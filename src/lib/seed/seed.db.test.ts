@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { flags } from "../../config/flags";
+import { createMockPaymentAdapter } from "../adapters/payment/mock";
+import type { Session } from "../auth/claims";
 import { configForDay } from "../data/config-version";
 import {
   countTenantRows,
@@ -15,7 +18,8 @@ import type { TenantRows } from "../data/rows";
 import { TENANT_TABLES, type TenantTable } from "../data/tables";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, Queryable } from "../db/types";
+import { executeMoneyAction, type MoneyHooks } from "../money/execute";
 import {
   advanceEligibility,
   findPaymentOnWrongInvoice,
@@ -31,7 +35,7 @@ import { DETENTION_TOTAL_CENTS, HERO_OPEN_WEEK, seededAdvanceDecision } from "./
 import { DEMO_CARRIERS, type DemoCarrier } from "./carriers";
 import golden from "./golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "./plan";
-import { findDemoTenant, replaceTenantData } from "./run";
+import { clearTenantLedger, findDemoTenant, replaceTenantData } from "./run";
 import { countRows } from "./summary";
 
 // The seed against a real database: plans written as payday_app, read back equal, the engine run
@@ -110,8 +114,10 @@ describe("seeding the demo carriers", () => {
 
   afterAll(async () => {
     await bypass?.close();
-    // Only what this file made: the two tenants (their rows go with them) and the role.
+    // Only what this file made: the two tenants (their rows, memberships and ledger rows go with
+    // them) and the role.
     for (const id of [A, B]) {
+      await clearTenantLedger(admin, id);
       await admin.withTenant(id, (q) =>
         q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"),
       );
@@ -410,5 +416,111 @@ describe("seeding the demo carriers", () => {
     // Every read the seed and the app make names its tenant, so this login reads one only.
     expect(await rowsOf(bypass, A)).toEqual(sorted(planA.rows));
     expect(await countsOf(bypass, B)).toEqual(countRows(planB.rows));
+  });
+
+  // Last: it pays a seeded advance, so the rows no longer equal the plan afterwards.
+  it("clears the tenant's ledger before a replace, so the re-created advance is paid once", async () => {
+    const saved = { ...flags };
+    flags.payoutsEnabled = true;
+    flags.paymentProvider = "mock";
+    try {
+      const member = async (tenantId: string): Promise<Session> => {
+        const sub = `seed-test-${tenantId}`;
+        await admin.withTenant(tenantId, (q) =>
+          q.execute(
+            `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+             VALUES (current_tenant_id(), $1, 'ops@carrier.example', 'staff')`,
+            [sub],
+          ),
+        );
+        return { sub, email: "", tenantId };
+      };
+      // A driver's pending request for a seeded advance (the plan writes them all paid).
+      const requested = (tenantId: string, advanceId: string) =>
+        app.withTenant(tenantId, (q) =>
+          q.execute(
+            `UPDATE advances SET status = 'requested', paid_at = NULL
+             WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+            [advanceId],
+          ),
+        );
+      const ledgerRows = async (tenantId: string) => {
+        const [row] = await admin.withoutTenant((q) =>
+          q.query<{ n: number }>(
+            "SELECT count(*) AS n FROM money_actions WHERE tenant_id = CAST($1 AS uuid)",
+            [tenantId],
+          ),
+        );
+        return Number(row.n);
+      };
+      const one = async (q: Queryable, sql: string, id: string) => {
+        if ((await q.execute(sql, [id])) !== 1) throw new Error("expected one advance row");
+      };
+      const hooks: MoneyHooks = {
+        onReserved: (q, a) =>
+          one(
+            q,
+            `UPDATE advances SET status = 'approved'
+             WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+               AND status = 'requested'`,
+            a.subjectId,
+          ),
+        onConfirmed: (q, a) =>
+          one(
+            q,
+            `UPDATE advances SET status = 'paid', paid_at = now()
+             WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+               AND status = 'approved'`,
+            a.subjectId,
+          ),
+      };
+      const mock = createMockPaymentAdapter({ log: () => {} });
+      const pay = (session: Session, advance: CarrierPlan["rows"]["advances"][number]) =>
+        executeMoneyAction(
+          app,
+          session,
+          {
+            kind: "advance_payout",
+            subjectId: advance.id,
+            counterpartyId: advance.driver_id,
+            amountCents: advance.amount_cents,
+            proposedBy: "person",
+            subjectStatuses: ["requested"],
+          },
+          hooks,
+          { payment: mock, log: () => {} },
+        );
+
+      const [sessionA, sessionB] = [await member(A), await member(B)];
+      const [advanceA] = planA.rows.advances;
+      const [advanceB] = planB.rows.advances;
+      expect(await requested(A, advanceA.id)).toBe(1);
+      expect(await requested(B, advanceB.id)).toBe(1);
+      const paid = await pay(sessionA, advanceA);
+      expect(paid.action.state).toBe("confirmed");
+      expect((await pay(sessionB, advanceB)).action.state).toBe("confirmed");
+
+      // What npm run seed does for blue-ridge: its ledger rows, then the replace.
+      expect(await clearTenantLedger(admin, A)).toBe(1);
+      await replaceTenantData(app, A, planA);
+      expect(await ledgerRows(A)).toBe(0);
+      // The admin login ignores row-level security; the tenant filter kept the other carrier's.
+      expect(await ledgerRows(B)).toBe(1);
+
+      expect(await requested(A, advanceA.id)).toBe(1);
+      const again = await pay(sessionA, advanceA);
+      expect(again).toMatchObject({ created: true, sent: true });
+      expect(again.action.state).toBe("confirmed");
+      expect(again.action.id).not.toBe(paid.action.id);
+      expect(again.action.idempotencyKey).toBe(`advance_payout:${advanceA.id}:1`);
+      // A second approval replays that row and sends nothing.
+      const replay = await pay(sessionA, advanceA);
+      expect(replay).toMatchObject({ created: false, sent: false });
+      expect(replay.action.id).toBe(again.action.id);
+      expect(mock.createdCount).toBe(3);
+      expect(await ledgerRows(A)).toBe(1);
+    } finally {
+      Object.assign(flags, saved);
+    }
   });
 });

@@ -308,6 +308,33 @@ describe("executeMoneyAction", () => {
     expect(polls).toBe(1);
   });
 
+  it("stops waiting after the default 8 s and reports the row still sent, with no send", async () => {
+    const t = setup();
+    const slept: number[] = [];
+    const hooks: MoneyHooks = {
+      ...t.hooks,
+      // Another caller claims the row right after this one reserves it, and never settles it.
+      onReserved: async (q, a) => {
+        await t.ledger.store.markSent(q, a.id);
+      },
+    };
+    const r = await executeMoneyAction(t.db, SESSION, payoutDraft(), hooks, {
+      ...t.deps,
+      waitMs: undefined,
+      pollMs: undefined,
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    expect(r).toMatchObject({ created: true, sent: false });
+    expect(r.action.state).toBe("sent");
+    expect(t.ledger.only().state).toBe("sent");
+    expect(t.payment.sends).toBe(0);
+    expect(slept.reduce((a, b) => a + b, 0)).toBe(8_000);
+    expect(t.onConfirmed).not.toHaveBeenCalled();
+    expect(t.onFailed).not.toHaveBeenCalled();
+  });
+
   it("refuses hooks that do not match the channel, and a bad draft, before any transaction", async () => {
     const t = setup();
     const send = async (): Promise<SendOutcome> => ({ kind: "failed", category: "validation" });

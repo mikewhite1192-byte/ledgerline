@@ -86,7 +86,10 @@ export type MoneyDeps = {
   accounting: AccountingAdapter;
   // The outside call's limit; past it the outcome is unknown.
   timeoutMs: number;
-  // A caller that finds the row being sent by another waits this long for it, polling.
+  // A caller that finds the row being sent by another waits this long for it, polling (sleep
+  // time; each poll's read adds its own). Kept short so a waiting request stays inside the
+  // server-render budget; a row still sent after it is returned as sent, and the reconcile pass
+  // finishes it.
   waitMs: number;
   pollMs: number;
   sleep(ms: number): Promise<void>;
@@ -100,7 +103,7 @@ export function resolveDeps(p: Partial<MoneyDeps> = {}): MoneyDeps {
     payment: p.payment ?? paymentAdapter(),
     accounting: p.accounting ?? accountingAdapter(),
     timeoutMs: p.timeoutMs ?? 20_000,
-    waitMs: p.waitMs ?? 25_000,
+    waitMs: p.waitMs ?? 8_000,
     pollMs: p.pollMs ?? 250,
     sleep: p.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
     log: p.log ?? ((line) => console.info(line)),

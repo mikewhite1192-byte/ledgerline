@@ -11,10 +11,10 @@ import { countRows } from "./summary";
 // row of the seventeen tables for that tenant, insert the plan, read the counts back, and roll
 // back on any difference. The seed never creates tenants or memberships.
 //
-// Two logins. The admin only looks the tenant up by slug (one SELECT on tenants). Every data
-// write runs as the app role inside withTenant, so row-level security bounds it too, and every
-// statement still names its tenant, so the writes stay on one tenant even under a login that
-// bypasses row-level security.
+// Two logins. The admin looks the tenant up by slug (one SELECT on tenants) and clears its money
+// ledger rows, which the app role cannot delete. Every data write runs as the app role inside
+// withTenant, so row-level security bounds it too, and every statement still names its tenant,
+// so the writes stay on one tenant even under a login that bypasses row-level security.
 
 export type SeedReport = {
   deleted: Record<TenantTable, number>;
@@ -36,6 +36,17 @@ export async function findDemoTenant(admin: Db, carrier: DemoCarrier): Promise<s
     throw new Error(`tenant ${carrier.slug} does not match the demo carrier`);
   }
   return t.id;
+}
+
+// A replace re-creates every subject with the same id, so the tenant's old ledger rows (keyed
+// kind:subject:attempt) would replay their old outcome, or block the subject for good, against
+// the new rows. The app role has no DELETE on money_actions, so the admin login removes them. That
+// login ignores row-level security, so the statement names the tenant itself, as a bound
+// parameter. Returns the rows deleted.
+export async function clearTenantLedger(admin: Db, tenantId: string): Promise<number> {
+  return admin.withTenant(tenantId, (q) =>
+    q.execute("DELETE FROM money_actions WHERE tenant_id = CAST($1 AS uuid)", [tenantId]),
+  );
 }
 
 // Inside the tenant transaction: the current tenant is the carrier the plan was built for.

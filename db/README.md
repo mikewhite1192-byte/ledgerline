@@ -65,7 +65,10 @@ One row per outside money write, reserved before the call. Two things differ fro
 tenant table" pattern above, on purpose:
 
 - The app role gets `SELECT, INSERT, UPDATE` and no `DELETE`: the app never removes a ledger
-  row. Test fixtures clear their rows with the admin login.
+  row. Test fixtures clear their rows with the admin login. A demo reseed (`npm run seed`)
+  clears the reseeded tenant's rows through the admin login (`WHERE tenant_id = $1`, since that
+  login ignores row-level security) before the replace; nothing else deletes them, except a
+  tenant's own delete (cascade).
 - The `money_actions_guard` trigger (a plain invoker-rights function) enforces the state machine
   on every insert and update, whoever runs it: a new row is a bare `reserved` row; what was
   approved (kind, subject, amount, counterparty, keys, proposal, approver) never changes;

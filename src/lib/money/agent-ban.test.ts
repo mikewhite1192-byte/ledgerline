@@ -13,11 +13,30 @@ const FORBIDDEN = [
   'import { createMockPaymentAdapter } from "../adapters/payment/mock";',
   'export const m = () => import("../money/execute");',
   'export const r = () => require("../money/ledger");',
+  // Odd spellings of the same paths, and any other module under money/ or adapters/.
+  'import { executeMoneyAction } from "../money/./execute";',
+  'import { executeMoneyAction } from "../money//execute";',
+  'import { executeMoneyAction } from "../Money/Execute";',
+  'import { reserve } from "../money/read/../ledger";',
+  'import { reserve } from "@/lib/money/../money/ledger";',
+  'export { executeMoneyAction } from "../money/./execute";',
+  'import { executeMoneyAction } from "../money/";',
+  'import { executeMoneyAction } from "../money/index";',
+  'import { FakeLedger } from "../money/test-fakes";',
+  'import { executeMoneyAction } from "../money";',
+  'import { createMockPaymentAdapter } from "../adapters/./payment/mock";',
+  'import { createMockPaymentAdapter } from "../adapters//payment/mock";',
+  'import { createMockPaymentAdapter } from "../adapters/tms/../payment/mock";',
+  // createRequire, imported or reached without an import.
+  'import { createRequire } from "node:module";',
+  'import { createRequire as load } from "module";',
+  'export const q = process.getBuiltinModule("node:module").createRequire(import.meta.url);',
 ];
 const ALLOWED = [
   'import { readAction } from "../money/read";',
   'import type { MoneyAction } from "../money/types";',
   'import { dollars } from "../money/format";',
+  'import { idempotencyKey } from "@/lib/money/keys";',
   'import { dbTmsAdapter } from "../adapters/tms/db";',
   'import type { TmsAdapter } from "../adapters/types";',
 ];
