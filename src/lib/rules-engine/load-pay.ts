@@ -17,6 +17,7 @@ import {
   type ExceptionLine,
   type LoadRecord,
   type LoadStatus,
+  type LocalDate,
   type PayConfig,
   type PayLine,
   type Period,
@@ -221,20 +222,24 @@ export function byLoadNumber(a: LoadRecord, b: LoadRecord): number {
   return compareText(a.loadNumber, b.loadNumber) || compareText(a.id, b.id);
 }
 
-// Load pay for the driver's delivered loads that no paid settlement has covered yet: what an
-// advance can be drawn against. A load with no rate earns nothing here, never a guess.
+// Load pay for the driver's loads delivered on or before `requestedOn` that no paid settlement
+// has covered yet: what an advance requested that day can be drawn against, so a replayed request
+// is never credited with later loads. A percent or flat load with no rate adds no load pay here,
+// never a guess, but its detention, layover and stop share still counts: that money is known.
 export function earnedUnpaid(
   config: PayConfig,
   driver: DriverRecord,
   loads: readonly LoadRecord[],
   paidPeriods: readonly Period[],
+  requestedOn: LocalDate,
 ): { cents: Cents; sources: SourceRef[] } {
+  const asOf = assertDate(requestedOn, "requestedOn");
   const periods = paidPeriods.map((p) => assertPeriod(p));
   const amounts: number[] = [];
   const sources: SourceRef[] = [];
   const unpaid = loads
     .map((l) => checkLoad(l, driver.id))
-    .filter((l) => isDelivered(l) && l.deliveredOn !== null)
+    .filter((l) => isDelivered(l) && l.deliveredOn !== null && l.deliveredOn <= asOf)
     .filter((l) => !periods.some((p) => isWithin(l.deliveredOn ?? "", p)))
     .sort(byLoadNumber);
   for (const load of unpaid) {

@@ -62,7 +62,7 @@ export function byOldest(a: AdvanceRecord, b: AdvanceRecord): number {
 
 // recovered = min(outstanding, cap, room), spread over paid advances requested on or before the
 // period's last day, oldest first, one line per advance touched. A shortfall leaves a note naming
-// the limit that applied (the tenant's cap, or the floor).
+// the limit that applied (the tenant's cap, or the floor) and citing the advances still owing.
 export function recoverAdvances(
   config: PayConfig,
   advances: readonly AdvanceRecord[],
@@ -83,6 +83,7 @@ export function recoverAdvances(
   const recovered = cents(Math.min(owed, cap ?? owed, Math.max(0, roomCents)));
   const lines: LineDraft[] = [];
   const recoveries: { advanceId: string; cents: Cents }[] = [];
+  const taken = new Map<AdvanceRecord, Cents>();
   let left: number = recovered;
   for (const advance of open) {
     if (left === 0) break;
@@ -95,13 +96,15 @@ export function recoverAdvances(
       sources: [{ table: "advances", id: advance.id }],
     });
     recoveries.push({ advanceId: advance.id, cents: take });
+    taken.set(advance, take);
   }
+  const stillOwing = open.filter((a) => sub(outstandingCents(a), taken.get(a) ?? 0) > 0);
   const note: SettlementNote | null =
     recovered < owed
       ? {
           kind: "advance_recovery",
           category: cap !== null && cap <= roomCents && recovered === cap ? "cap" : "floor",
-          sources: open.map((a) => ({ table: "advances" as const, id: a.id })),
+          sources: stillOwing.map((a) => ({ table: "advances" as const, id: a.id })),
           amountCents: sub(owed, recovered),
         }
       : null;

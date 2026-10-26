@@ -56,6 +56,7 @@ export function checkSchedule(schedule: ScheduleRecord, driverId?: string): Sche
   if (driverId !== undefined && schedule.driverId !== driverId) {
     throw new InputError(`schedule ${id} is not this driver's`);
   }
+  assertId(schedule.driverId, `schedule ${id} driverId`);
   assertOneOf(schedule.kind, SCHEDULE_KINDS, `schedule ${id} kind`);
   assertCents(schedule.amountCents, `schedule ${id} amountCents`);
   if (schedule.targetCents !== null)

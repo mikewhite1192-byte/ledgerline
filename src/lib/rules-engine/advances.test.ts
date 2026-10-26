@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { advanceEligibility } from "./advances";
+import { earnedUnpaid } from "./load-pay";
 import { advance, BLUE_RIDGE, c, driver, load, PRAIRIE_WIND } from "./test-records";
 import { ConfigError, InputError, type AdvanceInput, type AdvanceRefusal } from "./types";
 
 // One delivered load at $1,000 linehaul and 75%: $750 earned and unpaid, so Blue Ridge's 50%
-// share allows up to $375 against a $500 limit.
+// share allows up to $375, less what is still open, against a $500 limit.
 function request(over: Partial<AdvanceInput> = {}): AdvanceInput {
   return {
     config: BLUE_RIDGE,
@@ -71,7 +72,11 @@ describe("advanceEligibility", () => {
     ],
     [
       "a request that would take open advances past the limit",
-      { advances: [advance({ id: "a1", amountCents: c(40_000) })], amountCents: c(15_000) },
+      {
+        driver: driver({ advanceLimitCents: c(30_000) }),
+        advances: [advance({ id: "a1" })],
+        amountCents: c(15_000),
+      },
       ["over_driver_limit"],
       10_000,
     ],
@@ -83,17 +88,30 @@ describe("advanceEligibility", () => {
     ],
     [
       "the same amount as a paid advance 23 hours earlier",
-      { advances: [advance({ id: "a1", requestedAt: "2026-10-28T16:00:00Z" })] },
+      {
+        amountCents: c(15_000),
+        advances: [
+          advance({ id: "a1", amountCents: c(15_000), requestedAt: "2026-10-28T16:00:00Z" }),
+        ],
+      },
       ["possible_duplicate"],
-      30_000,
+      22_500,
     ],
     [
       "the same amount as an approved advance exactly 24 hours later",
       {
-        advances: [advance({ id: "a1", status: "approved", requestedAt: "2026-10-30T15:00:00Z" })],
+        amountCents: c(15_000),
+        advances: [
+          advance({
+            id: "a1",
+            status: "approved",
+            amountCents: c(15_000),
+            requestedAt: "2026-10-30T15:00:00Z",
+          }),
+        ],
       },
       ["possible_duplicate"],
-      30_000,
+      22_500,
     ],
     [
       "every refusal at once, in the fixed order",
@@ -125,11 +143,19 @@ describe("advanceEligibility", () => {
 
   it("does not call a request 25 hours away, or for another amount, a duplicate", () => {
     const apart = advanceEligibility(
-      request({ advances: [advance({ id: "a1", requestedAt: "2026-10-28T14:00:00Z" })] }),
+      request({
+        amountCents: c(15_000),
+        advances: [
+          advance({ id: "a1", amountCents: c(15_000), requestedAt: "2026-10-28T14:00:00Z" }),
+        ],
+      }),
     );
     expect(apart.reasons).toEqual([]);
     const otherAmount = advanceEligibility(
-      request({ advances: [advance({ id: "a1", amountCents: c(20_001) })] }),
+      request({
+        amountCents: c(15_000),
+        advances: [advance({ id: "a1", amountCents: c(15_001) })],
+      }),
     );
     expect(otherAmount.reasons).toEqual([]);
   });
@@ -156,7 +182,7 @@ describe("advanceEligibility", () => {
         amountCents: c(15_000),
       }),
     );
-    expect(decision).toMatchObject({ eligible: true, openCents: 10_000, maxCents: 37_500 });
+    expect(decision).toMatchObject({ eligible: true, openCents: 10_000, maxCents: 27_500 });
   });
 
   it("cites a fully recovered duplicate even though nothing is owed on it", () => {
@@ -181,7 +207,11 @@ describe("advanceEligibility", () => {
 
   it("offers nothing when the room left is under the minimum", () => {
     const decision = advanceEligibility(
-      request({ advances: [advance({ id: "a1", amountCents: c(46_000) })], amountCents: c(5_000) }),
+      request({
+        driver: driver({ advanceLimitCents: c(30_000) }),
+        advances: [advance({ id: "a1", amountCents: c(26_000) })],
+        amountCents: c(5_000),
+      }),
     );
     expect(decision.reasons).toEqual(["over_driver_limit"]);
     expect(decision.maxCents).toBe(0);
@@ -216,6 +246,62 @@ describe("advanceEligibility", () => {
       request({ driver: driver({ advanceLimitCents: c(30_000) }) }),
     );
     expect(ownLimit).toMatchObject({ limitCents: 30_000, maxCents: 30_000 });
+  });
+
+  it("counts earlier open advances against the share, so split requests cannot beat it", () => {
+    // $750 earned, $375 share, $500 limit: $300, then $75, then another $75 is past the share.
+    const first = advance({
+      id: "a1",
+      amountCents: c(30_000),
+      requestedAt: "2026-10-25T15:00:00Z",
+      requestedOn: "2026-10-25",
+    });
+    const second = advance({
+      id: "a2",
+      amountCents: c(7_500),
+      requestedAt: "2026-10-27T15:00:00Z",
+      requestedOn: "2026-10-27",
+    });
+    const fits = advanceEligibility(request({ advances: [first], amountCents: c(7_500) }));
+    expect(fits).toMatchObject({ eligible: true, openCents: 30_000, maxCents: 7_500 });
+    const third = advanceEligibility(request({ advances: [first, second], amountCents: c(7_500) }));
+    expect(third).toMatchObject({
+      eligible: false,
+      approvedCents: 0,
+      reasons: ["exceeds_earned_share"],
+      openCents: 37_500,
+      maxCents: 0,
+    });
+  });
+
+  it("counts only loads delivered on or before the request day", () => {
+    const on = { requestedAt: "2026-10-27T15:00:00Z", requestedOn: "2026-10-27" };
+    const replayed = advanceEligibility(
+      request({ ...on, loads: [load({ id: "l1", deliveredOn: "2026-10-30" })] }),
+    );
+    expect(replayed).toMatchObject({
+      eligible: false,
+      earnedUnpaidCents: 0,
+      maxCents: 0,
+      reasons: ["no_unpaid_earnings", "exceeds_earned_share"],
+    });
+    const sameDay = advanceEligibility(
+      request({
+        ...on,
+        loads: [
+          load({ id: "l1", deliveredOn: "2026-10-27" }),
+          load({ id: "l2", deliveredOn: "2026-10-30" }),
+        ],
+      }),
+    );
+    expect(sameDay).toMatchObject({ eligible: true, earnedUnpaidCents: 75_000 });
+    expect(sameDay.sources).toEqual([
+      { table: "drivers", id: "drv-1" },
+      { table: "loads", id: "l1" },
+    ]);
+    // Read on its own, earned-unpaid needs a request day it can compare against.
+    const loads = [load({ id: "l1" })];
+    expect(() => earnedUnpaid(BLUE_RIDGE, driver(), loads, [], "10/27/2026")).toThrow(InputError);
   });
 
   it.each<[string, Partial<AdvanceInput>, typeof ConfigError | typeof InputError]>([

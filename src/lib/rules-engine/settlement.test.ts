@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { localDateOf } from "../time/local-date";
+import { checkSchedule } from "./deductions";
 import { settleDriver } from "./settlement";
 import {
   advance,
@@ -19,6 +20,7 @@ import {
   type PayConfig,
   type SettlementInput,
   type SettlementResult,
+  type SourceRef,
 } from "./types";
 
 const WEEK = { start: "2026-10-26", end: "2026-11-01" };
@@ -246,10 +248,34 @@ type Expected = {
   recoveries?: [string, number][];
   escrowDelta?: number;
   insuredDays?: number;
+  // Each line's records, exactly, when given.
+  sources?: SourceRef[][];
 };
 
 const percentLoad = (id: string, linehaul: number, over = {}) =>
   load({ id, linehaulCents: c(linehaul), ...over });
+
+// Two paid advances, $205 and $155 with fees, against Prairie Wind's $250 cap.
+const PW_CAPPED = input({
+  config: PRAIRIE_WIND,
+  period: PW_WEEK,
+  loads: [percentLoad("a", 200_000, { deliveredOn: "2026-10-27" })],
+  advances: [
+    advance({
+      id: "newer",
+      requestedAt: "2026-10-28T15:00:00Z",
+      amountCents: c(15_000),
+      feeCents: c(500),
+    }),
+    advance({
+      id: "older",
+      requestedAt: "2026-10-26T15:00:00Z",
+      requestedOn: "2026-10-26",
+      amountCents: c(20_000),
+      feeCents: c(500),
+    }),
+  ],
+});
 
 const CASES: [string, SettlementInput, Expected][] = [
   [
@@ -363,26 +389,7 @@ const CASES: [string, SettlementInput, Expected][] = [
   ],
   [
     "Prairie Wind recovers at most $250 a settlement, oldest advance first, fee included",
-    input({
-      config: PRAIRIE_WIND,
-      period: PW_WEEK,
-      loads: [percentLoad("a", 200_000, { deliveredOn: "2026-10-27" })],
-      advances: [
-        advance({
-          id: "newer",
-          requestedAt: "2026-10-28T15:00:00Z",
-          amountCents: c(15_000),
-          feeCents: c(500),
-        }),
-        advance({
-          id: "older",
-          requestedAt: "2026-10-26T15:00:00Z",
-          requestedOn: "2026-10-26",
-          amountCents: c(20_000),
-          feeCents: c(500),
-        }),
-      ],
-    }),
+    PW_CAPPED,
     {
       lines: [
         ["load_pay", 150_000],
@@ -485,6 +492,16 @@ const CASES: [string, SettlementInput, Expected][] = [
       deductions: 82_240,
       net: 69_560,
       insuredDays: 1,
+      sources: [
+        [{ table: "loads", id: "a" }],
+        [{ table: "pay_items", id: "toll" }],
+        [{ table: "pay_items", id: "fuel" }],
+        [{ table: "pay_items", id: "scale" }],
+        [{ table: "pay_items", id: "short" }],
+        [{ table: "deduction_schedules", id: "lease" }],
+        [{ table: "deduction_schedules", id: "eld" }],
+        [{ table: "driver_days", id: "d1" }],
+      ],
     },
   ],
   [
@@ -678,6 +695,10 @@ CASES.push(
       gross: 82_500,
       deductions: 0,
       net: 82_500,
+      sources: [[{ table: "loads", id: "rich" }], [
+          { table: "load_accessorials", id: "det" },
+          { table: "load_accessorials", id: "stop" },
+        ]],
     },
   ],
   [
@@ -691,12 +712,22 @@ CASES.push(
       gross: 87_750,
       deductions: 0,
       net: 87_750,
+      sources: [[{ table: "loads", id: "rich" }], [
+          { table: "load_accessorials", id: "det" },
+          { table: "load_accessorials", id: "stop" },
+        ]],
     },
   ],
   [
     "percent of linehaul, fuel surcharge and accessorials pays accessorials once, inside the base",
     withConfig({ percentBase: "linehaul_fsc_accessorials" }),
-    { lines: [["load_pay", 89_625]], gross: 89_625, deductions: 0, net: 89_625 },
+    {
+      lines: [["load_pay", 89_625]],
+      gross: 89_625,
+      deductions: 0,
+      net: 89_625,
+      sources: [[{ table: "loads", id: "rich" }]],
+    },
   ],
   [
     "a per-mile driver gets the accessorial share whatever the percent base",
@@ -709,12 +740,22 @@ CASES.push(
       gross: 38_500,
       deductions: 0,
       net: 38_500,
+      sources: [[{ table: "loads", id: "rich" }], [
+          { table: "load_accessorials", id: "det" },
+          { table: "load_accessorials", id: "stop" },
+        ]],
     },
   ],
   [
     "a zero accessorial share adds no line",
     withConfig({ accessorialDriverShareBps: 0 }),
-    { lines: [["load_pay", 75_000]], gross: 75_000, deductions: 0, net: 75_000 },
+    {
+      lines: [["load_pay", 75_000]],
+      gross: 75_000,
+      deductions: 0,
+      net: 75_000,
+      sources: [[{ table: "loads", id: "rich" }]],
+    },
   ],
 );
 
@@ -730,6 +771,7 @@ function check(result: SettlementResult, want: Expected) {
   expect(result.recoveries.map((r) => [r.advanceId, r.cents])).toEqual(want.recoveries ?? []);
   expect(result.escrowDeltaCents).toBe(want.escrowDelta ?? 0);
   if (want.insuredDays !== undefined) expect(result.insuredDays).toBe(want.insuredDays);
+  if (want.sources !== undefined) expect(result.lines.map((l) => l.sources)).toEqual(want.sources);
 }
 
 describe("settleDriver: the pay math, case by case", () => {
@@ -750,6 +792,36 @@ describe("settleDriver: the pay math, case by case", () => {
       expect(r.netCents).toBeGreaterThanOrEqual(0);
     },
   );
+});
+
+describe("settleDriver: the advance recovery note", () => {
+  it("cites only the advances still owing after this run", () => {
+    // The cap takes all $205 of the older advance and $45 of the newer: only the newer still owes.
+    expect(settleDriver(PW_CAPPED).notes).toEqual([
+      {
+        kind: "advance_recovery",
+        category: "cap",
+        sources: [{ table: "advances", id: "newer" }],
+        amountCents: 11_000,
+      },
+    ]);
+    // Under the floor nothing is taken, so both still owe and both are cited, oldest first.
+    const short = {
+      ...PW_CAPPED,
+      loads: [percentLoad("a", 30_000, { deliveredOn: "2026-10-27" })],
+    };
+    expect(settleDriver(short).notes).toEqual([
+      {
+        kind: "advance_recovery",
+        category: "floor",
+        sources: [
+          { table: "advances", id: "older" },
+          { table: "advances", id: "newer" },
+        ],
+        amountCents: 36_000,
+      },
+    ]);
+  });
 });
 
 describe("settleDriver: weeks that cross the clock change", () => {
@@ -902,6 +974,17 @@ describe("settleDriver: fails closed", () => {
       InputError,
     ],
     [
+      "two escrow schedules active at once",
+      input({
+        loads: [percentLoad("a", 200_000)],
+        schedules: [
+          schedule({ id: "e1" }),
+          schedule({ id: "e2", activeFrom: "2026-10-28" }),
+        ],
+      }),
+      InputError,
+    ],
+    [
       "an unknown day source",
       input({ days: [day("d", "2026-10-28", { source: "guess" as never })] }),
       InputError,
@@ -924,5 +1007,9 @@ describe("settleDriver: fails closed", () => {
     ["a negative escrow balance", input({ escrowBalanceCents: c(-1) }), InputError],
   ])("refuses %s", (_name, given, error) => {
     expect(() => settleDriver(given)).toThrow(error);
+  });
+
+  it("refuses a schedule with no driver even when there is no driver to match", () => {
+    expect(() => checkSchedule(schedule({ id: "s", driverId: "" }))).toThrow(InputError);
   });
 });

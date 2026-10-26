@@ -15,10 +15,12 @@ import {
 // with the numbers behind it. The engine decides nothing about money moving: a person approves,
 // and the ledger pays.
 //
-// earnedUnpaid = load pay on delivered loads no paid settlement has covered
+// earnedUnpaid = load pay on loads delivered on or before the request day that no paid
+//                settlement has covered
 // open         = outstanding on approved and paid advances (amount + fee - recovered)
-// maxCents     = min(limit - open - fee, earnedUnpaid x share), or 0 when under the minimum
-// The fee counts against the limit, the same way findOverAdvanceLimit counts it.
+// maxCents     = min(limit - open - fee, earnedUnpaid x share - open), or 0 when under the minimum
+// The fee counts against the limit, the same way findOverAdvanceLimit counts it. The share is
+// cumulative: open advances count against it, so splitting a request does not get past it.
 export function advanceEligibility(input: AdvanceInput): AdvanceDecision {
   const config = assertPayConfig(input.config);
   const driver = checkDriver(input.driver);
@@ -27,7 +29,7 @@ export function advanceEligibility(input: AdvanceInput): AdvanceDecision {
   const requestedOn = assertDate(input.requestedOn, "requestedOn");
   const advances = input.advances.map((a) => checkAdvance(a, driver.id)).sort(byOldest);
 
-  const earned = earnedUnpaid(config, driver, input.loads, input.paidPeriods);
+  const earned = earnedUnpaid(config, driver, input.loads, input.paidPeriods, requestedOn);
   const owing = advances.filter((a) => outstandingCents(a) > 0);
   const open = sum(owing.map(outstandingCents));
   const limit = advanceLimitOf(config, driver);
@@ -47,10 +49,10 @@ export function advanceEligibility(input: AdvanceInput): AdvanceDecision {
   if (amount < Math.max(1, config.advanceMinCents)) reasons.push("below_minimum");
   if (earned.cents === 0) reasons.push("no_unpaid_earnings");
   if (sum([open, amount, fee]) > limit) reasons.push("over_driver_limit");
-  if (amount > share) reasons.push("exceeds_earned_share");
+  if (sum([open, amount]) > share) reasons.push("exceeds_earned_share");
   if (duplicates.length > 0) reasons.push("possible_duplicate");
 
-  const upTo = Math.max(0, Math.min(sub(limit, sum([open, fee])), share));
+  const upTo = Math.max(0, Math.min(sub(limit, sum([open, fee])), sub(share, open)));
   const maxCents = cents(inactive || upTo < Math.max(1, config.advanceMinCents) ? 0 : upTo);
   const eligible = reasons.length === 0;
   const sources: SourceRef[] = [
