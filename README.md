@@ -1,4 +1,4 @@
-# Payday Copilot
+# LedgerLine
 
 An AI operator for a trucking carrier's money desk. It takes driver advance requests, invoices
 delivered loads, runs weekly settlements and payouts, and records every step in QuickBooks Online.

@@ -1,0 +1,63 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { extname, join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+// The product is LedgerLine. The old name survives only inside deployed identifiers (secret names
+// under payday-copilot/), which cannot change without recreating the resource.
+const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const TEXT = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".mjs",
+  ".css",
+  ".md",
+  ".json",
+  ".txt",
+  ".svg",
+  ".html",
+]);
+const DEPLOYED_ID = /payday-copilot\/[a-z0-9-]+/g;
+const THIS_FILE = fileURLToPath(import.meta.url);
+
+function textFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) return textFiles(path);
+    return TEXT.has(extname(name)) && path !== THIS_FILE ? [path] : [];
+  });
+}
+
+function oldNameHits(paths: string[]): string[] {
+  return paths.flatMap((path) =>
+    readFileSync(path, "utf8")
+      .split("\n")
+      .flatMap((line, i) =>
+        /copilot/i.test(line.replace(DEPLOYED_ID, ""))
+          ? [`${relative(ROOT, path)}:${i + 1}`]
+          : [],
+      ),
+  );
+}
+
+describe("product name", () => {
+  it("never shows the old name in the app, its public files or the README", () => {
+    const dirs = ["src", "public"]
+      .map((d) => join(ROOT, d))
+      .filter((d) => statSync(d, { throwIfNoEntry: false }));
+    const files = [join(ROOT, "README.md"), ...dirs.flatMap(textFiles)];
+    expect(oldNameHits(files)).toEqual([]);
+  });
+
+  it("names the package ledgerline", () => {
+    const pkg = JSON.parse(
+      readFileSync(join(ROOT, "package.json"), "utf8"),
+    ) as { name: string };
+    expect(pkg.name).toBe("ledgerline");
+  });
+
+  it("still allows a deployed secret name", () => {
+    expect("payday-copilot/meta-api-key".replace(DEPLOYED_ID, "")).toBe("");
+  });
+});
