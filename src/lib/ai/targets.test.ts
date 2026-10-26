@@ -146,4 +146,15 @@ describe("modelFor", () => {
     vi.stubEnv("META_MODEL_VOICE", "");
     expect(modelFor("voice", "audio_seconds")).toBeNull();
   });
+
+  it("calls Wonder only as muse-wonder-1.0, never a Contributor id, mode off or on", () => {
+    vi.stubEnv("DB_CLUSTER_ARN", "");
+    for (const mode of ["false", "true"]) {
+      vi.stubEnv("META_CONTRIBUTOR_MODE", mode);
+      vi.stubEnv("META_MODEL_WONDER", "muse-wonder-1.0");
+      expect(modelFor("wonder", "tokens")?.model, mode).toBe("muse-wonder-1.0");
+      vi.stubEnv("META_MODEL_WONDER", "muse-wonder-1.0-contributor");
+      expect(modelFor("wonder", "tokens"), mode).toBeNull();
+    }
+  });
 });

@@ -63,6 +63,30 @@ describe("pdfPages", () => {
     );
     expect(pdfPages(pdf)).toBe(50);
   });
+
+  it("reads # escapes in names, so no escaped name hides a page or an object stream", () => {
+    // /Obj#53tm is /ObjStm.
+    const hidden = ascii(
+      "%PDF-1.5\n2 0 obj << /Type /Page >>\n" +
+        "5 0 obj << /Type /Obj#53tm /N 39 /First 300 >>\nstream\n",
+    );
+    expect(pdfPages(hidden)).toBe(50);
+    // /P#61ge is /Page.
+    const escaped = ascii(
+      "%PDF-1.4\n1 0 obj << /Type /Pages /Kids [2 0 R 3 0 R] >>\n" +
+        "2 0 obj << /Type /Page >>\n3 0 obj << /Type /P#61ge >>\n",
+    );
+    expect(pdfPages(escaped)).toBe(2);
+  });
+
+  it("counts a normal PDF whose font name has a # escape", () => {
+    const pdf = ascii(
+      "%PDF-1.4\n1 0 obj << /Type /Pages /Kids [2 0 R 3 0 R] >>\n" +
+        "2 0 obj << /Type /Page >>\n3 0 obj << /Type /Page >>\n" +
+        "4 0 obj << /Type /Font /BaseFont /Arial#20Bold >>\n",
+    );
+    expect(pdfPages(pdf)).toBe(2);
+  });
 });
 
 describe("fromBase64", () => {

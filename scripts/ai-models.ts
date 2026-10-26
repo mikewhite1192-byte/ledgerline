@@ -6,14 +6,15 @@ import { compareModels, liveIds } from "./lib/model-ids";
 //
 // Lists the Meta Model API's live model ids (GET /v1/models: read-only, free) and marks each
 // configured META_MODEL_* value as live or missing. Exit 1 when any is missing, so it can run
-// before a release. The key comes from META_API_KEY (.env.local) or, when that is unset, from
-// Secrets Manager by META_API_KEY_SECRET_NAME. The key is never printed.
+// before a release. The key comes from META_API_KEY (.env.local) or, when that is unset or
+// DB_CLUSTER_ARN is set (production, as src/lib/ai/keys.ts reads it), from Secrets Manager by
+// META_API_KEY_SECRET_NAME. The key is never printed.
 
 const MODELS_URL = "https://api.meta.ai/v1/models";
 const DEFAULT_SECRET = "payday-copilot/meta-api-key";
 
 async function key(): Promise<string> {
-  const raw = process.env.META_API_KEY?.trim();
+  const raw = process.env.DB_CLUSTER_ARN ? undefined : process.env.META_API_KEY?.trim();
   if (raw) return raw;
   const name = process.env.META_API_KEY_SECRET_NAME?.trim() || DEFAULT_SECRET;
   const client = new SecretsManagerClient({ region: process.env.AWS_REGION ?? "us-east-2" });

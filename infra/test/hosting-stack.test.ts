@@ -98,14 +98,32 @@ describe("HostingStack", () => {
     });
   });
 
-  it("gives the SSR runtime a role only Amplify can assume", () => {
+  it("gives the SSR runtime a role only Amplify can assume, for this app's main branch", () => {
     const [, compute] = role("ComputeRole");
+    const [appId] = Object.keys(template.findResources("AWS::Amplify::App"));
     expect(compute.Properties.AssumeRolePolicyDocument).toEqual({
       Statement: [
         {
           Action: "sts:AssumeRole",
           Effect: "Allow",
           Principal: { Service: "amplify.amazonaws.com" },
+          Condition: {
+            StringEquals: { "aws:SourceAccount": { Ref: "AWS::AccountId" } },
+            ArnEquals: {
+              "aws:SourceArn": {
+                "Fn::Join": [
+                  "",
+                  [
+                    "arn:aws:amplify:us-east-2:",
+                    { Ref: "AWS::AccountId" },
+                    ":apps/",
+                    { "Fn::GetAtt": [appId, "AppId"] },
+                    "/branches/main",
+                  ],
+                ],
+              },
+            },
+          },
         },
       ],
       Version: "2012-10-17",

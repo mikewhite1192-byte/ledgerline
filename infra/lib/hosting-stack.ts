@@ -143,10 +143,18 @@ export class HostingStack extends Stack {
     // The SSR runtime's credentials: the Data API on this cluster, the app's own database login
     // and the two model API keys, nothing else. No Cognito permission is needed (sign-in is an
     // unauthenticated API). Set on the branch, not the app, as Amplify recommends for a public
-    // repository.
+    // repository. Amplify may assume it only for this account and this app's main branch; the
+    // app does not refer to this role, so naming the app here is no cycle.
+    const branchName = "main";
+    const appArn = `arn:${partition}:amplify:${region}:${account}:apps/${app.attrAppId}`;
     const computeRole = new Role(this, "ComputeRole", {
       description: "Payday Copilot SSR runtime: Data API, the app database login and model keys",
-      assumedBy: new ServicePrincipal("amplify.amazonaws.com"),
+      assumedBy: new ServicePrincipal("amplify.amazonaws.com", {
+        conditions: {
+          StringEquals: { "aws:SourceAccount": account },
+          ArnEquals: { "aws:SourceArn": `${appArn}/branches/${branchName}` },
+        },
+      }),
       inlinePolicies: {
         data: new PolicyDocument({
           statements: [
@@ -180,7 +188,7 @@ export class HostingStack extends Stack {
 
     new CfnBranch(this, "MainBranch", {
       appId: app.attrAppId,
-      branchName: "main",
+      branchName,
       stage: "PRODUCTION",
       framework: "Next.js - SSR",
       enableAutoBuild: true,
