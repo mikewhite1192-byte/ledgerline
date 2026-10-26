@@ -34,6 +34,27 @@ security-definer function, and for an app role that owns, inherits or bypasses a
 App SQL uses `$1, $2` parameters and `CAST($1 AS uuid)` rather than the `::` shorthand. Money is
 `bigint` cents, never `numeric`.
 
+## The admin login is not held by row-level security
+
+Only `payday_app` is held by the policies. The admin login that runs `scripts/` is not: on
+Aurora it is `payday_admin`, the cluster's master user and a member of `rds_superuser`, and
+locally and in CI it is a superuser. A read-only probe on Aurora (2026-10-26) showed
+`payday_admin`, with `app.tenant_id` set to one carrier, reading another carrier's tenant row,
+with FORCE on and `rolbypassrls` false. The header of `0001_tenants.sql` says FORCE holds even
+the owner; that is wrong for this owner, which is the admin. The file is applied and never
+edited, so this note is the correction.
+
+So a script statement on a tenant table, run as the admin, names its tenant itself:
+
+- `tenants`: `WHERE id = current_tenant_id()`; an insert takes `current_tenant_id()` as `id`.
+- any other tenant table: `WHERE tenant_id = current_tenant_id()`; an insert takes
+  `current_tenant_id()` as `tenant_id`.
+
+Migrations run as the admin too, with no tenant set, so a migration that changes rows reaches
+every carrier unless its own `WHERE` says which. `scripts/lib/demo-rows.db.test.ts` runs the
+demo user statements through a local role with BYPASSRLS, the local stand-in for the Aurora
+master.
+
 ## Local, from a fresh database
 
 With a local Postgres 16 and its admin login:
