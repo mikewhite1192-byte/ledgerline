@@ -1,0 +1,30 @@
+# deps and builds
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+infra/.build/
+cdk.out/
+
+# secrets: never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# local notes and probes
+*.local.*
+.DS_Store
+
+# database dumps: a probe must never commit data
+*.dump
+*.sql.gz
+*.backup
+
+# framework output
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*

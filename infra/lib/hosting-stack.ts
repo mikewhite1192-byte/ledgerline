@@ -1,0 +1,38 @@
+import { SecretValue, Stack, type StackProps } from "aws-cdk-lib";
+import { CfnApp, CfnBranch } from "aws-cdk-lib/aws-amplify";
+import type { Construct } from "constructs";
+
+export const REPOSITORY_URL = "https://github.com/mikewhite1192-byte/payday-copilot";
+export const GITHUB_TOKEN_SECRET_NAME = "payday-copilot/github-token";
+
+// Amplify Hosting for the Next.js app. No inline build spec: Amplify reads amplify.yml from the
+// repo. A merge to main builds and deploys production.
+export class HostingStack extends Stack {
+  constructor(scope: Construct, id: string, props?: StackProps) {
+    super(scope, id, props);
+
+    const app = new CfnApp(this, "App", {
+      name: "payday-copilot",
+      platform: "WEB_COMPUTE",
+      repository: REPOSITORY_URL,
+      // A Secrets Manager dynamic reference: the template holds only the reference, and
+      // CloudFormation resolves the token at deploy time. The first deploy goes in this order:
+      // 1) install the Amplify GitHub App for the deploy region on this repository only:
+      //    https://github.com/apps/aws-amplify-us-east-2/installations/new
+      // 2) store a GitHub classic token with only the admin:repo_hook scope in Secrets Manager
+      //    under GITHUB_TOKEN_SECRET_NAME;
+      // 3) npm run cdk -- deploy.
+      accessToken: SecretValue.secretsManager(GITHUB_TOKEN_SECRET_NAME).unsafeUnwrap(),
+    });
+
+    new CfnBranch(this, "MainBranch", {
+      appId: app.attrAppId,
+      branchName: "main",
+      stage: "PRODUCTION",
+      framework: "Next.js - SSR",
+      enableAutoBuild: true,
+      // Off: Amplify refuses SSR PR previews on a public repo (outside code would run as our role).
+      enablePullRequestPreview: false,
+    });
+  }
+}

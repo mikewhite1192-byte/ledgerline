@@ -1,0 +1,200 @@
+# Blocking gates for Payday Copilot. Set up on day zero, before the first feature.
+#
+# Make every job REQUIRED on the mainline (Settings > Branches > branch protection), or they run
+# but do not block. Third-party actions are pinned to a commit SHA (a mutable tag is a
+# supply-chain door).
+#
+# Judgment lives in the pre-push review list and the AI reviewer; these are only the checks a
+# pipeline can make objective.
+
+name: quality-gates
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: build + lint + tests + house style
+    runs-on: ubuntu-latest
+    # Throwaway Postgres for the DB tests below; TENANTS uncomments it with the first migration.
+    # Trust auth on a container that lives for one job, so no password appears anywhere.
+    # services:
+    #   postgres:
+    #     image: postgres:16
+    #     env:
+    #       POSTGRES_HOST_AUTH_METHOD: trust
+    #     ports: ["5432:5432"]
+    #     options: >-
+    #       --health-cmd "pg_isready -U postgres"
+    #       --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests (no database, no network)
+        run: npm test
+
+      # DB tests run against a plain Postgres 16 built FRESH from db/migrations, so a broken or
+      # missing migration fails here instead of in production. TENANTS turns these on with the
+      # first migration, together with the services block above.
+      # - name: Build the test DB from db/migrations (filename order)
+      #   env:
+      #     DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+      #   run: |
+      #     set -euo pipefail
+      #     for f in db/migrations/*.sql; do
+      #       echo "applying $f"
+      #       psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+      #     done
+      # - name: DB tests
+      #   env:
+      #     DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+      #   run: npm run test:db
+
+      # House rule: no em dashes in NEW lines (existing files are grandfathered). On a push the
+      # change under review is the whole push, not just its last commit. Context values reach the
+      # script through env, never inline in run (a branch name is attacker-influenced text).
+      - name: No em dashes in new lines
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch -q origin "$BASE_REF"
+            BASE="origin/$BASE_REF"
+          else
+            BASE="$EVENT_BEFORE"
+            if [ -z "$BASE" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+              BASE=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+            fi
+          fi
+          if [ -z "$BASE" ]; then echo "no base to diff against; skipping"; exit 0; fi
+          # Fail closed. grep exits 0 on a match, 1 on none and 2 on an error. The filters treat
+          # "no match" as an empty result, so a failing git diff or grep fails this pipeline
+          # (pipefail) and the step (set -e). The em dash is matched as its fixed UTF-8 bytes,
+          # with no locale or PCRE involved, and its grep's exit code is read, never masked.
+          filter() { grep "$@" || [ $? -eq 1 ]; }
+          ADDED=$(git diff "$BASE"...HEAD | filter -E '^\+' | filter -v '^+++')
+          EM_DASH=$(printf '\342\200\224')
+          RC=0
+          HITS=$(printf '%s\n' "$ADDED" | grep -nF "$EM_DASH") || RC=$?
+          if [ "$RC" -eq 0 ]; then
+            echo "::error::em dash in added lines (house rule: commas, colons or parentheses instead)."
+            echo "$HITS"
+            exit 1
+          elif [ "$RC" -ne 1 ]; then
+            echo "::error::em dash check failed (grep exit $RC)."
+            exit 1
+          fi
+          echo "OK: no em dashes added."
+
+  # Every commit the change brings in, merge ancestry and merge resolutions included. The CLI
+  # runs directly: the action lists only the first 30 PR commits and skips a merge's second parent.
+  secrets:
+    name: secret scan (new commits)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # A pinned release binary checked against a hardcoded sha256 (from the release's checksums
+      # file); a mismatch fails the step.
+      - name: Install gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          TARBALL="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$TARBALL" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${TARBALL}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$TARBALL" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$RUNNER_TEMP/$TARBALL" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          "$RUNNER_TEMP/gitleaks/gitleaks" version
+
+      # On a pull request the checkout is the merge ref: parent 1 is the base, so HEAD^1..HEAD is
+      # everything the PR adds. On a push, the pushed range, or the full history when the old tip
+      # is unknown. Context values reach the script through env, never inline in run.
+      - name: Scan new commits
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if ! git rev-parse -q --verify "HEAD^2" >/dev/null; then
+              echo "::error::HEAD has no second parent, so the pull request's commits are unknown."
+              exit 1
+            fi
+            RANGE="HEAD^1..HEAD"
+          elif [ -n "$EVENT_BEFORE" ] && ! [[ "$EVENT_BEFORE" =~ ^0+$ ]] \
+            && git cat-file -e "${EVENT_BEFORE}^{commit}" 2>/dev/null; then
+            RANGE="${EVENT_BEFORE}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+          COUNT=$(git rev-list --count "$RANGE")
+          echo "Scanning $RANGE ($COUNT commits)"
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$COUNT" -eq 0 ]; then
+            echo "::error::the pull request range has no commits to scan."
+            exit 1
+          fi
+          # gitleaks exits 0 when git log fails, so a bad option or range is caught here first.
+          git log --diff-merges=remerge --format=%H "$RANGE" >/dev/null
+          "$RUNNER_TEMP/gitleaks/gitleaks" git --redact --no-banner --exit-code 1 \
+            --log-opts="--diff-merges=remerge $RANGE" .
+
+  semgrep:
+    name: semgrep (SAST + secrets rules)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # A suppression must name the rule and say why: `nosemgrep: <rule.id> -- <reason>`.
+      - run: >
+          semgrep scan
+          --config p/default
+          --config p/secrets
+          --config p/typescript
+          --config p/react
+          --error
+          --exclude node_modules
+          --exclude '*.local.*'
