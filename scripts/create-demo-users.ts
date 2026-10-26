@@ -13,9 +13,10 @@ import {
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
 import { createDataApiDb } from "../src/lib/db/data-api";
-import { DbError, type Db } from "../src/lib/db/types";
+import { DbError } from "../src/lib/db/types";
 import { isUuid } from "../src/lib/uuid";
 import { assertAccount, REGION, requireEnv } from "./lib/aws-account";
+import { ensureRows } from "./lib/demo-rows";
 import { generatePassword } from "./lib/password";
 
 // npm run demo:users [-- --reset-passwords]
@@ -29,6 +30,10 @@ import { generatePassword } from "./lib/password";
 // DEMO_SECRET_NAME secret, written before any password is set, so a password that works always
 // exists in the secret. The terminal shows the emails and the secret name, nothing else. A rerun
 // keeps existing logins and their passwords unless --reset-passwords is passed.
+//
+// It runs as the database admin, which row-level security does not hold (on Aurora the master
+// user reads every carrier even with app.tenant_id set), so the row statements in
+// lib/demo-rows.ts name their tenant themselves. See db/README.md.
 
 const DEMO_SECRET_NAME = "payday-copilot/demo-logins";
 
@@ -91,38 +96,6 @@ async function ensureLogin({ cognito, userPoolId }: Aws, carrier: Carrier) {
   const sub = attribute(out.User?.Attributes, "sub");
   if (!sub) throw new Error(`${carrier.email} was created without a subject`);
   return { sub, tenantId, created: true, confirmed: false };
-}
-
-// The tenant row and the membership, written as that tenant (row-level security applies to the
-// admin too) and read back whole. A slug or a login already tied to another tenant fails here.
-async function ensureRows(db: Db, carrier: Carrier, tenantId: string, sub: string) {
-  await db.withTenant(tenantId, async (q) => {
-    const zone = await q.query("SELECT 1 AS ok FROM pg_timezone_names WHERE name = $1", [
-      carrier.timezone,
-    ]);
-    if (zone.length !== 1) throw new Error(`${carrier.timezone} is not a time zone name`);
-    await q.execute(
-      `INSERT INTO tenants (id, slug, name, timezone)
-       VALUES (current_tenant_id(), $1, $2, $3) ON CONFLICT (slug) DO NOTHING`,
-      [carrier.slug, carrier.name, carrier.timezone],
-    );
-    await q.execute(
-      `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
-       VALUES (current_tenant_id(), $1, $2, 'admin') ON CONFLICT (cognito_sub) DO NOTHING`,
-      [sub, carrier.email],
-    );
-    const tenant = await q.query<{ slug: string }>("SELECT slug FROM tenants");
-    const member = await q.query<{ email: string }>(
-      "SELECT email FROM memberships WHERE cognito_sub = $1",
-      [sub],
-    );
-    if (tenant.length !== 1 || tenant[0].slug !== carrier.slug) {
-      throw new Error(`${carrier.slug} belongs to another tenant id; fix it by hand`);
-    }
-    if (member.length !== 1 || member[0].email !== carrier.email) {
-      throw new Error(`${carrier.email} is linked to another tenant; fix it by hand`);
-    }
-  });
 }
 
 async function readLogins({ secrets }: Aws): Promise<Logins | undefined> {
