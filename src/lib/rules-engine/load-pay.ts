@@ -7,6 +7,7 @@ import {
   assertId,
   assertOneOf,
   assertPeriod,
+  assertUniqueIds,
   compareText,
   ConfigError,
   InputError,
@@ -237,8 +238,10 @@ export function earnedUnpaid(
   const periods = paidPeriods.map((p) => assertPeriod(p));
   const amounts: number[] = [];
   const sources: SourceRef[] = [];
-  const unpaid = loads
-    .map((l) => checkLoad(l, driver.id))
+  const unpaid = assertUniqueIds(
+    loads.map((l) => checkLoad(l, driver.id)),
+    "load",
+  )
     .filter((l) => isDelivered(l) && l.deliveredOn !== null && l.deliveredOn <= asOf)
     .filter((l) => !periods.some((p) => isWithin(l.deliveredOn ?? "", p)))
     .sort(byLoadNumber);

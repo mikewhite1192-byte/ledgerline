@@ -1005,6 +1005,29 @@ describe("settleDriver: fails closed", () => {
       InputError,
     ],
     ["a negative escrow balance", input({ escrowBalanceCents: c(-1) }), InputError],
+    [
+      "the same load twice",
+      input({ loads: [percentLoad("a", 200_000), percentLoad("a", 200_000)] }),
+      InputError,
+    ],
+    [
+      "the same day twice",
+      input({ days: [day("d", "2026-10-28"), day("d", "2026-10-28")] }),
+      InputError,
+    ],
+    ["the same pay item twice", input({ items: [item({ id: "i" }), item({ id: "i" })] }), InputError],
+    [
+      "the same schedule twice",
+      input({
+        schedules: [schedule({ id: "s", kind: "other" }), schedule({ id: "s", kind: "other" })],
+      }),
+      InputError,
+    ],
+    [
+      "the same advance twice",
+      input({ advances: [advance({ id: "a" }), advance({ id: "a" })] }),
+      InputError,
+    ],
   ])("refuses %s", (_name, given, error) => {
     expect(() => settleDriver(given)).toThrow(error);
   });

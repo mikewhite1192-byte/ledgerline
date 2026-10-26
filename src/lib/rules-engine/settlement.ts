@@ -20,6 +20,7 @@ import { assertCents, cents, sub, sum } from "./money";
 import { checkAdvance, recoverAdvances } from "./recovery";
 import {
   assertPeriod,
+  assertUniqueIds,
   type ExceptionLine,
   type SettlementInput,
   type SettlementNote,
@@ -37,11 +38,17 @@ export function settleDriver(input: SettlementInput): SettlementResult {
   const driver = checkDriver(input.driver);
   const period = assertPeriod(input.period);
   const balance = assertCents(input.escrowBalanceCents, "escrowBalanceCents");
-  const loads = input.loads.map((l) => checkLoad(l, driver.id));
-  const days = input.days.map((d) => checkDay(d, driver.id));
-  const items = input.items.map((i) => checkItem(i, driver.id));
-  const schedules = input.schedules.map((s) => checkSchedule(s, driver.id));
-  const advances = input.advances.map((a) => checkAdvance(a, driver.id));
+  const loads = assertUniqueIds(input.loads.map((l) => checkLoad(l, driver.id)), "load");
+  const days = assertUniqueIds(input.days.map((d) => checkDay(d, driver.id)), "day");
+  const items = assertUniqueIds(input.items.map((i) => checkItem(i, driver.id)), "pay item");
+  const schedules = assertUniqueIds(
+    input.schedules.map((s) => checkSchedule(s, driver.id)),
+    "schedule",
+  );
+  const advances = assertUniqueIds(
+    input.advances.map((a) => checkAdvance(a, driver.id)),
+    "advance",
+  );
 
   // 1. Loads delivered in the period, in load number order.
   const delivered = loads

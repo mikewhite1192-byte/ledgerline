@@ -320,6 +320,12 @@ describe("advanceEligibility", () => {
       InputError,
     ],
     ["another driver's load", { loads: [load({ id: "l1", driverId: "drv-2" })] }, InputError],
+    ["the same load twice", { loads: [load({ id: "l1" }), load({ id: "l1" })] }, InputError],
+    [
+      "the same advance twice",
+      { advances: [advance({ id: "a1" }), advance({ id: "a1" })] },
+      InputError,
+    ],
     [
       "a reversed paid period",
       { paidPeriods: [{ start: "2026-11-01", end: "2026-10-26" }] },

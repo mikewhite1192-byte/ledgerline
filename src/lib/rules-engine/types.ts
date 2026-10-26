@@ -37,6 +37,17 @@ export class InputError extends Error {
 
 // ---- Guards every module uses on the records it reads ----
 
+// One id twice in one list (a join fan-out or a replayed read upstream) would pay, deduct or
+// recover that record twice. Refuse it rather than pick one.
+export function assertUniqueIds<T extends { id: string }>(rows: readonly T[], what: string): T[] {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.id)) throw new InputError(`${what} ${row.id} appears more than once`);
+    seen.add(row.id);
+  }
+  return [...rows];
+}
+
 export function assertOneOf<T extends string>(
   value: unknown,
   allowed: readonly T[],

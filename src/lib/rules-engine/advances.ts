@@ -4,6 +4,7 @@ import { assertCents, cents, mulBps, sub, sum } from "./money";
 import { byOldest, checkAdvance, DUPLICATE_WINDOW_MS, outstandingCents } from "./recovery";
 import {
   assertDate,
+  assertUniqueIds,
   instantMs,
   type AdvanceDecision,
   type AdvanceInput,
@@ -27,7 +28,10 @@ export function advanceEligibility(input: AdvanceInput): AdvanceDecision {
   const amount = assertCents(input.amountCents, "amountCents");
   const requestedMs = instantMs(input.requestedAt, "requestedAt");
   const requestedOn = assertDate(input.requestedOn, "requestedOn");
-  const advances = input.advances.map((a) => checkAdvance(a, driver.id)).sort(byOldest);
+  const advances = assertUniqueIds(
+    input.advances.map((a) => checkAdvance(a, driver.id)),
+    "advance",
+  ).sort(byOldest);
 
   const earned = earnedUnpaid(config, driver, input.loads, input.paidPeriods, requestedOn);
   const owing = advances.filter((a) => outstandingCents(a) > 0);
