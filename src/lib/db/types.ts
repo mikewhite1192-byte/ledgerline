@@ -49,6 +49,13 @@ export class DbError extends Error {
   }
 }
 
+// Any error from COMMIT itself. The database may have committed before the reply was lost, so
+// the outcome is unknown whatever the error says (a timeout or an outage here is not "nothing
+// ran", and never a reason to retry). The SQLSTATE stays when the database gave one.
+export function commitFailed(err: unknown): DbError {
+  return new DbError("unknown", err instanceof DbError ? err.sqlState : undefined);
+}
+
 // 42501 is insufficient_privilege: a row-level security refusal or a missing grant.
 export function categoryForSqlState(sqlState: string): DbErrorCategory {
   if (sqlState === "42501") return "rls_denied";

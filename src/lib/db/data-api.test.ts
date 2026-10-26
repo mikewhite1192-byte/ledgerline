@@ -150,6 +150,39 @@ describe("createDataApiDb", () => {
     await expect(db.withTenant(TENANT, async () => Promise.reject(boom))).rejects.toBe(boom);
   });
 
+  // The commit may have landed before the reply was lost, so neither looks retryable.
+  it.each(["TimeoutError", "ServiceUnavailableError"])(
+    "reports a commit that failed with %s as unknown, then rolls back",
+    async (name) => {
+      const { client, sent } = fakeClient((cmd) =>
+        cmd.name === CommitTransactionCommand.name ? sdkError(name) : ok(cmd),
+      );
+      const db = createDataApiDb(CONFIG, { client });
+      const err = await db.withTenant(TENANT, (q) => q.execute("SELECT 1")).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DbError);
+      expect(err).toMatchObject({ category: "unknown", sqlState: undefined });
+      expect(sent.map((c) => c.name)).toEqual([
+        BeginTransactionCommand.name,
+        ExecuteStatementCommand.name,
+        ExecuteStatementCommand.name,
+        CommitTransactionCommand.name,
+        RollbackTransactionCommand.name,
+      ]);
+    },
+  );
+
+  it("keeps the SQLSTATE of a commit that failed, still as unknown", async () => {
+    const { client } = fakeClient((cmd) =>
+      cmd.name === CommitTransactionCommand.name
+        ? sdkError("DatabaseErrorException", "ERROR: could not serialize access; SQLState: 40001")
+        : ok(cmd),
+    );
+    const db = createDataApiDb(CONFIG, { client });
+    const err = await db.withoutTenant((q) => q.execute("SELECT 1")).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DbError);
+    expect(err).toMatchObject({ category: "unknown", sqlState: "40001" });
+  });
+
   it("turns a SQL error into its SQLSTATE category and logs no upstream text", async () => {
     const { client } = fakeClient((cmd) =>
       cmd.name === ExecuteStatementCommand.name && cmd.input.sql === "INSERT x"

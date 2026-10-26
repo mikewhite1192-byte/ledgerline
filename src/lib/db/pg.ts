@@ -2,6 +2,7 @@ import type { Pool, PoolClient, QueryConfig } from "pg";
 import {
   assertTenantId,
   categoryForSqlState,
+  commitFailed,
   DbError,
   SET_TENANT_SQL,
   withScopedHandle,
@@ -81,7 +82,12 @@ export function createPgDb(config: PgConfig): Db {
       await q.execute("BEGIN");
       if (tenantId !== null) await q.query(SET_TENANT_SQL, [tenantId]);
       const result = await withScopedHandle(q, fn);
-      await q.execute("COMMIT");
+      // A commit that failed has an unknown outcome, so it surfaces as unknown.
+      try {
+        await q.execute("COMMIT");
+      } catch (err) {
+        throw commitFailed(err);
+      }
       return result;
     } catch (err) {
       try {

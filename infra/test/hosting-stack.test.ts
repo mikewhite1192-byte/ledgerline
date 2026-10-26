@@ -42,6 +42,26 @@ describe("HostingStack", () => {
     return policies[0].PolicyDocument.Statement;
   }
 
+  // Replaces every cross-stack import (Fn::GetStackOutput) with the value its producing stack
+  // exports, so a test sees which resource a setting really points at.
+  function imported(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(imported);
+    if (value === null || typeof value !== "object") return value;
+    const get = (value as Record<string, unknown>)["Fn::GetStackOutput"] as
+      | { StackName: string; Region: string; OutputName: string }
+      | undefined;
+    if (!get) return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, imported(v)]));
+    const producers = [
+      [synth.stacks.data, synth.data],
+      [synth.stacks.auth, synth.auth],
+    ] as const;
+    const found = producers.find(([s]) => s.stackName === get.StackName && s.region === get.Region);
+    const outputs = found?.[1].toJSON().Outputs as Record<string, { Value: unknown }> | undefined;
+    const output = outputs?.[get.OutputName];
+    if (!output) throw new Error(`no producer for ${JSON.stringify(get)}`);
+    return output.Value;
+  }
+
   it("hosts the repo on the SSR platform with no inline build spec", () => {
     template.hasResourceProperties("AWS::Amplify::App", {
       Platform: "WEB_COMPUTE",
@@ -113,9 +133,21 @@ describe("HostingStack", () => {
     expect(branches).toHaveLength(1);
     const props = branches[0].Properties;
     expect(props.ComputeRoleArn).toEqual({ "Fn::GetAtt": [computeId, "Arn"] });
-    const names = (props.EnvironmentVariables as { Name: string }[]).map((e) => e.Name);
-    expect(names).toEqual(BRANCH_ENV_NAMES);
+    const vars = props.EnvironmentVariables as { Name: string; Value: unknown }[];
+    expect(vars.map((e) => e.Name)).toEqual(BRANCH_ENV_NAMES);
     expect(BRANCH_ENV_NAMES).toHaveLength(5);
+
+    // Each value, followed to the stack that exports it, is the resource it names: the cluster,
+    // the app's own database login (never the admin secret), the user pool and its client.
+    const value = Object.fromEntries(vars.map((e) => [e.Name, imported(e.Value)]));
+    const { data, auth } = synth.stacks;
+    expect(value.DB_CLUSTER_ARN).toEqual(data.resolve(data.cluster.clusterArn));
+    expect(value.DB_SECRET_ARN).toEqual({ Ref: expect.stringMatching(/^AppSecret/) });
+    expect(value.DB_SECRET_ARN).toEqual(data.resolve(data.appSecret.secretArn));
+    expect(value.DB_SECRET_ARN).not.toEqual(data.resolve(data.adminSecret.secretArn));
+    expect(value.DB_NAME).toBe("payday");
+    expect(value.COGNITO_USER_POOL_ID).toEqual(auth.resolve(auth.userPool.userPoolId));
+    expect(value.COGNITO_CLIENT_ID).toEqual(auth.resolve(auth.client.userPoolClientId));
   });
 
   it("gives Amplify a separate service role, assumable only for apps in this account", () => {

@@ -9,6 +9,7 @@ import { toDataApiParams } from "./params";
 import {
   assertTenantId,
   categoryForSqlState,
+  commitFailed,
   DbError,
   SET_TENANT_SQL,
   withScopedHandle,
@@ -90,7 +91,7 @@ export function createDataApiDb(config: DataApiConfig, deps: DataApiDeps = {}): 
   }
 
   // Any error after BeginTransaction is a rollback and a rethrow, never a retry: the transaction
-  // may already be gone, and a commit that failed has an unknown outcome.
+  // may already be gone. A commit that failed has an unknown outcome, so it surfaces as unknown.
   async function inTransaction<T>(
     tenantId: string | null,
     fn: (q: Queryable) => Promise<T>,
@@ -100,7 +101,11 @@ export function createDataApiDb(config: DataApiConfig, deps: DataApiDeps = {}): 
     try {
       if (tenantId !== null) await q.query(SET_TENANT_SQL, [tenantId]);
       const result = await withScopedHandle(q, fn);
-      await call(() => client.send(new CommitTransactionCommand({ ...target, transactionId })));
+      try {
+        await call(() => client.send(new CommitTransactionCommand({ ...target, transactionId })));
+      } catch (err) {
+        throw commitFailed(err);
+      }
       return result;
     } catch (err) {
       try {

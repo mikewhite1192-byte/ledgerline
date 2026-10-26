@@ -151,7 +151,9 @@ async function writeLogins({ secrets }: Aws, logins: Logins, exists: boolean): P
   }
 }
 
-// Set while passwords are being applied, so a failure there says how to recover.
+// Set from the secret write until every password is applied, so a failure there says how to
+// recover. It starts before the write: a write that errors may still have landed, and a rerun
+// without --reset-passwords would then trust the new, never-set passwords and skip them.
 let settingPasswords = false;
 
 async function main(): Promise<void> {
@@ -193,8 +195,8 @@ async function main(): Promise<void> {
     }
 
     if (toSet.length > 0) {
-      await writeLogins(aws, logins, stored !== undefined);
       settingPasswords = true;
+      await writeLogins(aws, logins, stored !== undefined);
       for (const carrier of toSet) {
         await aws.cognito.send(
           new AdminSetUserPasswordCommand({
@@ -222,7 +224,7 @@ main().catch((err: unknown) => {
   const name = err instanceof Error ? err.name : "unknown";
   console.error(`demo users: ${own ? (err as Error).message : `failed (${name})`}`);
   if (settingPasswords) {
-    console.error("the secret holds new passwords not all applied: rerun with --reset-passwords");
+    console.error("the secret may hold new passwords not all applied: rerun with --reset-passwords");
   }
   process.exit(1);
 });
