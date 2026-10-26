@@ -1,3 +1,4 @@
+import { configFor, configForDay } from "../data/config-version";
 import { loadsOf, payConfigOf } from "../data/records";
 import type {
   AdvanceRow,
@@ -26,10 +27,10 @@ import {
   type LocalDate,
   type Period,
 } from "../time/local-date";
-import { buildReceivables, type WrongInvoicePlant } from "./ar-plan";
+import { buildReceivables, type CollectionsPlant, type WrongInvoicePlant } from "./ar-plan";
 import { assertPlan, seededAdvanceDecision } from "./assert-plan";
 import { instantAt } from "./calendar";
-import type { DemoCarrier } from "./carriers";
+import { detentionTermsOf, type DemoCarrier } from "./carriers";
 import { applyHistory } from "./history";
 import { HERO_LANES, LANES, laneMiles, reverseLane, type Lane } from "./lanes";
 import { CUSTOMERS, FIRST_NAMES, LAST_NAMES } from "./names";
@@ -40,7 +41,8 @@ import { Rng } from "./prng";
 // same anchor always gives the same rows and the same ids. The four pay periods are the four
 // weeks of the carrier's week shape that end on or before anchor - 1: three settled by the engine
 // (history.ts), the last one open. The plan is checked whole (assert-plan.ts) before anything
-// can be written.
+// can be written. The cases added later (addendum B: fuel anomalies, detention, stop times, fuel
+// tanks) draw from a second stream, side, so the rows the first stream makes stay as they were.
 
 type Role = "company_mile" | "company_flat" | "oo_leased" | "oo_owned";
 
@@ -51,7 +53,8 @@ const ROLE_MIX: readonly (readonly [Role, number])[] = [
   ["oo_owned", 6],
 ];
 
-// The drivers (codes) who carry the six planted pay problems; never the hero, all distinct.
+// The drivers (codes) who carry the planted problems: the six pay problems, then the three fuel
+// anomalies. Never the hero, all distinct.
 export type Victims = {
   duplicateAdvance: string;
   fuelItemDriver: string;
@@ -60,7 +63,12 @@ export type Victims = {
   missingReimbursement: string;
   noRate: string;
   overLimit: string;
+  fuelOffRoute: string;
+  fuelOverTank: string;
+  fuelParked: string;
 };
+
+type FuelVictim = "fuelOffRoute" | "fuelOverTank" | "fuelParked";
 
 // The ids of the planted rows, for the tests and for the checks that must find them.
 export type Planted = {
@@ -72,6 +80,12 @@ export type Planted = {
   noRateLoadId: string;
   overLimitAdvanceIds: [string, string];
   wrongInvoice: WrongInvoicePlant;
+  fuelOffRouteId: string;
+  fuelOverTankId: string;
+  fuelParkedId: string;
+  // The four loads with unbilled detention, in plant order A to D.
+  detentionLoadIds: string[];
+  collections: CollectionsPlant[];
 };
 
 export type CarrierPlan = {
@@ -111,18 +125,41 @@ function spanDays(loadedMiles: number): number {
 
 type LoadDraft = { row: LoadRow; lane: Lane; week: number; driverCode: string; order: number };
 
+// A state no lane of the carrier crosses, for the purchase made off route.
+const OFF_ROUTE_STATE: Record<DemoCarrier["prefix"], string> = { BR: "FL", PW: "NM" };
+
+// The four unbilled detention cases (addendum B3): the customer (by list index), the stop, and
+// the minutes at it. Past 120 free minutes they bill 41,250 + 30,000 + 37,500 + 26,250 cents.
+const DETENTION_PLANTS: readonly [number, "pickup" | "delivery", number][] = [
+  [3, "delivery", 440],
+  [0, "delivery", 480],
+  [7, "pickup", 420],
+  [4, "delivery", 435],
+];
+const MINUTE_MS = 60_000;
+const minutesBefore = (at: string, minutes: number) =>
+  new Date(Date.parse(at) - minutes * MINUTE_MS).toISOString();
+
 export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): CarrierPlan {
   if (!isLocalDate(anchor)) throw new Error("anchor is not a YYYY-MM-DD date");
   const zone = carrier.timezone;
-  const config = carrier.payConfig;
   const seed = `${carrier.slug}:${anchor}`;
   const rng = new Rng(`${seed}:plan`);
+  const side = new Rng(`${seed}:side`);
   const ids = new Rng(`${seed}:ids`);
   const newId = () => ids.uuid();
   const { prefix, slug } = carrier;
   const lanes = LANES[prefix];
-  const periods = planPeriods(anchor, config.week_start_dow);
+  const periods = planPeriods(anchor, carrier.payConfigs[0].week_start_dow);
   const openWeek = periods[3];
+  // The pay rules versions, dated by the week each starts; ids are made with the other rows.
+  const versions = carrier.payConfigs.map(({ from_week, note, ...knobs }) => {
+    const week = periods[from_week];
+    if (!week) throw new Error("a pay rules version starts outside the four weeks");
+    return { ...knobs, effective_from: week.start, note };
+  });
+  // The open week's version: escrow terms and schedules come from it.
+  const config = configFor(versions, openWeek.start);
 
   // ---- Customers ----
   const customers: CustomerRow[] = CUSTOMERS[prefix].map((c, i) => ({
@@ -136,6 +173,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     ]),
     city: c.city,
     state: c.state,
+    detention_free_minutes: detentionTermsOf(i).freeMinutes,
+    detention_hourly_cents: detentionTermsOf(i).hourlyCents,
   }));
 
   // ---- Drivers ----
@@ -175,6 +214,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       advance_limit_cents: null,
       escrow_balance_cents: escrow,
       truck_unit: `${prefix}-T${101 + i}`,
+      // Local trucks hold 150 gallons, the rest 200 to 300, so every ordinary fill fits.
+      tank_gallons: role === "company_flat" ? 150 : side.int(20, 30) * 10,
       active_from: addDays(anchor, -rng.int(120, 1500)),
       active_to: null,
     };
@@ -195,7 +236,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     taken.add(code);
     return code;
   };
-  const victims: Victims = {
+  const victims: Omit<Victims, FuelVictim> = {
     fuelItemDriver: choose(["oo_leased"]),
     fuelLoadDriver: choose(["company_mile"]),
     // Insurance applies to owner-operators at both carriers.
@@ -252,6 +293,11 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
         empty_miles: empty,
         linehaul_cents: linehaul,
         fuel_surcharge_cents: fsc,
+        // Set from the bill of lading once the load is delivered (stop times, below).
+        pickup_arrived_at: null,
+        pickup_departed_at: null,
+        delivery_arrived_at: null,
+        delivery_departed_at: null,
       },
       lane,
       week,
@@ -431,7 +477,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   type FuelDraft = { row: FuelPurchaseRow; order: number };
   const fuel: FuelDraft[] = [];
   const addFuel = (
-    x: LoadDraft,
+    d: DriverRow,
+    loadId: string | null,
     day: LocalDate,
     [hour, minute]: [number, number],
     state: string,
@@ -441,14 +488,14 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     const at = instantAt(day, hour, minute, zone);
     const row: FuelPurchaseRow = {
       id: newId(),
-      driver_id: x.row.driver_id!,
-      load_id: x.row.id,
+      driver_id: d.id,
+      load_id: loadId,
       purchased_at: at,
       purchased_on: localDateOf(at, zone),
       state,
       gallons_milli: gallonsMilli,
       amount_cents: roundHalfUp(gallonsMilli * priceCents, 1000),
-      paid_with: roleOf.get(x.driverCode) === "oo_owned" ? "driver_own" : "company_card",
+      paid_with: roleOf.get(d.code) === "oo_owned" ? "driver_own" : "company_card",
       purchase_ref: "",
     };
     fuel.push({ row, order: fuel.length });
@@ -462,7 +509,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       const day = rng.pick(daysOf(x));
       const time: [number, number] = [rng.int(5, 21), rng.int(0, 59)];
       const state = rng.pick(x.lane.states)[0];
-      addFuel(x, day, time, state, rng.int(60000, 140000), rng.int(340, 420));
+      addFuel(driver(x.driverCode), x.row.id, day, time, state, rng.int(60000, 140000),
+        rng.int(340, 420));
     }
   }
   // Planted: a company-card purchase by victim 3 on victim 3's load, deducted below from
@@ -470,7 +518,68 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   const v3Load = drafts.find((x) => x.driverCode === victims.fuelLoadDriver && x.week === 3);
   if (!v3Load) throw new Error("victim 3 has no load in the open week");
   const v3State = v3Load.lane.states[0][0];
-  const wrongPurchase = addFuel(v3Load, v3Load.row.pickup_on, [14, 20], v3State, 71600, 400);
+  const wrongPurchase = addFuel(driver(v3Load.driverCode), v3Load.row.id, v3Load.row.pickup_on,
+    [14, 20], v3State, 71600, 400);
+
+  // Planted (addendum B2): three fuel anomalies, each on a driver with no other problem, chosen
+  // on the side stream from the drivers whose week allows the case.
+  const chooseFor = (role: Role, fits: (d: DriverRow) => boolean) => {
+    const pool = drivers.filter(
+      (d) => roleOf.get(d.code) === role && !taken.has(d.code) && fits(d),
+    );
+    if (pool.length === 0) throw new Error("no driver fits a planted fuel case");
+    const d = side.pick(pool);
+    taken.add(d.code);
+    return d;
+  };
+  const openLoads = (d: DriverRow) => drafts.filter((x) => x.driverCode === d.code && x.week === 3);
+  const lastOf = (x: LoadDraft) => x.row.delivered_on ?? openWeek.end;
+  // Off route: day 2 of an open-week load, in a state the carrier never drives.
+  const twoDays = (d: DriverRow) =>
+    openLoads(d).filter((x) => addDays(x.row.pickup_on, 1) <= lastOf(x));
+  const v8 = chooseFor("company_mile", (d) => twoDays(d).length > 0);
+  const offRouteLoad = side.pick(twoDays(v8));
+  const offRouteState = OFF_ROUTE_STATE[prefix];
+  const onALane = (st: string) =>
+    [...lanes.regional, ...lanes.local].some((l) => l.states.some(([x]) => x === st));
+  if (onALane(offRouteState)) {
+    throw new Error("the off-route state is on a lane");
+  }
+  const offRoute = addFuel(v8, offRouteLoad.row.id, addDays(offRouteLoad.row.pickup_on, 1),
+    [side.int(6, 20), side.int(0, 59)], offRouteState, 95000, 385);
+  // Over the tank: more than a 200-gallon tank holds, on an open-week load, on the company card,
+  // so the fill also becomes a fuel deduction below.
+  const v9 = chooseFor("oo_leased", (d) => openLoads(d).length > 0);
+  v9.tank_gallons = 200;
+  const overTankLoad = side.pick(openLoads(v9));
+  const overTank = addFuel(v9, overTankLoad.row.id, side.pick(daysOf(overTankLoad)),
+    [side.int(6, 20), side.int(0, 59)], side.pick(overTankLoad.lane.states)[0], 286400, 390);
+  // While parked: 22:40 on an open-week day no load of the driver spans (an in-transit load spans
+  // every day from its pickup) and no day row holds, with no load named.
+  const spans = (d: DriverRow, day: LocalDate) =>
+    drafts.some(
+      (x) =>
+        x.driverCode === d.code && x.row.pickup_on <= day && day <= (x.row.delivered_on ?? day),
+    );
+  const parkedDays = (d: DriverRow) =>
+    datesBetween(openWeek.start, openWeek.end).filter(
+      (day) => !spans(d, day) && !days.some((r) => r.driver_id === d.id && r.day === day),
+    );
+  const v10 = chooseFor("company_mile", (d) => parkedDays(d).length > 0);
+  const parkedOn = side.pick(parkedDays(v10));
+  // Parked where the driver's last delivery before that day ended.
+  const before = drafts.filter(
+    (x) =>
+      x.driverCode === v10.code && x.row.delivered_on !== null && x.row.delivered_on < parkedOn,
+  );
+  const parkedState =
+    before.length > 0 ? before[before.length - 1].row.dest_state : lanes.regional[0].from.state;
+  const parked = addFuel(v10, null, parkedOn, [22, 40], parkedState, 118000, 372);
+  const fuelVictims: Pick<Victims, FuelVictim> = {
+    fuelOffRoute: v8.code,
+    fuelOverTank: v9.code,
+    fuelParked: v10.code,
+  };
   fuel.sort((a, b) => compareText(a.row.purchased_at, b.row.purchased_at) || a.order - b.order);
   fuel.forEach((f, i) => (f.row.purchase_ref = `${slug}-fuel-${i + 1}`));
   const fuelPurchases = fuel.map((f) => f.row);
@@ -558,6 +667,92 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     .sort(([a, i], [b, j]) => compareText(a.item_date, b.item_date) || i - j)
     .map(([x], i) => ({ ...x, item_ref: `${slug}-item-${i + 1}` }));
 
+  // ---- Unbilled detention (addendum B3) ----
+  // Four settled-week loads that took more than a day, carry no charges or pay items of their
+  // own, and belong to four drivers with no planted problem. Each moves to its plant's customer
+  // and waits past the free time at one stop; no detention charge is on the load, so the money
+  // is unbilled.
+  const charged = new Set([
+    ...accessorials.map((a) => a.load_id),
+    ...payItems.filter((i) => i.ref_table === "loads").map((i) => i.ref_id),
+  ]);
+  const detentionLoads: LoadDraft[] = [];
+  for (const x of side.shuffle(drafts)) {
+    if (detentionLoads.length === DETENTION_PLANTS.length) break;
+    const { row } = x;
+    if (x.week !== 1 && x.week !== 2) continue;
+    if (row.delivered_on === null || row.pickup_on >= row.delivered_on) continue;
+    if (taken.has(x.driverCode) || charged.has(row.id)) continue;
+    if (detentionLoads.some((y) => y.driverCode === x.driverCode)) continue;
+    detentionLoads.push(x);
+  }
+  if (detentionLoads.length < DETENTION_PLANTS.length) throw new Error("too few detention loads");
+  const plantDwell = new Map<string, { stop: "pickup" | "delivery"; minutes: number }>();
+  detentionLoads.forEach((x, k) => {
+    const [customerIndex, stop, minutes] = DETENTION_PLANTS[k];
+    x.row.customer_id = customers[customerIndex].id;
+    plain.add(x.row.id);
+    plantDwell.set(x.row.id, { stop, minutes });
+  });
+
+  // ---- Stop times, from the bill of lading: every delivered load's arrival and departure ----
+  // The truck leaves delivery when the bill is signed (delivered_at). Ordinary waits stay under
+  // the smallest free time; a load billed for detention waited at pickup as long as its charge
+  // says. One load waits exactly the free time, and about one open-week load in ten has no times
+  // yet (not known, never zero).
+  const customerById = new Map(customers.map((c) => [c.id, c]));
+  const billedDetention = new Map(
+    accessorials.filter((a) => a.kind === "detention").map((a) => [a.load_id, a.amount_cents]),
+  );
+  const heroId = carrier.heroCode ? driver(carrier.heroCode).id : null;
+  const ordinary = (x: LoadDraft) =>
+    x.row.delivered_on !== null &&
+    x.row.driver_id !== heroId &&
+    !plantDwell.has(x.row.id) &&
+    !billedDetention.has(x.row.id);
+  const atFree = side.pick(
+    drafts.filter((x) => ordinary(x) && x.week < 3 && x.row.pickup_on < x.row.delivered_on!),
+  );
+  const unknownTimes = drafts.filter((x) => ordinary(x) && x.week === 3 && side.chance(1, 10));
+  if (unknownTimes.length === 0) {
+    unknownTimes.push(side.pick(drafts.filter((x) => ordinary(x) && x.week === 3)));
+  }
+  for (const x of drafts) {
+    const l = x.row;
+    if (l.delivered_at === null || l.delivered_on === null || unknownTimes.includes(x)) continue;
+    const customer = customerById.get(l.customer_id!)!;
+    let deliveryDwell = side.int(20, 85);
+    let pickupDwell = side.int(25, 85);
+    const billed = billedDetention.get(l.id);
+    if (billed !== undefined) {
+      pickupDwell =
+        customer.detention_free_minutes +
+        Math.ceil((billed * 60) / customer.detention_hourly_cents);
+    }
+    const plant = plantDwell.get(l.id);
+    if (plant?.stop === "delivery") deliveryDwell = plant.minutes;
+    if (plant?.stop === "pickup") pickupDwell = plant.minutes;
+    if (x === atFree) deliveryDwell = customer.detention_free_minutes;
+    const deliveryArrived = minutesBefore(l.delivered_at, deliveryDwell);
+    let pickupDeparted: string;
+    if (l.pickup_on < l.delivered_on) {
+      // Loaded during the day; a long wait at pickup moves the departure later.
+      const later = Math.ceil(Math.max(0, pickupDwell - 120) / 60);
+      pickupDeparted = instantAt(l.pickup_on, side.int(6, 14) + later, side.int(0, 59), zone);
+    } else {
+      // Same day: leave the drive time (50 miles an hour) before arriving, within the day.
+      const drive = Math.ceil((l.loaded_miles * 60) / 50);
+      const arrive = Date.parse(deliveryArrived);
+      const earliest = Date.parse(instantAt(l.pickup_on, 0, 0, zone)) + pickupDwell * MINUTE_MS;
+      const ms = Math.min(arrive, Math.max(earliest, arrive - drive * MINUTE_MS));
+      pickupDeparted = new Date(ms).toISOString();
+    }
+    l.pickup_arrived_at = minutesBefore(pickupDeparted, pickupDwell);
+    l.pickup_departed_at = pickupDeparted;
+    l.delivery_arrived_at = deliveryArrived;
+    l.delivery_departed_at = l.delivered_at;
+  }
+
   // ---- Advances ----
   type AdvanceDraft = Omit<AdvanceRow, "request_ref"> & { ref?: string };
   const advanceDrafts: AdvanceDraft[] = [];
@@ -576,7 +771,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       requested_at: at,
       requested_on: localDateOf(at, zone),
       amount_cents: amount,
-      fee_cents: config.advance_fee_cents,
+      fee_cents: configForDay(versions, day).advance_fee_cents,
       status: "paid",
       recovered_cents: 0,
       source: "seed",
@@ -591,17 +786,19 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   // Each is one the engine grants when asked: requested a day or two after the driver's first
   // delivery that week, for no more than the most the engine allows on that day's earnings.
   const loadRecords = loadsOf(loads, stateMiles, accessorials);
-  const most = (d: DriverRow, at: string) =>
-    seededAdvanceDecision({
-      config: payConfigOf(config),
+  const most = (d: DriverRow, at: string) => {
+    const version = configForDay(versions, localDateOf(at, zone));
+    return seededAdvanceDecision({
+      config: payConfigOf(version),
       driver: d,
       loads: loadRecords,
       periods,
       zone,
       at,
-      amountCents: config.advance_min_cents,
+      amountCents: version.advance_min_cents,
       prior: [],
     }).maxCents;
+  };
   const ownAdvances = new Set([carrier.heroCode, victims.duplicateAdvance, victims.overLimit]);
   let placed = 0;
   for (const d of rng.shuffle(drivers.filter((x) => !ownAdvances.has(x.code)))) {
@@ -685,6 +882,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     newId,
     customers,
     windowLoads: loadsOf(windowLoads, stateMiles, accessorials),
+    openLoadIds: new Set(detentionLoads.map((x) => x.row.id)),
   });
 
   const rows: TenantRows = {
@@ -695,7 +893,13 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     load_accessorials: accessorials,
     driver_days: days,
     fuel_purchases: fuelPurchases,
-    pay_configs: [{ ...config }],
+    pay_configs: versions.map(({ effective_from, note, ...knobs }) => ({
+      id: newId(),
+      effective_from,
+      note,
+      source: "seed" as const,
+      ...knobs,
+    })),
     deduction_schedules: schedules,
     settlement_periods: settlementPeriods,
     settlements: [],
@@ -706,13 +910,13 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     customer_payments: ar.payments,
     payment_applications: ar.applications,
   };
-  applyHistory({ slug, zone, config: payConfigOf(config), rows, newId });
+  applyHistory({ slug, zone, rows, newId });
 
   const plan: CarrierPlan = {
     carrier,
     anchor,
     periods,
-    victims,
+    victims: { ...victims, ...fuelVictims },
     planted: {
       duplicateAdvanceIds: [dupA.id, dupB.id],
       wrongDriverFuelItemId: wrongFuelItem.id,
@@ -722,6 +926,11 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       noRateLoadId: noRateLoad.row.id,
       overLimitAdvanceIds: [over1.id, over2.id],
       wrongInvoice: ar.wrongInvoice,
+      fuelOffRouteId: offRoute.id,
+      fuelOverTankId: overTank.id,
+      fuelParkedId: parked.id,
+      detentionLoadIds: detentionLoads.map((x) => x.row.id),
+      collections: ar.collections,
     },
     rows,
   };

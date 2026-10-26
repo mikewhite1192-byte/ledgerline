@@ -1,5 +1,5 @@
 import { daysBetween } from "../time/local-date";
-import { assertCents, cents, sub, sum } from "./money";
+import { assertCents, cents, roundHalfUp, sub, sum } from "./money";
 import {
   AGING_BUCKETS,
   assertDate,
@@ -16,6 +16,8 @@ import {
   type InvoiceRecord,
   type InvoiceStatusResult,
   type PaymentApplicationRecord,
+  type PaymentLabel,
+  type PaymentProfile,
   type ReceivablesAging,
   type ReceivablesInput,
   type SourceRef,
@@ -173,4 +175,70 @@ export function findPaymentOnWrongInvoice(input: ReceivablesInput): Finding[] {
     }
   }
   return out;
+}
+
+// How one customer pays (addendum B4), derived from its own invoices issued in the 180 days
+// before asOf, void ones left out. A paid invoice was paid on the latest date of the payments
+// applied to it; days late run from the due date to that day. late share is over paid invoices.
+// reliable: at most 20% paid late and nothing over 30 days late, paid or open. repeat_late: at
+// least half paid late, or two paid more than 30 days late, or two open more than 30 days past
+// due. Anything else, and a customer with nothing paid yet, is mixed.
+export function paymentProfile(
+  customerId: string,
+  input: ReceivablesInput,
+  asOf: string,
+): PaymentProfile {
+  assertId(customerId, "customerId");
+  const on = assertDate(asOf, "asOf");
+  const payments = new Map(input.payments.map((p) => [checkPayment(p).id, p]));
+  const applications = input.applications.map(checkApplication);
+  const invoices = input.invoices
+    .map(checkInvoice)
+    .filter((i) => i.customerId === customerId && i.status !== "void")
+    .filter((i) => {
+      const age = daysBetween(i.issuedOn, on);
+      return age >= 1 && age <= 180;
+    });
+  const late: number[] = [];
+  let openPast30 = 0;
+  for (const invoice of invoices) {
+    const own = applications.filter((a) => a.invoiceId === invoice.id);
+    const applied = sum(own.map((a) => a.amountCents));
+    const { status } = invoiceStatus(invoice.amountCents, applied);
+    if (status !== "paid") {
+      if (daysBetween(invoice.dueOn, on) > 30) openPast30++;
+      continue;
+    }
+    let paidOn = "";
+    for (const a of own) {
+      const payment = payments.get(a.paymentId);
+      if (!payment) throw new InputError(`application ${a.id} names no known payment`);
+      if (payment.receivedOn > paidOn) paidOn = payment.receivedOn;
+    }
+    late.push(daysBetween(invoice.dueOn, paidOn));
+  }
+  const paidCount = late.length;
+  const lateCount = late.filter((d) => d > 0).length;
+  const paidOver30Late = late.filter((d) => d > 30).length;
+  const sorted = [...late].sort((a, b) => a - b);
+  const mid = Math.floor(paidCount / 2);
+  let medianDaysLate: number | null = null;
+  if (paidCount > 0) {
+    medianDaysLate = paidCount % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+  }
+  const mostlyLate = paidCount > 0 && lateCount * 2 >= paidCount;
+  const rarelyLate = paidCount > 0 && lateCount * 5 <= paidCount;
+  let label: PaymentLabel = "mixed";
+  if (mostlyLate || paidOver30Late >= 2 || openPast30 >= 2) label = "repeat_late";
+  else if (rarelyLate && paidOver30Late === 0 && openPast30 === 0) label = "reliable";
+  return {
+    customerId,
+    invoices: invoices.length,
+    paidCount,
+    medianDaysLate,
+    lateShareBps: paidCount === 0 ? 0 : roundHalfUp(lateCount * 10000, paidCount),
+    paidOver30Late,
+    openPast30,
+    label,
+  };
 }

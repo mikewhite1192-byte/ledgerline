@@ -21,6 +21,11 @@ import type { Rng } from "./prng";
 // are recorded checks, ACH and wires; most invoices are paid on time, some late, a few in part,
 // and some payments settle two or three invoices at once. One payment is planted on the wrong
 // invoice (the seventh problem). Every date stays on or before anchor - 1.
+//
+// Customers pay in three styles, by their place in the list (addendum B4): prompt payers are
+// almost always on time and are never paid in part, slow payers are often late, the rest are
+// typical. The style is an input to the generator only; the product derives it from the history
+// (paymentProfile). Four named late invoices are left open for COLLECTIONS.
 
 export const OPENING_INVOICE_COUNT = 90;
 
@@ -37,6 +42,59 @@ const OPEN_PER_BUCKET = 4;
 const CURRENT_MIN_INVOICES = 3;
 const CURRENT_MIN_CENTS = 500000;
 
+export type CustomerClass = "prompt" | "slow" | "typical";
+
+export function customerClassOf(index: number): CustomerClass {
+  if ([0, 4, 8].includes(index)) return "prompt";
+  if ([2, 5, 9].includes(index)) return "slow";
+  return "typical";
+}
+
+// Opening invoice outcomes by payment style. A prompt payer's open invoice is never more than 30
+// days past due, and it pays at most one invoice late.
+const OUTCOMES: Record<CustomerClass, readonly (readonly [Outcome, number])[]> = {
+  prompt: [
+    ["on_time", 86],
+    ["late_1_30", 7],
+    ["open", 7],
+  ],
+  typical: [
+    ["on_time", 55],
+    ["late_1_30", 14],
+    ["late_31_60", 8],
+    ["late_61_90", 5],
+    ["late_91", 4],
+    ["open", 14],
+  ],
+  slow: [
+    ["on_time", 25],
+    ["late_1_30", 24],
+    ["late_31_60", 15],
+    ["late_61_90", 10],
+    ["late_91", 8],
+    ["open", 18],
+  ],
+};
+
+// Each slow payer also paid this many opening invoices 31 to 60 days late, so its history always
+// reads as a repeat late payer.
+const SLOW_LATE_PER_CUSTOMER = 2;
+
+// The named late invoices, left open: customer index, days past due on the anchor, amount.
+const COLLECTIONS: readonly (readonly [number, number, number])[] = [
+  [2, 34, 248000],
+  [2, 62, 196000],
+  [2, 97, 312000],
+  [0, 12, 174000],
+];
+
+export type CollectionsPlant = {
+  invoiceId: string;
+  customerId: string;
+  customerClass: CustomerClass;
+  daysLate: number;
+};
+
 // The planted payment on the wrong invoice: P was for X but was applied in full to Y.
 export type WrongInvoicePlant = {
   customerId: string;
@@ -51,6 +109,7 @@ export type ReceivablesPlan = {
   payments: CustomerPaymentRow[];
   applications: PaymentApplicationRow[];
   wrongInvoice: WrongInvoicePlant;
+  collections: CollectionsPlant[];
 };
 
 type Outcome = "on_time" | "late_1_30" | "late_31_60" | "late_61_90" | "late_91" | "open";
@@ -80,12 +139,16 @@ export type ReceivablesArgs = {
   customers: readonly CustomerRow[];
   // The settled weeks' loads, as records; the ones with a rate and a delivery are invoiced.
   windowLoads: readonly LoadRecord[];
+  // Loads whose invoices stay open (the unbilled detention cases, so a charge can be added).
+  openLoadIds: ReadonlySet<string>;
 };
 
 export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
   const { slug, prefix, anchor, rng, newId, customers } = args;
   const lastDay = addDays(anchor, -1);
   const terms = new Map(customers.map((c) => [c.id, c.terms_days]));
+  const classes = new Map(customers.map((c, i) => [c.id, customerClassOf(i)]));
+  const classOf = (customerId: string) => classes.get(customerId) ?? "typical";
   const termsOf = (customerId: string) => {
     const t = terms.get(customerId);
     if (t === undefined) throw new Error("invoice for an unknown customer");
@@ -121,7 +184,8 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
   };
   const latest = (a: LocalDate, b: LocalDate) => (a < b ? b : a);
   const earliest = (a: LocalDate, b: LocalDate) => (a < b ? a : b);
-  const settle = (d: Draft, outcome: Outcome) => {
+  // whole: never paid in part (a prompt payer never is).
+  const settle = (d: Draft, outcome: Outcome, whole = false) => {
     const { issued_on: issued, due_on: due } = d.invoice;
     if (outcome === "open") return;
     if (outcome === "on_time") {
@@ -137,7 +201,7 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
       }
       if (d.receivedOn === null) return;
     }
-    if (rng.chance(6, 100)) {
+    if (!whole && classOf(d.invoice.customer_id) !== "prompt" && rng.chance(6, 100)) {
       d.partialCents = roundHalfUp(d.invoice.amount_cents * rng.int(40, 70), 100);
     }
   };
@@ -148,7 +212,8 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
     if (!billed.ok || load.deliveredOn === null || load.customerId === null) continue;
     const issued = addDays(load.deliveredOn, 1);
     const d = draft("load", load.id, load.customerId, billed.amountCents, issued);
-    settle(d, rng.chance(60, 100) ? "on_time" : "open");
+    const onTime = rng.chance(60, 100);
+    settle(d, onTime && !args.openLoadIds.has(load.id) ? "on_time" : "open");
   }
   // The newest of them not yet due stay open until the current bucket holds enough.
   const notDue = drafts
@@ -165,32 +230,49 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
   }
 
   // (2) Opening receivables, with no load: first the ones left open in each past-due bucket,
-  // issued so they are that many days past due on the anchor, then the rest at random.
+  // issued so they are that many days past due on the anchor (never a prompt payer's), then the
+  // named collections invoices, then each slow payer's late ones, then the rest at random.
+  const notPrompt = customers.filter((c) => classOf(c.id) !== "prompt");
   for (const [lo, hi] of PAST_DUE) {
     for (let k = 0; k < OPEN_PER_BUCKET; k++) {
-      const customer = rng.pick(customers);
+      const customer = rng.pick(notPrompt);
       const terms = customer.terms_days;
       const late = rng.int(Math.max(lo, 29 - terms), Math.min(hi, 154 - terms));
       const issued = addDays(anchor, -late - terms);
       draft("opening", null, customer.id, rng.int(1500, 4800) * 100, issued);
     }
   }
-  for (let k = PAST_DUE.length * OPEN_PER_BUCKET; k < OPENING_INVOICE_COUNT; k++) {
+  const collectionDrafts = COLLECTIONS.map(([index, daysLate, amount]) => {
+    const customer = customers[index];
+    if (!customer) throw new Error("a collections invoice names a missing customer");
+    const issued = addDays(anchor, -daysLate - customer.terms_days);
+    return { d: draft("opening", null, customer.id, amount, issued), daysLate };
+  });
+  const slow = customers.filter((c) => classOf(c.id) === "slow");
+  for (const customer of slow) {
+    for (let k = 0; k < SLOW_LATE_PER_CUSTOMER; k++) {
+      const amount = rng.int(900, 4800) * 100;
+      const latest = addDays(anchor, -32 - customer.terms_days);
+      const d = draft("opening", null, customer.id, amount, between(addDays(anchor, -154), latest));
+      settle(d, "late_31_60", true);
+      if (d.receivedOn === null) throw new Error("a slow payer's late invoice was not paid");
+    }
+  }
+  const fixed =
+    PAST_DUE.length * OPEN_PER_BUCKET + COLLECTIONS.length + slow.length * SLOW_LATE_PER_CUSTOMER;
+  const promptLate = new Set<string>();
+  for (let k = fixed; k < OPENING_INVOICE_COUNT; k++) {
     const customer = rng.pick(customers);
     const amount = rng.int(900, 4800) * 100;
     const issued = between(addDays(anchor, -154), addDays(anchor, -29));
     const d = draft("opening", null, customer.id, amount, issued);
-    settle(
-      d,
-      rng.weighted<Outcome>([
-        ["on_time", 55],
-        ["late_1_30", 14],
-        ["late_31_60", 8],
-        ["late_61_90", 5],
-        ["late_91", 4],
-        ["open", 14],
-      ]),
-    );
+    let outcome = rng.weighted<Outcome>(OUTCOMES[classOf(customer.id)]);
+    if (classOf(customer.id) === "prompt") {
+      if (outcome === "open" && d.invoice.due_on < addDays(anchor, -30)) outcome = "on_time";
+      if (outcome === "late_1_30" && promptLate.has(customer.id)) outcome = "on_time";
+      if (outcome === "late_1_30") promptLate.add(customer.id);
+    }
+    settle(d, outcome);
   }
 
   // Payments: one per paid invoice, except that a third of the time a customer's full payment
@@ -243,7 +325,8 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
         continue;
       }
       const group = [first];
-      if (rng.chance(1, 3)) {
+      // A prompt payer pays each invoice by itself, so grouping never makes one late.
+      if (classOf(customer.id) !== "prompt" && rng.chance(1, 3)) {
         const want = rng.int(1, 2);
         for (let j = i + 1; j < paid.length && group.length <= want; j++) {
           const next = paid[j];
@@ -259,8 +342,9 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
     }
   }
 
-  // (3) The planted pair. C: the customer on 30 days or less with the most opening invoices. X's
-  // amount is unique among C's invoices and payments, so the check can point at X alone.
+  // (3) The planted pair. C: the customer on 30 days or less with the most opening invoices, never
+  // a prompt payer (X stays open long past due). X's amount is unique among C's invoices and
+  // payments, so the check can point at X alone.
   const openingCount = new Map<string, number>();
   for (const d of drafts) {
     if (d.invoice.source === "opening") {
@@ -269,7 +353,7 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
     }
   }
   const c = customers
-    .filter((x) => x.terms_days <= 30)
+    .filter((x) => x.terms_days <= 30 && classOf(x.id) !== "prompt")
     .sort(
       (a, b) =>
         (openingCount.get(b.id) ?? 0) - (openingCount.get(a.id) ?? 0) ||
@@ -342,5 +426,11 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
       appliedToInvoiceId: y.invoice.id,
       meantForInvoiceId: x.invoice.id,
     },
+    collections: collectionDrafts.map(({ d, daysLate }) => ({
+      invoiceId: d.invoice.id,
+      customerId: d.invoice.customer_id,
+      customerClass: classOf(d.invoice.customer_id),
+      daysLate,
+    })),
   };
 }

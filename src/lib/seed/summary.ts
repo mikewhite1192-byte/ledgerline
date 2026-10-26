@@ -1,15 +1,21 @@
-import { receivablesInputOf, settlementInputOf } from "../data/records";
+import { sortVersions } from "../data/config-version";
+import { customerOf, loadStopsOf, receivablesInputOf, settlementInputOf } from "../data/records";
 import type { TenantRows } from "../data/rows";
 import { TENANT_TABLES, type TenantTable } from "../data/tables";
 import {
   ageReceivables,
   AGING_BUCKETS,
   agingBucket,
+  findUnbilledDetention,
   invoiceStatus,
+  lastFullMonthBefore,
   settleDriver,
+  sum,
   type AgingBucket,
 } from "../rules-engine";
-import { isWithin, type Period } from "../time/local-date";
+import { daysBetween, isWithin, type Period } from "../time/local-date";
+import type { CustomerClass } from "./ar-plan";
+import { fuelAnomalyIds } from "./assert-plan";
 import type { CarrierPlan } from "./plan";
 
 // The numbers that describe one seeded carrier, small enough to read in a review. golden.json is
@@ -36,6 +42,35 @@ export type CarrierSummary = {
     paymentsInOpenWeek: number;
     overappliedInvoices: number;
   };
+  // The pay rules versions, oldest first, and the settled weeks each one ran.
+  payConfigVersions: {
+    effectiveFrom: string;
+    note: string | null;
+    source: string;
+    insurancePerDayCents: number;
+    settledPeriods: string[];
+  }[];
+  fuelAnomalies: {
+    rule: string;
+    purchaseRef: string;
+    driverCode: string;
+    state: string;
+    gallonsMilli: number;
+    amountCents: number;
+  }[];
+  // Unbilled detention over the last full month before the anchor (the demo's dollar line).
+  detention: {
+    window: Period;
+    loads: { loadNumber: string; stop: string; overMinutes: number; cents: number }[];
+    totalCents: number;
+  };
+  collections: {
+    customerCode: string;
+    class: CustomerClass;
+    invoiceNumber: string;
+    daysLate: number;
+    balanceCents: number;
+  }[];
 };
 
 export function countRows(rows: TenantRows): Record<TenantTable, number> {
@@ -99,6 +134,69 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
     if (s.balanceCents > 0) openByBucket[agingBucket(i.due_on, anchor)].invoices++;
   }
 
+  const periodOf = new Map(rows.settlement_periods.map((p) => [p.id, p.period_start]));
+  const payConfigVersions = sortVersions(rows.pay_configs).map((v) => ({
+    effectiveFrom: v.effective_from,
+    note: v.note,
+    source: v.source,
+    insurancePerDayCents: v.insurance_per_day_cents,
+    settledPeriods: [
+      ...new Set(
+        rows.settlements
+          .filter((s) => s.pay_config_id === v.id)
+          .map((s) => periodOf.get(s.period_id)!),
+      ),
+    ].sort(),
+  }));
+
+  const codeOf = new Map(rows.drivers.map((d) => [d.id, d.code]));
+  const anomalies = fuelAnomalyIds(rows);
+  const fuelAnomalies = (["offRoute", "overTank", "parked"] as const).flatMap((rule) =>
+    anomalies[rule].map((id) => {
+      const f = rows.fuel_purchases.find((x) => x.id === id)!;
+      return {
+        rule,
+        purchaseRef: f.purchase_ref,
+        driverCode: codeOf.get(f.driver_id)!,
+        state: f.state,
+        gallonsMilli: f.gallons_milli,
+        amountCents: f.amount_cents,
+      };
+    }),
+  );
+
+  const window = lastFullMonthBefore(anchor);
+  const unbilled = findUnbilledDetention(
+    rows.loads.map(loadStopsOf),
+    rows.customers.map(customerOf),
+    rows.load_accessorials.map((a) => ({ loadId: a.load_id, kind: a.kind })),
+    window,
+  );
+  const detention = {
+    window,
+    loads: unbilled.flatMap((u) =>
+      u.stops.map((s) => ({
+        loadNumber: u.loadNumber,
+        stop: s.stop,
+        overMinutes: s.overMinutes,
+        cents: s.cents,
+      })),
+    ),
+    totalCents: sum(unbilled.map((u) => u.amountCents)),
+  };
+
+  const customerCode = new Map(rows.customers.map((c) => [c.id, c.code]));
+  const collections = plan.planted.collections.map((k) => {
+    const i = rows.invoices.find((x) => x.id === k.invoiceId)!;
+    return {
+      customerCode: customerCode.get(k.customerId)!,
+      class: k.customerClass,
+      invoiceNumber: i.invoice_number,
+      daysLate: daysBetween(i.due_on, anchor),
+      balanceCents: invoiceStatus(i.amount_cents, applied.get(i.id) ?? 0).balanceCents,
+    };
+  });
+
   return {
     counts: countRows(rows),
     linehaulCents: rows.loads.reduce((n, l) => n + (l.linehaul_cents ?? 0), 0),
@@ -111,5 +209,9 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
         .length,
       overappliedInvoices,
     },
+    payConfigVersions,
+    fuelAnomalies,
+    detention,
+    collections,
   };
 }

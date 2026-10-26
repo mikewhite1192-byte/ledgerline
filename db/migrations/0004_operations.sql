@@ -15,6 +15,11 @@ CREATE TABLE customers (
   terms_days integer NOT NULL CHECK (terms_days IN (15, 30, 45)),
   city       text NOT NULL,
   state      char(2) NOT NULL CHECK (state ~ '^[A-Z]{2}$'),
+  -- Detention terms: minutes free at each stop, then this hourly rate per started quarter hour.
+  detention_free_minutes integer NOT NULL DEFAULT 120
+                         CHECK (detention_free_minutes BETWEEN 0 AND 600),
+  detention_hourly_cents bigint NOT NULL DEFAULT 5000
+                         CHECK (detention_hourly_cents >= 0 AND detention_hourly_cents < 1000000),
   created_at timestamptz NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, id),
   UNIQUE (tenant_id, code)
@@ -44,6 +49,7 @@ CREATE TABLE drivers (
   escrow_balance_cents bigint NOT NULL DEFAULT 0
                        CHECK (escrow_balance_cents >= 0 AND escrow_balance_cents < 1000000000),
   truck_unit           text,
+  tank_gallons         integer NOT NULL DEFAULT 200 CHECK (tank_gallons BETWEEN 100 AND 400),
   active_from          date NOT NULL,
   active_to            date,
   created_at           timestamptz NOT NULL DEFAULT now(),
@@ -82,10 +88,19 @@ CREATE TABLE loads (
   linehaul_cents       bigint CHECK (linehaul_cents >= 0 AND linehaul_cents < 1000000000),
   fuel_surcharge_cents bigint NOT NULL DEFAULT 0
                        CHECK (fuel_surcharge_cents >= 0 AND fuel_surcharge_cents < 1000000000),
+  -- Stop times from the bill of lading; NULL means not known yet, never zero dwell.
+  pickup_arrived_at    timestamptz,
+  pickup_departed_at   timestamptz,
+  delivery_arrived_at  timestamptz,
+  delivery_departed_at timestamptz,
   created_at           timestamptz NOT NULL DEFAULT now(),
   CHECK (status NOT IN ('delivered', 'invoiced') OR (delivered_on IS NOT NULL AND driver_id IS NOT NULL)),
   CHECK ((delivered_on IS NULL) = (delivered_at IS NULL)),
   CHECK (delivered_on IS NULL OR delivered_on >= pickup_on),
+  CHECK ((pickup_arrived_at IS NULL) = (pickup_departed_at IS NULL)
+     AND (delivery_arrived_at IS NULL) = (delivery_departed_at IS NULL)),
+  CHECK (pickup_departed_at >= pickup_arrived_at AND delivery_departed_at >= delivery_arrived_at),
+  CHECK (delivery_departed_at IS NULL OR delivered_at IS NOT NULL),
   UNIQUE (tenant_id, id),
   UNIQUE (tenant_id, load_number),
   FOREIGN KEY (tenant_id, customer_id) REFERENCES customers (tenant_id, id),

@@ -43,6 +43,8 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["terms_days", "int"],
       ["city", "text"],
       ["state", "text"],
+      ["detention_free_minutes", "int"],
+      ["detention_hourly_cents", "int"],
     ],
   },
   drivers: {
@@ -61,6 +63,7 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["advance_limit_cents", "int"],
       ["escrow_balance_cents", "int"],
       ["truck_unit", "text"],
+      ["tank_gallons", "int"],
       ["active_from", "date"],
       ["active_to", "date"],
     ],
@@ -84,6 +87,10 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["empty_miles", "int"],
       ["linehaul_cents", "int"],
       ["fuel_surcharge_cents", "int"],
+      ["pickup_arrived_at", "timestamptz"],
+      ["pickup_departed_at", "timestamptz"],
+      ["delivery_arrived_at", "timestamptz"],
+      ["delivery_departed_at", "timestamptz"],
     ],
   },
   load_state_miles: {
@@ -135,6 +142,10 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
   pay_configs: {
     table: "pay_configs",
     columns: [
+      ["id", "uuid"],
+      ["effective_from", "date"],
+      ["note", "text"],
+      ["source", "text"],
       ["week_start_dow", "int"],
       ["percent_base", "text"],
       ["empty_miles_paid_bps", "int"],
@@ -179,6 +190,7 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["id", "uuid"],
       ["period_id", "uuid"],
       ["driver_id", "uuid"],
+      ["pay_config_id", "uuid"],
       ["status", "text"],
       ["gross_cents", "int"],
       ["deductions_cents", "int"],

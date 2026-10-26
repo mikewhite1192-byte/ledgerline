@@ -1,13 +1,15 @@
+import { configFor } from "../data/config-version";
 import {
   advanceOf,
   dayOf,
   driverOf,
   loadsOf,
+  payConfigOf,
   payItemOf,
   scheduleOf,
 } from "../data/records";
 import type { PayItemRow, SettlementLineRow, SettlementRow, TenantRows } from "../data/rows";
-import { settleDriver, sum, type PayConfig } from "../rules-engine";
+import { settleDriver, sum } from "../rules-engine";
 import { addDays, type LocalDate } from "../time/local-date";
 import { instantAt } from "./calendar";
 
@@ -16,17 +18,17 @@ import { instantAt } from "./calendar";
 // pay run will write it: a paid settlement with its lines, the escrow delta on the driver, each
 // recovery on its advance, every pay item the lines cite stamped with the settlement, and a
 // shortfall carried into the next week as a carried_shortfall item. So the open week starts from
-// balances the engine itself produced (design D5).
+// balances the engine itself produced (design D5). Each period runs under the pay rules version
+// in force at its start (rows.pay_configs), and its settlements name that version.
 
 export type HistoryArgs = {
   slug: string;
   zone: string;
-  config: PayConfig;
   rows: TenantRows;
   newId: () => string;
 };
 
-export function applyHistory({ slug, zone, config, rows, newId }: HistoryArgs): void {
+export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
   const paid = rows.settlement_periods.filter((p) => p.status === "paid");
   const open = rows.settlement_periods.filter((p) => p.status === "open");
   if (open.length !== 1) throw new Error("history needs exactly one open period");
@@ -51,6 +53,8 @@ export function applyHistory({ slug, zone, config, rows, newId }: HistoryArgs): 
     const nextStart: LocalDate =
       index + 1 < paid.length ? paid[index + 1].period_start : open[0].period_start;
     const period = { start: p.period_start, end: p.period_end };
+    const version = configFor(rows.pay_configs, p.period_start);
+    const config = payConfigOf(version);
     for (const d of drivers) {
       const driverLoads = loads.get(d.id) ?? [];
       const loadIds = new Set(driverLoads.map((l) => l.id));
@@ -73,6 +77,7 @@ export function applyHistory({ slug, zone, config, rows, newId }: HistoryArgs): 
         id: newId(),
         period_id: p.id,
         driver_id: d.id,
+        pay_config_id: version.id,
         status: "paid",
         gross_cents: result.grossCents,
         deductions_cents: result.deductionsCents,

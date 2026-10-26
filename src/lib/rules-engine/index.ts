@@ -64,4 +64,11 @@ export {
   agingBucket,
   findPaymentOnWrongInvoice,
   invoiceStatus,
+  paymentProfile,
 } from "./receivables";
+export {
+  detentionCents,
+  detentionStops,
+  findUnbilledDetention,
+  lastFullMonthBefore,
+} from "./detention";

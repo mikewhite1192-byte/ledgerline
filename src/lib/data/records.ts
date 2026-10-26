@@ -11,6 +11,7 @@ import {
   type FuelPurchaseRecord,
   type InvoiceRecord,
   type LoadRecord,
+  type LoadStopsRecord,
   type PayConfig,
   type PayItemRecord,
   type PaymentApplicationRecord,
@@ -20,6 +21,7 @@ import {
   type SettlementPeriodRecord,
 } from "../rules-engine";
 import type { LocalDate, Period } from "../time/local-date";
+import { checkVersionOf, configFor } from "./config-version";
 import type {
   AdvanceRow,
   CustomerPaymentRow,
@@ -32,7 +34,7 @@ import type {
   LoadAccessorialRow,
   LoadRow,
   LoadStateMilesRow,
-  PayConfigRow,
+  PayConfigKnobs,
   PayItemRow,
   PaymentApplicationRow,
   SettlementPeriodRow,
@@ -46,12 +48,21 @@ import type {
 const c = (value: number): Cents => cents(value);
 const cn = (value: number | null): Cents | null => (value === null ? null : cents(value));
 
-export function payConfigOf(row: PayConfigRow): PayConfig {
+export function payConfigOf(row: PayConfigKnobs): PayConfig {
   return parsePayConfig(row as unknown as Record<string, unknown>);
 }
 
 export function customerOf(r: CustomerRow): CustomerRecord {
-  return { id: r.id, code: r.code, name: r.name, termsDays: r.terms_days, city: r.city, state: r.state };
+  return {
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    termsDays: r.terms_days,
+    city: r.city,
+    state: r.state,
+    detentionFreeMinutes: r.detention_free_minutes,
+    detentionHourlyCents: c(r.detention_hourly_cents),
+  };
 }
 
 export function driverOf(r: DriverRow): DriverRecord {
@@ -111,6 +122,19 @@ export function loadsOf(
       description: a.description,
     })),
   }));
+}
+
+export function loadStopsOf(r: LoadRow): LoadStopsRecord {
+  return {
+    id: r.id,
+    loadNumber: r.load_number,
+    customerId: r.customer_id,
+    deliveredOn: r.delivered_on,
+    pickupArrivedAt: r.pickup_arrived_at,
+    pickupDepartedAt: r.pickup_departed_at,
+    deliveryArrivedAt: r.delivery_arrived_at,
+    deliveryDepartedAt: r.delivery_departed_at,
+  };
 }
 
 export function dayOf(r: DriverDayRow): DriverDayRecord {
@@ -218,11 +242,12 @@ export function applicationOf(r: PaymentApplicationRow): PaymentApplicationRecor
 
 // ---- Whole inputs, from one tenant's rows ----
 
-// Everything the six pay checks read.
+// Everything the six pay checks read, under the open period's pay rules version.
 export function checkInputOf(
   rows: Pick<
     TenantRows,
     | "pay_configs"
+    | "settlement_periods"
     | "drivers"
     | "loads"
     | "load_state_miles"
@@ -233,9 +258,8 @@ export function checkInputOf(
     | "advances"
   >,
 ): CheckInput {
-  if (rows.pay_configs.length !== 1) throw new Error("a tenant needs exactly one pay config");
   return {
-    config: payConfigOf(rows.pay_configs[0]),
+    config: payConfigOf(checkVersionOf(rows.pay_configs, rows.settlement_periods)),
     drivers: rows.drivers.map(driverOf),
     loads: loadsOf(rows.loads, rows.load_state_miles, rows.load_accessorials),
     days: rows.driver_days.map(dayOf),
@@ -245,7 +269,8 @@ export function checkInputOf(
   };
 }
 
-// One driver's settlement for one period, from the escrow balance the driver holds now.
+// One driver's settlement for one period, under the version that period runs on, from the
+// escrow balance the driver holds now.
 export function settlementInputOf(
   rows: Pick<
     TenantRows,
@@ -262,13 +287,12 @@ export function settlementInputOf(
   driverId: string,
   period: Period,
 ): SettlementInput {
-  if (rows.pay_configs.length !== 1) throw new Error("a tenant needs exactly one pay config");
   const driver = rows.drivers.find((d) => d.id === driverId);
   if (!driver) throw new Error("no such driver");
   const loads = rows.loads.filter((l) => l.driver_id === driverId);
   const ids = new Set(loads.map((l) => l.id));
   return {
-    config: payConfigOf(rows.pay_configs[0]),
+    config: payConfigOf(configFor(rows.pay_configs, period.start)),
     driver: driverOf(driver),
     period,
     loads: loadsOf(

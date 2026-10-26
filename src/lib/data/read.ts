@@ -3,12 +3,12 @@ import {
   cents,
   type AdvanceInput,
   type CheckInput,
-  type PayConfig,
   type ReceivablesInput,
   type SettlementInput,
 } from "../rules-engine";
 import { localDateOf, type Instant, type LocalDate } from "../time/local-date";
 import { isUuid } from "../uuid";
+import { configFor, configForDay, sortVersions } from "./config-version";
 import {
   checkInputOf,
   driverOf,
@@ -18,7 +18,7 @@ import {
   settlementInputOf,
   advanceOf,
 } from "./records";
-import type { TenantRows } from "./rows";
+import type { PayConfigRow, TenantRows } from "./rows";
 import { assertIdentifier, TABLE_SPECS, TENANT_TABLES, type TenantTable } from "./tables";
 
 // Read-only loaders for the tenant tables. SELECT only, always inside withTenant. The app role is
@@ -133,16 +133,26 @@ function assertUuid(value: string, what: string): string {
   return value;
 }
 
-export async function readPayConfig(q: Queryable): Promise<PayConfig> {
-  const rows = await readTable(q, "pay_configs");
-  if (rows.length !== 1) throw new Error("the tenant has no pay config");
-  return payConfigOf(rows[0]);
+// Every version of the tenant's pay rules, oldest first (the settings page). Refuses a tenant with
+// none, two on one date, or a week shape that changed between versions.
+export async function readPayConfigVersions(q: Queryable): Promise<PayConfigRow[]> {
+  return sortVersions(await readTable(q, "pay_configs"));
 }
 
-// Everything the six pay checks read, for the whole tenant.
+// The version a pay period runs under, given the period's first day; payConfigOf turns it into
+// the engine's PayConfig.
+export async function readPayConfigFor(
+  q: Queryable,
+  periodStart: LocalDate,
+): Promise<PayConfigRow> {
+  return configFor(await readPayConfigVersions(q), periodStart);
+}
+
+// Everything the six pay checks read, for the whole tenant, under the open period's version.
 export async function readCheckInput(q: Queryable): Promise<CheckInput> {
   return checkInputOf({
     pay_configs: await readTable(q, "pay_configs"),
+    settlement_periods: await readTable(q, "settlement_periods"),
     drivers: await readTable(q, "drivers"),
     loads: await readTable(q, "loads"),
     load_state_miles: await readTable(q, "load_state_miles"),
@@ -168,7 +178,7 @@ type DriverRows = Pick<
 >;
 
 // One driver's rows: the driver, their loads with miles and accessorials, days, items,
-// schedules and advances, and the tenant's pay config.
+// schedules and advances, and every version of the tenant's pay rules.
 async function readDriverRows(q: Queryable, driverId: string): Promise<DriverRows> {
   const p = [assertUuid(driverId, "driverId")];
   const drivers = await readWhere(q, "drivers", BY_ID, p);
@@ -201,8 +211,9 @@ export async function readSettlementInput(
   return settlementInputOf(rows, driverId, period);
 }
 
-// What advanceEligibility needs for one request: the date is the tenant's own, and the loads
-// delivered inside a paid period count as paid.
+// What advanceEligibility needs for one request: the date is the tenant's own, the loads
+// delivered inside a paid period count as paid, and the pay rules are the version that the
+// request's week will settle under.
 export async function readAdvanceInput(
   q: Queryable,
   driverId: string,
@@ -213,12 +224,13 @@ export async function readAdvanceInput(
   if (!tenant) throw new Error("no tenant is set");
   const rows = await readDriverRows(q, driverId);
   const paid = await readWhere(q, "settlement_periods", "status = $1", ["paid"]);
+  const requestedOn = localDateOf(requestedAt, tenant.timezone);
   return {
-    config: payConfigOf(rows.pay_configs[0]),
+    config: payConfigOf(configForDay(rows.pay_configs, requestedOn)),
     driver: driverOf(rows.drivers[0]),
     amountCents: cents(amountCents),
     requestedAt,
-    requestedOn: localDateOf(requestedAt, tenant.timezone),
+    requestedOn,
     loads: loadsOf(rows.loads, rows.load_state_miles, rows.load_accessorials),
     paidPeriods: paid.map((p) => ({ start: p.period_start, end: p.period_end })),
     advances: rows.advances.map(advanceOf),

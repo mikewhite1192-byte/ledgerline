@@ -115,7 +115,7 @@ export type TableName = (typeof TABLES)[number];
 // Every computed line and finding cites the rows it came from.
 export type SourceRef = { table: TableName; id: string };
 
-// ---- Per-tenant pay configuration (`pay_configs`, one row per tenant) ----
+// ---- Per-tenant pay configuration (`pay_configs`, one row per version of the rules) ----
 
 export const PERCENT_BASES = ["linehaul", "linehaul_fsc", "linehaul_fsc_accessorials"] as const;
 export type PercentBase = (typeof PERCENT_BASES)[number];
@@ -173,6 +173,9 @@ export type CustomerRecord = {
   termsDays: number;
   city: string;
   state: string;
+  // Detention terms: minutes free at each stop, then this rate per hour, billed by the quarter.
+  detentionFreeMinutes: number;
+  detentionHourlyCents: Cents;
 };
 
 export type DriverRecord = {
@@ -608,4 +611,63 @@ export type ReceivablesAging = {
   // Customers with an open balance, in customer id order.
   byCustomer: { customerId: string; buckets: AgingTotals }[];
   totals: AgingTotals;
+};
+
+// ---- Detention (addendum B3): stop times from the bill of lading, the customer's terms ----
+
+export const STOPS = ["pickup", "delivery"] as const;
+export type Stop = (typeof STOPS)[number];
+
+// A load's arrival and departure at each stop. A stop's two times are both set or both null;
+// null means not known yet, never zero time at the stop.
+export type LoadStopsRecord = {
+  id: string;
+  loadNumber: string;
+  customerId: string | null;
+  deliveredOn: LocalDate | null;
+  pickupArrivedAt: Instant | null;
+  pickupDepartedAt: Instant | null;
+  deliveryArrivedAt: Instant | null;
+  deliveryDepartedAt: Instant | null;
+};
+
+export type StopDetention = {
+  stop: Stop;
+  // Whole minutes from arrival to departure.
+  dwellMinutes: number;
+  overMinutes: number;
+  // Started quarter hours past the free time; each one is billed.
+  quarters: number;
+  cents: Cents;
+};
+
+// A delivered load whose stop times earn detention and that carries no detention charge.
+export type UnbilledDetention = {
+  loadId: string;
+  loadNumber: string;
+  customerId: string;
+  deliveredOn: LocalDate;
+  // Only the stops that earn something.
+  stops: StopDetention[];
+  amountCents: Cents;
+  sources: SourceRef[];
+};
+
+// ---- Collections (addendum B4): how a customer pays, derived from its own history ----
+
+export const PAYMENT_LABELS = ["reliable", "mixed", "repeat_late"] as const;
+export type PaymentLabel = (typeof PAYMENT_LABELS)[number];
+
+export type PaymentProfile = {
+  customerId: string;
+  // Invoices issued in the 180 days before asOf, void ones left out.
+  invoices: number;
+  paidCount: number;
+  // Over paid invoices: days from due to paid, negative is early; null with none paid.
+  medianDaysLate: number | null;
+  // Share of paid invoices paid after the due date, in basis points.
+  lateShareBps: number;
+  paidOver30Late: number;
+  openPast30: number;
+  label: PaymentLabel;
 };

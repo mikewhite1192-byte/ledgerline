@@ -6,9 +6,15 @@
 -- grant, app-made ids, composite (tenant_id, x_id) foreign keys, bigint cents, local dates.
 -- Nothing here moves money: these rows record what the rules engine computed and what arrived.
 
--- One row per tenant. Every knob the rules engine reads, range-checked here and again in code.
+-- One row per version of a tenant's pay rules. A version applies from the first period that
+-- starts on or after effective_from; week_start_dow is the same on every version (checked in code).
+-- Every knob the rules engine reads, range-checked here and again in code.
 CREATE TABLE pay_configs (
-  tenant_id                    uuid PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+  id                           uuid PRIMARY KEY,
+  tenant_id                    uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  effective_from               date NOT NULL,
+  note                         text,
+  source                       text NOT NULL CHECK (source IN ('seed', 'ui')),
   week_start_dow               integer NOT NULL CHECK (week_start_dow BETWEEN 0 AND 6),
   percent_base                 text NOT NULL
                                CHECK (percent_base IN ('linehaul', 'linehaul_fsc', 'linehaul_fsc_accessorials')),
@@ -33,7 +39,9 @@ CREATE TABLE pay_configs (
   advance_max_bps_of_earned    integer NOT NULL CHECK (advance_max_bps_of_earned BETWEEN 0 AND 10000),
   advance_min_cents            bigint NOT NULL
                                CHECK (advance_min_cents >= 0 AND advance_min_cents < 1000000000),
-  created_at                   timestamptz NOT NULL DEFAULT now()
+  created_at                   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, id),
+  UNIQUE (tenant_id, effective_from)
 );
 ALTER TABLE pay_configs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay_configs FORCE ROW LEVEL SECURITY;
@@ -87,6 +95,8 @@ CREATE TABLE settlements (
   tenant_id           uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   period_id           uuid NOT NULL,
   driver_id           uuid NOT NULL,
+  -- The pay rules version this settlement was computed under.
+  pay_config_id       uuid NOT NULL,
   status              text NOT NULL CHECK (status IN ('draft', 'approved', 'paid')),
   gross_cents         bigint NOT NULL CHECK (gross_cents >= 0 AND gross_cents < 1000000000),
   deductions_cents    bigint NOT NULL CHECK (deductions_cents >= 0 AND deductions_cents < 1000000000),
@@ -100,7 +110,8 @@ CREATE TABLE settlements (
   UNIQUE (tenant_id, id),
   UNIQUE (tenant_id, period_id, driver_id),
   FOREIGN KEY (tenant_id, period_id) REFERENCES settlement_periods (tenant_id, id),
-  FOREIGN KEY (tenant_id, driver_id) REFERENCES drivers (tenant_id, id)
+  FOREIGN KEY (tenant_id, driver_id) REFERENCES drivers (tenant_id, id),
+  FOREIGN KEY (tenant_id, pay_config_id) REFERENCES pay_configs (tenant_id, id)
 );
 ALTER TABLE settlements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE settlements FORCE ROW LEVEL SECURITY;

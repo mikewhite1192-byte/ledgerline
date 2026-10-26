@@ -9,17 +9,17 @@
         "load_state_miles": 1088,
         "load_accessorials": 90,
         "driver_days": 456,
-        "fuel_purchases": 461,
-        "pay_configs": 1,
+        "fuel_purchases": 464,
+        "pay_configs": 2,
         "deduction_schedules": 18,
         "settlement_periods": 4,
         "settlements": 75,
         "settlement_lines": 528,
-        "pay_items": 244,
+        "pay_items": 245,
         "advances": 19,
         "invoices": 335,
-        "customer_payments": 149,
-        "payment_applications": 209
+        "customer_payments": 167,
+        "payment_applications": 200
       },
       "linehaulCents": 30154000,
       "hero": {
@@ -87,44 +87,154 @@
       "settledNetCents": [
         {
           "periodStart": "2026-10-05",
-          "netCents": 2662634
+          "netCents": 2664384
         },
         {
           "periodStart": "2026-10-12",
-          "netCents": 2774187
+          "netCents": 2776337
         },
         {
           "periodStart": "2026-10-19",
           "netCents": 2312227
         }
       ],
-      "advancesOutstandingCents": 290331,
+      "advancesOutstandingCents": 289881,
       "receivables": {
         "openByBucket": {
           "current": {
-            "invoices": 62,
-            "cents": 6986999
+            "invoices": 71,
+            "cents": 8031600
           },
           "1_30": {
-            "invoices": 48,
-            "cents": 6950494
+            "invoices": 46,
+            "cents": 5816578
           },
           "31_60": {
             "invoices": 8,
-            "cents": 1687273
+            "cents": 2234692
           },
           "61_90": {
-            "invoices": 10,
-            "cents": 2607618
+            "invoices": 7,
+            "cents": 2116400
           },
           "over_90": {
-            "invoices": 11,
-            "cents": 3163650
+            "invoices": 10,
+            "cents": 3019460
           }
         },
-        "paymentsInOpenWeek": 39,
+        "paymentsInOpenWeek": 43,
         "overappliedInvoices": 1
-      }
+      },
+      "payConfigVersions": [
+        {
+          "effectiveFrom": "2026-10-05",
+          "note": "Opening pay policy",
+          "source": "seed",
+          "insurancePerDayCents": 1050,
+          "settledPeriods": [
+            "2026-10-05",
+            "2026-10-12"
+          ]
+        },
+        {
+          "effectiveFrom": "2026-10-19",
+          "note": "Owner-operator insurance to $11.00 per day",
+          "source": "seed",
+          "insurancePerDayCents": 1100,
+          "settledPeriods": [
+            "2026-10-19"
+          ]
+        }
+      ],
+      "fuelAnomalies": [
+        {
+          "rule": "offRoute",
+          "purchaseRef": "blue-ridge-fuel-418",
+          "driverCode": "BR-D12",
+          "state": "FL",
+          "gallonsMilli": 95000,
+          "amountCents": 36575
+        },
+        {
+          "rule": "overTank",
+          "purchaseRef": "blue-ridge-fuel-400",
+          "driverCode": "BR-D06",
+          "state": "TN",
+          "gallonsMilli": 286400,
+          "amountCents": 111696
+        },
+        {
+          "rule": "parked",
+          "purchaseRef": "blue-ridge-fuel-460",
+          "driverCode": "BR-D01",
+          "state": "NC",
+          "gallonsMilli": 118000,
+          "amountCents": 43896
+        }
+      ],
+      "detention": {
+        "window": {
+          "start": "2026-10-01",
+          "end": "2026-10-31"
+        },
+        "loads": [
+          {
+            "loadNumber": "BR-L10117",
+            "stop": "pickup",
+            "overMinutes": 300,
+            "cents": 37500
+          },
+          {
+            "loadNumber": "BR-L10195",
+            "stop": "delivery",
+            "overMinutes": 360,
+            "cents": 30000
+          },
+          {
+            "loadNumber": "BR-L10216",
+            "stop": "delivery",
+            "overMinutes": 320,
+            "cents": 41250
+          },
+          {
+            "loadNumber": "BR-L10220",
+            "stop": "delivery",
+            "overMinutes": 315,
+            "cents": 26250
+          }
+        ],
+        "totalCents": 135000
+      },
+      "collections": [
+        {
+          "customerCode": "BR-C03",
+          "class": "slow",
+          "invoiceNumber": "BR-INV-10072",
+          "daysLate": 34,
+          "balanceCents": 248000
+        },
+        {
+          "customerCode": "BR-C03",
+          "class": "slow",
+          "invoiceNumber": "BR-INV-10054",
+          "daysLate": 62,
+          "balanceCents": 196000
+        },
+        {
+          "customerCode": "BR-C03",
+          "class": "slow",
+          "invoiceNumber": "BR-INV-10030",
+          "daysLate": 97,
+          "balanceCents": 312000
+        },
+        {
+          "customerCode": "BR-C01",
+          "class": "prompt",
+          "invoiceNumber": "BR-INV-10064",
+          "daysLate": 12,
+          "balanceCents": 174000
+        }
+      ]
     },
     "prairie-wind": {
       "counts": {
@@ -134,17 +244,17 @@
         "load_state_miles": 687,
         "load_accessorials": 103,
         "driver_days": 336,
-        "fuel_purchases": 361,
+        "fuel_purchases": 364,
         "pay_configs": 1,
         "deduction_schedules": 18,
         "settlement_periods": 4,
         "settlements": 75,
         "settlement_lines": 553,
-        "pay_items": 209,
+        "pay_items": 210,
         "advances": 18,
         "invoices": 324,
-        "customer_payments": 155,
-        "payment_applications": 198
+        "customer_payments": 161,
+        "payment_applications": 203
       },
       "linehaulCents": 23362300,
       "hero": null,
@@ -166,29 +276,131 @@
       "receivables": {
         "openByBucket": {
           "current": {
-            "invoices": 86,
-            "cents": 7728701
+            "invoices": 90,
+            "cents": 7880954
           },
           "1_30": {
-            "invoices": 16,
-            "cents": 2433756
+            "invoices": 15,
+            "cents": 2586996
           },
           "31_60": {
             "invoices": 10,
-            "cents": 3055080
+            "cents": 2585492
           },
           "61_90": {
-            "invoices": 10,
-            "cents": 2582000
+            "invoices": 5,
+            "cents": 1315000
           },
           "over_90": {
-            "invoices": 12,
-            "cents": 3226362
+            "invoices": 10,
+            "cents": 2866900
           }
         },
-        "paymentsInOpenWeek": 46,
+        "paymentsInOpenWeek": 43,
         "overappliedInvoices": 1
-      }
+      },
+      "payConfigVersions": [
+        {
+          "effectiveFrom": "2026-10-04",
+          "note": "Opening pay policy",
+          "source": "seed",
+          "insurancePerDayCents": 900,
+          "settledPeriods": [
+            "2026-10-04",
+            "2026-10-11",
+            "2026-10-18"
+          ]
+        }
+      ],
+      "fuelAnomalies": [
+        {
+          "rule": "offRoute",
+          "purchaseRef": "prairie-wind-fuel-346",
+          "driverCode": "PW-D04",
+          "state": "NM",
+          "gallonsMilli": 95000,
+          "amountCents": 36575
+        },
+        {
+          "rule": "overTank",
+          "purchaseRef": "prairie-wind-fuel-321",
+          "driverCode": "PW-D22",
+          "state": "IA",
+          "gallonsMilli": 286400,
+          "amountCents": 111696
+        },
+        {
+          "rule": "parked",
+          "purchaseRef": "prairie-wind-fuel-265",
+          "driverCode": "PW-D24",
+          "state": "OK",
+          "gallonsMilli": 118000,
+          "amountCents": 43896
+        }
+      ],
+      "detention": {
+        "window": {
+          "start": "2026-10-01",
+          "end": "2026-10-31"
+        },
+        "loads": [
+          {
+            "loadNumber": "PW-L10122",
+            "stop": "delivery",
+            "overMinutes": 320,
+            "cents": 41250
+          },
+          {
+            "loadNumber": "PW-L10171",
+            "stop": "pickup",
+            "overMinutes": 300,
+            "cents": 37500
+          },
+          {
+            "loadNumber": "PW-L10201",
+            "stop": "delivery",
+            "overMinutes": 315,
+            "cents": 26250
+          },
+          {
+            "loadNumber": "PW-L10203",
+            "stop": "delivery",
+            "overMinutes": 360,
+            "cents": 30000
+          }
+        ],
+        "totalCents": 135000
+      },
+      "collections": [
+        {
+          "customerCode": "PW-C03",
+          "class": "slow",
+          "invoiceNumber": "PW-INV-10077",
+          "daysLate": 34,
+          "balanceCents": 248000
+        },
+        {
+          "customerCode": "PW-C03",
+          "class": "slow",
+          "invoiceNumber": "PW-INV-10055",
+          "daysLate": 62,
+          "balanceCents": 196000
+        },
+        {
+          "customerCode": "PW-C03",
+          "class": "slow",
+          "invoiceNumber": "PW-INV-10029",
+          "daysLate": 97,
+          "balanceCents": 312000
+        },
+        {
+          "customerCode": "PW-C01",
+          "class": "prompt",
+          "invoiceNumber": "PW-INV-10091",
+          "daysLate": 12,
+          "balanceCents": 174000
+        }
+      ]
     }
   }
 }

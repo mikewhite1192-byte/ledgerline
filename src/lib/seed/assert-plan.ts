@@ -1,7 +1,11 @@
+import { configFor, configForDay } from "../data/config-version";
 import {
   advanceOf,
   checkInputOf,
+  customerOf,
   driverOf,
+  loadStopsOf,
+  payConfigOf,
   receivablesInputOf,
   settlementInputOf,
 } from "../data/records";
@@ -13,9 +17,12 @@ import {
   agingBucket,
   cents,
   findPaymentOnWrongInvoice,
+  findUnbilledDetention,
   invoiceStatus,
+  paymentProfile,
   runAllChecks,
   settleDriver,
+  sum,
   type AdvanceDecision,
   type LoadRecord,
   type PayConfig,
@@ -28,6 +35,7 @@ import {
   type LocalDate,
   type Period,
 } from "../time/local-date";
+import { customerClassOf } from "./ar-plan";
 import type { CarrierPlan } from "./plan";
 
 // The whole plan is checked before anything is written: keys, references, dates, the history the
@@ -40,6 +48,42 @@ export const HERO_OPEN_WEEK = { grossCents: 258000, deductionsCents: 35500, netC
 // Each aging bucket holds at least this many open invoices and this much money.
 export const AGING_MIN_INVOICES = 3;
 export const AGING_MIN_CENTS = 500000;
+
+// The unbilled detention planted in each tenant's four weeks: $1,350.00.
+export const DETENTION_TOTAL_CENTS = 135000;
+
+// The three fuel anomalies (addendum B2), by the rule each one breaks. Each returns the ids of
+// the purchases that break it.
+export function fuelAnomalyIds(rows: TenantRows): Record<
+  "offRoute" | "overTank" | "parked",
+  string[]
+> {
+  const loads = new Map(rows.loads.map((l) => [l.id, l]));
+  const tanks = new Map(rows.drivers.map((d) => [d.id, d.tank_gallons]));
+  const offRoute = rows.fuel_purchases.filter((f) => {
+    const load = f.load_id === null ? undefined : loads.get(f.load_id);
+    if (!load || f.purchased_on < load.pickup_on) return false;
+    if (load.delivered_on !== null && f.purchased_on > load.delivered_on) return false;
+    const states = rows.load_state_miles.filter((m) => m.load_id === load.id).map((m) => m.state);
+    return !states.includes(f.state);
+  });
+  const overTank = rows.fuel_purchases.filter(
+    (f) => f.gallons_milli > tanks.get(f.driver_id)! * 1000,
+  );
+  const parked = rows.fuel_purchases.filter(
+    (f) =>
+      f.paid_with === "company_card" &&
+      !rows.loads.some(
+        (l) =>
+          l.driver_id === f.driver_id &&
+          l.pickup_on <= f.purchased_on &&
+          f.purchased_on <= (l.delivered_on ?? f.purchased_on),
+      ) &&
+      !rows.driver_days.some((d) => d.driver_id === f.driver_id && d.day === f.purchased_on),
+  );
+  const ids = (list: readonly { id: string }[]) => list.map((x) => x.id);
+  return { offRoute: ids(offRoute), overTank: ids(overTank), parked: ids(parked) };
+}
 
 // The engine's answer when a seeded advance was asked for. Only loads delivered on or before
 // that day count, every earlier week counts as paid, and the advances given count as open.
@@ -104,18 +148,26 @@ export function assertPlan(plan: CarrierPlan): void {
   }
 
   keysAndReferences(rows);
-  loadsAndDays(rows, zone, lastDay);
+  loadsAndDays(rows, zone, lastDay, openWeek.start);
   receivables(plan, lastDay);
+  addendumPlants(plan);
 
-  // Victims: seven distinct drivers, never the hero.
+  // Victims: ten distinct drivers, never the hero.
   const codes = Object.values(victims);
   if (new Set(codes).size !== codes.length) fail("two problems share a victim");
   if (carrier.heroCode && codes.includes(carrier.heroCode)) fail("the hero is a victim");
 
-  // History: every driver settled once in each of the three paid weeks.
+  // History: every driver settled once in each of the three paid weeks, under the pay rules
+  // version in force at the week's start.
   if (rows.settlements.length !== rows.drivers.length * 3) fail("history is incomplete");
   if (rows.settlement_periods.filter((p) => p.status === "open").length !== 1) {
     fail("there must be exactly one open week");
+  }
+  for (const s of rows.settlements) {
+    const p = rows.settlement_periods.find((x) => x.id === s.period_id)!;
+    if (configFor(rows.pay_configs, p.period_start).id !== s.pay_config_id) {
+      fail("a settlement names the wrong pay rules version");
+    }
   }
 
   // The checks find the six planted pay problems and nothing else.
@@ -154,7 +206,6 @@ export function assertPlan(plan: CarrierPlan): void {
     const a = rows.advances.find((x) => x.id === id);
     if (!a || a.recovered_cents !== 0) fail("a planted advance was recovered");
   }
-  const config = checkInputOf(rows).config;
   const loads = checkInputOf(rows).loads;
   for (const a of rows.advances) {
     if (plantedAdvances.has(a.id)) continue;
@@ -163,7 +214,7 @@ export function assertPlan(plan: CarrierPlan): void {
     }
     const driver = rows.drivers.find((d) => d.id === a.driver_id)!;
     const decision = seededAdvanceDecision({
-      config,
+      config: payConfigOf(configForDay(rows.pay_configs, a.requested_on)),
       driver,
       loads,
       periods,
@@ -185,9 +236,7 @@ export function assertPlan(plan: CarrierPlan): void {
 }
 
 function keysAndReferences(rows: TenantRows): void {
-  const all = TENANT_TABLES.filter((t) => t !== "pay_configs").flatMap(
-    (t) => rows[t] as readonly { id: string }[],
-  );
+  const all = TENANT_TABLES.flatMap((t) => rows[t] as readonly { id: string }[]);
   unique(all, (x) => x.id, "id");
   unique(rows.customers, (x) => x.code, "customer code");
   unique(rows.drivers, (x) => x.code, "driver code");
@@ -207,7 +256,8 @@ function keysAndReferences(rows: TenantRows): void {
   unique(rows.invoices, (x) => x.invoice_number, "invoice number");
   unique(rows.customer_payments, (x) => x.payment_ref, "payment ref");
   unique(rows.payment_applications, (x) => `${x.payment_id}:${x.invoice_id}`, "application");
-  if (rows.pay_configs.length !== 1) fail("a tenant needs exactly one pay config");
+  unique(rows.pay_configs, (x) => x.effective_from, "pay config date");
+  if (rows.pay_configs.length === 0) fail("a tenant needs a pay config");
 
   const customers = idsOf(rows.customers);
   const drivers = idsOf(rows.drivers);
@@ -223,6 +273,7 @@ function keysAndReferences(rows: TenantRows): void {
   refs(rows.deduction_schedules, (x) => x.driver_id, drivers, "a schedule");
   refs(rows.settlements, (x) => x.period_id, idsOf(rows.settlement_periods), "a settlement");
   refs(rows.settlements, (x) => x.driver_id, drivers, "a settlement");
+  refs(rows.settlements, (x) => x.pay_config_id, idsOf(rows.pay_configs), "a settlement");
   refs(rows.settlement_lines, (x) => x.settlement_id, idsOf(rows.settlements), "a line");
   refs(rows.pay_items, (x) => x.driver_id, drivers, "a pay item");
   refs(rows.pay_items, (x) => x.settlement_id, idsOf(rows.settlements), "a pay item");
@@ -254,7 +305,12 @@ function keysAndReferences(rows: TenantRows): void {
   }
 }
 
-function loadsAndDays(rows: TenantRows, zone: string, lastDay: LocalDate): void {
+function loadsAndDays(
+  rows: TenantRows,
+  zone: string,
+  lastDay: LocalDate,
+  openStart: LocalDate,
+): void {
   const miles = new Map<string, number>();
   for (const m of rows.load_state_miles) {
     if (!/^[A-Z]{2}$/.test(m.state) || m.miles <= 0) fail("a state mile row is malformed");
@@ -263,8 +319,15 @@ function loadsAndDays(rows: TenantRows, zone: string, lastDay: LocalDate): void 
   for (const l of rows.loads) {
     if (miles.get(l.id) !== l.loaded_miles + l.empty_miles) fail("state miles do not add up");
     if (l.pickup_on > lastDay) fail("a load starts after the last seeded day");
+    const times = [
+      l.pickup_arrived_at,
+      l.pickup_departed_at,
+      l.delivery_arrived_at,
+      l.delivery_departed_at,
+    ];
     if (l.status === "in_transit") {
       if (l.delivered_on !== null || l.delivered_at !== null) fail("an in-transit load is delivered");
+      if (times.some((t) => t !== null)) fail("an in-transit load has stop times");
       continue;
     }
     if (l.delivered_on === null || l.delivered_at === null || l.driver_id === null) {
@@ -272,6 +335,19 @@ function loadsAndDays(rows: TenantRows, zone: string, lastDay: LocalDate): void 
     }
     if (localDateOf(l.delivered_at, zone) !== l.delivered_on) fail("a delivery date is off");
     if (l.delivered_on < l.pickup_on || l.delivered_on > lastDay) fail("a delivery is out of range");
+    // Stop times: all four or none (none only in the open week), in order, the delivery
+    // departure at the signed delivery, and the pickup departure on the pickup day.
+    if (times.every((t) => t === null)) {
+      if (l.delivered_on < openStart) fail("a settled-week load has no stop times");
+      continue;
+    }
+    if (times.some((t) => t === null)) fail("a load has only some stop times");
+    const ms = times.map((t) => Date.parse(t!));
+    if (ms.some((m, i) => Number.isNaN(m) || (i > 0 && m < ms[i - 1]))) {
+      fail("stop times are out of order");
+    }
+    if (ms[3] !== Date.parse(l.delivered_at)) fail("the delivery departure is not the delivery");
+    if (localDateOf(l.pickup_departed_at!, zone) !== l.pickup_on) fail("a pickup is off its day");
   }
   for (const f of rows.fuel_purchases) {
     if (localDateOf(f.purchased_at, zone) !== f.purchased_on) fail("a purchase date is off");
@@ -330,4 +406,71 @@ function receivables(plan: CarrierPlan, lastDay: LocalDate): void {
   }
   const inOpenWeek = rows.customer_payments.filter((p) => isWithin(p.received_on, periods[3]));
   if (inOpenWeek.length < 5) fail("too few payments arrived in the open week");
+}
+
+// The addendum B plants: the three fuel anomalies each found by exactly its rule, the unbilled
+// detention exactly the four planted loads and $1,350.00 over the four weeks, the payment styles
+// read back from the history, and the collections invoices open at their ages.
+function addendumPlants(plan: CarrierPlan): void {
+  const { rows, anchor, periods, planted, carrier } = plan;
+  const fuel = fuelAnomalyIds(rows);
+  if (
+    fuel.offRoute.join() !== planted.fuelOffRouteId ||
+    fuel.overTank.join() !== planted.fuelOverTankId ||
+    fuel.parked.join() !== planted.fuelParkedId
+  ) {
+    fail("the fuel rules do not find exactly the planted purchases");
+  }
+  const tank = rows.fuel_purchases.find((f) => f.id === planted.fuelOverTankId)!;
+  if (!rows.pay_items.some((i) => i.ref_table === "fuel_purchases" && i.ref_id === tank.id)) {
+    fail("the fill over the tank was not deducted");
+  }
+
+  const unbilled = findUnbilledDetention(
+    rows.loads.map(loadStopsOf),
+    rows.customers.map(customerOf),
+    rows.load_accessorials.map((a) => ({ loadId: a.load_id, kind: a.kind })),
+    { start: periods[0].start, end: periods[3].end },
+  );
+  const found = unbilled.map((u) => u.loadId).sort();
+  if (
+    found.join() !== [...planted.detentionLoadIds].sort().join() ||
+    sum(unbilled.map((u) => u.amountCents)) !== DETENTION_TOTAL_CENTS
+  ) {
+    fail("unbilled detention is not exactly the four plants");
+  }
+  for (const id of planted.detentionLoadIds) {
+    const invoice = rows.invoices.find((i) => i.load_id === id);
+    if (invoice?.status !== "open") fail("a detention load's invoice is not open");
+  }
+
+  const input = receivablesInputOf(rows, anchor);
+  rows.customers.forEach((c, i) => {
+    const style = customerClassOf(i);
+    if (style === "typical") return;
+    const { label } = paymentProfile(c.id, input, anchor);
+    if (label !== (style === "prompt" ? "reliable" : "repeat_late")) {
+      fail(`${style} payer ${c.code} reads as ${label}`);
+    }
+  });
+  for (const k of planted.collections) {
+    const invoice = rows.invoices.find((i) => i.id === k.invoiceId);
+    if (invoice?.status !== "open" || daysBetween(invoice.due_on, anchor) !== k.daysLate) {
+      fail("a collections invoice is not open at its age");
+    }
+  }
+
+  // Nothing new is planted on the hero.
+  const hero = carrier.heroCode ? rows.drivers.find((d) => d.code === carrier.heroCode)! : null;
+  if (hero) {
+    const fuelIds = [planted.fuelOffRouteId, planted.fuelOverTankId, planted.fuelParkedId];
+    const onHero = (loadId: string) =>
+      rows.loads.find((l) => l.id === loadId)?.driver_id === hero.id;
+    if (
+      rows.fuel_purchases.some((f) => fuelIds.includes(f.id) && f.driver_id === hero.id) ||
+      planted.detentionLoadIds.some(onHero)
+    ) {
+      fail("a new plant landed on the hero");
+    }
+  }
 }

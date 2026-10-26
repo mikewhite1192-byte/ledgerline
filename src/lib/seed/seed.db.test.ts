@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { configForDay } from "../data/config-version";
 import {
   countTenantRows,
   readAdvanceInput,
   readCheckInput,
+  readPayConfigFor,
   readReceivablesInput,
   readSettlementInput,
   readTenantRows,
 } from "../data/read";
-import { loadsOf, payConfigOf } from "../data/records";
+import { customerOf, loadStopsOf, loadsOf, payConfigOf } from "../data/records";
 import type { TenantRows } from "../data/rows";
 import { TENANT_TABLES, type TenantTable } from "../data/tables";
 import { createPgDb } from "../db/pg";
@@ -17,10 +19,15 @@ import type { Db } from "../db/types";
 import {
   advanceEligibility,
   findPaymentOnWrongInvoice,
+  findUnbilledDetention,
+  lastFullMonthBefore,
   runAllChecks,
   settleDriver,
+  sum,
 } from "../rules-engine";
-import { HERO_OPEN_WEEK, seededAdvanceDecision } from "./assert-plan";
+import { addDays } from "../time/local-date";
+import { customerClassOf } from "./ar-plan";
+import { DETENTION_TOTAL_CENTS, HERO_OPEN_WEEK, seededAdvanceDecision } from "./assert-plan";
 import { DEMO_CARRIERS, type DemoCarrier } from "./carriers";
 import golden from "./golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "./plan";
@@ -230,6 +237,117 @@ describe("seeding the demo carriers", () => {
     }
   });
 
+  it("finds the versioned rules and the planted cases by SQL over the seeded rows", async () => {
+    for (const [id, plan] of [
+      [A, planA],
+      [B, planB],
+    ] as const) {
+      const p = plan.planted;
+      const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+      const sql = <T>(text: string, params: string[] = []) =>
+        app.withTenant(id, (q) => q.query<T>(text, params));
+
+      // Every settlement names the newest version dated on or before its period's start.
+      const versions = await sql<{ effective_from: string; settled: number }>(
+        `SELECT p.effective_from, count(s.id) AS settled
+           FROM pay_configs p
+           LEFT JOIN settlements s ON s.tenant_id = p.tenant_id AND s.pay_config_id = p.id
+          WHERE p.tenant_id = current_tenant_id()
+          GROUP BY p.effective_from
+          ORDER BY p.effective_from`,
+      );
+      const settledUnder = (from: string) => {
+        const version = plan.rows.pay_configs.find((v) => v.effective_from === from)!;
+        return plan.rows.settlements.filter((s) => s.pay_config_id === version.id).length;
+      };
+      expect(versions.map((v) => [v.effective_from, Number(v.settled)])).toEqual(
+        plan.carrier.slug === "blue-ridge"
+          ? [
+              ["2026-10-05", settledUnder("2026-10-05")],
+              ["2026-10-19", settledUnder("2026-10-19")],
+            ]
+          : [["2026-10-04", plan.rows.settlements.length]],
+      );
+      const [{ wrong }] = await sql<{ wrong: number }>(
+        `SELECT count(*) AS wrong
+           FROM settlements s
+           JOIN settlement_periods sp ON sp.tenant_id = s.tenant_id AND sp.id = s.period_id
+           JOIN pay_configs p ON p.tenant_id = s.tenant_id AND p.id = s.pay_config_id
+          WHERE s.tenant_id = current_tenant_id()
+            AND p.effective_from IS DISTINCT FROM (
+              SELECT max(v.effective_from) FROM pay_configs v
+               WHERE v.tenant_id = s.tenant_id AND v.effective_from <= sp.period_start)`,
+      );
+      expect(Number(wrong)).toBe(0);
+
+      const overTank = await sql<{ id: string }>(
+        `SELECT f.id FROM fuel_purchases f
+           JOIN drivers d ON d.tenant_id = f.tenant_id AND d.id = f.driver_id
+          WHERE f.tenant_id = current_tenant_id() AND f.gallons_milli > d.tank_gallons * 1000`,
+      );
+      const offRoute = await sql<{ id: string }>(
+        `SELECT f.id FROM fuel_purchases f
+           JOIN loads l ON l.tenant_id = f.tenant_id AND l.id = f.load_id
+          WHERE f.tenant_id = current_tenant_id()
+            AND f.purchased_on BETWEEN l.pickup_on AND coalesce(l.delivered_on, f.purchased_on)
+            AND NOT EXISTS (
+              SELECT 1 FROM load_state_miles m
+               WHERE m.tenant_id = l.tenant_id AND m.load_id = l.id AND m.state = f.state)`,
+      );
+      const parked = await sql<{ id: string }>(
+        `SELECT f.id FROM fuel_purchases f
+          WHERE f.tenant_id = current_tenant_id() AND f.paid_with = 'company_card'
+            AND NOT EXISTS (
+              SELECT 1 FROM loads l
+               WHERE l.tenant_id = f.tenant_id AND l.driver_id = f.driver_id
+                 AND l.pickup_on <= f.purchased_on
+                 AND f.purchased_on <= coalesce(l.delivered_on, f.purchased_on))
+            AND NOT EXISTS (
+              SELECT 1 FROM driver_days d
+               WHERE d.tenant_id = f.tenant_id AND d.driver_id = f.driver_id
+                 AND d.day = f.purchased_on)`,
+      );
+      expect([ids(overTank), ids(offRoute), ids(parked)]).toEqual([
+        [p.fuelOverTankId],
+        [p.fuelOffRouteId],
+        [p.fuelParkedId],
+      ]);
+
+      const rows = await app.withTenant(id, readTenantRows);
+      const unbilled = findUnbilledDetention(
+        rows.loads.map(loadStopsOf),
+        rows.customers.map(customerOf),
+        rows.load_accessorials.map((a) => ({ loadId: a.load_id, kind: a.kind })),
+        lastFullMonthBefore(ANCHOR),
+      );
+      expect(unbilled.map((u) => u.loadId).sort()).toEqual([...p.detentionLoadIds].sort());
+      expect(sum(unbilled.map((u) => u.amountCents))).toBe(DETENTION_TOTAL_CENTS);
+
+      // Prompt payers never leave an invoice open more than 30 days; slow payers do.
+      const pastDue = await sql<{ code: string }>(
+        `SELECT DISTINCT c.code FROM invoices i
+           JOIN customers c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id
+          WHERE i.tenant_id = current_tenant_id()
+            AND i.status IN ('open', 'partially_paid') AND i.due_on < $1::date`,
+        [addDays(ANCHOR, -30)],
+      );
+      const classes = pastDue.map((r) => customerClassOf(Number(r.code.slice(-2)) - 1));
+      expect(classes).not.toContain("prompt");
+      expect(classes).toContain("slow");
+    }
+
+    const blueRidge = await app.withTenant(A, async (q) => [
+      await readPayConfigFor(q, "2026-10-12"),
+      await readPayConfigFor(q, "2026-10-19"),
+    ]);
+    expect(blueRidge.map((v) => [v.effective_from, v.insurance_per_day_cents, v.source])).toEqual([
+      ["2026-10-05", 1050, "seed"],
+      ["2026-10-19", 1100, "seed"],
+    ]);
+    const prairieWind = await app.withTenant(B, (q) => readPayConfigFor(q, "2026-10-11"));
+    expect(prairieWind.effective_from).toBe("2026-10-04");
+  });
+
   it("answers an advance request from rows read back as the plan does", async () => {
     const hero = heroOf(planA);
     const at = "2026-11-01T14:30:00.000Z";
@@ -237,7 +355,7 @@ describe("seeding the demo carriers", () => {
     expect(input.requestedOn).toBe("2026-11-01");
     expect(advanceEligibility(input)).toEqual(
       seededAdvanceDecision({
-        config: payConfigOf(planA.rows.pay_configs[0]),
+        config: payConfigOf(configForDay(planA.rows.pay_configs, "2026-11-01")),
         driver: hero,
         loads: loadsOf(planA.rows.loads, planA.rows.load_state_miles, planA.rows.load_accessorials),
         periods: planA.periods,

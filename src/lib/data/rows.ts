@@ -11,6 +11,8 @@ export type CustomerRow = {
   terms_days: number;
   city: string;
   state: string;
+  detention_free_minutes: number;
+  detention_hourly_cents: number;
 };
 
 export type DriverRow = {
@@ -27,6 +29,7 @@ export type DriverRow = {
   advance_limit_cents: number | null;
   escrow_balance_cents: number;
   truck_unit: string | null;
+  tank_gallons: number;
   active_from: string;
   active_to: string | null;
 };
@@ -48,6 +51,10 @@ export type LoadRow = {
   empty_miles: number;
   linehaul_cents: number | null;
   fuel_surcharge_cents: number;
+  pickup_arrived_at: string | null;
+  pickup_departed_at: string | null;
+  delivery_arrived_at: string | null;
+  delivery_departed_at: string | null;
 };
 
 export type LoadStateMilesRow = { id: string; load_id: string; state: string; miles: number };
@@ -83,7 +90,8 @@ export type FuelPurchaseRow = {
   purchase_ref: string;
 };
 
-export type PayConfigRow = {
+// The knobs of one pay rules version, without its key and date.
+export type PayConfigKnobs = {
   week_start_dow: number;
   percent_base: "linehaul" | "linehaul_fsc" | "linehaul_fsc_accessorials";
   empty_miles_paid_bps: number;
@@ -98,6 +106,13 @@ export type PayConfigRow = {
   advance_limit_default_cents: number;
   advance_max_bps_of_earned: number;
   advance_min_cents: number;
+};
+
+export type PayConfigRow = PayConfigKnobs & {
+  id: string;
+  effective_from: string;
+  note: string | null;
+  source: "seed" | "ui";
 };
 
 export type DeductionScheduleRow = {
@@ -122,6 +137,7 @@ export type SettlementRow = {
   id: string;
   period_id: string;
   driver_id: string;
+  pay_config_id: string;
   status: "draft" | "approved" | "paid";
   gross_cents: number;
   deductions_cents: number;
