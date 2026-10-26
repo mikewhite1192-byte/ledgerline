@@ -9,7 +9,7 @@ let db: TenantDb | undefined;
 
 // The app's one database handle, built on first use (never at import, so the health route and
 // the build need no database). Production is the Data API, always; DATABASE_URL is local only.
-// Nothing but src/lib/tenant calls this.
+// Nothing but src/lib/tenant and the model spend ledger in src/lib/ai call this.
 export function getDb(): TenantDb {
   if (db) return db;
   const clusterArn = process.env.DB_CLUSTER_ARN;

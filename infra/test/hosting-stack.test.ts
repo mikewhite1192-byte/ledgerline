@@ -1,9 +1,18 @@
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { App } from "aws-cdk-lib";
 import {
+  AI_CREDIT_CENTS,
+  BASETEN_API_KEY_SECRET_NAME,
   BRANCH_ENV_NAMES,
   DATA_API_ACTIONS,
   GITHUB_TOKEN_SECRET_NAME,
+  HostingStack,
+  META_API_KEY_SECRET_NAME,
   REPOSITORY_URL,
 } from "../lib/hosting-stack";
 import { asArray, joined, policyStatements, synthAll } from "./synth";
@@ -103,7 +112,7 @@ describe("HostingStack", () => {
     });
   });
 
-  it("lets the runtime call the Data API and read the app secret, nothing more", () => {
+  it("lets the runtime call the Data API and read the app secret and the model keys, nothing more", () => {
     const [, compute] = role("ComputeRole");
     const statements = inlineStatements(compute);
     expect(statements).toHaveLength(2);
@@ -115,9 +124,28 @@ describe("HostingStack", () => {
     expect(JSON.stringify(dataApi.Resource)).toContain("PublishOutputRefCluster");
 
     expect(secret.Action).toBe("secretsmanager:GetSecretValue");
-    expect(asArray(secret.Resource)).toHaveLength(1);
-    expect(JSON.stringify(secret.Resource)).toContain("PublishOutputRefAppSecret");
+    // The policy minimizer orders resources, so they are matched by content, not position.
+    const resources = asArray(secret.Resource);
+    expect(resources).toHaveLength(3);
+    const appSecret = resources.filter((r) =>
+      JSON.stringify(r).includes("PublishOutputRefAppSecret"),
+    );
+    expect(appSecret).toHaveLength(1);
     expect(JSON.stringify(secret.Resource)).not.toMatch(/AdminSecret|ClusterSecret/);
+    // Each model key by its exact name. The only wildcard is the six-character suffix Secrets
+    // Manager appends to every secret ARN, one "?" per character.
+    const modelKeys = resources
+      .filter((r) => r !== appSecret[0])
+      .map(joined)
+      .sort();
+    const secretArn = "arn:aws:secretsmanager:us-east-2:${AWS::AccountId}:secret:";
+    expect(modelKeys).toEqual(
+      [
+        `${secretArn}${META_API_KEY_SECRET_NAME}-??????`,
+        `${secretArn}${BASETEN_API_KEY_SECRET_NAME}-??????`,
+      ].sort(),
+    );
+    for (const arn of modelKeys) expect(arn).not.toContain("*");
   });
 
   it("has no standalone IAM policy and no statement on every resource", () => {
@@ -127,7 +155,7 @@ describe("HostingStack", () => {
     }
   });
 
-  it("sets the compute role and the five server settings on the main branch", () => {
+  it("sets the compute role and the ten server settings on the main branch", () => {
     const [computeId] = role("ComputeRole");
     const branches = Object.values(template.findResources("AWS::Amplify::Branch"));
     expect(branches).toHaveLength(1);
@@ -135,7 +163,7 @@ describe("HostingStack", () => {
     expect(props.ComputeRoleArn).toEqual({ "Fn::GetAtt": [computeId, "Arn"] });
     const vars = props.EnvironmentVariables as { Name: string; Value: unknown }[];
     expect(vars.map((e) => e.Name)).toEqual(BRANCH_ENV_NAMES);
-    expect(BRANCH_ENV_NAMES).toHaveLength(5);
+    expect(BRANCH_ENV_NAMES).toHaveLength(10);
 
     // Each value, followed to the stack that exports it, is the resource it names: the cluster,
     // the app's own database login (never the admin secret), the user pool and its client.
@@ -148,6 +176,53 @@ describe("HostingStack", () => {
     expect(value.DB_NAME).toBe("payday");
     expect(value.COGNITO_USER_POOL_ID).toEqual(auth.resolve(auth.userPool.userPoolId));
     expect(value.COGNITO_CLIENT_ID).toEqual(auth.resolve(auth.client.userPoolClientId));
+    // The spend cap, the model ids and the key secret names are plain values in this stack.
+    expect(value).toMatchObject({
+      AI_SPEND_CAP_CENTS: "12000",
+      META_MODEL_ID: "muse-spark-1.3",
+      META_API_KEY_SECRET_NAME,
+      BASETEN_MODEL_ID: "meta-models/muse-spark-open-1026",
+      BASETEN_API_KEY_SECRET_NAME,
+    });
+    // Names only: no variable carries a key.
+    expect(BRANCH_ENV_NAMES.filter((n) => /_KEY$|TOKEN|PASSWORD/.test(n))).toEqual([]);
+  });
+
+  it("copies exactly the branch variables into the server build, and never a raw key", () => {
+    const spec = readFileSync(fileURLToPath(new URL("../../amplify.yml", import.meta.url)), "utf8");
+    const copied = [...spec.matchAll(/-e '\^([A-Z_]+)='/g)].map((m) => m[1]);
+    expect(copied).toEqual([
+      ...BRANCH_ENV_NAMES.slice(0, 5),
+      "AWS_REGION",
+      ...BRANCH_ENV_NAMES.slice(5),
+    ]);
+  });
+
+  it("refuses a spend cap that is not a whole number of cents up to the credit", () => {
+    // An App makes its output folder when it is built, so each one gets a folder this test owns.
+    const outdir = mkdtempSync(join(tmpdir(), "payday-hosting-cap-test-"));
+    try {
+      for (const aiSpendCapCents of [0, -1, 12.5, AI_CREDIT_CENTS + 1, Number.NaN]) {
+        const app = new App({ outdir: join(outdir, String(aiSpendCapCents)) });
+        expect(
+          () =>
+            new HostingStack(app, "Hosting", {
+              env: { region: "us-east-2" },
+              clusterArn: "arn:aws:rds:us-east-2:000000000000:cluster:test",
+              appSecret: synth.stacks.data.appSecret,
+              dbName: "payday",
+              userPoolId: "pool",
+              userPoolClientId: "client",
+              aiSpendCapCents,
+              metaModelId: "muse-spark-1.3",
+              basetenModelId: "meta-models/muse-spark-open-1026",
+            }),
+          String(aiSpendCapCents),
+        ).toThrow(/aiSpendCapCents/);
+      }
+    } finally {
+      rmSync(outdir, { recursive: true, force: true });
+    }
   });
 
   it("gives Amplify a separate service role, assumable only for apps in this account", () => {

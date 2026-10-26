@@ -1,11 +1,17 @@
 import { SecretValue, Stack, type StackProps } from "aws-cdk-lib";
 import { CfnApp, CfnBranch } from "aws-cdk-lib/aws-amplify";
 import { PolicyDocument, PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
-import type { ISecret } from "aws-cdk-lib/aws-secretsmanager";
+import { Secret, type ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
 
 export const REPOSITORY_URL = "https://github.com/mikewhite1192-byte/payday-copilot";
 export const GITHUB_TOKEN_SECRET_NAME = "payday-copilot/github-token";
+// Model API keys, stored by hand (each holds the raw key as its secret string). The server reads
+// them by name; the branch variables carry only the names.
+export const META_API_KEY_SECRET_NAME = "payday-copilot/meta-api-key";
+export const BASETEN_API_KEY_SECRET_NAME = "payday-copilot/baseten-api-key";
+// The model credit, in cents. A spend cap above it is refused at synth and by the app.
+export const AI_CREDIT_CENTS = 15_000;
 
 // The Data API calls the SSR code makes. Nothing else on the cluster, and never the admin secret.
 export const DATA_API_ACTIONS = [
@@ -16,14 +22,19 @@ export const DATA_API_ACTIONS = [
   "rds-data:BatchExecuteStatement",
 ];
 
-// Values are ARNs and ids, not secrets. amplify.yml copies them into .env.production at build
-// time so the Next.js server can read them.
+// Values are ARNs, ids, secret names and the spend cap, never secrets. amplify.yml copies them
+// into .env.production at build time so the Next.js server can read them.
 export const BRANCH_ENV_NAMES = [
   "DB_CLUSTER_ARN",
   "DB_SECRET_ARN",
   "DB_NAME",
   "COGNITO_USER_POOL_ID",
   "COGNITO_CLIENT_ID",
+  "AI_SPEND_CAP_CENTS",
+  "META_MODEL_ID",
+  "META_API_KEY_SECRET_NAME",
+  "BASETEN_MODEL_ID",
+  "BASETEN_API_KEY_SECRET_NAME",
 ];
 
 export type HostingStackProps = StackProps & {
@@ -32,6 +43,10 @@ export type HostingStackProps = StackProps & {
   dbName: string;
   userPoolId: string;
   userPoolClientId: string;
+  // The app refuses every model call once spent plus reserved would pass this.
+  aiSpendCapCents: number;
+  metaModelId: string;
+  basetenModelId: string;
 };
 
 // Amplify Hosting for the Next.js app. No inline build spec: Amplify reads amplify.yml from the
@@ -41,6 +56,10 @@ export class HostingStack extends Stack {
     super(scope, id, props);
 
     const { account, partition, region } = Stack.of(this);
+    const cap = props.aiSpendCapCents;
+    if (!Number.isInteger(cap) || cap < 1 || cap > AI_CREDIT_CENTS) {
+      throw new Error(`aiSpendCapCents must be a whole number from 1 to ${AI_CREDIT_CENTS}`);
+    }
 
     // Amplify's service role, used here only to write SSR logs to CloudWatch. Amplify's docs list
     // these four actions. DescribeLogGroups is a list call, scoped the way AWS's own Amplify policy
@@ -91,11 +110,22 @@ export class HostingStack extends Stack {
       iamServiceRole: serviceRole.roleArn,
     });
 
-    // The SSR runtime's credentials: the Data API on this cluster and the app's own database
-    // login, nothing else. No Cognito permission is needed (sign-in is an unauthenticated API).
-    // Set on the branch, not the app, as Amplify recommends for a public repository.
+    // The model API keys, by exact name. fromSecretNameV2 gives the ARN without the suffix
+    // Secrets Manager appends to every secret ARN ("-" and six random characters), so "-??????"
+    // (exactly six, one per "?") is the narrowest pattern that matches the named secret and no
+    // other. It is what grantRead would use, but inline and with GetSecretValue only.
+    // A grant on a secret that does not exist yet is valid IAM; the Baseten one waits for its key.
+    const modelKeyArns = [
+      Secret.fromSecretNameV2(this, "MetaApiKey", META_API_KEY_SECRET_NAME),
+      Secret.fromSecretNameV2(this, "BasetenApiKey", BASETEN_API_KEY_SECRET_NAME),
+    ].map((secret) => `${secret.secretArn}-??????`);
+
+    // The SSR runtime's credentials: the Data API on this cluster, the app's own database login
+    // and the two model API keys, nothing else. No Cognito permission is needed (sign-in is an
+    // unauthenticated API). Set on the branch, not the app, as Amplify recommends for a public
+    // repository.
     const computeRole = new Role(this, "ComputeRole", {
-      description: "Payday Copilot SSR runtime: Data API and the app database login only",
+      description: "Payday Copilot SSR runtime: Data API, the app database login and model keys",
       assumedBy: new ServicePrincipal("amplify.amazonaws.com"),
       inlinePolicies: {
         data: new PolicyDocument({
@@ -103,7 +133,7 @@ export class HostingStack extends Stack {
             new PolicyStatement({ actions: DATA_API_ACTIONS, resources: [props.clusterArn] }),
             new PolicyStatement({
               actions: ["secretsmanager:GetSecretValue"],
-              resources: [props.appSecret.secretArn],
+              resources: [props.appSecret.secretArn, ...modelKeyArns],
             }),
           ],
         }),
@@ -116,6 +146,11 @@ export class HostingStack extends Stack {
       DB_NAME: props.dbName,
       COGNITO_USER_POOL_ID: props.userPoolId,
       COGNITO_CLIENT_ID: props.userPoolClientId,
+      AI_SPEND_CAP_CENTS: String(cap),
+      META_MODEL_ID: props.metaModelId,
+      META_API_KEY_SECRET_NAME,
+      BASETEN_MODEL_ID: props.basetenModelId,
+      BASETEN_API_KEY_SECRET_NAME,
     };
 
     new CfnBranch(this, "MainBranch", {

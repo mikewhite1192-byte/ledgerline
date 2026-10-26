@@ -5,6 +5,8 @@
 export type Flags = {
   // Model calls through src/lib/ai. Off until the wrapper and its spend cap are live.
   aiEnabled: boolean;
+  // The model connection check on the home page; on only to prove a deploy.
+  aiProofRoute: boolean;
   // Which model triages inbound email: "meta" (Muse Spark) until Baseten credits land.
   triageProvider: "meta" | "baseten";
   // Payouts: the mock card-load adapter unless Stripe test mode is switched on.
@@ -17,6 +19,7 @@ export type Flags = {
 
 export const flags: Flags = {
   aiEnabled: false,
+  aiProofRoute: false,
   triageProvider: "meta",
   paymentProvider: "mock",
   accountingEnabled: false,
