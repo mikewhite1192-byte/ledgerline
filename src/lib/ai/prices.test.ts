@@ -1,52 +1,116 @@
 import { describe, expect, it } from "vitest";
 import {
   actualCost,
+  audioReserve,
   capNanocents,
   centsToDisplay,
   CREDIT_CENTS,
   dollarsToDisplay,
   estimateReserve,
+  IMAGE_NANOCENTS,
+  MEDIA_RESERVE_TOKENS,
+  mediaReserveTokens,
+  meteredCost,
   NANOCENTS_PER_CENT,
+  PDF_PAGE_RESERVE_TOKENS,
   priceFor,
+  SAM_NANOCENTS,
+  VOICE_NANOCENTS_PER_SECOND,
+  wonderCapNanocents,
+  type Price,
+  type TokenPrice,
 } from "./prices";
+
+function tokens(price: Price | null): TokenPrice {
+  if (price?.unit !== "tokens") throw new Error("not a token price");
+  return price;
+}
+
+const SPARK = { unit: "tokens", input: 125_000, cached: 15_000, output: 425_000 };
 
 describe("prices", () => {
   it("lists Meta's Standard prices in nanocents per token, exactly", () => {
     // $1.25, $0.15 and $4.25 per million tokens.
     for (const model of ["muse-spark-1.3", "muse-spark-1.2", "muse-spark-1.1"]) {
-      expect(priceFor("meta", model), model).toEqual({
-        input: 125_000,
-        cached: 15_000,
-        output: 425_000,
-      });
+      expect(priceFor("spark", model), model).toEqual(SPARK);
     }
-    expect(priceFor("baseten", "meta-models/muse-spark-open-1026")).toEqual({
-      input: 125_000,
-      cached: 15_000,
-      output: 425_000,
+    expect(priceFor("spark_open", "meta-models/muse-spark-open-1026")).toEqual(SPARK);
+    // $4.00, $0.20 and $20.00 per million tokens.
+    expect(priceFor("wonder", "muse-wonder-1.0")).toEqual({
+      unit: "tokens",
+      input: 400_000,
+      cached: 20_000,
+      output: 2_000_000,
     });
-    // A million output tokens is 425 cents.
-    expect(1_000_000 * priceFor("meta", "muse-spark-1.3")!.output).toBe(425 * NANOCENTS_PER_CENT);
+    // A million output tokens is 425 cents on Spark and 2,000 on Wonder.
+    expect(1_000_000 * tokens(priceFor("spark", "muse-spark-1.3")).output).toBe(
+      425 * NANOCENTS_PER_CENT,
+    );
+    expect(1_000_000 * tokens(priceFor("wonder", "muse-wonder-1.0")).output).toBe(
+      2_000 * NANOCENTS_PER_CENT,
+    );
   });
 
-  it("refuses models it has no price for, the contributor tier and prototype keys included", () => {
+  it("lists the Spark Contributor tier at its own prices, exactly", () => {
+    // $0.10, $0.002 and $0.20 per million tokens.
+    expect(priceFor("spark", "muse-spark-1.3-contributor")).toEqual({
+      unit: "tokens",
+      input: 10_000,
+      cached: 200,
+      output: 20_000,
+    });
+    const contributor = tokens(priceFor("spark", "muse-spark-1.3-contributor"));
+    expect(1_000_000 * contributor.output).toBe(20 * NANOCENTS_PER_CENT);
+    // The measured 15-in, 64-out Spark answer: 0.029075 cents Standard, 0.001430 Contributor.
+    const usage = { input: 15, cached: 0, output: 64, reasoning: 62 };
+    expect(actualCost(contributor, usage)).toBe(15 * 10_000 + 64 * 20_000);
+    expect(meteredCost(contributor, { unit: "tokens", usage })).toBe(1_430_000);
+    // No other slot has the tier.
+    expect(priceFor("wonder", "muse-wonder-1.0-contributor")).toBeNull();
+    expect(priceFor("spark_open", "muse-spark-1.3-contributor")).toBeNull();
+  });
+
+  it("lists the per-second and per-image prices in nanocents, exactly", () => {
+    // $0.18 an hour is 18 cents / 3,600 s.
+    expect(VOICE_NANOCENTS_PER_SECOND * 3_600).toBe(18 * NANOCENTS_PER_CENT);
+    expect(priceFor("voice", "muse-voice-transcribe-1.0")).toEqual({
+      unit: "audio_seconds",
+      perSecond: 5_000_000,
+    });
+    // $0.01 an image.
+    expect(IMAGE_NANOCENTS).toBe(NANOCENTS_PER_CENT);
+    expect(priceFor("image", "muse-image-1.0")).toEqual({ unit: "images", perImage: 1e9 });
+    // $2.50 per 1,000 images.
+    expect(SAM_NANOCENTS * 1_000).toBe(250 * NANOCENTS_PER_CENT);
+    expect(priceFor("sam", "sam-3.1")).toEqual({ unit: "images", perImage: 250_000_000 });
+  });
+
+  it("refuses models it has no price for, unlisted Contributor ids and prototype keys included", () => {
     for (const model of [
-      "muse-spark-1.3-contributor",
       "muse-spark-1.2-contributor",
+      "muse-spark-1.3-Contributor",
       "muse-image-1.0",
       "muse-spark",
       "",
       "constructor",
       "__proto__",
     ]) {
-      expect(priceFor("meta", model), model).toBeNull();
+      expect(priceFor("spark", model), model).toBeNull();
     }
-    expect(priceFor("baseten", "muse-spark-1.3")).toBeNull();
-    expect(priceFor("meta", "meta-models/muse-spark-open-1026")).toBeNull();
+    // An id is priced only in its own slot.
+    expect(priceFor("spark_open", "muse-spark-1.3")).toBeNull();
+    expect(priceFor("spark", "meta-models/muse-spark-open-1026")).toBeNull();
+    expect(priceFor("spark", "meta-models/muse-spark-open")).toBeNull();
+    expect(priceFor("spark_open", "meta-models/muse-spark-open")).toBeNull();
+    expect(priceFor("wonder", "muse-spark-1.3")).toBeNull();
+    expect(priceFor("spark", "muse-wonder-1.0")).toBeNull();
+    expect(priceFor("voice", "muse-image-1.0")).toBeNull();
+    expect(priceFor("image", "sam-3.1")).toBeNull();
+    expect(priceFor("sam", "__proto__")).toBeNull();
   });
 
   it("reserves a token per two request bytes of input plus every output token", () => {
-    const price = priceFor("meta", "muse-spark-1.3")!;
+    const price = tokens(priceFor("spark", "muse-spark-1.3"));
     // 400 bytes is 200 tokens; 256 output tokens.
     expect(estimateReserve(price, 400, 256)).toBe(200 * 125_000 + 256 * 425_000);
     expect(estimateReserve(price, 400, 256)).toBe(133_800_000);
@@ -58,8 +122,46 @@ describe("prices", () => {
     expect(estimateReserve(price, 300, 1024)).toBeLessThan(NANOCENTS_PER_CENT / 2);
   });
 
+  it("reserves 1,600 input tokens per image and 4,000 per PDF page", () => {
+    expect(MEDIA_RESERVE_TOKENS).toBe(1_600);
+    expect(PDF_PAGE_RESERVE_TOKENS).toBe(4_000);
+    expect(mediaReserveTokens(2, 3)).toBe(2 * 1_600 + 3 * 4_000);
+    const price = tokens(priceFor("spark", "muse-spark-1.3"));
+    // 400 bytes of text, two images and a three-page PDF, 256 output tokens.
+    expect(estimateReserve(price, 400, 256, mediaReserveTokens(2, 3))).toBe(
+      (200 + 15_200) * 125_000 + 256 * 425_000,
+    );
+  });
+
+  it("reserves every second of audio, rounded up, and one more", () => {
+    // 2.18 s at 16 kHz: 3 s rounded up, plus 1.
+    expect(audioReserve(VOICE_NANOCENTS_PER_SECOND, 34_901, 16_000)).toBe(4 * 5_000_000);
+    // Exactly 3 s at 24 kHz: 3 plus 1.
+    expect(audioReserve(VOICE_NANOCENTS_PER_SECOND, 72_000, 24_000)).toBe(4 * 5_000_000);
+    // The 600 s limit reserves 601 s: about 3 cents.
+    expect(audioReserve(VOICE_NANOCENTS_PER_SECOND, 600 * 16_000, 16_000)).toBe(3_005_000_000);
+  });
+
+  it("costs an answer by what it was metered in, and nothing else", () => {
+    const spark = priceFor("spark", "muse-spark-1.3")!;
+    const voice = priceFor("voice", "muse-voice-transcribe-1.0")!;
+    const image = priceFor("image", "muse-image-1.0")!;
+    const sam = priceFor("sam", "sam-3.1")!;
+    const usage = { input: 15, cached: 0, output: 64, reasoning: 62 };
+    expect(meteredCost(spark, { unit: "tokens", usage })).toBe(29_075_000);
+    // The measured transcription: 2,240 ms is metered as 2 whole seconds.
+    expect(meteredCost(voice, { unit: "audio_seconds", seconds: 2 })).toBe(10_000_000);
+    expect(meteredCost(image, { unit: "images", count: 1 })).toBe(NANOCENTS_PER_CENT);
+    expect(meteredCost(image, { unit: "images", count: 0 })).toBe(0);
+    expect(meteredCost(sam, { unit: "images", count: 1 })).toBe(250_000_000);
+    // A mismatch is not a cost.
+    expect(meteredCost(spark, { unit: "images", count: 1 })).toBeNull();
+    expect(meteredCost(voice, { unit: "tokens", usage })).toBeNull();
+    expect(meteredCost(image, { unit: "audio_seconds", seconds: 1 })).toBeNull();
+  });
+
   it("charges uncached input, cached input and output (reasoning is inside output)", () => {
-    const price = priceFor("meta", "muse-spark-1.3")!;
+    const price = tokens(priceFor("spark", "muse-spark-1.3"));
     // in=134 cached=0 out=212: 16,750,000 + 90,100,000 nanocents, shown rounded up.
     const example = actualCost(price, { input: 134, cached: 0, output: 212, reasoning: 150 });
     expect(example).toBe(134 * 125_000 + 212 * 425_000);
@@ -96,6 +198,18 @@ describe("prices", () => {
     }
     // The largest cap stays a safe integer.
     expect(Number.isSafeInteger(capNanocents("15000"))).toBe(true);
+  });
+
+  it("reads the Wonder cap as whole cents up to the overall cap, and refuses anything else", () => {
+    const overall = capNanocents("12000");
+    expect(wonderCapNanocents("3000", overall)).toBe(3_000 * NANOCENTS_PER_CENT);
+    expect(wonderCapNanocents("12000", overall)).toBe(12_000 * NANOCENTS_PER_CENT);
+    expect(wonderCapNanocents("1", overall)).toBe(NANOCENTS_PER_CENT);
+    for (const bad of [undefined, "", "0", "-1", "12001", "30.00", " 3000", "abc"]) {
+      expect(wonderCapNanocents(bad, overall), String(bad)).toBeNull();
+    }
+    // No overall cap means no Wonder cap either.
+    expect(wonderCapNanocents("3000", null)).toBeNull();
   });
 
   it("rounds displays up, never down", () => {

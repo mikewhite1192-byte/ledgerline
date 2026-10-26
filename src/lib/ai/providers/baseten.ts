@@ -2,8 +2,8 @@ import type { AiRequest, AiToolCall, CallOutcome } from "../types";
 import { asArray, asRecord, upstreamIdFrom, usageFrom } from "./http";
 
 // Muse Spark Open through Baseten's OpenAI-compatible Chat Completions
-// (https://docs.baseten.co/development/model-apis/overview). Dark until Baseten credits land:
-// the model slug, the usage field names and tool calling here are unverified against the network.
+// (https://docs.baseten.co/development/model-apis/overview). Text and tools only: structured
+// output and attachments are refused for this target until they are checked here.
 export const BASETEN_CHAT_URL = "https://inference.baseten.co/v1/chat/completions";
 
 export type BasetenOptions = { maxOutputTokens: number };
@@ -83,9 +83,11 @@ export function parseBaseten(json: unknown, httpStatus: number): CallOutcome {
     status: choice.finish_reason === "length" ? "incomplete" : "ok",
     httpStatus,
     upstreamId: upstreamIdFrom(body.id),
-    usage,
-    text: typeof message.content === "string" ? message.content : "",
-    toolCalls,
-    replay: [],
+    metered: { unit: "tokens", usage },
+    value: {
+      text: typeof message.content === "string" ? message.content : "",
+      toolCalls,
+      replay: [],
+    },
   };
 }

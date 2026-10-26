@@ -17,10 +17,8 @@ const answered: CallOutcome = {
   status: "ok",
   httpStatus: 200,
   upstreamId: "resp_1",
-  usage: { input: 1, cached: 0, output: 1, reasoning: 0 },
-  text: "hi",
-  toolCalls: [],
-  replay: [],
+  metered: { unit: "tokens", usage: { input: 1, cached: 0, output: 1, reasoning: 0 } },
+  value: { text: "hi", toolCalls: [], replay: [] },
 };
 
 function respond(status: number, headers?: Record<string, string>) {
@@ -169,6 +167,9 @@ describe("usageFrom", () => {
 describe("upstreamIdFrom", () => {
   it("keeps a plain id and drops anything else", () => {
     expect(upstreamIdFrom("resp_abc-123")).toBe("resp_abc-123");
+    // The transcription session id has a slash and a colon in it.
+    expect(upstreamIdFrom("asr/2026-10-26:ab12.cd")).toBe("asr/2026-10-26:ab12.cd");
+    expect(upstreamIdFrom("a<b")).toBeNull();
     expect(upstreamIdFrom("a".repeat(121))).toBeNull();
     expect(upstreamIdFrom("resp 1\nai: forged log line")).toBeNull();
     expect(upstreamIdFrom(42)).toBeNull();

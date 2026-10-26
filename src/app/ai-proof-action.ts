@@ -23,7 +23,7 @@ export async function proofCallAction(): Promise<ProofState> {
   const session = await requireSession();
   try {
     const result = await complete(
-      "meta",
+      "spark",
       {
         purpose: "proof",
         messages: [

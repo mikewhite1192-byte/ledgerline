@@ -30,23 +30,36 @@ const session = (tenantId: string): Session => ({
 
 const reservation = (over: Partial<Reservation> = {}): Reservation => ({
   callId: randomUUID(),
+  target: "spark",
   provider: "meta",
   model: "muse-spark-1.3",
+  kind: "text",
   purpose: "proof",
+  reasoningEffort: "low",
+  traceId: null,
   reserveNanocents: RESERVE,
   capNanocents: Number.MAX_SAFE_INTEGER,
+  wonderCapNanocents: null,
   ...over,
 });
+
+const wonderReservation = (over: Partial<Reservation> = {}): Reservation =>
+  reservation({
+    target: "wonder",
+    model: "muse-wonder-1.0",
+    wonderCapNanocents: Number.MAX_SAFE_INTEGER,
+    ...over,
+  });
 
 const spend = () => app.withTenant(A, (q) => readSpend(q));
 
 const callRow = (tenantId: string, callId: string) =>
   admin.withTenant(tenantId, async (q) => {
     const [row] = await q.query<Record<string, unknown>>(
-      `SELECT status, failure, reserved_nanocents, cost_nanocents, input_tokens, cached_tokens,
-              output_tokens, reasoning_tokens, upstream_id, http_status, duration_ms,
-              settled_at IS NOT NULL AS settled
-         FROM ai_calls WHERE id = CAST($1 AS uuid)`,
+      `SELECT target, kind, reasoning_effort, trace_id, status, failure, reserved_nanocents,
+              cost_nanocents, input_tokens, cached_tokens, output_tokens, reasoning_tokens, units,
+              upstream_id, http_status, duration_ms, settled_at IS NOT NULL AS settled
+         FROM model_calls WHERE id = CAST($1 AS uuid)`,
       [callId],
     );
     return row;
@@ -91,9 +104,16 @@ describe("model spend ledger", () => {
         q.execute(
           `UPDATE ops.ai_spend
               SET spent_nanocents = CAST($1 AS bigint), reserved_nanocents = CAST($2 AS bigint),
-                  calls = CAST($3 AS bigint)
+                  calls = CAST($3 AS bigint), wonder_spent_nanocents = CAST($4 AS bigint),
+                  wonder_reserved_nanocents = CAST($5 AS bigint)
             WHERE id = 1`,
-          [before.spentNanocents, before.reservedNanocents, before.calls],
+          [
+            before.spentNanocents,
+            before.reservedNanocents,
+            before.calls,
+            before.wonderSpentNanocents,
+            before.wonderReservedNanocents,
+          ],
         ),
       );
     }
@@ -108,13 +128,18 @@ describe("model spend ledger", () => {
 
   it("reserves, then settles an answer to its real cost, once", async () => {
     const start = await spend();
-    const r = reservation();
+    const trace = randomUUID();
+    const r = reservation({ traceId: trace });
     await reserve(app, session(A), r);
     expect(await spend()).toEqual({
       ...start,
       reservedNanocents: start.reservedNanocents + RESERVE,
     });
     expect(await callRow(A, r.callId)).toMatchObject({
+      target: "spark",
+      kind: "text",
+      reasoning_effort: "low",
+      trace_id: trace,
       status: "reserved",
       reserved_nanocents: RESERVE,
       settled: false,
@@ -124,6 +149,7 @@ describe("model spend ledger", () => {
       kind: "answered" as const,
       status: "incomplete" as const,
       usage: USAGE,
+      units: null,
       costNanocents: 29_075_000,
       upstreamId: "resp_test1",
       httpStatus: 200,
@@ -131,12 +157,17 @@ describe("model spend ledger", () => {
     };
     expect(await settle(app, session(A), r.callId, answer)).toBe(true);
     const settled = {
+      ...start,
       spentNanocents: start.spentNanocents + 29_075_000,
       reservedNanocents: start.reservedNanocents,
       calls: start.calls + 1,
     };
     expect(await spend()).toEqual(settled);
     expect(await callRow(A, r.callId)).toEqual({
+      target: "spark",
+      kind: "text",
+      reasoning_effort: "low",
+      trace_id: trace,
       status: "incomplete",
       failure: null,
       reserved_nanocents: RESERVE,
@@ -145,6 +176,7 @@ describe("model spend ledger", () => {
       cached_tokens: 0,
       output_tokens: 64,
       reasoning_tokens: 62,
+      units: null,
       upstream_id: "resp_test1",
       http_status: 200,
       duration_ms: 812,
@@ -193,7 +225,7 @@ describe("model spend ledger", () => {
     expect(
       await settle(app, session(A), r.callId, {
         kind: "unknown",
-        category: "timeout",
+        category: "network",
         httpStatus: null,
         durationMs: 25_000,
       }),
@@ -205,7 +237,7 @@ describe("model spend ledger", () => {
     });
     expect(await callRow(A, r.callId)).toMatchObject({
       status: "unknown",
-      failure: "timeout",
+      failure: "network",
       cost_nanocents: null,
       http_status: null,
     });
@@ -272,15 +304,17 @@ describe("model spend ledger", () => {
     const other = await failureOf(
       app.withTenant(B, (q) =>
         q.execute(
-          `INSERT INTO ai_calls (id, tenant_id, provider, model, purpose, status, reserved_nanocents)
-           VALUES (CAST($1 AS uuid), CAST($2 AS uuid), 'meta', 'muse-spark-1.3', 'proof', 'reserved', 1)`,
+          `INSERT INTO model_calls (id, tenant_id, target, provider, model, purpose, status,
+                                    reserved_nanocents)
+           VALUES (CAST($1 AS uuid), CAST($2 AS uuid), 'spark', 'meta', 'muse-spark-1.3', 'proof',
+                   'reserved', 1)`,
           [randomUUID(), A],
         ),
       ),
     );
     expect((other as { sqlState?: string }).sqlState).toBe("42501");
 
-    const deleted = await failureOf(app.withTenant(A, (q) => q.execute("DELETE FROM ai_calls")));
+    const deleted = await failureOf(app.withTenant(A, (q) => q.execute("DELETE FROM model_calls")));
     expect((deleted as { sqlState?: string }).sqlState).toBe("42501");
 
     const added = await failureOf(
@@ -294,5 +328,170 @@ describe("model spend ledger", () => {
       app.withTenant(A, (q) => q.execute("DELETE FROM ops.ai_spend")),
     );
     expect((removed as { sqlState?: string }).sqlState).toBe("42501");
+  });
+
+  it("keeps the renamed log's policy, forced row security and grants, and the old name is gone", async () => {
+    const facts = await admin.withoutTenant(async (q) => {
+      const [table] = await q.query<{ rls: boolean; forced: boolean; old: string | null }>(
+        `SELECT c.relrowsecurity AS rls, c.relforcerowsecurity AS forced,
+                to_regclass('public.ai_calls')::text AS old
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public' AND c.relname = 'model_calls'`,
+      );
+      const policies = await q.query<{ policyname: string }>(
+        "SELECT policyname FROM pg_policies WHERE schemaname = 'public' AND tablename = 'model_calls'",
+      );
+      const [grants] = await q.query<Record<string, boolean>>(
+        `SELECT has_table_privilege('payday_app', 'public.model_calls', 'SELECT') AS sel,
+                has_table_privilege('payday_app', 'public.model_calls', 'INSERT') AS ins,
+                has_table_privilege('payday_app', 'public.model_calls', 'UPDATE') AS upd,
+                has_table_privilege('payday_app', 'public.model_calls', 'DELETE') AS del,
+                has_table_privilege('payday_app', 'ops.ai_spend', 'INSERT') AS spend_ins,
+                has_table_privilege('payday_app', 'ops.ai_spend', 'DELETE') AS spend_del`,
+      );
+      return { table, policies: policies.map((p) => p.policyname), grants };
+    });
+    expect(facts.table).toEqual({ rls: true, forced: true, old: null });
+    expect(facts.policies).toEqual(["tenant_isolation"]);
+    expect(facts.grants).toEqual({
+      sel: true,
+      ins: true,
+      upd: true,
+      del: false,
+      spend_ins: false,
+      spend_del: false,
+    });
+  });
+
+  it("refuses a Wonder reservation without a Wonder cap, writing nothing", async () => {
+    const start = await spend();
+    const r = wonderReservation({ wonderCapNanocents: null });
+    const err = await failureOf(reserve(app, session(A), r));
+    expect(err).toBeInstanceOf(AiError);
+    expect((err as AiError).category).toBe("not_configured");
+    expect(await callRow(A, r.callId)).toBeUndefined();
+    expect(await spend()).toEqual(start);
+  });
+
+  it("lets one of two racing Wonder reservations through when the overall cap fits both but Wonder's fits one", async () => {
+    const start = await spend();
+    const overall = start.spentNanocents + start.reservedNanocents + 2 * RESERVE + RESERVE / 2;
+    const wonderCap =
+      start.wonderSpentNanocents + start.wonderReservedNanocents + RESERVE + RESERVE / 2;
+    const first = wonderReservation({ capNanocents: overall, wonderCapNanocents: wonderCap });
+    const second = wonderReservation({ capNanocents: overall, wonderCapNanocents: wonderCap });
+    const results = await Promise.allSettled([
+      reserve(app, session(A), first),
+      reserve(app, session(B), second),
+    ]);
+    const refused = results.flatMap((r) => (r.status === "rejected" ? [r.reason] : []));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    expect((refused[0] as AiError).category).toBe("cap");
+    expect(await spend()).toEqual({
+      ...start,
+      reservedNanocents: start.reservedNanocents + RESERVE,
+      wonderReservedNanocents: start.wonderReservedNanocents + RESERVE,
+    });
+
+    // Wonder's cap is now full, and Spark still passes under the overall cap.
+    const full = start.wonderSpentNanocents + start.wonderReservedNanocents + RESERVE;
+    const third = wonderReservation({ wonderCapNanocents: full });
+    expect(((await failureOf(reserve(app, session(A), third))) as AiError).category).toBe("cap");
+    const spark = reservation({ capNanocents: overall, wonderCapNanocents: full });
+    await reserve(app, session(A), spark);
+    expect(await spend()).toEqual({
+      ...start,
+      reservedNanocents: start.reservedNanocents + 2 * RESERVE,
+      wonderReservedNanocents: start.wonderReservedNanocents + RESERVE,
+    });
+  });
+
+  it("moves Wonder's counters with the overall ones: spent when answered, released when refused, kept when unknown", async () => {
+    const start = await spend();
+    const answered = wonderReservation();
+    const refused = wonderReservation();
+    const unknown = wonderReservation();
+    for (const r of [answered, refused, unknown]) await reserve(app, session(A), r);
+    expect(await spend()).toEqual({
+      ...start,
+      reservedNanocents: start.reservedNanocents + 3 * RESERVE,
+      wonderReservedNanocents: start.wonderReservedNanocents + 3 * RESERVE,
+    });
+
+    const cost = 15 * 400_000 + 64 * 2_000_000;
+    const answer = {
+      kind: "answered" as const,
+      status: "ok" as const,
+      usage: USAGE,
+      units: null,
+      costNanocents: cost,
+      upstreamId: "resp_w1",
+      httpStatus: 200,
+      durationMs: 3_000,
+    };
+    expect(await settle(app, session(A), answered.callId, answer)).toBe(true);
+    // Twice changes nothing.
+    expect(await settle(app, session(A), answered.callId, answer)).toBe(false);
+    expect(
+      await settle(app, session(A), refused.callId, {
+        kind: "refused",
+        category: "rate_limited",
+        httpStatus: 429,
+        durationMs: 5,
+      }),
+    ).toBe(true);
+    expect(
+      await settle(app, session(A), unknown.callId, {
+        kind: "unknown",
+        category: "unavailable",
+        httpStatus: 503,
+        durationMs: 5,
+      }),
+    ).toBe(true);
+    expect(await spend()).toEqual({
+      spentNanocents: start.spentNanocents + cost,
+      reservedNanocents: start.reservedNanocents + RESERVE,
+      calls: start.calls + 3,
+      wonderSpentNanocents: start.wonderSpentNanocents + cost,
+      wonderReservedNanocents: start.wonderReservedNanocents + RESERVE,
+    });
+  });
+
+  it("records the units a call that is not billed by tokens was charged for", async () => {
+    const r = reservation({
+      target: "voice",
+      model: "muse-voice-transcribe-1.0",
+      kind: "transcribe",
+      reasoningEffort: null,
+      reserveNanocents: 20_000_000,
+    });
+    await reserve(app, session(A), r);
+    expect(
+      await settle(app, session(A), r.callId, {
+        kind: "answered",
+        status: "ok",
+        usage: null,
+        units: 2,
+        costNanocents: 10_000_000,
+        upstreamId: "asr/1:abc",
+        httpStatus: 200,
+        durationMs: 900,
+      }),
+    ).toBe(true);
+    expect(await callRow(A, r.callId)).toMatchObject({
+      target: "voice",
+      kind: "transcribe",
+      reasoning_effort: null,
+      status: "ok",
+      units: 2,
+      cost_nanocents: 10_000_000,
+      input_tokens: null,
+      upstream_id: "asr/1:abc",
+    });
+    const [row] = (await app.withTenant(A, (q) => readRecentCalls(q, 50))).filter(
+      (c) => c.id === r.callId,
+    );
+    expect(row).toMatchObject({ target: "voice", kind: "transcribe", units: 2 });
   });
 });

@@ -54,7 +54,7 @@ describe("row-level security coverage", () => {
 
   it("finds the tables (an empty list would make every check below pass)", async () => {
     const names = (await tables()).map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["ai_calls", "memberships", "tenants"]));
+    expect(names).toEqual(expect.arrayContaining(["memberships", "model_calls", "tenants"]));
   });
 
   it("forces row-level security on every table, owned by someone other than the app", async () => {

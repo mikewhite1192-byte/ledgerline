@@ -115,6 +115,97 @@ describe("metaBody", () => {
   });
 });
 
+describe("metaBody structured output, attachments and effort", () => {
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const PDF = new Uint8Array([...Buffer.from("%PDF-1.4")]);
+
+  it("sends structured output as text.format with the caller's names, and max effort as is", () => {
+    const schema = { type: "object", properties: { load: { type: "string" } }, required: ["load"] };
+    const body = metaBody(
+      "muse-wonder-1.0",
+      {
+        purpose: "audit",
+        messages: [{ role: "user", content: "Check it." }],
+        format: { name: "audit_finding", schema, strict: true },
+      },
+      { maxOutputTokens: 64, reasoningEffort: "max" },
+    );
+    expect(body.text).toEqual({
+      format: { type: "json_schema", name: "audit_finding", schema, strict: true },
+    });
+    expect(body).not.toHaveProperty("response_format");
+    expect(body.reasoning).toEqual({ effort: "max" });
+    // Without strict, no strict key.
+    const loose = metaBody(
+      "muse-spark-1.3",
+      { purpose: "x", messages: [{ role: "user", content: "x" }], format: { name: "f", schema } },
+      OPTIONS,
+    );
+    expect(loose.text).toEqual({ format: { type: "json_schema", name: "f", schema } });
+  });
+
+  it("sends images and PDFs inline after the turn's text, never as file ids", () => {
+    const body = metaBody(
+      "muse-spark-1.3",
+      {
+        purpose: "doc",
+        messages: [
+          {
+            role: "user",
+            content: "Read these.",
+            attachments: [
+              { kind: "image", mime: "image/png", bytes: PNG },
+              { kind: "pdf", bytes: PDF, filename: "rate-con.pdf" },
+              { kind: "pdf", bytes: PDF },
+            ],
+          },
+        ],
+      },
+      OPTIONS,
+    );
+    expect(body.input[0]).toEqual({
+      type: "message",
+      role: "user",
+      content: [
+        { type: "input_text", text: "Read these." },
+        {
+          type: "input_image",
+          image_url: `data:image/png;base64,${Buffer.from(PNG).toString("base64")}`,
+        },
+        {
+          type: "input_file",
+          file_data: `data:application/pdf;base64,${Buffer.from(PDF).toString("base64")}`,
+          filename: "rate-con.pdf",
+        },
+        {
+          type: "input_file",
+          file_data: `data:application/pdf;base64,${Buffer.from(PDF).toString("base64")}`,
+        },
+      ],
+    });
+    expect(JSON.stringify(body)).not.toContain("file_id");
+  });
+
+  it("leaves out an empty text part when a turn carries only attachments", () => {
+    const body = metaBody(
+      "muse-spark-1.3",
+      {
+        purpose: "doc",
+        messages: [
+          {
+            role: "user",
+            content: "",
+            attachments: [{ kind: "image", mime: "image/png", bytes: PNG }],
+          },
+        ],
+      },
+      OPTIONS,
+    );
+    expect(body.input[0]).toMatchObject({ content: [{ type: "input_image" }] });
+    expect((body.input[0] as { content: unknown[] }).content).toHaveLength(1);
+  });
+});
+
 describe("parseMeta", () => {
   it("reads text, tool calls, encrypted reasoning and usage from a completed answer", () => {
     const outcome = parseMeta(
@@ -156,17 +247,19 @@ describe("parseMeta", () => {
       status: "ok",
       httpStatus: 200,
       upstreamId: "resp_abc123",
-      usage: { input: 15, cached: 5, output: 64, reasoning: 62 },
-      text: "Hello, money desk.",
-      toolCalls: [{ id: "call_9", name: "pay.read", argumentsJson: "{}" }],
-      // Without the server id (nothing is stored upstream), with its summary.
-      replay: [
-        {
-          type: "reasoning",
-          summary: [{ type: "summary_text", text: "thinking" }],
-          encrypted_content: "enc-xyz",
-        },
-      ],
+      metered: { unit: "tokens", usage: { input: 15, cached: 5, output: 64, reasoning: 62 } },
+      value: {
+        text: "Hello, money desk.",
+        toolCalls: [{ id: "call_9", name: "pay.read", argumentsJson: "{}" }],
+        // Without the server id (nothing is stored upstream), with its summary.
+        replay: [
+          {
+            type: "reasoning",
+            summary: [{ type: "summary_text", text: "thinking" }],
+            encrypted_content: "enc-xyz",
+          },
+        ],
+      },
     });
   });
 
@@ -185,10 +278,8 @@ describe("parseMeta", () => {
     expect(outcome).toMatchObject({
       kind: "answered",
       status: "incomplete",
-      text: "",
-      toolCalls: [],
-      replay: [],
-      usage: { input: 15, cached: 0, output: 64, reasoning: 62 },
+      metered: { unit: "tokens", usage: { input: 15, cached: 0, output: 64, reasoning: 62 } },
+      value: { text: "", toolCalls: [], replay: [] },
     });
   });
 
@@ -216,6 +307,6 @@ describe("parseMeta", () => {
 
   it("drops an id that is not a plain token", () => {
     const outcome = parseMeta({ id: "resp 1\nforged", status: "completed", usage: USAGE }, 200);
-    expect(outcome).toMatchObject({ kind: "answered", upstreamId: null, text: "" });
+    expect(outcome).toMatchObject({ kind: "answered", upstreamId: null, value: { text: "" } });
   });
 });

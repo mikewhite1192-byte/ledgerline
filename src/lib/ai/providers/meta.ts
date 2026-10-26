@@ -1,14 +1,35 @@
-import type { AiReasoningEffort, AiReplayItem, AiRequest, AiToolCall, CallOutcome } from "../types";
+import type {
+  AiAttachment,
+  AiReasoningEffort,
+  AiReplayItem,
+  AiRequest,
+  AiToolCall,
+  CallOutcome,
+} from "../types";
 import { asArray, asRecord, upstreamIdFrom, usageFrom } from "./http";
+import { dataUrl } from "./media";
 
-// Muse Spark through the Meta Model API's Responses endpoint
+// Muse Spark and Muse Wonder through the Meta Model API's Responses endpoint
 // (https://dev.meta.ai/docs/protocols/responses). Stateless: store is false, so this app's
 // conversation is the only copy, and the model's reasoning comes back encrypted for the next turn.
 export const META_RESPONSES_URL = "https://api.meta.ai/v1/responses";
 
 export type MetaOptions = { maxOutputTokens: number; reasoningEffort: AiReasoningEffort };
 
-const text = (type: "input_text" | "output_text", value: string) => [{ type, text: value }];
+const text = (type: "input_text" | "output_text", value: string) => ({ type, text: value });
+
+// An image as a base64 data URL; a PDF as inline file data, never a file id, so nothing of a
+// carrier's documents is kept upstream (https://dev.meta.ai/docs/image-understanding,
+// https://dev.meta.ai/docs/file-handling).
+function attachmentPart(a: AiAttachment) {
+  return a.kind === "image"
+    ? { type: "input_image", image_url: dataUrl(a.mime, a.bytes) }
+    : {
+        type: "input_file",
+        file_data: dataUrl("application/pdf", a.bytes),
+        ...(a.filename ? { filename: a.filename } : {}),
+      };
+}
 
 export function metaBody(model: string, request: AiRequest, options: MetaOptions) {
   const instructions = request.messages
@@ -24,15 +45,23 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
     switch (m.role) {
       case "system":
         return;
-      case "user":
-        input.push({ type: "message", role: "user", content: text("input_text", m.content) });
+      case "user": {
+        const attachments = m.attachments ?? [];
+        // The text first, then what it refers to; an empty text is left out only when the turn
+        // carries attachments.
+        const content = [
+          ...(m.content || attachments.length === 0 ? [text("input_text", m.content)] : []),
+          ...attachments.map(attachmentPart),
+        ];
+        input.push({ type: "message", role: "user", content });
         return;
+      }
       case "assistant":
         if (m.content) {
           input.push({
             type: "message",
             role: "assistant",
-            content: text("output_text", m.content),
+            content: [text("output_text", m.content)],
           });
         }
         for (const call of m.toolCalls ?? []) {
@@ -50,6 +79,7 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
     }
   });
   const tools = request.tools ?? [];
+  const format = request.format;
   return {
     model,
     ...(instructions ? { instructions } : {}),
@@ -64,6 +94,20 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
           })),
           // The only value Meta accepts.
           tool_choice: "auto",
+        }
+      : {}),
+    // Structured output on Responses is text.format, not response_format
+    // (https://dev.meta.ai/docs/structured-output).
+    ...(format
+      ? {
+          text: {
+            format: {
+              type: "json_schema",
+              name: format.name,
+              schema: format.schema,
+              ...(format.strict !== undefined ? { strict: format.strict } : {}),
+            },
+          },
         }
       : {}),
     // Reasoning and visible text together: a small cap can be spent entirely on reasoning.
@@ -119,9 +163,7 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
     status,
     httpStatus,
     upstreamId: upstreamIdFrom(body.id),
-    usage,
-    text: parts.join(""),
-    toolCalls,
-    replay,
+    metered: { unit: "tokens", usage },
+    value: { text: parts.join(""), toolCalls, replay },
   };
 }

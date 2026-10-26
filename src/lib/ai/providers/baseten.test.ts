@@ -105,10 +105,12 @@ describe("parseBaseten", () => {
       status: "ok",
       httpStatus: 200,
       upstreamId: "chatcmpl-1",
-      usage: { input: 20, cached: 4, output: 30, reasoning: 10 },
-      text: "Classifying.",
-      toolCalls: [{ id: "call_2", name: "classify", argumentsJson: "{}" }],
-      replay: [],
+      metered: { unit: "tokens", usage: { input: 20, cached: 4, output: 30, reasoning: 10 } },
+      value: {
+        text: "Classifying.",
+        toolCalls: [{ id: "call_2", name: "classify", argumentsJson: "{}" }],
+        replay: [],
+      },
     });
   });
 
@@ -117,7 +119,12 @@ describe("parseBaseten", () => {
       { id: "c", choices: [{ finish_reason: "length", message: { content: null } }], usage: USAGE },
       200,
     );
-    expect(outcome).toMatchObject({ kind: "answered", status: "incomplete", text: "" });
+    // The measured 64-token answer: content null, reasoning only.
+    expect(outcome).toMatchObject({
+      kind: "answered",
+      status: "incomplete",
+      value: { text: "", toolCalls: [] },
+    });
   });
 
   it("treats an answer without a choice or usable usage as unknown", () => {

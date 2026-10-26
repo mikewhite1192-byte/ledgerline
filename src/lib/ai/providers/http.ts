@@ -1,9 +1,17 @@
 import type { AiFailureCategory, AiUsage, CallOutcome } from "../types";
 
-// One JSON POST to a model provider. Only fetch is injected, so tests never reach the network.
+// One POST to a model provider: JSON, or multipart for audio. Only fetch is injected, so tests
+// never reach the network.
 export type FetchFn = (url: string, init: RequestInit) => Promise<Response>;
 
-export type HttpCall = { url: string; key: string; body: string; timeoutMs: number };
+export type HttpCall = {
+  url: string;
+  key: string;
+  // A JSON string, or a multipart form (fetch sets its content type with the boundary).
+  body: string | FormData;
+  timeoutMs: number;
+  accept?: string;
+};
 
 // The documented codes (https://dev.meta.ai/docs/error-handling); Baseten is OpenAI-compatible
 // and uses the same ones. 403 is not documented and reads as a key problem.
@@ -35,16 +43,19 @@ const DEFINITE_REFUSALS = new Set([400, 401, 402, 404, 413, 429]);
 
 // Never throws. Retry-After is ignored (the caller shows "try again"). An upstream message never
 // reaches a log, the ledger or a page: an error body is discarded unread.
-export async function post(
+export async function post<T>(
   fetchFn: FetchFn,
   call: HttpCall,
-  parse: (json: unknown, httpStatus: number) => CallOutcome,
-): Promise<CallOutcome> {
+  parse: (json: unknown, httpStatus: number) => CallOutcome<T>,
+): Promise<CallOutcome<T>> {
+  const headers: Record<string, string> = { authorization: `Bearer ${call.key}` };
+  if (typeof call.body === "string") headers["content-type"] = "application/json";
+  if (call.accept) headers.accept = call.accept;
   let response: Response;
   try {
     response = await fetchFn(call.url, {
       method: "POST",
-      headers: { authorization: `Bearer ${call.key}`, "content-type": "application/json" },
+      headers,
       body: call.body,
       // The timeout covers reading the body too.
       signal: AbortSignal.timeout(call.timeoutMs),
@@ -112,7 +123,8 @@ export function usageFrom(
   return { input: i, cached: c, output: o, reasoning: r };
 }
 
-// Response ids are logged and stored, so only a plain token of bounded length is kept.
+// Response ids are logged and stored, so only a plain token of bounded length is kept. A
+// transcription's id is a path ("voyager/transcribe/<hex>"), so "/" is allowed.
 export function upstreamIdFrom(value: unknown): string | null {
-  return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,120}$/.test(value) ? value : null;
+  return typeof value === "string" && /^[A-Za-z0-9_.:/-]{1,120}$/.test(value) ? value : null;
 }

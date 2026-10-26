@@ -22,8 +22,8 @@ export const DATA_API_ACTIONS = [
   "rds-data:BatchExecuteStatement",
 ];
 
-// Values are ARNs, ids, secret names and the spend cap, never secrets. amplify.yml copies them
-// into .env.production at build time so the Next.js server can read them.
+// Values are ARNs, ids, model ids, secret names and the spend caps, never secrets. amplify.yml
+// copies them into .env.production at build time so the Next.js server can read them.
 export const BRANCH_ENV_NAMES = [
   "DB_CLUSTER_ARN",
   "DB_SECRET_ARN",
@@ -31,11 +31,25 @@ export const BRANCH_ENV_NAMES = [
   "COGNITO_USER_POOL_ID",
   "COGNITO_CLIENT_ID",
   "AI_SPEND_CAP_CENTS",
-  "META_MODEL_ID",
+  "AI_WONDER_CAP_CENTS",
+  "META_MODEL_SPARK",
+  "META_MODEL_WONDER",
+  "META_MODEL_VOICE",
+  "META_MODEL_IMAGE",
+  "META_MODEL_SAM",
   "META_API_KEY_SECRET_NAME",
   "BASETEN_MODEL_ID",
   "BASETEN_API_KEY_SECRET_NAME",
 ];
+
+// The exact Meta model id for each slot, as GET /v1/models lists it.
+export type MetaModels = {
+  spark: string;
+  wonder: string;
+  voice: string;
+  image: string;
+  sam: string;
+};
 
 export type HostingStackProps = StackProps & {
   clusterArn: string;
@@ -45,7 +59,9 @@ export type HostingStackProps = StackProps & {
   userPoolClientId: string;
   // The app refuses every model call once spent plus reserved would pass this.
   aiSpendCapCents: number;
-  metaModelId: string;
+  // Muse Wonder's own stop inside the cap above.
+  aiWonderCapCents: number;
+  metaModels: MetaModels;
   basetenModelId: string;
 };
 
@@ -59,6 +75,10 @@ export class HostingStack extends Stack {
     const cap = props.aiSpendCapCents;
     if (!Number.isInteger(cap) || cap < 1 || cap > AI_CREDIT_CENTS) {
       throw new Error(`aiSpendCapCents must be a whole number from 1 to ${AI_CREDIT_CENTS}`);
+    }
+    const wonderCap = props.aiWonderCapCents;
+    if (!Number.isInteger(wonderCap) || wonderCap < 1 || wonderCap > cap) {
+      throw new Error("aiWonderCapCents must be a whole number from 1 to aiSpendCapCents");
     }
 
     // Amplify's service role, used here only to write SSR logs to CloudWatch. Amplify's docs list
@@ -147,7 +167,12 @@ export class HostingStack extends Stack {
       COGNITO_USER_POOL_ID: props.userPoolId,
       COGNITO_CLIENT_ID: props.userPoolClientId,
       AI_SPEND_CAP_CENTS: String(cap),
-      META_MODEL_ID: props.metaModelId,
+      AI_WONDER_CAP_CENTS: String(wonderCap),
+      META_MODEL_SPARK: props.metaModels.spark,
+      META_MODEL_WONDER: props.metaModels.wonder,
+      META_MODEL_VOICE: props.metaModels.voice,
+      META_MODEL_IMAGE: props.metaModels.image,
+      META_MODEL_SAM: props.metaModels.sam,
       META_API_KEY_SECRET_NAME,
       BASETEN_MODEL_ID: props.basetenModelId,
       BASETEN_API_KEY_SECRET_NAME,

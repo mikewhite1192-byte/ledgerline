@@ -1,5 +1,10 @@
 import { flags } from "@/config/flags";
-import { capNanocents, centsToDisplay, dollarsToDisplay } from "@/lib/ai/prices";
+import {
+  capNanocents,
+  centsToDisplay,
+  dollarsToDisplay,
+  wonderCapNanocents,
+} from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -76,6 +81,7 @@ export default async function Home() {
 
 function ModelCheck({ ledger }: { ledger: ModelLedger }) {
   const cap = capNanocents(process.env.AI_SPEND_CAP_CENTS);
+  const wonderCap = wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap);
   const { spend } = ledger;
   return (
     <section style={{ marginTop: 32 }}>
@@ -87,17 +93,27 @@ function ModelCheck({ ledger }: { ledger: ModelLedger }) {
         {spend.reservedNanocents > 0
           ? `, plus ${dollarsToDisplay(spend.reservedNanocents)} held for calls in flight or with no answer`
           : ""}
-        . Calls: {spend.calls}.
+        . Calls: {spend.calls}. Wonder: {dollarsToDisplay(spend.wonderSpentNanocents)} of{" "}
+        {wonderCap === null ? "no cap (every Wonder call is refused)" : dollarsToDisplay(wonderCap)}
+        {spend.wonderReservedNanocents > 0
+          ? `, plus ${dollarsToDisplay(spend.wonderReservedNanocents)} held`
+          : ""}
+        .
       </p>
       {ledger.calls.length > 0 ? (
         <ul style={{ marginTop: 12, paddingLeft: 18 }}>
           {ledger.calls.map((c) => (
             <li key={c.id} style={{ marginTop: 4 }}>
-              {c.created_utc} UTC, {c.purpose}, {c.status}
+              {c.created_utc} UTC, {c.target} {c.kind}, {c.purpose}, {c.status}
               {c.failure ? ` (${c.failure})` : ""}
+              {c.reasoning_effort ? `, ${c.reasoning_effort} effort` : ""}
               {c.input_tokens !== null
                 ? `, ${c.input_tokens} in, ${c.output_tokens} out (${c.reasoning_tokens} reasoning)`
                 : ""}
+              {c.units !== null
+                ? `, ${c.units} ${c.kind === "transcribe" ? "audio seconds" : "images"}`
+                : ""}
+              {c.duration_ms !== null ? `, ${c.duration_ms} ms` : ""}
               {c.cost_nanocents !== null ? `, ${centsToDisplay(c.cost_nanocents)} cents` : ""}
               {c.upstream_id ? `, ${c.upstream_id}` : ""}
             </li>
