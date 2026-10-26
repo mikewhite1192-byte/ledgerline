@@ -145,7 +145,7 @@ export type PayConfig = {
   advanceMinCents: Cents;
 };
 
-// ---- Operations (migration 0003) ----
+// ---- Operations (migration 0004) ----
 
 export const WORKER_TYPES = ["company", "owner_operator"] as const;
 export type WorkerType = (typeof WORKER_TYPES)[number];
@@ -255,7 +255,7 @@ export type FuelPurchaseRecord = {
   purchaseRef: string;
 };
 
-// ---- Pay (migration 0004) ----
+// ---- Pay (migration 0005) ----
 
 export const PAY_ITEM_KINDS = [
   "fuel",
@@ -505,7 +505,7 @@ export type InvoiceResult =
       sources: SourceRef[];
     };
 
-// ---- The six checks ----
+// ---- The checks: six over pay (checks.ts), one over receivables (receivables.ts) ----
 
 export const CHECK_NAMES = [
   "duplicate_advance",
@@ -514,6 +514,7 @@ export const CHECK_NAMES = [
   "missing_reimbursement",
   "delivered_without_rate",
   "over_advance_limit",
+  "payment_on_wrong_invoice",
 ] as const;
 export type CheckName = (typeof CHECK_NAMES)[number];
 
@@ -526,11 +527,13 @@ export const FINDING_CATEGORIES = [
   "no_reimbursement",
   "rate_missing",
   "over_limit",
+  "payment_on_wrong_invoice",
+  "invoice_overapplied",
 ] as const;
 export type FindingCategory = (typeof FINDING_CATEGORIES)[number];
 
 // Categories and ids only, never prose from the data. sources[0] is the record at fault (the
-// newer advance, the fuel item, the day row, the accessorial, the load, the driver).
+// newer advance, the fuel item, the day row, the accessorial, the load, the driver, the payment).
 export type Finding = {
   check: CheckName;
   category: FindingCategory;
@@ -548,4 +551,61 @@ export type CheckInput = {
   fuelPurchases: FuelPurchaseRecord[];
   items: PayItemRecord[];
   advances: AdvanceRecord[];
+};
+
+// ---- Receivables (section 4.8): customer payments, applications, aging ----
+
+export const PAYMENT_METHODS = ["check", "ach", "wire"] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+export const PAYMENT_SOURCES = ["ui", "email", "seed"] as const;
+export type PaymentSource = (typeof PAYMENT_SOURCES)[number];
+
+// A check, ACH or wire that arrived from a customer. Recorded only: nothing here collects money.
+export type CustomerPaymentRecord = {
+  id: string;
+  customerId: string;
+  // The tenant-local date it arrived.
+  receivedOn: LocalDate;
+  amountCents: Cents;
+  method: PaymentMethod;
+  paymentRef: string;
+  source: PaymentSource;
+  memo: string | null;
+  qboId: string | null;
+};
+
+// Part or all of one payment put against one invoice. A payment's unapplied rest is credit.
+export type PaymentApplicationRecord = {
+  id: string;
+  paymentId: string;
+  invoiceId: string;
+  amountCents: Cents;
+};
+
+// Days past the due date: 0 or fewer is current.
+export const AGING_BUCKETS = ["current", "1_30", "31_60", "61_90", "over_90"] as const;
+export type AgingBucket = (typeof AGING_BUCKETS)[number];
+
+export type ReceivablesInput = {
+  invoices: InvoiceRecord[];
+  payments: CustomerPaymentRecord[];
+  applications: PaymentApplicationRecord[];
+  // The tenant-local date the aging is as of.
+  asOf: LocalDate;
+};
+
+// What the applications say about one invoice. Derived, never stored.
+export type InvoiceStatusResult = {
+  status: Exclude<InvoiceStatus, "void">;
+  balanceCents: Cents;
+  // Applied past the amount; above zero only on an overapplied invoice.
+  overappliedCents: Cents;
+};
+
+export type AgingTotals = Record<AgingBucket, Cents>;
+
+export type ReceivablesAging = {
+  // Customers with an open balance, in customer id order.
+  byCustomer: { customerId: string; buckets: AgingTotals }[];
+  totals: AgingTotals;
 };

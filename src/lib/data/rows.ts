@@ -1,0 +1,229 @@
+import type { TenantTable } from "./tables";
+
+// One tenant table row as the seed writes it and the readers return it: the columns of
+// TABLE_SPECS, snake_case, without tenant_id and created_at. Money is integer cents, dates are
+// tenant-local YYYY-MM-DD strings, instants are ISO strings in UTC ending in Z.
+
+export type CustomerRow = {
+  id: string;
+  code: string;
+  name: string;
+  terms_days: number;
+  city: string;
+  state: string;
+};
+
+export type DriverRow = {
+  id: string;
+  code: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  worker_type: "company" | "owner_operator";
+  pay_basis: "per_mile" | "percent" | "flat";
+  per_mile_cents: number | null;
+  percent_bps: number | null;
+  flat_per_load_cents: number | null;
+  advance_limit_cents: number | null;
+  escrow_balance_cents: number;
+  truck_unit: string | null;
+  active_from: string;
+  active_to: string | null;
+};
+
+export type LoadRow = {
+  id: string;
+  load_number: string;
+  customer_id: string;
+  driver_id: string | null;
+  status: "planned" | "in_transit" | "delivered" | "invoiced" | "cancelled";
+  origin_city: string;
+  origin_state: string;
+  dest_city: string;
+  dest_state: string;
+  pickup_on: string;
+  delivered_on: string | null;
+  delivered_at: string | null;
+  loaded_miles: number;
+  empty_miles: number;
+  linehaul_cents: number | null;
+  fuel_surcharge_cents: number;
+};
+
+export type LoadStateMilesRow = { id: string; load_id: string; state: string; miles: number };
+
+export type LoadAccessorialRow = {
+  id: string;
+  load_id: string;
+  kind: "detention" | "layover" | "stop" | "lumper";
+  seq: number;
+  amount_cents: number;
+  paid_by_driver: boolean;
+  description: string;
+};
+
+export type DriverDayRow = {
+  id: string;
+  driver_id: string;
+  day: string;
+  source: "load" | "dispatch";
+  load_id: string | null;
+};
+
+export type FuelPurchaseRow = {
+  id: string;
+  driver_id: string;
+  load_id: string | null;
+  purchased_at: string;
+  purchased_on: string;
+  state: string;
+  gallons_milli: number;
+  amount_cents: number;
+  paid_with: "company_card" | "driver_own";
+  purchase_ref: string;
+};
+
+export type PayConfigRow = {
+  week_start_dow: number;
+  percent_base: "linehaul" | "linehaul_fsc" | "linehaul_fsc_accessorials";
+  empty_miles_paid_bps: number;
+  accessorial_driver_share_bps: number;
+  insurance_applies_to: "owner_operator" | "all";
+  insurance_per_day_cents: number;
+  escrow_target_cents: number;
+  escrow_per_settlement_cents: number;
+  net_pay_floor_cents: number;
+  advance_recovery_cap_cents: number | null;
+  advance_fee_cents: number;
+  advance_limit_default_cents: number;
+  advance_max_bps_of_earned: number;
+  advance_min_cents: number;
+};
+
+export type DeductionScheduleRow = {
+  id: string;
+  driver_id: string;
+  kind: "escrow" | "lease" | "other";
+  amount_cents: number;
+  target_cents: number | null;
+  description: string;
+  active_from: string;
+  active_to: string | null;
+};
+
+export type SettlementPeriodRow = {
+  id: string;
+  period_start: string;
+  period_end: string;
+  status: "open" | "approved" | "paid";
+};
+
+export type SettlementRow = {
+  id: string;
+  period_id: string;
+  driver_id: string;
+  status: "draft" | "approved" | "paid";
+  gross_cents: number;
+  deductions_cents: number;
+  net_cents: number;
+  carry_forward_cents: number;
+  exception_count: number;
+  paid_at: string | null;
+};
+
+export type SettlementLineRow = {
+  id: string;
+  settlement_id: string;
+  seq: number;
+  kind: string;
+  label: string;
+  amount_cents: number;
+  sources: { table: string; id: string }[];
+  meta: Record<string, string | number | boolean | null> | null;
+};
+
+export type PayItemRow = {
+  id: string;
+  driver_id: string;
+  kind: "fuel" | "reimbursement" | "other_deduction" | "carried_shortfall";
+  subkind: string;
+  amount_cents: number;
+  item_date: string;
+  ref_table: "fuel_purchases" | "load_accessorials" | "loads" | "settlements" | null;
+  ref_id: string | null;
+  item_ref: string;
+  description: string;
+  settlement_id: string | null;
+};
+
+export type AdvanceRow = {
+  id: string;
+  driver_id: string;
+  request_ref: string;
+  requested_at: string;
+  requested_on: string;
+  amount_cents: number;
+  fee_cents: number;
+  status: "requested" | "approved" | "paid" | "rejected" | "cancelled";
+  recovered_cents: number;
+  source: "ui" | "email" | "seed";
+  reason_category: string | null;
+  paid_at: string | null;
+};
+
+export type InvoiceRow = {
+  id: string;
+  source: "load" | "opening";
+  load_id: string | null;
+  customer_id: string;
+  invoice_number: string;
+  amount_cents: number;
+  issued_on: string;
+  due_on: string;
+  status: "open" | "partially_paid" | "paid" | "void";
+  paid_on: string | null;
+  qbo_id: string | null;
+};
+
+export type CustomerPaymentRow = {
+  id: string;
+  customer_id: string;
+  received_on: string;
+  amount_cents: number;
+  method: "check" | "ach" | "wire";
+  payment_ref: string;
+  source: "ui" | "email" | "seed";
+  memo: string | null;
+  qbo_id: string | null;
+};
+
+export type PaymentApplicationRow = {
+  id: string;
+  payment_id: string;
+  invoice_id: string;
+  amount_cents: number;
+};
+
+export type TenantRows = {
+  customers: CustomerRow[];
+  drivers: DriverRow[];
+  loads: LoadRow[];
+  load_state_miles: LoadStateMilesRow[];
+  load_accessorials: LoadAccessorialRow[];
+  driver_days: DriverDayRow[];
+  fuel_purchases: FuelPurchaseRow[];
+  pay_configs: PayConfigRow[];
+  deduction_schedules: DeductionScheduleRow[];
+  settlement_periods: SettlementPeriodRow[];
+  settlements: SettlementRow[];
+  settlement_lines: SettlementLineRow[];
+  pay_items: PayItemRow[];
+  advances: AdvanceRow[];
+  invoices: InvoiceRow[];
+  customer_payments: CustomerPaymentRow[];
+  payment_applications: PaymentApplicationRow[];
+};
+
+// Compile-time proof that TenantRows has exactly one key per table.
+type Exact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+export const ROWS_COVER_TABLES: Exact<keyof TenantRows, TenantTable> = true;

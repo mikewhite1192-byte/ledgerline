@@ -1,0 +1,194 @@
+{
+  "anchor": "2026-11-02",
+  "carriers": {
+    "blue-ridge": {
+      "counts": {
+        "customers": 12,
+        "drivers": 25,
+        "loads": 330,
+        "load_state_miles": 1088,
+        "load_accessorials": 90,
+        "driver_days": 456,
+        "fuel_purchases": 461,
+        "pay_configs": 1,
+        "deduction_schedules": 18,
+        "settlement_periods": 4,
+        "settlements": 75,
+        "settlement_lines": 528,
+        "pay_items": 244,
+        "advances": 19,
+        "invoices": 335,
+        "customer_payments": 149,
+        "payment_applications": 209
+      },
+      "linehaulCents": 30154000,
+      "hero": {
+        "code": "BR-D07",
+        "lines": [
+          {
+            "seq": 1,
+            "kind": "load_pay",
+            "label": "Load BR-L10247",
+            "amountCents": 82500
+          },
+          {
+            "seq": 2,
+            "kind": "load_pay",
+            "label": "Load BR-L10269",
+            "amountCents": 97500
+          },
+          {
+            "seq": 3,
+            "kind": "load_pay",
+            "label": "Load BR-L10307",
+            "amountCents": 60000
+          },
+          {
+            "seq": 4,
+            "kind": "reimbursement",
+            "label": "Reimbursement (toll)",
+            "amountCents": 4500
+          },
+          {
+            "seq": 5,
+            "kind": "reimbursement",
+            "label": "Reimbursement (toll)",
+            "amountCents": 3500
+          },
+          {
+            "seq": 6,
+            "kind": "reimbursement",
+            "label": "Reimbursement (fuel)",
+            "amountCents": 10000
+          },
+          {
+            "seq": 7,
+            "kind": "insurance",
+            "label": "Insurance, 5 days",
+            "amountCents": -5500
+          },
+          {
+            "seq": 8,
+            "kind": "escrow",
+            "label": "Escrow",
+            "amountCents": -10000
+          },
+          {
+            "seq": 9,
+            "kind": "advance_recovery",
+            "label": "Advance recovery (2026-10-28)",
+            "amountCents": -20000
+          }
+        ],
+        "grossCents": 258000,
+        "deductionsCents": 35500,
+        "netCents": 222500
+      },
+      "settledNetCents": [
+        {
+          "periodStart": "2026-10-05",
+          "netCents": 2662634
+        },
+        {
+          "periodStart": "2026-10-12",
+          "netCents": 2774187
+        },
+        {
+          "periodStart": "2026-10-19",
+          "netCents": 2312227
+        }
+      ],
+      "advancesOutstandingCents": 290331,
+      "receivables": {
+        "openByBucket": {
+          "current": {
+            "invoices": 62,
+            "cents": 6986999
+          },
+          "1_30": {
+            "invoices": 48,
+            "cents": 6950494
+          },
+          "31_60": {
+            "invoices": 8,
+            "cents": 1687273
+          },
+          "61_90": {
+            "invoices": 10,
+            "cents": 2607618
+          },
+          "over_90": {
+            "invoices": 11,
+            "cents": 3163650
+          }
+        },
+        "paymentsInOpenWeek": 39,
+        "overappliedInvoices": 1
+      }
+    },
+    "prairie-wind": {
+      "counts": {
+        "customers": 12,
+        "drivers": 25,
+        "loads": 315,
+        "load_state_miles": 687,
+        "load_accessorials": 103,
+        "driver_days": 336,
+        "fuel_purchases": 361,
+        "pay_configs": 1,
+        "deduction_schedules": 18,
+        "settlement_periods": 4,
+        "settlements": 75,
+        "settlement_lines": 553,
+        "pay_items": 209,
+        "advances": 18,
+        "invoices": 324,
+        "customer_payments": 155,
+        "payment_applications": 198
+      },
+      "linehaulCents": 23362300,
+      "hero": null,
+      "settledNetCents": [
+        {
+          "periodStart": "2026-10-04",
+          "netCents": 2266330
+        },
+        {
+          "periodStart": "2026-10-11",
+          "netCents": 2894837
+        },
+        {
+          "periodStart": "2026-10-18",
+          "netCents": 2569512
+        }
+      ],
+      "advancesOutstandingCents": 316299,
+      "receivables": {
+        "openByBucket": {
+          "current": {
+            "invoices": 86,
+            "cents": 7728701
+          },
+          "1_30": {
+            "invoices": 16,
+            "cents": 2433756
+          },
+          "31_60": {
+            "invoices": 10,
+            "cents": 3055080
+          },
+          "61_90": {
+            "invoices": 10,
+            "cents": 2582000
+          },
+          "over_90": {
+            "invoices": 12,
+            "cents": 3226362
+          }
+        },
+        "paymentsInOpenWeek": 46,
+        "overappliedInvoices": 1
+      }
+    }
+  }
+}

@@ -1,7 +1,12 @@
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 
-type Carrier = { name: string; timezone: string; email: string };
+type Carrier = {
+  name: string;
+  timezone: string;
+  email: string;
+  counts: { drivers: number; loads: number; periods: number };
+};
 
 // The signed-in carrier's shell. Every read runs inside withRequestTenant, so this page can only
 // ever see the carrier on the verified token. Signed out: withRequestTenant redirects to /sign-in.
@@ -18,7 +23,20 @@ export default async function Home() {
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
-      return { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email };
+      // Each count names its tenant, as every read does.
+      const [counts] = await q.query<{ drivers: number; loads: number; periods: number }>(
+        `SELECT (SELECT count(*) FROM drivers WHERE tenant_id = current_tenant_id()) AS drivers,
+                (SELECT count(*) FROM loads WHERE tenant_id = current_tenant_id()) AS loads,
+                (SELECT count(*) FROM settlement_periods WHERE tenant_id = current_tenant_id())
+                  AS periods`,
+      );
+      if (!counts) throw new DbError("unknown");
+      return {
+        name: tenants[0].name,
+        timezone: tenants[0].timezone,
+        email: members[0].email,
+        counts,
+      };
     });
   } catch (err) {
     // Anything else (the redirect to /sign-in among them) goes on to Next.
@@ -35,6 +53,10 @@ export default async function Home() {
           <h2 style={{ marginTop: 24 }}>{carrier.name}</h2>
           <p style={{ marginTop: 8 }}>Time zone: {carrier.timezone}</p>
           <p style={{ marginTop: 8 }}>Signed in as {carrier.email}</p>
+          <p style={{ marginTop: 8 }}>
+            {carrier.counts.drivers} drivers, {carrier.counts.loads} loads,{" "}
+            {carrier.counts.periods} pay periods
+          </p>
           <p style={{ marginTop: 24 }}>
             Drivers, loads and this week&apos;s pay run arrive with the next items.
           </p>

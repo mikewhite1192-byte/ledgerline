@@ -31,6 +31,10 @@ first. Unset means no rows and no writes. `src/lib/db/rls-coverage.db.test.ts` f
 table in `public` without forced row-level security and exactly that one policy, for a view or a
 security-definer function, and for an app role that owns, inherits or bypasses anything.
 
+A reference from one tenant table to another is a composite foreign key on `(tenant_id, x_id)`
+against the parent's `UNIQUE (tenant_id, id)`, so a row can never point at another tenant's row
+(the insert fails with 23503).
+
 App SQL uses `$1, $2` parameters and `CAST($1 AS uuid)` rather than the `::` shorthand. Money is
 `bigint` cents, never `numeric`.
 

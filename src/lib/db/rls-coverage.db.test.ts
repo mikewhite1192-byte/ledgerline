@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { TENANT_TABLES } from "../data/tables";
 import { createPgDb } from "./pg";
 import { adminUrl } from "./test-urls";
 import type { Db } from "./types";
@@ -44,7 +45,7 @@ describe("row-level security coverage", () => {
 
   it("finds the tables (an empty list would make every check below pass)", async () => {
     const names = (await tables()).map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["memberships", "tenants"]));
+    expect(names).toEqual(expect.arrayContaining(["memberships", "tenants", ...TENANT_TABLES]));
   });
 
   it("forces row-level security on every table, owned by someone other than the app", async () => {

@@ -1,0 +1,176 @@
+import { daysBetween } from "../time/local-date";
+import { assertCents, cents, sub, sum } from "./money";
+import {
+  AGING_BUCKETS,
+  assertDate,
+  assertId,
+  assertOneOf,
+  compareText,
+  INVOICE_SOURCES,
+  INVOICE_STATUSES,
+  InputError,
+  type AgingBucket,
+  type AgingTotals,
+  type CustomerPaymentRecord,
+  type Finding,
+  type InvoiceRecord,
+  type InvoiceStatusResult,
+  type PaymentApplicationRecord,
+  type ReceivablesAging,
+  type ReceivablesInput,
+  type SourceRef,
+} from "./types";
+
+// Receivables (design section 4.8): what customers owe the carrier and how late it is. Payments
+// are recorded, never collected. The stored invoice status follows the applications; these
+// functions are the one place that rule lives, for the seed, the app and the agent alike.
+
+function checkInvoice(invoice: InvoiceRecord): InvoiceRecord {
+  const id = assertId(invoice?.id, "invoice id");
+  assertId(invoice.customerId, `invoice ${id} customerId`);
+  assertOneOf(invoice.source, INVOICE_SOURCES, `invoice ${id} source`);
+  assertOneOf(invoice.status, INVOICE_STATUSES, `invoice ${id} status`);
+  assertCents(invoice.amountCents, `invoice ${id} amountCents`);
+  assertDate(invoice.issuedOn, `invoice ${id} issuedOn`);
+  assertDate(invoice.dueOn, `invoice ${id} dueOn`);
+  if (invoice.source === "load" && invoice.loadId === null) {
+    throw new InputError(`invoice ${id} is for a load but names none`);
+  }
+  return invoice;
+}
+
+function checkPayment(payment: CustomerPaymentRecord): CustomerPaymentRecord {
+  const id = assertId(payment?.id, "payment id");
+  assertId(payment.customerId, `payment ${id} customerId`);
+  assertDate(payment.receivedOn, `payment ${id} receivedOn`);
+  assertCents(payment.amountCents, `payment ${id} amountCents`);
+  return payment;
+}
+
+function checkApplication(application: PaymentApplicationRecord): PaymentApplicationRecord {
+  const id = assertId(application?.id, "application id");
+  assertId(application.paymentId, `application ${id} paymentId`);
+  assertId(application.invoiceId, `application ${id} invoiceId`);
+  assertCents(application.amountCents, `application ${id} amountCents`);
+  return application;
+}
+
+// 0 applied is open, under the amount partially paid, at or over it paid; what is past the
+// amount is reported, never hidden. Void is a person's decision, never derived.
+export function invoiceStatus(amountCents: number, appliedCents: number): InvoiceStatusResult {
+  const amount = assertCents(amountCents, "invoice amountCents");
+  if (amount === 0) throw new InputError("invoice amountCents is zero");
+  const applied = cents(appliedCents, "applied cents");
+  if (applied < 0) throw new InputError("applied cents is negative");
+  if (applied === 0) return { status: "open", balanceCents: amount, overappliedCents: cents(0) };
+  if (applied < amount) {
+    return { status: "partially_paid", balanceCents: sub(amount, applied), overappliedCents: cents(0) };
+  }
+  return { status: "paid", balanceCents: cents(0), overappliedCents: sub(applied, amount) };
+}
+
+// Aging counts whole days from the due date to asOf, both tenant-local dates.
+export function agingBucket(dueOn: string, asOf: string): AgingBucket {
+  const late = daysBetween(assertDate(dueOn, "dueOn"), assertDate(asOf, "asOf"));
+  if (late <= 0) return "current";
+  if (late <= 30) return "1_30";
+  if (late <= 60) return "31_60";
+  if (late <= 90) return "61_90";
+  return "over_90";
+}
+
+// Applied cents per invoice id, over every application given.
+function appliedByInvoice(applications: readonly PaymentApplicationRecord[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const a of applications.map(checkApplication)) {
+    out.set(a.invoiceId, sum([out.get(a.invoiceId) ?? 0, a.amountCents]));
+  }
+  return out;
+}
+
+function emptyTotals(): AgingTotals {
+  return Object.fromEntries(AGING_BUCKETS.map((b) => [b, cents(0)])) as AgingTotals;
+}
+
+// Open balances by customer and bucket, over invoices that are not void and still owe money.
+export function ageReceivables(input: ReceivablesInput): ReceivablesAging {
+  const asOf = assertDate(input.asOf, "asOf");
+  const applied = appliedByInvoice(input.applications);
+  const byCustomer = new Map<string, AgingTotals>();
+  const totals = emptyTotals();
+  for (const invoice of input.invoices.map(checkInvoice)) {
+    if (invoice.status === "void") continue;
+    const { balanceCents } = invoiceStatus(invoice.amountCents, applied.get(invoice.id) ?? 0);
+    if (balanceCents === 0) continue;
+    const bucket = agingBucket(invoice.dueOn, asOf);
+    const own = byCustomer.get(invoice.customerId) ?? emptyTotals();
+    own[bucket] = sum([own[bucket], balanceCents]);
+    byCustomer.set(invoice.customerId, own);
+    totals[bucket] = sum([totals[bucket], balanceCents]);
+  }
+  return {
+    byCustomer: [...byCustomer.entries()]
+      .sort(([a], [b]) => compareText(a, b))
+      .map(([customerId, buckets]) => ({ customerId, buckets })),
+    totals,
+  };
+}
+
+// The seventh check. For every invoice Y with more applied than its amount, each application on
+// Y and its payment P: when the same customer has another invoice X still owing, whose amount
+// equals P's exactly, P was most likely meant for X (payment_on_wrong_invoice, citing P, the
+// application, Y and X, amount = the application). With no such X, Y is simply overapplied
+// (invoice_overapplied, citing P, the application and Y, amount = the excess). One finding per
+// application; output order is fixed whatever order the records arrive in.
+export function findPaymentOnWrongInvoice(input: ReceivablesInput): Finding[] {
+  const invoices = input.invoices.map(checkInvoice);
+  const payments = new Map(input.payments.map((p) => [checkPayment(p).id, p]));
+  const applications = input.applications.map(checkApplication);
+  const applied = appliedByInvoice(applications);
+  const balanceOf = (i: InvoiceRecord) =>
+    i.status === "void" ? 0 : invoiceStatus(i.amountCents, applied.get(i.id) ?? 0).balanceCents;
+  const ordered = [...invoices].sort(
+    (a, b) => compareText(a.invoiceNumber, b.invoiceNumber) || compareText(a.id, b.id),
+  );
+  const out: Finding[] = [];
+  for (const y of ordered) {
+    if (y.status === "void") continue;
+    const { overappliedCents } = invoiceStatus(y.amountCents, applied.get(y.id) ?? 0);
+    if (overappliedCents === 0) continue;
+    const onY = applications
+      .filter((a) => a.invoiceId === y.id)
+      .sort((a, b) => compareText(a.paymentId, b.paymentId) || compareText(a.id, b.id));
+    for (const application of onY) {
+      const payment = payments.get(application.paymentId);
+      if (!payment) throw new InputError(`application ${application.id} names no known payment`);
+      const sources: SourceRef[] = [
+        { table: "customer_payments", id: payment.id },
+        { table: "payment_applications", id: application.id },
+        { table: "invoices", id: y.id },
+      ];
+      const meant = ordered.find(
+        (x) =>
+          x.id !== y.id &&
+          x.customerId === y.customerId &&
+          x.amountCents === payment.amountCents &&
+          balanceOf(x) > 0,
+      );
+      out.push(
+        meant
+          ? {
+              check: "payment_on_wrong_invoice",
+              category: "payment_on_wrong_invoice",
+              amountCents: application.amountCents,
+              sources: [...sources, { table: "invoices", id: meant.id }],
+            }
+          : {
+              check: "payment_on_wrong_invoice",
+              category: "invoice_overapplied",
+              amountCents: overappliedCents,
+              sources,
+            },
+      );
+    }
+  }
+  return out;
+}

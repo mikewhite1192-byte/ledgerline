@@ -16,6 +16,7 @@
     "test:db:fresh": "tsx scripts/test-db-fresh.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "demo:users": "tsx scripts/create-demo-users.ts",
+    "seed": "tsx scripts/seed.ts",
     "cdk": "cd infra && cdk"
   },
   "dependencies": {
