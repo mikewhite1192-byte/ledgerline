@@ -732,17 +732,28 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     if (plant?.stop === "delivery") deliveryDwell = plant.minutes;
     if (plant?.stop === "pickup") pickupDwell = plant.minutes;
     if (x === atFree) deliveryDwell = customer.detention_free_minutes;
-    const deliveryArrived = minutesBefore(l.delivered_at, deliveryDwell);
+    let deliveryArrived = minutesBefore(l.delivered_at, deliveryDwell);
     let pickupDeparted: string;
     if (l.pickup_on < l.delivered_on) {
       // Loaded during the day; a long wait at pickup moves the departure later.
       const later = Math.ceil(Math.max(0, pickupDwell - 120) / 60);
       pickupDeparted = instantAt(l.pickup_on, side.int(6, 14) + later, side.int(0, 59), zone);
     } else {
-      // Same day: leave the drive time (50 miles an hour) before arriving, within the day.
+      // Same day: leave the drive time (50 miles an hour) before arriving, within the day. When
+      // the pickup wait from midnight alone reaches the delivery arrival (a long billed
+      // detention), the bill is signed later instead: the whole drive follows the wait, that day.
       const drive = Math.ceil((l.loaded_miles * 60) / 50);
-      const arrive = Date.parse(deliveryArrived);
       const earliest = Date.parse(instantAt(l.pickup_on, 0, 0, zone)) + pickupDwell * MINUTE_MS;
+      if (earliest >= Date.parse(deliveryArrived)) {
+        deliveryArrived = new Date(earliest + drive * MINUTE_MS).toISOString();
+        l.delivered_at = new Date(
+          Date.parse(deliveryArrived) + deliveryDwell * MINUTE_MS,
+        ).toISOString();
+        if (localDateOf(l.delivered_at, zone) !== l.delivered_on) {
+          throw new Error("delivery left its day");
+        }
+      }
+      const arrive = Date.parse(deliveryArrived);
       const ms = Math.min(arrive, Math.max(earliest, arrive - drive * MINUTE_MS));
       pickupDeparted = new Date(ms).toISOString();
     }

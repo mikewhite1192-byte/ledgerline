@@ -196,13 +196,16 @@ describe("buildCarrierPlan", () => {
     }
   });
 
-  it("builds and checks a plan for a spread of anchors, DST weeks included", () => {
-    const anchors = Array.from({ length: 12 }, (_, i) => addDays("2026-01-05", i * 31));
-    anchors.push("2026-03-09", "2026-11-03");
-    for (const anchor of anchors) {
+  // One test per anchor, each with room for a slow runner: every plan runs all of assertPlan.
+  const spread = Array.from({ length: 12 }, (_, i) => addDays("2026-01-05", i * 31));
+  spread.push("2026-03-09", "2026-11-03");
+  it.each(spread)(
+    "builds and checks both plans at anchor %s (a spread of anchors, DST weeks included)",
+    { timeout: 30_000 },
+    (anchor) => {
       for (const c of DEMO_CARRIERS) expect(() => buildCarrierPlan(c, anchor)).not.toThrow();
-    }
-  });
+    },
+  );
 });
 
 describe("versioned pay rules", () => {

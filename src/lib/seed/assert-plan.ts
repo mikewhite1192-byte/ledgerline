@@ -336,7 +336,8 @@ function loadsAndDays(
     if (localDateOf(l.delivered_at, zone) !== l.delivered_on) fail("a delivery date is off");
     if (l.delivered_on < l.pickup_on || l.delivered_on > lastDay) fail("a delivery is out of range");
     // Stop times: all four or none (none only in the open week), in order, the delivery
-    // departure at the signed delivery, and the pickup departure on the pickup day.
+    // departure at the signed delivery, the pickup arrival and departure on the pickup day, and
+    // some drive time between leaving pickup and arriving at delivery.
     if (times.every((t) => t === null)) {
       if (l.delivered_on < openStart) fail("a settled-week load has no stop times");
       continue;
@@ -348,6 +349,10 @@ function loadsAndDays(
     }
     if (ms[3] !== Date.parse(l.delivered_at)) fail("the delivery departure is not the delivery");
     if (localDateOf(l.pickup_departed_at!, zone) !== l.pickup_on) fail("a pickup is off its day");
+    if (localDateOf(l.pickup_arrived_at!, zone) !== l.pickup_on) {
+      fail("a pickup arrival is off its day");
+    }
+    if (ms[2] <= ms[1]) fail("a load has no drive time");
   }
   for (const f of rows.fuel_purchases) {
     if (localDateOf(f.purchased_at, zone) !== f.purchased_on) fail("a purchase date is off");

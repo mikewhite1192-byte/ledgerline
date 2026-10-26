@@ -121,9 +121,11 @@ export function ageReceivables(input: ReceivablesInput): ReceivablesAging {
 // The seventh check. For every invoice Y with more applied than its amount, each application on
 // Y and its payment P: when the same customer has another invoice X still owing, whose amount
 // equals P's exactly, P was most likely meant for X (payment_on_wrong_invoice, citing P, the
-// application, Y and X, amount = the application). With no such X, Y is simply overapplied
-// (invoice_overapplied, citing P, the application and Y, amount = the excess). One finding per
-// application; output order is fixed whatever order the records arrive in.
+// application, Y and X, amount = the application). The part of Y's excess those findings do not
+// explain is one invoice_overapplied finding for Y (amount = that remainder), citing P and the
+// application of the last received payment on Y with no such X (it holds part of the excess),
+// then Y. Nothing left, or no such application, gives no invoice_overapplied finding. Output
+// order is fixed whatever order the records arrive in.
 export function findPaymentOnWrongInvoice(input: ReceivablesInput): Finding[] {
   const invoices = input.invoices.map(checkInvoice);
   const payments = new Map(input.payments.map((p) => [checkPayment(p).id, p]));
@@ -142,6 +144,9 @@ export function findPaymentOnWrongInvoice(input: ReceivablesInput): Finding[] {
     const onY = applications
       .filter((a) => a.invoiceId === y.id)
       .sort((a, b) => compareText(a.paymentId, b.paymentId) || compareText(a.id, b.id));
+    let unexplained: number = overappliedCents;
+    let unmatched: SourceRef[] | null = null;
+    let unmatchedOn = "";
     for (const application of onY) {
       const payment = payments.get(application.paymentId);
       if (!payment) throw new InputError(`application ${application.id} names no known payment`);
@@ -157,21 +162,29 @@ export function findPaymentOnWrongInvoice(input: ReceivablesInput): Finding[] {
           x.amountCents === payment.amountCents &&
           balanceOf(x) > 0,
       );
-      out.push(
-        meant
-          ? {
-              check: "payment_on_wrong_invoice",
-              category: "payment_on_wrong_invoice",
-              amountCents: application.amountCents,
-              sources: [...sources, { table: "invoices", id: meant.id }],
-            }
-          : {
-              check: "payment_on_wrong_invoice",
-              category: "invoice_overapplied",
-              amountCents: overappliedCents,
-              sources,
-            },
-      );
+      if (!meant) {
+        // The last received; on the same day, the later in the fixed order above.
+        if (unmatched === null || compareText(payment.receivedOn, unmatchedOn) >= 0) {
+          unmatched = sources;
+          unmatchedOn = payment.receivedOn;
+        }
+        continue;
+      }
+      unexplained = Math.max(0, sub(unexplained, application.amountCents));
+      out.push({
+        check: "payment_on_wrong_invoice",
+        category: "payment_on_wrong_invoice",
+        amountCents: application.amountCents,
+        sources: [...sources, { table: "invoices", id: meant.id }],
+      });
+    }
+    if (unexplained > 0 && unmatched !== null) {
+      out.push({
+        check: "payment_on_wrong_invoice",
+        category: "invoice_overapplied",
+        amountCents: cents(unexplained),
+        sources: unmatched,
+      });
     }
   }
   return out;

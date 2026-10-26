@@ -4,6 +4,7 @@ import { createDataApiDb } from "../src/lib/db/data-api";
 import { createPgDb } from "../src/lib/db/pg";
 import { DbError, type Db } from "../src/lib/db/types";
 import { settleDriver } from "../src/lib/rules-engine";
+import { HERO_OPEN_WEEK } from "../src/lib/seed/assert-plan";
 import { DEMO_CARRIERS, carrierBySlug, type DemoCarrier } from "../src/lib/seed/carriers";
 import { buildCarrierPlan, type CarrierPlan } from "../src/lib/seed/plan";
 import { findDemoTenant, replaceTenantData } from "../src/lib/seed/run";
@@ -115,8 +116,14 @@ async function main(): Promise<void> {
       for (const t of TENANT_TABLES) {
         console.log(`${slug} ${t}: deleted ${report.deleted[t]}, inserted ${report.inserted[t]}`);
       }
+      // Only the carrier with the hero has one; its net read back must be the worked example.
       const net = await heroNet(app, tenantId, plan);
-      if (net !== null) console.log(`${slug} hero ${plan.carrier.heroCode} open-week net: ${net}`);
+      if (net !== null) {
+        console.log(`${slug} hero ${plan.carrier.heroCode} open-week net: ${net}`);
+        if (net !== HERO_OPEN_WEEK.netCents) {
+          throw new Error(`${slug}: the hero's open-week net read back is not the worked example`);
+        }
+      }
     }
   } finally {
     await Promise.all([admin.close(), app.close()]);

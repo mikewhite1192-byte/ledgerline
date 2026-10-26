@@ -180,7 +180,8 @@ describe("findPaymentOnWrongInvoice", () => {
     ]);
   });
 
-  it("gives one finding per application on an overapplied invoice", () => {
+  it("never blames the invoice's own payment for an excess the wrong payment explains", () => {
+    // Y's own 26,400 is on it too; the whole 48,000 excess is P's, already found.
     const input = planted();
     input.payments.push(payment("p0", 26_400));
     input.applications.push(apply("a0", "p0", "y", 26_400));
@@ -196,17 +197,68 @@ describe("findPaymentOnWrongInvoice", () => {
           { table: "invoices", id: "x" },
         ],
       },
+    ]);
+  });
+
+  it("reports only what the wrong payment does not explain, on the last payment received", () => {
+    // Y's own 26,400 came first, then P's 48,000 (meant for X), then 5,000 with no target:
+    // 53,000 over, 48,000 explained, 5,000 left on the last payment.
+    const input = planted();
+    input.payments.push({ ...payment("p0", 26_400), receivedOn: "2026-10-01" }, payment("p3", 5_000));
+    input.applications.push(apply("a0", "p0", "y", 26_400), apply("a3", "p3", "y", 5_000));
+    expect(findPaymentOnWrongInvoice(input)).toEqual([
+      {
+        check: "payment_on_wrong_invoice",
+        category: "payment_on_wrong_invoice",
+        amountCents: 48_000,
+        sources: [
+          { table: "customer_payments", id: "p" },
+          { table: "payment_applications", id: "a" },
+          { table: "invoices", id: "y" },
+          { table: "invoices", id: "x" },
+        ],
+      },
       {
         check: "payment_on_wrong_invoice",
         category: "invoice_overapplied",
-        amountCents: 48_000,
+        amountCents: 5_000,
         sources: [
-          { table: "customer_payments", id: "p0" },
-          { table: "payment_applications", id: "a0" },
+          { table: "customer_payments", id: "p3" },
+          { table: "payment_applications", id: "a3" },
           { table: "invoices", id: "y" },
         ],
       },
     ]);
+  });
+
+  it("counts the excess once for two applications with no target, on the later payment", () => {
+    // 25,000 on 10-20 then 20,000 on 10-28 against 30,000: 15,000 over, once, on the later one
+    // (p1, though it sorts first by id).
+    const input: ReceivablesInput = {
+      invoices: [invoice("y", 30_000, "2026-10-15"), invoice("x", 48_000, "2026-10-20")],
+      payments: [payment("p1", 20_000), { ...payment("p2", 25_000), receivedOn: "2026-10-20" }],
+      applications: [apply("a1", "p1", "y", 20_000), apply("a2", "p2", "y", 25_000)],
+      asOf: AS_OF,
+    };
+    const want = [
+      {
+        check: "payment_on_wrong_invoice",
+        category: "invoice_overapplied",
+        amountCents: 15_000,
+        sources: [
+          { table: "customer_payments", id: "p1" },
+          { table: "payment_applications", id: "a1" },
+          { table: "invoices", id: "y" },
+        ],
+      },
+    ];
+    expect(findPaymentOnWrongInvoice(input)).toEqual(want);
+    const reversed: ReceivablesInput = {
+      ...input,
+      payments: [...input.payments].reverse(),
+      applications: [...input.applications].reverse(),
+    };
+    expect(findPaymentOnWrongInvoice(reversed)).toEqual(want);
   });
 
   it("gives the same findings whatever order the records arrive in", () => {
