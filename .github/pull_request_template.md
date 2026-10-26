@@ -5,7 +5,7 @@ Second read: <head sha>
 <Who asked, when, and what is missing or wrong today. One short paragraph. Quote the ask. Name
 the brief's done-means line this serves, if any.>
 
-Design: `docs/<item>-design.md` (D1-Dn approved <date>).
+Design: summarized below (D1-Dn approved <date>).
 
 ## What changes
 
@@ -18,8 +18,8 @@ Design: `docs/<item>-design.md` (D1-Dn approved <date>).
 - Probes: <P1 read-only result; P2 write probe on throwaway records, cleaned up>.
 - Tests: <N new checks in which suites>; full suite green; DB tests on a fresh database.
 - Dry run on real data: <summary of a print-only / preview run, if the change supports one>.
-- Second read (before the first push): <N findings by severity, all taken in one commit;
-  listed in the design doc 4a>.
+- Second read (before the first push): <N findings by severity, all taken in one commit,
+  each listed in one line>.
 
 ## Known interplay (not changed here)
 

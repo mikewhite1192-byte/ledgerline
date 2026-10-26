@@ -26,11 +26,10 @@ reviews:
     enabled: true
     drafts: false
     auto_incremental_review: false
-    # Patterns, not names, so a renamed mainline (phase3 -> phase4) keeps its review.
     base_branches: ["main"]
   path_filters:
     - "!node_modules/**"
-    - "!*.local.*"
+    - "!**/*.local.*"
     - "!docs/**"
     - "!**/*.md"
   path_instructions:

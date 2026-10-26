@@ -6,7 +6,7 @@ export const REPOSITORY_URL = "https://github.com/mikewhite1192-byte/payday-copi
 export const GITHUB_TOKEN_SECRET_NAME = "payday-copilot/github-token";
 
 // Amplify Hosting for the Next.js app. No inline build spec: Amplify reads amplify.yml from the
-// repo. A merge to main builds and deploys production; each PR gets a preview.
+// repo. A merge to main builds and deploys production.
 export class HostingStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
@@ -26,7 +26,8 @@ export class HostingStack extends Stack {
       stage: "PRODUCTION",
       framework: "Next.js - SSR",
       enableAutoBuild: true,
-      enablePullRequestPreview: true,
+      // Off: Amplify refuses SSR PR previews on a public repo (outside code would run as our role).
+      enablePullRequestPreview: false,
     });
   }
 }

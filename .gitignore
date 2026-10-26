@@ -19,6 +19,11 @@ cdk.out/
 *.local.*
 .DS_Store
 
+# database dumps: a probe must never commit data
+*.dump
+*.sql.gz
+*.backup
+
 # framework output
 *.tsbuildinfo
 next-env.d.ts

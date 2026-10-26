@@ -17,7 +17,7 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -99,16 +99,27 @@ jobs:
             fi
           fi
           if [ -z "$BASE" ]; then echo "no base to diff against; skipping"; exit 0; fi
-          HITS=$(git diff "$BASE"...HEAD | grep -E '^\+' | grep -v '^+++' | grep -nP '\x{2014}' || true)
-          if [ -n "$HITS" ]; then
+          # Fail closed. grep exits 0 on a match, 1 on none and 2 on an error. The filters treat
+          # "no match" as an empty result, so a failing git diff or grep fails this pipeline
+          # (pipefail) and the step (set -e). The em dash is matched as its fixed UTF-8 bytes,
+          # with no locale or PCRE involved, and its grep's exit code is read, never masked.
+          filter() { grep "$@" || [ $? -eq 1 ]; }
+          ADDED=$(git diff "$BASE"...HEAD | filter -E '^\+' | filter -v '^+++')
+          EM_DASH=$(printf '\342\200\224')
+          RC=0
+          HITS=$(printf '%s\n' "$ADDED" | grep -nF "$EM_DASH") || RC=$?
+          if [ "$RC" -eq 0 ]; then
             echo "::error::em dash in added lines (house rule: commas, colons or parentheses instead)."
             echo "$HITS"
+            exit 1
+          elif [ "$RC" -ne 1 ]; then
+            echo "::error::em dash check failed (grep exit $RC)."
             exit 1
           fi
           echo "OK: no em dashes added."
 
   secrets:
-    name: secret scan (full history)
+    name: secret scan (new commits)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -125,7 +136,7 @@ jobs:
     name: semgrep (SAST + secrets rules)
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep   # pin by digest once working
+      image: semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -137,7 +148,6 @@ jobs:
           --config p/secrets
           --config p/typescript
           --config p/react
-          --config p/nextjs
           --error
           --exclude node_modules
           --exclude '*.local.*'

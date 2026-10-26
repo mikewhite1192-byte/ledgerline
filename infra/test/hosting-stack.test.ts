@@ -39,13 +39,13 @@ describe("HostingStack", () => {
     expect(JSON.stringify(template.toJSON())).not.toMatch(/ghp_|gho_|github_pat_/);
   });
 
-  it("builds main as production with auto build and pull request previews", () => {
+  it("builds main as production with auto build and no pull request previews", () => {
     template.hasResourceProperties("AWS::Amplify::Branch", {
       BranchName: "main",
       Stage: "PRODUCTION",
       Framework: "Next.js - SSR",
       EnableAutoBuild: true,
-      EnablePullRequestPreview: true,
+      EnablePullRequestPreview: false,
     });
   });
 });
