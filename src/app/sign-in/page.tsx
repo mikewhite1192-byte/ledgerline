@@ -1,9 +1,12 @@
 import { redirect } from "next/navigation";
+import { Wordmark } from "@/components/brand/wordmark";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Field } from "@/components/ui/field";
+import { InlineAlert } from "@/components/ui/inline-alert";
+import { Input } from "@/components/ui/input";
 import { getSession } from "@/lib/auth/session";
 import { signInAction } from "./actions";
-
-const fieldStyle = { display: "grid", gap: 4 } as const;
-const inputStyle = { padding: "8px 10px", font: "inherit" } as const;
 
 // Logins are created only by the demo script: no sign-up link, no password reset.
 export default async function SignIn({
@@ -21,41 +24,39 @@ export default async function SignIn({
         : null;
 
   return (
-    <main style={{ maxWidth: 400, margin: "64px auto", padding: "0 16px" }}>
-      <h1>LedgerLine</h1>
-      <p style={{ marginTop: 12 }}>Sign in to your carrier.</p>
-      {message ? (
-        <p role="alert" style={{ marginTop: 12, color: "#b42318" }}>
-          {message}
-        </p>
-      ) : null}
-      <form action={signInAction} style={{ display: "grid", gap: 12, marginTop: 16 }}>
-        <label style={fieldStyle}>
-          Email
-          <input
-            name="email"
-            type="email"
-            autoComplete="username"
-            required
-            maxLength={254}
-            style={inputStyle}
-          />
-        </label>
-        <label style={fieldStyle}>
-          Password
-          <input
-            name="password"
-            type="password"
-            autoComplete="current-password"
-            required
-            maxLength={256}
-            style={inputStyle}
-          />
-        </label>
-        <button type="submit" style={inputStyle}>
-          Sign in
-        </button>
-      </form>
+    <main className="flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
+      <div className="grid w-full max-w-[400px] gap-6">
+        <Wordmark size="lg" className="justify-self-center" />
+        <Card className="grid gap-5 p-6 sm:p-8">
+          <div className="grid gap-1">
+            <h1 className="text-h2 text-foreground">Sign in</h1>
+            <p className="text-body text-foreground-2">Sign in to your carrier.</p>
+          </div>
+          {message ? <InlineAlert tone="destructive">{message}</InlineAlert> : null}
+          <form action={signInAction} className="grid gap-4">
+            <Field id="email" label="Email">
+              {(c) => (
+                <Input {...c} name="email" type="email" autoComplete="username" required maxLength={254} />
+              )}
+            </Field>
+            <Field id="password" label="Password">
+              {(c) => (
+                <Input
+                  {...c}
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                  maxLength={256}
+                />
+              )}
+            </Field>
+            <Button type="submit" size="lg" className="mt-1 w-full">
+              Sign in
+            </Button>
+          </form>
+        </Card>
+      </div>
     </main>
   );
 }

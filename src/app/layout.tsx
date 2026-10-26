@@ -1,4 +1,7 @@
 import type { Metadata } from "next";
+import Script from "next/script";
+import { ToastProvider } from "@/components/app/toast";
+import { sans } from "./fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -12,8 +15,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    // theme.js sets data-theme before first paint, so React must not warn that it differs.
+    <html lang="en" className={sans.variable} suppressHydrationWarning>
+      <body>
+        <Script src="/theme.js" strategy="beforeInteractive" />
+        <ToastProvider>{children}</ToastProvider>
+      </body>
     </html>
   );
 }

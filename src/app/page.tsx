@@ -1,4 +1,14 @@
+import { House } from "lucide-react";
 import { flags } from "@/config/flags";
+import { AppShell } from "@/components/app/app-shell";
+import { ChatThread } from "@/components/app/chat-thread";
+import { DataTable } from "@/components/app/data-table";
+import { StatCard } from "@/components/app/stat-card";
+import { ErrorState } from "@/components/app/states";
+import { StatusBadge } from "@/components/app/status-badge";
+import { Wordmark } from "@/components/brand/wordmark";
+import { Button } from "@/components/ui/button";
+import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   capNanocents,
   centsToDisplay,
@@ -7,6 +17,8 @@ import {
 } from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
 import { DbError } from "@/lib/db";
+import { formatInstant } from "@/lib/format/dates";
+import { codeToWords } from "@/lib/format/labels";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { AiProofForm } from "./ai-proof-form";
 
@@ -62,85 +74,232 @@ export default async function Home() {
     else throw err;
   }
 
+  const signOut = (
+    <form action="/api/auth/sign-out" method="post">
+      <Button type="submit" variant="ghost" className="w-full justify-start">
+        Sign out
+      </Button>
+    </form>
+  );
+
+  if (!carrier) {
+    return (
+      <main className="flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
+        <div className="grid w-full max-w-[440px] gap-6">
+          <h1 className="sr-only">LedgerLine</h1>
+          <Wordmark size="lg" className="justify-self-center" />
+          <Card>
+            {/* Unknown is not empty: a failed or timed-out read never shows as "no data". */}
+            <ErrorState category={problem === "forbidden" ? "forbidden" : "unreadable"} />
+            <div className="border-t border-border p-3">{signOut}</div>
+          </Card>
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main style={{ maxWidth: 640, margin: "64px auto", padding: "0 16px" }}>
-      <h1>LedgerLine</h1>
-      {carrier ? (
-        <>
-          <h2 style={{ marginTop: 24 }}>{carrier.name}</h2>
-          <p style={{ marginTop: 8 }}>Time zone: {carrier.timezone}</p>
-          <p style={{ marginTop: 8 }}>Signed in as {carrier.email}</p>
-          <p style={{ marginTop: 8 }}>
-            {carrier.counts.drivers} drivers, {carrier.counts.loads} loads,{" "}
-            {carrier.counts.periods} pay periods
-          </p>
-          <p style={{ marginTop: 24 }}>
-            Drivers, loads and this week&apos;s pay run arrive with the next items.
-          </p>
-          {carrier.ledger ? <ModelCheck ledger={carrier.ledger} /> : null}
-        </>
-      ) : problem === "forbidden" ? (
-        <p role="alert" style={{ marginTop: 24 }}>
-          This login is not linked to a carrier.
-        </p>
-      ) : (
-        // Unknown is not empty: a failed or timed-out read never shows as "no data".
-        <p role="alert" style={{ marginTop: 24 }}>
-          Could not read your carrier&apos;s data. Try again in a moment.
-        </p>
-      )}
-      <form action="/api/auth/sign-out" method="post" style={{ marginTop: 24 }}>
-        <button type="submit" style={{ padding: "8px 10px", font: "inherit" }}>
-          Sign out
-        </button>
-      </form>
-    </main>
+    <AppShell
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      nav={[{ href: "/", label: "Home", icon: <House aria-hidden />, current: true }]}
+      title="Home"
+      signOut={signOut}
+    >
+      <ChatThread
+        messages={[]}
+        suggestions={SUGGESTIONS}
+        intro="Drivers, loads and this week's pay run arrive with the next items."
+        composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
+      />
+      <RecordCounts counts={carrier.counts} />
+      {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
+    </AppShell>
   );
 }
 
-function ModelCheck({ ledger }: { ledger: ModelLedger }) {
+// Shown before the agent can answer; they light up when it can.
+const SUGGESTIONS = [
+  { id: "paystub-problems", label: "Who has a problem on this week's paystub?" },
+  { id: "past-60", label: "Who owes us money past 60 days?" },
+  { id: "pay-run-cost", label: "What will Friday's pay run cost?" },
+  { id: "advance-limit", label: "Who is over their advance limit?" },
+];
+
+// What this carrier has on file, from the counts read above.
+function RecordCounts({ counts }: { counts: Carrier["counts"] }) {
+  return (
+    <section aria-label="Records on file" className="mx-auto mt-12 grid w-full max-w-[720px] gap-3 sm:grid-cols-3">
+      <StatCard label="Drivers" value={counts.drivers.toLocaleString("en-US")} />
+      <StatCard label="Loads" value={counts.loads.toLocaleString("en-US")} />
+      <StatCard label="Pay periods" value={counts.periods.toLocaleString("en-US")} />
+    </section>
+  );
+}
+
+const PURPOSE_WORDS: Record<string, string> = { proof: "Connection test" };
+
+// created_utc is "YYYY-MM-DD HH24:MI:SS" in UTC. Shown in the carrier's zone; if it ever arrives
+// in another shape, it shows as stored, marked UTC, rather than as a guess.
+function callTime(createdUtc: string, timezone: string): string {
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(createdUtc)) {
+    try {
+      return formatInstant(`${createdUtc.replace(" ", "T")}Z`, timezone);
+    } catch {
+      // Falls through to the stored text.
+    }
+  }
+  return `${createdUtc} UTC`;
+}
+
+function ModelCheck({ ledger, timezone }: { ledger: ModelLedger; timezone: string }) {
   const cap = capNanocents(process.env.AI_SPEND_CAP_CENTS);
   const wonderCap = wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap);
   const { spend } = ledger;
+  const wonderHint = [
+    wonderCap === null
+      ? "No Wonder cap, so every Wonder call is refused"
+      : `Of its ${dollarsToDisplay(wonderCap)} cap`,
+    spend.wonderReservedNanocents > 0
+      ? `plus ${dollarsToDisplay(spend.wonderReservedNanocents)} held`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
   return (
-    <section style={{ marginTop: 32 }}>
-      <h2>Model connection</h2>
-      <AiProofForm />
-      <p style={{ marginTop: 12 }}>
-        Spent so far {dollarsToDisplay(spend.spentNanocents)} of{" "}
-        {cap === null ? "no cap (every call is refused)" : dollarsToDisplay(cap)}
-        {spend.reservedNanocents > 0
-          ? `, plus ${dollarsToDisplay(spend.reservedNanocents)} held for calls in flight or with no answer`
-          : ""}
-        . Calls: {spend.calls}. Wonder: {dollarsToDisplay(spend.wonderSpentNanocents)} of{" "}
-        {wonderCap === null ? "no cap (every Wonder call is refused)" : dollarsToDisplay(wonderCap)}
-        {spend.wonderReservedNanocents > 0
-          ? `, plus ${dollarsToDisplay(spend.wonderReservedNanocents)} held`
-          : ""}
-        .
-      </p>
-      {ledger.calls.length > 0 ? (
-        <ul style={{ marginTop: 12, paddingLeft: 18 }}>
-          {ledger.calls.map((c) => (
-            <li key={c.id} style={{ marginTop: 4 }}>
-              {c.created_utc} UTC, {c.target} {c.kind}, {c.purpose}, {c.status}
-              {c.failure ? ` (${c.failure})` : ""}
-              {c.reasoning_effort ? `, ${c.reasoning_effort} effort` : ""}
-              {c.input_tokens !== null
-                ? `, ${c.input_tokens} in, ${c.output_tokens} out (${c.reasoning_tokens} reasoning)`
-                : ""}
-              {c.units !== null
-                ? `, ${c.units} ${c.kind === "transcribe" ? "audio seconds" : "images"}`
-                : ""}
-              {c.duration_ms !== null ? `, ${c.duration_ms} ms` : ""}
-              {c.cost_nanocents !== null ? `, ${centsToDisplay(c.cost_nanocents)} cents` : ""}
-              {c.upstream_id ? `, ${c.upstream_id}` : ""}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p style={{ marginTop: 12 }}>No model calls yet.</p>
-      )}
-    </section>
+    <Card className="mx-auto mt-12 w-full max-w-[720px]">
+      <CardHeader>
+        <div className="grid gap-0.5">
+          <CardTitle>Model connection</CardTitle>
+          <CardDescription>A test call to the model, counted against the spend cap.</CardDescription>
+        </div>
+      </CardHeader>
+      <CardBody className="grid gap-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <StatCard
+            label="Spent"
+            value={dollarsToDisplay(spend.spentNanocents)}
+            hint={
+              spend.reservedNanocents > 0
+                ? `Plus ${dollarsToDisplay(spend.reservedNanocents)} held for calls in flight or with no answer`
+                : undefined
+            }
+          />
+          <StatCard
+            label="Cap"
+            value={cap === null ? "None" : dollarsToDisplay(cap)}
+            hint={cap === null ? "No cap, so every call is refused" : undefined}
+            tone={cap === null ? "warning" : "neutral"}
+          />
+          <StatCard label="Calls" value={spend.calls.toLocaleString("en-US")} />
+          <StatCard
+            label="Wonder spent"
+            value={dollarsToDisplay(spend.wonderSpentNanocents)}
+            hint={wonderHint}
+            tone={wonderCap === null ? "warning" : "neutral"}
+          />
+        </div>
+        <AiProofForm />
+        <DataTable<CallRow>
+          caption="Newest model calls"
+          rows={ledger.calls}
+          rowKey={(c) => c.id}
+          dense
+          pinFirstColumn
+          empty={{ title: "No model calls yet", body: "The test above makes the first one." }}
+          columns={[
+            {
+              key: "time",
+              header: "Time",
+              cell: (c) => <span className="whitespace-nowrap">{callTime(c.created_utc, timezone)}</span>,
+            },
+            {
+              key: "model",
+              header: "Model",
+              cell: (c) => (
+                <span className="whitespace-nowrap">
+                  {codeToWords(c.target)}
+                  <span className="block text-small text-muted-foreground">
+                    {codeToWords(c.kind)}
+                    {c.reasoning_effort ? `, ${c.reasoning_effort} effort` : ""}
+                  </span>
+                </span>
+              ),
+            },
+            {
+              key: "purpose",
+              header: "Purpose",
+              cell: (c) => PURPOSE_WORDS[c.purpose] ?? codeToWords(c.purpose),
+            },
+            {
+              key: "status",
+              header: "Status",
+              cell: (c) => (
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <StatusBadge status={c.status} />
+                  {c.failure ? <span className="text-small text-muted-foreground">{codeToWords(c.failure)}</span> : null}
+                </span>
+              ),
+            },
+            {
+              key: "usage",
+              header: "Usage",
+              align: "right",
+              cell: (c) =>
+                c.input_tokens !== null || c.units !== null ? (
+                  <span className="whitespace-nowrap">
+                    {c.input_tokens !== null ? (
+                      <>
+                        {c.input_tokens.toLocaleString("en-US")} in, {(c.output_tokens ?? 0).toLocaleString("en-US")} out
+                        <span className="block text-small text-muted-foreground">
+                          {(c.reasoning_tokens ?? 0).toLocaleString("en-US")} reasoning
+                        </span>
+                      </>
+                    ) : null}
+                    {c.units !== null ? (
+                      <span className="block">
+                        {c.units.toLocaleString("en-US")} {c.kind === "transcribe" ? "audio seconds" : "images"}
+                      </span>
+                    ) : null}
+                  </span>
+                ) : (
+                  <span className="text-muted-foreground">Not recorded</span>
+                ),
+            },
+            {
+              key: "duration",
+              header: "Duration",
+              align: "right",
+              cell: (c) =>
+                c.duration_ms !== null ? (
+                  <span className="whitespace-nowrap">{c.duration_ms.toLocaleString("en-US")} ms</span>
+                ) : (
+                  <span className="text-muted-foreground">Not recorded</span>
+                ),
+            },
+            {
+              key: "cost",
+              header: "Cost",
+              align: "right",
+              cell: (c) =>
+                c.cost_nanocents !== null ? (
+                  <span className="whitespace-nowrap">{centsToDisplay(c.cost_nanocents)} cents</span>
+                ) : (
+                  <span className="text-muted-foreground">Not settled</span>
+                ),
+            },
+            {
+              key: "upstream",
+              header: "Upstream id",
+              cell: (c) =>
+                c.upstream_id ? (
+                  <span className="whitespace-nowrap">ending {c.upstream_id.slice(-6)}</span>
+                ) : (
+                  <span className="text-muted-foreground">None</span>
+                ),
+            },
+          ]}
+        />
+      </CardBody>
+    </Card>
   );
 }

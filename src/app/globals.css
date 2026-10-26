@@ -1,42 +1,312 @@
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@import "tailwindcss";
+
+/*
+  Payday Copilot tokens: every color, radius and shadow in the app, once per mode. Components use
+  the semantic utilities mapped below (bg-card, text-muted-foreground, text-primary), never a hex
+  and never the dark: variant, so the two modes cannot drift apart. contrast.test.ts reads these
+  blocks and fails if any text pair drops under WCAG AA.
+
+  Light is the default. Dark applies when the system asks for it and nothing pins light, or when
+  any element (the html element included) carries data-theme="dark".
+*/
+
+:root,
+[data-theme="light"] {
+  --background: #f6f6f3;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --secondary: #eeefea;
+  --muted: #eeefea;
+  --accent: #eeefea;
+  --foreground: #161d1a;
+  --foreground-2: #4c5752;
+  --muted-foreground: #66706b;
+  --border: #e2e4df;
+  --input: #858e89;
+  --primary: #0e6b4d;
+  --primary-hover: #0b5a41;
+  --primary-foreground: #ffffff;
+  --link: #0e6b4d;
+  --success: #0b4a36;
+  --success-soft: #dcefe5;
+  --warning: #8a4b00;
+  --warning-soft: #fff1d6;
+  --destructive: #b42318;
+  --destructive-soft: #fde8e6;
+  --destructive-foreground: #ffffff;
+  --info: #2f4b5a;
+  --info-soft: #e3eaee;
+  --ring: #0e6b4d;
+  --radius: 8px;
+  --float-shadow: 0 4px 16px rgba(22, 29, 26, 0.1);
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  :root:not([data-theme="light"]) {
+    --background: #101412;
+    --card: #171c19;
+    --popover: #171c19;
+    --secondary: #1f2622;
+    --muted: #1f2622;
+    --accent: #1f2622;
+    --foreground: #eceeea;
+    --foreground-2: #b6bdb8;
+    --muted-foreground: #8f9893;
+    --border: #2a312d;
+    --input: #626c66;
+    --primary: #3fb984;
+    --primary-hover: #5ccb9c;
+    --primary-foreground: #0e1a14;
+    --link: #5ccb9c;
+    --success: #8fe0ba;
+    --success-soft: #153527;
+    --warning: #f2b33d;
+    --warning-soft: #3a2a0c;
+    --destructive: #f08a80;
+    --destructive-soft: #3d1915;
+    --destructive-foreground: #161d1a;
+    --info: #a7c3d2;
+    --info-soft: #1a2a31;
+    --ring: #3fb984;
+    --radius: 8px;
+    --float-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    color-scheme: dark;
   }
 }
 
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
+[data-theme="dark"] {
+  --background: #101412;
+  --card: #171c19;
+  --popover: #171c19;
+  --secondary: #1f2622;
+  --muted: #1f2622;
+  --accent: #1f2622;
+  --foreground: #eceeea;
+  --foreground-2: #b6bdb8;
+  --muted-foreground: #8f9893;
+  --border: #2a312d;
+  --input: #626c66;
+  --primary: #3fb984;
+  --primary-hover: #5ccb9c;
+  --primary-foreground: #0e1a14;
+  --link: #5ccb9c;
+  --success: #8fe0ba;
+  --success-soft: #153527;
+  --warning: #f2b33d;
+  --warning-soft: #3a2a0c;
+  --destructive: #f08a80;
+  --destructive-soft: #3d1915;
+  --destructive-foreground: #161d1a;
+  --info: #a7c3d2;
+  --info-soft: #1a2a31;
+  --ring: #3fb984;
+  --radius: 8px;
+  --float-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
 }
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+/* Unused by components (they never branch on the mode); kept so a one-off can opt in. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Hover also answers data-demo="hover", so /design can show a hover state without a pointer. */
+@custom-variant hover {
+  @media (hover: hover) {
+    &:hover {
+      @slot;
+    }
+  }
+  &[data-demo~="hover"] {
+    @slot;
+  }
 }
 
-* {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
+/* The page's own mode (not an element's): /design uses it to show one column on a phone. */
+@custom-variant page-dark {
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) & {
+      @slot;
+    }
+  }
+  :root[data-theme="dark"] & {
+    @slot;
+  }
 }
 
-a {
-  color: inherit;
-  text-decoration: none;
+@theme inline {
+  --color-*: initial;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-foreground-2: var(--foreground-2);
+  --color-card: var(--card);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-link: var(--link);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-ring: var(--ring);
+
+  --radius-*: initial;
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+
+  --shadow-*: initial;
+  --shadow-float: var(--float-shadow);
+
+  --font-sans: var(--font-public-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
+/* The type scale. Nothing else sets a font size. */
+@theme {
+  --text-*: initial;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1rem;
+  --text-caption--font-weight: 500;
+  --text-small: 0.8125rem;
+  --text-small--line-height: 1.125rem;
+  --text-body: 0.875rem;
+  --text-body--line-height: 1.25rem;
+  --text-lead: 1rem;
+  --text-lead--line-height: 1.5rem;
+  --text-h3: 1rem;
+  --text-h3--line-height: 1.5rem;
+  --text-h3--font-weight: 600;
+  --text-h2: 1.25rem;
+  --text-h2--line-height: 1.75rem;
+  --text-h2--font-weight: 600;
+  --text-h1: 1.5rem;
+  --text-h1--line-height: 2rem;
+  --text-h1--font-weight: 600;
+  --text-h1--letter-spacing: -0.01em;
+  --text-figure: 1.75rem;
+  --text-figure--line-height: 2rem;
+  --text-figure--font-weight: 600;
+  --text-figure--letter-spacing: -0.01em;
+
+  --animate-pulse-dot: pc-pulse 1.4s ease-in-out infinite;
+  --animate-rise: pc-rise 180ms ease-out;
+  --animate-sheet-in: pc-sheet-in 200ms ease-out;
+}
+
+@layer base {
   html {
-    color-scheme: dark;
+    font-family: var(--font-public-sans), ui-sans-serif, system-ui, sans-serif;
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+  }
+
+  /* An element that switches mode repaints itself in that mode. */
+  [data-theme] {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+
+  :focus-visible,
+  [data-demo~="focus"] {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: var(--success-soft);
+    color: var(--foreground);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+/*
+  A scroll container that shows a soft edge only on the side that has more to see. The covers
+  scroll with the content; the shade stays put, so it shows only while content is hidden.
+*/
+@utility scroll-edges {
+  background:
+    linear-gradient(to left, var(--card) 40%, transparent) right / 2rem 100% no-repeat local,
+    linear-gradient(to left, color-mix(in srgb, var(--foreground) 12%, transparent), transparent)
+      right / 0.75rem 100% no-repeat scroll,
+    var(--card);
+}
+
+/* The bookkeeper's rules on money: a single rule over a subtotal, a double rule under the net. */
+@utility rule-single {
+  border-top: 1px solid var(--foreground-2);
+}
+
+@utility rule-double {
+  border-bottom: 3px double var(--foreground);
+}
+
+/* The dimmed page behind a modal sheet: the same in both modes, it only darkens. */
+@utility scrim {
+  &::backdrop {
+    background-color: rgba(16, 20, 18, 0.5);
+  }
+}
+
+@keyframes pc-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@keyframes pc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pc-sheet-in {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
   }
 }
