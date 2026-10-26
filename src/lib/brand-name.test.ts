@@ -18,8 +18,9 @@ const TEXT = new Set([
   ".svg",
   ".html",
 ]);
-// Only a whole secret name, never the tail of a longer path or URL (an old repo badge stays caught).
-const DEPLOYED_ID = /(?<![\w./-])payday-copilot\/[a-z0-9-]+/g;
+// Only a whole secret name: never the tail of a longer path or URL, and never followed by another path
+// segment or file extension, so an old repo badge or a repo-relative link stays caught.
+const DEPLOYED_ID = /(?<![\w./-])payday-copilot\/[a-z0-9-]+(?![\w-]|[./]\w)/g;
 const THIS_FILE = fileURLToPath(import.meta.url);
 
 function textFiles(dir: string): string[] {
@@ -30,14 +31,16 @@ function textFiles(dir: string): string[] {
   });
 }
 
+function hasOldName(line: string): boolean {
+  return /copilot/i.test(line.replace(DEPLOYED_ID, ""));
+}
+
 function oldNameHits(paths: string[]): string[] {
   return paths.flatMap((path) =>
     readFileSync(path, "utf8")
       .split("\n")
       .flatMap((line, i) =>
-        /copilot/i.test(line.replace(DEPLOYED_ID, ""))
-          ? [`${relative(ROOT, path)}:${i + 1}`]
-          : [],
+        hasOldName(line) ? [`${relative(ROOT, path)}:${i + 1}`] : [],
       ),
   );
 }
@@ -63,11 +66,19 @@ describe("product name", () => {
     expect(`SecretId: "payday-copilot/db-admin"`.replace(DEPLOYED_ID, "")).toBe(
       `SecretId: ""`,
     );
+    expect(hasOldName("Stored as payday-copilot/db-admin.")).toBe(false);
   });
 
   it("still catches the old repo in a URL with a path", () => {
     const badge =
       "https://github.com/mikewhite1192-byte/payday-copilot/actions/workflows/ci.yml/badge.svg";
-    expect(/copilot/i.test(badge.replace(DEPLOYED_ID, ""))).toBe(true);
+    expect(hasOldName(badge)).toBe(true);
+  });
+
+  it("still catches the old repo in a repo-relative link", () => {
+    expect(hasOldName("[CI](payday-copilot/actions/workflows/ci.yml)")).toBe(
+      true,
+    );
+    expect(hasOldName("See payday-copilot/ci.yml")).toBe(true);
   });
 });
