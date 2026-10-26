@@ -49,7 +49,7 @@ export default async function Home() {
 
   return (
     <main style={{ maxWidth: 640, margin: "64px auto", padding: "0 16px" }}>
-      <h1>Payday Copilot</h1>
+      <h1>LedgerLine</h1>
       {carrier ? (
         <>
           <h2 style={{ marginTop: 24 }}>{carrier.name}</h2>

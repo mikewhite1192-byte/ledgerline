@@ -122,7 +122,7 @@ export async function reserve(db: TenantDb, session: Session, r: Reservation): P
 // real cost spent.
 // refused: never charged, so the reservation is released and nothing spent.
 // unknown: the reservation stays counted against the cap, forever (there is no usage read-back).
-// A timeout is never settled: its row stays 'reserved', which reads the same way.
+// A timeout settles here as unknown with failure 'timeout'.
 export type Settlement = { durationMs: number } & (
   | {
       kind: "answered";

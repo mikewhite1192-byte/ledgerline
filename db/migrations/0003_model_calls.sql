@@ -5,6 +5,8 @@
 -- the app's grants (all are attached to the table, not its name), so nothing is re-created.
 ALTER TABLE ai_calls RENAME TO model_calls;
 ALTER INDEX ai_calls_tenant_created_idx RENAME TO model_calls_tenant_created_idx;
+-- The primary key and CHECK constraints (and the foreign key) keep their ai_calls_ names on
+-- purpose: renaming them is cosmetic, and nothing in the app reads a constraint by its name.
 
 -- target: which model slot made the call. kind: what sort of call it was. units: what a
 -- non-token call is billed by (audio seconds, images returned, images segmented). trace_id

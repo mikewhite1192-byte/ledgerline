@@ -141,6 +141,10 @@ type Common = { purpose: string; maxCostCents: number; timeoutMs: number; traceI
 function common(options: AiCallOptions, defaultTimeoutMs: number): Common {
   const c: Common = {
     purpose: options.purpose,
+    // A PDF caller must pass a higher maxCostCents. A PDF read at the 50-page worst case (no
+    // readable page count, or a compressed object stream) reserves 4,000 x 50 = 200,000 input
+    // tokens, which at Spark's input price (125,000 nanocents a token) is 25.0 cents before any
+    // text or output, so on this default it is always refused too_expensive.
     maxCostCents: options.maxCostCents ?? 25,
     timeoutMs: options.timeoutMs ?? defaultTimeoutMs,
     traceId: options.traceId ?? null,
@@ -262,16 +266,10 @@ async function runCall<T, U extends Price["unit"]>(
       ? { kind: "unknown", category: "unknown", httpStatus: raw.httpStatus }
       : raw;
 
-  // A timeout is not settled: whether the provider ran and charged is not known, so the row
-  // stays 'reserved' with its reservation counted until a person reads it back.
-  if (outcome.kind === "unknown" && outcome.category === "timeout") {
-    console.error(
-      `${where} unknown timeout http=${outcome.httpStatus ?? "none"} ms=${durationMs}` +
-        ` row left reserved, reservation kept call=${callId}${trace}`,
-    );
-    throw new AiError("timeout", outcome.httpStatus ?? undefined);
-  }
-
+  // A timeout settles as 'unknown' like any other unknown outcome (failure 'timeout', its
+  // duration, the calls counter): whether the provider ran and charged is not known, so its
+  // reservation stays counted against the cap. A row left 'reserved' therefore always means a
+  // call in flight or a settle that failed.
   const settlement: Settlement =
     outcome.kind === "answered"
       ? {
@@ -368,12 +366,17 @@ function validateText(target: AiTextTarget, request: AiRequest): TextOptions {
           (m.role === "assistant" &&
             (m.toolCalls ?? []).every(
               (c) =>
-                CALL_ID.test(c.id) && TOOL_NAME.test(c.name) && typeof c.argumentsJson === "string",
+                typeof c.id === "string" &&
+                CALL_ID.test(c.id) &&
+                typeof c.name === "string" &&
+                TOOL_NAME.test(c.name) &&
+                typeof c.argumentsJson === "string",
             )) ||
-          (m.role === "tool" && CALL_ID.test(m.toolCallId))),
+          (m.role === "tool" && typeof m.toolCallId === "string" && CALL_ID.test(m.toolCallId))),
     ) &&
     tools.every(
       (t) =>
+        typeof t.name === "string" &&
         TOOL_NAME.test(t.name) &&
         typeof t.description === "string" &&
         typeof t.parameters === "object" &&
@@ -565,7 +568,7 @@ export async function generateImage(
         ),
         reserveNanocents: n * price.perImage,
         reasoningEffort: null,
-        parse: parseImage(outputFormat),
+        parse: parseImage(outputFormat, n),
       };
     },
   );

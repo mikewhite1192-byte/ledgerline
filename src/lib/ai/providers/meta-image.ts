@@ -36,13 +36,16 @@ export function imageBody(model: string, prompt: string, options: ImageOptions) 
 
 // A 200 answer. Every entry in data is a returned image and is charged, so the count is
 // data.length even when an entry cannot be decoded (that one is left out of the result). No
-// data array means the charge is not known: unknown, its reservation kept.
+// data array means the charge is not known: unknown, its reservation kept. More entries than
+// the n asked for would charge more than was reserved, so that answer is unknown too, its
+// reservation kept and none of its images handed back.
 export function parseImage(
   requested: ImageFormat,
+  n: number,
 ): (json: unknown, httpStatus: number) => CallOutcome<ImageResult["images"]> {
   return (json, httpStatus) => {
     const body = asRecord(json);
-    if (!body || !Array.isArray(body.data)) {
+    if (!body || !Array.isArray(body.data) || body.data.length > n) {
       return { kind: "unknown", category: "unknown", httpStatus };
     }
     const format =

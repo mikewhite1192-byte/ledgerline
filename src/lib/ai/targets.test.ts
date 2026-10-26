@@ -92,6 +92,26 @@ describe("modelIdFor", () => {
     expect(modelIdFor("spark", { ...older, META_CONTRIBUTOR_MODE: "true" })).toBeNull();
   });
 
+  it("refuses every target, as a junk mode does, when the mode is on in production", () => {
+    const production = { ...ENV, DB_CLUSTER_ARN: "arn:aws:rds:us-east-2:000000000000:cluster:x" };
+    const on = { ...production, META_CONTRIBUTOR_MODE: "true" };
+    for (const target of Object.keys(TARGETS) as (keyof typeof TARGETS)[]) {
+      expect(modelIdFor(target, on), target).toBeNull();
+    }
+    // Unset or "false" in production works as it does anywhere else.
+    for (const mode of [undefined, "false"]) {
+      const env = { ...production, META_CONTRIBUTOR_MODE: mode };
+      for (const target of Object.keys(TARGETS) as (keyof typeof TARGETS)[]) {
+        const variable = TARGETS[target].env as keyof typeof ENV;
+        expect(modelIdFor(target, env), `${target} ${String(mode)}`).toBe(ENV[variable]);
+      }
+    }
+    // An empty DB_CLUSTER_ARN is not production: the mode still works.
+    expect(modelIdFor("spark", { ...ENV, DB_CLUSTER_ARN: "", META_CONTRIBUTOR_MODE: "true" })).toBe(
+      "muse-spark-1.3-contributor",
+    );
+  });
+
   it("lists a priced Contributor id for every Standard id it replaces", () => {
     for (const [standard, contributor] of Object.entries(CONTRIBUTOR_IDS)) {
       expect(priceFor("spark", standard), standard).not.toBeNull();

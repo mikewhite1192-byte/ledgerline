@@ -55,6 +55,14 @@ describe("pdfPages", () => {
     expect(pdfPages(ascii("%PDF-1.5\n(compressed object streams)"))).toBe(50);
     expect(pdfPages(ascii("%PDF-1.4\n" + "<< /Type /Page >>\n".repeat(80)))).toBe(50);
   });
+
+  it("assumes the cap when a compressed object stream can hide more page objects", () => {
+    // One page object is exposed; the rest could sit inside the object stream.
+    const pdf = ascii(
+      "%PDF-1.5\n2 0 obj << /Type /Page >>\n5 0 obj << /Type /ObjStm /N 39 /First 300 >>\nstream\n",
+    );
+    expect(pdfPages(pdf)).toBe(50);
+  });
 });
 
 describe("fromBase64", () => {

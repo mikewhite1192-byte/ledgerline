@@ -45,10 +45,12 @@ export function looksLike(mime: AiImageMime | "application/pdf", bytes: Uint8Arr
 }
 
 // The page count a PDF declares (its /Type /Page objects), capped at the 50 pages Meta reads as
-// images. When none can be read (compressed object streams hide them), the cap: the reserve is
-// a worst case, never a guess low.
+// images. When none can be read, or the file has a compressed object stream (/ObjStm, which can
+// hide any number of page objects behind one that is exposed), the cap: the reserve is a worst
+// case, never a guess low.
 export function pdfPages(bytes: Uint8Array): number {
   const text = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("latin1");
+  if (text.includes("/ObjStm")) return PDF_MAX_PAGES;
   const found = text.match(/\/Type\s*\/Page(?![A-Za-z])/g)?.length ?? 0;
   return found === 0 ? PDF_MAX_PAGES : Math.min(found, PDF_MAX_PAGES);
 }

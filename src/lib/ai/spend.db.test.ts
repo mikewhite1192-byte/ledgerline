@@ -218,29 +218,33 @@ describe("model spend ledger", () => {
     });
   });
 
-  it("keeps an unknown call's reservation counted against the cap", async () => {
-    const start = await spend();
-    const r = reservation();
-    await reserve(app, session(A), r);
-    expect(
-      await settle(app, session(A), r.callId, {
-        kind: "unknown",
-        category: "network",
-        httpStatus: null,
-        durationMs: 25_000,
-      }),
-    ).toBe(true);
-    expect(await spend()).toEqual({
-      ...start,
-      reservedNanocents: start.reservedNanocents + RESERVE,
-      calls: start.calls + 1,
-    });
-    expect(await callRow(A, r.callId)).toMatchObject({
-      status: "unknown",
-      failure: "network",
-      cost_nanocents: null,
-      http_status: null,
-    });
+  it("keeps an unknown call's reservation counted against the cap, a timeout's too", async () => {
+    for (const category of ["network", "timeout"] as const) {
+      const start = await spend();
+      const r = reservation();
+      await reserve(app, session(A), r);
+      expect(
+        await settle(app, session(A), r.callId, {
+          kind: "unknown",
+          category,
+          httpStatus: null,
+          durationMs: 25_000,
+        }),
+      ).toBe(true);
+      expect(await spend()).toEqual({
+        ...start,
+        reservedNanocents: start.reservedNanocents + RESERVE,
+        calls: start.calls + 1,
+      });
+      expect(await callRow(A, r.callId)).toMatchObject({
+        status: "unknown",
+        failure: category,
+        cost_nanocents: null,
+        http_status: null,
+        duration_ms: 25_000,
+        settled: true,
+      });
+    }
   });
 
   it("lets exactly one of two racing reservations through when only one fits under the cap", async () => {

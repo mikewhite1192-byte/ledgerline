@@ -151,6 +151,8 @@ function fakeLedger(
   const steps: string[] = [];
   const counter = { spent: 0, reserved: 0, calls: 0, wonderSpent: 0, wonderReserved: 0, ...start };
   const rows = new Map<string, Row>();
+  // What each settle wrote besides the status: its failure category and its duration.
+  const settled = new Map<string, { failure: Param; durationMs: Param }>();
   const breaks = { membership: false, settleThrows: false, rowLost: false };
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
@@ -208,6 +210,7 @@ function fakeLedger(
         row.status = String(params[1]);
         row.cost = params[3];
         row.units = params[11];
+        settled.set(String(params[0]), { failure: params[2], durationMs: params[10] });
         return 1;
       }
       if (sql.includes("reserved_nanocents = reserved_nanocents - ")) {
@@ -228,7 +231,7 @@ function fakeLedger(
       return fn(q);
     },
   };
-  return { db, steps, counter, rows, breaks };
+  return { db, steps, counter, rows, settled, breaks };
 }
 
 function fakeFetch(
@@ -445,6 +448,38 @@ describe("every call, refusals before any reservation", () => {
         {
           ...REQUEST,
           messages: [...REQUEST.messages, { role: "tool", toolCallId: "", content: "x" }],
+        },
+        "spark",
+      ],
+      // A number where a name or an id belongs, which a pattern test alone would read as text.
+      [
+        { ...REQUEST, tools: [{ name: 42 as never, description: "x", parameters: {} }] },
+        "spark",
+      ],
+      [
+        {
+          ...REQUEST,
+          messages: [
+            ...REQUEST.messages,
+            { ...assistant, toolCalls: [{ id: 7 as never, name: "pay", argumentsJson: "{}" }] },
+          ],
+        },
+        "spark",
+      ],
+      [
+        {
+          ...REQUEST,
+          messages: [
+            ...REQUEST.messages,
+            { ...assistant, toolCalls: [{ id: "c1", name: 42 as never, argumentsJson: "{}" }] },
+          ],
+        },
+        "spark",
+      ],
+      [
+        {
+          ...REQUEST,
+          messages: [...REQUEST.messages, { role: "tool", toolCallId: 7 as never, content: "x" }],
         },
         "spark",
       ],
@@ -887,7 +922,7 @@ describe("complete, one call", () => {
     }
   });
 
-  it("leaves a timed-out call reserved and unsettled, its reservation counted", async () => {
+  it("settles a timed-out call as unknown, its reservation counted", async () => {
     const timeouts: (() => Response)[] = [
       () => {
         throw new DOMException("timed out", "TimeoutError");
@@ -900,15 +935,41 @@ describe("complete, one call", () => {
       const fetchFn = fakeFetch(ledger.steps, answer);
       const err = await refusal(CALLS.spark({ fetch: fetchFn, db: ledger.db }));
       expect(err.category).toBe("timeout");
-      const [row] = [...ledger.rows.values()];
-      expect(row.status).toBe("reserved");
-      // No settle ran: the steps end at the call.
-      expect(ledger.steps.at(-1)).toBe("fetch");
-      expect(ledger.counter).toMatchObject({ spent: 0, reserved: row.reserved, calls: 0 });
+      const [[id, row]] = [...ledger.rows.entries()];
+      expect(row.status).toBe("unknown");
+      expect(row.cost).toBeNull();
+      const { failure, durationMs } = ledger.settled.get(id)!;
+      expect(failure).toBe("timeout");
+      expect(Number.isSafeInteger(durationMs) && (durationMs as number) >= 0).toBe(true);
+      // Settled once, after the call.
+      expect(ledger.steps.slice(ledger.steps.indexOf("fetch"))).toEqual([
+        "fetch",
+        "tx tenant",
+        "lock call",
+        "settle call unknown",
+        "settle counter",
+      ]);
+      expect(ledger.counter).toMatchObject({ spent: 0, reserved: row.reserved, calls: 1 });
       expect(logged).toHaveLength(1);
       expect(logged[0]).toContain("unknown timeout");
-      expect(logged[0]).toContain("row left reserved, reservation kept");
+      expect(logged[0]).toContain("reservation kept");
     }
+  });
+
+  it("leaves a timed-out call reserved when its settle fails, as for any failed settle", async () => {
+    const ledger = fakeLedger();
+    ledger.breaks.settleThrows = true;
+    logged = [];
+    const fetchFn = fakeFetch(ledger.steps, () => new Response("gateway", { status: 504 }));
+    const err = await refusal(CALLS.spark({ fetch: fetchFn, db: ledger.db }));
+    expect(err.category).toBe("unknown");
+    const [row] = [...ledger.rows.values()];
+    expect(row.status).toBe("reserved");
+    expect(ledger.settled.size).toBe(0);
+    expect(ledger.counter).toMatchObject({ spent: 0, reserved: row.reserved, calls: 0 });
+    expect(logged).toEqual([
+      expect.stringContaining("not settled (unavailable); reservation kept"),
+    ]);
   });
 
   it("never returns an answer the ledger could not record", async () => {
@@ -1018,6 +1079,20 @@ describe("transcribe, generateImage and segment, one call each", () => {
     expect(result.images).toEqual([{ bytes: new Uint8Array(PNG_BYTES), mime: "image/png" }]);
     expect(ledger.counter).toMatchObject({ spent: NANOCENTS_PER_CENT, reserved: 0 });
     expect(logged.join("\n")).not.toContain("flatbed");
+  });
+
+  it("keeps the reservation and hands back no image when more came back than were asked for", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () =>
+      Response.json({ data: [{ b64_json: B64_PNG }, { b64_json: B64_PNG }] }),
+    );
+    // One asked (the default), two returned.
+    expect((await refusal(CALLS.image({ fetch: fetchFn, db: ledger.db }))).category).toBe(
+      "unknown",
+    );
+    const [row] = [...ledger.rows.values()];
+    expect(row).toMatchObject({ status: "unknown", reserved: NANOCENTS_PER_CENT, cost: null });
+    expect(ledger.counter).toMatchObject({ spent: 0, reserved: NANOCENTS_PER_CENT, calls: 1 });
   });
 
   it("segments an image: one image charged, boxes and masks returned", async () => {

@@ -35,9 +35,12 @@ export function contributorMode(value: string | undefined): boolean | null {
 }
 
 // The model id a target calls: its variable's value, or, for Spark in Contributor mode, that
-// id's Contributor counterpart. Null when the mode is invalid, when the variable names a
-// Contributor id itself (reached only through the switch), or when Contributor mode is on and
-// the Spark id has no counterpart.
+// id's Contributor counterpart. Null when the mode is invalid, when the mode is on in production
+// (DB_CLUSTER_ARN set, the signal ./keys.ts reads too: real tenants' data must never reach a tier
+// Meta may train on), when the variable names a Contributor id itself (reached only through the
+// switch), or when Contributor mode is on and the Spark id has no counterpart. Like an invalid
+// mode, the mode on in production refuses every target, not only Spark, so no half-working
+// mode is left.
 export function modelIdFor(
   target: AiTarget,
   env: Record<string, string | undefined> = process.env,
@@ -45,6 +48,7 @@ export function modelIdFor(
   const configured = env[TARGETS[target].env] ?? "";
   const contributor = contributorMode(env.META_CONTRIBUTOR_MODE);
   if (contributor === null || Object.values(CONTRIBUTOR_IDS).includes(configured)) return null;
+  if (contributor && env.DB_CLUSTER_ARN) return null;
   if (!contributor || target !== "spark") return configured;
   return Object.hasOwn(CONTRIBUTOR_IDS, configured) ? CONTRIBUTOR_IDS[configured] : null;
 }
