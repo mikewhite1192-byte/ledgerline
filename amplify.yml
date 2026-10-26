@@ -7,6 +7,8 @@ frontend:
         - npm ci
     build:
       commands:
+        # The Next.js server reads only what is in .env.production; these are ARNs and ids.
+        - env | grep -e '^DB_CLUSTER_ARN=' -e '^DB_SECRET_ARN=' -e '^DB_NAME=' -e '^COGNITO_USER_POOL_ID=' -e '^COGNITO_CLIENT_ID=' -e '^AWS_REGION=' >> .env.production
         - npm run build
   artifacts:
     baseDirectory: .next

@@ -26,17 +26,17 @@ jobs:
   checks:
     name: build + lint + tests + house style
     runs-on: ubuntu-latest
-    # Throwaway Postgres for the DB tests below; TENANTS uncomments it with the first migration.
-    # Trust auth on a container that lives for one job, so no password appears anywhere.
-    # services:
-    #   postgres:
-    #     image: postgres:16
-    #     env:
-    #       POSTGRES_HOST_AUTH_METHOD: trust
-    #     ports: ["5432:5432"]
-    #     options: >-
-    #       --health-cmd "pg_isready -U postgres"
-    #       --health-interval 5s --health-timeout 5s --health-retries 10
+    # Throwaway Postgres for the DB tests below. Trust auth on a container that lives for one
+    # job, so no password appears anywhere.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -63,21 +63,17 @@ jobs:
         run: npm test
 
       # DB tests run against a plain Postgres 16 built FRESH from db/migrations, so a broken or
-      # missing migration fails here instead of in production. TENANTS turns these on with the
-      # first migration, together with the services block above.
-      # - name: Build the test DB from db/migrations (filename order)
-      #   env:
-      #     DATABASE_URL: postgresql://postgres@localhost:5432/postgres
-      #   run: |
-      #     set -euo pipefail
-      #     for f in db/migrations/*.sql; do
-      #       echo "applying $f"
-      #       psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
-      #     done
-      # - name: DB tests
-      #   env:
-      #     DATABASE_URL: postgresql://postgres@localhost:5432/postgres
-      #   run: npm run test:db
+      # missing migration fails here instead of in production. The migrations go through the
+      # same runner and statement splitter that apply them to Aurora, not psql.
+      - name: Build the test DB from db/migrations
+        env:
+          DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+        run: npm run db:migrate -- --target local
+
+      - name: DB tests
+        env:
+          DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+        run: npm run test:db
 
       # House rule: no em dashes in NEW lines (existing files are grandfathered). On a push the
       # change under review is the whole push, not just its last commit. Context values reach the

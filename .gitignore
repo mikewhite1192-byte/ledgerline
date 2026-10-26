@@ -7,6 +7,8 @@ dist/
 coverage/
 infra/.build/
 cdk.out/
+# CDK lookups record the account id here; none are used, and none may be committed.
+cdk.context.json
 
 # secrets: never commit
 .env

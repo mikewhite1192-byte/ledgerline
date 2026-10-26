@@ -35,6 +35,12 @@ Built from scratch for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 
 - `src/`: the Next.js app (App Router, TypeScript).
 - `db/migrations/`: plain SQL migrations, forward-only, applied in filename order.
 - `infra/`: the CDK app for every AWS resource.
+- `scripts/`: the migration runner, the demo carriers and the fresh test database.
+
+## Try it
+
+The demo has two synthetic carriers, each with its own login, and each sees only its own data.
+Demo logins are in the submission notes.
 
 All data is synthetic. No real money moves: payouts run in test mode and accounting posts to a
 QuickBooks sandbox company.
