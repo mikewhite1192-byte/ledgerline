@@ -18,7 +18,8 @@ const TEXT = new Set([
   ".svg",
   ".html",
 ]);
-const DEPLOYED_ID = /payday-copilot\/[a-z0-9-]+/g;
+// Only a whole secret name, never the tail of a longer path or URL (an old repo badge stays caught).
+const DEPLOYED_ID = /(?<![\w./-])payday-copilot\/[a-z0-9-]+/g;
 const THIS_FILE = fileURLToPath(import.meta.url);
 
 function textFiles(dir: string): string[] {
@@ -59,5 +60,14 @@ describe("product name", () => {
 
   it("still allows a deployed secret name", () => {
     expect("payday-copilot/meta-api-key".replace(DEPLOYED_ID, "")).toBe("");
+    expect(`SecretId: "payday-copilot/db-admin"`.replace(DEPLOYED_ID, "")).toBe(
+      `SecretId: ""`,
+    );
+  });
+
+  it("still catches the old repo in a URL with a path", () => {
+    const badge =
+      "https://github.com/mikewhite1192-byte/payday-copilot/actions/workflows/ci.yml/badge.svg";
+    expect(/copilot/i.test(badge.replace(DEPLOYED_ID, ""))).toBe(true);
   });
 });
