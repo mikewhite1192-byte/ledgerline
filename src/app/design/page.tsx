@@ -227,7 +227,7 @@ export default function DesignPage() {
               <div className="flex items-end gap-5">
                 {[16, 24, 48].map((size) => (
                   <div key={size} className="grid justify-items-center gap-2">
-                    <Mark size={size} label={`Payday Copilot mark at ${size} pixels`} />
+                    <Mark size={size} label={`LedgerLine mark at ${size} pixels`} />
                     <Caption>{size} px</Caption>
                   </div>
                 ))}
@@ -392,7 +392,7 @@ export default function DesignPage() {
           }}
         </ModePair>
 
-        <ModePair id="proposal-card" note="What the copilot wants to do, what it costs and why. A person approves; the copilot never moves money.">
+        <ModePair id="proposal-card" note="What the agent wants to do, what it costs and why. A person approves; the agent never moves money.">
           {(mode) => <ProposalGallery prefix={`${mode}-`} />}
         </ModePair>
 
@@ -418,7 +418,7 @@ export default function DesignPage() {
               <div className="rounded-lg border border-border bg-card">
                 <EmptyState
                   title="No advances this week"
-                  body="When a driver asks for one, the copilot writes it up here for you to approve."
+                  body="When a driver asks for one, the agent writes it up here for you to approve."
                   action={<Button variant="outline">Ask about advances</Button>}
                 />
               </div>

@@ -42,7 +42,7 @@ function StepDot({ state }: { state: Step["state"] }) {
 
 function Steps({ steps }: { steps: Step[] }) {
   return (
-    <ul className="grid gap-1.5" aria-label="What the copilot did">
+    <ul className="grid gap-1.5" aria-label="What the agent did">
       {steps.map((s) => (
         <li key={s.id} className="flex items-start gap-2.5 text-body">
           <span className="mt-0.5 shrink-0">
@@ -76,7 +76,7 @@ function newestStep(messages: ChatMessage[]): Step | null {
 }
 
 // The home: a question, a few suggested ones, and the box. Once there are messages, the thread:
-// the person's questions on the right, the copilot's steps, answers, proposals and tables on the
+// the person's questions on the right, the agent's steps, answers, proposals and tables on the
 // left. Nothing here fetches; the caller streams messages in.
 export function ChatThread({
   messages,
@@ -123,7 +123,7 @@ export function ChatThread({
               <li key={m.id} className="flex gap-3">
                 <Mark size={24} className="mt-0.5" />
                 <div className="grid min-w-0 flex-1 gap-3">
-                  <p className="sr-only">Copilot</p>
+                  <p className="sr-only">Agent</p>
                   {m.parts.map((p, i) => {
                     switch (p.kind) {
                       case "text":

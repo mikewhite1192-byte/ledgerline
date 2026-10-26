@@ -45,7 +45,7 @@ export function AppShell({
       </a>
       <aside className="fixed inset-y-0 left-0 z-10 hidden w-60 flex-col border-r border-border bg-card lg:flex">
         <div className="flex h-14 items-center px-5">
-          <Link href={homeHref} aria-label="Payday Copilot home" className="rounded-md">
+          <Link href={homeHref} aria-label="LedgerLine home" className="rounded-md">
             <Wordmark size="sm" />
           </Link>
         </div>

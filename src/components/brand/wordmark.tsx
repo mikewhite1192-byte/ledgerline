@@ -1,7 +1,7 @@
 import { cn } from "@/lib/cn";
 import { Mark } from "./mark";
 
-// The name set in the UI face at weight 600, both words the same weight and color.
+// The name set in the UI face at weight 600, in one weight and color.
 export function Wordmark({ size = "sm", className }: { size?: "sm" | "lg"; className?: string }) {
   return (
     <span
@@ -12,7 +12,7 @@ export function Wordmark({ size = "sm", className }: { size?: "sm" | "lg"; class
       )}
     >
       <Mark size={size === "lg" ? 32 : 24} />
-      Payday Copilot
+      LedgerLine
     </span>
   );
 }

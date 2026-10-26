@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 /*
-  Payday Copilot tokens: every color, radius and shadow in the app, once per mode. Components use
+  LedgerLine tokens: every color, radius and shadow in the app, once per mode. Components use
   the semantic utilities mapped below (bg-card, text-muted-foreground, text-primary), never a hex
   and never the dark: variant, so the two modes cannot drift apart. contrast.test.ts reads these
   blocks and fails if any text pair drops under WCAG AA.

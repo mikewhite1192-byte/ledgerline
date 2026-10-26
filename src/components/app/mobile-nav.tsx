@@ -40,7 +40,7 @@ export function MobileNav({
       </Button>
       <Sheet open={open} onClose={() => setOpen(false)} label="Menu">
         <div className="flex h-14 shrink-0 items-center px-5">
-          <Link href={homeHref} aria-label="Payday Copilot home" onClick={() => setOpen(false)} className="rounded-md">
+          <Link href={homeHref} aria-label="LedgerLine home" onClick={() => setOpen(false)} className="rounded-md">
             <Wordmark size="sm" />
           </Link>
         </div>
