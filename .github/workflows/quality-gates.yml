@@ -118,19 +118,66 @@ jobs:
           fi
           echo "OK: no em dashes added."
 
+  # Every commit the change brings in, merge ancestry and merge resolutions included. The CLI
+  # runs directly: the action lists only the first 30 PR commits and skips a merge's second parent.
   secrets:
     name: secret scan (new commits)
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: read   # gitleaks lists PR commits on pull_request events
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+          persist-credentials: false
+
+      # A pinned release binary checked against a hardcoded sha256 (from the release's checksums
+      # file); a mismatch fails the step.
+      - name: Install gitleaks
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          set -euo pipefail
+          TARBALL="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$TARBALL" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${TARBALL}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/$TARBALL" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          tar -xzf "$RUNNER_TEMP/$TARBALL" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          "$RUNNER_TEMP/gitleaks/gitleaks" version
+
+      # On a pull request the checkout is the merge ref: parent 1 is the base, so HEAD^1..HEAD is
+      # everything the PR adds. On a push, the pushed range, or the full history when the old tip
+      # is unknown. Context values reach the script through env, never inline in run.
+      - name: Scan new commits
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if ! git rev-parse -q --verify "HEAD^2" >/dev/null; then
+              echo "::error::HEAD has no second parent, so the pull request's commits are unknown."
+              exit 1
+            fi
+            RANGE="HEAD^1..HEAD"
+          elif [ -n "$EVENT_BEFORE" ] && ! [[ "$EVENT_BEFORE" =~ ^0+$ ]] \
+            && git cat-file -e "${EVENT_BEFORE}^{commit}" 2>/dev/null; then
+            RANGE="${EVENT_BEFORE}..HEAD"
+          else
+            RANGE="HEAD"
+          fi
+          COUNT=$(git rev-list --count "$RANGE")
+          echo "Scanning $RANGE ($COUNT commits)"
+          if [ "$EVENT_NAME" = "pull_request" ] && [ "$COUNT" -eq 0 ]; then
+            echo "::error::the pull request range has no commits to scan."
+            exit 1
+          fi
+          # gitleaks exits 0 when git log fails, so a bad option or range is caught here first.
+          git log --diff-merges=remerge --format=%H "$RANGE" >/dev/null
+          "$RUNNER_TEMP/gitleaks/gitleaks" git --redact --no-banner --exit-code 1 \
+            --log-opts="--diff-merges=remerge $RANGE" .
 
   semgrep:
     name: semgrep (SAST + secrets rules)

@@ -16,7 +16,12 @@ export class HostingStack extends Stack {
       platform: "WEB_COMPUTE",
       repository: REPOSITORY_URL,
       // A Secrets Manager dynamic reference: the template holds only the reference, and
-      // CloudFormation resolves the token at deploy time.
+      // CloudFormation resolves the token at deploy time. The first deploy goes in this order:
+      // 1) install the Amplify GitHub App for the deploy region on this repository only:
+      //    https://github.com/apps/aws-amplify-us-east-2/installations/new
+      // 2) store a GitHub classic token with only the admin:repo_hook scope in Secrets Manager
+      //    under GITHUB_TOKEN_SECRET_NAME;
+      // 3) npm run cdk -- deploy.
       accessToken: SecretValue.secretsManager(GITHUB_TOKEN_SECRET_NAME).unsafeUnwrap(),
     });
 
