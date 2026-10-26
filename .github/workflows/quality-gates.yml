@@ -1,0 +1,143 @@
+# Blocking gates for Payday Copilot. Set up on day zero, before the first feature.
+#
+# Make every job REQUIRED on the mainline (Settings > Branches > branch protection), or they run
+# but do not block. Third-party actions are pinned to a commit SHA (a mutable tag is a
+# supply-chain door).
+#
+# Judgment lives in the pre-push review list and the AI reviewer; these are only the checks a
+# pipeline can make objective.
+
+name: quality-gates
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: build + lint + tests + house style
+    runs-on: ubuntu-latest
+    # Throwaway Postgres for the DB tests below; TENANTS uncomments it with the first migration.
+    # Trust auth on a container that lives for one job, so no password appears anywhere.
+    # services:
+    #   postgres:
+    #     image: postgres:16
+    #     env:
+    #       POSTGRES_HOST_AUTH_METHOD: trust
+    #     ports: ["5432:5432"]
+    #     options: >-
+    #       --health-cmd "pg_isready -U postgres"
+    #       --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests (no database, no network)
+        run: npm test
+
+      # DB tests run against a plain Postgres 16 built FRESH from db/migrations, so a broken or
+      # missing migration fails here instead of in production. TENANTS turns these on with the
+      # first migration, together with the services block above.
+      # - name: Build the test DB from db/migrations (filename order)
+      #   env:
+      #     DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+      #   run: |
+      #     set -euo pipefail
+      #     for f in db/migrations/*.sql; do
+      #       echo "applying $f"
+      #       psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+      #     done
+      # - name: DB tests
+      #   env:
+      #     DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+      #   run: npm run test:db
+
+      # House rule: no em dashes in NEW lines (existing files are grandfathered). On a push the
+      # change under review is the whole push, not just its last commit. Context values reach the
+      # script through env, never inline in run (a branch name is attacker-influenced text).
+      - name: No em dashes in new lines
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch -q origin "$BASE_REF"
+            BASE="origin/$BASE_REF"
+          else
+            BASE="$EVENT_BEFORE"
+            if [ -z "$BASE" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+              BASE=$(git rev-parse HEAD~1 2>/dev/null || echo "")
+            fi
+          fi
+          if [ -z "$BASE" ]; then echo "no base to diff against; skipping"; exit 0; fi
+          HITS=$(git diff "$BASE"...HEAD | grep -E '^\+' | grep -v '^+++' | grep -nP '\x{2014}' || true)
+          if [ -n "$HITS" ]; then
+            echo "::error::em dash in added lines (house rule: commas, colons or parentheses instead)."
+            echo "$HITS"
+            exit 1
+          fi
+          echo "OK: no em dashes added."
+
+  secrets:
+    name: secret scan (full history)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read   # gitleaks lists PR commits on pull_request events
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  semgrep:
+    name: semgrep (SAST + secrets rules)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep   # pin by digest once working
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # A suppression must name the rule and say why: `nosemgrep: <rule.id> -- <reason>`.
+      - run: >
+          semgrep scan
+          --config p/default
+          --config p/secrets
+          --config p/typescript
+          --config p/react
+          --config p/nextjs
+          --error
+          --exclude node_modules
+          --exclude '*.local.*'

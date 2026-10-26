@@ -1,0 +1,70 @@
+# AI PR reviewer config. Purpose: an independent reviewer on every PR, at a predictable cost.
+#
+# Cadence (one billed review per PR in the normal case). The reviewer bills per FILE per pass
+# and, by default, re-reviews on EVERY push; on the original project that ran 4 to 10 rounds on busy
+# PRs. So incremental review is OFF and drafts are skipped:
+#   1. Before the first push, a fresh second read (read-only, severity-ranked) and one fix
+#      commit. It catches most findings for free.
+#   2. Push once and open the PR as a DRAFT; drafts are not reviewed (but CI minutes still bill).
+#   3. Add "Second read: <head sha>" to the body, then mark it ready. That is the ONE
+#      automatic review.
+#   4. Batch every fix from a round into ONE commit and one push, wait about a minute, then
+#      comment "@coderabbitai review" (a push right after the request cancels it).
+#   5. Two rounds per PR, three only when round two flagged something Major or Critical. The
+#      reviewer answers any request comment, so the cap is enforced where requests start (the
+#      pipeline's re-review call, a local hook), never here.
+# Docs and Markdown are not reviewed (path_filters below): they cost per file and drew most of
+# the wording nitpicks. Lockfiles are already excluded by the reviewer's defaults.
+language: "en-US"
+
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true   # findings must be resolved, not scrolled past
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: false
+    # Patterns, not names, so a renamed mainline (phase3 -> phase4) keeps its review.
+    base_branches: ["main"]
+  path_filters:
+    - "!node_modules/**"
+    - "!*.local.*"
+    - "!docs/**"
+    - "!**/*.md"
+  path_instructions:
+    # Fallback for EVERY source file, so a new file can never land with only generic review.
+    - path: "{src,scripts}/**"
+      instructions: |
+        If this file writes to an outside system (payments, accounting, CRM, email, any
+        third-party API), check: fail-closed gates (enabled / armed / dryRun re-checked on
+        every path that reaches a write, never "the caller checked"); idempotency (one write
+        per business event, with a named key); unknown outcomes held as unknown, never
+        defaulted to empty or "not created"; whole-value read-backs, never substring matches;
+        integer cents for money; no raw upstream error text in user-facing strings or ledgers;
+        a start floor so it never acts on history; bounded retries.
+    # Danger zones: one entry per file group that can do real damage, with its invariants.
+    - path: "{db/migrations,src/lib/rules-engine,src/lib/agent,src/lib/money,infra}/**"
+      instructions: |
+        TIER 0: review every changed line against these invariants:
+        1. Every table holding tenant data has RLS enabled and every policy scopes by tenant_id;
+           no query or agent tool can read or write another tenant's rows.
+        2. Every query runs inside a transaction that first sets app.tenant_id from the verified
+           Cognito token; the app's database role is not the table owner and never bypasses RLS.
+        3. Pay math uses integer cents only; settlement totals are deterministic and come from
+           the rules engine, never from model output.
+        4. Agent tools are read-only or propose-only; applying a fix requires a human approval
+           record, and no agent path moves money or writes to an outside system.
+        5. No secrets, client names or real driver data in code, seeds, fixtures or logs.
+        6. IAM roles are least privilege; no wildcard actions on SES, S3 or Lambda.
+        7. infra/ (CDK): IAM is least privilege; no secret values in templates or context, only
+           Secrets Manager dynamic references.
+        8. Every payment or accounting write reserves a ledger row with an idempotency key before
+           the call, treats a failed or timed-out call as unknown until read back, and refuses
+           to run with production credentials.
+    - path: "src/config/flags.ts"
+      instructions: |
+        Any change to armed / dryRun / enabled / caps / start floors is a production posture
+        change. An arming flip must be the only change in its PR. Removing a gate check is a
+        blocking finding.
