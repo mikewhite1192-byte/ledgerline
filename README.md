@@ -10,11 +10,21 @@ Built from scratch for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 
 
 ## Meta models in this project
 
-- **Muse Spark** (Meta Model API): the operator agent. It calls tools over drivers, loads, pay
-  items and the rules engine; checks advance eligibility; explains settlement exceptions; answers
-  "why is this driver's pay short?"; and drafts every proposal a person approves.
-- **Muse Spark Open** (open weights, via Baseten): triages inbound driver and staff email into
-  cases (advance request, pay question, dispute) and extracts the driver, amount and dates.
+Each model below is reached through one wrapper (`src/lib/ai/`) with a hard spend cap, and every
+model call writes one ledger row with its model, usage, latency and cost. The jobs are what each
+model is being built into.
+
+| Model | Job in LedgerLine |
+|---|---|
+| **Muse Spark 1.3** | The operator agent: calls tools over drivers, loads, pay items and the rules engine, returns structured proposals, and reads receipts, bills of lading and rate confirmations from photos and PDFs |
+| **Muse Wonder** | The auditor: independently re-checks every money proposal before a person can approve it |
+| **Muse Voice Transcribe** | Turns driver voice notes, in English or Spanish, into requests the agent can act on |
+| **Muse Spark Open** (open weights, via Baseten) | Triages every inbound email, text and voice note into a case |
+| **SAM 3.1** | Cuts the document out of a cab photo before it is read |
+| **Muse Image** | Will generate the synthetic sample documents for the demo data |
+
+Planned: every answer will show which model did each step, with latency and cost, and an
+evaluation will compare Muse Spark, Muse Spark Open and Muse Wonder on planted pay problems.
 
 ## How it is built
 

@@ -1,11 +1,22 @@
+import { flags } from "@/config/flags";
+import {
+  capNanocents,
+  centsToDisplay,
+  dollarsToDisplay,
+  wonderCapNanocents,
+} from "@/lib/ai/prices";
+import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
+import { AiProofForm } from "./ai-proof-form";
 
+type ModelLedger = { calls: CallRow[]; spend: Spend };
 type Carrier = {
   name: string;
   timezone: string;
   email: string;
   counts: { drivers: number; loads: number; periods: number };
+  ledger: ModelLedger | null;
 };
 
 // The signed-in carrier's shell. Every read runs inside withRequestTenant, so this page can only
@@ -31,11 +42,17 @@ export default async function Home() {
                   AS periods`,
       );
       if (!counts) throw new DbError("unknown");
+      // The model check's read-back, from the database on every render: this carrier's newest
+      // calls (row-level security applies) and the global spend counter.
+      const ledger = flags.aiProofRoute
+        ? { calls: await readRecentCalls(q, 5), spend: await readSpend(q) }
+        : null;
       return {
         name: tenants[0].name,
         timezone: tenants[0].timezone,
         email: members[0].email,
         counts,
+        ledger,
       };
     });
   } catch (err) {
@@ -60,6 +77,7 @@ export default async function Home() {
           <p style={{ marginTop: 24 }}>
             Drivers, loads and this week&apos;s pay run arrive with the next items.
           </p>
+          {carrier.ledger ? <ModelCheck ledger={carrier.ledger} /> : null}
         </>
       ) : problem === "forbidden" ? (
         <p role="alert" style={{ marginTop: 24 }}>
@@ -77,5 +95,52 @@ export default async function Home() {
         </button>
       </form>
     </main>
+  );
+}
+
+function ModelCheck({ ledger }: { ledger: ModelLedger }) {
+  const cap = capNanocents(process.env.AI_SPEND_CAP_CENTS);
+  const wonderCap = wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap);
+  const { spend } = ledger;
+  return (
+    <section style={{ marginTop: 32 }}>
+      <h2>Model connection</h2>
+      <AiProofForm />
+      <p style={{ marginTop: 12 }}>
+        Spent so far {dollarsToDisplay(spend.spentNanocents)} of{" "}
+        {cap === null ? "no cap (every call is refused)" : dollarsToDisplay(cap)}
+        {spend.reservedNanocents > 0
+          ? `, plus ${dollarsToDisplay(spend.reservedNanocents)} held for calls in flight or with no answer`
+          : ""}
+        . Calls: {spend.calls}. Wonder: {dollarsToDisplay(spend.wonderSpentNanocents)} of{" "}
+        {wonderCap === null ? "no cap (every Wonder call is refused)" : dollarsToDisplay(wonderCap)}
+        {spend.wonderReservedNanocents > 0
+          ? `, plus ${dollarsToDisplay(spend.wonderReservedNanocents)} held`
+          : ""}
+        .
+      </p>
+      {ledger.calls.length > 0 ? (
+        <ul style={{ marginTop: 12, paddingLeft: 18 }}>
+          {ledger.calls.map((c) => (
+            <li key={c.id} style={{ marginTop: 4 }}>
+              {c.created_utc} UTC, {c.target} {c.kind}, {c.purpose}, {c.status}
+              {c.failure ? ` (${c.failure})` : ""}
+              {c.reasoning_effort ? `, ${c.reasoning_effort} effort` : ""}
+              {c.input_tokens !== null
+                ? `, ${c.input_tokens} in, ${c.output_tokens} out (${c.reasoning_tokens} reasoning)`
+                : ""}
+              {c.units !== null
+                ? `, ${c.units} ${c.kind === "transcribe" ? "audio seconds" : "images"}`
+                : ""}
+              {c.duration_ms !== null ? `, ${c.duration_ms} ms` : ""}
+              {c.cost_nanocents !== null ? `, ${centsToDisplay(c.cost_nanocents)} cents` : ""}
+              {c.upstream_id ? `, ${c.upstream_id}` : ""}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p style={{ marginTop: 12 }}>No model calls yet.</p>
+      )}
+    </section>
   );
 }
