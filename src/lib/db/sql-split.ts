@@ -4,7 +4,8 @@
 // bodies ($$ or $tag$, closed by the same tag). Each statement starts at its first code
 // character (comments before it are dropped), ends before its semicolon and is trimmed; pieces
 // that are only whitespace and comments are dropped. Anything unterminated throws, so a
-// malformed file fails instead of running half a statement.
+// malformed file fails instead of running half a statement. Escape strings (E'...') throw too:
+// their \' would read as the closing quote, so they are refused rather than mis-split.
 
 const DOLLAR_TAG = /\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/y;
 const IDENTIFIER_CHAR = /[A-Za-z0-9_$]/;
@@ -32,6 +33,11 @@ export function splitSql(text: string): string[] {
     } else if (c === "/" && next === "*") {
       i = skipBlockComment(text, i);
     } else if (c === "'" || c === '"') {
+      if (c === "'" && opensEscapeString(text, i)) {
+        throw new Error(
+          "escape-string literals (E'...') are not supported in migrations; use standard strings",
+        );
+      }
       markCode();
       i = skipQuoted(text, i, c);
     } else if (c === "$" && (i === 0 || !IDENTIFIER_CHAR.test(text[i - 1]))) {
@@ -55,6 +61,14 @@ export function splitSql(text: string): string[] {
   }
   push(text.length);
   return statements;
+}
+
+// E or e right before a quote opens an escape string, unless it ends a longer word:
+// date'2026-10-26' and ELSE'x' are a type name and a keyword followed by a standard string.
+function opensEscapeString(text: string, quote: number): boolean {
+  const prefix = text[quote - 1];
+  if (prefix !== "E" && prefix !== "e") return false;
+  return quote < 2 || !IDENTIFIER_CHAR.test(text[quote - 2]);
 }
 
 function skipQuoted(text: string, open: number, quote: string): number {

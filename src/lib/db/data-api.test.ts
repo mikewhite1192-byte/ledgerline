@@ -7,7 +7,7 @@ import {
 } from "@aws-sdk/client-rds-data";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { BEGIN_ATTEMPTS, BEGIN_DELAY_MS, createDataApiDb } from "./data-api";
-import { DbError } from "./types";
+import { DbError, type Queryable } from "./types";
 
 const TENANT = "3f6c1a52-8e0b-4f4e-9d7a-2b5c8e1f0a93";
 const CONFIG = {
@@ -167,6 +167,28 @@ describe("createDataApiDb", () => {
     const lines = logged.mock.calls.map((args) => args.join(" "));
     expect(lines).toContain("db: rls_denied (DatabaseErrorException 42501)");
     expect(lines.join("\n")).not.toMatch(/carrier\.example|row-level/);
+  });
+
+  it("refuses a handle kept past its transaction and sends nothing", async () => {
+    const { client, sent } = fakeClient(ok);
+    const db = createDataApiDb(CONFIG, { client });
+    const kept: Queryable[] = [];
+    await db.withTenant(TENANT, async (q) => {
+      kept.push(q);
+      return q.query("SELECT 1 AS ok");
+    });
+    await expect(
+      db.withTenant(TENANT, async (q) => {
+        kept.push(q);
+        throw new Error("work failed");
+      }),
+    ).rejects.toThrow("work failed");
+    const before = sent.length;
+    for (const q of kept) {
+      await expect(q.query("SELECT 1 AS ok")).rejects.toMatchObject({ category: "sql" });
+      await expect(q.execute("DELETE FROM t")).rejects.toBeInstanceOf(DbError);
+    }
+    expect(sent).toHaveLength(before);
   });
 
   it("closes the client", async () => {

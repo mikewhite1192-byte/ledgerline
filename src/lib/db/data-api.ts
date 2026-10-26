@@ -11,6 +11,7 @@ import {
   categoryForSqlState,
   DbError,
   SET_TENANT_SQL,
+  withScopedHandle,
   type Db,
   type DbErrorCategory,
   type Param,
@@ -98,7 +99,7 @@ export function createDataApiDb(config: DataApiConfig, deps: DataApiDeps = {}): 
     const q = queryable(transactionId);
     try {
       if (tenantId !== null) await q.query(SET_TENANT_SQL, [tenantId]);
-      const result = await fn(q);
+      const result = await withScopedHandle(q, fn);
       await call(() => client.send(new CommitTransactionCommand({ ...target, transactionId })));
       return result;
     } catch (err) {

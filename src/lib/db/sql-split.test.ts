@@ -52,6 +52,20 @@ describe("splitSql", () => {
     expect(() => splitSql("DO $x$ BEGIN END $$;")).toThrow(/unterminated/);
   });
 
+  it("refuses an escape string instead of reading its \\' as the closing quote", () => {
+    const refused = /escape-string literals \(E'\.\.\.'\) are not supported in migrations/;
+    expect(() => splitSql("INSERT INTO t VALUES (E'it\\'s; not the end');")).toThrow(refused);
+    expect(() => splitSql("SELECT e'a\\nb';")).toThrow(refused);
+    expect(() => splitSql("E'x';")).toThrow(refused);
+  });
+
+  it("still splits standard strings, typed literals and a keyword right before a quote", () => {
+    expect(splitSql("SELECT 'it''s; fine'; SELECT 2;")).toEqual(["SELECT 'it''s; fine'", "SELECT 2"]);
+    const sql =
+      "INSERT INTO t VALUES (date'2026-10-26', time'12:00', CASE WHEN x THEN 'a' ELSE'b' END)";
+    expect(splitSql(`${sql};`)).toEqual([sql]);
+  });
+
   it("splits the first migration into its 14 statements", () => {
     const file = readFileSync(new URL("../../../db/migrations/0001_tenants.sql", import.meta.url));
     const statements = splitSql(file.toString("utf8"));

@@ -64,3 +64,29 @@ export function assertTenantId(tenantId: string): void {
 // The statement every tenant transaction runs first. true = transaction-local: the setting
 // reverts at commit or rollback, so it never outlives the request on a reused connection.
 export const SET_TENANT_SQL = "SELECT set_config('app.tenant_id', $1, true)";
+
+// Runs fn with a handle that works only while fn runs. Kept past that, it would run outside its
+// transaction (with pg, on a pooled client that may hold no tenant or another request's
+// transaction), so once fn returns or throws every call throws before any SQL is sent. The
+// category is sql: a caller's mistake, not an outage, and not an unknown outcome.
+export async function withScopedHandle<T>(
+  q: Queryable,
+  fn: (q: Queryable) => Promise<T>,
+): Promise<T> {
+  let open = true;
+  const scoped: Queryable = {
+    async query<R>(sql: string, params?: Param[]) {
+      if (!open) throw new DbError("sql");
+      return q.query<R>(sql, params);
+    },
+    async execute(sql: string, params?: Param[]) {
+      if (!open) throw new DbError("sql");
+      return q.execute(sql, params);
+    },
+  };
+  try {
+    return await fn(scoped);
+  } finally {
+    open = false;
+  }
+}

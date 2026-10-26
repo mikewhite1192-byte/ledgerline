@@ -7,6 +7,11 @@
   recorded in `schema_migrations` in the same transaction, so a half-applied file never counts.
 - The app talks to Aurora PostgreSQL Serverless v2 through the Data API. Local and CI tests use a
   plain Postgres 16 database built fresh from these files with the same runner.
+- Keep the cluster's `log_statement` at `none` (the default). If statement logging is ever turned
+  on, set `log_parameter_max_length = 0` first: `scripts/migrate.ts` passes the app role's
+  password as a bind parameter, and Postgres logs bind values with logged statements.
+- Never keep the `Queryable` after the `withTenant` or `withoutTenant` callback returns. From then
+  on every call on it throws a `DbError` and sends no SQL.
 
 ## Every tenant table
 

@@ -4,6 +4,7 @@ import {
   categoryForSqlState,
   DbError,
   SET_TENANT_SQL,
+  withScopedHandle,
   type Db,
   type Param,
   type Queryable,
@@ -79,7 +80,7 @@ export function createPgDb(config: PgConfig): Db {
     try {
       await q.execute("BEGIN");
       if (tenantId !== null) await q.query(SET_TENANT_SQL, [tenantId]);
-      const result = await fn(q);
+      const result = await withScopedHandle(q, fn);
       await q.execute("COMMIT");
       return result;
     } catch (err) {
