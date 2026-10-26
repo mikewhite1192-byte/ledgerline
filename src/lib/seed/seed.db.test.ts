@@ -90,6 +90,20 @@ describe("seeding the demo carriers", () => {
   beforeAll(async () => {
     admin = createPgDb({ connectionString: adminUrl() });
     app = createPgDb({ connectionString: appUrl() });
+    // findDemoTenant needs exactly one tenant per demo slug, so a leftover one (from npm run
+    // demo:users, say) would fail every test here with a confusing message.
+    const leftover = await admin.withoutTenant((q) =>
+      q.query<{ slug: string }>("SELECT slug FROM tenants WHERE slug IN ($1, $2) ORDER BY slug", [
+        BR.slug,
+        PW.slug,
+      ]),
+    );
+    if (leftover.length > 0) {
+      throw new Error(
+        `a tenant ${leftover[0].slug} already exists: the database tests need a fresh database ` +
+          "(npm run test:db:fresh)",
+      );
+    }
     await createTenant(A, BR);
     await createTenant(B, PW);
   });

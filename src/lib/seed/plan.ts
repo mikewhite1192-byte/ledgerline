@@ -691,7 +691,6 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   detentionLoads.forEach((x, k) => {
     const [customerIndex, stop, minutes] = DETENTION_PLANTS[k];
     x.row.customer_id = customers[customerIndex].id;
-    plain.add(x.row.id);
     plantDwell.set(x.row.id, { stop, minutes });
   });
 
