@@ -40,11 +40,15 @@ import { contrastRatio } from "@/lib/design/contrast";
 import { isHex, parseTokens, type TokenSet } from "@/lib/design/tokens";
 import { recordLabel, sourceLabel } from "@/lib/format/labels";
 import { ChatDemo, ProposalGallery, SheetDemo, ToastDemo, ToastsAtRest } from "./demos";
-import { LOADS, PAYSTUB, SAMPLE_TENANT, SOURCE_ROWS } from "./sample-data";
+import { LOADS, PAYSTUB, SAMPLE_TENANT, SHORT_WEEK_PAYSTUB, SOURCE_ROWS } from "./sample-data";
 import { anchorFor, loadColumns } from "./shared";
 
 // The design review: every piece of the interface in both modes, with invented sample data.
 // Public and static; it reads no session, tenant, database or model.
+// force-static is load-bearing: the page reads src/app/globals.css from disk with readFileSync,
+// which is safe only because the page renders once at build time. The deployed artifact is the
+// .next folder, with no src/ beside it, so a render at request time would fail in production.
+// page.test.tsx pins this value.
 export const dynamic = "force-static";
 
 export const metadata: Metadata = {
@@ -382,7 +386,7 @@ export default function DesignPage() {
                   state="empty"
                   empty={{ title: "No loads this week", body: "Loads show here as dispatch books them." }}
                 />
-                <DataTable {...base} caption="Failed read" state="error" error={{ category: "unreadable" }} />
+                <DataTable {...base} caption="Failed read" state="error" error={{ category: "unreadable", announce: false }} />
               </div>
             );
           }}
@@ -397,7 +401,15 @@ export default function DesignPage() {
         </ModePair>
 
         <ModePair id="paystub" note="The money rail: a single rule over each subtotal, the bookkeeper's double rule under the net.">
-          {(mode) => <Paystub {...PAYSTUB} hrefFor={anchorFor(`${mode}-`)} />}
+          {(mode) => (
+            <div className="grid gap-6">
+              <Paystub {...PAYSTUB} hrefFor={anchorFor(`${mode}-`)} />
+              <div className="grid gap-2">
+                <Caption>A short week: net pay stops at zero and the shortfall carries to next period.</Caption>
+                <Paystub {...SHORT_WEEK_PAYSTUB} hrefFor={anchorFor(`${mode}-`)} />
+              </div>
+            </div>
+          )}
         </ModePair>
 
         <ModePair id="states" note="Every empty, loading and error state says what happened and what to do next.">
@@ -415,7 +427,7 @@ export default function DesignPage() {
               </div>
               {ERROR_CATEGORIES.map((c) => (
                 <div key={c} className="rounded-lg border border-border bg-card">
-                  <ErrorState category={c} className="py-6" />
+                  <ErrorState category={c} announce={false} className="py-6" />
                 </div>
               ))}
             </div>

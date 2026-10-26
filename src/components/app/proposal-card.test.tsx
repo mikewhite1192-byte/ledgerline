@@ -77,4 +77,44 @@ describe("ProposalCard", () => {
     render(<ProposalCard {...card} impact={{ cents: 320_000, direction: "in" }} />);
     expect(screen.getByText("+$3,200.00")).toBeTruthy();
   });
+
+  it("says money moved only once the proposal is done", () => {
+    const cases: [ProposalStatus, "in" | "out", string][] = [
+      ["proposed", "out", "Would pay out"],
+      ["approved", "in", "Would come in"],
+      ["failed", "out", "Not paid"],
+      ["failed", "in", "Not received"],
+      ["rejected", "out", "Not paid"],
+      ["unknown", "out", "Pay out, not confirmed"],
+      ["unknown", "in", "Coming in, not confirmed"],
+      ["done", "out", "Paid out"],
+      ["done", "in", "Came in"],
+    ];
+    for (const [status, direction, label] of cases) {
+      const { unmount } = render(<ProposalCard {...card} status={status} impact={{ cents: 20_000, direction }} />);
+      expect(screen.getByText(label), `${status} ${direction}`).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it("lets an explicit label win over the status label", () => {
+    render(<ProposalCard {...card} status="failed" impact={{ cents: 20_000, direction: "out", label: "Applies to INV-1" }} />);
+    expect(screen.getByText("Applies to INV-1")).toBeTruthy();
+    expect(screen.queryByText("Not paid")).toBeNull();
+  });
+
+  it("shows the amount a no-money move carries and names it on Approve", () => {
+    render(<ProposalCard {...card} impact={{ cents: 185_000, direction: "none" }} confirmQuestion={undefined} />);
+    expect(screen.getByText("No money moves")).toBeTruthy();
+    const amount = screen.getByText("$1,850.00");
+    expect(amount.hasAttribute("data-negative")).toBe(false);
+    expect(button("Approve $1,850.00")).toBeTruthy();
+    fireEvent.click(button("Approve $1,850.00")!);
+    expect(screen.getByText("Approve $1,850.00?")).toBeTruthy();
+  });
+
+  it("says nothing changed when a proposal is rejected", () => {
+    render(<ProposalCard {...card} status="rejected" />);
+    expect(screen.getByText("Rejected. Nothing changed.")).toBeTruthy();
+  });
 });

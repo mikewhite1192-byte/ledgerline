@@ -106,7 +106,7 @@ export function Paystub({
 
   return (
     <section
-      aria-label={`Paystub for ${driver.name}`}
+      aria-label={`Paystub for ${driver.name}, ${formatPeriod(period.start, period.end)}`}
       className={cn("rounded-lg border border-border bg-card px-4 py-4 text-card-foreground sm:px-6 sm:py-5", className)}
     >
       <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
@@ -168,9 +168,12 @@ export function Paystub({
         </Group>
         <tbody>
           {carryForwardCents !== 0 ? (
+            // The engine carries the shortfall as a positive add-back, so "+" sums down the rail;
+            // the caption says where it comes back from.
             <tr className="align-baseline">
               <th scope="row" className="pt-4 pr-4 text-left text-body font-normal text-foreground">
-                Shortfall carried to next period
+                <span className="block">Shortfall carried to next period</span>
+                <span className="mt-0.5 block text-caption text-foreground-2">Taken from next period&apos;s pay.</span>
               </th>
               <td className="pt-4 text-right text-body whitespace-nowrap">
                 <Money cents={carryForwardCents} sign="always" />

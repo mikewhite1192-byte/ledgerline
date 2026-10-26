@@ -12,7 +12,13 @@ describe("TenantPanel", () => {
   it("lists exactly one carrier, marked current, with the sign-out control", () => {
     const { container } = render(<TenantPanel tenant={tenant} signOut={signOut} />);
     expect(screen.getAllByText(tenant.name)).toHaveLength(1);
-    expect(screen.getAllByLabelText("Current carrier")).toHaveLength(1);
+    const current = screen.getByText("(current)");
+    expect(current.className).toContain("sr-only");
+    expect(current.previousElementSibling?.textContent).toBe(tenant.name);
+    const check = current.nextElementSibling as Element;
+    expect(check.tagName.toLowerCase()).toBe("svg");
+    expect(check.getAttribute("aria-hidden")).toBe("true");
+    expect(check.hasAttribute("aria-label")).toBe(false);
     expect(screen.getByText("This login belongs to one carrier")).toBeTruthy();
     expect(container.textContent).toContain(tenant.email);
     expect(container.textContent).toContain("Time zone: America/Chicago");

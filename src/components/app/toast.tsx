@@ -13,7 +13,8 @@ export type ToastInput = {
 };
 type ToastItem = ToastInput & { id: number };
 
-// Neutral and success news leaves on its own; a warning or an error stays until it is dismissed.
+// Neutral and success news leaves on its own; a warning, an error or a toast with an action stays
+// until it is dismissed or acted on. A timed toast waits while the pointer or focus is on it.
 export const TOAST_TIMEOUT_MS = 6000;
 export const TOAST_LIMIT = 3;
 const STAYS: ReadonlySet<ToastTone> = new Set(["warning", "destructive"]);
@@ -82,14 +83,43 @@ export function ToastView({
 
 function TimedToast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) => void }) {
   const tone = item.tone ?? "neutral";
+  const timed = !STAYS.has(tone) && !item.action;
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const paused = hovered || focused;
   useEffect(() => {
-    if (STAYS.has(tone)) return;
+    // Leaving the toast starts the full time again, so nobody loses it mid-read.
+    if (!timed || paused) return;
     const timer = setTimeout(() => onDismiss(item.id), TOAST_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [item.id, tone, onDismiss]);
+  }, [item.id, timed, paused, onDismiss]);
+  const action = item.action;
   return (
-    <li className="motion-safe:animate-rise">
-      <ToastView {...item} onDismiss={() => onDismiss(item.id)} />
+    <li
+      className="motion-safe:animate-rise"
+      onPointerEnter={() => setHovered(true)}
+      onPointerLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        // Focus moving between this toast's own buttons keeps it paused.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+      }}
+    >
+      <ToastView
+        {...item}
+        action={
+          action
+            ? {
+                label: action.label,
+                onClick: () => {
+                  action.onClick();
+                  onDismiss(item.id);
+                },
+              }
+            : undefined
+        }
+        onDismiss={() => onDismiss(item.id)}
+      />
     </li>
   );
 }

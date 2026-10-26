@@ -2,7 +2,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { ToastProvider } from "@/components/app/toast";
-import DesignPage from "./page";
+import DesignPage, { dynamic } from "./page";
 
 afterEach(cleanup);
 
@@ -47,6 +47,20 @@ describe("/design", () => {
     );
     expect(document.querySelectorAll('[data-theme="light"]').length).toBeGreaterThanOrEqual(SECTION_HEADINGS.length);
     expect(document.querySelectorAll('[data-theme="dark"]').length).toBeGreaterThanOrEqual(SECTION_HEADINGS.length);
+  });
+
+  it("stays prerendered at build time, since it reads globals.css from disk", () => {
+    expect(dynamic).toBe("force-static");
+  });
+
+  it("shows its error specimens without announcing them as alerts", () => {
+    render(
+      <ToastProvider>
+        <DesignPage />
+      </ToastProvider>,
+    );
+    expect(screen.getAllByText("That took too long to load").length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
   });
 
   it("lands every sample record link on a row of the source table", () => {

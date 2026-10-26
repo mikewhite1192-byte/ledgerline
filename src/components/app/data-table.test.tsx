@@ -36,6 +36,15 @@ describe("DataTable", () => {
     expect(screen.queryByText(EMPTY.title)).toBeNull();
   });
 
+  it("says it is loading in words a screen reader hears, and only while loading", () => {
+    const { rerender } = render(<DataTable {...base} state="loading" />);
+    expect(screen.getByRole("table", { name: "Loads, loading" })).toBeTruthy();
+    expect(screen.getByText(", loading").className).toContain("sr-only");
+    rerender(<DataTable {...base} />);
+    expect(screen.getByRole("table", { name: "Loads" })).toBeTruthy();
+    expect(screen.queryByText(", loading")).toBeNull();
+  });
+
   it("shows the empty copy when there are no rows", () => {
     render(<DataTable {...base} rows={[]} empty={EMPTY} />);
     expect(screen.getByText(EMPTY.title)).toBeTruthy();

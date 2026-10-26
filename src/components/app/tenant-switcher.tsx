@@ -52,7 +52,8 @@ export function TenantPanel({
         <div className="flex items-center gap-2.5 rounded-md bg-accent px-2 py-1.5">
           <Initials name={tenant.name} />
           <span className="min-w-0 flex-1 truncate text-body font-medium">{tenant.name}</span>
-          <Check aria-label="Current carrier" className="size-4 shrink-0 text-primary" />
+          <span className="sr-only">(current)</span>
+          <Check aria-hidden className="size-4 shrink-0 text-primary" />
         </div>
         <p className="text-small text-muted-foreground">This login belongs to one carrier</p>
       </div>

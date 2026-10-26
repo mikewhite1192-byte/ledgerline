@@ -115,7 +115,8 @@ export function ChatThread({
               <li key={m.id} className="flex justify-end">
                 <div className="max-w-[85%] rounded-lg bg-secondary px-4 py-2.5 text-body text-foreground">
                   {m.parts.map((p, i) => (p.kind === "text" ? <p key={i}>{p.text}</p> : null))}
-                  {m.at ? <p className="mt-1 text-caption text-muted-foreground">{m.at}</p> : null}
+                  {/* On the bubble's fill, muted ink falls under 4.5:1, so the time takes the second ink. */}
+                  {m.at ? <p className="mt-1 text-caption text-foreground-2">{m.at}</p> : null}
                 </div>
               </li>
             ) : (

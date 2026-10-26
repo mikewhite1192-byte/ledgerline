@@ -57,7 +57,10 @@ export function DataTable<T>({
     <div className={cn("min-w-0 overflow-hidden bg-card", framed && "rounded-lg border border-border", className)}>
       <div className="scroll-edges overflow-x-auto">
         <Table aria-busy={resolved === "loading" || undefined}>
-          <caption className="px-3 pt-3 pb-1 text-left text-caption text-muted-foreground">{caption}</caption>
+          <caption className="px-3 pt-3 pb-1 text-left text-caption text-muted-foreground">
+            {caption}
+            {resolved === "loading" ? <span className="sr-only">, loading</span> : null}
+          </caption>
           <THead>
             <Tr>
               {columns.map((c, i) => (

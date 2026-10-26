@@ -38,13 +38,26 @@ export type ProposalCardProps = {
   className?: string;
 };
 
-const IMPACT_LABEL = { in: "Comes in", out: "Paid out", none: "No money moves" } as const;
+// What the amount line says, by status. Only a done proposal may say that money moved.
+const IMPACT_LABEL: Record<ProposalStatus, { in: string; out: string }> = {
+  proposed: { out: "Would pay out", in: "Would come in" },
+  approved: { out: "Would pay out", in: "Would come in" },
+  executing: { out: "Would pay out", in: "Would come in" },
+  done: { out: "Paid out", in: "Came in" },
+  rejected: { out: "Not paid", in: "Not received" },
+  failed: { out: "Not paid", in: "Not received" },
+  unknown: { out: "Pay out, not confirmed", in: "Coming in, not confirmed" },
+};
+
+function impactLabel(direction: ProposalCardProps["impact"]["direction"], status: ProposalStatus): string {
+  return direction === "none" ? "No money moves" : IMPACT_LABEL[status][direction];
+}
 
 const STATUS_NOTE: Record<Exclude<ProposalStatus, "proposed">, string> = {
   approved: "Approved and queued to run.",
   executing: "Running now.",
   done: "Done and recorded.",
-  rejected: "Rejected. Nothing was paid.",
+  rejected: "Rejected. Nothing changed.",
   failed: "Failed. Check the record before trying again.",
   unknown: "Sent, waiting on the read-back.",
 };
@@ -85,9 +98,10 @@ export function ProposalCard({
       </div>
 
       <div className="mx-4 mt-3 flex items-baseline justify-between gap-4 border-b border-border pb-3 sm:mx-5">
-        <span className="text-small text-foreground-2">{impact.label ?? IMPACT_LABEL[impact.direction]}</span>
+        <span className="text-small text-foreground-2">{impact.label ?? impactLabel(impact.direction, status)}</span>
         {impact.direction === "none" ? (
-          <span className="text-h2 text-muted-foreground tabular-nums">{formatCents(0)}</span>
+          // Money that changes place but not hands: the amount, unsigned and uncolored.
+          <Money cents={Math.abs(impact.cents)} sign="never" tone="plain" className="text-h2 text-muted-foreground" />
         ) : (
           <Money cents={shown} sign={impact.direction === "in" ? "always" : "auto"} className="text-h2" />
         )}

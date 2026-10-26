@@ -65,12 +65,20 @@ describe("Paystub", () => {
     expect(screen.queryByText("$2,425.00")).toBeNull();
   });
 
-  it("shows the carried shortfall only when it is not zero", () => {
+  it("shows the carried shortfall only when it is not zero, as an add-back with a caption", () => {
     const { rerender } = render(<Paystub {...props} />);
     expect(screen.queryByText("Shortfall carried to next period")).toBeNull();
-    rerender(<Paystub {...props} carryForwardCents={-1_250} />);
+    expect(screen.queryByText("Taken from next period's pay.")).toBeNull();
+    rerender(<Paystub {...props} carryForwardCents={1_250} />);
     expect(screen.getByText("Shortfall carried to next period")).toBeTruthy();
-    expect(screen.getByText("−$12.50")).toBeTruthy();
+    expect(screen.getByText("+$12.50").hasAttribute("data-negative")).toBe(false);
+    const caption = screen.getByText("Taken from next period's pay.");
+    expect(caption.className).toContain("text-foreground-2");
+  });
+
+  it("names the paystub by driver and period", () => {
+    render(<Paystub {...props} />);
+    expect(screen.getByRole("region", { name: "Paystub for Sample Driver, Oct 26 to Nov 1, 2026" })).toBeTruthy();
   });
 
   it("raises an exception in words with links to its records", () => {

@@ -21,6 +21,7 @@ export const SOURCES = {
   load1: ref("loads", "L-10421"),
   load2: ref("loads", "L-10422"),
   load3: ref("loads", "L-10423"),
+  load4: ref("loads", "L-10424"),
   lumper: ref("pay_items", "PI-0912"),
   insurance: ref("deduction_schedules", "DS-INS-07"),
   escrow: ref("deduction_schedules", "DS-ESC-07"),
@@ -39,6 +40,7 @@ export const SOURCE_ROWS: { ref: SourceRef; what: string }[] = [
   { ref: SOURCES.load1, what: "Hartwell Produce, Fresno CA to Denver CO, 1,250 loaded miles, delivered Oct 26" },
   { ref: SOURCES.load2, what: "Hartwell Produce, Denver CO to Chicago IL, 1,000 loaded miles, delivered Oct 28" },
   { ref: SOURCES.load3, what: "Hartwell Produce, Chicago IL to Phoenix AZ, 1,750 loaded miles, delivered Oct 31" },
+  { ref: SOURCES.load4, what: "Hartwell Produce, a local run in the Phoenix AZ area, 70 loaded miles, delivered Nov 4" },
   { ref: SOURCES.lumper, what: "Lumper and scale fees paid by the driver, receipts attached" },
   { ref: SOURCES.insurance, what: "Occupational accident insurance, $11.00 a day worked" },
   { ref: SOURCES.escrow, what: "Escrow, $100.00 a week until $2,500.00 is held" },
@@ -75,6 +77,30 @@ export const PAYSTUB: Omit<PaystubProps, "hrefFor"> = {
   ],
 };
 
+// A short week, as the rules engine settles one: insurance is taken in full, net pay stops at
+// zero, and the shortfall is a positive add-back taken from next period's pay. The lines still
+// add up: gross, less deductions, plus the carry, is the net.
+export const SHORT_WEEK_PAYSTUB: Omit<PaystubProps, "hrefFor"> = {
+  driver: DRIVER,
+  period: { start: "2026-11-02", end: "2026-11-08" },
+  status: "draft",
+  lines: [
+    { seq: 1, kind: "load_pay", label: "Load pay, 1 load", amountCents: 4_200, sources: [SOURCES.load4] },
+    { seq: 2, kind: "insurance", label: "Insurance, 5 days", amountCents: -5_500, sources: [SOURCES.insurance] },
+  ],
+  grossCents: 4_200,
+  deductionsCents: 5_500,
+  netCents: 0,
+  carryForwardCents: 1_300,
+  exceptions: [
+    {
+      category: "net_below_zero",
+      label: `Insurance came to more than this week's pay, so net pay is ${formatCents(0)}.`,
+      sources: [SOURCES.driver],
+    },
+  ],
+};
+
 export const ADVANCE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
   id: "proposal-advance",
   title: `Pay a ${formatCents(20_000)} advance to ${DRIVER.name}`,
@@ -82,7 +108,7 @@ export const ADVANCE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
   reasons: [
     { text: `Earned and unpaid this week: ${formatCents(240_000)}`, source: SOURCES.load1 },
     { text: `Open advances: ${formatCents(0)}`, source: SOURCES.driver },
-    { text: `Limit ${formatCents(50_000)}, so up to ${formatCents(50_000)}`, source: SOURCES.payRules },
+    { text: `Advance limit: ${formatCents(50_000)}; this request fits`, source: SOURCES.payRules },
   ],
   sources: [SOURCES.load2, SOURCES.load3],
   confirmQuestion: `Pay ${formatCents(20_000)} to ${DRIVER.name}?`,
@@ -91,7 +117,7 @@ export const ADVANCE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
 export const PAYMENT_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
   id: "proposal-payment",
   title: "Record Hartwell Produce's payment against invoice INV-20417",
-  impact: { cents: 320_000, direction: "in", label: "Applied to INV-20417" },
+  impact: { cents: 320_000, direction: "in", label: "Applies to INV-20417" },
   reasons: [
     { text: `Check for ${formatCents(320_000)} received Oct 30`, source: SOURCES.customer },
     { text: `Open balance on INV-20417: ${formatCents(320_000)}`, source: SOURCES.invoiceA },
@@ -101,7 +127,7 @@ export const PAYMENT_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
 export const MOVE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
   id: "proposal-move",
   title: "Move a payment that landed on the wrong invoice",
-  impact: { cents: 0, direction: "none", label: "Moves between invoices" },
+  impact: { cents: 185_000, direction: "none", label: "Moves between invoices" },
   reasons: [
     { text: `${formatCents(185_000)} was applied to INV-20417 but matches INV-20418`, source: SOURCES.invoiceB },
   ],

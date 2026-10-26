@@ -30,7 +30,7 @@ export default async function SignIn({
         <Card className="grid gap-5 p-6 sm:p-8">
           <div className="grid gap-1">
             <h1 className="text-h2 text-foreground">Sign in</h1>
-            <p className="text-body text-foreground-2">Sign in to your carrier.</p>
+            <p className="text-body text-foreground-2">Your carrier&apos;s pay desk.</p>
           </div>
           {message ? <InlineAlert tone="destructive">{message}</InlineAlert> : null}
           <form action={signInAction} className="grid gap-4">

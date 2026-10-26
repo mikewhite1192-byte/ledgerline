@@ -80,15 +80,17 @@ export type ErrorStateProps = {
   title?: ReactNode;
   body?: ReactNode;
   retry?: ReactNode;
+  // Off only where the error is a specimen on show, never a failure that just happened.
+  announce?: boolean;
   className?: string;
 };
 
-export function ErrorState({ category, title, body, retry, className }: ErrorStateProps) {
+export function ErrorState({ category, title, body, retry, announce = true, className }: ErrorStateProps) {
   const copy = Object.hasOwn(ERROR_COPY, category)
     ? ERROR_COPY[category as ErrorCategory]
     : ERROR_COPY.unknown;
   return (
-    <div role="alert" className={cn("flex flex-col items-center gap-2 px-4 py-10 text-center", className)}>
+    <div role={announce ? "alert" : undefined} className={cn("flex flex-col items-center gap-2 px-4 py-10 text-center", className)}>
       <span className="mb-1 grid size-10 place-items-center rounded-lg bg-destructive-soft text-destructive">
         <CircleAlert aria-hidden className="size-5" />
       </span>

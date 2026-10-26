@@ -152,7 +152,8 @@ export function ToastDemo() {
         ))}
       </div>
       <p className="text-small text-muted-foreground">
-        Success and neutral leave after 6 seconds; a warning or an error stays until dismissed. At most three show.
+        Success and neutral leave after 6 seconds, and wait while the pointer or focus is on them. A warning, an
+        error or a toast with an action stays until dismissed. At most three show.
       </p>
     </div>
   );
