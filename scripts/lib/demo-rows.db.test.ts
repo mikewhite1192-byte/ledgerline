@@ -61,15 +61,23 @@ describe("demo rows through a login that skips row-level security", () => {
 
   afterAll(async () => {
     try {
-      // Memberships go with their tenant.
+      // Memberships go with their tenant. One failed delete does not stop the others.
       for (const id of made) {
-        await admin.withTenant(id, (q) =>
-          q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"),
-        );
+        try {
+          await admin.withTenant(id, (q) =>
+            q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"),
+          );
+        } catch {
+          // keep going; the role and the pool are still cleaned up below
+        }
       }
     } finally {
       try {
-        await master?.close();
+        try {
+          await master?.close();
+        } catch {
+          // the role is dropped even when its pool fails to close
+        }
         await admin?.withoutTenant(async (q) => {
           const role = await q.query("SELECT 1 AS ok FROM pg_roles WHERE rolname = $1", [ROLE]);
           if (role.length === 0) return;
@@ -122,10 +130,10 @@ describe("demo rows through a login that skips row-level security", () => {
     made.add(C);
     const before = await rowsOf(A);
     const taken = { ...carrier("c", "America/Denver"), slug: carrierA.slug };
-    // The tenant insert skips the taken slug, so the membership has no tenant: 23503.
-    await expect(ensureRows(master, taken, C, `sub-${C}`)).rejects.toMatchObject({
-      sqlState: "23503",
-    });
+    // The tenant insert skips the taken slug, and the read-back stops it before the membership.
+    await expect(ensureRows(master, taken, C, `sub-${C}`)).rejects.toThrow(
+      /belongs to another tenant id/,
+    );
     expect(await rowsOf(C)).toEqual({ tenants: [], members: [] });
     expect(await rowsOf(A)).toEqual(before);
   });

@@ -21,21 +21,21 @@ export async function ensureRows(db: Db, carrier: DemoCarrier, tenantId: string,
        VALUES (current_tenant_id(), $1, $2, $3) ON CONFLICT (slug) DO NOTHING`,
       [carrier.slug, carrier.name, carrier.timezone],
     );
+    const tenant = await q.query<{ slug: string }>(
+      "SELECT slug FROM tenants WHERE id = current_tenant_id()",
+    );
+    if (tenant.length !== 1 || tenant[0].slug !== carrier.slug) {
+      throw new Error(`${carrier.slug} belongs to another tenant id; fix it by hand`);
+    }
     await q.execute(
       `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
        VALUES (current_tenant_id(), $1, $2, 'admin') ON CONFLICT (cognito_sub) DO NOTHING`,
       [sub, carrier.email],
     );
-    const tenant = await q.query<{ slug: string }>(
-      "SELECT slug FROM tenants WHERE id = current_tenant_id()",
-    );
     const member = await q.query<{ email: string }>(
       "SELECT email FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
       [sub],
     );
-    if (tenant.length !== 1 || tenant[0].slug !== carrier.slug) {
-      throw new Error(`${carrier.slug} belongs to another tenant id; fix it by hand`);
-    }
     if (member.length !== 1 || member[0].email !== carrier.email) {
       throw new Error(`${carrier.email} is linked to another tenant; fix it by hand`);
     }
