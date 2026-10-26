@@ -32,6 +32,8 @@ export async function proofCallAction(): Promise<ProofState> {
         ],
         // Reasoning tokens count against this budget, so it leaves room for the reply after them.
         maxOutputTokens: 1024,
+        // A paused database can take 25 s to resume; call plus settle must fit the response window.
+        timeoutMs: 15_000,
       },
       session,
     );

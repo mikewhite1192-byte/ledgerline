@@ -45,13 +45,16 @@ describe("prices", () => {
     expect(priceFor("meta", "meta-models/muse-spark-open-1026")).toBeNull();
   });
 
-  it("reserves a token per three request bytes of input plus every output token", () => {
+  it("reserves a token per two request bytes of input plus every output token", () => {
     const price = priceFor("meta", "muse-spark-1.3")!;
-    // 400 bytes is 134 tokens (rounded up); 256 output tokens.
-    expect(estimateReserve(price, 400, 256)).toBe(134 * 125_000 + 256 * 425_000);
-    expect(estimateReserve(price, 400, 256)).toBe(125_550_000);
+    // 400 bytes is 200 tokens; 256 output tokens.
+    expect(estimateReserve(price, 400, 256)).toBe(200 * 125_000 + 256 * 425_000);
+    expect(estimateReserve(price, 400, 256)).toBe(133_800_000);
+    // 401 bytes is 201 tokens (rounded up).
+    expect(estimateReserve(price, 401, 256)).toBe(201 * 125_000 + 256 * 425_000);
+    expect(estimateReserve(price, 401, 256)).toBe(133_925_000);
     // The proof call's budget: 1024 output tokens is under half a cent.
-    expect(estimateReserve(price, 300, 1024)).toBe(100 * 125_000 + 1024 * 425_000);
+    expect(estimateReserve(price, 300, 1024)).toBe(150 * 125_000 + 1024 * 425_000);
     expect(estimateReserve(price, 300, 1024)).toBeLessThan(NANOCENTS_PER_CENT / 2);
   });
 

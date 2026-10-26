@@ -35,15 +35,16 @@ export function priceFor(provider: AiProvider, model: string): Price | null {
   return Object.hasOwn(table, model) ? table[model] : null;
 }
 
-// The worst case, reserved before the call: a generous guess at the input (a token per three
-// bytes of the request body; English runs about four characters a token) plus every output token
-// the call may produce.
+// The worst case, reserved before the call: a generous guess at the input plus every output token
+// the call may produce. Input is a token per two bytes of the request body. English runs about
+// four characters a token, but chat template tokens and JSON tool schemas tokenize denser, and a
+// bigger reserve keeps spend under the cap.
 export function estimateReserve(
   price: Price,
   requestBytes: number,
   maxOutputTokens: number,
 ): number {
-  return Math.ceil(requestBytes / 3) * price.input + maxOutputTokens * price.output;
+  return Math.ceil(requestBytes / 2) * price.input + maxOutputTokens * price.output;
 }
 
 // What the provider charges for the usage it reported. Cached input is part of input.

@@ -45,6 +45,10 @@ export type {
 // the switch, reserves the call's worst-case cost in the spend ledger, calls the provider once,
 // settles the ledger to the real cost, and writes one log line. It never retries.
 //
+// It returns an AiResult or throws an AiError. The ledger step before the call can also throw the
+// tenant module's ForbiddenError (no membership) and a DbError, so every caller handles all three,
+// as src/app/ai-proof-action.ts does.
+//
 // Call it outside withRequestTenant: it opens its own two short transactions, and a model call of
 // up to 25 seconds must not sit inside one.
 
