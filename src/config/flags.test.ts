@@ -4,6 +4,7 @@ import { flags } from "./flags";
 describe("flags", () => {
   it("ships every outside effect dark", () => {
     expect(flags.aiEnabled).toBe(false);
+    expect(flags.aiProofRoute).toBe(false);
     expect(flags.accountingEnabled).toBe(false);
     expect(flags.inboundEmailEnabled).toBe(false);
     expect(flags.paymentProvider).toBe("mock");

@@ -22,6 +22,19 @@ export function addStacks(app: App, env: Environment) {
     dbName: data.dbName,
     userPoolId: auth.userPool.userPoolId,
     userPoolClientId: auth.client.userPoolClientId,
+    // $120 of the $150 model credit, leaving $30 for the live finals. One variable to change.
+    aiSpendCapCents: 12_000,
+    // $30 of that for Muse Wonder, the auditor.
+    aiWonderCapCents: 3_000,
+    // Standard tier: Meta does not train on the content.
+    metaModels: {
+      spark: "muse-spark-1.3",
+      wonder: "muse-wonder-1.0",
+      voice: "muse-voice-transcribe-1.0",
+      image: "muse-image-1.0",
+      sam: "sam-3.1",
+    },
+    basetenModelId: "meta-models/muse-spark-open-1026",
   });
   hosting.addStackDependency(data);
   hosting.addStackDependency(auth);

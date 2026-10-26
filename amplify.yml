@@ -7,8 +7,9 @@ frontend:
         - npm ci
     build:
       commands:
-        # The Next.js server reads only what is in .env.production; these are ARNs and ids.
-        - env | grep -e '^DB_CLUSTER_ARN=' -e '^DB_SECRET_ARN=' -e '^DB_NAME=' -e '^COGNITO_USER_POOL_ID=' -e '^COGNITO_CLIENT_ID=' -e '^AWS_REGION=' >> .env.production
+        # The Next.js server reads only what is in .env.production; these are ARNs, ids, names
+        # and the spend cap, never a key (the keys stay in Secrets Manager).
+        - env | grep -e '^DB_CLUSTER_ARN=' -e '^DB_SECRET_ARN=' -e '^DB_NAME=' -e '^COGNITO_USER_POOL_ID=' -e '^COGNITO_CLIENT_ID=' -e '^AWS_REGION=' -e '^AI_SPEND_CAP_CENTS=' -e '^AI_WONDER_CAP_CENTS=' -e '^META_MODEL_SPARK=' -e '^META_MODEL_WONDER=' -e '^META_MODEL_VOICE=' -e '^META_MODEL_IMAGE=' -e '^META_MODEL_SAM=' -e '^META_API_KEY_SECRET_NAME=' -e '^BASETEN_MODEL_ID=' -e '^BASETEN_API_KEY_SECRET_NAME=' >> .env.production
         - npm run build
   artifacts:
     baseDirectory: .next

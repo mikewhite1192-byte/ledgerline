@@ -10,6 +10,16 @@ import type { Db } from "./types";
 
 const TENANT_ONLY = "(tenant_id = current_tenant_id())";
 
+// The only tables outside public: global rows that hold no tenant's data, each listed with why.
+// The app may read and update them, never add or remove a row.
+const GLOBAL_TABLES: Record<string, string> = {
+  "ops.ai_spend": "one model credit shared by every tenant",
+};
+
+// Schemas Postgres itself owns.
+const SYSTEM_SCHEMAS = `n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'`;
+
 let admin: Db;
 
 type Table = { name: string; rls: boolean; force: boolean; owner: string };
@@ -44,7 +54,7 @@ describe("row-level security coverage", () => {
 
   it("finds the tables (an empty list would make every check below pass)", async () => {
     const names = (await tables()).map((t) => t.name);
-    expect(names).toEqual(expect.arrayContaining(["memberships", "tenants"]));
+    expect(names).toEqual(expect.arrayContaining(["memberships", "model_calls", "tenants"]));
   });
 
   it("forces row-level security on every table, owned by someone other than the app", async () => {
@@ -88,13 +98,40 @@ describe("row-level security coverage", () => {
     }
   });
 
+  it("keeps every table outside public on the global list, with no tenant data and no app inserts", async () => {
+    const outside = await admin.withoutTenant((q) =>
+      q.query<{ name: string; owner: string; tenant_column: number; app_can: boolean }>(
+        `SELECT n.nspname || '.' || c.relname AS name, pg_get_userbyid(c.relowner) AS owner,
+                (SELECT count(*) FROM pg_attribute a
+                  WHERE a.attrelid = c.oid AND a.attname = 'tenant_id' AND NOT a.attisdropped)
+                  AS tenant_column,
+                has_table_privilege('payday_app', c.oid, 'INSERT, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+                  AS app_can
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname <> 'public' AND ${SYSTEM_SCHEMAS} AND c.relkind IN ('r', 'p', 'f')
+          ORDER BY 1`,
+      ),
+    );
+    expect(outside.map((t) => t.name)).toEqual(Object.keys(GLOBAL_TABLES).sort());
+    for (const t of outside) {
+      expect(t, t.name).toMatchObject({ tenant_column: 0, app_can: false });
+      expect(t.owner, t.name).not.toBe("payday_app");
+    }
+    const [ops] = await admin.withoutTenant((q) =>
+      q.query<{ can_create: boolean }>(
+        "SELECT has_schema_privilege('payday_app', 'ops', 'CREATE') AS can_create",
+      ),
+    );
+    expect(ops).toEqual({ can_create: false });
+  });
+
   it("has no view or definer function that would read as its owner", async () => {
     const [found] = await admin.withoutTenant((q) =>
       q.query<{ views: number; definers: number }>(
         `SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                  WHERE n.nspname = 'public' AND c.relkind IN ('v', 'm')) AS views,
+                  WHERE ${SYSTEM_SCHEMAS} AND c.relkind IN ('v', 'm')) AS views,
                 (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-                  WHERE n.nspname = 'public' AND p.prosecdef) AS definers`,
+                  WHERE ${SYSTEM_SCHEMAS} AND p.prosecdef) AS definers`,
       ),
     );
     expect(found).toEqual({ views: 0, definers: 0 });

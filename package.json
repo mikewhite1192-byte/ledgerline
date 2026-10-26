@@ -16,11 +16,13 @@
     "test:db:fresh": "tsx scripts/test-db-fresh.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "demo:users": "tsx scripts/create-demo-users.ts",
+    "ai:models": "tsx scripts/ai-models.ts",
     "cdk": "cd infra && cdk"
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "3.1157.0",
     "@aws-sdk/client-rds-data": "3.1157.0",
+    "@aws-sdk/client-secrets-manager": "3.1157.0",
     "aws-jwt-verify": "5.2.1",
     "next": "15.5.28",
     "pg": "8.23.1",
@@ -28,7 +30,6 @@
     "react-dom": "19.1.10"
   },
   "devDependencies": {
-    "@aws-sdk/client-secrets-manager": "3.1157.0",
     "@aws-sdk/client-sts": "3.1157.0",
     "@eslint/eslintrc": "^3",
     "@types/node": "^22",
