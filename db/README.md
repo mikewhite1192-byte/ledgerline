@@ -59,6 +59,24 @@ every carrier unless its own `WHERE` says which. `scripts/lib/demo-rows.db.test.
 demo user statements through a local role with BYPASSRLS, the local stand-in for the Aurora
 master.
 
+## The money ledger (`money_actions`, 0006)
+
+One row per outside money write, reserved before the call. Two things differ from the "Every
+tenant table" pattern above, on purpose:
+
+- The app role gets `SELECT, INSERT, UPDATE` and no `DELETE`: the app never removes a ledger
+  row. Test fixtures clear their rows with the admin login.
+- The `money_actions_guard` trigger (a plain invoker-rights function) enforces the state machine
+  on every insert and update, whoever runs it: a new row is a bare `reserved` row; what was
+  approved (kind, subject, amount, counterparty, keys, proposal, approver) never changes;
+  `reserved` moves to `sent`, or to `failed` as `refused`; `sent` moves to `confirmed`, `failed`
+  or `unknown`; `unknown` settles only through a read-back; `confirmed` and `failed` are final;
+  `sent_at` is fixed once set and `check_count` never goes down. A refused change raises SQLSTATE
+  23514.
+
+Dedupe keys: `UNIQUE (tenant_id, idempotency_key)` with the key `kind:subject_id:attempt`, and
+at most one row that is not `failed` per `(tenant_id, kind, subject_id)`.
+
 ## Local, from a fresh database
 
 With a local Postgres 16 and its admin login:

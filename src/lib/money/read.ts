@@ -1,0 +1,199 @@
+import { DbError, type Param, type Queryable } from "../db";
+import { isCanonicalUuid } from "./keys";
+import {
+  isMoneyFailure,
+  MAX_CHECKS,
+  MONEY_ACTION_KINDS,
+  MONEY_ACTION_STATES,
+  OUTSIDE_SYSTEMS,
+  PROPOSERS,
+  type MoneyAction,
+  type SubjectTable,
+} from "./types";
+
+// Reads of the money ledger, SELECT only, every statement inside a tenant transaction and naming
+// its tenant (`tenant_id = current_tenant_id()`), so a login that bypasses row-level security
+// still reads one tenant. Safe for agent tools: nothing here writes.
+
+const ts = (column: string) =>
+  `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS ${column}`;
+
+export const ACTION_COLUMNS = [
+  "CAST(id AS text) AS id",
+  "CAST(tenant_id AS text) AS tenant_id",
+  "kind",
+  "channel",
+  "subject_table",
+  "CAST(subject_id AS text) AS subject_id",
+  "attempt",
+  "idempotency_key",
+  "request_id",
+  "amount_cents",
+  "counterparty_table",
+  "CAST(counterparty_id AS text) AS counterparty_id",
+  "state",
+  "failure_category",
+  "settled_via",
+  "outside_system",
+  "outside_type",
+  "outside_id",
+  "outside_ref",
+  "outside_amount_cents",
+  "proposed_by",
+  "CAST(proposal_id AS text) AS proposal_id",
+  "CAST(trace_id AS text) AS trace_id",
+  "CAST(approver_membership_id AS text) AS approver_membership_id",
+  "check_count",
+  ts("created_at"),
+  ts("sent_at"),
+  ts("settled_at"),
+  ts("last_checked_at"),
+  "CAST(floor(EXTRACT(EPOCH FROM (now() - sent_at))) AS integer) AS sent_seconds_ago",
+].join(", ");
+
+const FROM = "FROM money_actions WHERE tenant_id = current_tenant_id()";
+
+type ActionRow = Record<string, unknown>;
+
+function fail(): never {
+  // A row that does not read back as stored is unknown, never guessed at.
+  throw new DbError("unknown");
+}
+
+function text(v: unknown): string {
+  return typeof v === "string" ? v : fail();
+}
+function textOrNull(v: unknown): string | null {
+  return v === null ? null : text(v);
+}
+function int(v: unknown): number {
+  return Number.isSafeInteger(v) ? (v as number) : fail();
+}
+function intOrNull(v: unknown): number | null {
+  return v === null ? null : int(v);
+}
+function uuid(v: unknown): string {
+  return isCanonicalUuid(v) ? v : fail();
+}
+function uuidOrNull(v: unknown): string | null {
+  return v === null ? null : uuid(v);
+}
+function oneOf<T extends string>(v: unknown, allowed: readonly T[]): T {
+  return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fail();
+}
+function oneOfOrNull<T extends string>(v: unknown, allowed: readonly T[]): T | null {
+  return v === null ? null : oneOf(v, allowed);
+}
+
+export function actionOf(r: ActionRow): MoneyAction {
+  const failure = r.failure_category;
+  if (failure !== null && !isMoneyFailure(failure)) fail();
+  return {
+    id: uuid(r.id),
+    tenantId: uuid(r.tenant_id),
+    kind: oneOf(r.kind, MONEY_ACTION_KINDS),
+    channel: oneOf(r.channel, ["payment", "accounting"] as const),
+    subjectTable: oneOf(r.subject_table, [
+      "advances",
+      "settlements",
+      "invoices",
+      "customer_payments",
+    ] as const),
+    subjectId: uuid(r.subject_id),
+    attempt: int(r.attempt),
+    idempotencyKey: text(r.idempotency_key),
+    requestId: text(r.request_id),
+    amountCents: int(r.amount_cents),
+    counterpartyTable: oneOf(r.counterparty_table, ["drivers", "customers"] as const),
+    counterpartyId: uuid(r.counterparty_id),
+    state: oneOf(r.state, MONEY_ACTION_STATES),
+    failureCategory: failure as MoneyAction["failureCategory"],
+    settledVia: oneOfOrNull(r.settled_via, ["response", "read_back", "refused"] as const),
+    outsideSystem: oneOfOrNull(r.outside_system, OUTSIDE_SYSTEMS),
+    outsideType: textOrNull(r.outside_type),
+    outsideId: textOrNull(r.outside_id),
+    outsideRef: textOrNull(r.outside_ref),
+    outsideAmountCents: intOrNull(r.outside_amount_cents),
+    proposedBy: oneOf(r.proposed_by, PROPOSERS),
+    proposalId: uuidOrNull(r.proposal_id),
+    traceId: uuidOrNull(r.trace_id),
+    approverMembershipId: uuid(r.approver_membership_id),
+    checkCount: int(r.check_count),
+    createdAt: text(r.created_at),
+    sentAt: textOrNull(r.sent_at),
+    settledAt: textOrNull(r.settled_at),
+    lastCheckedAt: textOrNull(r.last_checked_at),
+    sentSecondsAgo: intOrNull(r.sent_seconds_ago),
+  };
+}
+
+async function many(q: Queryable, where: string, params: Param[], tail = ""): Promise<MoneyAction[]> {
+  const rows = await q.query<ActionRow>(`SELECT ${ACTION_COLUMNS} ${FROM} AND ${where}${tail}`, params);
+  return rows.map(actionOf);
+}
+
+async function one(q: Queryable, where: string, params: Param[]): Promise<MoneyAction | null> {
+  const rows = await many(q, where, params);
+  if (rows.length > 1) fail();
+  return rows[0] ?? null;
+}
+
+export function readAction(q: Queryable, id: string): Promise<MoneyAction | null> {
+  if (!isCanonicalUuid(id)) throw new RangeError("action id is not a lowercase UUID");
+  return one(q, "id = CAST($1 AS uuid)", [id]);
+}
+
+export function readActionByKey(q: Queryable, key: string): Promise<MoneyAction | null> {
+  return one(q, "idempotency_key = $1", [key]);
+}
+
+// Every row for one subject, oldest first: the ledger card for an advance, settlement, invoice
+// or payment.
+export function readBySubject(
+  q: Queryable,
+  table: SubjectTable,
+  subjectId: string,
+): Promise<MoneyAction[]> {
+  oneOf(table, ["advances", "settlements", "invoices", "customer_payments"] as const);
+  if (!isCanonicalUuid(subjectId)) throw new RangeError("subject id is not a lowercase UUID");
+  return many(
+    q,
+    "subject_table = $1 AND subject_id = CAST($2 AS uuid)",
+    [table, subjectId],
+    " ORDER BY created_at, attempt, id",
+  );
+}
+
+// What the reconcile pass works on: rows left unknown, and rows still sent after the window
+// (their sender died or its settle failed). Rows at the check limit need a person and are left
+// out. Oldest send first.
+export function readPending(
+  q: Queryable,
+  olderThanSeconds: number,
+  limit = 5,
+): Promise<MoneyAction[]> {
+  if (!Number.isSafeInteger(olderThanSeconds) || olderThanSeconds < 0) {
+    throw new RangeError("olderThanSeconds must be a whole number of seconds");
+  }
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+    throw new RangeError("limit must be 1 to 50");
+  }
+  return many(
+    q,
+    `check_count < ${MAX_CHECKS} AND (state = 'unknown' OR (state = 'sent'
+       AND sent_at < now() - CAST($1 AS integer) * interval '1 second'))`,
+    [olderThanSeconds, limit],
+    " ORDER BY sent_at, id LIMIT CAST($2 AS integer)",
+  );
+}
+
+// The tenant's own zone, for dates sent outside (a payout's TxnDate is its local date).
+export async function readTenantZone(q: Queryable): Promise<string> {
+  const rows = await q.query<{ timezone: unknown }>(
+    "SELECT timezone FROM tenants WHERE id = current_tenant_id()",
+  );
+  if (rows.length !== 1 || typeof rows[0].timezone !== "string" || rows[0].timezone === "") {
+    throw new DbError("unknown");
+  }
+  return rows[0].timezone;
+}
