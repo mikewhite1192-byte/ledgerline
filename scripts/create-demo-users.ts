@@ -116,7 +116,7 @@ async function writeLogins({ secrets }: Aws, logins: Logins, exists: boolean): P
     await secrets.send(
       new CreateSecretCommand({
         Name: DEMO_SECRET_NAME,
-        Description: "Payday Copilot demo carrier logins",
+        Description: "LedgerLine demo carrier logins",
         SecretString,
         Tags: [{ Key: "project", Value: "payday-copilot" }],
       }),

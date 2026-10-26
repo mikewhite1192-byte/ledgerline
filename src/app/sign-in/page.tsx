@@ -22,7 +22,7 @@ export default async function SignIn({
 
   return (
     <main style={{ maxWidth: 400, margin: "64px auto", padding: "0 16px" }}>
-      <h1>Payday Copilot</h1>
+      <h1>LedgerLine</h1>
       <p style={{ marginTop: 12 }}>Sign in to your carrier.</p>
       {message ? (
         <p role="alert" style={{ marginTop: 12, color: "#b42318" }}>

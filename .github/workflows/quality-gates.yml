@@ -1,4 +1,4 @@
-# Blocking gates for Payday Copilot. Set up on day zero, before the first feature.
+# Blocking gates for LedgerLine. Set up on day zero, before the first feature.
 #
 # Make every job REQUIRED on the mainline (Settings > Branches > branch protection), or they run
 # but do not block. Third-party actions are pinned to a commit SHA (a mutable tag is a
