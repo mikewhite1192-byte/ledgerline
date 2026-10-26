@@ -50,6 +50,12 @@ export async function apiKey(
   return key;
 }
 
+// Drops the kept key, so the next call reads the secret again. Called when the provider refuses
+// the key, so a rotated secret is picked up without a redeploy. The refused call is not retried.
+export function forgetKey(provider: AiProvider): void {
+  keys.delete(provider);
+}
+
 function defaultClient(): SecretsClient {
   // Passed explicitly: whether the SSR runtime sets AWS_REGION is not confirmed.
   return new SecretsManagerClient({ region: process.env.AWS_REGION ?? "us-east-2" });

@@ -3,7 +3,7 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { DbError, getDb, type TenantDb } from "../db";
 import { isUuid } from "../uuid";
-import { apiKey, type SecretsClient } from "./keys";
+import { apiKey, forgetKey, type SecretsClient } from "./keys";
 import {
   audioReserve,
   capNanocents,
@@ -265,6 +265,8 @@ async function runCall<T, U extends Price["unit"]>(
     raw.kind === "answered" && costNanocents === null
       ? { kind: "unknown", category: "unknown", httpStatus: raw.httpStatus }
       : raw;
+  // A refused key is not kept: the next call reads the secret again. This call is not retried.
+  if (outcome.kind !== "answered" && outcome.category === "auth") forgetKey(provider);
 
   // A timeout settles as 'unknown' like any other unknown outcome (failure 'timeout', its
   // duration, the calls counter): whether the provider ran and charged is not known, so its

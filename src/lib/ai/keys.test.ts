@@ -97,6 +97,19 @@ describe("apiKey, production", () => {
     expect(logged.join("\n")).not.toContain(KEY);
   });
 
+  it("reads the secret again after the key is forgotten, for that provider only", async () => {
+    const { apiKey, forgetKey } = await load();
+    vi.stubEnv("BASETEN_API_KEY_SECRET_NAME", "payday-copilot/baseten-api-key");
+    vi.stubEnv("BASETEN_API_KEY", "");
+    const secrets = fakeSecrets(KEY, "other-key-abcdefghijklmnop", "rotated-key-abcdefghijklmnop");
+    expect(await apiKey("meta", secrets)).toBe(KEY);
+    expect(await apiKey("baseten", secrets)).toBe("other-key-abcdefghijklmnop");
+    forgetKey("meta");
+    expect(await apiKey("meta", secrets)).toBe("rotated-key-abcdefghijklmnop");
+    expect(await apiKey("baseten", secrets)).toBe("other-key-abcdefghijklmnop");
+    expect(secrets.send).toHaveBeenCalledTimes(3);
+  });
+
   it("does not keep a failed read, and logs only the error's name", async () => {
     const { apiKey } = await load();
     const failure = new Error(`denied for ${SECRET_NAME} with ${KEY}`);

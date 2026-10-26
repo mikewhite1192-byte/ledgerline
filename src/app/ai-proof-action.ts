@@ -3,9 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { flags } from "@/config/flags";
 import { AiError, complete, type AiErrorCategory } from "@/lib/ai";
-import { requireSession } from "@/lib/auth/session";
+import type { Session } from "@/lib/auth/claims";
 import { DbError } from "@/lib/db";
-import { ForbiddenError } from "@/lib/tenant/context";
+import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 
 export type ProofCategory = AiErrorCategory | "incomplete" | "forbidden" | "unreadable";
 
@@ -16,11 +16,28 @@ export type ProofState =
 
 // The model connection check behind the home page button. It returns categories only, never
 // upstream text; the reply is shown from this return value and never stored. The ledger rows
-// under the button are the read-back, from the database.
+// under the button are the read-back, from the database. Only a carrier admin may run it: each
+// press spends against the one global cap, so staff logins are refused before any reservation.
 export async function proofCallAction(): Promise<ProofState> {
   // The button's own switch, re-checked here; complete() checks aiEnabled itself.
   if (!flags.aiProofRoute) return { ok: false, category: "disabled" };
-  const session = await requireSession();
+  // Signed out: withRequestTenant redirects to /sign-in, and that redirect is rethrown below. The
+  // role is read in its own short transaction, before and outside the model call.
+  let session: Session;
+  try {
+    session = await withRequestTenant(async (q, s) => {
+      const rows = await q.query<{ role: string }>(
+        "SELECT role FROM memberships WHERE cognito_sub = $1",
+        [s.sub],
+      );
+      if (rows.length !== 1 || rows[0].role !== "admin") throw new ForbiddenError();
+      return s;
+    });
+  } catch (err) {
+    if (err instanceof ForbiddenError) return { ok: false, category: "forbidden" };
+    if (err instanceof DbError) return { ok: false, category: "unreadable" };
+    throw err;
+  }
   try {
     const result = await complete(
       "spark",

@@ -334,6 +334,57 @@ describe("model spend ledger", () => {
     expect((removed as { sqlState?: string }).sqlState).toBe("42501");
   });
 
+  it("refuses the app a change to anything a settle does not write, and still settles", async () => {
+    const start = await spend();
+    const r = reservation();
+    await reserve(app, session(A), r);
+    const refusals = [
+      ["UPDATE model_calls SET tenant_id = CAST($2 AS uuid) WHERE id = CAST($1 AS uuid)", B],
+      ["UPDATE model_calls SET purpose = $2 WHERE id = CAST($1 AS uuid)", "other"],
+      [
+        "UPDATE model_calls SET reserved_nanocents = CAST($2 AS bigint) WHERE id = CAST($1 AS uuid)",
+        1,
+      ],
+      ["UPDATE model_calls SET model = $2 WHERE id = CAST($1 AS uuid)", "muse-spark-1.0"],
+    ] as const;
+    for (const [sql, value] of refusals) {
+      const err = await failureOf(app.withTenant(A, (q) => q.execute(sql, [r.callId, value])));
+      expect((err as { sqlState?: string }).sqlState).toBe("42501");
+    }
+    const moved = await failureOf(
+      app.withTenant(A, (q) => q.execute("UPDATE ops.ai_spend SET id = 2 WHERE id = 1")),
+    );
+    expect((moved as { sqlState?: string }).sqlState).toBe("42501");
+    expect(await spend()).toEqual({
+      ...start,
+      reservedNanocents: start.reservedNanocents + RESERVE,
+    });
+
+    expect(
+      await settle(app, session(A), r.callId, {
+        kind: "answered",
+        status: "ok",
+        usage: USAGE,
+        units: null,
+        costNanocents: 1_000,
+        upstreamId: "resp_narrow",
+        httpStatus: 200,
+        durationMs: 40,
+      }),
+    ).toBe(true);
+    expect(await spend()).toEqual({
+      ...start,
+      spentNanocents: start.spentNanocents + 1_000,
+      calls: start.calls + 1,
+    });
+    expect(await callRow(A, r.callId)).toMatchObject({
+      status: "ok",
+      reserved_nanocents: RESERVE,
+      cost_nanocents: 1_000,
+      upstream_id: "resp_narrow",
+    });
+  });
+
   it("keeps the renamed log's policy, forced row security and grants, and the old name is gone", async () => {
     const facts = await admin.withoutTenant(async (q) => {
       const [table] = await q.query<{ rls: boolean; forced: boolean; old: string | null }>(
@@ -351,20 +402,66 @@ describe("model spend ledger", () => {
                 has_table_privilege('payday_app', 'public.model_calls', 'UPDATE') AS upd,
                 has_table_privilege('payday_app', 'public.model_calls', 'DELETE') AS del,
                 has_table_privilege('payday_app', 'ops.ai_spend', 'INSERT') AS spend_ins,
+                has_table_privilege('payday_app', 'ops.ai_spend', 'UPDATE') AS spend_upd,
                 has_table_privilege('payday_app', 'ops.ai_spend', 'DELETE') AS spend_del`,
       );
-      return { table, policies: policies.map((p) => p.policyname), grants };
+      // Every column the app may update, on the two tables it updates.
+      const updatable = await q.query<{ col: string }>(
+        `SELECT n.nspname || '.' || c.relname || '.' || a.attname AS col
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE ((n.nspname = 'public' AND c.relname = 'model_calls')
+                 OR (n.nspname = 'ops' AND c.relname = 'ai_spend'))
+            AND a.attnum > 0 AND NOT a.attisdropped
+            AND has_column_privilege('payday_app', c.oid, a.attnum, 'UPDATE')
+          ORDER BY 1`,
+      );
+      return {
+        table,
+        policies: policies.map((p) => p.policyname),
+        grants,
+        updatable: updatable.map((u) => u.col),
+      };
     });
     expect(facts.table).toEqual({ rls: true, forced: true, old: null });
     expect(facts.policies).toEqual(["tenant_isolation"]);
+    // No table-wide UPDATE on either table: only the columns listed below.
     expect(facts.grants).toEqual({
       sel: true,
       ins: true,
-      upd: true,
+      upd: false,
       del: false,
       spend_ins: false,
+      spend_upd: false,
       spend_del: false,
     });
+    expect(facts.updatable).toEqual(
+      [
+        ...[
+          "status",
+          "failure",
+          "cost_nanocents",
+          "input_tokens",
+          "cached_tokens",
+          "output_tokens",
+          "reasoning_tokens",
+          "upstream_id",
+          "http_status",
+          "duration_ms",
+          "units",
+          "settled_at",
+        ].map((c) => `public.model_calls.${c}`),
+        ...[
+          "spent_nanocents",
+          "reserved_nanocents",
+          "wonder_spent_nanocents",
+          "wonder_reserved_nanocents",
+          "calls",
+          "updated_at",
+        ].map((c) => `ops.ai_spend.${c}`),
+      ].sort(),
+    );
   });
 
   it("refuses a Wonder reservation without a Wonder cap, writing nothing", async () => {

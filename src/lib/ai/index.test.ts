@@ -21,6 +21,7 @@ import {
   type TokenPrice,
   VOICE_NANOCENTS_PER_SECOND,
 } from "./prices";
+import { forgetKey } from "./keys";
 import type { FetchFn } from "./providers/http";
 import { JPEG_BYTES, makeWav, PDF_BYTES, PNG_BYTES } from "./test-fixtures";
 
@@ -887,6 +888,42 @@ describe("complete, one call", () => {
         expect(logged.join("\n")).not.toContain(PROMPT);
       }
     }
+  });
+
+  it("forgets a refused key so the next call reads the secret again, without retrying", async () => {
+    vi.stubEnv("DB_CLUSTER_ARN", "test-cluster");
+    vi.stubEnv("META_API_KEY", "");
+    vi.stubEnv("META_API_KEY_SECRET_NAME", "payday-copilot/meta-api-key");
+    forgetKey("meta");
+    const secrets = { send: vi.fn(async () => ({ SecretString: KEY })) };
+    const ledger = fakeLedger();
+    const statuses = [401, 200, 429, 200];
+    const fetchFn = fakeFetch(ledger.steps, (url) => {
+      const status = statuses.shift();
+      return status === 200
+        ? answerFor(url)
+        : Response.json({ error: { message: PROMPT } }, { status });
+    });
+    const deps = { fetch: fetchFn, db: ledger.db, secrets };
+
+    const refused = await refusal(complete("spark", REQUEST, SESSION, deps));
+    expect(refused.category).toBe("auth");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(secrets.send).toHaveBeenCalledTimes(1);
+
+    await complete("spark", REQUEST, SESSION, deps);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(secrets.send).toHaveBeenCalledTimes(2);
+
+    // Any other refusal keeps the key.
+    expect((await refusal(complete("spark", REQUEST, SESSION, deps))).category).toBe(
+      "rate_limited",
+    );
+    await complete("spark", REQUEST, SESSION, deps);
+    expect(fetchFn).toHaveBeenCalledTimes(4);
+    expect(secrets.send).toHaveBeenCalledTimes(2);
+    expect(logged.join("\n")).not.toContain(KEY);
+    forgetKey("meta");
   });
 
   it("keeps the reservation counted when the outcome is unknown, Wonder's too", async () => {

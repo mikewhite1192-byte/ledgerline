@@ -31,8 +31,22 @@ ALTER TABLE model_calls ALTER COLUMN target SET NOT NULL;
 CREATE INDEX model_calls_tenant_trace_idx ON model_calls (tenant_id, trace_id) WHERE trace_id IS NOT NULL;
 CREATE INDEX model_calls_tenant_model_created_idx ON model_calls (tenant_id, model, created_at DESC);
 
+-- The app may change only what a settle writes. Identity, tenant, model, purpose, trace and the
+-- reserved amount are fixed once the row is inserted. Revoking the table-wide UPDATE that 0002
+-- granted also drops any column grants, so the list below is the whole of it.
+REVOKE UPDATE ON model_calls FROM payday_app;
+GRANT UPDATE (status, failure, cost_nanocents, input_tokens, cached_tokens, output_tokens,
+              reasoning_tokens, upstream_id, http_status, duration_ms, units, settled_at)
+  ON model_calls TO payday_app;
+
 -- The auditor's own hard stop, inside the overall one: its spend and reservations, counted on
 -- the same row so one row lock covers both caps.
 ALTER TABLE ops.ai_spend
   ADD COLUMN wonder_spent_nanocents    bigint NOT NULL DEFAULT 0 CHECK (wonder_spent_nanocents >= 0),
   ADD COLUMN wonder_reserved_nanocents bigint NOT NULL DEFAULT 0 CHECK (wonder_reserved_nanocents >= 0);
+
+-- The app moves the counters and nothing else: the row's id stays 1.
+REVOKE UPDATE ON ops.ai_spend FROM payday_app;
+GRANT UPDATE (spent_nanocents, reserved_nanocents, wonder_spent_nanocents,
+              wonder_reserved_nanocents, calls, updated_at)
+  ON ops.ai_spend TO payday_app;

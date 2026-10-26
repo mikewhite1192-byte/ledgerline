@@ -19,7 +19,7 @@ const MESSAGES: Record<ProofCategory, string> = {
   network: "Could not reach the model service. Its cost is held against the cap.",
   unknown: "The call's outcome is unknown. Its cost is held against the cap.",
   incomplete: "The model ran out of output budget before it answered.",
-  forbidden: "This login is not linked to a carrier.",
+  forbidden: "Only an admin of this carrier can run the model check.",
   unreadable: "Could not reach the spend ledger. Try again in a moment.",
 };
 
