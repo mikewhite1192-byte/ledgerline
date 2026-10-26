@@ -18,9 +18,11 @@ const TEXT = new Set([
   ".svg",
   ".html",
 ]);
-// Only a whole secret name: never the tail of a longer path or URL, and never followed by another path
-// segment or file extension, so an old repo badge or a repo-relative link stays caught.
-const DEPLOYED_ID = /(?<![\w./-])payday-copilot\/[a-z0-9-]+(?![\w-]|[./]\w)/g;
+// Only a whole secret name: never the tail of a longer path or URL, and it must visibly end (end of
+// line, whitespace, a quote, a closing bracket, punctuation, or a sentence's final period). Anything
+// else after it, such as a slash, a dotted path or a file extension, keeps the line caught.
+const DEPLOYED_ID =
+  /(?<![\w./-])payday-copilot\/[a-z0-9-]+(?=$|[\s"'`)\]},;:]|\.(?:\s|$))/g;
 const THIS_FILE = fileURLToPath(import.meta.url);
 
 function textFiles(dir: string): string[] {
@@ -67,6 +69,7 @@ describe("product name", () => {
       `SecretId: ""`,
     );
     expect(hasOldName("Stored as payday-copilot/db-admin.")).toBe(false);
+    expect(hasOldName("(payday-copilot/db-admin), then")).toBe(false);
   });
 
   it("still catches the old repo in a URL with a path", () => {
@@ -80,5 +83,10 @@ describe("product name", () => {
       true,
     );
     expect(hasOldName("See payday-copilot/ci.yml")).toBe(true);
+    expect(
+      hasOldName("[CI](payday-copilot/actions/.github/workflows/ci.yml)"),
+    ).toBe(true);
+    expect(hasOldName("payday-copilot/actions/")).toBe(true);
+    expect(hasOldName("payday-copilot/db-admin.ts")).toBe(true);
   });
 });
