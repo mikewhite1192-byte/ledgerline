@@ -1,15 +1,80 @@
 import { SecretValue, Stack, type StackProps } from "aws-cdk-lib";
 import { CfnApp, CfnBranch } from "aws-cdk-lib/aws-amplify";
+import { PolicyDocument, PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
+import type { ISecret } from "aws-cdk-lib/aws-secretsmanager";
 import type { Construct } from "constructs";
 
 export const REPOSITORY_URL = "https://github.com/mikewhite1192-byte/payday-copilot";
 export const GITHUB_TOKEN_SECRET_NAME = "payday-copilot/github-token";
 
+// The Data API calls the SSR code makes. Nothing else on the cluster, and never the admin secret.
+export const DATA_API_ACTIONS = [
+  "rds-data:BeginTransaction",
+  "rds-data:CommitTransaction",
+  "rds-data:RollbackTransaction",
+  "rds-data:ExecuteStatement",
+  "rds-data:BatchExecuteStatement",
+];
+
+// Values are ARNs and ids, not secrets. amplify.yml copies them into .env.production at build
+// time so the Next.js server can read them.
+export const BRANCH_ENV_NAMES = [
+  "DB_CLUSTER_ARN",
+  "DB_SECRET_ARN",
+  "DB_NAME",
+  "COGNITO_USER_POOL_ID",
+  "COGNITO_CLIENT_ID",
+];
+
+export type HostingStackProps = StackProps & {
+  clusterArn: string;
+  appSecret: ISecret;
+  dbName: string;
+  userPoolId: string;
+  userPoolClientId: string;
+};
+
 // Amplify Hosting for the Next.js app. No inline build spec: Amplify reads amplify.yml from the
 // repo. A merge to main builds and deploys production.
 export class HostingStack extends Stack {
-  constructor(scope: Construct, id: string, props?: StackProps) {
+  constructor(scope: Construct, id: string, props: HostingStackProps) {
     super(scope, id, props);
+
+    const { account, partition, region } = Stack.of(this);
+
+    // Amplify's service role, used here only to write SSR logs to CloudWatch. Amplify's docs list
+    // these four actions. DescribeLogGroups is a list call, scoped the way AWS's own Amplify policy
+    // scopes it (every log group), but to this account and region only. The app id is not in
+    // the policy (the app refers to this role, so naming the app here would be a cycle);
+    // apps/* in this account is the confused-deputy guard Amplify's docs recommend.
+    const logGroupArn = `arn:${partition}:logs:${region}:${account}:log-group`;
+    const serviceRole = new Role(this, "ServiceRole", {
+      description: "Amplify writes this app's SSR logs to CloudWatch",
+      assumedBy: new ServicePrincipal("amplify.amazonaws.com", {
+        conditions: {
+          StringEquals: { "aws:SourceAccount": account },
+          ArnLike: { "aws:SourceArn": `arn:${partition}:amplify:${region}:${account}:apps/*` },
+        },
+      }),
+      inlinePolicies: {
+        "ssr-logs": new PolicyDocument({
+          statements: [
+            new PolicyStatement({
+              actions: ["logs:CreateLogGroup"],
+              resources: [`${logGroupArn}:/aws/amplify/*`],
+            }),
+            new PolicyStatement({
+              actions: ["logs:CreateLogStream", "logs:PutLogEvents"],
+              resources: [`${logGroupArn}:/aws/amplify/*:log-stream:*`],
+            }),
+            new PolicyStatement({
+              actions: ["logs:DescribeLogGroups"],
+              resources: [`${logGroupArn}:*`],
+            }),
+          ],
+        }),
+      },
+    });
 
     const app = new CfnApp(this, "App", {
       name: "payday-copilot",
@@ -23,7 +88,35 @@ export class HostingStack extends Stack {
       //    under GITHUB_TOKEN_SECRET_NAME;
       // 3) npm run cdk -- deploy.
       accessToken: SecretValue.secretsManager(GITHUB_TOKEN_SECRET_NAME).unsafeUnwrap(),
+      iamServiceRole: serviceRole.roleArn,
     });
+
+    // The SSR runtime's credentials: the Data API on this cluster and the app's own database
+    // login, nothing else. No Cognito permission is needed (sign-in is an unauthenticated API).
+    // Set on the branch, not the app, as Amplify recommends for a public repository.
+    const computeRole = new Role(this, "ComputeRole", {
+      description: "Payday Copilot SSR runtime: Data API and the app database login only",
+      assumedBy: new ServicePrincipal("amplify.amazonaws.com"),
+      inlinePolicies: {
+        data: new PolicyDocument({
+          statements: [
+            new PolicyStatement({ actions: DATA_API_ACTIONS, resources: [props.clusterArn] }),
+            new PolicyStatement({
+              actions: ["secretsmanager:GetSecretValue"],
+              resources: [props.appSecret.secretArn],
+            }),
+          ],
+        }),
+      },
+    });
+
+    const env: Record<string, string> = {
+      DB_CLUSTER_ARN: props.clusterArn,
+      DB_SECRET_ARN: props.appSecret.secretArn,
+      DB_NAME: props.dbName,
+      COGNITO_USER_POOL_ID: props.userPoolId,
+      COGNITO_CLIENT_ID: props.userPoolClientId,
+    };
 
     new CfnBranch(this, "MainBranch", {
       appId: app.attrAppId,
@@ -33,6 +126,8 @@ export class HostingStack extends Stack {
       enableAutoBuild: true,
       // Off: Amplify refuses SSR PR previews on a public repo (outside code would run as our role).
       enablePullRequestPreview: false,
+      computeRoleArn: computeRole.roleArn,
+      environmentVariables: BRANCH_ENV_NAMES.map((name) => ({ name, value: env[name] })),
     });
   }
 }
