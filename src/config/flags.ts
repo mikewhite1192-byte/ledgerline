@@ -268,6 +268,11 @@ export type Flags = {
     // How long one drain request may send before it stops and says what is left.
     drainBudgetMs: number;
   };
+  // Invoice review: the Review tab, the review card on an invoice, Mark reviewed, Mark as sent and
+  // the agent's two review read tools. Off: the tab and card are hidden, the routes answer 404 and
+  // the tools are not offered. invoicesEnabled must also be on. A post to accounting is always
+  // left unsent there (a constant on the adapter, not a switch); LedgerLine never sends one.
+  invoiceReviewEnabled: boolean;
 };
 
 export const flags: Flags = {
@@ -357,6 +362,7 @@ export const flags: Flags = {
   settlementLimits: { driversPerRun: 200, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
   batchApproveEnabled: false,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
+  invoiceReviewEnabled: false,
 };
 
 applyLocalOverrides(flags);

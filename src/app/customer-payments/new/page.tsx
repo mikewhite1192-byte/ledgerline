@@ -2,7 +2,7 @@ import { Wallet } from "lucide-react";
 import { flags } from "@/config/flags";
 import { PageHeader } from "@/components/app/page-header";
 import { NoCarrierPage, SignedInPage } from "@/components/app/signed-in-page";
-import { EmptyState } from "@/components/app/states";
+import { EmptyState, FeatureOff } from "@/components/app/states";
 import { Card, CardBody } from "@/components/ui/card";
 import { PaymentForm } from "@/components/invoices/payment-form";
 import { DbError } from "@/lib/db";
@@ -46,11 +46,7 @@ export default async function NewPayment({
         description="A check, ACH or wire from a customer, applied to their open invoices. What is not applied stays as credit."
       />
       {view.form === null ? (
-        <EmptyState
-          icon={<Wallet aria-hidden />}
-          title="Recording payments is off in this environment"
-          body="Nothing here is read or written until it is switched on."
-        />
+        <FeatureOff name="Payments" plural />
       ) : view.form.customers.length === 0 ? (
         <EmptyState icon={<Wallet aria-hidden />} title="No customers yet" body="Customers come with the carrier's data." />
       ) : (

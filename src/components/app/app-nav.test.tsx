@@ -1,139 +1,216 @@
+// @vitest-environment jsdom
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
-import { appNav, type NavKey } from "./app-nav";
+import { appNav, NAV_HREFS, type NavKey } from "./app-nav";
+import * as registry from "./nav/items";
+import { MENU_GROUPS } from "./nav/menu-item";
+import { NavList } from "./nav-list";
 
-const saved = {
-  driverNotes: flags.driverNotesEnabled,
-  sweep: flags.sweepEnabled,
-  portalRunner: flags.portalRunnerEnabled,
-  documents: flags.documentsEnabled,
-  advances: flags.advancesEnabled,
-  invoices: flags.invoicesEnabled,
-  customerPayments: flags.customerPaymentsEnabled,
-  voiceIntake: flags.voiceIntakeEnabled,
-  clips: flags.clipsEnabled,
-  settlements: flags.settlementsEnabled,
-};
+const SWITCHES = [
+  "sweepEnabled",
+  "settlementsEnabled",
+  "driverNotesEnabled",
+  "advancesEnabled",
+  "invoicesEnabled",
+  "customerPaymentsEnabled",
+  "documentsEnabled",
+  "voiceIntakeEnabled",
+  "clipsEnabled",
+  "accountingEnabled",
+  "portalRunnerEnabled",
+  "demoResetEnabled",
+] as const;
+type Switch = (typeof SWITCHES)[number];
+
+const saved = Object.fromEntries(SWITCHES.map((s) => [s, flags[s]])) as Record<Switch, boolean>;
 afterEach(() => {
-  flags.driverNotesEnabled = saved.driverNotes;
-  flags.sweepEnabled = saved.sweep;
-  flags.portalRunnerEnabled = saved.portalRunner;
-  flags.documentsEnabled = saved.documents;
-  flags.advancesEnabled = saved.advances;
-  flags.invoicesEnabled = saved.invoices;
-  flags.customerPaymentsEnabled = saved.customerPayments;
-  flags.voiceIntakeEnabled = saved.voiceIntake;
-  flags.clipsEnabled = saved.clips;
-  flags.settlementsEnabled = saved.settlements;
+  for (const s of SWITCHES) flags[s] = saved[s];
+  cleanup();
 });
 
-const shape = (current: NavKey) => appNav(current).map((i) => [i.href, i.label, i.current ?? false]);
+function setAll(on: boolean) {
+  for (const s of SWITCHES) flags[s] = on;
+}
+
+const shape = (current: NavKey) => appNav(current).map((i) => [i.group, i.href, i.label, i.current ?? false]);
 
 describe("appNav", () => {
-  it("lists driver notes only while their switch is on, and marks the current page", () => {
-    flags.driverNotesEnabled = false;
-    flags.sweepEnabled = false;
-    flags.documentsEnabled = false;
-    flags.portalRunnerEnabled = false;
-    expect(shape("/models")).toEqual([
-      ["/", "Home", false],
-      ["/models", "Meta models", true],
-    ]);
-    flags.driverNotesEnabled = true;
-    expect(shape("/driver-notes")).toEqual([
-      ["/", "Home", false],
-      ["/driver-notes", "Driver notes", true],
-      ["/models", "Meta models", false],
-    ]);
-  });
-
-  it("lists the sweep only while its switch is on", () => {
-    flags.driverNotesEnabled = false;
-    flags.documentsEnabled = false;
-    flags.portalRunnerEnabled = false;
-    flags.sweepEnabled = false;
-    expect(shape("/").map(([href]) => href)).not.toContain("/sweep");
-    flags.sweepEnabled = true;
-    expect(shape("/sweep")).toEqual([
-      ["/", "Home", false],
-      ["/sweep", "Sweep", true],
-      ["/models", "Meta models", false],
-    ]);
-  });
-
-  it("links to portal runs only while the portal runner is switched on", () => {
-    flags.driverNotesEnabled = false;
-    flags.sweepEnabled = false;
-    flags.documentsEnabled = false;
-    flags.portalRunnerEnabled = false;
-    expect(appNav("/").map((i) => i.href)).toEqual(["/", "/models"]);
-    flags.portalRunnerEnabled = true;
-    const items = appNav("/portal-runs");
-    expect(items.map((i) => i.href)).toEqual(["/", "/models", "/portal-runs"]);
-    expect(items.find((i) => i.current)?.href).toBe("/portal-runs");
-  });
-
-  it("lists documents only while their switch is on", () => {
-    flags.driverNotesEnabled = false;
-    flags.sweepEnabled = false;
-    flags.portalRunnerEnabled = false;
-    flags.documentsEnabled = false;
-    expect(shape("/").map(([href]) => href)).toEqual(["/", "/models"]);
-    flags.documentsEnabled = true;
-    expect(shape("/documents")).toEqual([
-      ["/", "Home", false],
-      ["/documents", "Documents", true],
-      ["/models", "Meta models", false],
-    ]);
-  });
-
-  it("lists the sweep above documents when both are on", () => {
-    flags.driverNotesEnabled = false;
-    flags.portalRunnerEnabled = false;
-    flags.sweepEnabled = true;
-    flags.documentsEnabled = true;
-    expect(shape("/").map(([href]) => href)).toEqual(["/", "/sweep", "/documents", "/models"]);
-  });
-
-  it("lists every item, in order, when every switch is on", () => {
-    flags.sweepEnabled = true;
-    flags.documentsEnabled = true;
-    flags.advancesEnabled = true;
-    flags.driverNotesEnabled = true;
-    flags.settlementsEnabled = true;
-    flags.invoicesEnabled = true;
-    flags.customerPaymentsEnabled = true;
-    flags.voiceIntakeEnabled = true;
-    flags.clipsEnabled = true;
-    flags.portalRunnerEnabled = true;
+  it("lists every item, grouped by job and in order, when every switch is on", () => {
+    setAll(true);
     expect(shape("/invoices")).toEqual([
-      ["/", "Home", false],
-      ["/sweep", "Sweep", false],
-      ["/documents", "Documents", false],
-      ["/advances", "Advances", false],
-      ["/driver-notes", "Driver notes", false],
-      ["/settlements", "Settlements", false],
-      ["/invoices", "Invoices", true],
-      ["/customer-payments/new", "Payments", false],
-      ["/voice-notes", "Voice notes", false],
-      ["/clips", "Dock clips", false],
-      ["/models", "Meta models", false],
-      ["/portal-runs", "Portal runs", false],
+      ["Today", "/", "Home", false],
+      ["Pay", "/sweep", "Pay sweep", false],
+      ["Pay", "/settlements", "Settlements", false],
+      ["Pay", "/driver-notes", "Driver notes", false],
+      ["Pay", "/advances", "Advances", false],
+      ["Money in", "/invoices", "Invoices", true],
+      ["Money in", "/customer-payments/new", "Payments", false],
+      ["Drivers", "/documents", "Documents", false],
+      ["Drivers", "/voice-notes", "Voice notes", false],
+      ["Drivers", "/clips", "Dock clips", false],
+      ["Settings", "/settings/accounting", "QuickBooks", false],
+      ["Settings", "/models", "Models and spend", false],
+      ["Settings", "/portal-runs", "Portal runs", false],
+      ["Settings", "/settings/demo", "Demo", false],
     ]);
   });
 
-  it("lists settlements only while their switch is on", () => {
-    flags.driverNotesEnabled = false;
-    flags.sweepEnabled = false;
-    flags.documentsEnabled = false;
-    flags.portalRunnerEnabled = false;
-    flags.settlementsEnabled = false;
-    expect(shape("/").map(([href]) => href)).not.toContain("/settlements");
-    flags.settlementsEnabled = true;
-    expect(shape("/settlements")).toEqual([
-      ["/", "Home", false],
-      ["/settlements", "Settlements", true],
-      ["/models", "Meta models", false],
+  it("keeps Home and Models and spend when every switch is off", () => {
+    setAll(false);
+    expect(shape("/models")).toEqual([
+      ["Today", "/", "Home", false],
+      ["Settings", "/models", "Models and spend", true],
     ]);
+  });
+
+  it("shows each switched item only while its own switch is on", () => {
+    const behind: Record<Switch, string> = {
+      sweepEnabled: "/sweep",
+      settlementsEnabled: "/settlements",
+      driverNotesEnabled: "/driver-notes",
+      advancesEnabled: "/advances",
+      invoicesEnabled: "/invoices",
+      customerPaymentsEnabled: "/customer-payments/new",
+      documentsEnabled: "/documents",
+      voiceIntakeEnabled: "/voice-notes",
+      clipsEnabled: "/clips",
+      accountingEnabled: "/settings/accounting",
+      portalRunnerEnabled: "/portal-runs",
+      demoResetEnabled: "/settings/demo",
+    };
+    for (const s of SWITCHES) {
+      setAll(true);
+      flags[s] = false;
+      expect(appNav("none").map((i) => i.href)).not.toContain(behind[s]);
+      flags[s] = true;
+      expect(appNav("none").map((i) => i.href)).toContain(behind[s]);
+    }
+  });
+
+  it("marks no item current on a page with no item", () => {
+    setAll(true);
+    expect(appNav("none").some((i) => i.current)).toBe(false);
+  });
+});
+
+// Each item is its own file plus one line in the index, so two features never edit the same lines.
+// Where an item shows comes from its own fields; the full-order test above proves the index's
+// alphabetical lines do not decide it.
+describe("the menu registry", () => {
+  const itemsDir = path.join(process.cwd(), "src", "components", "app", "nav", "items");
+  const items = Object.values(registry);
+
+  it("lists every item file in the index once, one line each, sorted by file name", () => {
+    const files = readdirSync(itemsDir)
+      .filter((f) => f.endsWith(".tsx"))
+      .map((f) => f.replace(/\.tsx$/, ""))
+      .sort();
+    const lines = readFileSync(path.join(itemsDir, "index.ts"), "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "" && !line.startsWith("//"));
+    const listed = lines.map((line) => /^export \{ \w+ \} from "\.\/([a-z0-9-]+)";$/.exec(line)?.[1] ?? `bad line: ${line}`);
+    expect(listed).toEqual(files);
+    expect(items).toHaveLength(files.length);
+  });
+
+  it("never gives two items the same address or the same place in a group", () => {
+    const hrefs = items.map((i) => i.href);
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+    const places = items.map((i) => `${i.group}:${i.order}`);
+    expect(new Set(places).size).toBe(places.length);
+  });
+
+  it("puts every item in a known group at a whole-number place", () => {
+    for (const item of items) {
+      expect(MENU_GROUPS, item.href).toContain(item.group);
+      expect(Number.isInteger(item.order) && item.order > 0, item.href).toBe(true);
+    }
+  });
+});
+
+describe("NavList", () => {
+  it("prints each group's header once, before its items, and marks the current page", () => {
+    setAll(true);
+    render(<NavList items={appNav("/advances")} />);
+    const pay = screen.getByRole("list", { name: "Pay" });
+    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay sweep", "Settlements", "Driver notes", "Advances"]);
+    expect(screen.getByRole("link", { name: "Advances" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: "Home" }).getAttribute("aria-current")).toBeNull();
+    expect(screen.getAllByText("Money in")).toHaveLength(1);
+  });
+
+  it("prints no header for a group whose items are all switched off", () => {
+    setAll(true);
+    flags.invoicesEnabled = false;
+    flags.customerPaymentsEnabled = false;
+    render(<NavList items={appNav("/")} />);
+    expect(screen.queryByText("Money in")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Money in" })).toBeNull();
+    expect(screen.getByRole("list", { name: "Drivers" })).toBeTruthy();
+  });
+
+  it("renders a list with no groups as one plain list, as before", () => {
+    render(
+      <NavList
+        items={[
+          { href: "/a", label: "A", icon: null },
+          { href: "/b", label: "B", icon: null, current: true },
+        ]}
+      />,
+    );
+    expect(screen.getAllByRole("list")).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "B" }).getAttribute("aria-current")).toBe("page");
+  });
+});
+
+// Every page a person can open from the app is either a menu item or linked from one, so a page
+// never goes missing from the menu. Record pages ([id]) are reached from the lists and answers;
+// /sign-in, /design and the stand-in broker portal are not part of the signed-in app.
+describe("every signed-in page is reachable", () => {
+  const appDir = path.join(process.cwd(), "src", "app");
+
+  function pages(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return pages(full);
+      return entry.name === "page.tsx" ? [full] : [];
+    });
+  }
+
+  const routeOf = (file: string) => {
+    const rel = path.relative(appDir, path.dirname(file)).split(path.sep).join("/");
+    return rel === "" ? "/" : `/${rel}`;
+  };
+
+  const routes = pages(appDir)
+    .map(routeOf)
+    .filter((r) => r !== "/sign-in" && r !== "/design" && r !== "/portal" && !r.startsWith("/portal/"))
+    .filter((r) => !r.includes("["));
+
+  const itemPage = (href: string) => {
+    const file = path.join(appDir, ...href.split("/").filter(Boolean), "page.tsx");
+    try {
+      return readFileSync(file, "utf8");
+    } catch {
+      return "";
+    }
+  };
+
+  it("finds the routes it guards", () => {
+    expect(routes).toEqual(expect.arrayContaining(["/", "/models", "/settings/accounting", "/settings/demo", "/advances/new"]));
+  });
+
+  it("reaches each route from the menu or from a menu item's page", () => {
+    const unreachable = routes.filter(
+      (route) => !NAV_HREFS.includes(route) && !NAV_HREFS.some((href) => itemPage(href).includes(`href="${route}"`)),
+    );
+    expect(unreachable).toEqual([]);
+  });
+
+  it("points every menu item at a page that exists", () => {
+    for (const href of NAV_HREFS) expect(itemPage(href), href).not.toBe("");
   });
 });

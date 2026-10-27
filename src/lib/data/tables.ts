@@ -58,6 +58,8 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["state", "text"],
       ["detention_free_minutes", "int"],
       ["detention_hourly_cents", "int"],
+      ["pod_required", "bool"],
+      ["billing_email", "text"],
     ],
   },
   drivers: {
@@ -332,6 +334,13 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["status", "text"],
       ["paid_on", "date"],
       ["qbo_id", "text"],
+      ["reviewed_at", "timestamptz"],
+      ["reviewed_by_membership_id", "uuid"],
+      ["review_note", "text"],
+      ["sent_on", "date"],
+      ["sent_by_membership_id", "uuid"],
+      ["qbo_email_status", "text"],
+      ["qbo_amount_cents", "int"],
     ],
   },
   customer_payments: {

@@ -54,6 +54,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       sourceRefs: [{ table: "invoices", id: invoice.id }],
     },
     get_invoice_queue: {},
+    get_invoice_review: { invoiceId: invoice.id },
+    get_invoice_review_queue: { status: "needs_review" },
     get_ar_aging: { asOf: open.period_end, minBucket: "1_30" },
     get_payments_in: { from: paid.period_start, to: open.period_end },
     propose_payment_reapply: {

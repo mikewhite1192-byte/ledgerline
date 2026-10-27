@@ -13,6 +13,10 @@ export type CustomerRow = {
   state: string;
   detention_free_minutes: number;
   detention_hourly_cents: number;
+  // Whether the customer wants a signed delivery document with each invoice.
+  pod_required: boolean;
+  // Where the accounting system would email the invoice: a synthetic .example address, or none.
+  billing_email: string | null;
 };
 
 export type DriverRow = {
@@ -266,6 +270,14 @@ export type InvoiceRow = {
   status: "open" | "partially_paid" | "paid" | "void";
   paid_on: string | null;
   qbo_id: string | null;
+  // Review facts (0028). The review status is computed from these, never stored.
+  reviewed_at: string | null;
+  reviewed_by_membership_id: string | null;
+  review_note: string | null;
+  sent_on: string | null;
+  sent_by_membership_id: string | null;
+  qbo_email_status: "not_set" | "need_to_send" | "email_sent" | null;
+  qbo_amount_cents: number | null;
 };
 
 export type CustomerPaymentRow = {

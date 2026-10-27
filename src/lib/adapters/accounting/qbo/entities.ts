@@ -2,7 +2,7 @@ import { isCanonicalUuid } from "../../../money/keys";
 import { centsToDecimalString, decimalToCents } from "../../../money/format";
 import { AMOUNT_LIMIT_CENTS, MoneyError } from "../../../money/types";
 import { isLocalDate, type LocalDate } from "../../../time/local-date";
-import type { InvoiceLine, PayLine } from "../../types";
+import { INVOICE_EMAIL_STATUSES, type InvoiceEmailStatus, type InvoiceLine, type PayLine } from "../../types";
 import { decimalField } from "./wire";
 import {
   ACCOUNT_FOR_PAY_LINE,
@@ -146,6 +146,19 @@ export function keyedDocNumber(tenantKey: unknown, localRef: unknown): string {
   return checkDocNumber(`${tenantKey}-${checkDocNumber(localRef)}`);
 }
 
+// Every invoice is created unsent: it waits in the accounting system's own send queue with a
+// billing address, and LedgerLine never sends it (a person does, there). A constant, not a switch:
+// there is no second safe value.
+export const INVOICE_EMAIL_STATUS = "NeedToSend";
+
+// The only billing address shape an invoice may carry: a synthetic .example address, which never
+// delivers. Anything else fails validation before any call, so a real address is never written.
+const BILLING_EMAIL = /^[a-z0-9._-]{1,64}@[a-z0-9-]{1,63}\.example$/;
+
+export function checkEmail(e: unknown): string {
+  return typeof e === "string" && BILLING_EMAIL.test(e) ? e : fail();
+}
+
 export function invoiceBody(
   inv: {
     actionId: string;
@@ -154,6 +167,7 @@ export function invoiceBody(
     issuedOn: LocalDate;
     dueOn: LocalDate;
     lines: InvoiceLine[];
+    billingEmail: string;
   },
   items: ItemMap,
   tenantKey: string,
@@ -188,6 +202,8 @@ export function invoiceBody(
       DueDate: checkDate(inv.dueOn),
       PrivateNote: note(checkAction(inv.actionId)),
       Line,
+      EmailStatus: INVOICE_EMAIL_STATUS,
+      BillEmail: { Address: checkEmail(inv.billingEmail) },
     },
   };
 }
@@ -409,6 +425,8 @@ export type Found = {
   applied: AppliedLine[] | null;
   // Payment only, null for other types: the cents left unapplied, null when unreadable.
   unappliedCents: number | null;
+  // Invoice only, null for other types: its email state, read whole; anything else is null.
+  emailStatus: InvoiceEmailStatus | null;
 };
 
 function cents(v: unknown): number | null {
@@ -468,6 +486,10 @@ export function recordOf(type: EntityType, raw: unknown): Found | null {
     ourNote: typeof r.PrivateNote === "string" && r.PrivateNote.startsWith(NOTE_PREFIX),
     applied: payment ? appliedLines(r.Line) : null,
     unappliedCents: payment ? cents(r.UnappliedAmt) : null,
+    emailStatus:
+      type === "Invoice" && (INVOICE_EMAIL_STATUSES as readonly unknown[]).includes(r.EmailStatus)
+        ? (r.EmailStatus as InvoiceEmailStatus)
+        : null,
   };
 }
 

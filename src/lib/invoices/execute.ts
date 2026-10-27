@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { accountingAdapter } from "../adapters";
-import type { AccountingAdapter, InvoiceLine as AdapterInvoiceLine } from "../adapters/types";
+import type {
+  AccountingAdapter,
+  InvoiceEmailStatus,
+  InvoiceLine as AdapterInvoiceLine,
+} from "../adapters/types";
 import type { Session } from "../auth/claims";
 import { flags } from "../../config/flags";
 import type { Queryable, TenantDb } from "../db";
@@ -53,10 +57,11 @@ const Args = z.object({
 });
 
 // What one post sends: everything is read from the invoice and its load inside a transaction.
+// billingEmail is the customer's synthetic billing address; without one nothing is posted.
 export type PostableInvoice = {
   id: string;
   loadId: string | null;
-  customer: { id: string; code: string; name: string };
+  customer: { id: string; code: string; name: string; billingEmail: string | null };
   invoiceNumber: string;
   amountCents: number;
   issuedOn: LocalDate;
@@ -128,7 +133,12 @@ export async function readPostableInvoice(
     invoice: {
       id: row.id,
       loadId: row.load_id,
-      customer: { id: customer.id, code: customer.code, name: customer.name },
+      customer: {
+        id: customer.id,
+        code: customer.code,
+        name: customer.name,
+        billingEmail: customer.billing_email,
+      },
       invoiceNumber: row.invoice_number,
       amountCents,
       issuedOn: row.issued_on,
@@ -166,12 +176,34 @@ async function finishProposal(
   );
 }
 
-async function recordQboId(q: Queryable, invoiceId: string, action: MoneyAction): Promise<void> {
-  if (!action.outsideId) throw new MoneyError("unknown");
+// The accounting system's email states, in the words invoices.qbo_email_status stores.
+const EMAIL_STATUS_WORDS: Readonly<Record<InvoiceEmailStatus, string>> = {
+  NotSet: "not_set",
+  NeedToSend: "need_to_send",
+  EmailSent: "email_sent",
+};
+
+// The stored word for a reported email state; null when none was reported or it is not one we
+// know (unknown is stored as unknown, never guessed).
+export function emailStatusWord(status: unknown): string | null {
+  return typeof status === "string" && Object.hasOwn(EMAIL_STATUS_WORDS, status)
+    ? EMAIL_STATUS_WORDS[status as InvoiceEmailStatus]
+    : null;
+}
+
+// The outside id, the amount the accounting system confirmed and its email state, all at once and
+// only the first time: a later call (a replay, or the executor after its hook) changes nothing.
+async function recordQboId(
+  q: Queryable,
+  invoiceId: string,
+  action: MoneyAction,
+  emailStatus: InvoiceEmailStatus | null,
+): Promise<void> {
+  if (!action.outsideId || action.outsideAmountCents === null) throw new MoneyError("unknown");
   await q.execute(
-    `UPDATE invoices SET qbo_id = $2
+    `UPDATE invoices SET qbo_id = $2, qbo_amount_cents = $3, qbo_email_status = $4
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND qbo_id IS NULL`,
-    [invoiceId, action.outsideId],
+    [invoiceId, action.outsideId, action.outsideAmountCents, emailStatusWord(emailStatus)],
   );
 }
 
@@ -186,6 +218,12 @@ export async function postInvoiceAction(
 ): Promise<ExecuteResult> {
   const accounting = deps.accounting ?? accountingAdapter();
   const tenantId = session.tenantId;
+  // A customer with no billing address is refused before anything is reserved: the invoice would
+  // have nowhere to wait in the accounting system's send queue.
+  if (!invoice.customer.billingEmail) throw new MoneyError("validation");
+  const billingEmail = invoice.customer.billingEmail;
+  // The email state the create reported, kept for the settle that follows it in this same call.
+  let emailStatus: InvoiceEmailStatus | null = null;
   return executeMoneyAction(
     db,
     session,
@@ -203,7 +241,7 @@ export async function postInvoiceAction(
     {
       onReserved: (q, action) => linkProposal(q, invoice.loadId, action.id),
       onConfirmed: async (q, action) => {
-        await recordQboId(q, invoice.id, action);
+        await recordQboId(q, invoice.id, action, emailStatus);
         await finishProposal(q, invoice.loadId, "done", null);
       },
       onFailed: (q, action) =>
@@ -218,7 +256,7 @@ export async function postInvoiceAction(
           // No invoice was sent. The executor settles only a definite category as failed.
           return { kind: "failed", category: err instanceof MoneyError ? err.category : "unknown" };
         }
-        return db.withTenant(tenantId, (q) =>
+        const out = await db.withTenant(tenantId, (q) =>
           accounting.createInvoice(
             q,
             {
@@ -228,10 +266,13 @@ export async function postInvoiceAction(
               issuedOn: invoice.issuedOn,
               dueOn: invoice.dueOn,
               lines: invoice.lines,
+              billingEmail,
             },
             ctx,
           ),
         );
+        emailStatus = out.kind === "confirmed" ? (out.emailStatus ?? null) : null;
+        return out;
       },
     },
     { ...deps, accounting },
@@ -247,6 +288,9 @@ export function invoiceReconcileHooks(
   tenantId: string,
   accounting: AccountingAdapter,
 ): ReconcileHooks {
+  // The email state each read-back reported, by ledger row, for the settle that follows it in the
+  // same pass.
+  const emailStatusOf = new Map<string, InvoiceEmailStatus | null>();
   const loadOf = async (q: Queryable, invoiceId: string): Promise<string | null> => {
     const [row] = await q.query<{ load_id: string | null }>(
       "SELECT load_id FROM invoices WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
@@ -256,7 +300,8 @@ export function invoiceReconcileHooks(
   };
   return {
     onConfirmed: async (q, action) => {
-      await recordQboId(q, action.subjectId, action);
+      await recordQboId(q, action.subjectId, action, emailStatusOf.get(action.id) ?? null);
+      emailStatusOf.delete(action.id);
       await finishProposal(q, await loadOf(q, action.subjectId), "done", null);
     },
     onFailed: async (q, action) =>
@@ -269,7 +314,7 @@ export function invoiceReconcileHooks(
         ),
       );
       if (!invoice) return { found: false };
-      return db.withTenant(tenantId, (q) =>
+      const rb = await db.withTenant(tenantId, (q) =>
         accounting.readBack(
           q,
           {
@@ -283,6 +328,8 @@ export function invoiceReconcileHooks(
           ctx,
         ),
       );
+      emailStatusOf.set(action.id, rb.found ? (rb.emailStatus ?? null) : null);
+      return rb;
     },
   };
 }
@@ -415,7 +462,12 @@ async function writeInvoice(
     invoice: {
       id: invoiceId,
       loadId: args.loadId,
-      customer: { id: customer.id, code: customer.code, name: customer.name },
+      customer: {
+        id: customer.id,
+        code: customer.code,
+        name: customer.name,
+        billingEmail: customer.billing_email,
+      },
       invoiceNumber,
       amountCents: engine.amountCents,
       issuedOn,
@@ -447,6 +499,9 @@ async function postAndFinish(
     return state ? resultOf(proposal.id, state) : failed("not_found");
   };
 
+  // The invoice is written; with no billing address it is kept here, unposted, like a closed
+  // connection: nothing is reserved and the proposal is done.
+  if (!invoice.customer.billingEmail) return finish("done", "no_billing_address");
   let out: ExecuteResult;
   try {
     out = await postInvoiceAction(db, session, invoice, { attempt: 1, proposalId: proposal.id }, money);
@@ -462,7 +517,9 @@ async function postAndFinish(
   }
   const action = out.action;
   if (action.state === "confirmed") {
-    await db.withTenant(tenantId, (q) => recordQboId(q, invoice.id, action));
+    // The settle's own hook stored the email state; this only covers a replay, and is a no-op
+    // once the id is stored.
+    await db.withTenant(tenantId, (q) => recordQboId(q, invoice.id, action, null));
     return finish("done", null);
   }
   if (action.state === "failed") return finish("failed", action.failureCategory ?? "unknown");

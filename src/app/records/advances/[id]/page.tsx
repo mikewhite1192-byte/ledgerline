@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { FuelCardChip } from "@/components/app/fuel-card";
 import { LedgerEntryRow } from "@/components/app/ledger-entry";
@@ -8,7 +7,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { AdvanceFrame, problemOf, ReadFailed, type ReadProblem } from "@/app/advances/frame";
+import { AdvanceFrame, AdvancesOffPage, problemOf, ReadFailed, type ReadProblem } from "@/app/advances/frame";
 import { cardLineFor, readAdvanceRecord, readShell, type AdvanceRecord, type Shell } from "@/lib/advances/read";
 import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
@@ -27,7 +26,7 @@ export const dynamic = "force-dynamic";
 // every payout and QuickBooks attempt from the ledger. A missing id and another carrier's id read
 // the same "not here", so an id's existence elsewhere is never revealed.
 export default async function AdvanceRecordPage({ params }: { params: Promise<{ id: string }> }) {
-  if (!advancesOn()) notFound();
+  if (!advancesOn()) return <AdvancesOffPage title="Advance" />;
   const { id: raw } = await params;
   const id = isUuid(raw) ? raw.toLowerCase() : null;
 
@@ -46,6 +45,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
   if (!record) {
     return (
       <AdvanceFrame shell={shell} title="Advance">
+        <PageHeader title="Advance" />
         <Card>
           <ErrorState category="not_found" retry={<Link href="/advances" className="text-link underline-offset-4 hover:underline">All advances</Link>} />
         </Card>
