@@ -10,6 +10,7 @@ describe("flags", () => {
     expect(flags.inboundEmailEnabled).toBe(false);
     expect(flags.paymentProvider).toBe("mock");
     expect(flags.triageProvider).toBe("meta");
+    expect(flags.agentEnabled).toBe(false);
   });
 
   it("keeps the agent gateway's limits small and the screener on its probed output mode", () => {
@@ -21,5 +22,23 @@ describe("flags", () => {
     for (const v of Object.values(flags.gatewayLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
+  });
+
+  it("caps every agent turn and keeps approval with people", () => {
+    expect(flags.agentStreamMode).toBe("sse");
+    expect(flags.agentTurnLimits).toEqual({
+      maxToolSteps: 6,
+      maxModelCalls: 4,
+      maxTurnCents: 40,
+      wallClockMs: 22_000,
+      summaryChars: 10_000,
+    });
+    for (const v of Object.values(flags.agentTurnLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.agentTurnLimits.wallClockMs).toBeLessThan(30_000);
+    expect(flags.proposalMaxAgeDays).toBe(7);
+    expect(flags.auditorRequired).toBe(false);
+    expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
   });
 });

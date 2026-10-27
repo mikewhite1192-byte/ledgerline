@@ -17,6 +17,12 @@ describe("ErrorState", () => {
     expect(screen.getByText("That took too long to load")).toBeTruthy();
   });
 
+  it("shows the demo budget state in plain words", () => {
+    render(<ErrorState category="budget" />);
+    expect(screen.getByText("Demo budget reached")).toBeTruthy();
+    expect(screen.getByText("The agent pauses until the budget is raised; your data is unchanged.")).toBeTruthy();
+  });
+
   it("falls back to the unknown copy for a category it does not know", () => {
     render(<ErrorState category="constructor" />);
     expect(screen.getByText("Something failed and the cause is not known")).toBeTruthy();

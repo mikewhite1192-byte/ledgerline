@@ -57,11 +57,15 @@ describe("row-level security coverage", () => {
     const names = (await tables()).map((t) => t.name);
     expect(names).toEqual(
       expect.arrayContaining([
+        "conversations",
         "gateway_decisions",
         "memberships",
         "model_calls",
         "money_actions",
+        "proposals",
         "tenants",
+        "turn_steps",
+        "turns",
         ...TENANT_TABLES,
       ]),
     );

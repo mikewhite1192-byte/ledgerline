@@ -7,7 +7,12 @@ import { settleDriver } from "../src/lib/rules-engine";
 import { HERO_OPEN_WEEK } from "../src/lib/seed/assert-plan";
 import { DEMO_CARRIERS, carrierBySlug, type DemoCarrier } from "../src/lib/seed/carriers";
 import { buildCarrierPlan, type CarrierPlan } from "../src/lib/seed/plan";
-import { clearTenantLedger, findDemoTenant, replaceTenantData } from "../src/lib/seed/run";
+import {
+  clearTenantAgent,
+  clearTenantLedger,
+  findDemoTenant,
+  replaceTenantData,
+} from "../src/lib/seed/run";
 import { countRows } from "../src/lib/seed/summary";
 import { isLocalDate } from "../src/lib/time/local-date";
 import { assertAccount, REGION, requireEnv } from "./lib/aws-account";
@@ -123,6 +128,9 @@ async function main(): Promise<void> {
       // its own status; run the seed again before approving anything.
       const cleared = await clearTenantLedger(admin, tenantId);
       console.log(`cleared ${cleared} ledger rows for ${slug}`);
+      // Then the agent's conversations and proposals, which point at the ledger and the inputs.
+      const clearedAgent = await clearTenantAgent(admin, tenantId);
+      console.log(`cleared ${clearedAgent} agent rows for ${slug}`);
       const report = await replaceTenantData(app, tenantId, plan);
       for (const t of TENANT_TABLES) {
         console.log(`${slug} ${t}: deleted ${report.deleted[t]}, inserted ${report.inserted[t]}`);

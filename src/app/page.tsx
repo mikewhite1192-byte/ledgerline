@@ -1,5 +1,6 @@
 import { House } from "lucide-react";
 import { flags } from "@/config/flags";
+import { AgentChat } from "@/components/agent/turn-view";
 import { AppShell } from "@/components/app/app-shell";
 import { ChatThread } from "@/components/app/chat-thread";
 import { DataTable } from "@/components/app/data-table";
@@ -17,6 +18,9 @@ import {
 } from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
 import { DbError } from "@/lib/db";
+import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
+import type { TurnView } from "@/lib/agent/view";
+import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -29,6 +33,7 @@ type Carrier = {
   email: string;
   counts: { drivers: number; loads: number; periods: number };
   ledger: ModelLedger | null;
+  session: Session;
 };
 
 // The signed-in carrier's shell. Every read runs inside withRequestTenant, so this page can only
@@ -65,6 +70,7 @@ export default async function Home() {
         email: members[0].email,
         counts,
         ledger,
+        session,
       };
     });
   } catch (err) {
@@ -81,6 +87,17 @@ export default async function Home() {
       </Button>
     </form>
   );
+
+  // The agent's recent turns, for a reload to show the same thread. A failed read shows an empty
+  // thread with the box still working; the turns are read back again on the next question.
+  let agentTurns: TurnView[] = [];
+  if (carrier && flags.agentEnabled) {
+    try {
+      agentTurns = await readRecentAgentTurns(carrier.session);
+    } catch (err) {
+      console.error("agent turns read failed:", err instanceof Error ? err.name : "unknown");
+    }
+  }
 
   if (!carrier) {
     return (
@@ -105,12 +122,24 @@ export default async function Home() {
       title="Home"
       signOut={signOut}
     >
-      <ChatThread
-        messages={[]}
-        suggestions={SUGGESTIONS}
-        intro="Drivers, loads and this week's pay run arrive with the next items."
-        composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
-      />
+      {flags.agentEnabled ? (
+        <AgentChat
+          initialTurns={agentTurns}
+          streamMode={flags.agentStreamMode}
+          suggestions={SUGGESTIONS}
+          intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
+          disabledReason={
+            flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
+          }
+        />
+      ) : (
+        <ChatThread
+          messages={[]}
+          suggestions={SUGGESTIONS}
+          intro="Drivers, loads and this week's pay run arrive with the next items."
+          composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
+        />
+      )}
       <RecordCounts counts={carrier.counts} />
       {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
     </AppShell>

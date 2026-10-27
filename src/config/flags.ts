@@ -29,6 +29,28 @@ export type Flags = {
     // Largest change to an invoice total a proposal may carry.
     invoiceFixMaxCents: number;
   };
+  // The agent chat. Off means the composer shows its reason text and the turn route refuses
+  // before any model call. aiEnabled must also be on for a turn to reach a model.
+  agentEnabled: boolean;
+  // How the chat follows a running turn: server-sent events, or polling the turn every 1.5 s.
+  // The client falls back to polling on its own when no event arrives within 3 seconds.
+  agentStreamMode: "sse" | "poll";
+  // Hard caps on one turn. Reaching any of them ends the turn with what it found so far.
+  agentTurnLimits: {
+    maxToolSteps: number;
+    maxModelCalls: number;
+    maxTurnCents: number;
+    // Leaves room inside the 30 second response for the last event to flush.
+    wallClockMs: number;
+    // The state summary the model is given, in characters.
+    summaryChars: number;
+  };
+  // A proposal older than this becomes expired when someone tries to approve it.
+  proposalMaxAgeDays: number;
+  // On: a proposal needs the auditor's verdict before a person can approve it.
+  auditorRequired: boolean;
+  // Any member approves a proposal up to adminAboveCents; above it, only an admin.
+  approverRole: { adminAboveCents: number };
 };
 
 export const flags: Flags = {
@@ -41,4 +63,16 @@ export const flags: Flags = {
   inboundEmailEnabled: false,
   screenOutputMode: "text",
   gatewayLimits: { payCorrectionMaxCents: 50_000, invoiceFixMaxCents: 250_000 },
+  agentEnabled: false,
+  agentStreamMode: "sse",
+  agentTurnLimits: {
+    maxToolSteps: 6,
+    maxModelCalls: 4,
+    maxTurnCents: 40,
+    wallClockMs: 22_000,
+    summaryChars: 10_000,
+  },
+  proposalMaxAgeDays: 7,
+  auditorRequired: false,
+  approverRole: { adminAboveCents: 200_000 },
 };

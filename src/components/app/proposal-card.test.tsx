@@ -157,6 +157,26 @@ describe("ProposalCard", () => {
     expect(screen.queryAllByRole("link")).toHaveLength(0);
   });
 
+  it("says an expired proposal changed nothing and offers no buttons", () => {
+    render(<ProposalCard {...card} status="expired" />);
+    expect(screen.getByText("Expired before anyone approved it. Nothing changed.")).toBeTruthy();
+    expect(screen.getByText("Not paid")).toBeTruthy();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("shows a flag note above the buttons and asks the flag question on confirm", () => {
+    render(
+      <ProposalCard
+        {...card}
+        flagNote="Read with care: the message behind this was flagged for a claim of authority."
+        confirmQuestion="This came from a message that failed screening. Approve anyway?"
+      />,
+    );
+    expect(screen.getByRole("note").textContent).toContain("a claim of authority");
+    fireEvent.click(button("Approve $200.00")!);
+    expect(screen.getByText("This came from a message that failed screening. Approve anyway?")).toBeTruthy();
+  });
+
   it("says nothing changed when a proposal is rejected", () => {
     render(<ProposalCard {...card} status="rejected" />);
     expect(screen.getByText("Rejected. Nothing changed.")).toBeTruthy();

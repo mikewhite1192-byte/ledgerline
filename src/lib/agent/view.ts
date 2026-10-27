@@ -1,0 +1,83 @@
+// What the chat shows for a turn: plain data, safe to send to the browser. The gateway's store
+// builds it from the database (store/views.ts); the turn view component maps it to chat parts.
+// Ids, enums, cents, fixed labels and fixed sentences only, plus the person's own question, the
+// agent's final answer and, for a flagged input, the quoted text the person is warned about.
+
+export const TURN_STATUSES = ["running", "done", "partial", "failed"] as const;
+export type TurnStatus = (typeof TURN_STATUSES)[number];
+
+export type StepKind = "model" | "tool" | "escalation" | "proposal" | "screen";
+export type StepState = "running" | "done" | "failed";
+
+export type StepView = { id: string; seq: number; kind: StepKind; label: string; state: StepState };
+
+// The proposal statuses a card can show. approved with no ledger row yet shows as approved: no row
+// means nothing was reserved, and the ledger reserves before any outside call, so no money moved.
+// An executing proposal whose ledger outcome is not known shows as unknown.
+export type CardStatus =
+  | "proposed"
+  | "approved"
+  | "rejected"
+  | "expired"
+  | "executing"
+  | "done"
+  | "failed"
+  | "unknown";
+
+export type RefView = { table: string; id: string };
+
+export type ReasonView = { category: string; text: string; source: RefView | null };
+
+export type ProposalView = {
+  id: string;
+  kind: "advance_payout" | "pay_correction" | "invoice_fix";
+  subjectTable: string;
+  subjectId: string;
+  // The subject's code (a driver's or an invoice's number), read at render, never stored.
+  subjectLabel: string | null;
+  amountCents: number;
+  direction: "in" | "out" | "none";
+  title: string;
+  reasons: ReasonView[];
+  sources: RefView[];
+  status: CardStatus;
+  flagged: boolean;
+  flagCategories: string[];
+  operatorVerdict: string;
+  auditorVerdict: string | null;
+};
+
+// An outside message this turn read that failed screening. quote is shown to the person only, in
+// a marked block; it never reaches a model through the summary.
+export type FlagView = { inputId: string; categories: string[]; quote: string };
+
+// The error the chat shows instead of an answer: the fixed state, never upstream text.
+export type TurnError = "budget" | "timeout" | "unknown";
+
+export type TurnView = {
+  id: string;
+  conversationId: string;
+  seq: number;
+  userText: string;
+  status: TurnStatus;
+  endedReason: string | null;
+  text: string;
+  steps: StepView[];
+  proposals: ProposalView[];
+  flags: FlagView[];
+  error: TurnError | null;
+};
+
+// The server-sent events of one turn. The client reads the full turn back when done arrives.
+export type TurnEvent =
+  | { event: "start"; data: { turnId: string; conversationId: string } }
+  | { event: "step"; data: StepView }
+  | { event: "done"; data: { turnId: string; status: TurnStatus } };
+
+// What a failed or partial turn shows, by its ended reason.
+export function turnErrorFor(status: TurnStatus, endedReason: string | null): TurnError | null {
+  if (status !== "failed") return null;
+  if (endedReason === "budget") return "budget";
+  if (endedReason === "clock" || endedReason === "model_timeout") return "timeout";
+  return "unknown";
+}
