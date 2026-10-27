@@ -2,13 +2,13 @@
 -- tables. An Inbox message (0037) is a record of what a driver sent and what the agent was handed:
 -- the demo starts with an empty Inbox, so the reset clears these rows too (DEMO_RESET_CLEARED in
 -- src/lib/seed/reset.ts), and payday_app has no DELETE on them. The function is re-created whole,
--- copied from 0033 (0025 plus the sweep's second checks) with one more DELETE and one more returned
--- row, every bound unchanged: the fixed search_path, the demo carrier gate, the tenant row lock,
--- the refusals, a tenant filter on every statement and EXECUTE for payday_app only. A later number
--- than every migration that may re-create it, so on a fresh database this one runs last; it must
--- hold every DELETE of every re-creation merged before it (the same rule binds any later
--- re-creation), because whichever re-creation runs last on a database is the function that
--- database keeps.
+-- copied from 0034 (0025 plus the sweep's second checks from 0033 and the fuel checks from 0034)
+-- with one more DELETE and one more returned row, every bound unchanged: the fixed search_path, the
+-- demo carrier gate, the tenant row lock, the refusals, a tenant filter on every statement and
+-- EXECUTE for payday_app only. A later number than every migration that may re-create it, so on a
+-- fresh database this one runs last; it must hold every DELETE of every re-creation merged before
+-- it (the same rule binds any later re-creation), because whichever re-creation runs last on a
+-- database is the function that database keeps.
 CREATE OR REPLACE FUNCTION demo_reset_clear()
   RETURNS TABLE (table_name text, deleted bigint)
   LANGUAGE plpgsql
@@ -42,6 +42,8 @@ DECLARE
   v_fanout        bigint;
   v_sweep_items   bigint;
   v_sweep_runs    bigint;
+  v_fuel_findings bigint;
+  v_fuel_runs     bigint;
   v_batches       bigint;
   v_advances      bigint;
   v_proposals     bigint;
@@ -143,6 +145,14 @@ BEGIN
   DELETE FROM public.sweep_runs sr WHERE sr.tenant_id = v_tenant;
   GET DIAGNOSTICS v_sweep_runs = ROW_COUNT;
 
+  -- A fuel finding names a fill-up, a driver, a load and a pay line the replace deletes, and the
+  -- card it drafted, so it goes before the proposals; its runs go after it (0031).
+  DELETE FROM public.fuel_findings ff WHERE ff.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_fuel_findings = ROW_COUNT;
+
+  DELETE FROM public.fuel_check_runs fr WHERE fr.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_fuel_runs = ROW_COUNT;
+
   DELETE FROM public.advances a WHERE a.tenant_id = v_tenant AND a.proposal_id IS NOT NULL;
   GET DIAGNOSTICS v_advances = ROW_COUNT;
 
@@ -179,6 +189,8 @@ BEGIN
     (CAST('sweep_fanout' AS text), v_fanout),
     (CAST('sweep_items' AS text), v_sweep_items),
     (CAST('sweep_runs' AS text), v_sweep_runs),
+    (CAST('fuel_findings' AS text), v_fuel_findings),
+    (CAST('fuel_check_runs' AS text), v_fuel_runs),
     (CAST('approval_batches' AS text), v_batches),
     (CAST('advances' AS text), v_advances),
     (CAST('proposals' AS text), v_proposals),
