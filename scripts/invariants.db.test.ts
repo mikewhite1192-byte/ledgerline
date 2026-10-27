@@ -484,6 +484,82 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
       );
     });
 
+    // A proposal a person decided at a fixed time, and the confirmed payout of a paid week that
+    // names it, sent `early` before that decision (the decision is the app host's clock, the send
+    // the database's). Fixed times, so the wall clock never matters. Undo deletes both.
+    const DECIDED_AT = "2026-10-01T15:00:00.000Z";
+    function payoutSentEarly(early: string) {
+      const c = carriers[0];
+      const proposal = randomUUID();
+      const action = randomUUID();
+      const plant = () =>
+        admin.withoutTenant(async (q) => {
+          await q.execute(
+            `INSERT INTO proposals (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+               amount_cents, direction, title, args, operator_verdict, gateway_decision_id, dedupe_key, trace_id,
+               status, decided_by, decided_at)
+             SELECT CAST($1 AS uuid), tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+                    amount_cents, direction, title, args, operator_verdict, gateway_decision_id, $3, trace_id,
+                    'done', 'invariants-test', CAST($4 AS timestamptz)
+               FROM proposals WHERE id = CAST($2 AS uuid)`,
+            [proposal, ids.proposals[0], `advance_payout:${c.driver}:${randomBytes(32).toString("hex")}`, DECIDED_AT],
+          );
+          await q.execute(
+            `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, attempt,
+               idempotency_key, request_id, amount_cents, counterparty_table, counterparty_id, proposed_by,
+               proposal_id, approver_membership_id)
+             VALUES (CAST($1 AS uuid), CAST($2 AS uuid), 'settlement_payout', 'payment', 'settlements',
+               CAST($3 AS uuid), 1, $4, $5, $6, 'drivers', CAST($7 AS uuid), 'agent', CAST($8 AS uuid),
+               CAST($9 AS uuid))`,
+            [
+              action,
+              c.id,
+              c.settlement.id,
+              `settlement_payout:${c.settlement.id}:1`,
+              action.replace(/-/g, ""),
+              c.settlement.net,
+              c.settlement.driver,
+              proposal,
+              c.membership,
+            ],
+          );
+          await q.execute(
+            `UPDATE money_actions SET state = 'sent', sent_at = CAST($2 AS timestamptz) - CAST($3 AS interval)
+              WHERE id = CAST($1 AS uuid)`,
+            [action, DECIDED_AT, early],
+          );
+          await q.execute(
+            `UPDATE money_actions SET state = 'confirmed', settled_via = 'response', settled_at = now(),
+               outside_system = 'mock', outside_type = 'payout', outside_id = 'po_test', outside_amount_cents = $2
+             WHERE id = CAST($1 AS uuid)`,
+            [action, c.settlement.net],
+          );
+        });
+      const undo = async () => {
+        await sql("DELETE FROM money_actions WHERE id = CAST($1 AS uuid)", [action]);
+        await sql("DELETE FROM proposals WHERE id = CAST($1 AS uuid)", [proposal]);
+      };
+      return { plant, undo };
+    }
+
+    it("catches a payout sent well before its proposal was decided", async () => {
+      const { plant, undo } = payoutSentEarly("1 hour");
+      await planted("I3", plant, undo, { sent_before_decision: 1 });
+    });
+
+    it("passes a payout sent a few milliseconds before its decision, inside the clock tolerance", async () => {
+      const { plant, undo } = payoutSentEarly("3 milliseconds");
+      try {
+        await plant();
+        const passed = await expectAllPass();
+        // The plant is the only payment-channel ledger row, so the tolerance is what let it pass.
+        expect(passed.I3.counts.payment_rows).toBe(1);
+      } finally {
+        await undo();
+      }
+      await expectAllPass();
+    });
+
     it("catches a proposal that names a ledger row before anyone approved it", async () => {
       await planted(
         "I3",

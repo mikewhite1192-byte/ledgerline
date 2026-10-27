@@ -14,6 +14,15 @@ import type { Db } from "../db/types";
 //   failed when a definite failure stopped it before a retry) before the money was sent; an
 //   advance payout names the same proposal its advance came from.
 // - A proposal that names a ledger row is executing, done or failed, and the row exists.
+//
+// "Decided before sent" compares two clocks: proposals.decided_at is the app host's clock (the
+// approval writes the server's time, src/lib/proposals/execute.ts) and money_actions.sent_at is
+// the database's now() (markSent in src/lib/money/ledger.ts). A real approval and its send are
+// milliseconds apart, so with no slack a host clock a little ahead of the database would flag
+// every real payout. A send counts as before its decision only when it is more than
+// SENT_BEFORE_DECISION_TOLERANCE earlier; a send well before the decision is still caught. A
+// fixed constant, never input.
+export const SENT_BEFORE_DECISION_TOLERANCE = "5 seconds";
 
 export const ADVANCE_PAYOUTS_SQL = `SELECT a.source = 'seed' AS seeded, a.proposal_id IS NOT NULL AS flow,
        (a.status = 'paid' OR a.paid_at IS NOT NULL) AS paid,
@@ -33,7 +42,8 @@ export const SETTLEMENT_PAYOUTS_SQL = `SELECT (s.status = 'paid' OR s.paid_at IS
 export const PAYMENT_ROWS_SQL = `SELECT m.kind, m.proposed_by, (mem.id IS NOT NULL) AS approver_found,
        (m.proposal_id IS NOT NULL) AS names_proposal, p.status AS proposal_status,
        (p.decided_by IS NOT NULL AND p.decided_at IS NOT NULL) AS decided,
-       (m.sent_at IS NOT NULL) AS sent, (p.decided_at <= m.sent_at) IS TRUE AS decided_before_sent,
+       (m.sent_at IS NOT NULL) AS sent,
+       (p.decided_at <= m.sent_at + interval '${SENT_BEFORE_DECISION_TOLERANCE}') IS TRUE AS decided_before_sent,
        (m.kind <> 'advance_payout' OR a.proposal_id = m.proposal_id) IS TRUE AS same_proposal
   FROM money_actions m
   LEFT JOIN memberships mem ON mem.tenant_id = m.tenant_id AND mem.id = m.approver_membership_id
