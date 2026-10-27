@@ -67,6 +67,7 @@ export function driver(over: Partial<DriverRecord> = {}): DriverRecord {
     flatPerLoadCents: null,
     advanceLimitCents: null,
     escrowBalanceCents: c(0),
+    ownInsurance: false,
     truckUnit: "T-101",
     activeFrom: "2026-01-05",
     activeTo: null,

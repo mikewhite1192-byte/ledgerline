@@ -134,8 +134,8 @@ export type MoneyDraft = {
   // The subject statuses this action may start from, compared whole. Required for every subject
   // table that has a status; must be absent for customer_payments.
   subjectStatuses?: readonly string[];
-  // The approval batch that reserved this row (the pay run). Refused until the batch column
-  // lands with the pay run's migration; absent or null on every action today.
+  // The approval batch that reserved this row (one "Approve all clean" over a pay week). Written
+  // at INSERT and never changed (the guard refuses it); null on every single approval.
   batchId?: string | null;
 };
 
@@ -165,6 +165,7 @@ export type MoneyAction = {
   proposalId: string | null;
   traceId: string | null;
   approverMembershipId: string;
+  batchId: string | null;
   checkCount: number;
   createdAt: string;
   sentAt: string | null;

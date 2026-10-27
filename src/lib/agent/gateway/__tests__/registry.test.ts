@@ -13,6 +13,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_customer_payments: { tier: "read", roles: ["operator", "auditor"] },
   get_ledger: { tier: "read", roles: ["operator", "auditor"] },
   explain_paystub: { tier: "read", roles: ["operator"] },
+  get_settlements: { tier: "read", roles: ["operator"] },
   run_checks: { tier: "read", roles: ["operator", "auditor"] },
   get_inbound_message: { tier: "read", roles: ["operator", "triage"] },
   get_invoice_queue: { tier: "read", roles: ["operator"] },
@@ -97,10 +98,10 @@ describe("tool registry", () => {
 
   it("offers each role only its own tools, as copies", () => {
     const counts = Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]));
-    expect(counts).toEqual({ operator: 19, auditor: 12, triage: 2 });
+    expect(counts).toEqual({ operator: 20, auditor: 12, triage: 2 });
     const first = toolsFor("operator");
     first.pop();
-    expect(toolsFor("operator")).toHaveLength(19);
+    expect(toolsFor("operator")).toHaveLength(20);
     expect(toolsFor("nobody" as AgentRole)).toEqual([]);
   });
 
@@ -109,7 +110,7 @@ describe("tool registry", () => {
     for (const role of AGENT_ROLES) for (const n of DETENTION_TOOLS) expect(names(role)).not.toContain(n);
     flags.detentionEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 21,
+      operator: 22,
       auditor: 13,
       triage: 2,
     });
@@ -117,7 +118,7 @@ describe("tool registry", () => {
     expect(names("auditor")).toContain("find_unbilled_detention");
     expect(names("auditor")).not.toContain("propose_detention_charge");
     flags.detentionEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(19);
+    expect(toolsFor("operator")).toHaveLength(20);
   });
 
   it("offers the invoice and customer payment tools only while their switches are on, read on every offer", () => {
@@ -126,14 +127,14 @@ describe("tool registry", () => {
     flags.invoicesEnabled = true;
     expect(names()).toEqual(expect.arrayContaining(INVOICE_TOOLS));
     for (const n of PAYMENT_TOOLS) expect(names(), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(20);
+    expect(toolsFor("operator")).toHaveLength(21);
     flags.invoicesEnabled = false;
     flags.customerPaymentsEnabled = true;
     expect(names()).toEqual(expect.arrayContaining(PAYMENT_TOOLS));
     for (const n of INVOICE_TOOLS) expect(names(), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("operator")).toHaveLength(23);
     flags.customerPaymentsEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(19);
+    expect(toolsFor("operator")).toHaveLength(20);
     // Neither is ever offered to the auditor or triage.
     flags.invoicesEnabled = true;
     flags.customerPaymentsEnabled = true;
@@ -170,7 +171,7 @@ describe("tool registry", () => {
     expect(toolsFor("operator").map((t) => t.name).filter((n) => n.startsWith("report_"))).toEqual([]);
 
     flags.reportsEnabled = true;
-    expect(toolsFor("operator")).toHaveLength(24);
+    expect(toolsFor("operator")).toHaveLength(25);
     expect(toolsFor("auditor")).toHaveLength(12);
     expect(toolsFor("triage")).toHaveLength(2);
     for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
@@ -178,7 +179,7 @@ describe("tool registry", () => {
 
     flags.reportsEnabled = false;
     for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
-    expect(toolsFor("operator")).toHaveLength(19);
+    expect(toolsFor("operator")).toHaveLength(20);
   });
 
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
@@ -189,7 +190,7 @@ describe("tool registry", () => {
     flags.customerPaymentsEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 32,
+      operator: 33,
       auditor: 15,
       triage: 2,
     });

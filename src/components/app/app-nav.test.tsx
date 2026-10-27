@@ -11,6 +11,7 @@ import { NavList } from "./nav-list";
 
 const SWITCHES = [
   "sweepEnabled",
+  "settlementsEnabled",
   "driverNotesEnabled",
   "advancesEnabled",
   "invoicesEnabled",
@@ -42,6 +43,7 @@ describe("appNav", () => {
     expect(shape("/invoices")).toEqual([
       ["Today", "/", "Home", false],
       ["Pay", "/sweep", "Pay sweep", false],
+      ["Pay", "/settlements", "Settlements", false],
       ["Pay", "/driver-notes", "Driver notes", false],
       ["Pay", "/advances", "Advances", false],
       ["Money in", "/invoices", "Invoices", true],
@@ -67,6 +69,7 @@ describe("appNav", () => {
   it("shows each switched item only while its own switch is on", () => {
     const behind: Record<Switch, string> = {
       sweepEnabled: "/sweep",
+      settlementsEnabled: "/settlements",
       driverNotesEnabled: "/driver-notes",
       advancesEnabled: "/advances",
       invoicesEnabled: "/invoices",
@@ -133,7 +136,7 @@ describe("NavList", () => {
     setAll(true);
     render(<NavList items={appNav("/advances")} />);
     const pay = screen.getByRole("list", { name: "Pay" });
-    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay sweep", "Driver notes", "Advances"]);
+    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay sweep", "Settlements", "Driver notes", "Advances"]);
     expect(screen.getByRole("link", { name: "Advances" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: "Home" }).getAttribute("aria-current")).toBeNull();
     expect(screen.getAllByText("Money in")).toHaveLength(1);

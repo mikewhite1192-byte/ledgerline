@@ -12,5 +12,6 @@ export { home } from "./home";
 export { invoices } from "./invoices";
 export { models } from "./models";
 export { portalRuns } from "./portal-runs";
+export { settlements } from "./settlements";
 export { sweep } from "./sweep";
 export { voiceNotes } from "./voice-notes";

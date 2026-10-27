@@ -26,6 +26,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     get_customer_payments: {},
     get_ledger: { driverId: hero.id },
     explain_paystub: { driverId: hero.id, periodId: paid.id },
+    get_settlements: { periodId: paid.id },
     run_checks: {},
     get_inbound_message: { inputId: input.id },
     get_document: { inputId: doc.id },

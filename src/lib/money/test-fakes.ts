@@ -143,6 +143,7 @@ export class FakeLedger {
         proposalId: d.proposalId,
         traceId: d.traceId,
         approverMembershipId: approval.membershipId,
+        batchId: d.batchId,
         checkCount: 0,
         createdAt: "2026-11-02T15:00:00.000Z",
         sentAt: null,

@@ -5,6 +5,7 @@ import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
+import { SETTLEMENT_ROWS } from "../../../settlements/list";
 import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 
 // A FakeDb that serves one synthetic carrier's seed plan through the record readers' own SQL, so
@@ -55,6 +56,36 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
       return (tables.money_actions ?? [])
         .filter((r) => r.subject_table === params[0] && r.subject_id === params[1])
         .map((r) => ({ ...r }));
+    }
+    // get_settlements' list: the plan's stored paystubs for the week with their drivers. A seed
+    // plan holds no approval cards, so every card column is null.
+    if (sql === SETTLEMENT_ROWS) {
+      const drivers = new Map(plan.rows.drivers.map((d) => [d.id, d]));
+      return plan.rows.settlements
+        .filter((s) => s.period_id === params[0])
+        .map((s) => {
+          const d = drivers.get(s.driver_id)!;
+          return {
+            id: s.id,
+            driver_id: s.driver_id,
+            code: d.code,
+            first_name: d.first_name,
+            last_name: d.last_name,
+            gross_cents: s.gross_cents,
+            deductions_cents: s.deductions_cents,
+            net_cents: s.net_cents,
+            exception_count: s.exception_count,
+            status: s.status,
+            parked_reason: s.parked_reason,
+            proposal_id: null,
+            proposal_status: null,
+            exceptions: null,
+            flagged_input_id: null,
+            auditor_verdict: null,
+            auditor_agrees: null,
+          };
+        })
+        .sort((x, y) => (x.code === y.code ? (x.id < y.id ? -1 : 1) : x.code < y.code ? -1 : 1));
     }
     if (LEDGER_BY_KIND.test(sql)) {
       return (tables.money_actions ?? []).filter((r) => r.kind === params[0]).map((r) => ({ ...r }));
