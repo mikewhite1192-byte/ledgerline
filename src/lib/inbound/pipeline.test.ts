@@ -134,6 +134,13 @@ function fakeDb(f: Fake = {}): FakeDb {
   let stepReads = 0;
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
+      if (sql.startsWith("INSERT INTO inbound_messages")) {
+        // The insert counts its RETURNING rows: listed as a write, one row unless named.
+        writes.push({ sql, params });
+        if ((f.fail ?? []).some((word) => sql.includes(word))) throw new DbError("sql", "54000");
+        const n = Object.entries(f.affected ?? {}).find(([word]) => sql.includes(word))?.[1] ?? 1;
+        return Array.from({ length: n }, () => ({ id: params[0] })) as T[];
+      }
       reads.push({ sql, params });
       if (sql.includes("FROM memberships")) return ((f.member ?? true) ? [{ ok: 1 }] : []) as T[];
       if (sql.startsWith("SELECT CAST(m.id AS text) AS id FROM inbound_messages")) {
@@ -228,7 +235,7 @@ describe("receiveMessage", () => {
     expect(db.writes[0].params).toEqual([INPUT, null, SENDER, "Advance", TEXT, untrustedContentHash("email", TEXT), received]);
     expect(db.writes[0].sql).toContain("'email', 'inbound'");
     expect(db.writes[1].params).toEqual([MSG, "paste", INPUT, null, SENDER, "Advance", null, received, "sub-1", TRACE, new Date(T0).toISOString()]);
-    expect(db.writes[1].sql).toContain("ON CONFLICT DO NOTHING");
+    expect(db.writes[1].sql).toContain("ON CONFLICT DO NOTHING RETURNING");
   });
 
   it("receiveMessage matches the sender to a driver by the whole address, case-insensitively, and never by prefix", async () => {
@@ -458,7 +465,8 @@ describe("sortMessage", () => {
     expect(await sortMessage(session, MSG, d)).toMatchObject({ status: "failed", category: "timeout" });
     expect(sqlOf(db).some((s) => s.includes("'triaged'"))).toBe(false);
 
-    // Too little time left to start the call: failed, and the model is never called.
+    // Too little time left to start the call: failed, and the model is never called (the try is
+    // given back; see the test below).
     let now = T0;
     const late = fakeDb();
     const slow = sortDeps(late, { clock: () => now });
@@ -478,6 +486,24 @@ describe("sortMessage", () => {
       status: "failed",
       category: "unknown",
     });
+  });
+
+  it("gives the try back when too little time is left to start the sort's call", async () => {
+    let now = T0;
+    const db = fakeDb();
+    const { d, calls } = sortDeps(db, { clock: () => now });
+    const screen = d.screen!;
+    // The screen finished just inside MIN_CALL_MS of the deadline, so no triage call can start.
+    d.screen = async (...args) => {
+      const s = await screen(...args);
+      now = T0 + STEP_BUDGET_MS - MIN_CALL_MS + 1;
+      return s;
+    };
+    expect(await sortMessage(session, MSG, d)).toEqual({ ok: true, inboundId: MSG, status: "failed", category: "out_of_time", attempts: 0 });
+    expect(db.writes[1].sql).toContain("SET status = 'failed'");
+    // The claim took the try ($2 = 1) and the failure write gives it back ($4 = 1).
+    expect(db.writes[1].params.slice(1, 4)).toEqual([1, "out_of_time", 1]);
+    expect(calls.triage).toHaveLength(0);
   });
 
   it("gives the try back when the screen could not finish, and keeps it when the screen threw", async () => {
@@ -562,7 +588,7 @@ describe("sortMessage", () => {
 });
 
 describe("handOffMessage", () => {
-  function deps(db: TenantDb, opened: "ok" | "busy" | "not_found" | "throw" = "ok") {
+  function deps(db: TenantDb, opened: "ok" | "busy" | "not_found" | "duplicate" | "throw" = "ok") {
     const calls: { open: { text: string; conversationId: null }[]; run: string[] } = { open: [], run: [] };
     const d: InboundDeps = {
       db,
@@ -604,10 +630,15 @@ describe("handOffMessage", () => {
     ]);
     expect(db.writes[1].params.slice(0, 2)).toEqual([MSG, "c-1"]);
 
-    for (const how of ["busy", "not_found"] as const) {
+    // A turn id already taken answers as a message already handed off, never as a missing one.
+    for (const [how, category, retryable] of [
+      ["busy", "busy", true],
+      ["not_found", "not_found", false],
+      ["duplicate", "already_handed_off", false],
+    ] as const) {
       const refusedDb = fakeDb({ step: stepRow({ status: "triaged", attempts: 1 }) });
       const r = deps(refusedDb, how);
-      expect(await handOffMessage(session, MSG, r.d)).toMatchObject({ ok: false, category: how });
+      expect(await handOffMessage(session, MSG, r.d)).toEqual({ ok: false, category, retryable });
       expect(refusedDb.writes.at(-1)!.sql).toContain("SET status = 'triaged'");
       expect(refusedDb.writes.at(-1)!.sql).toContain("conversation_id IS NULL");
       expect(r.calls.run).toHaveLength(0);

@@ -2,12 +2,13 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import type { ScreenOutcome } from "../agent/gateway/screen";
+import { untrustedContentHash } from "../data/content-hash";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, Param, TenantDb } from "../db/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { handOffMessage, handOffText, receiveMessage, sortMessage, type InboundDeps } from "./pipeline";
-import { listInbound, readInbound, readInboundDetail } from "./store";
+import { EXISTING_SQL, insertInbound, listInbound, readInbound, readInboundDetail } from "./store";
 import type { ReceiveInput } from "./types";
 
 // The Inbox against a real database, as the app's own role, with the screen, the triage model
@@ -275,6 +276,55 @@ describe("the Inbox (database)", () => {
     await receiveMessage(A!.session, p, deps());
     expect(await receiveMessage(A!.session, p, deps())).toMatchObject({ ok: true, duplicate: true });
     expect(await rowsIn(A!, "inbound_messages")).toBe(2);
+  });
+
+  it("counts a repeated insert as no row written, from the rows it returns", async () => {
+    const f = A!;
+    const p = paste({ channel: "email", messageId: "<twice@mail.example>" });
+    const row = { ...p, text: TEXT };
+    const hash = untrustedContentHash("email", TEXT);
+    const ids = () => ({ inputId: randomUUID(), driverId: null, traceId: randomUUID(), createdBy: f.session.sub, nowIso: new Date(NOW).toISOString() });
+    expect(await app.withTenant(f.tenantId, (q) => insertInbound(q, row, hash, ids()))).toBe(1);
+
+    // The same message again, and the same Message-ID under a new id: each insert returns no row,
+    // and its transaction is rolled back, as the pipeline does.
+    class RolledBack extends Error {}
+    for (const again of [row, { ...row, id: randomUUID() }]) {
+      let written = -1;
+      await expect(
+        app.withTenant(f.tenantId, async (q) => {
+          written = await insertInbound(q, again, hash, ids());
+          throw new RolledBack();
+        }),
+      ).rejects.toBeInstanceOf(RolledBack);
+      expect(written).toBe(0);
+    }
+    expect(await rowsIn(f, "inbound_messages")).toBe(1);
+    expect(await rowsIn(f, "untrusted_inputs")).toBe(1);
+
+    // A delivery that missed the first one's row on its lookup (they arrived together) inserts
+    // nothing and answers with the first one's row.
+    let skipped = false;
+    const racing: TenantDb = {
+      withTenant: (tenant, fn) =>
+        app.withTenant(tenant, (q) =>
+          fn({
+            query: async <T>(sql: string, params?: Param[]): Promise<T[]> => {
+              if (sql === EXISTING_SQL && !skipped) {
+                skipped = true;
+                return [];
+              }
+              return q.query<T>(sql, params);
+            },
+            execute: (sql, params) => q.execute(sql, params),
+          }),
+        ),
+    };
+    const raced = await receiveMessage(f.session, p, deps({ db: racing }));
+    expect(skipped).toBe(true);
+    expect(raced).toMatchObject({ ok: true, duplicate: true, message: { id: row.id } });
+    expect(await rowsIn(f, "inbound_messages")).toBe(1);
+    expect(await rowsIn(f, "untrusted_inputs")).toBe(1);
   });
 
   it("counts the carrier's own day toward the daily cap", async () => {

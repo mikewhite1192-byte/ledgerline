@@ -20,13 +20,14 @@ export const INSERT_INPUT_SQL =
   " CAST($7 AS timestamptz))";
 
 // No conflict target: a repeated id (this carrier's or, by chance, another's), a repeated Message-ID
-// or a repeated input all write nothing, and the caller rolls the input back.
+// or a repeated input all write nothing, and the caller rolls the input back. RETURNING names the
+// row written, so the count is the rows returned, not the driver's affected-row figure.
 export const INSERT_MESSAGE_SQL =
   "INSERT INTO inbound_messages (id, tenant_id, channel, input_id, driver_id, from_address, subject, message_id," +
   " received_at, status, created_by, trace_id, created_at, updated_at)" +
   " VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid), CAST($4 AS uuid), $5, $6, $7," +
   " CAST($8 AS timestamptz), 'received', $9, CAST($10 AS uuid), CAST($11 AS timestamptz), CAST($11 AS timestamptz))" +
-  " ON CONFLICT DO NOTHING";
+  " ON CONFLICT DO NOTHING RETURNING CAST(id AS text) AS id";
 
 // The row a repeated event names: its id, or for an email its Message-ID.
 export const EXISTING_SQL =
@@ -87,7 +88,9 @@ export async function insertInbound(
     contentHash,
     input.receivedAt.toISOString(),
   ]);
-  return q.execute(INSERT_MESSAGE_SQL, [
+  // Counted from the rows returned, never from an affected-row count, so pg and the Data API
+  // answer the same way on a duplicate.
+  const written = await q.query<{ id: string }>(INSERT_MESSAGE_SQL, [
     input.id,
     input.channel,
     ids.inputId,
@@ -100,6 +103,7 @@ export async function insertInbound(
     ids.traceId,
     ids.nowIso,
   ]);
+  return written.length;
 }
 
 // --- one message for a step ---

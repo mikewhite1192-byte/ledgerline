@@ -2,12 +2,13 @@
 -- tables. An Inbox message (0037) is a record of what a driver sent and what the agent was handed:
 -- the demo starts with an empty Inbox, so the reset clears these rows too (DEMO_RESET_CLEARED in
 -- src/lib/seed/reset.ts), and payday_app has no DELETE on them. The function is re-created whole,
--- copied from 0025 with one more DELETE and one more returned row, every bound unchanged: the fixed
--- search_path, the demo carrier gate, the tenant row lock, the refusals, a tenant filter on every
--- statement and EXECUTE for payday_app only. A later number than every migration that may
--- re-create it, so on a fresh database this one runs last; it must hold every DELETE of every
--- re-creation merged before it (the same rule binds any later re-creation), because whichever
--- re-creation runs last on a database is the function that database keeps.
+-- copied from 0033 (0025 plus the sweep's second checks) with one more DELETE and one more returned
+-- row, every bound unchanged: the fixed search_path, the demo carrier gate, the tenant row lock,
+-- the refusals, a tenant filter on every statement and EXECUTE for payday_app only. A later number
+-- than every migration that may re-create it, so on a fresh database this one runs last; it must
+-- hold every DELETE of every re-creation merged before it (the same rule binds any later
+-- re-creation), because whichever re-creation runs last on a database is the function that
+-- database keeps.
 CREATE OR REPLACE FUNCTION demo_reset_clear()
   RETURNS TABLE (table_name text, deleted bigint)
   LANGUAGE plpgsql
@@ -37,6 +38,8 @@ DECLARE
   v_voice_notes   bigint;
   v_notes         bigint;
   v_steps         bigint;
+  v_fanout_checks bigint;
+  v_fanout        bigint;
   v_sweep_items   bigint;
   v_sweep_runs    bigint;
   v_batches       bigint;
@@ -125,6 +128,14 @@ BEGIN
   DELETE FROM public.turn_steps s WHERE s.tenant_id = v_tenant;
   GET DIAGNOSTICS v_steps = ROW_COUNT;
 
+  -- The sweep's second checks name a run, a driver and a turn; each run's second check names
+  -- the run and its turns (0024). Both go before the runs and the turns.
+  DELETE FROM public.sweep_fanout_checks fc WHERE fc.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_fanout_checks = ROW_COUNT;
+
+  DELETE FROM public.sweep_fanout sf WHERE sf.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_fanout = ROW_COUNT;
+
   -- The pay sweep's findings name a proposal and a run; its runs name a conversation (0018).
   DELETE FROM public.sweep_items si WHERE si.tenant_id = v_tenant;
   GET DIAGNOSTICS v_sweep_items = ROW_COUNT;
@@ -164,6 +175,8 @@ BEGIN
     (CAST('voice_notes' AS text), v_voice_notes),
     (CAST('driver_notes' AS text), v_notes),
     (CAST('turn_steps' AS text), v_steps),
+    (CAST('sweep_fanout_checks' AS text), v_fanout_checks),
+    (CAST('sweep_fanout' AS text), v_fanout),
     (CAST('sweep_items' AS text), v_sweep_items),
     (CAST('sweep_runs' AS text), v_sweep_runs),
     (CAST('approval_batches' AS text), v_batches),

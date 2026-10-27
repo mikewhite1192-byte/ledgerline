@@ -35,16 +35,17 @@ describe("the demo reset's lists", () => {
 });
 
 describe("the function's demo-carrier gate", () => {
-  // Every migration that creates or re-creates the function (0025, then 0038 with the Inbox
-  // messages), so whichever ran last keeps the same gate.
+  // Every migration that creates or re-creates the function (0025, then 0033 with the sweep's
+  // second checks, then 0038 with the Inbox messages), so whichever ran last keeps the same gate.
   const dir = new URL("../../../db/migrations/", import.meta.url);
   const defining = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort()
     .filter((f) => /FUNCTION demo_reset_clear\(\)\s+RETURNS/.test(readFileSync(new URL(f, dir), "utf8")));
 
-  it("is defined by 0025 and re-created whole by 0038", () => {
+  it("is defined by 0025 and re-created whole by 0033 and 0038", () => {
     expect(defining[0]).toBe("0025_demo_reset.sql");
+    expect(defining).toContain("0033_demo_reset_fanout.sql");
     expect(defining).toContain("0038_demo_reset_inbound.sql");
   });
 

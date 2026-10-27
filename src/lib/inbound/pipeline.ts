@@ -286,7 +286,10 @@ export async function sortMessage(session: Session, inboundId: string, deps: Inb
     return held === 0 ? current() : stepOk(id, "blocked", "screen_flagged", attempts);
   }
 
-  if (ctx.deadlineAt - clock() < MIN_CALL_MS) return fail("out_of_time", false);
+  // Too little time left to start the triage call: no call is made, and a shortage of time belongs
+  // to this call, not the text (as in the gateway's screen), so the try is given back. The screen's
+  // verdict is cached, so the next press starts with the whole budget.
+  if (ctx.deadlineAt - clock() < MIN_CALL_MS) return fail("out_of_time", true);
   const target = triageTarget();
   let sorted: TriageResult;
   try {
@@ -405,7 +408,11 @@ export async function handOffMessage(session: Session, inboundId: string, deps: 
   }
   if ("refused" in opened) {
     await inTenant(db, session, (q) => q.execute(UNCLAIM_HANDOFF_SQL, [id, iso()]));
-    return refused(opened.refused === "busy" ? "busy" : "not_found", opened.refused === "busy");
+    if (opened.refused === "busy") return refused("busy", true);
+    // A turn id already taken means a turn for this press exists: answer as for a message already
+    // handed off, never as a missing message.
+    if (opened.refused === "duplicate") return refused("already_handed_off");
+    return refused("not_found");
   }
   try {
     await inTenant(db, session, (q) => q.execute(LINK_SQL, [id, opened.conversationId, iso()]));
