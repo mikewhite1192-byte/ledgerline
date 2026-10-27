@@ -5,6 +5,7 @@ import { DEMO_CARRIERS } from "../seed/carriers";
 import { cashPositionOf } from "../seed/cash-plan";
 import golden from "../seed/golden.json";
 import { buildCarrierPlan } from "../seed/plan";
+import { cents, type CashOption, type CashPosition, type ChaseOption } from "../rules-engine";
 import {
   AiError,
   checkExplanation,
@@ -53,7 +54,7 @@ const input = { traceId: TRACE, result: short.result, billCategory: billCategory
 
 describe("explainFacts", () => {
   it("gives the model the engine's figures as dollars and the moves, nothing a person wrote", () => {
-    const { facts, allowed } = explainFacts(short.result, input.billCategory);
+    const { facts, guard } = explainFacts(short.result, input.billCategory);
     expect(facts).toMatchObject({
       payDay: "Friday, Nov 6",
       verdict: "short",
@@ -61,7 +62,7 @@ describe("explainFacts", () => {
       payRunIs: "a preview of this week's pay",
     });
     expect((facts.moves as unknown[]).length).toBe(4);
-    expect(allowed.has(680_000)).toBe(true);
+    expect(guard.allowed.has(680_000)).toBe(true);
     // No vendor, customer or driver name, no memo, no record id goes out.
     const sent = JSON.stringify(facts);
     for (const b of short.plan.rows.vendor_bills) expect(sent).not.toContain(b.vendor_name);
@@ -78,36 +79,150 @@ describe("explainFacts", () => {
     const defer = (facts.moves as Record<string, unknown>[]).find((m) => "bill" in m);
     expect(defer).toMatchObject({ bill: "shop and tires", newDueDate: "Friday, Nov 13", coversShort: true });
   });
+
+  it("gives each chase the engine's new cash and whether it alone covers the short", () => {
+    const { facts, guard } = explainFacts(short.result, input.billCategory);
+    const chases = short.result.options.filter((o) => o.kind === "collections_chase");
+    expect(chases.length).toBeGreaterThan(0);
+    const given = (facts.moves as Record<string, unknown>[]).filter((m) => "pastDue" in m);
+    expect(given).toEqual(
+      chases.map((o) => ({
+        move: "ask a late-paying customer for what is past due (test mode: nothing is sent)",
+        pastDue: dollars(o.amountCents),
+        newCash: dollars(o.newCashCents),
+        pastDueInvoices: o.overdueInvoices,
+        coversShort: o.coversShort,
+      })),
+    );
+    for (const o of chases) expect(guard.allowed.has(o.newCashCents)).toBe(true);
+  });
 });
 
+// The overstated chase: the short is $800.00, and a customer's $1,000.00 past-due invoice already
+// counts $500.00 in expected receipts, so chasing it adds $500.00 (the engine's newCashCents) and
+// does not cover the short. The position's own figures are chosen to share no amount with a move.
+function chase(over: Partial<ChaseOption> = {}): ChaseOption {
+  return {
+    kind: "collections_chase",
+    subjectTable: "customers",
+    subjectId: "cust-1",
+    direction: "in",
+    amountCents: cents(100_000),
+    newCashCents: cents(50_000),
+    coversShort: false,
+    label: "mixed",
+    overdueInvoices: 1,
+    invoices: [],
+    sources: [],
+    ...over,
+  };
+}
+
+function shortBy800(options: CashOption[]): CashPosition {
+  return {
+    ...short.result,
+    figures: {
+      ...short.result.figures,
+      cashOnHandCents: cents(150_000),
+      expectedReceiptsCents: cents(70_000),
+      payRunCents: cents(250_000),
+      fuelLoadsCents: cents(15_000),
+      vendorBillsDueCents: cents(35_000),
+      gapCents: cents(-80_000),
+    },
+    options,
+  };
+}
+
+const guardOf = (r: CashPosition) => explainFacts(r, () => null).guard;
+
 describe("checkExplanation", () => {
-  const { allowed } = explainFacts(short.result, input.billCategory);
+  const { guard } = explainFacts(short.result, input.billCategory);
 
   it("keeps a paragraph whose figures are all the engine's", () => {
     const text = "  Friday is short by $6,800.00.  Moving the shop bill covers it. ";
-    expect(checkExplanation(text, allowed)).toEqual({
+    expect(checkExplanation(text, guard)).toEqual({
       ok: true,
       text: "Friday is short by $6,800.00. Moving the shop bill covers it.",
     });
   });
 
   it("drops a paragraph with any other amount, dollar sign or not", () => {
-    expect(checkExplanation("Short by $6,800.00, about $7,000 in all.", allowed)).toEqual({
+    expect(checkExplanation("Short by $6,800.00, about $7,000 in all.", guard)).toEqual({
       ok: false,
       category: "figures",
     });
-    expect(checkExplanation("Short by $6,800.00 of the 1,234.56 needed.", allowed)).toEqual({
+    expect(checkExplanation("Short by $6,800.00 of the 1,234.56 needed.", guard)).toEqual({
       ok: false,
       category: "figures",
     });
-    expect(checkExplanation("Short by 6,800.00.", allowed)).toEqual({ ok: false, category: "figures" });
+    expect(checkExplanation("Short by 6,800.00.", guard)).toEqual({ ok: false, category: "figures" });
   });
 
   it("drops an empty or long paragraph", () => {
-    expect(checkExplanation("  ", allowed)).toEqual({ ok: false, category: "empty" });
-    expect(checkExplanation("a".repeat(flags.cashFridayLimits.maxExplainChars + 1), allowed)).toEqual({
+    expect(checkExplanation("  ", guard)).toEqual({ ok: false, category: "empty" });
+    expect(checkExplanation("a".repeat(flags.cashFridayLimits.maxExplainChars + 1), guard)).toEqual({
       ok: false,
       category: "too_long",
+    });
+  });
+
+  it("drops a paragraph that says a chase covers the short when its new cash does not", () => {
+    const g = guardOf(shortBy800([chase()]));
+    expect(g.allowed.has(50_000) && g.allowed.has(100_000)).toBe(true);
+    for (const text of [
+      "Friday is short by $800.00. Chasing the late payer for the $1,000.00 past due covers the short.",
+      "Friday is short by $800.00. Asking the late-paying customer for $1,000.00 is enough to close the gap.",
+      "Chasing the late payer brings in $500.00 of new cash. That covers the $800.00 short.",
+      "The $1,000.00 past due would cover the $800.00 short, with room to spare.",
+      "Collecting what is past due makes up the $800.00 short.",
+    ]) {
+      expect(checkExplanation(text, g)).toEqual({ ok: false, category: "overclaim" });
+    }
+  });
+
+  it("keeps a paragraph that says the chase only narrows the short", () => {
+    const g = guardOf(shortBy800([chase()]));
+    for (const text of [
+      "Friday is short by $800.00. Chasing the late payer's $1,000.00 past due adds $500.00 of new cash, " +
+        "which narrows the short but does not cover it.",
+      "Friday is short by $800.00. Chasing the late payer adds $500.00, not enough to cover the short.",
+      "Pay day is not covered: cash on hand of $1,500.00 and $700.00 expected fall short by $800.00.",
+    ]) {
+      expect(checkExplanation(text, g)).toMatchObject({ ok: true });
+    }
+  });
+
+  it("keeps a paragraph that says a chase covers the short when its new cash does", () => {
+    // A stalled $1,000.00 invoice: the engine expects none of it, so all of it is new cash.
+    const g = guardOf(shortBy800([chase({ newCashCents: cents(100_000), coversShort: true })]));
+    expect(
+      checkExplanation("Friday is short by $800.00. Chasing the late payer for the $1,000.00 past due covers it.", g),
+    ).toMatchObject({ ok: true });
+  });
+
+  it("reads each move's own claim when one covers and another does not", () => {
+    const factoring = short.result.options.find((o) => o.kind === "factoring_request");
+    if (!factoring || factoring.kind !== "factoring_request") throw new Error("no factoring move");
+    const covering = { ...factoring, amountCents: cents(90_000), feeCents: cents(2_700), coversShort: true };
+    const g = guardOf(shortBy800([covering, chase()]));
+    expect(
+      checkExplanation("Factoring brings in $900.00 and covers the short, while chasing the late payer only narrows it.", g),
+    ).toMatchObject({ ok: true });
+    expect(checkExplanation("Factoring or chasing the late payer would each cover the short.", g)).toEqual({
+      ok: false,
+      category: "overclaim",
+    });
+    expect(checkExplanation("Chasing $1,000.00 past due and factoring together close the gap.", g)).toEqual({
+      ok: false,
+      category: "overclaim",
+    });
+  });
+
+  it("reads no move claim in a covered week", () => {
+    const { guard: none } = explainFacts(covered.result, () => null);
+    expect(checkExplanation("Cash covers pay day, so there is no need to chase anyone.", none)).toMatchObject({
+      ok: true,
     });
   });
 });
@@ -137,6 +252,31 @@ describe("explainCheck", () => {
       format: { strict: true },
     });
     expect(request.messages).toHaveLength(2);
+  });
+
+  it("drops a paragraph that says a move covers the short the engine did not mark as covering", async () => {
+    const complete = vi.fn<CompleteFn>(async () =>
+      answer(JSON.stringify({ explanation: "Friday is short by $800.00. Chasing the $1,000.00 past due covers it." })),
+    );
+    const out = await explainCheck(SESSION, { ...input, result: shortBy800([chase()]) }, { complete });
+    expect(out).toEqual({
+      ok: false,
+      category: "overclaim",
+      callId: "c0ffee00-0000-4000-8000-000000000001",
+      costNanocents: 400_000_000,
+    });
+    // The model got the engine's new cash and flag for the chase, never a number to work out.
+    const [, request] = complete.mock.calls[0];
+    const sent = JSON.parse(String(request.messages[1].content)) as { moves: Record<string, unknown>[] };
+    expect(sent.moves).toEqual([
+      {
+        move: "ask a late-paying customer for what is past due (test mode: nothing is sent)",
+        pastDue: "$1,000.00",
+        newCash: "$500.00",
+        pastDueInvoices: 1,
+        coversShort: false,
+      },
+    ]);
   });
 
   it("drops a paragraph with a figure the engine did not give", async () => {

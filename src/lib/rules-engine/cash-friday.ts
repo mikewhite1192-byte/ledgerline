@@ -166,15 +166,12 @@ export function expectedReceipts(
   );
 }
 
-// A payment received since the balance date is already in cash on hand. The part of it not yet
-// applied to an invoice still sits in that customer's open balances, so it would count a second
-// time as expected: it comes off that customer's counted lines, in line order, never below zero.
-// Each dollar counts once.
-function lessUnappliedSince(
-  lines: readonly ReceiptLine[],
+// Each customer's payments received since the balance date, the part not yet applied to an
+// invoice: already in cash on hand, while the open balances it will pay still show it owed.
+function unappliedSince(
   paymentsSince: readonly CustomerPaymentRecord[],
   applications: readonly PaymentApplicationRecord[],
-): ReceiptLine[] {
+): Map<string, { cents: Cents; sources: SourceRef[] }> {
   const applied = new Map<string, Cents>();
   for (const a of applications) applied.set(a.paymentId, sum([applied.get(a.paymentId) ?? 0, a.amountCents]));
   const unapplied = new Map<string, { cents: Cents; sources: SourceRef[] }>();
@@ -187,6 +184,19 @@ function lessUnappliedSince(
       sources: [...(own?.sources ?? []), { table: "customer_payments", id: p.id }],
     });
   }
+  return unapplied;
+}
+
+// A payment received since the balance date is already in cash on hand. The part of it not yet
+// applied to an invoice still sits in that customer's open balances, so it would count a second
+// time as expected: it comes off that customer's counted lines, in line order, never below zero.
+// Each dollar counts once.
+function lessUnappliedSince(
+  lines: readonly ReceiptLine[],
+  paymentsSince: readonly CustomerPaymentRecord[],
+  applications: readonly PaymentApplicationRecord[],
+): ReceiptLine[] {
+  const unapplied = unappliedSince(paymentsSince, applications);
   return lines.map((line) => {
     const own = unapplied.get(line.customerId);
     if (!own || own.cents <= 0 || line.expectedCents <= 0) return line;
@@ -347,37 +357,63 @@ export function billDeferOption(
   };
 }
 
-// Option 3: one card per customer with a past-due open balance, the largest balances first.
+// Option 3: one card per customer with a past-due open balance, the largest balances first. A
+// past-due invoice can still be counted by pay day (a customer who usually pays late), and a
+// payment since the balance date not yet applied is already cash on hand, so the card's new cash
+// is its balances less both: only that part can close the short.
 export function chaseOptions(
   open: readonly OpenInvoice[],
   profiles: ReadonlyMap<string, PaymentProfile>,
   asOf: LocalDate,
   limit: number,
+  counted: {
+    lines: readonly ReceiptLine[];
+    unapplied: ReadonlyMap<string, { cents: Cents }>;
+    shortCents: number;
+  },
 ): ChaseOption[] {
-  const byCustomer = new Map<string, ChaseLine[]>();
+  const expected = new Map(counted.lines.map((l) => [l.invoiceId, l.expectedCents]));
+  const byCustomer = new Map<string, { lines: ChaseLine[]; expected: Cents[] }>();
   for (const { invoice, balanceCents } of open) {
     const daysLate = daysBetween(invoice.dueOn, asOf);
     if (daysLate <= 0) continue;
-    const own = byCustomer.get(invoice.customerId) ?? [];
-    own.push({ invoiceId: invoice.id, invoiceNumber: invoice.invoiceNumber, balanceCents, dueOn: invoice.dueOn, daysLate });
+    const own = byCustomer.get(invoice.customerId) ?? { lines: [], expected: [] };
+    const expectedCents = expected.get(invoice.id);
+    if (expectedCents === undefined) throw new InputError(`invoice ${invoice.id} has no receipt line`);
+    own.lines.push({
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      balanceCents,
+      dueOn: invoice.dueOn,
+      daysLate,
+    });
+    own.expected.push(expectedCents);
     byCustomer.set(invoice.customerId, own);
   }
   return [...byCustomer.entries()]
-    .map(([customerId, all]) => ({ customerId, all, total: sum(all.map((l) => l.balanceCents)) }))
+    .map(([customerId, own]) => ({
+      customerId,
+      all: own.lines,
+      total: sum(own.lines.map((l) => l.balanceCents)),
+      already: sum([...own.expected, counted.unapplied.get(customerId)?.cents ?? 0]),
+    }))
     .sort((a, b) => b.total - a.total || compareText(a.customerId, b.customerId))
     .slice(0, limit)
-    .map(({ customerId, all, total }): ChaseOption => {
+    .map(({ customerId, all, total, already }): ChaseOption => {
       const profile = profiles.get(customerId);
       if (!profile) throw new InputError(`customer ${customerId} has no payment profile`);
       const listed = [...all]
         .sort((a, b) => b.daysLate - a.daysLate || compareText(a.invoiceNumber, b.invoiceNumber))
         .slice(0, CHASE_INVOICES_MAX);
+      const newCashCents = total > already ? sub(total, already) : cents(0);
       return {
         kind: "collections_chase",
         subjectTable: "customers",
         subjectId: customerId,
         direction: "in",
         amountCents: total,
+        newCashCents,
+        coversShort: newCashCents >= counted.shortCents,
         label: profile.label,
         overdueInvoices: all.length,
         invoices: listed,
@@ -465,7 +501,9 @@ export function computeCashFriday(input: CashFridayInput, asOfDate: LocalDate): 
     if (factoring) options.push(factoring);
     const defer = billDeferOption(input.bills, payDay, shortCents);
     if (defer) options.push(defer);
-    options.push(...chaseOptions(openInvoiceList, profiles, asOf, limits.maxChaseCustomers));
+    const unapplied = unappliedSince(paymentsSince, input.applications);
+    const counted = { lines, unapplied, shortCents };
+    options.push(...chaseOptions(openInvoiceList, profiles, asOf, limits.maxChaseCustomers, counted));
   }
 
   return {

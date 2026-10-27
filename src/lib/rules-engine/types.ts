@@ -878,6 +878,12 @@ export type ChaseOption = {
   direction: "in";
   // Every past-due open balance of the customer.
   amountCents: Cents;
+  // The part of amountCents the position does not already count: those balances less what the
+  // engine expects from them by pay day and less this customer's payments since the balance date
+  // not yet applied (already cash on hand). Never below zero.
+  newCashCents: Cents;
+  // newCashCents alone closes the short.
+  coversShort: boolean;
   label: PaymentLabel;
   overdueInvoices: number;
   // The latest first, at most eight.

@@ -345,6 +345,8 @@ describe("computeCashFriday on the golden week", () => {
   });
 
   it("chases the customers with the largest past-due balances", () => {
+    // L1 is stalled, so none of it is expected: all 40,000 is new cash. N1 is counted at half
+    // (15,000) by pay day, so chasing it adds only the other 15,000. Neither closes the 50,000 short.
     expect(result.options.slice(2)).toEqual([
       {
         kind: "collections_chase",
@@ -352,6 +354,8 @@ describe("computeCashFriday on the golden week", () => {
         subjectId: "cust-l",
         direction: "in",
         amountCents: 40_000,
+        newCashCents: 40_000,
+        coversShort: false,
         label: "repeat_late",
         overdueInvoices: 1,
         invoices: [{ invoiceId: "L1", invoiceNumber: "INV-L1", balanceCents: 40_000, dueOn: "2026-09-01", daysLate: 62 }],
@@ -366,6 +370,8 @@ describe("computeCashFriday on the golden week", () => {
         subjectId: "cust-n",
         direction: "in",
         amountCents: 30_000,
+        newCashCents: 15_000,
+        coversShort: false,
         label: "mixed",
         overdueInvoices: 1,
         invoices: [{ invoiceId: "N1", invoiceNumber: "INV-N1", balanceCents: 30_000, dueOn: "2026-10-30", daysLate: 3 }],
@@ -730,6 +736,64 @@ describe("an unapplied payment counts once", () => {
     const result = position(golden({ payments: [...golden().payments, payment("pay-r-old", "cust-r", "2026-10-31", 30_000)] }));
     expect(counted(result, "R1")).toBe(100_000);
     expect(result.figures).toEqual(base.figures);
+  });
+});
+
+describe("a chase counts only the cash the position does not already count", () => {
+  // N1 grows to 1,000.00: three days past due, from a customer with nothing paid yet, so the engine
+  // counts half of it (500.00) by pay day. The bank balance is set so the short is 800.00.
+  const N1_1000 = OPEN_INVOICES.map((i) => (i.id === "N1" ? { ...i, amountCents: c(100_000) } : i));
+  const shortBy800 = (over: Partial<CashFridayInput> = {}) =>
+    golden({
+      settings: { ...SETTINGS, bankBalanceCents: c(205_000) },
+      invoices: [...HISTORY.map((h) => h.invoice), ...N1_1000],
+      ...over,
+    });
+  const chaseOf = (r: CashPosition, customerId: string) => {
+    const o = r.options.find((x) => x.kind === "collections_chase" && x.subjectId === customerId);
+    if (!o || o.kind !== "collections_chase") throw new Error(`no chase for ${customerId}`);
+    return o;
+  };
+
+  it("nets a 1,000.00 past-due invoice with 500.00 already expected to 500.00, short of an 800.00 short", () => {
+    const result = position(shortBy800());
+    expect(result.figures.gapCents).toBe(-80_000);
+    expect(result.lines.find((l) => l.invoiceId === "N1")).toMatchObject({ status: "counted", expectedCents: 50_000 });
+    const chase = chaseOf(result, "cust-n");
+    expect([chase.amountCents, chase.newCashCents, chase.coversShort]).toEqual([100_000, 50_000, false]);
+    expect(Number.isSafeInteger(chase.newCashCents)).toBe(true);
+  });
+
+  it("marks a chase covering when its new cash alone closes the short", () => {
+    // L1 at 1,000.00 is stalled, so the engine expects none of it: all of it is new cash.
+    const invoices = [
+      ...HISTORY.map((h) => h.invoice),
+      ...N1_1000.map((i) => (i.id === "L1" ? { ...i, amountCents: c(100_000) } : i)),
+    ];
+    const result = position(shortBy800({ invoices }));
+    expect(result.figures.gapCents).toBe(-80_000);
+    const l = chaseOf(result, "cust-l");
+    expect([l.amountCents, l.newCashCents, l.coversShort]).toEqual([100_000, 100_000, true]);
+    // The same 1,000.00 past due, half of it already expected: not covering.
+    const n = chaseOf(result, "cust-n");
+    expect([n.amountCents, n.newCashCents, n.coversShort]).toEqual([100_000, 50_000, false]);
+  });
+
+  it("takes a payment since the balance date not yet applied off the new cash once", () => {
+    // 20,000 received since the balance date, not applied: in cash on hand, off N1's count.
+    const payments = [...golden().payments, payment("pay-n-new", "cust-n", "2026-11-02", 20_000)];
+    const result = position(shortBy800({ payments }));
+    expect(result.figures.gapCents).toBe(-80_000);
+    expect(result.lines.find((l) => l.invoiceId === "N1")?.expectedCents).toBe(30_000);
+    // 100,000 past due less 30,000 still expected less 20,000 already in hand.
+    expect(chaseOf(result, "cust-n").newCashCents).toBe(50_000);
+  });
+
+  it("never takes the new cash below zero", () => {
+    // Golden N1 (30,000) and 40,000 received since the balance date, not applied: nothing new.
+    const result = position(golden({ payments: [...golden().payments, payment("pay-n-new", "cust-n", "2026-11-02", 40_000)] }));
+    const chase = chaseOf(result, "cust-n");
+    expect([chase.amountCents, chase.newCashCents, chase.coversShort]).toEqual([30_000, 0, false]);
   });
 });
 
