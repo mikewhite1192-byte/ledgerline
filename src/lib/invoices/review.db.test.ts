@@ -46,6 +46,8 @@ const [BR, PW] = tenants;
 
 let admin: Db;
 let app: Db;
+// Prairie Wind's queue-made invoice whose refused post was retried, read again by a later test.
+let pwRetried: string | null = null;
 
 // Admin reads and writes, always filtered to the tenant (the admin login skips row security).
 const adminRows = <T extends object>(t: Carrier, sql: string, params: Param[] = []) =>
@@ -203,6 +205,37 @@ const withAccounting = async <T>(fn: () => Promise<T>): Promise<T> => {
     flags.accountingEnabled = false;
   }
 };
+
+// Only an invoice the invoice queue made posts from the record page (a seeded invoice is history
+// and never goes out), so every post below starts there: a press of the queue, then one card
+// approved while posting is off, which writes the invoice unposted. The card is for a customer
+// that needs no delivery document, so the new invoice reads needs review and nothing else.
+async function queueInvoice(t: Carrier): Promise<string> {
+  expect(await proposeInvoices(app, t.session, clock())).toMatchObject({ ok: true });
+  const [card] = await adminRows<{ id: string; subject_id: string }>(
+    t,
+    `SELECT p.id, p.subject_id FROM proposals p
+       JOIN loads l ON l.tenant_id = p.tenant_id AND l.id = p.subject_id
+       JOIN customers c ON c.tenant_id = l.tenant_id AND c.id = l.customer_id
+      WHERE p.tenant_id = $1 AND p.kind = 'invoice_post' AND p.subject_table = 'loads'
+        AND p.status = 'proposed' AND NOT c.pod_required
+      ORDER BY p.created_at, p.id LIMIT 1`,
+    [t.id],
+  );
+  if (!card) throw new Error("the invoice queue has no card left for a customer without a document rule");
+  const executors = { ...EXECUTORS, invoice_post: invoicePostExecutor(moneyDeps(testBooks())) };
+  expect(await executeProposal(t.session, card.id, { confirmed: true }, { db: app, clock, executors })).toMatchObject({
+    ok: true,
+    status: "done",
+  });
+  const [inv] = await adminRows<{ id: string; qbo_id: string | null }>(
+    t,
+    "SELECT id, qbo_id FROM invoices WHERE tenant_id = $1 AND load_id = CAST($2 AS uuid)",
+    [t.id, card.subject_id],
+  );
+  expect(inv.qbo_id).toBeNull();
+  return inv.id;
+}
 
 describe("invoice review against a seeded database", () => {
   beforeAll(async () => {
@@ -368,7 +401,7 @@ describe("invoice review against a seeded database", () => {
 
   describe("a customer with no billing address", () => {
     it("is refused before anything is reserved when posted from the record page", async () => {
-      const id = BR.plan.planted.invoiceReview.needsReviewInvoiceIds[2];
+      const id = await queueInvoice(BR);
       const inv = await stored(BR, id);
       const books = testBooks();
       const out = await withAccounting(() =>
@@ -423,7 +456,10 @@ describe("invoice review against a seeded database", () => {
   });
 
   describe("posting as unsent, then review and the recorded send", () => {
-    const id = BR.plan.planted.invoiceReview.needsReviewInvoiceIds[0];
+    let id: string;
+    beforeAll(async () => {
+      id = await queueInvoice(BR);
+    });
 
     it("posts the invoice into the accounting system's send queue with its billing address", async () => {
       const before = await stored(BR, id);
@@ -524,7 +560,7 @@ describe("invoice review against a seeded database", () => {
 
   describe("accounting sync errors", () => {
     it("reads a timed-out post as a sync error until Check settles it", async () => {
-      const id = BR.plan.planted.invoiceReview.needsReviewInvoiceIds[1];
+      const id = await queueInvoice(BR);
       const inv = await stored(BR, id);
       const books = testBooks();
       books.answerInvoices("timeout");
@@ -556,7 +592,8 @@ describe("invoice review against a seeded database", () => {
     });
 
     it("reads a refused post as a sync error, and Retry posts again as attempt 2", async () => {
-      const id = PW.plan.planted.invoiceReview.needsReviewInvoiceIds[0];
+      const id = await queueInvoice(PW);
+      pwRetried = id;
       const books = testBooks();
       books.answerInvoices("refuse");
       await withAccounting(async () => {
@@ -586,7 +623,9 @@ describe("invoice review against a seeded database", () => {
     // amendment is written here directly: one detention line on the load and the same cents on
     // the invoice, as a later correction would. The engine's total then agrees with the invoice;
     // only the accounting system's copy is behind.
-    const id = PW.plan.planted.invoiceReview.needsReviewInvoiceIds[0];
+    // The invoice the refused post above settled on attempt 2.
+    if (pwRetried === null) throw new Error("the refused post test did not run first");
+    const id = pwRetried;
     const before = await stored(PW, id);
     expect(before.qbo_amount_cents).toBe(before.amount_cents);
     expect(before.load_id).not.toBeNull();
