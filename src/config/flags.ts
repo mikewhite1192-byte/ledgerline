@@ -1,6 +1,10 @@
 // Release switches. Every outside effect (payments, accounting posts, email, model calls)
 // reads its switch here, and every path that reaches the write re-checks it.
 // Turning a switch on is the owner's call, in its own one-line PR.
+// The demo-path test's local overrides (src/config/local-overrides.ts) are inert in production
+// and whenever an Aurora cluster is configured.
+
+import { applyLocalOverrides } from "./local-overrides";
 
 export type Flags = {
   // Model calls through src/lib/ai. Off until the wrapper and its spend cap are live.
@@ -314,3 +318,5 @@ export const flags: Flags = {
     approvalWaitMinutes: 30,
   },
 };
+
+applyLocalOverrides(flags);

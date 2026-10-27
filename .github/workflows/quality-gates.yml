@@ -122,6 +122,63 @@ jobs:
           fi
           echo "OK: no em dashes added."
 
+  # The demo path in a browser: next dev on a fresh seeded database, signed in through the local
+  # fake user pool, the models answered from the recorded replay (no key, no outside call). Not a
+  # required check until it has passed on main. About 6 billed minutes a run, 5 with a browser
+  # cache hit.
+  demo-path:
+    name: demo path (local)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97 # 16.15, resolved from Docker Hub 2026-10-26
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Read the test runner's version
+        id: playwright
+        run: echo "version=$(node -p "require('./node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}-chromium-shell
+
+      - name: Install the browser
+        run: npx playwright install --with-deps --only-shell chromium
+
+      - name: Demo path
+        env:
+          E2E_ADMIN_DATABASE_URL: postgresql://postgres@127.0.0.1:5432/postgres
+          E2E_REPORT_FILE: test-results/demo-path.json
+        run: npm run e2e
+
+      - name: Keep the trace of a failed run
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: demo-path-results
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Every commit the change brings in, merge ancestry and merge resolutions included. The CLI
   # runs directly: the action lists only the first 30 PR commits and skips a merge's second parent.
   secrets:
