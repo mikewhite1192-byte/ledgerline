@@ -26,6 +26,7 @@ function engine(): RuleChange {
       pay_configs: r.pay_configs,
       settlement_periods: r.settlement_periods,
       settlements: r.settlements,
+      settlement_lines: r.settlement_lines,
       drivers: r.drivers,
       loads: r.loads,
       load_state_miles: r.load_state_miles,

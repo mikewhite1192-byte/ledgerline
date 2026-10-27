@@ -413,6 +413,13 @@ describe("approving a pay rule change", () => {
       ),
     );
     expect(await sqlStateOf(again)).toBe("23505");
+
+    // The app login adds saved changes but never erases one (0030 grants no DELETE).
+    const erase = app.withTenant(A.tenantId, (q) =>
+      q.execute("DELETE FROM pay_rule_changes WHERE tenant_id = current_tenant_id()"),
+    );
+    expect(await sqlStateOf(erase)).toBe("42501");
+    expect(await changesOf(A)).toHaveLength(1);
   });
 
   it("edits a version that starts that same week in place, keeping its note", async () => {

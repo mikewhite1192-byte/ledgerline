@@ -50,4 +50,6 @@ ALTER TABLE pay_rule_changes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pay_rule_changes FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON pay_rule_changes
   USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
-GRANT SELECT, INSERT, DELETE ON pay_rule_changes TO payday_app;
+-- Append-only for the app: no app path deletes a saved change; the demo reset clears these rows
+-- through its own SECURITY DEFINER function (0036).
+GRANT SELECT, INSERT ON pay_rule_changes TO payday_app;

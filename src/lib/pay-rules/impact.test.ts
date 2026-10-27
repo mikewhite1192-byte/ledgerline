@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { configFor } from "../data/config-version";
 import { payConfigOf, settlementInputOf } from "../data/records";
-import { assertPayConfig, settleDriver } from "../rules-engine";
-import { ruleChangeOf, type RuleChange, type RuleChangeArgs } from "./change";
+import { assertPayConfig, cents, settleDriver } from "../rules-engine";
+import { ruleChangeOf, type RuleChange, type RuleChangeArgs, type RuleChangeRows } from "./change";
 import { ruleImpact, TOP_DRIVERS, type ImpactDriver } from "./impact";
 import { applyRule, RULES } from "./rules";
 import { rowsFor } from "./__tests__/rows";
@@ -127,5 +127,78 @@ describe("the impact on last week's pay", () => {
     expect(i.netDeltaCents).toBe(0);
     expect(i.top).toEqual([]);
     expect(i.ownerOperatorsOnly).toBe(false);
+  });
+});
+
+// The escrow a compared week ran from. The driver's balance now already holds what that week took,
+// so a rerun from it can take a different escrow than the week did. The week's own escrow line
+// stores the balance it started from; a week that took none stored none, and its escrow stays out.
+describe("the escrow a compared week ran from", () => {
+  const TARGET_195: RuleChangeArgs = { ruleKey: "escrow_target_cents", newValue: 195_000, askedFrom: "2026-11-02" };
+
+  // One driver's week of Oct 19, with their escrow schedule on the carrier's own target (so the
+  // escrow target rule reaches them), their balance now, and their week's escrow line meta.
+  function rowsWith(code: string, balanceNow: number, lineMeta?: Record<string, number> | null) {
+    const rows = rowsFor("blue-ridge");
+    const driver = rows.drivers.find((d) => d.code === code);
+    const period = rows.settlement_periods.find((p) => p.period_start === WEEK.start);
+    const settlement = rows.settlements.find((s) => s.period_id === period?.id && s.driver_id === driver?.id);
+    if (!driver || !settlement) throw new Error("no such driver week");
+    const line = rows.settlement_lines.find((l) => l.settlement_id === settlement.id && l.kind === "escrow") ?? null;
+    const out: RuleChangeRows = {
+      ...rows,
+      drivers: rows.drivers.map((d) => (d.id === driver.id ? { ...d, escrow_balance_cents: balanceNow } : d)),
+      deduction_schedules: rows.deduction_schedules.map((x) =>
+        x.driver_id === driver.id && x.kind === "escrow" ? { ...x, target_cents: null } : x,
+      ),
+      settlement_lines: rows.settlement_lines.map((l) =>
+        line && l.id === line.id && lineMeta !== undefined ? { ...l, meta: lineMeta } : l,
+      ),
+    };
+    return { rows: out, driver, settlement, line };
+  }
+
+  function impactOf(rows: RuleChangeRows, args: RuleChangeArgs) {
+    const check = ruleChangeOf(rows, args, "skip", NOW);
+    if (!check.ok) throw new Error(`refused: ${check.reason}`);
+    return check.change.impact;
+  }
+
+  it("starts each week from the balance stored on its escrow line, not the balance held now", () => {
+    // The hero's week took $100 of escrow and filled it to the $2,000 target: it started at
+    // $1,900 and the hero holds $2,000 now. From $1,900, a $1,950 target takes $50 that week
+    // instead of $100, so the hero is paid $50 more; from $2,000 neither run would take any.
+    const { rows, driver, settlement, line } = rowsWith("BR-D07", 200_000, {
+      balanceBeforeCents: 190_000,
+      targetCents: 200_000,
+    });
+    expect(line?.amount_cents).toBe(-10_000);
+    // The engine, run from the stored balance under the week's own version, takes what the week took.
+    const input = { ...settlementInputOf(rows, driver.id, WEEK), escrowBalanceCents: cents(190_000) };
+    const ran = settleDriver({ ...input, config: payConfigOf(configFor(rows.pay_configs, WEEK.start)) });
+    expect(ran.lines.find((l) => l.kind === "escrow")?.amountCents).toBe(-10_000);
+    expect(ran.netCents).toBe(settlement.net_cents);
+    const i = impactOf(rows, TARGET_195);
+    expect(i.driversChanged).toBe(1);
+    expect(i.netDeltaCents).toBe(5_000);
+    expect(i.top).toEqual([
+      { driverId: driver.id, code: "BR-D07", deltaCents: 5_000, settlementId: settlement.id },
+    ]);
+  });
+
+  it("leaves escrow out of both runs for a week that took none, whatever the balance held now", () => {
+    // BR-D11's week took no escrow (at the target then). Even with $0 held now, a lower target
+    // changes nothing about a week that took none.
+    const { rows, line } = rowsWith("BR-D11", 0);
+    expect(line).toBeNull();
+    const i = impactOf(rows, { ...TARGET_195, newValue: 5_000 });
+    expect(i.driversChanged).toBe(0);
+    expect(i.netDeltaCents).toBe(0);
+    expect(i.top).toEqual([]);
+  });
+
+  it("refuses to size a week whose escrow line holds no starting balance (unknown, never zero)", () => {
+    const { rows } = rowsWith("BR-D07", 200_000, null);
+    expect(() => ruleChangeOf(rows, TARGET_195, "skip", NOW)).toThrow();
   });
 });

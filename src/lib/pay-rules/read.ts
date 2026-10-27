@@ -2,6 +2,7 @@ import type { Queryable } from "../db";
 import { configForDay } from "../data/config-version";
 import { readPayConfigVersions, readTenant } from "../data/read";
 import type { PayConfigRow, PayRuleChangeRow } from "../data/rows";
+import { ConfigError } from "../rules-engine";
 import { localDateOf, type LocalDate } from "../time/local-date";
 import { nextWeekStart } from "./words";
 
@@ -25,16 +26,20 @@ export async function readPayRuleChanges(q: Queryable): Promise<PayRuleChangeRow
 }
 
 // The first date a change may start: the week after the one that holds now, in the carrier's zone
-// and week shape (every version shares the week shape). Null when the rules cannot be read.
+// and week shape (every version shares the week shape). Null only when the rules hold no week
+// (no version, two on one date, a changed week shape). A failed read is not "no week": it throws,
+// and the caller shows its own error state.
 export async function readNextWeekStart(q: Queryable, now: Date): Promise<LocalDate | null> {
   const tenant = await readTenant(q);
   if (!tenant) return null;
+  let first: PayConfigRow;
   try {
-    const [first] = await readPayConfigVersions(q);
-    return nextWeekStart(now, tenant.timezone, first.week_start_dow);
-  } catch {
-    return null;
+    [first] = await readPayConfigVersions(q);
+  } catch (error) {
+    if (error instanceof ConfigError) return null;
+    throw error;
   }
+  return nextWeekStart(now, tenant.timezone, first.week_start_dow);
 }
 
 export type PayRulesVersion = PayConfigRow & { weeksPaid: number };

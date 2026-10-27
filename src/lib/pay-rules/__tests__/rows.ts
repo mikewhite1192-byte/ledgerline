@@ -23,6 +23,7 @@ export function rowsFor(slug: "blue-ridge" | "prairie-wind"): RuleChangeRows {
       pay_configs: r.pay_configs,
       settlement_periods: r.settlement_periods,
       settlements: r.settlements,
+      settlement_lines: r.settlement_lines,
       drivers: r.drivers,
       loads: r.loads,
       load_state_miles: r.load_state_miles,
@@ -40,6 +41,7 @@ export function rowsFor(slug: "blue-ridge" | "prairie-wind"): RuleChangeRows {
     pay_configs: [...rows.pay_configs],
     settlement_periods: [...rows.settlement_periods],
     settlements: [...rows.settlements],
+    settlement_lines: [...rows.settlement_lines],
   };
 }
 

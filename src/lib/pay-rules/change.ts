@@ -1,19 +1,23 @@
 import { z } from "zod";
 import type { Queryable } from "../db";
 import { configFor, sortVersions } from "../data/config-version";
-import { readTable, readTenant, type TenantSummary } from "../data/read";
+import { readEscrowLines, readTable, readTenant, type TenantSummary } from "../data/read";
 import { payConfigOf, settlementInputOf } from "../data/records";
 import type {
   PayConfigRow,
+  SettlementLineRow,
   SettlementPeriodRow,
   SettlementRow,
   TenantRows,
 } from "../data/rows";
 import {
+  assertCents,
   assertPayConfig,
+  cents,
   ConfigError,
   INSURANCE_APPLIES_TO,
   PERCENT_BASES,
+  type SettlementInput,
   type SourceRef,
 } from "../rules-engine";
 import {
@@ -106,6 +110,9 @@ export type RuleChangeRows = DriverRows & {
   tenant: TenantSummary;
   settlement_periods: SettlementPeriodRow[];
   settlements: SettlementRow[];
+  // The escrow lines of the tenant's settlements (the reader loads no other kind; any other line
+  // here is ignored). Each holds the escrow balance its week started from.
+  settlement_lines: SettlementLineRow[];
 };
 
 // The rows a change is checked and sized from, for the current tenant. Read-only; the executor
@@ -118,6 +125,7 @@ export async function readRuleChangeRows(q: Queryable): Promise<RuleChangeRows> 
     pay_configs: await readTable(q, "pay_configs"),
     settlement_periods: await readTable(q, "settlement_periods"),
     settlements: await readTable(q, "settlements"),
+    settlement_lines: await readEscrowLines(q),
     drivers: await readTable(q, "drivers"),
     loads: await readTable(q, "loads"),
     load_state_miles: await readTable(q, "load_state_miles"),
@@ -147,6 +155,32 @@ function configRefusal(error: unknown): RuleChangeRefusal {
     : "week_shape";
 }
 
+// The escrow a frozen week ran from, from that week's own stored records only. The driver's
+// balance now already holds what that week (and any week after it) took, so it is never used.
+// The engine stores the balance a week started from on the week's escrow line
+// (meta.balanceBeforeCents), so both runs start from it. A week that took no escrow stored no
+// balance: its escrow stays out of both runs, at the none the week took, rather than guessed.
+// A line without a whole stored balance, or two escrow lines on one settlement, throws (unknown).
+function escrowAsPaid(
+  settlementId: string,
+  lines: readonly SettlementLineRow[],
+  input: SettlementInput,
+): SettlementInput {
+  const own = lines.filter((l) => l.settlement_id === settlementId && l.kind === "escrow");
+  if (own.length > 1) throw new Error("a settlement has more than one escrow line");
+  if (own.length === 0) {
+    return {
+      ...input,
+      schedules: input.schedules.filter((s) => s.kind !== "escrow"),
+      escrowBalanceCents: cents(0),
+    };
+  }
+  return {
+    ...input,
+    escrowBalanceCents: assertCents(own[0].meta?.balanceBeforeCents, "the escrow line's starting balance"),
+  };
+}
+
 // The newest frozen week and its frozen settlements, each with the engine's input for it.
 function comparedWeek(rows: RuleChangeRows): {
   period: SettlementPeriodRow | null;
@@ -169,7 +203,7 @@ function comparedWeek(rows: RuleChangeRows): {
         code: driver.code,
         workerType: driver.worker_type,
         settlementId: s.id,
-        input: settlementInputOf(rows, driver.id, span),
+        input: escrowAsPaid(s.id, rows.settlement_lines, settlementInputOf(rows, driver.id, span)),
       };
     })
     .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));

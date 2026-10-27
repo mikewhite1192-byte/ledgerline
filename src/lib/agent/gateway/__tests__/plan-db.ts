@@ -1,6 +1,6 @@
 import type { Param } from "../../../db";
 import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
-import { QUEUE_CHILDREN, QUEUE_LOADS } from "../../../data/read";
+import { ESCROW_LINES, QUEUE_CHILDREN, QUEUE_LOADS } from "../../../data/read";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
@@ -93,6 +93,7 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
     return all.filter((r) => loadIds.has(r.load_id as string));
   }
   if (where === "status = $1") return all.filter((r) => r.status === params[0]);
+  if (where === ESCROW_LINES) return all.filter((r) => r.kind === "escrow");
   if (where === QUEUE_LOADS || where === QUEUE_CHILDREN) {
     const invoiced = new Set(rows.invoices.map((i) => i.load_id));
     const queued = new Set(
