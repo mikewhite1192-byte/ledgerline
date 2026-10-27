@@ -38,6 +38,8 @@ export const REASON_CATEGORIES = [
   "capped_to_eligible",
   // A proposal exception: the advance names a card that is not one of the driver's active cards.
   "card_not_drivers",
+  // A proposal exception: a card match names a driver the candidates for that card do not include.
+  "driver_not_candidate",
 ] as const;
 export type ReasonCategory = (typeof REASON_CATEGORIES)[number];
 
@@ -142,6 +144,7 @@ export const PROPOSAL_KINDS = [
   "payment_reapply",
   "detention_charge",
   "settlement_approve",
+  "card_match",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 

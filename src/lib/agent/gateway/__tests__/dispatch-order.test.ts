@@ -11,6 +11,7 @@ import { callTool, capResult, MAX_RESULT_CHARS } from "../index";
 import { UNTRUSTED_WARNING } from "../tools/read/get-inbound-message";
 import type { CompleteFn, GatewayContext } from "../types";
 import { context, fixedClock, NOW, OTHER_ID, type FakeDb, type Handler } from "./fake-db";
+import { cardReconHandler } from "./card-db";
 import { blueRidgePlan, planDb, proposalRowFor, withProposal } from "./plan-db";
 import { sampleArgs } from "./sample-args";
 
@@ -19,6 +20,7 @@ import { sampleArgs } from "./sample-args";
 // (two when the call screened outside text: the screen logs its own).
 
 const plan = blueRidgePlan();
+const cards = cardReconHandler(plan);
 const zone = plan.carrier.timezone;
 const hero = plan.rows.drivers.find((d) => d.code === plan.carrier.heroCode)!;
 const today = addDays(plan.anchor, -2);
@@ -426,15 +428,18 @@ describe("callTool dispatch order", () => {
     flags.invoicesEnabled = true;
     flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
+    flags.cardRecon.enabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;
       flags.invoicesEnabled = false;
       flags.invoiceReviewEnabled = false;
       flags.customerPaymentsEnabled = false;
+      flags.cardRecon.enabled = false;
     });
     for (const [name, args] of Object.entries(ARGS)) {
       const auditor = name === "get_proposal";
-      const db = planDb(plan, auditor ? withProposal(proposalRowFor(plan, "advance_payout"), screenStore) : screenStore);
+      const store: Handler = (sql, params) => screenStore(sql, params) ?? cards(sql, params);
+      const db = planDb(plan, auditor ? withProposal(proposalRowFor(plan, "advance_payout"), store) : store);
       // get_document reads only an uploaded document: the seeded document input gets one, not read.
       if (name === "get_document") {
         db.tables.documents = [

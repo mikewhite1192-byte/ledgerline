@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Queryable } from "../../../../db";
+import { readCandidateFacts, readMatchFacts } from "../../../../data/card-recon";
 import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionChargeRows } from "../../../../data/detention-charge";
 import { loadsOf } from "../../../../data/records";
 import {
@@ -19,6 +20,7 @@ import {
   invoiceAmount,
   runAllChecks,
 } from "../../../../rules-engine";
+import { rankCandidates, topIsTied } from "../../../../rules-engine/card-recon";
 import { localDateOf } from "../../../../time/local-date";
 import { isUuid } from "../../../../uuid";
 import { defineTool, type AgentRole, type GatewayContext } from "../../types";
@@ -90,6 +92,8 @@ const SOURCE_FIELDS: Partial<Record<TenantTable, readonly string[]>> = {
   invoices: ["source", "load_id", "customer_id", "invoice_number", "amount_cents", "issued_on", "due_on", "status", "paid_on"],
   customer_payments: ["customer_id", "received_on", "amount_cents", "method", "source"],
   payment_applications: ["payment_id", "invoice_id", "amount_cents"],
+  // A card statement row by its last four digits; never the token or the merchant.
+  card_transactions: ["kind", "card_last4", "posted_on", "amount_cents", "state", "gallons_milli"],
 };
 
 // A code, an enum, an id, a date or an instant. Anything with a space or other characters is
@@ -217,6 +221,8 @@ const PROPOSAL_SQL = `
              SELECT cp.payment_ref FROM payment_applications a
                JOIN customer_payments cp ON cp.tenant_id = a.tenant_id AND cp.id = a.payment_id
               WHERE a.tenant_id = current_tenant_id() AND a.id = p.subject_id)
+           WHEN 'card_transactions' THEN (SELECT t.card_last4 FROM card_transactions t
+                                           WHERE t.tenant_id = current_tenant_id() AND t.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.operator_verdict, p.status,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources,
@@ -500,6 +506,40 @@ async function paymentReapplyEngine(
   };
 }
 
+// A card match (card_match), checked the way its executor checks it: the statement row is still a
+// fuel purchase on a card on no driver's file and not recorded yet, its cents equal the card's,
+// and where the driver stands among the candidates code ranks for it now.
+async function cardMatchEngine(p: ProposalRow, q: Queryable, args: Record<string, unknown>): Promise<Engine> {
+  const { transactionId, driverId } = args;
+  if (
+    p.subject_table !== "card_transactions" ||
+    transactionId !== p.subject_id ||
+    !isUuid(transactionId) ||
+    !isUuid(driverId)
+  ) {
+    return UNAVAILABLE;
+  }
+  const facts = await readMatchFacts(q, transactionId);
+  if (!facts) return { ok: true, check: "card_match", found: false };
+  const candidates = rankCandidates(facts.txn, await readCandidateFacts(q, facts.txn.postedOn));
+  const chosen = candidates.find((c) => c.driverId === driverId) ?? null;
+  return {
+    ok: true,
+    check: "card_match",
+    found: true,
+    proposedCents: Number(p.amount_cents),
+    transactionCents: facts.txn.amountCents,
+    fuelPurchase: facts.kind === "fuel",
+    cardOnFile: facts.cardOnFile,
+    purchaseOnFile: facts.purchaseOnFile,
+    driverIsCandidate: chosen !== null,
+    score: chosen?.score ?? null,
+    topScore: candidates[0]?.score ?? null,
+    tied: topIsTied(candidates),
+    candidates: candidates.map((c) => ({ driverId: c.driverId, score: c.score, reasons: [...c.reasons] })),
+  };
+}
+
 // The engine's own number for the proposal. A read or engine error is unavailable, never zero.
 async function engineFor(
   q: Queryable,
@@ -520,6 +560,7 @@ async function engineFor(
     if (p.kind === "detention_charge") return await detentionEngine(q, p);
     // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
     if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
+    if (p.kind === "card_match") return await cardMatchEngine(p, q, args);
     return UNAVAILABLE;
   } catch {
     console.warn("gateway: the auditor's engine check could not be computed");

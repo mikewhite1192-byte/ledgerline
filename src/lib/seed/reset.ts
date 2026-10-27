@@ -20,7 +20,7 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      function, which checks the same things again under the tenant row lock and deletes the settled ledger rows, the
 //      agent's records and the fictional broker portal's loads (the app role has no DELETE on
 //      them); the portal's loads come back only with npm run seed, since the app cannot write them;
-//   4. the seed's replace of the 22 seeded tables, as the app role, under row-level security (the
+//   4. the seed's replace of the 25 seeded tables, as the app role, under row-level security (the
 //      arming log, which the app role may add to but never delete from, goes with its drivers
 //      through the foreign key's cascade, and the plan's log is written again);
 //   5. the read-back: every seeded table equals the plan, every cleared table is empty, and the
@@ -136,6 +136,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   load_accessorials: "Load charges (detention and other extras)",
   driver_days: "Driver days",
   fuel_purchases: "Fuel purchases",
+  card_transactions: "Card provider statement (test mode)",
   pay_configs: "Pay rules",
   deduction_schedules: "Deduction schedules",
   settlement_periods: "Pay weeks",
@@ -148,6 +149,8 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   payment_applications: "Payment applications",
   untrusted_inputs: "Inbound messages",
   screenings: "Message screenings",
+  card_recon_runs: "Card checks",
+  card_recon_breaks: "Card check differences",
   money_actions: "Settled payouts and bookings (test mode)",
   documents: "Uploaded documents",
   evidence_clips: "Dock clips",

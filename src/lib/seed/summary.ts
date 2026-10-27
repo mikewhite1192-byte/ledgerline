@@ -77,6 +77,15 @@ export type CarrierSummary = {
     podCustomers: string[];
     plants: { plant: string; invoiceNumber: string; customerCode: string; amountCents: number }[];
   };
+  // The card provider's statement plants, and the driver the unknown card's candidates put on top
+  // (null: a tie a person resolves).
+  cardRecon: {
+    planted: Record<
+      "fuelAmountDiffers" | "purchaseNotRecorded" | "cardUnknown" | "loadNotInLedger",
+      { postedOn: string; last4: string; amountCents: number; state: string | null }
+    >;
+    candidateDriverCode: string | null;
+  };
 };
 
 export function countRows(rows: TenantRows): Record<TenantTable, number> {
@@ -225,6 +234,21 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
     ],
   };
 
+  const cr = plan.planted.cardRecon;
+  const statementPlant = (id: string) => {
+    const t = rows.card_transactions.find((x) => x.id === id)!;
+    return { postedOn: t.posted_on, last4: t.card_last4, amountCents: t.amount_cents, state: t.state };
+  };
+  const cardRecon = {
+    planted: {
+      fuelAmountDiffers: statementPlant(cr.fuelAmountDiffersId),
+      purchaseNotRecorded: statementPlant(cr.purchaseNotRecordedId),
+      cardUnknown: statementPlant(cr.cardUnknownId),
+      loadNotInLedger: statementPlant(cr.loadNotInLedgerId),
+    },
+    candidateDriverCode: rows.drivers.find((d) => d.id === cr.candidateDriverId)?.code ?? null,
+  };
+
   return {
     counts: countRows(rows),
     linehaulCents: rows.loads.reduce((n, l) => n + (l.linehaul_cents ?? 0), 0),
@@ -242,5 +266,6 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
     detention,
     collections,
     invoiceReview,
+    cardRecon,
   };
 }

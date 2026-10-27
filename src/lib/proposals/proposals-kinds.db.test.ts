@@ -89,8 +89,9 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // 0013, 0015, 0022 and 0032 each re-create the check, so whichever ran last decides it. Every
-    // one of them lists these kinds, kinds without code included.
+    // 0013, 0015, 0022, 0032 and 0046 each re-create the check, so whichever ran last decides it.
+    // Every one of them lists the first eight kinds, kinds without code included. Only 0046 lists
+    // card_match, and it runs last in both the number order and the production order.
     const union = [
       "advance_payout",
       "pay_correction",
@@ -100,10 +101,18 @@ describe("proposal kinds and origins on a fresh database", () => {
       "payment_reapply",
       "settlement_approve",
       "detention_charge",
+      "card_match",
     ];
-    // 0013 and 0015 list these three more and 0032 these four; 0022 lists none of them, so the
+    // 0013 and 0015 list three more, 0032 four and 0046 five; 0022 lists none of them, so the
     // check keeps them only when a migration that lists them ran after 0022.
-    const widest = [...union, "factoring_request", "bill_defer", "collections_chase", "pay_rule_change"];
+    const widest = [
+      ...union,
+      "factoring_request",
+      "bill_defer",
+      "collections_chase",
+      "pay_rule_change",
+      "money_code",
+    ];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);
     }

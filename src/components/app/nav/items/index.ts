@@ -3,6 +3,7 @@
 // from its line in this list (app-nav.test.tsx checks both).
 export { accounting } from "./accounting";
 export { advances } from "./advances";
+export { cards } from "./cards";
 export { clips } from "./clips";
 export { customerPayments } from "./customer-payments";
 export { demo } from "./demo";

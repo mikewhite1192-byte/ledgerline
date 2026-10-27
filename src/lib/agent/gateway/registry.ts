@@ -8,6 +8,7 @@ import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention"
 import { getAdvanceHeadroom } from "./tools/read/get-advance-headroom";
 import { getAdvances } from "./tools/read/get-advances";
 import { getArAging } from "./tools/read/get-ar-aging";
+import { getCardBreaks } from "./tools/read/get-card-breaks";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
@@ -33,6 +34,7 @@ import { reportDriverPaySummary } from "./tools/read/report-driver-pay-summary";
 import { reportMarginPerLoad } from "./tools/read/report-margin-per-load";
 import { runChecks } from "./tools/read/run-checks";
 import { proposeAdvance } from "./tools/propose/propose-advance";
+import { proposeCardMatch } from "./tools/propose/propose-card-match";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
@@ -86,6 +88,8 @@ const TOOLS: readonly AnyToolDef[] = [
   proposePaymentReapply,
   proposeLoadRate,
   proposeDetentionCharge,
+  getCardBreaks,
+  proposeCardMatch,
   getPortalEvidence,
   classifyMessage,
 ];

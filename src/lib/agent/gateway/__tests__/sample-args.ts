@@ -17,6 +17,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const detentionLoad = plan.planted.detentionLoadIds[0];
   const delivered = rows.loads.find((l) => l.status === "delivered") ?? rows.loads[0];
   const refs = [{ table: "drivers", id: hero.id }];
+  // The statement's planted card that is on no driver's file, and the driver code ranks first.
+  const unknownCard = plan.planted.cardRecon;
   return {
     get_driver: { driverId: hero.id },
     get_loads: { driverId: hero.id, from: paid.period_start, to: open.period_end },
@@ -92,6 +94,11 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     },
     get_driver_identity: { driverId: hero.id },
     get_advance_headroom: { driverId: hero.id, amountCents: 10_000 },
+    get_card_breaks: { status: "open", limit: 10 },
+    propose_card_match: {
+      transactionId: unknownCard.cardUnknownId,
+      driverId: unknownCard.candidateDriverId ?? hero.id,
+    },
     // Proposals are not in a seed plan; any well-formed id parses.
     get_proposal: { proposalId: "6a1f0c2e-9d3b-4c5a-8e7f-1b2c3d4e5f60" },
   };

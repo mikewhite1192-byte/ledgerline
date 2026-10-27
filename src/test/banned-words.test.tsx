@@ -234,6 +234,11 @@ vi.mock("@/lib/driver-notes/view", async (importOriginal) => ({
   readPeriodNotes: async () => get("periodNotes"),
   readDriverView: async () => get("driverView"),
 }));
+vi.mock("@/lib/recon/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/recon/view")>()),
+  readCardHome: async () => get("cardHome"),
+  readCardBreak: async () => get("cardBreak"),
+}));
 vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/agent/gateway/store")>()),
   readEngineProposalViews: async () => get("invoiceProposals"),
@@ -348,6 +353,8 @@ function defaults(): Record<string, unknown> {
     paystubAsk: null,
     reviewQueue: fx.REVIEW_QUEUE,
     invoiceReview: fx.INVOICE_REVIEW,
+    cardHome: fx.CARD_HOME,
+    cardBreak: fx.CARD_BREAKS[0],
   };
 }
 
@@ -470,8 +477,51 @@ const SETTLEMENT_CASES: [string, SettlementRecordView][] = [
   ],
 ];
 
+// The card check's switch sits inside its own settings block, so its pages turn it on themselves.
+const cardReconSaved = flags.cardRecon.enabled;
+afterAll(() => {
+  flags.cardRecon.enabled = cardReconSaved;
+});
+const cardsOn = (fixtures: Record<string, unknown>) => () => {
+  flags.cardRecon.enabled = true;
+  Object.assign(state.fx, fixtures);
+};
+const NO_RUN_HOME = { run: null, breaks: [], open: { needsYou: 0, notConfirmed: 0 } };
+const CARD_PAGE_CASES: [string, Record<string, unknown>][] = [
+  ["differences", { cardHome: fx.CARD_HOME }],
+  ["first visit", { cardHome: NO_RUN_HOME }],
+  ["running", { cardHome: { ...NO_RUN_HOME, run: { ...fx.CARD_RUN, status: "running", phase: "records", finishedAt: null, unchecked: [] } } }],
+  ["stopped", { cardHome: { ...NO_RUN_HOME, run: { ...fx.CARD_RUN, status: "failed", failCategory: "unknown" } } }],
+  ["all clear", { cardHome: { ...NO_RUN_HOME, run: { ...fx.CARD_RUN, counts: { ...fx.CARD_RUN.counts, needsYou: 0, notConfirmed: 0 }, unchecked: [] } } }],
+];
+const CARD_BREAK_CASES: [string, Record<string, unknown>][] = [
+  ...fx.CARD_BREAKS.map((b, i): [string, Record<string, unknown>] => [
+    `${b.category} ${i + 1}`,
+    { cardBreak: b, invoiceProposals: b.fixKind === "card_match" && b.proposalId ? [fx.CARD_MATCH_PROPOSAL] : [] },
+  ]),
+  ["fixed", { cardBreak: { ...fx.CARD_BREAKS[2], status: "resolved" }, invoiceProposals: [] }],
+  ["dismissed", { cardBreak: { ...fx.CARD_BREAKS[3], status: "dismissed", dismissCategory: "wrong_system" }, invoiceProposals: [] }],
+];
+
 // Every page that renders, keyed by its file under src/app, with each state worth reading.
 const PAGES: PageCase[] = [
+  {
+    file: "cards/page.tsx",
+    variants: CARD_PAGE_CASES.map(([name, fixtures]) => ({
+      name,
+      setup: cardsOn(fixtures),
+      load: async () => (await import("@/app/cards/page")).default(),
+    })),
+  },
+  {
+    file: "cards/[breakId]/page.tsx",
+    variants: CARD_BREAK_CASES.map(([name, fixtures]) => ({
+      name,
+      setup: cardsOn(fixtures),
+      load: async () => (await import("@/app/cards/[breakId]/page")).default({ params: p({ breakId: ID }) }),
+      shows: "Our records",
+    })),
+  },
   {
     file: "page.tsx",
     variants: [

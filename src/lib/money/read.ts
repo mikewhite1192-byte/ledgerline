@@ -174,6 +174,20 @@ export function readByKind(q: Queryable, kind: MoneyActionKind): Promise<MoneyAc
   return many(q, "kind = $1", [kind], " ORDER BY created_at, attempt, id");
 }
 
+// The card check's reading list: every row sent at or after an instant, in any state, oldest
+// first, at most limit of them. The check reads back the confirmed ones, flags the unconfirmed
+// ones, and lets a row that has since failed or confirmed close what an earlier check found on
+// it. Read only; the check never changes a row.
+export function readSentSince(q: Queryable, sinceIso: string, limit: number): Promise<MoneyAction[]> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new RangeError("limit is 1 to 1000");
+  return many(
+    q,
+    "sent_at >= CAST($1 AS timestamptz)",
+    [sinceIso],
+    ` ORDER BY sent_at, id LIMIT ${limit}`,
+  );
+}
+
 // One record whose ledger rows a pending read is limited to.
 export type PendingSubject = { table: SubjectTable; id: string };
 const SUBJECT_TABLES: readonly SubjectTable[] = ["advances", "settlements", "invoices", "customer_payments"];
