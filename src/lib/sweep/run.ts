@@ -26,7 +26,7 @@ import {
   type PlanLeg,
   type SettlementException,
 } from "./plan";
-import { fanoutLimits, fanoutOn } from "./fanout/limits";
+import { fanoutLimits, fanoutOn, lockTenantDay } from "./fanout/limits";
 import { checkPhase, planPhase, reconcilePhase, type FanoutCtx } from "./fanout/run";
 import { serviceSession } from "./service-session";
 
@@ -937,18 +937,22 @@ async function writeStatus(ctx: Ctx, itemId: string, w: StatusWrite): Promise<vo
 // Counts cents against the run's cap before a call; false when they do not fit. The second
 // opinion's holds (reserved_cents) count against the same cap. The sweep's own calls also stay
 // within the sweep's own budget (sweepLimits.maxRunCents), which the second opinion's larger cap
-// does not raise: own_spent_cents is the part of spent_cents these calls counted.
+// does not raise: own_spent_cents is the part of spent_cents these calls counted. These cents add
+// to the carrier's day total too (its cap never refuses them), so they are counted under the
+// carrier's lock, like the second opinion's holds: a check batch sized from the day's room is
+// never undercut by another run's call between the read and the hold.
 async function reserveCents(ctx: Ctx, cents: number): Promise<boolean> {
   if (!Number.isSafeInteger(cents) || cents <= 0) return false;
-  const rows = await leased(ctx, (q) =>
-    q.query<{ id: string }>(
+  const rows = await leased(ctx, async (q) => {
+    await lockTenantDay(q);
+    return q.query<{ id: string }>(
       `UPDATE sweep_runs SET spent_cents = spent_cents + $2, own_spent_cents = own_spent_cents + $2
         WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()
           AND spent_cents + reserved_cents + $2 <= cap_cents AND own_spent_cents + $2 <= $3
         RETURNING id`,
       [ctx.runId, cents, flags.sweepLimits.maxRunCents],
-    ),
-  );
+    );
+  });
   return rows.length === 1;
 }
 

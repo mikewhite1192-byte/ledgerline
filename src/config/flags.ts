@@ -243,8 +243,10 @@ export type Flags = {
     reconcileCents: number;
     // One driver's check, start to answer, in milliseconds.
     childTimeoutMs: number;
-    // Sweep model spend one carrier may count in one of its local days, in cents. Over it, a run
-    // skips the second opinion and finishes as a plain sweep.
+    // Sweep model spend one carrier may count in one of its local days, in cents. A run that
+    // reaches the second opinion with the day already at it skips it and finishes as a plain
+    // sweep, and every hold the second opinion takes must fit what is left of it across the
+    // carrier's runs that day.
     tenantDayCents: number;
     // Runs with the second opinion one carrier may start in one of its local days.
     runsPerTenantDay: number;

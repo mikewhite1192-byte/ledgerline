@@ -1,5 +1,6 @@
 import { flags, type Flags } from "../../../config/flags";
 import type { Queryable } from "../../db";
+import { tenantLock } from "../../invoices/number";
 
 // The second opinion's switch and the run-level spend helpers (design 3.7, layer 3).
 
@@ -30,20 +31,44 @@ export function refusedByProvider(category: string, httpStatus: number | undefin
   return httpStatus !== undefined && REFUSED_WITH_STATUS.get(category) === httpStatus;
 }
 
+// The sweep spend counted (held included) by every run this carrier started on the same day, in
+// its own time zone, as the run in `runParam`. A run counts in the day it started, so a run that
+// goes on past midnight is held against that day's cap.
+export function daySpentSql(runParam: string): string {
+  return `(SELECT COALESCE(SUM(d.spent_cents + d.reserved_cents), 0)
+             FROM sweep_runs d
+             JOIN tenants t ON t.id = d.tenant_id
+             JOIN sweep_runs me ON me.tenant_id = d.tenant_id AND me.id = CAST(${runParam} AS uuid)
+            WHERE d.tenant_id = current_tenant_id()
+              AND (d.started_at AT TIME ZONE t.timezone)::date = (me.started_at AT TIME ZONE t.timezone)::date)`;
+}
+
+// The carrier's day cap is shared by all its runs: their holds are taken one at a time. The lock
+// is held to the end of the caller's transaction, so the next hold's read sees this one, and a
+// caller that sizes a hold takes it before it reads the room.
+export async function lockTenantDay(q: Queryable): Promise<void> {
+  await tenantLock(q, "sweep_day_cents");
+}
+
 // Holds cents against the run's cap before a call. The run must still be this worker's (its
 // lease token) and the hold must fit: spent + reserved + cents <= cap. The second opinion's own
 // part must fit too: its spend (spent less the sweep's own) + reserved + cents <= cap less the
 // sweep's own budget, so the explanations and audits that run after it always keep their whole
-// budget. False: no call.
+// budget. And the carrier's day cap: what all its runs that day counted and hold + cents <=
+// tenantDayCents, checked under the carrier's lock so two runs at once cannot both pass it.
+// False: no call.
 export async function reserveRunCents(q: Queryable, runId: string, leaseToken: string, cents: number): Promise<boolean> {
-  if (!whole(cents)) return false;
+  const dayCents = flags.fanoutLimits.tenantDayCents;
+  if (!whole(cents) || !Number.isSafeInteger(dayCents)) return false;
+  await lockTenantDay(q);
   const rows = await q.query<{ id: string }>(
     `UPDATE sweep_runs SET reserved_cents = reserved_cents + $3
       WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND lease_token = CAST($2 AS uuid)
         AND status = 'running' AND spent_cents + reserved_cents + $3 <= cap_cents
         AND (spent_cents - own_spent_cents) + reserved_cents + $3 <= cap_cents - $4
+        AND ${daySpentSql("$1")} + $3 <= $5
       RETURNING id`,
-    [runId, leaseToken, cents, flags.sweepLimits.maxRunCents],
+    [runId, leaseToken, cents, flags.sweepLimits.maxRunCents, dayCents],
   );
   return rows.length === 1;
 }

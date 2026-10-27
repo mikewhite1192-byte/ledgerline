@@ -409,6 +409,88 @@ describe("the sweep's second opinion", () => {
     expect(row.spent_cents - row.own_spent_cents).toBeLessThanOrEqual(row.cap_cents - own);
   });
 
+  // An earlier run the same carrier-local day, finished, that counted `cents`.
+  async function earlierRunToday(like: string, cents: number) {
+    await admin.withTenant(T, (q) =>
+      q.execute(
+        `INSERT INTO sweep_runs (id, tenant_id, period_id, trigger, started_by, cap_cents, started_at, status, finished_at, spent_cents)
+         SELECT CAST($2 AS uuid), current_tenant_id(), period_id, 'button', started_by, cap_cents, started_at, 'done', started_at, $3
+           FROM sweep_runs WHERE id = CAST($1 AS uuid)`,
+        [like, randomUUID(), cents],
+      ),
+    );
+  }
+
+  async function dayTotal() {
+    const rows = await read<{ n: string }>("SELECT COALESCE(SUM(spent_cents + reserved_cents), 0) AS n FROM sweep_runs WHERE tenant_id = CAST($1 AS uuid)", [T]);
+    return Number(rows[0].n);
+  }
+
+  it("holds the second opinion's cents within the carrier's day cap: of two runs holding at once, one wins", async () => {
+    flags.fanoutLimits = { ...flags.fanoutLimits, tenantDayCents: 100 };
+    const a = await start();
+    await earlierRunToday(a, 90);
+    // A second run the same day, on another week (one running run per week).
+    const b = randomUUID();
+    const tokenA = randomUUID();
+    const tokenB = randomUUID();
+    await admin.withTenant(T, async (q) => {
+      const other = await q.query<{ id: string }>(
+        `SELECT CAST(id AS text) AS id FROM settlement_periods
+          WHERE tenant_id = current_tenant_id() AND id <> (SELECT period_id FROM sweep_runs WHERE id = CAST($1 AS uuid))
+          ORDER BY period_start LIMIT 1`,
+        [a],
+      );
+      await q.execute(
+        `INSERT INTO sweep_runs (id, tenant_id, period_id, trigger, started_by, cap_cents, started_at, lease_token)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'button', $3, $4, CAST($5 AS timestamptz), CAST($6 AS uuid))`,
+        [b, other[0].id, SESSION.sub, flags.fanoutLimits.runCapCents, NOW.toISOString(), tokenB],
+      );
+      await q.execute("UPDATE sweep_runs SET lease_token = CAST($2 AS uuid) WHERE id = CAST($1 AS uuid)", [a, tokenA]);
+    });
+    // Each run's own cap has room for 9 cents; the day has 10 left, so only one of the two holds fits.
+    const runs: [string, string][] = [
+      [a, tokenA],
+      [b, tokenB],
+    ];
+    const held = await Promise.all(runs.map(([id, token]) => app.withTenant(T, (q) => reserveRunCents(q, id, token, 9))));
+    expect(held.filter(Boolean)).toHaveLength(1);
+    expect(await dayTotal()).toBe(99);
+    // The day's last cent: 2 do not fit in either run, 1 does.
+    for (const [id, token] of runs) expect(await app.withTenant(T, (q) => reserveRunCents(q, id, token, 2))).toBe(false);
+    expect(await app.withTenant(T, (q) => reserveRunCents(q, b, tokenB, 1))).toBe(true);
+    expect(await app.withTenant(T, (q) => reserveRunCents(q, a, tokenA, 1))).toBe(false);
+    expect(await dayTotal()).toBe(100);
+  });
+
+  it("sizes the checks by what is left of the carrier's day cap after its earlier runs, and the sweep's own calls still run", async () => {
+    const l = flags.fanoutLimits;
+    flags.fanoutLimits = { ...l, tenantDayCents: 100 };
+    const runId = await start();
+    // The earlier run left room under the day cap for one driver's check: not for the plan or the
+    // comparison. The run still starts the second opinion (the day was under its cap).
+    await earlierRunToday(runId, 100 - l.driverCents);
+    const done = await runToEnd(runId);
+    expect(done).toMatchObject({ status: "done", phase: "done", truncatedReason: "cap" });
+
+    const purposes = model.mock.calls.map((c) => (c[1] as AiRequest).purpose);
+    expect(purposes.filter((p) => p === "fanout_plan")).toHaveLength(0);
+    expect(purposes.filter((p) => p === "fanout_reconcile")).toHaveLength(0);
+    expect(purposes.filter((p) => p === "fanout_check")).toHaveLength(2);
+    const rows = await checks(runId);
+    expect(rows.filter((c) => c.status === "done")).toHaveLength(1);
+    expect(rows.filter((c) => c.status === "budget")).toHaveLength(rows.length - 1);
+    expect((await fanoutRow(runId)).status).toBe("plan_budget");
+
+    // The sweep's own calls ran in full: the five explanations at two cents each.
+    expect(explain).toHaveBeenCalledTimes(5);
+    const row = await runRow(runId);
+    expect(row).toMatchObject({ own_spent_cents: 10, reserved_cents: 0 });
+    // The second opinion's spend stayed within the day's room: the one check at two cents.
+    expect(row.spent_cents - row.own_spent_cents).toBe(2);
+    expect(await dayTotal()).toBe(100 - l.driverCents + 2 + 10);
+  });
+
   it.each([
     ["fanout_plan", "plan_turn_id"],
     ["fanout_reconcile", "reconcile_turn_id"],
