@@ -4,7 +4,8 @@ import type { TraceCall, TraceDecision, TraceExtraCall, TraceProposal, TraceStep
 
 // Fixed words for every code a trace carries. Nothing here does math on money: model spend is
 // whole nanocents, cut to tenths of a cent (or whole cents) and always rounded up, so a display
-// never looks smaller than the ledger. Unknown codes read as a generic phrase, never as the code.
+// never looks smaller than the ledger. A cache saving is the opposite: always rounded down, so it
+// never looks bigger than it is. Unknown codes read as a generic phrase, never as the code.
 
 // The model wrapper's unit (1 cent is 1,000,000,000 nanocents). Kept here so the screens that use
 // this file never load the wrapper itself.
@@ -48,14 +49,35 @@ export function targetJob(target: string): string {
 
 const SPARK_VERSION = /^muse-spark-([0-9]{1,2}\.[0-9]{1,2})(?:-contributor)?$/;
 
+// Who serves each target when nothing has gone wrong (the wrapper's TARGETS, kept here so the
+// screens never load the wrapper; format.test.ts holds the two equal), and the words for the
+// hosts a call can come from instead.
+export const PRIMARY_HOSTS: Readonly<Record<string, string>> = {
+  spark: "meta",
+  wonder: "meta",
+  spark_open: "baseten",
+  voice: "meta",
+  image: "meta",
+  sam: "meta",
+};
+
+const HOST_NAMES: Readonly<Record<string, string>> = {
+  baseten: "Baseten",
+  fireworks: "Fireworks",
+};
+
 // The model as people know it: "muse-spark-1.3" reads "Muse Spark 1.3". A model string this
-// table does not know reads as its target's name; an unknown target reads "Other model".
-export function modelName(target: string, model: string): string {
+// table does not know reads as its target's name; an unknown target reads "Other model". A call
+// a standby host served names that host: "Muse Spark Open (via Fireworks)". A call from the
+// target's usual host, or with no host given, reads as before.
+export function modelName(target: string, model: string, provider?: string): string {
+  let name = targetName(target);
   if (target === "spark") {
     const m = SPARK_VERSION.exec(model);
-    if (m) return `Muse Spark ${m[1]}`;
+    if (m) name = `Muse Spark ${m[1]}`;
   }
-  return targetName(target);
+  if (!provider || !has(PRIMARY_HOSTS, target) || PRIMARY_HOSTS[target] === provider) return name;
+  return `${name} (via ${has(HOST_NAMES, provider) ? HOST_NAMES[provider] : "another host"})`;
 }
 
 const EFFORT_WORDS: Readonly<Record<string, string>> = {
@@ -86,6 +108,11 @@ function ceilDiv(n: number, unit: number): number {
   const rest = n % unit;
   const whole = (n - rest) / unit;
   return rest === 0 ? whole : whole + 1;
+}
+
+// Exact integer floor division for non-negative safe integers.
+function floorDiv(n: number, unit: number): number {
+  return (n - (n % unit)) / unit;
 }
 
 function dollarsUp(nanocents: number): string {
@@ -125,6 +152,35 @@ export function formatSpend(nanocents: number): string {
 
 export function countWords(n: number, one: string, many: string): string {
   return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+}
+
+// A cache saving, rounded down: "0.2 cents", "84.3 cents", then "$1.24" from a dollar up, and
+// "under 0.1 cents" for a saving too small to show.
+export function formatSaved(nanocents: number | null): string {
+  if (nanocents === null || !isNanocents(nanocents)) return "not known";
+  if (nanocents === 0) return "nothing";
+  if (nanocents >= 100 * NANOCENTS_PER_CENT) return formatCents(floorDiv(nanocents, NANOCENTS_PER_CENT));
+  const tenths = floorDiv(nanocents, TENTH);
+  return tenths === 0 ? "under 0.1 cents" : tenthsText(tenths);
+}
+
+const isCount = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+
+// Under one model call: how much of its input the prompt cache served and what that saved.
+// Null when either count is missing or they do not fit together (a call not metered in tokens,
+// or one not settled).
+export function formatCached(call: TraceCall): string | null {
+  const { inputTokens: input, cachedTokens: cached } = call;
+  if (!isCount(input) || !isCount(cached) || cached > input) return null;
+  if (cached === 0) return "no input tokens from cache";
+  const part = `${cached.toLocaleString("en-US")} of ${input.toLocaleString("en-US")} input tokens from cache`;
+  return call.savedNanocents === null ? `${part}, saving not known` : `${part}, saved ${formatSaved(call.savedNanocents)} at list price`;
+}
+
+// The share of input tokens served from the cache, as the models page shows it.
+export function formatCachedShare(share: number | null, cached: number): string | null {
+  if (share === null || !isCount(share) || share > 100) return null;
+  return share === 0 && cached > 0 ? "under 1%" : `${share}%`;
 }
 
 const FAILURE_WORDS: Readonly<Record<string, string>> = {
@@ -220,11 +276,13 @@ const PURPOSE_WORDS: Readonly<Record<string, string>> = {
 
 export type TraceTone = "neutral" | "info" | "success" | "warning" | "destructive";
 
-// One row of the disclosure: who did it, its effort, time and cost, and what happened.
+// One row of the disclosure: who did it, its effort, time and cost, and what happened. cache is
+// the prompt cache line for a row that names a model call, set only when the call has counts.
 export type TraceLine = {
   key: string;
   who: string;
   meta: string[];
+  cache?: string;
   text: string;
   badge: { tone: TraceTone; label: string } | null;
   refs: { table: string; id: string }[];
@@ -250,7 +308,7 @@ function callTrouble(call: TraceCall): string | null {
 }
 
 function modelStepLine(s: TraceStep, call: TraceCall | null): TraceLine {
-  const who = call ? modelName(call.target, call.model) : "Muse Spark";
+  const who = call ? modelName(call.target, call.model, call.provider) : "Muse Spark";
   const meta = call ? callMeta(call) : [];
   if (s.state === "failed" || (call && CALL_FAILED.has(call.status))) {
     const trouble = call ? callTrouble(call) : null;
@@ -268,6 +326,8 @@ function modelStepLine(s: TraceStep, call: TraceCall | null): TraceLine {
   }
   const n = s.toolCalls ?? 0;
   let text = n > 0 ? `Planned the next step: asked for ${countWords(n, "tool", "tools")}` : "Wrote the answer";
+  const searches = s.toolSearches ?? 0;
+  if (searches > 0) text += searches === 1 ? ", after one tool search" : `, after ${countWords(searches, "tool search", "tool searches")}`;
   if (s.incomplete) text += ", but the reply was cut short";
   return { key: `step:${s.seq}`, who, meta, text, badge: null, refs: [] };
 }
@@ -308,7 +368,7 @@ function escalationLine(s: TraceStep, call: TraceCall | null): TraceLine {
   }
   return {
     key: `step:${s.seq}`,
-    who: call ? modelName(call.target, call.model) : "Muse Wonder",
+    who: call ? modelName(call.target, call.model, call.provider) : "Muse Wonder",
     meta: call ? callMeta(call) : [],
     text,
     badge: done ? { tone: "info", label: "Escalated" } : { tone: "destructive", label: "Failed" },
@@ -334,7 +394,7 @@ function proposalStepLine(s: TraceStep): TraceLine {
 }
 
 function extraLine(c: TraceExtraCall): TraceLine {
-  const who = modelName(c.target, c.model);
+  const who = modelName(c.target, c.model, c.provider);
   const meta = callMeta(c);
   if (c.purpose === SCREEN_PURPOSE || c.screen) {
     const flagged = c.screen?.verdict === "flagged";
@@ -390,7 +450,18 @@ function pairFailedSteps(trace: TurnTrace): { calls: Map<number, TraceCall>; use
   return { calls, used };
 }
 
+// Adds a model call's cache line to its row when the call has the counts for one.
+function withCache(line: TraceLine, call: TraceCall | null): TraceLine {
+  const cache = call ? formatCached(call) : null;
+  return cache === null ? line : { ...line, cache };
+}
+
+// Tool and proposal rows show no model call, so they carry no cache line.
 function stepLine(s: TraceStep, call: TraceCall | null): TraceLine {
+  return withCache(lineOfStep(s, call), s.kind === "tool" || s.kind === "proposal" ? null : call);
+}
+
+function lineOfStep(s: TraceStep, call: TraceCall | null): TraceLine {
   switch (s.kind) {
     case "model":
       return modelStepLine(s, call);
@@ -403,7 +474,7 @@ function stepLine(s: TraceStep, call: TraceCall | null): TraceLine {
     default:
       return {
         key: `step:${s.seq}`,
-        who: call ? modelName(call.target, call.model) : "LedgerLine",
+        who: call ? modelName(call.target, call.model, call.provider) : "LedgerLine",
         meta: call ? callMeta(call) : [],
         text: s.label,
         badge: null,
@@ -417,7 +488,7 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
   if (has(OPERATOR_VERDICTS, p.operatorVerdict)) {
     out.push({
       key: `proposal:${p.id}:operator`,
-      who: operator ? modelName(operator.target, operator.model) : "Muse Spark",
+      who: operator ? modelName(operator.target, operator.model, operator.provider) : "Muse Spark",
       meta: [],
       text: `Judged it: ${OPERATOR_VERDICTS[p.operatorVerdict]}`,
       badge: null,
@@ -449,9 +520,9 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
       p.auditorVerdict !== null && has(AUDITOR_VERDICTS, p.auditorVerdict)
         ? AUDITOR_VERDICTS[p.auditorVerdict]
         : "Has not given a verdict yet";
-    out.push({
+    out.push(withCache({
       key: `proposal:${p.id}:auditor`,
-      who: `Auditor (${p.auditorCall ? modelName(p.auditorCall.target, p.auditorCall.model) : "Muse Wonder"})`,
+      who: `Auditor (${p.auditorCall ? modelName(p.auditorCall.target, p.auditorCall.model, p.auditorCall.provider) : "Muse Wonder"})`,
       meta: p.auditorCall ? callMeta(p.auditorCall) : [],
       text: verdict,
       badge:
@@ -463,7 +534,7 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
               ? { tone: "success", label: "Pass" }
               : null,
       refs: [],
-    });
+    }, p.auditorCall));
   }
   return out;
 }
@@ -515,7 +586,7 @@ export function traceLines(trace: TurnTrace, proposalId?: string): TraceLine[] {
     for (const c of extras) {
       if (c.afterSeq !== after) continue;
       if (proposal && !(proposal.flagged && c.screen?.verdict === "flagged")) continue;
-      out.push(extraLine(c));
+      out.push(withCache(extraLine(c), c));
     }
   };
   pushExtras(0);
@@ -528,7 +599,7 @@ export function traceLines(trace: TurnTrace, proposalId?: string): TraceLine[] {
   for (const c of extras) {
     if (known.has(c.afterSeq)) continue;
     if (proposal && !(proposal.flagged && c.screen?.verdict === "flagged")) continue;
-    out.push(extraLine(c));
+    out.push(withCache(extraLine(c), c));
   }
   if (proposal) out.push(...proposalLines(proposal, subset?.operator ?? null));
   return out;

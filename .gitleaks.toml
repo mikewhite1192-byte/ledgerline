@@ -1,0 +1,14 @@
+# The secret scan uses gitleaks' default rules plus one narrow exception.
+[extend]
+useDefault = true
+
+# Three aging report column keys (days1To30Cents and the two after it) read as random keys to the
+# generic key rule because of their digits. The exception matches the extracted value against
+# exactly those three names, only in the report types file, and only for that one rule.
+[[allowlists]]
+description = "Aging report column keys in src/lib/reports/types.ts are field names, not credentials"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^src/lib/reports/types\.ts$''']
+regexTarget = "secret"
+regexes = ['''^(days1To30Cents|days31To60Cents|days61To90Cents)$''']

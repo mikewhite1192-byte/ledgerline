@@ -76,6 +76,7 @@ function fakeModel(text: string) {
         costNanocents: 1_500_000,
         upstreamId: null,
         replay: [],
+        toolSearches: 0,
       }) satisfies AiResult,
   );
 }

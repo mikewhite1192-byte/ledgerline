@@ -1,4 +1,6 @@
 import type { Queryable } from "../../../db";
+import { argStrings, parseReportArgs } from "../../../reports/args";
+import { isReportName } from "../../../reports/types";
 import { reasonSentence } from "../../reasons";
 import {
   turnErrorFor,
@@ -6,6 +8,7 @@ import {
   type FlagView,
   type ProposalView,
   type RefView,
+  type ReportView,
   type StepView,
   type TurnStatus,
   type TurnView,
@@ -26,7 +29,14 @@ type TurnRow = {
   ended_reason: string | null;
   assistant_text: string;
 };
-type StepRow = { id: string; seq: number | string; kind: string; label: string; state: string };
+type StepRow = {
+  id: string;
+  seq: number | string;
+  kind: string;
+  label: string;
+  state: string;
+  report: string | null;
+};
 type ProposalRow = {
   id: string;
   kind: ProposalView["kind"];
@@ -164,7 +174,8 @@ const PROPOSAL_SQL = `
 
 async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
   const steps = await q.query<StepRow>(
-    "SELECT id, seq, kind, label, state FROM turn_steps WHERE turn_id = CAST($1 AS uuid) ORDER BY seq",
+    `SELECT id, seq, kind, label, state, CAST(detail->'report' AS text) AS report
+       FROM turn_steps WHERE turn_id = CAST($1 AS uuid) ORDER BY seq`,
     [t.id],
   );
   const proposals = await q.query<ProposalRow>(
@@ -201,6 +212,7 @@ async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
       }),
     ),
     proposals: proposals.map(proposalView),
+    reports: steps.flatMap(reportView),
     flags: flags.map(
       (f): FlagView => ({
         inputId: f.input_id,
@@ -210,6 +222,23 @@ async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
     ),
     error: turnErrorFor(status, t.ended_reason),
   };
+}
+
+// The report a finished tool step built, read back through the report's own strict schema;
+// anything that does not parse is left out rather than shown.
+function reportView(s: StepRow): ReportView[] {
+  if (s.kind !== "tool" || s.state !== "done" || s.report === null) return [];
+  let raw: unknown;
+  try {
+    raw = JSON.parse(s.report);
+  } catch {
+    return [];
+  }
+  if (!raw || typeof raw !== "object") return [];
+  const { name, args } = raw as { name?: unknown; args?: unknown };
+  if (!isReportName(name)) return [];
+  const parsed = parseReportArgs(name, args);
+  return parsed ? [{ stepId: s.id, name, args: argStrings(parsed.args) }] : [];
 }
 
 // One turn, only if it is in a conversation this person started.

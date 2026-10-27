@@ -451,4 +451,112 @@ describe("guarded writes and the pending read", () => {
       inA((q) => readPending(q, 0, 5, ["advance" as MoneyActionKind])),
     ).rejects.toBeInstanceOf(RangeError);
   });
+
+  it("reads only one subject's pending rows when a subject is named, and checks it whole first", async () => {
+    const leftUnknown = async (subjectId: string) => {
+      const { action } = await reserveA({ subjectId });
+      await inA((q) => markSent(q, action.id));
+      await inA((q) => settle(q, action.id, { to: "unknown", category: "timeout" }));
+      return action.id;
+    };
+    const mine = await addAdvance(admin, A);
+    const other = await addAdvance(admin, A);
+    const mineId = await leftUnknown(mine);
+    const otherId = await leftUnknown(other);
+    const ids = (rows: MoneyAction[]) => rows.map((a) => a.id);
+
+    expect(ids(await inA((q) => readPending(q, 0, 10))).sort()).toEqual([mineId, otherId].sort());
+    expect(ids(await inA((q) => readPending(q, 0, 10, ["advance_payout"], { table: "advances", id: mine })))).toEqual([
+      mineId,
+    ]);
+    expect(ids(await inA((q) => readPending(q, 0, 10, undefined, { table: "advances", id: other })))).toEqual([
+      otherId,
+    ]);
+    expect(await inA((q) => readPending(q, 0, 10, undefined, { table: "advances", id: randomUUID() }))).toEqual([]);
+    // Another carrier naming the same subject sees nothing.
+    expect(
+      await app.withTenant(B.tenantId, (q) => readPending(q, 0, 10, undefined, { table: "advances", id: mine })),
+    ).toEqual([]);
+    // The subject is checked whole before any SQL.
+    await expect(
+      inA((q) => readPending(q, 0, 10, undefined, { table: "advances", id: "not-a-uuid" })),
+    ).rejects.toBeInstanceOf(RangeError);
+    await expect(
+      inA((q) => readPending(q, 0, 10, undefined, { table: "loads" as "advances", id: mine })),
+    ).rejects.toBeInstanceOf(RangeError);
+  });
+
+  it("lifts the check limit only for one named subject's read-back, keeps the count at 50, and moves no other row", async () => {
+    const atLimit = async (subjectId: string) => {
+      const { action } = await reserveA({ subjectId });
+      await inA((q) => markSent(q, action.id));
+      await inA((q) => settle(q, action.id, { to: "unknown", category: "timeout" }));
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          "UPDATE money_actions SET check_count = 50 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+          [action.id],
+        ),
+      );
+      return action.id;
+    };
+    const mine = { table: "advances" as const, id: await addAdvance(admin, A) };
+    const other = { table: "advances" as const, id: await addAdvance(admin, A) };
+    const lost = { table: "advances" as const, id: await addAdvance(admin, A) };
+    const mineId = await atLimit(mine.id);
+    const otherId = await atLimit(other.id);
+    const lostId = await atLimit(lost.id);
+    const ids = (rows: MoneyAction[]) => rows.map((a) => a.id);
+    const outside = { ...OUTSIDE, amountCents: 25_000 };
+
+    // The automatic read keeps the limit, with or without a subject.
+    expect(await inA((q) => readPending(q, 0, 10))).toEqual([]);
+    expect(await inA((q) => readPending(q, 0, 10, undefined, mine))).toEqual([]);
+    // A person's check of one subject reads that subject's row past the limit, and only it.
+    expect(ids(await inA((q) => readPending(q, 0, 10, undefined, mine, true)))).toEqual([mineId]);
+    // Never without a subject, and never a value that is not a boolean.
+    await expect(inA((q) => readPending(q, 0, 10, undefined, undefined, true))).rejects.toBeInstanceOf(RangeError);
+    const notBoolean = "yes" as unknown as boolean;
+    await expect(inA((q) => readPending(q, 0, 10, undefined, mine, notBoolean))).rejects.toBeInstanceOf(RangeError);
+
+    // Without the lift a row at the limit cannot move; naming another subject moves nothing.
+    expect(await inA((q) => bumpCheck(q, mineId, "unknown"))).toBe(false);
+    expect(await inA((q) => bumpCheck(q, mineId, "unknown", other))).toBe(false);
+    expect(await inA((q) => settle(q, mineId, { to: "confirmed", via: "read_back", outside }, other))).toBe(false);
+    // Only a read-back may lift the limit.
+    await expect(
+      inA((q) => settle(q, otherId, { to: "failed", via: "refused", category: "disabled" }, other)),
+    ).rejects.toBeInstanceOf(RangeError);
+    await expect(inA((q) => settle(q, otherId, { to: "unknown", category: "timeout" }, other))).rejects.toBeInstanceOf(
+      RangeError,
+    );
+
+    // An ambiguous answer keeps the row unknown, and the count stays at 50 (the table allows no more).
+    expect(await inA((q) => bumpCheck(q, mineId, "unknown", mine))).toBe(true);
+    expect(await inA((q) => mustReadAction(q, mineId))).toMatchObject({ state: "unknown", checkCount: 50 });
+    // A definite answer settles it: confirmed is paid; failed frees the subject for a retry.
+    expect(await inA((q) => settle(q, mineId, { to: "confirmed", via: "read_back", outside }, mine))).toBe(true);
+    expect(await inA((q) => mustReadAction(q, mineId))).toMatchObject({
+      state: "confirmed",
+      settledVia: "read_back",
+      checkCount: 50,
+    });
+    expect(
+      await inA((q) =>
+        settle(q, lostId, { to: "failed", via: "read_back", category: "outside_failed", outside }, lost),
+      ),
+    ).toBe(true);
+    expect(await inA((q) => mustReadAction(q, lostId))).toMatchObject({
+      state: "failed",
+      failureCategory: "outside_failed",
+      checkCount: 50,
+    });
+    // A settled row is not moved again, lift or not.
+    expect(await inA((q) => settle(q, mineId, { to: "confirmed", via: "read_back", outside }, mine))).toBe(false);
+    expect(await inA((q) => bumpCheck(q, lostId, "unknown", lost))).toBe(false);
+    // The other subject's row is as it was.
+    expect(await inA((q) => mustReadAction(q, otherId))).toMatchObject({ state: "unknown", checkCount: 50 });
+    // Another carrier naming the same subject reads and moves nothing.
+    expect(await app.withTenant(B.tenantId, (q) => readPending(q, 0, 10, undefined, other, true))).toEqual([]);
+    expect(await app.withTenant(B.tenantId, (q) => bumpCheck(q, otherId, "unknown", other))).toBe(false);
+  });
 });

@@ -88,6 +88,7 @@ export function parseBaseten(json: unknown, httpStatus: number): CallOutcome {
       text: typeof message.content === "string" ? message.content : "",
       toolCalls,
       replay: [],
+      toolSearches: 0,
     },
   };
 }

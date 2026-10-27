@@ -42,6 +42,7 @@ function screenModel(text: string): CompleteFn {
       costNanocents: 1,
       upstreamId: null,
       replay: [],
+      toolSearches: 0,
     }) satisfies AiResult;
 }
 const CLEAN = screenModel("VERDICT: clean\nCATEGORIES: none\nCONFIDENCE: 0.99");

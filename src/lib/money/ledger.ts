@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
-import { DbError, type Queryable } from "../db";
+import { DbError, type Param, type Queryable } from "../db";
 import { idempotencyKey, isAttempt, isCanonicalUuid, requestIdOf } from "./keys";
-import { readAction, readActionByKey } from "./read";
+import { assertPendingSubject, readAction, readActionByKey, type PendingSubject } from "./read";
 import {
   AMOUNT_LIMIT_CENTS,
   isMoneyFailure,
@@ -269,9 +269,29 @@ const FROM_STATES = {
   refused: "state = 'reserved'",
 } as const;
 
+// pastLimit: a person's check on one record's page (reconcile with ignoreCheckLimit) reads that
+// record's rows back even at the check limit. It names the subject, and the row must belong to
+// it; the count then stays at the limit (the column's own check) instead of rising past it.
+function pastLimitGuard(pastLimit: PendingSubject, first: number): { sql: string; params: Param[] } {
+  assertPendingSubject(pastLimit);
+  return {
+    sql: `state IN ('sent', 'unknown') AND subject_table = $${first} AND subject_id = CAST($${first + 1} AS uuid)`,
+    params: [pastLimit.table, pastLimit.id],
+  };
+}
+
 // One guarded UPDATE. true when this call moved the row; false when it had already moved.
-export async function settle(q: Queryable, id: string, s: Settlement): Promise<boolean> {
+// pastLimit applies to a read-back only (see pastLimitGuard).
+export async function settle(
+  q: Queryable,
+  id: string,
+  s: Settlement,
+  pastLimit?: PendingSubject,
+): Promise<boolean> {
   assertId(id);
+  if (pastLimit !== undefined && !(s.to !== "unknown" && s.via === "read_back")) {
+    throw new RangeError("the check limit is lifted only for a read-back");
+  }
   if (s.to === "unknown") {
     if (!isMoneyFailure(s.category)) throw new RangeError("unknown category");
     const n = await q.execute(
@@ -289,12 +309,18 @@ export async function settle(q: Queryable, id: string, s: Settlement): Promise<b
   if (outside !== undefined && !isOutsideRecord(outside)) throw new RangeError("bad outside record");
   const category = s.to === "failed" ? s.category : null;
   if (s.to === "failed" && !isMoneyFailure(category)) throw new RangeError("unknown category");
-  const checked = via === "read_back" ? ", check_count = check_count + 1, last_checked_at = now()" : "";
+  const lifted = pastLimit === undefined ? null : pastLimitGuard(pastLimit, 10);
+  const checked =
+    via !== "read_back"
+      ? ""
+      : lifted
+        ? `, check_count = LEAST(check_count + 1, ${MAX_CHECKS}), last_checked_at = now()`
+        : ", check_count = check_count + 1, last_checked_at = now()";
   const n = await q.execute(
     `UPDATE money_actions SET state = $2, settled_via = $3, settled_at = now(),
         failure_category = $4, outside_system = $5, outside_type = $6, outside_id = $7,
         outside_ref = $8, outside_amount_cents = $9${checked}
-      WHERE ${BY_ID} AND ${FROM_STATES[via]}`,
+      WHERE ${BY_ID} AND ${lifted ? lifted.sql : FROM_STATES[via]}`,
     [
       id,
       s.to,
@@ -305,21 +331,33 @@ export async function settle(q: Queryable, id: string, s: Settlement): Promise<b
       outside?.id ?? null,
       outside?.ref ?? null,
       outside?.amountCents ?? null,
+      ...(lifted ? lifted.params : []),
     ],
   );
   return n === 1;
 }
 
 // A read-back that found nothing or failed: the row is (or stays) unknown, one more check
-// counted. false at the check limit or when the row has settled meanwhile.
-export async function bumpCheck(q: Queryable, id: string, category: MoneyFailure): Promise<boolean> {
+// counted. false at the check limit or when the row has settled meanwhile. With pastLimit (see
+// pastLimitGuard) a row of that subject at the limit stays unknown and its check time moves on.
+export async function bumpCheck(
+  q: Queryable,
+  id: string,
+  category: MoneyFailure,
+  pastLimit?: PendingSubject,
+): Promise<boolean> {
   assertId(id);
   if (!isMoneyFailure(category)) throw new RangeError("unknown category");
+  const lifted = pastLimit === undefined ? null : pastLimitGuard(pastLimit, 3);
   const n = await q.execute(
-    `UPDATE money_actions SET state = 'unknown', failure_category = $2,
-        check_count = check_count + 1, last_checked_at = now()
-      WHERE ${BY_ID} AND state IN ('sent', 'unknown') AND check_count < ${MAX_CHECKS}`,
-    [id, category],
+    lifted
+      ? `UPDATE money_actions SET state = 'unknown', failure_category = $2,
+            check_count = LEAST(check_count + 1, ${MAX_CHECKS}), last_checked_at = now()
+          WHERE ${BY_ID} AND ${lifted.sql}`
+      : `UPDATE money_actions SET state = 'unknown', failure_category = $2,
+            check_count = check_count + 1, last_checked_at = now()
+          WHERE ${BY_ID} AND state IN ('sent', 'unknown') AND check_count < ${MAX_CHECKS}`,
+    [id, category, ...(lifted ? lifted.params : [])],
   );
   return n === 1;
 }

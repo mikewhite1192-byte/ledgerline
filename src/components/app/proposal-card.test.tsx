@@ -30,6 +30,37 @@ describe("ProposalCard", () => {
     expect(button("Reject")).toBeTruthy();
   });
 
+  it("offers one Resume on an approved card that stopped before it finished, and never Reject", () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(<ProposalCard {...card} status="approved" canResume onApprove={onApprove} onReject={onReject} />);
+    expect(screen.queryAllByRole("button").map((b) => b.textContent)).toEqual(["Resume"]);
+    expect(button("Reject")).toBeNull();
+    expect(screen.getByText(/Resume picks it up where it stopped/)).toBeTruthy();
+    // One click: the approval and its confirm already stand.
+    fireEvent.click(button("Resume")!);
+    expect(onApprove).toHaveBeenCalledTimes(1);
+    expect(onApprove).toHaveBeenCalledWith("p-1");
+    expect(onReject).not.toHaveBeenCalled();
+  });
+
+  it("offers no Resume without canResume, and none on any status but approved", () => {
+    const { unmount } = render(<ProposalCard {...card} status="approved" />);
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    unmount();
+    const others: ProposalStatus[] = ["executing", "rejected", "done", "failed", "unknown"];
+    for (const status of others) {
+      const view = render(<ProposalCard {...card} status={status} canResume />);
+      expect(screen.queryAllByRole("button"), status).toHaveLength(0);
+      view.unmount();
+    }
+  });
+
+  it("disables Resume while it is in flight", () => {
+    render(<ProposalCard {...card} status="approved" canResume pending />);
+    expect((button(/Resuming/) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("asks once more and approves only on Confirm", () => {
     const onApprove = vi.fn();
     render(<ProposalCard {...card} onApprove={onApprove} />);

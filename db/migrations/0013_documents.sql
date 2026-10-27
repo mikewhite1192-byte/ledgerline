@@ -70,4 +70,5 @@ GRANT UPDATE (read_status, read_attempts, document_kind, reading, match, untrust
 ALTER TABLE proposals DROP CONSTRAINT proposals_kind_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_kind_check
   CHECK (kind IN ('advance_payout', 'pay_correction', 'invoice_fix', 'load_rate_fill', 'invoice_post',
-                  'payment_reapply', 'settlement_approve', 'detention_charge'));
+                  'payment_reapply', 'settlement_approve', 'detention_charge', 'factoring_request',
+                  'bill_defer', 'collections_chase'));

@@ -32,6 +32,8 @@ export type DriverRow = {
   tank_gallons: number;
   active_from: string;
   active_to: string | null;
+  // The language the driver's pay note is written in (migration 0019).
+  preferred_language: "en" | "es";
 };
 
 export type LoadRow = {
@@ -185,6 +187,10 @@ export type AdvanceRow = {
   source: "ui" | "email" | "seed";
   reason_category: string | null;
   paid_at: string | null;
+  proposal_id: string | null;
+  source_input_id: string | null;
+  decided_at: string | null;
+  decided_by_membership_id: string | null;
 };
 
 export type InvoiceRow = {

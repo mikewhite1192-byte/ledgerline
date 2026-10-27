@@ -124,8 +124,11 @@ async function main(): Promise<void> {
       // rows, then the agent's rows a booking row kept. Both ledger clears refuse, deleting
       // nothing, while any row is still reserved, sent or unknown (its outcome is not known yet)
       // or failed as amount_mismatch (money may have moved for another amount, so a person must
-      // review it and the subject stays closed). The clears and the replace run on different
-      // logins, so they cannot share a transaction. If the replace fails, the old subjects stay:
+      // review it and the subject stays closed). The payout clear and the agent clear also refuse,
+      // deleting nothing, while a ledger row names an advance an approval created, which the
+      // agent clear would otherwise delete with nothing to stop it. The clears and the replace
+      // run on different logins, so they cannot share a transaction. If the replace fails, the
+      // old subjects stay:
       // a paid advance or settlement refuses a second payout by its own status, and the booking
       // rows are still there, with any proposal they name, so approving a booking again replays
       // its row instead of posting twice. If the booking clear refuses after the replace, the

@@ -1,4 +1,4 @@
-import type { AiTarget, AiUsage, Metered } from "./types";
+import type { AiProvider, AiTarget, AiUsage, Metered } from "./types";
 
 // Prices in nanocents (1 cent = 1,000,000,000 nanocents), so every listed price is an exact
 // integer. $1.25 per million tokens is 125 cents / 1,000,000 = 125,000 nanocents a token.
@@ -63,32 +63,42 @@ const MUSE_WONDER: TokenPrice = {
   output: 2_000_000,
 };
 
-// Keyed by the exact model ids GET /v1/models lists, per target. A model id missing from its
-// target's table is refused before any call, so a typo in a branch variable fails closed. The
-// Contributor row is priced here but never named by a variable: ./targets.ts swaps it in only
-// when META_CONTRIBUTOR_MODE is "true".
-const PRICES: Record<AiTarget, Record<string, Price>> = {
+// Keyed by target, then by the host that serves it, then by the exact model id that host lists
+// (GET /v1/models for Meta). A model id missing from its host's table is refused before any
+// call, so a typo in a branch variable fails closed, and a Baseten id put in the Fireworks
+// variable is refused instead of reaching Fireworks. The Contributor row is priced here but never
+// named by a variable: ./targets.ts swaps it in only when META_CONTRIBUTOR_MODE is "true".
+const PRICES: Record<AiTarget, Partial<Record<AiProvider, Record<string, Price>>>> = {
   spark: {
-    "muse-spark-1.3": MUSE_SPARK_STANDARD,
-    "muse-spark-1.2": MUSE_SPARK_STANDARD,
-    "muse-spark-1.1": MUSE_SPARK_STANDARD,
-    "muse-spark-1.3-contributor": MUSE_SPARK_CONTRIBUTOR,
+    meta: {
+      "muse-spark-1.3": MUSE_SPARK_STANDARD,
+      "muse-spark-1.2": MUSE_SPARK_STANDARD,
+      "muse-spark-1.1": MUSE_SPARK_STANDARD,
+      "muse-spark-1.3-contributor": MUSE_SPARK_CONTRIBUTOR,
+    },
   },
-  wonder: { "muse-wonder-1.0": MUSE_WONDER },
-  // Muse Spark Open on Baseten: the same per-million prices as Muse Spark
-  // (https://www.baseten.co/library/muse-spark-open/).
+  wonder: { meta: { "muse-wonder-1.0": MUSE_WONDER } },
   spark_open: {
-    "meta-models/muse-spark-open-1026": { ...MUSE_SPARK_STANDARD },
+    // Muse Spark Open on Baseten: the same per-million prices as Muse Spark
+    // (https://www.baseten.co/library/muse-spark-open/).
+    baseten: { "meta-models/muse-spark-open-1026": { ...MUSE_SPARK_STANDARD } },
+    // The standby host, the same per-million prices again (https://fireworks.ai/pricing):
+    // serverless, US-only capacity, with the US-only premium waived for this model.
+    fireworks: { "accounts/fireworks/models/muse-spark-open": { ...MUSE_SPARK_STANDARD } },
   },
   voice: {
-    "muse-voice-transcribe-1.0": { unit: "audio_seconds", perSecond: VOICE_NANOCENTS_PER_SECOND },
+    meta: {
+      "muse-voice-transcribe-1.0": { unit: "audio_seconds", perSecond: VOICE_NANOCENTS_PER_SECOND },
+    },
   },
-  image: { "muse-image-1.0": { unit: "images", perImage: IMAGE_NANOCENTS } },
-  sam: { "sam-3.1": { unit: "images", perImage: SAM_NANOCENTS } },
+  image: { meta: { "muse-image-1.0": { unit: "images", perImage: IMAGE_NANOCENTS } } },
+  sam: { meta: { "sam-3.1": { unit: "images", perImage: SAM_NANOCENTS } } },
 };
 
-export function priceFor(target: AiTarget, model: string): Price | null {
-  const table = PRICES[target];
+// The price of one model id on one host for one target, or null when that host has no such row.
+export function priceFor(target: AiTarget, provider: AiProvider, model: string): Price | null {
+  const hosts = Object.hasOwn(PRICES, target) ? PRICES[target] : undefined;
+  const table = hosts && Object.hasOwn(hosts, provider) ? hosts[provider] : undefined;
   return table && Object.hasOwn(table, model) ? table[model] : null;
 }
 
@@ -123,6 +133,12 @@ export function actualCost(price: TokenPrice, usage: AiUsage): number {
     usage.cached * price.cached +
     usage.output * price.output
   );
+}
+
+// What the cached share of one call's input saved at list price, in nanocents: the cached tokens
+// at the full input price less what they were billed. Whole numbers in, a whole number out.
+export function savedByCache(price: TokenPrice, cached: number): number {
+  return cached * (price.input - price.cached);
 }
 
 // The cost of any answer, from what the provider reported. Null when what was reported is not

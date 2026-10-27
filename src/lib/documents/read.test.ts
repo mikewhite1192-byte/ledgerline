@@ -43,6 +43,7 @@ function result(over: Partial<AiResult> = {}): AiResult {
     costNanocents: 1_500_000,
     upstreamId: null,
     replay: [],
+    toolSearches: 0,
     ...over,
   };
 }
