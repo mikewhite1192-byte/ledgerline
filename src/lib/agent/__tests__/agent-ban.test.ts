@@ -3,8 +3,9 @@ import { describe, expect, it } from "vitest";
 
 // The lint wall around agent code, kept standing: each forbidden import is reported once, each
 // way to load a module with no import line for exactly its reasons, and each allowed one not at
-// all, at the three places the rule draws a line. The import-boundary test walks the whole graph;
-// this one proves the editor and CI stop the line itself.
+// all, at the three places the rule draws a line. Code from a string, the vm module and a network
+// call of its own are refused in all three. The import-boundary test walks the whole graph; this
+// one proves the editor and CI stop the line itself.
 
 const LEDGER_FORBIDDEN = [
   'import { executeMoneyAction } from "../money/execute";',
@@ -62,6 +63,8 @@ const DIRECT_IO = [
   'import { readFile } from "fs/promises";',
   'import { readFile } from "node:fs/promises";',
 ];
+// The vm module runs a string as code: refused in every agent block, the gateway included.
+const VM = ['import { runInNewContext } from "vm";', 'import vm from "node:vm";'];
 const MODEL_WRAPPER = ['import { complete } from "../../ai";', 'import type { AiTool } from "@/lib/ai/types";'];
 // Each way to load a module with no import line, with the reasons it is refused (each message's
 // headline): the import of node:module, a dynamic import, a loader's name, or a loader's name in
@@ -96,6 +99,20 @@ const STRING_CODE: [code: string, rule: string][] = [
   ['export const f = new Function("return 1");', "no-new-func"],
   ['setTimeout("tick()", 10);', "no-implied-eval"],
 ];
+// A network call of its own, with the rule that refuses it: the name bare, or reached through the
+// global object by a member, a quoted member or a destructured key.
+const NETWORK: [code: string, rule: string][] = [
+  ['export const r = fetch("/x");', "no-restricted-globals"],
+  ["export const x = new XMLHttpRequest();", "no-restricted-globals"],
+  ['export const s = new WebSocket("/x");', "no-restricted-globals"],
+  ['export const e = new EventSource("/x");', "no-restricted-globals"],
+  ['export const r = globalThis.fetch("/x");', "no-restricted-properties"],
+  ['export const r = globalThis["fetch"]("/x");', "no-restricted-properties"],
+  ['export const s = new window.WebSocket("/x");', "no-restricted-properties"],
+  ["export const x = new self.XMLHttpRequest();", "no-restricted-properties"],
+  ['export const e = new global.EventSource("/x");', "no-restricted-properties"],
+  ['const { fetch: f } = globalThis;\nexport const r = f("/x");', "no-restricted-properties"],
+];
 // Names that only look like a loader's.
 const PLAIN_NAMES = [
   'export const schema = { required: ["driverId"], requirements: ["a"] };',
@@ -120,10 +137,10 @@ async function lint(code: string, filePath: string): Promise<string[]> {
   );
 }
 
-// Each way to run code from a string is refused by its own rule, in or out of the gateway.
-async function expectStringCodeRefused(filePath: string) {
+// Each case is refused by its own rule, in or out of the gateway.
+async function expectRefusedBy(cases: [code: string, rule: string][], filePath: string) {
   await Promise.all(
-    STRING_CODE.map(async ([code, rule]) =>
+    cases.map(async ([code, rule]) =>
       expect(await ruleIds(code, filePath), `${filePath}: ${code}`).toContain(rule),
     ),
   );
@@ -153,21 +170,23 @@ describe("agent lint wall", () => {
   it("outside the gateway, agent code imports none of the gateway's modules, money, I/O or loaders", async () => {
     for (const file of ["src/lib/agent/probe.ts", "src/lib/agent/operator/loop.ts", "src/app/api/agent/turn/route.ts"]) {
       await expectReports(
-        [...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...DIRECT_IO],
+        [...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...DIRECT_IO, ...VM],
         file,
         1,
       );
       await expectLoadersRefused(file);
-      await expectStringCodeRefused(file);
+      await expectRefusedBy(STRING_CODE, file);
+      await expectRefusedBy(NETWORK, file);
       await expectReports([...PLAIN, ...PLAIN_NAMES], file, 0);
     }
   }, 60_000);
 
   it("the gateway imports records, the engine, ledger reads and the model wrapper, never a money write", async () => {
     const file = "src/lib/agent/gateway/probe.ts";
-    await expectReports(LEDGER_FORBIDDEN, file, 1);
+    await expectReports([...LEDGER_FORBIDDEN, ...VM], file, 1);
     await expectLoadersRefused(file);
-    await expectStringCodeRefused(file);
+    await expectRefusedBy(STRING_CODE, file);
+    await expectRefusedBy(NETWORK, file);
     await expectReports(
       [...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...DIRECT_IO, ...PLAIN, ...PLAIN_NAMES],
       file,
@@ -178,16 +197,20 @@ describe("agent lint wall", () => {
   it("the operator turn may call the model wrapper and nothing else the gateway owns", async () => {
     const file = "src/lib/agent/operator/turn.ts";
     await expectReports(MODEL_WRAPPER, file, 0);
-    await expectReports([...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...DIRECT_IO], file, 1);
+    await expectReports([...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...DIRECT_IO, ...VM], file, 1);
     await expectLoadersRefused(file);
-    await expectStringCodeRefused(file);
+    await expectRefusedBy(STRING_CODE, file);
+    await expectRefusedBy(NETWORK, file);
     await expectReports(PLAIN_NAMES, file, 0);
   }, 60_000);
 
-  it("leaves code outside the agent alone", async () => {
-    const file = "src/app/approve/route.ts";
+  it("leaves code outside the agent alone, the model wrapper included", async () => {
     const loaders = LOADERS.map(([code]) => code);
-    await expectReports([LEDGER_FORBIDDEN[0], GATEWAY_MODULES[0], DIRECT_IO[0], ...loaders], file, 0);
-    for (const [code, rule] of STRING_CODE) expect(await ruleIds(code, file), code).not.toContain(rule);
+    for (const file of ["src/app/approve/route.ts", "src/lib/ai/probe.ts"]) {
+      await expectReports([LEDGER_FORBIDDEN[0], GATEWAY_MODULES[0], DIRECT_IO[0], ...VM, ...loaders], file, 0);
+      for (const [code, rule] of [...STRING_CODE, ...NETWORK]) {
+        expect(await ruleIds(code, file), `${file}: ${code}`).not.toContain(rule);
+      }
+    }
   }, 60_000);
 });

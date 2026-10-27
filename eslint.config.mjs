@@ -19,8 +19,8 @@ const NO_CREATE_REQUIRE = "No createRequire in agent code: every dependency is c
 // destructured key, or a quoted key or computed member ("createRequire", `_load`). Agent code has
 // no use for any of them. The limit: a name put together at run time (process["getBuiltin" +
 // "Module"]) is caught neither here nor by the import-boundary test, which sees names only as
-// written. Code run from a string (eval, new Function, a string to setTimeout) is refused by
-// NO_STRING_CODE below; any other name assembled at run time is left to review.
+// written. Code run from a string (eval, new Function, a string to setTimeout, the vm module) is
+// refused by NO_STRING_CODE and NO_VM below; any other name assembled at run time is left to review.
 const LOADER_NAMES =
   "^(require|createRequire|getBuiltinModule|__non_webpack_require__|__webpack_require__|_load|mainModule)$";
 const LOADER_LIST =
@@ -52,6 +52,31 @@ const NO_STRING_CODE = {
   "no-eval": "error",
   "no-new-func": "error",
   "no-implied-eval": "error",
+};
+// Nor the vm module, which runs a string as code with no eval in sight. Refused in every block.
+const NO_VM = {
+  regex: "^(node:)?vm(/|$)",
+  message: "No vm module in agent code: it runs a string as code, and agent code runs none.",
+};
+
+// No network connection of its own in agent code: fetch, XMLHttpRequest, WebSocket and
+// EventSource are refused bare and through globalThis, window, self or global. The model wrapper
+// (src/lib/ai), outside these folders, makes every outside call.
+const NETWORK_GLOBALS = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource"];
+const NO_NETWORK_MESSAGE =
+  "Agent code opens no network connection of its own: fetch, XMLHttpRequest, WebSocket and " +
+  "EventSource are refused, and every outside call goes through the model wrapper (src/lib/ai).";
+const NO_NETWORK = {
+  "no-restricted-globals": [
+    "error",
+    ...NETWORK_GLOBALS.map((name) => ({ name, message: NO_NETWORK_MESSAGE })),
+  ],
+  "no-restricted-properties": [
+    "error",
+    ...["globalThis", "window", "self", "global"].flatMap((object) =>
+      NETWORK_GLOBALS.map((property) => ({ object, property, message: NO_NETWORK_MESSAGE })),
+    ),
+  ],
 };
 
 // The ledger's own rule: nothing in agent code reaches a money write or a vendor adapter.
@@ -146,28 +171,33 @@ const eslintConfig = [
   //      "money//execute" and "money/read/../ledger" are refused too. rules-engine/money, the
   //      engine's cents math, is not the ledger and is allowed.
   //   3. The operator turn may also call the model wrapper; the package rule of 1 still holds.
-  // Every block refuses dynamic import, every module loader by name and code from a string, so
-  // each dependency is checked statically. Matching ignores case (case-insensitive file systems).
+  // Every block refuses dynamic import, every module loader by name and code from a string (vm
+  // included), so each dependency is checked statically, and every block refuses fetch,
+  // XMLHttpRequest, WebSocket and EventSource, bare or through globalThis, window, self or global
+  // (an alias of the global object is left to review). Matching ignores case (case-insensitive
+  // file systems).
   // A re-export from a file outside these folders is not caught here; the import-boundary test
   // walks those.
   {
     files: ["src/lib/agent/**", "src/app/api/agent/**"],
     rules: {
-      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, AI_ONLY, ...NO_DIRECT_IO])],
+      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, AI_ONLY, ...NO_DIRECT_IO, NO_VM])],
       "no-restricted-syntax": ["error", ...NO_DYNAMIC_LOADING],
       ...NO_STRING_CODE,
+      ...NO_NETWORK,
     },
   },
+  // The two blocks below set only no-restricted-imports, so they keep every other rule above.
   {
     files: ["src/lib/agent/gateway/**"],
     rules: {
-      "no-restricted-imports": ["error", agentImportRule(LEDGER_WRITES)],
+      "no-restricted-imports": ["error", agentImportRule([...LEDGER_WRITES, NO_VM])],
     },
   },
   {
     files: ["src/lib/agent/operator/turn.ts"],
     rules: {
-      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, ...NO_DIRECT_IO])],
+      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, ...NO_DIRECT_IO, NO_VM])],
     },
   },
 ];

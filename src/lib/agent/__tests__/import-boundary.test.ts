@@ -23,9 +23,10 @@ import { describe, expect, it } from "vitest";
 // what cannot be followed cannot be proven. The limit: the walk sees names only as written, so a
 // loader name put together at run time (process["getBuiltin" + "Module"]) and code run from a
 // string (eval, new Function) get past it. eslint.config.mjs refuses the string-to-code routes
-// (no-eval, no-new-func, no-implied-eval); any other name assembled at run time is left to
-// review. Packages are not walked: the lint rule refuses the database, AWS SDK, process, network
-// and file packages in agent code outside the gateway.
+// (no-eval, no-new-func, no-implied-eval, the vm module); any other name assembled at run time is
+// left to review. Packages are not walked: the lint rule refuses the database, AWS SDK, process,
+// network and file packages in agent code outside the gateway, and vm and the network globals in
+// all agent code.
 
 type Host = { read(file: string): string | undefined };
 type Edge = { to: string; spec: string };

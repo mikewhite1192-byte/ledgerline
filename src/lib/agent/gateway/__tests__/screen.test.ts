@@ -282,8 +282,8 @@ describe("screenUntrustedInput", () => {
     expect(out.verdict.verdict).toBe("flagged");
   });
 
-  it("blocks without a model call when too little time is left", async () => {
-    const { db } = setup(BENIGN);
+  it("blocks without a model call when too little time is left, and stores nothing", async () => {
+    const { db, screenings } = setup(BENIGN);
     const m = model(answer(CLEAN_TEXT));
     const out = await screenUntrustedInput(context({ deadlineAt: NOW + 500 }), INPUT, {
       db,
@@ -292,6 +292,43 @@ describe("screenUntrustedInput", () => {
     });
     expect(m.calls).toHaveLength(0);
     expect(out).toMatchObject({ decision: "blocked", reason: "screen_error" });
+    expect(out.verdict).toMatchObject({ verdict: "flagged", via: "error", categories: ["screen_error"] });
+    // The shortage belongs to this call, not the text: no screening row is written.
+    expect(screenings).toHaveLength(0);
+    expect(db.statements.some((s) => s.sql.startsWith("INSERT INTO screenings"))).toBe(false);
+    expect(db.decisions).toEqual([
+      expect.objectContaining({ id: out.decisionId, decision: "blocked", reason: "screen_error" }),
+    ]);
+  });
+
+  it("calls the model for the same text once a later call has the time", async () => {
+    const { db, screenings } = setup(BENIGN);
+    const rushed = model(answer(CLEAN_TEXT));
+    await screenUntrustedInput(context({ deadlineAt: NOW + 500 }), INPUT, {
+      db,
+      complete: rushed.fn,
+      clock: fixedClock,
+    });
+    expect(rushed.calls).toHaveLength(0);
+    const later = model(answer(CLEAN_TEXT));
+    const out = await screenUntrustedInput(ctx, INPUT, { db, complete: later.fn, clock: fixedClock });
+    expect(later.calls).toHaveLength(1);
+    expect(out).toMatchObject({ decision: "allowed", reason: "ok", verdict: { verdict: "clean", via: "model" } });
+    expect(screenings).toEqual([expect.objectContaining({ verdict: "clean", via: "model", expires_at: null })]);
+  });
+
+  it("stores a text too long to screen as an error for ten minutes, with no model call", async () => {
+    const huge = "Routine delivery notes. ".repeat(10_000);
+    // More than the nine chunks one screen takes: a property of the text, so it is stored.
+    expect(chunksOf(huge).length).toBeGreaterThan(9);
+    const { db, screenings } = setup(huge);
+    const m = model(answer(CLEAN_TEXT));
+    const out = await screenUntrustedInput(ctx, INPUT, { db, complete: m.fn, clock: fixedClock });
+    expect(m.calls).toHaveLength(0);
+    expect(out).toMatchObject({ decision: "blocked", reason: "screen_error" });
+    expect(screenings).toEqual([
+      expect.objectContaining({ via: "error", expires_at: new Date(NOW + 10 * 60_000).toISOString() }),
+    ]);
   });
 
   it("logs a blocked unknown_record and throws for an input outside the tenant", async () => {

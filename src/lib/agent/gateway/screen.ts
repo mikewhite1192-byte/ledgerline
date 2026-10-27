@@ -228,8 +228,10 @@ export async function screenUntrustedInput(
     const mode = flags.screenOutputMode;
     const chunks = chunksOf(input.body_text);
     const remaining = Math.min(SCREEN_TIMEOUT_MS, Math.floor(ctx.deadlineAt - clock()));
+    // A shortage of time belongs to this call, not the text, so its error is never stored.
+    const outOfTime = remaining < MIN_TIMEOUT_MS;
     let results: ChunkResult[];
-    if (chunks.length > MAX_CHUNKS || remaining < MIN_TIMEOUT_MS) {
+    if (chunks.length > MAX_CHUNKS || outOfTime) {
       results = [{ kind: "error", budget: false, callId: null }];
     } else {
       results = await Promise.all(
@@ -273,25 +275,27 @@ export async function screenUntrustedInput(
       };
     }
 
-    const expiresAt = verdict.via === "error" ? new Date(ctx.now.getTime() + ERROR_TTL_MS) : null;
-    const stored = await inTenant(db, ctx, async (q) => {
-      const n = await q.execute(INSERT_SQL, [
-        randomUUID(),
-        input.id,
-        hash,
-        SCREENER_VERSION,
-        verdict.verdict,
-        JSON.stringify(verdict.categories),
-        confidenceMilli(verdict.confidence),
-        verdict.via,
-        modelCallId,
-        Math.max(0, Math.round(clock() - started)),
-        expiresAt ? expiresAt.toISOString() : null,
-      ]);
-      // Another screen of the same text won the race: its stored verdict is the answer.
-      return n === 1 ? null : await readCached(q, hash, ctx.now);
-    });
-    if (stored) verdict = { inputId, contentHash: hash, ...stored };
+    if (!outOfTime) {
+      const expiresAt = verdict.via === "error" ? new Date(ctx.now.getTime() + ERROR_TTL_MS) : null;
+      const stored = await inTenant(db, ctx, async (q) => {
+        const n = await q.execute(INSERT_SQL, [
+          randomUUID(),
+          input.id,
+          hash,
+          SCREENER_VERSION,
+          verdict.verdict,
+          JSON.stringify(verdict.categories),
+          confidenceMilli(verdict.confidence),
+          verdict.via,
+          modelCallId,
+          Math.max(0, Math.round(clock() - started)),
+          expiresAt ? expiresAt.toISOString() : null,
+        ]);
+        // Another screen of the same text won the race: its stored verdict is the answer.
+        return n === 1 ? null : await readCached(q, hash, ctx.now);
+      });
+      if (stored) verdict = { inputId, contentHash: hash, ...stored };
+    }
     ({ decision, reason } = decisionFor(verdict, budget));
     return { verdict, decisionId, decision, reason };
   } finally {
