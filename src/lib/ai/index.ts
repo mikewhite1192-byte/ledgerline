@@ -16,6 +16,7 @@ import {
   type Price,
 } from "./prices";
 import { basetenBody, BASETEN_CHAT_URL, parseBaseten } from "./providers/baseten";
+import { FIREWORKS_CHAT_URL, parseFireworks } from "./providers/fireworks";
 import { post, type FetchFn } from "./providers/http";
 import { dataUrlLength, IMAGE_MIMES, looksLike, pdfPages } from "./providers/media";
 import { META_RESPONSES_URL, metaBody, parseMeta } from "./providers/meta";
@@ -28,12 +29,14 @@ import {
   voiceBody,
 } from "./providers/meta-voice";
 import { reserve, settle, type Settlement } from "./spend";
-import { TARGETS, contributorMode, modelFor } from "./targets";
+import { shouldFallBack, standbyFor, type FirstAttempt } from "./standby";
+import { TARGETS, contributorMode, contributorRefusesAll, modelFor } from "./targets";
 import {
   AiError,
   type AiAttachment,
   type AiCallOptions,
   type AiLanguage,
+  type AiProvider,
   type AiReasoningEffort,
   type AiRequest,
   type AiResult,
@@ -82,7 +85,11 @@ export type {
 // The one door to a model. Every runtime model call in the app goes through complete(),
 // transcribe(), generateImage() or segment(), and all four through runCall(): it checks the
 // switch, reserves the call's worst-case cost in the spend ledger, calls the provider once,
-// settles the ledger to the real cost, and writes one log line. It never retries.
+// settles the ledger to the real cost, and writes one log line. It never retries a host. Muse
+// Spark Open alone has a standby host (./standby.ts): while flags.sparkOpenFallback names it,
+// a first attempt that failed for a reason that is the primary host's own is followed by at
+// most one attempt on the standby, through the same reserve, settle and log steps with its own
+// ledger row, inside the time the caller had left.
 //
 // Each returns its result or throws an AiError. The ledger step before the call can also throw
 // the tenant module's ForbiddenError (no membership) and a DbError, so every caller handles all
@@ -92,8 +99,14 @@ export type {
 // call of up to 60 seconds must not sit inside one.
 
 // Tests inject fetch and a database; under NODE_ENV=test a missing fetch is refused, so no test
-// can reach the network.
-export type AiDeps = { fetch?: FetchFn; db?: TenantDb; secrets?: SecretsClient };
+// can reach the network. clock is monotonic milliseconds (default performance.now), for each
+// attempt's duration and the time a standby attempt has left; tests inject a fake one.
+export type AiDeps = {
+  fetch?: FetchFn;
+  db?: TenantDb;
+  secrets?: SecretsClient;
+  clock?: () => number;
+};
 
 const PURPOSE = /^[a-z][a-z0-9_]{2,39}$/;
 // Meta's rule (letters, digits, _ . -, at most one dot), and at most 64 characters.
@@ -128,6 +141,8 @@ const MAX_CALL_COST_CENTS = 15_000;
 
 const DEFAULT_TIMEOUT_MS = 25_000;
 const SLOW_TIMEOUT_MS = 60_000;
+// A standby attempt is started only with at least this much of the caller's time left.
+const MIN_STANDBY_MS = 1_000;
 
 function inRange(value: unknown, min: number, max: number): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
@@ -175,6 +190,7 @@ type Plan<T> = {
 };
 
 type Answered<T> = Extract<CallOutcome<T>, { kind: "answered" }>;
+type Failed<T> = Exclude<CallOutcome<T>, { kind: "answered" }>;
 
 // The ledger's units column: what a call that is not billed by tokens is billed by.
 function unitsOf(metered: Metered): number | null {
@@ -189,57 +205,74 @@ function usageLine(metered: Metered): string {
   return `in=${u.input} cached=${u.cached} out=${u.output} reasoning=${u.reasoning}`;
 }
 
-// The shared path of every model call. plan() validates the call's own input and builds its
-// body; it runs after the configuration checks and before the key is read.
-async function runCall<T, U extends Price["unit"]>(
-  target: AiTarget,
-  unit: U,
-  options: AiCallOptions,
-  defaultTimeoutMs: number,
-  session: Session,
-  deps: AiDeps,
-  plan: (model: string, price: Extract<Price, { unit: U }>) => Plan<T>,
-): Promise<{ callId: string; answer: Answered<T>; costNanocents: number }> {
-  // The switch is read on every call, here, not by the caller.
-  if (!flags.aiEnabled) throw new AiError("disabled");
-  const fetchFn = deps.fetch ?? (process.env.NODE_ENV === "test" ? undefined : fetch);
-  const cap = capNanocents(process.env.AI_SPEND_CAP_CENTS);
-  // Unset or invalid refuses Wonder calls only.
-  const wonderCap =
-    target === "wonder" ? wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap) : null;
-  if (contributorMode(process.env.META_CONTRIBUTOR_MODE) === null) {
-    console.error("ai: META_CONTRIBUTOR_MODE must be unset, true or false; every call is refused");
-    throw new AiError("not_configured");
-  }
-  const configured = modelFor(target, unit);
-  if (
-    !fetchFn ||
-    cap === null ||
-    !configured ||
-    !isUuid(session.tenantId) ||
-    (target === "wonder" && wonderCap === null)
-  ) {
-    console.error(`ai: ${target} not configured (cap, model id or test fetch)`);
-    throw new AiError("not_configured");
-  }
-  const { model, price } = configured;
-  const c = common(options, defaultTimeoutMs);
-  const p = plan(model, price);
+type PlanFn<T, U extends Price["unit"]> = (
+  model: string,
+  price: Extract<Price, { unit: U }>,
+  provider: AiProvider,
+) => Plan<T>;
 
-  const { provider, kind } = TARGETS[target];
-  const key = await apiKey(provider, deps.secrets);
+// What both attempts of one call share.
+type CallContext<T, U extends Price["unit"]> = {
+  target: AiTarget;
+  session: Session;
+  deps: AiDeps;
+  fetchFn: FetchFn;
+  clock: () => number;
+  cap: number;
+  wonderCap: number | null;
+  c: Common;
+  trace: string;
+  plan: PlanFn<T, U>;
+};
+
+// One attempt, ready to reserve and send.
+type Prepared<T, U extends Price["unit"]> = {
+  provider: AiProvider;
+  model: string;
+  price: Extract<Price, { unit: U }>;
+  p: Plan<T>;
+  key: string;
+};
+
+type Sent<T> =
+  | { kind: "answered"; callId: string; answer: Answered<T>; costNanocents: number }
+  | { kind: "failed"; callId: string; outcome: Failed<T>; error: AiError };
+
+// Builds one attempt for one host: validates the call's own input and builds its body (plan),
+// reads the host's key, and checks the reserve against the call's maxCostCents. Null, with one
+// log line naming the host, when the host's key is missing or unreadable: nothing was sent.
+async function prepare<T, U extends Price["unit"]>(
+  ctx: CallContext<T, U>,
+  provider: AiProvider,
+  configured: { model: string; price: Extract<Price, { unit: U }> },
+  label: "" | "fallback ",
+): Promise<Prepared<T, U> | null> {
+  const p = ctx.plan(configured.model, configured.price, provider);
+  const key = await apiKey(provider, ctx.deps.secrets);
   if (!key) {
-    console.error(`ai: ${target} not configured (no ${provider} key)`);
-    throw new AiError("not_configured");
+    console.error(`ai: ${ctx.target} ${label}not configured (no ${provider} key)`);
+    return null;
   }
-  if (p.reserveNanocents > c.maxCostCents * NANOCENTS_PER_CENT) {
+  if (p.reserveNanocents > ctx.c.maxCostCents * NANOCENTS_PER_CENT) {
     throw new AiError("too_expensive");
   }
+  return { provider, model: configured.model, price: configured.price, p, key };
+}
 
-  const db = deps.db ?? getDb();
+// One attempt: reserve, one HTTP call, settle, one log line. A failure the host reported comes
+// back as "failed" with the error to throw; a refusal at the reserve (cap, membership, the
+// database) and a failed settle throw from here.
+async function send<T, U extends Price["unit"]>(
+  ctx: CallContext<T, U>,
+  prepared: Prepared<T, U>,
+  timeoutMs: () => number,
+): Promise<Sent<T>> {
+  const { target, session, c, trace } = ctx;
+  const { provider, model, price, p, key } = prepared;
+  const { kind } = TARGETS[target];
+  const db = ctx.deps.db ?? getDb();
   // The dedupe key: the row's primary key, made here, before the reservation.
   const callId = randomUUID();
-  const trace = c.traceId ? ` trace=${c.traceId}` : "";
   const where = `ai: ${target} ${model} ${kind} ${c.purpose}`;
   await reserve(db, session, {
     callId,
@@ -251,17 +284,17 @@ async function runCall<T, U extends Price["unit"]>(
     reasoningEffort: p.reasoningEffort,
     traceId: c.traceId,
     reserveNanocents: p.reserveNanocents,
-    capNanocents: cap,
-    wonderCapNanocents: wonderCap,
+    capNanocents: ctx.cap,
+    wonderCapNanocents: ctx.wonderCap,
   });
 
-  const started = performance.now();
+  const started = ctx.clock();
   const raw = await post(
-    fetchFn,
-    { url: p.url, key, body: p.body, timeoutMs: c.timeoutMs, accept: p.accept },
+    ctx.fetchFn,
+    { url: p.url, key, body: p.body, timeoutMs: timeoutMs(), accept: p.accept },
     p.parse,
   );
-  const durationMs = Math.round(performance.now() - started);
+  const durationMs = Math.round(ctx.clock() - started);
   const costNanocents = raw.kind === "answered" ? meteredCost(price, raw.metered) : null;
   // An answer metered some other way than the price is not a known cost.
   const outcome: CallOutcome<T> =
@@ -289,7 +322,7 @@ async function runCall<T, U extends Price["unit"]>(
         }
       : { ...outcome, durationMs };
   // If settling fails, the row stays 'reserved' and its reservation counted, and the caller gets
-  // no answer whose cost the ledger does not show.
+  // no answer whose cost the ledger does not show. No standby attempt follows.
   let notSettled: string | null = "row not reserved";
   try {
     if (await settle(db, session, callId, settlement)) notSettled = null;
@@ -307,7 +340,8 @@ async function runCall<T, U extends Price["unit"]>(
       `${where} ${outcome.kind === "refused" ? "failed" : "unknown"} ${outcome.category}` +
         ` http=${outcome.httpStatus ?? "none"} ms=${durationMs}${kept} call=${callId}${trace}`,
     );
-    throw new AiError(outcome.category, outcome.httpStatus ?? undefined);
+    const error = new AiError(outcome.category, outcome.httpStatus ?? undefined);
+    return { kind: "failed", callId, outcome, error };
   }
   const cost = costNanocents ?? 0;
   console.log(
@@ -315,7 +349,105 @@ async function runCall<T, U extends Price["unit"]>(
       ` cost=${centsToDisplay(cost)}c ms=${durationMs}` +
       ` id=${outcome.upstreamId ?? "none"} call=${callId}${trace}`,
   );
-  return { callId, answer: outcome, costNanocents: cost };
+  return { kind: "answered", callId, answer: outcome, costNanocents: cost };
+}
+
+// The shared path of every model call. plan() validates the call's own input and builds its
+// body for a host; it runs after the configuration checks and before that host's key is read.
+async function runCall<T, U extends Price["unit"]>(
+  target: AiTarget,
+  unit: U,
+  options: AiCallOptions,
+  defaultTimeoutMs: number,
+  session: Session,
+  deps: AiDeps,
+  plan: PlanFn<T, U>,
+): Promise<{ callId: string; answer: Answered<T>; costNanocents: number }> {
+  // The switch is read on every call, here, not by the caller.
+  if (!flags.aiEnabled) throw new AiError("disabled");
+  const clock = deps.clock ?? (() => performance.now());
+  const started = clock();
+  const fetchFn = deps.fetch ?? (process.env.NODE_ENV === "test" ? undefined : fetch);
+  const cap = capNanocents(process.env.AI_SPEND_CAP_CENTS);
+  // Unset or invalid refuses Wonder calls only.
+  const wonderCap =
+    target === "wonder" ? wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap) : null;
+  if (contributorMode(process.env.META_CONTRIBUTOR_MODE) === null) {
+    console.error("ai: META_CONTRIBUTOR_MODE must be unset, true or false; every call is refused");
+    throw new AiError("not_configured");
+  }
+  const primary = TARGETS[target].provider;
+  const configured = modelFor(target, unit);
+  // These reasons are ours, never a host's, so no standby host is tried after them. A primary
+  // with no usable model id is the host's own reason, tried on the standby while the switch is on.
+  if (
+    !fetchFn ||
+    cap === null ||
+    contributorRefusesAll(process.env) ||
+    !isUuid(session.tenantId) ||
+    (target === "wonder" && wonderCap === null) ||
+    (!configured && !standbyFor(target))
+  ) {
+    console.error(`ai: ${target} not configured (cap, model id or test fetch)`);
+    throw new AiError("not_configured");
+  }
+  if (!configured) console.error(`ai: ${target} not configured (no ${primary} model id)`);
+  const c = common(options, defaultTimeoutMs);
+  // The caller's time budget covers every attempt.
+  const deadline = started + c.timeoutMs;
+  const trace = c.traceId ? ` trace=${c.traceId}` : "";
+  const ctx: CallContext<T, U> = {
+    target,
+    session,
+    deps,
+    fetchFn,
+    clock,
+    cap,
+    wonderCap,
+    c,
+    trace,
+    plan,
+  };
+
+  const prepared = configured ? await prepare(ctx, primary, configured, "") : null;
+  let first: FirstAttempt = { kind: "not_sent" };
+  let firstError = new AiError("not_configured");
+  let firstId = "none";
+  if (prepared) {
+    const sent = await send(ctx, prepared, () => c.timeoutMs);
+    if (sent.kind === "answered") {
+      return { callId: sent.callId, answer: sent.answer, costNanocents: sent.costNanocents };
+    }
+    first = sent.outcome;
+    firstError = sent.error;
+    firstId = sent.callId;
+  }
+
+  // At most one more attempt, on the standby host, and only for a failure that is the primary
+  // host's own. Unless it starts, the caller gets the first attempt's error, as with no standby.
+  const standby = shouldFallBack(first) ? standbyFor(target) : null;
+  if (!standby) throw firstError;
+  const backup = modelFor(target, unit, standby);
+  if (!backup) {
+    console.error(`ai: ${target} fallback not configured (no ${standby} model id)`);
+    throw firstError;
+  }
+  const second = await prepare(ctx, standby, backup, "fallback ");
+  if (!second) throw firstError;
+  const left = Math.floor(deadline - clock());
+  if (left < MIN_STANDBY_MS) {
+    console.error(`ai: ${target} fallback skipped (${left} ms left) call=${firstId}${trace}`);
+    throw firstError;
+  }
+  const after = first.kind === "not_sent" ? "not_configured" : first.category;
+  const http = first.kind === "not_sent" ? "none" : (first.httpStatus ?? "none");
+  console.error(
+    `ai: ${target} falling back to ${standby} after ${after} http=${http} call=${firstId}${trace}`,
+  );
+  // Never more than what is left of the caller's time, measured again after the reservation.
+  const sent = await send(ctx, second, () => Math.max(1, Math.floor(deadline - clock())));
+  if (sent.kind === "failed") throw sent.error;
+  return { callId: sent.callId, answer: sent.answer, costNanocents: sent.costNanocents };
 }
 
 // --- complete: Muse Spark, Muse Wonder, Muse Spark Open ---
@@ -408,6 +540,16 @@ function validateText(target: AiTextTarget, request: AiRequest): TextOptions {
   return options;
 }
 
+// Where each host's text call goes and how its answer is read.
+const TEXT_HOSTS: Record<
+  AiProvider,
+  { url: string; parse: (json: unknown, httpStatus: number) => CallOutcome }
+> = {
+  meta: { url: META_RESPONSES_URL, parse: parseMeta },
+  baseten: { url: BASETEN_CHAT_URL, parse: parseBaseten },
+  fireworks: { url: FIREWORKS_CHAT_URL, parse: parseFireworks },
+};
+
 export async function complete(
   target: AiTextTarget,
   request: AiRequest,
@@ -422,9 +564,10 @@ export async function complete(
     DEFAULT_TIMEOUT_MS,
     session,
     deps,
-    (model, price) => {
+    (model, price, provider) => {
       const options = validateText(target, request);
-      const meta = target !== "spark_open";
+      const meta = provider === "meta";
+      // Fireworks takes Baseten's body: the same OpenAI chat shape.
       const body = JSON.stringify(
         meta
           ? metaBody(model, request, options)
@@ -446,7 +589,7 @@ export async function complete(
       }
       const textBytes = new TextEncoder().encode(body).length - attachmentChars;
       return {
-        url: meta ? META_RESPONSES_URL : BASETEN_CHAT_URL,
+        url: TEXT_HOSTS[provider].url,
         body,
         reserveNanocents: estimateReserve(
           price,
@@ -454,9 +597,9 @@ export async function complete(
           options.maxOutputTokens,
           mediaReserveTokens(images, pages),
         ),
-        // Baseten takes no reasoning setting, so none is recorded for it.
+        // Baseten and Fireworks take no reasoning setting, so none is recorded for them.
         reasoningEffort: meta ? options.reasoningEffort : null,
-        parse: meta ? parseMeta : parseBaseten,
+        parse: TEXT_HOSTS[provider].parse,
       };
     },
   );

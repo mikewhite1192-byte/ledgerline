@@ -48,14 +48,34 @@ export function targetJob(target: string): string {
 
 const SPARK_VERSION = /^muse-spark-([0-9]{1,2}\.[0-9]{1,2})(?:-contributor)?$/;
 
+// Who serves each target when nothing has gone wrong (the wrapper's TARGETS, kept here so the
+// screens never load the wrapper), and the words for the hosts a call can come from instead.
+const PRIMARY_HOSTS: Readonly<Record<string, string>> = {
+  spark: "meta",
+  wonder: "meta",
+  spark_open: "baseten",
+  voice: "meta",
+  image: "meta",
+  sam: "meta",
+};
+
+const HOST_NAMES: Readonly<Record<string, string>> = {
+  baseten: "Baseten",
+  fireworks: "Fireworks",
+};
+
 // The model as people know it: "muse-spark-1.3" reads "Muse Spark 1.3". A model string this
-// table does not know reads as its target's name; an unknown target reads "Other model".
-export function modelName(target: string, model: string): string {
+// table does not know reads as its target's name; an unknown target reads "Other model". A call
+// a standby host served names that host: "Muse Spark Open (via Fireworks)". A call from the
+// target's usual host, or with no host given, reads as before.
+export function modelName(target: string, model: string, provider?: string): string {
+  let name = targetName(target);
   if (target === "spark") {
     const m = SPARK_VERSION.exec(model);
-    if (m) return `Muse Spark ${m[1]}`;
+    if (m) name = `Muse Spark ${m[1]}`;
   }
-  return targetName(target);
+  if (!provider || !has(PRIMARY_HOSTS, target) || PRIMARY_HOSTS[target] === provider) return name;
+  return `${name} (via ${has(HOST_NAMES, provider) ? HOST_NAMES[provider] : "another host"})`;
 }
 
 const EFFORT_WORDS: Readonly<Record<string, string>> = {
@@ -250,7 +270,7 @@ function callTrouble(call: TraceCall): string | null {
 }
 
 function modelStepLine(s: TraceStep, call: TraceCall | null): TraceLine {
-  const who = call ? modelName(call.target, call.model) : "Muse Spark";
+  const who = call ? modelName(call.target, call.model, call.provider) : "Muse Spark";
   const meta = call ? callMeta(call) : [];
   if (s.state === "failed" || (call && CALL_FAILED.has(call.status))) {
     const trouble = call ? callTrouble(call) : null;
@@ -308,7 +328,7 @@ function escalationLine(s: TraceStep, call: TraceCall | null): TraceLine {
   }
   return {
     key: `step:${s.seq}`,
-    who: call ? modelName(call.target, call.model) : "Muse Wonder",
+    who: call ? modelName(call.target, call.model, call.provider) : "Muse Wonder",
     meta: call ? callMeta(call) : [],
     text,
     badge: done ? { tone: "info", label: "Escalated" } : { tone: "destructive", label: "Failed" },
@@ -334,7 +354,7 @@ function proposalStepLine(s: TraceStep): TraceLine {
 }
 
 function extraLine(c: TraceExtraCall): TraceLine {
-  const who = modelName(c.target, c.model);
+  const who = modelName(c.target, c.model, c.provider);
   const meta = callMeta(c);
   if (c.purpose === SCREEN_PURPOSE || c.screen) {
     const flagged = c.screen?.verdict === "flagged";
@@ -403,7 +423,7 @@ function stepLine(s: TraceStep, call: TraceCall | null): TraceLine {
     default:
       return {
         key: `step:${s.seq}`,
-        who: call ? modelName(call.target, call.model) : "LedgerLine",
+        who: call ? modelName(call.target, call.model, call.provider) : "LedgerLine",
         meta: call ? callMeta(call) : [],
         text: s.label,
         badge: null,
@@ -417,7 +437,7 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
   if (has(OPERATOR_VERDICTS, p.operatorVerdict)) {
     out.push({
       key: `proposal:${p.id}:operator`,
-      who: operator ? modelName(operator.target, operator.model) : "Muse Spark",
+      who: operator ? modelName(operator.target, operator.model, operator.provider) : "Muse Spark",
       meta: [],
       text: `Judged it: ${OPERATOR_VERDICTS[p.operatorVerdict]}`,
       badge: null,
@@ -451,7 +471,7 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
         : "Has not given a verdict yet";
     out.push({
       key: `proposal:${p.id}:auditor`,
-      who: `Auditor (${p.auditorCall ? modelName(p.auditorCall.target, p.auditorCall.model) : "Muse Wonder"})`,
+      who: `Auditor (${p.auditorCall ? modelName(p.auditorCall.target, p.auditorCall.model, p.auditorCall.provider) : "Muse Wonder"})`,
       meta: p.auditorCall ? callMeta(p.auditorCall) : [],
       text: verdict,
       badge:

@@ -19,7 +19,7 @@ model is being built into.
 | **Muse Spark 1.3** | The operator agent: calls tools over drivers, loads, pay items and the rules engine, returns structured proposals, and reads receipts, bills of lading and rate confirmations from photos and PDFs |
 | **Muse Wonder** | The auditor: independently re-checks every money proposal before a person can approve it |
 | **Muse Voice Transcribe** | Turns driver voice notes, in English or Spanish, into requests the agent can act on |
-| **Muse Spark Open** (open weights, via Baseten) | Triages every inbound email, text and voice note into a case |
+| **Muse Spark Open** (open weights, via Baseten, with Fireworks as a standby host behind a switch) | Triages every inbound email, text and voice note into a case |
 | **SAM 3.1** | Cuts the document out of a cab photo before it is read |
 | **Muse Image** | Will generate the synthetic sample documents for the demo data |
 
