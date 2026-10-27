@@ -53,6 +53,16 @@ export function roundHalfUp(numerator: number, denominator: number): number {
   return safe(remainder * 2, "remainder") >= denominator ? quotient + 1 : quotient;
 }
 
+// numerator / denominator rounded down, on non-negative integers only (the share of a fill-up's
+// price that bought the gallons over the tank).
+export function floorDiv(numerator: number, denominator: number): number {
+  safe(numerator, "numerator");
+  safe(denominator, "denominator");
+  if (numerator < 0) throw new InputError("numerator is negative");
+  if (denominator <= 0) throw new InputError("denominator is not positive");
+  return (numerator - (numerator % denominator)) / denominator;
+}
+
 // amount x bps / 10000, rounded half up. Applied per load, never on a total.
 export function mulBps(amount: number, bps: number): Cents {
   if (!Number.isSafeInteger(bps) || bps < 0 || bps > BPS) {
