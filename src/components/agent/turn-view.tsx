@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatThread, type ChatMessage, type Part } from "@/components/app/chat-thread";
 import type { Suggestion } from "@/components/app/prompt-chips";
 import { decodeEvents } from "@/lib/agent/operator/stream";
+import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
 import type { StepView, TurnView } from "@/lib/agent/view";
 import { proposalCardFrom } from "./proposal-card-from";
@@ -17,8 +18,10 @@ const FALLBACK_MS = 3_000;
 const POLL_MS = 1_500;
 const POLL_LIMIT = 40;
 
-// What the card's row says when an approval does not go through. Fixed sentences per category.
+// What the card's row says when an approval does not go through. Fixed sentences per category;
+// the advance executor's own refusals come from its closed list.
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
+  ...ADVANCE_APPROVE_NOTICE,
   not_executable: "This kind of proposal cannot run yet. Nothing changed.",
   already_decided: "This proposal was already decided.",
   expired: "This proposal expired. Ask again for a fresh one.",

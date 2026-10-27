@@ -1,6 +1,7 @@
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
+import { executeAdvanceProposal } from "../advances/approve";
 import { assertMembership } from "../tenant/context";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
@@ -79,9 +80,10 @@ export type Executor = (
 
 export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>;
 
-// One executor per kind. Empty in this release: ADVANCES registers advance_payout (it creates the
-// advances row the ledger needs at approval); pay_correction and invoice_fix have none yet.
-export const EXECUTORS: ExecutorRegistry = {};
+// One executor per kind. advance_payout creates the advances row at approval and pays it through
+// the money executor (src/lib/advances/approve.ts); pay_correction and invoice_fix have none yet,
+// so they are refused as not_executable.
+export const EXECUTORS: ExecutorRegistry = { advance_payout: executeAdvanceProposal };
 
 const DAY_MS = 86_400_000;
 

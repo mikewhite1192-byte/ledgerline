@@ -1,0 +1,489 @@
+import { randomBytes, randomUUID } from "node:crypto";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { flags } from "../../config/flags";
+import { createMockPaymentAdapter, type MockPaymentAdapter } from "../adapters/payment/mock";
+import type { AccountingAdapter, PaymentAdapter } from "../adapters/types";
+import { DAILY_CAP_SQL } from "../agent/gateway/daily-cap";
+import { createPgDb } from "../db/pg";
+import { adminUrl, appUrl } from "../db/test-urls";
+import type { Db } from "../db/types";
+import { addAdvance, clearLedger, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
+import { executeProposal } from "../proposals/execute";
+import { checkAdvancePayouts, retryAdvancePayout, type AdvanceDeps } from "./approve";
+import { postAdvanceExpense } from "./post-expense";
+import { readAdvanceRecord } from "./read";
+import { REQUEST_REF } from "./request";
+
+// The advance flow against a real database, as the app's own role, with the registered executor
+// (EXECUTORS) and the mock payment adapter. A person's approval creates the one advances row and
+// pays it once, however many times it is pressed; a failure after the gate leaves a state that a
+// retry, a re-approval or Check pending adopts; the pay rules are asked again at approval; a
+// flagged proposal needs the second confirm; another carrier sees nothing. Every tenant made here
+// is removed after each test.
+
+const saved = structuredClone(flags);
+const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
+const HOUR = 3_600_000;
+const clock = () => new Date(NOW);
+
+let admin: Db;
+let app: Db;
+let A: Fixture;
+let B: Fixture;
+let transcriptId: string;
+let mock: MockPaymentAdapter;
+
+// A pay rule set and one delivered, unpaid load per driver: 2,000 loaded miles at 60 cents is
+// $1,200.00 earned, half of which ($600.00) may be advanced, with a $5.00 fee and a $1,500.00 limit.
+async function addPayRules(f: Fixture) {
+  await admin.withTenant(f.tenantId, async (q) => {
+    await q.execute(
+      `INSERT INTO pay_configs (id, tenant_id, effective_from, source, week_start_dow, percent_base,
+         empty_miles_paid_bps, accessorial_driver_share_bps, insurance_applies_to, insurance_per_day_cents,
+         escrow_target_cents, escrow_per_settlement_cents, net_pay_floor_cents, advance_recovery_cap_cents,
+         advance_fee_cents, advance_limit_default_cents, advance_max_bps_of_earned, advance_min_cents)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST('2026-01-01' AS date), 'ui', 1, 'linehaul',
+         0, 10000, 'owner_operator', 0, 0, 0, 0, NULL, 500, 150000, 5000, 5000)`,
+      [randomUUID()],
+    );
+    let n = 0;
+    for (const driverId of [f.driverId, f.otherDriverId]) {
+      n += 1;
+      const loadId = randomUUID();
+      await q.execute(
+        `INSERT INTO loads (id, tenant_id, load_number, customer_id, driver_id, status, origin_city,
+           origin_state, dest_city, dest_state, pickup_on, delivered_on, delivered_at, loaded_miles,
+           linehaul_cents)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid), CAST($4 AS uuid),
+           'delivered', 'Springfield', 'IL', 'Dallas', 'TX', CAST('2026-10-28' AS date),
+           CAST('2026-10-30' AS date), CAST('2026-10-30T20:00:00Z' AS timestamptz), 2000, 400000)`,
+        [loadId, `L-${n}`, f.customerId, driverId],
+      );
+      // The per-state miles add up to the load's miles (the engine checks it).
+      for (const [state, miles] of [["IL", 600], ["MO", 500], ["OK", 400], ["TX", 500]] as const) {
+        await q.execute(
+          `INSERT INTO load_state_miles (id, tenant_id, load_id, state, miles)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4)`,
+          [randomUUID(), loadId, state, miles],
+        );
+      }
+    }
+  });
+}
+
+type Opts = {
+  amountCents?: number;
+  driverId?: string;
+  flagged?: boolean;
+  requestRef?: string;
+  createdAt?: string;
+  tenant?: Fixture;
+};
+
+// A waiting advance proposal shaped like the gateway's: the driver is the subject, the args
+// carry the driver and the amount. Written by the admin login so created_at can be set.
+async function addProposal(o: Opts = {}): Promise<string> {
+  const f = o.tenant ?? A;
+  const amountCents = o.amountCents ?? 25_000;
+  const driverId = o.driverId ?? f.driverId;
+  const [conversation, turn, decision, id, trace] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  const created = o.createdAt ?? new Date(NOW - HOUR).toISOString();
+  await admin.withTenant(f.tenantId, async (q) => {
+    await q.execute(
+      "INSERT INTO conversations (id, tenant_id, created_by) VALUES (CAST($1 AS uuid), current_tenant_id(), $2)",
+      [conversation, f.session.sub],
+    );
+    await q.execute(
+      `INSERT INTO turns (id, tenant_id, conversation_id, seq, user_text, status, trace_id, started_at, finished_at)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 1, 'Advance for DRV-1?', 'done', $3,
+         CAST($4 AS timestamptz), CAST($4 AS timestamptz))`,
+      [turn, conversation, trace, created],
+    );
+    await q.execute(
+      `INSERT INTO gateway_decisions (id, tenant_id, turn_id, trace_id, role, model, tool, tier, decision, reason, latency_ms)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'operator', 'spark', 'propose_advance',
+         'propose', 'allowed', 'ok', 1)`,
+      [decision, turn, trace],
+    );
+    await q.execute(
+      `INSERT INTO proposals (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+         amount_cents, direction, title, args, operator_verdict, flagged_input_id, gateway_decision_id,
+         dedupe_key, trace_id, created_at, updated_at)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'advance_payout',
+         'drivers', CAST($4 AS uuid), $5, 'out', 'Advance', CAST($6 AS jsonb), 'eligible', CAST($7 AS uuid),
+         CAST($8 AS uuid), $9, $10, CAST($11 AS timestamptz), CAST($11 AS timestamptz))`,
+      [
+        id,
+        conversation,
+        turn,
+        driverId,
+        amountCents,
+        JSON.stringify({ driverId, amountCents, ...(o.requestRef ? { requestRef: o.requestRef } : {}) }),
+        o.flagged ? transcriptId : null,
+        decision,
+        `advance_payout:${driverId}:${randomBytes(32).toString("hex")}`,
+        trace,
+        created,
+      ],
+    );
+  });
+  return id;
+}
+
+const deps = (over: Partial<AdvanceDeps["money"]> = {}): AdvanceDeps => ({
+  db: app,
+  clock,
+  money: { payment: mock, timeoutMs: 2_000, waitMs: 2_000, pollMs: 10, log: () => {}, ...over },
+});
+
+const approve = (id: string, confirmed = false, d: AdvanceDeps = deps(), session = A.session) =>
+  executeProposal(session, id, { confirmed }, d);
+
+const proposalRow = async (id: string) =>
+  (
+    await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ status: string; money_action_id: string | null; decision_note: string | null }>(
+        `SELECT status, money_action_id, decision_note FROM proposals
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [id],
+      ),
+    )
+  )[0];
+
+type FlowRow = {
+  id: string;
+  status: string;
+  request_ref: string;
+  source: string;
+  source_input_id: string | null;
+  requested_at: string;
+  amount_cents: string;
+  fee_cents: string;
+  decided_by_membership_id: string | null;
+  paid: boolean;
+};
+
+const flowAdvances = (f: Fixture = A) =>
+  admin.withTenant(f.tenantId, (q) =>
+    q.query<FlowRow>(
+      `SELECT id, status, request_ref, source, source_input_id,
+              to_char(requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS requested_at,
+              CAST(amount_cents AS text) AS amount_cents, CAST(fee_cents AS text) AS fee_cents,
+              CAST(decided_by_membership_id AS text) AS decided_by_membership_id,
+              (paid_at IS NOT NULL) AS paid
+         FROM advances WHERE tenant_id = current_tenant_id() AND proposal_id IS NOT NULL`,
+    ),
+  );
+
+const ledger = (f: Fixture = A) =>
+  admin.withTenant(f.tenantId, (q) =>
+    q.query<{ id: string; kind: string; state: string; attempt: number; amount_cents: string; failure_category: string | null }>(
+      `SELECT id, kind, state, attempt, CAST(amount_cents AS text) AS amount_cents, failure_category
+         FROM money_actions WHERE tenant_id = current_tenant_id() ORDER BY kind, attempt`,
+    ),
+  );
+
+function openSwitches() {
+  flags.advancesEnabled = true;
+  flags.payoutsEnabled = true;
+  flags.paymentProvider = "mock";
+  flags.accountingEnabled = false;
+  flags.auditorRequired = false;
+  flags.advancePayouts = { armed: true, capCents: 50_000, startDate: "2026-10-27" };
+}
+
+describe("the advance flow", () => {
+  beforeAll(() => {
+    admin = createPgDb({ connectionString: adminUrl() });
+    app = createPgDb({ connectionString: appUrl() });
+  });
+
+  beforeEach(async () => {
+    Object.assign(flags, structuredClone(saved));
+    openSwitches();
+    mock = createMockPaymentAdapter({ log: () => {} });
+    const tag = randomUUID().slice(0, 8);
+    A = await makeTenant(admin, `adv-a-${tag}`);
+    B = await makeTenant(admin, `adv-b-${tag}`);
+    await addPayRules(A);
+    await addPayRules(B);
+    transcriptId = randomUUID();
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO untrusted_inputs (id, tenant_id, kind, source, body_text, content_hash, received_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'transcript', 'voice', 'Need two fifty for fuel.', $2,
+           CAST('2026-11-02T14:00:00Z' AS timestamptz))`,
+        [transcriptId, "d".repeat(64)],
+      ),
+    );
+  });
+
+  afterEach(async () => {
+    Object.assign(flags, structuredClone(saved));
+    for (const f of [A, B]) {
+      if (f) await clearLedger(admin, f);
+      await dropTenant(admin, f);
+    }
+  });
+
+  afterAll(async () => {
+    await app?.close();
+    await admin?.close();
+  });
+
+  it("creates one advance at approval and pays it once, however many times approve is pressed", async () => {
+    const id = await addProposal();
+    expect(await approve(id)).toMatchObject({ ok: true, proposalId: id, status: "done" });
+    expect(await approve(id)).toMatchObject({ ok: false, category: "already_decided" });
+
+    const advances = await flowAdvances();
+    expect(advances).toHaveLength(1);
+    const [adv] = advances;
+    expect(adv).toMatchObject({
+      status: "paid",
+      source: "ui",
+      source_input_id: null,
+      requested_at: new Date(NOW - HOUR).toISOString(),
+      amount_cents: "25000",
+      fee_cents: "500",
+      decided_by_membership_id: A.memberId,
+      paid: true,
+    });
+    expect(adv.request_ref).toMatch(REQUEST_REF);
+    expect(adv.request_ref).toBe(`ADV-${id.replace(/-/g, "").slice(0, 12).toUpperCase()}`);
+    const rows = await ledger();
+    expect(rows).toEqual([expect.objectContaining({ kind: "advance_payout", state: "confirmed", attempt: 1, amount_cents: "25000" })]);
+    expect(mock.sendCount).toBe(1);
+    expect(await proposalRow(id)).toMatchObject({ status: "done", money_action_id: rows[0].id });
+  });
+
+  it("pays once when two approvals race", async () => {
+    const id = await addProposal();
+    const results = await Promise.all([approve(id), approve(id)]);
+    expect(results.filter((r) => r.ok)).not.toHaveLength(0);
+    expect(await flowAdvances()).toHaveLength(1);
+    expect(await ledger()).toHaveLength(1);
+    expect(mock.sendCount).toBe(1);
+    expect((await flowAdvances())[0].status).toBe("paid");
+  });
+
+  it("leaves a definite payout failure approved and unpaid, and a retry pays it as attempt 2", async () => {
+    const id = await addProposal();
+    mock.failNext("rate_limited");
+    expect(await approve(id)).toEqual({ ok: false, category: "payout_failed", retryable: true });
+    const [adv] = await flowAdvances();
+    expect(adv.status).toBe("approved");
+    expect(await ledger()).toEqual([expect.objectContaining({ state: "failed", attempt: 1 })]);
+    expect((await proposalRow(id)).status).toBe("failed");
+
+    // Approving again is refused (the proposal is decided); the advance's page retries it.
+    expect(await approve(id)).toMatchObject({ ok: false, category: "already_decided" });
+    const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+    expect(record?.actions).toEqual({ retry: true, check: false, post: false });
+
+    expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: true, status: "paid" });
+    expect(await ledger()).toEqual([
+      expect.objectContaining({ state: "failed", attempt: 1 }),
+      expect.objectContaining({ state: "confirmed", attempt: 2 }),
+    ]);
+    expect((await flowAdvances())[0].status).toBe("paid");
+    expect(mock.sendCount).toBe(2);
+    // The advance row is the truth after a retry; a failed proposal never becomes done.
+    expect((await proposalRow(id)).status).toBe("failed");
+    expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "not_retryable" });
+  });
+
+  it("keeps a payout with no answer unknown, never retries it, and Check pending adopts it", async () => {
+    const id = await addProposal();
+    mock.hangNext();
+    expect(await approve(id, false, deps({ timeoutMs: 50 }))).toMatchObject({ ok: true, status: "executing" });
+    const [adv] = await flowAdvances();
+    expect(adv.status).toBe("approved");
+    const [row] = await ledger();
+    expect(["sent", "unknown"]).toContain(row.state);
+    expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "payout_pending" });
+
+    const checked = await checkAdvancePayouts(A.session, adv.id, deps());
+    expect(checked).toMatchObject({ ok: true, summary: { confirmed: 1 } });
+    expect((await flowAdvances())[0]).toMatchObject({ status: "paid", paid: true });
+    expect(await ledger()).toEqual([expect.objectContaining({ state: "confirmed", attempt: 1 })]);
+    expect((await proposalRow(id)).status).toBe("done");
+  });
+
+  it("stops before the ledger when the payment service is not ready, and a later approval adopts it", async () => {
+    const id = await addProposal();
+    const notReady: PaymentAdapter = { ...mock, system: "mock", ready: async () => ({ ok: false, category: "not_configured" }) };
+    expect(await approve(id, false, deps({ payment: notReady }))).toEqual({ ok: false, category: "unavailable", retryable: true });
+    const [adv] = await flowAdvances();
+    expect(adv.status).toBe("requested");
+    expect(await ledger()).toEqual([]);
+    expect((await proposalRow(id)).status).toBe("executing");
+    const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+    expect(record?.actions.retry).toBe(true);
+
+    expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+    expect(await flowAdvances()).toEqual([expect.objectContaining({ id: adv.id, status: "paid" })]);
+    expect(await ledger()).toHaveLength(1);
+    expect(mock.sendCount).toBe(1);
+  });
+
+  it("asks the pay rules again at approval and never pays a proposal the numbers no longer allow", async () => {
+    // An approved $400.00 advance already open: $250.00 more would pass the $600.00 earned share.
+    await addAdvance(admin, A, 40_000, "approved");
+    const id = await addProposal();
+    expect(await approve(id)).toEqual({ ok: false, category: "stale_eligibility", retryable: false });
+    expect(await proposalRow(id)).toMatchObject({
+      status: "failed",
+      decision_note: "stale_eligibility: exceeds_earned_share",
+      money_action_id: null,
+    });
+    expect(await flowAdvances()).toEqual([]);
+    expect(await ledger()).toEqual([]);
+    expect(mock.sendCount).toBe(0);
+  });
+
+  it("refuses every closed switch before any advance or ledger row, and pays once they open", async () => {
+    flags.advancesEnabled = false;
+    const id = await addProposal();
+    expect(await approve(id)).toMatchObject({ ok: false, category: "disabled" });
+    flags.advancesEnabled = true;
+    flags.advancePayouts = { ...flags.advancePayouts, armed: false };
+    expect(await approve(id)).toMatchObject({ ok: false, category: "not_armed" });
+    flags.advancePayouts = { ...flags.advancePayouts, armed: true, capCents: 10_000 };
+    expect(await approve(id)).toMatchObject({ ok: false, category: "over_cap" });
+    flags.advancePayouts = { ...flags.advancePayouts, capCents: 50_000, startDate: "2026-11-03" };
+    expect(await approve(id)).toMatchObject({ ok: false, category: "before_start" });
+    flags.advancePayouts = { ...flags.advancePayouts, startDate: "2026-10-27" };
+    flags.payoutsEnabled = false;
+    expect(await approve(id)).toMatchObject({ ok: false, category: "payouts_off" });
+    expect(await flowAdvances()).toEqual([]);
+    expect(await ledger()).toEqual([]);
+    // The person's approval stands while the switches are closed; it pays once they open.
+    expect((await proposalRow(id)).status).toBe("approved");
+    flags.payoutsEnabled = true;
+    expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+    expect(mock.sendCount).toBe(1);
+  });
+
+  it("needs the second confirm for a flagged proposal, and names the voice note it came from", async () => {
+    const id = await addProposal({ flagged: true, requestRef: transcriptId });
+    expect(await approve(id, false)).toMatchObject({ ok: false, category: "needs_confirm" });
+    expect(await flowAdvances()).toEqual([]);
+    expect(await ledger()).toEqual([]);
+    expect((await proposalRow(id)).status).toBe("proposed");
+    expect(await approve(id, true)).toMatchObject({ ok: true, status: "done" });
+    expect(await flowAdvances()).toEqual([
+      expect.objectContaining({ status: "paid", source: "voice", source_input_id: transcriptId }),
+    ]);
+  });
+
+  it("holds a staff member to the admin line, for an approval and for a retry", async () => {
+    flags.approverRole = { adminAboveCents: 20_000 };
+    const id = await addProposal({ amountCents: 25_000 });
+    expect(await approve(id)).toMatchObject({ ok: false, category: "role" });
+    expect(await flowAdvances()).toEqual([]);
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute("UPDATE memberships SET role = 'admin' WHERE tenant_id = current_tenant_id()"),
+    );
+    mock.failNext("rate_limited");
+    expect(await approve(id)).toMatchObject({ ok: false, category: "payout_failed" });
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute("UPDATE memberships SET role = 'staff' WHERE tenant_id = current_tenant_id()"),
+    );
+    const [adv] = await flowAdvances();
+    expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "role" });
+    expect(await ledger()).toHaveLength(1);
+  });
+
+  it("shows another carrier nothing: no approval, no retry, no check and no record", async () => {
+    const id = await addProposal();
+    expect(await approve(id, false, deps(), B.session)).toMatchObject({ ok: false, category: "not_found" });
+    expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+    const [adv] = await flowAdvances();
+    expect(await retryAdvancePayout(B.session, adv.id, deps())).toMatchObject({ ok: false, category: "not_found" });
+    expect(await checkAdvancePayouts(B.session, adv.id, deps())).toMatchObject({ ok: false, category: "not_found" });
+    expect(await postAdvanceExpense(B.session, adv.id, deps())).toMatchObject({ ok: false });
+    expect(await app.withTenant(B.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()))).toBeNull();
+    expect(await flowAdvances(B)).toEqual([]);
+    expect(await ledger(B)).toEqual([]);
+  });
+
+  it("posts a paid advance to QuickBooks once, as the advance plus its fee", async () => {
+    flags.accountingEnabled = true;
+    const sent: { amountCents: number; feeCents: number; docRef: string }[] = [];
+    const accounting = {
+      system: "qbo_sandbox",
+      ready: async () => ({ ok: true }),
+      ensureVendor: async () => ({ outsideId: "V-77" }),
+      createExpense: async (_q: unknown, e: { amountCents: number; feeCents: number; docRef: string }) => {
+        sent.push({ amountCents: e.amountCents, feeCents: e.feeCents, docRef: e.docRef });
+        return { kind: "confirmed", system: "qbo_sandbox", type: "Purchase", id: "P-9001", amountCents: e.amountCents + e.feeCents };
+      },
+    } as unknown as AccountingAdapter;
+    const id = await addProposal();
+    expect(await approve(id, false, deps({ accounting }))).toMatchObject({ ok: true, status: "done" });
+    const [adv] = await flowAdvances();
+    expect(sent).toEqual([{ amountCents: 25_000, feeCents: 500, docRef: adv.request_ref }]);
+    expect(await ledger()).toEqual([
+      expect.objectContaining({ kind: "advance_expense", state: "confirmed", amount_cents: "25500" }),
+      expect.objectContaining({ kind: "advance_payout", state: "confirmed", amount_cents: "25000" }),
+    ]);
+    expect(await postAdvanceExpense(A.session, adv.id, deps({ accounting }))).toMatchObject({
+      ok: false,
+      category: "already_posted",
+    });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("counts a tenant's advance proposals per local day for the gateway's daily ceiling", async () => {
+    // 05:30 UTC on Nov 2 is still Nov 1 in Chicago; 06:30 UTC is Nov 2.
+    await addProposal({ createdAt: "2026-11-02T05:30:00.000Z" });
+    await addProposal({ createdAt: "2026-11-02T06:30:00.000Z", driverId: A.otherDriverId });
+    const count = (at: string, f: Fixture = A) =>
+      app.withTenant(f.tenantId, async (q) => Number((await q.query<{ n: number }>(DAILY_CAP_SQL, [at]))[0].n));
+    expect(await count(new Date(NOW).toISOString())).toBe(1);
+    expect(await count("2026-11-02T05:00:00.000Z")).toBe(1);
+    expect(await count(new Date(NOW).toISOString(), B)).toBe(0);
+  });
+
+  it("holds migration 0011's rules: one advance per proposal, own-tenant references, voice, no seeded flow rows", async () => {
+    const id = await addProposal();
+    expect(await approve(id)).toMatchObject({ ok: true });
+    const insert = (f: Fixture, o: { proposalId?: string | null; source?: string; inputId?: string | null; decided?: boolean }) =>
+      admin.withTenant(f.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO advances (id, tenant_id, driver_id, request_ref, requested_at, requested_on, amount_cents,
+             status, source, proposal_id, source_input_id, decided_at, decided_by_membership_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, CAST('2026-11-02T15:00:00Z' AS timestamptz),
+             CAST('2026-11-02' AS date), 10000, 'requested', $4, CAST($5 AS uuid), CAST($6 AS uuid),
+             CAST($7 AS timestamptz), CAST($8 AS uuid))`,
+          [
+            randomUUID(),
+            f.driverId,
+            `T-${randomUUID().slice(0, 8)}`,
+            o.source ?? "ui",
+            o.proposalId ?? null,
+            o.inputId ?? null,
+            o.decided === undefined ? null : "2026-11-02T15:00:00Z",
+            o.decided === true ? f.memberId : null,
+          ],
+        ),
+      );
+    expect(await sqlStateOf(insert(A, { proposalId: id }))).toBe("23505");
+    expect(await sqlStateOf(insert(B, { proposalId: id }))).toBe("23503");
+    expect(await sqlStateOf(insert(B, { inputId: transcriptId }))).toBe("23503");
+    expect(await sqlStateOf(insert(A, { source: "voice", inputId: transcriptId }))).toBe("no error");
+    const other = await addProposal({ driverId: A.otherDriverId });
+    expect(await sqlStateOf(insert(A, { source: "seed", proposalId: other }))).toBe("23514");
+    expect(await sqlStateOf(insert(A, { decided: false }))).toBe("23514");
+    // A proposal a flow advance names cannot be deleted.
+    await clearLedger(admin, A);
+    expect(
+      await sqlStateOf(
+        admin.withTenant(A.tenantId, (q) =>
+          q.execute("DELETE FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [id]),
+        ),
+      ),
+    ).toBe("23503");
+  });
+});

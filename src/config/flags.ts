@@ -51,6 +51,22 @@ export type Flags = {
   auditorRequired: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
+  // The advance flow: approving an advance proposal, Retry, Check pending, Post to QuickBooks and
+  // the request desk. Off means each refuses with disabled before any write. The agent can still
+  // propose an advance (that writes only our own tables).
+  advancesEnabled: boolean;
+  // The advance payout path, on top of advancesEnabled and payoutsEnabled. Every approval and
+  // retry checks all of it before the ledger reserves a row: armed, the amount at or under
+  // capCents, and the tenant's local date on or after startDate (YYYY-MM-DD).
+  advancePayouts: { armed: boolean; capCents: number; startDate: string };
+  advancesLimits: {
+    // Advance proposals one carrier can make in one of its local days.
+    proposalsPerDay: number;
+    // Payout tries per advance, the first included; Retry stops at this many.
+    maxPayoutAttempts: number;
+    // The QuickBooks post runs in the approve request only with this much of its time left.
+    legTwoMinRemainingMs: number;
+  };
 };
 
 export const flags: Flags = {
@@ -75,4 +91,7 @@ export const flags: Flags = {
   proposalMaxAgeDays: 7,
   auditorRequired: false,
   approverRole: { adminAboveCents: 200_000 },
+  advancesEnabled: false,
+  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-27" },
+  advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
 };

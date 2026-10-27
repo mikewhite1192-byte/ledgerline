@@ -41,4 +41,18 @@ describe("flags", () => {
     expect(flags.auditorRequired).toBe(false);
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
   });
+
+  it("ships the advance flow dark, disarmed, capped and dated", () => {
+    expect(flags.advancesEnabled).toBe(false);
+    expect(flags.advancePayouts).toEqual({ armed: false, capCents: 50_000, startDate: "2026-10-27" });
+    expect(flags.advancePayouts.startDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(flags.advancesLimits).toEqual({
+      proposalsPerDay: 30,
+      maxPayoutAttempts: 3,
+      legTwoMinRemainingMs: 12_000,
+    });
+    for (const v of [flags.advancePayouts.capCents, ...Object.values(flags.advancesLimits)]) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+  });
 });

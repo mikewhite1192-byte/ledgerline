@@ -54,3 +54,19 @@ Demo logins are in the submission notes.
 
 All data is synthetic. No real money moves: payouts run in test mode and accounting posts to a
 QuickBooks sandbox company.
+
+## Advances: how a request becomes a payout
+
+1. A request arrives: a person fills in the request desk (`/advances/new`) or asks in the chat.
+2. The agent checks the pay rules through the gateway (earned, unpaid pay; the driver's limit;
+   the carrier's minimum and share; a possible duplicate) and proposes one advance. It cannot
+   pay: its tools only read and propose.
+3. A person approves the card. Only then does an advance row exist. The approval asks the pay
+   rules again, so numbers that changed since the proposal stop it with nothing paid.
+4. The engine reserves one ledger row and sends the payout in test mode. Pressing approve twice,
+   or two people at once, still pays once. A payout with no answer stays unknown until it is
+   read back (Check pending on the advance's page); only a definite failure offers Retry.
+5. A paid advance posts to the QuickBooks sandbox as the advance plus its fee, once.
+
+Every step is behind switches that ship off: advances, payouts, an arm switch, a per-payout cap
+and a start date.
