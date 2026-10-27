@@ -173,6 +173,15 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
         issued_on: issuedOn,
         due_on: addDays(issuedOn, termsOf(customerId)),
         qbo_id: null,
+        // History is reviewed and sent by construction, by nobody in particular; the review plan
+        // takes a few recent invoices back out. Nothing seeded is posted to accounting.
+        reviewed_at: `${issuedOn}T12:00:00.000Z`,
+        reviewed_by_membership_id: null,
+        review_note: null,
+        sent_on: issuedOn,
+        sent_by_membership_id: null,
+        qbo_email_status: null,
+        qbo_amount_cents: null,
       },
       order: drafts.length,
       receivedOn: null,

@@ -1,4 +1,3 @@
-import { flags } from "@/config/flags";
 import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
@@ -10,16 +9,18 @@ import { BUCKET_WORDS, Day, Facts, RecordLink } from "@/components/invoices/cell
 import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
 import { PostButton } from "@/components/invoices/post-button";
-import { readInvoiceRecord } from "@/lib/invoices/views";
+import { ReviewCard } from "@/components/invoices/review-card";
+import { invoiceRecordActions, readInvoiceRecordPage } from "@/lib/invoices/record-page";
 import { readRecordPage } from "../../read-record";
 
 export const dynamic = "force-dynamic";
 
 // One invoice: who owes it, what it is for, what came in against it, and every attempt to post
-// it to QuickBooks. "Post to QuickBooks" shows until a post is confirmed.
+// it to QuickBooks. "Post to QuickBooks" shows until a post is confirmed, for an invoice the
+// invoice queue made (record-page.ts).
 export default async function InvoiceRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const page = await readRecordPage(id, readInvoiceRecord);
+  const page = await readRecordPage(id, readInvoiceRecordPage);
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   if (page.kind === "missing") {
     return (
@@ -29,11 +30,9 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
       </SignedInPage>
     );
   }
-  const inv = page.record;
-  const confirmed = inv.posted || inv.ledger.some((r) => r.state === "confirmed");
-  const canPost = flags.invoicesEnabled && !confirmed && inv.status !== "void";
-  // A post nobody confirmed yet (unknown, or sent with no answer) is read back from here.
-  const canCheck = flags.invoicesEnabled && !confirmed && inv.ledger.some((r) => r.state === "unknown" || r.state === "sent");
+  const inv = page.record.record;
+  const review = page.record.review;
+  const actions = invoiceRecordActions(page.record);
   return (
     <SignedInPage tenant={page.shell} current="/invoices" title={`Invoice ${inv.invoiceNumber}`}>
       <PageHeader
@@ -41,6 +40,9 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
         description={<RecordLink table="customers" id={inv.customerId}>{inv.customerName}</RecordLink>}
         actions={<StatusBadge status={inv.status} />}
       />
+      {review ? (
+        <ReviewCard view={review.view} roles={review.roles} today={page.today} timezone={page.shell.timezone} />
+      ) : null}
       <Card>
         <CardBody>
           <Facts
@@ -64,8 +66,8 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
           />
         </CardBody>
       </Card>
-      {canPost ? <PostButton url={`/api/invoices/${encodeURIComponent(inv.id)}/post`} /> : null}
-      {canCheck ? <CheckButton url={`/api/invoices/${encodeURIComponent(inv.id)}/reconcile`} /> : null}
+      {actions.post ? <PostButton url={`/api/invoices/${encodeURIComponent(inv.id)}/post`} /> : null}
+      {actions.check ? <CheckButton url={`/api/invoices/${encodeURIComponent(inv.id)}/reconcile`} /> : null}
       {inv.lines ? (
         <DataTable
           caption="Lines, from the rules engine"
@@ -92,7 +94,9 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
           { key: "amount", header: "Applied", align: "right", cell: (a) => <Money cents={a.amountCents} tone="plain" /> },
         ]}
       />
-      <LedgerTable rows={inv.ledger} timezone={page.shell.timezone} />
+      <div id="posting-attempts">
+        <LedgerTable rows={inv.ledger} timezone={page.shell.timezone} />
+      </div>
     </SignedInPage>
   );
 }

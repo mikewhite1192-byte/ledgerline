@@ -42,6 +42,7 @@ const invoice = (over: Record<string, unknown> = {}) => ({
     { kind: "linehaul" as const, description: "Linehaul", amountCents: 250_000 },
     { kind: "fuel_surcharge" as const, description: "Fuel surcharge", amountCents: 31_005 },
   ],
+  billingEmail: "ar@br-c01.example",
   ...over,
 });
 
@@ -196,7 +197,47 @@ describe("QuickBooks adapter: creates", () => {
           SalesItemLineDetail: { ItemRef: { value: "202" }, Qty: 1, UnitPrice: 310.05 },
         },
       ],
+      EmailStatus: "NeedToSend",
+      BillEmail: { Address: "ar@br-c01.example" },
     });
+  });
+
+  it("creates every invoice unsent, and passes the email state the reply carries", async () => {
+    const reply = { Invoice: { ...invoiceReply().Invoice, EmailStatus: "NeedToSend" } };
+    const { adapter, sent, db } = make([NONE, { status: 200, body: reply }]);
+    expect(await adapter.createInvoice(db, invoice(), ctx())).toEqual({
+      kind: "confirmed",
+      system: "qbo_sandbox",
+      type: "Invoice",
+      id: "901",
+      ref: "T5B0E-BR-INV-1001",
+      amountCents: 281_005,
+      emailStatus: "NeedToSend",
+    });
+    const body = JSON.parse(sent[1].body ?? "");
+    expect(body.EmailStatus).toBe("NeedToSend");
+    expect(body.BillEmail).toEqual({ Address: "ar@br-c01.example" });
+  });
+
+  it("leaves out an email state it does not know, never guessing one", async () => {
+    for (const status of ["Sent", "needtosend", 3, null]) {
+      const reply = { Invoice: { ...invoiceReply().Invoice, EmailStatus: status } };
+      const { adapter, db } = make([NONE, { status: 200, body: reply }]);
+      const out = await adapter.createInvoice(db, invoice(), ctx());
+      expect(out, String(status)).toMatchObject({ kind: "confirmed", id: "901" });
+      expect(out, String(status)).not.toHaveProperty("emailStatus");
+    }
+  });
+
+  it("refuses a billing address that is not a synthetic .example one before any post", async () => {
+    for (const billingEmail of ["ar@shipper.com", "AR@BR-C01.EXAMPLE", "", undefined, "a@b.example.com"]) {
+      const { adapter, sent, db } = make([NONE, { status: 200, body: invoiceReply() }]);
+      expect(await adapter.createInvoice(db, invoice({ billingEmail }), ctx()), String(billingEmail)).toEqual({
+        kind: "failed",
+        category: "validation",
+      });
+      expect(sent.filter((r) => r.method === "POST"), String(billingEmail)).toHaveLength(0);
+    }
   });
 
   it("maps refusals and unknowns from the status, never from Intuit's words", async () => {
@@ -605,6 +646,16 @@ describe("QuickBooks adapter: read-back", () => {
     expect(sent[0].method).toBe("GET");
     expect(sent[0].url.pathname).toBe(`/v3/company/${REALM}/invoice/901`);
     expect(sent[0].url.searchParams.get("requestid")).toBeNull();
+  });
+
+  it("reads an invoice's email state back whole", async () => {
+    for (const status of ["NotSet", "NeedToSend", "EmailSent"] as const) {
+      const reply = { Invoice: { ...invoiceReply().Invoice, EmailStatus: status } };
+      const { adapter, db } = make([{ status: 200, body: reply }]);
+      expect(await adapter.readBack(db, ref(), ctx())).toMatchObject({ found: true, emailStatus: status });
+    }
+    const odd = make([{ status: 200, body: { Invoice: { ...invoiceReply().Invoice, EmailStatus: "Emailed" } } }]);
+    expect(await odd.adapter.readBack(odd.db, ref(), ctx())).not.toHaveProperty("emailStatus");
   });
 
   it("answers not found for a 610, and finds by document number when there is no id", async () => {

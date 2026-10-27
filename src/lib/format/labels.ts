@@ -43,6 +43,13 @@ const STATUS_LABELS: Record<string, string> = {
   // model calls
   ok: "Answered",
   incomplete: "Stopped early",
+  // invoice review (the same words as the invoice screens' review labels)
+  sync_error: "Accounting sync error",
+  rate_mismatch: "Rate mismatch",
+  missing_documents: "Missing documents",
+  duplicate_warning: "Duplicate warning",
+  needs_review: "Needs review",
+  ready_to_send: "Ready to send",
 };
 
 const LINE_KIND_LABELS: Record<string, string> = {

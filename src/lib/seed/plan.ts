@@ -49,6 +49,7 @@ import {
   type AdvanceDraft,
   type ParityPlanted,
 } from "./parity-plan";
+import { planInvoiceReview, type ReviewPlant } from "./review-plan";
 import { buildUntrustedInputs } from "./untrusted-inputs";
 
 // buildCarrierPlan(carrier, anchor): every row the seed writes for one demo carrier, built in
@@ -101,6 +102,7 @@ export type Planted = {
   // The four loads with unbilled detention, in plant order A to D.
   detentionLoadIds: string[];
   collections: CollectionsPlant[];
+  invoiceReview: ReviewPlant;
   // Arming, the extra cards, the load pair and the take-back (parity-plan.ts).
   parity: ParityPlanted;
 };
@@ -234,6 +236,9 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     state: c.state,
     detention_free_minutes: detentionTermsOf(i).freeMinutes,
     detention_hourly_cents: detentionTermsOf(i).hourlyCents,
+    // The review plan turns the document rule on for two customers.
+    pod_required: false,
+    billing_email: `ar@${prefix.toLowerCase()}-c${pad2(i + 1)}.example`,
   }));
 
   // ---- Drivers ----
@@ -991,6 +996,25 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     windowLoads: loadsOf(windowLoads, stateMiles, accessorials),
     openLoadIds: new Set(detentionLoads.map((x) => x.row.id)),
   });
+  const invoiceReview = planInvoiceReview({
+    seed,
+    anchor,
+    openWeek,
+    customers,
+    invoices: ar.invoices,
+    loads,
+    stateMiles,
+    accessorials,
+    drivers,
+    heroId: carrier.heroCode ? driver(carrier.heroCode).id : null,
+    takenLoadIds: new Set(detentionLoads.map((x) => x.row.id)),
+    takenInvoiceIds: new Set([
+      ar.wrongInvoice.appliedToInvoiceId,
+      ar.wrongInvoice.meantForInvoiceId,
+      ...ar.collections.map((c) => c.invoiceId),
+    ]),
+    applications: ar.applications,
+  });
 
   // Parity, after every other draw on the parity stream above: the disarmed driver, the cards,
   // the dispatch-system ids and the arming log.
@@ -1069,6 +1093,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       fuelParkedId: parked.id,
       detentionLoadIds: detentionLoads.map((x) => x.row.id),
       collections: ar.collections,
+      invoiceReview,
       parity: {
         disarmedDriverId: disarmed.id,
         loadPairLoadId: pair.loadId,

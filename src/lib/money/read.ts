@@ -165,6 +165,13 @@ export function readBySubject(
   );
 }
 
+// Every row of one kind, oldest first: the invoice review reads the latest post of each invoice
+// from this in one statement instead of one read per invoice.
+export function readByKind(q: Queryable, kind: MoneyActionKind): Promise<MoneyAction[]> {
+  oneOf(kind, MONEY_ACTION_KINDS);
+  return many(q, "kind = $1", [kind], " ORDER BY created_at, attempt, id");
+}
+
 // One record whose ledger rows a pending read is limited to.
 export type PendingSubject = { table: SubjectTable; id: string };
 const SUBJECT_TABLES: readonly SubjectTable[] = ["advances", "settlements", "invoices", "customer_payments"];
