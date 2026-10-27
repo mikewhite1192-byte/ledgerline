@@ -1,6 +1,7 @@
 import { App } from "aws-cdk-lib";
 import { moneySettingsFromEnv } from "../lib/hosting-stack";
 import { addStacks } from "../lib/stacks";
+import { sweepSettingsFromEnv } from "../lib/sweep-stack";
 
 const app = new App();
 
@@ -12,9 +13,12 @@ const app = new App();
 // Amplify shows green. So synth (any cdk command) is refused unless all four are exported:
 // QBO_CLIENT_ID, QBO_REDIRECT_URI, QBO_ALLOWED_REALM_ID and STRIPE_TEST_DESTINATION_ACCOUNT. To
 // deploy with fewer on purpose, set MONEY_SETTINGS=none: exactly the ones exported reach the branch
-// and the rest are removed from it.
+// and the rest are removed from it. PaydayCopilotSweep reads SWEEP_APP_URL (the app's https origin)
+// and SWEEP_TENANT_IDS (comma-separated carrier ids) from the same shell; unset, its kicker calls
+// nothing, and its schedule ships disabled either way.
 addStacks(
   app,
   { account: process.env.CDK_DEFAULT_ACCOUNT, region: "us-east-2" },
   moneySettingsFromEnv(process.env),
+  sweepSettingsFromEnv(process.env),
 );

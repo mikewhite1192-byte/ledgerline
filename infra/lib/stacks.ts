@@ -2,14 +2,16 @@ import { Tags, type App, type Environment } from "aws-cdk-lib";
 import { AuthStack } from "./auth-stack";
 import { DataStack } from "./data-stack";
 import { HostingStack, type MoneySettings } from "./hosting-stack";
+import { SweepStack, type SweepSettings } from "./sweep-stack";
 
 export const PROJECT_TAG = { key: "project", value: "payday-copilot" };
 
 // The whole app: data and auth first, then hosting, which reads their outputs. Every stack and
 // every resource carries the project tag (cdk.json sets explicitStackTags, so stack tags are
 // given here explicitly as well as on the app). The money settings come from the deploying shell
-// (infra/bin/app.ts); unset, the branch carries none of them.
-export function addStacks(app: App, env: Environment, money: MoneySettings = {}) {
+// (infra/bin/app.ts); unset, the branch carries none of them. The sweep stack (the nightly kicker,
+// its key and a schedule that ships disabled) stands alone: the app reads its key by name.
+export function addStacks(app: App, env: Environment, money: MoneySettings = {}, sweep: SweepSettings = {}) {
   const tags = { [PROJECT_TAG.key]: PROJECT_TAG.value };
   Tags.of(app).add(PROJECT_TAG.key, PROJECT_TAG.value);
 
@@ -44,5 +46,6 @@ export function addStacks(app: App, env: Environment, money: MoneySettings = {})
   });
   hosting.addStackDependency(data);
   hosting.addStackDependency(auth);
-  return { data, auth, hosting };
+  const sweepStack = new SweepStack(app, "PaydayCopilotSweep", { env, tags, settings: sweep });
+  return { data, auth, hosting, sweep: sweepStack };
 }
