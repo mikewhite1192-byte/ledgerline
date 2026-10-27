@@ -3,7 +3,7 @@ import { getDb, type Queryable, type TenantDb } from "../../db";
 import type { Cents } from "../../rules-engine";
 import { assertMembership } from "../../tenant/context";
 import { isUuid } from "../../uuid";
-import { logDecision, type DecisionRow } from "./decisions";
+import { INVALID_TRACE, isTraceId, logDecision, type DecisionRow } from "./decisions";
 import { redactArgs } from "./redact";
 import { assertRefsExist, distinctRefs } from "./refs";
 import { REDACT_ENUMS, TOOL_NAME, toolNamed } from "./registry";
@@ -31,7 +31,9 @@ import { parseArgs } from "./validate";
 //   7. failed         the tool threw or ran out of time (raw error to the server log only)
 //   8. allowed        the result, cut to 8,000 characters
 // One decision row is written for every call. A call whose decision cannot be written is failed:
-// a decision that cannot be recorded is not allowed.
+// a decision that cannot be recorded is not allowed. The trace id is checked once, on the way in:
+// a call whose trace id the log cannot hold is failed after step 2, before its args are read, and
+// recorded under INVALID_TRACE. Every later step, the limit lookups included, reads the checked id.
 
 export { toolsFor, TOOL_REGISTRY } from "./registry";
 export { screenUntrustedInput } from "./screen";
@@ -52,6 +54,13 @@ class GatewayTimeout extends Error {
   constructor() {
     super("gateway step timed out");
     this.name = "GatewayTimeout";
+  }
+}
+
+class InvalidTraceId extends Error {
+  constructor() {
+    super("the trace id is not one the decision log can hold");
+    this.name = "InvalidTraceId";
   }
 }
 
@@ -95,16 +104,27 @@ export function capResult(result: Record<string, unknown>): {
   return { result: out, chars: JSON.stringify(out).length, truncated: true };
 }
 
+// What the server log keeps of an error: its name, its category when it has one (a DbError's
+// rls_denied, an AiError's timeout) and its short code (a SQLSTATE such as 23514, or a system code
+// such as ECONNRESET). Never the message: the driver, the Data API, the engine or a tool can put
+// row values in it.
+const ERROR_NAME = /^[A-Za-z][\w.]{0,63}$/;
+const ERROR_CATEGORY = /^[a-z_]{1,32}$/;
+const ERROR_CODE = /^[A-Z0-9_]{1,32}$/;
 function errorText(err: unknown): string {
-  return err instanceof Error ? `${err.name}: ${err.message}` : "error";
+  if (!(err instanceof Error)) return "error";
+  const e = err as { category?: unknown; sqlState?: unknown; code?: unknown };
+  const parts = [ERROR_NAME.test(err.name) ? err.name : "Error"];
+  if (typeof e.category === "string" && ERROR_CATEGORY.test(e.category)) parts.push(e.category);
+  const code = e.sqlState ?? e.code;
+  if (typeof code === "string" && ERROR_CODE.test(code)) parts.push(code);
+  return parts.join(" ");
 }
 
 // The ids that tie a server log line to its call, so a call whose decision row could not be
 // written (a dead pool) can still be traced. Ids only: never args, personal data or model text.
-const LOG_TRACE = /^[\w.:-]{1,64}$/;
-function callIds(decisionId: string, ctx: GatewayContext): string {
-  const trace = typeof ctx.traceId === "string" && LOG_TRACE.test(ctx.traceId) ? ctx.traceId : "invalid";
-  return `decision=${decisionId} trace=${trace}`;
+function callIds(decisionId: string, traceId: string): string {
+  return `decision=${decisionId} trace=${traceId}`;
 }
 
 async function inTenant<T>(
@@ -127,10 +147,13 @@ export async function callTool(
   const started = clock();
   const decisionId = randomUUID();
   const name = typeof call?.name === "string" ? call.name : "";
+  // The one trace check: the row, the log lines and every step of dispatch use this value.
+  const traceId = isTraceId(ctx.traceId) ? ctx.traceId : INVALID_TRACE;
+  const checked: GatewayContext = { ...ctx, traceId };
   const row: DecisionRow = {
     id: decisionId,
     turnId: ctx.turnId,
-    traceId: ctx.traceId,
+    traceId,
     role: ctx.role,
     model: ctx.model,
     tool: TOOL_NAME.test(name) ? name : "invalid_name",
@@ -149,9 +172,9 @@ export async function callTool(
   let db: TenantDb | null = null;
   try {
     db = deps.db ?? getDb();
-    outcome = await dispatch(ctx, call, deps, db, row, decisionId, clock);
+    outcome = await dispatch(checked, call, deps, db, row, decisionId, clock);
   } catch (err) {
-    console.error(`gateway: ${row.tool} failed, ${callIds(decisionId, ctx)} (${errorText(err)})`);
+    console.error(`gateway: ${row.tool} failed, ${callIds(decisionId, traceId)} (${errorText(err)})`);
     row.decision = "failed";
     row.reason = "tool_failed";
     row.resultChars = null;
@@ -171,7 +194,7 @@ export async function callTool(
     await logDecision(db, ctx.session, row);
   } catch (err) {
     console.error(
-      `gateway: the decision for ${row.tool} was not recorded, ${callIds(decisionId, ctx)} (${errorText(err)})`,
+      `gateway: the decision for ${row.tool} was not recorded, ${callIds(decisionId, traceId)} (${errorText(err)})`,
     );
     return {
       decision: "failed",
@@ -212,6 +235,9 @@ async function dispatch(
   if (!tool.roles.includes(ctx.role)) {
     return refuse("denied", "role_not_allowed", { error: "role_not_allowed" });
   }
+  // A trace id the log cannot hold (checked in callTool) fails the call here: no limit lookup,
+  // screen or tool runs on it.
+  if (ctx.traceId === INVALID_TRACE) throw new InvalidTraceId();
 
   // 3: strict args. A failure reports field paths and codes, never the text.
   const parsed = parseArgs(tool.args, call.argumentsJson);

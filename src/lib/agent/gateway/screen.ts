@@ -5,7 +5,7 @@ import { getDb, type Queryable, type TenantDb } from "../../db";
 import { untrustedContentHash } from "../../data/content-hash";
 import { assertMembership } from "../../tenant/context";
 import { isUuid } from "../../uuid";
-import { logDecision, type DecisionKind } from "./decisions";
+import { isTraceId, logDecision, type DecisionKind } from "./decisions";
 import { patternHits } from "./patterns";
 import {
   parseTextReport,
@@ -183,13 +183,15 @@ function confidenceMilli(confidence: number | null): number | null {
 }
 
 // Screens one stored untrusted input for the caller's tenant and logs one gateway decision.
-// Throws when the input does not exist in the tenant or a database write fails.
+// Throws when the input does not exist in the tenant or a database write fails, and before any
+// read when the input id or the trace id is malformed (a trace id the log cannot hold).
 export async function screenUntrustedInput(
   ctx: GatewayContext,
   inputId: string,
   deps: GatewayDeps = {},
 ): Promise<ScreenOutcome> {
   if (!isUuid(inputId)) throw new Error("inputId is not a uuid");
+  if (!isTraceId(ctx.traceId)) throw new Error("traceId is not valid");
   const db = deps.db ?? getDb();
   const call = deps.complete ?? complete;
   const clock = deps.clock ?? Date.now;

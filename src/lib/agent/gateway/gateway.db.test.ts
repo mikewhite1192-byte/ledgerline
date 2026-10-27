@@ -6,6 +6,7 @@ import { untrustedContentHash } from "../../data/content-hash";
 import { createPgDb } from "../../db/pg";
 import { adminUrl, appUrl } from "../../db/test-urls";
 import type { Db } from "../../db/types";
+import { INVALID_TRACE } from "./decisions";
 import { callTool } from "./index";
 import { screenUntrustedInput } from "./screen";
 import type { CompleteFn, GatewayContext } from "./types";
@@ -165,6 +166,24 @@ describe("agent gateway on a real database", () => {
     const row = await decisionRow(A, out.decisionId);
     expect(JSON.parse(row.args)).toEqual({ fieldErrors: [{ path: "driverId", code: "invalid_format" }] });
     expect(row.args).not.toContain("Jane");
+  });
+
+  it("records a call whose trace id is too long for the column, failed, under the invalid marker", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const out = await callTool(ctx(A, { traceId: "t".repeat(65) }), call("get_driver", { driverId: DRIVER[A] }), {
+      db: app,
+      clock,
+    });
+    expect(out).toMatchObject({ decision: "failed", reason: "tool_failed" });
+    const [row] = await admin.withTenant(A, (q) =>
+      q.query<{ trace_id: string; decision: string; tier: string }>(
+        "SELECT trace_id, decision, tier FROM gateway_decisions" +
+          " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [out.decisionId],
+      ),
+    );
+    expect(row).toEqual({ trace_id: INVALID_TRACE, decision: "failed", tier: "read" });
+    vi.restoreAllMocks();
   });
 
   it("logs an unknown tool with no tier", async () => {

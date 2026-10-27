@@ -307,6 +307,18 @@ describe("screenUntrustedInput", () => {
     await expect(screenUntrustedInput(ctx, "nope", { db, clock: fixedClock })).rejects.toThrow();
     expect(db.statements).toHaveLength(0);
   });
+
+  it("refuses a trace id the decision log cannot hold before touching the database or the model", async () => {
+    for (const traceId of ["t".repeat(65), "", "trace with spaces"]) {
+      const { db } = setup(BENIGN);
+      const m = model(answer(CLEAN_TEXT));
+      await expect(
+        screenUntrustedInput({ ...ctx, traceId }, INPUT, { db, complete: m.fn, clock: fixedClock }),
+      ).rejects.toThrow();
+      expect(db.statements).toHaveLength(0);
+      expect(m.calls).toHaveLength(0);
+    }
+  });
 });
 
 describe("chunksOf", () => {

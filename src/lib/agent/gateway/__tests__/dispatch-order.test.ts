@@ -4,10 +4,11 @@ import type { Queryable, TenantDb } from "../../../db";
 import { instantAt } from "../../../seed/calendar";
 import { CASE_A_ASK_CENTS } from "../../../seed/untrusted-inputs";
 import { addDays } from "../../../time/local-date";
+import { INVALID_TRACE } from "../decisions";
 import { callTool, capResult, MAX_RESULT_CHARS } from "../index";
 import { UNTRUSTED_WARNING } from "../tools/read/get-inbound-message";
 import type { CompleteFn, GatewayContext } from "../types";
-import { context, fixedClock, NOW, OTHER_ID, type Handler } from "./fake-db";
+import { context, fixedClock, NOW, OTHER_ID, type FakeDb, type Handler } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
 import { sampleArgs } from "./sample-args";
 
@@ -89,6 +90,37 @@ describe("callTool dispatch order", () => {
     expect(db.decisions[0]).toMatchObject({ tool: "propose_advance", tier: "propose", role: "auditor", argsRedacted: {} });
   });
 
+  it("2: fails a call whose trace id the log cannot hold, before its args are read, and records it", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const bad = ["t".repeat(65), "", "trace with spaces", "trace\nnext", 42 as unknown as string];
+    for (const traceId of bad) {
+      const db = planDb(plan, screenStore);
+      const out = await callTool({ ...ctx, traceId }, call("propose_advance", ARGS.propose_advance), {
+        db,
+        clock: fixedClock,
+      });
+      expect(out, String(traceId)).toMatchObject({ decision: "failed", reason: "tool_failed" });
+      expect(reads(db)).toEqual([]);
+      expect(db.decisions).toEqual([
+        expect.objectContaining({ traceId: INVALID_TRACE, tier: "propose", decision: "failed", argsRedacted: {} }),
+      ]);
+    }
+    expect(err).toHaveBeenCalledTimes(bad.length);
+    for (const [line] of err.mock.calls) expect(line).toContain(`trace=${INVALID_TRACE} (InvalidTraceId)`);
+
+    // The longest trace id the log holds still runs, and the limit lookup reads that same id.
+    const db = planDb(plan, screenStore);
+    const longest = "t".repeat(64);
+    const out = await callTool({ ...ctx, traceId: longest }, call("propose_advance", ARGS.propose_advance), {
+      db,
+      clock: fixedClock,
+    });
+    expect(out.decision).toBe("allowed");
+    expect(db.decisions[0].traceId).toBe(longest);
+    const asked = db.statements.find((st) => st.sql.startsWith("SELECT max(requested_cents) AS asked"))!;
+    expect(asked.params[0]).toBe(longest);
+  });
+
   it("3: refuses bad args with paths and codes only, before any read", async () => {
     const db = planDb(plan, screenStore);
     const out = await callTool(ctx, call("get_driver", { driverId: "Jane Doe" }), { db, clock: fixedClock });
@@ -100,6 +132,26 @@ describe("callTool dispatch order", () => {
     expect(reads(db)).toEqual([]);
     expect(db.decisions[0].argsRedacted).toEqual({ fieldErrors: [{ path: "driverId", code: "invalid_format" }] });
     expect(JSON.stringify(db.decisions)).not.toContain("Jane");
+  });
+
+  it("3: refuses a pay correction whose verdict does not match its sign, before any read", async () => {
+    const mismatched = [
+      { deltaCents: -2_500, operatorVerdict: "owed_to_driver" },
+      { deltaCents: 2_500, operatorVerdict: "owed_by_driver" },
+    ];
+    for (const over of mismatched) {
+      const db = planDb(plan, screenStore);
+      const out = await callTool(ctx, call("propose_pay_correction", { ...ARGS.propose_pay_correction, ...over }), {
+        db,
+        clock: fixedClock,
+      });
+      expect(out, JSON.stringify(over)).toMatchObject({
+        decision: "invalid_args",
+        reason: "invalid_args",
+        fieldErrors: [{ path: "operatorVerdict", code: "custom" }],
+      });
+      expect(reads(db)).toEqual([]);
+    }
   });
 
   it("4: blocks an id that is not a row of the caller's tenant, and never runs the tool", async () => {
@@ -168,6 +220,27 @@ describe("callTool dispatch order", () => {
     expect(JSON.stringify(db.decisions)).not.toContain("secret");
     expect(db.decisions[0]).toMatchObject({ decision: "failed", reason: "tool_failed", tier: "read" });
     expect(err).toHaveBeenCalledTimes(1);
+    const [line] = err.mock.calls[0];
+    expect(line).toContain("(TypeError)");
+    expect(line).not.toContain("secret detail");
+  });
+
+  it("7: the server log keeps an error's category and SQLSTATE, never its message", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const db = planDb(plan, (sql, params) => {
+      if (/^SELECT .+ FROM drivers WHERE .+ ORDER BY/s.test(sql)) {
+        throw Object.assign(new Error('value "Jane Doe" violates check'), {
+          name: "DbError",
+          category: "sql",
+          sqlState: "23514",
+        });
+      }
+      return screenStore(sql, params);
+    });
+    await callTool(ctx, call("get_driver", ARGS.get_driver), { db, clock: fixedClock });
+    const [line] = err.mock.calls[0];
+    expect(line).toContain("(DbError sql 23514)");
+    expect(line).not.toContain("Jane");
   });
 
   it("7: a run past the deadline is failed and still logged", async () => {
@@ -198,12 +271,14 @@ describe("callTool dispatch order", () => {
   });
 
   it("a decision that cannot be written fails the call, even when the tool succeeded", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     const db = planDb(plan, screenStore);
     db.failDecisionInsert = true;
     const out = await callTool(ctx, call("get_driver", ARGS.get_driver), { db, clock: fixedClock });
     expect(out).toMatchObject({ decision: "failed", reason: "tool_failed", result: { error: "tool_failed" } });
     expect(JSON.stringify(out)).not.toContain(hero.first_name);
+    expect(err.mock.calls[0][0]).toContain("(Error)");
+    expect(err.mock.calls[0][0]).not.toContain("insert refused");
   });
 
   it("with no database the call is failed, and both server log lines name the decision and trace", async () => {
@@ -262,6 +337,48 @@ describe("callTool dispatch order", () => {
     expect(out).toMatchObject({ decision: "blocked", reason: "screen_error", result: { blocked: true } });
     expect(JSON.stringify(out)).not.toContain(input.body_text.slice(0, 20));
     expect(db.decisions.map((d) => d.decision)).toEqual(["blocked", "blocked"]);
+  });
+
+  it("5 then 8: an upper-case refused ask and a lower-case retry are one driver: the draft is capped", async () => {
+    // Answers the trace lookup from the decisions logged so far, comparing the stored driver id as
+    // text, the way the SQL does.
+    let db: FakeDb | null = null;
+    db = planDb(plan, (sql, params) => {
+      if (!sql.startsWith("SELECT max(requested_cents) AS asked")) return screenStore(sql, params);
+      const asked = db!.decisions
+        .filter(
+          (d) =>
+            d.traceId === params[0] &&
+            d.tool === "propose_advance" &&
+            d.decision === "blocked" &&
+            d.reason === "amount_over_limit" &&
+            d.argsRedacted.driverId === params[1],
+        )
+        .map((d) => d.requestedCents as number);
+      return [{ asked: asked.length > 0 ? Math.max(...asked) : null }];
+    });
+    const upper = hero.id.toUpperCase();
+    expect(upper).not.toBe(hero.id);
+    const blocked = await callTool(
+      ctx,
+      call("propose_advance", {
+        ...ARGS.propose_advance,
+        driverId: upper,
+        amountCents: CASE_A_ASK_CENTS,
+        requestedOn: today,
+        sourceRefs: [{ table: "drivers", id: upper }],
+      }),
+      { db, clock: fixedClock },
+    );
+    if (blocked.decision === "allowed" || blocked.limitCents === undefined) throw new Error("not blocked");
+    expect(db.decisions[0].argsRedacted.driverId).toBe(hero.id);
+    const out = await callTool(
+      ctx,
+      call("propose_advance", { ...ARGS.propose_advance, amountCents: blocked.limitCents, requestedOn: today }),
+      { db, clock: fixedClock },
+    );
+    if (out.decision !== "allowed") throw new Error("not allowed");
+    expect(out.draft).toMatchObject({ subjectId: hero.id, exceptions: ["capped_to_eligible"] });
   });
 
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {

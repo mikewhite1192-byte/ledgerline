@@ -36,6 +36,31 @@ const GATEWAY_MODULES = [
   'import { readRows } from "../../data/read";',
   'import { advanceEligibility } from "@/lib/rules-engine";',
   'import { advanceEligibility as a } from "../../rules-engine/advances";',
+  // The engine's cents math, not the ledger's money/.
+  'import { cents } from "../../rules-engine/money";',
+  'import { cents } from "@/lib/rules-engine/money";',
+];
+// A connection of its own: a database driver, the AWS SDK, a process, a socket or a file. Agent
+// code outside the gateway may open none; the gateway holds the database and may.
+const DIRECT_IO = [
+  'import { Pool } from "pg";',
+  'import Pool from "pg-pool";',
+  'import { RDSDataClient } from "@aws-sdk/client-rds-data";',
+  'import { exec } from "child_process";',
+  'import { spawn } from "node:child_process";',
+  'import { Worker } from "worker_threads";',
+  'import { request } from "http";',
+  'import { request } from "node:https";',
+  'import { connect } from "http2";',
+  'import { Socket } from "net";',
+  'import { connect } from "node:tls";',
+  'import { createSocket } from "dgram";',
+  'import { lookup } from "dns";',
+  'import { lookup } from "dns/promises";',
+  'import { readFileSync } from "fs";',
+  'import { writeFileSync } from "node:fs";',
+  'import { readFile } from "fs/promises";',
+  'import { readFile } from "node:fs/promises";',
 ];
 const MODEL_WRAPPER = ['import { complete } from "../../ai";', 'import type { AiTool } from "@/lib/ai/types";'];
 // Each way to load a module with no import line, with the reasons it is refused (each message's
@@ -65,6 +90,12 @@ const LOADERS: [code: string, reasons: string[]][] = [
   ['export const m = module.constructor._load("../../money/execute");', [BY_NAME]],
   ['export const m = module.constructor[`_load`]("../../money/execute");', [QUOTED]],
 ];
+// Code from a string, with the rule that refuses it.
+const STRING_CODE: [code: string, rule: string][] = [
+  ['export const v = eval("1 + 1");', "no-eval"],
+  ['export const f = new Function("return 1");', "no-new-func"],
+  ['setTimeout("tick()", 10);', "no-implied-eval"],
+];
 // Names that only look like a loader's.
 const PLAIN_NAMES = [
   'export const schema = { required: ["driverId"], requirements: ["a"] };',
@@ -78,12 +109,24 @@ const PLAIN = [
 ];
 
 let eslint: ESLint;
-async function lint(code: string, filePath: string): Promise<string[]> {
+async function ruleIds(code: string, filePath: string): Promise<string[]> {
   eslint ??= new ESLint({ cwd: process.cwd() });
   const [res] = await eslint.lintText(`${code}\n`, { filePath });
-  return res.messages
-    .map((m) => m.ruleId ?? "")
-    .filter((id) => id === "no-restricted-imports" || id === "no-restricted-syntax");
+  return res.messages.map((m) => m.ruleId ?? "");
+}
+async function lint(code: string, filePath: string): Promise<string[]> {
+  return (await ruleIds(code, filePath)).filter(
+    (id) => id === "no-restricted-imports" || id === "no-restricted-syntax",
+  );
+}
+
+// Each way to run code from a string is refused by its own rule, in or out of the gateway.
+async function expectStringCodeRefused(filePath: string) {
+  await Promise.all(
+    STRING_CODE.map(async ([code, rule]) =>
+      expect(await ruleIds(code, filePath), `${filePath}: ${code}`).toContain(rule),
+    ),
+  );
 }
 
 function expectReports(cases: string[], filePath: string, count: number) {
@@ -107,10 +150,15 @@ async function expectLoadersRefused(filePath: string) {
 }
 
 describe("agent lint wall", () => {
-  it("outside the gateway, agent code imports none of the gateway's modules, money or loaders", async () => {
+  it("outside the gateway, agent code imports none of the gateway's modules, money, I/O or loaders", async () => {
     for (const file of ["src/lib/agent/probe.ts", "src/lib/agent/operator/loop.ts", "src/app/api/agent/turn/route.ts"]) {
-      await expectReports([...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER], file, 1);
+      await expectReports(
+        [...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...DIRECT_IO],
+        file,
+        1,
+      );
       await expectLoadersRefused(file);
+      await expectStringCodeRefused(file);
       await expectReports([...PLAIN, ...PLAIN_NAMES], file, 0);
     }
   }, 60_000);
@@ -119,19 +167,27 @@ describe("agent lint wall", () => {
     const file = "src/lib/agent/gateway/probe.ts";
     await expectReports(LEDGER_FORBIDDEN, file, 1);
     await expectLoadersRefused(file);
-    await expectReports([...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...PLAIN, ...PLAIN_NAMES], file, 0);
+    await expectStringCodeRefused(file);
+    await expectReports(
+      [...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...DIRECT_IO, ...PLAIN, ...PLAIN_NAMES],
+      file,
+      0,
+    );
   }, 60_000);
 
   it("the operator turn may call the model wrapper and nothing else the gateway owns", async () => {
     const file = "src/lib/agent/operator/turn.ts";
     await expectReports(MODEL_WRAPPER, file, 0);
-    await expectReports([...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES], file, 1);
+    await expectReports([...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...DIRECT_IO], file, 1);
     await expectLoadersRefused(file);
+    await expectStringCodeRefused(file);
     await expectReports(PLAIN_NAMES, file, 0);
   }, 60_000);
 
   it("leaves code outside the agent alone", async () => {
+    const file = "src/app/approve/route.ts";
     const loaders = LOADERS.map(([code]) => code);
-    await expectReports([LEDGER_FORBIDDEN[0], GATEWAY_MODULES[0], ...loaders], "src/app/approve/route.ts", 0);
+    await expectReports([LEDGER_FORBIDDEN[0], GATEWAY_MODULES[0], DIRECT_IO[0], ...loaders], file, 0);
+    for (const [code, rule] of STRING_CODE) expect(await ruleIds(code, file), code).not.toContain(rule);
   }, 60_000);
 });

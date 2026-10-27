@@ -8,9 +8,11 @@ import type { AnyToolDef, FieldError } from "./types";
 
 export const MAX_ARGUMENTS_CHARS = 16_000;
 
-// Shared field schemas. Ids are UUIDs, dates are real calendar dates in YYYY-MM-DD, cents are
-// whole numbers.
-export const idField = () => z.uuid();
+// Shared field schemas. Ids are UUIDs, lower-cased once here so every later comparison (the
+// stored args, the limit lookups) sees one spelling; dates are real calendar dates in YYYY-MM-DD,
+// cents are whole numbers. toLowerCase is an overwrite, so the JSON schema a model is offered is
+// the plain uuid one.
+export const idField = () => z.uuid().toLowerCase();
 export const dateField = () =>
   z
     .string()

@@ -1,3 +1,5 @@
+// The one file I/O in agent code: this test reads the source tree. No agent module imports it.
+// eslint-disable-next-line no-restricted-imports -- a test reading the source tree
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +20,12 @@ import { describe, expect, it } from "vitest";
 //
 // A module loaded by a name that is not a string literal, a loader named anywhere but as the
 // callee of a direct require("..."), or a local import that does not resolve, fails the walk:
-// what cannot be followed cannot be proven.
+// what cannot be followed cannot be proven. The limit: the walk sees names only as written, so a
+// loader name put together at run time (process["getBuiltin" + "Module"]) and code run from a
+// string (eval, new Function) get past it. eslint.config.mjs refuses the string-to-code routes
+// (no-eval, no-new-func, no-implied-eval); any other name assembled at run time is left to
+// review. Packages are not walked: the lint rule refuses the database, AWS SDK, process, network
+// and file packages in agent code outside the gateway.
 
 type Host = { read(file: string): string | undefined };
 type Edge = { to: string; spec: string };
@@ -29,8 +36,9 @@ const AGENT_DIRS = ["src/lib/agent", "src/app/api/agent"];
 const SOURCE = /\.[cm]?[jt]sx?$/;
 const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs", ".cjs"];
 const TURN = "src/lib/agent/operator/turn.ts";
-const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/;
-const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/;
+// Every area match ignores case: on a case-insensitive file system "../../Money/execute" resolves.
+const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/i;
+const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/i;
 // Every name that loads a module with no import line; eslint.config.mjs bans the same set. Regexes,
 // not strings: this file is agent code too, so it names no loader in quotes.
 const LOADER_NAME =
@@ -159,9 +167,9 @@ function buildGraph(root: string, entries: string[], host: Host): Graph {
 }
 
 function restrictedArea(rel: string): string | null {
-  const m = /^src\/lib\/(db|data|rules-engine|money|ai|adapters)(\/|\.|$)/.exec(rel);
-  if (m) return m[1];
-  return /(^|\/)adapters(\/|\.|$)/.test(rel) ? "adapters" : null;
+  const m = /^src\/lib\/(db|data|rules-engine|money|ai|adapters)(\/|\.|$)/i.exec(rel);
+  if (m) return m[1].toLowerCase();
+  return /(^|\/)adapters(\/|\.|$)/i.test(rel) ? "adapters" : null;
 }
 
 const isGateway = (rel: string) => rel.startsWith("src/lib/agent/gateway/");
@@ -209,8 +217,8 @@ function ledgerViolations(root: string, agentFiles: string[], graph: Graph): str
   for (const file of parent.keys()) {
     const rel = relTo(root, file);
     // money/ is the ledger's folder (src/lib/rules-engine/money.ts is the engine's cents math).
-    const money = /^src\/lib\/money(\/|\.[cm]?[jt]sx?$)/.test(rel) && !MONEY_OK.test(rel);
-    const adapter = /(^|\/)adapters(\/|\.[cm]?[jt]sx?$)/.test(rel) && !ADAPTERS_OK.test(rel);
+    const money = /^src\/lib\/money(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !MONEY_OK.test(rel);
+    const adapter = /(^|\/)adapters(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !ADAPTERS_OK.test(rel);
     if (!money && !adapter) continue;
     const chain = [rel];
     for (let p = parent.get(file); p; p = parent.get(p)) chain.unshift(relTo(root, p));
@@ -403,6 +411,25 @@ describe("the walker itself, on fixture trees", () => {
     expect(out.problems).toEqual([]);
     expect(out.graph.edges.get(`${V}/src/lib/agent/operator/names.ts`)).toEqual([
       { to: `${V}/src/lib/agent/operator/ok.ts`, spec: "./ok" },
+    ]);
+  });
+
+  it("matches areas whatever the case, as a case-insensitive file system resolves them", () => {
+    const out = run({
+      "src/lib/agent/operator/x.ts": 'import { pay } from "../../Money/execute";',
+      "src/lib/agent/operator/turn.ts": 'import { complete } from "../../AI";',
+      "src/lib/agent/gateway/g.ts":
+        'import { r } from "../../Money/Read";\nimport { m } from "../../ADAPTERS/payment/mock";',
+      "src/lib/Money/execute.ts": "",
+      "src/lib/Money/Read.ts": "",
+      "src/lib/AI/index.ts": "",
+      "src/lib/ADAPTERS/payment/mock.ts": "",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.boundary).toEqual(["src/lib/agent/operator/x.ts -> src/lib/Money/execute.ts"]);
+    expect(out.ledger.sort()).toEqual([
+      "src/lib/agent/gateway/g.ts -> src/lib/ADAPTERS/payment/mock.ts",
+      "src/lib/agent/operator/x.ts -> src/lib/Money/execute.ts",
     ]);
   });
 

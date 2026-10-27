@@ -17,8 +17,10 @@ const NO_CREATE_REQUIRE = "No createRequire in agent code: every dependency is c
 // __webpack_require__ and __non_webpack_require__ (Next turns the second into Node's require).
 // Each is refused by name wherever it appears: a call, an alias (const r = require), a member, a
 // destructured key, or a quoted key or computed member ("createRequire", `_load`). Agent code has
-// no use for any of them. A name built at run time is not caught here; the import-boundary test
-// fails on anything it cannot follow.
+// no use for any of them. The limit: a name put together at run time (process["getBuiltin" +
+// "Module"]) is caught neither here nor by the import-boundary test, which sees names only as
+// written. Code run from a string (eval, new Function, a string to setTimeout) is refused by
+// NO_STRING_CODE below; any other name assembled at run time is left to review.
 const LOADER_NAMES =
   "^(require|createRequire|getBuiltinModule|__non_webpack_require__|__webpack_require__|_load|mainModule)$";
 const LOADER_LIST =
@@ -44,6 +46,14 @@ const NO_DYNAMIC_LOADING = [
   },
 ];
 
+// No code from a string in agent code: eval, new Function and a string to setTimeout, setInterval
+// or execScript.
+const NO_STRING_CODE = {
+  "no-eval": "error",
+  "no-new-func": "error",
+  "no-implied-eval": "error",
+};
+
 // The ledger's own rule: nothing in agent code reaches a money write or a vendor adapter.
 const LEDGER_WRITES = [
   {
@@ -53,7 +63,9 @@ const LEDGER_WRITES = [
       "From money/ it may import read, types, keys and format.",
   },
   {
-    regex: "(^|/)money$",
+    // rules-engine/money is the engine's cents math, not the ledger: the gateway uses the engine
+    // (design 3.5), and the import-boundary test allows it too.
+    regex: "(^|/)(?<!(?:^|/)rules-engine/)money(\\.[cm]?[jt]s)?$",
     message: "Import the ledger read module you need (money/read, types, keys, format).",
   },
   {
@@ -75,6 +87,21 @@ const GATEWAY_ONLY = [
     message:
       "Agent code reaches records, the rules engine and money only through the gateway " +
       "(src/lib/agent/gateway).",
+  },
+];
+
+// Outside the gateway, agent code opens no connection of its own: no database driver, AWS SDK,
+// child process, worker, socket or file access. The import-boundary test does not walk packages,
+// so this is their check. The gateway, which holds the database, is not under this rule.
+const NO_DIRECT_IO_MESSAGE =
+  "Agent code outside the gateway opens no database, AWS, process, network or file connection; " +
+  "it reaches records only through the gateway (src/lib/agent/gateway).";
+const NO_DIRECT_IO = [
+  { regex: "^pg(-[\\w.-]+)?(/|$)", message: NO_DIRECT_IO_MESSAGE },
+  { regex: "^@aws-sdk/", message: NO_DIRECT_IO_MESSAGE },
+  {
+    regex: "^(node:)?(child_process|worker_threads|http|https|http2|net|tls|dgram|dns|fs)(/|$)",
+    message: NO_DIRECT_IO_MESSAGE,
   },
 ];
 
@@ -109,22 +136,26 @@ const eslintConfig = [
   // narrowing earlier ones for the files they name:
   //   1. All agent code (src/lib/agent, src/app/api/agent) may not import the database, the
   //      record readers, the rules engine, the model wrapper, money/ or adapters/ at all. Those
-  //      are reached only through the gateway, so every tool call takes the gateway's checks.
+  //      are reached only through the gateway, so every tool call takes the gateway's checks. Nor
+  //      may it import a database driver, the AWS SDK, or a process, network or file package.
   //   2. The gateway (src/lib/agent/gateway) may import those, except the money executor, the
   //      approval, the ledger writes, the reconcile pass and the payment and accounting
   //      adapters: under money/ and adapters/ each pattern is an allowlist, so any path with that
   //      segment is refused unless the rest is exactly a ledger read module (money/read, types,
   //      keys, format), adapters/types or a module of adapters/tms. "money/./execute",
-  //      "money//execute" and "money/read/../ledger" are refused too.
-  //   3. The operator turn may also call the model wrapper.
-  // Every block refuses dynamic import and every module loader by name, so each dependency is
-  // checked statically. Matching ignores case (case-insensitive file systems). A re-export from
-  // a file outside these folders is not caught here; the import-boundary test walks those.
+  //      "money//execute" and "money/read/../ledger" are refused too. rules-engine/money, the
+  //      engine's cents math, is not the ledger and is allowed.
+  //   3. The operator turn may also call the model wrapper; the package rule of 1 still holds.
+  // Every block refuses dynamic import, every module loader by name and code from a string, so
+  // each dependency is checked statically. Matching ignores case (case-insensitive file systems).
+  // A re-export from a file outside these folders is not caught here; the import-boundary test
+  // walks those.
   {
     files: ["src/lib/agent/**", "src/app/api/agent/**"],
     rules: {
-      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, AI_ONLY])],
+      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, AI_ONLY, ...NO_DIRECT_IO])],
       "no-restricted-syntax": ["error", ...NO_DYNAMIC_LOADING],
+      ...NO_STRING_CODE,
     },
   },
   {
@@ -136,7 +167,7 @@ const eslintConfig = [
   {
     files: ["src/lib/agent/operator/turn.ts"],
     rules: {
-      "no-restricted-imports": ["error", agentImportRule(GATEWAY_ONLY)],
+      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, ...NO_DIRECT_IO])],
     },
   },
 ];

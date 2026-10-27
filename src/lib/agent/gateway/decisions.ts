@@ -27,6 +27,16 @@ export type DecisionRow = {
   latencyMs: number;
 };
 
+// A trace id the log can hold (its column takes 1 to 64 characters): 1 to 64 letters, digits and
+// _ . : -. The gateway checks it once per call; a call with any other trace id is refused and its
+// row is stored under INVALID_TRACE, which no valid trace id can equal.
+const TRACE_ID = /^[\w.:-]{1,64}$/;
+export const INVALID_TRACE = "(invalid)";
+
+export function isTraceId(value: unknown): value is string {
+  return typeof value === "string" && TRACE_ID.test(value);
+}
+
 const INSERT_SQL =
   "INSERT INTO gateway_decisions (id, tenant_id, turn_id, trace_id, role, model, tool, tier," +
   " args_redacted, refs, decision, reason, limit_cents, requested_cents, result_chars," +
