@@ -15,11 +15,28 @@ import { secretStep } from "./secret-step";
 // is the proposal step once the shared demo budget is spent (the auditor then gives no verdict).
 
 const DEPLOYED = process.env.E2E_TARGET === "deployed";
+// A local run answered from the fixture. A recording run (npm run e2e:record) takes the live
+// model's own words, as a deployed run does.
+const REPLAYED = !DEPLOYED && process.env.E2E_RECORD !== "1";
 const FIRST_QUESTION = "Who has a problem on this week's paystub?";
+// What the recorded first answer says (e2e/fixtures/model-replay.json): each driver with a
+// problem, the amount carried forward for each, and the exception each shows. A re-record that
+// words the answer differently updates this list.
+const FIRST_ANSWER_SAYS = [
+  "Kevin Yarborough (BR-D04)",
+  "$682.75",
+  "Ellen Kowalski (BR-D09)",
+  "$483.71",
+  "Wesley Delgado (BR-D20)",
+  "$146.61",
+  "1 exception",
+];
 // The hero driver of the seed (the same ids every seed at the anchor), asked for a modest amount
-// so the engine's limit allows it on any day of the demo week.
-const ADVANCE_QUESTION = "Propose a $100.00 advance for Monique Vasquez (BR-D07), requested today.";
-// Local answers replay as recorded on the fixture's recordedOn: cosmetic, no assertion reads them.
+// so the engine's limit allows it on any day of the demo week. The ask names a fixed date, never
+// "today", so the replayed proposal's requestedOn is the date the question asks for on every run
+// (the engine takes an ask dated today or earlier).
+const ADVANCE_QUESTION = "Propose a $100.00 advance for Monique Vasquez (BR-D07), requested on 2026-10-27.";
+// Local answers replay word for word as recorded on the fixture's recordedOn, whatever the run's date.
 const TURN_TIMEOUT = 30_000;
 
 type Features = { agent: boolean; auditor: boolean; reports: boolean };
@@ -137,7 +154,13 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     }
     const answer = await finishedAnswer(page, FIRST_QUESTION);
     await expectNoReplayMisses();
-    expect(await answerText(answer), "the agent's answer has words").not.toBe("");
+    const said = await answerText(answer);
+    expect(said, "the agent's answer has words").not.toBe("");
+    // Replay only: the answer is the recorded one, word for word, so each name and figure it
+    // recorded must reach the page. Read from the agent's words, not the report table below them.
+    if (REPLAYED) {
+      for (const text of FIRST_ANSWER_SAYS) expect(said, `the agent's answer says ${text}`).toContain(text);
+    }
     firstAnswer = answer;
   });
 
