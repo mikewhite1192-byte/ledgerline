@@ -474,6 +474,17 @@ describe("the demo reset", () => {
          VALUES (current_tenant_id(), CAST($1 AS uuid), decode('52494646', 'hex'), 'audio/wav', 4)`,
         [voiceNote],
       );
+      // An Inbox message handed to the agent: it names the input, the driver and a conversation
+      // that all go or are rewritten.
+      await q.execute(
+        `INSERT INTO inbound_messages (id, tenant_id, channel, input_id, driver_id, received_at, status,
+           triage_category, triage_urgency, conversation_id, created_by, trace_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'paste', CAST($2 AS uuid), CAST($3 AS uuid), now(),
+           'handed_off', 'advance_request', 'normal',
+           (SELECT c.id FROM conversations c WHERE c.tenant_id = current_tenant_id() ORDER BY c.id LIMIT 1),
+           $4, CAST($5 AS uuid))`,
+        [randomUUID(), input, driver.id, session.sub, randomUUID()],
+      );
       await q.execute(
         `INSERT INTO evidence_clips (id, tenant_id, load_id, stop, uploaded_by, filename, raw_hash, raw_byte_length,
            width, height, frames_per_second, frame_count, duration_ms, status)
@@ -578,6 +589,7 @@ describe("the demo reset", () => {
         portal_sessions: 1,
         portal_runs: 1,
         portal_loads: portalA.loads.length,
+        inbound_messages: 1,
         voice_note_audio: 1,
         voice_notes: 1,
         driver_notes: 1,
@@ -610,6 +622,7 @@ describe("the demo reset", () => {
         portal_sessions: 1,
         portal_runs: 1,
         portal_loads: portalA.loads.length,
+        inbound_messages: 1,
         voice_note_audio: 1,
         voice_notes: 1,
         driver_notes: 1,
