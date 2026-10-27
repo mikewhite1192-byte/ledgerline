@@ -1,7 +1,8 @@
+import { MP4_BRANDS } from "../../clips/mp4";
 import { PDF_MAX_PAGES } from "../prices";
 import type { AiImageMime } from "../types";
 
-// Images and PDFs sent inline. Pure helpers: no network, no file system.
+// Images, PDFs and videos sent inline. Pure helpers: no network, no file system.
 
 export const IMAGE_MIMES: readonly AiImageMime[] = [
   "image/jpeg",
@@ -29,7 +30,10 @@ const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
 
 // Whether the bytes begin the way the declared type's files do. A mislabeled or corrupt file is
 // refused before any reservation instead of reaching the model as a 400.
-export function looksLike(mime: AiImageMime | "application/pdf", bytes: Uint8Array): boolean {
+export function looksLike(
+  mime: AiImageMime | "application/pdf" | "video/mp4",
+  bytes: Uint8Array,
+): boolean {
   switch (mime) {
     case "image/png":
       return startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -41,6 +45,11 @@ export function looksLike(mime: AiImageMime | "application/pdf", bytes: Uint8Arr
       return startsWith(bytes, ascii("RIFF")) && startsWith(bytes, ascii("WEBP"), 8);
     case "application/pdf":
       return startsWith(bytes, ascii("%PDF-"));
+    case "video/mp4":
+      return (
+        startsWith(bytes, ascii("ftyp"), 4) &&
+        MP4_BRANDS.some((brand) => startsWith(bytes, ascii(brand), 8))
+      );
   }
 }
 
