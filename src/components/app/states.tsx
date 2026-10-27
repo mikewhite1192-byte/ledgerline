@@ -48,7 +48,7 @@ export function LoadingState({
   );
 }
 
-export const ERROR_CATEGORIES = ["unreadable", "forbidden", "timeout", "not_found", "budget", "unknown"] as const;
+export const ERROR_CATEGORIES = ["unreadable", "forbidden", "timeout", "not_found", "budget", "job_cap", "unknown"] as const;
 export type ErrorCategory = (typeof ERROR_CATEGORIES)[number];
 
 // A fixed message per category: what failed and what to do. The raw error never reaches a prop.
@@ -72,6 +72,10 @@ const ERROR_COPY: Record<ErrorCategory, { title: string; body: string }> = {
   budget: {
     title: "Demo budget reached",
     body: "The agent pauses until the budget is raised; your data is unchanged.",
+  },
+  job_cap: {
+    title: "This job was stopped",
+    body: "It used more than its hourly allowance. An admin can clear it on the Meta models page; your data is unchanged.",
   },
   unknown: {
     title: "Something failed and the cause is not known",

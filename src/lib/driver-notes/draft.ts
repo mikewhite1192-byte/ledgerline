@@ -99,12 +99,14 @@ export type DraftSummary =
 type Candidate = { settlement_id: string; note_id: string | null; status: string | null };
 
 // complete() throws these before any provider request (src/lib/ai/index.ts and spend.ts reserve,
-// which writes nothing for cap). Every other category follows a request that was sent.
+// which writes no ledger row for cap or job_cap). Every other category follows a request that
+// was sent.
 const BEFORE_ANY_REQUEST: ReadonlySet<AiErrorCategory> = new Set<AiErrorCategory>([
   "disabled",
   "not_configured",
   "too_expensive",
   "cap",
+  "job_cap",
 ]);
 
 export function noteRequest(pack: NotePack, traceId: string): AiRequest {
