@@ -48,7 +48,12 @@ export type ProposalCardProps = {
   flagNote?: string;
   audit?: ProposalAudit;
   // overrideReason is set only when the person approves over a block, with their trimmed reason.
+  // Resume calls it too, with no reason.
   onApprove?: (id: string, overrideReason?: string) => void;
+  // An approved proposal whose run stopped before it finished: the card offers Resume, which asks
+  // the same approve request again (the server treats it as a resume and pays at most once). Only
+  // honored while the status is approved; Reject is never offered on an approved card.
+  canResume?: boolean;
   onReject?: (id: string) => void;
   pending?: boolean;
   hrefFor?: HrefFor;
@@ -82,6 +87,8 @@ const STATUS_NOTE: Record<Exclude<ProposalStatus, "proposed">, string> = {
   expired: "Expired before anyone approved it. Nothing changed.",
   unknown: "Sent, waiting on the read-back.",
 };
+
+const RESUME_NOTE = "Approved, but it stopped before it finished. Resume picks it up where it stopped.";
 
 const AUDIT_BADGE: Record<Exclude<ProposalAudit["state"], "checking">, { tone: BadgeTone; label: string }> = {
   pass: { tone: "success", label: "Checked by Muse Wonder: pass" },
@@ -135,6 +142,7 @@ export function ProposalCard({
   audit,
   onApprove,
   onReject,
+  canResume = false,
   pending = false,
   hrefFor = recordHref,
   initialConfirming = false,
@@ -314,6 +322,15 @@ export function ProposalCard({
             </Button>
           </div>
         )
+      ) : canResume && status === "approved" ? (
+        // The approval already stands (it passed its confirm when it was given), so Resume is one
+        // click: it carries on the same approval and never asks for a new decision.
+        <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          <p className="text-small text-foreground-2">{RESUME_NOTE}</p>
+          <Button pending={pending} pendingLabel="Resuming" disabled={pending} onClick={() => onApprove?.(id)}>
+            Resume
+          </Button>
+        </div>
       ) : (
         <p className="border-t border-border px-4 py-3 text-small text-foreground-2 sm:px-5">
           {STATUS_NOTE[status]}

@@ -139,6 +139,26 @@ would block the replace (which deletes the untrusted inputs), so the agent clear
 one exists, with the count only, and deletes nothing; a person reviews it first. Run before the
 agent clear, the replace is refused by a proposal's flag and changes nothing.
 
+## The advance flow (`advances` columns, 0011)
+
+No new table. An advance born from a person's approval of an advance proposal carries
+`proposal_id`, `source_input_id` (the outside message the ask came in, when there was one),
+`decided_at` and `decided_by_membership_id`. Seeded advances leave them null.
+
+- Each is a composite `(tenant_id, x)` foreign key, so a flow row never names another carrier's
+  proposal, input or member (23503); the RLS coverage test checks every reference between two
+  tenant tables carries `tenant_id` on both sides. The proposal and member references take no
+  delete action: removing a proposal or a member a flow row names fails, while a tenant's own
+  delete (which cascades to both ends) still works. Deleting the input only clears
+  `source_input_id`.
+- `UNIQUE (tenant_id, proposal_id)` where set: one advance per proposal, so a second approval
+  finds the row and carries on from its state.
+- `source` gains `voice`; a flow row is never `seed`; a decision names both its time and its
+  member, or neither (23514).
+- The grants stay as 0005 set them, `DELETE` included, because a demo reseed replaces advances
+  as the app role. The reseed's agent clear deletes flow advances (`proposal_id IS NOT NULL`)
+  through the admin login before it deletes proposals.
+
 ## Local, from a fresh database
 
 With a local Postgres 16 and its admin login:

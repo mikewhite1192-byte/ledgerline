@@ -64,7 +64,7 @@ export type LimitResult =
     }
   | {
       ok: false;
-      reason: "amount_over_limit" | "engine_refused" | "limit_unavailable";
+      reason: "amount_over_limit" | "engine_refused" | "limit_unavailable" | "budget";
       limitCents: Cents | null;
       requestedCents: Cents | null;
     };

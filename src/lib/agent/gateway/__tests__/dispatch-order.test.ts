@@ -5,6 +5,7 @@ import type { Queryable, TenantDb } from "../../../db";
 import { instantAt } from "../../../seed/calendar";
 import { CASE_A_ASK_CENTS } from "../../../seed/untrusted-inputs";
 import { addDays } from "../../../time/local-date";
+import { DAILY_CAP_SQL } from "../daily-cap";
 import { INVALID_TRACE } from "../decisions";
 import { callTool, capResult, MAX_RESULT_CHARS } from "../index";
 import { UNTRUSTED_WARNING } from "../tools/read/get-inbound-message";
@@ -28,6 +29,7 @@ const screenStore: Handler = (sql) => {
   if (sql.startsWith("SELECT verdict, CAST(categories AS text)")) return [];
   if (sql.startsWith("INSERT INTO screenings")) return 1;
   if (sql.startsWith("SELECT max(requested_cents) AS asked")) return [{ asked: null }];
+  if (sql === DAILY_CAP_SQL) return [{ n: 0 }];
   return undefined;
 };
 
@@ -183,6 +185,32 @@ describe("callTool dispatch order", () => {
       limitCents: out.limitCents,
       requestedCents: CASE_A_ASK_CENTS,
     });
+  });
+
+  it("5: blocks an advance proposal past the tenant's daily ceiling as budget, before the engine runs", async () => {
+    const db = planDb(plan, (sql, params) => (sql === DAILY_CAP_SQL ? [{ n: 30 }] : screenStore(sql, params)));
+    const out = await callTool(ctx, call("propose_advance", { ...ARGS.propose_advance, requestedOn: today }), {
+      db,
+      clock: fixedClock,
+    });
+    expect(out).toMatchObject({ decision: "blocked", reason: "budget", result: { blocked: true, reason: "budget" } });
+    expect(db.decisions[0]).toMatchObject({ tool: "propose_advance", decision: "blocked", reason: "budget" });
+    const cap = db.statements.find((st) => st.sql === DAILY_CAP_SQL)!;
+    expect(cap.params).toEqual([ctx.now.toISOString()]);
+    // The engine never ran: no driver rows were read for the limit.
+    expect(db.statements.some((st) => st.sql.startsWith("SELECT max(requested_cents) AS asked"))).toBe(false);
+  });
+
+  it("5: an unreadable daily count blocks as limit_unavailable (unknown is not zero)", async () => {
+    const db = planDb(plan, (sql, params) => {
+      if (sql === DAILY_CAP_SQL) throw new Error("read failed");
+      return screenStore(sql, params);
+    });
+    const out = await callTool(ctx, call("propose_advance", { ...ARGS.propose_advance, requestedOn: today }), {
+      db,
+      clock: fixedClock,
+    });
+    expect(out).toMatchObject({ decision: "blocked", reason: "limit_unavailable" });
   });
 
   it("5 then 8: allows an advance at the limit and hands back a draft for a person to approve", async () => {
