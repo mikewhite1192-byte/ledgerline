@@ -99,6 +99,11 @@ ALTER TABLE advances
     AND (taken_back_by_membership_id IS NULL OR taken_back_at IS NOT NULL)
     AND (taken_back_at IS NULL OR taken_back_by_membership_id IS NOT NULL OR source = 'seed')),
   ADD CONSTRAINT advances_takeback_bound CHECK (taken_back_cents <= amount_cents + fee_cents),
+  -- Together too, as the rules engine holds them: what settlements recovered and what was taken
+  -- back never pass what was lent. Every existing row holds it: taken_back_cents starts at 0 and
+  -- 0005's table check already keeps recovered_cents within amount_cents + fee_cents.
+  ADD CONSTRAINT advances_recovered_takeback_bound
+    CHECK (recovered_cents + taken_back_cents <= amount_cents + fee_cents),
   ADD CONSTRAINT advances_takeback_paid CHECK (taken_back_cents = 0 OR status = 'paid');
 CREATE INDEX advances_tenant_load ON advances (tenant_id, load_id) WHERE load_id IS NOT NULL;
 

@@ -1485,6 +1485,38 @@ describe("the advance flow", () => {
       expect(mock.sendCount).toBe(1);
     });
 
+    it("refuses in the database a recovery and a take-back that together pass what was lent, by one cent", async () => {
+      const id = await addProposal();
+      expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+      const [adv] = await flowAdvances();
+      const [{ lent }] = await admin.withTenant(A.tenantId, (q) =>
+        q.query<{ lent: string }>(
+          `SELECT CAST(amount_cents + fee_cents AS text) AS lent FROM advances
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [adv.id],
+        ),
+      );
+      // $250.00 plus the $5.00 fee.
+      expect(Number(lent)).toBe(25_500);
+      const takenBack = 20_000;
+      // Each amount alone stays within what was lent, so only the combined bound can refuse it.
+      const set = (recoveredCents: number) =>
+        admin.withTenant(A.tenantId, (q) =>
+          q.execute(
+            `UPDATE advances
+                SET recovered_cents = $2, taken_back_cents = $3,
+                    taken_back_at = CAST('2026-11-02T16:00:00Z' AS timestamptz),
+                    taken_back_by_membership_id = CAST($4 AS uuid), takeback_reason = 'duplicate'
+              WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+            [adv.id, recoveredCents, takenBack, A.memberId],
+          ),
+        );
+      expect(await sqlStateOf(set(Number(lent) - takenBack + 1))).toBe("23514");
+      expect(await advanceRow(adv.id)).toMatchObject({ taken_back_cents: "0", taken_back_by: null });
+      expect(await sqlStateOf(set(Number(lent) - takenBack))).toBe("no error");
+      expect(await advanceRow(adv.id)).toMatchObject({ taken_back_cents: "20000", taken_back_by: A.memberId });
+    });
+
     it("cancels an advance nothing was paid on, and refuses one whose payout may have moved money", async () => {
       flags.advanceTakeback = { enabled: true, maxCents: 100_000 };
       const unpaid = await addAdvance(admin, A, 25_000, "approved");
