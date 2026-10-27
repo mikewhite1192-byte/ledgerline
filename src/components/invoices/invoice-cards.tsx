@@ -18,7 +18,8 @@ export type InvoiceCard = {
 // The auditor's lease: a check still running is asked again once, after it would have lapsed.
 const AUDIT_RETRY_MS = 90_000;
 
-// Why an approval did not go through, before the executor's own outcomes. Fixed sentences only.
+// Why an approval did not go through, before the executor's own outcomes. Fixed sentences only. A
+// lost or unreadable reply ("unknown", "unavailable") takes the shared not-known sentence.
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   not_executable: "This kind of proposal cannot run yet. Nothing changed.",
   already_decided: "This proposal was already decided.",
@@ -31,7 +32,6 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   bad_request: "The reason must be 10 to 240 characters. Nothing changed.",
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That proposal is not here.",
-  unavailable: "The approval did not go through. Nothing changed. Try again in a moment.",
 };
 
 const notice = (category: string | null) =>

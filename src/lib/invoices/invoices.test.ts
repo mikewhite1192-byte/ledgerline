@@ -176,6 +176,13 @@ describe("outcome labels", () => {
     expect(outcomeLabel("Error: socket hang up")).toBe(OUTCOME_FALLBACK);
     expect(outcomeLabel(null)).toBe(OUTCOME_FALLBACK);
   });
+
+  it("never says nothing changed when the outcome is not known", () => {
+    for (const category of ["unknown", "unavailable"]) {
+      expect(outcomeLabel(category), category).toMatch(/Refresh the page/);
+      expect(outcomeLabel(category), category).not.toMatch(/Nothing changed/);
+    }
+  });
 });
 
 describe("proposal impact for the new kinds", () => {

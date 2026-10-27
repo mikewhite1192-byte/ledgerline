@@ -14,9 +14,11 @@ export const getInvoiceQueue = defineTool({
   tier: "read",
   roles: OPERATOR,
   label: "Reading the invoice queue",
+  enabled: () => flags.invoicesEnabled,
   args: z.strictObject({}),
   refs: (): GatewayRef[] => [],
   run: async (q) => {
+    if (!flags.invoicesEnabled) throw new Error("invoicing is switched off");
     const { loads, customers } = await readInvoiceQueue(q, flags.invoicesStart);
     const queue = splitInvoiceQueue(loads, customers);
     return {

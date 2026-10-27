@@ -137,9 +137,10 @@ const BILL_KEY = /^T[0-9A-F]{4}$/;
 // <tenant key>-<our number>: an invoice's number or a payment's reference as QuickBooks keeps it.
 // Every tenant numbers its invoices from 10001 under a prefix made of its slug's initials, and
 // the tenants share one sandbox company, so two tenants whose slugs share initials would send the
-// same number: the second would be refused as held by another party, or adopted when the party
-// matched. The key keeps them apart, as it does for bills. The invoice prefix and the payment
-// form's reference are capped so ours fit Intuit's 21; a longer result is refused, never cut.
+// same number. The key is the tenant's document key (0015), unique in the database, so two
+// tenants never share one even when their ids start alike, and the adapter adopts a document
+// only when its customer is one of the tenant's own. The invoice prefix and the payment form's
+// reference are capped so ours fit Intuit's 21; a longer result is refused, never cut.
 export function keyedDocNumber(tenantKey: unknown, localRef: unknown): string {
   if (typeof tenantKey !== "string" || !BILL_KEY.test(tenantKey)) fail();
   return checkDocNumber(`${tenantKey}-${checkDocNumber(localRef)}`);

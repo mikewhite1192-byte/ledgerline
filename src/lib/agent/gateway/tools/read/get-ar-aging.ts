@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { flags } from "../../../../../config/flags";
 import { readAging } from "../../../../invoices/aging";
 import { AGING_BUCKETS } from "../../../../rules-engine";
 import { localDateOf } from "../../../../time/local-date";
@@ -16,12 +17,14 @@ export const getArAging = defineTool({
   tier: "read",
   roles: OPERATOR,
   label: "Aging the receivables",
+  enabled: () => flags.customerPaymentsEnabled,
   args: z.strictObject({
     asOf: dateField().optional(),
     minBucket: z.enum(AGING_BUCKETS).optional(),
   }),
   refs: (): GatewayRef[] => [],
   run: async (q, ctx, a) => {
+    if (!flags.customerPaymentsEnabled) throw new Error("customer payments is switched off");
     const asOf = a.asOf ?? localDateOf(ctx.now.toISOString(), ctx.timeZone);
     const view = await readAging(q, asOf, a.minBucket);
     return {

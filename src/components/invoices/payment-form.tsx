@@ -85,15 +85,25 @@ export function PaymentForm({
   const overApplied = amountCents !== null && appliedCents > amountCents;
   const refOk = PAYMENT_REF.test(paymentRef);
   const ready =
-    !!customer && amountCents !== null && amountCents > 0 && refOk && !badApp && !overApplied && receivedOn <= today;
+    !!customer &&
+    amountCents !== null &&
+    amountCents > 0 &&
+    refOk &&
+    !badApp &&
+    !overApplied &&
+    receivedOn !== "" &&
+    receivedOn <= today;
 
+  // Any edit clears the last refusal, so it never sits under a form it no longer describes.
   function pickCustomer(id: string) {
+    setProblem("");
     setCustomerId(id);
     setTouched(false);
     setApps(prefill(customers.find((c) => c.id === id), amountCents));
   }
 
   function changeAmount(text: string) {
+    setProblem("");
     setAmountText(text);
     if (!touched) setApps(prefill(customer, dollarsToCents(text)));
   }
@@ -105,27 +115,32 @@ export function PaymentForm({
     inFlight.current = true;
     setPending(true);
     setProblem("");
-    const applications = customer.invoices
-      .map((inv) => ({ invoiceId: inv.id, amountCents: appCents[inv.id] ?? 0 }))
-      .filter((a) => a.amountCents > 0);
-    const reply = await postJson("/api/customer-payments", {
-      customerId: customer.id,
-      receivedOn,
-      amountCents,
-      method,
-      paymentRef,
-      ...(memo.trim() ? { memo: memo.trim() } : {}),
-      applications,
-    });
-    const paymentId = typeof reply.data.paymentId === "string" ? reply.data.paymentId : null;
-    if (reply.ok && paymentId) {
-      setDone({ paymentId, created: reply.data.created === true });
-      router.refresh();
-    } else {
-      setProblem(outcomeLabel(reply.error));
+    try {
+      const applications = customer.invoices
+        .map((inv) => ({ invoiceId: inv.id, amountCents: appCents[inv.id] ?? 0 }))
+        .filter((a) => a.amountCents > 0);
+      const reply = await postJson("/api/customer-payments", {
+        customerId: customer.id,
+        receivedOn,
+        amountCents,
+        method,
+        paymentRef,
+        ...(memo.trim() ? { memo: memo.trim() } : {}),
+        applications,
+      });
+      const paymentId = typeof reply.data.paymentId === "string" ? reply.data.paymentId : null;
+      if (reply.ok && paymentId) {
+        setDone({ paymentId, created: reply.data.created === true });
+        router.refresh();
+      } else {
+        // A success with no payment id is a reply the form cannot read: the outcome is not known.
+        setProblem(outcomeLabel(reply.ok ? "unknown" : reply.error));
+      }
+    } finally {
+      // Whatever happened, the button comes back.
+      inFlight.current = false;
+      setPending(false);
     }
-    inFlight.current = false;
-    setPending(false);
   }
 
   if (done) {
@@ -179,9 +194,22 @@ export function PaymentForm({
             </select>
           )}
         </Field>
-        <Field id="pay-received" label="Date received" error={receivedOn > today ? "Not after today." : undefined}>
+        <Field
+          id="pay-received"
+          label="Date received"
+          error={receivedOn === "" ? "Enter the date received." : receivedOn > today ? "Not after today." : undefined}
+        >
           {(p) => (
-            <Input {...p} type="date" max={today} value={receivedOn} onChange={(e) => setReceivedOn(e.target.value)} />
+            <Input
+              {...p}
+              type="date"
+              max={today}
+              value={receivedOn}
+              onChange={(e) => {
+                setProblem("");
+                setReceivedOn(e.target.value);
+              }}
+            />
           )}
         </Field>
         <Field
@@ -200,7 +228,10 @@ export function PaymentForm({
               {...p}
               className={cn(controlClass, "h-9")}
               value={method}
-              onChange={(e) => setMethod(e.target.value as (typeof PAYMENT_METHODS)[number])}
+              onChange={(e) => {
+                setProblem("");
+                setMethod(e.target.value as (typeof PAYMENT_METHODS)[number]);
+              }}
             >
               {PAYMENT_METHODS.map((m) => (
                 <option key={m} value={m}>
@@ -217,11 +248,30 @@ export function PaymentForm({
           error={paymentRef !== "" && !refOk ? `Letters, digits and dashes only, up to ${MAX_PAYMENT_REF}.` : undefined}
         >
           {(p) => (
-            <Input {...p} autoComplete="off" maxLength={MAX_PAYMENT_REF} value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} />
+            <Input
+              {...p}
+              autoComplete="off"
+              maxLength={MAX_PAYMENT_REF}
+              value={paymentRef}
+              onChange={(e) => {
+                setProblem("");
+                setPaymentRef(e.target.value);
+              }}
+            />
           )}
         </Field>
         <Field id="pay-memo" label="Memo (optional)">
-          {(p) => <Input {...p} maxLength={MAX_MEMO} value={memo} onChange={(e) => setMemo(e.target.value)} />}
+          {(p) => (
+            <Input
+              {...p}
+              maxLength={MAX_MEMO}
+              value={memo}
+              onChange={(e) => {
+                setProblem("");
+                setMemo(e.target.value);
+              }}
+            />
+          )}
         </Field>
       </div>
 
@@ -249,6 +299,7 @@ export function PaymentForm({
                     className="col-span-2 sm:col-span-1"
                     value={apps[inv.id] ?? ""}
                     onChange={(e) => {
+                      setProblem("");
                       setTouched(true);
                       setApps((a) => ({ ...a, [inv.id]: e.target.value }));
                     }}

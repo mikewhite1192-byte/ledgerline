@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { flags } from "../../../../../config/flags";
 import { paymentReapplyLimit } from "../../limits";
 import { defineTool, type GatewayRef } from "../../types";
 import { idField } from "../../validate";
@@ -15,6 +16,7 @@ export const proposePaymentReapply = defineTool({
   tier: "propose",
   roles: OPERATOR,
   label: "Checking the payment move",
+  enabled: () => flags.customerPaymentsEnabled,
   args: z.strictObject({
     paymentId: idField(),
     applicationId: idField(),
@@ -31,6 +33,7 @@ export const proposePaymentReapply = defineTool({
   ],
   limit: (q, ctx, a) => paymentReapplyLimit(q, ctx, a),
   run: async (_q, _ctx, a, extras) => {
+    if (!flags.customerPaymentsEnabled) throw new Error("customer payments is switched off");
     const limit = extras.limit;
     if (!limit) throw new Error("a proposal needs its limit");
     const draft = {

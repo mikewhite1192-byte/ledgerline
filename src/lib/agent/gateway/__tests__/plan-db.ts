@@ -23,6 +23,11 @@ const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS 
 const DELIVERED_LOADS = `load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
 const DELIVERED_CUSTOMERS = `id IN (SELECT customer_id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
 
+// The ledger's rows for one subject (money/read.ts readBySubject). The plan holds none, so this
+// answers from a money_actions list a test adds, or none.
+export const LEDGER_BY_SUBJECT =
+  /^SELECT CAST\(id AS text\) AS id, .+ FROM money_actions WHERE tenant_id = current_tenant_id\(\) AND subject_table = \$1 AND subject_id = CAST\(\$2 AS uuid\) ORDER BY created_at, attempt, id$/s;
+
 export const PLAN_ANCHOR = "2026-11-02";
 
 let cached: CarrierPlan | null = null;
@@ -40,6 +45,11 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     if (sql === "SELECT id, slug, name, timezone FROM tenants WHERE id = current_tenant_id()") {
       const c = plan.carrier;
       return [{ id: TENANT, slug: c.slug, name: c.name, timezone: c.timezone }];
+    }
+    if (LEDGER_BY_SUBJECT.test(sql)) {
+      return (tables.money_actions ?? [])
+        .filter((r) => r.subject_table === params[0] && r.subject_id === params[1])
+        .map((r) => ({ ...r }));
     }
     const m = FROM.exec(sql);
     if (!m) return undefined;

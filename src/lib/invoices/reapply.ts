@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
 import { readReceivablesInput, readTenant } from "../data/read";
+import { readBySubject } from "../money/read";
 import type { Executor, ProposalResult, ProposalRow } from "../proposals/execute";
 import { findPaymentOnWrongInvoice } from "../rules-engine";
 import { localDateOf } from "../time/local-date";
@@ -11,9 +13,11 @@ import { matchWrongInvoiceFinding, type ReapplyIds } from "./match";
 // it sits on to the open invoice the rules engine says it was meant for. Everything happens in one
 // tenant transaction with the proposal, the payment, the application and both invoices locked: the
 // engine's finding is re-run on the rows as they are now and must still name exactly these four
-// records, or nothing moves (stale). A payment already posted to QuickBooks is refused
+// records, or nothing moves (stale). A payment already posted to QuickBooks, or with a post
+// reserved, sent or not yet known (a customer_payment ledger row that is not failed), is refused
 // (posted_outside): moving it here alone would leave the two books disagreeing, so a person moves
-// it there by hand. No money moves and nothing outside is called, so there is no ledger row.
+// it there by hand. No money moves and nothing outside is called, so there is no ledger row. With
+// the customer payments switch off nothing runs and the proposal stays approved.
 //
 // The same approval twice changes one application: the second run finds the proposal done.
 
@@ -75,6 +79,10 @@ async function move(
     return failApproved(q, proposal.id, "stale");
   }
   if (payment.qbo_id !== null) return failApproved(q, proposal.id, "posted_outside");
+  const posts = (await readBySubject(q, "customer_payments", payment.id)).filter(
+    (a) => a.kind === "customer_payment",
+  );
+  if (posts.some((a) => a.state !== "failed")) return failApproved(q, proposal.id, "posted_outside");
   const amountCents = Number(application.amount_cents);
   if (
     application.payment_id !== ids.paymentId ||
@@ -137,6 +145,7 @@ async function move(
 }
 
 export const executePaymentReapply: Executor = async (db, session, proposal, _opts, deps) => {
+  if (!flags.customerPaymentsEnabled) return failed("disabled");
   const now = (deps.clock ?? (() => new Date()))();
   return db.withTenant(session.tenantId, async (q) => {
     const [p] = await q.query<ProposalState>(

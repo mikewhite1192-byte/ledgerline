@@ -34,7 +34,7 @@ import {
   type Found,
 } from "./entities";
 import { quoteQueryValue } from "./mapping";
-import { readEntityId, storeEntityId, tenantCode, type EntityTable } from "./store";
+import { isTenantCustomer, readEntityId, storeEntityId, tenantCode, type EntityTable } from "./store";
 
 // The QuickBooks Online sandbox behind the accounting interface. Each create posts once with the
 // ledger row's request id as Intuit's requestid, so a resend of the same row replays the first
@@ -62,6 +62,16 @@ type Built = {
 // Why a record QuickBooks holds is not the one we asked for. Logged, never stored; the ledger
 // gets an outcome it already knows.
 type Mismatch = "voided" | "amount_mismatch" | "applied_short";
+
+// An invoice or a customer payment: numbered under the tenant's document key and made out to one
+// of the tenant's own customers.
+const isKeyed = (type: DocType): boolean => type === "Invoice" || type === "Payment";
+
+// The tenant's document key (0015). A tenant without one sends nothing.
+function docKeyOf(opened: Opened): string {
+  if (opened.conn.docKey === null) throw new MoneyError("not_configured");
+  return opened.conn.docKey;
+}
 
 function categoryOf(err: unknown): MoneyFailure {
   if (err instanceof MoneyError) return err.category;
@@ -184,6 +194,15 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
       checkContext(ctx, actionId);
       opened = await client.connection(q, ctx.timeoutMs, { write: true });
       built = build(opened);
+      // An invoice or payment goes only to a customer this tenant made or adopted, so a number
+      // another tenant holds is never adopted as ours through a customer that is not ours.
+      if (isKeyed(type)) {
+        const party = partyOf(built.body);
+        if (party === null || !(await isTenantCustomer(q, party))) {
+          client.log(`qbo: ${type} customer not mapped`);
+          throw new MoneyError("validation");
+        }
+      }
       // The adapter cannot tell a row's first send from a resend (both carry the row's stored
       // request id), so it looks every time; for a resend the look finds the document the replay
       // would answer with.
@@ -335,11 +354,12 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
       });
     },
 
-    // The invoice number and the payment reference carry the tenant's key too, so two tenants
-    // in the one sandbox company never send the same number.
+    // The invoice number and the payment reference carry the tenant's document key, unique in
+    // the database (0015), so two tenants in the one sandbox company never send the same number,
+    // even when their ids start alike.
     createInvoice(q, inv, ctx) {
       return create(q, "Invoice", inv?.actionId, ctx, (o) =>
-        invoiceBody(inv, o.conn.items, billKeyOf(o.conn.tenantId)),
+        invoiceBody(inv, o.conn.items, docKeyOf(o)),
       );
     },
 
@@ -361,7 +381,7 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
 
     recordCustomerPayment(q, p, ctx) {
       return create(q, "Payment", p?.actionId, ctx, (o) =>
-        paymentBody(p, o.conn.accounts, billKeyOf(o.conn.tenantId)),
+        paymentBody(p, o.conn.accounts, docKeyOf(o)),
       );
     },
 
@@ -371,9 +391,11 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     // QuickBooks applied short of what was asked throws amount_mismatch, so the row stays
     // unknown for a person and is never confirmed. A single document with our number that
     // belongs to another party is not ours: not found, and a replay's own look refuses it too.
-    // An invoice or payment still unknown has no outside number stored yet: the caller passes our
-    // own number (localRef), keyed here as the create keyed it, and our customer (partyLocalId),
-    // resolved through the stored id map; a customer never created there means nothing was sent.
+    // An invoice or payment found by number is ours only when its customer is one of this
+    // tenant's own. An invoice or payment still unknown has no outside number stored yet: the
+    // caller passes our own number (localRef), keyed here as the create keyed it, and our customer
+    // (partyLocalId), resolved through the stored id map; a customer never created there means
+    // nothing was sent.
     async readBack(q, ref, ctx): Promise<ReadBack> {
       checkContext(ctx);
       if (!(DOC_TYPES as readonly unknown[]).includes(ref?.type) || ref.requestId !== ctx.requestId) {
@@ -382,7 +404,7 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
       const type = ref.type as DocType;
       // A payment is judged by how it was applied, so its read-back must say what was asked.
       const asked = type === "Payment" ? checkApplications(ref.applications) : null;
-      const keyed = type === "Invoice" || type === "Payment";
+      const keyed = isKeyed(type);
       if ((ref.localRef || ref.partyLocalId) && !keyed) throw new MoneyError("validation");
       let party =
         ref.partyOutsideId === undefined || ref.partyOutsideId === null
@@ -412,7 +434,7 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
       } else if (ref.outsideRef || ref.localRef) {
         const number = ref.outsideRef
           ? checkDocNumber(ref.outsideRef)
-          : keyedDocNumber(billKeyOf(opened.conn.tenantId), ref.localRef);
+          : keyedDocNumber(docKeyOf(opened), ref.localRef);
         const rows = await byNumber(q, opened, type, number, ctx.timeoutMs);
         if (rows.length === 0) return { found: false };
         if (rows.length > 1) {
@@ -420,7 +442,11 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
           client.log(`qbo: ${type} read-back duplicate`);
           throw new MoneyError("duplicate");
         }
-        if (party !== null && rows[0].partyId !== party) {
+        const holder = rows[0].partyId;
+        if (
+          (party !== null && holder !== party) ||
+          (keyed && (holder === null || !(await isTenantCustomer(q, holder))))
+        ) {
           client.log(`qbo: ${type} number held by another party`);
           return { found: false };
         }

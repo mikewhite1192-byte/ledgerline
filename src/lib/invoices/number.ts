@@ -4,9 +4,10 @@ import type { Queryable } from "../db";
 // the initials of the carrier's slug words (blue-ridge is BR, prairie-wind is PW), because the
 // tenants table has no code column; a unit test holds it equal to each demo carrier's prefix.
 //
-// QuickBooks keeps the number with the tenant's 5-character key in front (T5B0E-BR-INV-10001) in
-// a 21-character field, so ours is at most 15: a prefix of up to 4 and a sequence of up to 6
-// digits. The adapter refuses anything longer, never cuts it.
+// QuickBooks keeps the number with the tenant's 5-character document key in front
+// (T0001-BR-INV-10001, the key unique per tenant since 0015) in a 21-character field, so ours is
+// at most 15: a prefix of up to 4 and a sequence of up to 6 digits. The adapter refuses anything
+// longer, never cuts it.
 
 // What the tenants table's CHECK allows (0001): lowercase letters, digits and dashes, any order.
 const SLUG = /^[a-z0-9-]{3,40}$/;

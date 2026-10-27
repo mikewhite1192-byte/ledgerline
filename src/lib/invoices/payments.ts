@@ -48,6 +48,8 @@ type PostablePayment = {
   receivedOn: string;
   amountCents: number;
   qboId: string | null;
+  // 'ui' for a payment a person recorded on the form; anything else came from elsewhere.
+  source: string;
   applications: { invoiceOutsideId: string | null; amountCents: number }[];
 };
 
@@ -60,8 +62,10 @@ async function readPostablePayment(q: Queryable, paymentId: string): Promise<Pos
     received_on: string;
     amount_cents: number | string;
     qbo_id: string | null;
+    source: string;
   }>(
-    `SELECT id, customer_id, payment_ref, CAST(received_on AS text) AS received_on, amount_cents, qbo_id
+    `SELECT id, customer_id, payment_ref, CAST(received_on AS text) AS received_on, amount_cents, qbo_id,
+            source
        FROM customer_payments
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) FOR UPDATE`,
     [paymentId],
@@ -86,6 +90,7 @@ async function readPostablePayment(q: Queryable, paymentId: string): Promise<Pos
     receivedOn: p.received_on,
     amountCents: Number(p.amount_cents),
     qboId: p.qbo_id,
+    source: p.source,
     applications: apps.map((a) => ({ invoiceOutsideId: a.qbo_id, amountCents: Number(a.amount_cents) })),
   };
 }
@@ -199,7 +204,20 @@ export async function recordCustomerPayment(
       [input.paymentRef],
     );
     if (same) {
-      return same.customer_id === input.customerId && Number(same.amount_cents) === input.amountCents
+      if (same.customer_id !== input.customerId || Number(same.amount_cents) !== input.amountCents) {
+        return refuse("duplicate_ref");
+      }
+      // A repeat only when it was applied the same way too: the stored applications and the asked
+      // ones compared as whole sets of invoice and amount.
+      const stored = await q.query<{ invoice_id: string; amount_cents: number | string }>(
+        `SELECT invoice_id, amount_cents FROM payment_applications
+          WHERE tenant_id = current_tenant_id() AND payment_id = CAST($1 AS uuid)`,
+        [same.id],
+      );
+      const key = (invoiceId: string, cents: number) => `${invoiceId}:${cents}`;
+      const had = stored.map((a) => key(a.invoice_id, Number(a.amount_cents))).sort();
+      const asked = input.applications.map((a) => key(a.invoiceId, a.amountCents)).sort();
+      return had.length === asked.length && had.every((k, i) => k === asked[i])
         ? { kind: "existing", paymentId: same.id }
         : refuse("duplicate_ref");
     }
@@ -312,6 +330,9 @@ export async function postCustomerPayment(
     await assertMembership(q, session);
     const payment = await readPostablePayment(q, paymentId);
     if (!payment) return { ok: false as const, category: "not_found" as const };
+    // Only a payment a person recorded on the form posts from here: a seeded or older one never
+    // goes out.
+    if (payment.source !== "ui") return { ok: false as const, category: "validation" as const };
     if (payment.qboId !== null) return { ok: false as const, category: "already_posted" as const };
     const rows = (await readBySubject(q, "customer_payments", paymentId)).filter(
       (a) => a.kind === "customer_payment",

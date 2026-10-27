@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { flags } from "../../../../../config/flags";
 import { readPaymentsBetween } from "../../../../invoices/aging";
 import { daysBetween } from "../../../../time/local-date";
 import { defineTool, type GatewayRef } from "../../types";
@@ -17,6 +18,7 @@ export const getPaymentsIn = defineTool({
   tier: "read",
   roles: OPERATOR,
   label: "Reading payments received",
+  enabled: () => flags.customerPaymentsEnabled,
   args: z
     .strictObject({ from: dateField(), to: dateField() })
     .refine((a) => a.to >= a.from && daysBetween(a.from, a.to) < PAYMENTS_IN_MAX_DAYS, {
@@ -25,6 +27,7 @@ export const getPaymentsIn = defineTool({
     }),
   refs: (): GatewayRef[] => [],
   run: async (q, _ctx, a) => {
+    if (!flags.customerPaymentsEnabled) throw new Error("customer payments is switched off");
     const view = await readPaymentsBetween(q, a.from, a.to);
     return {
       result: {

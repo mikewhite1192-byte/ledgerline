@@ -3,9 +3,10 @@
 -- trace exactly as before; an engine proposal has none of them, because no model and no turn made
 -- it. One approve route, one gate, one auditor and one clean filter serve both.
 --
--- No new table and no new grant: an engine proposal is inserted and moved by the same app grants
--- 0009 gave (INSERT, and UPDATE of status, decision and money columns), and row-level security on
--- proposals is unchanged (enabled, forced, one tenant_isolation policy).
+-- No new table: an engine proposal is inserted and moved by the same app grants 0009 gave (INSERT,
+-- and UPDATE of status, decision and money columns), and row-level security on proposals is
+-- unchanged (enabled, forced, one tenant_isolation policy). The one new grant is USAGE on the
+-- sequence behind each tenant's document key (below), so a tenant row the app inserts gets its key.
 
 ALTER TABLE proposals
   ADD COLUMN origin text NOT NULL DEFAULT 'agent' CHECK (origin IN ('agent', 'engine')),
@@ -34,3 +35,27 @@ ALTER TABLE proposals ADD CONSTRAINT proposals_kind_check CHECK (kind IN (
 
 -- The invoice page lists the engine's live cards per tenant.
 CREATE INDEX proposals_tenant_origin_status ON proposals (tenant_id, origin, status);
+
+-- Each tenant's document key: T and four uppercase hex digits, unique across the database. An
+-- invoice number and a customer payment reference carry it (T0001-PW10001), so two tenants posting
+-- to one sandbox company never send the same number, even when their ids start alike. Existing
+-- tenants get theirs in the order they were made; a new tenant takes the next one. The sequence
+-- stops at FFFF rather than wrap, so a key is never handed out twice.
+CREATE SEQUENCE tenant_doc_key_seq AS integer MINVALUE 1 MAXVALUE 65535 NO CYCLE;
+ALTER TABLE tenants ADD COLUMN doc_key text;
+-- The admin owns tenants. FORCE is lifted for this one transaction so the backfill sees every
+-- tenant where the admin is a plain owner, and it is put back before the transaction ends.
+ALTER TABLE tenants NO FORCE ROW LEVEL SECURITY;
+UPDATE tenants t SET doc_key = 'T' || upper(lpad(to_hex(n.rn::integer), 4, '0'))
+  FROM (SELECT id, row_number() OVER (ORDER BY created_at, id) AS rn FROM tenants) n
+ WHERE n.id = t.id;
+SELECT setval('tenant_doc_key_seq', GREATEST((SELECT count(*) FROM tenants), 1),
+              (SELECT count(*) FROM tenants) > 0);
+ALTER TABLE tenants FORCE ROW LEVEL SECURITY;
+ALTER TABLE tenants
+  ALTER COLUMN doc_key SET DEFAULT ('T' || upper(lpad(to_hex(nextval('tenant_doc_key_seq')::integer), 4, '0'))),
+  ALTER COLUMN doc_key SET NOT NULL,
+  ADD CONSTRAINT tenants_doc_key_format CHECK (doc_key ~ '^T[0-9A-F]{4}$'),
+  ADD CONSTRAINT tenants_doc_key_unique UNIQUE (doc_key);
+ALTER SEQUENCE tenant_doc_key_seq OWNED BY tenants.doc_key;
+GRANT USAGE ON SEQUENCE tenant_doc_key_seq TO payday_app;

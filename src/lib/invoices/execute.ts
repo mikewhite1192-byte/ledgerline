@@ -39,7 +39,8 @@ export const LINE_WORDS: Readonly<Record<InvoiceLine["kind"], string>> = {
   lumper: "Lumper",
 };
 
-const LINE_KINDS = ["linehaul", "fuel_surcharge", "detention", "layover", "stop", "lumper"] as const;
+// Taken from LINE_WORDS, so a kind added there is accepted here and the two never drift apart.
+const LINE_KINDS = Object.keys(LINE_WORDS) as [InvoiceLine["kind"], ...InvoiceLine["kind"][]];
 
 const Args = z.object({
   loadId: z.uuid(),

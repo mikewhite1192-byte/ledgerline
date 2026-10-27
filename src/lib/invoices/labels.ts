@@ -27,8 +27,13 @@ export const OUTCOME_LABELS: Readonly<Record<string, string>> = {
   already_posted: "This is already posted to QuickBooks.",
   disabled: "This is off in this environment.",
   amount_mismatch: "QuickBooks holds this number at a different amount. Check it there by hand.",
+  // The reply was lost or could not be read, or the service was down: the work may have happened,
+  // so these never say nothing changed.
+  unknown: "The outcome is not known yet. Refresh the page to see where it stands before trying again.",
+  unavailable: "That could not be confirmed. Refresh the page to see where it stands before trying again.",
 };
 
+// A definite refusal with no fixed sentence of its own.
 export const OUTCOME_FALLBACK = "That did not go through. Nothing changed.";
 
 export function outcomeLabel(category: string | null | undefined): string {

@@ -944,6 +944,22 @@ describe("invoices against a seeded database", () => {
         ok: false,
         category: "duplicate_ref",
       });
+      // The same reference, customer and amount applied another way is not a repeat: refused,
+      // and the stored applications stay as they were.
+      for (const other of [form(inv, "ACH-INV-1", half, half - 1), { ...form(inv, "ACH-INV-1", half), applications: [] }]) {
+        expect(await recordCustomerPayment(app, BR.session, other, clock())).toEqual({
+          ok: false,
+          category: "duplicate_ref",
+        });
+      }
+      const kept = await adminRows<{ invoice_id: string; amount_cents: string }>(
+        BR,
+        `SELECT a.invoice_id, a.amount_cents::text FROM payment_applications a
+           JOIN customer_payments p ON p.tenant_id = a.tenant_id AND p.id = a.payment_id
+          WHERE a.tenant_id = $1 AND p.payment_ref = 'ACH-INV-1'`,
+        [BR.id],
+      );
+      expect(kept).toEqual([{ invoice_id: inv.id, amount_cents: String(half) }]);
 
       // More applied than the payment, or than the invoice still owes, is refused.
       expect(await recordCustomerPayment(app, BR.session, form(inv, "ACH-INV-2", 100, 101), clock())).toEqual({
@@ -987,6 +1003,31 @@ describe("invoices against a seeded database", () => {
         expect(await ledgerFor(BR, paymentId)).toEqual([
           { kind: "customer_payment", state: "confirmed", attempt: 1, proposal_id: null },
         ]);
+      } finally {
+        flags.accountingEnabled = false;
+      }
+    });
+  });
+
+  describe("payments that did not come from the form", () => {
+    it("never posts a seeded payment, and reserves nothing for it", async () => {
+      const [seeded] = await adminRows<{ id: string }>(
+        BR,
+        `SELECT id FROM customer_payments
+          WHERE tenant_id = $1 AND source <> 'ui' AND qbo_id IS NULL ORDER BY payment_ref LIMIT 1`,
+        [BR.id],
+      );
+      expect(seeded).toBeDefined();
+      flags.accountingEnabled = true;
+      try {
+        const books = testBooks();
+        const deps = { accounting: books.adapter, waitMs: 2_000, pollMs: 10, log: () => {} };
+        expect(await postCustomerPayment(app, BR.session, seeded!.id, deps)).toEqual({
+          ok: false,
+          category: "validation",
+        });
+        expect(books.seen.payments).toEqual([]);
+        expect(await ledgerFor(BR, seeded!.id)).toEqual([]);
       } finally {
         flags.accountingEnabled = false;
       }
@@ -1089,6 +1130,35 @@ describe("invoices against a seeded database", () => {
             ids.paymentId,
           ]);
         }
+        // So is one whose post is reserved and not settled: no outside id yet, but the books may
+        // already hold it.
+        const postId = randomUUID();
+        await adminWrite(
+          t,
+          `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, attempt,
+             idempotency_key, request_id, amount_cents, counterparty_table, counterparty_id, proposed_by,
+             approver_membership_id)
+           SELECT CAST($2 AS uuid), p.tenant_id, 'customer_payment', 'accounting', 'customer_payments', p.id, 1,
+                  'customer_payment:' || CAST(p.id AS text) || ':1', $4, p.amount_cents, 'customers',
+                  p.customer_id, 'person', m.id
+             FROM customer_payments p
+             JOIN memberships m ON m.tenant_id = p.tenant_id
+            WHERE p.tenant_id = $1 AND p.id = CAST($3 AS uuid)
+            ORDER BY m.id LIMIT 1`,
+          [t.id, postId, ids.paymentId, postId.replace(/-/g, "")],
+        );
+        try {
+          expect(await ledgerFor(t, ids.paymentId)).toMatchObject([{ kind: "customer_payment", state: "reserved" }]);
+          expect(await app.withTenant(t.id, (q) => paymentReapplyLimit(q, ctx, ids))).toMatchObject({
+            ok: false,
+            reason: "engine_refused",
+          });
+          const pending = await proposeMove(t, args, limit.requestedCents);
+          expect(await approve(t, pending)).toEqual({ ok: false, category: "posted_outside", retryable: false });
+          expect(await proposalById(t, pending)).toMatchObject({ status: "failed", decision_note: "posted_outside" });
+        } finally {
+          await adminWrite(t, "DELETE FROM money_actions WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [t.id, postId]);
+        }
         expect(matchWrongInvoiceFinding(await findingsNow(t), ids)).not.toBeNull();
 
         const id = await proposeMove(t, args, limit.requestedCents);
@@ -1109,6 +1179,14 @@ describe("invoices against a seeded database", () => {
           postedOutside: false,
           findingMatches: true,
         });
+        // With customer payments switched off nothing moves and the approval stands until it is on.
+        flags.customerPaymentsEnabled = false;
+        try {
+          expect(await approve(t, id)).toEqual({ ok: false, category: "disabled", retryable: false });
+          expect(await proposalById(t, id)).toMatchObject({ status: "approved", decision_note: null });
+        } finally {
+          flags.customerPaymentsEnabled = true;
+        }
         expect(await approve(t, id)).toEqual({ ok: true, proposalId: id, status: "done", moneyActionId: null });
         expect(await approve(t, id)).toEqual({ ok: false, category: "already_decided", retryable: false });
         const onTarget = await adminRows<{ amount_cents: string }>(

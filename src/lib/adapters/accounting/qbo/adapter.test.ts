@@ -642,10 +642,13 @@ describe("QuickBooks adapter: read-back", () => {
       status: "succeeded",
     });
     expect(same.lines.join("\n")).not.toContain("another party");
-    // No party given: unchanged, the single match is read back.
+    // No party given: the single match is ours only when its customer is one of this tenant's.
     for (const party of [undefined, null]) {
-      const open = make([held("Invoice", invoiceReply(2810.05, "77").Invoice)]);
-      expect(await open.adapter.readBack(open.db, byNumber(party), ctx())).toMatchObject({
+      const theirs = make([held("Invoice", invoiceReply(2810.05, "77").Invoice)]);
+      expect(await theirs.adapter.readBack(theirs.db, byNumber(party), ctx())).toEqual({ found: false });
+      expect(theirs.lines).toContain("qbo: Invoice number held by another party");
+      const ours = make([held("Invoice", invoiceReply().Invoice)]);
+      expect(await ours.adapter.readBack(ours.db, byNumber(party), ctx())).toMatchObject({
         found: true,
         id: "901",
       });
@@ -734,8 +737,9 @@ describe("QuickBooks adapter: read-back", () => {
 });
 
 describe("QuickBooks adapter: two tenants in one company", () => {
-  // A second tenant whose slug shares the first's initials, so both number from BR-INV-10001.
-  const OTHER_TENANT = "7c2a9d4e-1b3f-4a5c-8d6e-9f0a1b2c3d4e";
+  // A second tenant whose slug shares the first's initials, so both number from BR-INV-10001,
+  // and whose id starts with the same four hex digits as the first's (5b0e).
+  const OTHER_TENANT = "5b0e9d4e-1b3f-4a5c-8d6e-9f0a1b2c3d4e";
 
   // The one sandbox company both tenants post into. It keeps invoices by number and answers the
   // look and the post as QuickBooks does: it never refuses a second document with a number.
@@ -762,18 +766,59 @@ describe("QuickBooks adapter: two tenants in one company", () => {
     return { fetch, invoices };
   }
 
-  it("posts the same invoice number from two tenants as two documents", async () => {
+  it("posts the same invoice number from two tenants whose ids start alike as two documents", async () => {
+    expect(TENANT.slice(0, 4)).toBe(OTHER_TENANT.slice(0, 4));
     const company = sharedCompany();
     const adapter = createQboAdapter({ env: qboEnv(), fetch: company.fetch, log: () => {} });
-    const first = await adapter.createInvoice(new FakeQboDb(), invoice({ invoiceNumber: "BR-INV-10001" }), ctx());
+    const first = await adapter.createInvoice(
+      new FakeQboDb({ docKey: "T0001" }),
+      invoice({ invoiceNumber: "BR-INV-10001" }),
+      ctx(),
+    );
     const second = await adapter.createInvoice(
-      new FakeQboDb({ tenantId: OTHER_TENANT }),
+      new FakeQboDb({ tenantId: OTHER_TENANT, docKey: "T0002", customers: ["61"] }),
       invoice({ invoiceNumber: "BR-INV-10001", customerOutsideId: "61" }),
       ctx(),
     );
-    expect(first).toMatchObject({ kind: "confirmed", id: "901", ref: "T5B0E-BR-INV-10001" });
-    expect(second).toMatchObject({ kind: "confirmed", id: "902", ref: "T7C2A-BR-INV-10001" });
-    expect(company.invoices.map((i) => i.DocNumber)).toEqual(["T5B0E-BR-INV-10001", "T7C2A-BR-INV-10001"]);
+    expect(first).toMatchObject({ kind: "confirmed", id: "901", ref: "T0001-BR-INV-10001" });
+    expect(second).toMatchObject({ kind: "confirmed", id: "902", ref: "T0002-BR-INV-10001" });
+    expect(company.invoices.map((i) => i.DocNumber)).toEqual(["T0001-BR-INV-10001", "T0002-BR-INV-10001"]);
+  });
+
+  it("never adopts another tenant's document, even under the same key and amount", async () => {
+    const company = sharedCompany();
+    const lines: string[] = [];
+    const adapter = createQboAdapter({ env: qboEnv(), fetch: company.fetch, log: (l) => lines.push(l) });
+    await adapter.createInvoice(new FakeQboDb({ docKey: "T0001" }), invoice({ invoiceNumber: "BR-INV-10001" }), ctx());
+    const other = () => new FakeQboDb({ tenantId: OTHER_TENANT, docKey: "T0001", customers: ["61"] });
+    // Its own customer: the number is held by another party, refused.
+    expect(
+      await adapter.createInvoice(other(), invoice({ invoiceNumber: "BR-INV-10001", customerOutsideId: "61" }), ctx()),
+    ).toEqual({ kind: "failed", category: "validation" });
+    // The first tenant's customer, which is not its own: refused before the look.
+    expect(
+      await adapter.createInvoice(other(), invoice({ invoiceNumber: "BR-INV-10001", customerOutsideId: "58" }), ctx()),
+    ).toEqual({ kind: "failed", category: "validation" });
+    expect(lines).toContain("qbo: Invoice customer not mapped");
+    expect(company.invoices.map((i) => i.Id)).toEqual(["901"]);
+  });
+
+  it("refuses an invoice or payment for a customer the tenant never made, sending nothing", async () => {
+    const { adapter, sent, lines, db } = make([], new FakeQboDb({ customers: [] }));
+    expect(await adapter.createInvoice(db, invoice(), ctx())).toEqual({ kind: "failed", category: "validation" });
+    expect(await adapter.recordCustomerPayment(db, payment(), ctx())).toEqual({ kind: "failed", category: "validation" });
+    expect(sent).toHaveLength(0);
+    expect(lines).toContain("qbo: Payment customer not mapped");
+  });
+
+  it("sends no invoice or payment for a tenant without a document key", async () => {
+    const { adapter, sent, db } = make([], new FakeQboDb({ docKey: null }));
+    expect(await adapter.createInvoice(db, invoice(), ctx())).toEqual({ kind: "failed", category: "not_configured" });
+    expect(await adapter.recordCustomerPayment(db, payment(), ctx())).toEqual({
+      kind: "failed",
+      category: "not_configured",
+    });
+    expect(sent).toHaveLength(0);
   });
 
   it("refuses an invoice number or payment reference that would pass 21 characters, sending nothing", async () => {

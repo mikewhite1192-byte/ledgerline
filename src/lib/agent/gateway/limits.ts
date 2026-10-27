@@ -9,6 +9,7 @@ import {
   readSettlementInput,
 } from "../../data/read";
 import { matchWrongInvoiceFinding, type ReapplyIds } from "../../invoices/match";
+import { readBySubject } from "../../money/read";
 import {
   advanceEligibility,
   cents,
@@ -208,19 +209,26 @@ export async function invoiceFixLimit(
 
 // A payment move exists only for a payment_on_wrong_invoice finding the rules engine makes now,
 // matched on all four ids whole and in order. The amount is the application's, never the
-// model's. A payment already posted to the accounting system is refused here too: moving it in
-// this app alone would leave the two books disagreeing.
+// model's. A payment already posted to the accounting system is refused here too, and so is one
+// whose post is reserved, sent or not yet known (any ledger row for it that is not failed):
+// moving it in this app alone would leave the two books disagreeing. The switch is read here too.
 export async function paymentReapplyLimit(
   q: Queryable,
   ctx: GatewayContext,
   args: ReapplyIds,
 ): Promise<LimitResult> {
+  if (!flags.customerPaymentsEnabled) return unavailable(null);
   try {
     const [application] = await readRowsWhereId(q, "payment_applications", "id", args.applicationId);
     const [payment] = await readRowsWhereId(q, "customer_payments", "id", args.paymentId);
     if (!application || !payment) return unavailable(null);
     const amount = application.amount_cents;
-    if (payment.qbo_id !== null) return refused("engine_refused", amount, amount);
+    const posts = (await readBySubject(q, "customer_payments", args.paymentId)).filter(
+      (a) => a.kind === "customer_payment",
+    );
+    if (payment.qbo_id !== null || posts.some((a) => a.state !== "failed")) {
+      return refused("engine_refused", amount, amount);
+    }
     const asOf = localDateOf(ctx.now.toISOString(), ctx.timeZone);
     const finding = matchWrongInvoiceFinding(
       findPaymentOnWrongInvoice(await readReceivablesInput(q, asOf)),
