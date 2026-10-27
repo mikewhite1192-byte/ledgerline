@@ -78,7 +78,9 @@ describe("money start-up guard", () => {
     expect([...RAW_SECRET_VARIABLES].sort()).toEqual(Object.values(SECRET_SOURCES).map((s) => s.raw).sort());
   });
 
-  it("runs at server start in Node only, and a refusal stops the start", async () => {
+  // A rejected register() does not stop the process: Next keeps the rejection and answers every
+  // request 500 while the process runs, so the refusal still fails closed.
+  it("runs in Node only, and a refusal rejects register()", async () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
     vi.stubEnv("QBO_ENVIRONMENT", "production");
     vi.stubEnv("NEXT_RUNTIME", "edge");

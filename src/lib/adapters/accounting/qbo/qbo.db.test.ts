@@ -121,7 +121,7 @@ afterAll(async () => {
 const mapping = { realmId: REALM, tokens: TOKENS, accounts: ACCOUNTS, items: ITEMS };
 
 describe("0007 QuickBooks tables", () => {
-  it("grants the app role what the store needs and no update or delete on outside ids", async () => {
+  it("grants the app role what the store needs: no update on states, no update or delete on outside ids", async () => {
     const rows = await admin.withoutTenant((q) =>
       q.query<{ t: string; s: boolean; i: boolean; u: boolean; d: boolean }>(
         `SELECT t,
@@ -136,8 +136,16 @@ describe("0007 QuickBooks tables", () => {
     expect(rows).toEqual([
       { t: "qbo_connections", s: true, i: true, u: true, d: true },
       { t: "qbo_entity_ids", s: true, i: true, u: false, d: false },
-      { t: "qbo_oauth_states", s: true, i: true, u: true, d: true },
+      { t: "qbo_oauth_states", s: true, i: true, u: false, d: true },
     ]);
+    // The app role cannot change a state, so a stale one cannot be made fresh again.
+    const state = "u".repeat(43);
+    await inA((q) => addOAuthState(q, state, A.memberId));
+    expect(
+      await sqlStateOf(
+        inA((q) => q.execute("UPDATE qbo_oauth_states SET created_at = now() WHERE tenant_id = current_tenant_id()")),
+      ),
+    ).toBe("42501");
   });
 
   it("keeps each tenant's connection behind its wall", async () => {
@@ -238,6 +246,8 @@ describe("QuickBooks store", () => {
 
 describe("QuickBooks connect", () => {
   it("connects an admin to the allowed company, sets up accounts and items, then disconnects", async () => {
+    // Creating the accounts and items is a write to the company: it needs the accounting switch.
+    flags.accountingEnabled = true;
     const c = company();
     const qbo = createQboConnect({ env: qboEnv(), fetch: c.fetch, log: () => {} });
     const started = await qbo.start(runA, A.session.sub);
@@ -259,6 +269,26 @@ describe("QuickBooks connect", () => {
     });
 
     expect(await qbo.disconnect(runA, A.session.sub)).toEqual({ ok: true, revoked: true });
+    expect(c.sent.at(-1)?.url.host).toBe("developer.api.intuit.com");
+    expect(await inA(connectionSummary)).toBeNull();
+  });
+
+  it("with the accounting switch off, creates nothing in the company, revokes the grant and stores nothing", async () => {
+    flags.accountingEnabled = false;
+    const c = company();
+    const qbo = createQboConnect({ env: qboEnv(), fetch: c.fetch, log: () => {} });
+    const started = await qbo.start(runA, A.session.sub);
+    if (!started.ok) throw new Error(`start refused: ${started.reason}`);
+    const out = await qbo.finish(runA, A.session.sub, {
+      code: "code-1",
+      state: stateOf(started.url),
+      realmId: REALM,
+      error: null,
+    });
+    expect(out).toEqual({ ok: false, reason: "disabled" });
+    // The lookups went out; no create did, and the grant was revoked last.
+    expect(c.sent.filter((s) => s.method === "POST" && s.url.host.startsWith("sandbox-"))).toHaveLength(0);
+    expect(c.sent.some((s) => s.method === "GET" && s.url.host.startsWith("sandbox-"))).toBe(true);
     expect(c.sent.at(-1)?.url.host).toBe("developer.api.intuit.com");
     expect(await inA(connectionSummary)).toBeNull();
   });

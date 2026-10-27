@@ -103,7 +103,7 @@ these differences:
   DELETE` (a disconnect deletes the row).
 - `qbo_oauth_states` holds a connect in progress: the random state, its membership (composite
   foreign key, cascading), matched whole on the callback, deleted on first use and refused after
-  ten minutes (database clock). The app gets `SELECT, INSERT, UPDATE, DELETE`.
+  ten minutes (database clock). The app gets `SELECT, INSERT, DELETE`: a state is never changed.
 - `qbo_entity_ids` records the company's id for each customer or driver already created there,
   so a second post finds it instead of making another. No foreign key to the local row (a reseed
   replaces those rows and the outside record stays). The app gets `SELECT, INSERT` only: an

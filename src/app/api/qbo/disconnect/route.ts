@@ -9,11 +9,13 @@ export const dynamic = "force-dynamic";
 
 const qbo = createQboConnect();
 
-// An admin disconnects. A cross-site or same-site post is refused before anything changes (the
-// browser sets Sec-Fetch-Site itself); a request without the header is handled.
+// An admin disconnects. Only a post from this app's own page is handled: the browser sets
+// Sec-Fetch-Site itself, and anything but "same-origin" (another site, a sibling subdomain, or
+// no header at all, as an older browser sends) is refused before anything changes.
 export async function POST(request: Request) {
-  const site = request.headers.get("sec-fetch-site");
-  if (site !== null && site !== "same-origin") return new NextResponse(null, { status: 403 });
+  if (request.headers.get("sec-fetch-site") !== "same-origin") {
+    return new NextResponse(null, { status: 403 });
+  }
   const session = await requireSession();
   try {
     const result = await qbo.disconnect(tenantRun(session), session.sub);

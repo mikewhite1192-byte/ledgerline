@@ -82,6 +82,39 @@ export type MoneySettings = {
   stripeTestDestinationAccount?: string;
 };
 
+// The money settings as the deploying shell exports them (infra/bin/app.ts). Every hosting deploy
+// sets the branch's variables whole, so a deploy from a shell that forgot them would strip them
+// from the branch, and once accounting is on every request would then fail while Amplify shows
+// green. So synth is refused unless all four are exported, or unless MONEY_SETTINGS=none says the
+// deploy carries fewer on purpose: then exactly the ones exported reach the branch (still checked
+// by moneyEnv) and the rest are removed from it. Any other MONEY_SETTINGS value is refused. A
+// refusal names the variables, never their values.
+export const MONEY_SETTINGS_OPT_OUT = "none";
+
+export function moneySettingsFromEnv(env: Record<string, string | undefined>): MoneySettings {
+  const read = (name: string) => env[name]?.trim() || undefined;
+  const optOut = read("MONEY_SETTINGS");
+  if (optOut !== undefined && optOut !== MONEY_SETTINGS_OPT_OUT) {
+    throw new Error(`MONEY_SETTINGS may only be ${MONEY_SETTINGS_OPT_OUT}`);
+  }
+  const missing = OPTIONAL_BRANCH_ENV_NAMES.filter((name) => read(name) === undefined);
+  if (missing.length > 0 && optOut === undefined) {
+    const one = missing.length === 1;
+    throw new Error(
+      `Refusing to synthesize: ${missing.join(", ")} ${one ? "is" : "are"} not exported. A hosting ` +
+        "deploy sets the Amplify branch's variables whole, so a deploy now would remove " +
+        `${one ? "it" : "them"} from the branch. Export all four, or set ` +
+        `MONEY_SETTINGS=${MONEY_SETTINGS_OPT_OUT} to deploy without ${one ? "it" : "them"} on purpose.`,
+    );
+  }
+  return {
+    qboClientId: read("QBO_CLIENT_ID"),
+    qboRedirectUri: read("QBO_REDIRECT_URI"),
+    qboAllowedRealmId: read("QBO_ALLOWED_REALM_ID"),
+    stripeTestDestinationAccount: read("STRIPE_TEST_DESTINATION_ACCOUNT"),
+  };
+}
+
 // The branch values for the money settings that are set, each checked whole. A refusal names the
 // variable, never its value.
 export function moneyEnv(m: MoneySettings = {}): Record<string, string> {

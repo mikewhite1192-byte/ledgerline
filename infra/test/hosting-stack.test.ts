@@ -188,7 +188,8 @@ describe("HostingStack", () => {
     const props = branches[0].Properties;
     expect(props.ComputeRoleArn).toEqual({ "Fn::GetAtt": [computeId, "Arn"] });
     const vars = props.EnvironmentVariables as { Name: string; Value: unknown }[];
-    // No money settings exported: those four are left off, never sent empty.
+    // No money settings exported, on purpose (MONEY_SETTINGS=none): those four are left off,
+    // never sent empty.
     expect(vars.map((e) => e.Name)).toEqual(
       BRANCH_ENV_NAMES.filter((n) => !OPTIONAL_BRANCH_ENV_NAMES.includes(n)),
     );
@@ -242,8 +243,74 @@ describe("HostingStack", () => {
     stripeTestDestinationAccount: "acct_TESTDESTINATION01",
   };
 
+  // The same values as the deploying shell exports them.
+  const EXPORTED = {
+    QBO_CLIENT_ID: MONEY.qboClientId,
+    QBO_REDIRECT_URI: MONEY.qboRedirectUri,
+    QBO_ALLOWED_REALM_ID: MONEY.qboAllowedRealmId,
+    STRIPE_TEST_DESTINATION_ACCOUNT: MONEY.stripeTestDestinationAccount,
+  };
+
+  const branchVars = (exported: Record<string, string | undefined>) => {
+    const s = synthAll(undefined, exported);
+    try {
+      const branches = Object.values(s.hosting.findResources("AWS::Amplify::Branch"));
+      return branches[0].Properties.EnvironmentVariables as { Name: string; Value: unknown }[];
+    } finally {
+      s.cleanup();
+    }
+  };
+
+  const synthRefusal = (exported: Record<string, string | undefined>) => {
+    try {
+      synthAll(undefined, exported).cleanup();
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return null;
+  };
+
+  it("refuses to synthesize with no money setting exported, naming all four and how to opt out", () => {
+    const message = synthRefusal({});
+    expect(message).toMatch(
+      /^Refusing to synthesize: QBO_CLIENT_ID, QBO_REDIRECT_URI, QBO_ALLOWED_REALM_ID, STRIPE_TEST_DESTINATION_ACCOUNT are not exported\./,
+    );
+    expect(message).toContain("MONEY_SETTINGS=none");
+    // Blank exports are the same as none.
+    expect(synthRefusal({ QBO_CLIENT_ID: "", QBO_REDIRECT_URI: "  " })).toMatch(/^Refusing to synthesize: QBO_CLIENT_ID,/);
+  });
+
+  it("refuses a partial set, naming only the missing variables and never a value", () => {
+    const partial = { QBO_CLIENT_ID: EXPORTED.QBO_CLIENT_ID, STRIPE_TEST_DESTINATION_ACCOUNT: EXPORTED.STRIPE_TEST_DESTINATION_ACCOUNT };
+    const message = synthRefusal(partial);
+    expect(message).toMatch(/^Refusing to synthesize: QBO_REDIRECT_URI, QBO_ALLOWED_REALM_ID are not exported\./);
+    for (const value of Object.values(partial)) expect(message).not.toContain(value);
+    const one = synthRefusal({ ...EXPORTED, QBO_ALLOWED_REALM_ID: undefined });
+    expect(one).toMatch(/^Refusing to synthesize: QBO_ALLOWED_REALM_ID is not exported\./);
+    for (const value of Object.values(EXPORTED)) expect(one).not.toContain(value);
+  });
+
+  it("with MONEY_SETTINGS=none, synthesizes with none or with the ones exported, still checked", () => {
+    expect(branchVars({ MONEY_SETTINGS: "none" }).map((e) => e.Name)).toEqual(
+      BRANCH_ENV_NAMES.filter((n) => !OPTIONAL_BRANCH_ENV_NAMES.includes(n)),
+    );
+    const stripeOnly = branchVars({
+      MONEY_SETTINGS: "none",
+      STRIPE_TEST_DESTINATION_ACCOUNT: EXPORTED.STRIPE_TEST_DESTINATION_ACCOUNT,
+    });
+    expect(stripeOnly.map((e) => e.Name).filter((n) => OPTIONAL_BRANCH_ENV_NAMES.includes(n))).toEqual([
+      "STRIPE_TEST_DESTINATION_ACCOUNT",
+    ]);
+    // The opt-out never lets a partial QuickBooks set through.
+    expect(synthRefusal({ MONEY_SETTINGS: "none", QBO_CLIENT_ID: EXPORTED.QBO_CLIENT_ID })).toMatch(/set together/);
+    // Only the exact word opts out.
+    for (const word of ["None", "all", "yes"]) {
+      expect(synthRefusal({ MONEY_SETTINGS: word }), word).toBe("MONEY_SETTINGS may only be none");
+    }
+  });
+
   it("sets the money settings exported at deploy, in order", () => {
-    const withMoney = synthAll(undefined, MONEY);
+    const withMoney = synthAll(undefined, EXPORTED);
     try {
       const branches = Object.values(withMoney.hosting.findResources("AWS::Amplify::Branch"));
       const vars = branches[0].Properties.EnvironmentVariables as { Name: string; Value: unknown }[];

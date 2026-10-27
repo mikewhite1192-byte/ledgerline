@@ -68,7 +68,10 @@ ALTER TABLE qbo_entity_ids FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON qbo_entity_ids
   USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
 
--- States are consumed and connections removed on disconnect, so both get DELETE. An entity id is
--- the record of an outside create: no UPDATE, no DELETE (it goes only with the tenant).
-GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_oauth_states, qbo_connections TO payday_app;
+-- A state is inserted and consumed (DELETE ... RETURNING), never changed: no UPDATE. A connection
+-- is upserted (INSERT ... ON CONFLICT DO UPDATE), its tokens updated on a refresh and the row
+-- removed on disconnect. An entity id is the record of an outside create: no UPDATE, no DELETE (it
+-- goes only with the tenant).
+GRANT SELECT, INSERT, DELETE ON qbo_oauth_states TO payday_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON qbo_connections TO payday_app;
 GRANT SELECT, INSERT ON qbo_entity_ids TO payday_app;

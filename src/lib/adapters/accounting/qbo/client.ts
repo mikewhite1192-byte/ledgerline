@@ -219,8 +219,13 @@ export function createQboClient(deps: QboDeps = {}) {
   }
 
   // One call with tokens the caller holds (the connect flow, before anything is stored): no
-  // switch, no refresh. The caller has checked the company is the allowed one.
+  // refresh. The caller has checked the company is the allowed one; it is checked again here. A
+  // GET needs no switch; a POST (setting up the company's accounts and items) checks the
+  // accounting switch here, at the write, the same way request() does.
   async function direct(p: Prepared, target: Target, call: Call, timeoutMs: number): Promise<Reply> {
+    if (call.method === "POST" && flags.accountingEnabled !== true) {
+      throw new MoneyError("disabled");
+    }
     if (target.realmId !== p.config.allowedRealmId) throw new MoneyError("not_configured");
     return replyOf(call, await sendOnce(p, target, call, timeoutMs));
   }

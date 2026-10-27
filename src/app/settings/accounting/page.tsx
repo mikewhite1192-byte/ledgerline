@@ -22,6 +22,10 @@ const NOTES: Record<string, Note> = {
   expired: { tone: "warning", text: "That sign-in to QuickBooks expired or was already used. Connect again." },
   not_allowed: { tone: "destructive", text: "That company is not allowed. Nothing stayed connected." },
   declined: { tone: "info", text: "QuickBooks was not connected." },
+  disabled: {
+    tone: "warning",
+    text: "Accounting is off, so LedgerLine could not set up its accounts in QuickBooks. Nothing stayed connected.",
+  },
   failed: { tone: "destructive", text: "QuickBooks could not be connected. Nothing was saved. Try again in a moment." },
 };
 

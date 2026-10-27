@@ -4,25 +4,37 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { App } from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
-import type { MoneySettings } from "../lib/hosting-stack";
+import { moneySettingsFromEnv } from "../lib/hosting-stack";
 import { addStacks } from "../lib/stacks";
 
-// Synthesizes the real app (the same addStacks and cdk.json feature flags the deploy uses) into
-// a temp folder the caller owns. No account by default: the templates must not depend on one.
-// No money settings by default, as on a deploy from a shell that does not export them.
-export function synthAll(account?: string, money?: MoneySettings) {
+// Synthesizes the real app (the same addStacks, cdk.json feature flags and money settings check
+// the deploy uses) into a temp folder the caller owns. No account by default: the templates must
+// not depend on one. `exported` stands for the deploying shell's money variables; by default none
+// are exported and MONEY_SETTINGS=none says so on purpose. A refusal throws before the temp
+// folder exists, and any later failure removes it.
+export function synthAll(
+  account?: string,
+  exported: Record<string, string | undefined> = { MONEY_SETTINGS: "none" },
+) {
+  const money = moneySettingsFromEnv(exported);
   const outdir = mkdtempSync(join(tmpdir(), "payday-stacks-test-"));
-  const { context } = JSON.parse(readFileSync(fileURLToPath(new URL("../cdk.json", import.meta.url)), "utf8"));
-  const app = new App({ outdir, context });
-  const stacks = addStacks(app, { account, region: "us-east-2" }, money);
-  return {
-    app,
-    stacks,
-    data: Template.fromStack(stacks.data),
-    auth: Template.fromStack(stacks.auth),
-    hosting: Template.fromStack(stacks.hosting),
-    cleanup: () => rmSync(outdir, { recursive: true, force: true }),
-  };
+  const cleanup = () => rmSync(outdir, { recursive: true, force: true });
+  try {
+    const { context } = JSON.parse(readFileSync(fileURLToPath(new URL("../cdk.json", import.meta.url)), "utf8"));
+    const app = new App({ outdir, context });
+    const stacks = addStacks(app, { account, region: "us-east-2" }, money);
+    return {
+      app,
+      stacks,
+      data: Template.fromStack(stacks.data),
+      auth: Template.fromStack(stacks.auth),
+      hosting: Template.fromStack(stacks.hosting),
+      cleanup,
+    };
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
 }
 
 type Json = unknown;

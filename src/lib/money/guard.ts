@@ -2,7 +2,7 @@ import { flags as releaseFlags, type Flags } from "../../config/flags";
 
 // The server's start-up check (src/instrumentation.ts): no production QuickBooks company, no live
 // Stripe key and no raw secret in production, ever. A refusal throws and names the variable,
-// never its value. Pure: it reads only the environment and the release switches it is given. Each
+// never its value; the process keeps running and answers every request 500. Pure: it reads only the environment and the release switches it is given. Each
 // adapter repeats its own part of this on every call, and checks the secrets read from Secrets
 // Manager there, since those are not in the environment.
 

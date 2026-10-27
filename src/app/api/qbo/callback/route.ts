@@ -8,8 +8,10 @@ export const dynamic = "force-dynamic";
 
 const qbo = createQboConnect();
 
-// Intuit sends the person back here (a cross-site navigation, so no Sec-Fetch-Site check; the
-// single-use state tied to their membership is the check). Signed out: to /sign-in.
+// Intuit sends the person back here, a top-level navigation from Intuit's site, so the browser
+// sends Sec-Fetch-Site "cross-site" and no same-origin check can apply. The check is the
+// single-use state tied to the admin's membership, which only this app's own connect step wrote.
+// Signed out: to /sign-in.
 export async function GET(request: Request) {
   const session = await requireSession();
   const params = new URL(request.url).searchParams;

@@ -17,9 +17,11 @@ import {
 
 // Connecting a tenant to the one allowed QuickBooks sandbox company, by an admin of that tenant.
 // This sets the connection up (and, the first time, the LedgerLine accounts and items in that
-// company); it books nothing, so it needs complete QuickBooks settings but not the accounting
-// switch. Each database step is its own short tenant transaction; no transaction is held open
-// across a call to Intuit.
+// company); it books nothing. Finding the accounts and items needs only complete QuickBooks
+// settings, but creating any of them is a write to the company, so it waits for the accounting
+// switch (client.direct refuses the POST): with the switch off, a company still missing them is
+// refused as "disabled" and nothing stays connected. Each database step is its own short tenant
+// transaction; no transaction is held open across a call to Intuit.
 
 // Runs fn in a transaction scoped to the signed-in user's tenant, membership checked.
 export type TenantRun = <T>(fn: (q: Queryable) => Promise<T>) => Promise<T>;
@@ -35,6 +37,9 @@ export type ConnectRefusal =
   | "not_allowed"
   // The person said no at Intuit.
   | "declined"
+  // The company's accounts or items had to be created and the accounting switch is off; the grant
+  // was revoked.
+  | "disabled"
   // Intuit refused, or the company's accounts could not be set up.
   | "failed";
 
@@ -178,7 +183,7 @@ export function createQboConnect(deps: QboDeps = {}) {
       const category = err instanceof MoneyError ? err.category : "unknown";
       log(`qbo: connect could not set up accounts and items (${category})`);
       await revoke(p, tokens, "abandoned");
-      return { ok: false, reason: "failed" };
+      return { ok: false, reason: category === "disabled" ? "disabled" : "failed" };
     }
 
     try {
