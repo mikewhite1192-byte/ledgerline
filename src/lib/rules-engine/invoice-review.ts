@@ -30,7 +30,8 @@ export const INVOICE_REVIEW_STATUSES = [
 export type InvoiceReviewStatus = (typeof INVOICE_REVIEW_STATUSES)[number];
 
 // Each reason, in the order it is checked, with the status it puts the invoice in. not_posted is
-// a note on a ready invoice (ready here, not posted to accounting yet), never a blocker.
+// a note on a ready invoice the invoice queue made (ready here, not posted to accounting yet),
+// never a blocker. An invoice from earlier records never posts from here, so it never carries it.
 export const INVOICE_REVIEW_REASONS = [
   "posting_failed",
   "posting_unknown",
@@ -89,6 +90,9 @@ export type InvoiceReviewInput = {
     sentOn: LocalDate | null;
     qboId: string | null;
     qboAmountCents: Cents | null;
+    // True when the invoice queue made it, so it posts to accounting from here before it is
+    // recorded as sent. False for history (seeded, imported, opening balance): recorded by hand.
+    madeByQueue: boolean;
   };
   // invoiceAmount(load).amountCents when the load has one, else null (no load, or no rate).
   engineTotalCents: Cents | null;
@@ -124,6 +128,7 @@ function checkInput(input: InvoiceReviewInput): void {
   if (inv.reviewedAt !== null) instantMs(inv.reviewedAt, `invoice ${inv.id} reviewed time`);
   if (inv.sentOn !== null) assertDate(inv.sentOn, `invoice ${inv.id} sent date`);
   if (inv.qboAmountCents !== null) assertCents(inv.qboAmountCents, `invoice ${inv.id} posted amount`);
+  if (typeof inv.madeByQueue !== "boolean") throw new InputError(`invoice ${inv.id} origin is missing`);
   if (input.engineTotalCents !== null) assertCents(input.engineTotalCents, `invoice ${inv.id} engine total`);
   if (input.engineLinehaulCents !== null) {
     assertCents(input.engineLinehaulCents, `invoice ${inv.id} linehaul`);
@@ -221,7 +226,7 @@ export function reviewInvoice(input: InvoiceReviewInput): InvoiceReview {
   }
 
   if (inv.reviewedAt === null) reasons.push("not_reviewed");
-  if (reasons.length === 0 && inv.qboId === null) reasons.push("not_posted");
+  if (reasons.length === 0 && inv.qboId === null && inv.madeByQueue) reasons.push("not_posted");
 
   const first = reasons[0];
   const status: InvoiceReviewStatus = first === undefined ? "ready_to_send" : REVIEW_STATUS_OF[first];

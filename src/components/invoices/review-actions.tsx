@@ -90,8 +90,20 @@ export function MarkReviewedForm({ url }: { url: string }) {
   );
 }
 
-// "Mark as sent", with the date it went out: on or after the invoice date, never after today.
-export function MarkSentForm({ url, issuedOn, today }: { url: string; issuedOn: string; today: string }) {
+// "Mark as sent", with the date it went out: on or after the invoice date, never after today. An
+// invoice from earlier records (byHand) is never posted from here: the person sends it themselves
+// and records the date, so the words say that instead.
+export function MarkSentForm({
+  url,
+  issuedOn,
+  today,
+  byHand = false,
+}: {
+  url: string;
+  issuedOn: string;
+  today: string;
+  byHand?: boolean;
+}) {
   const { pending, note: status, setNote: setStatus, write } = useWrite();
   const [sentOn, setSentOn] = useState(today);
   const problem =
@@ -117,7 +129,11 @@ export function MarkSentForm({ url, issuedOn, today }: { url: string; issuedOn: 
       <Field
         id="sent-on"
         label="Date sent"
-        hint="Send it from the accounting system first. This only records the date here."
+        hint={
+          byHand
+            ? "Send it to the customer yourself first. This only records the date here."
+            : "Send it from the accounting system first. This only records the date here."
+        }
         error={problem}
       >
         {(p) => (
@@ -136,7 +152,7 @@ export function MarkSentForm({ url, issuedOn, today }: { url: string; issuedOn: 
       </Field>
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" variant="primary" pending={pending} disabled={problem !== undefined}>
-          Mark as sent
+          {byHand ? "Record as sent" : "Mark as sent"}
         </Button>
         <p role="status" className="text-small text-foreground-2">
           {status}

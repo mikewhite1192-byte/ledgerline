@@ -14,6 +14,7 @@ import {
   type InvoiceReviewStatus,
 } from "../rules-engine";
 import { readDocumentFacts } from "./documents";
+import { readQueueCardLoads, readQueueCardLoadsFor } from "./made-by-queue";
 import {
   REVIEW_REASON_LABELS,
   REVIEW_STATUS_LABELS,
@@ -40,6 +41,9 @@ export type InvoiceReviewView = {
   reasons: ReviewReasonView[];
   inQueue: boolean;
   posted: boolean;
+  // The invoice queue made it, so it is posted before it is recorded as sent. False for an
+  // invoice from earlier records, which is never posted from here and is recorded as sent by hand.
+  madeByQueue: boolean;
   emailStatus: InvoiceRow["qbo_email_status"];
   qboAmountCents: number | null;
   reviewedAt: string | null;
@@ -66,6 +70,7 @@ export type ReviewQueueRow = {
   firstReason: InvoiceReviewReason | null;
   firstReasonLabel: string | null;
   posted: boolean;
+  madeByQueue: boolean;
   emailStatus: InvoiceRow["qbo_email_status"];
   sentOn: string | null;
 };
@@ -108,6 +113,7 @@ function viewOf(inv: InvoiceRow, facts: ReviewFacts, numbers: ReadonlyMap<string
     })),
     inQueue: inReviewQueue(inv.status, review),
     posted: inv.qbo_id !== null,
+    madeByQueue: input.invoice.madeByQueue,
     emailStatus: inv.qbo_email_status,
     qboAmountCents: input.invoice.qboAmountCents,
     reviewedAt: inv.reviewed_at,
@@ -122,7 +128,7 @@ function viewOf(inv: InvoiceRow, facts: ReviewFacts, numbers: ReadonlyMap<string
 }
 
 // One invoice's review, from its own rows: the invoice, its customer and the customer's other
-// invoices, its load, the load's documents and this invoice's ledger rows.
+// invoices, its load, the load's documents, this invoice's ledger rows and its load's queue card.
 export async function readInvoiceReview(q: Queryable, invoiceId: string): Promise<InvoiceReviewView | null> {
   const [inv] = await readRowsWhereId(q, "invoices", "id", invoiceId);
   if (!inv) return null;
@@ -141,6 +147,7 @@ export async function readInvoiceReview(q: Queryable, invoiceId: string): Promis
     loads,
     documents: await readDocumentFacts(q, inv.load_id === null ? [] : [inv.load_id]),
     postings: latestPostings(await readBySubject(q, "invoices", inv.id)),
+    queueCardLoads: await readQueueCardLoadsFor(q, inv),
   });
   return viewOf(inv, facts, new Map(siblings.map((s) => [s.id, s.invoice_number])));
 }
@@ -167,6 +174,7 @@ export async function readReviewQueue(q: Queryable, status?: InvoiceReviewStatus
     loads,
     documents: await readDocumentFacts(q, loadIds),
     postings: latestPostings(await readByKind(q, "invoice")),
+    queueCardLoads: await readQueueCardLoads(q, null),
   });
   const names = new Map(customers.map((c) => [c.id, c.name]));
   const numbers = new Map(invoices.map((i) => [i.id, i.invoice_number]));
@@ -191,6 +199,7 @@ export async function readReviewQueue(q: Queryable, status?: InvoiceReviewStatus
       firstReason: first,
       firstReasonLabel: first === null ? null : REVIEW_REASON_LABELS[first],
       posted: v.posted,
+      madeByQueue: v.madeByQueue,
       emailStatus: v.emailStatus,
       sentOn: v.sentOn,
     });

@@ -145,14 +145,16 @@ export function reviewReasonSentence(reason: InvoiceReviewReason, d: ReviewReaso
 }
 
 // The accounting line on an invoice: where it stands in the accounting system and with the customer.
+// An invoice from earlier records is never posted from here, so it never reads as waiting on a post.
 export function accountingLine(v: {
   posted: boolean;
+  madeByQueue: boolean;
   emailStatus: string | null;
   sentOn: string | null;
   sentBy: string | null;
 }): string {
   if (v.sentOn !== null) return v.sentBy ? `Sent ${v.sentOn} by ${v.sentBy}` : `Sent ${v.sentOn}`;
-  if (!v.posted) return "Not posted to accounting yet";
+  if (!v.posted) return v.madeByQueue ? "Not posted to accounting yet" : "From earlier records, not posted from here";
   if (v.emailStatus === "need_to_send") return "Posted, unsent (in the accounting system's send queue)";
   if (v.emailStatus === "email_sent") return "Posted; the accounting system shows it emailed";
   return "Posted, unsent";

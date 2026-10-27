@@ -547,14 +547,58 @@ describe("invoice review against a seeded database", () => {
       ]);
     });
 
-    it("refuses to record a send for an invoice that was never posted", async () => {
-      const ready = BR.plan.planted.invoiceReview.readyInvoiceId;
-      expect((await reviewOf(BR, ready))?.review.status).toBe("ready_to_send");
-      expect(await markSent(app, BR.session, ready, BR.today, clock())).toEqual({
+    it("refuses to record a send for an invoice the queue made until it is posted", async () => {
+      const made = await queueInvoice(BR);
+      expect(await markReviewed(app, BR.session, made, null, clock())).toEqual({ ok: true, changed: true });
+      const view = await reviewOf(BR, made);
+      expect(view?.review).toMatchObject({ status: "ready_to_send", reasons: ["not_posted"] });
+      expect(view).toMatchObject({ posted: false, madeByQueue: true });
+      expect(await markSent(app, BR.session, made, BR.today, clock())).toEqual({
         ok: false,
         category: "not_posted",
       });
-      expect((await stored(BR, ready)).sent_on).toBeNull();
+      expect(await stored(BR, made)).toMatchObject({ qbo_id: null, sent_on: null, sent_by_membership_id: null });
+      expect(await ledgerFor(BR, made)).toEqual([]);
+    });
+  });
+
+  // A seeded invoice is history: LedgerLine never posts it, so once it is reviewed a person sends
+  // it themselves and records the date, with no post and nothing reserved.
+  describe("an invoice from earlier records", () => {
+    it("records the planted ready invoice as sent by hand, end to end, with no post", async () => {
+      const ready = BR.plan.planted.invoiceReview.readyInvoiceId;
+      const before = await reviewOf(BR, ready);
+      expect(before?.review).toMatchObject({ status: "ready_to_send", reasons: [] });
+      expect(before).toMatchObject({ posted: false, madeByQueue: false, inQueue: true, sentOn: null });
+      const readyBefore = (await queueOf(BR)).counts.ready_to_send;
+      // The post is refused as history and reserves nothing; the send needs none.
+      expect(await postInvoice(app, BR.session, ready, moneyDeps(testBooks()))).toEqual({
+        ok: false,
+        category: "history",
+      });
+      expect(await markSent(app, BR.session, ready, BR.today, clock())).toEqual({ ok: true, changed: true });
+      expect(await markSent(app, BR.session, ready, BR.today, clock())).toEqual({ ok: true, changed: false });
+      expect(await stored(BR, ready)).toMatchObject({
+        qbo_id: null,
+        sent_on: BR.today,
+        sent_by_membership_id: await memberId(BR),
+      });
+      expect(await reviewOf(BR, ready)).toMatchObject({ sentOn: BR.today, inQueue: false, madeByQueue: false });
+      const queue = await queueOf(BR);
+      expect(queue.rows.map((x) => x.id)).not.toContain(ready);
+      expect(queue.counts.ready_to_send).toBe(readyBefore - 1);
+      expect(await ledgerFor(BR, ready)).toEqual([]);
+    });
+
+    it("records a seeded invoice as sent once it is reviewed, and not before", async () => {
+      const id = PW.plan.planted.invoiceReview.needsReviewInvoiceIds[0];
+      expect(await reviewOf(PW, id)).toMatchObject({ posted: false, madeByQueue: false });
+      expect(await markSent(app, PW.session, id, PW.today, clock())).toEqual({ ok: false, category: "not_ready" });
+      expect(await markReviewed(app, PW.session, id, null, clock())).toEqual({ ok: true, changed: true });
+      expect((await reviewOf(PW, id))?.review).toMatchObject({ status: "ready_to_send", reasons: [] });
+      expect(await markSent(app, PW.session, id, PW.today, clock())).toEqual({ ok: true, changed: true });
+      expect(await stored(PW, id)).toMatchObject({ qbo_id: null, sent_on: PW.today });
+      expect(await ledgerFor(PW, id)).toEqual([]);
     });
   });
 

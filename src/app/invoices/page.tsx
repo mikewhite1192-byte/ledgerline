@@ -282,6 +282,7 @@ function Review({ queue, filter }: { queue: ReviewQueue; filter: InvoiceReviewSt
             cell: (r) =>
               accountingLine({
                 posted: r.posted,
+                madeByQueue: r.madeByQueue,
                 emailStatus: r.emailStatus,
                 sentOn: r.sentOn === null ? null : formatLocalDate(r.sentOn),
                 sentBy: null,

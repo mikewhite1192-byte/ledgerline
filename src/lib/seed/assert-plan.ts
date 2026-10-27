@@ -519,7 +519,8 @@ function addendumPlants(plan: CarrierPlan): void {
 // The invoice review plants: each planted invoice reads back as its planted status through the
 // same engine and inputs the pages use, every other invoice is out of the review queue, exactly
 // the two planted customers require a delivery document, and every customer has a billing
-// address on the reserved example domain. The seed writes no ledger rows or documents.
+// address on the reserved example domain. The seed writes no ledger rows, documents or invoice
+// cards, so every seeded invoice is history: the ready plant is recorded as sent by hand, no post.
 function invoiceReviewPlants(plan: CarrierPlan): void {
   const { rows, planted } = plan;
   const r = planted.invoiceReview;
@@ -529,6 +530,7 @@ function invoiceReviewPlants(plan: CarrierPlan): void {
     loads: loadsOf(rows.loads, rows.load_state_miles, rows.load_accessorials),
     documents: [],
     postings: new Map(),
+    queueCardLoads: new Set(),
   });
   const want = new Map<string, string>([
     [r.missingDocumentsInvoiceId, "missing_documents"],
@@ -554,7 +556,7 @@ function invoiceReviewPlants(plan: CarrierPlan): void {
   }
   const ready = rows.invoices.find((i) => i.id === r.readyInvoiceId)!;
   const readyReview = reviewInvoice(reviewInputOf(ready, facts));
-  if (readyReview.reasons.join() !== "not_posted") fail("the ready plant has more to clear than posting");
+  if (readyReview.reasons.length !== 0) fail("the ready plant has more to clear than recording the send");
   const dup = reviewInvoice(reviewInputOf(rows.invoices.find((i) => i.id === r.duplicateInvoiceIds[1])!, facts));
   if (dup.reasons.join() !== "same_amount_recent,not_reviewed" || dup.duplicateOf.join() !== r.duplicateInvoiceIds[0]) {
     fail("the duplicate plant shows more than the duplicate");

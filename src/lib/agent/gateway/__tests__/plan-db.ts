@@ -1,6 +1,7 @@
 import type { Param } from "../../../db";
 import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
 import { QUEUE_CHILDREN, QUEUE_LOADS } from "../../../data/read";
+import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
@@ -57,6 +58,19 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     }
     if (LEDGER_BY_KIND.test(sql)) {
       return (tables.money_actions ?? []).filter((r) => r.kind === params[0]).map((r) => ({ ...r }));
+    }
+    // The loads an approved invoice card wrote an invoice for. The plan holds no cards, so this
+    // answers from a proposals list a test adds, or none: every seeded invoice is history.
+    if (sql === QUEUE_CARD_LOADS_SQL) {
+      const cards = (tables.proposals ?? []).filter(
+        (r) =>
+          r.kind === "invoice_post" &&
+          r.origin === "engine" &&
+          r.subject_table === "loads" &&
+          ["executing", "done", "failed"].includes(String(r.status)) &&
+          (params[0] === null || r.subject_id === params[0]),
+      );
+      return [...new Set(cards.map((r) => String(r.subject_id)))].map((load_id) => ({ load_id }));
     }
     const m = FROM.exec(sql);
     if (!m) return undefined;

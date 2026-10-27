@@ -31,6 +31,7 @@ function input(over: Over = {}): InvoiceReviewInput {
       sentOn: null,
       qboId: "901",
       qboAmountCents: c(125_000),
+      madeByQueue: true,
       ...invoice,
     },
     engineTotalCents: c(125_000),
@@ -72,6 +73,18 @@ describe("reviewInvoice: one case per rule", () => {
     const r = reviewInvoice(input({ invoice: { qboId: null, qboAmountCents: null }, posting: null }));
     expect(r.status).toBe("ready_to_send");
     expect(r.reasons).toEqual(["not_posted"]);
+  });
+
+  it("never notes not_posted on an invoice from earlier records, which is never posted from here", () => {
+    const r = reviewInvoice(
+      input({ invoice: { qboId: null, qboAmountCents: null, madeByQueue: false }, posting: null }),
+    );
+    expect(r).toMatchObject({ status: "ready_to_send", reasons: [] });
+    // Everything else reads the same: an unreviewed one still needs review.
+    const unreviewed = reviewInvoice(
+      input({ invoice: { qboId: null, qboAmountCents: null, madeByQueue: false, reviewedAt: null }, posting: null }),
+    );
+    expect(unreviewed).toMatchObject({ status: "needs_review", reasons: ["not_reviewed"] });
   });
 
   it("a failed post is a sync error", () => {
@@ -262,6 +275,7 @@ describe("reviewInvoice: refuses bad input", () => {
     ["document kind", { documents: [{ documentId: "d", kind: "pod" as never, loadId: "load-a", ratedCents: null }] }],
     ["sibling amount", { siblings: [{ ...sibling("2026-10-19"), amountCents: -1 as never }] }],
     ["document rule", { customer: { podRequired: "yes" as never } }],
+    ["origin", { invoice: { madeByQueue: undefined as never } }],
   ])("a bad %s", (_name, over) => {
     expect(() => reviewInvoice(input(over))).toThrow(InputError);
   });

@@ -9,6 +9,7 @@ import {
   type LoadRecord,
   type PostingState,
 } from "../rules-engine";
+import { madeByQueueOf } from "./made-by-queue";
 
 // The review's inputs, put together from rows already read. Pure: the page readers and the seed's
 // own check build the same input from the same rows, so a seeded plant and a page read back agree.
@@ -23,6 +24,8 @@ export type ReviewFacts = {
   // Every invoice of each customer, the one under review included (the rules skip it).
   invoicesByCustomer: ReadonlyMap<string, readonly InvoiceRow[]>;
   postings: ReadonlyMap<string, PostingFact>;
+  // The loads an approved invoice_post card wrote an invoice for (readQueueCardLoads).
+  queueCardLoads: ReadonlySet<string>;
 };
 
 export function reviewFactsOf(rows: {
@@ -31,6 +34,7 @@ export function reviewFactsOf(rows: {
   loads: readonly LoadRecord[];
   documents: readonly DocumentFact[];
   postings: ReadonlyMap<string, PostingFact>;
+  queueCardLoads: ReadonlySet<string>;
 }): ReviewFacts {
   const byCustomer = new Map<string, InvoiceRow[]>();
   for (const i of rows.invoices) byCustomer.set(i.customer_id, [...(byCustomer.get(i.customer_id) ?? []), i]);
@@ -40,6 +44,7 @@ export function reviewFactsOf(rows: {
     documents: rows.documents,
     invoicesByCustomer: byCustomer,
     postings: rows.postings,
+    queueCardLoads: rows.queueCardLoads,
   };
 }
 
@@ -86,6 +91,7 @@ export function reviewInputOf(inv: InvoiceRow, facts: ReviewFacts): InvoiceRevie
       sentOn: inv.sent_on,
       qboId: inv.qbo_id,
       qboAmountCents: numOrNull(inv.qbo_amount_cents, `invoice ${inv.id} posted amount`),
+      madeByQueue: madeByQueueOf(inv, facts.queueCardLoads),
     },
     engineTotalCents,
     engineLinehaulCents: load?.linehaulCents ?? null,

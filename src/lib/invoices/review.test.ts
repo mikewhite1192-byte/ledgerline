@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { flags } from "../../config/flags";
 import type { InvoiceRow } from "../data/rows";
 import {
   cents,
@@ -8,6 +9,7 @@ import {
   reviewInvoice,
   type LoadRecord,
 } from "../rules-engine";
+import { addDays } from "../time/local-date";
 import {
   accountingLine,
   OUTCOME_FALLBACK,
@@ -132,8 +134,11 @@ describe("review labels", () => {
   });
 
   it("gives the accounting line for each place an invoice can stand", () => {
-    const base = { posted: false, emailStatus: null, sentOn: null, sentBy: null };
+    const base = { posted: false, madeByQueue: true, emailStatus: null, sentOn: null, sentBy: null };
     expect(accountingLine(base)).toBe("Not posted to accounting yet");
+    // An invoice from earlier records is never posted from here, so it never reads as waiting on one.
+    expect(accountingLine({ ...base, madeByQueue: false })).toBe("From earlier records, not posted from here");
+    expect(accountingLine({ ...base, madeByQueue: false, sentOn: "2026-10-21" })).toBe("Sent 2026-10-21");
     expect(accountingLine({ ...base, posted: true })).toBe("Posted, unsent");
     expect(accountingLine({ ...base, posted: true, emailStatus: "not_set" })).toBe("Posted, unsent");
     expect(accountingLine({ ...base, posted: true, emailStatus: "need_to_send" })).toBe(
@@ -194,13 +199,16 @@ describe("latest postings", () => {
 });
 
 describe("review input from rows", () => {
-  const facts = (over: { invoices?: InvoiceRow[]; loads?: LoadRecord[]; pod?: boolean } = {}) =>
+  const facts = (
+    over: { invoices?: InvoiceRow[]; loads?: LoadRecord[]; pod?: boolean; cards?: string[] } = {},
+  ) =>
     reviewFactsOf({
       invoices: over.invoices ?? [invoice()],
       customers: [{ id: CUSTOMER, pod_required: over.pod ?? false }],
       loads: over.loads ?? [load()],
       documents: [],
       postings: new Map(),
+      queueCardLoads: new Set(over.cards ?? []),
     });
 
   it("takes the engine's total and linehaul from the load", () => {
@@ -226,6 +234,25 @@ describe("review input from rows", () => {
     const none = reviewInputOf(invoice(), facts({ loads: [] }));
     expect(none.engineTotalCents).toBeNull();
     expect(none.engineLinehaulCents).toBeNull();
+  });
+
+  it("reads an invoice as made by the queue only with its load's card, from the start date on", () => {
+    const made = (inv: InvoiceRow, cards: string[]) => reviewInputOf(inv, facts({ cards })).invoice.madeByQueue;
+    const start = invoice({ issued_on: flags.invoicesStart });
+    expect(made(start, [LOAD])).toBe(true);
+    // No card for its load, another load's card, an opening balance, or issued before the start.
+    expect(made(start, [])).toBe(false);
+    expect(made(start, [id(9)])).toBe(false);
+    expect(made(invoice({ source: "opening", load_id: null, issued_on: flags.invoicesStart }), [LOAD])).toBe(false);
+    expect(made(invoice({ issued_on: addDays(flags.invoicesStart, -1) }), [LOAD])).toBe(false);
+  });
+
+  it("notes an unposted ready invoice as not posted only when the queue made it", () => {
+    const reviewed = invoice({ issued_on: flags.invoicesStart, reviewed_at: "2026-10-21T15:00:00.000Z" });
+    const queue = reviewInvoice(reviewInputOf(reviewed, facts({ invoices: [reviewed], cards: [LOAD] })));
+    expect(queue).toMatchObject({ status: "ready_to_send", reasons: ["not_posted"] });
+    const history = reviewInvoice(reviewInputOf(reviewed, facts({ invoices: [reviewed] })));
+    expect(history).toMatchObject({ status: "ready_to_send", reasons: [] });
   });
 
   it("carries the customer's document rule", () => {

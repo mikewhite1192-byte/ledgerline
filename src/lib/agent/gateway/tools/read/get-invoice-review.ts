@@ -13,8 +13,10 @@ export const getInvoiceReview = defineTool({
     "Read one invoice's review: its status (sync_error, rate_mismatch, missing_documents, " +
     "duplicate_warning, needs_review, ready_to_send), every reason in check order with its " +
     "sentence, the records behind them, and where it stands in accounting (posted, unsent, sent " +
-    "date). The status is computed by the rules engine; money is in integer cents. This only " +
-    "reads: a person marks an invoice reviewed or sent.",
+    "date). The status is computed by the rules engine; money is in integer cents. madeByQueue " +
+    "true: the invoice queue made it, and it is posted to accounting before it is recorded as " +
+    "sent. false: it came from earlier records, is never posted from here, and a person records " +
+    "it as sent by hand. This only reads: a person marks an invoice reviewed or sent.",
   tier: "read",
   roles: OPERATOR_AUDITOR,
   label: "Reading an invoice's review",
@@ -40,6 +42,7 @@ export const getInvoiceReview = defineTool({
         duplicateOf: v.duplicates,
         inReviewQueue: v.inQueue,
         posted: v.posted,
+        madeByQueue: v.madeByQueue,
         accountingEmailStatus: v.emailStatus,
         postedAmountCents: v.qboAmountCents,
         reviewed: v.reviewedAt !== null,

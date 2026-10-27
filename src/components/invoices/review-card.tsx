@@ -14,7 +14,9 @@ import { MarkReviewedForm, MarkSentForm } from "./review-actions";
 
 // The Review card at the top of an invoice: the engine's status, every reason as a sentence with
 // the records behind it, where it stands in accounting, and the one next step for its status.
-// Nothing here sends an invoice; "Mark as sent" records a send a person made elsewhere.
+// Nothing here sends an invoice; "Mark as sent" records a send a person made elsewhere. An invoice
+// the invoice queue made is posted first; one from earlier records is never posted from here, so
+// once ready it offers "Record as sent" with no post.
 
 const LIVE = new Set(["open", "partially_paid"]);
 
@@ -65,12 +67,15 @@ export function ReviewCard({
   const who = (memberId: string | null) => (memberId === null ? null : (roles.get(memberId) ?? null));
   const accounting = accountingLine({
     posted: view.posted,
+    madeByQueue: view.madeByQueue,
     emailStatus: view.emailStatus,
     sentOn: view.sentOn === null ? null : formatLocalDate(view.sentOn),
     sentBy: who(view.sentByMembershipId),
   });
   const reviewedBy = who(view.reviewedByMembershipId);
   const reasons = view.reasons.map((r) => r.reason);
+  // An unposted invoice from earlier records is sent by the person and recorded here by hand.
+  const byHand = !view.madeByQueue && !view.posted;
   return (
     <Card>
       <CardHeader className="items-center">
@@ -123,8 +128,13 @@ export function ReviewCard({
             {/* A duplicate warning clears only with a person's review, so the button shows on any
                 live invoice nobody has reviewed yet. */}
             {view.reviewedAt === null ? <MarkReviewedForm url={`/api/invoices/${id}/review`} /> : null}
-            {status === "ready_to_send" && view.posted && view.sentOn === null ? (
-              <MarkSentForm url={`/api/invoices/${id}/mark-sent`} issuedOn={view.issuedOn} today={today} />
+            {status === "ready_to_send" && (view.posted || byHand) && view.sentOn === null ? (
+              <MarkSentForm
+                url={`/api/invoices/${id}/mark-sent`}
+                issuedOn={view.issuedOn}
+                today={today}
+                byHand={byHand}
+              />
             ) : null}
           </div>
         ) : null}

@@ -40,6 +40,7 @@ function view(
     reasons: reasons.map((reason) => ({ reason, label: reason, sentence: `Sentence for ${reason}.` })),
     inQueue: true,
     posted: false,
+    madeByQueue: true,
     emailStatus: null,
     qboAmountCents: null,
     reviewedAt: null,
@@ -94,8 +95,33 @@ describe("the Review card", () => {
     expect(screen.getByText("Posted, unsent (in the accounting system's send queue)")).toBeTruthy();
     expect(screen.getByText(/by staff/)).toBeTruthy();
     cleanup();
+    // The invoice queue made it and it is not posted yet: it is posted before the send is recorded.
     card(view("ready_to_send", ["not_posted"], { reviewedAt: "2026-10-21T15:00:00.000Z" }));
     expect(screen.queryByRole("button", { name: "Mark as sent" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Record as sent" })).toBeNull();
+  });
+
+  it("offers Record as sent on a ready invoice from earlier records, and never asks for a post", async () => {
+    const fetch = answer(200, { ok: true, changed: true });
+    card(view("ready_to_send", [], { reviewedAt: "2026-10-21T15:00:00.000Z", madeByQueue: false }));
+    expect(screen.getByText("From earlier records, not posted from here")).toBeTruthy();
+    expect(screen.getByText("Send it to the customer yourself first. This only records the date here.")).toBeTruthy();
+    // Nothing asks for a post: no post button, no "post it first", no "not posted yet".
+    expect(screen.queryByText(/\bpost\b|not posted to accounting yet/i)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark as sent" })).toBeNull();
+    const date = screen.getByLabelText("Date sent") as HTMLInputElement;
+    expect(date.min).toBe("2026-10-20");
+    expect(date.max).toBe(TODAY);
+    fireEvent.click(screen.getByRole("button", { name: "Record as sent" }));
+    expect(await screen.findByText("Recorded as sent.")).toBeTruthy();
+    expect(fetch).toHaveBeenCalledWith(`/api/invoices/${INVOICE}/mark-sent`, expect.objectContaining({ method: "POST" }));
+    expect(sentBody(fetch)).toEqual({ sentOn: TODAY });
+    cleanup();
+    // Not reviewed yet: Mark reviewed first, and still no post.
+    card(view("needs_review", ["not_reviewed"], { madeByQueue: false }));
+    expect(screen.getByRole("button", { name: "Mark reviewed" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Record as sent" })).toBeNull();
+    expect(screen.queryByText(/\bpost\b|not posted to accounting yet/i)).toBeNull();
   });
 
   it("reads a recorded send with who recorded it, and offers nothing more", () => {

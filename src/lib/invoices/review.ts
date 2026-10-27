@@ -9,8 +9,10 @@ import { readInvoiceReview } from "./review-read";
 
 // The two things a person records on an invoice's review: that they reviewed it, and that it was
 // sent to the customer. Both are facts in our database only. LedgerLine never sends an invoice or
-// an email; "sent" is recorded after a person sent it from the accounting system or by hand. Each
-// write happens once: a repeat changes nothing and says so.
+// an email; "sent" is recorded after a person sent it from the accounting system or by hand. An
+// invoice the invoice queue made is posted to accounting before its send is recorded; one from
+// earlier records is never posted from here, so its send is recorded with no post. Each write
+// happens once: a repeat changes nothing and says so.
 
 export type ReviewRefusal = "disabled" | "validation" | "not_found" | "not_posted" | "not_ready";
 
@@ -96,18 +98,19 @@ export async function markSent(
     if (!view) return refuse("not_found");
     if (view.invoiceStatus !== "open" && view.invoiceStatus !== "partially_paid") return refuse("validation");
     if (view.sentOn !== null) return { ok: true, changed: false };
-    if (!view.posted) return refuse("not_posted");
+    if (view.madeByQueue && !view.posted) return refuse("not_posted");
     if (view.review.status !== "ready_to_send") return refuse("not_ready");
     // A send date is on or after the invoice's date and never after the carrier's today.
     const tenant = await readTenant(q);
     if (!tenant) return refuse("not_found");
     const today = localDateOf(now.toISOString(), tenant.timezone);
     if (sentOn < view.issuedOn || sentOn > today) return refuse("validation");
+    // Under the lock, a queue-made invoice ($4) still needs its accounting id; history does not.
     const changed = await q.execute(
       `UPDATE invoices SET sent_on = CAST($2 AS date), sent_by_membership_id = CAST($3 AS uuid)
         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
-          AND sent_on IS NULL AND qbo_id IS NOT NULL`,
-      [invoiceId, sentOn, member],
+          AND sent_on IS NULL AND (NOT CAST($4 AS boolean) OR qbo_id IS NOT NULL)`,
+      [invoiceId, sentOn, member, view.madeByQueue],
     );
     return { ok: true, changed: changed === 1 };
   });

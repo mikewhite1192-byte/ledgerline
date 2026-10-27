@@ -72,7 +72,8 @@ describe("get_invoice_review_queue", () => {
       "ready_to_send",
     ]);
     expect(result.rows[0]).toMatchObject({ invoiceId: r.rateMismatchInvoiceId, firstReason: "engine_total_differs" });
-    expect(result.rows.at(-1)).toMatchObject({ invoiceId: r.readyInvoiceId, firstReason: "not_posted", sentOn: null });
+    // The ready plant is seeded history: never posted from here, so nothing is noted.
+    expect(result.rows.at(-1)).toMatchObject({ invoiceId: r.readyInvoiceId, firstReason: null, sentOn: null });
     expect(writes(db)).toEqual([]);
   });
 
@@ -114,10 +115,46 @@ describe("get_invoice_review", () => {
       ],
       inReviewQueue: true,
       posted: false,
+      madeByQueue: false,
       accountingEmailStatus: null,
       postedAmountCents: null,
       reviewed: false,
       sentOn: null,
+    });
+    expect(writes(db)).toEqual([]);
+  });
+
+  it("reads the ready plant as history recorded by hand, and a queue-made one as waiting on its post", async () => {
+    on();
+    const ready = plan.rows.invoices.find((i) => i.id === r.readyInvoiceId)!;
+    const history = await run("get_invoice_review", { invoiceId: ready.id });
+    if (history.out.decision !== "allowed") throw new Error(`not allowed: ${history.out.reason}`);
+    expect(history.out.result).toMatchObject({
+      status: "ready_to_send",
+      reasons: [],
+      posted: false,
+      madeByQueue: false,
+      reviewed: true,
+      sentOn: null,
+    });
+    // The same invoice with a done invoice card for its load reads as the queue's: post it first.
+    const db = planDb(plan);
+    db.tables.proposals = [
+      {
+        kind: "invoice_post",
+        origin: "engine",
+        subject_table: "loads",
+        subject_id: ready.load_id,
+        status: "done",
+      },
+    ];
+    const out = await callTool(ctx, call("get_invoice_review", { invoiceId: ready.id }), { db, clock: fixedClock });
+    if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
+    expect(out.result).toMatchObject({
+      status: "ready_to_send",
+      reasons: [{ reason: "not_posted", sentence: "Ready here; not posted to accounting yet." }],
+      posted: false,
+      madeByQueue: true,
     });
     expect(writes(db)).toEqual([]);
   });

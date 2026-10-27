@@ -380,9 +380,10 @@ export default function DesignPage() {
                 ))}
               </div>
               <ul className="grid gap-1 text-small text-foreground-2">
-                <li>{accountingLine({ posted: false, emailStatus: null, sentOn: null, sentBy: null })}</li>
-                <li>{accountingLine({ posted: true, emailStatus: "need_to_send", sentOn: null, sentBy: null })}</li>
-                <li>{accountingLine({ posted: true, emailStatus: "need_to_send", sentOn: "Oct 30, 2026", sentBy: "staff" })}</li>
+                <li>{accountingLine({ posted: false, madeByQueue: true, emailStatus: null, sentOn: null, sentBy: null })}</li>
+                <li>{accountingLine({ posted: false, madeByQueue: false, emailStatus: null, sentOn: null, sentBy: null })}</li>
+                <li>{accountingLine({ posted: true, madeByQueue: true, emailStatus: "need_to_send", sentOn: null, sentBy: null })}</li>
+                <li>{accountingLine({ posted: true, madeByQueue: true, emailStatus: "need_to_send", sentOn: "Oct 30, 2026", sentBy: "staff" })}</li>
               </ul>
             </div>
           )}
