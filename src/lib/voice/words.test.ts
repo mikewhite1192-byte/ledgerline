@@ -17,7 +17,7 @@ describe("voice words", () => {
   });
 
   it("labels every status and words an unknown one", () => {
-    expect(statusWords("blocked")).toEqual({ label: "Held by the screen", tone: "warning" });
+    expect(statusWords("blocked")).toEqual({ label: "Held for a person to read", tone: "warning" });
     expect(statusWords("replied").tone).toBe("success");
     expect(statusWords("odd_state")).toEqual({ label: "Odd state", tone: "neutral" });
   });

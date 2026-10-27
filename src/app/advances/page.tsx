@@ -148,7 +148,7 @@ export default async function AdvancesPage({
                 {r.payoutState ? (
                   <StatusBadge status={r.payoutState} />
                 ) : (
-                  <span className="text-muted-foreground">{r.fromFlow ? "Not sent" : "On file"}</span>
+                  <span className="text-muted-foreground">{r.fromFlow ? "Not sent" : "Paid before this app"}</span>
                 )}
                 {r.cardLine ? (
                   <span className="block text-small text-muted-foreground">
@@ -159,7 +159,7 @@ export default async function AdvancesPage({
               </span>
             ),
           },
-          { key: "source", header: "Source", cell: (r) => sourceWords(r.source) },
+          { key: "source", header: "Requested through", cell: (r) => sourceWords(r.source) },
         ]}
       />
     </AdvanceFrame>

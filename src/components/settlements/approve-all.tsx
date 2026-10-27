@@ -32,7 +32,7 @@ function countsOf(data: Record<string, unknown>): Counts {
 }
 
 const progress = (c: Counts) =>
-  `${c.confirmed} confirmed, ${c.failed} failed, ${c.unknown} waiting on a read-back, ${c.remaining} still to send.`;
+  `${c.confirmed} confirmed, ${c.failed} failed, ${c.unknown} not confirmed yet, ${c.remaining} still to send.`;
 
 // "Approve all clean (n, $total)": a confirm sheet listing every paystub and the total, sent as
 // exactly that list. A list that changed underneath comes back as the list as it stands now, to
@@ -119,7 +119,7 @@ export function ApproveAll({ periodId, items, totalCents }: { periodId: string; 
         <div className="grid gap-4 overflow-y-auto p-5 pt-12">
           <h2 className="text-h2 text-foreground">Approve {list.items.length} paystubs</h2>
           <p className="text-small text-foreground-2">
-            Each one is clean: no exceptions, nothing flagged, and the auditor agreed. Approving pays each driver
+            Each one is clean: no exceptions, nothing flagged, and the second check agreed. Approving pays each driver
             the net shown.
           </p>
           {list.items.length === 0 ? (

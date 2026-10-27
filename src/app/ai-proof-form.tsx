@@ -23,7 +23,7 @@ const MESSAGES: Record<ProofCategory, string> = {
   unknown: "The call's outcome is unknown. Its cost is held against the cap.",
   incomplete: "The model ran out of output budget before it answered.",
   forbidden: "Only an admin of this carrier can run the model check.",
-  unreadable: "Could not reach the spend ledger. Try again in a moment.",
+  unreadable: "Could not read the spend records. Try again in a moment.",
 };
 
 export function AiProofForm() {
