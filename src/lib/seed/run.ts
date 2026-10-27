@@ -8,8 +8,8 @@ import type { CarrierPlan } from "./plan";
 import { countRows } from "./summary";
 
 // Writing a plan (design 4.6). Replace is the only mode: in one tenant transaction, delete every
-// row of the seventeen tables for that tenant, insert the plan, read the counts back, and roll
-// back on any difference. The seed never creates tenants or memberships.
+// row of the seeded tables (TENANT_TABLES) for that tenant, insert the plan, read the counts back,
+// and roll back on any difference. The seed never creates tenants or memberships.
 //
 // Two logins. The admin only looks the tenant up by slug (one SELECT on tenants). Every data
 // write runs as the app role inside withTenant, so row-level security bounds it too, and every

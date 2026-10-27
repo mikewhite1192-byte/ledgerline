@@ -220,6 +220,33 @@ export type PaymentApplicationRow = {
   amount_cents: number;
 };
 
+export type UntrustedInputRow = {
+  id: string;
+  kind: "email" | "transcript" | "document";
+  source: "inbound" | "upload" | "voice" | "seed_benign" | "seed_injection";
+  driver_id: string | null;
+  from_address: string | null;
+  subject: string | null;
+  body_text: string;
+  content_hash: string;
+  received_at: string;
+  seed_key: string | null;
+};
+
+export type ScreeningRow = {
+  id: string;
+  input_id: string;
+  content_hash: string;
+  screener_version: number;
+  verdict: "clean" | "flagged";
+  categories: string[];
+  confidence_milli: number | null;
+  via: "model" | "cache" | "pattern" | "error";
+  model_call_id: string | null;
+  latency_ms: number;
+  expires_at: string | null;
+};
+
 export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
@@ -238,6 +265,8 @@ export type TenantRows = {
   invoices: InvoiceRow[];
   customer_payments: CustomerPaymentRow[];
   payment_applications: PaymentApplicationRow[];
+  untrusted_inputs: UntrustedInputRow[];
+  screenings: ScreeningRow[];
 };
 
 // Compile-time proof that TenantRows has exactly one key per table.

@@ -133,6 +133,21 @@ function assertUuid(value: string, what: string): string {
   return value;
 }
 
+// The current tenant's rows of one table whose id column equals one id (for example a driver's
+// loads, or one invoice by its id). The column must be a uuid column of that table; the id
+// travels as a parameter.
+export async function readRowsWhereId<K extends TenantTable>(
+  q: Queryable,
+  table: K,
+  column: string,
+  id: string,
+): Promise<TenantRows[K]> {
+  const spec = TABLE_SPECS[table].columns.find(([name]) => name === column);
+  if (!spec || spec[1] !== "uuid") throw new Error("not an id column of that table");
+  const where = `${assertIdentifier(column)} = CAST($1 AS uuid)`;
+  return readWhere(q, table, where, [assertUuid(id, column)]);
+}
+
 // Every version of the tenant's pay rules, oldest first (the settings page). Refuses a tenant with
 // none, two on one date, or a week shape that changed between versions.
 export async function readPayConfigVersions(q: Queryable): Promise<PayConfigRow[]> {

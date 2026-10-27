@@ -1,5 +1,6 @@
-// The seventeen tenant tables of migrations 0004 and 0005, in an order where every table comes
-// after the tables it references (insert in this order, delete in reverse). Each column says how
+// The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
+// and 0005, then the outside text and its screenings from 0008, in an order where every table
+// comes after the tables it references (insert in this order, delete in reverse). Each column says how
 // it travels: the Data API sends strings as text, so uuid, date, timestamptz and jsonb columns
 // need a CAST on the way in, and reads turn timestamptz into one ISO form and jsonb into text so
 // both drivers return the same values. tenant_id and created_at are never listed: tenant_id is
@@ -30,6 +31,8 @@ export const TENANT_TABLES = [
   "invoices",
   "customer_payments",
   "payment_applications",
+  "untrusted_inputs",
+  "screenings",
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
@@ -283,6 +286,37 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["payment_id", "uuid"],
       ["invoice_id", "uuid"],
       ["amount_cents", "int"],
+    ],
+  },
+  untrusted_inputs: {
+    table: "untrusted_inputs",
+    columns: [
+      ["id", "uuid"],
+      ["kind", "text"],
+      ["source", "text"],
+      ["driver_id", "uuid"],
+      ["from_address", "text"],
+      ["subject", "text"],
+      ["body_text", "text"],
+      ["content_hash", "text"],
+      ["received_at", "timestamptz"],
+      ["seed_key", "text"],
+    ],
+  },
+  screenings: {
+    table: "screenings",
+    columns: [
+      ["id", "uuid"],
+      ["input_id", "uuid"],
+      ["content_hash", "text"],
+      ["screener_version", "int"],
+      ["verdict", "text"],
+      ["categories", "jsonb"],
+      ["confidence_milli", "int"],
+      ["via", "text"],
+      ["model_call_id", "uuid"],
+      ["latency_ms", "int"],
+      ["expires_at", "timestamptz"],
     ],
   },
 };

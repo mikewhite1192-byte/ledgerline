@@ -257,6 +257,8 @@ function keysAndReferences(rows: TenantRows): void {
   unique(rows.customer_payments, (x) => x.payment_ref, "payment ref");
   unique(rows.payment_applications, (x) => `${x.payment_id}:${x.invoice_id}`, "application");
   unique(rows.pay_configs, (x) => x.effective_from, "pay config date");
+  unique(rows.untrusted_inputs, (x) => x.seed_key ?? x.id, "untrusted seed key");
+  unique(rows.screenings, (x) => `${x.content_hash}:${x.screener_version}`, "screening key");
   if (rows.pay_configs.length === 0) fail("a tenant needs a pay config");
 
   const customers = idsOf(rows.customers);
@@ -283,6 +285,8 @@ function keysAndReferences(rows: TenantRows): void {
   refs(rows.customer_payments, (x) => x.customer_id, customers, "a payment");
   refs(rows.payment_applications, (x) => x.payment_id, idsOf(rows.customer_payments), "an application");
   refs(rows.payment_applications, (x) => x.invoice_id, idsOf(rows.invoices), "an application");
+  refs(rows.untrusted_inputs, (x) => x.driver_id, drivers, "an untrusted input");
+  refs(rows.screenings, (x) => x.input_id, idsOf(rows.untrusted_inputs), "a screening");
 
   // A pay item's reference points at a row of the table it names.
   const byTable: Record<string, Set<string>> = {

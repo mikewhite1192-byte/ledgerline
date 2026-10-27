@@ -1,0 +1,357 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import ts from "typescript";
+import { describe, expect, it } from "vitest";
+
+// No path around the gateway, from the code's side. The lint rule sees each file's own import
+// lines; this test walks the whole import graph from every agent file, through re-exports,
+// folder indexes, dynamic imports, require and type imports, and through modules outside the
+// agent folders, so a re-export from a helper elsewhere cannot carry a forbidden module in.
+//
+//   P1. Outside src/lib/agent/gateway, agent code reaches the database, the record readers, the
+//       rules engine, the model wrapper, money/ and adapters/ only through the gateway. The one
+//       exception is the operator turn, which calls the model wrapper directly.
+//   P2. Nothing reachable from any agent file, the gateway included, is a money write or a
+//       payment or accounting adapter: under money/ only read, types, keys and format, and under
+//       adapters/ only types and tms/*.
+//
+// A module loaded by a name that is not a string literal, or a local import that does not
+// resolve, fails the walk: what cannot be followed cannot be proven.
+
+type Host = { read(file: string): string | undefined };
+type Edge = { to: string; spec: string };
+type Graph = { edges: Map<string, Edge[]>; problems: string[] };
+
+const ROOT = resolve(fileURLToPath(new URL("../../../..", import.meta.url)));
+const AGENT_DIRS = ["src/lib/agent", "src/app/api/agent"];
+const SOURCE = /\.[cm]?[jt]sx?$/;
+const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs", ".cjs"];
+const TURN = "src/lib/agent/operator/turn.ts";
+const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/;
+const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/;
+
+const diskHost: Host = {
+  read(file) {
+    try {
+      return statSync(file).isFile() ? readFileSync(file, "utf8") : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+};
+
+function memoryHost(files: Record<string, string>): Host {
+  return { read: (file) => (Object.hasOwn(files, file) ? files[file] : undefined) };
+}
+
+const relTo = (root: string, file: string) => relative(root, file).split(sep).join("/");
+
+// Every way a TypeScript file can name another module. A null spec is a name that is not a
+// string literal (import(x), require(x)) or a loader reached without an import
+// (createRequire, process.getBuiltinModule).
+function refsOf(file: string, text: string): { spec: string | null; line: number }[] {
+  if (!SOURCE.test(file)) return [];
+  const kind = /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, kind);
+  const out: { spec: string | null; line: number }[] = [];
+  const add = (node: ts.Node, expr: ts.Node | undefined) =>
+    out.push({
+      spec: expr && ts.isStringLiteralLike(expr) ? expr.text : null,
+      line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
+    });
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      if (node.moduleSpecifier) add(node, node.moduleSpecifier);
+    } else if (ts.isImportEqualsDeclaration(node)) {
+      if (ts.isExternalModuleReference(node.moduleReference)) add(node, node.moduleReference.expression);
+    } else if (
+      ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+    ) {
+      add(node, node.arguments[0]);
+    } else if (ts.isImportTypeNode(node)) {
+      add(node, ts.isLiteralTypeNode(node.argument) ? node.argument.literal : undefined);
+    } else if (ts.isIdentifier(node) && (node.text === "createRequire" || node.text === "getBuiltinModule")) {
+      add(node, undefined);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
+// Relative and "@/" specifiers resolve the way the bundler does; anything else is a package.
+function resolveRef(root: string, from: string, spec: string, host: Host): string | "package" | null {
+  let base: string;
+  if (spec === "." || spec === ".." || spec.startsWith("./") || spec.startsWith("../")) {
+    base = resolve(dirname(from), spec);
+  } else if (spec.startsWith("@/")) {
+    base = resolve(root, "src", spec.slice(2));
+  } else if (spec.startsWith("/")) {
+    base = resolve(spec);
+  } else {
+    return "package";
+  }
+  const swapped = base.replace(/\.([cm]?)js(x?)$/, ".$1ts$2");
+  const candidates = [
+    base,
+    swapped,
+    ...EXTENSIONS.map((e) => base + e),
+    ...EXTENSIONS.map((e) => join(base, `index${e}`)),
+  ];
+  return candidates.find((c) => host.read(c) !== undefined) ?? null;
+}
+
+function buildGraph(root: string, entries: string[], host: Host): Graph {
+  const edges = new Map<string, Edge[]>();
+  const problems: string[] = [];
+  const queue = [...entries];
+  while (queue.length > 0) {
+    const file = queue.pop()!;
+    if (edges.has(file)) continue;
+    const out: Edge[] = [];
+    edges.set(file, out);
+    const text = host.read(file);
+    if (text === undefined) {
+      problems.push(`${relTo(root, file)}: not readable`);
+      continue;
+    }
+    for (const ref of refsOf(file, text)) {
+      const where = `${relTo(root, file)}:${ref.line}`;
+      if (ref.spec === null) {
+        problems.push(`${where}: a module loaded by a name that is not a string literal`);
+        continue;
+      }
+      const to = resolveRef(root, file, ref.spec, host);
+      if (to === "package") continue;
+      if (to === null) {
+        problems.push(`${where}: "${ref.spec}" does not resolve`);
+        continue;
+      }
+      out.push({ to, spec: ref.spec });
+      if (!edges.has(to)) queue.push(to);
+    }
+  }
+  return { edges, problems };
+}
+
+function restrictedArea(rel: string): string | null {
+  const m = /^src\/lib\/(db|data|rules-engine|money|ai|adapters)(\/|\.|$)/.exec(rel);
+  if (m) return m[1];
+  return /(^|\/)adapters(\/|\.|$)/.test(rel) ? "adapters" : null;
+}
+
+const isGateway = (rel: string) => rel.startsWith("src/lib/agent/gateway/");
+
+// P1: from each agent file outside the gateway, walk without entering the gateway (the
+// sanctioned path) and without following the turn's one allowed edge into the model wrapper.
+function boundaryViolations(root: string, agentFiles: string[], graph: Graph): string[] {
+  const out: string[] = [];
+  for (const start of agentFiles.filter((f) => !isGateway(relTo(root, f)))) {
+    const seen = new Set([start]);
+    const queue: { file: string; chain: string[] }[] = [{ file: start, chain: [relTo(root, start)] }];
+    while (queue.length > 0) {
+      const { file, chain } = queue.shift()!;
+      for (const edge of graph.edges.get(file) ?? []) {
+        const to = relTo(root, edge.to);
+        if (isGateway(to)) continue;
+        const area = restrictedArea(to);
+        if (area) {
+          if (!(area === "ai" && relTo(root, file) === TURN)) out.push([...chain, to].join(" -> "));
+          continue;
+        }
+        if (!seen.has(edge.to)) {
+          seen.add(edge.to);
+          queue.push({ file: edge.to, chain: [...chain, to] });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// P2: walk everything reachable from every agent file, the gateway included.
+function ledgerViolations(root: string, agentFiles: string[], graph: Graph): string[] {
+  const parent = new Map<string, string | null>(agentFiles.map((f) => [f, null]));
+  const queue = [...agentFiles];
+  while (queue.length > 0) {
+    const file = queue.shift()!;
+    for (const edge of graph.edges.get(file) ?? []) {
+      if (parent.has(edge.to)) continue;
+      parent.set(edge.to, file);
+      queue.push(edge.to);
+    }
+  }
+  const out: string[] = [];
+  for (const file of parent.keys()) {
+    const rel = relTo(root, file);
+    // money/ is the ledger's folder (src/lib/rules-engine/money.ts is the engine's cents math).
+    const money = /^src\/lib\/money(\/|\.[cm]?[jt]sx?$)/.test(rel) && !MONEY_OK.test(rel);
+    const adapter = /(^|\/)adapters(\/|\.[cm]?[jt]sx?$)/.test(rel) && !ADAPTERS_OK.test(rel);
+    if (!money && !adapter) continue;
+    const chain = [rel];
+    for (let p = parent.get(file); p; p = parent.get(p)) chain.unshift(relTo(root, p));
+    out.push(chain.join(" -> "));
+  }
+  return out;
+}
+
+function check(root: string, agentFiles: string[], host: Host) {
+  const graph = buildGraph(root, agentFiles, host);
+  return {
+    graph,
+    problems: graph.problems,
+    boundary: boundaryViolations(root, agentFiles, graph),
+    ledger: ledgerViolations(root, agentFiles, graph),
+  };
+}
+
+function listSources(dir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return names.flatMap((name) => {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) return name === "node_modules" ? [] : listSources(path);
+    return SOURCE.test(name) ? [path] : [];
+  });
+}
+
+describe("agent import boundary, on the real tree", () => {
+  const agentFiles = AGENT_DIRS.flatMap((d) => listSources(join(ROOT, d))).sort();
+  const result = check(ROOT, agentFiles, diskHost);
+  const reached = [...result.graph.edges.keys()].map((f) => relTo(ROOT, f));
+
+  it("finds the agent files and walks past them", () => {
+    expect(agentFiles.map((f) => relTo(ROOT, f))).toContain("src/lib/agent/gateway/index.ts");
+    expect(reached).toContain("src/lib/db/index.ts");
+    expect(reached.some((r) => r.startsWith("src/lib/rules-engine/"))).toBe(true);
+    expect(reached.some((r) => r.startsWith("src/lib/ai/"))).toBe(true);
+  });
+
+  it("follows every import: no loader by a computed name, no local import that does not resolve", () => {
+    expect(result.problems).toEqual([]);
+  });
+
+  it("P1: only the gateway reaches the database, records, engine, model wrapper and money", () => {
+    expect(result.boundary).toEqual([]);
+  });
+
+  it("P2: nothing an agent file reaches writes money or calls a payment or accounting adapter", () => {
+    expect(result.ledger).toEqual([]);
+  });
+});
+
+describe("the walker itself, on fixture trees", () => {
+  const V = "/v";
+  const at = (files: Record<string, string>) =>
+    Object.fromEntries(Object.entries(files).map(([k, v]) => [`${V}/${k}`, v]));
+  const run = (files: Record<string, string>) => {
+    const tree = at(files);
+    const agentFiles = Object.keys(tree).filter((f) =>
+      AGENT_DIRS.some((d) => relTo(V, f).startsWith(`${d}/`)),
+    );
+    return check(V, agentFiles, memoryHost(tree));
+  };
+
+  it("passes the allowed paths: gateway to records and ledger reads, the turn to the model wrapper", () => {
+    const out = run({
+      "src/lib/agent/gateway/ok.ts":
+        'import { q } from "../../db";\nimport { r } from "../../money/read";\n' +
+        'import type { T } from "@/lib/adapters/types";\nimport { tms } from "../../adapters/tms/db";',
+      "src/lib/agent/operator/turn.ts": 'import { complete } from "../../ai";\nimport { callTool } from "../gateway/ok";',
+      "src/lib/agent/operator/other.ts": 'import { complete } from "@/lib/ai";',
+      "src/lib/ai/index.ts": 'import { db } from "../db";\nexport const complete = 1;',
+      "src/lib/db/index.ts": "export const q = 1;",
+      "src/lib/money/read.ts": 'import "./keys";',
+      "src/lib/money/keys.ts": "",
+      "src/lib/adapters/types.ts": "",
+      "src/lib/adapters/tms/db.ts": 'import "../../data/tables";',
+      "src/lib/data/tables.ts": "",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.ledger).toEqual([]);
+    expect(out.boundary).toEqual(["src/lib/agent/operator/other.ts -> src/lib/ai/index.ts"]);
+  });
+
+  it("catches a re-export chain through a helper outside the agent folders", () => {
+    const out = run({
+      "src/lib/agent/operator/plan.ts": 'export * from "../../seed/helpers";',
+      "src/lib/seed/helpers.ts": 'export { pay } from "@/lib/money/execute";',
+      "src/lib/money/execute.ts": "export const pay = 1;",
+    });
+    expect(out.boundary).toEqual([
+      "src/lib/agent/operator/plan.ts -> src/lib/seed/helpers.ts -> src/lib/money/execute.ts",
+    ]);
+    expect(out.ledger).toEqual([
+      "src/lib/agent/operator/plan.ts -> src/lib/seed/helpers.ts -> src/lib/money/execute.ts",
+    ]);
+  });
+
+  it("catches a dynamic import and a require in the gateway itself", () => {
+    const out = run({
+      "src/lib/agent/gateway/a.ts": 'export async function f() {\n  return import("../../money/ledger");\n}',
+      "src/lib/agent/gateway/b.ts": 'export const m = require("@/lib/adapters/payment/mock");',
+      "src/lib/money/ledger.ts": "",
+      "src/lib/adapters/payment/mock.ts": "",
+    });
+    expect(out.boundary).toEqual([]);
+    expect(out.ledger.sort()).toEqual([
+      "src/lib/agent/gateway/a.ts -> src/lib/money/ledger.ts",
+      "src/lib/agent/gateway/b.ts -> src/lib/adapters/payment/mock.ts",
+    ]);
+  });
+
+  it("catches a folder index, an import-equals and a type import", () => {
+    const out = run({
+      "src/lib/agent/gateway/c.ts": 'import money = require("../../money");\nexport { money };',
+      "src/lib/agent/operator/loop.ts":
+        'import type { Queryable } from "@/lib/db";\nexport type Q = import("../../rules-engine/types").Cents;',
+      "src/lib/money/index.ts": 'export * from "./approval";',
+      "src/lib/money/approval.ts": "",
+      "src/lib/db/index.ts": "export type Queryable = object;",
+      "src/lib/rules-engine/types.ts": "export type Cents = number;",
+    });
+    expect(out.ledger).toEqual([
+      "src/lib/agent/gateway/c.ts -> src/lib/money/index.ts",
+      "src/lib/agent/gateway/c.ts -> src/lib/money/index.ts -> src/lib/money/approval.ts",
+    ]);
+    expect(out.boundary.sort()).toEqual([
+      "src/lib/agent/operator/loop.ts -> src/lib/db/index.ts",
+      "src/lib/agent/operator/loop.ts -> src/lib/rules-engine/types.ts",
+    ]);
+  });
+
+  it("refuses a computed module name, a loader with no import, and a local import that does not resolve", () => {
+    const out = run({
+      "src/lib/agent/operator/x.ts": [
+        'const n = "../../money/" + "execute";',
+        "export const a = import(n);",
+        "export const b = require(n);",
+        'export const c = process.getBuiltinModule("node:module").createRequire(import.meta.url)(n);',
+        'import "./missing";',
+      ].join("\n"),
+    });
+    expect(out.problems).toEqual([
+      "src/lib/agent/operator/x.ts:2: a module loaded by a name that is not a string literal",
+      "src/lib/agent/operator/x.ts:3: a module loaded by a name that is not a string literal",
+      "src/lib/agent/operator/x.ts:4: a module loaded by a name that is not a string literal",
+      "src/lib/agent/operator/x.ts:4: a module loaded by a name that is not a string literal",
+      'src/lib/agent/operator/x.ts:5: "./missing" does not resolve',
+    ]);
+  });
+
+  it("resolves a .js specifier to its .ts file", () => {
+    const out = run({
+      "src/lib/agent/operator/y.ts": 'export * from "../../money/execute.js";',
+      "src/lib/money/execute.ts": "",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.ledger).toEqual(["src/lib/agent/operator/y.ts -> src/lib/money/execute.ts"]);
+  });
+});

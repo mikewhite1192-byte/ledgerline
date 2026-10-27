@@ -1,0 +1,72 @@
+import { z } from "zod";
+import { cents } from "../../../../rules-engine";
+import { payCorrectionLimit } from "../../limits";
+import { defineTool, type GatewayRef } from "../../types";
+import { idField } from "../../validate";
+import { OPERATOR, refsOf, sourceRefsField } from "../shared";
+
+export const PAY_CORRECTION_REASON_CATEGORIES = [
+  "missed_pay",
+  "wrong_rate",
+  "wrong_driver",
+  "duplicate_charge",
+  "missing_reimbursement",
+] as const;
+
+export const proposePayCorrection = defineTool({
+  name: "propose_pay_correction",
+  description:
+    "Propose a correction to a driver's pay in an open pay period, for a person to approve. " +
+    "Nothing is paid by this call. deltaCents is integer cents: positive adds to pay, negative " +
+    "takes away. payItemId names the item being corrected, when there is one. Corrections above " +
+    "the carrier's limit are refused.",
+  tier: "propose",
+  roles: OPERATOR,
+  label: "Checking the pay correction",
+  args: z.strictObject({
+    driverId: idField(),
+    periodId: idField(),
+    payItemId: idField().optional(),
+    deltaCents: z
+      .int()
+      .min(-1_000_000)
+      .max(1_000_000)
+      .refine((n) => n !== 0, { message: "zero" }),
+    operatorVerdict: z.enum(["owed_to_driver", "owed_by_driver"]),
+    reasonCategories: z.array(z.enum(PAY_CORRECTION_REASON_CATEGORIES)).min(1).max(4),
+    sourceRefs: sourceRefsField(),
+  }),
+  refs: (a): GatewayRef[] => [
+    { table: "drivers", id: a.driverId },
+    { table: "settlement_periods", id: a.periodId },
+    ...(a.payItemId ? [{ table: "pay_items" as const, id: a.payItemId }] : []),
+    ...refsOf(a.sourceRefs),
+  ],
+  limit: (q, ctx, a) => payCorrectionLimit(q, ctx, a),
+  run: async (_q, _ctx, a, extras) => {
+    const limit = extras.limit;
+    if (!limit) throw new Error("a proposal needs its limit");
+    const draft = {
+      kind: "pay_correction" as const,
+      subjectTable: "drivers" as const,
+      subjectId: a.driverId,
+      amountCents: cents(a.deltaCents),
+      args: { ...a },
+      limitCents: limit.limitCents,
+      exceptions: limit.exceptions,
+      reasons: limit.reasons,
+      sources: [...limit.sources, ...refsOf(a.sourceRefs)],
+    };
+    return {
+      result: {
+        proposed: true,
+        kind: draft.kind,
+        amountCents: draft.amountCents,
+        limitCents: draft.limitCents,
+        exceptions: draft.exceptions,
+        note: "A person must approve this before any pay changes.",
+      },
+      draft,
+    };
+  },
+});
