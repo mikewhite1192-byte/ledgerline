@@ -1,5 +1,6 @@
 import type { Param } from "../../../db";
 import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
+import { QUEUE_CHILDREN, QUEUE_LOADS } from "../../../data/read";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
@@ -22,6 +23,11 @@ const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS 
 const DELIVERED_LOADS = `load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
 const DELIVERED_CUSTOMERS = `id IN (SELECT customer_id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
 
+// The ledger's rows for one subject (money/read.ts readBySubject). The plan holds none, so this
+// answers from a money_actions list a test adds, or none.
+export const LEDGER_BY_SUBJECT =
+  /^SELECT CAST\(id AS text\) AS id, .+ FROM money_actions WHERE tenant_id = current_tenant_id\(\) AND subject_table = \$1 AND subject_id = CAST\(\$2 AS uuid\) ORDER BY created_at, attempt, id$/s;
+
 export const PLAN_ANCHOR = "2026-11-02";
 
 let cached: CarrierPlan | null = null;
@@ -39,6 +45,11 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     if (sql === "SELECT id, slug, name, timezone FROM tenants WHERE id = current_tenant_id()") {
       const c = plan.carrier;
       return [{ id: TENANT, slug: c.slug, name: c.name, timezone: c.timezone }];
+    }
+    if (LEDGER_BY_SUBJECT.test(sql)) {
+      return (tables.money_actions ?? [])
+        .filter((r) => r.subject_table === params[0] && r.subject_id === params[1])
+        .map((r) => ({ ...r }));
     }
     const m = FROM.exec(sql);
     if (!m) return undefined;
@@ -82,6 +93,21 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
     return all.filter((r) => loadIds.has(r.load_id as string));
   }
   if (where === "status = $1") return all.filter((r) => r.status === params[0]);
+  if (where === QUEUE_LOADS || where === QUEUE_CHILDREN) {
+    const invoiced = new Set(rows.invoices.map((i) => i.load_id));
+    const queued = new Set(
+      rows.loads
+        .filter(
+          (l) =>
+            l.status === "delivered" &&
+            l.delivered_on !== null &&
+            l.delivered_on >= (params[0] as string) &&
+            !invoiced.has(l.id),
+        )
+        .map((l) => l.id),
+    );
+    return all.filter((r) => queued.has((where === QUEUE_LOADS ? r.id : r.load_id) as string));
+  }
   if (where === DELIVERED_BETWEEN || where === DELIVERED_LOADS || where === DELIVERED_CUSTOMERS) {
     const [start, end] = params as string[];
     const loads = rows.loads.filter(

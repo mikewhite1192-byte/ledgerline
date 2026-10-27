@@ -207,6 +207,10 @@ const PROPOSAL_SQL = `
            WHEN 'invoices' THEN (SELECT i.invoice_number FROM invoices i WHERE i.id = p.subject_id)
            WHEN 'loads' THEN (SELECT l.load_number FROM loads l
                                WHERE l.tenant_id = p.tenant_id AND l.id = p.subject_id)
+           WHEN 'payment_applications' THEN (
+             SELECT cp.payment_ref FROM payment_applications a
+               JOIN customer_payments cp ON cp.tenant_id = a.tenant_id AND cp.id = a.payment_id
+              WHERE a.tenant_id = p.tenant_id AND a.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.title,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources, p.status,
@@ -339,4 +343,22 @@ export async function readRecentTurnViews(q: Queryable, sub: string): Promise<Tu
   const out: TurnView[] = [];
   for (const r of rows.reverse()) out.push(await viewOf(q, r));
   return out;
+}
+
+// The cards the rules engine made for one kind (the invoice queue), still waiting or running, for
+// the page that lists them. Named tenant as well as row security, oldest first.
+export async function readEngineProposalViews(
+  q: Queryable,
+  kind: ProposalView["kind"],
+  limit = 200,
+): Promise<ProposalView[]> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new RangeError("bad limit");
+  const rows = await q.query<ProposalRow>(
+    `${PROPOSAL_SQL}
+      WHERE p.tenant_id = current_tenant_id() AND p.origin = 'engine' AND p.kind = $1
+        AND p.status IN ('proposed', 'approved', 'executing')
+      ORDER BY p.created_at, p.id LIMIT ${limit}`,
+    [kind],
+  );
+  return rows.map(proposalView);
 }

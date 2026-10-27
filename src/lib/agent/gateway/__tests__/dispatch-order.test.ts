@@ -419,11 +419,15 @@ describe("callTool dispatch order", () => {
 
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
-    // the afterEach above; the report switch after this test.
+    // the afterEach above; the report, invoicing and customer payments switches after this test.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
+    flags.invoicesEnabled = true;
+    flags.customerPaymentsEnabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;
+      flags.invoicesEnabled = false;
+      flags.customerPaymentsEnabled = false;
     });
     for (const [name, args] of Object.entries(ARGS)) {
       const auditor = name === "get_proposal";
