@@ -171,6 +171,8 @@ describe("local overrides for the demo-path test", () => {
       { accountingEnabled: true },
       { driverNotesEmailEnabled: true },
       { agentEnabled: true, "agentTurnLimits.maxToolSteps": 99 },
+      // Not on the demo path yet: adding it is detention's own change, with a re-recorded replay.
+      { detentionEnabled: true },
     ]) {
       const target = copy();
       const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify(bad) };

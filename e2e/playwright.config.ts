@@ -9,6 +9,13 @@ import { APP_PORT, APP_URL, appEnv, FAKE_HOST, REPO_ROOT } from "./env.local-mod
 
 const DEPLOYED = process.env.E2E_TARGET === "deployed";
 
+// What a failed run keeps. A trace or screenshot of the deployed site would carry the real
+// session cookie and the signed-in pages, so the deployed project keeps neither, pass or fail.
+// The local project keeps both on a failure only: its login is the fake one and its database is
+// thrown away.
+const KEEP_ON_FAILURE = { trace: "retain-on-failure", screenshot: "only-on-failure" } as const;
+const KEEP_NOTHING = { trace: "off", screenshot: "off" } as const;
+
 // One report per day, named by the date in New York (the deadlines' time zone).
 const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(new Date());
 // E2E_REPORT_FILE (CI) is read from the repository root.
@@ -28,15 +35,14 @@ export default defineConfig({
   reporter: [["list"], ["json", { outputFile: reportFile }]],
   use: {
     ...devices["Desktop Chrome"],
-    trace: "retain-on-failure",
-    screenshot: "only-on-failure",
+    ...KEEP_NOTHING,
     video: "off",
     navigationTimeout: 120_000,
     actionTimeout: 30_000,
   },
   projects: [
-    { name: "local", use: { baseURL: APP_URL } },
-    { name: "deployed", use: { baseURL: process.env.E2E_BASE_URL } },
+    { name: "local", use: { baseURL: APP_URL, ...(DEPLOYED ? KEEP_NOTHING : KEEP_ON_FAILURE) } },
+    { name: "deployed", use: { baseURL: process.env.E2E_BASE_URL, ...KEEP_NOTHING } },
   ],
   webServer: DEPLOYED
     ? undefined

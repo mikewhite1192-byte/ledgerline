@@ -57,6 +57,8 @@ QuickBooks sandbox company.
 
 To walk the demo path in a browser (a local Postgres running): `npx playwright install chromium`
 once, then `npm run e2e`. The models answer from a recording, so nothing leaves the machine.
+`E2E_ADMIN_DATABASE_URL` names a local Postgres superuser (the default is the 127.0.0.1:5432 trust
+URL in `e2e/env.local-mode.ts`), and the run drops and recreates the `payday_e2e` database each time.
 
 ## Advances: how a request becomes a payout
 

@@ -16,6 +16,7 @@ const FIRST_QUESTION = "Who has a problem on this week's paystub?";
 // The hero driver of the seed (the same ids every seed at the anchor), asked for a modest amount
 // so the engine's limit allows it on any day of the demo week.
 const ADVANCE_QUESTION = "Propose a $100.00 advance for Monique Vasquez (BR-D07), requested today.";
+// Local answers replay as recorded on the fixture's recordedOn: cosmetic, no assertion reads them.
 const TURN_TIMEOUT = 30_000;
 
 const VERDICTS = ["Checked by Muse Wonder: pass", "Muse Wonder has concerns", "Muse Wonder blocked this"];
@@ -108,7 +109,7 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
   await test.step("1. sign in and land on the carrier's home", async () => {
     await page.goto("/sign-in");
     await page.getByLabel("Email").fill(creds.email);
-    // A type=password field: the trace never records what is typed here.
+    // The deployed project keeps no trace or screenshot, pass or fail (playwright.config.ts).
     await page.getByLabel("Password").fill(creds.password);
     await page.getByRole("button", { name: "Sign in" }).click();
     await expect(page).toHaveURL(new URL("/", baseURL).toString());

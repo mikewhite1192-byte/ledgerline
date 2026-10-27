@@ -200,9 +200,9 @@ export function parseFixture(text: string): ReplayFixture {
   return parsed as ReplayFixture;
 }
 
-// Stable on disk and plain ASCII: entries sorted by fingerprint, two-space JSON, every character
-// past ASCII written as its \u escape (the same data once parsed; a model's typography stays out
-// of the house style checks), and a trailing newline.
+// Stable on disk: entries sorted by fingerprint, two-space JSON with a trailing newline, and plain
+// ASCII so the file is byte-stable on every platform (every character past ASCII is written as
+// its \u escape, the same data once parsed).
 export function serializeFixture(fixture: ReplayFixture): string {
   const entries = Object.fromEntries(Object.entries(fixture.entries).sort(([a], [b]) => a.localeCompare(b)));
   const text = JSON.stringify({ ...fixture, entries }, null, 2).replace(
