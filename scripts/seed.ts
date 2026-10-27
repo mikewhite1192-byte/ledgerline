@@ -11,6 +11,7 @@ import { buildPortalPlan } from "../src/lib/seed/portal";
 import { clearTenantPortal, seedTenantPortal } from "../src/lib/seed/portal-db";
 import {
   clearTenantAgent,
+  clearTenantArmLog,
   clearTenantBookings,
   clearTenantLedger,
   findDemoTenant,
@@ -30,9 +31,9 @@ import { localDatabaseUrl } from "./lib/local-db";
 // are deleted and rewritten in one transaction. The tenants must already exist
 // (npm run demo:users); the seed never creates them.
 //
-// The admin login looks each tenant up by slug and clears its ledger rows (the app role has no
-// DELETE on money_actions). The rows are written as payday_app, the app's own role, inside the
-// tenant's transaction.
+// The admin login looks each tenant up by slug and clears its ledger rows and its arming log
+// (the app role has no DELETE on money_actions or driver_arm_events). The rows are written as
+// payday_app, the app's own role, inside the tenant's transaction.
 //
 // local:  DATABASE_URL, the admin login of a database on this machine; the app role connects to
 //         the same database as payday_app with no password (trust auth, local and CI only).
@@ -151,6 +152,9 @@ async function main(): Promise<void> {
       // Then the fictional portal's rows, which point at the loads and inputs the replace deletes.
       const clearedPortal = await clearTenantPortal(admin, tenantId);
       console.log(`cleared ${clearedPortal} portal rows for ${slug}`);
+      // And the arming log, which the app role may add to but never delete from.
+      const clearedArm = await clearTenantArmLog(admin, tenantId);
+      console.log(`cleared ${clearedArm} arming log rows for ${slug}`);
       const report = await replaceTenantData(app, tenantId, plan);
       const booked = await clearTenantBookings(admin, tenantId);
       console.log(`cleared ${booked} booking ledger rows for ${slug}`);

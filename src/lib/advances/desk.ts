@@ -7,16 +7,28 @@ import type { TurnStatus } from "../agent/view";
 import type { Session } from "../auth/claims";
 import { getDb, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
-import { readDriverCode } from "./read";
-import { deskRequestText, isDeskAmount, isRequestCategory, type AdvanceRequestCategory } from "./request";
+import { readDriverCode, readDriverLoadNumber } from "./read";
+import {
+  DESK_LOAD_NUMBER,
+  deskRequestText,
+  isDeskAmount,
+  isRequestCategory,
+  type AdvanceRequestCategory,
+} from "./request";
 
 // The request desk: a person picks a driver, an amount and a reason, and the desk hands the agent
-// the same sentence every time ("Request an advance of $300.00 for driver D-01 (fuel)"). The agent
+// the same sentence every time ("Request an advance of $300.00 for driver D-01 (fuel)", plus
+// "for load <number>" when a load is picked, read back from the driver's own loads). The agent
 // then checks eligibility through the gateway and proposes; a person approves on the card. The desk
 // itself decides nothing and writes no advance: it is a typed question, run as one agent turn in
 // this request (a function call, not an HTTP hop).
 
-export type DeskInput = { driverId: string; amountCents: number; category: AdvanceRequestCategory };
+export type DeskInput = {
+  driverId: string;
+  amountCents: number;
+  category: AdvanceRequestCategory;
+  loadId?: string | null;
+};
 
 export type DeskResult =
   | { ok: true; conversationId: string; turnId: string; status: TurnStatus }
@@ -71,12 +83,17 @@ export async function requestFromDesk(
     return { ok: false, category: "bad_request" };
   }
   const db = deps.db ?? getDb();
-  const code = await db.withTenant(session.tenantId, async (q) => {
+  const read = await db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
-    return readDriverCode(q, input.driverId);
+    const code = await readDriverCode(q, input.driverId);
+    if (code === null || input.loadId === undefined || input.loadId === null) return { code, loadNumber: null };
+    return { code, loadNumber: await readDriverLoadNumber(q, input.driverId, input.loadId) };
   });
-  if (code === null) return { ok: false, category: "not_found" };
-  const text = deskRequestText(input.amountCents, code, input.category);
+  if (read.code === null) return { ok: false, category: "not_found" };
+  const named = input.loadId !== undefined && input.loadId !== null;
+  if (named && read.loadNumber === null) return { ok: false, category: "not_found" };
+  if (read.loadNumber !== null && !DESK_LOAD_NUMBER.test(read.loadNumber)) return { ok: false, category: "bad_request" };
+  const text = deskRequestText(input.amountCents, read.code, input.category, read.loadNumber);
   const startedAt = (deps.clock ?? Date.now)();
   const opened = await (deps.open ?? openAgentTurn)(session, {
     conversationId: null,

@@ -112,6 +112,14 @@ describe("ProposalCard", () => {
     expect(screen.getByText("Outcome unknown")).toBeTruthy();
   });
 
+  it("shows the detail line under the title only when there is one", () => {
+    const { unmount } = render(<ProposalCard {...card} />);
+    expect(screen.queryByText(/cap left after this/)).toBeNull();
+    unmount();
+    render(<ProposalCard {...card} detail="Load BR-L10001: $145.00 of $600.00 cap left after this." />);
+    expect(screen.getByText("Load BR-L10001: $145.00 of $600.00 cap left after this.")).toBeTruthy();
+  });
+
   it("shows money going out as a negative and links each reason to its record", () => {
     render(<ProposalCard {...card} />);
     expect(screen.getByText("−$200.00").hasAttribute("data-negative")).toBe(true);

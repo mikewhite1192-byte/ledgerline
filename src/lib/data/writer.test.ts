@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Param, Queryable } from "../db";
-import { assertIdentifier, TENANT_TABLES } from "./tables";
+import { APP_KEEPS_TABLES, assertIdentifier, TENANT_TABLES } from "./tables";
 import {
   deleteTenantRows,
   insertRows,
@@ -152,9 +152,17 @@ describe("deleteTenantRows", () => {
     expect(seen.map((s) => s.sql)).toEqual(
       [...TENANT_TABLES]
         .reverse()
+        .filter((t) => t !== "driver_arm_events")
         .map((t) => `DELETE FROM ${t} WHERE tenant_id = current_tenant_id()`),
     );
     expect(Object.keys(out).sort()).toEqual([...TENANT_TABLES].sort());
-    expect(Object.values(out).every((n) => n === 3)).toBe(true);
+    expect(Object.entries(out).every(([t, n]) => n === (t === "driver_arm_events" ? 0 : 3))).toBe(true);
+  });
+
+  it("never deletes from the arming log, which the app role may only add to", async () => {
+    expect([...APP_KEEPS_TABLES]).toEqual(["driver_arm_events"]);
+    const { q, seen } = fakeQ(() => 0);
+    await deleteTenantRows(q);
+    expect(seen.some((s) => s.sql.includes("driver_arm_events"))).toBe(false);
   });
 });

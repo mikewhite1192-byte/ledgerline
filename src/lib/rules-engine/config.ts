@@ -66,6 +66,10 @@ export function assertPayConfig(config: PayConfig | null | undefined): PayConfig
     advanceLimitDefaultCents: centsIn(config.advanceLimitDefaultCents, "advanceLimitDefaultCents"),
     advanceMaxBpsOfEarned: bpsIn(config.advanceMaxBpsOfEarned, "advanceMaxBpsOfEarned"),
     advanceMinCents: centsIn(config.advanceMinCents, "advanceMinCents"),
+    advancePerLoadBpsOfPay:
+      config.advancePerLoadBpsOfPay === null
+        ? null
+        : bpsIn(config.advancePerLoadBpsOfPay, "advancePerLoadBpsOfPay"),
   };
 }
 
@@ -74,10 +78,11 @@ export function assertPayConfig(config: PayConfig | null | undefined): PayConfig
 // must be present as null: a column that is simply absent is a missing config.
 export function parsePayConfig(row: Record<string, unknown> | null | undefined): PayConfig {
   if (!row || typeof row !== "object") throw new ConfigError("pay config is missing");
-  if (!("advance_recovery_cap_cents" in row)) {
-    throw new ConfigError("advance_recovery_cap_cents is missing");
+  for (const key of ["advance_recovery_cap_cents", "advance_per_load_bps_of_pay"]) {
+    if (!(key in row)) throw new ConfigError(`${key} is missing`);
   }
   const cap = row.advance_recovery_cap_cents;
+  const perLoad = row.advance_per_load_bps_of_pay;
   return assertPayConfig({
     weekStartDow: intIn(row.week_start_dow, 0, 6, "week_start_dow"),
     percentBase: oneOf(row.percent_base, PERCENT_BASES, "percent_base"),
@@ -106,6 +111,8 @@ export function parsePayConfig(row: Record<string, unknown> | null | undefined):
     ),
     advanceMaxBpsOfEarned: bpsIn(row.advance_max_bps_of_earned, "advance_max_bps_of_earned"),
     advanceMinCents: centsIn(row.advance_min_cents, "advance_min_cents"),
+    advancePerLoadBpsOfPay:
+      perLoad === null ? null : bpsIn(perLoad, "advance_per_load_bps_of_pay"),
   });
 }
 
@@ -143,6 +150,9 @@ export function checkDriver(driver: DriverRecord | null | undefined): DriverReco
   assertOneOf(driver.workerType, WORKER_TYPES, `driver ${driver.id} workerType`);
   assertDate(driver.activeFrom, `driver ${driver.id} activeFrom`);
   if (driver.activeTo !== null) assertDate(driver.activeTo, `driver ${driver.id} activeTo`);
+  if (typeof driver.moneyArmed !== "boolean") {
+    throw new InputError(`driver ${driver.id} moneyArmed is not true or false`);
+  }
   driverRate(driver);
   return driver;
 }

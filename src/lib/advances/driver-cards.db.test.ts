@@ -7,10 +7,10 @@ import { addAdvance, addCard, closeCard, dropTenant, makeTenant, sqlStateOf, typ
 import type { MoneyAction } from "../money/types";
 import { readActiveCard, readCardDestination } from "./cards";
 
-// Migration 0017's fuel cards as the app role sees them: the tenant wall, one active card per
-// driver, the composite reference to the driver, the shape checks, and an advance's reference
-// cleared (never the advance) when its card is deleted. Every tenant made here is removed after
-// each test.
+// Migrations 0017 and 0027's fuel cards as the app role sees them: the tenant wall, one default
+// active card per driver (0027; more active cards beside it), the composite reference to the
+// driver, the shape checks, and an advance's reference cleared (never the advance) when its card
+// is deleted. Every tenant made here is removed after each test.
 
 let admin: Db;
 let app: Db;
@@ -20,13 +20,26 @@ let B: Fixture;
 const token = () => `fcs_card_${randomBytes(12).toString("hex")}`;
 
 // One card row written as the app role in `as`'s tenant (or naming `tenantId` outright).
-function insertCard(as: Fixture, o: { driverId?: string; tenantId?: string; tok?: string; last4?: string; status?: string; closedAt?: string | null } = {}) {
+function insertCard(
+  as: Fixture,
+  o: {
+    driverId?: string;
+    tenantId?: string;
+    tok?: string;
+    last4?: string;
+    status?: string;
+    closedAt?: string | null;
+    isDefault?: boolean;
+    holderKind?: string;
+    portalName?: string | null;
+  } = {},
+) {
   return app.withTenant(as.tenantId, (q) =>
     q.execute(
       `INSERT INTO driver_cards (id, tenant_id, driver_id, provider, provider_token, last4, status, sim_behavior,
-         source, closed_at)
+         source, closed_at, is_default, holder_kind, portal_name)
        VALUES (CAST($1 AS uuid), CAST($2 AS uuid), CAST($3 AS uuid), 'fuel_card_sim', $4, $5, $6, 'ok', 'ui',
-         CAST($7 AS timestamptz))`,
+         CAST($7 AS timestamptz), $8, $9, $10)`,
       [
         randomUUID(),
         o.tenantId ?? as.tenantId,
@@ -35,6 +48,9 @@ function insertCard(as: Fixture, o: { driverId?: string; tenantId?: string; tok?
         o.last4 ?? "0042",
         o.status ?? "active",
         o.closedAt ?? null,
+        o.isDefault ?? false,
+        o.holderKind ?? "named",
+        o.portalName ?? null,
       ],
     ),
   );
@@ -84,13 +100,25 @@ describe("driver_cards (0017)", () => {
     expect(await sqlStateOf(insertCard(B, { driverId: A.otherDriverId }))).toBe("23503");
   });
 
-  it("allows one active card per driver; a closed one makes room for the next", async () => {
-    expect(await sqlStateOf(insertCard(A))).toBe("23505");
+  it("allows one default active card per driver and more active cards beside it; a closed default makes room", async () => {
+    expect(await sqlStateOf(insertCard(A, { isDefault: true }))).toBe("23505");
+    expect(await sqlStateOf(insertCard(A, { last4: "0043" }))).toBe("no error");
+    // The default is still the one paid; the second active card is not it.
+    expect(await app.withTenant(A.tenantId, (q) => readActiveCard(q, A.otherDriverId))).not.toMatchObject({ last4: "0043" });
     await closeCard(admin, A, A.otherDriverId);
-    expect(await sqlStateOf(insertCard(A))).toBe("no error");
+    expect(await app.withTenant(A.tenantId, (q) => readActiveCard(q, A.otherDriverId))).toBeNull();
+    expect(await sqlStateOf(insertCard(A, { isDefault: true }))).toBe("no error");
     const rows = (await cardsOf(A)).filter((c) => c.driver_id === A.otherDriverId);
-    expect(rows.map((c) => c.status).sort()).toEqual(["active", "closed"]);
+    expect(rows.map((c) => c.status).sort()).toEqual(["active", "closed", "closed"]);
     expect(await app.withTenant(A.tenantId, (q) => readActiveCard(q, A.otherDriverId))).toMatchObject({ last4: "0042" });
+  });
+
+  it("holds 0027's card rules: a closed card is never the default, a generic card has a portal name of its shape", async () => {
+    expect(await sqlStateOf(insertCard(A, { status: "closed", closedAt: "2026-11-02T16:00:00Z", isDefault: true }))).toBe("23514");
+    expect(await sqlStateOf(insertCard(A, { holderKind: "generic" }))).toBe("23514");
+    expect(await sqlStateOf(insertCard(A, { holderKind: "generic", portalName: "pool card" }))).toBe("23514");
+    expect(await sqlStateOf(insertCard(A, { holderKind: "person" }))).toBe("23514");
+    expect(await sqlStateOf(insertCard(A, { holderKind: "generic", portalName: "POOL CARD 3" }))).toBe("no error");
   });
 
   it("holds the shapes: provider token, last four, a closed card's close time, one provider per token", async () => {

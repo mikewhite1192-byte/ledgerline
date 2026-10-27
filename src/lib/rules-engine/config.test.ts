@@ -20,6 +20,7 @@ const ROW: Record<string, unknown> = {
   advance_limit_default_cents: 50_000,
   advance_max_bps_of_earned: 5_000,
   advance_min_cents: 5_000,
+  advance_per_load_bps_of_pay: 4_000,
   created_at: "2026-10-26 12:00:00+00",
 };
 
@@ -31,6 +32,9 @@ describe("parsePayConfig", () => {
     expect(
       parsePayConfig({ ...ROW, advance_recovery_cap_cents: 25_000 }).advanceRecoveryCapCents,
     ).toBe(25_000);
+    expect(
+      parsePayConfig({ ...ROW, advance_per_load_bps_of_pay: null }).advancePerLoadBpsOfPay,
+    ).toBeNull();
   });
 
   it("refuses a missing row", () => {
@@ -56,6 +60,8 @@ describe("parsePayConfig", () => {
     ["net_pay_floor_cents", 1_000_000_000],
     ["escrow_target_cents", "200000"],
     ["advance_recovery_cap_cents", -1],
+    ["advance_per_load_bps_of_pay", 10_001],
+    ["advance_per_load_bps_of_pay", 12.5],
     ["percent_base", "gross"],
     ["insurance_applies_to", "company"],
     ["percent_base", 1],

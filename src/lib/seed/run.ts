@@ -246,6 +246,18 @@ export async function clearTenantAgent(admin: Db, tenantId: string): Promise<num
   });
 }
 
+// The arming log (0027) is append-only for the app role, which has no DELETE on it, so the admin
+// login clears the tenant's log before the replace, naming the tenant in the statement because
+// that login skips row-level security. The replace then writes the plan's log again. A row written
+// between this clear and the replace goes with its driver when the replace deletes the drivers
+// (the foreign key cascades). Returns the rows deleted.
+export async function clearTenantArmLog(admin: Db, tenantId: string): Promise<number> {
+  if (!isUuid(tenantId)) throw new Error("not a tenant id; nothing was cleared");
+  return admin.withTenant(tenantId, (q) =>
+    q.execute("DELETE FROM driver_arm_events WHERE tenant_id = CAST($1 AS uuid)", [tenantId]),
+  );
+}
+
 // Inside the tenant transaction: the current tenant is the carrier the plan was built for.
 export async function verifyTenant(q: Queryable, carrier: DemoCarrier): Promise<void> {
   const tenant = await readTenant(q);

@@ -232,6 +232,10 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "sweep_runs",
     "sweep_items",
     "approval_batches",
+    // Seeded, but filled here as a person writes them too (0027), so the probe also reads rows the
+    // app role wrote.
+    "driver_arm_events",
+    "driver_identities",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -416,6 +420,18 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), 'proposals', ARRAY[CAST($2 AS uuid)], 10000, 'refused',
              'invariants-test', now())`,
           [randomUUID(), proposal],
+        );
+        // A person arming the driver for advances, and the id the carrier's TMS knows them by (0027).
+        await q.execute(
+          `INSERT INTO driver_arm_events (id, tenant_id, driver_id, armed, note, membership_id, source)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), true, 'invariants-test',
+             CAST($3 AS uuid), 'ui')`,
+          [randomUUID(), c.driver, c.membership],
+        );
+        await q.execute(
+          `INSERT INTO driver_identities (id, tenant_id, driver_id, system, external_id, source)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'tms', 'invariants-test', 'ui')`,
+          [randomUUID(), c.driver],
         );
       });
       ids.proposals.push(proposal);

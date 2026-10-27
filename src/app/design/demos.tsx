@@ -6,6 +6,7 @@ import { CircleHelp, FileText, House, Truck, Users, Wallet } from "lucide-react"
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChatThread, type ChatMessage } from "@/components/app/chat-thread";
+import { DriverMoneyPanel } from "@/components/app/driver-money-panel";
 import { MobileNav } from "@/components/app/mobile-nav";
 import { NavList } from "@/components/app/nav-list";
 import { ProposalCard, type ProposalStatus } from "@/components/app/proposal-card";
@@ -16,8 +17,11 @@ import {
   ADVANCE_PROPOSAL,
   DRIVER,
   LOADS,
+  MONEY_IDENTITY,
+  MONEY_IDENTITY_NOT_ARMED,
   MOVE_PROPOSAL,
   PAYMENT_PROPOSAL,
+  SAMPLE_TENANT,
   SUGGESTIONS,
   type LoadRow,
 } from "./sample-data";
@@ -202,5 +206,18 @@ export function SheetDemo() {
     >
       <NavList items={SAMPLE_NAV} />
     </MobileNav>
+  );
+}
+
+// The driver's money panel as an admin and as staff. Presses here go nowhere: the sample answers
+// that it saved, and nothing is read again.
+const demoSend = async () => ({ ok: true, error: null });
+
+export function MoneyPanelDemo() {
+  return (
+    <div className="grid gap-4">
+      <DriverMoneyPanel identity={MONEY_IDENTITY} canAdmin timezone={SAMPLE_TENANT.timezone} send={demoSend} />
+      <DriverMoneyPanel identity={MONEY_IDENTITY_NOT_ARMED} canAdmin={false} timezone={SAMPLE_TENANT.timezone} send={demoSend} />
+    </div>
   );
 }

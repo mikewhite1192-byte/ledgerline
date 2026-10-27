@@ -1,19 +1,22 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { controlClass, Input } from "@/components/ui/input";
-import type { DriverOption } from "@/lib/advances/read";
+import type { DeskLoad, DeskSuggestion, DriverOption } from "@/lib/advances/read";
 import {
   ADVANCE_REQUEST_CATEGORIES,
   isDeskAmount,
   parseDollarsToCents,
   REQUEST_CATEGORY_LABELS,
+  suggestionInput,
+  suggestionLine,
   type AdvanceRequestCategory,
 } from "@/lib/advances/request";
+import { formatLocalDate } from "@/lib/format/dates";
 import { cn } from "@/lib/cn";
 
 // A fixed sentence per refusal from the desk route; nothing from the server is shown but these.
@@ -21,7 +24,7 @@ const NOTICES: Readonly<Record<string, string>> = {
   disabled: "Advances are switched off.",
   agent_off: "The agent is switched off, so the request was not checked.",
   ai_off: "The models are switched off, so the request was not checked.",
-  not_found: "That driver is not on file for your carrier.",
+  not_found: "That driver or load is not on file for your carrier.",
   busy: "The agent is answering another question. Try again in a moment.",
   bad_request: "Check the driver, the amount and the reason, then try again.",
   unauthenticated: "Your sign-in ended. Sign in again, then retry.",
@@ -30,6 +33,9 @@ const NOTICES: Readonly<Record<string, string>> = {
 const FALLBACK = "The request did not finish. Open Home to see whether the agent answered before trying again.";
 
 const AMOUNT_HINT = "Dollars and cents, from $1.00 to $10,000.00, like 300 or 300.50.";
+const SUGGEST_FAILED = "The suggestion could not be read. The agent still checks the pay rules.";
+
+type SuggestBody = { loads?: DeskLoad[]; suggestion?: DeskSuggestion; error?: unknown };
 
 export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; disabled: boolean }) {
   const router = useRouter();
@@ -39,6 +45,63 @@ export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; di
   const [errors, setErrors] = useState<{ driver?: string; amount?: string; category?: string }>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [loads, setLoads] = useState<DeskLoad[]>([]);
+  const [loadId, setLoadId] = useState("");
+  const [suggestion, setSuggestion] = useState<string | null>(null);
+  // Each pick asks again; only the newest answer is shown.
+  const asked = useRef(0);
+  // The last amount a suggestion wrote into the field, or "" when none did.
+  const autofilled = useRef("");
+
+  // The pay rules' suggestion for the picked driver and load, computed on the server. A new pick
+  // first takes back the last suggestion's amount while the field still holds exactly it, so one
+  // driver's or load's number never stays in the field for another. The answer fills the field
+  // only while it is empty, so a typed amount is never overwritten.
+  async function suggest(nextDriver: string, nextLoad: string) {
+    const ask = ++asked.current;
+    setSuggestion(null);
+    const stale = autofilled.current;
+    autofilled.current = "";
+    if (stale) setAmount((current) => (current === stale ? "" : current));
+    if (!nextDriver) {
+      setLoads([]);
+      return;
+    }
+    try {
+      const res = await fetch("/api/advances/suggest", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(nextLoad ? { driverId: nextDriver, loadId: nextLoad } : { driverId: nextDriver }),
+      });
+      const body = (await res.json()) as SuggestBody;
+      if (ask !== asked.current) return;
+      if (!res.ok || !body.suggestion) {
+        setSuggestion(SUGGEST_FAILED);
+        return;
+      }
+      if (!nextLoad) setLoads(Array.isArray(body.loads) ? body.loads : []);
+      setSuggestion(suggestionLine(body.suggestion));
+      const filled = body.suggestion.armed ? suggestionInput(body.suggestion.suggestedCents) : "";
+      if (filled) {
+        autofilled.current = filled;
+        setAmount((current) => (current.trim() === "" ? filled : current));
+      }
+    } catch {
+      if (ask === asked.current) setSuggestion(SUGGEST_FAILED);
+    }
+  }
+
+  function pickDriver(value: string) {
+    setDriverId(value);
+    setLoadId("");
+    setLoads([]);
+    void suggest(value, "");
+  }
+
+  function pickLoad(value: string) {
+    setLoadId(value);
+    void suggest(driverId, value);
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -57,7 +120,7 @@ export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; di
       const res = await fetch("/api/advances/request", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ driverId, amountCents: cents, category }),
+        body: JSON.stringify(loadId ? { driverId, amountCents: cents, category, loadId } : { driverId, amountCents: cents, category }),
       });
       if (res.ok) {
         router.push("/");
@@ -84,7 +147,7 @@ export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; di
           <select
             {...control}
             value={driverId}
-            onChange={(e) => setDriverId(e.target.value)}
+            onChange={(e) => pickDriver(e.target.value)}
             disabled={disabled || pending}
             className={cn(controlClass, "h-9")}
           >
@@ -97,6 +160,33 @@ export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; di
           </select>
         )}
       </Field>
+      <Field
+        id="advance-load"
+        label="For load (optional)"
+        hint={driverId ? "Loads this driver delivered in the last 45 days, newest first." : "Pick a driver first."}
+      >
+        {(control) => (
+          <select
+            {...control}
+            value={loadId}
+            onChange={(e) => pickLoad(e.target.value)}
+            disabled={disabled || pending || !driverId}
+            className={cn(controlClass, "h-9")}
+          >
+            <option value="">No particular load</option>
+            {loads.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.number}, delivered {formatLocalDate(l.deliveredOn)}
+              </option>
+            ))}
+          </select>
+        )}
+      </Field>
+      {suggestion ? (
+        <p className="text-body text-foreground-2" aria-live="polite">
+          {suggestion}
+        </p>
+      ) : null}
       <Field id="advance-amount" label="Amount" hint={AMOUNT_HINT} error={errors.amount}>
         {(control) => (
           <Input

@@ -77,6 +77,9 @@ export type ProposalView = {
   destination: { label: string; last4: string | null; testMode: true } | null;
   // Set on a detention_charge only, when its stored args read back whole.
   detention?: DetentionView | null;
+  // Set on an advance_payout only: the load it is for, with the per-load cap and what was left
+  // under it after this advance at proposal time (both null when the carrier has no cap).
+  load?: { number: string; capCents: number | null; leftAfterCents: number | null } | null;
 };
 
 // An outside message this turn read that failed screening. quote is shown to the person only, in

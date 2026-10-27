@@ -4,6 +4,7 @@ import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
 import { StatusBadge } from "@/components/app/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { flags } from "@/config/flags";
 import { isAdvanceStatus, readAdvanceList, readShell, type AdvanceListRow, type Shell } from "@/lib/advances/read";
@@ -18,23 +19,30 @@ import { AdvanceFrame, problemOf, ReadFailed, type ReadProblem } from "./frame";
 
 export const dynamic = "force-dynamic";
 
-// Every advance on file, newest first, with the latest payout's state. A row opens the advance's
-// record. Dark while the advances switch is off.
+// Every advance on file, newest first, with the latest payout's state and the load it is for. A
+// row opens the advance's record; the driver opens the driver's page. "Not armed" narrows the list
+// to drivers no one has armed to receive money. Dark while the advances switch is off.
 export default async function AdvancesPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   if (!advancesOn()) notFound();
-  const raw = (await searchParams).status;
+  const params = await searchParams;
+  const raw = params.status;
   const status = isAdvanceStatus(raw) ? raw : null;
+  const notArmed = params.armed === "no";
+  const hrefFor = (s: string | null, na: boolean) => {
+    const query = [s ? `status=${s}` : null, na ? "armed=no" : null].filter(Boolean).join("&");
+    return query ? `/advances?${query}` : "/advances";
+  };
 
   let page: { shell: Shell; rows: AdvanceListRow[] } | null = null;
   let problem: ReadProblem | null = null;
   try {
     page = await withRequestTenant(async (q, session) => ({
       shell: await readShell(q, session),
-      rows: await readAdvanceList(q, status),
+      rows: await readAdvanceList(q, status, notArmed),
     }));
   } catch (err) {
     problem = problemOf(err);
@@ -61,7 +69,7 @@ export default async function AdvancesPage({
           return (
             <Link
               key={s ?? "all"}
-              href={s ? `/advances?status=${s}` : "/advances"}
+              href={hrefFor(s, notArmed)}
               aria-current={current ? "page" : undefined}
               className={cn(
                 buttonVariants({ variant: current ? "secondary" : "ghost", size: "sm" }),
@@ -72,9 +80,20 @@ export default async function AdvancesPage({
             </Link>
           );
         })}
+        <span aria-hidden className="mx-1 self-center text-muted-foreground">·</span>
+        <Link
+          href={hrefFor(status, !notArmed)}
+          aria-current={notArmed ? "page" : undefined}
+          className={cn(
+            buttonVariants({ variant: notArmed ? "secondary" : "ghost", size: "sm" }),
+            notArmed && "font-semibold",
+          )}
+        >
+          Not armed
+        </Link>
       </nav>
       <DataTable<AdvanceListRow>
-        caption={status ? `${statusLabel(status)} advances` : "All advances"}
+        caption={`${status ? `${statusLabel(status)} advances` : "All advances"}${notArmed ? ", drivers not armed" : ""}`}
         rows={page.rows}
         rowKey={(r) => r.id}
         empty={{
@@ -96,10 +115,24 @@ export default async function AdvancesPage({
             header: "Driver",
             cell: (r) => (
               <span className="whitespace-nowrap">
-                {r.driverName}
-                <span className="block text-small text-muted-foreground">{r.driverCode}</span>
+                <Link href={`/records/drivers/${r.driverId}`} className="text-link underline-offset-4 hover:underline">
+                  {r.driverName}
+                </Link>
+                <span className="block text-small text-muted-foreground">
+                  {r.driverCode}
+                  {r.driverArmed ? null : (
+                    <Badge tone="warning" className="ml-2">
+                      Not armed
+                    </Badge>
+                  )}
+                </span>
               </span>
             ),
+          },
+          {
+            key: "load",
+            header: "Load",
+            cell: (r) => (r.loadNumber ? <span className="whitespace-nowrap">{r.loadNumber}</span> : <span className="text-muted-foreground">None</span>),
           },
           { key: "requested", header: "Requested", cell: (r) => <span className="whitespace-nowrap">{formatLocalDate(r.requestedOn)}</span> },
           { key: "amount", header: "Amount", align: "right", cell: (r) => <Money cents={r.amountCents} /> },

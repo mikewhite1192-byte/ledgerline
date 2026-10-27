@@ -133,6 +133,66 @@ describe("advance limit", () => {
   });
 });
 
+describe("advance limit with a load or a card", () => {
+  const ACTIVE_CARD = /^SELECT id, provider, provider_token, last4, sim_behavior\s+FROM driver_cards/;
+  const heroLoad = plan.rows.loads.find((l) => l.driver_id === hero.id && l.delivered_on !== null)!;
+  const otherLoad = plan.rows.loads.find((l) => l.driver_id !== hero.id)!;
+  const heroCard = plan.rows.driver_cards.find((c) => c.driver_id === hero.id && c.status === "active")!;
+
+  function cardDb() {
+    return planDb(plan, (sql, params) => {
+      if (ASKED.test(sql)) return [{ asked: null }];
+      if (!ACTIVE_CARD.test(sql)) return undefined;
+      const row = plan.rows.driver_cards.find(
+        (c) => c.driver_id === params[0] && c.id === params[1] && c.status === "active",
+      );
+      return row ? [{ ...row }] : [];
+    });
+  }
+
+  async function engineOnLoad(amountCents: number) {
+    return planDb(plan).withTenant(ctx.session.tenantId, async (q) =>
+      advanceEligibility(await readAdvanceInput(q, hero.id, ctx.now.toISOString(), amountCents, heroLoad.id)),
+    );
+  }
+
+  it("refuses a load that is not the driver's, with nothing to size against", async () => {
+    const out = await cardDb().withTenant(ctx.session.tenantId, (q) =>
+      advanceLimit(q, ctx, { driverId: hero.id, amountCents: 100, requestedOn: today, loadId: otherLoad.id }),
+    );
+    expect(out).toEqual({ ok: false, reason: "engine_refused", limitCents: 0, requestedCents: 100 });
+  });
+
+  it("sizes an advance for the driver's own load under its cap, and refuses one above it", async () => {
+    const engine = await engineOnLoad(100);
+    expect(engine.loadCapCents).not.toBeNull();
+    expect(engine.maxCents).toBeGreaterThan(0);
+    const within = await cardDb().withTenant(ctx.session.tenantId, (q) =>
+      advanceLimit(q, ctx, { driverId: hero.id, amountCents: engine.maxCents, requestedOn: today, loadId: heroLoad.id }),
+    );
+    expect(within).toMatchObject({ ok: true, limitCents: engine.maxCents, exceptions: [] });
+    const over = await engineOnLoad(engine.maxCents + 100);
+    const overOnly = over.reasons.every((r) => r === "over_driver_limit" || r === "exceeds_earned_share" || r === "over_load_cap");
+    const out = await cardDb().withTenant(ctx.session.tenantId, (q) =>
+      advanceLimit(q, ctx, { driverId: hero.id, amountCents: engine.maxCents + 100, requestedOn: today, loadId: heroLoad.id }),
+    );
+    expect(out).toMatchObject({ ok: false, reason: overOnly ? "amount_over_limit" : "engine_refused" });
+  });
+
+  it("keeps a card that is not one of the driver's active cards as an exception, never clean", async () => {
+    const { maxCents } = await engineFor(hero.id, CASE_A_ASK_CENTS);
+    expect((await engineFor(hero.id, maxCents)).eligible).toBe(true);
+    const own = await cardDb().withTenant(ctx.session.tenantId, (q) =>
+      advanceLimit(q, ctx, { driverId: hero.id, amountCents: maxCents, requestedOn: today, cardId: heroCard.id }),
+    );
+    expect(own).toMatchObject({ ok: true, exceptions: [] });
+    const stranger = await cardDb().withTenant(ctx.session.tenantId, (q) =>
+      advanceLimit(q, ctx, { driverId: hero.id, amountCents: maxCents, requestedOn: today, cardId: OTHER_ID }),
+    );
+    expect(stranger).toMatchObject({ ok: true, exceptions: ["card_not_drivers"] });
+  });
+});
+
 describe("pay correction limit", () => {
   const open = plan.rows.settlement_periods.find((p) => p.status === "open")!;
   const paid = plan.rows.settlement_periods.find((p) => p.status === "paid")!;
