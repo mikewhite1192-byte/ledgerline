@@ -46,6 +46,26 @@ export function auditFor(p: ProposalView, ctx: AuditContext): ProposalAudit {
   return ctx.checking && p.status === "proposed" ? { state: "checking" } : { state: "unknown" };
 }
 
+// Hours and minutes, as the card says a stop's time: 420 is "7 h 00 min".
+export function hoursMinutes(minutes: number): string {
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+}
+
+// A detention charge's why, one line per stop and one for the invoice, every figure from the
+// proposal's stored args (the engine's numbers at proposal time).
+export function detentionLines(d: NonNullable<ProposalView["detention"]>, amountCents: number): string[] {
+  const free = hoursMinutes(d.freeMinutes);
+  const rate = formatCents(d.hourlyCents);
+  const lines = d.stops.map((s) => {
+    const place = s.stop === "pickup" ? "the shipper" : "the consignee";
+    const quarters = `${s.quarters} started quarter ${s.quarters === 1 ? "hour" : "hours"}`;
+    return `${hoursMinutes(s.dwellMinutes)} at ${place}, ${free} free, ${quarters} at ${rate} an hour: ${formatCents(s.cents)}.`;
+  });
+  const after = formatCents(d.invoiceAmountBeforeCents + amountCents);
+  lines.push(`The open invoice goes from ${formatCents(d.invoiceAmountBeforeCents)} to ${after}.`);
+  return lines;
+}
+
 export function proposalCardFrom(
   p: ProposalView,
   audit?: AuditContext,
@@ -62,11 +82,18 @@ export function proposalCardFrom(
   else if (p.kind === "advance_payout" && p.subjectLabel && p.amountCents > 0) {
     confirmQuestion = `Pay ${formatCents(p.amountCents)} to ${p.subjectLabel}?`;
   }
+  const detention =
+    p.kind === "detention_charge" && p.detention
+      ? detentionLines(p.detention, p.amountCents).map((text) => ({ text }))
+      : [];
   return {
     id: p.id,
     title: `${p.title}${subject}`,
     impact: { cents: p.amountCents, direction: p.direction },
-    reasons: p.reasons.map((r) => (r.source ? { text: r.text, source: r.source } : { text: r.text })),
+    reasons: [
+      ...detention,
+      ...p.reasons.map((r) => (r.source ? { text: r.text, source: r.source } : { text: r.text })),
+    ],
     sources: p.sources,
     status: p.status,
     confirmQuestion,

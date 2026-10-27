@@ -11,6 +11,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const invoice = rows.invoices.find((i) => i.source === "load" && i.status === "open")!;
   const input = rows.untrusted_inputs[0];
   const wrong = plan.planted.wrongInvoice;
+  // The first planted unbilled detention: 41,250 cents in October.
+  const detentionLoad = plan.planted.detentionLoadIds[0];
   const refs = [{ table: "drivers", id: hero.id }];
   return {
     get_driver: { driverId: hero.id },
@@ -54,6 +56,12 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       fromInvoiceId: wrong.appliedToInvoiceId,
       toInvoiceId: wrong.meantForInvoiceId,
       sourceRefs: [{ table: "customer_payments", id: wrong.paymentId }],
+    },
+    find_unbilled_detention: { month: "2026-10" },
+    propose_detention_charge: {
+      loadId: detentionLoad,
+      amountCents: 41_250,
+      sourceRefs: [{ table: "loads", id: detentionLoad }],
     },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     report_ar_aging: { asOf: "2026-11-02" },

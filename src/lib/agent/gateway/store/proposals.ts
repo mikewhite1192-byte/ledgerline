@@ -14,6 +14,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   invoice_fix: "Invoice correction",
   invoice_post: "Post invoice",
   payment_reapply: "Move payment to the right invoice",
+  detention_charge: "Bill unbilled detention",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;
@@ -48,6 +49,8 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   }
   // An invoice is money the customer owes in; nothing moves until they pay it.
   if (kind === "invoice_post") return { amountCents, direction: "in" } as const;
+  // Money the customer owes the carrier on top of the invoice.
+  if (kind === "detention_charge") return { amountCents, direction: "in" } as const;
   return { amountCents, direction: "out" } as const;
 }
 

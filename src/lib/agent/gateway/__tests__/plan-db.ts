@@ -1,4 +1,5 @@
 import type { Param } from "../../../db";
+import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
 import { QUEUE_CHILDREN, QUEUE_LOADS } from "../../../data/read";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
@@ -11,10 +12,16 @@ import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 // handler or fails the test.
 
 const FROM =
-  /^SELECT .+? FROM (\w+) WHERE tenant_id = current_tenant_id\(\)(?: AND (.+))? ORDER BY \w+$/s;
+  /^SELECT .+? FROM (\w+) WHERE tenant_id = current_tenant_id\(\)(?: AND (.+))? ORDER BY (\w+)(?: LIMIT (\d+))?$/s;
+// A paged read: its filter in parentheses and, after the first page, the last key it saw.
+const AFTER_KEY = " AND id > CAST($3 AS uuid)";
 const BY_COLUMN = /^(\w+) = CAST\(\$1 AS uuid\)$/;
 const BY_DRIVER_LOADS =
   "load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid))";
+
+const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)";
+const DELIVERED_LOADS = `load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
+const DELIVERED_CUSTOMERS = `id IN (SELECT customer_id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
 
 export const PLAN_ANCHOR = "2026-11-02";
 
@@ -37,9 +44,34 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     const m = FROM.exec(sql);
     if (!m) return undefined;
     const all = tables[m[1]] ?? [];
+    if (m[4] !== undefined) return pageRows(plan.rows, all, m[2], m[3], Number(m[4]), params);
     return filterRows(plan.rows, all, m[2], params).map((r) => ({ ...r }));
   };
   return new FakeDb(tables, handler);
+}
+
+// One page as the database gives it: the filter's rows in key order, after the last key seen, up
+// to the limit.
+function pageRows(
+  rows: TenantRows,
+  all: Row[],
+  where: string | undefined,
+  key: string,
+  limit: number,
+  params: Param[],
+): Row[] {
+  if (where === undefined || key !== "id") throw new Error("unexpected paged read");
+  const after = where.endsWith(AFTER_KEY) ? String(params[2]) : null;
+  const inner = after === null ? where : where.slice(0, -AFTER_KEY.length);
+  if (!inner.startsWith("(") || !inner.endsWith(")")) {
+    throw new Error(`unexpected paged where clause: ${inner.slice(0, 60)}`);
+  }
+  const filterParams = after === null ? params : params.slice(0, -1);
+  return filterRows(rows, all, inner.slice(1, -1), filterParams)
+    .filter((r) => after === null || String(r.id) > after)
+    .sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))
+    .slice(0, limit)
+    .map((r) => ({ ...r }));
 }
 
 function filterRows(rows: TenantRows, all: Row[], where: string | undefined, params: Param[]): Row[] {
@@ -66,6 +98,19 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
     );
     return all.filter((r) => queued.has((where === QUEUE_LOADS ? r.id : r.load_id) as string));
   }
+  if (where === DELIVERED_BETWEEN || where === DELIVERED_LOADS || where === DELIVERED_CUSTOMERS) {
+    const [start, end] = params as string[];
+    const loads = rows.loads.filter(
+      (l) => l.delivered_on !== null && l.delivered_on >= start && l.delivered_on <= end,
+    );
+    const loadIds = new Set(loads.map((l) => l.id));
+    if (where === DELIVERED_BETWEEN) return all.filter((r) => loadIds.has(r.id as string));
+    if (where === DELIVERED_CUSTOMERS) {
+      const customerIds = new Set(loads.map((l) => l.customer_id));
+      return all.filter((r) => customerIds.has(r.id as string));
+    }
+    return all.filter((r) => loadIds.has(r.load_id as string));
+  }
   throw new Error(`unexpected where clause: ${where.slice(0, 60)}`);
 }
 
@@ -73,7 +118,7 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
 // serves one stored proposal through withProposal.
 export const PROPOSAL_ID = "6a1f0c2e-9d3b-4c5a-8e7f-1b2c3d4e5f60";
 
-export type ProposalKindName = "advance_payout" | "pay_correction" | "invoice_fix";
+export type ProposalKindName = "advance_payout" | "pay_correction" | "invoice_fix" | "detention_charge";
 
 // One stored proposal per kind, as get_proposal's select returns it, over the plan's own records.
 export function proposalRowFor(plan: CarrierPlan, kind: ProposalKindName, over: Row = {}): Row {
@@ -117,6 +162,30 @@ export function proposalRowFor(plan: CarrierPlan, kind: ProposalKindName, over: 
       operator_verdict: "owed_to_driver",
       sources: JSON.stringify([{ table: "drivers", id: hero.id }, { table: "settlement_periods", id: open.id }]),
       args: JSON.stringify({ driverId: hero.id, periodId: open.id, deltaCents: 2_500 }),
+      ...over,
+    };
+  }
+  if (kind === "detention_charge") {
+    const load = rows.loads.find((l) => l.id === plan.planted.detentionLoadIds[0])!;
+    const check = detentionChargeOf({
+      load,
+      customer: rows.customers.find((c) => c.id === load.customer_id)!,
+      miles: rows.load_state_miles.filter((m) => m.load_id === load.id),
+      accessorials: rows.load_accessorials.filter((a) => a.load_id === load.id),
+      invoices: rows.invoices.filter((i) => i.load_id === load.id),
+    });
+    if (!check.ok) throw new Error("the planted detention load has no charge");
+    return {
+      ...base,
+      title: "Bill unbilled detention",
+      subject_table: "loads",
+      subject_id: load.id,
+      subject_label: load.load_number,
+      amount_cents: check.charge.amountCents,
+      direction: "in",
+      operator_verdict: "not_given",
+      sources: JSON.stringify(check.charge.sources),
+      args: JSON.stringify(chargeArgsOf(check.charge)),
       ...over,
     };
   }
