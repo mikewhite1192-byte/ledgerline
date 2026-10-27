@@ -78,7 +78,7 @@ function neutralize(text: string): string {
 
 export function screenMessages(
   mode: "tool" | "text",
-  kind: "email" | "transcript" | "document",
+  kind: "email" | "transcript" | "document" | "portal",
   text: string,
 ): AiMessage[] {
   return [

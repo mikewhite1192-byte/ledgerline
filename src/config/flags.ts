@@ -150,6 +150,27 @@ export type Flags = {
   // adds the charge to the load's open invoice. Off means neither tool is offered or runs and an
   // approval is refused before anything is written.
   detentionEnabled: boolean;
+  // The portal runner: the agent opens the fictional broker portal in a browser and reads a
+  // load's delivery stamps and POD. Off gates the portal pages, the run routes, the gateway tool
+  // and the worker, which re-checks it when it claims a run. aiEnabled must also be on.
+  portalRunnerEnabled: boolean;
+  // The model that drives the browser, and the only one a computer step may call. Muse Spark is
+  // the default: Muse Wonder answered 400 "Unsupported tool type: 'computer'" when the runner was
+  // built. Moving to Muse Wonder once it takes the tool is the owner's call, in its own one-line
+  // change.
+  portalRunnerModel: "wonder" | "spark";
+  // Hard caps on one portal run. Reaching any of them ends the run with no evidence.
+  portalRunLimits: {
+    maxSteps: number;
+    maxWallMs: number;
+    maxRunCents: number;
+    maxCallCents: number;
+    maxActionsPerStep: number;
+    screenshotMaxBytes: number;
+    podMaxBytes: number;
+    // A safety check a person has not decided within this many minutes ends the run.
+    approvalWaitMinutes: number;
+  };
 };
 
 export const flags: Flags = {
@@ -199,4 +220,18 @@ export const flags: Flags = {
   voiceIntakeEnabled: false,
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
   detentionEnabled: false,
+  portalRunnerEnabled: false,
+  portalRunnerModel: "spark",
+  portalRunLimits: {
+    maxSteps: 15,
+    maxWallMs: 240_000,
+    maxRunCents: 150,
+    maxCallCents: 25,
+    maxActionsPerStep: 8,
+    screenshotMaxBytes: 400_000,
+    // Also the held_pod_pdf CHECK in migration 0021 (300000 bytes): raise both together, or a
+    // paused run cannot hold its POD and its resume ends pod_not_kept.
+    podMaxBytes: 300_000,
+    approvalWaitMinutes: 30,
+  },
 };

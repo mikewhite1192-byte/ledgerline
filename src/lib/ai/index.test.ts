@@ -6,6 +6,7 @@ import { ForbiddenError } from "../tenant/context";
 import {
   AiError,
   complete,
+  computerStep,
   generateImage,
   segment,
   transcribe,
@@ -15,14 +16,17 @@ import {
 } from "./index";
 import {
   audioReserve,
+  COMPUTER_TOOL_RESERVE_TOKENS,
   estimateReserve,
   NANOCENTS_PER_CENT,
   priceFor,
+  SCREENSHOT_RESERVE_TOKENS,
   type TokenPrice,
   VOICE_NANOCENTS_PER_SECOND,
 } from "./prices";
 import { forgetKey } from "./keys";
 import type { FetchFn } from "./providers/http";
+import { dataUrlLength } from "./providers/media";
 import { JPEG_BYTES, makeWav, PDF_BYTES, PNG_BYTES, QUIET_JOB } from "./test-fixtures";
 
 const KEY = "test-key-abcdefghijklmnop";
@@ -2188,5 +2192,152 @@ describe("Muse Spark Open's standby host", () => {
     flags.sparkOpenFallback = "fireworks";
     await complete("spark_open", REQUEST, SESSION, deps);
     expect(fetchFn).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe("computerStep, one browser step", () => {
+  const SHOT = { mime: "image/png" as const, bytes: PNG_BYTES };
+  const CHECK = { id: "sc_1", code: "malicious_instructions", message: "The page asks for something else." };
+  const pairOf = (i: number) => ({
+    call: { type: "computer_call", call_id: `call_${i}`, actions: [{ type: "wait" }] },
+    output: { callId: `call_${i}`, screenshot: SHOT, acknowledged: [] as Record<string, unknown>[] },
+  });
+  const STEP = (history: ReturnType<typeof pairOf>[] = []) => ({
+    purpose: "portal_runner_step",
+    instructions: "Read the page only.",
+    task: "Find load FFE-100001.",
+    screenshot: SHOT,
+    history,
+    traceId: TRACE,
+  });
+  const computerAnswer = (checks: unknown[] = []) =>
+    Response.json({
+      id: "resp_cu1",
+      status: "completed",
+      output: [
+        {
+          type: "computer_call",
+          id: "cu_1",
+          call_id: "call_new",
+          actions: [{ type: "click", x: 5, y: 6, button: "left" }],
+          pending_safety_checks: checks,
+          status: "completed",
+        },
+      ],
+      usage: USAGE,
+    });
+  // What the wrapper reserves for a step with n screenshots.
+  const reserveFor = (body: string, n: number, price = priceFor("spark", "meta", "muse-spark-1.3")) =>
+    estimateReserve(
+      price as TokenPrice,
+      new TextEncoder().encode(body).length - n * dataUrlLength("image/png", PNG_BYTES.length),
+      1024,
+      n * SCREENSHOT_RESERVE_TOKENS + COMPUTER_TOOL_RESERVE_TOKENS,
+    );
+  const SHIPPED_MODEL = flags.portalRunnerModel;
+
+  afterEach(() => {
+    flags.portalRunnerModel = SHIPPED_MODEL;
+  });
+
+  it("ships on Muse Spark: sends the computer tool, reserves each screen and the tool, and returns the call", async () => {
+    expect(flags.portalRunnerModel).toBe("spark");
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer([CHECK]));
+    const result = await computerStep("spark", STEP(), SESSION, { fetch: fetchFn, db: ledger.db });
+    const body = String(fetchFn.mock.calls[0][1].body);
+    const sent = JSON.parse(body);
+    expect(sent.model).toBe("muse-spark-1.3");
+    expect(sent.tools).toEqual([{ type: "computer" }]);
+    expect(sent.store).toBe(false);
+    const row = ledger.rows.get(result.callId)!;
+    expect(row).toMatchObject({ target: "spark", trace: TRACE, status: "ok", cost: COST });
+    expect(row.reserved).toBe(reserveFor(body, 1));
+    expect(result.call).toMatchObject({ callId: "call_new", pendingSafetyChecks: [CHECK], checks: [CHECK] });
+    expect(result.costNanocents).toBe(COST);
+    expect(result.toolSearches).toBe(0);
+    // Nothing lands on the Wonder counter.
+    expect(ledger.counter.wonderSpent).toBe(0);
+  });
+
+  it("drives Muse Wonder only when the switch names it, on the Wonder counter", async () => {
+    flags.portalRunnerModel = "wonder";
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const result = await computerStep("wonder", STEP(), SESSION, { fetch: fetchFn, db: ledger.db });
+    const body = String(fetchFn.mock.calls[0][1].body);
+    expect(JSON.parse(body).model).toBe("muse-wonder-1.0");
+    const row = ledger.rows.get(result.callId)!;
+    expect(row).toMatchObject({ target: "wonder", cost: WONDER_COST });
+    expect(row.reserved).toBe(reserveFor(body, 1, priceFor("wonder", "meta", "muse-wonder-1.0")));
+    // The Wonder counter carries the reservation and then the cost.
+    expect(ledger.counter.wonderSpent).toBe(WONDER_COST);
+  });
+
+  it("reserves fifteen screens for a step with fourteen calls behind it", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const history = Array.from({ length: 14 }, (_, i) => pairOf(i));
+    const result = await computerStep("spark", STEP(history), SESSION, { fetch: fetchFn, db: ledger.db });
+    const body = String(fetchFn.mock.calls[0][1].body);
+    expect(JSON.parse(body).input).toHaveLength(1 + 28);
+    expect(ledger.rows.get(result.callId)!.reserved).toBe(reserveFor(body, 15));
+  });
+
+  it("returns a null call when the model answers in text", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => Response.json(metaAnswer()));
+    const result = await computerStep("spark", STEP(), SESSION, { fetch: fetchFn, db: ledger.db });
+    expect(result.call).toBeNull();
+    expect(result.text).toBe("Hello, money desk.");
+  });
+
+  it.each([
+    ["30 calls of history", () => STEP(Array.from({ length: 30 }, (_, i) => pairOf(i)))],
+    ["a screenshot that is not a PNG or JPEG", () => ({ ...STEP(), screenshot: { mime: "image/png" as const, bytes: PDF_BYTES } })],
+    ["an empty task", () => ({ ...STEP(), task: " " })],
+    ["an answer for another call", () => ({ ...STEP([{ ...pairOf(1), output: { ...pairOf(1).output, callId: "call_9" } }]) })],
+    [
+      "an acknowledged check without an id",
+      () => ({ ...STEP([{ ...pairOf(1), output: { ...pairOf(1).output, acknowledged: [{ code: "x" }] } }]) }),
+    ],
+  ])("refuses %s before any reservation", async (_name, request) => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const err = await refusal(
+      computerStep("spark", request() as Parameters<typeof computerStep>[1], SESSION, { fetch: fetchFn, db: ledger.db }),
+    );
+    expect(err.category).toBe("bad_request");
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(ledger.rows.size).toBe(0);
+  });
+
+  it("refuses every target but the one the switch names, both ways, before any reservation", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const deps = { fetch: fetchFn, db: ledger.db };
+    flags.portalRunnerModel = "spark";
+    expect((await refusal(computerStep("wonder", STEP(), SESSION, deps))).category).toBe("bad_request");
+    flags.portalRunnerModel = "wonder";
+    expect((await refusal(computerStep("spark", STEP(), SESSION, deps))).category).toBe("bad_request");
+    // A target that is neither, and a switch holding neither, refuse too.
+    expect((await refusal(computerStep("spark_open" as "spark", STEP(), SESSION, deps))).category).toBe("bad_request");
+    flags.portalRunnerModel = "spark_open" as "spark";
+    expect((await refusal(computerStep("spark_open" as "spark", STEP(), SESSION, deps))).category).toBe("bad_request");
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(ledger.rows.size).toBe(0);
+  });
+
+  it("refuses a step whose reservation passes its cost cap, before the call", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const err = await refusal(
+      computerStep("spark", { ...STEP(Array.from({ length: 14 }, (_, i) => pairOf(i))), maxCostCents: 1 }, SESSION, {
+        fetch: fetchFn,
+        db: ledger.db,
+      }),
+    );
+    expect(err.category).toBe("too_expensive");
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });
