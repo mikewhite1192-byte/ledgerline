@@ -145,18 +145,24 @@ export async function runAudit(
   const { traceId, attempts } = lease;
 
   const write = async (verdict: ParsedVerdict, callId: string | null): Promise<AuditResult> => {
+    // Only while this run still holds its own lease: one that lapsed and was taken over writes
+    // nothing, so the newer run's answer is the one stored.
     const wrote = await store.write(
       proposalId,
       { verdict: verdict.verdict, agrees: agreesOf(verdict.verdict), callId, concerns: verdict.concerns },
       clock(),
+      leasedAt,
     );
     if (!wrote) {
-      console.warn(`auditor: proposal ${proposalId} took no verdict (set already, or decided) trace=${traceId}`);
+      console.warn(
+        `auditor: proposal ${proposalId} took no verdict (set already, decided, or the lease lapsed) trace=${traceId}`,
+      );
     }
     const back = await store.read(proposalId);
     if (back?.verdict) return doneOf(back);
     // Unknown is not zero: a verdict that did not land is never reported. A proposal decided
-    // meanwhile takes none; one still waiting is asked again.
+    // meanwhile takes none; one still waiting (another run holds the lease now, or gave it back)
+    // is reported as in progress, with no second call from this run.
     return back && back.status === "proposed" ? { state: "in_progress" } : { state: "not_auditable" };
   };
 

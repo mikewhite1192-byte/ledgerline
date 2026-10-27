@@ -306,8 +306,8 @@ describe("the auditor on a real database", () => {
     expect(await store.lease(id, t3, 90_000, randomUUID())).toEqual({ traceId: trace, attempts: 3 });
 
     const now = new Date(T0 + 95_000);
-    expect(await store.write(id, { verdict: "concerns", agrees: false, callId: CALL_ID, concerns: ["source_missing"] }, now)).toBe(true);
-    expect(await store.write(id, { verdict: "pass", agrees: true, callId: null, concerns: [] }, now)).toBe(false);
+    expect(await store.write(id, { verdict: "concerns", agrees: false, callId: CALL_ID, concerns: ["source_missing"] }, now, t3)).toBe(true);
+    expect(await store.write(id, { verdict: "pass", agrees: true, callId: null, concerns: [] }, now, t3)).toBe(false);
     expect(await auditRow(A, id)).toMatchObject({
       auditor_verdict: "concerns",
       auditor_agrees: false,
@@ -322,13 +322,62 @@ describe("the auditor on a real database", () => {
     expect(await store.read(id)).toMatchObject({ verdict: "concerns", concerns: ["source_missing"], checkedAt: now.toISOString() });
   });
 
+  it("refuses the verdict of a run whose lease lapsed and was taken over, and keeps the newer run's", async () => {
+    const id = await addProposal(A);
+    const store = dbAuditStore(session(A), { db: app });
+    // Runner A leases; its call outlives the 90 seconds, so runner B takes the lease.
+    const tA = new Date(T0);
+    const lateA = await store.lease(id, tA, 90_000, randomUUID());
+    expect(lateA).toMatchObject({ attempts: 1 });
+    const tB = new Date(T0 + 90_000);
+    expect(await store.lease(id, tB, 90_000, randomUUID())).toEqual({ traceId: lateA?.traceId, attempts: 2 });
+
+    // A answers first, under the lease it no longer holds: nothing changes.
+    const aAt = new Date(T0 + 95_000);
+    expect(await store.write(id, { verdict: "pass", agrees: true, callId: CALL_ID, concerns: [] }, aAt, tA)).toBe(false);
+    expect(await auditRow(A, id)).toMatchObject({
+      auditor_verdict: null,
+      auditor_agrees: null,
+      auditor_call_id: null,
+      concerns: "[]",
+      checked_at: null,
+      started_at: tB.toISOString(),
+      attempts: 2,
+    });
+
+    // B answers under its own lease, and its verdict is the one stored.
+    const bAt = new Date(T0 + 100_000);
+    expect(await store.write(id, { verdict: "block", agrees: false, callId: null, concerns: ["amount_wrong"] }, bAt, tB)).toBe(true);
+    expect(await auditRow(A, id)).toMatchObject({
+      auditor_verdict: "block",
+      auditor_agrees: false,
+      auditor_call_id: null,
+      concerns: '["amount_wrong"]',
+      checked_at: bAt.toISOString(),
+      started_at: tB.toISOString(),
+      attempts: 2,
+    });
+
+    // A lease given back also writes nothing: a released lease is no one's.
+    const other = await addProposal(A);
+    const t1 = new Date(T0);
+    expect(await store.lease(other, t1, 90_000, randomUUID())).not.toBeNull();
+    await store.release(other, t1);
+    expect(await store.write(other, { verdict: "pass", agrees: true, callId: null, concerns: [] }, new Date(T0 + 1_000), t1)).toBe(false);
+    expect(await auditRow(A, other)).toMatchObject({ auditor_verdict: null, checked_at: null, started_at: null });
+  });
+
   it("keeps each carrier's proposals to itself, for the store and for get_proposal", async () => {
     const id = await addProposal(A, { onDriver: true });
     const storeB = dbAuditStore(session(B), { db: app });
     expect(await storeB.read(id)).toBeNull();
     expect(await storeB.lease(id, new Date(T0), 90_000, randomUUID())).toBeNull();
-    expect(await storeB.write(id, { verdict: "pass", agrees: true, callId: null, concerns: [] }, new Date(T0))).toBe(false);
     expect(await auditRow(A, id)).toMatchObject({ auditor_verdict: null, started_at: null });
+    // Even with a lease the owner holds, the other carrier's write finds no row.
+    const leasedAt = new Date(T0);
+    expect(await dbAuditStore(session(A), { db: app }).lease(id, leasedAt, 90_000, randomUUID())).not.toBeNull();
+    expect(await storeB.write(id, { verdict: "pass", agrees: true, callId: null, concerns: [] }, leasedAt, leasedAt)).toBe(false);
+    expect(await auditRow(A, id)).toMatchObject({ auditor_verdict: null, started_at: leasedAt.toISOString() });
 
     const ctx = (tenantId: string, over: Partial<GatewayContext> = {}): GatewayContext => ({
       session: session(tenantId),
@@ -424,13 +473,14 @@ describe("the auditor on a real database", () => {
     const store = dbAuditStore(session(A), { db: app });
     for (const status of ["rejected", "expired"]) {
       const id = await addProposal(A);
-      expect(await store.lease(id, new Date(T0), 90_000, randomUUID()), status).not.toBeNull();
+      const leasedAt = new Date(T0);
+      expect(await store.lease(id, leasedAt, 90_000, randomUUID()), status).not.toBeNull();
       await asAdmin(
         "UPDATE proposals SET status = $2, decided_by = 'sub-x', decided_at = now() WHERE id = CAST($1 AS uuid)",
         [id, status],
       );
       const verdict = { verdict: "pass", agrees: true, callId: CALL_ID, concerns: [] };
-      expect(await store.write(id, verdict, new Date(T0 + 5_000)), status).toBe(false);
+      expect(await store.write(id, verdict, new Date(T0 + 5_000), leasedAt), status).toBe(false);
       expect(await auditRow(A, id), status).toMatchObject({ auditor_verdict: null, auditor_call_id: null, checked_at: null });
     }
 

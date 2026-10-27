@@ -124,14 +124,16 @@ export type VerdictWrite = {
   concerns: readonly string[];
 };
 
-// Writes the verdict once, and only on a proposal still waiting. False when a verdict was already
-// there (someone else finished first) or the proposal was decided meanwhile; the caller reads it
-// back.
+// Writes the verdict once, and only on a proposal still waiting, by the caller still holding the
+// lease it took at startedAt. False when a verdict was already there (someone else finished
+// first), the proposal was decided meanwhile, or this caller's lease lapsed and was taken over or
+// given back (a lapsed lease's late answer never wins); the caller reads it back.
 export async function writeAuditVerdict(
   q: Queryable,
   proposalId: string,
   v: VerdictWrite,
   now: Date,
+  startedAt: Date,
 ): Promise<boolean> {
   const n = await q.execute(
     `UPDATE proposals
@@ -139,8 +141,16 @@ export async function writeAuditVerdict(
             auditor_concerns = CAST($5 AS jsonb), auditor_checked_at = CAST($6 AS timestamptz),
             updated_at = CAST($6 AS timestamptz)
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND auditor_verdict IS NULL
-        AND status = 'proposed'`,
-    [proposalId, v.verdict, v.agrees, v.callId, JSON.stringify(v.concerns), now.toISOString()],
+        AND status = 'proposed' AND auditor_started_at = CAST($7 AS timestamptz)`,
+    [
+      proposalId,
+      v.verdict,
+      v.agrees,
+      v.callId,
+      JSON.stringify(v.concerns),
+      now.toISOString(),
+      startedAt.toISOString(),
+    ],
   );
   return n === 1;
 }

@@ -89,8 +89,9 @@ export interface AuditStore {
   // when someone else does.
   lease(proposalId: string, now: Date, leaseMs: number, traceId: string): Promise<AuditLease | null>;
   release(proposalId: string, startedAt: Date): Promise<void>;
-  // False when a verdict was already there.
-  write(proposalId: string, verdict: VerdictWrite, now: Date): Promise<boolean>;
+  // Writes as the holder of the lease taken at startedAt. False when a verdict was already there,
+  // the proposal was decided, or that lease is no longer this caller's.
+  write(proposalId: string, verdict: VerdictWrite, now: Date, startedAt: Date): Promise<boolean>;
 }
 
 export function dbAuditStore(session: Session, deps: StoreDeps = {}): AuditStore {
@@ -103,6 +104,7 @@ export function dbAuditStore(session: Session, deps: StoreDeps = {}): AuditStore
     release: async (proposalId, startedAt) => {
       await tx((q) => releaseAuditLease(q, proposalId, startedAt));
     },
-    write: (proposalId, verdict, now) => tx((q) => writeAuditVerdict(q, proposalId, verdict, now)),
+    write: (proposalId, verdict, now, startedAt) =>
+      tx((q) => writeAuditVerdict(q, proposalId, verdict, now, startedAt)),
   };
 }

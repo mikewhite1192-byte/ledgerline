@@ -3,7 +3,7 @@ import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import type { AuditState, AuditStore, VerdictWrite } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
-import { AiError, runAudit, type AuditDeps } from "./run";
+import { AiError, runAudit, type AuditDeps, type AuditResult } from "./run";
 
 // runAudit with a fake store, a fake gateway and a fake model (design 4.2 step 4): one Wonder call
 // per proposal, the 90-second lease, the verdict written once, and the evidence never carrying
@@ -57,9 +57,10 @@ function fakeStore(over: Partial<AuditState> = {}, missing = false, attempts = 0
       log.releases += 1;
       if (state.startedAt === startedAt.toISOString()) state.startedAt = null;
     },
-    // As the database: only a waiting proposal with no verdict takes one.
-    write: async (_id, v, now) => {
+    // As the database: only a waiting proposal with no verdict takes one, from the lease holder.
+    write: async (_id, v, now, startedAt) => {
       if (state.verdict !== null || state.status !== "proposed") return false;
+      if (state.startedAt !== startedAt.toISOString()) return false;
       log.writes.push(v);
       state.verdict = v.verdict;
       state.concerns = [...v.concerns];
@@ -346,6 +347,38 @@ describe("runAudit", () => {
     release();
     expect(await first).toMatchObject({ state: "done", verdict: "pass" });
     expect(model).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores nothing from a run whose lease lapsed and was taken over, and reports in progress, not its answer", async () => {
+    const { store, log, state } = fakeStore();
+    const later = new Date(NOW.getTime() + 90_000);
+    let releaseB!: () => void;
+    const gateB = new Promise<void>((r) => (releaseB = r));
+    const modelB = fakeModel(async () => {
+      await gateB;
+      return okResult(verdictText({ verdict: "block", concerns: ["amount_wrong"] }));
+    });
+    let runB: Promise<AuditResult> | undefined;
+    // A's call outlives its 90-second lease: B takes the lease and is still checking when A answers.
+    const modelA = fakeModel(async () => {
+      runB = runAudit(SESSION, PROPOSAL, deps({ store, complete: modelB, clock: () => later }));
+      await vi.waitFor(() => expect(modelB).toHaveBeenCalledTimes(1));
+      return okResult(verdictText());
+    });
+    expect(await runAudit(SESSION, PROPOSAL, deps({ store, complete: modelA }))).toEqual({ state: "in_progress" });
+    expect(modelA).toHaveBeenCalledTimes(1);
+    expect(log.writes).toEqual([]);
+    expect(log.releases).toBe(0);
+    expect(state).toMatchObject({ verdict: null, startedAt: later.toISOString() });
+
+    // B answers under its own lease, and its verdict is the one stored.
+    releaseB();
+    expect(await runB).toMatchObject({ state: "done", verdict: "block", concerns: ["amount_wrong"] });
+    expect(log.writes).toEqual([
+      { verdict: "block", agrees: false, callId: "c0ffee00-0000-4000-8000-000000000001", concerns: ["amount_wrong"] },
+    ]);
+    expect(log.leases).toBe(2);
+    expect(modelB).toHaveBeenCalledTimes(1);
   });
 
   it("reads back the stored verdict when someone else wrote first", async () => {
