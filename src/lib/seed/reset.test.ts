@@ -56,21 +56,21 @@ describe("the function's demo-carrier gate", () => {
 describe("a refusal", () => {
   it("names counts only, and says nothing was cleared", () => {
     expect(refusalText({ kind: "open", count: 2 })).toBe(
-      "2 ledger row(s) still reserved, sent or unknown; settle them before a reset",
+      "2 payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset",
     );
     expect(refusalText({ kind: "mismatch", count: 1 })).toBe(
-      "1 ledger row(s) failed as amount_mismatch; a person must review them before a reset",
+      "1 payment record(s) failed because the amount did not match; a person must review them before a reset",
     );
     expect(refusalText({ kind: "flagged", count: 3 })).toBe(
-      "3 proposal(s) a ledger row names carry a flag from an outside message; a person must review them before a reset",
+      "3 card(s) behind a payment record carry a flag from an outside message; a person must review them before a reset",
     );
     const err = new DemoResetRefused([
       { kind: "open", count: 1 },
       { kind: "mismatch", count: 1 },
     ]);
     expect(err.message).toBe(
-      "1 ledger row(s) still reserved, sent or unknown; settle them before a reset; " +
-        "1 ledger row(s) failed as amount_mismatch; a person must review them before a reset " +
+      "1 payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset; " +
+        "1 payment record(s) failed because the amount did not match; a person must review them before a reset " +
         "(nothing was cleared)",
     );
   });

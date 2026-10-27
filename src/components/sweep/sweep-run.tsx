@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ProposalView } from "@/lib/agent/view";
 import { formatPeriod } from "@/lib/format/dates";
-import { codeToWords, recordLabel } from "@/lib/format/labels";
+import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
@@ -30,9 +30,9 @@ const ADVANCE_LIMIT = 60;
 const BUSY_WAIT_MS = 3_000;
 
 const NOT_DRAFTED: Readonly<Record<string, string>> = {
-  mismatch: "The drafted amount did not match the engine's figure, so it was set aside.",
-  blocked_live: "Not drafted: an open proposal already covers this driver.",
-  audit_pending: "Waiting on Muse Wonder's check.",
+  mismatch: "The drafted amount did not match the figure from your pay rules, so it was set aside.",
+  blocked_live: "Not drafted: a card waiting for approval already covers this driver.",
+  audit_pending: "Waiting for the second check.",
   over_cap: "Not drafted: the sweep's model budget for this run ran out.",
   expired_earlier: "Not drafted: an earlier fix for this expired before anyone decided it.",
   found: "Not drafted yet.",
@@ -42,8 +42,8 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   already_decided: "This fix was already decided.",
   expired: "This fix expired before anyone decided it. The sweep does not draft it again; add it by hand if it is still owed.",
   role: "An admin must approve an amount this size.",
-  auditor_required: "This waits for the auditor's check before anyone can approve it.",
-  override_required: "Muse Wonder blocked this. Write why you approve it anyway, then confirm.",
+  auditor_required: "This waits for the second check before anyone can approve it.",
+  override_required: "The second check did not pass this. Write why you approve it anyway, then confirm.",
   stale: "The records changed since this was drafted, so it was not applied. Reject it if it still waits, then run the sweep again.",
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That fix is not here.",
@@ -118,7 +118,16 @@ function banner(page: SweepPage): string {
     : `LedgerLine checked the week of ${when}, found ${problems} and drafted ${fixes}.`;
 }
 
-export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn: boolean }) {
+export function SweepRun({
+  initial,
+  auditorOn,
+  timezone,
+}: {
+  initial: SweepPage;
+  auditorOn: boolean;
+  // The carrier's time zone, for times shown on a card (an override's time).
+  timezone?: string;
+}) {
   const [page, setPage] = useState(initial);
   const [readFailed, setReadFailed] = useState(false);
   const [stalled, setStalled] = useState(false);
@@ -334,7 +343,7 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
     return (
       <div key={item.id} className="grid gap-1.5">
         <ProposalCard
-          {...proposalCardFrom(p, { on: auditorOn, checking: item.status === "audit_pending" })}
+          {...proposalCardFrom(p, { on: auditorOn, checking: item.status === "audit_pending", timezone })}
           pending={busy === p.id || busy === "all"}
           onApprove={(_id, reason) => void approve(p, reason)}
           onReject={(id) => void reject(id)}
@@ -495,17 +504,18 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
 // The records behind a needs-a-person line, each one click away.
 function RecordLinks({ item }: { item: SweepItemView }) {
   const refs = item.sourceRefs.slice(0, 3);
+  const name = recordNamer(refs);
   return (
     <span className="flex flex-wrap gap-x-3 text-small">
       {refs.map((r) => {
         const href = hrefOrNull(recordHref, r);
         return href ? (
           <Link key={`${r.table}:${r.id}`} href={href} className="text-link underline-offset-4 hover:underline">
-            {recordLabel(r)}
+            {name(r)}
           </Link>
         ) : (
           <span key={`${r.table}:${r.id}`} className="text-foreground-2">
-            {recordLabel(r)}
+            {name(r)}
           </span>
         );
       })}

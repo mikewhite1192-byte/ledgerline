@@ -315,10 +315,10 @@ describe("the trace and the model week", () => {
     const text = traceLines(trace).map((l) => `${l.who}: ${l.text}`);
     expect(text).toEqual([
       "Muse Spark 1.3: Planned the next step: asked for 1 tool, after one tool search",
-      "Gateway: Checking advance eligibility: blocked, the amount is over the eligible limit ($412.00)",
+      "Safety check: Checking advance eligibility: blocked, the amount is over the eligible limit ($412.00)",
       "Muse Spark Open: Screened outside text before the agent read it: clean",
-      "Muse Wonder: Took over after Muse Spark failed the proposal format twice",
-      "LedgerLine: Saved the proposal card for a person to approve",
+      "Muse Wonder: Took over after Muse Spark could not form the card twice",
+      "LedgerLine: Saved the card for a person to approve",
     ]);
     expect(traceLines(trace).map((l) => l.cache ?? null)).toEqual([
       "1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price",

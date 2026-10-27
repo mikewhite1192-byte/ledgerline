@@ -1,4 +1,5 @@
 import { dollars } from "../money/format";
+import type { MoneyActionState } from "../money/types";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "../rules-engine/invoice-review";
 import type { InvoiceResult } from "../rules-engine/types";
 
@@ -19,7 +20,7 @@ export const OUTCOME_LABELS: Readonly<Record<string, string>> = {
   not_connected: "Invoiced here. QuickBooks is not connected, so it was not posted.",
   not_configured: "Recorded here. QuickBooks is not set up for this yet, so it was not posted.",
   stale: "The load changed after this was proposed. Refresh the queue for a fresh total.",
-  superseded: "Replaced by a newer proposal.",
+  superseded: "Replaced by a newer card.",
   posted_outside: "This payment is already in QuickBooks, so it must be moved there by hand.",
   duplicate_ref: "A different payment already uses that reference.",
   over_applied: "An application is more than that invoice still owes, or more than the payment.",
@@ -45,6 +46,19 @@ export function outcomeLabel(category: string | null | undefined): string {
   return typeof category === "string" && Object.hasOwn(OUTCOME_LABELS, category)
     ? OUTCOME_LABELS[category]
     : OUTCOME_FALLBACK;
+}
+
+// The QuickBooks line on an invoice's or a payment's record page: its QuickBooks record when one
+// is stored, else where its attempts to send it stand. A send nobody confirmed never reads as sent
+// or as not sent, and a failed one never says whether QuickBooks holds it.
+export function quickBooksStanding(qboTail: string | null, states: readonly MoneyActionState[]): string {
+  if (qboTail) return `In QuickBooks, record ending ${qboTail}`;
+  if (states.includes("confirmed")) return "Confirmed by QuickBooks";
+  if (states.includes("unknown")) return "Not confirmed yet";
+  if (states.includes("sent")) return "Sent, waiting for QuickBooks to confirm it";
+  if (states.includes("reserved")) return "Waiting to send";
+  if (states.includes("failed")) return "Not confirmed. The last attempt failed";
+  return "Not sent yet";
 }
 
 // Why "Mark reviewed" or "Mark as sent" was refused. Anything not listed reads as the outcome

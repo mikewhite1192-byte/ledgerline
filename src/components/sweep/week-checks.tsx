@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback } from "react";
 import { HowWorkedOut, fetchTraceAt, type TraceLoader } from "@/components/trace/how-worked-out";
 import { Card } from "@/components/ui/card";
-import { codeToWords, recordLabel } from "@/lib/format/labels";
+import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import type { FanoutCheckView, FanoutTree } from "@/lib/sweep/fanout/tree";
 
@@ -63,13 +63,13 @@ function agreement(tree: FanoutTree): string | null {
   if (c.drivers_checked === 0) return lines[0];
   lines.push(
     c.engine === 0
-      ? "The rules engine found no problems for these drivers."
-      : `The second check also found ${c.agreed} of the engine's ${plural(c.engine, "problem", "problems")}.`,
+      ? "Your pay rules found no problems for these drivers."
+      : `The second check also found ${c.agreed} of the ${plural(c.engine, "problem", "problems")} your pay rules found.`,
   );
   lines.push(
     c.spark_only === 0
-      ? "It found nothing the engine did not."
-      : `It noticed ${c.spark_only} more the engine did not; ${c.spark_only === 1 ? "it is" : "they are"} under Needs a person.`,
+      ? "It found nothing your pay rules did not."
+      : `It noticed ${c.spark_only} more your pay rules did not; ${c.spark_only === 1 ? "it is" : "they are"} under Needs a person.`,
   );
   return lines.join(" ");
 }
@@ -172,6 +172,8 @@ export function WeekChecks({ tree, runId, running }: { tree: FanoutTree; runId: 
 }
 
 function DriverCheck({ check, running, load }: { check: FanoutCheckView; running: boolean; load: TraceLoader }) {
+  // One name per record across this driver's issues, so a record cited twice reads the same.
+  const name = recordNamer(check.issues.flatMap((issue) => issue.sources));
   return (
     <Card className="grid gap-1.5 px-4 py-3 sm:px-5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -193,11 +195,11 @@ function DriverCheck({ check, running, load }: { check: FanoutCheckView; running
                   const href = hrefOrNull(recordHref, r);
                   return href ? (
                     <Link key={`${r.table}:${r.id}`} href={href} className="text-link underline-offset-4 hover:underline">
-                      {recordLabel(r)}
+                      {name(r)}
                     </Link>
                   ) : (
                     <span key={`${r.table}:${r.id}`} className="text-foreground-2">
-                      {recordLabel(r)}
+                      {name(r)}
                     </span>
                   );
                 })}

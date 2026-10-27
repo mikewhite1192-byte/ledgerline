@@ -21,7 +21,7 @@ describe("TenantPanel", () => {
     expect(check.hasAttribute("aria-label")).toBe(false);
     expect(screen.getByText("This login belongs to one carrier")).toBeTruthy();
     expect(container.textContent).toContain(tenant.email);
-    expect(container.textContent).toContain("Time zone: America/Chicago");
+    expect(container.textContent).toContain("Time zone: Central time");
     expect(screen.getByRole("button", { name: "Sign out" })).toBeTruthy();
     expect(screen.getByRole("group", { name: "Appearance" })).toBeTruthy();
   });

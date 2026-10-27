@@ -21,7 +21,7 @@ export type AuditConcern = (typeof AUDIT_CONCERNS)[number];
 // One plain sentence per concern, for the card.
 export const CONCERN_SENTENCES: Readonly<Record<AuditConcern, string>> = {
   cause_wrong: "the cause given does not match the records",
-  amount_wrong: "the amount does not match the rules engine's number",
+  amount_wrong: "the amount does not match the number from your pay rules",
   source_missing: "a record behind it is missing",
   record_mismatch: "the records point at a different driver, load or invoice",
   limit_exceeded: "the amount is over the limit",
@@ -30,7 +30,7 @@ export const CONCERN_SENTENCES: Readonly<Record<AuditConcern, string>> = {
   budget: "the demo budget was reached",
 };
 
-// Short names for the confirm question ("Muse Wonder has a concern (source missing).").
+// Short names for the confirm question ("The second check has a concern (source missing).").
 export const CONCERN_NAMES: Readonly<Record<AuditConcern, string>> = {
   cause_wrong: "cause wrong",
   amount_wrong: "amount wrong",
@@ -77,8 +77,8 @@ export function sentences(concerns: readonly string[]): string {
 export function auditConfirmQuestion(verdict: string | null, concerns: readonly string[]): string | null {
   if (verdict === "concerns") {
     const word = concerns.length > 1 ? "concerns" : "a concern";
-    return `Muse Wonder has ${word} (${names(concerns)}). Approve anyway?`;
+    return `The second check has ${word} (${names(concerns)}). Approve anyway?`;
   }
-  if (verdict === "unknown") return "Not checked by the auditor. Approve anyway?";
+  if (verdict === "unknown") return "The second check could not run. Approve anyway?";
   return null;
 }

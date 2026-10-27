@@ -7,6 +7,7 @@ import { decodeEvents } from "@/lib/agent/operator/stream";
 import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
 import type { ReportView, StepView, TurnView } from "@/lib/agent/view";
+import { stepLabel } from "@/lib/format/labels";
 import { reportPath } from "@/lib/reports/types";
 import { proposalCardFrom, type AuditContext } from "./proposal-card-from";
 import { reportResultOf, reportTable, type ReportLoad } from "./report-table";
@@ -26,18 +27,18 @@ const AUDIT_RETRY_MS = 90_000;
 // the advance executor's own refusals come from its closed list.
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   ...ADVANCE_APPROVE_NOTICE,
-  not_executable: "This kind of proposal cannot run yet. Nothing changed.",
-  already_decided: "This proposal was already decided.",
-  expired: "This proposal expired. Ask again for a fresh one.",
+  not_executable: "This type of card cannot be approved yet. Nothing changed.",
+  already_decided: "This card was already decided.",
+  expired: "This card expired. Ask again for a fresh one.",
   role: "An admin must approve an amount this size.",
-  auditor_required: "This waits for the auditor's check before anyone can approve it.",
-  not_auditable: "This proposal was made before the auditor started. Ask the agent again for a fresh one.",
-  override_required: "Muse Wonder blocked this. Write why you approve it anyway, then confirm.",
-  stale: "Something on this proposal changed since the card loaded, so nothing was done. Reload the card.",
+  auditor_required: "This waits for the second check before anyone can approve it.",
+  not_auditable: "This card was made before the second check started. Ask again for a fresh one.",
+  override_required: "The second check did not pass this. Write why you approve it anyway, then confirm.",
+  stale: "Something on this card changed since it loaded, so nothing was done. Reload the card.",
   invoice_posted: "The invoice was already posted or paid, so the charge was not added. Nothing changed.",
   bad_request: "The reason must be 10 to 240 characters. Nothing changed.",
   needs_confirm: "Confirm the warning on the card first.",
-  not_found: "That proposal, or the record it names, is not here.",
+  not_found: "That card, or the record it names, is not here.",
 };
 const APPROVE_FALLBACK = "The approval did not go through. Nothing changed.";
 const REJECT_FAILED = "The rejection did not go through. Try again.";
@@ -83,7 +84,7 @@ function noticeOf(map: Readonly<Record<string, string>>, category: unknown, fall
 }
 
 // The auditor's state for the cards: switched on or not, and which checks this page waits on.
-export type AuditPage = { on: boolean; checking: Readonly<Record<string, boolean>> };
+export type AuditPage = { on: boolean; checking: Readonly<Record<string, boolean>>; timezone?: string };
 
 // onShow, when set, is called as a report's table first scrolls into view, so its rows are read
 // then and not for every table of a long thread at page load.
@@ -100,7 +101,7 @@ export function toMessages(
     const parts: Part[] = [];
     const steps =
       t.steps.length > 0
-        ? t.steps.map((s) => ({ id: s.id, label: s.label, state: s.state }))
+        ? t.steps.map((s) => ({ id: s.id, label: stepLabel(s.label), state: s.state }))
         : t.status === "running"
           ? [{ id: `${t.id}:wait`, label: "Reading your question", state: "running" as const }]
           : [];
@@ -132,7 +133,7 @@ export function toMessages(
     if (traced) parts.push({ kind: "trace", turnId: t.id });
     for (const p of t.proposals) {
       const ctx: AuditContext | undefined = audit
-        ? { on: audit.on, checking: audit.checking[p.id] === true }
+        ? { on: audit.on, checking: audit.checking[p.id] === true, timezone: audit.timezone }
         : undefined;
       parts.push({ kind: "proposal", proposal: proposalCardFrom(p, ctx) });
       if (traced) parts.push({ kind: "trace", turnId: t.id, proposalId: p.id });
@@ -180,6 +181,7 @@ export function AgentChat({
   intro,
   auditorOn = false,
   initialDraft,
+  timezone,
 }: {
   initialTurns: TurnView[];
   streamMode: "sse" | "poll";
@@ -191,6 +193,8 @@ export function AgentChat({
   intro?: string;
   // Text the box starts with (the documents page's "Ask the agent" link); the person sends it.
   initialDraft?: string;
+  // The carrier's time zone, for times shown on a card (an override's time).
+  timezone?: string;
 }) {
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
   const [draft, setDraft] = useState(initialDraft ?? "");
@@ -446,7 +450,7 @@ export function AgentChat({
     }
   }
 
-  const messages = toMessages(turns, notices, reports, showReport, { on: auditorOn, checking }).map((m) => ({
+  const messages = toMessages(turns, notices, reports, showReport, { on: auditorOn, checking, timezone }).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
       if (p.kind !== "proposal") return p;
