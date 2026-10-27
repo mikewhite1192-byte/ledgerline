@@ -306,8 +306,8 @@ export type PayItemRecord = {
   amountCents: Cents;
   itemDate: LocalDate;
   // What the item is for: a fuel item names its fuel_purchases row, a lumper reimbursement its
-  // load_accessorials row.
-  refTable: TableName | null;
+  // load_accessorials row, an approved pay correction its proposals row.
+  refTable: TableName | "proposals" | null;
   refId: string | null;
   itemRef: string;
   description: string | null;

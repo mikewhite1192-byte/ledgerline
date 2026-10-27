@@ -1,4 +1,4 @@
-import { AudioLines, Cpu, FileText, Globe, HandCoins, House, NotebookPen, Video, Wallet } from "lucide-react";
+import { AudioLines, Cpu, FileText, Globe, HandCoins, House, NotebookPen, ScanSearch, Video, Wallet } from "lucide-react";
 import { flags } from "@/config/flags";
 import type { NavItem } from "./nav-list";
 
@@ -7,6 +7,7 @@ import type { NavItem } from "./nav-list";
 // page still says it is off if someone types the address.
 const ITEMS = [
   { href: "/", label: "Home", icon: <House aria-hidden />, shown: () => true },
+  { href: "/sweep", label: "Sweep", icon: <ScanSearch aria-hidden />, shown: () => flags.sweepEnabled === true },
   { href: "/documents", label: "Documents", icon: <FileText aria-hidden />, shown: () => flags.documentsEnabled === true },
   { href: "/advances", label: "Advances", icon: <HandCoins aria-hidden />, shown: () => flags.advancesEnabled === true },
   { href: "/driver-notes", label: "Driver notes", icon: <NotebookPen aria-hidden />, shown: () => flags.driverNotesEnabled === true },
