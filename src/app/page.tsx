@@ -24,7 +24,7 @@ import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
 import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
-import { codeToWords } from "@/lib/format/labels";
+import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { isUuid } from "@/lib/uuid";
@@ -144,6 +144,7 @@ export default async function Home({
       title="Home"
       signOut={signOut}
     >
+      <h1 className="sr-only">Home</h1>
       {flags.agentEnabled ? (
         <AgentChat
           initialTurns={agentTurns}
@@ -310,7 +311,7 @@ function ModelCheck({ ledger, timezone }: { ledger: ModelLedger; timezone: strin
               header: "Status",
               cell: (c) => (
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <StatusBadge status={c.status} />
+                  <StatusBadge status={c.status} label={modelCallStatusLabel(c.status)} />
                   {c.failure ? <span className="text-small text-muted-foreground">{codeToWords(c.failure)}</span> : null}
                 </span>
               ),

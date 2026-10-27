@@ -27,6 +27,7 @@ export default async function CustomerRecord({ params }: { params: Promise<{ id:
   if (page.kind === "missing") {
     return (
       <SignedInPage tenant={page.shell} current="none" title="Customer">
+        <PageHeader title="Customer" />
         <ErrorState category="not_found" />
       </SignedInPage>
     );

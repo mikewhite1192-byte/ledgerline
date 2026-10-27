@@ -18,7 +18,7 @@ import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { ClearAlertForm } from "./clear-alert-form";
 
-// The Meta models page: the Spend card (budgets, this carrier's last day, and the jobs the spend
+// The Models and spend page (Settings): the Spend card (budgets, this carrier's last day, and the jobs the spend
 // watch stopped, which an admin can clear), then this carrier's model calls for the pay week, per
 // model, with the gateway and screening totals. Row security limits every read to the carrier on
 // the verified token; the only write is an admin's Clear (./clear-alert-action.ts). Signed out:
@@ -121,12 +121,12 @@ export default async function ModelsPage() {
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
       nav={appNav("/models")}
-      title="Meta models"
+      title="Models and spend"
       signOut={signOut}
     >
       <div className="mx-auto grid w-full max-w-[1080px] gap-6">
         <PageHeader
-          title="Meta models"
+          title="Models and spend"
           description="Which Meta model did what for this carrier, how long it took and what it cost. Open How this was worked out under any answer to see one turn's calls."
         />
         {spend ? (
