@@ -29,12 +29,14 @@ import {
   DECIDE_ERROR_WORDS,
   DRAFT_ERROR_WORDS,
   draftedWords,
+  EMAIL_UNCONFIRMED_WORDS,
   REFUSAL_WORDS,
   refusalWords,
   REMINDER_STATUS_WORDS,
   stillWaitingWords,
   TONE_HELP,
   TONE_WORDS,
+  UNCONFIRMED_DECISION_WORDS,
 } from "@/lib/collections/words";
 import type { Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
@@ -579,7 +581,7 @@ const PAGES: PageCase[] = [
         name: "nobody past due",
         setup: () => (state.fx.collectionsView = { ...fx.COLLECTIONS_VIEW, pastDueCount: 0, pastDueCents: 0, waiting: 0, approvedLastWeek: 0, toDraft: [], cards: [] }),
         load: async () => (await import("@/app/collections/page")).default(),
-        shows: "Nobody is more than 30 days past due",
+        shows: "Nobody is 30 or more days past due",
       },
     ],
   },
@@ -1316,6 +1318,9 @@ describe("no internal word in a collections note", () => {
       ...[null, "cap", "model"].flatMap((stoppedBy) => [stillWaitingWords(1, stoppedBy) ?? "", stillWaitingWords(4, stoppedBy) ?? ""]),
       ...Object.values(DRAFT_ERROR_WORDS),
       ...Object.values(DECIDE_ERROR_WORDS),
+      UNCONFIRMED_DECISION_WORDS.title,
+      UNCONFIRMED_DECISION_WORDS.body,
+      EMAIL_UNCONFIRMED_WORDS,
     ];
     const { container } = render(
       <ul>

@@ -8,7 +8,8 @@ import { isUuid } from "@/lib/uuid";
 // POST: a person approves a drafted reminder. Approval records it (Test mode); then the email path
 // runs, which with its switch off (or the address off the allowlist, a draft older than the start
 // date, or no sender) logs "would send" and sends nothing. The email outcome never undoes the
-// approval. With collectionsEnabled off the route answers 404 before reading anything.
+// approval, and an email that may or may not have gone answers "unknown", never "would_send".
+// With collectionsEnabled off the route answers 404 before reading anything.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -24,6 +25,7 @@ const STATUS = {
   already_decided: 409,
   paid_since: 409,
   changed: 409,
+  stage_passed: 409,
 } as const;
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -36,7 +38,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   try {
     const result = await approveReminder(session, id);
     if (!result.ok) return reply({ error: result.category === "disabled" ? "not_found" : result.category }, STATUS[result.category]);
-    const email = result.email.sent ? "sent" : "would_send";
+    const email = result.email.sent ? "sent" : result.email.category === "unknown" ? "unknown" : "would_send";
     const category = result.email.sent ? null : result.email.category;
     return reply({ ok: true, status: "approved", channel: result.channel, email, category }, 200);
   } catch (err) {

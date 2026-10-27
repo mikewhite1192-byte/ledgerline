@@ -1,11 +1,14 @@
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
+import { readTenant } from "../data/read";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { isAllowlisted, type EmailSender } from "../driver-notes/deliver";
+import { collectionStage } from "../rules-engine/collections";
 import { invoiceStatus } from "../rules-engine/receivables";
 import { assertMembership } from "../tenant/context";
-import { isLocalDate } from "../time/local-date";
-import { parseFigures } from "./pack";
+import { carrierToday } from "../tenant/shell";
+import { daysBetween, isLocalDate } from "../time/local-date";
+import { parseFigures, type ReminderFigures } from "./pack";
 
 // Emailing an approved reminder to the customer. Approval records the reminder (channel 'logged');
 // an email is the only outside write here, and it is off. It needs every one of these, each
@@ -21,12 +24,12 @@ import { parseFigures } from "./pack";
 // and sends nothing. Seeded billing addresses end in .example (reserved, undeliverable) too.
 //
 // An email cannot be recalled, so in the transaction that reserves the send the invoice is read
-// again: if its balance is no longer the reminder's balance (paid or changed since), nothing is
-// sent (stale). An email goes at most once: the channel moves from logged to email in that same
-// transaction before the send (the reservation), so a retry, a second click or a crash after the
-// send never sends again. sent_at is written after the send went out. A send that throws may still
-// have reached the provider: its outcome is unknown, it is never re-sent, and only the error's
-// name is logged.
+// again: if its balance is no longer the reminder's balance (paid or changed since), or it has
+// reached its next stage on the carrier's calendar since drafting, nothing is sent (stale). An
+// email goes at most once: the channel moves from logged to email in that same transaction before
+// the send (the reservation), so a retry, a second click or a crash after the send never sends
+// again. sent_at is written after the send went out. A send that throws may still have reached
+// the provider: its outcome is unknown, it is never re-sent, and only the error's name is logged.
 
 export type SendRefusal =
   | "disabled"
@@ -69,8 +72,20 @@ export async function readInvoiceBalance(q: Queryable, invoiceId: string): Promi
   return { status: s.status, balanceCents: s.balanceCents };
 }
 
+// Whether the invoice has left the reminder's stage: the stage recomputed from the due date in the
+// reminder's figures and the carrier's date at `at` is not the reminder's. A reminder at 30 for an
+// invoice now 60 days late is out of date; that stage gets its own reminder.
+export async function stagePassed(q: Queryable, figures: ReminderFigures, stage: string, at: Date): Promise<boolean> {
+  const tenant = await readTenant(q);
+  if (!tenant) throw new Error("no tenant row");
+  const daysLate = daysBetween(figures.dueOn, carrierToday(tenant.timezone, at));
+  if (!Number.isSafeInteger(daysLate) || daysLate < 0) return true;
+  return collectionStage(daysLate) !== stage;
+}
+
 type ReminderForEmail = {
   status: string;
+  stage: string;
   channel: string | null;
   subject: string | null;
   body: string | null;
@@ -87,7 +102,7 @@ export async function sendReminder(session: Session, id: string, deps: SendDeps 
   const draft = await db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
     const rows = await q.query<ReminderForEmail>(
-      `SELECT d.status, d.channel, d.subject, d.body, CAST(d.invoice_id AS text) AS invoice_id,
+      `SELECT d.status, d.stage, d.channel, d.subject, d.body, CAST(d.invoice_id AS text) AS invoice_id,
               CAST(d.figures AS text) AS figures, c.billing_email
          FROM collection_drafts d
          JOIN customers c ON c.tenant_id = d.tenant_id AND c.id = d.customer_id
@@ -134,6 +149,7 @@ export async function sendReminder(session: Session, id: string, deps: SendDeps 
     if (balance === null || balance.status === "void" || balance.balanceCents !== figures.balanceCents) {
       return "stale" as const;
     }
+    if (await stagePassed(q, figures, draft.stage, clock())) return "stale" as const;
     return q.execute(
       `UPDATE collection_drafts SET channel = 'email', updated_at = CAST($2 AS timestamptz)
         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)

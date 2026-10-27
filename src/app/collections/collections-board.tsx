@@ -14,11 +14,13 @@ import {
   DECIDE_ERROR_WORDS,
   DRAFT_ERROR_WORDS,
   draftedWords,
+  EMAIL_UNCONFIRMED_WORDS,
   REMINDER_STATUS_WORDS,
   refusalWords,
   stillWaitingWords,
   TONE_HELP,
   TONE_WORDS,
+  UNCONFIRMED_DECISION_WORDS,
 } from "@/lib/collections/words";
 import type { CollectionTone } from "@/lib/rules-engine/collections";
 
@@ -181,22 +183,32 @@ function ReminderCardView({ card, onDecided }: { card: BoardCard; onDecided: () 
     try {
       const { status, json } = await postJson(`/api/collections/${card.id}/${action}`);
       if (status !== 200) {
-        toast({
-          title: action === "approve" ? "Not approved" : "Not rejected",
-          body: DECIDE_ERROR_WORDS[errorOf(json)] ?? "Try again in a moment.",
-          tone: "warning",
-        });
+        // A server failure may follow a saved decision, so it claims neither outcome. Every refusal
+        // reads the page again, so the card shows where the reminder stands now.
+        toast(
+          status >= 500
+            ? { ...UNCONFIRMED_DECISION_WORDS, tone: "warning" }
+            : {
+                title: action === "approve" ? "Not approved" : "Not rejected",
+                body: DECIDE_ERROR_WORDS[errorOf(json)] ?? "Try again in a moment.",
+                tone: "warning",
+              },
+        );
+        onDecided();
         return;
       }
+      const emailUnknown = action === "approve" && json.email === "unknown";
       toast({
         title: action === "approve" ? "Reminder approved" : "Reminder rejected",
         body:
           action === "approve"
             ? json.email === "sent"
               ? "It was emailed to the customer."
-              : "It is recorded here. Nothing was sent (Test mode)."
+              : emailUnknown
+                ? EMAIL_UNCONFIRMED_WORDS
+                : "It is recorded here. Nothing was sent (Test mode)."
             : "It will not be sent.",
-        tone: "success",
+        tone: emailUnknown ? "warning" : "success",
       });
       onDecided();
     } catch {

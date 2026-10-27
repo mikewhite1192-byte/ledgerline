@@ -17,9 +17,10 @@ import { readCollectionsView } from "./view";
 // Collections against the real database, as the app's role, with a fake model. Each late invoice
 // gets at most one reminder per stage however many runs press the button; a reminder that fails
 // the check keeps no text; a run stops at its spending cap and the rest wait (over_cap) for the
-// next run; approval re-reads the invoice and refuses one paid since drafting; approval records
-// the reminder and email stays refused, logged as "would send" with a category and never the
-// address, until every switch agrees, and then goes once; and another carrier sees none of it.
+// next run; approval re-reads the invoice and refuses one paid since drafting or past its stage
+// (and so does the email path); approval records the reminder and email stays refused, logged as
+// "would send" with a category and never the address, until every switch agrees, and then goes
+// once; and another carrier sees none of it.
 // Only this file's tenants are made, and they are removed after.
 
 const saved = {
@@ -583,6 +584,65 @@ describe("collections", () => {
     expect(await rejectReminder(A.session, row.id, { db: app, clock })).toEqual({ ok: false, category: "already_decided" });
   });
 
+  it("approve refuses a reminder whose invoice reached its next stage since drafting, and the email path never sends one", async () => {
+    const day = 86_400_000;
+    const at = (days: number) => () => new Date(NOW + days * day);
+    await draft();
+    // L34 was drafted at 34 days late (stage 30). 26 days on it is 60 days late: its stage is 60.
+    const passed = (await rowFor(INVOICES.L34.id))!;
+    expect(passed.stage).toBe("30");
+    expect(await approveReminder(A.session, passed.id, { db: app, clock: at(26), log: () => {} })).toEqual({
+      ok: false,
+      category: "stage_passed",
+    });
+    expect((await rowFor(INVOICES.L34.id))!.status).toBe("drafted");
+    // A person can still clear it.
+    expect(await rejectReminder(A.session, passed.id, { db: app, clock: at(26) })).toEqual({ ok: true, status: "rejected" });
+
+    // L62 was drafted at 62 days late (stage 60). 27 days on it is 89 days late, still 60: approved.
+    const row = (await rowFor(INVOICES.L62.id))!;
+    expect(await approveReminder(A.session, row.id, { db: app, clock: at(27), log: () => {} })).toMatchObject({
+      ok: true,
+      channel: "logged",
+    });
+    flags.collectionsEmailEnabled = true;
+    flags.collectionsEmailFrom = "2026-11-02";
+    flags.collectionsEmailAllowlist = [address];
+    const sender = vi.fn<EmailSender>(async () => {});
+    // A day later it is 90 days late (stage 90): nothing is sent, and the channel stays logged.
+    expect(await sendReminder(A.session, row.id, { db: app, clock: at(28), log: () => {}, send: sender })).toEqual({
+      sent: false,
+      category: "stale",
+    });
+    expect(sender).not.toHaveBeenCalled();
+    expect(await rowFor(INVOICES.L62.id)).toMatchObject({ channel: "logged", sent_at: null });
+    // The stage alone stopped it: on the day it was approved, every switch on, it goes.
+    expect(await sendReminder(A.session, row.id, { db: app, clock: at(27), log: () => {}, send: sender })).toEqual({
+      sent: true,
+    });
+    expect(sender).toHaveBeenCalledTimes(1);
+  });
+
+  it("an email step that throws after approval answers approved with the email unknown, never a failure", async () => {
+    await draft();
+    const row = (await rowFor(INVOICES.L97.id))!;
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    // The email path's log line throws after the approval is saved.
+    const log = () => {
+      throw new Error(`log down for ${address}`);
+    };
+    expect(await approveReminder(A.session, row.id, { db: app, clock, log })).toEqual({
+      ok: true,
+      status: "approved",
+      channel: "unknown",
+      email: { sent: false, category: "unknown" },
+    });
+    expect(await rowFor(INVOICES.L97.id)).toMatchObject({ status: "approved", channel: "logged", sent_at: null });
+    expect(errors).toHaveBeenCalled();
+    for (const args of errors.mock.calls) expect(args.join(" ")).not.toContain("@");
+    errors.mockRestore();
+  });
+
   it("approve logs would send with the category and never the address when email is off, the list is empty, the date is before from, or no sender is injected", async () => {
     await draft();
     const row = (await rowFor(INVOICES.L62.id))!;
@@ -648,8 +708,11 @@ describe("collections", () => {
       throw new Error(`provider refused ${address}`);
     });
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await approveReminder(A.session, other.id, { ...deps, send: failing })).toMatchObject({
+    // The reservation moved the channel to email before the send threw.
+    expect(await approveReminder(A.session, other.id, { ...deps, send: failing })).toEqual({
       ok: true,
+      status: "approved",
+      channel: "email",
       email: { sent: false, category: "unknown" },
     });
     expect(await sendReminder(A.session, other.id, { ...deps, send: failing })).toEqual({ sent: false, category: "already_sent" });

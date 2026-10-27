@@ -151,9 +151,25 @@ describe("collections routes", () => {
     mocks.approveReminder.mockResolvedValueOnce({ ok: true, status: "approved", channel: "email", email: { sent: true } });
     expect(await (await post(approvePost)).json()).toEqual({ ok: true, status: "approved", channel: "email", email: "sent", category: null });
 
+    // An email that may or may not have gone out stays unknown, never "would send".
+    mocks.approveReminder.mockResolvedValueOnce({
+      ok: true,
+      status: "approved",
+      channel: "email",
+      email: { sent: false, category: "unknown" },
+    });
+    expect(await (await post(approvePost)).json()).toEqual({
+      ok: true,
+      status: "approved",
+      channel: "email",
+      email: "unknown",
+      category: "unknown",
+    });
+
     for (const [category, status] of [
       ["paid_since", 409],
       ["changed", 409],
+      ["stage_passed", 409],
       ["already_decided", 409],
       ["not_approvable", 409],
       ["not_found", 404],

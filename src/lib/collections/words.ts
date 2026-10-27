@@ -88,9 +88,21 @@ export const DRAFT_ERROR_WORDS: Record<string, string> = {
 export const DECIDE_ERROR_WORDS: Record<string, string> = {
   paid_since: "This invoice was paid after the reminder was drafted, so it was not approved. Reject it to clear it.",
   changed: "This invoice's balance changed after the reminder was drafted, so it was not approved. Reject it to clear it.",
+  stage_passed:
+    "This invoice reached its next reminder after this one was drafted, so it was not approved. Reject it to clear it.",
   already_decided: "Someone already decided this reminder.",
   not_approvable: "Only a reminder that passed its check can be decided.",
   not_found: "This reminder is not here.",
   forbidden: "This login cannot decide reminders for this carrier.",
   unauthenticated: "Your session ended. Sign in again.",
 };
+
+// A decision whose answer did not come back (the server failed partway): it may or may not have
+// been saved, so the toast says neither, and the page is read again to show where it stands.
+export const UNCONFIRMED_DECISION_WORDS = {
+  title: "The decision was not confirmed",
+  body: "It may or may not have been saved. The reminder below shows where it stands now.",
+};
+
+// The toast after an approval whose email may or may not have gone out.
+export const EMAIL_UNCONFIRMED_WORDS = "An email was attempted, but it is not confirmed as sent.";

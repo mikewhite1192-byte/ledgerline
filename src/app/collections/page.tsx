@@ -17,9 +17,10 @@ import { CollectionsBoard, type BoardCard, type BoardLate } from "./collections-
 
 export const dynamic = "force-dynamic";
 
-// Invoices more than 30 days past due and the reminder drafted for each. A person approves or
-// rejects every reminder; approving records it, and with email switched off (Test mode) nothing is
-// sent. Every read runs inside withRequestTenant, so only the signed-in carrier's invoices appear.
+// Invoices at least minDaysLate (30) days past due and the reminder drafted for each. A person
+// approves or rejects every reminder; approving records it, and with email switched off (Test mode)
+// nothing is sent. Every read runs inside withRequestTenant, so only the signed-in carrier's
+// invoices appear.
 // With collectionsEnabled off nothing is read but the shell, and the page says it is off.
 export default async function CollectionsPage() {
   let data: { shell: ShellInfo; view: CollectionsView | null } | null = null;
@@ -35,6 +36,8 @@ export default async function CollectionsPage() {
   }
   if (!data) return <ShellProblemPage problem={problem ?? "unreadable"} />;
   const { shell, view } = data;
+  // The planner keeps an invoice exactly this many days late, so the words say "or more".
+  const minDays = flags.collectionsLimits.minDaysLate;
 
   return (
     <AppShell
@@ -46,7 +49,7 @@ export default async function CollectionsPage() {
       <div className="mx-auto grid w-full max-w-[720px] gap-6">
         <PageHeader
           title="Collections"
-          description="Invoices more than 30 days past due, with a reminder email drafted for each. You approve every reminder; in Test mode nothing is sent."
+          description={`Invoices ${minDays} or more days past due, with a reminder email drafted for each. You approve every reminder; in Test mode nothing is sent.`}
         />
         {!view ? (
           <Card>
@@ -56,7 +59,7 @@ export default async function CollectionsPage() {
           <Card>
             <EmptyState
               icon={<BellRing aria-hidden />}
-              title="Nobody is more than 30 days past due"
+              title={`Nobody is ${minDays} or more days past due`}
               body="Reminders appear here when an invoice is."
             />
           </Card>
@@ -64,7 +67,7 @@ export default async function CollectionsPage() {
           <>
             <div className="grid gap-3 sm:grid-cols-3">
               <StatCard
-                label="Past due 30+ days"
+                label={`Past due ${minDays}+ days`}
                 value={formatCents(view.pastDueCents)}
                 hint={`${view.pastDueCount} ${view.pastDueCount === 1 ? "invoice" : "invoices"}`}
               />
