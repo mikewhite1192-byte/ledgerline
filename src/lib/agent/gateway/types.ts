@@ -141,6 +141,7 @@ export const PROPOSAL_KINDS = [
   "invoice_post",
   "payment_reapply",
   "detention_charge",
+  "settlement_approve",
   "factoring_request",
   "bill_defer",
   "collections_chase",

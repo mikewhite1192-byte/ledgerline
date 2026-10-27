@@ -1,35 +1,27 @@
-import { AudioLines, Banknote, Cpu, FileText, Globe, HandCoins, House, NotebookPen, ScanSearch, Video, Wallet } from "lucide-react";
-import { flags } from "@/config/flags";
+import * as registry from "./nav/items";
+import { MENU_GROUPS, type MenuItem } from "./nav/menu-item";
 import type { NavItem } from "./nav-list";
 
-// The signed-in sidebar, one list for every page so they cannot drift apart. An item behind a
+// The signed-in menu, one list for the sidebar and the phone sheet so they cannot drift apart,
+// grouped by the job the office is doing. Each item is its own file under ./nav/items, listed once
+// in that folder's index. The menu places items by their group's place in MENU_GROUPS, then by
+// their own `order`, so a line's position in the index never moves an item. An item behind a
 // switch shows only while its switch is on, so a dark feature has no way in from the menu; its
-// page still says it is off if someone types the address.
-const ITEMS = [
-  { href: "/", label: "Home", icon: <House aria-hidden />, shown: () => true },
-  { href: "/sweep", label: "Sweep", icon: <ScanSearch aria-hidden />, shown: () => flags.sweepEnabled === true },
-  { href: "/documents", label: "Documents", icon: <FileText aria-hidden />, shown: () => flags.documentsEnabled === true },
-  { href: "/advances", label: "Advances", icon: <HandCoins aria-hidden />, shown: () => flags.advancesEnabled === true },
-  { href: "/driver-notes", label: "Driver notes", icon: <NotebookPen aria-hidden />, shown: () => flags.driverNotesEnabled === true },
-  { href: "/invoices", label: "Invoices", icon: <FileText aria-hidden />, shown: () => flags.invoicesEnabled === true },
-  {
-    href: "/customer-payments/new",
-    label: "Payments",
-    icon: <Wallet aria-hidden />,
-    shown: () => flags.customerPaymentsEnabled === true,
-  },
-  { href: "/cash", label: "Cash", icon: <Banknote aria-hidden />, shown: () => flags.cashFridayEnabled === true },
-  { href: "/voice-notes", label: "Voice notes", icon: <AudioLines aria-hidden />, shown: () => flags.voiceIntakeEnabled === true },
-  { href: "/clips", label: "Dock clips", icon: <Video aria-hidden />, shown: () => flags.clipsEnabled === true },
-  { href: "/models", label: "Meta models", icon: <Cpu aria-hidden />, shown: () => true },
-  { href: "/portal-runs", label: "Portal runs", icon: <Globe aria-hidden />, shown: () => flags.portalRunnerEnabled === true },
-] as const;
+// page still says it is off if someone types the address. A group with every item hidden is not
+// shown at all.
+const ITEMS: readonly MenuItem[] = Object.values(registry).sort(
+  (a, b) => MENU_GROUPS.indexOf(a.group) - MENU_GROUPS.indexOf(b.group) || a.order - b.order,
+);
 
 // Where a page sits in the nav: its item's address, or "none" for a record page with no item.
-export type NavKey = (typeof ITEMS)[number]["href"] | "none";
+export type NavKey = (typeof registry)[keyof typeof registry]["href"] | "none";
+
+// Every address the menu can link to, shown or not (the route test walks the app against it).
+export const NAV_HREFS: readonly string[] = ITEMS.map((item) => item.href);
 
 export function appNav(current: NavKey): NavItem[] {
-  return ITEMS.filter((item) => item.shown()).map(({ href, label, icon }) => ({
+  return ITEMS.filter((item) => item.shown()).map(({ group, href, label, icon }) => ({
+    group,
     href,
     label,
     icon,

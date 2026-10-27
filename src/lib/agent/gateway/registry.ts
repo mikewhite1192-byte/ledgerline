@@ -15,11 +15,14 @@ import { getDriver } from "./tools/read/get-driver";
 import { getDriverIdentity } from "./tools/read/get-driver-identity";
 import { getInboundMessage } from "./tools/read/get-inbound-message";
 import { getInvoiceQueue } from "./tools/read/get-invoice-queue";
+import { getInvoiceReview } from "./tools/read/get-invoice-review";
+import { getInvoiceReviewQueue } from "./tools/read/get-invoice-review-queue";
 import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
+import { getSettlements } from "./tools/read/get-settlements";
 import { getPayItems } from "./tools/read/get-pay-items";
 import { getPaymentsIn } from "./tools/read/get-payments-in";
 import { getPortalEvidence } from "./tools/read/get-portal-evidence";
@@ -59,6 +62,7 @@ const TOOLS: readonly AnyToolDef[] = [
   getCustomerPayments,
   getLedger,
   explainPaystub,
+  getSettlements,
   runChecks,
   reportArAging,
   reportDriverPaySummary,
@@ -67,6 +71,8 @@ const TOOLS: readonly AnyToolDef[] = [
   reportMarginPerLoad,
   getInboundMessage,
   getInvoiceQueue,
+  getInvoiceReview,
+  getInvoiceReviewQueue,
   getArAging,
   getPaymentsIn,
   getVoiceNote,

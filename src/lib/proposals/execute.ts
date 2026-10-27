@@ -5,6 +5,7 @@ import { getDb, type Queryable, type TenantDb } from "../db";
 import { executeAdvanceProposal, precheckAdvanceProposal } from "../advances/approve";
 import { executeInvoicePost } from "../invoices/execute";
 import { executePaymentReapply } from "../invoices/reapply";
+import { executeSettlementApprove } from "../settlements/approve";
 import { assertMembership } from "../tenant/context";
 import { overrideReasonOf } from "../agent/auditor/words";
 import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
@@ -131,6 +132,8 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 // first: the membership check, not_found, already_decided, expiring an aged proposal (which writes
 // the row as expired), the role refusal, the auditor refusals (not_auditable, auditor_required,
 // override_required, stale) and needs_confirm.
+// settlement_approve pays one driver's week (src/lib/settlements/approve.ts); its own switch is
+// read inside the executor, which writes nothing while it is off.
 export const EXECUTORS: ExecutorRegistry = {
   advance_payout: Object.assign(
     (...args: Parameters<Executor>) => executeAdvanceProposal(...args),
@@ -145,6 +148,7 @@ export const EXECUTORS: ExecutorRegistry = {
   get detention_charge() {
     return flags.detentionEnabled ? executeDetentionCharge : undefined;
   },
+  settlement_approve: executeSettlementApprove,
   // Cash Friday (src/lib/proposals/executors/cash-friday.ts): a delayed bill moves one bill's
   // date; factoring and a chase are test mode and record the decision only. All three are read
   // through cashFridayEnabled on every approval, like detention_charge.

@@ -89,9 +89,9 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // 0013, 0015, 0022 and 0029 each re-create the check, so whichever ran last decides it. 0029
-    // runs after the others in number order and in production's merge order, and lists the full
-    // union of twelve, kinds without code included.
+    // 0013, 0015, 0022, 0029 and 0032 each re-create the check, so whichever ran last decides it.
+    // 0029 and 0032 run after the others in number order and in production's merge order, and each
+    // lists the full union of twelve in the same order, kinds without code included.
     const union = [
       "advance_payout",
       "pay_correction",

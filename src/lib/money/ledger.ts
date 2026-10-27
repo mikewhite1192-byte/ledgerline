@@ -46,6 +46,7 @@ export type CleanDraft = {
   proposalId: string | null;
   traceId: string | null;
   subjectStatuses: readonly string[] | null;
+  batchId: string | null;
 };
 
 function invalid(): never {
@@ -68,8 +69,6 @@ export function validateDraft(draft: MoneyDraft): CleanDraft {
   const attempt = draft.attempt ?? 1;
   if (!isAttempt(attempt)) invalid();
   if (!(PROPOSERS as readonly unknown[]).includes(draft.proposedBy)) invalid();
-  // No batch column yet: a batch id would be dropped on the floor, so it is refused instead.
-  if (draft.batchId !== undefined && draft.batchId !== null) invalid();
   const table = KIND_SHAPES[kind].subjectTable;
   const allowed: readonly string[] = SUBJECT_STATUSES[table];
   let statuses: readonly string[] | null = null;
@@ -91,6 +90,7 @@ export function validateDraft(draft: MoneyDraft): CleanDraft {
     proposalId: optionalUuid(draft.proposalId),
     traceId: optionalUuid(draft.traceId),
     subjectStatuses: statuses,
+    batchId: optionalUuid(draft.batchId),
   };
 }
 
@@ -112,9 +112,10 @@ function lockSql(table: string, counterparty: string, status: string | null): st
 
 const INSERT_SQL = `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table,
     subject_id, attempt, idempotency_key, request_id, amount_cents, counterparty_table,
-    counterparty_id, proposed_by, proposal_id, trace_id, approver_membership_id)
+    counterparty_id, proposed_by, proposal_id, trace_id, approver_membership_id, batch_id)
   VALUES (CAST($1 AS uuid), current_tenant_id(), $2, $3, $4, CAST($5 AS uuid), $6, $7, $8, $9,
-    $10, CAST($11 AS uuid), $12, CAST($13 AS uuid), CAST($14 AS uuid), CAST($15 AS uuid))
+    $10, CAST($11 AS uuid), $12, CAST($13 AS uuid), CAST($14 AS uuid), CAST($15 AS uuid),
+    CAST($16 AS uuid))
   ON CONFLICT (tenant_id, idempotency_key) DO NOTHING`;
 
 export type ReserveResult = { action: MoneyAction; created: boolean };
@@ -198,6 +199,7 @@ export async function reserve(
       d.proposalId,
       d.traceId,
       approval.membershipId,
+      d.batchId,
     ]);
   } catch (err) {
     if (isUniqueViolation(err)) throw new MoneyError("duplicate");

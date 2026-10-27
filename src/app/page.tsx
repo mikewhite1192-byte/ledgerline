@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { flags } from "@/config/flags";
-import { homeSuggestions } from "@/components/agent/suggestions";
+import { homeSuggestions, withPaystubSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
@@ -26,7 +26,8 @@ import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
 import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
-import { codeToWords } from "@/lib/format/labels";
+import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
+import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { isUuid } from "@/lib/uuid";
@@ -39,6 +40,7 @@ type Carrier = {
   email: string;
   counts: { drivers: number; loads: number; periods: number };
   ledger: ModelLedger | null;
+  paystub: { driverName: string; periodEnd: string } | null;
   session: Session;
 };
 
@@ -46,13 +48,19 @@ type Carrier = {
 // ever see the carrier on the verified token. Signed out: withRequestTenant redirects to /sign-in.
 // ?document=<input id>, from a document's page: the question box starts with a request to check
 // that document. Only an id is taken from the address; the text around it is fixed.
+// ?paystub=<settlement id>: "Ask about this paystub" links here with the paystub's id; anything
+// else is ignored.
 export default async function Home({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const asked = (await searchParams).document;
+  const params = await searchParams;
+  const asked = params.document;
   const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
+  const askedPaystub = params.paystub;
+  const paystubId =
+    typeof askedPaystub === "string" && isUuid(askedPaystub) ? askedPaystub.toLowerCase() : null;
   let carrier: Carrier | null = null;
   let problem: "forbidden" | "unreadable" | null = null;
   try {
@@ -78,12 +86,14 @@ export default async function Home({
       const ledger = flags.aiProofRoute
         ? { calls: await readRecentCalls(q, 5), spend: await readSpend(q) }
         : null;
+      const paystub = paystubId ? await readPaystubAsk(q, paystubId) : null;
       return {
         name: tenants[0].name,
         timezone: tenants[0].timezone,
         email: members[0].email,
         counts,
         ledger,
+        paystub,
         session,
       };
     });
@@ -150,6 +160,9 @@ export default async function Home({
     );
   }
 
+  const base = flags.detentionEnabled ? [...SUGGESTIONS, DETENTION_SUGGESTION] : SUGGESTIONS;
+  const suggestions = withPaystubSuggestion(base, carrier.paystub);
+
   return (
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
@@ -157,12 +170,13 @@ export default async function Home({
       title="Home"
       signOut={signOut}
     >
+      <h1 className="sr-only">Home</h1>
       {flags.agentEnabled ? (
         <AgentChat
           initialTurns={agentTurns}
           streamMode={flags.agentStreamMode}
           auditorOn={flags.auditorEnabled}
-          suggestions={flags.detentionEnabled ? [...SUGGESTIONS, DETENTION_SUGGESTION] : SUGGESTIONS}
+          suggestions={suggestions}
           initialDraft={documentInput ? `Check document ${documentInput}` : undefined}
           intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
           disabledReason={
@@ -344,7 +358,7 @@ function ModelCheck({ ledger, timezone }: { ledger: ModelLedger; timezone: strin
               header: "Status",
               cell: (c) => (
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <StatusBadge status={c.status} />
+                  <StatusBadge status={c.status} label={modelCallStatusLabel(c.status)} />
                   {c.failure ? <span className="text-small text-muted-foreground">{codeToWords(c.failure)}</span> : null}
                 </span>
               ),

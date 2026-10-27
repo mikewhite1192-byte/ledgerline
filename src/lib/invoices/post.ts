@@ -1,6 +1,6 @@
 import type { Session } from "../auth/claims";
 import { flags } from "../../config/flags";
-import type { Queryable, TenantDb } from "../db";
+import type { TenantDb } from "../db";
 import { isCanonicalUuid } from "../money/keys";
 import { readBySubject } from "../money/read";
 import { MoneyError, type MoneyActionState } from "../money/types";
@@ -14,6 +14,7 @@ import {
   type InvoiceMoneyDeps,
   type PostableInvoice,
 } from "./execute";
+import { madeByQueue } from "./made-by-queue";
 import type { RecordReconcileResult } from "./payments";
 
 // "Post to QuickBooks" on an invoice's record page: the same money action the invoice_post
@@ -33,6 +34,7 @@ export type PostRefusal =
   | "disabled"
   | "not_connected"
   | "not_configured"
+  | "no_billing_address"
   | (string & {});
 
 export type PostResult =
@@ -41,28 +43,15 @@ export type PostResult =
 
 type Plan = { ok: true; invoice: PostableInvoice; attempt: number } | { ok: false; category: PostRefusal };
 
-// Only an invoice the invoice queue made posts from here, as only a payment recorded on the form
-// does: a load invoice issued on or after invoicesStart that an approved invoice_post card wrote
-// (the card moves to executing in the transaction that writes the invoice, then to done or
-// failed). The queue offers only delivered loads with no invoice, so no card ever names a load
-// whose invoice came from anywhere else. A seeded or imported invoice, or an opening balance
-// carried in from before the app, is history and never goes out.
-async function madeByQueue(
-  q: Queryable,
-  row: { source: string; load_id: string | null; issued_on: string },
-): Promise<boolean> {
-  if (row.source !== "load" || row.load_id === null || row.issued_on < flags.invoicesStart) return false;
-  const cards = await q.query<{ ok: unknown }>(
-    `SELECT 1 AS ok FROM proposals
-      WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post' AND origin = 'engine'
-        AND subject_table = 'loads' AND subject_id = CAST($1 AS uuid)
-        AND status IN ('executing', 'done', 'failed')
-      LIMIT 1`,
-    [row.load_id],
-  );
-  return cards.length > 0;
+// The invoices start date is a release switch for posting: nothing dated before it goes out from
+// here, even an invoice the queue made (the made-by-queue rule itself has no date). The record
+// page asks the same question, so it never offers a post this refuses.
+export function datedBeforeInvoicesStart(issuedOn: string): boolean {
+  return issuedOn < flags.invoicesStart;
 }
 
+// Only an invoice the invoice queue made posts from here; anything else is history
+// (made-by-queue.ts), and so is anything dated before the invoices start.
 export async function postInvoice(
   db: TenantDb,
   session: Session,
@@ -76,8 +65,10 @@ export async function postInvoice(
     const read = await readPostableInvoice(q, invoiceId);
     if (!read.ok) return read;
     if (read.row.status === "void") return { ok: false, category: "validation" };
+    if (datedBeforeInvoicesStart(read.row.issued_on)) return { ok: false, category: "history" };
     if (!(await madeByQueue(q, read.row))) return { ok: false, category: "history" };
     if (read.row.qbo_id !== null) return { ok: false, category: "already_posted" };
+    if (!read.invoice.customer.billingEmail) return { ok: false, category: "no_billing_address" };
     // The approver rule the proposal gate applies, so the button is never a way around it.
     const [member] = await q.query<{ role: string }>(
       "SELECT role FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",

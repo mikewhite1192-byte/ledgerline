@@ -15,6 +15,7 @@ import { TENANT_TABLES, type TenantTable } from "../../../../data/tables";
 import { matchWrongInvoiceFinding } from "../../../../invoices/match";
 import { paymentPostedOutside } from "../../../../invoices/posted-outside";
 import { lineSummary, sameLines, type LineSummary } from "../../../../invoices/queue";
+import { settlementEvidence } from "../../../../settlements/evidence";
 import {
   advanceEligibility,
   computeCashFriday,
@@ -562,6 +563,8 @@ async function engineFor(
     if (p.kind === "invoice_post") return await invoicePostEngine(q, p, raw);
     if (p.kind === "payment_reapply") return await paymentReapplyEngine(q, ctx, p, args);
     if (p.kind === "detention_charge") return await detentionEngine(q, p);
+    // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
+    if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
     // The cards' invoice lists are objects, which safeArgs leaves out; compared as stored.
     if (p.kind === "factoring_request" || p.kind === "bill_defer" || p.kind === "collections_chase") {
       return await cashEngine(q, ctx, p, raw);

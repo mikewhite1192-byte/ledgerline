@@ -37,6 +37,13 @@ const TONES: Record<string, BadgeTone> = {
   waiting_approval: "warning",
   declined: "destructive",
   stopped: "warning",
+  // invoice review
+  sync_error: "destructive",
+  rate_mismatch: "warning",
+  missing_documents: "warning",
+  duplicate_warning: "warning",
+  needs_review: "info",
+  ready_to_send: "success",
 };
 
 // Every status that has a tone of its own, for /design to show.

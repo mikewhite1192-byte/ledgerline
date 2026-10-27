@@ -16,7 +16,9 @@ function HelpLink({ help }: { help: { href: string; label: string } }) {
 }
 
 // Every signed-in page: a sidebar at laptop width (a sheet behind the menu button under it), a top
-// bar with the page title and the carrier chip, and the page itself in <main id="main">.
+// bar with the current menu group ("Pay", nothing on a page with no item) and the carrier chip at
+// the right, and the page itself in <main id="main">. The page's own PageHeader carries its one
+// visible title (the h1); `title` names the main region for a screen reader.
 export function AppShell({
   tenant,
   nav,
@@ -35,6 +37,7 @@ export function AppShell({
   children: ReactNode;
 }) {
   const list = <NavList items={nav} />;
+  const group = nav.find((item) => item.current)?.group;
   return (
     <div className="min-h-dvh bg-background">
       <a
@@ -63,10 +66,12 @@ export function AppShell({
           <MobileNav homeHref={homeHref} help={help ? <HelpLink help={help} /> : null}>
             {list}
           </MobileNav>
-          <h1 className="min-w-0 flex-1 truncate text-h3 text-foreground">{title}</h1>
-          <TenantSwitcher tenant={tenant} signOut={signOut} />
+          {group ? <p className="min-w-0 flex-1 truncate text-body font-medium text-foreground-2">{group}</p> : null}
+          <div className="ml-auto shrink-0">
+            <TenantSwitcher tenant={tenant} signOut={signOut} />
+          </div>
         </header>
-        <main id="main" tabIndex={-1} className="px-4 py-6 outline-none md:px-6 md:py-8">
+        <main id="main" tabIndex={-1} aria-label={title} className="px-4 py-6 outline-none md:px-6 md:py-8">
           {children}
         </main>
       </div>

@@ -547,6 +547,26 @@ const CASES: [string, SettlementInput, Expected][] = [
     },
   ],
   [
+    "an owner-operator who carries their own insurance is never charged for a day",
+    input({
+      driver: driver({ ownInsurance: true }),
+      loads: [percentLoad("a", 200_000)],
+      days: [day("d1", "2026-10-27"), day("d2", "2026-10-28")],
+    }),
+    { lines: [["load_pay", 150_000]], gross: 150_000, deductions: 0, net: 150_000, insuredDays: 0 },
+  ],
+  [
+    "Prairie Wind charges every driver except one who carries their own insurance",
+    input({
+      config: PRAIRIE_WIND,
+      period: PW_WEEK,
+      driver: companyDriver({ ownInsurance: true }),
+      loads: [load({ id: "a" })],
+      days: [day("d1", "2026-10-28")],
+    }),
+    { lines: [["load_pay", 31_000]], gross: 31_000, deductions: 0, net: 31_000, insuredDays: 0 },
+  ],
+  [
     "a load with no rate is an exception at 0 cents for a percent driver",
     input({ loads: [load({ id: "a", linehaulCents: null }), percentLoad("b", 100_000)] }),
     {
@@ -1034,5 +1054,51 @@ describe("settleDriver: fails closed", () => {
 
   it("refuses a schedule with no driver even when there is no driver to match", () => {
     expect(() => checkSchedule(schedule({ id: "s", driverId: "" }))).toThrow(InputError);
+  });
+});
+
+describe("settleDriver: a shortfall carried week to week", () => {
+  const WEEK2 = { start: "2026-11-02", end: "2026-11-08" };
+  const lease = (amount: number) => schedule({ id: "lease", kind: "lease", amountCents: c(amount) });
+  const shortfall = (id: string, amount: number, on: string) =>
+    item({ id, kind: "carried_shortfall", amountCents: c(amount), itemDate: on });
+  const deliveredOn = (on: string) => ({ pickupOn: on, deliveredOn: on });
+
+  it("carries a deficit forward, takes it as a hard deduction next week, and clears it when there is room", () => {
+    // Week 1: gross 21000 against a 35000 lease: net 0, 14000 carried.
+    const w1 = settleDriver(input({ loads: [percentLoad("a", 28_000)], schedules: [lease(35_000)] }));
+    expect([w1.grossCents, w1.netCents, w1.carryForwardCents]).toEqual([21_000, 0, 14_000]);
+    expect(w1.exceptions.map((e) => e.category)).toEqual(["net_below_zero"]);
+
+    // Week 2: the 14000 arrives as a carried_shortfall item; another deficit carries hard - gross.
+    const w2 = settleDriver(
+      input({
+        period: WEEK2,
+        loads: [percentLoad("b", 28_000, deliveredOn("2026-11-04"))],
+        schedules: [lease(35_000)],
+        items: [shortfall("short-1", w1.carryForwardCents, WEEK2.start)],
+      }),
+    );
+    expect(w2.lines.map((l) => [l.kind, l.amountCents])).toEqual([
+      ["load_pay", 21_000],
+      ["carried_shortfall", -14_000],
+      ["lease", -35_000],
+    ]);
+    expect([w2.netCents, w2.carryForwardCents]).toEqual([0, 28_000]);
+
+    // Week 3: room for everything clears the carry to the cent.
+    const WEEK3 = { start: "2026-11-09", end: "2026-11-15" };
+    const w3 = settleDriver(
+      input({
+        period: WEEK3,
+        loads: [percentLoad("c", 200_000, deliveredOn("2026-11-11"))],
+        schedules: [lease(35_000)],
+        items: [shortfall("short-2", w2.carryForwardCents, WEEK3.start)],
+      }),
+    );
+    expect([w3.grossCents, w3.deductionsCents, w3.netCents, w3.carryForwardCents]).toEqual([
+      150_000, 63_000, 87_000, 0,
+    ]);
+    expect(w3.exceptions).toEqual([]);
   });
 });

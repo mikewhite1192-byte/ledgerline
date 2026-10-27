@@ -24,7 +24,7 @@ import {
   targetLabel,
 } from "@/lib/voice/words";
 import { problemOf, ReadFailed, type ReadProblem } from "../../advances/frame";
-import { VoiceFrame, VoiceStatusBadge } from "../frame";
+import { VoiceFrame, VoiceOffPage, VoiceStatusBadge } from "../frame";
 import { CopyReply, NoteActions } from "./note-actions";
 
 export const dynamic = "force-dynamic";
@@ -51,7 +51,7 @@ function stepsFor(note: VoiceDetail): ("prepare" | "hand-off" | "reply")[] {
 }
 
 export default async function VoiceNotePage({ params }: { params: Promise<{ id: string }> }) {
-  if (!voiceOn()) notFound();
+  if (!voiceOn()) return <VoiceOffPage title="Voice note" />;
   const { id } = await params;
   if (!isUuid(id)) notFound();
   let page: { shell: Shell; note: VoiceDetail | null } | null = null;
@@ -70,6 +70,7 @@ export default async function VoiceNotePage({ params }: { params: Promise<{ id: 
   if (!note) {
     return (
       <VoiceFrame shell={page.shell} title="Voice note">
+        <PageHeader title="Voice note" />
         <Card>
           <ErrorState category="not_found" retry={<Link href="/voice-notes" className="text-link underline-offset-4 hover:underline">All voice notes</Link>} />
         </Card>

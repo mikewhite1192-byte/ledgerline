@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { DataTable } from "@/components/app/data-table";
@@ -10,14 +9,17 @@ import { flags } from "@/config/flags";
 import { formatInstant } from "@/lib/format/dates";
 import { formatSpend } from "@/lib/trace/format";
 import { portalLoadChoices, listRuns, type RunSummary } from "@/lib/portal/views";
-import { CarrierProblem, readCarrier, signOut } from "./carrier";
+import { CarrierProblem, PortalRunsOffPage, readCarrier, signOut } from "./carrier";
 
 // Portal runs: each time the agent read the broker's portal for a load, newest first, with a way
 // to start one and a way to open the portal yourself.
 export const dynamic = "force-dynamic";
 
+const DESCRIPTION =
+  "The agent opens the broker's portal, finds a delivered load and brings back the check-in and check-out times and the signed POD. It only reads; any safety check waits for a person.";
+
 export default async function PortalRunsPage() {
-  if (!flags.portalRunnerEnabled) notFound();
+  if (!flags.portalRunnerEnabled) return <PortalRunsOffPage title="Portal runs" description={DESCRIPTION} />;
   const read = await readCarrier(async (q) => ({
     runs: await listRuns(q, new Date()),
     choices: await portalLoadChoices(q),
@@ -33,10 +35,7 @@ export default async function PortalRunsPage() {
       signOut={signOut}
     >
       <div className="mx-auto grid w-full max-w-[1080px] gap-6">
-        <PageHeader
-          title="Portal runs"
-          description="The agent opens the broker's portal, finds a delivered load and brings back the check-in and check-out times and the signed POD. It only reads; any safety check waits for a person."
-        />
+        <PageHeader title="Portal runs" description={DESCRIPTION} />
         <PortalRunActions choices={data.choices} />
         <DataTable<RunSummary>
           caption="Runs, newest first"

@@ -5,6 +5,7 @@ import type { Session } from "../auth/claims";
 import { getDb, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
 import { isUuid } from "../uuid";
+import { readFanoutTree, type FanoutTree } from "./fanout/tree";
 import { countItems, type SweepCounts } from "./run";
 
 // What the sweep pages show: rows only, every number from the database, no model text except an
@@ -64,6 +65,8 @@ export type SweepPage = {
   proposals: Record<string, ProposalView>;
   // What "Approve all clean" would send: this run's clean fixes, id order, and their total.
   clean: { proposalIds: string[]; totalCents: number };
+  // How the week was checked a second time, or null when the run never reached that step.
+  fanout: FanoutTree | null;
 };
 
 const TS = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
@@ -221,12 +224,14 @@ export async function readSweepPage(
     const proposals: Record<string, ProposalView> = {};
     for (const p of await readProposalViews(q, linked)) proposals[p.id] = p;
     const counts = await countItems(q, runId);
+    const fanout = await readFanoutTree(q, runId);
     return {
       run: runOf(runs[0]),
       items: views,
       counts,
       proposals,
       clean: { proposalIds: ids, totalCents: total },
+      fanout,
     };
   });
 }

@@ -1,13 +1,14 @@
 import type { ReactNode } from "react";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
-import { ErrorState } from "@/components/app/states";
+import { PageHeader } from "@/components/app/page-header";
+import { ErrorState, FeatureOff } from "@/components/app/states";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import type { Shell } from "@/lib/advances/read";
+import { readShell, type Shell } from "@/lib/advances/read";
 import { DbError } from "@/lib/db";
-import { ForbiddenError } from "@/lib/tenant/context";
+import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 
 // The frame every advance page shares: the signed-in shell with the Advances item current, and
 // the one way a page says its read failed. Unknown is not empty: a failed read never shows as
@@ -55,5 +56,24 @@ export function ReadFailed({ problem }: { problem: ReadProblem }) {
         </Card>
       </div>
     </main>
+  );
+}
+
+// An advance page while the advances switch is off: the shell, the page's title, and the off
+// state. It reads only the carrier chip, never an advance.
+export async function AdvancesOffPage({ title, description }: { title: string; description?: string }) {
+  let shell: Shell | null = null;
+  let problem: ReadProblem | null = null;
+  try {
+    shell = await withRequestTenant((q, session) => readShell(q, session));
+  } catch (err) {
+    problem = problemOf(err);
+  }
+  if (!shell) return <ReadFailed problem={problem ?? "unreadable"} />;
+  return (
+    <AdvanceFrame shell={shell} title={title}>
+      <PageHeader title={title} description={description} />
+      <FeatureOff name="Advances" plural />
+    </AdvanceFrame>
   );
 }

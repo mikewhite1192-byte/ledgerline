@@ -16,7 +16,7 @@ import {
 import { findProposalConflict, flagTurnProposals, persistProposal } from "./proposals";
 import { finishStep, finishTurn, openTurn, startStep, type OpenTurnInput } from "./turns";
 import type { OpenTurnRefusal, OpenedTurn, TurnStore } from "./types";
-import { readModelWeek, readTurnTrace } from "./trace";
+import { readModelWeek, readTurnTrace, readTurnTraceInRun } from "./trace";
 import { readRecentTurnViews, readTurnView } from "./views";
 
 // The agent side's only door to its own tables (design 3.7): every call opens the gateway's
@@ -119,6 +119,17 @@ export async function readAgentTurnTrace(
   deps: StoreDeps = {},
 ): Promise<TurnTrace | null> {
   return withAgentTenant(deps.db ?? getDb(), session, (q) => readTurnTrace(q, session.sub, turnId));
+}
+
+// How one turn of a sweep run's second opinion was worked out: any member of the carrier may read
+// it, as with the run itself, but only a turn that run names.
+export async function readSweepTurnTrace(
+  session: Session,
+  runId: string,
+  turnId: string,
+  deps: StoreDeps = {},
+): Promise<TurnTrace | null> {
+  return withAgentTenant(deps.db ?? getDb(), session, (q) => readTurnTraceInRun(q, runId, turnId));
 }
 
 // This carrier's model calls, gateway decisions and screenings for the pay week holding now.

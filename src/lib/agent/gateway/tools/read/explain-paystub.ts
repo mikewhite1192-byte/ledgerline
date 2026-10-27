@@ -10,7 +10,9 @@ export const explainPaystub = defineTool({
   description:
     "Explain one driver's pay for one pay period line by line: the stored settlement lines when " +
     "the period has been settled, otherwise the rules engine's computed lines. Earnings are " +
-    "positive and deductions negative, in integer cents, each with the records it came from.",
+    "positive and deductions negative, in integer cents, each with the records it came from. A " +
+    "note insurance_exempt means the driver carries their own insurance, so no daily insurance " +
+    "line applies; parkedReason says why a stored paystub no longer matches its records.",
   tier: "read",
   roles: OPERATOR,
   label: "Explaining the pay stub",
@@ -20,6 +22,12 @@ export const explainPaystub = defineTool({
     { table: "settlement_periods", id: a.periodId },
   ],
   run: async (q, _ctx, a) => {
+    const [driver] = await readRowsWhereId(q, "drivers", "id", a.driverId);
+    if (!driver) throw new Error("driver vanished after the ref check");
+    // Why an exempt driver's paystub has no insurance line (the engine never charges one).
+    const exemptNotes = driver.own_insurance
+      ? [{ kind: "insurance" as const, category: "insurance_exempt" as const, amountCents: 0 }]
+      : [];
     const settlements = await readRowsWhereId(q, "settlements", "period_id", a.periodId);
     const stored = settlements.find((s) => s.driver_id === a.driverId);
     if (stored) {
@@ -35,6 +43,8 @@ export const explainPaystub = defineTool({
           deductionsCents: stored.deductions_cents,
           netCents: stored.net_cents,
           carryForwardCents: stored.carry_forward_cents,
+          parkedReason: stored.parked_reason,
+          notes: exemptNotes,
           rows: [...lines]
             .sort((x, y) => x.seq - y.seq)
             .map((l) => ({
@@ -63,11 +73,14 @@ export const explainPaystub = defineTool({
           amountCents: e.amountCents ?? null,
           sources: e.sources,
         })),
-        notes: result.notes.map((n) => ({
-          kind: n.kind,
-          category: n.category,
-          amountCents: n.amountCents,
-        })),
+        notes: [
+          ...result.notes.map((n) => ({
+            kind: n.kind,
+            category: n.category,
+            amountCents: n.amountCents,
+          })),
+          ...exemptNotes,
+        ],
         rows: result.lines.map((l) => ({
           seq: l.seq,
           kind: l.kind,

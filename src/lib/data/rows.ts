@@ -13,6 +13,10 @@ export type CustomerRow = {
   state: string;
   detention_free_minutes: number;
   detention_hourly_cents: number;
+  // Whether the customer wants a signed delivery document with each invoice.
+  pod_required: boolean;
+  // Where the accounting system would email the invoice: a synthetic .example address, or none.
+  billing_email: string | null;
 };
 
 export type DriverRow = {
@@ -37,6 +41,8 @@ export type DriverRow = {
   // Armed to receive money, separate from the card (0027). Off until a person arms the driver.
   money_armed: boolean;
   money_armed_at: string | null;
+  // The driver carries their own insurance, so no daily insurance charge applies (0032).
+  own_insurance: boolean;
 };
 
 // A fuel card on file (0017): the provider's own token and the last four digits only. A driver
@@ -190,6 +196,15 @@ export type SettlementRow = {
   carry_forward_cents: number;
   exception_count: number;
   paid_at: string | null;
+  // What the paid settlement did to escrow (0032): closing = opening - charges + withheld. A draft
+  // keeps zeros until it is booked.
+  escrow_opening_cents: number;
+  escrow_charges_cents: number;
+  escrow_withheld_cents: number;
+  escrow_closing_cents: number;
+  // A draft whose lines no longer matched their sources at approval (0032); both null otherwise.
+  parked_reason: string | null;
+  parked_at: string | null;
 };
 
 export type SettlementLineRow = {
@@ -255,6 +270,14 @@ export type InvoiceRow = {
   status: "open" | "partially_paid" | "paid" | "void";
   paid_on: string | null;
   qbo_id: string | null;
+  // Review facts (0028). The review status is computed from these, never stored.
+  reviewed_at: string | null;
+  reviewed_by_membership_id: string | null;
+  review_note: string | null;
+  sent_on: string | null;
+  sent_by_membership_id: string | null;
+  qbo_email_status: "not_set" | "need_to_send" | "email_sent" | null;
+  qbo_amount_cents: number | null;
 };
 
 export type CustomerPaymentRow = {

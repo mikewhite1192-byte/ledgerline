@@ -8,7 +8,8 @@ import { StatCard } from "@/components/app/stat-card";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { buttonVariants } from "@/components/ui/button";
-import { BUCKET_WORDS, Day, RecordLink } from "@/components/invoices/cells";
+import { Card, CardBody } from "@/components/ui/card";
+import { BUCKET_WORDS, Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { formatCents } from "@/lib/format/money";
 import { AGING_BUCKETS } from "@/lib/rules-engine";
 import { readCustomerRecord } from "@/lib/invoices/views";
@@ -26,6 +27,7 @@ export default async function CustomerRecord({ params }: { params: Promise<{ id:
   if (page.kind === "missing") {
     return (
       <SignedInPage tenant={page.shell} current="none" title="Customer">
+        <PageHeader title="Customer" />
         <ErrorState category="not_found" />
       </SignedInPage>
     );
@@ -56,6 +58,18 @@ export default async function CustomerRecord({ params }: { params: Promise<{ id:
       <p className="text-body text-foreground">
         Unapplied credit <Money cents={c.creditCents} tone="plain" />
       </p>
+      {flags.invoicesEnabled && flags.invoiceReviewEnabled ? (
+        <Card>
+          <CardBody>
+            <Facts
+              items={[
+                { label: "Requires delivery document", value: c.podRequired ? "Yes" : "No" },
+                { label: "Billing address", value: c.billingDomain ? `At ${c.billingDomain}` : "None on file" },
+              ]}
+            />
+          </CardBody>
+        </Card>
+      ) : null}
       <DataTable
         caption="Invoices"
         rows={c.invoices}

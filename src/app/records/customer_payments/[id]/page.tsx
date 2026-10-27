@@ -25,6 +25,7 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
   if (page.kind === "missing") {
     return (
       <SignedInPage tenant={page.shell} current="/customer-payments/new" title="Payment">
+        <PageHeader title="Payment" />
         <ErrorState category="not_found" />
       </SignedInPage>
     );
