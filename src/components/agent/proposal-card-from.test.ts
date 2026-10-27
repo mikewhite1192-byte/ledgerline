@@ -51,6 +51,15 @@ describe("proposalCardFrom", () => {
     expect(card.reasons).toEqual([{ text: "A rule check found this." }]);
   });
 
+  it("lets a person resume only an approved advance payout, never one executing or another kind", () => {
+    expect(proposalCardFrom({ ...view, status: "approved" }).canResume).toBe(true);
+    expect(proposalCardFrom({ ...view, kind: "pay_correction", status: "approved" }).canResume).toBeUndefined();
+    expect(proposalCardFrom({ ...view, kind: "invoice_fix", status: "approved" }).canResume).toBeUndefined();
+    for (const status of ["proposed", "executing", "done", "failed", "unknown", "rejected"] as const) {
+      expect(proposalCardFrom({ ...view, status }).canResume, status).toBeUndefined();
+    }
+  });
+
   it("renders a ref the link rules refuse as text, never throwing", () => {
     expect(hrefOrNull(recordHref, { table: "memberships", id: DRIVER })).toBeNull();
     expect(hrefOrNull(recordHref, { table: "drivers", id: "" })).toBeNull();

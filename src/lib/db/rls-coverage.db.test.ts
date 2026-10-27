@@ -143,6 +143,36 @@ describe("row-level security coverage", () => {
     expect(ops).toEqual({ can_create: false });
   });
 
+  it("carries tenant_id on both sides of every reference between two tenant tables", async () => {
+    // A single-column reference could point a row at another carrier's row; a composite
+    // (tenant_id, x_id) reference cannot. References to tenants itself are the tenant column.
+    const loose = await admin.withoutTenant((q) =>
+      q.query<{ name: string; tbl: string }>(
+        `SELECT c.conname AS name, c.conrelid::regclass::text AS tbl
+           FROM pg_constraint c
+           JOIN pg_namespace n ON n.oid = c.connamespace
+           JOIN pg_attribute src ON src.attrelid = c.conrelid AND src.attname = 'tenant_id'
+           JOIN pg_attribute dst ON dst.attrelid = c.confrelid AND dst.attname = 'tenant_id'
+          WHERE n.nspname = 'public' AND c.contype = 'f'
+            AND c.confrelid <> 'public.tenants'::regclass
+            AND NOT EXISTS (
+              SELECT 1 FROM generate_subscripts(c.conkey, 1) AS i
+               WHERE c.conkey[i] = src.attnum AND c.confkey[i] = dst.attnum)
+          ORDER BY 2, 1`,
+      ),
+    );
+    expect(loose).toEqual([]);
+    // The check above must see the references it guards (0011 adds three on advances).
+    const [seen] = await admin.withoutTenant((q) =>
+      q.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pg_constraint
+          WHERE contype = 'f' AND conrelid = 'public.advances'::regclass
+            AND conname IN ('advances_proposal_fk', 'advances_source_input_fk', 'advances_decided_by_fk')`,
+      ),
+    );
+    expect(seen.n).toBe(3);
+  });
+
   it("has no view or definer function that would read as its owner", async () => {
     const [found] = await admin.withoutTenant((q) =>
       q.query<{ views: number; definers: number }>(

@@ -61,6 +61,38 @@ export async function findDemoTenant(admin: Db, carrier: DemoCarrier): Promise<s
 //     If the replace fails, those rows stay and a new approval replays them instead of posting
 //     again; if this clear fails, the same holds until the seed runs again.
 // Each returns the rows deleted.
+//
+// A ledger row that names an advance an approval created (one with a proposal_id) makes a clear
+// refuse too. money_actions has no foreign key to advances, and the agent clear deletes those
+// advances before the replace, so nothing else would stop it leaving such a row naming an advance
+// that no longer exists. clearTenantAgent refuses on any such row. clearTenantLedger refuses on
+// the booking rows among them (it removes the settled payout rows itself), so npm run seed refuses
+// before its first delete rather than after the payout rows are gone. clearTenantBookings does
+// not check: a person who has reviewed such a booking row may remove it that way.
+const FLOW_ADVANCE_ROWS = `SELECT count(*) AS n FROM money_actions m
+   WHERE m.tenant_id = CAST($1 AS uuid) AND m.subject_table = 'advances'
+     AND EXISTS (SELECT 1 FROM advances a
+                  WHERE a.tenant_id = CAST($1 AS uuid) AND a.id = m.subject_id
+                    AND a.proposal_id IS NOT NULL)`;
+
+async function countFlowAdvanceRows(
+  q: Queryable,
+  tenantId: string,
+  bookingsOnly: boolean,
+): Promise<number> {
+  const scope = bookingsOnly ? " AND m.channel = 'accounting'" : "";
+  const rows = await q.query<{ n: unknown }>(`${FLOW_ADVANCE_ROWS}${scope}`, [tenantId]);
+  const n = rows.length === 1 ? Number(rows[0].n) : NaN;
+  if (!Number.isSafeInteger(n) || n < 0) {
+    throw new Error("could not count the tenant's ledger rows; nothing was cleared");
+  }
+  return n;
+}
+
+const flowAdvanceBlock = (n: number) =>
+  `${n} ledger row(s) name an advance an approval created; a person must review them before ` +
+  "a reseed";
+
 export async function clearTenantLedger(admin: Db, tenantId: string): Promise<number> {
   return clearSettled(admin, tenantId, "payment");
 }
@@ -102,6 +134,10 @@ async function clearSettled(
           "before a reseed",
       );
     }
+    if (channel === "payment") {
+      const flow = await countFlowAdvanceRows(q, tenantId, true);
+      if (flow > 0) blocked.push(flowAdvanceBlock(flow));
+    }
     if (blocked.length > 0) throw new Error(`${blocked.join("; ")} (nothing was cleared)`);
     return q.execute(
       `DELETE FROM money_actions
@@ -126,8 +162,12 @@ async function clearSettled(
 // nothing, while one exists: a person must review it. A ledger row that comes to name a proposal
 // after the check still makes the delete fail and the transaction roll back, so nothing is half
 // cleared. Driver notes (0019) go first: each names a settlement and a driver the replace
-// deletes, they name no proposal, and the app role has no DELETE on them either. Returns the
-// rows deleted.
+// deletes, they name no proposal, and the app role has no DELETE on them either. An advance born
+// from an approval names its proposal, so those advances go before the proposals; the seeded ones
+// are replaced after. While a ledger row names one of those advances, the clear also refuses up
+// front, deleting nothing (see FLOW_ADVANCE_ROWS). It locks them before it counts, and reserve()
+// locks its advance before it writes a row, so a payout or post reserved for one either lands
+// before the count or finds its advance gone after the delete. Returns the rows deleted.
 const NAMED_BY_LEDGER = `SELECT 1 FROM money_actions m
    WHERE m.tenant_id = CAST($1 AS uuid) AND m.proposal_id = p.id`;
 
@@ -138,6 +178,7 @@ const AGENT_CLEAR = [
       AND NOT EXISTS (SELECT 1 FROM proposals p
                        WHERE p.tenant_id = CAST($1 AS uuid) AND p.turn_id = s.turn_id
                          AND EXISTS (${NAMED_BY_LEDGER}))`,
+  "DELETE FROM advances WHERE tenant_id = CAST($1 AS uuid) AND proposal_id IS NOT NULL",
   `DELETE FROM proposals p
     WHERE p.tenant_id = CAST($1 AS uuid) AND NOT EXISTS (${NAMED_BY_LEDGER})`,
   `DELETE FROM turns t
@@ -155,6 +196,11 @@ const AGENT_CLEAR = [
 export async function clearTenantAgent(admin: Db, tenantId: string): Promise<number> {
   if (!isUuid(tenantId)) throw new Error("not a tenant id; nothing was cleared");
   return admin.withTenant(tenantId, async (q) => {
+    await q.query(
+      `SELECT 1 FROM advances
+        WHERE tenant_id = CAST($1 AS uuid) AND proposal_id IS NOT NULL FOR UPDATE`,
+      [tenantId],
+    );
     const rows = await q.query<{ flagged: unknown }>(
       `SELECT count(*) AS flagged FROM proposals p
         WHERE p.tenant_id = CAST($1 AS uuid) AND p.flagged_input_id IS NOT NULL
@@ -165,12 +211,16 @@ export async function clearTenantAgent(admin: Db, tenantId: string): Promise<num
     if (!Number.isSafeInteger(flagged) || flagged < 0) {
       throw new Error("could not count the tenant's proposals; nothing was cleared");
     }
+    const flow = await countFlowAdvanceRows(q, tenantId, false);
+    const blocked: string[] = [];
     if (flagged > 0) {
-      throw new Error(
+      blocked.push(
         `${flagged} proposal(s) a ledger row still names carry a flag from an outside message ` +
-          "the replace deletes; a person must review them before a reseed (nothing was cleared)",
+          "the replace deletes; a person must review them before a reseed",
       );
     }
+    if (flow > 0) blocked.push(flowAdvanceBlock(flow));
+    if (blocked.length > 0) throw new Error(`${blocked.join("; ")} (nothing was cleared)`);
     let deleted = 0;
     for (const sql of AGENT_CLEAR) deleted += await q.execute(sql, [tenantId]);
     return deleted;

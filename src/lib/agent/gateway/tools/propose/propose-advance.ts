@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { cents } from "../../../../rules-engine";
+import { advanceDailyCap } from "../../daily-cap";
 import { advanceLimit } from "../../limits";
 import { defineTool, type GatewayRef } from "../../types";
 import { dateField, idField } from "../../validate";
@@ -38,7 +39,8 @@ export const proposeAdvance = defineTool({
     ...refsOf(a.sourceRefs),
     ...(a.requestRef ? [{ table: "untrusted_inputs" as const, id: a.requestRef }] : []),
   ],
-  limit: (q, ctx, a) => advanceLimit(q, ctx, a),
+  // The tenant's daily ceiling on advance proposals first, then the engine's limit.
+  limit: async (q, ctx, a) => (await advanceDailyCap(q, ctx, a.amountCents)) ?? advanceLimit(q, ctx, a),
   run: async (_q, _ctx, a, extras) => {
     const limit = extras.limit;
     if (!limit) throw new Error("a proposal needs its limit");

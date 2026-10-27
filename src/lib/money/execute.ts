@@ -80,6 +80,9 @@ export const dbLedgerStore: LedgerStore = {
   readPending,
 };
 
+// The outside call's limit when the caller sets none.
+export const DEFAULT_TIMEOUT_MS = 20_000;
+
 export type MoneyDeps = {
   store: LedgerStore;
   payment: PaymentAdapter;
@@ -102,7 +105,7 @@ export function resolveDeps(p: Partial<MoneyDeps> = {}): MoneyDeps {
     store: p.store ?? dbLedgerStore,
     payment: p.payment ?? paymentAdapter(),
     accounting: p.accounting ?? accountingAdapter(),
-    timeoutMs: p.timeoutMs ?? 20_000,
+    timeoutMs: p.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     waitMs: p.waitMs ?? 8_000,
     pollMs: p.pollMs ?? 250,
     sleep: p.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))),
