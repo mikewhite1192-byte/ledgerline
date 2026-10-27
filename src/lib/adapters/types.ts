@@ -44,6 +44,16 @@ export type SendOutcome =
   | { kind: "failed"; category: MoneyFailure; httpStatus?: number }
   | { kind: "unknown"; category: UnknownCategory; httpStatus?: number };
 
+// Where a record the outside system found stands, in the ledger's words. Each adapter maps its
+// processor's own statuses into these, and anything it does not recognize to "pending":
+//   succeeded  the write landed for good (a payout paid out, an accounting record created)
+//   pending    the record exists but is not final yet (processing, in transit)
+//   failed     it ended with no money moved (failed, returned)
+//   canceled   it was called off with no money moved
+// Only "succeeded" confirms a row; any other value, listed here or not, never does.
+export const READ_BACK_STATUSES = ["succeeded", "pending", "failed", "canceled"] as const;
+export type ReadBackStatus = (typeof READ_BACK_STATUSES)[number];
+
 // What a read-back by request id finds. found: false is not "never happened": the row stays
 // unknown and a person decides at the check limit.
 export type ReadBack =
@@ -54,7 +64,7 @@ export type ReadBack =
       id: string;
       ref?: string;
       amountCents: number;
-      status: string;
+      status: ReadBackStatus;
     }
   | { found: false };
 

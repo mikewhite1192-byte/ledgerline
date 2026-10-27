@@ -8,6 +8,7 @@ import {
   OUTSIDE_SYSTEMS,
   PROPOSERS,
   type MoneyAction,
+  type MoneyActionKind,
   type SubjectTable,
 } from "./types";
 
@@ -165,12 +166,17 @@ export function readBySubject(
 }
 
 // What the reconcile pass works on: rows left unknown, and rows still sent after the window
-// (their sender died or its settle failed). Rows at the check limit need a person and are left
-// out. Oldest send first.
+// (their sender died or its settle failed), of the given kinds only (the ones the caller can
+// serve). Rows at the check limit need a person and are left out. Rows never checked come first,
+// then the least recently checked, so a row that keeps reading back nothing rotates behind newer
+// ones instead of holding its place; oldest send first within each. The ORDER BY names the table,
+// so it sorts the stored timestamps and id, not the millisecond text the SELECT list returns
+// under the same names (two checks in one millisecond would tie).
 export function readPending(
   q: Queryable,
   olderThanSeconds: number,
   limit = 5,
+  kinds: readonly MoneyActionKind[] = MONEY_ACTION_KINDS,
 ): Promise<MoneyAction[]> {
   if (!Number.isSafeInteger(olderThanSeconds) || olderThanSeconds < 0) {
     throw new RangeError("olderThanSeconds must be a whole number of seconds");
@@ -178,12 +184,22 @@ export function readPending(
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
     throw new RangeError("limit must be 1 to 50");
   }
+  if (!Array.isArray(kinds) || kinds.length === 0) {
+    throw new RangeError("kinds must name at least one kind");
+  }
+  for (const k of kinds) {
+    if (!(MONEY_ACTION_KINDS as readonly unknown[]).includes(k)) throw new RangeError("unknown kind");
+  }
+  const wanted = [...new Set(kinds)];
+  // One placeholder per kind; the kinds themselves travel as parameters.
+  const slots = wanted.map((_, i) => `$${i + 3}`).join(", ");
   return many(
     q,
     `check_count < ${MAX_CHECKS} AND (state = 'unknown' OR (state = 'sent'
-       AND sent_at < now() - CAST($1 AS integer) * interval '1 second'))`,
-    [olderThanSeconds, limit],
-    " ORDER BY sent_at, id LIMIT CAST($2 AS integer)",
+       AND sent_at < now() - CAST($1 AS integer) * interval '1 second')) AND kind IN (${slots})`,
+    [olderThanSeconds, limit, ...wanted],
+    " ORDER BY money_actions.last_checked_at NULLS FIRST, money_actions.sent_at, money_actions.id" +
+      " LIMIT CAST($2 AS integer)",
   );
 }
 

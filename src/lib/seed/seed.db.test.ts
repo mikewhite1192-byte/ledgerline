@@ -19,7 +19,9 @@ import { TENANT_TABLES, type TenantTable } from "../data/tables";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Queryable } from "../db/types";
+import { approvalFrom } from "../money/approval";
 import { executeMoneyAction, type MoneyHooks } from "../money/execute";
+import { reserve, settle } from "../money/ledger";
 import {
   advanceEligibility,
   findPaymentOnWrongInvoice,
@@ -115,9 +117,8 @@ describe("seeding the demo carriers", () => {
   afterAll(async () => {
     await bypass?.close();
     // Only what this file made: the two tenants (their rows, memberships and ledger rows go with
-    // them) and the role.
+    // them, by cascade) and the role.
     for (const id of [A, B]) {
-      await clearTenantLedger(admin, id);
       await admin.withTenant(id, (q) =>
         q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"),
       );
@@ -419,7 +420,7 @@ describe("seeding the demo carriers", () => {
   });
 
   // Last: it pays a seeded advance, so the rows no longer equal the plan afterwards.
-  it("clears the tenant's ledger before a replace, so the re-created advance is paid once", async () => {
+  it("refuses a reseed while a ledger row is open, then clears the settled rows before a replace, so the re-created advance is paid once", async () => {
     const saved = { ...flags };
     flags.payoutsEnabled = true;
     flags.paymentProvider = "mock";
@@ -500,8 +501,44 @@ describe("seeding the demo carriers", () => {
       expect(paid.action.state).toBe("confirmed");
       expect((await pay(sessionB, advanceB)).action.state).toBe("confirmed");
 
-      // What npm run seed does for blue-ridge: its ledger rows, then the replace.
-      expect(await clearTenantLedger(admin, A)).toBe(1);
+      // A row still open (reserved, its outside outcome not known): the reseed refuses, names the
+      // count only, and deletes nothing, this carrier's settled row included.
+      const openA = planA.rows.advances[1];
+      expect(await requested(A, openA.id)).toBe(1);
+      const open = await app.withTenant(A, async (q) =>
+        reserve(q, await approvalFrom(q, sessionA), {
+          kind: "advance_payout",
+          subjectId: openA.id,
+          counterpartyId: openA.driver_id,
+          amountCents: openA.amount_cents,
+          proposedBy: "person",
+          subjectStatuses: ["requested"],
+        }),
+      );
+      expect(open.action.state).toBe("reserved");
+      const refused = await clearTenantLedger(admin, A).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(refused).toBeInstanceOf(Error);
+      const message = (refused as Error).message;
+      expect(message).toBe(
+        "1 ledger row(s) still reserved, sent or unknown; settle them before a reseed " +
+          "(nothing was cleared)",
+      );
+      expect(message).not.toContain(open.action.id);
+      expect(message).not.toContain(String(openA.amount_cents));
+      expect(await ledgerRows(A)).toBe(2);
+      expect(await ledgerRows(B)).toBe(1);
+      // Settled (refused before any call), the row is final, and the clear deletes both.
+      expect(
+        await app.withTenant(A, (q) =>
+          settle(q, open.action.id, { to: "failed", via: "refused", category: "disabled" }),
+        ),
+      ).toBe(true);
+
+      // What npm run seed does for blue-ridge: its settled ledger rows, then the replace.
+      expect(await clearTenantLedger(admin, A)).toBe(2);
       await replaceTenantData(app, A, planA);
       expect(await ledgerRows(A)).toBe(0);
       // The admin login ignores row-level security; the tenant filter kept the other carrier's.

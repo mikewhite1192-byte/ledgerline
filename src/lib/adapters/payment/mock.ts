@@ -109,7 +109,7 @@ export function createMockPaymentAdapter(deps: MockDeps = {}): MockPaymentAdapte
         type: "payout",
         id: made.id,
         amountCents: made.amountCents,
-        status: "paid",
+        status: "succeeded",
       };
     },
 

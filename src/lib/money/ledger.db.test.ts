@@ -16,7 +16,7 @@ import {
   sqlStateOf,
   type Fixture,
 } from "./test-db";
-import type { MoneyDraft } from "./types";
+import type { MoneyAction, MoneyActionKind, MoneyDraft } from "./types";
 
 // The money ledger as the app role sees it: tenant walls, the trigger's state machine, the
 // dedupe keys and the pending read. Every test removes its ledger rows; the tenants go at the end.
@@ -189,6 +189,29 @@ describe("reserve", () => {
       });
     });
     expect(await sqlStateOf(reserveA({ attempt: 2 }))).toBe("duplicate");
+  });
+
+  it("settles an unknown row as outside_failed by read-back, which frees the subject for attempt 2", async () => {
+    const one = await reserveA();
+    await inA(async (q) => {
+      await markSent(q, one.action.id);
+      await settle(q, one.action.id, { to: "unknown", category: "timeout" });
+      expect(
+        await settle(q, one.action.id, {
+          to: "failed",
+          via: "read_back",
+          category: "outside_failed",
+          outside: { ...OUTSIDE, amountCents: 25_000 },
+        }),
+      ).toBe(true);
+    });
+    expect(await inA((q) => mustReadAction(q, one.action.id))).toMatchObject({
+      state: "failed",
+      failureCategory: "outside_failed",
+      settledVia: "read_back",
+      checkCount: 1,
+    });
+    expect((await reserveA({ attempt: 2 })).created).toBe(true);
   });
 
   it("refuses a second live row for the subject whatever the key (23505 -> duplicate)", async () => {
@@ -381,5 +404,51 @@ describe("guarded writes and the pending read", () => {
     expect(await inA((q) => readPending(q, 0))).toEqual([]);
     // Another tenant's pending read sees none of it.
     expect(await app.withTenant(B.tenantId, (q) => readPending(q, 0))).toEqual([]);
+  });
+
+  it("reads only the kinds asked for, never-checked rows first, so older rows cannot block a newer one", async () => {
+    flags.accountingEnabled = true;
+    // Each step in its own transaction, so sent_at and last_checked_at increase row by row.
+    const sendRow = async (over: Partial<MoneyDraft>) => {
+      const { action } = await reserveA(over);
+      await inA((q) => markSent(q, action.id));
+      return action.id;
+    };
+    const ids = (rows: MoneyAction[]) => rows.map((a) => a.id);
+    const unserved: string[] = [];
+    const checked: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const subject = await addAdvance(admin, A);
+      // An accounting row left unknown and never checked: a kind the caller cannot serve.
+      const expense = await sendRow({ kind: "advance_expense", subjectId: subject });
+      await inA((q) => settle(q, expense, { to: "unknown", category: "timeout" }));
+      unserved.push(expense);
+      // An older payout checked once that read back nothing.
+      const payout = await sendRow({ subjectId: subject });
+      expect(await inA((q) => bumpCheck(q, payout, "unknown"))).toBe(true);
+      checked.push(payout);
+    }
+    const newer = await sendRow({});
+    await inA((q) => settle(q, newer, { to: "unknown", category: "timeout" }));
+
+    // Every kind: the five never-checked accounting rows fill the page.
+    expect(ids(await inA((q) => readPending(q, 0, 5)))).toEqual(unserved);
+    // Payouts only: the never-checked newer row first, then the least recently checked.
+    expect(ids(await inA((q) => readPending(q, 0, 5, ["advance_payout"])))).toEqual([
+      newer,
+      ...checked.slice(0, 4),
+    ]);
+    // A check moves a row behind the others.
+    await inA((q) => bumpCheck(q, newer, "unknown"));
+    await inA((q) => bumpCheck(q, checked[0], "unknown"));
+    expect(ids(await inA((q) => readPending(q, 0, 5, ["advance_payout"])))).toEqual([
+      ...checked.slice(1),
+      newer,
+    ]);
+    // The kinds are checked whole before any SQL.
+    await expect(inA((q) => readPending(q, 0, 5, []))).rejects.toBeInstanceOf(RangeError);
+    await expect(
+      inA((q) => readPending(q, 0, 5, ["advance" as MoneyActionKind])),
+    ).rejects.toBeInstanceOf(RangeError);
   });
 });

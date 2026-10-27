@@ -12,6 +12,7 @@ import { switchOn, validateDraft, type Settlement } from "./ledger";
 import {
   KIND_SHAPES,
   MAX_CHECKS,
+  MONEY_ACTION_KINDS,
   MoneyError,
   type Approval,
   type MoneyAction,
@@ -54,6 +55,8 @@ export class FakeLedger {
   zone = "America/Chicago";
   // Seconds a sent row reports as its age (the database clock in the real store).
   sentAgeSeconds = 0;
+  // The kinds each pending read asked for.
+  pendingKinds: string[][] = [];
 
   snapshot(): Snapshot {
     const rows = new Map<string, MoneyAction>();
@@ -203,16 +206,30 @@ export class FakeLedger {
       return true;
     },
     readAction: async (_q, id) => this.age(this.row(id)),
-    readPending: async (_q, olderThanSeconds, limit = 5) =>
-      [...this.rows.values()]
+    // Same filter and order as the real read: the given kinds only, never-checked rows first,
+    // then the least recently checked, then the oldest send, then the id.
+    readPending: async (_q, olderThanSeconds, limit = 5, kinds = MONEY_ACTION_KINDS) => {
+      if (kinds.length === 0) throw new RangeError("kinds must name at least one kind");
+      this.pendingKinds.push([...kinds]);
+      const order = (a: string | null, b: string | null) =>
+        a === b ? 0 : a === null ? -1 : b === null ? 1 : a < b ? -1 : 1;
+      return [...this.rows.values()]
         .filter(
           (r) =>
+            kinds.includes(r.kind) &&
             r.checkCount < MAX_CHECKS &&
             (r.state === "unknown" ||
               (r.state === "sent" && this.sentAgeSeconds > olderThanSeconds)),
         )
+        .sort(
+          (a, b) =>
+            order(a.lastCheckedAt, b.lastCheckedAt) ||
+            order(a.sentAt, b.sentAt) ||
+            order(a.id, b.id),
+        )
         .slice(0, limit)
-        .map((r) => this.age(r)),
+        .map((r) => this.age(r));
+    },
   };
 }
 

@@ -76,13 +76,21 @@ const eslintConfig = [
           message: "No dynamic imports in agent code: every dependency is checked statically.",
         },
         {
-          selector: "CallExpression[callee.name='require']",
+          // The name itself, so an alias (const r = require) is refused like a direct call.
+          selector: "Identifier[name='require']",
           message: "No require in agent code: every dependency is checked statically.",
         },
         {
-          // process.getBuiltinModule("node:module").createRequire needs no import.
-          selector: "MemberExpression[property.name='createRequire']",
-          message: "No createRequire in agent code: every dependency is checked statically.",
+          // process.getBuiltinModule("node:module") reaches createRequire with no import, and
+          // destructuring, an alias or a computed key hides that name, so the way in is banned
+          // instead: by name, or as a quoted key. It only returns Node's own modules; agent code
+          // has no use for it. A name built at run time is not caught here; review it.
+          selector: "Identifier[name='getBuiltinModule']",
+          message: "No getBuiltinModule in agent code: it reaches createRequire with no import.",
+        },
+        {
+          selector: "Literal[value='getBuiltinModule']",
+          message: "No getBuiltinModule in agent code: it reaches createRequire with no import.",
         },
       ],
     },

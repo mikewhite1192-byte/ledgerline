@@ -336,10 +336,16 @@ export async function executeMoneyAction(
     tenantZone: first.tenantZone,
   };
   const sending = action;
+  // The payment adapter checks its switch itself on every call. The accounting send is the
+  // caller's hook, so its switch is checked here, at the write: off means a definite disabled
+  // answer and no call.
   const work =
     channel === "payment"
       ? () => d.payment.sendPayout(payoutOf(sending), ctx)
-      : () => (hooks.send as NonNullable<MoneyHooks["send"]>)(sending, ctx);
+      : async (): Promise<SendOutcome> => {
+          if (!switchOn("accounting")) return { kind: "failed", category: "disabled" };
+          return (hooks.send as NonNullable<MoneyHooks["send"]>)(sending, ctx);
+        };
   d.log(`money: sending ${action.id} ${action.kind} ${action.amountCents}c`);
   let outcome: unknown;
   try {

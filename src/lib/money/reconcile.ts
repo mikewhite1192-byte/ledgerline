@@ -13,18 +13,22 @@ import {
 import { isOutsideRecord, switchOn, type Settlement } from "./ledger";
 import {
   KIND_SHAPES,
+  MONEY_ACTION_KINDS,
   type MoneyAction,
   type MoneyActionKind,
+  type MoneyChannel,
   type MoneyFailure,
 } from "./types";
 
 // Finishes what a send left open: rows unknown, and rows still sent after the window (their
 // sender died or its settle did not commit). Each is read back from the outside system by its
-// request id. The whole approved amount found: confirmed by read-back, plus the same follow-up
-// write the executor would have made. Another amount: failed as amount_mismatch, for a person.
-// Nothing found, an error or a timeout: still unknown, one more check counted; at the check limit
-// the row needs a person and the pass skips it. Never sends anything new. Agent code cannot
-// import this file (eslint.config.mjs).
+// request id. Found succeeded for the whole approved amount: confirmed by read-back, plus the
+// same follow-up write the executor would have made. Succeeded for another amount: failed as
+// amount_mismatch, for a person. Found failed or canceled: failed as outside_failed (no money
+// moved; a person may retry). Still pending, a status outside the contract, nothing found, an
+// error or a timeout: still unknown, one more check counted; at the check limit the row needs a
+// person and the pass skips it. Never sends anything new. Agent code cannot import this file
+// (eslint.config.mjs).
 
 export type ReconcileHooks = {
   // The follow-up write a confirmed action needs (an advance to paid, say). Required: a row is
@@ -39,7 +43,7 @@ export type ReconcileHooks = {
 export type ReconcileOptions = {
   limit?: number;
   olderThanSeconds?: number;
-  // A kind without hooks is skipped, never guessed at.
+  // A kind without hooks is not read, never guessed at.
   hooks: Partial<Record<MoneyActionKind, ReconcileHooks>>;
 };
 
@@ -79,6 +83,9 @@ async function readBackOf(
   }
 }
 
+// What a found record means for the row, its status compared whole. Only "succeeded" confirms;
+// "failed" and "canceled" are a definite end with no money moved; anything else (pending, or a
+// value outside the contract) stays unknown.
 function settlementOf(
   action: MoneyAction,
   rb: Found,
@@ -93,10 +100,51 @@ function settlementOf(
   };
   const expected = systemFor(KIND_SHAPES[action.kind].channel, d);
   if (!isOutsideRecord(outside) || outside.system !== expected) return { category: "unknown" };
-  if (outside.amountCents === action.amountCents) {
-    return { to: "confirmed", via: "read_back", outside };
+  const status: unknown = rb.status;
+  if (status === "succeeded") {
+    if (outside.amountCents === action.amountCents) {
+      return { to: "confirmed", via: "read_back", outside };
+    }
+    return { to: "failed", via: "read_back", category: "amount_mismatch", outside };
   }
-  return { to: "failed", via: "read_back", category: "amount_mismatch", outside };
+  if (status === "failed" || status === "canceled") {
+    return { to: "failed", via: "read_back", category: "outside_failed", outside };
+  }
+  return { category: "unknown" };
+}
+
+// The hooks a kind needs: onConfirmed always, and a readBack for accounting kinds only.
+function hooksFit(kind: MoneyActionKind, hooks: ReconcileHooks | undefined): hooks is ReconcileHooks {
+  return (
+    typeof hooks === "object" &&
+    hooks !== null &&
+    typeof hooks.onConfirmed === "function" &&
+    (KIND_SHAPES[kind].channel === "accounting") === (typeof hooks.readBack === "function")
+  );
+}
+
+// The kinds this pass can finish now: hooks that fit, the channel's switch on and its adapter
+// ready (asked once per channel). The pending read asks for these kinds only, so rows the pass
+// would skip never take the places of rows it can finish.
+async function servableKinds(
+  db: TenantDb,
+  tenantId: string,
+  hooks: ReconcileOptions["hooks"] | undefined,
+  d: MoneyDeps,
+): Promise<MoneyActionKind[]> {
+  const ready = new Map<MoneyChannel, boolean>();
+  const kinds: MoneyActionKind[] = [];
+  for (const kind of MONEY_ACTION_KINDS) {
+    const { channel } = KIND_SHAPES[kind];
+    if (!hooksFit(kind, hooks?.[kind]) || !switchOn(channel)) continue;
+    let ok = ready.get(channel);
+    if (ok === undefined) {
+      ok = (await adapterReady(db, tenantId, channel, d)).ok;
+      ready.set(channel, ok);
+    }
+    if (ok) kinds.push(kind);
+  }
+  return kinds;
 }
 
 export async function reconcileMoneyActions(
@@ -120,21 +168,22 @@ export async function reconcileMoneyActions(
   };
 
   // A person with a membership in this tenant pressed the button (or the schedule acts for one).
-  const { pending, tenantZone } = await db.withTenant(tenantId, async (q) => {
+  const tenantZone = await db.withTenant(tenantId, async (q) => {
     await d.store.approvalFrom(q, session);
-    return {
-      pending: await d.store.readPending(q, olderThanSeconds, limit),
-      tenantZone: await d.store.tenantZone(q),
-    };
+    return d.store.tenantZone(q);
   });
+  const kinds = await servableKinds(db, tenantId, options.hooks, d);
+  if (kinds.length === 0) return summary;
+  const pending = await db.withTenant(tenantId, (q) =>
+    d.store.readPending(q, olderThanSeconds, limit, kinds),
+  );
 
   for (const action of pending) {
     const { channel } = KIND_SHAPES[action.kind];
     const hooks = options.hooks?.[action.kind];
+    // Asked again per row: a switch or an adapter can change during the pass.
     if (
-      !hooks ||
-      typeof hooks.onConfirmed !== "function" ||
-      (channel === "accounting") !== (typeof hooks.readBack === "function") ||
+      !hooksFit(action.kind, hooks) ||
       !switchOn(channel) ||
       !(await adapterReady(db, tenantId, channel, d)).ok
     ) {

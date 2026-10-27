@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import { createMockPaymentAdapter } from "../adapters/payment/mock";
-import type { PaymentAdapter, SendOutcome } from "../adapters/types";
-import { executeMoneyAction, settlementFor, type MoneyDeps, type MoneyHooks } from "./execute";
+import type { AccountingAdapter, PaymentAdapter, SendOutcome } from "../adapters/types";
+import {
+  executeMoneyAction,
+  settlementFor,
+  type LedgerStore,
+  type MoneyDeps,
+  type MoneyHooks,
+} from "./execute";
 import {
   FakeDb,
   FakeLedger,
@@ -213,6 +219,57 @@ describe("executeMoneyAction", () => {
     expect(r.action.settledVia).toBe("response");
     expect(r.action.failureCategory).toBe("disabled");
     expect(inner.createdCount).toBe(0);
+  });
+
+  it("re-checks the accounting switch at the write: flipped off after the claim, no call and failed/disabled", async () => {
+    flags.accountingEnabled = true;
+    const accounting = {
+      system: "qbo_sandbox",
+      ready: async () => ({ ok: true }),
+    } as unknown as AccountingAdapter;
+    const answer: SendOutcome = {
+      kind: "confirmed",
+      system: "qbo_sandbox",
+      type: "Purchase",
+      id: "qbo_1",
+      amountCents: 25_000,
+    };
+    const expense = payoutDraft({ kind: "advance_expense" });
+
+    // Control: with the switch on, the caller's hook makes the one call.
+    const on = setup();
+    const sendOn = vi.fn(async (): Promise<SendOutcome> => answer);
+    const ok = await executeMoneyAction(on.db, SESSION, expense, { ...on.hooks, send: sendOn }, {
+      ...on.deps,
+      accounting,
+    });
+    expect(sendOn).toHaveBeenCalledTimes(1);
+    expect(ok.action.state).toBe("confirmed");
+
+    const t = setup();
+    const send = vi.fn(async (): Promise<SendOutcome> => answer);
+    const store: LedgerStore = {
+      ...t.ledger.store,
+      markSent: async (q, id) => {
+        const claimed = await t.ledger.store.markSent(q, id);
+        flags.accountingEnabled = false;
+        return claimed;
+      },
+    };
+    const r = await executeMoneyAction(t.db, SESSION, expense, { ...t.hooks, send }, {
+      ...t.deps,
+      store,
+      accounting,
+    });
+    expect(send).not.toHaveBeenCalled();
+    expect(r.action).toMatchObject({
+      state: "failed",
+      settledVia: "response",
+      failureCategory: "disabled",
+    });
+    expect(t.ledger.only().state).toBe("failed");
+    expect(t.onFailed).toHaveBeenCalledTimes(1);
+    expect(steps(t.ledger.events)).toContain("markSent");
   });
 
   it("rolls the reservation back with the caller's write when that write throws", async () => {

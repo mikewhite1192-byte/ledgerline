@@ -41,12 +41,34 @@ export async function findDemoTenant(admin: Db, carrier: DemoCarrier): Promise<s
 // A replace re-creates every subject with the same id, so the tenant's old ledger rows (keyed
 // kind:subject:attempt) would replay their old outcome, or block the subject for good, against
 // the new rows. The app role has no DELETE on money_actions, so the admin login removes them. That
-// login ignores row-level security, so the statement names the tenant itself, as a bound
-// parameter. Returns the rows deleted.
+// login ignores row-level security, so each statement names the tenant itself, as a bound
+// parameter. A row still reserved, sent or unknown may have reached the outside system, and the
+// reconcile pass needs its keys to read the outcome back, so while any is open the clear refuses
+// and deletes nothing; it removes settled rows (confirmed or failed) only, in the same
+// transaction as the check. Returns the rows deleted.
 export async function clearTenantLedger(admin: Db, tenantId: string): Promise<number> {
-  return admin.withTenant(tenantId, (q) =>
-    q.execute("DELETE FROM money_actions WHERE tenant_id = CAST($1 AS uuid)", [tenantId]),
-  );
+  return admin.withTenant(tenantId, async (q) => {
+    const rows = await q.query<{ n: unknown }>(
+      `SELECT count(*) AS n FROM money_actions
+        WHERE tenant_id = CAST($1 AS uuid) AND state IN ('reserved', 'sent', 'unknown')`,
+      [tenantId],
+    );
+    const open = rows.length === 1 ? Number(rows[0].n) : NaN;
+    if (!Number.isSafeInteger(open) || open < 0) {
+      throw new Error("could not count the open ledger rows; nothing was cleared");
+    }
+    if (open > 0) {
+      throw new Error(
+        `${open} ledger row(s) still reserved, sent or unknown; settle them before a reseed ` +
+          "(nothing was cleared)",
+      );
+    }
+    return q.execute(
+      `DELETE FROM money_actions
+        WHERE tenant_id = CAST($1 AS uuid) AND state IN ('confirmed', 'failed')`,
+      [tenantId],
+    );
+  });
 }
 
 // Inside the tenant transaction: the current tenant is the carrier the plan was built for.

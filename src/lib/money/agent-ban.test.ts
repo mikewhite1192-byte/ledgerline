@@ -31,6 +31,13 @@ const FORBIDDEN = [
   'import { createRequire } from "node:module";',
   'import { createRequire as load } from "module";',
   'export const q = process.getBuiltinModule("node:module").createRequire(import.meta.url);',
+  // The same way in, destructured, computed or aliased, and require through an alias.
+  'export const { createRequire: cr } = process.getBuiltinModule("node:module");',
+  'export const cr = process.getBuiltinModule("node:module")["createRequire"];',
+  'export const g = process["getBuiltinModule"];',
+  "export const g = process.getBuiltinModule;",
+  "export const { getBuiltinModule: g } = process;",
+  'const r = require;\nexport const m = r("../money/ledger");',
 ];
 const ALLOWED = [
   'import { readAction } from "../money/read";',
@@ -39,6 +46,8 @@ const ALLOWED = [
   'import { idempotencyKey } from "@/lib/money/keys";',
   'import { dbTmsAdapter } from "../adapters/tms/db";',
   'import type { TmsAdapter } from "../adapters/types";',
+  // Names that only start like a banned one.
+  'export const schema = { required: ["driverId"] };',
 ];
 
 describe("agent import ban", () => {

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import { createMockPaymentAdapter } from "../adapters/payment/mock";
-import type { PaymentAdapter, ReadBack } from "../adapters/types";
+import type { PaymentAdapter, ReadBack, ReadBackStatus } from "../adapters/types";
 import { executeMoneyAction, type MoneyDeps, type MoneyHooks } from "./execute";
+import { requestIdOf } from "./keys";
 import { reconcileMoneyActions, type ReconcileHooks } from "./reconcile";
 import {
   FakeDb,
@@ -54,6 +55,19 @@ async function unknownPayout(readBack?: PaymentAdapter["readBack"]) {
   return { ledger, db, mock, payment, deps, hooks, onConfirmed, onFailed, id: r.action.id };
 }
 
+// A read-back that finds the payout with these fields (by default: succeeded, the whole amount).
+function found(over: Partial<Extract<ReadBack, { found: true }>> = {}) {
+  return async (): Promise<ReadBack> => ({
+    found: true,
+    system: "mock",
+    type: "payout",
+    id: "mock_x",
+    amountCents: 25_000,
+    status: "succeeded",
+    ...over,
+  });
+}
+
 describe("reconcileMoneyActions", () => {
   it("confirms by read-back when the whole amount is found, and runs onConfirmed once", async () => {
     const t = await unknownPayout();
@@ -73,17 +87,16 @@ describe("reconcileMoneyActions", () => {
     expect(t.onConfirmed).toHaveBeenCalledTimes(1);
   });
 
-  it("fails as amount_mismatch when another amount is found", async () => {
-    const t = await unknownPayout(
-      async (): Promise<ReadBack> => ({
-        found: true,
-        system: "mock",
-        type: "payout",
-        id: "mock_x",
-        amountCents: 2_500,
-        status: "paid",
-      }),
-    );
+  it("confirms a read-back that succeeded for the whole amount", async () => {
+    const t = await unknownPayout(found());
+    const s = await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks }, t.deps);
+    expect(s).toEqual({ checked: 1, confirmed: 1, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 });
+    expect(t.ledger.row(t.id)).toMatchObject({ state: "confirmed", outsideId: "mock_x" });
+    expect(t.onConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails as amount_mismatch when a read-back succeeded for another amount", async () => {
+    const t = await unknownPayout(found({ amountCents: 2_500 }));
     const s = await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks }, t.deps);
     expect(s.failed).toBe(1);
     const row = t.ledger.row(t.id);
@@ -93,6 +106,47 @@ describe("reconcileMoneyActions", () => {
     expect(row.outsideAmountCents).toBe(2_500);
     expect(t.onConfirmed).not.toHaveBeenCalled();
     expect(t.onFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails a read-back that failed or was canceled as outside_failed, and never confirms it", async () => {
+    for (const status of ["failed", "canceled"] as const) {
+      const t = await unknownPayout(found({ status }));
+      const s = await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks }, t.deps);
+      expect(s, status).toEqual({
+        checked: 1,
+        confirmed: 0,
+        failed: 1,
+        stillUnknown: 0,
+        skipped: 0,
+        errors: 0,
+      });
+      expect(t.ledger.row(t.id), status).toMatchObject({
+        state: "failed",
+        failureCategory: "outside_failed",
+        settledVia: "read_back",
+        outsideId: "mock_x",
+        checkCount: 1,
+      });
+      expect(t.onConfirmed).not.toHaveBeenCalled();
+      expect(t.onFailed).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("keeps a pending or unrecognized read-back status unknown and counts a check", async () => {
+    // "paid" was never in the contract; an adapter passing its processor's word through is unknown.
+    for (const status of ["pending", "paid", "SUCCEEDED", "", undefined]) {
+      const t = await unknownPayout(found({ status: status as ReadBackStatus }));
+      const s = await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks }, t.deps);
+      expect(s.stillUnknown, String(status)).toBe(1);
+      expect(t.ledger.row(t.id), String(status)).toMatchObject({
+        state: "unknown",
+        failureCategory: "unknown",
+        settledVia: null,
+        checkCount: 1,
+      });
+      expect(t.onConfirmed).not.toHaveBeenCalled();
+      expect(t.onFailed).not.toHaveBeenCalled();
+    }
   });
 
   it("keeps the row unknown and counts a check when the read-back throws, finds nothing or hangs", async () => {
@@ -137,13 +191,69 @@ describe("reconcileMoneyActions", () => {
     expect(s.confirmed).toBe(1);
   });
 
-  it("skips a row whose switch is off or whose kind has no hooks, and counts nothing", async () => {
+  it("does not read a row whose kind has no hooks, whose adapter is not ready or whose switch is off", async () => {
     const t = await unknownPayout();
-    expect((await reconcileMoneyActions(t.db, SESSION, { hooks: {} }, t.deps)).skipped).toBe(1);
+    const none = { checked: 0, confirmed: 0, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 };
+    expect(await reconcileMoneyActions(t.db, SESSION, { hooks: {} }, t.deps)).toEqual(none);
+    const notReady: Partial<MoneyDeps> = {
+      ...t.deps,
+      payment: { ...t.payment, ready: async () => ({ ok: false, category: "not_configured" }) },
+    };
+    expect(await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks }, notReady)).toEqual(none);
     flags.payoutsEnabled = false;
-    expect((await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks }, t.deps)).skipped).toBe(1);
+    expect(await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks }, t.deps)).toEqual(none);
+    expect(t.ledger.pendingKinds).toEqual([]);
     expect(t.ledger.row(t.id).checkCount).toBe(0);
     expect(t.payment.readBacks).toBe(0);
+  });
+
+  it("reads only kinds it can serve, never-checked rows first, so older rows cannot block a newer one", async () => {
+    const seen: string[] = [];
+    const t = await unknownPayout(async (ref) => {
+      seen.push(ref.requestId);
+      return { found: false };
+    });
+    const newer = t.ledger.row(t.id);
+    t.ledger.rows.delete(t.id);
+    const older = "2026-11-02T14:00:00.000Z";
+    const checked: string[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      // A row of a kind this pass has no hooks for (and whose switch is off): never read.
+      const a = nextId();
+      t.ledger.rows.set(a, {
+        ...newer,
+        id: a,
+        requestId: requestIdOf(a),
+        kind: "advance_expense",
+        channel: "accounting",
+        sentAt: older,
+      });
+      // An older payout already checked once that read back nothing.
+      const p = nextId();
+      checked.push(requestIdOf(p));
+      t.ledger.rows.set(p, {
+        ...newer,
+        id: p,
+        requestId: requestIdOf(p),
+        sentAt: older,
+        checkCount: 1,
+        lastCheckedAt: "2026-11-02T15:00:00.000Z",
+      });
+    }
+    // Sent last and stored last: only the order of the read can put it first.
+    t.ledger.rows.set(t.id, newer);
+
+    const s = await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks, limit: 5 }, t.deps);
+    expect(t.ledger.pendingKinds).toEqual([["advance_payout"]]);
+    expect(s).toEqual({ checked: 5, confirmed: 0, failed: 0, stillUnknown: 5, skipped: 0, errors: 0 });
+    expect(seen).toEqual([newer.requestId, ...checked.slice(0, 4)]);
+    expect(t.ledger.row(t.id).checkCount).toBe(1);
+    for (const r of t.ledger.rows.values()) {
+      if (r.kind === "advance_expense") expect(r.checkCount).toBe(0);
+    }
+    // The next pass starts with the row the first one left out: checked rows rotate.
+    await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks, limit: 5 }, t.deps);
+    expect(seen[5]).toBe(checked[4]);
   });
 
   it("rolls back a confirm whose onConfirmed throws, and counts a check so it cannot loop forever", async () => {

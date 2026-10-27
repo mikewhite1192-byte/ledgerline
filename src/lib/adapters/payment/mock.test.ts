@@ -110,7 +110,7 @@ describe("mock payment adapter", () => {
       type: "payout",
       id: "mock_0000000000000001",
       amountCents: 25_000,
-      status: "paid",
+      status: "succeeded",
     });
     expect(mock.createdCount).toBe(1);
   });

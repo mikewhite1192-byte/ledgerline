@@ -30,6 +30,8 @@ export const MONEY_FAILURES = [
   "timeout",
   "network",
   "amount_mismatch",
+  // A read-back found the record failed or canceled: no money moved.
+  "outside_failed",
   "unknown",
 ] as const;
 export type MoneyFailure = (typeof MONEY_FAILURES)[number];
