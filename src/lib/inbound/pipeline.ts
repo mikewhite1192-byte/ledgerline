@@ -314,7 +314,6 @@ export async function sortMessage(session: Session, inboundId: string, deps: Inb
         JSON.stringify(sorted.decided ? (sorted.dates ?? []) : []),
         callId,
         target,
-        sorted.decided ? (sorted.driverId ?? null) : null,
         iso(),
       ]),
     );
@@ -344,7 +343,9 @@ export type HandOffResult =
 // Names the message's untrusted input, the id get_inbound_message reads it by.
 export const handOffText = (inputId: string) => `Handle inbound message ${inputId}`;
 
-// A turn that failed or will never run, closed as failed so it does not stay running.
+// A turn that failed or will never run, closed as failed so it does not stay running. Only a
+// running turn is closed: one never written, or already closed, changes nothing (the log line says
+// it could not be closed).
 async function closeFailedTurn(session: Session, turnId: string, store: StoreDeps = {}): Promise<void> {
   try {
     await dbTurnStore(session, store).finishTurn(turnId, {
@@ -384,26 +385,44 @@ export async function handOffMessage(session: Session, inboundId: string, deps: 
 
   const row = await inTenant(db, session, (q) => readStep(q, id));
   if (!row) return refused("not_found");
-  if (row.status === "handed_off") return refused("already_handed_off");
-  if (row.status !== "triaged") return refused("not_ready");
+  if (row.status === "handed_off" && row.conversation_id !== null) return refused("already_handed_off");
+  // A handed-off message with no conversation is a hand-off in progress, or one whose request
+  // ended before it named its conversation: the claim tells which (busy, or taken again).
+  if (row.status !== "triaged" && row.status !== "handed_off") return refused("not_ready");
   if (!row.input_id) return refused("not_found");
 
   // Claim the message first, so two presses start one turn.
   const claimed = await inTenant(db, session, (q) => q.execute(CLAIM_HANDOFF_SQL, [id, iso()]));
   if (claimed === 0) return refused("busy", true);
 
+  // A failure to give the claim back is logged by name; the claim is taken again after the hold.
+  const giveBack = async () => {
+    try {
+      await inTenant(db, session, (q) => q.execute(UNCLAIM_HANDOFF_SQL, [id, iso()]));
+    } catch (err) {
+      console.error("inbound message claim not given back:", errorName(err));
+    }
+  };
+  const store: StoreDeps = { db, clock: () => new Date(clock()) };
+
   const text = handOffText(row.input_id);
+  // Made before the open, so the catch can name the turn the open may have written.
+  const turnId = (deps.newId ?? randomUUID)();
   let opened: Opened;
   try {
     opened = await (deps.open ?? openAgentTurn)(session, {
       conversationId: null,
-      turnId: (deps.newId ?? randomUUID)(),
+      turnId,
       text,
       now: new Date(startedAt),
       summaryChars: flags.agentTurnLimits.summaryChars,
     });
   } catch (err) {
-    await inTenant(db, session, (q) => q.execute(UNCLAIM_HANDOFF_SQL, [id, iso()]));
+    // The open may have written its turn before it threw (a commit that answered with an error is
+    // unknown): close that turn, which changes nothing if it was never written, then give the
+    // claim back.
+    await closeFailedTurn(session, turnId, store);
+    await giveBack();
     throw err;
   }
   if ("refused" in opened) {
@@ -414,19 +433,23 @@ export async function handOffMessage(session: Session, inboundId: string, deps: 
     if (opened.refused === "duplicate") return refused("already_handed_off");
     return refused("not_found");
   }
+  let linked: number;
   try {
-    await inTenant(db, session, (q) => q.execute(LINK_SQL, [id, opened.conversationId, iso()]));
+    linked = await inTenant(db, session, (q) => q.execute(LINK_SQL, [id, opened.conversationId, iso()]));
   } catch (err) {
     // The turn opened but the message may not name it. Give the claim back (the unclaim touches
     // only a message with no conversation, so a link that did land stays) and close the turn that
     // will not run.
-    try {
-      await inTenant(db, session, (q) => q.execute(UNCLAIM_HANDOFF_SQL, [id, iso()]));
-    } catch (unclaimErr) {
-      console.error("inbound message claim not given back:", errorName(unclaimErr));
-    }
-    await closeFailedTurn(session, opened.turnId, { db, clock: () => new Date(clock()) });
+    await giveBack();
+    await closeFailedTurn(session, opened.turnId, store);
     throw err;
+  }
+  if (linked === 0) {
+    // The claim is no longer this press's (another press took it again after the hold and named
+    // its conversation first, or it was given back): this turn never runs, and the message is left
+    // as it is.
+    await closeFailedTurn(session, opened.turnId, store);
+    return refused("busy", true);
   }
   const turnStatus = await (deps.run ?? runDefault)(session, opened, text, startedAt);
   return { ok: true, inboundId: id, status: "handed_off", conversationId: opened.conversationId, turnId: opened.turnId, turnStatus };

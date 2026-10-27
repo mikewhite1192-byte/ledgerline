@@ -2,7 +2,9 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import type { ScreenOutcome } from "../agent/gateway/screen";
+import { openAgentTurn } from "../agent/gateway/store";
 import { untrustedContentHash } from "../data/content-hash";
+import { DbError } from "../db";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param, TenantDb } from "../db/types";
@@ -13,7 +15,9 @@ import type { ReceiveInput } from "./types";
 
 // The Inbox against a real database, as the app's own role, with the screen, the triage model
 // and the agent faked: a paste goes from received to handed off; the sender matches its driver by
-// the whole address; a repeated paste or email is one row; another carrier sees nothing and cannot
+// the whole address, and a driver the model names never lands on the row; a repeated paste or
+// email is one row; a hand-off claim that never named its conversation is taken again once, after
+// the hold; a turn an open wrote before it threw is closed; another carrier sees nothing and cannot
 // write into this one; the app role deletes nothing and changes no fixed column; the checks hold.
 // Fixed instants only. Every tenant made here is removed after each test.
 
@@ -174,6 +178,136 @@ describe("the Inbox (database)", () => {
     expect(await handOffMessage(f.session, id, deps())).toMatchObject({ ok: false, category: "already_handed_off" });
   });
 
+  it("keeps the driver a model names off the row when the sender matched nobody", async () => {
+    const f = A!;
+    const { message } = await received(f, { fromAddress: "someone@unknown.example" });
+    expect(message.driverId).toBeNull();
+    // The model names a driver on file; the sort is recorded, the driver is not.
+    const hinted = deps({
+      triage: async () => ({
+        category: "advance_request",
+        urgency: "high",
+        callId: null,
+        decided: true,
+        amountCents: 30_000,
+        dates: ["2026-11-03"],
+        driverId: f.driverId,
+      }),
+    });
+    expect(await sortMessage(f.session, message.id, hinted)).toMatchObject({ ok: true, status: "triaged" });
+    expect(await app.withTenant(f.tenantId, (q) => readInbound(q, message.id))).toMatchObject({
+      status: "triaged",
+      category: "advance_request",
+      driverId: null,
+      driverCode: null,
+      driverName: null,
+    });
+  });
+
+  it("takes again, once, a hand-off claim that never named its conversation", async () => {
+    const f = A!;
+    const { message } = await received(f);
+    await sortMessage(f.session, message.id, deps());
+    // A press claimed it at NOW and its request ended before the link.
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        "UPDATE inbound_messages SET status = 'handed_off', updated_at = CAST($2 AS timestamptz)" +
+          " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [message.id, new Date(NOW).toISOString()],
+      ),
+    );
+    const conversations = [randomUUID(), randomUUID()];
+    for (const conversationId of conversations) {
+      await admin.withTenant(f.tenantId, (q) =>
+        q.execute("INSERT INTO conversations (id, tenant_id, created_by) VALUES (CAST($1 AS uuid), current_tenant_id(), $2)", [
+          conversationId,
+          f.session.sub,
+        ]),
+      );
+    }
+    let opens = 0;
+    const press = (at: number) =>
+      handOffMessage(
+        f.session,
+        message.id,
+        deps({
+          clock: () => at,
+          open: async (_s, input) => ({ conversationId: conversations[opens++], turnId: input.turnId }) as never,
+          run: async () => "done",
+        }),
+      );
+    // Within the hold it is a hand-off in progress.
+    expect(await press(NOW + 30_000)).toEqual({ ok: false, category: "busy", retryable: true });
+    expect(opens).toBe(0);
+    // After it, two presses at once take it once and open one turn.
+    const both = await Promise.all([press(NOW + 41_000), press(NOW + 41_000)]);
+    expect(both.filter((r) => r.ok)).toHaveLength(1);
+    // The other found the claim held, or (if it read after the link) the message handed off.
+    expect(both.filter((r) => !r.ok).map((r) => !r.ok && r.category)).toEqual([expect.stringMatching(/^(busy|already_handed_off)$/)]);
+    expect(opens).toBe(1);
+    expect(await app.withTenant(f.tenantId, (q) => readInbound(q, message.id))).toMatchObject({
+      status: "handed_off",
+      conversationId: conversations[0],
+    });
+    expect(await press(NOW + 90_000)).toEqual({ ok: false, category: "already_handed_off", retryable: false });
+  });
+
+  it("closes the turn an open wrote before it threw, and the message can be handed off again", async () => {
+    const f = A!;
+    const { message } = await received(f);
+    await sortMessage(f.session, message.id, deps());
+    const open = (s: typeof f.session, input: Parameters<typeof openAgentTurn>[1]) =>
+      openAgentTurn(s, input, { db: app, clock: () => new Date(NOW) });
+    const turns = () =>
+      admin.withTenant(f.tenantId, (q) =>
+        q.query<{ status: string; ended_reason: string | null }>(
+          "SELECT status, ended_reason FROM turns WHERE tenant_id = current_tenant_id() ORDER BY status",
+        ),
+      );
+
+    // The open's transaction commits, then the call answers with an error.
+    await expect(
+      handOffMessage(
+        f.session,
+        message.id,
+        deps({
+          open: async (s, input) => {
+            await open(s, input);
+            throw new DbError("unknown");
+          },
+          run: async () => "done",
+        }),
+      ),
+    ).rejects.toBeInstanceOf(DbError);
+    expect(await turns()).toEqual([{ status: "failed", ended_reason: "store" }]);
+    expect(await app.withTenant(f.tenantId, (q) => readInbound(q, message.id))).toMatchObject({ status: "triaged", conversationId: null });
+
+    // The message is claimable again, and two presses at once start one turn.
+    let runs = 0;
+    const press = () =>
+      handOffMessage(
+        f.session,
+        message.id,
+        deps({
+          open,
+          run: async () => {
+            runs += 1;
+            return "done";
+          },
+        }),
+      );
+    const both = await Promise.all([press(), press()]);
+    expect(both.filter((r) => r.ok)).toHaveLength(1);
+    // The other found the claim held, or (if it read after the link) the message handed off.
+    expect(both.filter((r) => !r.ok).map((r) => !r.ok && r.category)).toEqual([expect.stringMatching(/^(busy|already_handed_off)$/)]);
+    expect(runs).toBe(1);
+    expect(await turns()).toEqual([
+      { status: "failed", ended_reason: "store" },
+      { status: "running", ended_reason: null },
+    ]);
+    expect(await app.withTenant(f.tenantId, (q) => readInbound(q, message.id))).toMatchObject({ status: "handed_off" });
+  });
+
   it("holds a flagged message for a person and never sorts or hands it on", async () => {
     const f = A!;
     const { message } = await received(f);
@@ -228,7 +362,7 @@ describe("the Inbox (database)", () => {
     const { message } = await received(f);
     const asApp = (sql: string) => sqlStateOf(app.withTenant(f.tenantId, (q) => q.execute(sql, [message.id])));
     expect(await asApp("DELETE FROM inbound_messages WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)")).toBe("42501");
-    // The channel, input, sender, subject, Message-ID, trace, author and tenant are fixed once written.
+    // The channel, input, sender, driver, subject, Message-ID, trace, author and tenant are fixed once written.
     for (const set of [
       "channel = 'email'",
       "input_id = NULL",
@@ -238,6 +372,8 @@ describe("the Inbox (database)", () => {
       "trace_id = gen_random_uuid()",
       "created_by = 'x'",
       "received_at = now()",
+      // The sender's driver too: only the sender's address sets it, when the row is written.
+      "driver_id = NULL",
       `tenant_id = CAST('${B!.tenantId}' AS uuid)`,
     ]) {
       expect(await asApp(`UPDATE inbound_messages SET ${set} WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`), set).toBe(

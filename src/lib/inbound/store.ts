@@ -135,7 +135,8 @@ export async function readStep(q: Queryable, id: string): Promise<StepRow | null
 // Takes one try: only from received or failed, only while tries are left, and only if nobody took
 // one since the row was read ($2). The row reads received while it is being sorted, so a received
 // row with a try taken in the last SORT_HOLD_SECONDS is being sorted and a second press is busy;
-// after that it is a sort whose outcome was never written, and the next press may take it.
+// after that it is a sort whose outcome was never written, and the next press may take it. The
+// hand-off claim uses the same hold.
 export const SORT_HOLD_SECONDS = 40;
 export const CLAIM_SORT_SQL =
   "UPDATE inbound_messages SET attempts = attempts + 1, status = 'received', fail_category = NULL," +
@@ -161,27 +162,34 @@ export const SET_FAILED_SQL =
   " updated_at = CAST($5 AS timestamptz)" +
   " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'received' AND attempts = $2";
 
-// The sender's driver wins; the model's is kept only when the sender matched nobody (the gateway's
-// ref check found it on file, and the foreign key checks it again).
+// driver_id is not written here: it is only ever the driver the sender's address matched, set when
+// the message was received. A driver the model names is a guess and is not stored on the row.
 export const SET_SORTED_SQL =
   "UPDATE inbound_messages SET status = 'triaged', triage_category = $5, triage_urgency = $6," +
   " triage_amount_cents = $7, triage_dates = CAST($8 AS jsonb), triage_call_id = CAST($9 AS uuid)," +
-  " triage_target = $10, driver_id = COALESCE(driver_id, CAST($11 AS uuid))," +
-  ` screening_id = ${SCREENING_ID}, updated_at = CAST($12 AS timestamptz)` +
+  ` triage_target = $10, screening_id = ${SCREENING_ID}, updated_at = CAST($11 AS timestamptz)` +
   " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'received' AND attempts = $2";
 
 // --- hand off ---
 
+// Takes the message for one hand-off: a sorted one, or a claim that never named its conversation
+// and was taken more than SORT_HOLD_SECONDS ago (its request ended between the claim and the
+// link). A newer claim with no conversation is a hand-off in progress, and a second press is busy.
 export const CLAIM_HANDOFF_SQL =
   "UPDATE inbound_messages SET status = 'handed_off', updated_at = CAST($2 AS timestamptz)" +
-  " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'triaged'";
+  " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND (status = 'triaged'" +
+  " OR (status = 'handed_off' AND conversation_id IS NULL" +
+  ` AND updated_at <= CAST($2 AS timestamptz) - interval '${SORT_HOLD_SECONDS} seconds'))`;
 export const UNCLAIM_HANDOFF_SQL =
   "UPDATE inbound_messages SET status = 'triaged', updated_at = CAST($2 AS timestamptz)" +
   " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'handed_off'" +
   " AND conversation_id IS NULL";
+// Names the conversation only on a claim that has none yet, so of two turns opened for one
+// message (a claim taken again after the hold), only the first to link runs.
 export const LINK_SQL =
   "UPDATE inbound_messages SET conversation_id = CAST($2 AS uuid), updated_at = CAST($3 AS timestamptz)" +
-  " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'handed_off'";
+  " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'handed_off'" +
+  " AND conversation_id IS NULL";
 
 // --- reading for the routes ---
 

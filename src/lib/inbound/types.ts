@@ -16,6 +16,8 @@ export type InboundMessage = {
   receivedAt: string;
   fromAddress: string | null;
   subject: string | null;
+  // The driver the sender's address matched, and that driver's code and name. Never a driver a
+  // model named.
   driverId: string | null;
   driverCode: string | null;
   driverName: string | null;

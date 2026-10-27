@@ -17,8 +17,10 @@
 -- flags.inboxLimits.maxAttempts: raise both together.
 --
 -- Grants: SELECT and INSERT, and UPDATE on the pipeline's own columns only. Its channel, input,
--- sender, subject, Message-ID, trace and tenant are fixed once the row is written. There is no
--- DELETE grant: the demo reset function (SECURITY DEFINER) owns deletion. Money is integer cents.
+-- sender, the sender's driver, subject, Message-ID, trace and tenant are fixed once the row is
+-- written: driver_id is only the driver the sender's address matched, never one a model named.
+-- There is no DELETE grant: the demo reset function (SECURITY DEFINER) owns deletion. Money is
+-- integer cents.
 
 CREATE TABLE inbound_messages (
   id                  uuid PRIMARY KEY,
@@ -70,6 +72,6 @@ ALTER TABLE inbound_messages FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON inbound_messages
   USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
 GRANT SELECT, INSERT ON inbound_messages TO payday_app;
-GRANT UPDATE (status, fail_category, attempts, driver_id, screening_id, triage_category,
-              triage_urgency, triage_amount_cents, triage_dates, triage_call_id, triage_target,
-              conversation_id, updated_at) ON inbound_messages TO payday_app;
+GRANT UPDATE (status, fail_category, attempts, screening_id, triage_category, triage_urgency,
+              triage_amount_cents, triage_dates, triage_call_id, triage_target, conversation_id,
+              updated_at) ON inbound_messages TO payday_app;

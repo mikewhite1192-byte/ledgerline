@@ -402,7 +402,7 @@ describe("sortMessage", () => {
     expect(logged).toContainEqual(["inbound message held for a person:", "instruction_to_agent"]);
   });
 
-  it("sortMessage records category, urgency, amount, dates and the triage model on a clean message", async () => {
+  it("sortMessage records category, urgency, amount, dates and the triage model on a clean message, never the model's driver", async () => {
     const db = fakeDb();
     const { d, calls } = sortDeps(db);
     expect(await sortMessage(session, MSG, d)).toEqual({ ok: true, inboundId: MSG, status: "triaged", category: null, attempts: 1 });
@@ -414,7 +414,9 @@ describe("sortMessage", () => {
     expect(db.writes[0].params).toEqual([MSG, 0, new Date(T0).toISOString(), 3]);
     const set = db.writes[1];
     expect(set.sql).toContain("SET status = 'triaged'");
-    expect(set.sql).toContain("driver_id = COALESCE(driver_id,");
+    // The row's driver is only ever the sender's match: the driver the model named is not written.
+    expect(set.sql).not.toContain("driver_id");
+    expect(set.params).not.toContain(OTHER_DRIVER);
     expect(set.params).toEqual([
       MSG,
       1,
@@ -427,7 +429,6 @@ describe("sortMessage", () => {
       CALL,
       // The owner's default: Muse Spark Open sorts.
       "spark_open",
-      OTHER_DRIVER,
       new Date(T0).toISOString(),
     ]);
     flags.triageProvider = "meta";
@@ -440,7 +441,8 @@ describe("sortMessage", () => {
     const db = fakeDb();
     const { d } = sortDeps(db, { triage: sorted({ category: "other", urgency: "normal", decided: false, amountCents: 5, dates: ["2026-01-01"], driverId: DRIVER }) });
     expect(await sortMessage(session, MSG, d)).toMatchObject({ status: "triaged" });
-    expect(db.writes[1].params.slice(4, 11)).toEqual(["other", "normal", null, "[]", CALL, "spark_open", null]);
+    expect(db.writes[1].params.slice(4, 10)).toEqual(["other", "normal", null, "[]", CALL, "spark_open"]);
+    expect(db.writes[1].params).not.toContain(DRIVER);
   });
 
   it("sortMessage keeps a model error as failed with a category and stops after three attempts", async () => {
@@ -656,7 +658,13 @@ describe("handOffMessage", () => {
       ["handed_off", "already_handed_off"],
     ];
     for (const [status, category] of cases) {
-      const db = fakeDb({ step: stepRow({ status, fail_category: status === "blocked" ? "screen_flagged" : null }) });
+      const db = fakeDb({
+        step: stepRow({
+          status,
+          fail_category: status === "blocked" ? "screen_flagged" : null,
+          conversation_id: status === "handed_off" ? "c-0" : null,
+        }),
+      });
       const { d, calls } = deps(db);
       expect(await handOffMessage(session, MSG, d)).toEqual({ ok: false, category, retryable: false });
       expect(db.writes).toHaveLength(0);
@@ -668,6 +676,55 @@ describe("handOffMessage", () => {
     const { d, calls } = deps(fakeDb({ step: stepRow({ status: "triaged" }), affected: { "SET status = 'handed_off'": 0 } }));
     expect(await handOffMessage(session, MSG, d)).toEqual({ ok: false, category: "busy", retryable: true });
     expect(calls.open).toHaveLength(0);
+  });
+
+  it("takes again a handed-off message that never named its conversation, only through the held claim", async () => {
+    // Within the hold the claim changes nothing, and the press is busy.
+    const held = fakeDb({ step: stepRow({ status: "handed_off" }), affected: { "SET status = 'handed_off'": 0 } });
+    const first = deps(held);
+    expect(await handOffMessage(session, MSG, first.d)).toEqual({ ok: false, category: "busy", retryable: true });
+    expect(first.calls.open).toHaveLength(0);
+    // After it, the claim takes the row and one turn opens, links and runs.
+    const stale = fakeDb({ step: stepRow({ status: "handed_off" }) });
+    const again = deps(stale);
+    expect(await handOffMessage(session, MSG, again.d)).toMatchObject({ ok: true, status: "handed_off", conversationId: "c-1" });
+    expect(again.calls.run).toEqual([handOffText(INPUT)]);
+    const claim = sqlOf(stale)[0];
+    expect(claim).toContain("status = 'triaged' OR (status = 'handed_off' AND conversation_id IS NULL");
+    expect(claim).toContain("interval '40 seconds'");
+    expect(sqlOf(stale)[1]).toContain("SET conversation_id");
+    expect(sqlOf(stale)[1]).toContain("AND conversation_id IS NULL");
+  });
+
+  it("closes the turn an open may have written before it threw, then gives the claim back", async () => {
+    const db = fakeDb({ step: stepRow({ status: "triaged" }) });
+    const { d, calls } = deps(db, "throw");
+    await expect(handOffMessage(session, MSG, d)).rejects.toThrow("store down");
+    expect(calls.open[0]).toMatchObject({ turnId: TURN });
+    expect(calls.run).toHaveLength(0);
+    const sqls = sqlOf(db);
+    expect(sqls[0]).toContain("SET status = 'handed_off'");
+    expect(sqls[1]).toMatch(/UPDATE turns\s+SET status = \$2/);
+    expect(db.writes[1].params.slice(0, 3)).toEqual([TURN, "failed", "store"]);
+    expect(sqls.at(-1)).toContain("SET status = 'triaged'");
+    expect(sqls.at(-1)).toContain("conversation_id IS NULL");
+
+    // A failed give-back is logged by name, and the open's own error is the one thrown.
+    const stuck = fakeDb({ step: stepRow({ status: "triaged" }), fail: ["SET status = 'triaged'"] });
+    await expect(handOffMessage(session, MSG, deps(stuck, "throw").d)).rejects.toThrow("store down");
+    expect(logged).toContainEqual(["inbound message claim not given back:", "sql"]);
+  });
+
+  it("runs no turn when the link finds the message no longer this press's", async () => {
+    const db = fakeDb({ step: stepRow({ status: "triaged" }), affected: { "SET conversation_id": 0 } });
+    const { d, calls } = deps(db);
+    expect(await handOffMessage(session, MSG, d)).toEqual({ ok: false, category: "busy", retryable: true });
+    expect(calls.run).toHaveLength(0);
+    const sqls = sqlOf(db);
+    // The turn is closed, and the claim is left for the press that holds it.
+    expect(sqls[2]).toMatch(/UPDATE turns\s+SET status = \$2/);
+    expect(db.writes[2].params.slice(0, 3)).toEqual([TURN, "failed", "store"]);
+    expect(sqls.some((sql) => sql.includes("SET status = 'triaged'"))).toBe(false);
   });
 
   it("gives the claim back and closes the unrun turn when the link fails", async () => {
