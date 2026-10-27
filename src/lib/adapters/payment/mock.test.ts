@@ -128,7 +128,7 @@ describe("mock payment adapter", () => {
 });
 
 describe("adapter selection", () => {
-  it("uses the mock for payouts and answers not_configured for the rest of this change", async () => {
+  it("uses the mock for payouts by default; Stripe test and the sandbox refuse with no settings", async () => {
     expect(paymentAdapter().system).toBe("mock");
     expect(paymentAdapter()).toBe(paymentAdapter());
     flags.paymentProvider = "stripe_test";

@@ -38,13 +38,19 @@ export const REASON_CATEGORIES = [
 export type ReasonCategory = (typeof REASON_CATEGORIES)[number];
 
 // Names held for tools that later items register. A reserved name is not in the registry, so a
-// call to it is unknown_tool until the item that owns it lands.
-export const RESERVED_TOOL_NAMES = ["create_case", "get_proposal"] as const;
+// call to it is unknown_tool until the item that owns it lands. get_proposal, the auditor's
+// evidence read, was reserved here until AUDITOR registered it.
+export const RESERVED_TOOL_NAMES = ["create_case"] as const;
 
-// The tables a tool's ids may point at: the engine's tables plus the outside text.
+// The tables a tool's ids may point at: the engine's tables plus the outside text. A citation in
+// the operator's answer may name only these.
 export const GATEWAY_TABLES = [...TABLES, "untrusted_inputs"] as const;
 export type GatewayTable = TableName | "untrusted_inputs";
-export type GatewayRef = { table: GatewayTable; id: string };
+// The tables an argument's id may name: the above plus proposals, which only the auditor's
+// get_proposal reads.
+export const REF_TABLES = [...GATEWAY_TABLES, "proposals"] as const;
+export type RefTable = GatewayTable | "proposals";
+export type GatewayRef = { table: RefTable; id: string };
 
 export type LimitResult =
   | {

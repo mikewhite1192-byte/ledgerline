@@ -2,6 +2,7 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
+import { overrideReasonOf } from "../agent/auditor/words";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
 // purpose: approval is the only road from a proposal to the ledger, and the agent tree cannot
@@ -10,13 +11,17 @@ import { assertMembership } from "../tenant/context";
 // Every approval passes the same gate first, in one tenant transaction with the proposal locked:
 // it exists, it is still waiting (or approved/executing, which is a resume), it is not past
 // proposalMaxAgeDays (an old one becomes expired, here, with no scheduled job), the member's role
-// covers the amount (approverRole), the auditor's verdict is in when auditorRequired is on, and a
-// flagged proposal carries the person's second confirm. Then the proposal's kind picks its
-// executor from EXECUTORS. A kind with no executor is refused as not_executable before any write.
-// When every check passes, the gate moves the proposal to approved in that same locked
-// transaction, so a reject that lands after the gate finds it approved and is refused; only then
-// does the executor run. Each executor reserves its ledger row before any outside call (the money
-// executor) and moves the proposal on from there.
+// covers the amount (approverRole), the auditor's verdict is in when auditorRequired is on (one
+// made before auditorStart, which the auditor never checks, is refused as not_auditable rather
+// than left waiting), a block carries the person's override reason for the very verdict they saw,
+// and anything other than a pass, or anything flagged, carries the person's second confirm. Then
+// the proposal's kind picks its executor from EXECUTORS. A kind with no executor is refused as
+// not_executable before any write. Every refusal except expired leaves the row proposed and writes
+// nothing. When every check passes, the gate moves the proposal to approved in that same locked
+// transaction (a block's override reason, with who and when, goes in the same statement), so a
+// reject that lands after the gate finds it approved and is refused; only then does the executor
+// run. Each executor reserves its ledger row before any outside call (the money executor) and
+// moves the proposal on from there.
 
 export const PROPOSAL_KINDS = ["advance_payout", "pay_correction", "invoice_fix"] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
@@ -39,8 +44,15 @@ export type ProposalRow = {
   traceId: string;
 };
 
-// confirmed: the person's second confirm on a flagged proposal (owner decision 2).
-export type ApproveOptions = { confirmed: boolean };
+// confirmed: the person's second confirm, on a flagged proposal (owner decision 2) or on any
+// auditor verdict other than pass. overrideReason: their reason for approving over a block (the
+// gate trims it and checks its length again). auditedAt: the auditor's checked_at the card showed,
+// so an override always refers to the one verdict the person read.
+export type ApproveOptions = {
+  confirmed: boolean;
+  overrideReason?: string | null;
+  auditedAt?: string | null;
+};
 
 export type ProposalRefusal =
   | "not_found"
@@ -49,6 +61,9 @@ export type ProposalRefusal =
   | "expired"
   | "role"
   | "auditor_required"
+  | "not_auditable"
+  | "override_required"
+  | "stale"
   | "needs_confirm";
 
 export type ProposalResult =
@@ -85,6 +100,13 @@ export const EXECUTORS: ExecutorRegistry = {};
 
 const DAY_MS = 86_400_000;
 
+// auditorStart as an instant, or null when it does not read as one. Null counts every proposal as
+// made before it: the auditor itself never checks a proposal against an unreadable start.
+function auditorStartIso(): string | null {
+  const start = Date.parse(flags.auditorStart);
+  return Number.isFinite(start) ? new Date(start).toISOString() : null;
+}
+
 type Row = {
   id: string;
   conversation_id: string;
@@ -102,6 +124,8 @@ type Row = {
   money_action_id: string | null;
   trace_id: string;
   too_old: boolean;
+  before_auditor: boolean;
+  auditor_checked_at: string | null;
 };
 
 function rowOf(r: Row): ProposalRow {
@@ -158,9 +182,12 @@ async function gate(
   const rows = await q.query<Row>(
     `SELECT id, conversation_id, turn_id, kind, subject_table, subject_id, amount_cents, direction,
             CAST(args AS text) AS args, status, flagged_input_id, auditor_verdict, auditor_agrees,
-            money_action_id, trace_id, (created_at < CAST($2 AS timestamptz)) AS too_old
+            money_action_id, trace_id, (created_at < CAST($2 AS timestamptz)) AS too_old,
+            (CAST($3 AS timestamptz) IS NULL OR created_at < CAST($3 AS timestamptz)) AS before_auditor,
+            to_char(auditor_checked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+              AS auditor_checked_at
        FROM proposals WHERE id = CAST($1 AS uuid) FOR UPDATE`,
-    [proposalId, cutoff],
+    [proposalId, cutoff, auditorStartIso()],
   );
   if (rows.length !== 1) return { result: refused("not_found") };
   const p = rowOf(rows[0]);
@@ -184,20 +211,61 @@ async function gate(
   if (p.amountCents > flags.approverRole.adminAboveCents && member[0]?.role !== "admin") {
     return { result: refused("role") };
   }
-  if (flags.auditorRequired && p.auditorVerdict === null) return { result: refused("auditor_required") };
-  if (p.flaggedInputId !== null && !opts.confirmed) return { result: refused("needs_confirm") };
+  // The auditor never checks a proposal made before auditorStart, so that one would wait for good:
+  // it is refused as not auditable instead.
+  if (flags.auditorRequired && p.auditorVerdict === null) {
+    return { result: refused(rows[0].before_auditor ? "not_auditable" : "auditor_required") };
+  }
+  // A block needs a reason, checked again here, for the very verdict the card showed. A stored
+  // override only ever sits on a row that is already approved or later, which took the resume path
+  // above.
+  const block = p.auditorVerdict === "block";
+  const reason = block ? overrideReasonOf(opts.overrideReason) : null;
+  if (block) {
+    if (reason === null) return { result: refused("override_required") };
+    if (!sameInstant(opts.auditedAt, rows[0].auditor_checked_at)) return { result: refused("stale") };
+  }
+  // Only a pass goes through on one click: every other verdict, and any flagged input, needs the
+  // second confirm.
+  const needsConfirm = p.flaggedInputId !== null || p.auditorVerdict !== "pass";
+  if (needsConfirm && !opts.confirmed) return { result: refused("needs_confirm") };
   if (!executor) return { result: refused("not_executable") };
   // Lock the approval in while the row is still locked. Exactly one row must move; anything else
-  // means it is no longer waiting, and nothing runs.
-  const approved = await q.execute(
-    `UPDATE proposals
-        SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
-            updated_at = CAST($3 AS timestamptz)
-      WHERE id = CAST($1 AS uuid) AND status = 'proposed'`,
-    [p.id, session.sub, now.toISOString()],
-  );
+  // means it is no longer waiting, and nothing runs. A block's override is stored in the same
+  // statement, only for the verdict the card showed and only if none is stored yet, so the
+  // approval and its reason land together or not at all.
+  const nowIso = now.toISOString();
+  const approved =
+    reason === null
+      ? await q.execute(
+          `UPDATE proposals
+              SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                  updated_at = CAST($3 AS timestamptz)
+            WHERE id = CAST($1 AS uuid) AND status = 'proposed'`,
+          [p.id, session.sub, nowIso],
+        )
+      : await q.execute(
+          `UPDATE proposals
+              SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                  updated_at = CAST($3 AS timestamptz), auditor_override_reason = $4,
+                  auditor_override_by = $2, auditor_override_at = CAST($3 AS timestamptz)
+            WHERE id = CAST($1 AS uuid) AND status = 'proposed' AND auditor_verdict = 'block'
+              AND auditor_override_reason IS NULL
+              AND date_trunc('milliseconds', auditor_checked_at) = CAST($5 AS timestamptz)`,
+          [p.id, session.sub, nowIso, reason, rows[0].auditor_checked_at],
+        );
   if (approved !== 1) return { result: refused("already_decided") };
+  // Never the reason itself: its length only.
+  if (reason !== null) console.info(`proposal ${p.id} override=stored len=${reason.length}`);
   return { run: { ...p, status: "approved" }, executor };
+}
+
+// The instant the card showed equals the stored one, to the millisecond. Unknown is not equal.
+function sameInstant(sent: string | null | undefined, stored: string | null): boolean {
+  if (typeof sent !== "string" || stored === null) return false;
+  const a = Date.parse(sent);
+  const b = Date.parse(stored);
+  return Number.isFinite(a) && Number.isFinite(b) && a === b;
 }
 
 export async function executeProposal(

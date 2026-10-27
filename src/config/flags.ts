@@ -47,7 +47,13 @@ export type Flags = {
   };
   // A proposal older than this becomes expired when someone tries to approve it.
   proposalMaxAgeDays: number;
-  // On: a proposal needs the auditor's verdict before a person can approve it.
+  // The auditor: one Muse Wonder call per proposal that checks it against the records and the
+  // rules engine. Off means no audit call is made and the card reads "Auditor off".
+  auditorEnabled: boolean;
+  // Proposals created before this instant are never audited.
+  auditorStart: string;
+  // On: a proposal needs the auditor's verdict before a person can approve it. While this is on
+  // and auditorEnabled is off, nothing can be approved: the release flips both together.
   auditorRequired: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
@@ -86,7 +92,9 @@ export const flags: Flags = {
     summaryChars: 10_000,
   },
   proposalMaxAgeDays: 7,
-  auditorRequired: false,
+  auditorEnabled: false,
+  auditorStart: "2026-10-27T00:00:00Z",
+  auditorRequired: true,
   approverRole: { adminAboveCents: 200_000 },
   driverNotesEnabled: false,
   driverNotesEmailEnabled: false,

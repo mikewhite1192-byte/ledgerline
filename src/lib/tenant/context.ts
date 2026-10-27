@@ -29,8 +29,15 @@ export async function withRequestTenant<T>(
   fn: (q: Queryable, session: Session) => Promise<T>,
 ): Promise<T> {
   const session = await requireSession();
+  return withSessionTenant(session, (q) => fn(q, session));
+}
+
+// The same scoped, membership-checked transaction for a session the caller already verified, for
+// a request that needs more than one short transaction (the QuickBooks callback calls Intuit
+// between two, so no transaction stays open across an outside call).
+export function withSessionTenant<T>(session: Session, fn: (q: Queryable) => Promise<T>): Promise<T> {
   return getDb().withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
-    return fn(q, session);
+    return fn(q);
   });
 }

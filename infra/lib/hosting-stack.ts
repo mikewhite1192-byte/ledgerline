@@ -10,8 +10,18 @@ export const GITHUB_TOKEN_SECRET_NAME = "payday-copilot/github-token";
 // them by name; the branch variables carry only the names.
 export const META_API_KEY_SECRET_NAME = "payday-copilot/meta-api-key";
 export const BASETEN_API_KEY_SECRET_NAME = "payday-copilot/baseten-api-key";
-// The model credit, in cents. A spend cap above it is refused at synth and by the app.
-export const AI_CREDIT_CENTS = 15_000;
+// The money adapters' secrets, stored by hand the same way: the QuickBooks client secret, the key
+// that seals the QuickBooks tokens at rest, and the Stripe test key.
+export const QBO_CLIENT_SECRET_NAME = "payday-copilot/qbo-client-secret";
+export const QBO_TOKEN_KEY_SECRET_NAME = "payday-copilot/qbo-token-key";
+export const STRIPE_SECRET_KEY_SECRET_NAME = "payday-copilot/stripe-test-key";
+// The QuickBooks API minor version the adapter asks for (Intuit retired those below 75).
+export const QBO_MINOR_VERSION = "75";
+// The highest a spend cap may be set, in cents ($400). The $150 Meta credit is spent first and the
+// card on file covers the rest, up to the cap. The caps are the only real stop (Meta's spend limit
+// only notifies), so a cap above this is refused at synth and by the app (CAP_CEILING_CENTS in
+// src/lib/ai/prices.ts, kept equal).
+export const AI_CAP_CEILING_CENTS = 40_000;
 
 // The Data API calls the SSR code makes. Nothing else on the cluster, and never the admin secret.
 export const DATA_API_ACTIONS = [
@@ -20,6 +30,15 @@ export const DATA_API_ACTIONS = [
   "rds-data:RollbackTransaction",
   "rds-data:ExecuteStatement",
   "rds-data:BatchExecuteStatement",
+];
+
+// Set from the deploying shell (MoneySettings) and left off the branch when unset, so the sandbox
+// company id never sits in a tracked file. Without them the adapters answer "not configured".
+export const OPTIONAL_BRANCH_ENV_NAMES = [
+  "QBO_CLIENT_ID",
+  "QBO_REDIRECT_URI",
+  "QBO_ALLOWED_REALM_ID",
+  "STRIPE_TEST_DESTINATION_ACCOUNT",
 ];
 
 // Values are ARNs, ids, model ids, secret names and the spend caps, never secrets. amplify.yml
@@ -40,6 +59,12 @@ export const BRANCH_ENV_NAMES = [
   "META_API_KEY_SECRET_NAME",
   "BASETEN_MODEL_ID",
   "BASETEN_API_KEY_SECRET_NAME",
+  "QBO_ENVIRONMENT",
+  "QBO_MINOR_VERSION",
+  "QBO_CLIENT_SECRET_NAME",
+  "QBO_TOKEN_KEY_SECRET_NAME",
+  "STRIPE_SECRET_KEY_SECRET_NAME",
+  ...OPTIONAL_BRANCH_ENV_NAMES,
 ];
 
 // The exact Meta model id for each slot, as GET /v1/models lists it.
@@ -50,6 +75,96 @@ export type MetaModels = {
   image: string;
   sam: string;
 };
+
+// The QuickBooks app and its one sandbox company (all three or none), and the Stripe test
+// connected account payouts go to. Ids and a URL, never a secret.
+export type MoneySettings = {
+  qboClientId?: string;
+  qboRedirectUri?: string;
+  qboAllowedRealmId?: string;
+  stripeTestDestinationAccount?: string;
+};
+
+// The money settings as the deploying shell exports them (infra/bin/app.ts). Every hosting deploy
+// sets the branch's variables whole, so a deploy from a shell that forgot them would strip them
+// from the branch, and once accounting is on every request would then fail while Amplify shows
+// green. So synth is refused unless all four are exported, or unless MONEY_SETTINGS=none says the
+// deploy carries fewer on purpose: then exactly the ones exported reach the branch (still checked
+// by moneyEnv) and the rest are removed from it. Any other MONEY_SETTINGS value is refused. A
+// refusal names the variables, never their values.
+export const MONEY_SETTINGS_OPT_OUT = "none";
+
+export function moneySettingsFromEnv(env: Record<string, string | undefined>): MoneySettings {
+  const read = (name: string) => env[name]?.trim() || undefined;
+  const optOut = read("MONEY_SETTINGS");
+  if (optOut !== undefined && optOut !== MONEY_SETTINGS_OPT_OUT) {
+    throw new Error(`MONEY_SETTINGS may only be ${MONEY_SETTINGS_OPT_OUT}`);
+  }
+  const missing = OPTIONAL_BRANCH_ENV_NAMES.filter((name) => read(name) === undefined);
+  if (missing.length > 0 && optOut === undefined) {
+    const one = missing.length === 1;
+    throw new Error(
+      `Refusing to synthesize: ${missing.join(", ")} ${one ? "is" : "are"} not exported. A hosting ` +
+        "deploy sets the Amplify branch's variables whole, so a deploy now would remove " +
+        `${one ? "it" : "them"} from the branch. Export all four, or set ` +
+        `MONEY_SETTINGS=${MONEY_SETTINGS_OPT_OUT} to deploy without ${one ? "it" : "them"} on purpose.`,
+    );
+  }
+  return {
+    qboClientId: read("QBO_CLIENT_ID"),
+    qboRedirectUri: read("QBO_REDIRECT_URI"),
+    qboAllowedRealmId: read("QBO_ALLOWED_REALM_ID"),
+    stripeTestDestinationAccount: read("STRIPE_TEST_DESTINATION_ACCOUNT"),
+  };
+}
+
+// The branch values for the money settings that are set, each checked whole. A refusal names the
+// variable, never its value.
+export function moneyEnv(m: MoneySettings = {}): Record<string, string> {
+  const qbo = [m.qboClientId, m.qboRedirectUri, m.qboAllowedRealmId];
+  const setCount = qbo.filter((v) => v !== undefined).length;
+  if (setCount !== 0 && setCount !== qbo.length) {
+    throw new Error("QBO_CLIENT_ID, QBO_REDIRECT_URI and QBO_ALLOWED_REALM_ID are set together or not at all");
+  }
+  const out: Record<string, string> = {};
+  if (setCount === qbo.length) {
+    if (!/^[A-Za-z0-9]{10,100}$/.test(m.qboClientId ?? "")) throw new Error("QBO_CLIENT_ID is malformed");
+    if (!isHostedCallback(m.qboRedirectUri ?? "")) {
+      throw new Error("QBO_REDIRECT_URI must be the app's https URL ending /api/qbo/callback");
+    }
+    if (!/^[0-9]{10,20}$/.test(m.qboAllowedRealmId ?? "")) {
+      throw new Error("QBO_ALLOWED_REALM_ID must be the sandbox company id (10 to 20 digits)");
+    }
+    out.QBO_CLIENT_ID = m.qboClientId as string;
+    out.QBO_REDIRECT_URI = m.qboRedirectUri as string;
+    out.QBO_ALLOWED_REALM_ID = m.qboAllowedRealmId as string;
+  }
+  if (m.stripeTestDestinationAccount !== undefined) {
+    if (!/^acct_[A-Za-z0-9]{6,64}$/.test(m.stripeTestDestinationAccount)) {
+      throw new Error("STRIPE_TEST_DESTINATION_ACCOUNT is malformed");
+    }
+    out.STRIPE_TEST_DESTINATION_ACCOUNT = m.stripeTestDestinationAccount;
+  }
+  return out;
+}
+
+function isHostedCallback(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    url.toString() === value &&
+    url.protocol === "https:" &&
+    url.username === "" &&
+    url.password === "" &&
+    url.search === "" &&
+    url.hash === "" &&
+    url.pathname === "/api/qbo/callback"
+  );
+}
 
 export type HostingStackProps = StackProps & {
   clusterArn: string;
@@ -63,6 +178,7 @@ export type HostingStackProps = StackProps & {
   aiWonderCapCents: number;
   metaModels: MetaModels;
   basetenModelId: string;
+  money?: MoneySettings;
 };
 
 // Amplify Hosting for the Next.js app. No inline build spec: Amplify reads amplify.yml from the
@@ -73,13 +189,14 @@ export class HostingStack extends Stack {
 
     const { account, partition, region } = Stack.of(this);
     const cap = props.aiSpendCapCents;
-    if (!Number.isInteger(cap) || cap < 1 || cap > AI_CREDIT_CENTS) {
-      throw new Error(`aiSpendCapCents must be a whole number from 1 to ${AI_CREDIT_CENTS}`);
+    if (!Number.isInteger(cap) || cap < 1 || cap > AI_CAP_CEILING_CENTS) {
+      throw new Error(`aiSpendCapCents must be a whole number from 1 to ${AI_CAP_CEILING_CENTS}`);
     }
     const wonderCap = props.aiWonderCapCents;
     if (!Number.isInteger(wonderCap) || wonderCap < 1 || wonderCap > cap) {
       throw new Error("aiWonderCapCents must be a whole number from 1 to aiSpendCapCents");
     }
+    const money = moneyEnv(props.money);
 
     // Amplify's service role, used here only to write SSR logs to CloudWatch. Amplify's docs list
     // these four actions. DescribeLogGroups is a list call, scoped the way AWS's own Amplify policy
@@ -130,18 +247,21 @@ export class HostingStack extends Stack {
       iamServiceRole: serviceRole.roleArn,
     });
 
-    // The model API keys, by exact name. fromSecretNameV2 gives the ARN without the suffix
+    // The model API keys and the money adapters' secrets, by exact name. fromSecretNameV2 gives the ARN without the suffix
     // Secrets Manager appends to every secret ARN ("-" and six random characters), so "-??????"
     // (exactly six, one per "?") is the narrowest pattern that matches the named secret and no
     // other. It is what grantRead would use, but inline and with GetSecretValue only.
-    // A grant on a secret that does not exist yet is valid IAM; the Baseten one waits for its key.
-    const modelKeyArns = [
+    // A grant on a secret that does not exist yet is valid IAM; each waits for its value.
+    const keyArns = [
       Secret.fromSecretNameV2(this, "MetaApiKey", META_API_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "BasetenApiKey", BASETEN_API_KEY_SECRET_NAME),
+      Secret.fromSecretNameV2(this, "QboClientSecret", QBO_CLIENT_SECRET_NAME),
+      Secret.fromSecretNameV2(this, "QboTokenKey", QBO_TOKEN_KEY_SECRET_NAME),
+      Secret.fromSecretNameV2(this, "StripeTestKey", STRIPE_SECRET_KEY_SECRET_NAME),
     ].map((secret) => `${secret.secretArn}-??????`);
 
-    // The SSR runtime's credentials: the Data API on this cluster, the app's own database login
-    // and the two model API keys, nothing else. No Cognito permission is needed (sign-in is an
+    // The SSR runtime's credentials: the Data API on this cluster, the app's own database login,
+    // the two model API keys and the three money secrets, nothing else. No Cognito permission is needed (sign-in is an
     // unauthenticated API). Set on the branch, not the app, as Amplify recommends for a public
     // repository. Amplify may assume it only for this account and this app's main branch; the
     // app does not refer to this role, so naming the app here is no cycle.
@@ -161,7 +281,7 @@ export class HostingStack extends Stack {
             new PolicyStatement({ actions: DATA_API_ACTIONS, resources: [props.clusterArn] }),
             new PolicyStatement({
               actions: ["secretsmanager:GetSecretValue"],
-              resources: [props.appSecret.secretArn, ...modelKeyArns],
+              resources: [props.appSecret.secretArn, ...keyArns],
             }),
           ],
         }),
@@ -184,6 +304,12 @@ export class HostingStack extends Stack {
       META_API_KEY_SECRET_NAME,
       BASETEN_MODEL_ID: props.basetenModelId,
       BASETEN_API_KEY_SECRET_NAME,
+      QBO_ENVIRONMENT: "sandbox",
+      QBO_MINOR_VERSION,
+      QBO_CLIENT_SECRET_NAME,
+      QBO_TOKEN_KEY_SECRET_NAME,
+      STRIPE_SECRET_KEY_SECRET_NAME,
+      ...money,
     };
 
     new CfnBranch(this, "MainBranch", {
@@ -195,7 +321,11 @@ export class HostingStack extends Stack {
       // Off: Amplify refuses SSR PR previews on a public repo (outside code would run as our role).
       enablePullRequestPreview: false,
       computeRoleArn: computeRole.roleArn,
-      environmentVariables: BRANCH_ENV_NAMES.map((name) => ({ name, value: env[name] })),
+      // An optional money setting that is unset is left off, never sent empty.
+      environmentVariables: BRANCH_ENV_NAMES.filter((name) => env[name] !== undefined).map((name) => ({
+        name,
+        value: env[name],
+      })),
     });
   }
 }
