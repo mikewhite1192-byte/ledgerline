@@ -17,14 +17,27 @@ export function fanoutLimits(): FanoutLimits {
 
 const whole = (n: number) => Number.isSafeInteger(n) && n > 0;
 
+// A provider refusal the wrapper treats as definite: the hold was released and the ledger shows
+// the call at 0. The status must match too: a 403 is also "auth", but its outcome is unknown and
+// its reservation is kept, so it stays counted as the whole hold, like a timeout or a lost answer.
+const REFUSED_WITH_STATUS: ReadonlyMap<string, number> = new Map([
+  ["auth", 401],
+  ["billing", 402],
+  ["rate_limited", 429],
+]);
+
+export function refusedByProvider(category: string, httpStatus: number | undefined): boolean {
+  return httpStatus !== undefined && REFUSED_WITH_STATUS.get(category) === httpStatus;
+}
+
 // Holds cents against the run's cap before a call. The run must still be this worker's (its
 // lease token) and the hold must fit: spent + reserved + cents <= cap. False: no call.
 export async function reserveRunCents(q: Queryable, runId: string, leaseToken: string, cents: number): Promise<boolean> {
   if (!whole(cents)) return false;
   const rows = await q.query<{ id: string }>(
     `UPDATE sweep_runs SET reserved_cents = reserved_cents + $3
-      WHERE id = CAST($1 AS uuid) AND lease_token = CAST($2 AS uuid) AND status = 'running'
-        AND spent_cents + reserved_cents + $3 <= cap_cents
+      WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND lease_token = CAST($2 AS uuid)
+        AND status = 'running' AND spent_cents + reserved_cents + $3 <= cap_cents
       RETURNING id`,
     [runId, leaseToken, cents],
   );
@@ -47,7 +60,7 @@ export async function settleRunCents(
   const n = await q.execute(
     `UPDATE sweep_runs
         SET reserved_cents = GREATEST(0, reserved_cents - $3), spent_cents = spent_cents + $4
-      WHERE id = CAST($1 AS uuid) AND lease_token = CAST($2 AS uuid)`,
+      WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND lease_token = CAST($2 AS uuid)`,
     [runId, leaseToken, reservedCents, actual],
   );
   return n === 1;
@@ -64,7 +77,8 @@ export async function dayUse(
     `SELECT COUNT(*) FILTER (WHERE r.fanout AND r.id <> CAST($1 AS uuid)) AS runs,
             COALESCE(SUM(r.spent_cents + r.reserved_cents), 0) AS cents
        FROM sweep_runs r JOIN tenants t ON t.id = r.tenant_id
-      WHERE (r.started_at AT TIME ZONE t.timezone)::date = (CAST($2 AS timestamptz) AT TIME ZONE t.timezone)::date`,
+      WHERE r.tenant_id = current_tenant_id()
+        AND (r.started_at AT TIME ZONE t.timezone)::date = (CAST($2 AS timestamptz) AT TIME ZONE t.timezone)::date`,
     [runId, now.toISOString()],
   );
   const runs = Number(rows[0]?.runs);

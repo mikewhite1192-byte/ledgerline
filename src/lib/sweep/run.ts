@@ -935,14 +935,18 @@ async function writeStatus(ctx: Ctx, itemId: string, w: StatusWrite): Promise<vo
 // ---- Budget ----
 
 // Counts cents against the run's cap before a call; false when they do not fit. The second
-// opinion's holds (reserved_cents) count against the same cap.
+// opinion's holds (reserved_cents) count against the same cap. The sweep's own calls also stay
+// within the sweep's own budget (sweepLimits.maxRunCents), which the second opinion's larger cap
+// does not raise: own_spent_cents is the part of spent_cents these calls counted.
 async function reserveCents(ctx: Ctx, cents: number): Promise<boolean> {
   if (!Number.isSafeInteger(cents) || cents <= 0) return false;
   const rows = await leased(ctx, (q) =>
     q.query<{ id: string }>(
-      `UPDATE sweep_runs SET spent_cents = spent_cents + $2
-        WHERE id = CAST($1 AS uuid) AND spent_cents + reserved_cents + $2 <= cap_cents RETURNING id`,
-      [ctx.runId, cents],
+      `UPDATE sweep_runs SET spent_cents = spent_cents + $2, own_spent_cents = own_spent_cents + $2
+        WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()
+          AND spent_cents + reserved_cents + $2 <= cap_cents AND own_spent_cents + $2 <= $3
+        RETURNING id`,
+      [ctx.runId, cents, flags.sweepLimits.maxRunCents],
     ),
   );
   return rows.length === 1;
@@ -952,7 +956,9 @@ async function reserveCents(ctx: Ctx, cents: number): Promise<boolean> {
 async function settleCents(ctx: Ctx, reserved: number, actual: number): Promise<void> {
   await leased(ctx, (q) =>
     q.execute(
-      "UPDATE sweep_runs SET spent_cents = GREATEST(0, spent_cents - $2 + $3) WHERE id = CAST($1 AS uuid)",
+      `UPDATE sweep_runs SET spent_cents = GREATEST(0, spent_cents - $2 + $3),
+              own_spent_cents = GREATEST(0, own_spent_cents - $2 + $3)
+        WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()`,
       [ctx.runId, reserved, actual],
     ),
   );

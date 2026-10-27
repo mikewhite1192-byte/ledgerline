@@ -9,14 +9,18 @@
 --                   at its real cost once known, and the whole reserve while it is unknown, so
 --                   spent_cents + reserved_cents never passes cap_cents
 --   fanout          the run took the second opinion (the per-carrier daily count reads it)
+--   own_spent_cents the part of spent_cents the sweep's own calls (explain, audit) counted, kept
+--                   within the sweep's own budget even when the run's cap is raised for the
+--                   second opinion
 -- and two phases between find and draft: plan, check, reconcile.
 ALTER TABLE sweep_runs
   ADD COLUMN reserved_cents integer NOT NULL DEFAULT 0 CHECK (reserved_cents >= 0),
-  ADD COLUMN fanout boolean NOT NULL DEFAULT false;
+  ADD COLUMN fanout boolean NOT NULL DEFAULT false,
+  ADD COLUMN own_spent_cents integer NOT NULL DEFAULT 0 CHECK (own_spent_cents >= 0);
 ALTER TABLE sweep_runs DROP CONSTRAINT sweep_runs_phase_check;
 ALTER TABLE sweep_runs ADD CONSTRAINT sweep_runs_phase_check
   CHECK (phase IN ('find', 'plan', 'check', 'reconcile', 'draft', 'audit', 'done'));
-GRANT UPDATE (reserved_cents, fanout) ON sweep_runs TO payday_app;
+GRANT UPDATE (reserved_cents, fanout, own_spent_cents) ON sweep_runs TO payday_app;
 
 -- sweep_fanout: one row per run that reached the plan phase, ever (run_id is the key). The turn
 -- ids name the ordering and comparison calls' turns, for the run page's "how it was checked".

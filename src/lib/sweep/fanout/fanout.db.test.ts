@@ -5,7 +5,7 @@ import type { AuditResult } from "../../agent/auditor/run";
 import { readSweepTurnTrace } from "../../agent/gateway/store";
 import { reasonSentence } from "../../agent/reasons";
 import type { Explained } from "../../agent/sweep/explain";
-import type { AiRequest, AiResult, AiToolCall } from "../../ai";
+import { AiError, type AiRequest, type AiResult, type AiToolCall } from "../../ai";
 import { NANOCENTS_PER_CENT } from "../../ai/prices";
 import type { Session } from "../../auth/claims";
 import { createPgDb } from "../../db/pg";
@@ -120,8 +120,18 @@ async function start() {
 const read = <R>(sql: string, params: Param[] = []) => admin.withTenant(T, (q) => q.query<R>(sql, params));
 
 async function runRow(runId: string) {
-  const rows = await read<{ status: string; phase: string; cap_cents: number; spent_cents: number; reserved_cents: number; fanout: boolean; truncated_reason: string | null }>(
-    "SELECT status, phase, cap_cents, spent_cents, reserved_cents, fanout, truncated_reason FROM sweep_runs WHERE id = CAST($1 AS uuid)",
+  const rows = await read<{
+    status: string;
+    phase: string;
+    cap_cents: number;
+    spent_cents: number;
+    reserved_cents: number;
+    own_spent_cents: number;
+    fanout: boolean;
+    truncated_reason: string | null;
+  }>(
+    `SELECT status, phase, cap_cents, spent_cents, reserved_cents, own_spent_cents, fanout, truncated_reason
+       FROM sweep_runs WHERE id = CAST($1 AS uuid)`,
     [runId],
   );
   return rows[0];
@@ -239,7 +249,8 @@ describe("the sweep's second opinion", () => {
     expect(purposes.filter((p) => p === "fanout_plan")).toHaveLength(1);
     expect(purposes.filter((p) => p === "fanout_check")).toHaveLength(2 * n);
     expect(purposes.filter((p) => p === "fanout_reconcile")).toHaveLength(1);
-    expect(await runRow(runId)).toMatchObject({ spent_cents: 10 + 1 + 2 * n + 1, reserved_cents: 0, fanout: true });
+    // The sweep's own part of it: the five explanations at two cents each.
+    expect(await runRow(runId)).toMatchObject({ spent_cents: 10 + 1 + 2 * n + 1, own_spent_cents: 10, reserved_cents: 0, fanout: true });
 
     // Every turn the fan-out opened is closed.
     const open = await read<{ n: string }>("SELECT COUNT(*) AS n FROM turns WHERE status = 'running'");
@@ -338,6 +349,116 @@ describe("the sweep's second opinion", () => {
     // A cost never read back counts the whole hold; a known one counts itself.
     await app.withTenant(T, (q) => settleRunCents(q, runId, token, 9, null));
     expect(await runRow(runId)).toMatchObject({ reserved_cents: 0, spent_cents: (await runRow(runId)).cap_cents - 1 });
+  });
+
+  it.each([
+    ["fanout_plan", "plan_turn_id"],
+    ["fanout_reconcile", "reconcile_turn_id"],
+  ] as const)("closes the %s turn a dead slice left running before the next try opens its own", async (purpose, column) => {
+    const runId = await start();
+    let died = false;
+    const dying = vi.fn(async (target: string, req: AiRequest): Promise<AiResult> => {
+      const out = await model(target, req);
+      if (req.purpose === purpose && !died) {
+        died = true;
+        // The slice dies after the call: its lease moves on before the answer is written.
+        await admin.withTenant(T, (q) =>
+          q.execute("UPDATE sweep_runs SET lease_token = CAST($2 AS uuid) WHERE id = CAST($1 AS uuid)", [runId, randomUUID()]),
+        );
+      }
+      return out;
+    });
+    const d = deps({ complete: dying as unknown as SweepDeps["complete"] });
+    for (let i = 0; i < 40 && !died; i++) {
+      const s = await advanceSweep(SESSION, runId, NOW.getTime() + SLICE, d);
+      if (!s.ok) throw new Error(`advance refused: ${s.category}`);
+    }
+    expect(died).toBe(true);
+    const turn = async (id: string) =>
+      (await read<{ status: string; ended_reason: string | null }>("SELECT status, ended_reason FROM turns WHERE id = CAST($1 AS uuid)", [id]))[0];
+    const left = (await fanoutRow(runId))[column] as string;
+    expect(await turn(left)).toMatchObject({ status: "running" });
+    // The dead slice's lease runs out, and the next slice tries again.
+    await admin.withTenant(T, (q) =>
+      q.execute("UPDATE sweep_runs SET lease_token = NULL, lease_until = CAST($2 AS timestamptz) WHERE id = CAST($1 AS uuid)", [
+        runId,
+        NOW.toISOString(),
+      ]),
+    );
+    expect(await runToEnd(runId, d)).toMatchObject({ status: "done" });
+    expect(model.mock.calls.filter((c) => (c[1] as AiRequest).purpose === purpose)).toHaveLength(2);
+    expect(await turn(left)).toMatchObject({ status: "failed", ended_reason: "abandoned" });
+    const next = (await fanoutRow(runId))[column] as string;
+    expect(next).not.toBe(left);
+    expect((await turn(next)).status).not.toBe("running");
+    const open = await read<{ n: string }>("SELECT COUNT(*) AS n FROM turns WHERE status = 'running'");
+    expect(Number(open[0].n)).toBe(0);
+  });
+
+  it.each([
+    ["a 429", new AiError("rate_limited", 429), 0],
+    ["a 401", new AiError("auth", 401), 0],
+    ["a 503", new AiError("unavailable", 503), "hold"],
+    ["a 403", new AiError("auth", 403), "hold"],
+  ] as const)("counts a plan call refused with %s at its real cost: nothing, or the whole hold when unknown", async (_label, err, counted) => {
+    let failed = false;
+    const once = vi.fn(async (target: string, req: AiRequest): Promise<AiResult> => {
+      if (req.purpose === "fanout_plan" && !failed) {
+        failed = true;
+        throw err;
+      }
+      return model(target, req);
+    });
+    const runId = await start();
+    await runToEnd(runId, deps({ complete: once as unknown as SweepDeps["complete"] }));
+    const n = (await checks(runId)).length;
+    const extra = counted === "hold" ? flags.fanoutLimits.planCents : counted;
+    // The second try answers; the first counts nothing, or its whole hold.
+    expect(await runRow(runId)).toMatchObject({ spent_cents: 10 + 1 + 2 * n + 1 + extra, reserved_cents: 0 });
+  });
+
+  it("keeps the sweep's own calls within its own budget inside the second opinion's larger cap: room for one", async () => {
+    const own = flags.sweepLimits.maxRunCents;
+    const each = flags.sweepLimits.maxExplainCents;
+    const runId = await start();
+    // The sweep's own calls already counted all but one explanation's hold.
+    await admin.withTenant(T, (q) =>
+      q.execute("UPDATE sweep_runs SET spent_cents = $2, own_spent_cents = $2 WHERE id = CAST($1 AS uuid)", [runId, own - each]),
+    );
+    await runToEnd(runId);
+    expect(explain).toHaveBeenCalledTimes(1);
+    const row = await runRow(runId);
+    expect(row.own_spent_cents).toBe(own - each + 2);
+    expect(row.own_spent_cents).toBeLessThanOrEqual(own);
+    // The run's cap had room: only the sweep's own budget stopped the rest.
+    expect(row.spent_cents + each).toBeLessThan(row.cap_cents);
+    const over = await read<{ n: string }>("SELECT COUNT(*) AS n FROM sweep_items WHERE seen_run_id = CAST($1 AS uuid) AND status = 'over_cap'", [runId]);
+    expect(Number(over[0].n)).toBeGreaterThan(0);
+  });
+
+  it("keeps the sweep's own calls within its own budget inside the second opinion's larger cap: one cent short", async () => {
+    const own = flags.sweepLimits.maxRunCents;
+    const each = flags.sweepLimits.maxExplainCents;
+    const runId = await start();
+    await admin.withTenant(T, (q) =>
+      q.execute("UPDATE sweep_runs SET spent_cents = $2, own_spent_cents = $2 WHERE id = CAST($1 AS uuid)", [runId, own - each + 1]),
+    );
+    await runToEnd(runId);
+    expect(explain).not.toHaveBeenCalled();
+    const row = await runRow(runId);
+    expect(row.own_spent_cents).toBe(own - each + 1);
+    expect(row.spent_cents + each).toBeLessThan(row.cap_cents);
+  });
+
+  it("does not let the second opinion's spend use up the sweep's own budget", async () => {
+    const runId = await start();
+    // Spend the sweep's own calls never made: the second opinion's, past the sweep's own budget.
+    await admin.withTenant(T, (q) =>
+      q.execute("UPDATE sweep_runs SET spent_cents = $2 WHERE id = CAST($1 AS uuid)", [runId, 2 * flags.sweepLimits.maxRunCents]),
+    );
+    await runToEnd(runId);
+    expect(explain).toHaveBeenCalledTimes(5);
+    expect((await runRow(runId)).own_spent_cents).toBe(10);
   });
 
   it("shows another carrier nothing of this one's second opinion", async () => {

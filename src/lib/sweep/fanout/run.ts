@@ -8,7 +8,7 @@ import { reasonSentence } from "../../agent/reasons";
 import type { Session } from "../../auth/claims";
 import type { Queryable } from "../../db";
 import { runChildCheck, type ChildOutcome, type ValidCheck } from "./check";
-import { dayUse, fanoutLimits, fanoutOn, reserveRunCents, settleRunCents } from "./limits";
+import { dayUse, fanoutLimits, fanoutOn, refusedByProvider, reserveRunCents, settleRunCents } from "./limits";
 import { PLAN_PROMPT, defaultOrder, planInput, readRoster, validatePlan, type ValidPlan } from "./plan";
 import {
   RECONCILE_PROMPT,
@@ -68,8 +68,13 @@ export const CHECK_LEASE_S = 30;
 // can still start its checks.
 const SLICE_SLACK_MS = 6_000;
 const MAX_ATTEMPTS = 2;
-const PLAN_OUTPUT_TOKENS = 2_400;
-const RECONCILE_OUTPUT_TOKENS = 1_600;
+// Reasoning and the answer share these caps. Measured on muse-wonder-1.0 at medium effort
+// (2026-10-27): a two-driver plan spent 1,720 of 2,400 output tokens on reasoning and was cut off
+// before its JSON closed. Each cap is sized so its reserve (output at the Wonder rate plus the
+// input) still fits planCents and reconcileCents for a full roster; a bigger request is refused
+// too_expensive before anything is sent, and the run goes on without that call.
+const PLAN_OUTPUT_TOKENS = 4_800;
+const RECONCILE_OUTPUT_TOKENS = 4_000;
 
 // The wrapper refused these before anything was sent: the call cost nothing.
 const REFUSED_BEFORE_SENDING: ReadonlySet<string> = new Set([
@@ -94,8 +99,8 @@ const errorCategory = (err: unknown) =>
 async function runWeek(q: Queryable, runId: string): Promise<Week & { periodId: string }> {
   const rows = await q.query<{ period_id: string; period_start: string; period_end: string }>(
     `SELECT sp.id AS period_id, CAST(sp.period_start AS text) AS period_start, CAST(sp.period_end AS text) AS period_end
-       FROM sweep_runs r JOIN settlement_periods sp ON sp.id = r.period_id
-      WHERE r.id = CAST($1 AS uuid)`,
+       FROM sweep_runs r JOIN settlement_periods sp ON sp.id = r.period_id AND sp.tenant_id = r.tenant_id
+      WHERE r.id = CAST($1 AS uuid) AND r.tenant_id = current_tenant_id()`,
     [runId],
   );
   if (!rows[0]) throw new Error("the sweep run's week did not read back");
@@ -103,7 +108,27 @@ async function runWeek(q: Queryable, runId: string): Promise<Week & { periodId: 
 }
 
 async function setPhase(q: Queryable, runId: string, phase: "check" | "reconcile" | "draft"): Promise<void> {
-  await q.execute("UPDATE sweep_runs SET phase = $2 WHERE id = CAST($1 AS uuid)", [runId, phase]);
+  await q.execute("UPDATE sweep_runs SET phase = $2 WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()", [
+    runId,
+    phase,
+  ]);
+}
+
+// The turn a dead slice left running for the plan or the comparison. Closed before the next try
+// opens its own: the try then points the run at the new turn, and the old one would stay running.
+const LEFT_TURN_SQL = {
+  plan: `UPDATE turns SET status = 'failed', ended_reason = 'abandoned', finished_at = CAST($2 AS timestamptz)
+          WHERE tenant_id = current_tenant_id() AND status = 'running' AND id IN (
+            SELECT plan_turn_id FROM sweep_fanout
+             WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND plan_turn_id IS NOT NULL)`,
+  reconcile: `UPDATE turns SET status = 'failed', ended_reason = 'abandoned', finished_at = CAST($2 AS timestamptz)
+               WHERE tenant_id = current_tenant_id() AND status = 'running' AND id IN (
+                 SELECT reconcile_turn_id FROM sweep_fanout
+                  WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND reconcile_turn_id IS NOT NULL)`,
+} as const;
+
+async function closeLeftTurn(q: Queryable, fx: FanoutCtx, which: keyof typeof LEFT_TURN_SQL): Promise<void> {
+  await q.execute(LEFT_TURN_SQL[which], [fx.runId, fx.clock().toISOString()]);
 }
 
 // Opens one turn for a fan-out call, in a conversation of its own: the checks run side by side,
@@ -180,9 +205,12 @@ async function callWonder(
     return { ok: true, result, cents: centsOf(result.costNanocents) };
   } catch (err) {
     const category = errorCategory(err);
+    const status = err instanceof AiError ? err.httpStatus : undefined;
     await steps.finishStep(turn.turnId, step.id, { state: "failed", detail: { category } });
-    // An answer that never came back cost an unknown amount: the whole hold stays counted.
-    return { ok: false, category, cents: REFUSED_BEFORE_SENDING.has(category) ? 0 : null };
+    // An answer that never came back cost an unknown amount: the whole hold stays counted. A
+    // refusal before sending, or a definite provider refusal (401, 402, 429), cost nothing.
+    const free = REFUSED_BEFORE_SENDING.has(category) || refusedByProvider(category, status);
+    return { ok: false, category, cents: free ? 0 : null };
   }
 }
 
@@ -204,7 +232,7 @@ async function writePlan(
   const n = await q.execute(
     `UPDATE sweep_fanout SET status = $2, plan_json = CAST($3 AS jsonb),
             plan_call_id = COALESCE(plan_call_id, CAST($4 AS uuid))
-      WHERE run_id = CAST($1 AS uuid) AND status = 'planning'`,
+      WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND status = 'planning'`,
     [fx.runId, status, JSON.stringify({ summary: plan.summary, order: plan.order, skipped: plan.skipped }), callId],
   );
   if (n === 1 && plan.order.length > 0) {
@@ -227,7 +255,7 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
   const now = fx.clock();
   const start = await fx.leased(async (q): Promise<PlanStart> => {
     const rows = await q.query<{ status: string; plan_attempts: number | string }>(
-      "SELECT status, plan_attempts FROM sweep_fanout WHERE run_id = CAST($1 AS uuid)",
+      "SELECT status, plan_attempts FROM sweep_fanout WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()",
       [fx.runId],
     );
     let attempts = 0;
@@ -255,7 +283,9 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
          ON CONFLICT DO NOTHING`,
         [fx.runId, now.toISOString()],
       );
-      await q.execute("UPDATE sweep_runs SET fanout = true WHERE id = CAST($1 AS uuid)", [fx.runId]);
+      await q.execute("UPDATE sweep_runs SET fanout = true WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()", [
+        fx.runId,
+      ]);
     } else if (rows[0].status === "skipped_daily_cap") {
       await setPhase(q, fx.runId, "draft");
       return { kind: "next", phase: "draft" };
@@ -284,12 +314,14 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
   const { roster, week } = start;
   // The hold and the try are counted together, before the call.
   const held = await fx.leased(async (q) => {
+    await closeLeftTurn(q, fx, "plan");
     if (!(await reserveRunCents(q, fx.runId, fx.token, l.planCents))) {
       await writePlan(q, fx, defaultOrder(roster), "plan_budget", null);
       return false;
     }
     await q.execute(
-      "UPDATE sweep_fanout SET plan_attempts = plan_attempts + 1 WHERE run_id = CAST($1 AS uuid) AND status = 'planning'",
+      `UPDATE sweep_fanout SET plan_attempts = plan_attempts + 1
+        WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND status = 'planning'`,
       [fx.runId],
     );
     return true;
@@ -308,7 +340,7 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
     return lastTry ? "check" : "plan";
   }
   await fx.leased((q) =>
-    q.execute("UPDATE sweep_fanout SET plan_turn_id = CAST($2 AS uuid) WHERE run_id = CAST($1 AS uuid)", [
+    q.execute("UPDATE sweep_fanout SET plan_turn_id = CAST($2 AS uuid) WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()", [
       fx.runId,
       turn.turnId,
     ]),
@@ -344,7 +376,7 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
     // Tried again by this slice or the next, while tries are left.
     if (callId) {
       await q.execute(
-        "UPDATE sweep_fanout SET plan_call_id = COALESCE(plan_call_id, CAST($2 AS uuid)) WHERE run_id = CAST($1 AS uuid)",
+        "UPDATE sweep_fanout SET plan_call_id = COALESCE(plan_call_id, CAST($2 AS uuid)) WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()",
         [fx.runId, callId],
       );
     }
@@ -396,9 +428,10 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
     // or, on its second lease, ends here.
     await q.execute(
       `UPDATE turns SET status = 'failed', ended_reason = 'abandoned', finished_at = CAST($2 AS timestamptz)
-        WHERE status = 'running' AND id IN (
+        WHERE tenant_id = current_tenant_id() AND status = 'running' AND id IN (
           SELECT turn_id FROM sweep_fanout_checks
-           WHERE run_id = CAST($1 AS uuid) AND status = 'running' AND lease_until <= CAST($2 AS timestamptz)
+           WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND status = 'running'
+             AND lease_until <= CAST($2 AS timestamptz)
              AND turn_id IS NOT NULL)`,
       [fx.runId, nowIso],
     );
@@ -406,15 +439,16 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
     await q.execute(
       `UPDATE sweep_fanout_checks SET status = 'error', lease_token = NULL, lease_until = NULL,
               finished_at = CAST($2 AS timestamptz)
-        WHERE run_id = CAST($1 AS uuid) AND status = 'running' AND lease_until <= CAST($2 AS timestamptz)
-          AND attempts >= $3`,
+        WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND status = 'running'
+          AND lease_until <= CAST($2 AS timestamptz) AND attempts >= $3`,
       [fx.runId, nowIso, MAX_ATTEMPTS],
     );
     const state = await q.query<{ pending: number | string; live: number | string; room: number | string }>(
       `SELECT COUNT(*) FILTER (WHERE c.status = 'queued' OR (c.status = 'running' AND c.lease_until <= CAST($2 AS timestamptz))) AS pending,
               COUNT(*) FILTER (WHERE c.status = 'running' AND c.lease_until > CAST($2 AS timestamptz)) AS live,
-              (SELECT r.cap_cents - r.spent_cents - r.reserved_cents FROM sweep_runs r WHERE r.id = CAST($1 AS uuid)) AS room
-         FROM sweep_fanout_checks c WHERE c.run_id = CAST($1 AS uuid)`,
+              (SELECT r.cap_cents - r.spent_cents - r.reserved_cents FROM sweep_runs r
+                WHERE r.id = CAST($1 AS uuid) AND r.tenant_id = current_tenant_id()) AS room
+         FROM sweep_fanout_checks c WHERE c.run_id = CAST($1 AS uuid) AND c.tenant_id = current_tenant_id()`,
       [fx.runId, nowIso],
     );
     const pending = Number(state[0]?.pending ?? 0);
@@ -434,11 +468,14 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
       await q.execute(
         `UPDATE sweep_fanout_checks SET status = 'budget', lease_token = NULL, lease_until = NULL,
                 finished_at = CAST($2 AS timestamptz)
-          WHERE run_id = CAST($1 AS uuid)
+          WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()
             AND (status = 'queued' OR (status = 'running' AND lease_until <= CAST($2 AS timestamptz)))`,
         [fx.runId, nowIso],
       );
-      await q.execute("UPDATE sweep_runs SET truncated_reason = 'cap' WHERE id = CAST($1 AS uuid)", [fx.runId]);
+      await q.execute(
+        "UPDATE sweep_runs SET truncated_reason = 'cap' WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()",
+        [fx.runId],
+      );
       if (live > 0) return { kind: "wait" };
       await setPhase(q, fx.runId, "reconcile");
       return { kind: "next", phase: "reconcile" };
@@ -450,7 +487,7 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
     const rows = await q.query<Leased>(
       `WITH next AS (
          SELECT id FROM sweep_fanout_checks
-          WHERE run_id = CAST($1 AS uuid) AND attempts < $5
+          WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND attempts < $5
             AND (status = 'queued' OR (status = 'running' AND lease_until <= CAST($3 AS timestamptz)))
           ORDER BY priority, driver_id
           LIMIT $4
@@ -459,8 +496,9 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
           SET status = 'running', lease_token = CAST($2 AS uuid),
               lease_until = CAST($3 AS timestamptz) + make_interval(secs => $6),
               attempts = c.attempts + 1, started_at = CAST($3 AS timestamptz), turn_id = NULL
-         FROM next WHERE c.id = next.id
-       RETURNING c.id, c.driver_id, (SELECT d.code FROM drivers d WHERE d.id = c.driver_id) AS code,
+         FROM next WHERE c.id = next.id AND c.tenant_id = current_tenant_id()
+       RETURNING c.id, c.driver_id,
+                 (SELECT d.code FROM drivers d WHERE d.id = c.driver_id AND d.tenant_id = current_tenant_id()) AS code,
                  CAST(c.focus AS text) AS focus, c.brief, c.attempts`,
       [fx.runId, fx.token, nowIso, k, MAX_ATTEMPTS, CHECK_LEASE_S],
     );
@@ -483,7 +521,8 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
       if (!t) continue;
       await q.execute(
         `UPDATE sweep_fanout_checks SET turn_id = CAST($3 AS uuid)
-          WHERE id = CAST($1 AS uuid) AND lease_token = CAST($2 AS uuid) AND status = 'running'`,
+          WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND lease_token = CAST($2 AS uuid)
+            AND status = 'running'`,
         [start.rows[i].id, fx.token, t.turnId],
       );
     }
@@ -545,7 +584,8 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
             SET status = $3, result = CAST($4 AS jsonb), cost_cents = cost_cents + $5,
                 finished_at = CASE WHEN $3 = 'queued' THEN NULL ELSE CAST($6 AS timestamptz) END,
                 lease_token = NULL, lease_until = NULL
-          WHERE id = CAST($1 AS uuid) AND lease_token = CAST($2 AS uuid) AND status = 'running' AND result IS NULL`,
+          WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND lease_token = CAST($2 AS uuid)
+            AND status = 'running' AND result IS NULL`,
         [
           row.id,
           fx.token,
@@ -611,7 +651,7 @@ async function finishFanout(q: Queryable, fx: FanoutCtx, answer: ValidReconcile 
         SET reconcile_json = CAST($2 AS jsonb), reconcile_call_id = COALESCE(reconcile_call_id, CAST($3 AS uuid)),
             status = CASE WHEN status IN ('checking', 'reconciling') THEN 'done' ELSE status END,
             finished_at = CAST($4 AS timestamptz)
-      WHERE run_id = CAST($1 AS uuid) AND finished_at IS NULL`,
+      WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND finished_at IS NULL`,
     [fx.runId, answer ? JSON.stringify(answer) : null, callId, fx.clock().toISOString()],
   );
   await setPhase(q, fx.runId, "draft");
@@ -622,7 +662,7 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
   const start = await fx.leased(async (q): Promise<ReconcileStart> => {
     const rows = await q.query<{ reconcile_attempts: number | string; finished_at: string | null; has_counts: boolean }>(
       `SELECT reconcile_attempts, CAST(finished_at AS text) AS finished_at, counts IS NOT NULL AS has_counts
-         FROM sweep_fanout WHERE run_id = CAST($1 AS uuid)`,
+         FROM sweep_fanout WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()`,
       [fx.runId],
     );
     const f = rows[0];
@@ -632,7 +672,7 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
     }
     const engineRows = await q.query<{ driver_id: string; category: string; record_table: string; record_id: string }>(
       `SELECT DISTINCT driver_id, category, record_table, record_id FROM sweep_items
-        WHERE seen_run_id = CAST($1 AS uuid) AND finding_key NOT LIKE 'fanout:%'
+        WHERE seen_run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND finding_key NOT LIKE 'fanout:%'
           AND driver_id IS NOT NULL AND record_table IS NOT NULL AND record_id IS NOT NULL
         ORDER BY driver_id, category, record_table, record_id`,
       [fx.runId],
@@ -645,7 +685,7 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
     }));
     const checkRows = await q.query<{ driver_id: string; status: string; result: string | null }>(
       `SELECT driver_id, status, CAST(result AS text) AS result FROM sweep_fanout_checks
-        WHERE run_id = CAST($1 AS uuid) ORDER BY priority, driver_id`,
+        WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() ORDER BY priority, driver_id`,
       [fx.runId],
     );
     const checks: CheckRow[] = checkRows.map((r) => {
@@ -688,7 +728,7 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
       await q.execute(
         `UPDATE sweep_fanout SET counts = CAST($2 AS jsonb),
                 status = CASE WHEN status = 'checking' THEN 'reconciling' ELSE status END
-          WHERE run_id = CAST($1 AS uuid)`,
+          WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()`,
         [fx.runId, JSON.stringify(counts)],
       );
     }
@@ -705,13 +745,15 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
   if (fx.deadlineAt - fx.clock().getTime() < MIN_WONDER_MS) return "wait";
 
   const held = await fx.leased(async (q) => {
+    await closeLeftTurn(q, fx, "reconcile");
     if (!(await reserveRunCents(q, fx.runId, fx.token, l.reconcileCents))) {
       await finishFanout(q, fx, null, null);
       return false;
     }
-    await q.execute("UPDATE sweep_fanout SET reconcile_attempts = reconcile_attempts + 1 WHERE run_id = CAST($1 AS uuid)", [
-      fx.runId,
-    ]);
+    await q.execute(
+      "UPDATE sweep_fanout SET reconcile_attempts = reconcile_attempts + 1 WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()",
+      [fx.runId],
+    );
     return true;
   });
   if (!held) return "draft";
@@ -726,7 +768,7 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
     return lastTry ? "draft" : "reconcile";
   }
   await fx.leased((q) =>
-    q.execute("UPDATE sweep_fanout SET reconcile_turn_id = CAST($2 AS uuid) WHERE run_id = CAST($1 AS uuid)", [
+    q.execute("UPDATE sweep_fanout SET reconcile_turn_id = CAST($2 AS uuid) WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()", [
       fx.runId,
       turn.turnId,
     ]),
@@ -758,7 +800,7 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
     }
     if (callId) {
       await q.execute(
-        "UPDATE sweep_fanout SET reconcile_call_id = COALESCE(reconcile_call_id, CAST($2 AS uuid)) WHERE run_id = CAST($1 AS uuid)",
+        "UPDATE sweep_fanout SET reconcile_call_id = COALESCE(reconcile_call_id, CAST($2 AS uuid)) WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()",
         [fx.runId, callId],
       );
     }

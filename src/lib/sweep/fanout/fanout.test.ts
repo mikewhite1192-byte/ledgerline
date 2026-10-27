@@ -6,6 +6,7 @@ import type { GatewayOutcome } from "@/lib/agent/gateway/types";
 import { AiError, type AiRequest, type AiResult, type AiTool } from "@/lib/ai";
 import { NANOCENTS_PER_CENT } from "@/lib/ai/prices";
 import { CHECK_TOOLS, runChildCheck, sourcesFrom, validateCheck, type ChildDeps, type ChildInput } from "./check";
+import { refusedByProvider } from "./limits";
 import { defaultOrder, validatePlan, type Roster } from "./plan";
 import { computeCounts, fanoutFindingKey, validateReconcile, type CheckRow, type EngineFinding } from "./reconcile";
 import { parseJson, scrubFigures } from "./schemas";
@@ -292,6 +293,41 @@ describe("runChildCheck", () => {
       },
     ]);
     expect(await runChildCheck(input(), capped.deps)).toMatchObject({ status: "budget", costKnown: true });
+  });
+
+  it("counts a definite provider refusal (401, 402, 429) as nothing, and any other failure as unknown", async () => {
+    type Category = "auth" | "billing" | "rate_limited" | "timeout" | "network" | "unavailable" | "unknown";
+    const run = (category: Category, status?: number) =>
+      runChildCheck(
+        input(),
+        harness([
+          () => {
+            throw new AiError(category, status);
+          },
+        ]).deps,
+      );
+    for (const [category, status] of [["auth", 401], ["billing", 402], ["rate_limited", 429]] as const) {
+      expect(await run(category, status)).toMatchObject({ status: "error", costKnown: true });
+    }
+    // A 403 is "auth" too, but its outcome is unknown and the wrapper keeps the hold.
+    expect(await run("auth", 403)).toMatchObject({ costKnown: false });
+    // The category alone is not enough: the status must be the definite one.
+    expect(await run("rate_limited")).toMatchObject({ costKnown: false });
+    const others: [Category, number | undefined][] = [["unavailable", 503], ["timeout", 504], ["network", undefined], ["unknown", undefined]];
+    for (const [category, status] of others) {
+      expect(await run(category, status)).toMatchObject({ costKnown: false });
+    }
+  });
+
+  it("frees only the three definite provider refusals, each with its own status", () => {
+    expect(refusedByProvider("auth", 401)).toBe(true);
+    expect(refusedByProvider("billing", 402)).toBe(true);
+    expect(refusedByProvider("rate_limited", 429)).toBe(true);
+    expect(refusedByProvider("auth", 403)).toBe(false);
+    expect(refusedByProvider("billing", 401)).toBe(false);
+    expect(refusedByProvider("rate_limited", undefined)).toBe(false);
+    expect(refusedByProvider("unavailable", 503)).toBe(false);
+    expect(refusedByProvider("timeout", 504)).toBe(false);
   });
 
   it("makes no call when the switch is off", async () => {

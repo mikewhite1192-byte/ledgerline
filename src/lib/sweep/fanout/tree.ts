@@ -197,25 +197,25 @@ export function treeOf(row: FanoutRow, checks: FanoutCheckRow[], names: DriverNa
 }
 
 // The run's tree, or null when the run never reached the second opinion. Inside the caller's
-// tenant transaction (row security scopes every read to the carrier).
+// tenant transaction: row security scopes every read to the carrier, and each read names it too.
 export async function readFanoutTree(q: Queryable, runId: string): Promise<FanoutTree | null> {
   const rows = await q.query<FanoutRow>(
     `SELECT status, plan_turn_id, CAST(plan_json AS text) AS plan_json, reconcile_turn_id,
             CAST(reconcile_json AS text) AS reconcile_json, CAST(counts AS text) AS counts,
             CAST(finished_at AS text) AS finished_at
-       FROM sweep_fanout WHERE run_id = CAST($1 AS uuid)`,
+       FROM sweep_fanout WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()`,
     [runId],
   );
   if (!rows[0]) return null;
   const checks = await q.query<FanoutCheckRow>(
     `SELECT driver_id, priority, CAST(focus AS text) AS focus, brief, status, CAST(result AS text) AS result,
             turn_id, cost_cents
-       FROM sweep_fanout_checks WHERE run_id = CAST($1 AS uuid)
+       FROM sweep_fanout_checks WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()
       ORDER BY priority, driver_id`,
     [runId],
   );
   const drivers = await q.query<{ id: string; code: string | null; label: string | null }>(
-    "SELECT id, code, first_name || ' ' || last_name AS label FROM drivers",
+    "SELECT id, code, first_name || ' ' || last_name AS label FROM drivers WHERE tenant_id = current_tenant_id()",
   );
   const names = new Map(drivers.map((d) => [d.id.toLowerCase(), { code: d.code, label: d.label }]));
   return treeOf(rows[0], checks, names);

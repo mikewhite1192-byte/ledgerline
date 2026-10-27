@@ -5,7 +5,7 @@ import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../..
 import { TurnBudget } from "../../agent/operator/budget";
 import { CALL_MARGIN_MS } from "../../agent/policy";
 import type { Session } from "../../auth/claims";
-import type { FanoutLimits } from "./limits";
+import { refusedByProvider, type FanoutLimits } from "./limits";
 import { CHECK_SHAPE, CheckAnswer, NOTE_MAX, isRecordTable, parseJson, scrubFigures, type CheckCategory } from "./schemas";
 
 // One driver's check (design 3.3): a short loop of Muse Spark calls over five raw-record read
@@ -24,7 +24,11 @@ export const SEE_THE_RECORD = "see the record";
 // A model call needs at least this long, or the check ends as timed out.
 export const MIN_CALL_MS = 4_000;
 const MAX_CALL_MS = 60_000;
-const MAX_OUTPUT_TOKENS = 700;
+// Reasoning and the answer share this cap. Measured on muse-spark-1.3 at low effort (2026-10-27):
+// the answering call spent 650 to 700 tokens on reasoning alone, so a 700 cap cut every answer
+// off. 2,000 leaves room for an eight-issue answer, and its reserve (about 1.6 cents with a full
+// set of read results) still fits callCents.
+const MAX_OUTPUT_TOKENS = 2_000;
 
 export type CheckStatus = "done" | "unparsed" | "timed_out" | "budget" | "error";
 
@@ -269,7 +273,9 @@ export async function runChildCheck(input: ChildInput, deps: ChildDeps): Promise
       );
     } catch (err) {
       const category = err instanceof AiError ? err.category : "unknown";
-      if (!REFUSED_BEFORE_SENDING.has(category)) costKnown = false;
+      const status = err instanceof AiError ? err.httpStatus : undefined;
+      // A refusal before sending, or a definite provider refusal (401, 402, 429), cost nothing.
+      if (!REFUSED_BEFORE_SENDING.has(category) && !refusedByProvider(category, status)) costKnown = false;
       await deps.steps.finishStep(input.turnId, step.id, { state: "failed", detail: { category } });
       if (category === "timeout") return end("timed_out");
       if (BUDGET_ERRORS.has(category)) return end("budget");
