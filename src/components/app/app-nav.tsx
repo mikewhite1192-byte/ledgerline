@@ -1,4 +1,4 @@
-import { AudioLines, Cpu, FileText, HandCoins, House, NotebookPen, Video } from "lucide-react";
+import { AudioLines, Cpu, FileText, Globe, HandCoins, House, NotebookPen, Video } from "lucide-react";
 import { flags } from "@/config/flags";
 import type { NavItem } from "./nav-list";
 
@@ -12,6 +12,7 @@ const ITEMS = [
   { href: "/voice-notes", label: "Voice notes", icon: <AudioLines aria-hidden />, shown: () => flags.voiceIntakeEnabled === true },
   { href: "/clips", label: "Dock clips", icon: <Video aria-hidden />, shown: () => flags.clipsEnabled === true },
   { href: "/models", label: "Meta models", icon: <Cpu aria-hidden />, shown: () => true },
+  { href: "/portal-runs", label: "Portal runs", icon: <Globe aria-hidden />, shown: () => flags.portalRunnerEnabled === true },
 ] as const;
 
 export function appNav(current: string): NavItem[] {

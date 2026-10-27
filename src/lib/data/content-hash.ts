@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 // the text. The seed and the screener both use it, so a seeded row's stored hash is the key the
 // screener looks up.
 export function untrustedContentHash(
-  kind: "email" | "transcript" | "document",
+  kind: "email" | "transcript" | "document" | "portal",
   text: string,
 ): string {
   return createHash("sha256").update(`${kind}\n${text}`, "utf8").digest("hex");

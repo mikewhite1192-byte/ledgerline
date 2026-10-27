@@ -13,7 +13,9 @@ import {
   estimateReserve,
   mediaReserveTokens,
   meteredCost,
+  COMPUTER_TOOL_RESERVE_TOKENS,
   NANOCENTS_PER_CENT,
+  SCREENSHOT_RESERVE_TOKENS,
   videoFramesCost,
   wonderCapNanocents,
   type Price,
@@ -22,7 +24,7 @@ import { basetenBody, BASETEN_CHAT_URL, parseBaseten } from "./providers/baseten
 import { FIREWORKS_CHAT_URL, parseFireworks } from "./providers/fireworks";
 import { post, type FetchFn } from "./providers/http";
 import { dataUrlLength, IMAGE_MIMES, looksLike, pdfPages } from "./providers/media";
-import { META_RESPONSES_URL, metaBody, parseMeta } from "./providers/meta";
+import { META_RESPONSES_URL, metaBody, metaComputerBody, parseMeta } from "./providers/meta";
 import { imageBody, META_IMAGES_URL, parseImage } from "./providers/meta-image";
 import { parseSam, parseSamVideo, samBody, samVideoBody } from "./providers/meta-sam";
 import {
@@ -50,6 +52,10 @@ import {
   type AiTextTarget,
   type AiTool,
   type CallOutcome,
+  type ComputerPair,
+  type ComputerRequest,
+  type ComputerResult,
+  type ComputerScreenshot,
   type ImageRequest,
   type ImageResult,
   type Metered,
@@ -82,8 +88,17 @@ export type {
   AiTool,
   AiToolCall,
   AiUsage,
+  ComputerAction,
+  ComputerButton,
+  ComputerCall,
+  ComputerPair,
+  ComputerPoint,
+  ComputerRequest,
+  ComputerResult,
+  ComputerScreenshot,
   ImageRequest,
   ImageResult,
+  SafetyCheck,
   SegmentMatch,
   SegmentRequest,
   SegmentResult,
@@ -848,6 +863,127 @@ export async function spendRoom(
     wonderCapNanocents: wonderCap,
   });
   return refused ? "cap" : "room";
+}
+
+// --- computerStep: one step of a computer-use loop, on the model flags.portalRunnerModel names ---
+
+// The docs' limit for a stateless replay: at most 29 calls and their answers in one request.
+const MAX_COMPUTER_PAIRS = 29;
+const MAX_INSTRUCTIONS_CHARS = 20_000;
+const MAX_TASK_CHARS = 4_000;
+const MAX_ACKNOWLEDGED = 8;
+const SCREENSHOT_MIMES: readonly string[] = ["image/png", "image/jpeg"];
+
+function validScreenshot(s: ComputerScreenshot): boolean {
+  return (
+    typeof s === "object" &&
+    s !== null &&
+    SCREENSHOT_MIMES.includes(s.mime) &&
+    s.bytes instanceof Uint8Array &&
+    s.bytes.length > 0 &&
+    s.bytes.length <= MAX_IMAGE_BYTES &&
+    looksLike(s.mime, s.bytes)
+  );
+}
+
+function validPair(p: ComputerPair): boolean {
+  if (typeof p !== "object" || p === null) return false;
+  const call = p.call;
+  const output = p.output;
+  return (
+    typeof call === "object" &&
+    call !== null &&
+    !Array.isArray(call) &&
+    call.type === "computer_call" &&
+    typeof call.call_id === "string" &&
+    typeof output === "object" &&
+    output !== null &&
+    output.callId === call.call_id &&
+    validScreenshot(output.screenshot) &&
+    Array.isArray(output.acknowledged) &&
+    output.acknowledged.length <= MAX_ACKNOWLEDGED &&
+    output.acknowledged.every(
+      (c) => typeof c === "object" && c !== null && typeof c.id === "string" && c.id !== "",
+    )
+  );
+}
+
+// The caller acts on result.call: it validates the actions, and it never runs any of them while
+// call.pendingSafetyChecks is non-empty. The wrapper only carries the checks; it never fills
+// acknowledged itself.
+export async function computerStep(
+  target: "wonder" | "spark",
+  request: ComputerRequest,
+  session: Session,
+  deps: AiDeps = {},
+): Promise<ComputerResult> {
+  // Only the model the switch names, read on every call: any other target is refused before any
+  // reservation, whichever of the two it is.
+  if ((target !== "wonder" && target !== "spark") || target !== flags.portalRunnerModel) bad();
+  const { callId, answer, costNanocents } = await runCall(
+    target,
+    "tokens",
+    request,
+    SLOW_TIMEOUT_MS,
+    session,
+    deps,
+    (model, price, provider) => {
+      // The computer tool is a Meta Responses feature; no other host is ever sent this body.
+      if (provider !== "meta") bad();
+      const options: TextOptions = {
+        maxOutputTokens: request.maxOutputTokens ?? 1024,
+        reasoningEffort: request.reasoningEffort ?? "medium",
+      };
+      const history = request.history;
+      if (
+        !inRange(options.maxOutputTokens, 16, 8192) ||
+        ![...BASE_EFFORTS, "max"].includes(options.reasoningEffort) ||
+        typeof request.instructions !== "string" ||
+        request.instructions.trim() === "" ||
+        request.instructions.length > MAX_INSTRUCTIONS_CHARS ||
+        typeof request.task !== "string" ||
+        request.task.trim() === "" ||
+        request.task.length > MAX_TASK_CHARS ||
+        !validScreenshot(request.screenshot) ||
+        !Array.isArray(history) ||
+        history.length > MAX_COMPUTER_PAIRS ||
+        !history.every(validPair)
+      ) {
+        bad();
+      }
+      const body = JSON.stringify(metaComputerBody(model, request, options));
+      // The text is reserved at its byte count; each screenshot at its own token figure; the
+      // computer tool at the tokens the platform adds for it.
+      const screenshots = [request.screenshot, ...history.map((p) => p.output.screenshot)];
+      const imageChars = screenshots.reduce((n, s) => n + dataUrlLength(s.mime, s.bytes.length), 0);
+      const textBytes = new TextEncoder().encode(body).length - imageChars;
+      return {
+        url: META_RESPONSES_URL,
+        body,
+        reserveNanocents: estimateReserve(
+          price,
+          textBytes,
+          options.maxOutputTokens,
+          screenshots.length * SCREENSHOT_RESERVE_TOKENS + COMPUTER_TOOL_RESERVE_TOKENS,
+        ),
+        reasoningEffort: options.reasoningEffort,
+        parse: parseMeta,
+      };
+    },
+  );
+  if (answer.metered.unit !== "tokens") throw new AiError("unknown");
+  return {
+    callId,
+    status: answer.status,
+    text: answer.value.text,
+    toolCalls: answer.value.toolCalls,
+    usage: answer.metered.usage,
+    costNanocents,
+    upstreamId: answer.upstreamId,
+    replay: answer.value.replay,
+    toolSearches: answer.value.toolSearches,
+    call: answer.value.computerCall ?? null,
+  };
 }
 
 // --- transcribe: Muse Voice Transcribe ---
