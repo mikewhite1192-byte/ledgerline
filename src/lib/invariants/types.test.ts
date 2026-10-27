@@ -1,19 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { DbError, type Queryable } from "../db/types";
+import { DbError, type Param, type Queryable } from "../db/types";
 import {
   InvariantReadError,
+  countOf,
   exitCodeOf,
   flag,
   formatLine,
   isReadSql,
+  onlyRow,
   readFailureCategory,
   readOnly,
+  readPaged,
+  refuseUnread,
   resultOf,
   safeName,
   unreadable,
   verdictOf,
   whole,
   type InvariantId,
+  type PageKey,
 } from "./types";
 
 const pass = (id: InvariantId) => resultOf(id, { rows: 1 }, {});
@@ -123,6 +128,90 @@ describe("read-only access", () => {
     await expect(ro.query("DELETE FROM money_actions")).rejects.toMatchObject({ category: "refused_not_select" });
     await expect(ro.query("SELECT 1")).resolves.toEqual([]);
     expect(calls).toEqual(["SELECT 1"]);
+  });
+});
+
+describe("aggregate counts", () => {
+  it("takes whole counts of zero or more", () => {
+    expect(countOf(0)).toBe(0);
+    expect(countOf("42")).toBe(42);
+    for (const bad of [-1, "-1", 1.5, null, "1.0", true]) expect(() => countOf(bad)).toThrow("not_whole");
+  });
+
+  it("takes exactly one aggregate row", () => {
+    expect(onlyRow([{ n: 1 }], "x_unread")).toEqual({ n: 1 });
+    expect(() => onlyRow([], "x_unread")).toThrow("x_unread");
+    expect(() => onlyRow([{ n: 1 }, { n: 2 }], "x_unread")).toThrow("x_unread");
+  });
+
+  it("leaves the check unread when any record was refused", () => {
+    expect(() => refuseUnread(0, "not_whole")).not.toThrow();
+    expect(() => refuseUnread(1, "not_whole")).toThrow("not_whole");
+    expect(() => refuseUnread("2", "not_boolean")).toThrow("not_boolean");
+    expect(() => refuseUnread(null, "not_boolean")).toThrow("not_whole");
+  });
+});
+
+describe("readPaged", () => {
+  const SQL = { first: "SELECT first", after: "SELECT after" };
+  const T = "00000000-0000-4000-8000-0000000000aa";
+  type Row = PageKey & { n: number };
+  const key = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const row = (n: number): Row => ({ page_tenant: T, page_id: key(n), n });
+
+  // Answers each query with the next page given, recording what was asked.
+  function pages(answers: Row[][]) {
+    const calls: { sql: string; params?: Param[] }[] = [];
+    const q = {
+      query: async <R>(sql: string, params?: Param[]) => {
+        calls.push({ sql, params });
+        return (answers[calls.length - 1] ?? []) as R[];
+      },
+    };
+    return { q, calls };
+  }
+
+  it("reads page after page, each after the last key, until a short page", async () => {
+    const { q, calls } = pages([[row(1), row(2)], [row(3), row(4)], [row(5)]]);
+    const rows = await readPaged<Row>(q, SQL, 2, 10);
+    expect(rows.map((r) => r.n)).toEqual([1, 2, 3, 4, 5]);
+    expect(calls).toEqual([
+      { sql: "SELECT first", params: [2] },
+      { sql: "SELECT after", params: [T, key(2), 2] },
+      { sql: "SELECT after", params: [T, key(4), 2] },
+    ]);
+  });
+
+  it("stops at an empty page after a full one, and at a short first page", async () => {
+    const full = pages([[row(1), row(2)], []]);
+    expect((await readPaged<Row>(full.q, SQL, 2, 10)).map((r) => r.n)).toEqual([1, 2]);
+    expect(full.calls).toHaveLength(2);
+    const one = pages([[row(1)]]);
+    expect((await readPaged<Row>(one.q, SQL, 2, 10)).map((r) => r.n)).toEqual([1]);
+    expect(one.calls).toHaveLength(1);
+  });
+
+  it("fails closed at the page cap instead of returning part of the rows", async () => {
+    const { q, calls } = pages([[row(1), row(2)], [row(3), row(4)], [row(5), row(6)], [row(7)]]);
+    await expect(readPaged(q, SQL, 2, 3)).rejects.toMatchObject({ category: "page_cap" });
+    expect(calls).toHaveLength(3);
+  });
+
+  it("fails closed on a key it cannot read, never guessing the next page", async () => {
+    for (const bad of [{ page_tenant: T, page_id: 42 }, { page_tenant: null, page_id: key(2) }, { page_tenant: T, page_id: "2" }]) {
+      const { q, calls } = pages([[row(1), { ...row(2), ...bad }], [row(3)]]);
+      await expect(readPaged(q, SQL, 2, 10)).rejects.toMatchObject({ category: "page_key_unread" });
+      expect(calls).toHaveLength(1);
+    }
+  });
+
+  it("passes a read failure through as it came", async () => {
+    const q = {
+      query: async () => {
+        throw new DbError("timeout", "57014");
+      },
+    };
+    await expect(readPaged(q, SQL, 2, 10)).rejects.toMatchObject({ name: "DbError", category: "timeout" });
   });
 });
 

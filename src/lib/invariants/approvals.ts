@@ -1,4 +1,14 @@
-import { flag, readAll, resultOf, tally, unreadable, whole, type InvariantResult, type ReadQuery } from "./types";
+import {
+  countOf,
+  onlyRow,
+  readAll,
+  refuseUnread,
+  resultOf,
+  tally,
+  unreadable,
+  type InvariantResult,
+  type ReadQuery,
+} from "./types";
 import type { Db } from "../db/types";
 
 // I3: every payout has a ledger row and an approval.
@@ -24,53 +34,129 @@ import type { Db } from "../db/types";
 // fixed constant, never input.
 export const SENT_BEFORE_DECISION_TOLERANCE = "5 seconds";
 
-export const ADVANCE_PAYOUTS_SQL = `SELECT a.source = 'seed' AS seeded, a.proposal_id IS NOT NULL AS flow,
-       (a.status = 'paid' OR a.paid_at IS NOT NULL) AS paid,
-       count(m.id) FILTER (WHERE m.state = 'confirmed') AS confirmed
-  FROM advances a
-  LEFT JOIN money_actions m
-    ON m.tenant_id = a.tenant_id AND m.kind = 'advance_payout' AND m.subject_id = a.id
- GROUP BY a.tenant_id, a.id`;
+// Decided by a person: approved, then executing, then done, or failed (only reachable through
+// approved, and a retry may still pay after it).
+export const DECIDED_STATUSES = ["approved", "executing", "done", "failed"] as const;
+export const LINKED_STATUSES = ["executing", "done", "failed"] as const;
 
-export const SETTLEMENT_PAYOUTS_SQL = `SELECT (s.status = 'paid' OR s.paid_at IS NOT NULL) AS paid, count(m.id) AS ledger_rows,
-       count(m.id) FILTER (WHERE m.state = 'confirmed') AS confirmed
-  FROM settlements s
-  LEFT JOIN money_actions m
-    ON m.tenant_id = s.tenant_id AND m.kind = 'settlement_payout' AND m.subject_id = s.id
- GROUP BY s.tenant_id, s.id`;
+const list = (values: readonly string[]) => values.map((v) => `'${v}'`).join(", ");
 
-export const PAYMENT_ROWS_SQL = `SELECT m.kind, m.proposed_by, (mem.id IS NOT NULL) AS approver_found,
-       (m.proposal_id IS NOT NULL) AS names_proposal, p.status AS proposal_status,
-       (p.decided_by IS NOT NULL AND p.decided_at IS NOT NULL) AS decided,
-       (m.sent_at IS NOT NULL) AS sent,
-       (p.decided_at <= m.sent_at + interval '${SENT_BEFORE_DECISION_TOLERANCE}') IS TRUE AS decided_before_sent,
-       (m.kind <> 'advance_payout' OR a.proposal_id = m.proposal_id) IS TRUE AS same_proposal
-  FROM money_actions m
-  LEFT JOIN memberships mem ON mem.tenant_id = m.tenant_id AND mem.id = m.approver_membership_id
-  LEFT JOIN proposals p ON p.tenant_id = m.tenant_id AND p.id = m.proposal_id
-  LEFT JOIN advances a ON m.kind = 'advance_payout' AND a.tenant_id = m.tenant_id AND a.id = m.subject_id
- WHERE m.channel = 'payment'`;
+// Each check reads one aggregate row, not one row per record (a Data API response holds at most
+// 1 MiB). The inner SELECT is the per-record row the check judges; the outer one counts what the
+// per-record judgment counted. "unread" counts the records whose flags the per-record read would
+// have refused (a NULL where true or false belongs): any at all leaves I3 unread.
 
-export const PROPOSAL_LINKS_SQL = `SELECT p.status, (m.id IS NOT NULL) AS action_found
-  FROM proposals p
-  LEFT JOIN money_actions m ON m.tenant_id = p.tenant_id AND m.id = p.money_action_id
- WHERE p.money_action_id IS NOT NULL`;
+// An advance from the flow (it has a proposal) has at most one confirmed payout, and is marked
+// paid exactly when it has one. Any other advance with a payout is off the flow; a paid one with
+// none is seeded history when the seed wrote it, and a violation otherwise.
+export const ADVANCE_PAYOUTS_SQL = `SELECT count(*) AS advances,
+       count(*) FILTER (WHERE x.paid IS NULL OR x.flow IS NULL
+                          OR (NOT x.flow AND x.confirmed = 0 AND x.paid AND x.seeded IS NULL)) AS unread,
+       count(*) FILTER (WHERE x.confirmed > 1) AS paid_twice,
+       count(*) FILTER (WHERE x.paid AND x.confirmed = 0 AND (x.flow OR NOT x.seeded)) AS paid_without_payout,
+       count(*) FILTER (WHERE x.flow AND NOT x.paid AND x.confirmed > 0) AS payout_unmarked,
+       count(*) FILTER (WHERE NOT x.flow AND x.confirmed > 0) AS off_flow,
+       count(*) FILTER (WHERE NOT x.flow AND x.confirmed = 0 AND x.paid AND x.seeded) AS history
+  FROM (SELECT a.source = 'seed' AS seeded, a.proposal_id IS NOT NULL AS flow,
+               (a.status = 'paid' OR a.paid_at IS NOT NULL) AS paid,
+               count(m.id) FILTER (WHERE m.state = 'confirmed') AS confirmed
+          FROM advances a
+          LEFT JOIN money_actions m
+            ON m.tenant_id = a.tenant_id AND m.kind = 'advance_payout' AND m.subject_id = a.id
+         GROUP BY a.tenant_id, a.id) x`;
 
-export type AdvancePayoutRow = { seeded: unknown; flow: unknown; paid: unknown; confirmed: unknown };
-export type SettlementPayoutRow = { paid: unknown; ledger_rows: unknown; confirmed: unknown };
-export type PaymentRow = {
-  kind: unknown;
-  proposed_by: unknown;
-  approver_found: unknown;
-  names_proposal: unknown;
-  proposal_status: unknown;
-  decided: unknown;
-  sent: unknown;
-  decided_before_sent: unknown;
-  same_proposal: unknown;
+// A settlement has at most one confirmed payout, which means it is marked paid; a paid settlement
+// with payout rows has a confirmed one, and one with no ledger rows at all is seeded history.
+export const SETTLEMENT_PAYOUTS_SQL = `SELECT count(*) AS settlements,
+       count(*) FILTER (WHERE x.paid IS NULL) AS unread,
+       count(*) FILTER (WHERE x.confirmed > 1) AS paid_twice,
+       count(*) FILTER (WHERE x.confirmed > 0 AND NOT x.paid) AS payout_unmarked,
+       count(*) FILTER (WHERE x.paid AND x.confirmed = 0 AND x.ledger_rows <> 0) AS paid_without_payout,
+       count(*) FILTER (WHERE x.paid AND x.confirmed = 0 AND x.ledger_rows = 0) AS history
+  FROM (SELECT (s.status = 'paid' OR s.paid_at IS NOT NULL) AS paid, count(m.id) AS ledger_rows,
+               count(m.id) FILTER (WHERE m.state = 'confirmed') AS confirmed
+          FROM settlements s
+          LEFT JOIN money_actions m
+            ON m.tenant_id = s.tenant_id AND m.kind = 'settlement_payout' AND m.subject_id = s.id
+         GROUP BY s.tenant_id, s.id) x`;
+
+// Every payment-channel ledger row: an approver always. An agent's row that names no proposal is
+// that violation and nothing more is judged; a row with an unknown proposer is flagged and judged
+// on. A row that names a proposal: the proposal exists (if not, nothing more is judged), a person
+// decided it, before the send (inside the clock tolerance), and for an advance payout it is the
+// advance's own proposal.
+export const PAYMENT_ROWS_SQL = `SELECT count(*) AS payment_rows,
+       count(*) FILTER (WHERE r.approver_found IS NULL OR r.names_proposal IS NULL
+                          OR (r.judged AND r.proposal_status IS NOT NULL
+                              AND (r.decided IS NULL OR r.sent IS NULL
+                                   OR (r.sent AND r.decided_before_sent IS NULL)
+                                   OR r.same_proposal IS NULL))) AS unread,
+       count(*) FILTER (WHERE NOT r.approver_found) AS approver_missing,
+       count(*) FILTER (WHERE r.agent_unlinked) AS agent_without_proposal,
+       count(*) FILTER (WHERE NOT r.agent_unlinked AND r.proposed_by IS DISTINCT FROM 'agent'
+                          AND r.proposed_by IS DISTINCT FROM 'person') AS proposer_unknown,
+       count(*) FILTER (WHERE r.judged AND r.proposal_status IS NULL) AS proposal_missing,
+       count(*) FILTER (WHERE r.judged AND r.proposal_status NOT IN (${list(DECIDED_STATUSES)})) AS not_approved,
+       count(*) FILTER (WHERE r.judged AND r.proposal_status IS NOT NULL AND NOT r.decided) AS undecided,
+       count(*) FILTER (WHERE r.judged AND r.proposal_status IS NOT NULL AND r.sent
+                          AND NOT r.decided_before_sent) AS sent_before_decision,
+       count(*) FILTER (WHERE r.judged AND r.proposal_status IS NOT NULL AND NOT r.same_proposal) AS mismatch
+  FROM (SELECT y.*, (y.proposed_by = 'agent' AND NOT y.names_proposal) IS TRUE AS agent_unlinked,
+               ((y.proposed_by = 'agent' AND NOT y.names_proposal) IS NOT TRUE AND y.names_proposal) IS TRUE AS judged
+          FROM (SELECT m.proposed_by, (mem.id IS NOT NULL) AS approver_found,
+                       (m.proposal_id IS NOT NULL) AS names_proposal, p.status AS proposal_status,
+                       (p.decided_by IS NOT NULL AND p.decided_at IS NOT NULL) AS decided,
+                       (m.sent_at IS NOT NULL) AS sent,
+                       (p.decided_at <= m.sent_at + interval '${SENT_BEFORE_DECISION_TOLERANCE}') IS TRUE AS decided_before_sent,
+                       (m.kind <> 'advance_payout' OR a.proposal_id = m.proposal_id) IS TRUE AS same_proposal
+                  FROM money_actions m
+                  LEFT JOIN memberships mem ON mem.tenant_id = m.tenant_id AND mem.id = m.approver_membership_id
+                  LEFT JOIN proposals p ON p.tenant_id = m.tenant_id AND p.id = m.proposal_id
+                  LEFT JOIN advances a ON m.kind = 'advance_payout' AND a.tenant_id = m.tenant_id AND a.id = m.subject_id
+                 WHERE m.channel = 'payment') y) r`;
+
+// A proposal that names a ledger row is executing, done or failed, and the row exists.
+export const PROPOSAL_LINKS_SQL = `SELECT count(*) AS linked_proposals,
+       count(*) FILTER (WHERE l.action_found IS NULL) AS unread,
+       count(*) FILTER (WHERE (l.status IN (${list(LINKED_STATUSES)})) IS NOT TRUE) AS linked_early,
+       count(*) FILTER (WHERE NOT l.action_found) AS action_missing
+  FROM (SELECT p.status, (m.id IS NOT NULL) AS action_found
+          FROM proposals p
+          LEFT JOIN money_actions m ON m.tenant_id = p.tenant_id AND m.id = p.money_action_id
+         WHERE p.money_action_id IS NOT NULL) l`;
+
+export type AdvancePayoutRow = {
+  advances: unknown;
+  unread: unknown;
+  paid_twice: unknown;
+  paid_without_payout: unknown;
+  payout_unmarked: unknown;
+  off_flow: unknown;
+  history: unknown;
 };
-export type ProposalLinkRow = { status: unknown; action_found: unknown };
+export type SettlementPayoutRow = {
+  settlements: unknown;
+  unread: unknown;
+  paid_twice: unknown;
+  payout_unmarked: unknown;
+  paid_without_payout: unknown;
+  history: unknown;
+};
+export type PaymentRow = {
+  payment_rows: unknown;
+  unread: unknown;
+  approver_missing: unknown;
+  agent_without_proposal: unknown;
+  proposer_unknown: unknown;
+  proposal_missing: unknown;
+  not_approved: unknown;
+  undecided: unknown;
+  sent_before_decision: unknown;
+  mismatch: unknown;
+};
+export type ProposalLinkRow = { linked_proposals: unknown; unread: unknown; linked_early: unknown; action_missing: unknown };
 
+// One aggregate row each.
 export type ApprovalRows = {
   advances: AdvancePayoutRow[];
   settlements: SettlementPayoutRow[];
@@ -78,75 +164,50 @@ export type ApprovalRows = {
   proposalLinks: ProposalLinkRow[];
 };
 
-// Decided by a person: approved, then executing, then done, or failed (only reachable through
-// approved, and a retry may still pay after it).
-const DECIDED_STATUSES = new Set(["approved", "executing", "done", "failed"]);
-const LINKED_STATUSES = new Set(["executing", "done", "failed"]);
-
 export function judgeApprovals(rows: ApprovalRows): InvariantResult {
   const v: Record<string, number> = {};
-  let history = 0;
 
-  for (const a of rows.advances) {
-    const confirmed = whole(a.confirmed);
-    const paid = flag(a.paid);
-    if (confirmed > 1) tally(v, "advance_paid_twice");
-    if (flag(a.flow)) {
-      if (paid && confirmed === 0) tally(v, "advance_paid_without_payout");
-      if (!paid && confirmed > 0) tally(v, "advance_payout_unmarked");
-    } else {
-      if (confirmed > 0) tally(v, "advance_payout_off_flow");
-      else if (paid && flag(a.seeded)) history += 1;
-      else if (paid) tally(v, "advance_paid_without_payout");
-    }
-  }
+  const a = onlyRow(rows.advances, "advances_unread");
+  const advances = countOf(a.advances);
+  refuseUnread(a.unread, "not_boolean");
+  tally(v, "advance_paid_twice", countOf(a.paid_twice));
+  tally(v, "advance_paid_without_payout", countOf(a.paid_without_payout));
+  tally(v, "advance_payout_unmarked", countOf(a.payout_unmarked));
+  tally(v, "advance_payout_off_flow", countOf(a.off_flow));
 
-  for (const s of rows.settlements) {
-    const confirmed = whole(s.confirmed);
-    const ledgerRows = whole(s.ledger_rows);
-    const paid = flag(s.paid);
-    if (confirmed > 1) tally(v, "settlement_paid_twice");
-    if (confirmed > 0 && !paid) tally(v, "settlement_payout_unmarked");
-    if (paid && confirmed === 0) {
-      if (ledgerRows === 0) history += 1;
-      else tally(v, "settlement_paid_without_payout");
-    }
-  }
+  const s = onlyRow(rows.settlements, "settlements_unread");
+  const settlements = countOf(s.settlements);
+  refuseUnread(s.unread, "not_boolean");
+  tally(v, "settlement_paid_twice", countOf(s.paid_twice));
+  tally(v, "settlement_payout_unmarked", countOf(s.payout_unmarked));
+  tally(v, "settlement_paid_without_payout", countOf(s.paid_without_payout));
 
-  for (const m of rows.paymentRows) {
-    if (!flag(m.approver_found)) tally(v, "approver_missing");
-    const namesProposal = flag(m.names_proposal);
-    if (m.proposed_by === "agent" && !namesProposal) {
-      tally(v, "agent_payout_without_proposal");
-      continue;
-    }
-    if (m.proposed_by !== "agent" && m.proposed_by !== "person") tally(v, "proposer_unknown");
-    if (!namesProposal) continue;
-    if (m.proposal_status === null) {
-      tally(v, "proposal_missing");
-      continue;
-    }
-    if (typeof m.proposal_status !== "string" || !DECIDED_STATUSES.has(m.proposal_status)) {
-      tally(v, "proposal_not_approved");
-    }
-    if (!flag(m.decided)) tally(v, "proposal_undecided");
-    if (flag(m.sent) && !flag(m.decided_before_sent)) tally(v, "sent_before_decision");
-    if (!flag(m.same_proposal)) tally(v, "proposal_mismatch");
-  }
+  const m = onlyRow(rows.paymentRows, "payment_rows_unread");
+  const paymentRows = countOf(m.payment_rows);
+  refuseUnread(m.unread, "not_boolean");
+  tally(v, "approver_missing", countOf(m.approver_missing));
+  tally(v, "agent_payout_without_proposal", countOf(m.agent_without_proposal));
+  tally(v, "proposer_unknown", countOf(m.proposer_unknown));
+  tally(v, "proposal_missing", countOf(m.proposal_missing));
+  tally(v, "proposal_not_approved", countOf(m.not_approved));
+  tally(v, "proposal_undecided", countOf(m.undecided));
+  tally(v, "sent_before_decision", countOf(m.sent_before_decision));
+  tally(v, "proposal_mismatch", countOf(m.mismatch));
 
-  for (const p of rows.proposalLinks) {
-    if (typeof p.status !== "string" || !LINKED_STATUSES.has(p.status)) tally(v, "proposal_linked_early");
-    if (!flag(p.action_found)) tally(v, "proposal_action_missing");
-  }
+  const p = onlyRow(rows.proposalLinks, "proposal_links_unread");
+  const linkedProposals = countOf(p.linked_proposals);
+  refuseUnread(p.unread, "not_boolean");
+  tally(v, "proposal_linked_early", countOf(p.linked_early));
+  tally(v, "proposal_action_missing", countOf(p.action_missing));
 
   return resultOf(
     "I3",
     {
-      advances: rows.advances.length,
-      settlements: rows.settlements.length,
-      payment_rows: rows.paymentRows.length,
-      linked_proposals: rows.proposalLinks.length,
-      history_paid: history,
+      advances,
+      settlements,
+      payment_rows: paymentRows,
+      linked_proposals: linkedProposals,
+      history_paid: countOf(a.history) + countOf(s.history),
     },
     v,
   );

@@ -95,6 +95,25 @@ export function flag(value: unknown): boolean {
   throw new InvariantReadError("not_boolean");
 }
 
+// A count from an aggregate: a whole number, never below zero.
+export function countOf(value: unknown): number {
+  const n = whole(value);
+  if (n < 0) throw new InvariantReadError("not_whole");
+  return n;
+}
+
+// The one row an aggregate returns; none, or more than one, is unread.
+export function onlyRow<T>(rows: T[], category: string): T {
+  if (rows.length !== 1) throw new InvariantReadError(category);
+  return rows[0];
+}
+
+// An aggregate's count of rows the per-row read would have refused (a NULL where a number or a
+// flag belongs): any at all leaves the whole check unread, as the per-row read did.
+export function refuseUnread(count: unknown, category: "not_whole" | "not_boolean"): void {
+  if (countOf(count) > 0) throw new InvariantReadError(category);
+}
+
 // A schema identifier as it may appear in a category: plain lower-case identifiers only.
 export function safeName(name: unknown): string {
   return typeof name === "string" && /^[a-z_][a-z0-9_.]{0,126}$/.test(name) ? name : "unnamed";
@@ -134,6 +153,50 @@ export function readAll<T>(db: Db, fn: (q: ReadQuery) => Promise<T>): Promise<T>
     await q.execute(READ_ONLY_SNAPSHOT_SQL);
     return fn(readOnly(q));
   });
+}
+
+// ---- Paged reads ----
+
+// One Data API response holds at most 1 MiB, so every check reads aggregates (one row) where SQL
+// can judge exactly what TypeScript judged. A read that must return one row per record, because
+// its judgment is code the SQL must not copy, reads in pages by key: ordered by (tenant_id, id),
+// PAGE_SIZE rows at a time, each page after the last key seen, until a short page. Every page is
+// read inside readAll's one snapshot. A paged row is at most about 230 bytes in the Data API's
+// encoding (two uuid keys, a status, three numbers), so a page stays near 230 KB, under a quarter
+// of the limit. More than MAX_PAGES full pages is unread, never a partial verdict. Fixed
+// constants, never input.
+export const PAGE_SIZE = 1000;
+export const MAX_PAGES = 100;
+
+// first takes the page size as $1; after takes the last page's tenant_id and id as $1 and $2 and
+// the page size as $3. Each returns the key as page_tenant and page_id (text).
+export type PagedSql = { first: string; after: string };
+export type PageKey = { page_tenant: unknown; page_id: unknown };
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function pageKey(value: unknown): string {
+  if (typeof value === "string" && UUID.test(value)) return value;
+  throw new InvariantReadError("page_key_unread");
+}
+
+export async function readPaged<T extends PageKey>(
+  q: ReadQuery,
+  sql: PagedSql,
+  size: number = PAGE_SIZE,
+  pages: number = MAX_PAGES,
+): Promise<T[]> {
+  const out: T[] = [];
+  let after: [string, string] | null = null;
+  for (let page = 0; page < pages; page += 1) {
+    const rows: T[] =
+      after === null ? await q.query<T>(sql.first, [size]) : await q.query<T>(sql.after, [after[0], after[1], size]);
+    for (const row of rows) out.push(row);
+    if (rows.length < size) return out;
+    const last = rows[rows.length - 1];
+    after = [pageKey(last.page_tenant), pageKey(last.page_id)];
+  }
+  throw new InvariantReadError("page_cap");
 }
 
 export function readAs<T>(db: Db, tenantId: string | null, fn: (q: ReadQuery) => Promise<T>): Promise<T> {

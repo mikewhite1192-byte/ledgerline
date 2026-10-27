@@ -9,7 +9,8 @@ import { adminUrl } from "../src/lib/db/test-urls";
 import type { Db, Param, Queryable } from "../src/lib/db/types";
 import { runInvariants, type InvariantResult } from "../src/lib/invariants";
 import { PROBE_TENANT_SLUGS } from "../src/lib/invariants/rls";
-import { READ_ONLY_SNAPSHOT_SQL, READ_ONLY_SQL } from "../src/lib/invariants/types";
+import { INVOICES_AFTER_SQL, INVOICES_FIRST_SQL, type InvoiceRow } from "../src/lib/invariants/ledger";
+import { READ_ONLY_SNAPSHOT_SQL, READ_ONLY_SQL, readAll, readPaged } from "../src/lib/invariants/types";
 import { dropDatabase, freshSeededDatabase } from "./lib/fresh-seeded-db";
 
 // Each invariant against a real database: a throwaway one built from every migration and seeded
@@ -77,6 +78,64 @@ async function planted(
     await undo();
   }
   await expectAllPass();
+}
+
+// A proposal a person decided at a fixed time, and the confirmed payout of a paid week that
+// names it, sent `early` before that decision (the decision is the app host's clock, the send
+// the database's). Fixed times, so the wall clock never matters. Undo deletes both.
+const DECIDED_AT = "2026-10-01T15:00:00.000Z";
+function payoutSentEarly(early: string) {
+  const c = carriers[0];
+  const proposal = randomUUID();
+  const action = randomUUID();
+  const plant = () =>
+    admin.withoutTenant(async (q) => {
+      await q.execute(
+        `INSERT INTO proposals (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+           amount_cents, direction, title, args, operator_verdict, gateway_decision_id, dedupe_key, trace_id,
+           status, decided_by, decided_at)
+         SELECT CAST($1 AS uuid), tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+                amount_cents, direction, title, args, operator_verdict, gateway_decision_id, $3, trace_id,
+                'done', 'invariants-test', CAST($4 AS timestamptz)
+           FROM proposals WHERE id = CAST($2 AS uuid)`,
+        [proposal, ids.proposals[0], `advance_payout:${c.driver}:${randomBytes(32).toString("hex")}`, DECIDED_AT],
+      );
+      await q.execute(
+        `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, attempt,
+           idempotency_key, request_id, amount_cents, counterparty_table, counterparty_id, proposed_by,
+           proposal_id, approver_membership_id)
+         VALUES (CAST($1 AS uuid), CAST($2 AS uuid), 'settlement_payout', 'payment', 'settlements',
+           CAST($3 AS uuid), 1, $4, $5, $6, 'drivers', CAST($7 AS uuid), 'agent', CAST($8 AS uuid),
+           CAST($9 AS uuid))`,
+        [
+          action,
+          c.id,
+          c.settlement.id,
+          `settlement_payout:${c.settlement.id}:1`,
+          action.replace(/-/g, ""),
+          c.settlement.net,
+          c.settlement.driver,
+          proposal,
+          c.membership,
+        ],
+      );
+      await q.execute(
+        `UPDATE money_actions SET state = 'sent', sent_at = CAST($2 AS timestamptz) - CAST($3 AS interval)
+          WHERE id = CAST($1 AS uuid)`,
+        [action, DECIDED_AT, early],
+      );
+      await q.execute(
+        `UPDATE money_actions SET state = 'confirmed', settled_via = 'response', settled_at = now(),
+           outside_system = 'mock', outside_type = 'payout', outside_id = 'po_test', outside_amount_cents = $2
+         WHERE id = CAST($1 AS uuid)`,
+        [action, c.settlement.net],
+      );
+    });
+  const undo = async () => {
+    await sql("DELETE FROM money_actions WHERE id = CAST($1 AS uuid)", [action]);
+    await sql("DELETE FROM proposals WHERE id = CAST($1 AS uuid)", [proposal]);
+  };
+  return { plant, undo };
 }
 
 beforeAll(async () => {
@@ -508,64 +567,6 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
       );
     });
 
-    // A proposal a person decided at a fixed time, and the confirmed payout of a paid week that
-    // names it, sent `early` before that decision (the decision is the app host's clock, the send
-    // the database's). Fixed times, so the wall clock never matters. Undo deletes both.
-    const DECIDED_AT = "2026-10-01T15:00:00.000Z";
-    function payoutSentEarly(early: string) {
-      const c = carriers[0];
-      const proposal = randomUUID();
-      const action = randomUUID();
-      const plant = () =>
-        admin.withoutTenant(async (q) => {
-          await q.execute(
-            `INSERT INTO proposals (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
-               amount_cents, direction, title, args, operator_verdict, gateway_decision_id, dedupe_key, trace_id,
-               status, decided_by, decided_at)
-             SELECT CAST($1 AS uuid), tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
-                    amount_cents, direction, title, args, operator_verdict, gateway_decision_id, $3, trace_id,
-                    'done', 'invariants-test', CAST($4 AS timestamptz)
-               FROM proposals WHERE id = CAST($2 AS uuid)`,
-            [proposal, ids.proposals[0], `advance_payout:${c.driver}:${randomBytes(32).toString("hex")}`, DECIDED_AT],
-          );
-          await q.execute(
-            `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, attempt,
-               idempotency_key, request_id, amount_cents, counterparty_table, counterparty_id, proposed_by,
-               proposal_id, approver_membership_id)
-             VALUES (CAST($1 AS uuid), CAST($2 AS uuid), 'settlement_payout', 'payment', 'settlements',
-               CAST($3 AS uuid), 1, $4, $5, $6, 'drivers', CAST($7 AS uuid), 'agent', CAST($8 AS uuid),
-               CAST($9 AS uuid))`,
-            [
-              action,
-              c.id,
-              c.settlement.id,
-              `settlement_payout:${c.settlement.id}:1`,
-              action.replace(/-/g, ""),
-              c.settlement.net,
-              c.settlement.driver,
-              proposal,
-              c.membership,
-            ],
-          );
-          await q.execute(
-            `UPDATE money_actions SET state = 'sent', sent_at = CAST($2 AS timestamptz) - CAST($3 AS interval)
-              WHERE id = CAST($1 AS uuid)`,
-            [action, DECIDED_AT, early],
-          );
-          await q.execute(
-            `UPDATE money_actions SET state = 'confirmed', settled_via = 'response', settled_at = now(),
-               outside_system = 'mock', outside_type = 'payout', outside_id = 'po_test', outside_amount_cents = $2
-             WHERE id = CAST($1 AS uuid)`,
-            [action, c.settlement.net],
-          );
-        });
-      const undo = async () => {
-        await sql("DELETE FROM money_actions WHERE id = CAST($1 AS uuid)", [action]);
-        await sql("DELETE FROM proposals WHERE id = CAST($1 AS uuid)", [proposal]);
-      };
-      return { plant, undo };
-    }
-
     it("catches a payout sent well before its proposal was decided", async () => {
       const { plant, undo } = payoutSentEarly("1 hour");
       await planted("I3", plant, undo, { sent_before_decision: 1 });
@@ -738,6 +739,470 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           }),
         { "global_table_unexpected:ops.inv_probe_side": 1, view_present: 1, definer_function: 1 },
       );
+    });
+  });
+
+  // The checks judge in SQL aggregates (a Data API response holds at most 1 MiB), so each count
+  // must mean exactly what the per-record judgment counted before. Each test plants every kind of
+  // bad row its check knows at once, lifting a schema rule where the schema itself would refuse
+  // the row, and expects the exact result: every category and every count. Undo takes the plants
+  // out (last first) and puts every rule back as it was; then all five pass again.
+  describe("aggregates count what the per-record reads counted", () => {
+    type Undo = () => Promise<unknown>;
+
+    async function lift(table: string, name: string): Promise<Undo> {
+      const [c] = await rows<{ def: string }>(
+        "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conrelid = CAST($1 AS regclass) AND conname = $2",
+        [table, name],
+      );
+      if (!c) throw new Error(`fixture: no constraint ${name}`);
+      await sql(`ALTER TABLE ${table} DROP CONSTRAINT ${name}`);
+      return () => sql(`ALTER TABLE ${table} ADD CONSTRAINT ${name} ${c.def}`);
+    }
+
+    async function liftIndex(name: string): Promise<Undo> {
+      const [i] = await rows<{ def: string }>("SELECT pg_get_indexdef(CAST($1 AS regclass)) AS def", [name]);
+      await sql(`DROP INDEX ${name}`);
+      return () => sql(i.def);
+    }
+
+    async function liftNotNull(table: string, column: string): Promise<Undo> {
+      await sql(`ALTER TABLE ${table} ALTER COLUMN ${column} DROP NOT NULL`);
+      return () => sql(`ALTER TABLE ${table} ALTER COLUMN ${column} SET NOT NULL`);
+    }
+
+    // A payment-channel ledger row, taken as far as `end`. by: the proposer (null for none).
+    type Action = {
+      tenant: string;
+      kind: "advance_payout" | "settlement_payout";
+      subject: string;
+      attempt?: number;
+      amount: number;
+      outside?: number | null;
+      driver: string;
+      by?: string | null;
+      proposal?: string | null;
+      approver: string;
+      end: "reserved" | "confirmed" | "refused";
+    };
+    async function plantAction(a: Action): Promise<Undo> {
+      const id = randomUUID();
+      const attempt = a.attempt ?? 1;
+      await admin.withoutTenant(async (q) => {
+        await q.execute(
+          `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, attempt,
+             idempotency_key, request_id, amount_cents, counterparty_table, counterparty_id, proposed_by,
+             proposal_id, approver_membership_id)
+           VALUES (CAST($1 AS uuid), CAST($2 AS uuid), $3, 'payment', $4, CAST($5 AS uuid), $6, $7, $8, $9,
+             'drivers', CAST($10 AS uuid), $11, CAST($12 AS uuid), CAST($13 AS uuid))`,
+          [
+            id,
+            a.tenant,
+            a.kind,
+            a.kind === "advance_payout" ? "advances" : "settlements",
+            a.subject,
+            attempt,
+            `${a.kind}:${a.subject}:${attempt}`,
+            id.replace(/-/g, ""),
+            a.amount,
+            a.driver,
+            a.by === undefined ? "person" : a.by,
+            a.proposal ?? null,
+            a.approver,
+          ],
+        );
+        if (a.end === "confirmed") {
+          await q.execute("UPDATE money_actions SET state = 'sent', sent_at = now() WHERE id = CAST($1 AS uuid)", [id]);
+          await q.execute(
+            `UPDATE money_actions SET state = 'confirmed', settled_via = 'response', settled_at = now(),
+               outside_system = 'mock', outside_type = 'payout', outside_id = 'po_test', outside_amount_cents = $2
+             WHERE id = CAST($1 AS uuid)`,
+            [id, a.outside === undefined ? a.amount : a.outside],
+          );
+        } else if (a.end === "refused") {
+          await q.execute(
+            `UPDATE money_actions SET state = 'failed', settled_via = 'refused', settled_at = now(),
+               failure_category = 'disabled'
+             WHERE id = CAST($1 AS uuid)`,
+            [id],
+          );
+        }
+      });
+      return () => sql("DELETE FROM money_actions WHERE id = CAST($1 AS uuid)", [id]);
+    }
+
+    async function undoAll(undo: Undo[]): Promise<void> {
+      for (const u of undo.reverse()) await u();
+    }
+
+    it("I1: every kind of bad row, the NULL ones included, counted as before", async () => {
+      const base = (await expectAllPass()).I1;
+      const [c0, c1] = carriers;
+      const [other] = await rows<{ id: string }>(
+        `SELECT CAST(id AS text) AS id FROM drivers WHERE tenant_id = CAST($1 AS uuid) AND id <> CAST($2 AS uuid)
+          ORDER BY id LIMIT 1`,
+        [c1.id, c1.settlement.driver],
+      );
+      const [outsideRule] = await rows<{ name: string }>(
+        `SELECT conname AS name FROM pg_constraint
+          WHERE conrelid = CAST('money_actions' AS regclass) AND contype = 'c'
+            AND pg_get_constraintdef(oid) LIKE '%outside_amount_cents = amount_cents%'`,
+      );
+      const [pa] = await rows<{ id: string }>(
+        `SELECT CAST(pa.id AS text) AS id FROM payment_applications pa
+           JOIN customer_payments p ON p.tenant_id = pa.tenant_id AND p.id = pa.payment_id
+           JOIN invoices i ON i.tenant_id = pa.tenant_id AND i.id = pa.invoice_id
+          WHERE i.status = 'paid' AND i.id <> CAST($1 AS uuid)
+            AND p.amount_cents = (SELECT sum(x.amount_cents) FROM payment_applications x
+                                   WHERE x.tenant_id = p.tenant_id AND x.payment_id = p.id)
+          ORDER BY pa.id LIMIT 1`,
+        [c1.invoice.id],
+      );
+      expect([other, outsideRule, pa].every(Boolean)).toBe(true);
+
+      const undo: Undo[] = [];
+      try {
+        // A settlement's net a cent off its lines.
+        await sql("UPDATE settlements SET net_cents = net_cents + 1 WHERE id = CAST($1 AS uuid)", [c0.settlement.id]);
+        undo.push(() => sql("UPDATE settlements SET net_cents = net_cents - 1 WHERE id = CAST($1 AS uuid)", [c0.settlement.id]));
+        // A line of a kind the check does not know, worth nothing (the schema refuses the kind).
+        undo.push(await lift("settlement_lines", "settlement_lines_kind_check"));
+        const line = randomUUID();
+        await sql(
+          `INSERT INTO settlement_lines (id, tenant_id, settlement_id, seq, kind, label, amount_cents, sources)
+           SELECT CAST($1 AS uuid), s.tenant_id, s.id,
+                  (SELECT max(l.seq) + 1 FROM settlement_lines l WHERE l.tenant_id = s.tenant_id AND l.settlement_id = s.id),
+                  'bonus', 'Bonus', 0, CAST('[]' AS jsonb)
+             FROM settlements s WHERE s.id = CAST($2 AS uuid)`,
+          [line, c1.settlement.id],
+        );
+        undo.push(() => sql("DELETE FROM settlement_lines WHERE id = CAST($1 AS uuid)", [line]));
+        // An advance's recovered amount a cent short of its recovery lines.
+        await sql("UPDATE advances SET recovered_cents = recovered_cents - 1 WHERE id = CAST($1 AS uuid)", [c1.advance.id]);
+        undo.push(() => sql("UPDATE advances SET recovered_cents = recovered_cents + 1 WHERE id = CAST($1 AS uuid)", [c1.advance.id]));
+        // A confirmed payout of the week's net to another driver.
+        undo.push(
+          await plantAction({
+            tenant: c1.id,
+            kind: "settlement_payout",
+            subject: c1.settlement.id,
+            amount: c1.settlement.net,
+            driver: other.id,
+            approver: c1.membership,
+            end: "confirmed",
+          }),
+        );
+        // A confirmed payout whose advance does not exist: its own category, never a mismatch.
+        undo.push(
+          await plantAction({
+            tenant: c0.id,
+            kind: "advance_payout",
+            subject: randomUUID(),
+            amount: 10000,
+            driver: c0.driver,
+            approver: c0.membership,
+            end: "confirmed",
+          }),
+        );
+        // A confirmed payout of the right amount to the right driver with no outside amount: a
+        // mismatch (the schema refuses it).
+        undo.push(await lift("money_actions", outsideRule.name));
+        undo.push(
+          await plantAction({
+            tenant: c0.id,
+            kind: "settlement_payout",
+            subject: c0.settlement.id,
+            amount: c0.settlement.net + 1,
+            outside: null,
+            driver: c0.settlement.driver,
+            approver: c0.membership,
+            end: "confirmed",
+          }),
+        );
+        // A customer payment applied for more than it brought in.
+        await sql("UPDATE payment_applications SET amount_cents = amount_cents + 100 WHERE id = CAST($1 AS uuid)", [pa.id]);
+        undo.push(() => sql("UPDATE payment_applications SET amount_cents = amount_cents - 100 WHERE id = CAST($1 AS uuid)", [pa.id]));
+        // A paid invoice marked open.
+        await sql("UPDATE invoices SET status = 'open', paid_on = NULL WHERE id = CAST($1 AS uuid)", [c1.invoice.id]);
+        undo.push(() =>
+          sql("UPDATE invoices SET status = 'paid', paid_on = CAST($2 AS date) WHERE id = CAST($1 AS uuid)", [
+            c1.invoice.id,
+            c1.invoice.paidOn,
+          ]),
+        );
+
+        const r = byId(await run()).I1;
+        expect({ verdict: r.verdict, violations: r.violations, unknown: r.unknown, counts: r.counts }).toEqual({
+          verdict: "FAIL",
+          violations: {
+            settlement_totals_off: 1,
+            settlement_line_kind_unknown: 1,
+            recovery_off: 1,
+            payout_mismatch: 2,
+            payout_subject_missing: 1,
+            payment_overapplied: 1,
+            invoice_status_off: 1,
+          },
+          unknown: [],
+          counts: { ...base.counts, lines: base.counts.lines + 1, payouts: base.counts.payouts + 3 },
+        });
+      } finally {
+        await undoAll(undo);
+      }
+      await expectAllPass();
+    });
+
+    it("I3: every kind of bad row, the NULL ones included, counted as before", async () => {
+      const base = (await expectAllPass()).I3;
+      const [c0, c1] = carriers;
+      // Two more paid weeks of the first carrier with no ledger rows (seeded history).
+      const weeks = await rows<{ id: string; net: number; driver: string; paidAt: string }>(
+        `SELECT CAST(s.id AS text) AS id, s.net_cents AS net, CAST(s.driver_id AS text) AS driver,
+                CAST(s.paid_at AS text) AS "paidAt"
+           FROM settlements s
+          WHERE s.tenant_id = CAST($1 AS uuid) AND s.status = 'paid' AND s.net_cents > 0 AND s.id <> CAST($2 AS uuid)
+            AND NOT EXISTS (SELECT 1 FROM money_actions m WHERE m.tenant_id = s.tenant_id AND m.subject_id = s.id)
+          ORDER BY s.id LIMIT 2`,
+        [c0.id, c0.settlement.id],
+      );
+      const [adv] = await rows<{ amount: number; driver: string }>(
+        "SELECT amount_cents AS amount, CAST(driver_id AS text) AS driver FROM advances WHERE id = CAST($1 AS uuid)",
+        [c1.advance.id],
+      );
+      expect(weeks).toHaveLength(2);
+      const [unmarked, unpaid] = weeks;
+
+      const undo: Undo[] = [];
+      try {
+        // Rules the schema keeps, lifted so the rows the check exists to catch can be planted.
+        undo.push(await liftIndex("money_actions_one_live_per_subject"));
+        undo.push(await lift("money_actions", "money_actions_tenant_id_approver_membership_id_fkey"));
+        undo.push(await lift("money_actions", "money_actions_proposal_fk"));
+        undo.push(await lift("money_actions", "money_actions_proposed_by_check"));
+        undo.push(await liftNotNull("money_actions", "proposed_by"));
+        undo.push(await lift("proposals", "proposals_tenant_id_money_action_id_fkey"));
+        undo.push(await liftNotNull("proposals", "status"));
+
+        // A seeded paid advance that no longer reads as seeded: paid without a payout.
+        await sql("UPDATE advances SET source = 'ui' WHERE id = CAST($1 AS uuid)", [c0.advance.id]);
+        undo.push(() => sql("UPDATE advances SET source = 'seed' WHERE id = CAST($1 AS uuid)", [c0.advance.id]));
+        // Two confirmed payouts on an advance outside the flow: paid twice, and off the flow.
+        for (const attempt of [1, 2]) {
+          undo.push(
+            await plantAction({
+              tenant: c1.id,
+              kind: "advance_payout",
+              subject: c1.advance.id,
+              attempt,
+              amount: adv.amount,
+              driver: adv.driver,
+              approver: c1.membership,
+              end: "confirmed",
+            }),
+          );
+        }
+        // Two confirmed payouts on one week: paid twice.
+        for (const attempt of [1, 2]) {
+          undo.push(
+            await plantAction({
+              tenant: c1.id,
+              kind: "settlement_payout",
+              subject: c1.settlement.id,
+              attempt,
+              amount: c1.settlement.net,
+              driver: c1.settlement.driver,
+              approver: c1.membership,
+              end: "confirmed",
+            }),
+          );
+        }
+        // A week paid out but not marked paid.
+        await sql("UPDATE settlements SET status = 'approved', paid_at = NULL WHERE id = CAST($1 AS uuid)", [unmarked.id]);
+        undo.push(() =>
+          sql("UPDATE settlements SET status = 'paid', paid_at = CAST($2 AS timestamptz) WHERE id = CAST($1 AS uuid)", [
+            unmarked.id,
+            unmarked.paidAt,
+          ]),
+        );
+        undo.push(
+          await plantAction({
+            tenant: c0.id,
+            kind: "settlement_payout",
+            subject: unmarked.id,
+            amount: unmarked.net,
+            driver: unmarked.driver,
+            approver: c0.membership,
+            end: "confirmed",
+          }),
+        );
+        // A paid week whose only ledger row was refused: paid without a payout.
+        undo.push(
+          await plantAction({
+            tenant: c0.id,
+            kind: "settlement_payout",
+            subject: unpaid.id,
+            amount: unpaid.net,
+            driver: unpaid.driver,
+            approver: c0.membership,
+            end: "refused",
+          }),
+        );
+        // An agent's row that names no proposal.
+        undo.push(
+          await plantAction({
+            tenant: c0.id,
+            kind: "advance_payout",
+            subject: randomUUID(),
+            amount: 100,
+            driver: c0.driver,
+            by: "agent",
+            approver: c0.membership,
+            end: "reserved",
+          }),
+        );
+        // An agent's row on a proposal nobody decided, which is not the advance's own.
+        undo.push(
+          await plantAction({
+            tenant: c1.id,
+            kind: "advance_payout",
+            subject: c1.advance.id,
+            attempt: 3,
+            amount: adv.amount,
+            driver: adv.driver,
+            by: "agent",
+            proposal: ids.proposals[1],
+            approver: c1.membership,
+            end: "reserved",
+          }),
+        );
+        // A payout sent an hour before its proposal was decided.
+        const early = payoutSentEarly("1 hour");
+        await early.plant();
+        undo.push(early.undo);
+        // A row whose approver is not a member.
+        undo.push(
+          await plantAction({
+            tenant: c0.id,
+            kind: "settlement_payout",
+            subject: randomUUID(),
+            amount: 100,
+            driver: c0.driver,
+            approver: randomUUID(),
+            end: "reserved",
+          }),
+        );
+        // Rows whose proposer is neither the agent nor a person, one of them NULL.
+        for (const by of ["robot", null]) {
+          undo.push(
+            await plantAction({
+              tenant: c0.id,
+              kind: "advance_payout",
+              subject: randomUUID(),
+              amount: 100,
+              driver: c0.driver,
+              by,
+              approver: c0.membership,
+              end: "reserved",
+            }),
+          );
+        }
+        // An agent's row naming a proposal that does not exist.
+        undo.push(
+          await plantAction({
+            tenant: c0.id,
+            kind: "advance_payout",
+            subject: randomUUID(),
+            amount: 100,
+            driver: c0.driver,
+            by: "agent",
+            proposal: randomUUID(),
+            approver: c0.membership,
+            end: "reserved",
+          }),
+        );
+        // A proposal with no status that names a ledger row that does not exist, and an agent's
+        // row naming it (a NULL status reads as missing).
+        const nullStatus = randomUUID();
+        await sql(
+          `INSERT INTO proposals (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+             amount_cents, direction, title, args, operator_verdict, gateway_decision_id, dedupe_key, trace_id,
+             status, money_action_id)
+           SELECT CAST($1 AS uuid), tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+                  amount_cents, direction, title, args, operator_verdict, gateway_decision_id, $3, trace_id,
+                  NULL, CAST($4 AS uuid)
+             FROM proposals WHERE id = CAST($2 AS uuid)`,
+          [nullStatus, ids.proposals[0], `advance_payout:${c0.driver}:${randomBytes(32).toString("hex")}`, randomUUID()],
+        );
+        undo.push(() => sql("DELETE FROM proposals WHERE id = CAST($1 AS uuid)", [nullStatus]));
+        undo.push(
+          await plantAction({
+            tenant: c0.id,
+            kind: "advance_payout",
+            subject: randomUUID(),
+            amount: 100,
+            driver: c0.driver,
+            by: "agent",
+            proposal: nullStatus,
+            approver: c0.membership,
+            end: "reserved",
+          }),
+        );
+        // A proposal that names a ledger row before anyone approved it.
+        await sql("UPDATE proposals SET money_action_id = CAST($2 AS uuid) WHERE id = CAST($1 AS uuid)", [
+          ids.proposals[0],
+          ids.accountingRows[0],
+        ]);
+        undo.push(() => sql("UPDATE proposals SET money_action_id = NULL WHERE id = CAST($1 AS uuid)", [ids.proposals[0]]));
+
+        const r = byId(await run()).I3;
+        expect({ verdict: r.verdict, violations: r.violations, unknown: r.unknown, counts: r.counts }).toEqual({
+          verdict: "FAIL",
+          violations: {
+            advance_paid_twice: 1,
+            advance_paid_without_payout: 1,
+            advance_payout_off_flow: 1,
+            settlement_paid_twice: 1,
+            settlement_payout_unmarked: 1,
+            settlement_paid_without_payout: 1,
+            approver_missing: 1,
+            agent_payout_without_proposal: 1,
+            proposer_unknown: 2,
+            proposal_missing: 2,
+            proposal_not_approved: 1,
+            proposal_undecided: 1,
+            proposal_mismatch: 1,
+            sent_before_decision: 1,
+            proposal_linked_early: 2,
+            proposal_action_missing: 1,
+          },
+          unknown: [],
+          counts: {
+            ...base.counts,
+            payment_rows: base.counts.payment_rows + 14,
+            linked_proposals: (base.counts.linked_proposals ?? 0) + 2,
+            // The two advances, the twice-paid week, the unmarked week, the refused week and the
+            // week paid early are no longer seeded history.
+            history_paid: base.counts.history_paid - 6,
+          },
+        });
+      } finally {
+        await undoAll(undo);
+      }
+      await expectAllPass();
+    });
+
+    it("pages every invoice exactly once, in key order, at any page size", async () => {
+      const sqls = { first: INVOICES_FIRST_SQL, after: INVOICES_AFTER_SQL };
+      const read = (size: number) =>
+        readAll(admin, (q) => readPaged<InvoiceRow>(q, sqls, size, 10_000)).then((list) =>
+          list.map((i) => [i.page_tenant, i.page_id, i.status, i.amount, i.has_paid_on, i.applied]),
+        );
+      const keys = await rows<{ t: string; id: string }>(
+        "SELECT CAST(tenant_id AS text) AS t, CAST(id AS text) AS id FROM invoices ORDER BY tenant_id, id",
+      );
+      const all = await read(keys.length + 1);
+      expect(all.map(([t, id]) => [t, id])).toEqual(keys.map((k) => [k.t, k.id]));
+      for (const size of [7, 250, keys.length - 1, keys.length]) expect(await read(size)).toEqual(all);
     });
   });
 
