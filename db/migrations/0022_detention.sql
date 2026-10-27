@@ -3,17 +3,22 @@
 -- to the load and raises its open, unposted invoice by the same cents, in one transaction.
 --
 -- 1. The proposal kind detention_charge. 0009 declared the kind check inline, so Postgres named it
---    proposals_kind_check; no later merged migration re-creates it. The list below is every kind
---    allowed before this file plus the new one. A later migration that adds a kind re-lists all of
---    them, this one included.
+--    proposals_kind_check. The list below is the full union of every proposal kind known across
+--    all branches, in this order, whether or not its code has merged yet: a kind with no code is
+--    harmless in an allow list. 0013 and 0015 also re-create this check with the same full list,
+--    so whichever of the three runs last (production applies migrations in merge order, a fresh
+--    database in number order) leaves the same check. Any later migration that adds a kind re-lists them
+--    all, this one included.
 ALTER TABLE proposals DROP CONSTRAINT proposals_kind_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_kind_check
-  CHECK (kind IN ('advance_payout', 'pay_correction', 'invoice_fix', 'detention_charge'));
+  CHECK (kind IN ('advance_payout', 'pay_correction', 'invoice_fix', 'load_rate_fill', 'invoice_post',
+                  'payment_reapply', 'settlement_approve', 'detention_charge'));
 
 -- 2. The proposal an accessorial came from, null for every row a person or the seed wrote. At most
 --    one accessorial per proposal, so the same approval run twice writes once. The reference is
 --    the same tenant's proposal; deleting the proposal (a reseed clears the agent's rows first)
---    only clears the link, so a charge that was billed stays billed.
+--    only clears the link, so a charge that was billed stays billed. ON DELETE SET NULL with a
+--    column list needs Postgres 15 or later (CI runs 16, production Aurora 16.13).
 ALTER TABLE load_accessorials ADD COLUMN proposal_id uuid;
 CREATE UNIQUE INDEX load_accessorials_one_per_proposal
   ON load_accessorials (tenant_id, proposal_id) WHERE proposal_id IS NOT NULL;

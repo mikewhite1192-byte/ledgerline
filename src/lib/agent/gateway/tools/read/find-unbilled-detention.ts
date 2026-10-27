@@ -5,7 +5,7 @@ import {
   type DetentionChargeRefusal,
   type DetentionChargeRows,
 } from "../../../../data/detention-charge";
-import { readTable } from "../../../../data/read";
+import { readDeliveredBetween } from "../../../../data/read";
 import { customerOf, loadStopsOf } from "../../../../data/records";
 import { findUnbilledDetention, lastFullMonthBefore, sum } from "../../../../rules-engine";
 import { addDays, localDateOf, type Period } from "../../../../time/local-date";
@@ -13,9 +13,10 @@ import { defineTool, type GatewayRef } from "../../types";
 import { OPERATOR_AUDITOR } from "../shared";
 
 // Detention the carrier earned and never billed, for one month of delivered loads. The engine's
-// findUnbilledDetention does the finding and the math; this tool reads the rows, picks the month
-// (the carrier's last full month unless one is named) and says, per load, whether the charge can
-// go on the load's invoice with the same check the propose tool's limit and the executor use.
+// findUnbilledDetention does the finding and the math; this tool picks the month (the carrier's
+// last full month unless one is named), reads only the loads delivered in it and those loads'
+// rows, and says, per load, whether the charge can go on the load's invoice with the same check
+// the propose tool's limit and the executor use.
 
 const MONTH = /^20\d{2}-(0[1-9]|1[0-2])$/;
 
@@ -70,11 +71,13 @@ export const findUnbilledDetentionTool = defineTool({
     const window = a.month
       ? monthPeriod(a.month)
       : lastFullMonthBefore(localDateOf(ctx.now.toISOString(), ctx.timeZone));
-    const loads = await readTable(q, "loads");
-    const customers = await readTable(q, "customers");
-    const accessorials = await readTable(q, "load_accessorials");
-    const miles = await readTable(q, "load_state_miles");
-    const invoices = await readTable(q, "invoices");
+    const {
+      loads,
+      customers,
+      load_accessorials: accessorials,
+      load_state_miles: miles,
+      invoices,
+    } = await readDeliveredBetween(q, window);
     const found = findUnbilledDetention(
       loads.map(loadStopsOf),
       customers.map(customerOf),

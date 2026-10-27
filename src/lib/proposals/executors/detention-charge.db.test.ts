@@ -2,11 +2,14 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { flags } from "../../../config/flags";
 import { chargeArgsOf, detentionChargeOf, readDetentionChargeRows } from "../../data/detention-charge";
+import { readDeliveredBetween } from "../../data/read";
 import { createPgDb } from "../../db/pg";
 import { adminUrl, appUrl } from "../../db/test-urls";
-import type { Db } from "../../db/types";
+import type { Db, Param, Queryable } from "../../db/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../../money/test-db";
+import { context } from "../../agent/gateway/__tests__/fake-db";
 import { readTurnView } from "../../agent/gateway/store/views";
+import { findUnbilledDetentionTool } from "../../agent/gateway/tools/read/find-unbilled-detention";
 import { EXECUTORS, executeProposal, type ProposalRow } from "../execute";
 import { executeDetentionCharge } from "./detention-charge";
 
@@ -15,8 +18,9 @@ import { executeDetentionCharge } from "./detention-charge";
 // engine's cents, in one transaction; the same approval again, or two at once, writes once; an
 // invoice posted to accounting or paid is refused; anything that moved since the proposal (stop
 // times, the invoice amount) is refused as stale; the switch off refuses before anything is
-// written; another carrier reads and writes nothing. Only this file's two tenants are made, and
-// they are removed after.
+// written; another carrier reads and writes nothing. Finding the charge reads only the month's
+// delivered loads and those loads' own rows. Only this file's two tenants are made, and they are
+// removed after.
 
 const saved = { ...flags, approverRole: { ...flags.approverRole }, gatewayLimits: { ...flags.gatewayLimits } };
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -352,5 +356,104 @@ describe("approving a detention charge", () => {
     // B cannot read A's load through the shared reader.
     expect(await app.withTenant(B.tenantId, (q) => readDetentionChargeRows(q, load.loadId))).toBeNull();
     expect(await stateOf(A, load, p.id)).toEqual(untouched("proposed"));
+  });
+
+  it("finds detention by reading only the month's delivered loads and those loads' own rows", async () => {
+    const october = await addLoad(A);
+    const september = await addLoad(A);
+    const [septemberCustomer, septemberMiles, septemberLumper, octoberMiles] = [
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+      randomUUID(),
+    ];
+    // Move the second load, with its own customer, miles and a lumper line, to the last day of
+    // September; the first stays delivered on October 6.
+    await admin.withTenant(A.tenantId, async (q) => {
+      await q.execute(
+        `INSERT INTO customers (id, tenant_id, code, name, terms_days, city, state)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'CUST-SEPT', 'September Shipper', 30, 'Dayton', 'OH')`,
+        [septemberCustomer],
+      );
+      await q.execute(
+        `UPDATE loads SET customer_id = CAST($2 AS uuid), pickup_on = CAST('2026-09-29' AS date),
+           delivered_on = CAST('2026-09-30' AS date),
+           delivered_at = CAST('2026-09-30T16:00:00Z' AS timestamptz),
+           pickup_arrived_at = CAST('2026-09-29T13:00:00Z' AS timestamptz),
+           pickup_departed_at = CAST('2026-09-29T20:00:00Z' AS timestamptz),
+           delivery_arrived_at = CAST('2026-09-30T15:00:00Z' AS timestamptz),
+           delivery_departed_at = CAST('2026-09-30T16:00:00Z' AS timestamptz)
+         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [september.loadId, septemberCustomer],
+      );
+      await q.execute(
+        `UPDATE invoices SET customer_id = CAST($2 AS uuid), issued_on = CAST('2026-09-30' AS date),
+           due_on = CAST('2026-10-30' AS date)
+         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [september.invoiceId, septemberCustomer],
+      );
+      await q.execute(
+        `INSERT INTO load_state_miles (id, tenant_id, load_id, state, miles)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'OH', 480),
+                (CAST($3 AS uuid), current_tenant_id(), CAST($4 AS uuid), 'OH', 480)`,
+        [octoberMiles, october.loadId, septemberMiles, september.loadId],
+      );
+      await q.execute(
+        `INSERT INTO load_accessorials (id, tenant_id, load_id, kind, seq, amount_cents, description)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'lumper', 1, 7500, 'Lumper at delivery')`,
+        [septemberLumper, september.loadId],
+      );
+    });
+
+    // Every statement the reader and the tool send, through the app role.
+    const sent: string[] = [];
+    const out = await app.withTenant(A.tenantId, async (q) => {
+      const recorder: Queryable = {
+        query: <T>(sql: string, params?: Param[]) => {
+          sent.push(sql);
+          return q.query<T>(sql, params);
+        },
+        execute: (sql: string, params?: Param[]) => {
+          sent.push(sql);
+          return q.execute(sql, params);
+        },
+      };
+      const octoberRows = await readDeliveredBetween(recorder, { start: "2026-10-01", end: "2026-10-31" });
+      const septemberRows = await readDeliveredBetween(recorder, { start: "2026-09-01", end: "2026-09-30" });
+      const ctx = { ...context({ now: new Date(NOW), timeZone: "America/Chicago" }), session: A.session };
+      const found = await findUnbilledDetentionTool.run(recorder, ctx, { month: "2026-10" }, { screen: null, limit: null });
+      return { octoberRows, septemberRows, found: found.result as { rows: { loadId: string }[] } };
+    });
+
+    const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+    const loadIds = (rows: { load_id: string | null }[]) => rows.map((r) => r.load_id);
+    // October: the October load and its rows; nothing of the September load or its customer.
+    const oct = out.octoberRows;
+    expect(ids(oct.loads)).toContain(october.loadId);
+    expect(ids(oct.loads)).not.toContain(september.loadId);
+    expect(ids(oct.customers)).toEqual([A.customerId]);
+    expect(ids(oct.load_state_miles)).toContain(octoberMiles);
+    expect(ids(oct.load_state_miles)).not.toContain(septemberMiles);
+    expect(ids(oct.load_accessorials)).not.toContain(septemberLumper);
+    expect(ids(oct.invoices)).toContain(october.invoiceId);
+    expect(ids(oct.invoices)).not.toContain(september.invoiceId);
+    for (const r of [...oct.load_state_miles, ...oct.load_accessorials, ...oct.invoices]) {
+      expect(ids(oct.loads)).toContain(r.load_id);
+    }
+    // September: the same filter finds the September load and only its rows.
+    const sep = out.septemberRows;
+    expect(ids(sep.loads)).toEqual([september.loadId]);
+    expect(ids(sep.customers)).toEqual([septemberCustomer]);
+    expect(ids(sep.load_state_miles)).toEqual([septemberMiles]);
+    expect(ids(sep.load_accessorials)).toEqual([septemberLumper]);
+    expect(ids(sep.invoices)).toEqual([september.invoiceId]);
+    expect(new Set([...loadIds(sep.load_state_miles), ...loadIds(sep.invoices)])).toEqual(new Set([september.loadId]));
+    // The tool finds the October load's detention and not the September load's.
+    const foundIds = out.found.rows.map((r) => r.loadId);
+    expect(foundIds).toContain(october.loadId);
+    expect(foundIds).not.toContain(september.loadId);
+    // Two reads of five tables, then the tool's five: every one filtered by the delivered date.
+    expect(sent).toHaveLength(15);
+    for (const sql of sent) expect(sql).toContain("delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)");
   });
 });

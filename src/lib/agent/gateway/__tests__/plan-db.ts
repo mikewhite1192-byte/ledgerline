@@ -16,6 +16,10 @@ const BY_COLUMN = /^(\w+) = CAST\(\$1 AS uuid\)$/;
 const BY_DRIVER_LOADS =
   "load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid))";
 
+const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)";
+const DELIVERED_LOADS = `load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
+const DELIVERED_CUSTOMERS = `id IN (SELECT customer_id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
+
 export const PLAN_ANCHOR = "2026-11-02";
 
 let cached: CarrierPlan | null = null;
@@ -51,6 +55,19 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
     return all.filter((r) => loadIds.has(r.load_id as string));
   }
   if (where === "status = $1") return all.filter((r) => r.status === params[0]);
+  if (where === DELIVERED_BETWEEN || where === DELIVERED_LOADS || where === DELIVERED_CUSTOMERS) {
+    const [start, end] = params as string[];
+    const loads = rows.loads.filter(
+      (l) => l.delivered_on !== null && l.delivered_on >= start && l.delivered_on <= end,
+    );
+    const loadIds = new Set(loads.map((l) => l.id));
+    if (where === DELIVERED_BETWEEN) return all.filter((r) => loadIds.has(r.id as string));
+    if (where === DELIVERED_CUSTOMERS) {
+      const customerIds = new Set(loads.map((l) => l.customer_id));
+      return all.filter((r) => customerIds.has(r.id as string));
+    }
+    return all.filter((r) => loadIds.has(r.load_id as string));
+  }
   throw new Error(`unexpected where clause: ${where.slice(0, 60)}`);
 }
 

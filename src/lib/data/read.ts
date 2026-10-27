@@ -6,7 +6,13 @@ import {
   type ReceivablesInput,
   type SettlementInput,
 } from "../rules-engine";
-import { localDateOf, type Instant, type LocalDate } from "../time/local-date";
+import {
+  assertLocalDate,
+  localDateOf,
+  type Instant,
+  type LocalDate,
+  type Period,
+} from "../time/local-date";
 import { isUuid } from "../uuid";
 import { configFor, configForDay, sortVersions } from "./config-version";
 import {
@@ -265,4 +271,35 @@ export async function readReceivablesInput(
     },
     asOf,
   );
+}
+
+// Loads delivered inside one tenant-local date range, first to last day, and only the rows those
+// loads need: their customers, state miles, accessorials and invoices. The other tables are read
+// through the same delivered-date filter on loads, so a month's read never pulls the rest of the
+// tenant's history (the Data API caps a response at 1 MiB).
+const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)";
+const DELIVERED_LOADS =
+  "load_id IN (SELECT id FROM loads" +
+  ` WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
+const DELIVERED_CUSTOMERS =
+  "id IN (SELECT customer_id FROM loads" +
+  ` WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
+
+export type DeliveredRows = Pick<
+  TenantRows,
+  "loads" | "customers" | "load_state_miles" | "load_accessorials" | "invoices"
+>;
+
+export async function readDeliveredBetween(q: Queryable, period: Period): Promise<DeliveredRows> {
+  const start = assertLocalDate(period.start, "period start");
+  const end = assertLocalDate(period.end, "period end");
+  if (end < start) throw new RangeError("period ends before it starts");
+  const p = [start, end];
+  return {
+    loads: await readWhere(q, "loads", DELIVERED_BETWEEN, p),
+    customers: await readWhere(q, "customers", DELIVERED_CUSTOMERS, p),
+    load_state_miles: await readWhere(q, "load_state_miles", DELIVERED_LOADS, p),
+    load_accessorials: await readWhere(q, "load_accessorials", DELIVERED_LOADS, p),
+    invoices: await readWhere(q, "invoices", DELIVERED_LOADS, p),
+  };
 }
