@@ -76,6 +76,32 @@ URL in `e2e/env.local-mode.ts`), and the run drops and recreates the `payday_e2e
 Every step is behind switches that ship off: advances, payouts, an arm switch, a per-payout cap
 and a start date.
 
+## Voice intake: a driver's voice note, in English or Spanish
+
+Staff add a driver's voice note on `/voice-notes`: record it in the browser or pick a clip. Each
+step is its own request, so a slow model never times out the rest, and a stopped step can be
+pressed again from the note's page.
+
+1. **Transcribe.** The browser turns the clip into 16 kHz mono audio and **Muse Voice Transcribe**
+   writes it down, biased to Spanish and English. The transcript is stored as untrusted input with
+   its note first; the original clip (up to 700 KB) is then kept for playback on its own, so a
+   recording the database refuses never costs the note. A failed transcription keeps no recording.
+2. **Screen, translate, sort.** The gateway's safety screen (**Muse Spark Open**) reads the
+   transcript first. A held note goes no further and no model reads its words. Then **Muse Spark**
+   names the language and writes an English copy, and the triage model sorts the note through the
+   gateway's classify tool. The amount the driver said is read from the transcript by code, never
+   by a model.
+3. **Hand to the agent.** One agent turn reads the note through a screened tool and, for an
+   advance, proposes it like any other request. A note the screen flagged makes its card need the
+   second confirm. The agent never pays.
+4. **Reply draft.** A fixed sentence per outcome, with the engine's numbers, translated back for a
+   Spanish note. A translation that changes or drops a dollar figure is thrown away for the
+   English sentence. Nothing is sent: staff copy it.
+
+The note's page shows who did what: each model call with its latency and cost. Voice intake ships
+off behind its own switch, with a per-carrier daily limit and caps on clip size and length.
+`scripts/voice/make-samples.sh` (macOS only) makes the synthetic sample clips in `public/samples/`.
+
 ## Payout rails
 
 Two rails, one doorway: advances load to the driver's fuel card; weekly settlements go to the

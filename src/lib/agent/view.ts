@@ -47,7 +47,7 @@ export type DetentionView = {
 
 export type ProposalView = {
   id: string;
-  kind: "advance_payout" | "pay_correction" | "invoice_fix" | "detention_charge";
+  kind: "advance_payout" | "pay_correction" | "invoice_fix" | "load_rate_fill" | "detention_charge";
   subjectTable: string;
   subjectId: string;
   // The subject's code (a driver's or an invoice's number), read at render, never stored.
