@@ -15,6 +15,7 @@ import {
   centsToDollarsText,
   dollarsToCents,
   MAX_MEMO,
+  MAX_PAYMENT_REF,
   PAYMENT_METHODS,
   PAYMENT_REF,
 } from "@/lib/invoices/form-text";
@@ -212,11 +213,11 @@ export function PaymentForm({
         <Field
           id="pay-ref"
           label="Reference"
-          hint="The check or ACH number: letters, digits and dashes, up to 21."
-          error={paymentRef !== "" && !refOk ? "Letters, digits and dashes only, up to 21." : undefined}
+          hint={`The check or ACH number: letters, digits and dashes, up to ${MAX_PAYMENT_REF}.`}
+          error={paymentRef !== "" && !refOk ? `Letters, digits and dashes only, up to ${MAX_PAYMENT_REF}.` : undefined}
         >
           {(p) => (
-            <Input {...p} autoComplete="off" maxLength={21} value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} />
+            <Input {...p} autoComplete="off" maxLength={MAX_PAYMENT_REF} value={paymentRef} onChange={(e) => setPaymentRef(e.target.value)} />
           )}
         </Field>
         <Field id="pay-memo" label="Memo (optional)">

@@ -144,24 +144,27 @@ export async function persistEngineProposal(
   return { kind: "created", proposalId: id };
 }
 
-// Retires the waiting engine card for a subject that no longer qualifies (a load that became an
-// exception). Approved and running cards are left alone: their executors re-check. Returns the
-// rows moved.
-export async function expireStaleEngineProposals(
+// Retires every waiting engine card of a kind whose subject no longer qualifies: keep is the whole
+// list of subjects that still do (every invoiceable load, not just this press's capped share). A
+// load that became an exception, was invoiced some other way or left the queue loses its card.
+// Approved and running cards are left alone: their executors re-check. Returns the rows moved.
+export async function retireEngineProposalsExcept(
   q: Queryable,
   kind: ProposalKind,
-  subjectId: string,
+  keep: ReadonlySet<string>,
   session: Session,
   now: Date,
 ): Promise<number> {
-  const rows = await q.query<{ id: string }>(
-    `SELECT id FROM proposals
-      WHERE tenant_id = current_tenant_id() AND origin = 'engine' AND kind = $1
-        AND subject_id = CAST($2 AS uuid) AND status = 'proposed'
+  const rows = await q.query<{ id: string; subject_id: string }>(
+    `SELECT id, subject_id FROM proposals
+      WHERE tenant_id = current_tenant_id() AND origin = 'engine' AND kind = $1 AND status = 'proposed'
+      ORDER BY id
       FOR UPDATE`,
-    [kind, subjectId],
+    [kind],
   );
   let moved = 0;
-  for (const r of rows) moved += await retire(q, r.id, session, now);
+  for (const r of rows) {
+    if (!keep.has(r.subject_id)) moved += await retire(q, r.id, session, now);
+  }
   return moved;
 }

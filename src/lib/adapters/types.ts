@@ -183,9 +183,14 @@ export interface AccountingAdapter {
       requestId: string;
       outsideId?: string | null;
       outsideRef?: string | null;
+      // Invoice and Payment only, when no outside number is stored: our own invoice number or
+      // payment reference, which the adapter keys as its create did.
+      localRef?: string | null;
       // The customer or vendor the document was sent for, from the stored action. When given, a
       // document found by number that belongs to another party is never read back as ours.
       partyOutsideId?: string | null;
+      // Invoice and Payment only: our customer's id, resolved to its outside id by the adapter.
+      partyLocalId?: string | null;
       applications?: { invoiceOutsideId: string; amountCents: number }[];
     },
     ctx: SendContext,

@@ -88,6 +88,31 @@ describe("proposal kinds and origins on a fresh database", () => {
     expect(await sqlStateOf(insert({ kind: "made_up_kind" }))).toBe("23514");
   });
 
+  it("takes every kind any branch knows, so no migration order drops one", async () => {
+    // The full union 0013, 0015 and 0022 each re-create the check with, kinds without code included.
+    const union = [
+      "advance_payout",
+      "pay_correction",
+      "invoice_fix",
+      "load_rate_fill",
+      "invoice_post",
+      "payment_reapply",
+      "settlement_approve",
+      "detention_charge",
+    ];
+    for (const kind of union) {
+      expect(await insert({ kind }), kind).toBe(1);
+    }
+    const [def] = await admin.withoutTenant((q) =>
+      q.query<{ def: string }>(
+        `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+          WHERE conrelid = CAST('public.proposals' AS regclass) AND conname = 'proposals_kind_check'`,
+      ),
+    );
+    const listed = [...def.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
+    expect([...listed].sort()).toEqual([...union].sort());
+  });
+
   it("keeps the dedupe key the engine computes inside the table's pattern", () => {
     const key = dedupeKey("invoice_post", randomUUID().toUpperCase(), { loadId: "x", revision: 0 });
     expect(key).toMatch(/^[a-z_]{3,40}:[0-9a-f-]{36}:[0-9a-f]{64}$/);

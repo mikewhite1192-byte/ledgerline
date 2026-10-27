@@ -5,6 +5,7 @@ import { MoneyError } from "../../../money/types";
 import type { SendContext } from "../../types";
 import { createQboAdapter } from "./adapter";
 import { openToken } from "./crypto";
+import type { FetchLike } from "./oauth";
 import {
   ACCESS,
   type Answer,
@@ -45,7 +46,7 @@ const invoice = (over: Record<string, unknown> = {}) => ({
 });
 
 const invoiceReply = (total = 2810.05, customer = "58") => ({
-  Invoice: { Id: "901", DocNumber: "BR-INV-1001", TotalAmt: total, CustomerRef: { value: customer } },
+  Invoice: { Id: "901", DocNumber: "T5B0E-BR-INV-1001", TotalAmt: total, CustomerRef: { value: customer } },
 });
 
 // The look by document number before every post: nothing holds it yet.
@@ -70,7 +71,7 @@ const payment = (over: Record<string, unknown> = {}) => ({
 // A payment as QuickBooks returns it: each line linking one invoice, the rest unapplied.
 const paymentRecord = (lines: [string, number][], unapplied: number, total = 100) => ({
   Id: "950",
-  PaymentRefNum: "PAY-2001",
+  PaymentRefNum: "T5B0E-PAY-2001",
   TotalAmt: total,
   UnappliedAmt: unapplied,
   CustomerRef: { value: "58" },
@@ -158,13 +159,13 @@ describe("QuickBooks adapter: creates", () => {
       system: "qbo_sandbox",
       type: "Invoice",
       id: "901",
-      ref: "BR-INV-1001",
+      ref: "T5B0E-BR-INV-1001",
       amountCents: 281_005,
     });
     expect(sent).toHaveLength(2);
     expect(sent[0].method).toBe("GET");
     expect(sent[0].url.searchParams.get("query")).toBe(
-      "SELECT * FROM Invoice WHERE DocNumber = 'BR-INV-1001'",
+      "SELECT * FROM Invoice WHERE DocNumber = 'T5B0E-BR-INV-1001'",
     );
     const req = sent[1];
     expect(req.method).toBe("POST");
@@ -177,7 +178,7 @@ describe("QuickBooks adapter: creates", () => {
     expect(req.body).toContain('"UnitPrice":310.05');
     expect(JSON.parse(req.body ?? "")).toEqual({
       CustomerRef: { value: "58" },
-      DocNumber: "BR-INV-1001",
+      DocNumber: "T5B0E-BR-INV-1001",
       TxnDate: "2026-11-02",
       DueDate: "2026-12-02",
       PrivateNote: `LedgerLine action ${ACTION}`,
@@ -295,7 +296,7 @@ describe("QuickBooks adapter: creates", () => {
       amountCents: 281_005,
     });
     expect(ours.sent[2].url.searchParams.get("query")).toBe(
-      "SELECT * FROM Invoice WHERE DocNumber = 'BR-INV-1001'",
+      "SELECT * FROM Invoice WHERE DocNumber = 'T5B0E-BR-INV-1001'",
     );
     const theirs = make([
       NONE,
@@ -363,7 +364,7 @@ describe("QuickBooks adapter: a document number already held", () => {
       system: "qbo_sandbox",
       type: "Invoice",
       id: "901",
-      ref: "BR-INV-1001",
+      ref: "T5B0E-BR-INV-1001",
       amountCents: 281_005,
     });
     expect(posts(found.sent)).toBe(0);
@@ -445,7 +446,7 @@ describe("QuickBooks adapter: a document number already held", () => {
       id: "950",
     });
     expect(sent[0].url.searchParams.get("query")).toBe(
-      "SELECT * FROM Payment WHERE PaymentRefNum = 'PAY-2001'",
+      "SELECT * FROM Payment WHERE PaymentRefNum = 'T5B0E-PAY-2001'",
     );
   });
 });
@@ -458,7 +459,7 @@ describe("QuickBooks adapter: customer payments as applied", () => {
       system: "qbo_sandbox",
       type: "Payment",
       id: "950",
-      ref: "PAY-2001",
+      ref: "T5B0E-PAY-2001",
       amountCents: 10_000,
     });
     expect(JSON.parse(sent[1].body ?? "").Line).toEqual([
@@ -597,7 +598,7 @@ describe("QuickBooks adapter: read-back", () => {
       system: "qbo_sandbox",
       type: "Invoice",
       id: "901",
-      ref: "BR-INV-1001",
+      ref: "T5B0E-BR-INV-1001",
       amountCents: 281_005,
       status: "succeeded",
     });
@@ -612,18 +613,18 @@ describe("QuickBooks adapter: read-back", () => {
 
     const byRef = make([{ status: 200, body: { QueryResponse: { Invoice: [invoiceReply().Invoice] } } }]);
     expect(
-      await byRef.adapter.readBack(byRef.db, ref({ outsideId: null, outsideRef: "BR-INV-1001" }), ctx()),
+      await byRef.adapter.readBack(byRef.db, ref({ outsideId: null, outsideRef: "T5B0E-BR-INV-1001" }), ctx()),
     ).toMatchObject({ found: true, id: "901" });
 
     const none = make([{ status: 200, body: { QueryResponse: {} } }]);
     expect(
-      await none.adapter.readBack(none.db, ref({ outsideId: null, outsideRef: "BR-INV-1001" }), ctx()),
+      await none.adapter.readBack(none.db, ref({ outsideId: null, outsideRef: "T5B0E-BR-INV-1001" }), ctx()),
     ).toEqual({ found: false });
   });
 
   it("never reads a document found by number as ours when it belongs to another party", async () => {
     const byNumber = (partyOutsideId?: string | null) =>
-      ref({ outsideId: null, outsideRef: "BR-INV-1001", partyOutsideId });
+      ref({ outsideId: null, outsideRef: "T5B0E-BR-INV-1001", partyOutsideId });
     // Another customer's document, or one with no readable party: not ours, nothing posted.
     for (const row of [invoiceReply(2810.05, "77").Invoice, { ...invoiceReply().Invoice, CustomerRef: undefined }]) {
       const other = make([held("Invoice", row)]);
@@ -657,7 +658,7 @@ describe("QuickBooks adapter: read-back", () => {
       await expect(
         adapter.readBack(
           db,
-          ref({ outsideId: null, outsideRef: "BR-INV-1001", partyOutsideId }) as never,
+          ref({ outsideId: null, outsideRef: "T5B0E-BR-INV-1001", partyOutsideId }) as never,
           ctx(),
         ),
       ).rejects.toMatchObject({ category: "validation" });
@@ -670,7 +671,7 @@ describe("QuickBooks adapter: read-back", () => {
       { status: 200, body: { QueryResponse: { Invoice: [invoiceReply().Invoice, { ...invoiceReply().Invoice, Id: "902" }] } } },
     ]);
     const err = await two.adapter
-      .readBack(two.db, ref({ outsideId: null, outsideRef: "BR-INV-1001" }), ctx())
+      .readBack(two.db, ref({ outsideId: null, outsideRef: "T5B0E-BR-INV-1001" }), ctx())
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(MoneyError);
     expect(err).toMatchObject({ category: "duplicate" });
@@ -695,7 +696,7 @@ describe("QuickBooks adapter: read-back", () => {
     expect(byId.lines.join("\n")).toContain("voided");
     const byNumber = make([held("Invoice", voided)]);
     expect(
-      await byNumber.adapter.readBack(byNumber.db, ref({ outsideId: null, outsideRef: "BR-INV-1001" }), ctx()),
+      await byNumber.adapter.readBack(byNumber.db, ref({ outsideId: null, outsideRef: "T5B0E-BR-INV-1001" }), ctx()),
     ).toMatchObject({ found: true, status: "canceled" });
     // A zero total without the note: still never a success.
     const zeroed = make([{ status: 200, body: invoiceReply(0) }]);
@@ -728,6 +729,106 @@ describe("QuickBooks adapter: read-back", () => {
     await expect(
       adapter.readBack(db, ref({ type: "Payment", outsideId: "950" }), ctx()),
     ).rejects.toMatchObject({ category: "validation" });
+    expect(sent).toHaveLength(0);
+  });
+});
+
+describe("QuickBooks adapter: two tenants in one company", () => {
+  // A second tenant whose slug shares the first's initials, so both number from BR-INV-10001.
+  const OTHER_TENANT = "7c2a9d4e-1b3f-4a5c-8d6e-9f0a1b2c3d4e";
+
+  // The one sandbox company both tenants post into. It keeps invoices by number and answers the
+  // look and the post as QuickBooks does: it never refuses a second document with a number.
+  function sharedCompany() {
+    const invoices: { Id: string; DocNumber: string; TotalAmt: number; CustomerRef: { value: string } }[] = [];
+    const fetch: FetchLike = async (url, init) => {
+      if ((init.method ?? "GET") === "GET") {
+        const asked = /DocNumber = '([^']*)'/.exec(new URL(url).searchParams.get("query") ?? "")?.[1];
+        const rows = invoices.filter((i) => i.DocNumber === asked);
+        return new Response(JSON.stringify({ QueryResponse: rows.length > 0 ? { Invoice: rows } : {} }), {
+          status: 200,
+        });
+      }
+      const body = JSON.parse(String(init.body)) as { DocNumber: string; CustomerRef: { value: string } };
+      const row = {
+        Id: String(901 + invoices.length),
+        DocNumber: body.DocNumber,
+        TotalAmt: 2810.05,
+        CustomerRef: body.CustomerRef,
+      };
+      invoices.push(row);
+      return new Response(JSON.stringify({ Invoice: row }), { status: 200 });
+    };
+    return { fetch, invoices };
+  }
+
+  it("posts the same invoice number from two tenants as two documents", async () => {
+    const company = sharedCompany();
+    const adapter = createQboAdapter({ env: qboEnv(), fetch: company.fetch, log: () => {} });
+    const first = await adapter.createInvoice(new FakeQboDb(), invoice({ invoiceNumber: "BR-INV-10001" }), ctx());
+    const second = await adapter.createInvoice(
+      new FakeQboDb({ tenantId: OTHER_TENANT }),
+      invoice({ invoiceNumber: "BR-INV-10001", customerOutsideId: "61" }),
+      ctx(),
+    );
+    expect(first).toMatchObject({ kind: "confirmed", id: "901", ref: "T5B0E-BR-INV-10001" });
+    expect(second).toMatchObject({ kind: "confirmed", id: "902", ref: "T7C2A-BR-INV-10001" });
+    expect(company.invoices.map((i) => i.DocNumber)).toEqual(["T5B0E-BR-INV-10001", "T7C2A-BR-INV-10001"]);
+  });
+
+  it("refuses an invoice number or payment reference that would pass 21 characters, sending nothing", async () => {
+    const long = make([]);
+    expect(await long.adapter.createInvoice(long.db, invoice({ invoiceNumber: "ABCD-INV-1000000" }), ctx())).toEqual({
+      kind: "failed",
+      category: "validation",
+    });
+    expect(await long.adapter.recordCustomerPayment(long.db, payment({ paymentRef: "C".repeat(16) }), ctx())).toEqual({
+      kind: "failed",
+      category: "validation",
+    });
+    expect(long.sent).toHaveLength(0);
+  });
+});
+
+describe("QuickBooks adapter: read-back by our own number", () => {
+  const ref = (over: Record<string, unknown> = {}) => ({
+    type: "Invoice",
+    requestId: ctx().requestId,
+    outsideId: null,
+    outsideRef: null,
+    localRef: "BR-INV-1001",
+    partyLocalId: CUSTOMER,
+    ...over,
+  });
+
+  it("keys our number as the create did and checks the customer through the id map", async () => {
+    const { adapter, sent, db } = make([held("Invoice", invoiceReply().Invoice)]);
+    db.entityIds.set(`customers:${CUSTOMER}`, "58");
+    expect(await adapter.readBack(db, ref(), ctx())).toMatchObject({
+      found: true,
+      id: "901",
+      ref: "T5B0E-BR-INV-1001",
+      amountCents: 281_005,
+      status: "succeeded",
+    });
+    expect(sent[0].url.searchParams.get("query")).toBe("SELECT * FROM Invoice WHERE DocNumber = 'T5B0E-BR-INV-1001'");
+  });
+
+  it("answers not found for a customer never created there, or a number held by another customer", async () => {
+    const never = make([]);
+    expect(await never.adapter.readBack(never.db, ref(), ctx())).toEqual({ found: false });
+    expect(never.sent).toHaveLength(0);
+    const other = make([held("Invoice", invoiceReply(2810.05, "77").Invoice)]);
+    other.db.entityIds.set(`customers:${CUSTOMER}`, "58");
+    expect(await other.adapter.readBack(other.db, ref(), ctx())).toEqual({ found: false });
+  });
+
+  it("refuses our own number for a document type the adapter does not key", async () => {
+    const { adapter, sent, db } = make([]);
+    await expect(adapter.readBack(db, ref({ type: "Bill" }), ctx())).rejects.toMatchObject({ category: "validation" });
+    await expect(adapter.readBack(db, ref({ partyLocalId: "not-a-uuid" }), ctx())).rejects.toMatchObject({
+      category: "validation",
+    });
     expect(sent).toHaveLength(0);
   });
 });

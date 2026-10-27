@@ -11,6 +11,7 @@ import {
   invoiceNumberOf,
   invoiceNumberPattern,
   invoicePrefixOf,
+  MAX_INVOICE_NUMBER,
   nextInvoiceNumber,
   tenantLock,
 } from "./number";
@@ -40,9 +41,23 @@ describe("invoice numbers", () => {
     for (const c of DEMO_CARRIERS) expect(invoicePrefixOf(c.slug)).toBe(c.prefix);
   });
 
+  it("gives every slug the tenants CHECK allows a prefix of at most 4", () => {
+    expect(invoicePrefixOf("blue--ridge")).toBe("BR");
+    expect(invoicePrefixOf("-blue-ridge-")).toBe("BR");
+    expect(invoicePrefixOf("a-b-c-d-e-f")).toBe("ABCD");
+    expect(invoicePrefixOf("9-lives")).toBe("9L");
+    expect(invoicePrefixOf("---")).toBe("INV");
+  });
+
   it("refuses a slug or prefix outside the allowed shape", () => {
     expect(() => invoicePrefixOf("Blue Ridge")).toThrow(RangeError);
     expect(() => invoicePrefixOf("")).toThrow(RangeError);
+    expect(() => invoicePrefixOf("ab")).toThrow(RangeError);
+    expect(() => invoicePrefixOf("a".repeat(41))).toThrow(RangeError);
+    expect(() => invoiceNumberOf("ABCDE", 10001)).toThrow(RangeError);
+    // 6 digits at most, so the number with the tenant's key fits QuickBooks' 21.
+    expect(invoiceNumberOf("ABCD", MAX_INVOICE_NUMBER)).toBe("ABCD-INV-999999");
+    expect(() => invoiceNumberOf("BR", MAX_INVOICE_NUMBER + 1)).toThrow(RangeError);
     expect(() => invoiceNumberOf("br", 10001)).toThrow(RangeError);
     expect(() => invoiceNumberOf("BR", 0)).toThrow(RangeError);
     expect(() => invoiceNumberOf("BR", 1.5)).toThrow(RangeError);
@@ -226,7 +241,9 @@ describe("payment input", () => {
     expect(checkPaymentInput({ ...base, extra: 1 }, today)).toEqual({ ok: false, category: "validation" });
     expect(checkPaymentInput({ ...base, amountCents: 10.5 }, today)).toEqual({ ok: false, category: "validation" });
     expect(checkPaymentInput({ ...base, method: "cash" }, today)).toEqual({ ok: false, category: "validation" });
-    expect(checkPaymentInput({ ...base, paymentRef: "A".repeat(22) }, today)).toEqual({
+    // 15 at most: QuickBooks keeps it behind the tenant's key and a dash, in 21.
+    expect(checkPaymentInput({ ...base, paymentRef: "A".repeat(15) }, today).ok).toBe(true);
+    expect(checkPaymentInput({ ...base, paymentRef: "A".repeat(16) }, today)).toEqual({
       ok: false,
       category: "validation",
     });

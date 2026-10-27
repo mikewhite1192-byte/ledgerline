@@ -1,9 +1,22 @@
 import { z } from "zod";
 import type { Queryable } from "../../../../db";
 import { loadsOf } from "../../../../data/records";
-import { readAdvanceInput, readCheckInput, readRowsWhereId } from "../../../../data/read";
+import {
+  readAdvanceInput,
+  readCheckInput,
+  readReceivablesInput,
+  readRowsWhereId,
+} from "../../../../data/read";
 import { TENANT_TABLES, type TenantTable } from "../../../../data/tables";
-import { advanceEligibility, invoiceAmount, runAllChecks } from "../../../../rules-engine";
+import { matchWrongInvoiceFinding } from "../../../../invoices/match";
+import { lineSummary, sameLines, type LineSummary } from "../../../../invoices/queue";
+import {
+  advanceEligibility,
+  findPaymentOnWrongInvoice,
+  invoiceAmount,
+  runAllChecks,
+} from "../../../../rules-engine";
+import { localDateOf } from "../../../../time/local-date";
 import { isUuid } from "../../../../uuid";
 import { defineTool, type AgentRole, type GatewayContext } from "../../types";
 import { idField } from "../../validate";
@@ -192,6 +205,12 @@ const PROPOSAL_SQL = `
                                  WHERE d.tenant_id = current_tenant_id() AND d.id = p.subject_id)
            WHEN 'invoices' THEN (SELECT i.invoice_number FROM invoices i
                                   WHERE i.tenant_id = current_tenant_id() AND i.id = p.subject_id)
+           WHEN 'loads' THEN (SELECT l.load_number FROM loads l
+                               WHERE l.tenant_id = current_tenant_id() AND l.id = p.subject_id)
+           WHEN 'payment_applications' THEN (
+             SELECT cp.payment_ref FROM payment_applications a
+               JOIN customer_payments cp ON cp.tenant_id = a.tenant_id AND cp.id = a.payment_id
+              WHERE a.tenant_id = current_tenant_id() AND a.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.operator_verdict, p.status,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources,
@@ -283,18 +302,124 @@ async function invoiceEngine(q: Queryable, p: ProposalRow, args: Record<string, 
   return { ...base, engine };
 }
 
+// The card's invoice lines as stored, or null when any entry is not a kind and integer cents.
+function cardLinesOf(v: unknown): LineSummary[] | null {
+  if (!Array.isArray(v) || v.length === 0 || v.length > 40) return null;
+  const out: LineSummary[] = [];
+  for (const line of v) {
+    if (!line || typeof line !== "object") return null;
+    const { kind, amountCents } = line as Record<string, unknown>;
+    if (typeof kind !== "string" || !CATEGORY.test(kind) || !Number.isSafeInteger(amountCents)) return null;
+    out.push({ kind: kind as LineSummary["kind"], amountCents: amountCents as number });
+  }
+  return out;
+}
+
+// An engine invoice card (invoice_post), checked the way its executor checks it: the load must
+// still be delivered with no invoice, and the engine's total and lines for it now must equal the
+// card's. Every check's outcome is reported, so a mismatch is evidence, never a silent pass.
+async function invoicePostEngine(q: Queryable, p: ProposalRow, args: Record<string, unknown>): Promise<Engine> {
+  const loadId = p.subject_id;
+  if (p.subject_table !== "loads" || args.loadId !== loadId || !Number.isSafeInteger(args.amountCents)) {
+    return UNAVAILABLE;
+  }
+  const loads = await readRowsWhereId(q, "loads", "id", loadId);
+  if (loads.length !== 1) return { ok: true, check: "invoice_post", loadFound: false };
+  const invoiced = (await readRowsWhereId(q, "invoices", "load_id", loadId)).length > 0;
+  const miles = await readRowsWhereId(q, "load_state_miles", "load_id", loadId);
+  const accessorials = await readRowsWhereId(q, "load_accessorials", "load_id", loadId);
+  const [load] = loadsOf(loads, miles, accessorials);
+  const base = {
+    ok: true,
+    check: "invoice_post",
+    loadFound: true,
+    loadStatus: safeScalar(loads[0].status) ?? null,
+    alreadyInvoiced: invoiced,
+    proposedCents: args.amountCents,
+  };
+  const result = invoiceAmount(load);
+  if (!result.ok) {
+    return { ...base, engine: { ok: false, reason: result.reason, sources: refList(result.sources, MAX_ENGINE_SOURCES) } };
+  }
+  const lines = lineSummary(result.lines);
+  const cardLines = cardLinesOf(args.lines);
+  return {
+    ...base,
+    proposedLines: cardLines ?? [],
+    engine: {
+      ok: true,
+      amountCents: result.amountCents,
+      lines: lines.map((l) => ({ kind: l.kind, amountCents: l.amountCents })),
+      sources: refList(result.sources, MAX_ENGINE_SOURCES),
+    },
+    matches: {
+      amount: result.amountCents === args.amountCents && result.amountCents === Number(p.amount_cents),
+      lines: cardLines !== null && sameLines(lines, cardLines),
+    },
+  };
+}
+
+// A payment move (payment_reapply), checked the way its executor checks it: the payment is not in
+// QuickBooks yet, the application is where the card says, and the engine's payment_on_wrong_invoice
+// finding still names exactly these four records for the application's amount.
+async function paymentReapplyEngine(
+  q: Queryable,
+  ctx: GatewayContext,
+  p: ProposalRow,
+  args: Record<string, unknown>,
+): Promise<Engine> {
+  const { paymentId, applicationId, fromInvoiceId, toInvoiceId } = args;
+  if (
+    p.subject_table !== "payment_applications" ||
+    applicationId !== p.subject_id ||
+    !isUuid(paymentId) ||
+    !isUuid(applicationId) ||
+    !isUuid(fromInvoiceId) ||
+    !isUuid(toInvoiceId)
+  ) {
+    return UNAVAILABLE;
+  }
+  const [application] = await readRowsWhereId(q, "payment_applications", "id", applicationId);
+  const [payment] = await readRowsWhereId(q, "customer_payments", "id", paymentId);
+  if (!application || !payment) return { ok: true, check: "payment_on_wrong_invoice", found: false };
+  const amount = application.amount_cents;
+  const asOf = localDateOf(ctx.now.toISOString(), ctx.timeZone);
+  const finding = matchWrongInvoiceFinding(findPaymentOnWrongInvoice(await readReceivablesInput(q, asOf)), {
+    paymentId,
+    applicationId,
+    fromInvoiceId,
+    toInvoiceId,
+  });
+  return {
+    ok: true,
+    check: "payment_on_wrong_invoice",
+    found: true,
+    proposedCents: Number(p.amount_cents),
+    applicationCents: amount,
+    applicationOnFromInvoice: application.payment_id === paymentId && application.invoice_id === fromInvoiceId,
+    postedOutside: payment.qbo_id !== null,
+    findingMatches: finding !== null && finding.amountCents === amount,
+    findingCents: finding?.amountCents ?? null,
+    sources: finding ? refList(finding.sources, MAX_ENGINE_SOURCES) : [],
+  };
+}
+
 // The engine's own number for the proposal. A read or engine error is unavailable, never zero.
 async function engineFor(
   q: Queryable,
   ctx: GatewayContext,
   p: ProposalRow,
   args: Record<string, unknown>,
+  raw: Record<string, unknown>,
 ): Promise<Engine> {
   try {
     const amount = Number(p.amount_cents);
     if (p.kind === "advance_payout") return await advanceEngine(q, ctx, p, amount);
     if (p.kind === "pay_correction") return await payCorrectionEngine(q, args);
     if (p.kind === "invoice_fix") return await invoiceEngine(q, p, args);
+    // The card's lines are objects, which safeArgs leaves out; this check reads them as stored.
+    if (p.kind === "invoice_post") return await invoicePostEngine(q, p, raw);
+    if (p.kind === "payment_reapply") return await paymentReapplyEngine(q, ctx, p, args);
     return UNAVAILABLE;
   } catch {
     console.warn("gateway: the auditor's engine check could not be computed");
@@ -325,7 +450,9 @@ export const getProposal = defineTool({
   run: async (q, ctx, a) => {
     const [p] = await q.query<ProposalRow>(PROPOSAL_SQL, [a.proposalId]);
     if (!p) throw new Error("the proposal is not readable");
-    const args = safeArgs((parseJson(p.args) as Record<string, unknown> | null) ?? {});
+    const parsed = parseJson(p.args);
+    const raw = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    const args = safeArgs(raw);
     const refs = refsOf(p.sources).slice(0, MAX_SOURCES);
     const sources: Record<string, unknown>[] = [];
     for (const ref of refs) sources.push(await sourceRow(q, ref));
@@ -349,7 +476,7 @@ export const getProposal = defineTool({
       flagged: p.flagged === true,
       flagCategories: categoriesOf(p.flag_categories),
     };
-    const engine = await engineFor(q, ctx, p, args);
+    const engine = await engineFor(q, ctx, p, args, raw);
     return { result: fit({ proposal, engine }, refs) };
   },
 });

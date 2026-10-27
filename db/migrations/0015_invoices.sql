@@ -22,14 +22,15 @@ ALTER TABLE proposals
   -- The trace stays required for every agent proposal.
   ADD CONSTRAINT proposals_origin_trace_check CHECK (origin = 'engine' OR trace_id IS NOT NULL);
 
--- The kinds, as the union of every design on the board (0009, DOC-VISION's load_rate_fill, this
--- file's invoice_post and payment_reapply, and the pay run's settlement_approve). Whichever
--- migration applies last carries this same list; proposals-kinds.db.test.ts inserts one row per
--- PROPOSAL_KINDS entry on a fresh database.
+-- The kinds, as the full union of every kind known on any branch: 0009's three, DOC-VISION's
+-- load_rate_fill, this file's invoice_post and payment_reapply, the pay run's settlement_approve
+-- and DETENTION's detention_charge. A kind with no code yet is harmless in a whitelist. 0013 and
+-- 0022 re-create this check with the same full list, so production's merge order and a fresh
+-- database's number order end with the same check; a later migration that adds a kind re-lists
+-- them all. proposals-kinds.db.test.ts inserts one row per kind on a fresh database.
 ALTER TABLE proposals DROP CONSTRAINT proposals_kind_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_kind_check CHECK (kind IN (
-  'advance_payout', 'pay_correction', 'invoice_fix', 'load_rate_fill',
-  'invoice_post', 'payment_reapply', 'settlement_approve'));
+  'advance_payout', 'pay_correction', 'invoice_fix', 'load_rate_fill', 'invoice_post', 'payment_reapply', 'settlement_approve', 'detention_charge'));
 
 -- The invoice page lists the engine's live cards per tenant.
 CREATE INDEX proposals_tenant_origin_status ON proposals (tenant_id, origin, status);

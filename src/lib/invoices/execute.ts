@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { accountingAdapter } from "../adapters";
-import type { InvoiceLine as AdapterInvoiceLine } from "../adapters/types";
+import type { AccountingAdapter, InvoiceLine as AdapterInvoiceLine } from "../adapters/types";
 import type { Session } from "../auth/claims";
+import { flags } from "../../config/flags";
 import type { Queryable, TenantDb } from "../db";
 import { loadsOf } from "../data/records";
 import { readRowsWhereId, readTenant } from "../data/read";
 import { executeMoneyAction, type ExecuteResult, type MoneyDeps } from "../money/execute";
+import type { ReconcileHooks } from "../money/reconcile";
 import { MoneyError, type MoneyAction } from "../money/types";
 import type { ExecuteDeps, Executor, ProposalResult, ProposalRow } from "../proposals/execute";
 import { invoiceAmount, type InvoiceLine } from "../rules-engine";
@@ -235,6 +237,55 @@ export async function postInvoiceAction(
   );
 }
 
+// The reconcile hooks for an invoice's ledger row (kind 'invoice'): the follow-up writes the post
+// makes (the outside id on the invoice, the waiting card moved on), and a read-back by our own
+// invoice number, keyed by the adapter as its create keyed it, for the customer it was sent for.
+// The invoice is read in its own short transaction and the adapter is called in another.
+export function invoiceReconcileHooks(
+  db: TenantDb,
+  tenantId: string,
+  accounting: AccountingAdapter,
+): ReconcileHooks {
+  const loadOf = async (q: Queryable, invoiceId: string): Promise<string | null> => {
+    const [row] = await q.query<{ load_id: string | null }>(
+      "SELECT load_id FROM invoices WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+      [invoiceId],
+    );
+    return row?.load_id ?? null;
+  };
+  return {
+    onConfirmed: async (q, action) => {
+      await recordQboId(q, action.subjectId, action);
+      await finishProposal(q, await loadOf(q, action.subjectId), "done", null);
+    },
+    onFailed: async (q, action) =>
+      finishProposal(q, await loadOf(q, action.subjectId), "failed", action.failureCategory ?? "unknown"),
+    readBack: async (action, ctx) => {
+      const [invoice] = await db.withTenant(tenantId, (q) =>
+        q.query<{ invoice_number: string }>(
+          "SELECT invoice_number FROM invoices WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+          [action.subjectId],
+        ),
+      );
+      if (!invoice) return { found: false };
+      return db.withTenant(tenantId, (q) =>
+        accounting.readBack(
+          q,
+          {
+            type: "Invoice",
+            requestId: action.requestId,
+            outsideId: action.outsideId,
+            outsideRef: action.outsideRef,
+            localRef: invoice.invoice_number,
+            partyLocalId: action.counterpartyId,
+          },
+          ctx,
+        ),
+      );
+    },
+  };
+}
+
 type Phase =
   | { kind: "result"; result: ProposalResult }
   | { kind: "post"; invoice: PostableInvoice; posted: boolean };
@@ -263,6 +314,8 @@ async function writeInvoice(
   proposal: ProposalRow,
   now: Date,
 ): Promise<Phase> {
+  // Switch off: nothing is written and the proposal stays approved, so it resumes once it is on.
+  if (!flags.invoicesEnabled) return { kind: "result", result: failed("disabled") };
   const [p] = await q.query<ProposalState>(
     `SELECT status, money_action_id, decision_note FROM proposals
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) FOR UPDATE`,
@@ -286,7 +339,11 @@ async function writeInvoice(
     );
     if (!existing) return { kind: "result", result: failed("unknown") };
     const read = await readPostableInvoice(q, existing.id);
-    if (!read.ok) return { kind: "result", result: failed(read.category) };
+    if (!read.ok) {
+      // The load moved after the invoice was written: the card ends failed, never left executing.
+      if (read.category === "stale") await finishProposal(q, args.loadId, "failed", "stale");
+      return { kind: "result", result: failed(read.category) };
+    }
     return { kind: "post", invoice: read.invoice, posted: read.row.qbo_id !== null };
   }
 
@@ -323,7 +380,14 @@ async function writeInvoice(
 
   const issuedOn = localDateOf(now.toISOString(), tenant.timezone);
   const dueOn = addDays(issuedOn, customer.terms_days);
-  const invoiceNumber = await nextInvoiceNumber(q, invoicePrefixOf(tenant.slug));
+  // A number past what the accounting system can hold with the tenant's key is refused, never cut.
+  let invoiceNumber: string;
+  try {
+    invoiceNumber = await nextInvoiceNumber(q, invoicePrefixOf(tenant.slug));
+  } catch (err) {
+    if (!(err instanceof RangeError)) throw err;
+    return { kind: "result", result: await failStale(q, proposal.id, "validation") };
+  }
   const invoiceId = randomUUID();
   await q.execute(
     `INSERT INTO invoices (id, tenant_id, source, load_id, customer_id, invoice_number, amount_cents,

@@ -1,9 +1,11 @@
 // The payment form's fixed rules and its dollar text, with no imports, so the browser form and
 // the server check share them without pulling server code into the page.
 
-// QuickBooks keeps a payment's reference in a 21-character document number field, and the
-// adapter refuses anything longer, so the form does too.
-export const PAYMENT_REF = /^[A-Za-z0-9-]{1,21}$/;
+// QuickBooks keeps a payment's reference in a 21-character field with the tenant's 5-character
+// key and a dash in front (T5B0E-CHK-20417), and the adapter refuses anything longer, so the form
+// takes 15 at most.
+export const MAX_PAYMENT_REF = 15;
+export const PAYMENT_REF = /^[A-Za-z0-9-]{1,15}$/;
 export const PAYMENT_METHODS = ["check", "ach", "wire"] as const;
 export const MAX_MEMO = 200;
 

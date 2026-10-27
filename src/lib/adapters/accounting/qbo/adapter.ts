@@ -20,6 +20,7 @@ import {
   entityOf,
   invoiceBody,
   isVoided,
+  keyedDocNumber,
   PATH_OF,
   paymentBody,
   purchaseBody,
@@ -334,8 +335,12 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
       });
     },
 
+    // The invoice number and the payment reference carry the tenant's key too, so two tenants
+    // in the one sandbox company never send the same number.
     createInvoice(q, inv, ctx) {
-      return create(q, "Invoice", inv?.actionId, ctx, (o) => invoiceBody(inv, o.conn.items));
+      return create(q, "Invoice", inv?.actionId, ctx, (o) =>
+        invoiceBody(inv, o.conn.items, billKeyOf(o.conn.tenantId)),
+      );
     },
 
     // The bill number carries the tenant's key, from the tenant id the connection was loaded
@@ -355,7 +360,9 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     },
 
     recordCustomerPayment(q, p, ctx) {
-      return create(q, "Payment", p?.actionId, ctx, (o) => paymentBody(p, o.conn.accounts));
+      return create(q, "Payment", p?.actionId, ctx, (o) =>
+        paymentBody(p, o.conn.accounts, billKeyOf(o.conn.tenantId)),
+      );
     },
 
     // By id when known, else by our document number, exact. Not found is not "never happened":
@@ -364,6 +371,9 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     // QuickBooks applied short of what was asked throws amount_mismatch, so the row stays
     // unknown for a person and is never confirmed. A single document with our number that
     // belongs to another party is not ours: not found, and a replay's own look refuses it too.
+    // An invoice or payment still unknown has no outside number stored yet: the caller passes our
+    // own number (localRef), keyed here as the create keyed it, and our customer (partyLocalId),
+    // resolved through the stored id map; a customer never created there means nothing was sent.
     async readBack(q, ref, ctx): Promise<ReadBack> {
       checkContext(ctx);
       if (!(DOC_TYPES as readonly unknown[]).includes(ref?.type) || ref.requestId !== ctx.requestId) {
@@ -372,10 +382,17 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
       const type = ref.type as DocType;
       // A payment is judged by how it was applied, so its read-back must say what was asked.
       const asked = type === "Payment" ? checkApplications(ref.applications) : null;
-      const party =
+      const keyed = type === "Invoice" || type === "Payment";
+      if ((ref.localRef || ref.partyLocalId) && !keyed) throw new MoneyError("validation");
+      let party =
         ref.partyOutsideId === undefined || ref.partyOutsideId === null
           ? null
           : checkOutsideId(ref.partyOutsideId);
+      if (party === null && ref.partyLocalId) {
+        if (!isCanonicalUuid(ref.partyLocalId)) throw new MoneyError("validation");
+        party = await readEntityId(q, "customers", ref.partyLocalId);
+        if (party === null) return { found: false };
+      }
       const opened = await client.connection(q, ctx.timeoutMs, { write: false });
       let found: Found | null = null;
       if (ref.outsideId) {
@@ -392,8 +409,11 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
         if (reply.kind !== "ok") throw toError(reply);
         found = entityOf(type, reply.body);
         if (!found || found.id !== id) throw new MoneyError("unknown");
-      } else if (ref.outsideRef) {
-        const rows = await byNumber(q, opened, type, checkDocNumber(ref.outsideRef), ctx.timeoutMs);
+      } else if (ref.outsideRef || ref.localRef) {
+        const number = ref.outsideRef
+          ? checkDocNumber(ref.outsideRef)
+          : keyedDocNumber(billKeyOf(opened.conn.tenantId), ref.localRef);
+        const rows = await byNumber(q, opened, type, number, ctx.timeoutMs);
         if (rows.length === 0) return { found: false };
         if (rows.length > 1) {
           // Two or more documents carry our number: nobody can tell which is ours.

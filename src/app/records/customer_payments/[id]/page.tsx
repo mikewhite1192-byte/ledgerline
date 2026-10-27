@@ -6,6 +6,7 @@ import { NoCarrierPage, SignedInPage } from "@/components/app/signed-in-page";
 import { ErrorState } from "@/components/app/states";
 import { Card, CardBody } from "@/components/ui/card";
 import { Day, Facts, RecordLink } from "@/components/invoices/cells";
+import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
 import { PostButton } from "@/components/invoices/post-button";
 import { readPaymentRecord } from "@/lib/invoices/views";
@@ -31,6 +32,8 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
   const p = page.record;
   const confirmed = p.posted || p.ledger.some((r) => r.state === "confirmed");
   const canPost = flags.customerPaymentsEnabled && !confirmed && p.invoicesPosted;
+  // A post nobody confirmed yet (unknown, or sent with no answer) is read back from here.
+  const canCheck = flags.customerPaymentsEnabled && !confirmed && p.ledger.some((r) => r.state === "unknown" || r.state === "sent");
   return (
     <SignedInPage tenant={page.shell} current="/customer-payments/new" title={`Payment ${p.paymentRef}`}>
       <PageHeader
@@ -52,6 +55,7 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
         </CardBody>
       </Card>
       {canPost ? <PostButton url={`/api/customer-payments/${encodeURIComponent(p.id)}/post`} /> : null}
+      {canCheck ? <CheckButton url={`/api/customer-payments/${encodeURIComponent(p.id)}/reconcile`} /> : null}
       {!confirmed && !p.invoicesPosted ? (
         <p className="text-body text-foreground-2">
           Posting waits until every invoice this payment applies to is posted to QuickBooks.

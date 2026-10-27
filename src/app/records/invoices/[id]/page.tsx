@@ -7,6 +7,7 @@ import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Card, CardBody } from "@/components/ui/card";
 import { BUCKET_WORDS, Day, Facts, RecordLink } from "@/components/invoices/cells";
+import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
 import { PostButton } from "@/components/invoices/post-button";
 import { readInvoiceRecord } from "@/lib/invoices/views";
@@ -30,6 +31,8 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
   const inv = page.record;
   const confirmed = inv.posted || inv.ledger.some((r) => r.state === "confirmed");
   const canPost = flags.invoicesEnabled && !confirmed && inv.status !== "void";
+  // A post nobody confirmed yet (unknown, or sent with no answer) is read back from here.
+  const canCheck = flags.invoicesEnabled && !confirmed && inv.ledger.some((r) => r.state === "unknown" || r.state === "sent");
   return (
     <SignedInPage tenant={page.shell} current="/invoices" title={`Invoice ${inv.invoiceNumber}`}>
       <PageHeader
@@ -61,6 +64,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
         </CardBody>
       </Card>
       {canPost ? <PostButton url={`/api/invoices/${encodeURIComponent(inv.id)}/post`} /> : null}
+      {canCheck ? <CheckButton url={`/api/invoices/${encodeURIComponent(inv.id)}/reconcile`} /> : null}
       {inv.lines ? (
         <DataTable
           caption="Lines, from the rules engine"

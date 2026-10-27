@@ -4,7 +4,9 @@ import type { Session } from "../auth/claims";
 import { flags } from "../../config/flags";
 import type { Queryable, TenantDb } from "../db";
 import { readTenant } from "../data/read";
+import type { AccountingAdapter } from "../adapters/types";
 import { executeMoneyAction, type MoneyDeps } from "../money/execute";
+import { reconcileMoneyActions, type ReconcileHooks, type ReconcileSummary } from "../money/reconcile";
 import { isCanonicalUuid } from "../money/keys";
 import { readBySubject } from "../money/read";
 import { MoneyError, type MoneyAction, type MoneyActionState } from "../money/types";
@@ -327,4 +329,67 @@ export async function postCustomerPayment(
   });
   if (!plan.ok) return plan;
   return { ok: true, posting: await postPaymentAction(db, session, plan.payment, plan.attempt, deps) };
+}
+
+// The reconcile hooks for a payment's ledger row (kind 'customer_payment'): the outside id on the
+// payment once confirmed, and a read-back by our own reference, keyed by the adapter as its create
+// keyed it, for the customer and applications it was sent with. An applied invoice with no outside
+// id means nothing was sent: not found, so the row stays unknown and is never assumed failed.
+export function paymentReconcileHooks(
+  db: TenantDb,
+  tenantId: string,
+  accounting: AccountingAdapter,
+): ReconcileHooks {
+  return {
+    onConfirmed: (q, action) => recordPaymentQboId(q, action.subjectId, action),
+    readBack: async (action, ctx) => {
+      const payment = await db.withTenant(tenantId, (q) => readPostablePayment(q, action.subjectId));
+      if (!payment || payment.applications.some((a) => a.invoiceOutsideId === null)) return { found: false };
+      return db.withTenant(tenantId, (q) =>
+        accounting.readBack(
+          q,
+          {
+            type: "Payment",
+            requestId: action.requestId,
+            outsideId: action.outsideId,
+            outsideRef: action.outsideRef,
+            localRef: payment.paymentRef,
+            partyLocalId: action.counterpartyId,
+            applications: payment.applications.map((a) => ({
+              invoiceOutsideId: a.invoiceOutsideId as string,
+              amountCents: a.amountCents,
+            })),
+          },
+          ctx,
+        ),
+      );
+    },
+  };
+}
+
+export type RecordReconcileResult =
+  | { ok: true; summary: ReconcileSummary }
+  | { ok: false; category: "disabled" | "validation" };
+
+// The refresh on a payment's record page: reads back this payment's unsettled ledger rows only.
+// Never sends anything new.
+export async function reconcileCustomerPayment(
+  db: TenantDb,
+  session: Session,
+  paymentId: string,
+  deps: Partial<MoneyDeps> = {},
+): Promise<RecordReconcileResult> {
+  if (!flags.customerPaymentsEnabled) return { ok: false, category: "disabled" };
+  if (!isCanonicalUuid(paymentId)) return { ok: false, category: "validation" };
+  const accounting = deps.accounting ?? accountingAdapter();
+  const summary = await reconcileMoneyActions(
+    db,
+    session,
+    {
+      subjectId: paymentId,
+      hooks: { customer_payment: paymentReconcileHooks(db, session.tenantId, accounting) },
+    },
+    { ...deps, accounting },
+  );
+  return { ok: true, summary };
 }

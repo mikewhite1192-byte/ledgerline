@@ -132,6 +132,19 @@ export function vendorBody(displayName: string, workerType: string): Record<stri
 
 // ---- Documents ----
 
+const BILL_KEY = /^T[0-9A-F]{4}$/;
+
+// <tenant key>-<our number>: an invoice's number or a payment's reference as QuickBooks keeps it.
+// Every tenant numbers its invoices from 10001 under a prefix made of its slug's initials, and
+// the tenants share one sandbox company, so two tenants whose slugs share initials would send the
+// same number: the second would be refused as held by another party, or adopted when the party
+// matched. The key keeps them apart, as it does for bills. The invoice prefix and the payment
+// form's reference are capped so ours fit Intuit's 21; a longer result is refused, never cut.
+export function keyedDocNumber(tenantKey: unknown, localRef: unknown): string {
+  if (typeof tenantKey !== "string" || !BILL_KEY.test(tenantKey)) fail();
+  return checkDocNumber(`${tenantKey}-${checkDocNumber(localRef)}`);
+}
+
 export function invoiceBody(
   inv: {
     actionId: string;
@@ -142,6 +155,7 @@ export function invoiceBody(
     lines: InvoiceLine[];
   },
   items: ItemMap,
+  tenantKey: string,
 ): { body: Record<string, unknown>; totalCents: number; docNumber: string } {
   if (!Array.isArray(inv.lines) || inv.lines.length < 1 || inv.lines.length > 100) fail();
   let total = 0;
@@ -162,7 +176,7 @@ export function invoiceBody(
     };
   });
   if (total >= AMOUNT_LIMIT_CENTS) fail();
-  const docNumber = checkDocNumber(inv.invoiceNumber);
+  const docNumber = keyedDocNumber(tenantKey, inv.invoiceNumber);
   return {
     docNumber,
     totalCents: total,
@@ -176,8 +190,6 @@ export function invoiceBody(
     },
   };
 }
-
-const BILL_KEY = /^T[0-9A-F]{4}$/;
 
 // <tenant key>-YYMMDD-<driver code>, so T5B0E-261107-BR-D07 is the week ending 2026-11-07 for
 // driver BR-D07 of the tenant whose id starts 5b0e. The key keeps two tenants in one company
@@ -348,13 +360,14 @@ export function paymentBody(
     applications: Application[];
   },
   accounts: AccountMap,
+  tenantKey: string,
 ): { body: Record<string, unknown>; totalCents: number; docNumber: string; applications: Application[] } {
   const cents = checkAmount(p.amountCents);
   const applications = checkApplications(p.applications);
   const applied = applications.reduce((sum, a) => sum + a.amountCents, 0);
   // Any excess stays unapplied credit in the company; more applied than received is refused.
   if (applied > cents) fail();
-  const ref = checkDocNumber(p.paymentRef);
+  const ref = keyedDocNumber(tenantKey, p.paymentRef);
   return {
     docNumber: ref,
     totalCents: cents,

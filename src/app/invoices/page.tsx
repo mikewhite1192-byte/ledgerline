@@ -58,7 +58,14 @@ export default async function InvoicesPage({
       if (!flags.invoicesEnabled) return { shell, open: null };
       const queue = await readQueueView(q);
       const proposals = await readEngineProposalViews(q, "invoice_post");
-      const cards = proposals.map((p) => proposalCardFrom(p));
+      // The same gate as an agent's card: the auditor's line, its second confirm and override.
+      const audit = { on: flags.auditorEnabled, checking: false };
+      const cards: InvoiceCard[] = proposals.map((p) => ({
+        card: proposalCardFrom(p, audit),
+        verdict: p.auditorVerdict,
+        checkedAt: p.auditorCheckedAt,
+        flagged: p.flagged,
+      }));
       const carded = new Set(proposals.map((p) => p.subjectId));
       return {
         shell,
@@ -130,7 +137,7 @@ function ToInvoice({ cards, waiting }: { cards: InvoiceCard[]; waiting: QueueIte
   }
   return (
     <div className="grid gap-6">
-      {cards.length > 0 ? <InvoiceCards cards={cards} /> : null}
+      {cards.length > 0 ? <InvoiceCards cards={cards} auditorOn={flags.auditorEnabled} /> : null}
       {waiting.length > 0 ? (
         <DataTable
           caption="Ready to invoice. Refresh to make a card for each."

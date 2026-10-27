@@ -2,7 +2,7 @@ import type { Session } from "../auth/claims";
 import { flags } from "../../config/flags";
 import type { TenantDb } from "../db";
 import { readInvoiceQueue } from "../data/read";
-import { expireStaleEngineProposals, persistEngineProposal } from "../proposals/engine";
+import { persistEngineProposal, retireEngineProposalsExcept } from "../proposals/engine";
 import { assertMembership } from "../tenant/context";
 import { tenantLock } from "./number";
 import { lineSummary, splitInvoiceQueue } from "./queue";
@@ -10,8 +10,9 @@ import { lineSummary, splitInvoiceQueue } from "./queue";
 // "Refresh" on the invoice queue: one engine proposal per delivered load the rules engine can
 // invoice, each carrying the engine's total and lines. Never on a schedule; a person presses it.
 // Proposing twice changes nothing (the dedupe key is the args hash); a load whose total changed
-// gets a new card and the old waiting card is retired; a load that became an exception has its
-// waiting card retired. At most invoiceLimits.proposalsPerRun new cards per press, the rest next time.
+// gets a new card and the old waiting card is retired; a load that is no longer invoiceable (an
+// exception now, invoiced another way, out of the queue) has its waiting card retired. At most
+// invoiceLimits.proposalsPerRun new cards per press, the rest next time.
 // Nothing here writes outside the app, and nothing moves money.
 
 export type ProposeCounts = {
@@ -76,9 +77,9 @@ export async function proposeInvoices(db: TenantDb, session: Session, now: Date)
       else if (result.kind === "live_exists") counts.inFlight += 1;
       else counts.decided += 1;
     }
-    for (const ex of queue.exceptions) {
-      counts.retired += await expireStaleEngineProposals(q, "invoice_post", ex.load.id, session, now);
-    }
+    // Every press, whatever the cap: a waiting card whose load is no longer invoiceable is retired.
+    const invoiceable = new Set(queue.invoiceable.map((i) => i.load.id));
+    counts.retired += await retireEngineProposalsExcept(q, "invoice_post", invoiceable, session, now);
     return { ok: true, counts };
   });
 }

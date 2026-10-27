@@ -12,7 +12,8 @@ const STATE_NOTE: Readonly<Record<string, string>> = {
   sent: "Sent to QuickBooks, waiting on the read-back.",
   reserved: "Sent to QuickBooks, waiting on the read-back.",
   unknown: "Sent to QuickBooks, waiting on the read-back.",
-  failed: "QuickBooks refused it. Nothing was posted.",
+  // A failure may be a refusal or a record already there at another amount, so it claims neither.
+  failed: "QuickBooks did not confirm it at this amount. Check QuickBooks before trying again.",
 };
 
 // "Post to QuickBooks" on a record page. The server's ledger key makes a second click a replay of

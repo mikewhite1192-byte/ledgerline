@@ -3,19 +3,29 @@ import type { Queryable } from "../db";
 // Invoice numbers: <PREFIX>-INV-<n>, the same shape the seed writes (BR-INV-10001). The prefix is
 // the initials of the carrier's slug words (blue-ridge is BR, prairie-wind is PW), because the
 // tenants table has no code column; a unit test holds it equal to each demo carrier's prefix.
+//
+// QuickBooks keeps the number with the tenant's 5-character key in front (T5B0E-BR-INV-10001) in
+// a 21-character field, so ours is at most 15: a prefix of up to 4 and a sequence of up to 6
+// digits. The adapter refuses anything longer, never cuts it.
 
-const SLUG = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-const PREFIX = /^[A-Z0-9]{1,8}$/;
+// What the tenants table's CHECK allows (0001): lowercase letters, digits and dashes, any order.
+const SLUG = /^[a-z0-9-]{3,40}$/;
+const PREFIX = /^[A-Z0-9]{1,4}$/;
+const FALLBACK_PREFIX = "INV";
 export const FIRST_INVOICE_NUMBER = 10001;
-const MAX_INVOICE_NUMBER = 999_999_999;
+export const MAX_INVOICE_NUMBER = 999_999;
 
+// Every slug the CHECK allows has a prefix: words are the runs between dashes (a doubled or
+// leading dash makes no empty word), and a slug of dashes only falls back to INV.
 export function invoicePrefixOf(slug: string): string {
   if (typeof slug !== "string" || !SLUG.test(slug)) throw new RangeError("not a carrier slug");
-  const prefix = slug
-    .split("-")
-    .map((w) => w[0].toUpperCase())
-    .join("")
-    .slice(0, 8);
+  const prefix =
+    slug
+      .split(/-+/)
+      .filter((w) => w.length > 0)
+      .map((w) => w[0].toUpperCase())
+      .join("")
+      .slice(0, 4) || FALLBACK_PREFIX;
   if (!PREFIX.test(prefix)) throw new RangeError("not an invoice prefix");
   return prefix;
 }
@@ -35,7 +45,7 @@ export function invoiceNumberOf(prefix: string, n: number): string {
 // Anchored at both ends, so BR-INV-10001X and XBR-INV-10001 never count. The prefix is letters and
 // digits only (checked), so it needs no escaping inside the pattern.
 export function invoiceNumberPattern(prefix: string): string {
-  return `^${checkPrefix(prefix)}-INV-([0-9]{1,9})$`;
+  return `^${checkPrefix(prefix)}-INV-([0-9]{1,6})$`;
 }
 
 // A lock per tenant and purpose, held to the end of the caller's transaction. Wrapped in count(*)

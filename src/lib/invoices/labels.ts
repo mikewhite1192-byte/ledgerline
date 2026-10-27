@@ -26,6 +26,7 @@ export const OUTCOME_LABELS: Readonly<Record<string, string>> = {
   attempts_used: "This invoice was tried the most times allowed. Check QuickBooks first.",
   already_posted: "This is already posted to QuickBooks.",
   disabled: "This is off in this environment.",
+  amount_mismatch: "QuickBooks holds this number at a different amount. Check it there by hand.",
 };
 
 export const OUTCOME_FALLBACK = "That did not go through. Nothing changed.";

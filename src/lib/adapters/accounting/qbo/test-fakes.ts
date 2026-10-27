@@ -117,16 +117,28 @@ export class FakeQboDb implements Queryable {
   locks = 0;
   refreshed: Param[][] = [];
   statements: string[] = [];
+  // The tenant this database answers for (current_tenant_id()); its tokens are sealed to it.
+  readonly tenantId: string;
 
-  constructor(opts: { realmId?: string; expiring?: boolean; refreshExpired?: boolean; connected?: boolean } = {}) {
+  constructor(
+    opts: {
+      realmId?: string;
+      expiring?: boolean;
+      refreshExpired?: boolean;
+      connected?: boolean;
+      tenantId?: string;
+    } = {},
+  ) {
     const realm = opts.realmId ?? REALM;
+    const tenant = opts.tenantId ?? TENANT;
+    this.tenantId = tenant;
     this.row =
       opts.connected === false
         ? null
         : {
             realm_id: realm,
-            access_enc: sealToken(KEY, ACCESS, TENANT, realm, "access").toString("base64"),
-            refresh_enc: sealToken(KEY, REFRESH, TENANT, realm, "refresh").toString("base64"),
+            access_enc: sealToken(KEY, ACCESS, tenant, realm, "access").toString("base64"),
+            refresh_enc: sealToken(KEY, REFRESH, tenant, realm, "refresh").toString("base64"),
             expiring: opts.expiring ?? false,
             refresh_expired: opts.refreshExpired ?? false,
             account_map: JSON.stringify(ACCOUNTS),
@@ -136,7 +148,7 @@ export class FakeQboDb implements Queryable {
 
   async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
     this.statements.push(sql);
-    if (sql.includes("CAST(current_tenant_id() AS text) AS id")) return [{ id: TENANT }] as T[];
+    if (sql.includes("CAST(current_tenant_id() AS text) AS id")) return [{ id: this.tenantId }] as T[];
     if (sql.includes("FROM qbo_connections") && sql.includes("encode(access_token_enc")) {
       if (sql.includes("FOR UPDATE")) this.locks += 1;
       return (this.row ? [{ ...this.row }] : []) as T[];

@@ -5,7 +5,16 @@ import { isCanonicalUuid } from "../money/keys";
 import { readBySubject } from "../money/read";
 import { MoneyError, type MoneyActionState } from "../money/types";
 import { assertMembership } from "../tenant/context";
-import { postInvoiceAction, readPostableInvoice, type InvoiceMoneyDeps, type PostableInvoice } from "./execute";
+import { accountingAdapter } from "../adapters";
+import { reconcileMoneyActions } from "../money/reconcile";
+import {
+  invoiceReconcileHooks,
+  postInvoiceAction,
+  readPostableInvoice,
+  type InvoiceMoneyDeps,
+  type PostableInvoice,
+} from "./execute";
+import type { RecordReconcileResult } from "./payments";
 
 // "Post to QuickBooks" on an invoice's record page: the same money action the invoice_post
 // executor runs, with the same ledger key. A row still in flight (reserved, sent, unknown) is
@@ -37,6 +46,7 @@ export async function postInvoice(
   invoiceId: string,
   deps: InvoiceMoneyDeps = {},
 ): Promise<PostResult> {
+  if (!flags.invoicesEnabled) return { ok: false, category: "disabled" };
   if (!isCanonicalUuid(invoiceId)) return { ok: false, category: "validation" };
   const plan = await db.withTenant(session.tenantId, async (q): Promise<Plan> => {
     await assertMembership(q, session);
@@ -70,4 +80,25 @@ export async function postInvoice(
     if (err instanceof MoneyError) return { ok: false, category: err.category };
     throw err;
   }
+}
+
+// The refresh on an invoice's record page: reads back this invoice's unsettled ledger rows only
+// (same amount: confirmed; another amount: failed as amount_mismatch; nothing found: still
+// unknown). Never sends anything new.
+export async function reconcileInvoice(
+  db: TenantDb,
+  session: Session,
+  invoiceId: string,
+  deps: InvoiceMoneyDeps = {},
+): Promise<RecordReconcileResult> {
+  if (!flags.invoicesEnabled) return { ok: false, category: "disabled" };
+  if (!isCanonicalUuid(invoiceId)) return { ok: false, category: "validation" };
+  const accounting = deps.accounting ?? accountingAdapter();
+  const summary = await reconcileMoneyActions(
+    db,
+    session,
+    { subjectId: invoiceId, hooks: { invoice: invoiceReconcileHooks(db, session.tenantId, accounting) } },
+    { ...deps, accounting },
+  );
+  return { ok: true, summary };
 }

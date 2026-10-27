@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
-import type { AccountingAdapter, SendOutcome } from "../adapters/types";
+import type { AccountingAdapter, ReadBack, SendOutcome } from "../adapters/types";
+import { runAudit } from "../agent/auditor/run";
+import { callTool } from "../agent/gateway";
 import { paymentReapplyLimit } from "../agent/gateway/limits";
-import type { GatewayContext } from "../agent/gateway/types";
+import type { CompleteFn, GatewayContext, ToolCall } from "../agent/gateway/types";
+import type { AiResult } from "../ai";
 import type { Session } from "../auth/claims";
 import { readInvoiceQueue, readReceivablesInput } from "../data/read";
 import { createPgDb } from "../db/pg";
@@ -19,8 +22,8 @@ import { replaceTenantData } from "../seed/run";
 import { addDays, type LocalDate } from "../time/local-date";
 import { invoicePostExecutor, type InvoiceMoneyDeps } from "./execute";
 import { matchWrongInvoiceFinding } from "./match";
-import { postCustomerPayment, recordCustomerPayment } from "./payments";
-import { postInvoice } from "./post";
+import { postCustomerPayment, reconcileCustomerPayment, recordCustomerPayment } from "./payments";
+import { postInvoice, reconcileInvoice } from "./post";
 import { proposeInvoices } from "./propose";
 import { splitInvoiceQueue } from "./queue";
 
@@ -131,11 +134,16 @@ function nextNumber(t: Carrier, ahead: number): string {
   return `${prefix}${top + ahead}`;
 }
 
-// An accounting system double: it confirms every write, or answers "timeout" for invoices while
-// told to. It counts what it was asked to create.
+type ReadBackRef = Parameters<AccountingAdapter["readBack"]>[1];
+
+// An accounting system double: it confirms every write, or answers "timeout" for invoices or
+// payments while told to. A read-back answers what it was last told (nothing found, by default).
+// It keeps what it was asked to create and to read back.
 function testBooks() {
-  const seen = { customers: 0, invoices: [] as string[], payments: [] as string[] };
+  const seen = { customers: 0, invoices: [] as string[], payments: [] as string[], readBacks: [] as ReadBackRef[] };
   let invoiceAnswer: "confirm" | "timeout" = "confirm";
+  let paymentAnswer: "confirm" | "timeout" = "confirm";
+  let readBackAnswer: ReadBack = { found: false };
   const unused = async (): Promise<never> => {
     throw new Error("not used by invoices");
   };
@@ -164,6 +172,7 @@ function testBooks() {
     createExpense: unused,
     recordCustomerPayment: async (_q, p): Promise<SendOutcome> => {
       seen.payments.push(p.paymentRef);
+      if (paymentAnswer === "timeout") return { kind: "unknown", category: "timeout" };
       return {
         kind: "confirmed",
         system: "qbo_sandbox",
@@ -172,13 +181,22 @@ function testBooks() {
         amountCents: p.amountCents,
       };
     },
-    readBack: async () => ({ found: false }),
+    readBack: async (_q, ref) => {
+      seen.readBacks.push(ref);
+      return readBackAnswer;
+    },
   };
   return {
     adapter,
     seen,
     answerInvoices(a: "confirm" | "timeout") {
       invoiceAnswer = a;
+    },
+    answerPayments(a: "confirm" | "timeout") {
+      paymentAnswer = a;
+    },
+    answerReadBack(a: ReadBack) {
+      readBackAnswer = a;
     },
   };
 }
@@ -198,6 +216,48 @@ const quiet = registryWith({ log: () => {} });
 // is switched off here and not required), and anything but a pass needs that confirm.
 const approve = (t: Carrier, id: string, db: Db = app, executors: ExecutorRegistry = quiet) =>
   executeProposal(t.session, id, { confirmed: true }, { db, clock, executors });
+
+// The auditor's own read of a proposal, through the gateway as the app role, on the fixed clock.
+const auditorCtx = (t: Carrier): GatewayContext => ({
+  session: t.session,
+  role: "auditor",
+  model: "wonder",
+  turnId: null,
+  traceId: randomUUID(),
+  now: clock(),
+  deadlineAt: NOW + 60_000,
+  timeZone: t.carrier.timezone,
+});
+const gatewayNow = (ctx: GatewayContext, call: ToolCall) => callTool(ctx, call, { db: app, clock: () => NOW });
+async function packFor(t: Carrier, proposalId: string): Promise<Record<string, unknown>> {
+  const out = await gatewayNow(auditorCtx(t), {
+    id: "c",
+    name: "get_proposal",
+    argumentsJson: JSON.stringify({ proposalId }),
+  });
+  if (out.decision !== "allowed") throw new Error(`get_proposal was not allowed: ${out.reason}`);
+  return out.result;
+}
+
+// A model that always answers a clean pass. No model is called.
+const AUDIT_CALL_ID = "c0ffee00-0000-4000-8000-0000000000b2";
+const passModel = (calls: { n: number }): CompleteFn => async () => {
+  calls.n += 1;
+  return {
+    callId: AUDIT_CALL_ID,
+    status: "ok",
+    text: JSON.stringify({
+      verdict: "pass",
+      concerns: [],
+      checks: ["cause", "sources", "amount", "limit"].map((name) => ({ name, pass: true, note: "holds" })),
+    }),
+    toolCalls: [],
+    usage: { input: 900, cached: 0, output: 300, reasoning: 200 },
+    costNanocents: 1,
+    upstreamId: null,
+    replay: [],
+  } satisfies AiResult;
+};
 
 describe("invoices against a seeded database", () => {
   beforeAll(async () => {
@@ -505,6 +565,329 @@ describe("invoices against a seeded database", () => {
     });
   });
 
+  describe("guards, follow-ups and the auditor on invoice cards", () => {
+    // Prairie Wind's own queue, so Blue Ridge's flow above is untouched. Its planted payment on the
+    // wrong invoice is left alone until its own test below.
+    const loadNumberOf = async (t: Carrier, loadId: string) =>
+      (
+        await adminRows<{ load_number: string }>(
+          t,
+          "SELECT load_number FROM loads WHERE tenant_id = $1 AND id = CAST($2 AS uuid)",
+          [t.id, loadId],
+        )
+      )[0].load_number;
+    const bumpRate = (t: Carrier, loadId: string, cents: number) =>
+      adminWrite(t, "UPDATE loads SET linehaul_cents = linehaul_cents + $3 WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [
+        t.id,
+        loadId,
+        cents,
+      ]);
+    const failureOf = async (t: Carrier, subjectId: string) =>
+      adminRows<{ state: string; failure_category: string | null }>(
+        t,
+        "SELECT state, failure_category FROM money_actions WHERE tenant_id = $1 AND subject_id = CAST($2 AS uuid) ORDER BY attempt",
+        [t.id, subjectId],
+      );
+    // A card approved while the accounting system times out: the invoice is written and its post
+    // is left unknown, with the card executing.
+    async function unknownPost(t: Carrier) {
+      const [card] = await waitingCards(t);
+      const books = testBooks();
+      books.answerInvoices("timeout");
+      const result = await approve(t, card.id, app, registryWith(moneyDeps(books, [])));
+      expect(result).toMatchObject({ ok: true, proposalId: card.id, status: "executing" });
+      const [inv] = await invoicesFor(t, card.subject_id);
+      expect(await ledgerFor(t, inv.id)).toEqual([{ kind: "invoice", state: "unknown", attempt: 1, proposal_id: card.id }]);
+      return { card, inv };
+    }
+
+    it("refuses an approval, a post and a check while its switch is off, and the approval resumes after", async () => {
+      expect(await proposeInvoices(app, PW.session, clock())).toMatchObject({ ok: true, counts: { truncated: true } });
+      const [card] = await waitingCards(PW);
+      const seededInvoice = PW.plan.rows.invoices[0].id;
+      const seededPayment = PW.plan.rows.customer_payments[0].id;
+      flags.invoicesEnabled = false;
+      flags.customerPaymentsEnabled = false;
+      try {
+        expect(await approve(PW, card.id)).toEqual({ ok: false, category: "disabled", retryable: false });
+        expect(await invoicesFor(PW, card.subject_id)).toEqual([]);
+        // The approval stands and nothing else moved, so it resumes once the switch is on.
+        expect(await proposalById(PW, card.id)).toMatchObject({ status: "approved", decision_note: null });
+        expect(await postInvoice(app, PW.session, seededInvoice)).toEqual({ ok: false, category: "disabled" });
+        expect(await reconcileInvoice(app, PW.session, seededInvoice)).toEqual({ ok: false, category: "disabled" });
+        expect(await reconcileCustomerPayment(app, PW.session, seededPayment)).toEqual({
+          ok: false,
+          category: "disabled",
+        });
+      } finally {
+        flags.invoicesEnabled = true;
+        flags.customerPaymentsEnabled = true;
+      }
+      expect(await reconcileInvoice(app, PW.session, "not-a-uuid")).toEqual({ ok: false, category: "validation" });
+      expect(await approve(PW, card.id)).toEqual({ ok: true, proposalId: card.id, status: "done", moneyActionId: null });
+      expect(await invoicesFor(PW, card.subject_id)).toHaveLength(1);
+    });
+
+    it("fails a card as stale when its load changed while its post was unknown, never leaving it executing", async () => {
+      flags.accountingEnabled = true;
+      try {
+        const { card } = await unknownPost(PW);
+        await bumpRate(PW, card.subject_id, 100);
+        try {
+          expect(await approve(PW, card.id)).toEqual({ ok: false, category: "stale", retryable: false });
+          expect(await proposalById(PW, card.id)).toMatchObject({ status: "failed", decision_note: "stale" });
+        } finally {
+          await bumpRate(PW, card.subject_id, -100);
+        }
+      } finally {
+        flags.accountingEnabled = false;
+      }
+    });
+
+    it("settles an unknown invoice post from its record page: same amount confirms, scoped to that invoice", async () => {
+      flags.accountingEnabled = true;
+      try {
+        const { card, inv } = await unknownPost(PW);
+        const books = testBooks();
+        const deps = moneyDeps(books, []);
+        books.answerReadBack({
+          found: true,
+          system: "qbo_sandbox",
+          type: "Invoice",
+          id: "QI-77",
+          amountCents: Number(inv.amount_cents),
+          status: "succeeded",
+        });
+        // The stale card's unknown row above is another invoice's, so it is never read here.
+        expect(await reconcileInvoice(app, PW.session, inv.id, deps)).toEqual({
+          ok: true,
+          summary: { checked: 1, confirmed: 1, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 },
+        });
+        expect(books.seen.readBacks).toHaveLength(1);
+        expect(books.seen.readBacks[0]).toMatchObject({
+          type: "Invoice",
+          localRef: inv.invoice_number,
+          partyLocalId: inv.customer_id,
+        });
+        expect(books.seen.invoices).toEqual([]);
+        expect((await invoiceById(PW, inv.id)).qbo_id).toBe("QI-77");
+        expect(await proposalById(PW, card.id)).toMatchObject({ status: "done", decision_note: null });
+        expect(await ledgerFor(PW, inv.id)).toEqual([
+          { kind: "invoice", state: "confirmed", attempt: 1, proposal_id: card.id },
+        ]);
+        // Nothing left to settle for it.
+        expect(await reconcileInvoice(app, PW.session, inv.id, deps)).toMatchObject({
+          ok: true,
+          summary: { checked: 0, confirmed: 0 },
+        });
+      } finally {
+        flags.accountingEnabled = false;
+      }
+    });
+
+    it("fails an unknown post QuickBooks holds at another amount, and leaves one it cannot find unknown", async () => {
+      flags.accountingEnabled = true;
+      try {
+        const other = await unknownPost(PW);
+        const books = testBooks();
+        books.answerReadBack({
+          found: true,
+          system: "qbo_sandbox",
+          type: "Invoice",
+          id: "QI-78",
+          amountCents: Number(other.inv.amount_cents) + 1,
+          status: "succeeded",
+        });
+        expect(await reconcileInvoice(app, PW.session, other.inv.id, moneyDeps(books, []))).toEqual({
+          ok: true,
+          summary: { checked: 1, confirmed: 0, failed: 1, stillUnknown: 0, skipped: 0, errors: 0 },
+        });
+        expect(await failureOf(PW, other.inv.id)).toEqual([{ state: "failed", failure_category: "amount_mismatch" }]);
+        expect(await proposalById(PW, other.card.id)).toMatchObject({ status: "failed", decision_note: "amount_mismatch" });
+        expect((await invoiceById(PW, other.inv.id)).qbo_id).toBeNull();
+
+        const missing = await unknownPost(PW);
+        const none = testBooks();
+        expect(await reconcileInvoice(app, PW.session, missing.inv.id, moneyDeps(none, []))).toEqual({
+          ok: true,
+          summary: { checked: 1, confirmed: 0, failed: 0, stillUnknown: 1, skipped: 0, errors: 0 },
+        });
+        expect(none.seen.readBacks).toHaveLength(1);
+        // Still unknown, with the check counted: nothing found is never "never happened".
+        expect(await failureOf(PW, missing.inv.id)).toEqual([{ state: "unknown", failure_category: "unknown" }]);
+        expect(await proposalById(PW, missing.card.id)).toMatchObject({ status: "executing" });
+      } finally {
+        flags.accountingEnabled = false;
+      }
+    });
+
+    it("settles an unknown payment post from its record page, reading it back with its applications", async () => {
+      const [inv] = await adminRows<InvoiceRow>(
+        PW,
+        `SELECT id, invoice_number, amount_cents::text, CAST(issued_on AS text) AS issued_on,
+                CAST(due_on AS text) AS due_on, status, qbo_id, customer_id
+           FROM invoices WHERE tenant_id = $1 AND qbo_id = 'QI-77'`,
+        [PW.id],
+      );
+      const amount = Number(inv.amount_cents);
+      flags.accountingEnabled = true;
+      try {
+        const books = testBooks();
+        books.answerPayments("timeout");
+        const deps = { accounting: books.adapter, waitMs: 2_000, pollMs: 10, log: () => {} };
+        const recorded = await recordCustomerPayment(
+          app,
+          PW.session,
+          {
+            customerId: inv.customer_id,
+            receivedOn: TODAY,
+            amountCents: amount,
+            method: "ach",
+            paymentRef: "ACH-CHECK-1",
+            applications: [{ invoiceId: inv.id, amountCents: amount }],
+          },
+          clock(),
+          deps,
+        );
+        expect(recorded).toMatchObject({ ok: true, created: true, posting: "unknown" });
+        const paymentId = recorded.ok ? recorded.paymentId : "";
+        books.answerReadBack({
+          found: true,
+          system: "qbo_sandbox",
+          type: "Payment",
+          id: "QP-77",
+          amountCents: amount,
+          status: "succeeded",
+        });
+        expect(await reconcileCustomerPayment(app, PW.session, paymentId, deps)).toEqual({
+          ok: true,
+          summary: { checked: 1, confirmed: 1, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 },
+        });
+        expect(books.seen.payments).toEqual(["ACH-CHECK-1"]);
+        expect(books.seen.readBacks).toHaveLength(1);
+        expect(books.seen.readBacks[0]).toMatchObject({
+          type: "Payment",
+          localRef: "ACH-CHECK-1",
+          partyLocalId: inv.customer_id,
+          applications: [{ invoiceOutsideId: "QI-77", amountCents: amount }],
+        });
+        const [payment] = await adminRows<{ qbo_id: string | null }>(
+          PW,
+          "SELECT qbo_id FROM customer_payments WHERE tenant_id = $1 AND id = CAST($2 AS uuid)",
+          [PW.id, paymentId],
+        );
+        expect(payment.qbo_id).toBe("QP-77");
+        expect(await ledgerFor(PW, paymentId)).toEqual([
+          { kind: "customer_payment", state: "confirmed", attempt: 1, proposal_id: null },
+        ]);
+      } finally {
+        flags.accountingEnabled = false;
+      }
+    });
+
+    it("retires a waiting card whose load left the queue on every press, even one the cap cut short", async () => {
+      const [card] = await waitingCards(PW);
+      const setStatus = (status: string) =>
+        adminWrite(PW, "UPDATE loads SET status = $3 WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [
+          PW.id,
+          card.subject_id,
+          status,
+        ]);
+      flags.invoiceLimits = { ...flags.invoiceLimits, proposalsPerRun: 1 };
+      try {
+        await setStatus("in_transit");
+        const press = await proposeInvoices(app, PW.session, clock());
+        expect(press).toMatchObject({ ok: true, counts: { created: 1, retired: 1, truncated: true } });
+        expect(await proposalById(PW, card.id)).toMatchObject({ status: "expired", decision_note: "superseded" });
+      } finally {
+        await setStatus("delivered");
+        flags.invoiceLimits = { ...saved.invoiceLimits };
+      }
+      // Back in the queue: the next press asks about it again.
+      expect(await proposeInvoices(app, PW.session, clock())).toMatchObject({ ok: true, counts: { retired: 0 } });
+      expect((await waitingCards(PW)).filter((c) => c.subject_id === card.subject_id)).toHaveLength(1);
+    });
+
+    it("gives the auditor an engine card's load and the engine's own total and lines, every check reported", async () => {
+      const [card] = await waitingCards(PW);
+      const pack = await packFor(PW, card.id);
+      expect(pack.proposal).toMatchObject({
+        id: card.id,
+        kind: "invoice_post",
+        status: "proposed",
+        subject: { table: "loads", id: card.subject_id, label: await loadNumberOf(PW, card.subject_id) },
+        amountCents: Number(card.amount_cents),
+        operatorVerdict: "engine",
+      });
+      expect(pack.engine).toMatchObject({
+        ok: true,
+        check: "invoice_post",
+        loadFound: true,
+        loadStatus: "delivered",
+        alreadyInvoiced: false,
+        proposedCents: Number(card.amount_cents),
+        engine: { ok: true, amountCents: Number(card.amount_cents) },
+        matches: { amount: true, lines: true },
+      });
+      // A changed load is evidence the auditor sees, never a silent pass.
+      await bumpRate(PW, card.subject_id, 100);
+      try {
+        expect((await packFor(PW, card.id)).engine).toMatchObject({
+          engine: { amountCents: Number(card.amount_cents) + 100 },
+          matches: { amount: false },
+        });
+      } finally {
+        await bumpRate(PW, card.subject_id, -100);
+      }
+    });
+
+    it("audits an engine card end to end, and the gate holds every card to the auditor's verdict", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      const [audited, waiting] = await waitingCards(PW);
+      flags.auditorEnabled = true;
+      flags.auditorRequired = true;
+      try {
+        const calls = { n: 0 };
+        const out = await runAudit(PW.session, audited.id, {
+          db: app,
+          clock,
+          callTool: gatewayNow,
+          complete: passModel(calls),
+          env: { META_MODEL_WONDER: "muse-wonder-1.0" },
+        });
+        expect(out).toEqual({ state: "done", verdict: "pass", concerns: [], checkedAt: new Date(NOW).toISOString() });
+        expect(calls.n).toBe(1);
+        const decisions = await adminRows<{ turn_id: string | null; tool: string; decision: string }>(
+          PW,
+          `SELECT d.turn_id, d.tool, d.decision FROM gateway_decisions d
+             JOIN proposals p ON p.tenant_id = d.tenant_id AND CAST(p.auditor_trace_id AS text) = d.trace_id
+            WHERE d.tenant_id = $1 AND p.id = CAST($2 AS uuid)`,
+          [PW.id, audited.id],
+        );
+        expect(decisions).toEqual([{ turn_id: null, tool: "get_proposal", decision: "allowed" }]);
+
+        // No verdict yet: nobody can approve it.
+        expect(await approve(PW, waiting.id)).toEqual({ ok: false, category: "auditor_required", retryable: false });
+        // A verdict the auditor could not reach needs the second confirm.
+        await adminWrite(
+          PW,
+          `UPDATE proposals SET auditor_verdict = 'unknown', auditor_checked_at = CAST($3 AS timestamptz)
+            WHERE tenant_id = $1 AND id = CAST($2 AS uuid)`,
+          [PW.id, waiting.id, new Date(NOW).toISOString()],
+        );
+        const once = (id: string) => executeProposal(PW.session, id, { confirmed: false }, { db: app, clock, executors: quiet });
+        expect(await once(waiting.id)).toEqual({ ok: false, category: "needs_confirm", retryable: false });
+        expect(await approve(PW, waiting.id)).toEqual({ ok: true, proposalId: waiting.id, status: "done", moneyActionId: null });
+        // A pass goes through on one click.
+        expect(await once(audited.id)).toEqual({ ok: true, proposalId: audited.id, status: "done", moneyActionId: null });
+      } finally {
+        flags.auditorEnabled = false;
+        flags.auditorRequired = false;
+        vi.restoreAllMocks();
+      }
+    });
+  });
+
   describe("customer payments", () => {
     // An invoice this file wrote and nobody has paid, with its customer.
     async function unpaid(t: Carrier, posted: boolean) {
@@ -708,6 +1091,23 @@ describe("invoices against a seeded database", () => {
         expect(matchWrongInvoiceFinding(await findingsNow(t), ids)).not.toBeNull();
 
         const id = await proposeMove(t, args, limit.requestedCents);
+        // The auditor's pack: the payment's reference, and every check the executor makes.
+        const [{ payment_ref: ref }] = await adminRows<{ payment_ref: string }>(
+          t,
+          "SELECT payment_ref FROM customer_payments WHERE tenant_id = $1 AND id = CAST($2 AS uuid)",
+          [t.id, ids.paymentId],
+        );
+        const pack = await packFor(t, id);
+        expect(pack.proposal).toMatchObject({ subject: { table: "payment_applications", label: ref } });
+        expect(pack.engine).toMatchObject({
+          ok: true,
+          check: "payment_on_wrong_invoice",
+          found: true,
+          proposedCents: limit.requestedCents,
+          applicationOnFromInvoice: true,
+          postedOutside: false,
+          findingMatches: true,
+        });
         expect(await approve(t, id)).toEqual({ ok: true, proposalId: id, status: "done", moneyActionId: null });
         expect(await approve(t, id)).toEqual({ ok: false, category: "already_decided", retryable: false });
         const onTarget = await adminRows<{ amount_cents: string }>(

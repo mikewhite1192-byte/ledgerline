@@ -889,7 +889,6 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   // ---- Receivables: the settled weeks' loads, the opening invoices, the payments ----
   const windowLoads = drafts.filter((x) => x.week < 3).map((x) => x.row);
   const ar = buildReceivables({
-    slug,
     prefix,
     anchor,
     rng: new Rng(`${seed}:receivables`),

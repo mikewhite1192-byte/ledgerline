@@ -12,6 +12,7 @@ export const runtime = "nodejs";
 
 const STATUS: Readonly<Record<string, number>> = {
   validation: 400,
+  disabled: 404,
   not_found: 404,
   role: 403,
   forbidden: 403,

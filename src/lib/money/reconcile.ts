@@ -43,6 +43,8 @@ export type ReconcileHooks = {
 export type ReconcileOptions = {
   limit?: number;
   olderThanSeconds?: number;
+  // One record's rows only (its record page's refresh); every pending row of the kinds when unset.
+  subjectId?: string | null;
   // A kind without hooks is not read, never guessed at.
   hooks: Partial<Record<MoneyActionKind, ReconcileHooks>>;
 };
@@ -175,7 +177,7 @@ export async function reconcileMoneyActions(
   const kinds = await servableKinds(db, tenantId, options.hooks, d);
   if (kinds.length === 0) return summary;
   const pending = await db.withTenant(tenantId, (q) =>
-    d.store.readPending(q, olderThanSeconds, limit, kinds),
+    d.store.readPending(q, olderThanSeconds, limit, kinds, options.subjectId ?? null),
   );
 
   for (const action of pending) {

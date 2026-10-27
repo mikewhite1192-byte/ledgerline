@@ -57,6 +57,8 @@ export class FakeLedger {
   sentAgeSeconds = 0;
   // The kinds each pending read asked for.
   pendingKinds: string[][] = [];
+  // The subject each pending read was scoped to, or null for the whole tenant.
+  pendingSubjects: (string | null)[] = [];
 
   snapshot(): Snapshot {
     const rows = new Map<string, MoneyAction>();
@@ -208,15 +210,17 @@ export class FakeLedger {
     readAction: async (_q, id) => this.age(this.row(id)),
     // Same filter and order as the real read: the given kinds only, never-checked rows first,
     // then the least recently checked, then the oldest send, then the id.
-    readPending: async (_q, olderThanSeconds, limit = 5, kinds = MONEY_ACTION_KINDS) => {
+    readPending: async (_q, olderThanSeconds, limit = 5, kinds = MONEY_ACTION_KINDS, subjectId = null) => {
       if (kinds.length === 0) throw new RangeError("kinds must name at least one kind");
       this.pendingKinds.push([...kinds]);
+      this.pendingSubjects.push(subjectId);
       const order = (a: string | null, b: string | null) =>
         a === b ? 0 : a === null ? -1 : b === null ? 1 : a < b ? -1 : 1;
       return [...this.rows.values()]
         .filter(
           (r) =>
             kinds.includes(r.kind) &&
+            (subjectId === null || r.subjectId === subjectId) &&
             r.checkCount < MAX_CHECKS &&
             (r.state === "unknown" ||
               (r.state === "sent" && this.sentAgeSeconds > olderThanSeconds)),
