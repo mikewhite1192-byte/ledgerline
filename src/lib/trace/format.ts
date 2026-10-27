@@ -92,9 +92,20 @@ function dollarsUp(nanocents: number): string {
   return formatCents(ceilDiv(nanocents, NANOCENTS_PER_CENT));
 }
 
-function tenthsOfCent(nanocents: number): string {
-  const tenths = ceilDiv(nanocents, TENTH);
+function tenthsText(tenths: number): string {
   return `${Math.floor(tenths / 10)}.${tenths % 10} cents`;
+}
+
+function tenthsOfCent(nanocents: number): string {
+  return tenthsText(ceilDiv(nanocents, TENTH));
+}
+
+// One call's cost as formatCallCost shows it, in tenths of a cent: rounded up to a tenth under a
+// dollar, to a whole cent from there.
+function shownTenths(nanocents: number): number {
+  return nanocents >= 100 * NANOCENTS_PER_CENT
+    ? ceilDiv(nanocents, NANOCENTS_PER_CENT) * 10
+    : ceilDiv(nanocents, TENTH);
 }
 
 // One call's cost: "0.7 cents", "no charge", or why there is no figure.
@@ -193,6 +204,7 @@ const PROPOSAL_RESULTS: Readonly<Record<string, string>> = {
   created: "Saved the proposal card for a person to approve",
   duplicate: "Found the same proposal already on file, so no second card was made",
   live_exists: "An open proposal for this is already waiting, so no new card was made",
+  already_decided: "That proposal was already decided, so no new card was made",
   store_failed: "Could not save the proposal card",
 };
 
@@ -302,15 +314,20 @@ function escalationLine(s: TraceStep, call: TraceCall | null): TraceLine {
   };
 }
 
+// An unknown result says a card was prepared only when its step is done; otherwise it reads as
+// not saved, so no line claims a card that was never made.
 function proposalStepLine(s: TraceStep): TraceLine {
+  const result = s.result !== null && has(PROPOSAL_RESULTS, s.result) ? s.result : null;
   const text =
-    s.result !== null && has(PROPOSAL_RESULTS, s.result)
-      ? PROPOSAL_RESULTS[s.result]
+    result !== null
+      ? PROPOSAL_RESULTS[result]
       : s.state === "running"
         ? "Preparing a proposal card"
-        : "Prepared a proposal card";
-  const badge: TraceLine["badge"] =
-    s.result === "store_failed" ? { tone: "destructive", label: "Failed" } : null;
+        : s.state === "done"
+          ? "Prepared a proposal card"
+          : PROPOSAL_RESULTS.store_failed;
+  const failed = result !== null ? result === "store_failed" : s.state !== "running" && s.state !== "done";
+  const badge: TraceLine["badge"] = failed ? { tone: "destructive", label: "Failed" } : null;
   return { key: `step:${s.seq}`, who: "LedgerLine", meta: [], text, badge, refs: [] };
 }
 
@@ -513,7 +530,9 @@ export function traceLines(trace: TurnTrace, proposalId?: string): TraceLine[] {
   return out;
 }
 
-// The footer: the distinct model calls behind these rows, their time and cost.
+// The footer: the distinct model calls behind these rows, their time and cost. The cost is the sum
+// of each call's shown figure, so the rows add up to it and it is never below the ledger; from a
+// dollar up it reads in whole cents, rounded up.
 export function traceTotals(trace: TurnTrace, proposalId?: string): string | null {
   const keys = new Set(traceLines(trace, proposalId).map((l) => l.key));
   const { calls: paired } = pairFailedSteps(trace);
@@ -528,17 +547,18 @@ export function traceTotals(trace: TurnTrace, proposalId?: string): string | nul
     if (p.auditorCall && keys.has(`proposal:${p.id}:auditor`)) calls.set(p.auditorCall.id, p.auditorCall);
   }
   if (calls.size === 0) return null;
-  let cost = 0;
+  let tenths = 0;
   let unsettled = 0;
   let unknown = 0;
   let ms = 0;
   for (const c of calls.values()) {
     if (c.costNanocents === null) unsettled++;
-    else if (isNanocents(c.costNanocents)) cost += c.costNanocents;
+    else if (isNanocents(c.costNanocents)) tenths += shownTenths(c.costNanocents);
     else unknown++;
     if (c.durationMs !== null && Number.isSafeInteger(c.durationMs) && c.durationMs > 0) ms += c.durationMs;
   }
-  const parts = [countWords(calls.size, "model call", "model calls"), `${formatSpend(cost)} in all`];
+  const spend = tenths === 0 ? "0 cents" : tenths >= 1_000 ? formatCents(ceilDiv(tenths, 10)) : tenthsText(tenths);
+  const parts = [countWords(calls.size, "model call", "model calls"), `${spend} in all`];
   const time = formatLatency(ms);
   if (time && ms > 0) parts.push(`${time} of model time`);
   let line = parts.join(", ");

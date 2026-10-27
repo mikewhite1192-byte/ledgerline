@@ -86,9 +86,12 @@ describe("AgentChat", () => {
     render(<AgentChat initialTurns={[turn]} streamMode="poll" />);
     expect(screen.getByText(turn.userText)).toBeTruthy();
     expect(screen.getByRole("article", { name: "Pay advance for BR-D07" })).toBeTruthy();
-    // One disclosure under the answer and one under the card, both closed until opened.
-    const toggles = screen.getAllByRole("button", { name: "How this was worked out" });
-    expect(toggles).toHaveLength(2);
+    // One disclosure under the answer and one under the card, named apart, both closed until opened.
+    const toggles = [
+      screen.getByRole("button", { name: "How this was worked out for this answer" }),
+      screen.getByRole("button", { name: "How this was worked out for this card" }),
+    ];
+    expect(screen.getAllByRole("button", { name: /^How this was worked out/ })).toHaveLength(2);
     for (const t of toggles) expect(t.getAttribute("aria-expanded")).toBe("false");
   });
 

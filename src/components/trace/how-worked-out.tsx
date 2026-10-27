@@ -5,6 +5,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "@/components/app/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { VisuallyHidden } from "@/components/ui/visually-hidden";
 import { traceLines, traceTotals, type TraceLine } from "@/lib/trace/format";
 import type { TurnTrace } from "@/lib/trace/types";
 import { cn } from "@/lib/cn";
@@ -158,7 +159,9 @@ export function HowWorkedOut({
         onClick={toggle}
       >
         <ChevronRight aria-hidden className={cn("transition-transform motion-reduce:transition-none", open && "rotate-90")} />
-        How this was worked out
+        How this was worked out{" "}
+        {/* A thread holds one under each answer and each card; the hidden words tell them apart. */}
+        <VisuallyHidden>{proposalId ? "for this card" : "for this answer"}</VisuallyHidden>
       </Button>
       <div id={panelId} hidden={!open} className="rounded-lg border border-border bg-card px-4 py-3">
         {open ? <Body state={state} proposalId={proposalId} hrefFor={hrefFor} onRetry={() => void read()} /> : null}

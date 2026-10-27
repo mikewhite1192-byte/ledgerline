@@ -10,7 +10,7 @@ import {
   traceTotals,
 } from "./format";
 import { SAMPLE_CALLS, SAMPLE_PROPOSAL_ID, sampleTrace } from "./sample";
-import type { TraceDecision, TurnTrace } from "./types";
+import type { TraceDecision, TraceStep, TurnTrace } from "./types";
 
 const RAW_CODES = [
   "propose_advance",
@@ -263,14 +263,67 @@ describe("traceLines", () => {
     const whole = traceLines(trace);
     expect(whole.at(-1)).toMatchObject({ who: "Other model", text: "Made a model call for this turn" });
   });
+
+  it("says a proposal card was prepared only for a known success or a done step", () => {
+    const base = sampleTrace();
+    const line = (over: Partial<TraceStep>) =>
+      traceLines({ ...base, steps: [{ ...base.steps[6], ...over }], extraCalls: [], proposals: [] })[0];
+    const failed = { text: "Could not save the proposal card", badge: { tone: "destructive", label: "Failed" } };
+
+    expect(line({ state: "failed", result: "already_decided", proposalId: null })).toMatchObject({
+      text: "That proposal was already decided, so no new card was made",
+      badge: null,
+    });
+    expect(line({ state: "failed", result: "store_failed", proposalId: null })).toMatchObject(failed);
+    expect(line({ state: "failed", result: null, proposalId: null })).toMatchObject(failed);
+    expect(line({ state: "failed", result: "something_new", proposalId: null })).toMatchObject(failed);
+    expect(line({ state: "cancelled", result: null, proposalId: null })).toMatchObject(failed);
+    expect(line({ state: "running", result: null, proposalId: null })).toMatchObject({
+      text: "Preparing a proposal card",
+      badge: null,
+    });
+    expect(line({ state: "done", result: "something_new" })).toMatchObject({ text: "Prepared a proposal card", badge: null });
+    expect(line({ state: "done", result: "duplicate" }).text).toBe(
+      "Found the same proposal already on file, so no second card was made",
+    );
+  });
 });
 
 describe("traceTotals", () => {
   it("sums the distinct calls behind the rows, rounding the cost up", () => {
-    expect(traceTotals(sampleTrace())).toBe("5 model calls, 2.5 cents in all, 7.4 s of model time");
+    expect(traceTotals(sampleTrace())).toBe("5 model calls, 2.6 cents in all, 7.4 s of model time");
     expect(traceTotals(sampleTrace(), SAMPLE_PROPOSAL_ID)).toBe(
-      "3 model calls, 7.2 cents in all, 8.1 s of model time",
+      "3 model calls, 7.3 cents in all, 8.1 s of model time",
     );
+  });
+
+  it("totals exactly the costs its rows show, never less", () => {
+    const tenths = (text: string) => {
+      const m = /^([0-9]+)\.([0-9]) cents$/.exec(text);
+      return m ? Number(m[1]) * 10 + Number(m[2]) : 0;
+    };
+    for (const id of [undefined, SAMPLE_PROPOSAL_ID]) {
+      const rows = traceLines(sampleTrace(), id).flatMap((l) => l.meta).reduce((sum, m) => sum + tenths(m), 0);
+      const footer = /, ([0-9]+\.[0-9] cents) in all/.exec(traceTotals(sampleTrace(), id) ?? "");
+      expect(footer).not.toBeNull();
+      expect(tenths(footer![1])).toBe(rows);
+    }
+    // The sample's rows read 0.7 + 0.1 + 0.7 + 0.8 + 0.3 cents; the raw spend, 2.42 cents, rounds to 2.5.
+    const rows = traceLines(sampleTrace()).flatMap((l) => l.meta).reduce((sum, m) => sum + tenths(m), 0);
+    expect(rows).toBe(26);
+
+    // From a dollar up a row shows whole cents, and the total counts that figure, not the raw one.
+    const base = sampleTrace();
+    const big: TurnTrace = {
+      ...base,
+      steps: [
+        { ...base.steps[0], call: { ...SAMPLE_CALLS.plan, costNanocents: 100_000_000_001 } },
+        { ...base.steps[2], call: { ...SAMPLE_CALLS.ask, costNanocents: 50_000_000 } },
+      ],
+      extraCalls: [],
+      proposals: [],
+    };
+    expect(traceTotals(big)).toBe("2 model calls, $1.02 in all, 3.9 s of model time");
   });
 
   it("says when a call is not settled or has no known cost, and is empty with no calls", () => {
