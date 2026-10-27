@@ -70,6 +70,9 @@ export type Flags = {
   // out of the cached prefix. Off sends today's request. "24h" is a retention hint with its own
   // price: read the pricing page before choosing it.
   agentPromptCache: { enabled: boolean; retention: "in_memory" | "24h" };
+  // The five report tools in the chat and the report download route. Off: the agent is not
+  // offered them, a call to one is refused as an unknown tool, and the route answers 404.
+  reportsEnabled: boolean;
 };
 
 export const flags: Flags = {
@@ -99,4 +102,5 @@ export const flags: Flags = {
   approverRole: { adminAboveCents: 200_000 },
   agentToolSearch: false,
   agentPromptCache: { enabled: false, retention: "in_memory" },
+  reportsEnabled: false,
 };

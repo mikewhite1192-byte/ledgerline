@@ -1,4 +1,6 @@
+import { flags } from "../../../config/flags";
 import type { AiTool } from "../../ai";
+import { reportOfTool } from "../../reports/types";
 import { enumValuesOf } from "./redact";
 import { classifyMessage } from "./tools/triage/classify-message";
 import { explainPaystub } from "./tools/read/explain-paystub";
@@ -12,6 +14,11 @@ import { getLoads } from "./tools/read/get-loads";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
 import { getPayItems } from "./tools/read/get-pay-items";
+import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstanding";
+import { reportArAging } from "./tools/read/report-ar-aging";
+import { reportCashNeeded } from "./tools/read/report-cash-needed";
+import { reportDriverPaySummary } from "./tools/read/report-driver-pay-summary";
+import { reportMarginPerLoad } from "./tools/read/report-margin-per-load";
 import { runChecks } from "./tools/read/run-checks";
 import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
@@ -40,6 +47,11 @@ const TOOLS: readonly AnyToolDef[] = [
   getLedger,
   explainPaystub,
   runChecks,
+  reportArAging,
+  reportDriverPaySummary,
+  reportAdvancesOutstanding,
+  reportCashNeeded,
+  reportMarginPerLoad,
   getInboundMessage,
   getProposal,
   proposeAdvance,
@@ -64,8 +76,14 @@ function build(): Readonly<Record<string, AnyToolDef>> {
 
 export const TOOL_REGISTRY: Readonly<Record<string, AnyToolDef>> = build();
 
+// The report tools exist only while their switch is on (flags.reportsEnabled, read on every call):
+// off, they are not offered and a call to one is refused as an unknown tool.
+function switchedOn(name: string): boolean {
+  return reportOfTool(name) === null || flags.reportsEnabled;
+}
+
 export function toolNamed(name: string): AnyToolDef | null {
-  return Object.hasOwn(TOOL_REGISTRY, name) ? TOOL_REGISTRY[name] : null;
+  return Object.hasOwn(TOOL_REGISTRY, name) && switchedOn(name) ? TOOL_REGISTRY[name] : null;
 }
 
 // What each role is offered: JSON schemas made once from the same zod schemas the gateway parses.
@@ -90,13 +108,14 @@ for (const name of ALWAYS_LOADED) {
   }
 }
 
-// What a role is offered, as a fresh list. With defer, each tool ALWAYS_LOADED does not name is
-// marked deferLoading (sent as a name and a description until the model searches for it); the
-// names, schemas and order are the same either way.
+// What a role is offered, as a fresh list, leaving out a tool its switch keeps off. With defer,
+// each tool ALWAYS_LOADED does not name is marked deferLoading (sent as a name and a description
+// until the model searches for it); the names, schemas and order are the same either way.
 export function toolsFor(role: AgentRole, options: { defer?: boolean } = {}): AiTool[] {
   if (!Object.hasOwn(OFFERED, role)) return [];
-  if (!options.defer) return [...OFFERED[role]];
-  return OFFERED[role].map((t) => (ALWAYS_LOADED.includes(t.name) ? t : { ...t, deferLoading: true }));
+  const offered = OFFERED[role].filter((t) => switchedOn(t.name));
+  if (!options.defer) return offered;
+  return offered.map((t) => (ALWAYS_LOADED.includes(t.name) ? t : { ...t, deferLoading: true }));
 }
 
 // Every enum value any tool schema declares: the only free strings the decision log keeps.

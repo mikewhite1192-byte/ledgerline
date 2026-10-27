@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, X } from "lucide-react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Mark } from "@/components/brand/mark";
 import { HowWorkedOut, type TraceLoader } from "@/components/trace/how-worked-out";
 import { cn } from "@/lib/cn";
@@ -18,8 +19,12 @@ export type Part =
   | { kind: "text"; text: string; warning?: string }
   | { kind: "steps"; steps: Step[] }
   | { kind: "proposal"; proposal: Omit<ProposalCardProps, "hrefFor"> }
+  // onVisible, when set, is called once the table first scrolls into view (a report reads its
+  // rows then, not at page load).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a thread mixes tables of any row shape
-  | { kind: "table"; table: DataTableProps<any> }
+  | { kind: "table"; table: DataTableProps<any>; onVisible?: () => void }
+  // A file the person can download (a report's CSV); href is a same-site path.
+  | { kind: "link"; href: string; label: string }
   | { kind: "error"; category: string }
   // "How this was worked out" for the turn, or for one proposal card when proposalId is set.
   | { kind: "trace"; turnId: string; proposalId?: string; load?: TraceLoader };
@@ -65,6 +70,37 @@ function Steps({ steps }: { steps: Step[] }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+// Calls onVisible the first time its children scroll into view, then stops watching. Where the
+// browser has no IntersectionObserver (an old browser, a test page) it calls at once, so the
+// table still loads. A caller that must act once guards on its own side: a remount watches again.
+function WhenVisible({ onVisible, children }: { onVisible: () => void; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const latest = useRef(onVisible);
+  useEffect(() => {
+    latest.current = onVisible;
+  });
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    if (typeof IntersectionObserver === "undefined") {
+      latest.current();
+      return;
+    }
+    const watch = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      watch.disconnect();
+      latest.current();
+    });
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, []);
+  return (
+    <div ref={box} className="min-w-0">
+      {children}
+    </div>
   );
 }
 
@@ -147,7 +183,21 @@ export function ChatThread({
                         // Keyed by the proposal, not its place, so an open confirm row stays with it.
                         return <ProposalCard key={`proposal:${p.proposal.id}`} {...p.proposal} hrefFor={hrefFor} />;
                       case "table":
-                        return <DataTable key={i} {...p.table} />;
+                        return p.onVisible ? (
+                          <WhenVisible key={i} onVisible={p.onVisible}>
+                            <DataTable {...p.table} />
+                          </WhenVisible>
+                        ) : (
+                          <DataTable key={i} {...p.table} />
+                        );
+                      case "link":
+                        return (
+                          <p key={i} className="text-small">
+                            <a href={p.href} download className="text-link underline-offset-4 hover:underline">
+                              {p.label}
+                            </a>
+                          </p>
+                        );
                       case "error":
                         return (
                           <div key={i} className="rounded-lg border border-border bg-card">

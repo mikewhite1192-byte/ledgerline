@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { flags } from "../../../../config/flags";
 import type { AiResult } from "../../../ai";
 import type { Queryable, TenantDb } from "../../../db";
 import { instantAt } from "../../../seed/calendar";
@@ -386,6 +387,11 @@ describe("callTool dispatch order", () => {
   });
 
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
+    // The report tools run only with their switch on; it is put back after this test.
+    flags.reportsEnabled = true;
+    onTestFinished(() => {
+      flags.reportsEnabled = false;
+    });
     for (const [name, args] of Object.entries(ARGS)) {
       const auditor = name === "get_proposal";
       const db = planDb(plan, auditor ? withProposal(proposalRowFor(plan, "advance_payout"), screenStore) : screenStore);
@@ -402,6 +408,12 @@ describe("callTool dispatch order", () => {
       }
       expect(out, name).toMatchObject({ decision: "allowed" });
       expect(JSON.stringify(out.result).length, name).toBeLessThanOrEqual(MAX_RESULT_CHARS);
+      // A report fits itself under the cap, so its row count is the report's own, never the cut's.
+      if (name.startsWith("report_")) {
+        const r = out.result as { rows: unknown[]; rowsShown: number; rowsTotal: number; truncated: boolean };
+        expect(r.rowsShown, name).toBe(r.rows.length);
+        expect(r.truncated, name).toBe(r.rows.length < r.rowsTotal);
+      }
       const logged = db.decisions.find((d) => d.tool === name)!;
       expect(logged.resultChars, name).toBe(JSON.stringify(out.result).length);
     }

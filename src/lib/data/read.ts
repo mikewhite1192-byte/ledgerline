@@ -266,3 +266,14 @@ export async function readReceivablesInput(
     asOf,
   );
 }
+
+// Only the named tables, whole, for the current tenant: what one report reads. A report is a view
+// over the whole tenant, so nothing is filtered here; the report's own code picks the rows.
+export async function readReportInput<K extends TenantTable>(
+  q: Queryable,
+  tables: readonly K[],
+): Promise<Pick<TenantRows, K>> {
+  const out: Partial<Record<TenantTable, unknown>> = {};
+  for (const table of tables) out[table] = await readTable(q, table);
+  return out as Pick<TenantRows, K>;
+}

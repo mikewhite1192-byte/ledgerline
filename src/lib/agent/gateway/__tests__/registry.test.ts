@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { flags } from "../../../../config/flags";
 import { ALWAYS_LOADED } from "../loading";
 import { REDACT_ENUMS, STRICT_TOOL_SCHEMAS, TOOL_NAME, TOOL_REGISTRY, toolNamed, toolsFor } from "../registry";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, TIERS, type AgentRole } from "../types";
@@ -18,8 +19,19 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
   classify_message: { tier: "read", roles: ["triage"] },
+  report_ar_aging: { tier: "read", roles: ["operator"] },
+  report_driver_pay_summary: { tier: "read", roles: ["operator"] },
+  report_advances_outstanding: { tier: "read", roles: ["operator"] },
+  report_cash_needed: { tier: "read", roles: ["operator"] },
+  report_margin_per_load: { tier: "read", roles: ["operator"] },
   get_proposal: { tier: "read", roles: ["auditor"] },
 };
+
+const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_"));
+
+afterEach(() => {
+  flags.reportsEnabled = false;
+});
 
 describe("tool registry", () => {
   it("holds exactly the designed tools, each with its tier and roles", () => {
@@ -63,7 +75,25 @@ describe("tool registry", () => {
     expect(toolsFor("nobody" as AgentRole)).toEqual([]);
   });
 
+  it("offers and finds the report tools only while their switch is on, read on every call", () => {
+    expect(flags.reportsEnabled).toBe(false);
+    for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
+    expect(toolsFor("operator").map((t) => t.name).filter((n) => n.startsWith("report_"))).toEqual([]);
+
+    flags.reportsEnabled = true;
+    expect(toolsFor("operator")).toHaveLength(18);
+    expect(toolsFor("auditor")).toHaveLength(9);
+    expect(toolsFor("triage")).toHaveLength(2);
+    for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
+    expect(toolsFor("operator").map((t) => t.name)).toEqual(expect.arrayContaining(REPORT_TOOLS));
+
+    flags.reportsEnabled = false;
+    for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
+    expect(toolsFor("operator")).toHaveLength(13);
+  });
+
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
+    flags.reportsEnabled = true;
     for (const role of AGENT_ROLES) {
       for (const tool of toolsFor(role)) {
         const params = tool.parameters as Record<string, unknown>;
@@ -104,6 +134,20 @@ describe("deferred loading for tool search", () => {
     // Without defer, no tool carries the key at all, so today's request is unchanged.
     for (const t of plain) expect(t).not.toHaveProperty("deferLoading");
     for (const t of toolsFor("operator", { defer: false })) expect(t).not.toHaveProperty("deferLoading");
+  });
+
+  it("defers a tool added later, the report tools included, unless the list names it", () => {
+    flags.reportsEnabled = true;
+    const plain = toolsFor("operator");
+    const deferred = toolsFor("operator", { defer: true });
+    expect(deferred.map((t) => t.name)).toEqual(plain.map((t) => t.name));
+    for (const name of REPORT_TOOLS) {
+      expect(ALWAYS_LOADED, name).not.toContain(name);
+      expect(deferred.find((t) => t.name === name)?.deferLoading, name).toBe(true);
+      // Off, each report tool is sent in full, with no deferLoading key.
+      expect(plain.find((t) => t.name === name), name).not.toHaveProperty("deferLoading");
+    }
+    expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...ALWAYS_LOADED].sort());
   });
 
   it("names only registered tools offered to the operator as always loaded, and nothing else", () => {

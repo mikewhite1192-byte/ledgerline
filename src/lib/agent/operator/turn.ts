@@ -1,7 +1,7 @@
 import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import { AiError, complete, type AiMessage, type AiReplayItem, type AiResult, type AiTool } from "../../ai";
-import { callTool, toolsFor, TOOL_REGISTRY } from "../gateway";
+import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY } from "../gateway";
 import { dbTurnStore, type OpenedTurn, type StepFinish, type TurnStore } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
 import {
@@ -10,11 +10,10 @@ import {
   ESCALATION_CALL,
   LOOP_TEXT,
   OPERATOR_CALL,
-  OPERATOR_PROMPT,
+  operatorPrompt,
   TURN_SUMMARY_CHARS,
   invalidArgsNote,
   operatorCacheKey,
-  withToolSearchRule,
 } from "../policy";
 import type { StepView } from "../view";
 import { TurnBudget, type CapReason, type TurnLimits } from "./budget";
@@ -90,7 +89,7 @@ export function turnRequest(
     toolSearch: search,
     cache: cache.enabled
       ? {
-          key: operatorCacheKey(withToolSearchRule(OPERATOR_PROMPT, search), tools),
+          key: operatorCacheKey(operatorPrompt(tools.map((t) => t.name), search), tools),
           retention: cache.retention,
         }
       : null,
@@ -102,11 +101,10 @@ const ESCALATION_LABEL = "Asking Muse Wonder to form the proposal";
 const PROPOSAL_LABEL = "Preparing a proposal card";
 const UNKNOWN_TOOL_LABEL = "Checking a tool";
 
-// The fixed label the registry holds for a tool; never the name the model typed.
+// The fixed label the registry holds for a tool that is switched on; never the name the model
+// typed, and never a switched-off tool's label for a call the gateway will refuse.
 function labelFor(name: string): string {
-  return Object.prototype.hasOwnProperty.call(TOOL_REGISTRY, name)
-    ? TOOL_REGISTRY[name].label
-    : UNKNOWN_TOOL_LABEL;
+  return toolNamed(name)?.label ?? UNKNOWN_TOOL_LABEL;
 }
 
 function toolNameFor(name: string): string {
@@ -137,7 +135,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // With the cache on, the state summary (this tenant's data) goes in input after the static
   // prompt, so the prompt and the tools stay one prefix every tenant shares.
   const messages: AiMessage[] = [
-    { role: "system", content: withToolSearchRule(OPERATOR_PROMPT, request.toolSearch) },
+    { role: "system", content: operatorPrompt(deps.tools.map((t) => t.name), request.toolSearch) },
     request.cache
       ? { role: "system", content: turn.summary, placement: "input" }
       : { role: "system", content: turn.summary },
@@ -231,6 +229,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       };
     }
     budget.addToolStep();
+    const report = outcome.decision === "allowed" ? reportRefOf(outcome.tool, outcome.result) : null;
     if (outcome.decision === "allowed") {
       toolsDone += 1;
       centsIn(outcome.result, allowedCents);
@@ -251,6 +250,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         ...(outcome.decision === "allowed" && outcome.flaggedInputId
           ? { flaggedInputId: outcome.flaggedInputId }
           : {}),
+        // A report's name and typed args (dates and ids), so the chat can show its table again.
+        ...(report ? { report } : {}),
       },
     });
     if (outcome.decision === "allowed" && outcome.draft) {

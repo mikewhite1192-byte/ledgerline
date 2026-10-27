@@ -4,6 +4,8 @@ import { createHash } from "node:crypto";
 // loop prompts or sequences lands in one place. Nothing here is read from the database or from a
 // model: these are constants.
 
+import { reportOfTool } from "../reports/types";
+
 export const OPERATOR_PROMPT = [
   "You are LedgerLine's back-office assistant for a trucking carrier. You answer questions about",
   "driver pay, advances, loads, invoices and customer payments, and you propose fixes for a person",
@@ -52,6 +54,30 @@ export function operatorCacheKey(instructions: string, tools: readonly CachedToo
     .update(instructions + JSON.stringify(tools))
     .digest("hex");
   return `${OPERATOR_CALL.cacheKeyPrefix}-${digest.slice(0, 16)}`;
+}
+
+// Added to the prompt only while the report tools are offered (flags.reportsEnabled).
+export const REPORT_PROMPT = [
+  "",
+  "Reports:",
+  "- When the person asks for a report, a list across many records, or totals (who owes us, aging,",
+  "  pay for a week, advances owed, cash for the pay run, margin per load), call the matching",
+  "  report_* tool. The chat shows its table and a CSV download under your answer.",
+  "- report_ar_aging: what customers owe by days past due. report_driver_pay_summary: each driver's",
+  "  pay for one week. report_advances_outstanding: advances still owed per driver.",
+  "  report_cash_needed: net pay still to pay for a week. report_margin_per_load: revenue, driver",
+  "  pay and margin per delivered load between two dates (at most 92 days).",
+  "- Dates are YYYY-MM-DD in the carrier's time zone. Do not repeat the table: give the headline",
+  "  (the total or the largest rows) in one or two lines and say the full table is below.",
+].join("\n");
+
+// The operator's system prompt for the tools this turn offers: the tool search rule while search
+// is on (it is one of the rules), then the report section while the report tools are offered.
+// With search off it is the prompt above, plus the report section when reports are on.
+export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
+  const prompt = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
+  const reports = toolNames.some((n) => reportOfTool(n) !== null);
+  return reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
 }
 
 export const STATE_HEADER = "Current state (from the database, for this turn only):";
