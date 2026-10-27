@@ -35,7 +35,8 @@ import { parseArgs } from "./validate";
 // a call whose trace id the log cannot hold is failed after step 2, before its args are read, and
 // recorded under INVALID_TRACE. Every later step, the limit lookups included, reads the checked id.
 
-export { toolsFor, TOOL_REGISTRY } from "./registry";
+export { toolNamed, toolsFor, TOOL_REGISTRY } from "./registry";
+export { reportRefOf, type ReportRef } from "./report-ref";
 export { screenUntrustedInput } from "./screen";
 export { withAgentTenant } from "./tenant";
 export type {

@@ -12,6 +12,7 @@ describe("flags", () => {
     expect(flags.paymentProvider).toBe("mock");
     expect(flags.triageProvider).toBe("meta");
     expect(flags.agentEnabled).toBe(false);
+    expect(flags.reportsEnabled).toBe(false);
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
   });
