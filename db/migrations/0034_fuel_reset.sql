@@ -2,11 +2,12 @@
 -- a carrier has run a fuel check: a finding names a fill-up, a driver, a load and a pay line the
 -- seed replace deletes, and the card it drafted.
 --
--- demo_reset_clear() re-created whole from its latest definition (0025), unchanged except for the
+-- demo_reset_clear() re-created whole from its latest definition (0033), unchanged except for the
 -- two fuel deletes (findings before the proposals they name, then their runs) and their two count
--- rows. Same owner, same security definer and search path, same refusals (LR001, LR002, LR003),
--- the same two demo carriers, the same revoke and grant. Any later migration that re-creates this
--- function carries these deletes too.
+-- rows. Every delete 0033 has stays, the sweep's second checks included. Same owner, same
+-- security definer and search path, same refusals (LR001, LR002, LR003), the same two demo
+-- carriers, the same revoke and grant. Any later migration that re-creates this function carries
+-- these deletes too.
 CREATE OR REPLACE FUNCTION demo_reset_clear()
   RETURNS TABLE (table_name text, deleted bigint)
   LANGUAGE plpgsql
@@ -35,6 +36,8 @@ DECLARE
   v_voice_notes   bigint;
   v_notes         bigint;
   v_steps         bigint;
+  v_fanout_checks bigint;
+  v_fanout        bigint;
   v_sweep_items   bigint;
   v_sweep_runs    bigint;
   v_fuel_findings bigint;
@@ -118,6 +121,14 @@ BEGIN
   DELETE FROM public.turn_steps s WHERE s.tenant_id = v_tenant;
   GET DIAGNOSTICS v_steps = ROW_COUNT;
 
+  -- The sweep's second checks name a run, a driver and a turn; each run's second check names
+  -- the run and its turns (0024). Both go before the runs and the turns.
+  DELETE FROM public.sweep_fanout_checks fc WHERE fc.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_fanout_checks = ROW_COUNT;
+
+  DELETE FROM public.sweep_fanout sf WHERE sf.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_fanout = ROW_COUNT;
+
   -- The pay sweep's findings name a proposal and a run; its runs name a conversation (0018).
   DELETE FROM public.sweep_items si WHERE si.tenant_id = v_tenant;
   GET DIAGNOSTICS v_sweep_items = ROW_COUNT;
@@ -164,6 +175,8 @@ BEGIN
     (CAST('voice_notes' AS text), v_voice_notes),
     (CAST('driver_notes' AS text), v_notes),
     (CAST('turn_steps' AS text), v_steps),
+    (CAST('sweep_fanout_checks' AS text), v_fanout_checks),
+    (CAST('sweep_fanout' AS text), v_fanout),
     (CAST('sweep_items' AS text), v_sweep_items),
     (CAST('sweep_runs' AS text), v_sweep_runs),
     (CAST('fuel_findings' AS text), v_fuel_findings),

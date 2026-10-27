@@ -185,6 +185,9 @@ const AGENT_CLEAR = [
   // them (a redacted clip is evidence), so only this reseed path removes them.
   "DELETE FROM evidence_clips WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM driver_notes WHERE tenant_id = CAST($1 AS uuid)",
+  // A run's second opinion names its turns and drivers, so it goes before both.
+  `DELETE FROM sweep_fanout_checks WHERE tenant_id = CAST($1 AS uuid)`,
+  `DELETE FROM sweep_fanout WHERE tenant_id = CAST($1 AS uuid)`,
   `DELETE FROM sweep_items WHERE tenant_id = CAST($1 AS uuid)`,
   `DELETE FROM sweep_runs WHERE tenant_id = CAST($1 AS uuid)`,
   // The fuel checks' findings name a fill-up, a load and a pay line the replace deletes, and the

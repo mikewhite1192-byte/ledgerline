@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import { runAudit as auditorRun, type AuditResult } from "../agent/auditor/run";
-import { callTool as gatewayCallTool } from "../agent/gateway";
+import { callTool as gatewayCallTool, toolsFor } from "../agent/gateway";
 import { dbTurnStore, openAgentTurn, type OpenedTurn, type OpenTurnRefusal, type TurnStore } from "../agent/gateway/store";
-import type { GatewayContext, GatewayOutcome, ToolCall } from "../agent/gateway/types";
+import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../agent/gateway/types";
 import { CLEAN_SQL } from "../agent/proposals/clean";
 import { codeToWords } from "../format/labels";
 import { EXPLAIN_TIMEOUT_MS, explainFix, type Explained, type ExplainInput } from "../agent/sweep/explain";
+import { complete as aiComplete, type AiTool } from "../ai";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { Session } from "../auth/claims";
 import { readCheckInput, readReceivablesInput, readRowsWhereId } from "../data/read";
@@ -25,6 +26,8 @@ import {
   type PlanLeg,
   type SettlementException,
 } from "./plan";
+import { fanoutLimits, fanoutOn, lockTenantDay } from "./fanout/limits";
+import { checkPhase, planPhase, reconcilePhase, type FanoutCtx } from "./fanout/run";
 import { serviceSession } from "./service-session";
 
 // The pay sweep (design 3.2): one run checks one open week, drafts a pay correction for each
@@ -33,6 +36,11 @@ import { serviceSession } from "./service-session";
 // workers never touch one run:
 //   find   one slice: run the engine's checks, plan each finding, write one item per leg (the
 //          dedupe key is finding_key per week, so a second run adds nothing it already has);
+//   plan, check, reconcile
+//          the second opinion (fanout/run.ts), only with its switch on and the run started with
+//          its larger cap: a model orders the week's drivers, a short check reads each driver's
+//          records, and the server compares the checks with the engine's findings; an issue only
+//          a check raised is listed for a person. It reads and labels; it never drafts;
 //   draft  one item per step: open the item's turn, ask the gateway for the proposal (it checks
 //          the limits), save it, check the saved numbers are the engine's, explain it. An item
 //          refused for a passing reason (TRANSIENT_REFUSALS) is tried again by a later run, at
@@ -64,7 +72,7 @@ export type SweepCounts = Record<
 export type SweepState = {
   runId: string;
   status: "running" | "done" | "failed";
-  phase: "find" | "draft" | "audit" | "done";
+  phase: "find" | "plan" | "check" | "reconcile" | "draft" | "audit" | "done";
   counts: Partial<SweepCounts>;
   truncatedReason: string | null;
   failureCategory: string | null;
@@ -89,6 +97,10 @@ export type SweepDeps = {
   store?: (session: Session) => Pick<TurnStore, "persistProposal" | "finishTurn">;
   explain?: (session: Session, input: ExplainInput) => Promise<Explained>;
   runAudit?: (session: Session, proposalId: string) => Promise<AuditResult>;
+  // The second opinion's model calls, turn steps and the tools its checks are offered.
+  complete?: CompleteFn;
+  steps?: (session: Session) => Pick<TurnStore, "startStep" | "finishStep" | "finishTurn">;
+  tools?: () => AiTool[];
 };
 
 // The find and draft lease. A draft step may start just over STOP_BEFORE_MS before the slice's
@@ -131,6 +143,7 @@ type Run = {
   period_id: string;
   status: SweepState["status"];
   phase: SweepState["phase"];
+  cap_cents: number | string;
   conversation_id: string | null;
   counts: string;
   truncated_reason: string | null;
@@ -167,7 +180,7 @@ function stateOf(r: Run): SweepState {
 }
 
 const RUN_COLUMNS =
-  "id, period_id, status, phase, conversation_id, CAST(counts AS text) AS counts, truncated_reason, failure_category";
+  "id, period_id, status, phase, cap_cents, conversation_id, CAST(counts AS text) AS counts, truncated_reason, failure_category";
 
 async function readRun(q: Queryable, runId: string): Promise<Run | null> {
   const rows = await q.query<Run>(`SELECT ${RUN_COLUMNS} FROM sweep_runs WHERE id = CAST($1 AS uuid)`, [runId]);
@@ -192,6 +205,9 @@ function defaults(db: TenantDb, clock: () => Date, deps: SweepDeps): Ctx["deps"]
     store: deps.store ?? ((s) => dbTurnStore(s, { db, clock })),
     explain: deps.explain ?? ((s, input) => explainFix(s, input, { ai: { db } })),
     runAudit: deps.runAudit ?? ((s, id) => auditorRun(s, id, { db, clock })),
+    complete: deps.complete ?? ((target, request, s) => aiComplete(target, request, s, { db })),
+    steps: deps.steps ?? ((s) => dbTurnStore(s, { db, clock })),
+    tools: deps.tools ?? (() => toolsFor("operator")),
   };
 }
 
@@ -206,7 +222,9 @@ export async function startSweep(
   if (!flags.sweepEnabled) return { ok: false, category: "disabled" };
   const periodId = input.periodId ?? null;
   if (!isUuid(input.runId) || (periodId !== null && !isUuid(periodId))) return { ok: false, category: "bad_request" };
-  const cap = flags.sweepLimits.maxRunCents;
+  // With the second opinion on, the run starts with room for it (design 3.7): the sweep's own
+  // spend stays its own number inside the larger cap.
+  const cap = fanoutOn() ? fanoutLimits().runCapCents : flags.sweepLimits.maxRunCents;
   if (!Number.isSafeInteger(cap) || cap <= 0) return { ok: false, category: "not_configured" };
   const db = deps.db ?? getDb();
   const now = (deps.clock ?? (() => new Date()))();
@@ -361,12 +379,40 @@ async function setPhase(ctx: Ctx, phase: SweepState["phase"]): Promise<void> {
   );
 }
 
+function fanoutCtx(ctx: Ctx): FanoutCtx {
+  return {
+    service: ctx.service,
+    runId: ctx.runId,
+    token: ctx.token,
+    clock: ctx.clock,
+    deadlineAt: ctx.deadlineAt,
+    leased: (fn) => leased(ctx, fn),
+    deps: {
+      complete: ctx.deps.complete,
+      callTool: ctx.deps.callTool,
+      openTurn: ctx.deps.openTurn,
+      steps: ctx.deps.steps,
+      tools: ctx.deps.tools,
+    },
+  };
+}
+
 async function slice(ctx: Ctx, run: Run): Promise<void> {
   let phase = run.phase;
   if (phase === "find") {
-    const found = await findPhase(ctx, run);
-    if (!found) return;
-    phase = "draft";
+    const next = await findPhase(ctx, run);
+    if (!next) return;
+    phase = next;
+    if (!timeLeft(ctx)) return;
+  }
+  // The second opinion's phases, one step at a time while the slice has time; "wait" ends the
+  // slice and the next one carries on.
+  while (phase === "plan" || phase === "check" || phase === "reconcile") {
+    const fx = fanoutCtx(ctx);
+    const next: Run["phase"] | "wait" =
+      phase === "plan" ? await planPhase(fx) : phase === "check" ? await checkPhase(fx) : await reconcilePhase(fx);
+    if (next === "wait") return;
+    phase = next;
     if (!timeLeft(ctx)) return;
   }
   if (phase === "draft") {
@@ -394,13 +440,15 @@ async function slice(ctx: Ctx, run: Run): Promise<void> {
 
 type Planned = { key: string; check: string; category: string; leg: PlanLeg; sources: Finding["sources"]; order: string };
 
-async function findPhase(ctx: Ctx, run: Run): Promise<boolean> {
+// The run's next phase once its findings are written (null when the run failed): the second
+// opinion when its switch is on and the run was started with room for it, else draft.
+async function findPhase(ctx: Ctx, run: Run): Promise<"plan" | "draft" | null> {
   const now = ctx.clock().toISOString();
   return leased(ctx, async (q) => {
     const [period] = await readRowsWhereId(q, "settlement_periods", "id", run.period_id);
     if (!period || period.status !== "open") {
       await failRun(q, ctx, "no_open_period", now);
-      return false;
+      return null;
     }
     const window = { start: period.period_start, end: period.period_end };
     const input = await readCheckInput(q);
@@ -448,11 +496,12 @@ async function findPhase(ctx: Ctx, run: Run): Promise<boolean> {
       );
     }
     for (const leg of kept.flat()) await writeItem(q, ctx, run, leg, now);
+    const next = fanoutOn() && Number(run.cap_cents) >= fanoutLimits().runCapCents ? "plan" : "draft";
     await q.execute(
-      `UPDATE sweep_runs SET phase = 'draft', truncated_reason = $2 WHERE id = CAST($1 AS uuid)`,
-      [ctx.runId, waiting > 0 ? "max_items" : null],
+      `UPDATE sweep_runs SET phase = $3, truncated_reason = $2 WHERE id = CAST($1 AS uuid)`,
+      [ctx.runId, waiting > 0 ? "max_items" : null, next],
     );
-    return true;
+    return next;
   });
 }
 
@@ -610,8 +659,9 @@ async function draftNext(ctx: Ctx): Promise<Step> {
          JOIN sweep_runs r ON r.id = i.seen_run_id
          JOIN settlement_periods sp ON sp.id = i.period_id
          LEFT JOIN drivers d ON d.id = i.driver_id
+         LEFT JOIN sweep_fanout_checks fc ON fc.run_id = i.seen_run_id AND fc.driver_id = i.driver_id
         WHERE i.seen_run_id = CAST($1 AS uuid) AND i.kind = 'fix' AND i.status IN ('found', 'over_cap')
-        ORDER BY d.code NULLS LAST, i.check_name, i.leg, i.finding_key
+        ORDER BY fc.priority NULLS LAST, d.code NULLS LAST, i.check_name, i.leg, i.finding_key
         LIMIT 1`,
       [ctx.runId],
     ),
@@ -884,16 +934,25 @@ async function writeStatus(ctx: Ctx, itemId: string, w: StatusWrite): Promise<vo
 
 // ---- Budget ----
 
-// Counts cents against the run's cap before a call; false when they do not fit.
+// Counts cents against the run's cap before a call; false when they do not fit. The second
+// opinion's holds (reserved_cents) count against the same cap. The sweep's own calls also stay
+// within the sweep's own budget (sweepLimits.maxRunCents), which the second opinion's larger cap
+// does not raise: own_spent_cents is the part of spent_cents these calls counted. These cents add
+// to the carrier's day total too (its cap never refuses them), so they are counted under the
+// carrier's lock, like the second opinion's holds: a check batch sized from the day's room is
+// never undercut by another run's call between the read and the hold.
 async function reserveCents(ctx: Ctx, cents: number): Promise<boolean> {
   if (!Number.isSafeInteger(cents) || cents <= 0) return false;
-  const rows = await leased(ctx, (q) =>
-    q.query<{ id: string }>(
-      `UPDATE sweep_runs SET spent_cents = spent_cents + $2
-        WHERE id = CAST($1 AS uuid) AND spent_cents + $2 <= cap_cents RETURNING id`,
-      [ctx.runId, cents],
-    ),
-  );
+  const rows = await leased(ctx, async (q) => {
+    await lockTenantDay(q);
+    return q.query<{ id: string }>(
+      `UPDATE sweep_runs SET spent_cents = spent_cents + $2, own_spent_cents = own_spent_cents + $2
+        WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()
+          AND spent_cents + reserved_cents + $2 <= cap_cents AND own_spent_cents + $2 <= $3
+        RETURNING id`,
+      [ctx.runId, cents, flags.sweepLimits.maxRunCents],
+    );
+  });
   return rows.length === 1;
 }
 
@@ -901,7 +960,9 @@ async function reserveCents(ctx: Ctx, cents: number): Promise<boolean> {
 async function settleCents(ctx: Ctx, reserved: number, actual: number): Promise<void> {
   await leased(ctx, (q) =>
     q.execute(
-      "UPDATE sweep_runs SET spent_cents = GREATEST(0, spent_cents - $2 + $3) WHERE id = CAST($1 AS uuid)",
+      `UPDATE sweep_runs SET spent_cents = GREATEST(0, spent_cents - $2 + $3),
+              own_spent_cents = GREATEST(0, own_spent_cents - $2 + $3)
+        WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()`,
       [ctx.runId, reserved, actual],
     ),
   );
@@ -917,9 +978,10 @@ async function auditNext(ctx: Ctx): Promise<"done" | "none" | "cap" | "disabled"
          FROM sweep_items i
          JOIN proposals p ON p.id = i.proposal_id
          LEFT JOIN drivers d ON d.id = i.driver_id
+         LEFT JOIN sweep_fanout_checks fc ON fc.run_id = i.seen_run_id AND fc.driver_id = i.driver_id
         WHERE i.seen_run_id = CAST($1 AS uuid) AND i.status IN ('drafted', 'audit_pending')
           AND i.audit_attempts < $2 AND p.status = 'proposed' AND p.auditor_verdict IS NULL
-        ORDER BY d.code NULLS LAST, i.check_name, i.leg, i.finding_key
+        ORDER BY fc.priority NULLS LAST, d.code NULLS LAST, i.check_name, i.leg, i.finding_key
         LIMIT 1`,
       [ctx.runId, max],
     ),
@@ -1017,6 +1079,7 @@ async function finishRun(ctx: Ctx, truncated: string | null): Promise<void> {
     await q.execute(
       `UPDATE sweep_runs
           SET status = 'done', phase = 'done', counts = CAST($2 AS jsonb),
+              spent_cents = spent_cents + reserved_cents, reserved_cents = 0,
               truncated_reason = COALESCE($3, truncated_reason), finished_at = CAST($4 AS timestamptz),
               lease_until = NULL, lease_token = NULL
         WHERE id = CAST($1 AS uuid)`,

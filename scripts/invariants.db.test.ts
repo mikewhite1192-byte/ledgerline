@@ -231,6 +231,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "evidence_clips",
     "sweep_runs",
     "sweep_items",
+    "sweep_fanout",
+    "sweep_fanout_checks",
     "approval_batches",
     // Seeded, but filled here as a person writes them too (0027), so the probe also reads rows the
     // app role wrote.
@@ -415,6 +417,17 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
              'invariants-test', 'invariants_test', 'invariants_test', 'needs_person', CAST($4 AS uuid),
              'needs_person')`,
           [randomUUID(), sweep, c.settlement.period, c.settlement.driver],
+        );
+        // The run's second check, and one driver's check still waiting (0024).
+        await q.execute(
+          `INSERT INTO sweep_fanout (run_id, tenant_id, status, counts, finished_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'done', CAST('{}' AS jsonb), now())`,
+          [sweep],
+        );
+        await q.execute(
+          `INSERT INTO sweep_fanout_checks (tenant_id, run_id, driver_id, priority)
+           VALUES (current_tenant_id(), CAST($1 AS uuid), CAST($2 AS uuid), 3)`,
+          [sweep, c.settlement.driver],
         );
         await q.execute(
           `INSERT INTO approval_batches (id, tenant_id, scope, item_ids, total_cents, status, requested_by,
