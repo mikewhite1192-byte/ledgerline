@@ -998,4 +998,81 @@ describe("settlements against a seeded database", () => {
     // The other carrier is untouched.
     expect(await ledgerCount(PW)).toBe(pwLedger);
   }, 60_000);
+
+  it("holds a run's card cleanup until another run's paystub in progress commits, so its new card is kept", async () => {
+    expect((await run(PW)).ok).toBe(true);
+    const s = await settlementOf(PW, "PW-D17");
+    expect(s.status).toBe("draft");
+    const old = await openCard(PW, "PW-D17");
+    // A pay change, so the next run's draft of this paystub makes a new card and retires this one.
+    await adminWrite(PW, "UPDATE drivers SET own_insurance = NOT own_insurance WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [
+      PW.id,
+      s.driver_id,
+    ]);
+
+    // A row lock on the paystub stops the next run inside that driver's draft, holding the run lock.
+    let release = () => {};
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let holderPid = 0;
+    const held = new Promise<void>((resolve, reject) => {
+      const holder = app2.withTenant(PW.id, async (q) => {
+        await q.query("SELECT id FROM settlements WHERE id = CAST($1 AS uuid) FOR UPDATE", [s.id]);
+        holderPid = (await q.query<{ pid: number }>("SELECT pg_backend_pid() AS pid"))[0].pid;
+        resolve();
+        await released;
+      });
+      holder.catch(reject);
+    });
+    const pending: Promise<unknown>[] = [];
+    const until = async (sql: string, params: Param[], what: string) => {
+      for (let i = 0; i < 600; i += 1) {
+        const [row] = await admin.withoutTenant((q) => q.query<{ n: string }>(sql, params));
+        if (Number(row.n) > 0) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      throw new Error(`timed out waiting for ${what}`);
+    };
+    try {
+      await held;
+      const drafting = runPayPeriod(app, PW.session, openPeriodOf(PW).id, clock());
+      pending.push(drafting);
+      await until(
+        "SELECT count(*) AS n FROM pg_stat_activity WHERE CAST($1 AS int) = ANY(pg_blocking_pids(pid))",
+        [holderPid],
+        "the run to reach the locked paystub",
+      );
+      // A second run with no drafts to make goes straight to retiring cards.
+      flags.settlementLimits.driversPerRun = 0;
+      let cleanupDone = false;
+      const cleanup = runPayPeriod(app, PW.session, openPeriodOf(PW).id, clock()).then((r) => {
+        cleanupDone = true;
+        return r;
+      });
+      pending.push(cleanup);
+      await until(
+        `SELECT count(*) AS n FROM pg_locks w
+          WHERE w.locktype = 'advisory' AND NOT w.granted
+            AND EXISTS (SELECT 1 FROM pg_stat_activity d
+                         WHERE CAST($1 AS int) = ANY(pg_blocking_pids(d.pid))
+                           AND d.pid = ANY(pg_blocking_pids(w.pid)))`,
+        [holderPid],
+        "the cleanup to wait on the run lock the drafting run holds",
+      );
+      expect(cleanupDone).toBe(false);
+
+      release();
+      expect(await drafting).toMatchObject({ ok: true });
+      expect(await cleanup).toMatchObject({ ok: true, counts: { drafts: 0, truncated: true } });
+      expect(await cardById(PW, old.id)).toMatchObject({ status: "expired", decision_note: "superseded" });
+      const fresh = await openCard(PW, "PW-D17");
+      expect(fresh.id).not.toBe(old.id);
+      expect(fresh.subject_id).toBe(s.id);
+    } finally {
+      release();
+      flags.settlementLimits.driversPerRun = saved.settlementLimits.driversPerRun;
+      await Promise.allSettled([held, ...pending]);
+    }
+  }, 60_000);
 });

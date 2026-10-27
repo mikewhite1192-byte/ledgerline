@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { flags } from "@/config/flags";
-import { proposalCardFrom } from "@/components/agent/proposal-card-from";
 import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
@@ -11,6 +10,7 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { RecordLink } from "@/components/invoices/cells";
 import { InvoiceCards, type InvoiceCard } from "@/components/invoices/invoice-cards";
 import { SettlementAction } from "@/components/settlements/action-button";
+import { paystubCardFrom } from "@/components/settlements/paystub-card";
 import { Badge } from "@/components/ui/badge";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { readEngineProposalViews } from "@/lib/agent/gateway/store";
@@ -33,17 +33,12 @@ async function readPage(q: Queryable, id: string): Promise<PageData | null> {
   if (view.settlement.parkedReason !== null) return { view, cards: [] };
   const audit = { on: flags.auditorEnabled, checking: false };
   const proposals = await readEngineProposalViews(q, "settlement_approve", 5, id);
-  const zero = view.settlement.netCents === 0;
-  const cards = proposals.map((p) => {
-    const card = proposalCardFrom(p, audit);
-    return {
-      // A $0 week sends nothing: the confirm says so in words.
-      card: zero ? { ...card, confirmQuestion: "Approve and carry forward (no payout)?" } : card,
-      verdict: p.auditorVerdict,
-      checkedAt: p.auditorCheckedAt,
-      flagged: p.flagged,
-    };
-  });
+  const cards = proposals.map((p) => ({
+    card: paystubCardFrom(p, audit, view.settlement.netCents),
+    verdict: p.auditorVerdict,
+    checkedAt: p.auditorCheckedAt,
+    flagged: p.flagged,
+  }));
   return { view, cards };
 }
 

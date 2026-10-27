@@ -39,8 +39,19 @@ export function exceptionLabel(category: string): string {
   return Object.hasOwn(EXCEPTION_LABELS, category) ? EXCEPTION_LABELS[category] : "Needs a look";
 }
 
+// A lost or unreadable reply, or a server error: the work may have happened (a payout among it), so
+// this never says nothing changed.
+const NOT_CONFIRMED = "Not confirmed yet: this may have gone through. Refresh the page to see where it stands before you try again.";
+
+// A category with no sentence of its own: it claims nothing about what happened, either way.
+export const SETTLEMENT_OUTCOME_FALLBACK = "Check where this stands before you try again.";
+
 // How a settlement_approve card ended (proposals.decision_note) and why a button was refused.
 export const SETTLEMENT_OUTCOMES: Readonly<Record<string, string>> = {
+  unknown: NOT_CONFIRMED,
+  unavailable: NOT_CONFIRMED,
+  // Retry payout refused before this try sent anything.
+  failed: "The payout did not go out on this try. Check the money legs below before you try again.",
   not_paid: "Approved. Payouts are off in this environment, so nothing was sent.",
   no_payout: "Approved with no payout: net pay is $0 and the rest carries to next week.",
   parked: "Parked: the paystub no longer matches its records. Run the week to recompute.",
@@ -69,7 +80,7 @@ export const SETTLEMENT_OUTCOMES: Readonly<Record<string, string>> = {
 export function settlementOutcome(category: string | null | undefined): string {
   return typeof category === "string" && Object.hasOwn(SETTLEMENT_OUTCOMES, category)
     ? SETTLEMENT_OUTCOMES[category]
-    : "That did not go through. Nothing changed.";
+    : SETTLEMENT_OUTCOME_FALLBACK;
 }
 
 export const LEG_LABELS = {

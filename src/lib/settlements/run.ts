@@ -228,6 +228,10 @@ export async function runPayPeriod(
   // card for a changed draft already retired its old one).
   await db.withTenant(tenantId, async (q) => {
     await assertMembership(q, session);
+    // The run lock first, as draftDriver takes it: no other run's draft and card can commit between
+    // the read of the waiting cards and their locked read below, so a card made in between is never
+    // retired. Both holders take this lock before any row lock, so waiting on it cannot deadlock.
+    await tenantLock(q, "settlement_run");
     const waiting = await q.query<{ subject_id: string }>(
       `SELECT p.subject_id FROM proposals p
         WHERE p.tenant_id = current_tenant_id() AND p.origin = 'engine' AND p.kind = 'settlement_approve'

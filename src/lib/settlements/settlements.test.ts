@@ -8,9 +8,19 @@ import { checkBatch, legsToReserve, parseBatchRequest } from "./batch";
 import { settlementIsClean } from "./clean";
 import { batchStatusOf, countLegs } from "./drain";
 import { linesHash } from "./hash";
-import { exceptionLabel, LEG_NOT_SENT, legFailureLabel, parkLabel, PARK_LABELS, settlementOutcome } from "./labels";
+import {
+  exceptionLabel,
+  LEG_NOT_SENT,
+  legFailureLabel,
+  parkLabel,
+  PARK_LABELS,
+  SETTLEMENT_OUTCOME_FALLBACK,
+  SETTLEMENT_OUTCOMES,
+  settlementOutcome,
+} from "./labels";
 import { latestOf, planLeg } from "./legs";
 import { paidWritesOf } from "./paid";
+import type { RetryResult } from "./post";
 import {
   checkLineSources,
   parkReasonOf,
@@ -403,7 +413,39 @@ describe("the pay run's words", () => {
     expect(exceptionLabel("net_below_zero")).toBe("Deductions were more than pay; net is $0");
     expect(exceptionLabel("toString")).toBe("Needs a look");
     expect(settlementOutcome("no_payout")).toContain("net pay is $0");
-    expect(settlementOutcome("hasOwnProperty")).toBe("That did not go through. Nothing changed.");
+    expect(settlementOutcome("hasOwnProperty")).toBe(SETTLEMENT_OUTCOME_FALLBACK);
+  });
+
+  it("never says nothing changed when the outcome is not known, and words every Retry payout refusal", () => {
+    // A lost or unreadable reply (unknown), a server error (unavailable), or a category with no
+    // sentence: the work may have happened, so none of them claims it did not.
+    for (const category of ["unknown", "unavailable", "hasOwnProperty", "not_a_category", null, undefined]) {
+      expect(settlementOutcome(category), String(category)).not.toMatch(/Nothing changed|Nothing was (sent|saved)/);
+    }
+    for (const category of ["unknown", "unavailable"]) {
+      expect(settlementOutcome(category), category).toMatch(/^Not confirmed yet: this may have gone through\. Refresh the page/);
+    }
+    // Every category retryPayout answers has its own sentence, "failed" included.
+    const refusals: Record<Extract<RetryResult, { ok: false }>["category"], true> = {
+      disabled: true,
+      not_found: true,
+      not_approved: true,
+      already_paid: true,
+      in_flight: true,
+      attempts_used: true,
+      role: true,
+      not_connected: true,
+      not_configured: true,
+      not_booked: true,
+      records_changed: true,
+      failed: true,
+    };
+    for (const category of Object.keys(refusals)) {
+      expect(Object.hasOwn(SETTLEMENT_OUTCOMES, category), category).toBe(true);
+    }
+    expect(settlementOutcome("failed")).toBe(
+      "The payout did not go out on this try. Check the money legs below before you try again.",
+    );
   });
 
   it("says a bill leg the drain refused after the leg before it failed was not sent for that reason", () => {
