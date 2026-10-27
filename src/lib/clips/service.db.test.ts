@@ -580,6 +580,31 @@ describe("dock clip pipeline", () => {
     expect(await row(up.clip.id)).toMatchObject({ status: "read", read_attempts: 1 });
   });
 
+  it("counts no try and makes no model call when the reading alone is over the job's hourly allowance", async () => {
+    const ai = fakeAi();
+    const up = await upload(ai);
+    if (!up.ok) throw new Error(`upload ${up.category}`);
+    await storeRedacted(A.session, up.clip.id, blurred(14), deps(ai));
+    // The reading reserves about 1.1 cents: over a one-cent allowance, under the overall cap.
+    const saved = flags.aiJobHourlyCapCents;
+    try {
+      flags.aiJobHourlyCapCents = 1;
+      const spendBefore = await app.withTenant(A.tenantId, (q) => readSpend(q));
+      for (let i = 0; i < 3; i += 1) {
+        expect(await readClip(A.session, up.clip.id, deps(ai))).toEqual({ ok: false, category: "budget", retryable: true });
+      }
+      expect(await row(up.clip.id)).toMatchObject({ status: "budget", read_attempts: 0, read_lease_free: true });
+      expect(ai.sent).toHaveLength(2);
+      expect(await app.withTenant(A.tenantId, (q) => readSpend(q))).toEqual(spendBefore);
+      expect(logged.join("\n")).toContain("clip reading waits on the cap: too_expensive");
+    } finally {
+      flags.aiJobHourlyCapCents = saved;
+    }
+    expect(await readClip(A.session, up.clip.id, deps(ai))).toMatchObject({ ok: true, clip: { status: "read" } });
+    expect(ai.sent).toHaveLength(3);
+    expect(await row(up.clip.id)).toMatchObject({ status: "read", read_attempts: 1 });
+  });
+
   it("still counts a cap refusal that lands after the lease, and stops at three", async () => {
     const ai = fakeAi();
     const up = await upload(ai);

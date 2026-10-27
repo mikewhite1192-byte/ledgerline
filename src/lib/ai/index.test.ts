@@ -2479,6 +2479,49 @@ describe("spendRoom, the read-only check before a call", () => {
     ).toBe("too_expensive");
   });
 
+  it("says too_expensive when the reserve is over the job's hourly allowance, as the call does", async () => {
+    // 8,192 output tokens reserve 3.48 cents on Spark: over a 3-cent allowance, under 4.
+    const saved = flags.aiJobHourlyCapCents;
+    const request: AiRequest = { ...REQUEST, maxOutputTokens: 8192 };
+    try {
+      flags.aiJobHourlyCapCents = 3;
+      const check = counterOnly();
+      expect(await spendRoom("spark", request, check.q)).toBe("too_expensive");
+      expect(check.sql).toEqual([]);
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      expect(
+        (await refusal(complete("spark", request, SESSION, { fetch: fetchFn, db: ledger.db }))).category,
+      ).toBe("too_expensive");
+      expect(fetchFn).not.toHaveBeenCalled();
+
+      flags.aiJobHourlyCapCents = 4;
+      expect(await spendRoom("spark", request, counterOnly().q)).toBe("room");
+    } finally {
+      flags.aiJobHourlyCapCents = saved;
+    }
+  });
+
+  it("leaves the answer to the call when the job's hourly allowance is not set, as the call refuses it", async () => {
+    const saved = flags.aiJobHourlyCapCents;
+    try {
+      for (const bad of [0, -1, 1.5, Number.NaN]) {
+        flags.aiJobHourlyCapCents = bad;
+        const check = counterOnly();
+        expect(await spendRoom("spark", REQUEST, check.q), String(bad)).toBeNull();
+        expect(check.sql, String(bad)).toEqual([]);
+        const ledger = fakeLedger();
+        expect(
+          (await refusal(complete("spark", REQUEST, SESSION, { fetch: fakeFetch(ledger.steps), db: ledger.db })))
+            .category,
+          String(bad),
+        ).toBe("not_configured");
+      }
+    } finally {
+      flags.aiJobHourlyCapCents = saved;
+    }
+  });
+
   it("leaves the answer to the call when it would be refused for another reason first", async () => {
     const cases: [string, () => void][] = [
       ["switch off", () => (flags.aiEnabled = false)],

@@ -801,12 +801,14 @@ export async function complete(
 export type SpendRoom = "room" | "cap" | "too_expensive";
 
 // What complete(target, request) would meet at its spend checks right now, read with one SELECT
-// of the counter and no lock and no write: the caps, model, price and reserve runCall uses, then
-// prepare's maxCostCents test ("too_expensive") and the reserve's own cap test ("cap"). Null when
-// the call would be refused for another reason first (the switch, the configuration, a malformed
-// request): the call then answers for itself. A counter that cannot be read throws, as at the
-// reserve. Nothing is held, so a call that starts after this read can still take the room; the
-// reserve, under its lock, stays the real stop. Muse Spark Open's standby host is not checked.
+// of the counter and no lock and no write: the caps, job allowance, model, price and reserve
+// runCall uses, then prepare's maxCostCents and job allowance test ("too_expensive") and the
+// reserve's own cap test ("cap"). Null when the call would be refused for another reason first
+// (the switch, the configuration, a job allowance that is not a positive whole number of cents,
+// a malformed request): the call then answers for itself. A counter that cannot be read throws,
+// as at the reserve. Nothing is held, so a call that starts after this read can still take the
+// room; the reserve, under its lock, stays the real stop. Muse Spark Open's standby host is not
+// checked.
 export async function spendRoom(
   target: AiTextTarget,
   request: AiRequest,
@@ -814,9 +816,11 @@ export async function spendRoom(
 ): Promise<SpendRoom | null> {
   if (!flags.aiEnabled || !TEXT_TARGETS.includes(target)) return null;
   const { cap, wonderCap } = capsFor(target);
+  const jobCap = jobCapNanocents(flags.aiJobHourlyCapCents);
   const configured = modelFor(target, "tokens");
   if (
     cap === null ||
+    jobCap === null ||
     (target === "wonder" && wonderCap === null) ||
     contributorRefusesAll(process.env) ||
     !configured
@@ -836,7 +840,7 @@ export async function spendRoom(
     if (err instanceof AiError) return null;
     throw err;
   }
-  if (overCallCost(reserveNanocents, c)) return "too_expensive";
+  if (overCallCost(reserveNanocents, c) || reserveNanocents > jobCap) return "too_expensive";
   const refused = overCap(await readSpend(q), {
     target,
     reserveNanocents,
