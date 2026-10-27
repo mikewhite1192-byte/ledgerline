@@ -19,6 +19,7 @@ import {
   type ScheduleRecord,
   type SettlementInput,
   type SettlementPeriodRecord,
+  type SettlementRecord,
 } from "../rules-engine";
 import type { LocalDate, Period } from "../time/local-date";
 import { checkVersionOf, configFor } from "./config-version";
@@ -38,6 +39,7 @@ import type {
   PayItemRow,
   PaymentApplicationRow,
   SettlementPeriodRow,
+  SettlementRow,
   TenantRows,
 } from "./rows";
 
@@ -204,6 +206,22 @@ export function advanceOf(r: AdvanceRow): AdvanceRecord {
 
 export function periodOf(r: SettlementPeriodRow): SettlementPeriodRecord {
   return { id: r.id, periodStart: r.period_start, periodEnd: r.period_end, status: r.status };
+}
+
+// A stored settlement: the engine's totals for one driver and week, as the pay run saved them.
+export function settlementOf(r: SettlementRow): SettlementRecord {
+  return {
+    id: r.id,
+    periodId: r.period_id,
+    driverId: r.driver_id,
+    status: r.status,
+    grossCents: c(r.gross_cents),
+    deductionsCents: c(r.deductions_cents),
+    netCents: c(r.net_cents),
+    carryForwardCents: c(r.carry_forward_cents),
+    exceptionCount: r.exception_count,
+    paidAt: r.paid_at,
+  };
 }
 
 export function invoiceOf(r: InvoiceRow): InvoiceRecord {

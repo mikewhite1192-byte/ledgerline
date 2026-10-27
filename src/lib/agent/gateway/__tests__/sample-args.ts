@@ -45,6 +45,15 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       sourceRefs: [{ table: "invoices", id: invoice.id }],
     },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
+    report_ar_aging: { asOf: "2026-11-02" },
+    report_driver_pay_summary: { periodStart: paid.period_start, driverId: hero.id },
+    report_advances_outstanding: {},
+    report_cash_needed: { periodStart: open.period_start },
+    report_margin_per_load: {
+      periodStart: paid.period_start,
+      periodEnd: open.period_end,
+      customerId: invoice.customer_id,
+    },
     // Proposals are not in a seed plan; any well-formed id parses.
     get_proposal: { proposalId: "6a1f0c2e-9d3b-4c5a-8e7f-1b2c3d4e5f60" },
   };
