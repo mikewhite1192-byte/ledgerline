@@ -127,6 +127,8 @@ export function noSuggestionLine(reason: NoSuggestionReason, excessCents: number
       return "No pay change suggested: the driver was not paid back the full amount twice";
     case "over_limit":
       return "Above the correction limit, handle by hand";
+    case "payback_on_other_row":
+      return "No pay change suggested: another row already covers taking back this payback";
   }
 }
 

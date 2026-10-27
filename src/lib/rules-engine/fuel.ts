@@ -38,7 +38,9 @@ import {
 //   pay                             -> none (taking it again would charge the driver twice)
 //   the same fill-up twice          -> the second payback back, naming its pay line, when it
 //                                      paid back the whole fill-up; otherwise none (a part
-//                                      payback is never charged back as the whole amount)
+//                                      payback is never charged back as the whole amount).
+//                                      One payback is taken back once: only the newer fill-up's
+//                                      first matching pair carries it, later pairs none
 // runFuelChecks then caps it at the correction limit and drops fill-ups before the start date.
 
 export const FUEL_CHECK_NAMES = [
@@ -65,6 +67,7 @@ export const NO_SUGGESTION_REASONS = [
   "card_double_charge",
   "not_paid_back",
   "over_limit",
+  "payback_on_other_row",
 ] as const;
 export type NoSuggestionReason = (typeof NO_SUGGESTION_REASONS)[number];
 
@@ -317,7 +320,9 @@ export function findFuelWhileParked(input: CheckInput): FuelFinding[] {
 }
 
 // Two fill-ups by one driver with the same gallons, amount and state, the second within the
-// window of the first: the newer one is at fault. Each (older, newer) pair is one finding.
+// window of the first: the newer one is at fault. Each (older, newer) pair is one finding. With
+// three or more alike, a newer fill-up pairs with each older one, but its payback is taken back
+// by its first pair only (the earliest older fill-up); the later pairs are listed with none.
 export function findFuelDuplicate(input: CheckInput, windowMinutes: number): FuelFinding[] {
   const window = assertCount(windowMinutes, "duplicate window minutes");
   const windowMs = mul(window, MS_PER_MINUTE, "window");
@@ -326,6 +331,8 @@ export function findFuelDuplicate(input: CheckInput, windowMinutes: number): Fue
     .map((p) => ({ p, at: instantMs(p.purchasedAt, `fuel purchase ${p.id} purchasedAt`) }))
     .sort((a, b) => compareText(a.p.driverId, b.p.driverId) || a.at - b.at || compareText(a.p.id, b.p.id));
   const out: FuelFinding[] = [];
+  // The paybacks a pair already takes back, by pay line id: never the same one twice.
+  const takenBack = new Set<string>();
   for (let i = 0; i < timed.length; i++) {
     for (let j = i + 1; j < timed.length; j++) {
       const older = timed[i];
@@ -356,14 +363,18 @@ export function findFuelDuplicate(input: CheckInput, windowMinutes: number): Fue
       // The take-back is what the driver got: only a payback of the whole fill-up is taken back in
       // full. A part payback is listed with its pay line and no suggestion, so a person handles it.
       const paidBackWhole = payback !== undefined && payback.amountCents === p.amountCents;
+      const onOtherRow = paidBackWhole && takenBack.has(payback.id);
+      if (paidBackWhole) takenBack.add(payback.id);
       out.push({
         ...found,
         findingKey: `${found.findingKey}:${older.p.id}`,
         otherPurchaseId: older.p.id,
         payItemId: payback?.id ?? null,
-        ...(paidBackWhole
-          ? chargeBack(p)
-          : none(payback || p.paidWith !== "company_card" ? "not_paid_back" : "card_double_charge")),
+        ...(onOtherRow
+          ? none("payback_on_other_row")
+          : paidBackWhole
+            ? chargeBack(p)
+            : none(payback || p.paidWith !== "company_card" ? "not_paid_back" : "card_double_charge")),
       });
     }
   }

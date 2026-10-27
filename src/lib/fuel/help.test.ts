@@ -1,6 +1,12 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { REASON_SENTENCE_CATEGORIES } from "../agent/reasons";
-import { FUEL_CATEGORY_OF, type FuelCheckName, type NoSuggestionReason } from "../rules-engine/fuel";
+import {
+  FUEL_CATEGORY_OF,
+  NO_SUGGESTION_REASONS,
+  type FuelCheckName,
+  type NoSuggestionReason,
+} from "../rules-engine/fuel";
 import {
   compareLine,
   DISMISS_CATEGORIES,
@@ -31,6 +37,7 @@ const REASONS: NoSuggestionReason[] = [
   "card_double_charge",
   "not_paid_back",
   "over_limit",
+  "payback_on_other_row",
 ];
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 const INTERNAL = /proposal|tenant|ledger|executor|\bkind\b|fuel_|_id\b|\u2014/i;
@@ -83,6 +90,15 @@ describe("fuel page words", () => {
 
   it("gives every check's reason category a card sentence", () => {
     for (const c of CHECKS) expect(REASON_SENTENCE_CATEGORIES).toContain(FUEL_CATEGORY_OF[c]);
+  });
+
+  it("has a line for every reason the engine gives, and the findings table accepts each one", () => {
+    expect([...REASONS].sort()).toEqual([...NO_SUGGESTION_REASONS].sort());
+    const sql = readFileSync(new URL("../../../db/migrations/0031_fuel_checks.sql", import.meta.url), "utf8");
+    const check = /no_suggestion\s+text CHECK \(no_suggestion IN \(([^)]*)\)\)/.exec(sql);
+    expect(check).not.toBeNull();
+    const listed = [...check![1].matchAll(/'([a-z_]+)'/g)].map(([, r]) => r);
+    expect(listed.sort()).toEqual([...NO_SUGGESTION_REASONS].sort());
   });
 
   it("never shows an id, an internal word or an em dash", () => {

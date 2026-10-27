@@ -302,6 +302,29 @@ describe("the same receipt turned in twice", () => {
     ]);
     expect(findFuelDuplicate(input({ fuelPurchases: [...records].reverse() }), 60)).toEqual(found);
   });
+
+  it("takes each payback back once with three alike: the later pair lists it with no suggestion, saying why", () => {
+    const records = [...pair(6), purchase({ id: "pc", paidWith: "driver_own", purchasedAt: at(12) })];
+    const items = [payback("ia", "pa"), payback("ib", "pb"), payback("ic", "pc")];
+    const found = findFuelDuplicate(input({ fuelPurchases: records, items }), 60);
+    expect(found.map((f) => [f.findingKey, f.payItemId, f.suggestedCents, f.noSuggestion])).toEqual([
+      ["fuel_duplicate:pb:pa", "ib", -31_996, null],
+      ["fuel_duplicate:pc:pa", "ic", -31_996, null],
+      ["fuel_duplicate:pc:pb", "ic", null, "payback_on_other_row"],
+    ]);
+    // Whatever order the records arrive in, and through the limit in runFuelChecks too.
+    expect(findFuelDuplicate(input({ fuelPurchases: [...records].reverse(), items: [...items].reverse() }), 60)).toEqual(
+      found,
+    );
+    const run = runFuelChecks(input({ fuelPurchases: records, items }), LIMITS).filter((f) => f.check === "fuel_duplicate");
+    expect(run.map((f) => [f.findingKey, f.suggestedCents, f.noSuggestion])).toEqual(
+      found.map((f) => [f.findingKey, f.suggestedCents, f.noSuggestion]),
+    );
+    // Two paybacks taken back, never the same one twice: the driver keeps the first fill-up's.
+    const back = run.filter((f) => f.suggestedCents !== null).map((f) => f.payItemId);
+    expect(back).toEqual(["ib", "ic"]);
+    expect(new Set(back).size).toBe(back.length);
+  });
 });
 
 describe("all four together", () => {

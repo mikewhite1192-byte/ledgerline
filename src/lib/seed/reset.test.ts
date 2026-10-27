@@ -37,14 +37,30 @@ describe("the demo reset's lists", () => {
 // Every migration that creates or re-creates demo_reset_clear(): the last one is the live function,
 // and each must keep the gate whole.
 const MIGRATIONS = new URL("../../../db/migrations/", import.meta.url);
+// Any spelling: either case, any whitespace, with or without OR REPLACE, a public. prefix or quotes.
+const DEFINES = /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?public"?\s*\.\s*)?"?demo_reset_clear"?\s*\(/i;
 const DEFINITIONS = readdirSync(MIGRATIONS)
   .filter((f) => f.endsWith(".sql"))
   .sort()
-  .filter((f) => /CREATE (OR REPLACE )?FUNCTION demo_reset_clear\(\)/.test(readFileSync(new URL(f, MIGRATIONS), "utf8")));
+  .filter((f) => DEFINES.test(readFileSync(new URL(f, MIGRATIONS), "utf8")));
 
 describe("the function's demo-carrier gate", () => {
   it("is defined by 0025 first and re-created whole by any later migration", () => {
     expect(DEFINITIONS[0]).toBe("0025_demo_reset.sql");
+  });
+
+  it("finds a definition in any spelling, and never a call or a longer name", () => {
+    for (const sql of [
+      "CREATE FUNCTION demo_reset_clear()",
+      "create or replace function public.demo_reset_clear()",
+      "CREATE  OR\n  REPLACE FUNCTION\tdemo_reset_clear ()",
+      'CREATE OR REPLACE FUNCTION "public"."demo_reset_clear"()',
+    ]) {
+      expect(DEFINES.test(sql)).toBe(true);
+    }
+    for (const sql of ["SELECT * FROM demo_reset_clear()", "CREATE FUNCTION demo_reset_clear_all()"]) {
+      expect(DEFINES.test(sql)).toBe(false);
+    }
   });
 
   it.each(DEFINITIONS)("%s lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", (file) => {

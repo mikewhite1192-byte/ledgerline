@@ -376,6 +376,21 @@ describe("advance parity", () => {
     }
   });
 
+  // At these anchors the duplicate-receipt driver (victim 11) is the one the parity stream would
+  // otherwise pick: disarmed on Sep 28 (both carriers), the load pair on Nov 9 (Prairie Wind).
+  it.each(["2026-09-28", "2026-11-09"])(
+    "never disarms or plants the load pair on the duplicate-receipt driver (anchor %s)",
+    (anchor) => {
+      for (const c of DEMO_CARRIERS) {
+        const plan = buildCarrierPlan(c, anchor);
+        const { rows, planted, victims } = plan;
+        const pairLoad = rows.loads.find((l) => l.id === planted.parity.loadPairLoadId)!;
+        expect(Object.values(victims)).not.toContain(codeOf(plan, planted.parity.disarmedDriverId));
+        expect(codeOf(plan, pairLoad.driver_id!)).not.toBe(victims.fuelDuplicate);
+      }
+    },
+  );
+
   it("names the driver's own recent load on an advance only while the load's cap holds", () => {
     for (const plan of plans) {
       const { rows } = plan;

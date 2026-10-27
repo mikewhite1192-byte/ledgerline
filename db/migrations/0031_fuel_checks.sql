@@ -94,7 +94,8 @@ CREATE TABLE fuel_findings (
   excess_cents         bigint CHECK (excess_cents >= 0 AND excess_cents < 1000000000),
   suggested_cents      bigint CHECK (suggested_cents <> 0 AND abs(suggested_cents) < 1000000000),
   no_suggestion        text CHECK (no_suggestion IN ('driver_paid', 'already_deducted', 'over_tank',
-                         'card_double_charge', 'not_paid_back', 'over_limit')),
+                         'card_double_charge', 'not_paid_back', 'over_limit',
+                         'payback_on_other_row')),
   sources              jsonb NOT NULL CHECK (jsonb_typeof(sources) = 'array'),
   status               text NOT NULL DEFAULT 'open'
                          CHECK (status IN ('open', 'proposed', 'dismissed', 'cleared')),
