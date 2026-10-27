@@ -23,6 +23,11 @@ export const SAM_NANOCENTS = 250_000_000;
 // The input tokens reserved for each image sent to a text model. Meta's docs put a 1280-pixel
 // image at about 1,300 to 1,500 tokens; a 400 x 300 PNG measured 167.
 export const MEDIA_RESERVE_TOKENS = 1_600;
+// The input tokens reserved for each 1280 x 800 browser screenshot in a computer-use step.
+export const SCREENSHOT_RESERVE_TOKENS = MEDIA_RESERVE_TOKENS;
+// The input tokens the platform adds to every request that carries the computer tool. Counted on
+// Muse Spark at 2,082 (the same request with and without the tool); reserved with a fifth on top.
+export const COMPUTER_TOOL_RESERVE_TOKENS = 2_500;
 // The input tokens reserved for each PDF page. Meta's docs give no figure; a one-page US Letter
 // PDF with two lines of text measured 2,524 (the page image plus its extracted text), so a dense
 // page gets room on top of that.

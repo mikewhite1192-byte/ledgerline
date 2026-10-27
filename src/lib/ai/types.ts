@@ -111,6 +111,66 @@ export type AiResult = {
   toolSearches: number;
 };
 
+// --- Computer use (a Meta model driving a browser, https://dev.meta.ai/docs/computer-use) ---
+
+// The five mouse buttons the docs name for a click.
+export type ComputerButton = "left" | "right" | "wheel" | "back" | "forward";
+
+export type ComputerPoint = { x: number; y: number };
+
+// The nine documented action types, in pixels of the last screenshot sent. The wrapper never
+// reads these: a call's actions come back raw (ComputerCall.actions) and the caller's validator
+// turns them into this type or refuses the whole batch, so an unknown type is never dropped.
+export type ComputerAction =
+  | { type: "click"; x: number; y: number; button: ComputerButton }
+  | { type: "double_click"; x: number; y: number }
+  | { type: "drag"; path: ComputerPoint[] }
+  | { type: "keypress"; keys: string[] }
+  | { type: "move"; x: number; y: number }
+  | { type: "scroll"; x: number; y: number; scrollX: number; scrollY: number }
+  | { type: "type"; text: string }
+  | { type: "screenshot" }
+  | { type: "wait" };
+
+// A check the platform raised on a step. Nothing in that step runs until a person decides.
+export type SafetyCheck = { id: string; code: string; message: string };
+
+// One computer_call item. raw is the whole item as received, sent back verbatim on the next
+// call; checks holds the raw check objects as received, which are the only thing ever sent
+// back as acknowledged, and only after a person approved each one.
+export type ComputerCall = {
+  callId: string;
+  actions: Record<string, unknown>[];
+  pendingSafetyChecks: SafetyCheck[];
+  checks: Record<string, unknown>[];
+  status: string | null;
+  raw: Record<string, unknown>;
+};
+
+export type ComputerScreenshot = { mime: "image/png" | "image/jpeg"; bytes: Uint8Array };
+
+// A call already made and the screenshot this app answered it with.
+export type ComputerPair = {
+  call: Record<string, unknown>;
+  output: { callId: string; screenshot: ComputerScreenshot; acknowledged: Record<string, unknown>[] };
+};
+
+// One step of a computer-use loop. screenshot is the first screen, sent with the task; history
+// is every call since and its answer, the last pair being the screen the model sees now.
+export type ComputerRequest = AiCallOptions & {
+  instructions: string;
+  task: string;
+  screenshot: ComputerScreenshot;
+  history: ComputerPair[];
+  // 16 to 8192. Default 1024.
+  maxOutputTokens?: number;
+  // Default "medium".
+  reasoningEffort?: AiReasoningEffort;
+};
+
+// call is null when the model answered in text instead of asking for an action.
+export type ComputerResult = AiResult & { call: ComputerCall | null };
+
 // Language names, not codes: what the transcription API takes. A hint only.
 export type AiLanguage = "English" | "Spanish";
 
@@ -234,6 +294,8 @@ export type TextAnswer = {
   toolCalls: AiToolCall[];
   replay: AiReplayItem[];
   toolSearches: number;
+  // Set only when the request offered the computer tool and the model asked for an action.
+  computerCall?: ComputerCall;
 };
 
 // What one HTTP call produced, before it is settled in the ledger.

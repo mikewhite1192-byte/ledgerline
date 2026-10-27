@@ -5,6 +5,10 @@ import type {
   AiRequest,
   AiToolCall,
   CallOutcome,
+  ComputerCall,
+  ComputerRequest,
+  ComputerScreenshot,
+  SafetyCheck,
 } from "../types";
 import { asArray, asRecord, upstreamIdFrom, usageFrom } from "./http";
 import { dataUrl } from "./media";
@@ -153,6 +157,90 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
   };
 }
 
+const screenshotUrl = (s: ComputerScreenshot) => dataUrl(s.mime, s.bytes);
+
+// One step of a computer-use loop (https://dev.meta.ai/docs/computer-use). The task and the
+// first screen open the conversation; then each call the model made, sent back verbatim, and
+// this app's answer to it: the screen after its actions ran and the checks a person approved.
+// Stateless like metaBody: nothing is kept upstream, so this app's rows are the only copy.
+export function metaComputerBody(model: string, request: ComputerRequest, options: MetaOptions) {
+  const input: unknown[] = [
+    {
+      type: "message",
+      role: "user",
+      content: [
+        text("input_text", request.task),
+        { type: "input_image", image_url: screenshotUrl(request.screenshot) },
+      ],
+    },
+  ];
+  // Only each computer_call goes back, not the reasoning items that came with it: they are not
+  // stored, and the encrypted reasoning the request asks for is not replayed. The model works from
+  // the task and the screens alone, which the local multi-step run showed is enough. A run is
+  // bounded by its step, time and cost limits whatever the model does with less context.
+  for (const pair of request.history) {
+    input.push(pair.call, {
+      type: "computer_call_output",
+      call_id: pair.output.callId,
+      acknowledged_safety_checks: pair.output.acknowledged,
+      output: { type: "computer_screenshot", image_url: screenshotUrl(pair.output.screenshot) },
+    });
+  }
+  return {
+    model,
+    instructions: request.instructions,
+    input,
+    tools: [{ type: "computer" }],
+    max_output_tokens: options.maxOutputTokens,
+    reasoning: { effort: options.reasoningEffort },
+    store: false,
+    include: ["reasoning.encrypted_content"],
+  };
+}
+
+const CHECK_CODE = /^[a-z_]{2,60}$/;
+const MAX_CHECK_MESSAGE = 500;
+const MAX_UPSTREAM_ID = 200;
+
+const upstreamString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= MAX_UPSTREAM_ID;
+
+// A computer_call item, or null when it cannot be acted on safely: no call id, actions that are
+// not a list of objects, or a safety check without an id (it could never be acknowledged, and a
+// check that cannot be shown to a person must not be skipped). Actions stay raw; the caller's
+// validator types them or refuses the batch.
+function computerCallFrom(item: Record<string, unknown>): ComputerCall | null {
+  if (!upstreamString(item.call_id) || !Array.isArray(item.actions)) return null;
+  const actions: Record<string, unknown>[] = [];
+  for (const a of item.actions) {
+    const action = asRecord(a);
+    if (!action) return null;
+    actions.push(action);
+  }
+  const rawChecks = item.pending_safety_checks ?? [];
+  if (!Array.isArray(rawChecks)) return null;
+  const checks: Record<string, unknown>[] = [];
+  const pendingSafetyChecks: SafetyCheck[] = [];
+  for (const c of rawChecks) {
+    const check = asRecord(c);
+    if (!check || !upstreamString(check.id)) return null;
+    checks.push(check);
+    pendingSafetyChecks.push({
+      id: check.id,
+      code: typeof check.code === "string" && CHECK_CODE.test(check.code) ? check.code : "unknown",
+      message: typeof check.message === "string" ? check.message.slice(0, MAX_CHECK_MESSAGE) : "",
+    });
+  }
+  return {
+    callId: item.call_id,
+    actions,
+    pendingSafetyChecks,
+    checks,
+    status: typeof item.status === "string" ? item.status : null,
+    raw: item,
+  };
+}
+
 // A 200 answer. Usage decides the cost, so an answer without usable usage, or with a status other
 // than completed or incomplete, is settled as unknown with its reservation kept.
 export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
@@ -172,6 +260,7 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
   const toolCalls: AiToolCall[] = [];
   const replay: AiReplayItem[] = [];
   let toolSearches = 0;
+  const computerCalls: (ComputerCall | null)[] = [];
   for (const raw of asArray(body.output)) {
     const item = asRecord(raw);
     if (item?.type === "message") {
@@ -184,6 +273,8 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
       if (typeof id === "string" && typeof name === "string" && typeof args === "string") {
         toolCalls.push({ id, name, argumentsJson: args });
       }
+    } else if (item?.type === "computer_call") {
+      computerCalls.push(computerCallFrom(item));
     } else if (item?.type === "reasoning" && typeof item.encrypted_content === "string") {
       // Sent back without its id: nothing is stored upstream (store: false), and Meta requires
       // a summary field on every reasoning input item.
@@ -201,12 +292,18 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
       replay.push({ ...rest, type });
     }
   }
+  // The docs promise one computer_call per turn. More than one, or one that cannot be acted on
+  // safely, is not guessed at: the answer is unknown and nothing runs.
+  if (computerCalls.length > 1 || computerCalls.includes(null)) {
+    return { kind: "unknown", category: "unknown", httpStatus };
+  }
+  const computerCall = computerCalls[0];
   return {
     kind: "answered",
     status,
     httpStatus,
     upstreamId: upstreamIdFrom(body.id),
     metered: { unit: "tokens", usage },
-    value: { text: parts.join(""), toolCalls, replay, toolSearches },
+    value: { text: parts.join(""), toolCalls, replay, toolSearches, ...(computerCall ? { computerCall } : {}) },
   };
 }

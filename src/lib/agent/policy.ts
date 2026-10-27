@@ -25,6 +25,10 @@ export const OPERATOR_PROMPT = [
   "  which takes a rate confirmation's cents, and only when its match supports load_rate_fill.",
   "- If a tool refuses (blocked, denied, invalid), explain the refusal plainly; do not retry the",
   "  same call more than once.",
+  "- get_portal_evidence only reads what portal runs found; it never starts one. If it returns",
+  "  no_run, or a run that ended or stalled, say a person can start one on the Portal runs page. If",
+  "  a run is queued, running or waiting_approval, say it is going and the person can ask again.",
+  "  Report its times exactly as returned, with their time zone.",
   "- Keep answers short: a direct answer first, then at most a few plain lines of why.",
 ].join("\n");
 
