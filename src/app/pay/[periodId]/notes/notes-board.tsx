@@ -211,7 +211,8 @@ function NoteCardView({ card, onDecided }: { card: BoardCard; onDecided: () => v
 
         {note?.status === "over_cap" ? (
           <p className="text-body text-foreground-2">
-            Not drafted: the note spending cap for this period was reached. Draft notes again to retry.
+            Not drafted yet: the note spending cap for this period was reached, or the model could not be
+            called. Draft notes again to retry.
           </p>
         ) : null}
 

@@ -82,6 +82,25 @@ describe("deliverNoteEmail", () => {
     expect(other).toEqual([]);
   });
 
+  it("sends nothing when the start date is not a whole date", async () => {
+    armEmail();
+    flags.driverNotesEmailFrom = "2026-10-1";
+    const { db, other } = fakeDb({ start: "2026-10-26", end: "2026-11-01" });
+    const sent: EmailMessage[] = [];
+    const lines: string[] = [];
+    const result = await deliverNoteEmail(SESSION, NOTE_ID, {
+      db,
+      log: (l) => lines.push(l),
+      send: async (m) => {
+        sent.push(m);
+      },
+    });
+    expect(result).toEqual({ sent: false, category: "disabled" });
+    expect(lines).toEqual([`would send note ${NOTE_ID} (disabled)`]);
+    expect(other).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
   it("works out the message before the reservation, so a date it cannot read leaves the note unreserved", async () => {
     armEmail();
     // The period's words refuse an end before the start. The database never holds one (its check

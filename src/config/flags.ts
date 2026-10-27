@@ -67,6 +67,12 @@ export type Flags = {
   driverNotesEmailEnabled: boolean;
   // Exact, lower-cased addresses the email path may send to. Empty refuses every address.
   driverNotesEmailAllowlist: string[];
+  // Email goes only for a period that ends on or after this date (YYYY-MM-DD, a whole date on the
+  // carrier's calendar, as the period's own dates are). Older periods are the backlog, and a
+  // release never notifies the backlog: their notes stay on the driver view only. The release PR
+  // that arms email sets this to its go-live date. A value that is not a whole date refuses every
+  // email.
+  driverNotesEmailFrom: string;
   // Caps on note drafting: one note's worst case, the spend of one period's notes, and the
   // output budget of one note.
   driverNoteLimits: { maxNoteCents: number; maxBatchCents: number; maxOutputTokens: number };
@@ -99,5 +105,6 @@ export const flags: Flags = {
   driverNotesEnabled: false,
   driverNotesEmailEnabled: false,
   driverNotesEmailAllowlist: [],
+  driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
 };

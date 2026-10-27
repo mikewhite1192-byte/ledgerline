@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
-import { AiError, complete, type AiFormat, type AiRequest, type AiResult } from "../ai";
+import { AiError, complete, type AiErrorCategory, type AiFormat, type AiRequest, type AiResult } from "../ai";
 import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
@@ -16,6 +16,12 @@ import { MAX_BODY_CHARS, MODEL_LANGUAGE, verifyNote } from "./verify";
 // settlement twice. The call's answer is checked (verify.ts) before the row moves to drafted; a
 // note that fails becomes refused with its category and no text. A row left drafting by a crash
 // is marked refused (interrupted) once its lease runs out, so it is never shown as approvable.
+//
+// A call complete() turned down before any request went out (AI switched off, not configured,
+// over the note's own limit, or over the spend cap) never reached a model, so the note goes back
+// to waiting (over_cap, which the next pass picks up), never refused. That step is allowed only
+// while the note names no model call. A refusal after a real request, a timeout and an unknown
+// outcome are final: the note becomes refused with the category.
 //
 // The period's cap: before each call the period's note spend is read back from the model ledger
 // (settled cost, or the reservation while unsettled) plus the worst case of every note still
@@ -91,6 +97,15 @@ export type DraftSummary =
     };
 
 type Candidate = { settlement_id: string; note_id: string | null; status: string | null };
+
+// complete() throws these before any provider request (src/lib/ai/index.ts and spend.ts reserve,
+// which writes nothing for cap). Every other category follows a request that was sent.
+const BEFORE_ANY_REQUEST: ReadonlySet<AiErrorCategory> = new Set<AiErrorCategory>([
+  "disabled",
+  "not_configured",
+  "too_expensive",
+  "cap",
+]);
 
 export function noteRequest(pack: NotePack, traceId: string): AiRequest {
   return {
@@ -272,6 +287,21 @@ async function finishNote(db: TenantDb, session: Session, noteId: string, f: Fin
   });
 }
 
+// A note whose call never went out goes back to waiting for the next pass. Only a note still
+// drafting that names no model call moves.
+async function returnNote(db: TenantDb, session: Session, noteId: string, now: string): Promise<boolean> {
+  return db.withTenant(session.tenantId, async (q) => {
+    await assertMembership(q, session);
+    const n = await q.execute(
+      `UPDATE driver_notes SET status = 'over_cap', updated_at = CAST($2 AS timestamptz)
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'drafting'
+          AND model_call_id IS NULL`,
+      [noteId, now],
+    );
+    return n === 1;
+  });
+}
+
 async function readSummary(q: Queryable, periodId: string) {
   const [row] = await q.query<Record<string, number | string>>(
     `SELECT count(*) AS total,
@@ -354,9 +384,14 @@ export async function draftDriverNotes(
       result = await call("spark", noteRequest(claim.pack, claim.traceId), session);
     } catch (err) {
       if (!(err instanceof AiError)) throw err;
-      // The category only; the row keeps no text. The rest wait for the next pass.
-      await finishNote(db, session, claim.noteId, { status: "refused", category: err.category, verification: null, modelCallId: null }, iso());
-      written += 1;
+      if (BEFORE_ANY_REQUEST.has(err.category)) {
+        // No request went out: the note waits for the next pass with the rest.
+        await returnNote(db, session, claim.noteId, iso());
+      } else {
+        // The category only; the row keeps no text. The rest wait for the next pass.
+        await finishNote(db, session, claim.noteId, { status: "refused", category: err.category, verification: null, modelCallId: null }, iso());
+        written += 1;
+      }
       stoppedBy = "model";
       break;
     }

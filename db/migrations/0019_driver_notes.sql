@@ -34,7 +34,8 @@ ALTER TABLE model_calls ADD CONSTRAINT model_calls_tenant_id_id_key UNIQUE (tena
 --   drafting  reserved before the model call; body is not set yet
 --   drafted   the note passed the check and waits for a person
 --   refused   the check or the model call failed; no body, refusal_category says why
---   over_cap  not drafted: the period's note spend reached its cap (no call was made)
+--   over_cap  not drafted, waiting for the next pass: the period's note spend reached its cap, or
+--             the model call was turned down before any request went out (no call was made)
 --   approved  a person approved it; delivered to the driver view at the same moment
 --   rejected  a person rejected it; the driver sees the code-built fallback line
 --
@@ -83,11 +84,12 @@ CREATE INDEX driver_notes_tenant_period ON driver_notes (tenant_id, period_id);
 -- What a note may become, and what never changes. The text, its language, its citations and the
 -- check's record are written once, on the step out of drafting, and never again: approval never
 -- edits the text. Status moves forward only. over_cap may go back to drafting (the period's cap
--- was raised and someone drafts the rest); refused, rejected and approved are final. The channel
--- may move from the driver view to email once, when an allowlisted email is sent. A new row is
--- only ever a bare reservation (drafting, or over_cap with no call made): no text, citations,
--- check record, refusal, model call, decision or delivery, so every later state goes through the
--- update rules and nothing can be inserted already approved.
+-- was raised and someone drafts the rest), and drafting may go back to over_cap while the note
+-- names no model call (its call was turned down before any request went out); refused, rejected
+-- and approved are final. The channel may move from the driver view to email once, when an
+-- allowlisted email is sent. A new row is only ever a bare reservation (drafting, or over_cap with
+-- no call made): no text, citations, check record, refusal, model call, decision or delivery, so
+-- every later state goes through the update rules and nothing can be inserted already approved.
 CREATE FUNCTION driver_notes_guard() RETURNS trigger
   LANGUAGE plpgsql
   AS $$
@@ -121,6 +123,8 @@ BEGIN
   IF NEW.status IS DISTINCT FROM OLD.status AND NOT (
        (OLD.status = 'drafting' AND NEW.status IN ('drafted', 'refused'))
     OR (OLD.status = 'over_cap' AND NEW.status = 'drafting')
+    OR (OLD.status = 'drafting' AND NEW.status = 'over_cap'
+        AND OLD.model_call_id IS NULL AND NEW.model_call_id IS NULL)
     OR (OLD.status = 'drafted' AND NEW.status IN ('approved', 'rejected'))) THEN
     RAISE EXCEPTION 'driver_notes: status transition not allowed' USING ERRCODE = 'check_violation';
   END IF;

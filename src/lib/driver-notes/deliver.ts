@@ -2,6 +2,7 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { getDb, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
+import { isLocalDate } from "../time/local-date";
 import { readNoteSource, recheckNote } from "./pack";
 import { periodWords } from "./words";
 
@@ -17,6 +18,13 @@ import { periodWords } from "./words";
 // An email cannot be recalled, so the note is checked once more against its settlement as it is
 // now (pack.ts recheckNote) in the same transaction that reserves the send: a note whose paystub
 // changed after approval is refused (stale) and nothing is sent.
+//
+// A release never notifies the backlog: email goes only for a period that ends on or after the
+// start date (driverNotesEmailFrom), checked in the same transaction, before the reservation. The
+// period's end is a date column on the carrier's calendar (periods are laid out in the carrier's
+// named time zone) and the start is a whole date read the same way, so the database compares
+// date to date, with no clock and no time zone shift. An older period is refused (before_start)
+// and nothing is reserved or sent; its note stays on the driver view.
 //
 // An email is sent at most once: the note's channel moves from driver_view to email in its own
 // transaction before the send (the reservation), so a retry, a second click or a crash after the
@@ -34,7 +42,8 @@ export type EmailRefusal =
   | "not_approved"
   | "already_sent"
   | "not_found"
-  | "stale";
+  | "stale"
+  | "before_start";
 export type EmailResult = { sent: true } | { sent: false; category: EmailRefusal | "unknown" };
 
 export type DeliverDeps = {
@@ -100,6 +109,9 @@ export async function deliverNoteEmail(
   };
   if (!flags.driverNotesEnabled) return refuse("disabled");
   if (!flags.driverNotesEmailEnabled) return refuse("disabled");
+  // A start that is not a whole date leaves no period known to be on or after it.
+  const from = flags.driverNotesEmailFrom;
+  if (!isLocalDate(from)) return refuse("disabled");
   if (!isAllowlisted(note.email, flags.driverNotesEmailAllowlist)) return refuse("not_allowlisted");
   if (!deps.send) return refuse("no_sender");
 
@@ -109,6 +121,16 @@ export async function deliverNoteEmail(
 
   const reserved = await db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
+    const [end] = await q.query<{ on_or_after: unknown }>(
+      `SELECT p.period_end >= CAST($2 AS date) AS on_or_after
+         FROM driver_notes n
+         JOIN settlement_periods p ON p.tenant_id = n.tenant_id AND p.id = n.period_id
+        WHERE n.tenant_id = current_tenant_id() AND p.tenant_id = current_tenant_id()
+          AND n.id = CAST($1 AS uuid)`,
+      [noteId, from],
+    );
+    // Only a period read back as on or after the start goes on; anything else sends nothing.
+    if (end?.on_or_after !== true) return "before_start" as const;
     // The text never changes once written (the table's guard), so the note read above is the
     // note; the settlement is read now. A missing settlement or a failed check sends nothing.
     const source = await readNoteSource(q, note.settlement_id);
@@ -120,7 +142,7 @@ export async function deliverNoteEmail(
       [noteId, now],
     );
   });
-  if (reserved === "stale") return { sent: false, category: "stale" };
+  if (reserved === "stale" || reserved === "before_start") return { sent: false, category: reserved };
   if (reserved !== 1) return { sent: false, category: "already_sent" };
 
   try {

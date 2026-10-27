@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { flags } from "../../config/flags";
 import { AiError, type AiRequest, type AiResult } from "../ai";
 import type { Session } from "../auth/claims";
-import type { Queryable } from "../db";
+import type { Param, Queryable } from "../db";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
@@ -20,8 +20,9 @@ import { listNotePeriods, readDriverView, readPeriodNotes } from "./view";
 // a note whose paystub changed after drafting is neither approved, shown nor emailed; a note can
 // only be inserted as a bare reservation and only names a model call of its own carrier; email
 // stays refused (and logged as "would send") until its switch, the allowlist and a sender all
-// agree, and sends at most once; the period's cap stops drafting with no call; and another
-// carrier sees none of it. Only this file's tenants are made, and they are removed after.
+// agree, sends at most once, and never goes for a period that ended before its start date; the
+// period's cap stops drafting with no call; a call turned down before any request leaves the note
+// waiting, never refused; and another carrier sees none of it. Only this file's tenants are made, and they are removed after.
 
 const saved = { ...flags, driverNoteLimits: { ...flags.driverNoteLimits }, driverNotesEmailAllowlist: [...flags.driverNotesEmailAllowlist] };
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -291,6 +292,82 @@ describe("driver notes", () => {
     expect(await draft()).toMatchObject({ ok: true, drafted: 1, refused: 1, missing: 0 });
   });
 
+  it.each(["disabled", "not_configured", "too_expensive", "cap"] as const)(
+    "puts the note back to wait when its call is turned down before any request goes out (%s)",
+    async (category) => {
+      let calls = 0;
+      const turnedDown: CompleteFn = async () => {
+        calls += 1;
+        throw new AiError(category);
+      };
+      expect(await draft(turnedDown)).toMatchObject({
+        ok: true,
+        overCap: 1,
+        refused: 0,
+        missing: 1,
+        written: 0,
+        stoppedBy: "model",
+      });
+      expect(calls).toBe(1);
+      const notes = await notesOf(A);
+      expect(notes).toHaveLength(1);
+      expect(notes[0]).toMatchObject({ status: "over_cap", refusal_category: null, body: null });
+      // The next pass drafts it with the one never started.
+      expect(await draft()).toMatchObject({ ok: true, drafted: 2, overCap: 0, refused: 0 });
+    },
+  );
+
+  it.each([
+    "rate_limited",
+    "unavailable",
+    "bad_request",
+    "auth",
+    "billing",
+    "too_long",
+    "network",
+    "timeout",
+    "unknown",
+  ] as const)("keeps the note refused when its call failed after the request went out (%s)", async (category) => {
+    const failing: CompleteFn = async () => {
+      throw new AiError(category);
+    };
+    expect(await draft(failing)).toMatchObject({ ok: true, refused: 1, overCap: 0, written: 1, stoppedBy: "model" });
+    expect((await notesOf(A))[0]).toMatchObject({ status: "refused", refusal_category: category, body: null });
+    // Final: the next pass drafts only the one never started.
+    expect(await draft()).toMatchObject({ ok: true, drafted: 1, refused: 1, overCap: 0 });
+  });
+
+  it("lets a drafting note go back to waiting only while it names no model call", async () => {
+    const noteId = randomUUID();
+    const callA = randomUUID();
+    await admin.withTenant(A.tenantId, (q) => ledgerRow(q, callA, "driver_note", null));
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO driver_notes (id, tenant_id, settlement_id, driver_id, period_id, language, status, trace_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid), 'en',
+           'drafting', CAST($5 AS uuid))`,
+        [noteId, settlement1, A.driverId, periodId, randomUUID()],
+      ),
+    );
+    const set = (assignments: string, params: Param[] = []) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE driver_notes SET ${assignments} WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [noteId, ...params],
+        ),
+      );
+    // Naming a call on the way back is refused; the bare step back is allowed.
+    expect(await sqlStateOf(set("status = 'over_cap', model_call_id = CAST($2 AS uuid)", [callA]))).toBe("23514");
+    expect(await sqlStateOf(set("status = 'over_cap'"))).toBe("no error");
+    expect(await sqlStateOf(set("status = 'drafting'"))).toBe("no error");
+    // Once refused with its call, the note never waits again.
+    expect(
+      await sqlStateOf(set("status = 'refused', refusal_category = 'incomplete', model_call_id = CAST($2 AS uuid)", [callA])),
+    ).toBe("no error");
+    expect(await sqlStateOf(set("status = 'over_cap', refusal_category = NULL, model_call_id = NULL"))).toBe("23514");
+    expect((await notesOf(A))[0]).toMatchObject({ status: "refused", refusal_category: "incomplete" });
+  });
+
   it("stores an answer cut off by the output budget as incomplete, with no check record", async () => {
     const cut: CompleteFn = async (_target, request, session) =>
       result(request, session, '{"language": "English", "body": "Hi, your', "incomplete");
@@ -501,6 +578,49 @@ describe("driver notes", () => {
     // With the paystub back as it was, the note matches again and goes out once.
     expect(await deliver()).toEqual({ sent: true });
     expect(sent).toHaveLength(1);
+  });
+
+  it("emails only a note whose period ends on or after the start date, leaving older ones on the driver view", async () => {
+    flags.driverNotesEmailEnabled = true;
+    flags.driverNotesEmailAllowlist = [`drv-1@${slugA}.example`];
+    const sent: EmailMessage[] = [];
+    const deliver = (id: string) =>
+      deliverNoteEmail(A.session, id, {
+        db: app,
+        log: () => undefined,
+        clock,
+        send: async (m) => {
+          sent.push(m);
+        },
+      });
+    const channelOf = async (id: string) => (await notesOf(A)).find((n) => n.id === id)?.channel;
+
+    // Last week's period ended Oct 25, before the start date (Oct 27): approved and shown, never
+    // emailed, and nothing reserved.
+    expect(
+      await draftDriverNotes(A.session, previousPeriodId, deadline(), { db: app, complete: goodModel, clock }),
+    ).toMatchObject({ ok: true, drafted: 1 });
+    const old = (await notesOf(A)).find((n) => n.settlement_id !== settlement1 && n.settlement_id !== settlement2);
+    if (!old) throw new Error("last week's note was not drafted");
+    expect(await approveNote(A.session, old.id, { db: app, clock })).toEqual({ ok: true });
+    expect(await deliver(old.id)).toEqual({ sent: false, category: "before_start" });
+    expect(await channelOf(old.id)).toBe("driver_view");
+    const view = await app.withTenant(A.tenantId, (q) => readDriverView(q, old.settlement_id));
+    expect(view?.message).toEqual({ kind: "note", body: "Hi, your net pay is $1,000.00 [line 1].", language: "en" });
+
+    // This week's period ends Nov 1: refused with the start a day after it, sent with the start on it.
+    await draft();
+    const n1 = (await notesOf(A)).find((n) => n.settlement_id === settlement1);
+    if (!n1) throw new Error("this week's note was not drafted");
+    expect(await approveNote(A.session, n1.id, { db: app, clock })).toEqual({ ok: true });
+    flags.driverNotesEmailFrom = "2026-11-02";
+    expect(await deliver(n1.id)).toEqual({ sent: false, category: "before_start" });
+    expect(await channelOf(n1.id)).toBe("driver_view");
+    expect(sent).toEqual([]);
+    flags.driverNotesEmailFrom = "2026-11-01";
+    expect(await deliver(n1.id)).toEqual({ sent: true });
+    expect(sent.map((m) => m.noteId)).toEqual([n1.id]);
+    expect(await channelOf(n1.id)).toBe("email");
   });
 
   it("ties a note's model call to a call of the same carrier", async () => {
