@@ -58,6 +58,7 @@ describe("row-level security coverage", () => {
     expect(names).toEqual(
       expect.arrayContaining([
         "conversations",
+        "documents",
         "driver_notes",
         "gateway_decisions",
         "memberships",
@@ -78,6 +79,8 @@ describe("row-level security coverage", () => {
         "portal_run_steps",
         "portal_run_checks",
         "portal_evidence",
+        "voice_note_audio",
+        "voice_notes",
         ...TENANT_TABLES,
       ]),
     );
