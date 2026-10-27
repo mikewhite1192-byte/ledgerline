@@ -1,6 +1,7 @@
 -- The auditor's record on a proposal. auditor_verdict, auditor_call_id and auditor_agrees exist
 -- from 0009. concerns are fixed categories; started_at is a 90-second lease so two page loads
--- make one model call; checked_at is when the verdict landed; trace_id ties the audit's model
+-- make one model call; attempts counts the leases taken, so a check that keeps failing stops
+-- asking the model; checked_at is when the verdict landed; trace_id ties the audit's model
 -- call and its gateway decision together.
 -- Verdicts are pass / concerns / block / unknown. 0009 had agree / disagree / unknown; the check
 -- is replaced here, before any audited row exists in production. 0009 declared it inline, so
@@ -13,6 +14,7 @@ ALTER TABLE proposals
   ADD COLUMN auditor_concerns        jsonb NOT NULL DEFAULT '[]'::jsonb
     CHECK (jsonb_typeof(auditor_concerns) = 'array'),
   ADD COLUMN auditor_started_at      timestamptz,
+  ADD COLUMN auditor_attempts        smallint NOT NULL DEFAULT 0 CHECK (auditor_attempts >= 0),
   ADD COLUMN auditor_checked_at      timestamptz,
   ADD COLUMN auditor_trace_id        uuid,
   -- A person's override of a block: their words, who, when. Never read by a model.
@@ -88,8 +90,8 @@ BEGIN
 END
 $$;
 
-GRANT UPDATE (auditor_concerns, auditor_started_at, auditor_checked_at, auditor_trace_id,
-              auditor_override_reason, auditor_override_by, auditor_override_at)
+GRANT UPDATE (auditor_concerns, auditor_started_at, auditor_attempts, auditor_checked_at,
+              auditor_trace_id, auditor_override_reason, auditor_override_by, auditor_override_at)
   ON proposals TO payday_app;
 
 -- The proposals still waiting for an audit, per tenant, oldest first.

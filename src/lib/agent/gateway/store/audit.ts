@@ -73,29 +73,37 @@ export async function readAuditState(q: Queryable, proposalId: string): Promise<
   };
 }
 
+export type AuditLease = { traceId: string; attempts: number };
+
 // Takes the 90-second lease: only a waiting proposal with no verdict, whose lease is free or
-// older than leaseMs. The audit's trace id is kept from the first lease, so a retry after a
-// released lease joins the same trace. Returns that trace id, or null when someone else holds it.
+// older than leaseMs. The same statement counts the attempt, so two callers never share a count.
+// The audit's trace id is kept from the first lease, so a retry after a released lease joins the
+// same trace. Returns that trace id and this attempt's number, or null when someone else holds it.
 export async function takeAuditLease(
   q: Queryable,
   proposalId: string,
   now: Date,
   leaseMs: number,
   traceId: string,
-): Promise<string | null> {
+): Promise<AuditLease | null> {
   const nowIso = now.toISOString();
   const cutoff = new Date(now.getTime() - leaseMs).toISOString();
-  const rows = await q.query<{ trace_id: string | null }>(
+  const rows = await q.query<{ trace_id: string | null; attempts: number | string | null }>(
     `UPDATE proposals
         SET auditor_started_at = CAST($2 AS timestamptz),
-            auditor_trace_id = COALESCE(auditor_trace_id, CAST($3 AS uuid))
+            auditor_trace_id = COALESCE(auditor_trace_id, CAST($3 AS uuid)),
+            auditor_attempts = auditor_attempts + 1
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
         AND status = 'proposed' AND auditor_verdict IS NULL
         AND (auditor_started_at IS NULL OR auditor_started_at <= CAST($4 AS timestamptz))
-      RETURNING CAST(auditor_trace_id AS text) AS trace_id`,
+      RETURNING CAST(auditor_trace_id AS text) AS trace_id, CAST(auditor_attempts AS integer) AS attempts`,
     [proposalId, nowIso, traceId, cutoff],
   );
-  return rows.length === 1 ? (rows[0].trace_id ?? traceId) : null;
+  if (rows.length !== 1) return null;
+  const attempts = Number(rows[0].attempts);
+  // Unknown is not zero: an unreadable count throws, which rolls the lease back.
+  if (!Number.isSafeInteger(attempts) || attempts < 1) throw new Error("auditor: unreadable attempt count");
+  return { traceId: rows[0].trace_id ?? traceId, attempts };
 }
 
 // Gives back this caller's own lease (the one it took at startedAt), so the page's one retry can

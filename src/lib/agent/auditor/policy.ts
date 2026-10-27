@@ -94,6 +94,9 @@ export const AUDITOR_MODEL = "muse-wonder-1.0";
 // Two page loads within this window make one call; after it, a stuck lease can be taken again.
 export const LEASE_MS = 90_000;
 
+// Three tries ride out a short Meta outage at no more than 30 cents a proposal; then it is unknown.
+export const MAX_AUDIT_ATTEMPTS = 3;
+
 // The evidence read through the gateway must finish within this.
 export const EVIDENCE_DEADLINE_MS = 8_000;
 

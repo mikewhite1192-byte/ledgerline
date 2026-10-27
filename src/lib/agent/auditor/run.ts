@@ -11,6 +11,7 @@ import {
   AUDITOR_PROMPT,
   EVIDENCE_DEADLINE_MS,
   LEASE_MS,
+  MAX_AUDIT_ATTEMPTS,
   NO_VERDICT,
   VERDICT_FORMAT,
   agreesOf,
@@ -30,7 +31,7 @@ import {
 // Idempotent end to end: a verdict already stored is read back with no call; a 90-second lease on
 // the proposal lets one caller at a time make the call; the verdict is written only on a proposal
 // still waiting with none set (and the database refuses any change after). At most one Wonder call
-// and one gateway decision per lease.
+// and one gateway decision per lease, and at most MAX_AUDIT_ATTEMPTS leases make a call.
 //
 // This is one of the two agent files that may import the model wrapper (the import-boundary test).
 
@@ -132,14 +133,16 @@ export async function runAudit(
   if (state.verdict !== null) return doneOf(state);
   if (state.status !== "proposed" || startedBefore(state)) return { state: "not_auditable" };
 
-  // b. The lease. Zero rows: someone else is checking it now (or it was decided meanwhile).
+  // b. The lease, which counts this attempt. Zero rows: someone else is checking it now (or it
+  // was decided meanwhile).
   const leasedAt = clock();
-  const traceId = await store.lease(proposalId, leasedAt, LEASE_MS, randomUUID());
-  if (traceId === null) {
+  const lease = await store.lease(proposalId, leasedAt, LEASE_MS, randomUUID());
+  if (lease === null) {
     const now = await store.read(proposalId);
     if (now?.verdict) return doneOf(now);
     return now && now.status === "proposed" ? { state: "in_progress" } : { state: "not_auditable" };
   }
+  const { traceId, attempts } = lease;
 
   const write = async (verdict: ParsedVerdict, callId: string | null): Promise<AuditResult> => {
     const wrote = await store.write(
@@ -157,11 +160,20 @@ export async function runAudit(
     return back && back.status === "proposed" ? { state: "in_progress" } : { state: "not_auditable" };
   };
 
-  // Nothing is known yet: give the lease back so the page's one retry can try again.
+  // Nothing is known yet: give the lease back so the page's one retry can try again. The last
+  // attempt gives nothing back and stores unknown instead, so no later page load calls again.
   const retry = async (): Promise<AuditResult> => {
+    if (attempts >= MAX_AUDIT_ATTEMPTS) {
+      console.warn(`auditor: no answer after ${attempts} attempts; stored as unknown trace=${traceId}`);
+      return write(NO_VERDICT, null);
+    }
     await store.release(proposalId, leasedAt);
     return { state: "in_progress" };
   };
+
+  // Past the last attempt (an earlier lease lapsed with no answer and nothing given back): unknown,
+  // with no evidence read and no call.
+  if (attempts > MAX_AUDIT_ATTEMPTS) return write(NO_VERDICT, null);
 
   // c. The evidence, through the gateway as the auditor. A refusal (blocked, denied, invalid args,
   // unknown tool) is no evidence and is stored as unknown; a failure (a tool error, or the evidence

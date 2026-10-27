@@ -27,7 +27,7 @@ const PACK = {
   engine: { ok: true, check: "advance_eligibility", approvedCents: 10_000 },
 };
 
-function fakeStore(over: Partial<AuditState> = {}, missing = false) {
+function fakeStore(over: Partial<AuditState> = {}, missing = false, attempts = 0) {
   const state: AuditState = {
     id: PROPOSAL,
     status: "proposed",
@@ -41,16 +41,17 @@ function fakeStore(over: Partial<AuditState> = {}, missing = false) {
     timeZone: "America/New_York",
     ...over,
   };
-  const log = { leases: 0, releases: 0, writes: [] as VerdictWrite[] };
+  const log = { leases: 0, releases: 0, attempts, writes: [] as VerdictWrite[] };
   const store: AuditStore = {
     read: async () => (missing ? null : { ...state, concerns: [...state.concerns] }),
     lease: async (_id, now, ms, trace) => {
       if (state.verdict !== null || state.status !== "proposed") return null;
       if (state.startedAt !== null && Date.parse(state.startedAt) > now.getTime() - ms) return null;
       log.leases += 1;
+      log.attempts += 1;
       state.startedAt = now.toISOString();
       state.traceId ??= trace;
-      return state.traceId;
+      return { traceId: state.traceId, attempts: log.attempts };
     },
     release: async (_id, startedAt) => {
       log.releases += 1;
@@ -221,6 +222,81 @@ describe("runAudit", () => {
       expect(log.releases, text).toBe(1);
       expect(state, text).toMatchObject({ verdict: null, startedAt: null });
     }
+  });
+
+  it("stores unknown on the third failed attempt instead of giving the lease back, and a fourth load makes no call", async () => {
+    const { store, log, state } = fakeStore();
+    const answers: (() => AiResult | Promise<AiResult>)[] = [
+      () => Promise.reject(new AiError("timeout")),
+      () => okResult('{"verdict":"pass","concerns":[],"chec', "incomplete"),
+      () => Promise.reject(new AiError("unavailable", 503)),
+    ];
+    const model = fakeModel(() => answers[model.mock.calls.length - 1]());
+    for (const n of [1, 2]) {
+      expect(await runAudit(SESSION, PROPOSAL, deps({ store, complete: model })), `attempt ${n}`).toEqual({ state: "in_progress" });
+    }
+    expect(log.releases).toBe(2);
+    expect(await runAudit(SESSION, PROPOSAL, deps({ store, complete: model }))).toEqual({
+      state: "done",
+      verdict: "unknown",
+      concerns: ["insufficient_evidence"],
+      checkedAt: NOW.toISOString(),
+    });
+    expect(model).toHaveBeenCalledTimes(3);
+    expect(log.releases).toBe(2);
+    expect(log.writes).toEqual([{ verdict: "unknown", agrees: null, callId: null, concerns: ["insufficient_evidence"] }]);
+    expect(state.startedAt).toBe(NOW.toISOString());
+
+    // A fourth page load reads the stored verdict back: no lease, no evidence read, no call.
+    const tool = fakeTool();
+    expect(await runAudit(SESSION, PROPOSAL, deps({ store, complete: model, callTool: tool.fn }))).toMatchObject({
+      state: "done",
+      verdict: "unknown",
+    });
+    expect(model).toHaveBeenCalledTimes(3);
+    expect(tool.calls).toHaveLength(0);
+    expect(log.leases).toBe(3);
+  });
+
+  it("stores unknown on every outcome that would give the lease back, once it is the third attempt", async () => {
+    const failed: GatewayOutcome = {
+      decision: "failed",
+      decisionId: "d-3",
+      tool: "get_proposal",
+      reason: "tool_failed",
+      result: { error: "tool_failed" },
+      latencyMs: 1,
+    };
+    const cases: [string, Partial<AuditDeps>][] = [
+      ...(["network", "timeout", "unknown", "rate_limited", "unavailable"] as const).map(
+        (c): [string, Partial<AuditDeps>] => [c, { complete: fakeModel(() => Promise.reject(new AiError(c))) }],
+      ),
+      ["incomplete", { complete: fakeModel(() => okResult("", "incomplete")) }],
+      ["gateway failed", { callTool: fakeTool(failed).fn }],
+      ["gateway threw", { callTool: () => Promise.reject(new Error("db down")) }],
+    ];
+    for (const [name, over] of cases) {
+      const { store, log } = fakeStore({}, false, 2);
+      const out = await runAudit(SESSION, PROPOSAL, deps({ store, ...over }));
+      expect(out, name).toMatchObject({ state: "done", verdict: "unknown", concerns: ["insufficient_evidence"] });
+      expect(log.writes, name).toEqual([{ verdict: "unknown", agrees: null, callId: null, concerns: ["insufficient_evidence"] }]);
+      expect(log.releases, name).toBe(0);
+    }
+    // A real answer on the third attempt is stored as it is.
+    const { store, log } = fakeStore({}, false, 2);
+    expect(await runAudit(SESSION, PROPOSAL, deps({ store }))).toMatchObject({ state: "done", verdict: "pass" });
+    expect(log.writes[0]).toMatchObject({ verdict: "pass", agrees: true });
+  });
+
+  it("stores unknown with no evidence read and no call past the third attempt (a lapsed lease)", async () => {
+    const { store, log } = fakeStore({}, false, 3);
+    const model = fakeModel(() => okResult(verdictText()));
+    const tool = fakeTool();
+    const out = await runAudit(SESSION, PROPOSAL, deps({ store, complete: model, callTool: tool.fn }));
+    expect(out).toMatchObject({ state: "done", verdict: "unknown", concerns: ["insufficient_evidence"] });
+    expect(log.writes).toEqual([{ verdict: "unknown", agrees: null, callId: null, concerns: ["insufficient_evidence"] }]);
+    expect(model).not.toHaveBeenCalled();
+    expect(tool.calls).toHaveLength(0);
   });
 
   it("writes unknown on any other refusal (auth, not configured, a bad request)", async () => {

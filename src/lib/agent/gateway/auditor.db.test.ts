@@ -14,8 +14,8 @@ import type { CompleteFn, GatewayContext, ToolCall } from "./types";
 
 // The auditor's columns (0014) against a real database: the verdict words and their agreement,
 // an override only on a block and only 10 to 240 characters with who and when, the guard that
-// keeps a verdict and an override from ever changing, the 90-second lease, one verdict write, the
-// app role's grants, each carrier's proposals walled off from the other, and Approve all clean's
+// keeps a verdict and an override from ever changing, the 90-second lease and its attempt count,
+// one verdict write, the app role's grants, each carrier's proposals walled off from the other, and Approve all clean's
 // filter. Only this file's two tenants are made, and they are removed after.
 
 const A = randomUUID();
@@ -125,6 +125,7 @@ type AuditRow = {
   auditor_call_id: string | null;
   concerns: string;
   started_at: string | null;
+  attempts: number;
   checked_at: string | null;
   trace_id: string | null;
 };
@@ -136,6 +137,7 @@ const auditRow = async (tenantId: string, id: string) =>
         `SELECT auditor_verdict, auditor_agrees, CAST(auditor_call_id AS text) AS auditor_call_id,
                 CAST(auditor_concerns AS text) AS concerns,
                 to_char(auditor_started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS started_at,
+                CAST(auditor_attempts AS integer) AS attempts,
                 to_char(auditor_checked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS checked_at,
                 CAST(auditor_trace_id AS text) AS trace_id
            FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
@@ -215,6 +217,9 @@ describe("the auditor on a real database", () => {
     expect(
       await sqlStateOf(asAdmin(`UPDATE proposals SET auditor_concerns = CAST('{"a":1}' AS jsonb) WHERE id = CAST($1 AS uuid)`, [id])),
     ).toBe("23514");
+    // A new proposal has no attempts, and the count is never below zero.
+    expect((await auditRow(A, id)).attempts).toBe(0);
+    expect(await sqlStateOf(asAdmin("UPDATE proposals SET auditor_attempts = -1 WHERE id = CAST($1 AS uuid)", [id]))).toBe("23514");
   });
 
   it("takes an override only on a block, 10 to 240 characters, with who and when", async () => {
@@ -277,25 +282,28 @@ describe("the auditor on a real database", () => {
     expect(await sqlStateOf(asAdmin(override, [decided, REASON])), "after a decision").toBe("23514");
   });
 
-  it("lets the app role take the lease once per 90 seconds, give it back, and write the verdict once", async () => {
+  it("lets the app role take the lease once per 90 seconds, count each one, give it back, and write the verdict once", async () => {
     const id = await addProposal(A);
     const store = dbAuditStore(session(A), { db: app });
     const t1 = new Date(T0);
-    const trace = await store.lease(id, t1, 90_000, randomUUID());
-    expect(trace).toMatch(/^[0-9a-f-]{36}$/);
+    const first = await store.lease(id, t1, 90_000, randomUUID());
+    expect(first).toEqual({ traceId: expect.stringMatching(/^[0-9a-f-]{36}$/), attempts: 1 });
+    const trace = first?.traceId;
+    // A lease refused while it is held counts nothing.
     expect(await store.lease(id, new Date(T0 + 30_000), 90_000, randomUUID())).toBeNull();
     expect(await store.lease(id, new Date(T0 + 89_999), 90_000, randomUUID())).toBeNull();
+    expect((await auditRow(A, id)).attempts).toBe(1);
 
     // Past 90 seconds the lease is free again, and the first trace is kept.
     const t2 = new Date(T0 + 90_000);
-    expect(await store.lease(id, t2, 90_000, randomUUID())).toBe(trace);
+    expect(await store.lease(id, t2, 90_000, randomUUID())).toEqual({ traceId: trace, attempts: 2 });
     // Giving back a lease this caller no longer holds changes nothing.
     await store.release(id, t1);
     expect((await auditRow(A, id)).started_at).toBe(t2.toISOString());
     await store.release(id, t2);
     expect((await auditRow(A, id)).started_at).toBeNull();
     const t3 = new Date(T0 + 91_000);
-    expect(await store.lease(id, t3, 90_000, randomUUID())).toBe(trace);
+    expect(await store.lease(id, t3, 90_000, randomUUID())).toEqual({ traceId: trace, attempts: 3 });
 
     const now = new Date(T0 + 95_000);
     expect(await store.write(id, { verdict: "concerns", agrees: false, callId: CALL_ID, concerns: ["source_missing"] }, now)).toBe(true);
@@ -307,6 +315,7 @@ describe("the auditor on a real database", () => {
       concerns: '["source_missing"]',
       checked_at: now.toISOString(),
       trace_id: trace,
+      attempts: 3,
     });
     // A checked proposal takes no lease.
     expect(await store.lease(id, new Date(T0 + 500_000), 90_000, randomUUID())).toBeNull();
@@ -470,6 +479,70 @@ describe("the auditor on a real database", () => {
     expect(out).toEqual({ state: "done", verdict: "pass", concerns: [], checkedAt: later.toISOString() });
     expect(calls.n).toBe(1);
     expect(await auditRow(B, id)).toMatchObject({ auditor_verdict: "pass", trace_id: before.trace_id });
+  });
+
+  it("stores unknown as the app role on the third failed attempt, and a fourth page load makes no call", async () => {
+    flags.auditorEnabled = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const id = await addProposal(B);
+    const env = { META_MODEL_WONDER: "muse-wonder-1.0" };
+    // A timeout, an answer cut short at the output budget, then Meta busy: each would give the lease back.
+    let failing = 0;
+    const failures: CompleteFn = async (...args) => {
+      failing += 1;
+      if (failing === 1) throw new AiError("timeout");
+      if (failing === 2) return { ...(await passModel({ n: 0 })(...args)), status: "incomplete", text: '{"verdict":"pa' };
+      throw new AiError("unavailable", 503);
+    };
+    const at = (n: number) => {
+      const when = new Date(T0 + n * 1_000);
+      return { db: app, clock: () => when, callTool: gatewayAt(when.getTime()), complete: failures, env };
+    };
+    for (const n of [0, 1]) {
+      expect(await runAudit(session(B), id, at(n)), `attempt ${n + 1}`).toEqual({ state: "in_progress" });
+      expect(await auditRow(B, id), `attempt ${n + 1}`).toMatchObject({ auditor_verdict: null, started_at: null, attempts: n + 1 });
+    }
+    const third = new Date(T0 + 2_000).toISOString();
+    expect(await runAudit(session(B), id, at(2))).toEqual({
+      state: "done",
+      verdict: "unknown",
+      concerns: ["insufficient_evidence"],
+      checkedAt: third,
+    });
+    expect(failing).toBe(3);
+    const row = await auditRow(B, id);
+    expect(row).toMatchObject({
+      auditor_verdict: "unknown",
+      auditor_agrees: null,
+      auditor_call_id: null,
+      concerns: '["insufficient_evidence"]',
+      checked_at: third,
+      started_at: third,
+      attempts: 3,
+    });
+    // The three attempts read their evidence on the one audit trace.
+    const reads = await admin.withTenant(B, (q) =>
+      q.query<{ n: number }>(
+        "SELECT CAST(count(*) AS integer) AS n FROM gateway_decisions WHERE tenant_id = current_tenant_id() AND trace_id = $1",
+        [row.trace_id],
+      ),
+    );
+    expect(reads).toEqual([{ n: 3 }]);
+
+    // A fourth page load, past the lease: the stored verdict is read back, with no lease and no call.
+    const calls = { n: 0 };
+    const fourth = new Date(T0 + 200_000);
+    const out = await runAudit(session(B), id, {
+      db: app,
+      clock: () => fourth,
+      callTool: gatewayAt(fourth.getTime()),
+      complete: passModel(calls),
+      env,
+    });
+    expect(out).toEqual({ state: "done", verdict: "unknown", concerns: ["insufficient_evidence"], checkedAt: third });
+    expect(calls.n).toBe(0);
+    expect(failing).toBe(3);
+    expect((await auditRow(B, id)).attempts).toBe(3);
   });
 
   it("finds only the waiting pass with Approve all clean's filter", async () => {

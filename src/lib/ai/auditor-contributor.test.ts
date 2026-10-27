@@ -92,7 +92,7 @@ function store(): AuditStore {
     lease: async (_id, now, _ms, trace) => {
       state.startedAt = now.toISOString();
       state.traceId ??= trace;
-      return state.traceId;
+      return { traceId: state.traceId, attempts: 1 };
     },
     release: async () => {
       state.startedAt = null;

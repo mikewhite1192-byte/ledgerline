@@ -7,6 +7,7 @@ import {
   releaseAuditLease,
   takeAuditLease,
   writeAuditVerdict,
+  type AuditLease,
   type AuditState,
   type VerdictWrite,
 } from "./audit";
@@ -23,7 +24,7 @@ export type { OpenedTurn, OpenTurnRefusal, PersistResult, StepFinish, TurnStore 
 export { assembleSummary } from "./summary";
 export { PROPOSAL_TITLES, canonicalJson, dedupeKey, impactOf } from "./proposals";
 export { cardStatusOf } from "./views";
-export type { AuditState, VerdictWrite } from "./audit";
+export type { AuditLease, AuditState, VerdictWrite } from "./audit";
 
 export type StoreDeps = { db?: TenantDb; clock?: () => Date };
 
@@ -84,8 +85,9 @@ export async function readRecentAgentTurns(
 // transaction with the membership check; each write is guarded in its WHERE clause.
 export interface AuditStore {
   read(proposalId: string): Promise<AuditState | null>;
-  // The audit's trace id when this caller now holds the lease, null when someone else does.
-  lease(proposalId: string, now: Date, leaseMs: number, traceId: string): Promise<string | null>;
+  // The audit's trace id and this attempt's number when this caller now holds the lease, null
+  // when someone else does.
+  lease(proposalId: string, now: Date, leaseMs: number, traceId: string): Promise<AuditLease | null>;
   release(proposalId: string, startedAt: Date): Promise<void>;
   // False when a verdict was already there.
   write(proposalId: string, verdict: VerdictWrite, now: Date): Promise<boolean>;
