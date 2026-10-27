@@ -71,6 +71,12 @@ export type CarrierSummary = {
     daysLate: number;
     balanceCents: number;
   }[];
+  // The invoice review plants by the status each is planted to show, and the two customers that
+  // require a signed delivery document.
+  invoiceReview: {
+    podCustomers: string[];
+    plants: { plant: string; invoiceNumber: string; customerCode: string; amountCents: number }[];
+  };
 };
 
 export function countRows(rows: TenantRows): Record<TenantTable, number> {
@@ -198,6 +204,27 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
     };
   });
 
+  const r = plan.planted.invoiceReview;
+  const reviewPlant = (plant: string, id: string) => {
+    const i = rows.invoices.find((x) => x.id === id)!;
+    return {
+      plant,
+      invoiceNumber: i.invoice_number,
+      customerCode: customerCode.get(i.customer_id)!,
+      amountCents: i.amount_cents,
+    };
+  };
+  const invoiceReview = {
+    podCustomers: r.podCustomerIds.map((id) => customerCode.get(id)!),
+    plants: [
+      reviewPlant("missing_documents", r.missingDocumentsInvoiceId),
+      ...r.duplicateInvoiceIds.map((id) => reviewPlant("duplicate_warning", id)),
+      reviewPlant("rate_mismatch", r.rateMismatchInvoiceId),
+      reviewPlant("ready_to_send", r.readyInvoiceId),
+      ...r.needsReviewInvoiceIds.map((id) => reviewPlant("needs_review", id)),
+    ],
+  };
+
   return {
     counts: countRows(rows),
     linehaulCents: rows.loads.reduce((n, l) => n + (l.linehaul_cents ?? 0), 0),
@@ -214,5 +241,6 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
     fuelAnomalies,
     detention,
     collections,
+    invoiceReview,
   };
 }

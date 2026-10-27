@@ -26,6 +26,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     get_customer_payments: {},
     get_ledger: { driverId: hero.id },
     explain_paystub: { driverId: hero.id, periodId: paid.id },
+    get_settlements: { periodId: paid.id },
     run_checks: {},
     get_inbound_message: { inputId: input.id },
     get_document: { inputId: doc.id },
@@ -53,6 +54,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       sourceRefs: [{ table: "invoices", id: invoice.id }],
     },
     get_invoice_queue: {},
+    get_invoice_review: { invoiceId: invoice.id },
+    get_invoice_review_queue: { status: "needs_review" },
     get_ar_aging: { asOf: open.period_end, minBucket: "1_30" },
     get_payments_in: { from: paid.period_start, to: open.period_end },
     propose_payment_reapply: {

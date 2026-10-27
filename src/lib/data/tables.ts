@@ -58,6 +58,8 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["state", "text"],
       ["detention_free_minutes", "int"],
       ["detention_hourly_cents", "int"],
+      ["pod_required", "bool"],
+      ["billing_email", "text"],
     ],
   },
   drivers: {
@@ -82,6 +84,7 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["preferred_language", "text"],
       ["money_armed", "bool"],
       ["money_armed_at", "timestamptz"],
+      ["own_insurance", "bool"],
     ],
   },
   driver_cards: {
@@ -254,6 +257,12 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["carry_forward_cents", "int"],
       ["exception_count", "int"],
       ["paid_at", "timestamptz"],
+      ["escrow_opening_cents", "int"],
+      ["escrow_charges_cents", "int"],
+      ["escrow_withheld_cents", "int"],
+      ["escrow_closing_cents", "int"],
+      ["parked_reason", "text"],
+      ["parked_at", "timestamptz"],
     ],
   },
   settlement_lines: {
@@ -325,6 +334,13 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["status", "text"],
       ["paid_on", "date"],
       ["qbo_id", "text"],
+      ["reviewed_at", "timestamptz"],
+      ["reviewed_by_membership_id", "uuid"],
+      ["review_note", "text"],
+      ["sent_on", "date"],
+      ["sent_by_membership_id", "uuid"],
+      ["qbo_email_status", "text"],
+      ["qbo_amount_cents", "int"],
     ],
   },
   customer_payments: {

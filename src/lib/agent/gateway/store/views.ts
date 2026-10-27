@@ -1,5 +1,6 @@
 import type { Queryable } from "../../../db";
 import { chargeArgsSchema } from "../../../data/detention-charge";
+import { isUuid } from "../../../uuid";
 import { argStrings, parseReportArgs } from "../../../reports/args";
 import { isReportName } from "../../../reports/types";
 import { cardLabel } from "../../../advances/cards";
@@ -382,19 +383,23 @@ export async function readRecentTurnViews(q: Queryable, sub: string): Promise<Tu
 }
 
 // The cards the rules engine made for one kind (the invoice queue), still waiting or running, for
-// the page that lists them. Named tenant as well as row security, oldest first.
+// the page that lists them. Named tenant as well as row security, oldest first. subjectId: one
+// record's card only (its record page), compared whole.
 export async function readEngineProposalViews(
   q: Queryable,
   kind: ProposalView["kind"],
   limit = 200,
+  subjectId: string | null = null,
 ): Promise<ProposalView[]> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) throw new RangeError("bad limit");
+  if (subjectId !== null && !isUuid(subjectId)) throw new RangeError("bad subject id");
   const rows = await q.query<ProposalRow>(
     `${PROPOSAL_SQL}
       WHERE p.tenant_id = current_tenant_id() AND p.origin = 'engine' AND p.kind = $1
         AND p.status IN ('proposed', 'approved', 'executing')
+        ${subjectId === null ? "" : "AND p.subject_id = CAST($2 AS uuid)"}
       ORDER BY p.created_at, p.id LIMIT ${limit}`,
-    [kind],
+    subjectId === null ? [kind] : [kind, subjectId.toLowerCase()],
   );
   return rows.map(proposalView);
 }

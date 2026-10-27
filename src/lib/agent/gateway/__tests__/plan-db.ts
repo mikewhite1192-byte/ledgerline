@@ -1,9 +1,11 @@
 import type { Param } from "../../../db";
 import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
 import { QUEUE_CHILDREN, QUEUE_LOADS } from "../../../data/read";
+import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
+import { SETTLEMENT_ROWS } from "../../../settlements/list";
 import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 
 // A FakeDb that serves one synthetic carrier's seed plan through the record readers' own SQL, so
@@ -28,6 +30,10 @@ const DELIVERED_CUSTOMERS = `id IN (SELECT customer_id FROM loads WHERE tenant_i
 export const LEDGER_BY_SUBJECT =
   /^SELECT CAST\(id AS text\) AS id, .+ FROM money_actions WHERE tenant_id = current_tenant_id\(\) AND subject_table = \$1 AND subject_id = CAST\(\$2 AS uuid\) ORDER BY created_at, attempt, id$/s;
 
+// The ledger's rows of one kind (money/read.ts readByKind), answered the same way.
+export const LEDGER_BY_KIND =
+  /^SELECT CAST\(id AS text\) AS id, .+ FROM money_actions WHERE tenant_id = current_tenant_id\(\) AND kind = \$1 ORDER BY created_at, attempt, id$/s;
+
 export const PLAN_ANCHOR = "2026-11-02";
 
 let cached: CarrierPlan | null = null;
@@ -50,6 +56,52 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
       return (tables.money_actions ?? [])
         .filter((r) => r.subject_table === params[0] && r.subject_id === params[1])
         .map((r) => ({ ...r }));
+    }
+    // get_settlements' list: the plan's stored paystubs for the week with their drivers. A seed
+    // plan holds no approval cards, so every card column is null.
+    if (sql === SETTLEMENT_ROWS) {
+      const drivers = new Map(plan.rows.drivers.map((d) => [d.id, d]));
+      return plan.rows.settlements
+        .filter((s) => s.period_id === params[0])
+        .map((s) => {
+          const d = drivers.get(s.driver_id)!;
+          return {
+            id: s.id,
+            driver_id: s.driver_id,
+            code: d.code,
+            first_name: d.first_name,
+            last_name: d.last_name,
+            gross_cents: s.gross_cents,
+            deductions_cents: s.deductions_cents,
+            net_cents: s.net_cents,
+            exception_count: s.exception_count,
+            status: s.status,
+            parked_reason: s.parked_reason,
+            proposal_id: null,
+            proposal_status: null,
+            exceptions: null,
+            flagged_input_id: null,
+            auditor_verdict: null,
+            auditor_agrees: null,
+          };
+        })
+        .sort((x, y) => (x.code === y.code ? (x.id < y.id ? -1 : 1) : x.code < y.code ? -1 : 1));
+    }
+    if (LEDGER_BY_KIND.test(sql)) {
+      return (tables.money_actions ?? []).filter((r) => r.kind === params[0]).map((r) => ({ ...r }));
+    }
+    // The loads an approved invoice card wrote an invoice for. The plan holds no cards, so this
+    // answers from a proposals list a test adds, or none: every seeded invoice is history.
+    if (sql === QUEUE_CARD_LOADS_SQL) {
+      const cards = (tables.proposals ?? []).filter(
+        (r) =>
+          r.kind === "invoice_post" &&
+          r.origin === "engine" &&
+          r.subject_table === "loads" &&
+          ["executing", "done", "failed"].includes(String(r.status)) &&
+          (params[0] === null || r.subject_id === params[0]),
+      );
+      return [...new Set(cards.map((r) => String(r.subject_id)))].map((load_id) => ({ load_id }));
     }
     const m = FROM.exec(sql);
     if (!m) return undefined;

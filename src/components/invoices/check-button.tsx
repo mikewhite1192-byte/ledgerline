@@ -17,7 +17,7 @@ function isSummary(v: unknown): v is Summary {
 
 // "Check QuickBooks" on a record page whose post nobody confirmed yet: reads this one record's
 // unsettled post back from QuickBooks. It never sends anything new.
-export function CheckButton({ url }: { url: string }) {
+export function CheckButton({ url, label = "Check QuickBooks" }: { url: string; label?: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [note, setNote] = useState("");
@@ -43,7 +43,7 @@ export function CheckButton({ url }: { url: string }) {
     <div className="flex flex-wrap items-center gap-3">
       <Button type="button" variant="outline" pending={pending} onClick={() => void check()}>
         <RefreshCw aria-hidden />
-        Check QuickBooks
+        {label}
       </Button>
       <p role="status" className="text-small text-foreground-2">
         {note}
