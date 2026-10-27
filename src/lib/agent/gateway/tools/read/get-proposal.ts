@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Queryable } from "../../../../db";
+import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionChargeRows } from "../../../../data/detention-charge";
 import { loadsOf } from "../../../../data/records";
 import { readAdvanceInput, readCheckInput, readRowsWhereId } from "../../../../data/read";
 import { TENANT_TABLES, type TenantTable } from "../../../../data/tables";
@@ -192,6 +193,8 @@ const PROPOSAL_SQL = `
                                  WHERE d.tenant_id = current_tenant_id() AND d.id = p.subject_id)
            WHEN 'invoices' THEN (SELECT i.invoice_number FROM invoices i
                                   WHERE i.tenant_id = current_tenant_id() AND i.id = p.subject_id)
+           WHEN 'loads' THEN (SELECT l.load_number FROM loads l
+                               WHERE l.tenant_id = current_tenant_id() AND l.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.operator_verdict, p.status,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources,
@@ -283,6 +286,43 @@ async function invoiceEngine(q: Queryable, p: ProposalRow, args: Record<string, 
   return { ...base, engine };
 }
 
+// The detention the engine finds on the load today, the invoice it would go on, and whether the
+// stored figures (stops, instants, terms, invoice and its amount before) still match it exactly.
+// The stored args are parsed whole with their own schema here: the pack's safe args drop the stops.
+async function detentionEngine(q: Queryable, p: ProposalRow): Promise<Engine> {
+  if (p.subject_table !== "loads" || !isUuid(p.subject_id)) return UNAVAILABLE;
+  const rows = await readDetentionChargeRows(q, p.subject_id);
+  if (!rows) return UNAVAILABLE;
+  const check = detentionChargeOf(rows);
+  const base = { ok: true, check: "detention_charge", proposedCents: Number(p.amount_cents) };
+  if (!check.ok) return { ...base, engine: { ok: false, reason: check.reason } };
+  const c = check.charge;
+  const stored = chargeArgsSchema.safeParse(parseJson(p.args));
+  return {
+    ...base,
+    engine: {
+      ok: true,
+      amountCents: c.amountCents,
+      freeMinutes: c.freeMinutes,
+      hourlyCents: c.hourlyCents,
+      invoiceId: c.invoiceId,
+      invoiceAmountBeforeCents: c.invoiceAmountBeforeCents,
+      invoiceAmountAfterCents: c.invoiceAmountAfterCents,
+      stops: c.stops.map((s) => ({
+        stop: s.stop,
+        arrivedAt: s.arrivedAt,
+        departedAt: s.departedAt,
+        dwellMinutes: s.dwellMinutes,
+        overMinutes: s.overMinutes,
+        quarters: s.quarters,
+        cents: s.cents,
+      })),
+      matchesProposal: stored.success && chargeMatches(stored.data, c),
+      sources: refList(c.sources, MAX_ENGINE_SOURCES),
+    },
+  };
+}
+
 // The engine's own number for the proposal. A read or engine error is unavailable, never zero.
 async function engineFor(
   q: Queryable,
@@ -295,6 +335,7 @@ async function engineFor(
     if (p.kind === "advance_payout") return await advanceEngine(q, ctx, p, amount);
     if (p.kind === "pay_correction") return await payCorrectionEngine(q, args);
     if (p.kind === "invoice_fix") return await invoiceEngine(q, p, args);
+    if (p.kind === "detention_charge") return await detentionEngine(q, p);
     return UNAVAILABLE;
   } catch {
     console.warn("gateway: the auditor's engine check could not be computed");

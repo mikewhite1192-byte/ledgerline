@@ -37,6 +37,7 @@ describe("get_proposal", () => {
     ["advance_payout", "advance_eligibility"],
     ["pay_correction", "pay_checks"],
     ["invoice_fix", "invoice_amount"],
+    ["detention_charge", "detention_charge"],
   ];
 
   it.each(cases)("returns the %s pack with the engine's own check, inside the size cap", async (kind, check) => {
@@ -61,6 +62,26 @@ describe("get_proposal", () => {
     expect(typeof engine.currentCents).toBe("number");
     expect(engine.proposedCents).toBe((engine.currentCents as number) + 100);
     expect(engine.engine).toMatchObject({ ok: true });
+  });
+
+  it("gives the detention engine's own figures and whether the stored ones still match them", async () => {
+    const row = proposalRowFor(plan, "detention_charge");
+    const run = async (r: typeof row) => {
+      const db = planDb(plan, withProposal(r));
+      const out = await callTool(auditor, call(PROPOSAL_ID), { db, clock: fixedClock });
+      if (out.decision !== "allowed") throw new Error("not allowed");
+      return out.result as { proposal: Record<string, unknown>; engine: Record<string, unknown> };
+    };
+    const same = await run(row);
+    expect(same.proposal).toMatchObject({ subject: { table: "loads", label: row.subject_label } });
+    expect(same.engine).toMatchObject({
+      proposedCents: 41_250,
+      engine: { ok: true, amountCents: 41_250, matchesProposal: true },
+    });
+    const args = JSON.parse(row.args as string);
+    args.stops[0].arrivedAt = "2026-10-01T00:00:00.000Z";
+    const moved = await run({ ...row, args: JSON.stringify(args) });
+    expect(moved.engine).toMatchObject({ engine: { ok: true, amountCents: 41_250, matchesProposal: false } });
   });
 
   it("drops free text from the stored args and keeps codes, numbers and references", async () => {

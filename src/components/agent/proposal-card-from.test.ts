@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProposalView } from "@/lib/agent/view";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
-import { FLAG_QUESTION, auditFor, proposalCardFrom } from "./proposal-card-from";
+import { FLAG_QUESTION, auditFor, detentionLines, hoursMinutes, proposalCardFrom } from "./proposal-card-from";
 
 const DRIVER = "11111111-1111-4111-8111-111111111111";
 
@@ -129,5 +129,50 @@ describe("the auditor on the card", () => {
     const card = proposalCardFrom({ ...view, auditorVerdict: "concerns", auditorConcerns: ["source_missing"] });
     expect(card).not.toHaveProperty("audit");
     expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07?");
+  });
+
+  it("explains a detention charge stop by stop from the stored figures, then the invoice change", () => {
+    const LOAD = "22222222-2222-4222-8222-222222222222";
+    const card = proposalCardFrom({
+      ...view,
+      kind: "detention_charge",
+      subjectTable: "loads",
+      subjectId: LOAD,
+      subjectLabel: "BR-L0412",
+      amountCents: 37_500,
+      direction: "in",
+      title: "Bill unbilled detention",
+      reasons: [],
+      sources: [{ table: "loads", id: LOAD }],
+      operatorVerdict: "not_given",
+      detention: {
+        freeMinutes: 120,
+        hourlyCents: 7_500,
+        invoiceAmountBeforeCents: 250_000,
+        stops: [{ stop: "pickup", dwellMinutes: 420, overMinutes: 300, quarters: 20, cents: 37_500 }],
+      },
+    });
+    expect(card.title).toBe("Bill unbilled detention for BR-L0412");
+    expect(card.impact).toEqual({ cents: 37_500, direction: "in" });
+    expect(card.confirmQuestion).toBeUndefined();
+    expect(card.reasons).toEqual([
+      { text: "7 h 00 min at the shipper, 2 h 00 min free, 20 started quarter hours at $75.00 an hour: $375.00." },
+      { text: "The open invoice goes from $2,500.00 to $2,875.00." },
+    ]);
+  });
+
+  it("writes minutes as hours and minutes, and one quarter hour in the singular", () => {
+    expect(hoursMinutes(0)).toBe("0 h 00 min");
+    expect(hoursMinutes(135)).toBe("2 h 15 min");
+    const [line] = detentionLines(
+      {
+        freeMinutes: 120,
+        hourlyCents: 6_000,
+        invoiceAmountBeforeCents: 100_000,
+        stops: [{ stop: "delivery", dwellMinutes: 125, overMinutes: 5, quarters: 1, cents: 1_500 }],
+      },
+      1_500,
+    );
+    expect(line).toBe("2 h 05 min at the consignee, 2 h 00 min free, 1 started quarter hour at $60.00 an hour: $15.00.");
   });
 });

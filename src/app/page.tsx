@@ -128,7 +128,7 @@ export default async function Home() {
           initialTurns={agentTurns}
           streamMode={flags.agentStreamMode}
           auditorOn={flags.auditorEnabled}
-          suggestions={SUGGESTIONS}
+          suggestions={flags.detentionEnabled ? [...SUGGESTIONS, DETENTION_SUGGESTION] : SUGGESTIONS}
           intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
           disabledReason={
             flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
@@ -150,6 +150,10 @@ export default async function Home() {
 
 // Shown before the agent can answer; they light up when it can.
 const SUGGESTIONS = homeSuggestions(flags.reportsEnabled);
+
+// Offered only while the detention tools are switched on, so the chip never asks for a tool the
+// agent does not have.
+const DETENTION_SUGGESTION = { id: "unbilled-detention", label: "Find detention we never billed last month" };
 
 // What this carrier has on file, from the counts read above.
 function RecordCounts({ counts }: { counts: Carrier["counts"] }) {

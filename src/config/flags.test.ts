@@ -16,6 +16,7 @@ describe("flags", () => {
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
     expect(flags.clipsEnabled).toBe(false);
+    expect(flags.detentionEnabled).toBe(false);
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
@@ -34,6 +35,7 @@ describe("flags", () => {
     expect(flags.gatewayLimits).toEqual({
       payCorrectionMaxCents: 50_000,
       invoiceFixMaxCents: 250_000,
+      detentionChargeMaxCents: 100_000,
     });
     for (const v of Object.values(flags.gatewayLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
