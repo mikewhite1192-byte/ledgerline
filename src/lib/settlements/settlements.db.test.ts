@@ -14,6 +14,7 @@ import { cents, settleDriver } from "../rules-engine";
 import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import golden from "../seed/golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "../seed/plan";
+import { resetDemoTenant } from "../seed/reset";
 import { replaceTenantData } from "../seed/run";
 import { settlementApproveExecutor } from "./approve";
 import { confirmBatch, type BatchRequest } from "./batch";
@@ -21,7 +22,7 @@ import { readCleanSet } from "./clean";
 import { drainBatch } from "./drain";
 import { LEG_NOT_SENT, legFailureLabel } from "./labels";
 import type { SettlementMoneyDeps } from "./legs";
-import { readSettlementRows } from "./list";
+import { nameOf, readPaystubAsk, readSettlementRows } from "./list";
 import { paidWritesOf } from "./paid";
 import { retryPayout } from "./post";
 import { runPayPeriod } from "./run";
@@ -327,26 +328,24 @@ describe("settlements against a seeded database", () => {
     await admin?.close();
   });
 
-  it("starts with every driver paying for their own insurance off and accepts the new pay item kinds", async () => {
+  it("starts with every driver paying for their own insurance off, and escrow never below zero", async () => {
     for (const t of tenants) {
       expect(await countOf(t, "SELECT count(*) AS n FROM drivers WHERE tenant_id = $1 AND own_insurance", [t.id])).toBe(0);
     }
-    // An escrow charge item, and an item that points back at a settlement, both fit the table.
-    const [paid] = await adminRows<{ id: string; driver_id: string }>(
+    // The engine refuses a negative escrow balance, so the schema does too (no row changes).
+    const [driver] = await adminRows<{ id: string }>(
       BR,
-      "SELECT id, driver_id FROM settlements WHERE tenant_id = $1 AND status = 'paid' ORDER BY id LIMIT 1",
+      "SELECT id FROM drivers WHERE tenant_id = $1 ORDER BY id LIMIT 1",
       [BR.id],
     );
-    const itemId = randomUUID();
-    await adminWrite(
-      BR,
-      `INSERT INTO pay_items (id, tenant_id, driver_id, kind, subkind, amount_cents, item_date, ref_table, ref_id,
-                              item_ref, description)
-       VALUES (CAST($1 AS uuid), $2, CAST($3 AS uuid), 'escrow_charge', 'escrow_charge', 100, '2027-01-04',
-               'settlements', CAST($4 AS uuid), $5, 'Test charge')`,
-      [itemId, BR.id, paid.driver_id, paid.id, `test-${itemId}`],
-    );
-    expect(await adminWrite(BR, "DELETE FROM pay_items WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [BR.id, itemId])).toBe(1);
+    expect(
+      await sqlStateOf(
+        adminWrite(BR, "UPDATE drivers SET escrow_balance_cents = -1 WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [
+          BR.id,
+          driver.id,
+        ]),
+      ),
+    ).toBe("23514");
   });
 
   it("runs the open week for both carriers: every draft is the engine's own result, and nothing is clean before the auditor", async () => {
@@ -605,6 +604,11 @@ describe("settlements against a seeded database", () => {
     expect(payment.createdCount - createdBefore).toBe(1);
     expect((await settlementOf(BR, "BR-D08")).status).toBe("paid");
     expect((await ledgerOf(BR, s.id)).map((r) => [r.kind, r.state, r.attempt])).toEqual([["settlement_payout", "confirmed", 1]]);
+    // The card ended failed before the retry paid the driver, and 0014 keeps an ended card's
+    // status, so it stays failed but no longer says the rail was not connected.
+    expect(await cardById(BR, card.id)).toMatchObject({ status: "failed", decision_note: null });
+    const after = await app.withTenant(BR.id, (q) => readSettlementRecord(q, s.id));
+    expect(after?.proposal).toMatchObject({ id: card.id, status: "failed", note: null });
   }, 60_000);
 
   it("leaves insurance off the paystub of a driver who carries their own", async () => {
@@ -789,6 +793,170 @@ describe("settlements against a seeded database", () => {
     for (const code of ["PW-D07", "PW-D10"]) expect((await settlementOf(PW, code)).status, code).toBe("paid");
   }, 60_000);
 
+  it("names the paystub's driver and week for the question box, inside its own carrier only", async () => {
+    const s = await settlementOf(BR, "BR-D08");
+    const [driver] = await adminRows<{ first_name: string; last_name: string }>(
+      BR,
+      "SELECT first_name, last_name FROM drivers WHERE tenant_id = $1 AND id = CAST($2 AS uuid)",
+      [BR.id, s.driver_id],
+    );
+    const asked = await app.withTenant(BR.id, (q) => readPaystubAsk(q, s.id));
+    expect(asked).toEqual({ driverName: nameOf(driver.first_name, driver.last_name), periodEnd: openPeriodOf(BR).period_end });
+    expect(asked?.driverName).toMatch(/^\S.* .*\S$/);
+    expect(await app.withTenant(PW.id, (q) => readPaystubAsk(q, s.id))).toBeNull();
+    expect(await app.withTenant(BR.id, (q) => readPaystubAsk(q, randomUUID()))).toBeNull();
+  });
+
+  it("retires a waiting card whose paystub an interrupted run removed, and the rerun makes a new one", async () => {
+    const s = await settlementOf(BR, "BR-D16");
+    const card = await openCard(BR, "BR-D16");
+    // What a run that stopped after removing the draft and before retiring its card leaves.
+    await adminWrite(BR, "DELETE FROM settlement_lines WHERE tenant_id = $1 AND settlement_id = CAST($2 AS uuid)", [BR.id, s.id]);
+    expect(await adminWrite(BR, "DELETE FROM settlements WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [BR.id, s.id])).toBe(1);
+    expect((await cardById(BR, card.id)).status).toBe("proposed");
+
+    expect((await run(BR)).ok).toBe(true);
+    expect((await cardById(BR, card.id)).status).toBe("expired");
+    const fresh = await openCard(BR, "BR-D16");
+    expect(fresh.id).not.toBe(card.id);
+    expect(fresh.subject_id).toBe((await settlementOf(BR, "BR-D16")).id);
+    expect(fresh.subject_id).not.toBe(s.id);
+  }, 60_000);
+
+  it("keeps a confirmed payout recorded when booking its paystub fails, and Retry books it without paying again", async () => {
+    const s = await settlementOf(BR, "BR-D21");
+    expect(Number(s.net_cents)).toBeGreaterThan(0);
+    const card = await openCard(BR, "BR-D21");
+    const lines = await app.withTenant(BR.id, (q) => readStoredLines(q, s.id));
+    const item = lines.flatMap((l) => l.sources).find((x) => x.table === "pay_items");
+    if (!item) throw new Error("BR-D21 cites no pay item");
+    const [paid] = await adminRows<{ id: string }>(
+      BR,
+      "SELECT id FROM settlements WHERE tenant_id = $1 AND status = 'paid' AND id <> CAST($2 AS uuid) ORDER BY id LIMIT 1",
+      [BR.id, s.id],
+    );
+    const stamp = (to: string | null) =>
+      adminWrite(BR, "UPDATE pay_items SET settlement_id = CAST($3 AS uuid) WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [
+        BR.id,
+        item.id,
+        to,
+      ]);
+    // The rail pays the driver, then one of the week's pay items is settled elsewhere before the
+    // paystub is booked: the booking cannot write whole.
+    const breaksBooking: SettlementMoneyDeps = {
+      ...money,
+      payment: {
+        ...payment,
+        sendPayout: async (p, ctx) => {
+          const out = await payment.sendPayout(p, ctx);
+          expect(await stamp(paid.id)).toBe(1);
+          return out;
+        },
+      },
+    };
+    const breaking: ExecutorRegistry = { ...EXECUTORS, settlement_approve: settlementApproveExecutor(breaksBooking) };
+    const createdBefore = payment.createdCount;
+    const sendsBefore = payment.sendCount;
+    const billsBefore = books.seen.bills;
+    try {
+      await withSwitches(true, () => executeProposal(BR.session, card.id, { confirmed: true }, { db: app, clock, executors: breaking }));
+
+      // The money went out and its record stands; the paystub is not booked, the bill legs did
+      // not start, and the card says why while it waits.
+      expect(payment.createdCount - createdBefore).toBe(1);
+      expect((await ledgerOf(BR, s.id)).map((r) => [r.kind, r.state, r.attempt])).toEqual([["settlement_payout", "confirmed", 1]]);
+      expect((await settlementOf(BR, "BR-D21")).status).toBe("approved");
+      expect(books.seen.bills).toBe(billsBefore);
+      expect(await cardById(BR, card.id)).toMatchObject({ status: "executing", decision_note: "not_booked" });
+      const record = await app.withTenant(BR.id, (q) => readSettlementRecord(q, s.id));
+      expect(record?.proposal).toMatchObject({ id: card.id, status: "executing", note: "not_booked" });
+      expect(record?.latest.settlement_payout).toBe("confirmed");
+
+      // Still unbookable: Retry says so and sends nothing.
+      expect(await withSwitches(true, () => retryPayout(app, BR.session, s.id, money, clock))).toEqual({
+        ok: false,
+        category: "not_booked",
+      });
+    } finally {
+      expect(await stamp(null)).toBe(1);
+    }
+    expect([payment.createdCount - createdBefore, payment.sendCount - sendsBefore]).toEqual([1, 1]);
+
+    const retried = await withSwitches(true, () => retryPayout(app, BR.session, s.id, money, clock));
+    expect(retried).toMatchObject({ ok: true, state: "confirmed" });
+    expect([payment.createdCount - createdBefore, payment.sendCount - sendsBefore]).toEqual([1, 1]);
+    expect((await settlementOf(BR, "BR-D21")).status).toBe("paid");
+    expect((await ledgerOf(BR, s.id)).map((r) => [r.kind, r.state, r.attempt])).toEqual([["settlement_payout", "confirmed", 1]]);
+    expect(await cardById(BR, card.id)).toMatchObject({ status: "done", decision_note: null });
+    // Booked once: a second Retry finds a paid paystub and changes nothing.
+    expect(await withSwitches(true, () => retryPayout(app, BR.session, s.id, money, clock))).toMatchObject({ ok: false });
+    expect(payment.sendCount - sendsBefore).toBe(1);
+  }, 60_000);
+
+  it("refuses Retry payout on an approved paystub whose records changed, with nothing sent", async () => {
+    const s = await settlementOf(BR, "BR-D07");
+    expect(Number(s.net_cents)).toBeGreaterThan(0);
+    const card = await openCard(BR, "BR-D07");
+    // Approved with the switch off: nothing reserved, the paystub waits for Retry payout.
+    await approve(BR, card.id);
+    expect((await settlementOf(BR, "BR-D07")).status).toBe("approved");
+    expect(await cardById(BR, card.id)).toMatchObject({ status: "done", decision_note: "not_paid" });
+
+    await raiseLoad(BR, "BR-D07");
+    const sendsBefore = payment.sendCount;
+    const createdBefore = payment.createdCount;
+    expect(await withSwitches(true, () => retryPayout(app, BR.session, s.id, money, clock))).toEqual({
+      ok: false,
+      category: "records_changed",
+    });
+    expect([payment.sendCount, payment.createdCount]).toEqual([sendsBefore, createdBefore]);
+    expect(await ledgerOf(BR, s.id)).toEqual([]);
+    expect((await settlementOf(BR, "BR-D07")).status).toBe("approved");
+    expect(await cardById(BR, card.id)).toMatchObject({ status: "done", decision_note: "records_changed" });
+
+    // The records back as approved: Retry pays once and the card's note clears.
+    await raiseLoad(BR, "BR-D07", -10_000);
+    expect(await withSwitches(true, () => retryPayout(app, BR.session, s.id, money, clock))).toMatchObject({
+      ok: true,
+      state: "confirmed",
+    });
+    expect(payment.createdCount - createdBefore).toBe(1);
+    expect((await settlementOf(BR, "BR-D07")).status).toBe("paid");
+    expect(await cardById(BR, card.id)).toMatchObject({ status: "done", decision_note: null });
+  }, 60_000);
+
+  it("refuses a batch paystub whose records changed after the confirm, in the drain, with nothing sent for it", async () => {
+    const req = await requestFor(BR, ["BR-D02", "BR-D19"]);
+    const d02 = await settlementOf(BR, "BR-D02");
+    const createdBefore = payment.createdCount;
+    const billsBefore = books.seen.bills;
+    await withSwitches(true, async () => {
+      const out = await confirmBatch(app, BR.session, req, clock(), money);
+      expect(out).toMatchObject({ ok: true, legsReserved: 6, status: "confirmed" });
+      if (!out.ok) return;
+      await raiseLoad(BR, "BR-D02");
+      const drained = await drainBatch(app, BR.session, out.batchId, 100_000, { ...money, nowMs: () => 0, clock });
+      expect(drained).toMatchObject({ ok: true, status: "partial", confirmed: 3, failed: 3, unknown: 0, remaining: 0 });
+    });
+    expect(payment.createdCount - createdBefore).toBe(1);
+    expect(books.seen.bills - billsBefore).toBe(1);
+    const refused = await adminRows<{ kind: string; state: string; failure_category: string; settled_via: string }>(
+      BR,
+      `SELECT kind, state, failure_category, settled_via FROM money_actions
+        WHERE tenant_id = $1 AND subject_id = CAST($2 AS uuid) ORDER BY kind`,
+      [BR.id, d02.id],
+    );
+    expect(refused).toEqual([
+      { kind: "settlement_bill", state: "failed", failure_category: "validation", settled_via: "refused" },
+      { kind: "settlement_bill_payment", state: "failed", failure_category: "validation", settled_via: "refused" },
+      { kind: "settlement_payout", state: "failed", failure_category: "validation", settled_via: "refused" },
+    ]);
+    expect((await settlementOf(BR, "BR-D02")).status).toBe("approved");
+    const d02Cards = (await cardsOf(BR, d02.id)).filter((c) => req.proposalIds.includes(c.id));
+    expect(d02Cards).toMatchObject([{ status: "failed", decision_note: "records_changed" }]);
+    expect((await settlementOf(BR, "BR-D19")).status).toBe("paid");
+  }, 60_000);
+
   it("keeps each carrier's batches and their ledger rows to itself", async () => {
     expect(await drainBatch(app, BR.session, pwBatch, 100_000, { ...money, clock })).toEqual({
       ok: false,
@@ -801,4 +969,33 @@ describe("settlements against a seeded database", () => {
     expect(seen).toEqual({ batches: [], ledger: [] });
     expect(await countOf(PW, "SELECT count(*) AS n FROM approval_batches WHERE tenant_id = $1", [PW.id])).toBe(2);
   });
+
+  it("resets the demo carrier after paid, parked and batch-paid weeks, ledger rows on a batch included", async () => {
+    // One more paystub parked, beside the paid ones and the three settlements batches above.
+    const card = await openCard(BR, "BR-D11");
+    await raiseLoad(BR, "BR-D11");
+    await withSwitches(true, () => approve(BR, card.id));
+    expect((await settlementOf(BR, "BR-D11")).parked_reason).toBe("line_amount_changed");
+    const statuses = (await draftsOf(BR)).map((d) => d.status);
+    expect(statuses).toContain("paid");
+    expect(statuses).toContain("approved");
+    const onBatch = await countOf(BR, "SELECT count(*) AS n FROM money_actions WHERE tenant_id = $1 AND batch_id IS NOT NULL", [BR.id]);
+    expect(onBatch).toBeGreaterThan(0);
+    expect(
+      await countOf(BR, "SELECT count(*) AS n FROM approval_batches WHERE tenant_id = $1 AND scope = 'settlements'", [BR.id]),
+    ).toBe(3);
+    const ledger = await ledgerCount(BR);
+    const pwLedger = await ledgerCount(PW);
+
+    const report = await resetDemoTenant(app, BR.id, BR.plan);
+    expect(report.cleared.money_actions).toBe(ledger);
+    expect(report.cleared.approval_batches).toBe(3);
+    expect([await ledgerCount(BR), await batchCount(BR)]).toEqual([0, 0]);
+    // resetDemoTenant read every seeded table back against the plan before it returned.
+    expect(await countOf(BR, "SELECT count(*) AS n FROM settlements WHERE tenant_id = $1", [BR.id])).toBe(
+      BR.plan.rows.settlements.length,
+    );
+    // The other carrier is untouched.
+    expect(await ledgerCount(PW)).toBe(pwLedger);
+  }, 60_000);
 });

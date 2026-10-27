@@ -5,20 +5,30 @@ import { flags } from "../../config/flags";
 import type { Queryable, TenantDb } from "../db";
 import { readRowsWhereId, readTenant } from "../data/read";
 import { executeMoneyAction, type ExecuteResult, type MoneyDeps, type MoneyHooks } from "../money/execute";
+import { settle } from "../money/ledger";
 import { readBySubject } from "../money/read";
 import { MoneyError, type MoneyAction, type MoneyDraft } from "../money/types";
 import type { PayLine } from "../rules-engine";
 import { localDateOf, type LocalDate } from "../time/local-date";
 import { bookPaidSettlement } from "./book";
-import { readPeriod, readStoredLines, readStoredSettlement } from "./stored";
+import {
+  readPeriod,
+  readStoredLines,
+  readStoredSettlement,
+  recheckSettlement,
+  type StoredSettlement,
+} from "./stored";
 
 // The three money legs of one approved paystub, in order: the payout to the driver (payment
 // channel), the bill for the week (accounting), and the bill payment that marks it paid. Every leg
 // goes through the money executor with the settlement's ledger key (<kind>:<settlement id>:
 // <attempt>), so the same leg is sent at most once per attempt, by whoever gets there first (the
-// approve, the batch drain, or a button). The payout's confirmation books the paystub as paid; the
-// bill legs only record what the accounting system holds. A later leg never starts until the leg
-// before it is confirmed.
+// approve, the batch drain, or a button). Once the payout is confirmed and that record committed,
+// the paystub is booked as paid in its own transaction (bookConfirmedPayout), so a booking error
+// never undoes the record of money that went out; a booking that does not go through stops the
+// legs after it, as a failed leg does, and Retry books it without sending again. The bill legs only
+// record what the accounting system holds. A later leg never starts until the leg before it is
+// confirmed and the paystub is booked.
 
 export const LEG_KINDS = ["settlement_payout", "settlement_bill", "settlement_bill_payment"] as const;
 export type LegKind = (typeof LEG_KINDS)[number];
@@ -122,17 +132,124 @@ export async function finishProposal(
   );
 }
 
-// The payout's follow-up writes, shared by the executor, the batch and the reconcile pass.
-export function payoutHooks(settlementId: string, clock: () => Date): Required<Pick<MoneyHooks, "onReserved" | "onConfirmed" | "onFailed">> {
+// The card a paystub shows: its live card, else its newest (views.ts and list.ts pick it the same
+// way). $1 is the settlement id.
+const SHOWN_CARD = `SELECT id FROM proposals
+  WHERE tenant_id = current_tenant_id() AND kind = 'settlement_approve' AND subject_id = CAST($1 AS uuid)
+  ORDER BY (status IN ('proposed', 'approved', 'executing')) DESC, created_at DESC, id
+  LIMIT 1`;
+
+// The paystub's card once its payout is booked. An executing card ends done. A card that had
+// already ended (failed when a payout was refused before a retry sent it, or done 'not_paid' when
+// the switch was off at the approve) keeps its status, which 0014's guard makes final, and loses
+// the note that no longer holds.
+export async function cardPaid(q: Queryable, settlementId: string, now: Date): Promise<void> {
+  await finishProposal(q, settlementId, "done", null, now);
+  await q.execute(
+    `UPDATE proposals SET decision_note = NULL, updated_at = CAST($2 AS timestamptz)
+      WHERE tenant_id = current_tenant_id() AND id = (${SHOWN_CARD})
+        AND status IN ('done', 'failed') AND decision_note IS NOT NULL`,
+    [settlementId, now.toISOString()],
+  );
+}
+
+// Why the paystub's payout did not finish, on the card it shows. An executing card moves to
+// executingTo ('failed' ends it; 'executing' keeps it running, for a step still to retry); a card
+// that already ended keeps its status and carries the note.
+async function cardNote(
+  q: Queryable,
+  settlementId: string,
+  note: string,
+  executingTo: "failed" | "executing",
+  now: Date,
+): Promise<void> {
+  await q.execute(
+    `UPDATE proposals
+        SET status = CASE WHEN status = 'executing' THEN CAST($2 AS text) ELSE status END,
+            decision_note = $3, updated_at = CAST($4 AS timestamptz)
+      WHERE tenant_id = current_tenant_id() AND id = (${SHOWN_CARD})
+        AND status IN ('executing', 'failed', 'done')`,
+    [settlementId, executingTo, note, now.toISOString()],
+  );
+}
+
+// The payout's follow-up writes in its settle transaction, shared by the executor, the batch and
+// the reconcile pass. A confirmation writes nothing here: the booking runs after the settle
+// commits (bookConfirmedPayout).
+export function payoutHooks(settlementId: string, clock: () => Date): Required<Pick<MoneyHooks, "onReserved" | "onFailed">> {
   return {
     onReserved: (q, action) => linkProposal(q, settlementId, action.id, clock()),
-    onConfirmed: async (q) => {
-      const now = clock();
-      await bookPaidSettlement(q, settlementId, now);
-      await finishProposal(q, settlementId, "done", null, now);
-    },
     onFailed: (q, action) => finishProposal(q, settlementId, "failed", action.failureCategory ?? "unknown", clock()),
   };
+}
+
+export type BookOutcome = "booked" | "not_confirmed" | "not_booked";
+
+// The paystub booked as paid once its payout is confirmed, in its own transaction after the
+// payout's record committed, and its card ended. booked: now or earlier. not_confirmed: no
+// confirmed payout behind an approved paystub, so nothing was written. not_booked: the booking
+// failed and rolled back whole; the payout stays confirmed, the card says so (and stays executing
+// when it was), and the next approve resume, batch drain or Retry books it, never sending again.
+export async function bookConfirmedPayout(
+  db: TenantDb,
+  tenantId: string,
+  settlementId: string,
+  clock: () => Date,
+): Promise<BookOutcome> {
+  try {
+    return await db.withTenant(tenantId, async (q) => {
+      // The paystub's lock first, the order every writer of it uses.
+      const stored = await readStoredSettlement(q, settlementId, true);
+      const now = clock();
+      if (stored?.status === "paid") {
+        await cardPaid(q, settlementId, now);
+        return "booked";
+      }
+      if (stored?.status !== "approved") return "not_confirmed";
+      const payout = latestOf(await readBySubject(q, "settlements", settlementId), "settlement_payout");
+      if (payout?.state !== "confirmed") return "not_confirmed";
+      await bookPaidSettlement(q, settlementId, now);
+      await cardPaid(q, settlementId, now);
+      return "booked";
+    });
+  } catch (err) {
+    console.error(
+      `settlements: booking settlement ${settlementId} did not commit (${err instanceof Error ? err.name : "unknown"})`,
+    );
+  }
+  try {
+    await db.withTenant(tenantId, async (q) => {
+      // Only while the paystub is still unbooked: a commit whose answer was lost may have booked it.
+      const stored = await readStoredSettlement(q, settlementId, true);
+      if (stored?.status === "approved") await cardNote(q, settlementId, "not_booked", "executing", clock());
+    });
+  } catch (err) {
+    // The record page offers Retry booking from the paystub and its ledger rows alone.
+    console.error(`settlements: noting the unbooked settlement ${settlementId} failed (${err instanceof Error ? err.name : "unknown"})`);
+  }
+  return "not_booked";
+}
+
+// The pre-pay recheck on an approved paystub, the one the approve runs on the draft, run again
+// before a payout goes from the batch drain, Retry payout or a resumed approve. The caller holds
+// the paystub's lock. An approved paystub cannot be parked (only a draft can), so a stale one is
+// refused instead: a reserved payout settles as refused before any call (validation, as the drain
+// refuses), an executing card ends failed 'records_changed' (an ended one carries that note), and
+// nothing is sent. A payout already sent, unknown or confirmed is never refused here. true when it
+// refused.
+export async function refuseStalePayout(q: Queryable, stored: StoredSettlement, now: Date): Promise<boolean> {
+  if (stored.status !== "approved") return false;
+  const payout = latestOf(await readBySubject(q, "settlements", stored.id), "settlement_payout");
+  if (payout !== null && payout.state !== "reserved" && payout.state !== "failed") return false;
+  const check = await recheckSettlement(q, stored, await readStoredLines(q, stored.id));
+  if (check.park === null) return false;
+  // A row another caller claimed a moment ago is its send now (checked before it claimed).
+  if (payout?.state === "reserved" && !(await settle(q, payout.id, { to: "failed", via: "refused", category: "validation" }))) {
+    return false;
+  }
+  await cardNote(q, stored.id, "records_changed", "failed", now);
+  console.info(`settlements: payout refused, records changed (${check.park}) for settlement ${stored.id}`);
+  return true;
 }
 
 // The bill's lines are the stored paystub lines, and must add up to the net exactly.

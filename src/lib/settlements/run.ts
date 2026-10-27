@@ -223,14 +223,17 @@ export async function runPayPeriod(
     }
   }
 
-  // A waiting card whose draft was removed is retired; every other waiting card, of this week or
-  // any other, stays (a new card for a changed draft already retired its old one).
+  // A waiting card whose draft was removed is retired, in this run or in an earlier one that
+  // stopped before this step; every other waiting card, of this week or any other, stays (a new
+  // card for a changed draft already retired its old one).
   await db.withTenant(tenantId, async (q) => {
     await assertMembership(q, session);
     const waiting = await q.query<{ subject_id: string }>(
-      `SELECT subject_id FROM proposals
-        WHERE tenant_id = current_tenant_id() AND origin = 'engine' AND kind = 'settlement_approve'
-          AND status = 'proposed'`,
+      `SELECT p.subject_id FROM proposals p
+        WHERE p.tenant_id = current_tenant_id() AND p.origin = 'engine' AND p.kind = 'settlement_approve'
+          AND p.status = 'proposed'
+          AND EXISTS (SELECT 1 FROM settlements s
+                       WHERE s.tenant_id = p.tenant_id AND s.id = p.subject_id)`,
     );
     const keep = new Set(waiting.map((w) => w.subject_id).filter((id) => !dropped.has(id)));
     await retireEngineProposalsExcept(q, "settlement_approve", keep, session, now);

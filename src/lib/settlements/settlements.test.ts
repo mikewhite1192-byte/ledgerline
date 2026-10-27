@@ -349,10 +349,10 @@ describe("the check before an approve", () => {
     ({ table: "loads", record: { status, deliveredOn } }) as unknown as SourceRow;
   const itemRow = (settlementId: string | null): SourceRow =>
     ({ table: "pay_items", record: { settlementId } }) as unknown as SourceRow;
-  const advanceRow = (amount: number, recovered: number): SourceRow =>
+  const advanceRow = (amount: number, recovered: number, takenBack = 0): SourceRow =>
     ({
       table: "advances",
-      record: { status: "paid", amountCents: amount, feeCents: 0, recoveredCents: recovered },
+      record: { status: "paid", amountCents: amount, feeCents: 0, recoveredCents: recovered, takenBackCents: takenBack },
     }) as unknown as SourceRow;
 
   it("finds each problem with a cited record as it stands now", () => {
@@ -378,6 +378,8 @@ describe("the check before an approve", () => {
     expect(cat({ [`loads:${ID.a}`]: loadRow("cancelled", "2026-10-28") })).toEqual(["source_changed"]);
     expect(cat({ [`loads:${ID.a}`]: loadRow("delivered", "2026-10-25") })).toEqual(["source_changed"]);
     expect(cat({ [`advances:${ID.c}`]: advanceRow(30_000, 15_000) })).toEqual(["advance_overrecovered"]);
+    // A take-back a person recorded counts against what is left to recover, as settlements do.
+    expect(cat({ [`advances:${ID.c}`]: advanceRow(30_000, 0, 15_000) })).toEqual(["advance_overrecovered"]);
     expect(cat({ [`advances:${ID.c}`]: null })).toEqual(["source_missing"]);
     // A record the server did not read at all counts as missing: unknown is not zero.
     expect(checkLineSources(lines, ID.settlement, period, new Map()).map((p) => p.category)).toEqual([

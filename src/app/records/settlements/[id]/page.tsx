@@ -70,6 +70,8 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
     flags.settlementsEnabled && s.status === "paid" && s.netCents > 0 && !(bill === "confirmed" && billPayment === "confirmed");
   const canRetry =
     flags.settlementsEnabled && s.status === "approved" && s.netCents > 0 && (payout === null || payout === "failed" || payout === "reserved");
+  // The payout went out but the paystub was not booked: the same button books it, sending nothing.
+  const canBook = flags.settlementsEnabled && s.status === "approved" && s.netCents > 0 && payout === "confirmed";
   const ask = `/?paystub=${encodeURIComponent(s.id)}`;
   return (
     <SignedInPage tenant={page.shell} current="/settlements" title={`Paystub ${view.driver.name}`}>
@@ -118,8 +120,12 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
         </Link>
       </p>
       {cards.length > 0 ? <InvoiceCards cards={cards} auditorOn={flags.auditorEnabled} /> : null}
-      {canRetry ? (
-        <SettlementAction url={`/api/settlements/${encodeURIComponent(s.id)}/retry-payout`} label="Retry payout" kind="retry" />
+      {canRetry || canBook ? (
+        <SettlementAction
+          url={`/api/settlements/${encodeURIComponent(s.id)}/retry-payout`}
+          label={canBook ? "Retry booking" : "Retry payout"}
+          kind="retry"
+        />
       ) : null}
       {canPost ? (
         <SettlementAction

@@ -30,6 +30,23 @@ export type SettlementListRow = {
 
 export const nameOf = (first: string, last: string) => `${first} ${last}`.trim();
 
+// The paystub "Ask about this paystub" opens the home page with: its driver's name and the week's
+// last day, or null when the id is not one of this carrier's paystubs. The caller checks the id.
+export async function readPaystubAsk(
+  q: Queryable,
+  settlementId: string,
+): Promise<{ driverName: string; periodEnd: string } | null> {
+  const [row] = await q.query<{ first_name: string; last_name: string; end_date: string }>(
+    `SELECT d.first_name, d.last_name, CAST(p.period_end AS text) AS end_date
+       FROM settlements s
+       JOIN drivers d ON d.tenant_id = s.tenant_id AND d.id = s.driver_id
+       JOIN settlement_periods p ON p.tenant_id = s.tenant_id AND p.id = s.period_id
+      WHERE s.tenant_id = current_tenant_id() AND s.id = CAST($1 AS uuid)`,
+    [settlementId],
+  );
+  return row ? { driverName: nameOf(row.first_name, row.last_name), periodEnd: row.end_date } : null;
+}
+
 // A proposal's exception categories, read as text (the Data API returns json as text) and parsed.
 // Anything but a list of strings reads as no categories, which keeps the row out of "clean".
 export function categoriesOf(text: string | null): string[] | null {

@@ -59,6 +59,8 @@ export const SETTLEMENT_OUTCOMES: Readonly<Record<string, string>> = {
   not_found: "That paystub was not found.",
   amount_mismatch: "The outside system holds a different amount. Check it there by hand.",
   not_approved: "Only an approved paystub can be paid.",
+  not_booked: "The payout went out, but the paystub was not marked paid. Retry booking finishes it without paying again.",
+  records_changed: "Not paid: the records behind this paystub changed after it was approved. Nothing was sent.",
   not_open: "That week is not open for a pay run.",
   before_start: "Pay runs here start with a later week.",
   forbidden: "You do not have access to this carrier.",

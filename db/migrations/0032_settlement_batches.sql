@@ -1,8 +1,13 @@
 -- SETTLEMENTS: the week's pay is run, checked against its sources, approved one paystub at a time
 -- or all clean ones at once, paid out and booked. This file adds the batch reference on the ledger
 -- row, the settlement_approve proposal kind, and the parity columns the paid settlement and the
--- driver carry (escrow as a running balance, the insurance exemption, and the park a draft gets
--- when its lines no longer match their sources).
+-- driver carry (what a paid settlement did to escrow, the insurance exemption, and the park a
+-- draft gets when its lines no longer match their sources).
+--
+-- Escrow stays at or above zero and pay items keep their four kinds: the rules engine refuses a
+-- negative escrow balance and an escrow charge today, so the schema refuses them too. Escrow
+-- charges and a balance that can run below zero are a later item that widens the engine and these
+-- checks together.
 --
 -- The approval batch itself (approval_batches, proposals.batch_id) is the SHARED BLOCK that
 -- 0018_sweep.sql already created, as is the pay_items_ref_table_check widening; this file runs
@@ -109,31 +114,21 @@ BEGIN
 END
 $$;
 
--- Escrow runs as a balance: a charge can take it below zero and withholding repays it. The
--- posted balance through the last paid settlement may be negative.
-ALTER TABLE drivers DROP CONSTRAINT drivers_escrow_balance_cents_check;
-ALTER TABLE drivers ADD CONSTRAINT drivers_escrow_balance_cents_check
-  CHECK (escrow_balance_cents > -1000000000 AND escrow_balance_cents < 1000000000);
--- Full list, as the kind check is re-created. An escrow_charge posts against escrow, never a line.
-ALTER TABLE pay_items DROP CONSTRAINT pay_items_kind_check;
-ALTER TABLE pay_items ADD CONSTRAINT pay_items_kind_check
-  CHECK (kind IN ('fuel', 'reimbursement', 'other_deduction', 'carried_shortfall', 'escrow_charge'));
-
 -- A driver who carries their own insurance pays no daily insurance charge. A flag read at run
 -- time, so a change applies to the next run as a whole week.
 ALTER TABLE drivers ADD COLUMN own_insurance boolean NOT NULL DEFAULT false;
 
--- What a paid settlement did to escrow: opening, charges posted, withheld, closing. A draft keeps
--- zeros until it is booked.
+-- What a paid settlement did to escrow: opening, charges posted (always zero until escrow charges
+-- are booked), withheld, closing. A draft keeps zeros until it is booked.
 ALTER TABLE settlements
   ADD COLUMN escrow_opening_cents  bigint NOT NULL DEFAULT 0
-             CHECK (escrow_opening_cents > -1000000000 AND escrow_opening_cents < 1000000000),
+             CHECK (escrow_opening_cents >= 0 AND escrow_opening_cents < 1000000000),
   ADD COLUMN escrow_charges_cents  bigint NOT NULL DEFAULT 0
              CHECK (escrow_charges_cents >= 0 AND escrow_charges_cents < 1000000000),
   ADD COLUMN escrow_withheld_cents bigint NOT NULL DEFAULT 0
              CHECK (escrow_withheld_cents >= 0 AND escrow_withheld_cents < 1000000000),
   ADD COLUMN escrow_closing_cents  bigint NOT NULL DEFAULT 0
-             CHECK (escrow_closing_cents > -1000000000 AND escrow_closing_cents < 1000000000),
+             CHECK (escrow_closing_cents >= 0 AND escrow_closing_cents < 1000000000),
   ADD CONSTRAINT settlements_escrow_identity
              CHECK (escrow_closing_cents = escrow_opening_cents - escrow_charges_cents
                                            + escrow_withheld_cents);

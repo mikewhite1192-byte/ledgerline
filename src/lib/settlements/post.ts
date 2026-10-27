@@ -5,7 +5,15 @@ import { readBySubject } from "../money/read";
 import { MoneyError } from "../money/types";
 import { assertMembership } from "../tenant/context";
 import { isUuid } from "../uuid";
-import { latestOf, runAccountingLegs, sendLeg, type LegsOutcome, type SettlementMoneyDeps } from "./legs";
+import {
+  bookConfirmedPayout,
+  latestOf,
+  refuseStalePayout,
+  runAccountingLegs,
+  sendLeg,
+  type LegsOutcome,
+  type SettlementMoneyDeps,
+} from "./legs";
 import { readStoredSettlement } from "./stored";
 
 // The record page's two buttons. Each sends through the same ledger keys as the approve and the
@@ -16,8 +24,11 @@ import { readStoredSettlement } from "./stored";
 // reconcile pass.
 //
 // "Retry payout": a new payout attempt for an approved paystub whose payout failed or was never
-// sent (the switch was off at the approve). A paid paystub is never paid again; a payout in flight
-// or unknown is left alone.
+// sent (the switch was off at the approve). Before it goes, the paystub is re-checked against its
+// records under its lock (the approve's check) and a stale one is refused with nothing sent. A
+// paid paystub is never paid again; a payout in flight or unknown is left alone. When the payout is
+// already confirmed and only the booking failed, the same button ("Retry booking") books the
+// paystub and sends nothing.
 
 export type PostResult =
   | { ok: true; legs: LegsOutcome }
@@ -40,6 +51,8 @@ export type RetryResult =
         | "role"
         | "not_connected"
         | "not_configured"
+        | "not_booked"
+        | "records_changed"
         | "failed";
     };
 
@@ -119,9 +132,15 @@ export async function retryPayout(
   if (read.party.status !== "approved" || read.party.netCents <= 0) return { ok: false, category: "not_approved" };
   if (!read.allowed) return { ok: false, category: "role" };
   const latest = latestOf(read.rows, "settlement_payout");
+  if (latest?.state === "confirmed") {
+    // The money went out; only the booking is left. Never sent again.
+    const booked = await bookConfirmedPayout(db, session.tenantId, read.party.settlementId, clock);
+    return booked === "booked"
+      ? { ok: true, state: latest.state, moneyActionId: latest.id }
+      : { ok: false, category: "not_booked" };
+  }
   let attempt = 1;
   if (latest !== null) {
-    if (latest.state === "confirmed") return { ok: false, category: "already_paid" };
     if (latest.state === "sent" || latest.state === "unknown") return { ok: false, category: "in_flight" };
     if (latest.state === "reserved") attempt = latest.attempt;
     else {
@@ -129,6 +148,14 @@ export async function retryPayout(
       if (attempt > flags.settlementLimits.maxPayoutAttempts) return { ok: false, category: "attempts_used" };
     }
   }
+  const check = await db.withTenant(session.tenantId, async (q) => {
+    const stored = await readStoredSettlement(q, read.party.settlementId, true);
+    if (stored?.status !== "approved") return stored?.status === "paid" ? "paid" : "moved";
+    return (await refuseStalePayout(q, stored, clock())) ? "stale" : "fresh";
+  });
+  if (check === "paid") return { ok: false, category: "already_paid" };
+  if (check === "moved") return { ok: false, category: "not_approved" };
+  if (check === "stale") return { ok: false, category: "records_changed" };
   try {
     const out = await sendLeg(
       db,
@@ -144,6 +171,12 @@ export async function retryPayout(
       money,
       clock,
     );
+    if (
+      out.action.state === "confirmed" &&
+      (await bookConfirmedPayout(db, session.tenantId, read.party.settlementId, clock)) !== "booked"
+    ) {
+      return { ok: false, category: "not_booked" };
+    }
     return { ok: true, state: out.action.state, moneyActionId: out.action.id };
   } catch (err) {
     if (!(err instanceof MoneyError)) throw err;

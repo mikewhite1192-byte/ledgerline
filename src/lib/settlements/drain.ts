@@ -7,7 +7,16 @@ import { readAction, readByBatch } from "../money/read";
 import { KIND_SHAPES, MoneyError, type MoneyAction, type MoneyFailure } from "../money/types";
 import { assertMembership } from "../tenant/context";
 import { isUuid } from "../uuid";
-import { LEG_KINDS, payoutHooks, sendLeg, type LegKind, type SettlementMoneyDeps } from "./legs";
+import {
+  bookConfirmedPayout,
+  LEG_KINDS,
+  payoutHooks,
+  refuseStalePayout,
+  sendLeg,
+  type LegKind,
+  type SettlementMoneyDeps,
+} from "./legs";
+import { readStoredSettlement } from "./stored";
 
 // Sends what a confirmed settlements batch reserved, inside one request's time budget: paystubs in
 // driver order, and for each the payout, then the bill, then its payment, each only once the leg
@@ -15,8 +24,12 @@ import { LEG_KINDS, payoutHooks, sendLeg, type LegKind, type SettlementMoneyDeps
 // through the money executor, which re-checks the switch and the adapter and claims the row before
 // it calls out, so two drains at once send each leg once. A leg whose switch went off, or whose
 // adapter is not ready, is refused in place; a reserved leg whose earlier leg failed is refused
-// too, so the batch can finish. An unknown outcome stays unknown for the reconcile pass. The page
-// calls the drain again while anything is left.
+// too, so the batch can finish. Before a reserved payout is sent, the paystub is re-checked against
+// its records under its lock (the approve's check) and a stale one is refused. A confirmed payout
+// books its paystub in its own transaction; a booking that does not go through refuses the bill
+// legs as a failed payout would (Retry booking, then "Post to QuickBooks", finish them). An unknown
+// outcome stays unknown for the reconcile pass. The page calls the drain again while anything is
+// left.
 
 export type DrainCounts = { sent: number; confirmed: number; failed: number; unknown: number; remaining: number };
 
@@ -147,7 +160,12 @@ export async function drainBatch(
   const subjects = await readSubjects(db, tenantId, batch.item_ids);
   let sent = 0;
   let outOfTime = false;
+  // A confirmed payout's paystub booked in its own transaction; false when that did not go through.
+  const booked = async (settlementId: string) =>
+    (await bookConfirmedPayout(db, tenantId, settlementId, clock)) === "booked";
   for (const subject of subjects) {
+    // The payout is confirmed but its paystub is not booked: the legs after it are refused.
+    let unbooked = false;
     for (let i = 0; i < LEG_KINDS.length; i += 1) {
       const kind = LEG_KINDS[i];
       const rows = await db.withTenant(tenantId, (q) => readByBatch(q, id));
@@ -156,10 +174,13 @@ export async function drainBatch(
       // reconcile pass.
       if (row === null || row.state === "unknown") break;
       // Finished: a failed leg still lets the legs after it be refused below.
-      if (row.state === "confirmed" || row.state === "failed") continue;
+      if (row.state === "confirmed" || row.state === "failed") {
+        if (kind === "settlement_payout" && row.state === "confirmed") unbooked = !(await booked(subject.settlementId));
+        continue;
+      }
       if (i > 0) {
         const before = latest(rows, subject.settlementId, LEG_KINDS[i - 1]);
-        if (before === null || before.state === "failed") {
+        if (before === null || before.state === "failed" || unbooked) {
           // Nothing can send this leg now; refuse it (and so each leg after it) so the batch can
           // finish. Stored as validation (refused by a check before any call; nothing was set up
           // wrong), which the record page words as "not sent because the leg before it failed"
@@ -178,6 +199,14 @@ export async function drainBatch(
       if (row.state === "reserved" && !switchOn(KIND_SHAPES[kind].channel)) {
         if (await refuse(db, tenantId, row, "disabled", clock)) continue;
         break;
+      }
+      if (kind === "settlement_payout" && row.state === "reserved") {
+        const stale = await db.withTenant(tenantId, async (q) => {
+          const stored = await readStoredSettlement(q, subject.settlementId, true);
+          return stored !== null && (await refuseStalePayout(q, stored, clock()));
+        });
+        // Refused as failed: the legs after it are refused below.
+        if (stale) continue;
       }
       let state: string;
       try {
@@ -207,6 +236,7 @@ export async function drainBatch(
       // A failed leg refuses the legs after it in this same call; anything else not confirmed waits.
       if (state === "failed") continue;
       if (state !== "confirmed") break;
+      if (kind === "settlement_payout") unbooked = !(await booked(subject.settlementId));
     }
     if (outOfTime) break;
   }

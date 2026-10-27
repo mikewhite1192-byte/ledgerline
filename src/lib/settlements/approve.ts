@@ -9,8 +9,10 @@ import type { ExecuteDeps, Executor, ProposalResult, ProposalRow } from "../prop
 import { bookPaidSettlement } from "./book";
 import { linesHash } from "./hash";
 import {
+  bookConfirmedPayout,
   finishProposal,
   planLeg,
+  refuseStalePayout,
   runAccountingLegs,
   sendLeg,
   type SettlementMoneyDeps,
@@ -30,8 +32,12 @@ import { parkSettlement, readStoredLines, readStoredSettlement, recheckSettlemen
 // A net-$0 week books right there (paid, escrow columns, next week's carried shortfall), with no
 // money leg at all, and the card ends done 'no_payout'.
 //
-// (b) The payout through the money executor (ledger key settlement_payout:<id>:<attempt>). Its
-// confirmation books the paystub as paid and ends the card done. payoutsEnabled off: nothing is
+// (b) The payout through the money executor (ledger key settlement_payout:<id>:<attempt>). Once its
+// confirmation is recorded, the paystub is booked as paid in its own transaction and the card ends
+// done; a booking that does not go through leaves the payout confirmed, the card executing with
+// the note not_booked, and the bill legs unsent until a resume or Retry books it (never sending
+// again). A resumed approve re-checks the paystub against its records before the payout goes, as
+// the batch drain and Retry payout do, and refuses a stale one. payoutsEnabled off: nothing is
 // reserved, the executor logs what it would send, the settlement stays approved and the card ends
 // done 'not_paid' ("Retry payout" sends it once the switch is on). A payment adapter that is not
 // ready (not connected, not configured) also refuses before anything is reserved, but the driver
@@ -142,6 +148,10 @@ async function prepare(q: Queryable, proposal: ProposalRow, now: Date): Promise<
       return { kind: "result", result: after ? resultOf(proposal.id, after) : failed("not_found") };
     }
     if (stored.status !== "approved") return { kind: "result", result: failed("unknown") };
+    if (await refuseStalePayout(q, stored, now)) {
+      const after = await readState(q, proposal.id, false);
+      return { kind: "result", result: after ? resultOf(proposal.id, after) : failed("not_found") };
+    }
     return {
       kind: "pay",
       step: { settlementId: stored.id, driverId: stored.driverId, netCents: stored.netCents, batchId: p.batch_id },
@@ -265,12 +275,12 @@ async function payAndFinish(
     }
   }
 
-  // Confirmed (now or by an earlier call): the paystub is booked once, the card ends done.
-  await db.withTenant(session.tenantId, async (q) => {
-    const now = clock();
-    await bookPaidSettlement(q, step.settlementId, now);
-    await finishProposal(q, step.settlementId, "done", null, now);
-  });
+  // Confirmed (now or by an earlier call): the paystub is booked once, in its own transaction, and
+  // the card ends done. A booking that does not go through stops the bill legs, as a failed leg does.
+  if ((await bookConfirmedPayout(db, session.tenantId, step.settlementId, clock)) !== "booked") {
+    const state = await db.withTenant(session.tenantId, (q) => readState(q, proposalId, false));
+    return state ? resultOf(proposalId, state) : failed("not_found");
+  }
 
   if (remainingMs(startedMs, nowMs()) > flags.settlementLimits.legTwoMinRemainingMs) {
     const left = remainingMs(startedMs, nowMs()) - 2_000;

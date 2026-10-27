@@ -6,7 +6,9 @@ import { retryPayout } from "@/lib/settlements/post";
 import { isUuid } from "@/lib/uuid";
 
 // POST: "Retry payout" on an approved paystub whose payout failed or never went out. A new attempt
-// (at most three in all); a payout in flight or unknown is left alone. Categories only.
+// (at most three in all), refused when the paystub no longer matches its records; a payout in
+// flight or unknown is left alone. "Retry booking" (the payout confirmed, the paystub not booked)
+// books it and sends nothing. Categories only.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;

@@ -25,6 +25,7 @@ import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
+import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { isUuid } from "@/lib/uuid";
@@ -83,23 +84,14 @@ export default async function Home({
       const ledger = flags.aiProofRoute
         ? { calls: await readRecentCalls(q, 5), spend: await readSpend(q) }
         : null;
-      const [paystub] = paystubId
-        ? await q.query<{ name: string; end_date: string }>(
-            `SELECT d.name, CAST(p.period_end AS text) AS end_date
-               FROM settlements s
-               JOIN drivers d ON d.tenant_id = s.tenant_id AND d.id = s.driver_id
-               JOIN settlement_periods p ON p.tenant_id = s.tenant_id AND p.id = s.period_id
-              WHERE s.tenant_id = current_tenant_id() AND s.id = CAST($1 AS uuid)`,
-            [paystubId],
-          )
-        : [];
+      const paystub = paystubId ? await readPaystubAsk(q, paystubId) : null;
       return {
         name: tenants[0].name,
         timezone: tenants[0].timezone,
         email: members[0].email,
         counts,
         ledger,
-        paystub: paystub ? { driverName: paystub.name, periodEnd: paystub.end_date } : null,
+        paystub,
         session,
       };
     });
