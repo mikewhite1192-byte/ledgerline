@@ -13,11 +13,12 @@ import { decideCheck } from "./decide";
 import { findPortalLoads, portalLoadByReference, portalPod } from "./read";
 import type { CapturedPod, PortalCredentials, PortalDriver } from "./runner/driver";
 import { runPortalRun, type RunDeps, type StepFn } from "./runner/run";
-import { dbRunStore } from "./runner/store";
+import { dbRunStore, LostClaimError } from "./runner/store";
 import { cookieValue, mintSession, SIGN_IN_FAILURE_LIMIT, signIn } from "./session";
+import { iso } from "./sql";
 import { createRunIn } from "./start";
 import { withPortalTenant } from "./tenant";
-import { evidencePod, latestEvidence, listRuns, runView, stepScreenshot } from "./views";
+import { evidencePod, latestEvidence, listRuns, runView, STALLED_AFTER_MS, stepScreenshot, UNCLAIMED_AFTER_MS } from "./views";
 
 // The portal tables against a real database: the runner start to finish through the real store,
 // paused on a safety check and resumed after a person approved it; the live-run index and the
@@ -511,6 +512,63 @@ describe("the portal tables", () => {
     );
     const claimed = await dbRunStore(B, admin).claim(runId, randomUUID(), tick());
     expect(claimed).toMatchObject({ kind: "claimed", member: false });
+  });
+
+  it("ends a run no worker claimed or a worker lost as a runner error, so the load is never held", async () => {
+    const asker: Session = { sub: SUB_A, email: memberA.email, tenantId: B };
+    const load = setup[B].timesLoad;
+    const t0 = tick().getTime();
+    const at = (ms: number) => new Date(t0 + ms);
+    const ask = (now: Date) => asApp(B, (q) => createRunIn(q, asker, { loadId: load, refresh: true, turnId: null }, now));
+    const row = (id: string) =>
+      asApp(B, (q) =>
+        q.query<{ status: string; ended_reason: string | null; finished: string | null; claim_token: string | null }>(
+          `SELECT status, ended_reason, ${iso("finished_at", "finished")}, claim_token FROM portal_runs WHERE id = CAST($1 AS uuid)`,
+          [id],
+        ),
+      ).then((r) => r[0]);
+
+    // Queued and never claimed (a failed kick, a killed process): live until the stated age.
+    const first = await ask(at(0));
+    expect(first.kind).toBe("queued");
+    const firstId = (first as { runId: string }).runId;
+    expect(await ask(at(UNCLAIMED_AFTER_MS - 1_000))).toEqual({ kind: "live", runId: firstId, status: "queued" });
+    const second = await ask(at(UNCLAIMED_AFTER_MS + 1_000));
+    expect(second.kind).toBe("queued");
+    const secondId = (second as { runId: string }).runId;
+    expect(secondId).not.toBe(firstId);
+    expect(await row(firstId)).toEqual({
+      status: "failed",
+      ended_reason: "runner_error",
+      finished: at(UNCLAIMED_AFTER_MS + 1_000).toISOString(),
+      claim_token: null,
+    });
+
+    // Claimed, then its worker went quiet: live until STALLED_AFTER_MS after the claim.
+    const store = dbRunStore(B, app);
+    const token = randomUUID();
+    const claimedAt = at(UNCLAIMED_AFTER_MS + 2_000);
+    expect(await store.claim(secondId, token, claimedAt)).toMatchObject({ kind: "claimed" });
+    const fromClaim = (ms: number) => new Date(claimedAt.getTime() + ms);
+    expect(await ask(fromClaim(STALLED_AFTER_MS - 1_000))).toEqual({ kind: "live", runId: secondId, status: "running" });
+    const third = await ask(fromClaim(STALLED_AFTER_MS + 1_000));
+    expect(third.kind).toBe("queued");
+    const thirdId = (third as { runId: string }).runId;
+    expect(await row(secondId)).toMatchObject({ status: "failed", ended_reason: "runner_error", claim_token: null });
+
+    // The lost worker coming back is refused and writes nothing: its claim is gone.
+    await expect(
+      store.finish(secondId, token, { status: "done", reason: "ok" }, null, fromClaim(STALLED_AFTER_MS + 2_000)),
+    ).rejects.toBeInstanceOf(LostClaimError);
+    expect(await row(secondId)).toMatchObject({ status: "failed", ended_reason: "runner_error" });
+
+    // A run waiting on a person is never ended here, however old.
+    await asApp(B, (q) =>
+      q.execute("UPDATE portal_runs SET status = 'waiting_approval' WHERE id = CAST($1 AS uuid) AND status = 'queued'", [thirdId]),
+    );
+    const later = fromClaim(2 * STALLED_AFTER_MS + 2_000);
+    expect(await ask(later)).toEqual({ kind: "live", runId: thirdId, status: "waiting_approval" });
+    clock = later.getTime();
   });
 
   it("refuses every sign-in after ten misses in a minute, for that tenant only", async () => {

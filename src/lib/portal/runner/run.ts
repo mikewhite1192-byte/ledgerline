@@ -296,12 +296,21 @@ export async function runPortalRun(
 
     let pod: { bytes: Uint8Array; hash: string; stepSeq: number } | null = null;
     let seenPod: CapturedPod | null = opened.pod();
+    // Only this run's own load's POD counts: the whole path, compared whole. A POD the browser
+    // opened for any other load (a misclick, or page text steering the model) is never stored as
+    // this load's; it is counted on the run's result instead.
+    const ownPod = `/portal/loads/${run.reference}/pod`;
+    let otherPods = 0;
     const notePod = (seq: number) => {
       const captured = opened.pod();
-      if (captured && captured !== seenPod) {
-        seenPod = captured;
-        pod = { bytes: captured.bytes, hash: sha256(captured.bytes), stepSeq: seq };
+      if (!captured || captured === seenPod) return;
+      seenPod = captured;
+      if (!sameOrigin(captured.url, deps.origin) || pathOf(captured.url) !== ownPod) {
+        otherPods += 1;
+        console.warn("portal run: ignored a POD that is not this load's");
+        return;
       }
+      pod = { bytes: captured.bytes, hash: sha256(captured.bytes), stepSeq: seq };
     };
 
     // 10. Resume: the approved step's actions run now, and its answer carries the approvals.
@@ -414,7 +423,11 @@ export async function runPortalRun(
             screenVerdict: verdict,
             readback,
           },
-          { status: "done", reason: found ? "ok" : "not_found", result: { readback, screen: verdict } },
+          {
+            status: "done",
+            reason: found ? "ok" : "not_found",
+            result: { readback, screen: verdict, ...(otherPods > 0 ? { ignoredPods: otherPods } : {}) },
+          },
           progress(),
           deps.now(),
         );

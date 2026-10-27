@@ -3,13 +3,12 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
-import { isUuid } from "../uuid";
 import { kickPortalRun, runnerReady, type Kick } from "./runner/kick";
-import { latestEvidence, type EvidenceView } from "./views";
+import { latestEvidence, portalReference, STALLED_AFTER_MS, UNCLAIMED_AFTER_MS, type EvidenceView } from "./views";
 
-// Starting a portal run (design 4.1): the start route and the agent's fetch_portal_evidence tool
-// both come here. One live run per load: the partial unique index on portal_runs is the dedupe
-// key, so the same ask twice is one run.
+// Starting a portal run (design 4.1): only a person starts one, through the start route; the
+// agent's tool only reads runs. One live run per load: the partial unique index on portal_runs is
+// the dedupe key, so the same ask twice is one run.
 
 export type StartOutcome =
   | { kind: "disabled" }
@@ -23,6 +22,22 @@ export type StartInput = { loadId: string; refresh: boolean; turnId: string | nu
 // Whether runs may start: the switch, and a runner configured for this environment.
 export function portalRunsAvailable(): boolean {
   return flags.portalRunnerEnabled && runnerReady();
+}
+
+// Ends the load's live runs that no worker will finish, so a lost worker or a failed kick never
+// holds the load's one live slot: running longer than STALLED_AFTER_MS since its claim, or queued
+// and unclaimed for UNCLAIMED_AFTER_MS (views.ts isStale, the same rule). One statement in the
+// start's transaction; a worker that comes back finds its claim gone and writes nothing.
+async function endStaleRuns(q: Queryable, loadId: string, now: Date): Promise<void> {
+  const before = (ms: number) => new Date(now.getTime() - ms).toISOString();
+  await q.execute(
+    "UPDATE portal_runs SET status = 'failed', ended_reason = 'runner_error', finished_at = CAST($2 AS timestamptz)," +
+      " claim_token = NULL" +
+      " WHERE tenant_id = current_tenant_id() AND load_id = CAST($1 AS uuid) AND (" +
+      "(status = 'running' AND COALESCE(claimed_at, queued_at) < CAST($3 AS timestamptz))" +
+      " OR (status = 'queued' AND queued_at < CAST($4 AS timestamptz)))",
+    [loadId, now.toISOString(), before(STALLED_AFTER_MS), before(UNCLAIMED_AFTER_MS)],
+  );
 }
 
 async function liveRun(q: Queryable, loadId: string) {
@@ -43,29 +58,26 @@ export async function createRunIn(
   now: Date,
 ): Promise<StartOutcome> {
   if (!portalRunsAvailable()) return { kind: "disabled" };
-  if (!isUuid(input.loadId)) return { kind: "no_portal_load" };
-  const portal = await q.query<{ reference: string }>(
-    "SELECT reference FROM portal_loads WHERE tenant_id = current_tenant_id() AND load_id = CAST($1 AS uuid)",
-    [input.loadId],
-  );
-  if (portal.length !== 1) return { kind: "no_portal_load" };
+  const reference = await portalReference(q, input.loadId);
+  if (reference === null) return { kind: "no_portal_load" };
   if (!input.refresh) {
     const done = await latestEvidence(q, input.loadId);
     if (done) return { kind: "done", runId: done.runId, evidence: done };
   }
+  await endStaleRuns(q, input.loadId, now);
   const live = await liveRun(q, input.loadId);
   if (live) return { kind: "live", runId: live.id, status: live.status };
   const runId = randomUUID();
   const inserted = await q.query<{ id: string }>(
     "INSERT INTO portal_runs (id, tenant_id, load_id, reference, requested_by, turn_id, trace_id, model, status," +
-      " created_at)" +
+      " created_at, queued_at)" +
       " VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, CAST($5 AS uuid), $6, $7, 'queued'," +
-      " CAST($8 AS timestamptz))" +
+      " CAST($8 AS timestamptz), CAST($8 AS timestamptz))" +
       " ON CONFLICT DO NOTHING RETURNING id",
     [
       runId,
       input.loadId,
-      portal[0].reference,
+      reference,
       session.sub,
       input.turnId,
       randomUUID(),

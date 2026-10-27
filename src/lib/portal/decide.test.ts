@@ -47,8 +47,9 @@ describe("decideCheck", () => {
     expect(writes).toHaveLength(2);
     expect(writes[0].sql).toContain("UPDATE portal_run_checks SET status = $3");
     expect(writes[0].params).toEqual([RUN, CHECK, "approved", "sub-2", NOW.toISOString()]);
-    expect(writes[1].sql).toContain("status = 'queued', resume_step = $2");
-    expect(writes[1].params).toEqual([RUN, 3]);
+    // The run is queued again as of now, so its unclaimed clock starts at the approval.
+    expect(writes[1].sql).toContain("status = 'queued', resume_step = $2, queued_at = CAST($3 AS timestamptz)");
+    expect(writes[1].params).toEqual([RUN, 3, NOW.toISOString()]);
   });
 
   it("approves one check and waits while another on the step is still pending", async () => {

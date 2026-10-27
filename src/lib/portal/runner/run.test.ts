@@ -155,7 +155,8 @@ function fakeStore(options: {
 // A browser that runs nothing real. Each action may carry an effect: a new URL or a captured POD.
 // Signing in lands on the loads page unless the portal is set to refuse it.
 function fakeDriver(
-  effects: Record<number, { url?: string; pod?: boolean; fail?: boolean }> = {},
+  // pod: true captures this load's own POD; a string captures a POD from that URL instead.
+  effects: Record<number, { url?: string; pod?: boolean | string; fail?: boolean }> = {},
   portal: { refuseSignIn?: boolean } = {},
 ) {
   const state = {
@@ -181,7 +182,7 @@ function fakeDriver(
       state.ran.push(action);
       if (effect.fail) throw new Error("element detached");
       if (effect.url) state.url = effect.url;
-      if (effect.pod) state.pod = { bytes: POD_BYTES, url: `${DETAIL}/pod` };
+      if (effect.pod) state.pod = { bytes: POD_BYTES, url: effect.pod === true ? `${DETAIL}/pod` : effect.pod };
     },
     async settle() {},
     async screenshot() {
@@ -346,6 +347,32 @@ describe("runPortalRun, a run start to finish", () => {
     expect(out).toEqual({ kind: "ended", status: "done", reason: "ok" });
     expect(s.evidence[0].row.pod).toBeNull();
     expect(s.evidence[0].row.readback).toBe("partial");
+  });
+
+  it.each([
+    ["another load's POD", `${ORIGIN}/portal/loads/FFE-100002/pod`],
+    ["a longer reference that starts with this one", `${ORIGIN}/portal/loads/${REF}0/pod`],
+    ["a path past this load's POD", `${ORIGIN}/portal/loads/${REF}/pod/x`],
+    ["this load's POD path on another origin", `http://localhost:3001/portal/loads/${REF}/pod`],
+  ])("never stores %s as this load's POD, and counts it on the result", async (_name, url) => {
+    const s = fakeStore();
+    const d = fakeDriver({ 0: { url: DETAIL }, 1: { pod: url } });
+    const m = scripted([callResult([click()]), callResult([click()]), answerResult()]);
+    const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, m.step));
+    expect(out).toEqual({ kind: "ended", status: "done", reason: "ok" });
+    expect(s.evidence[0].row.pod).toBeNull();
+    expect(s.evidence[0].row.readback).toBe("partial");
+    expect(s.evidence[0].ending.result).toEqual({ readback: "partial", screen: "clean", ignoredPods: 1 });
+  });
+
+  it("keeps this load's own POD when another load's was opened first", async () => {
+    const s = fakeStore();
+    const d = fakeDriver({ 0: { url: DETAIL }, 1: { pod: `${ORIGIN}/portal/loads/FFE-100002/pod` }, 2: { pod: true } });
+    const m = scripted([callResult([click()]), callResult([click()]), callResult([click()]), answerResult()]);
+    await runPortalRun(PAYLOAD, deps(s.store, d.driver, m.step));
+    expect(s.evidence[0].row.pod).toMatchObject({ hash: POD_HASH, stepSeq: 3 });
+    expect(s.evidence[0].row.readback).toBe("matches");
+    expect(s.evidence[0].ending.result).toEqual({ readback: "matches", screen: "clean", ignoredPods: 1 });
   });
 
   it("reads back differs when the answer's times are not the portal's", async () => {

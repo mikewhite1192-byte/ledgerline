@@ -42,7 +42,7 @@ export default async function PortalRunsPage() {
           caption="Runs, newest first"
           rows={data.runs}
           rowKey={(r) => r.id}
-          empty={{ title: "No portal runs yet", body: "Pick a delivered load above to start one, or ask the agent for a load's delivery times." }}
+          empty={{ title: "No portal runs yet", body: "Pick a delivered load above to start one. The agent reads what a run found; only a person starts one." }}
           columns={[
             {
               key: "load",

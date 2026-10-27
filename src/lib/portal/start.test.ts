@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import type { Param, Queryable, TenantDb } from "../db";
-import { fetchPortalEvidence } from "../agent/gateway/tools/record/fetch-portal-evidence";
 import { createRunIn, startPortalRun } from "./start";
+import { STALLED_AFTER_MS, UNCLAIMED_AFTER_MS } from "./views";
 
 const mocks = vi.hoisted(() => ({ kick: vi.fn(() => true) }));
 vi.mock("./runner/kick", async (importOriginal) => ({
@@ -47,8 +47,10 @@ function fakeQ(state: { portal?: boolean; evidence?: boolean; live?: { id: strin
       if (sql.startsWith("INSERT INTO portal_runs")) return (state.inserted === false ? [] : [{ id: params[0] }]) as T[];
       throw new Error(`unexpected query ${sql}`);
     },
-    async execute() {
-      throw new Error("unexpected statement");
+    async execute(sql: string, params: Param[] = []) {
+      calls.push({ sql, params });
+      if (sql.startsWith("UPDATE portal_runs SET status = 'failed'")) return 0;
+      throw new Error(`unexpected statement ${sql}`);
     },
   };
   return { q, calls };
@@ -98,6 +100,30 @@ describe("createRunIn", () => {
     expect(fresh.kind).toBe("queued");
   });
 
+  it("ends the load's stale live runs as runner errors before looking for a live one", async () => {
+    const { q, calls } = fakeQ();
+    await createRunIn(q, SESSION, input(), NOW);
+    const ending = calls.findIndex((c) => c.sql.startsWith("UPDATE portal_runs SET status = 'failed'"));
+    const live = calls.findIndex((c) => c.sql.includes("FROM portal_runs"));
+    expect(ending).toBeGreaterThanOrEqual(0);
+    expect(ending).toBeLessThan(live);
+    const { sql, params } = calls[ending];
+    expect(sql).toContain("ended_reason = 'runner_error'");
+    expect(sql).toContain("claim_token = NULL");
+    expect(sql).toContain("load_id = CAST($1 AS uuid)");
+    expect(params).toEqual([
+      LOAD,
+      NOW.toISOString(),
+      new Date(NOW.getTime() - STALLED_AFTER_MS).toISOString(),
+      new Date(NOW.getTime() - UNCLAIMED_AFTER_MS).toISOString(),
+    ]);
+  });
+
+  it("sets the stalled limit past any live worker's wall limit", () => {
+    // A worker ends itself at its wall limit plus one last step; twice the wall limit is past it.
+    expect(2 * flags.portalRunLimits.maxWallMs).toBeLessThanOrEqual(STALLED_AFTER_MS);
+  });
+
   it("returns the live run instead of a second one", async () => {
     const live = { id: "77777777-7777-4777-8777-777777777777", status: "waiting_approval" };
     const { q, calls } = fakeQ({ live: [live] });
@@ -139,49 +165,5 @@ describe("startPortalRun", () => {
     const withTenant = vi.fn();
     expect(await startPortalRun(SESSION, input(), { db: { withTenant }, kick: vi.fn(), now: NOW })).toEqual({ kind: "disabled" });
     expect(withTenant).not.toHaveBeenCalled();
-  });
-});
-
-describe("fetch_portal_evidence", () => {
-  const ctx = { session: SESSION, turnId: null, now: NOW } as Parameters<typeof fetchPortalEvidence.run>[1];
-  const EXTRAS = { screen: null, limit: null };
-
-  it("answers disabled with the switch off", async () => {
-    flags.portalRunnerEnabled = false;
-    expect(await fetchPortalEvidence.run(fakeQ().q, ctx, { loadId: LOAD }, EXTRAS)).toEqual({ result: { started: false, reason: "disabled" } });
-  });
-
-  it("names a load not on the portal, and reports a live run without starting another", async () => {
-    expect(await fetchPortalEvidence.run(fakeQ({ portal: false }).q, ctx, { loadId: LOAD }, EXTRAS)).toEqual({ result: { started: false, reason: "not_on_portal" } });
-    expect(await fetchPortalEvidence.run(fakeQ({ live: [{ id: "r1", status: "running" }] }).q, ctx, { loadId: LOAD }, EXTRAS)).toEqual({
-      result: { status: "running", runId: "r1" },
-    });
-  });
-
-  it("queues a new run and starts its worker", async () => {
-    const out = await fetchPortalEvidence.run(fakeQ().q, ctx, { loadId: LOAD, refresh: true }, EXTRAS);
-    expect(out).toMatchObject({ result: { status: "queued" } });
-    const runId = (out as { result: { runId: string } }).result.runId;
-    expect(mocks.kick).toHaveBeenCalledWith({ tenantId: SESSION.tenantId, runId });
-  });
-
-  it("returns code-computed facts only, and points at the screened text when it was flagged", async () => {
-    const out = await fetchPortalEvidence.run(fakeQ({ evidence: true }).q, ctx, { loadId: LOAD }, EXTRAS);
-    expect(out).toEqual({
-      result: {
-        status: "done",
-        runId: EVIDENCE.run_id,
-        evidence: {
-          deliveryCheckedIn: "2026-10-20 09:05 CT",
-          deliveryCheckedOut: "2026-10-20 11:10 CT",
-          timeZone: "CT",
-          minutesAtDock: 125,
-          pod: "present",
-          readback: "matches",
-          screening: "flagged",
-          flaggedInputId: EVIDENCE.untrusted_input_id,
-        },
-      },
-    });
   });
 });

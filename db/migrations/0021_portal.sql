@@ -97,6 +97,9 @@ CREATE TABLE portal_runs (
   finished_at      timestamptz,
   result           jsonb,
   created_at       timestamptz NOT NULL DEFAULT now(),
+  -- When the run last became queued: made, or resumed after a person approved its checks. A
+  -- queued run no worker claimed long after this is ended as a runner error.
+  queued_at        timestamptz NOT NULL DEFAULT now(),
   CHECK ((status IN ('done', 'failed', 'declined', 'stopped')) = (finished_at IS NOT NULL)),
   CHECK ((status IN ('done', 'failed', 'declined', 'stopped')) = (ended_reason IS NOT NULL)),
   UNIQUE (tenant_id, id),
@@ -260,7 +263,7 @@ GRANT SELECT, INSERT ON portal_sessions, portal_runs, portal_run_steps, portal_r
 GRANT UPDATE (signed_in_at, session_expires_at) ON portal_sessions TO payday_app;
 GRANT UPDATE (failed_sign_ins, failed_window_start) ON portal_accounts TO payday_app;
 GRANT UPDATE (status, ended_reason, step_count, model_call_count, cost_nanocents, last_url,
-  session_id, claim_token, claimed_at, resume_step, started_at, finished_at, result)
+  session_id, claim_token, claimed_at, resume_step, started_at, finished_at, result, queued_at)
   ON portal_runs TO payday_app;
 GRANT UPDATE (executed, stopped_early, screenshot_mime, screenshot, screenshot_bytes, url_after)
   ON portal_run_steps TO payday_app;

@@ -105,9 +105,9 @@ export async function decideCheck(
   );
   if (Number(left[0]?.n ?? 1) > 0) return { kind: "approved", resume: false };
   await q.execute(
-    "UPDATE portal_runs SET status = 'queued', resume_step = $2" +
+    "UPDATE portal_runs SET status = 'queued', resume_step = $2, queued_at = CAST($3 AS timestamptz)" +
       " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'waiting_approval'",
-    [input.runId, Number(check.seq)],
+    [input.runId, Number(check.seq), at],
   );
   return { kind: "approved", resume: true };
 }

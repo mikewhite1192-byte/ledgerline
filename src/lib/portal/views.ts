@@ -11,8 +11,21 @@ import { isFacilityZone, labelOf, stampText, type ZoneLabel } from "./zones";
 
 export const LIVE_STATUSES = ["queued", "running", "waiting_approval"] as const;
 export type RunStatus = (typeof LIVE_STATUSES)[number] | "done" | "failed" | "declined" | "stopped";
-// A run still "running" this long after its worker claimed it has no worker left (design 4.3).
-export const STALLED_AFTER_MS = 6 * 60_000;
+// A run still "running" this long after its worker claimed it has no worker left (design 4.3): a
+// worker ends itself within its wall limit plus one last step, well inside this.
+export const STALLED_AFTER_MS = 10 * 60_000;
+// A run still "queued" this long after it was queued was never claimed: a worker claims within
+// seconds of the kick, so the kick or its process is gone.
+export const UNCLAIMED_AFTER_MS = 2 * 60_000;
+
+// Whether a live run has no worker and never will. Starting a run for the load ends such runs as
+// runner errors (start.ts, the same rule in SQL); the pages show them as stalled until then.
+export function isStale(r: { status: string; claimedAt: string | null; queuedAt: string }, now: Date): boolean {
+  const since = (at: string) => now.getTime() - Date.parse(at);
+  if (r.status === "running") return since(r.claimedAt ?? r.queuedAt) > STALLED_AFTER_MS;
+  if (r.status === "queued") return since(r.queuedAt) > UNCLAIMED_AFTER_MS;
+  return false;
+}
 
 export type EvidenceView = {
   runId: string;
@@ -85,6 +98,37 @@ export async function latestEvidence(q: Queryable, loadId: string): Promise<Evid
   return rows.length === 1 ? evidenceOf(rows[0]) : null;
 }
 
+// The portal's reference for a load, or null when the portal does not carry it.
+export async function portalReference(q: Queryable, loadId: string): Promise<string | null> {
+  if (!isUuid(loadId)) return null;
+  const rows = await q.query<{ reference: string }>(
+    "SELECT reference FROM portal_loads WHERE tenant_id = current_tenant_id() AND load_id = CAST($1 AS uuid)",
+    [loadId],
+  );
+  return rows.length === 1 ? rows[0].reference : null;
+}
+
+export type LatestRun = { runId: string; status: RunStatus; endedReason: string | null; stalled: boolean };
+
+// The newest run for a load, whatever its state.
+export async function latestRun(q: Queryable, loadId: string, now: Date): Promise<LatestRun | null> {
+  if (!isUuid(loadId)) return null;
+  const rows = await q.query<{ id: string; status: RunStatus; ended_reason: string | null; claimed_at: string | null; queued_at: string }>(
+    `SELECT r.id, r.status, r.ended_reason, ${iso("r.claimed_at")}, ${iso("r.queued_at")} FROM portal_runs r` +
+      " WHERE r.tenant_id = current_tenant_id() AND r.load_id = CAST($1 AS uuid)" +
+      " ORDER BY r.created_at DESC, r.id LIMIT 1",
+    [loadId],
+  );
+  if (rows.length !== 1) return null;
+  const r = rows[0];
+  return {
+    runId: r.id,
+    status: r.status,
+    endedReason: r.ended_reason,
+    stalled: isStale({ status: r.status, claimedAt: r.claimed_at, queuedAt: r.queued_at }, now),
+  };
+}
+
 export type RunSummary = {
   id: string;
   loadId: string;
@@ -114,13 +158,15 @@ type RunRaw = {
   created_at: string;
   finished_at: string | null;
   claimed_at: string | null;
+  queued_at: string;
   trace_id: string;
   requested_email: string | null;
 };
 
 const RUN_SELECT =
   "SELECT r.id, r.load_id, l.load_number, r.reference, r.status, r.ended_reason, r.model, r.step_count," +
-  ` r.cost_nanocents, ${iso("r.created_at")}, ${iso("r.finished_at")}, ${iso("r.claimed_at")}, r.trace_id,` +
+  ` r.cost_nanocents, ${iso("r.created_at")}, ${iso("r.finished_at")}, ${iso("r.claimed_at")}, ${iso("r.queued_at")},` +
+  " r.trace_id," +
   " m.email AS requested_email" +
   " FROM portal_runs r JOIN loads l ON l.tenant_id = r.tenant_id AND l.id = r.load_id" +
   " LEFT JOIN memberships m ON m.tenant_id = r.tenant_id AND m.cognito_sub = r.requested_by" +
@@ -140,8 +186,7 @@ function summaryOf(r: RunRaw, now: Date): RunSummary {
     createdAt: r.created_at,
     finishedAt: r.finished_at,
     requestedBy: r.requested_email,
-    stalled:
-      r.status === "running" && r.claimed_at !== null && now.getTime() - Date.parse(r.claimed_at) > STALLED_AFTER_MS,
+    stalled: isStale({ status: r.status, claimedAt: r.claimed_at, queuedAt: r.queued_at }, now),
   };
 }
 

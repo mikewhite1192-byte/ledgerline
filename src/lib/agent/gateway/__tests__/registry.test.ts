@@ -18,7 +18,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_advance: { tier: "propose", roles: ["operator"] },
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
-  fetch_portal_evidence: { tier: "record", roles: ["operator"] },
+  get_portal_evidence: { tier: "read", roles: ["operator"] },
   classify_message: { tier: "read", roles: ["triage"] },
   report_ar_aging: { tier: "read", roles: ["operator"] },
   report_driver_pay_summary: { tier: "read", roles: ["operator"] },
@@ -187,10 +187,10 @@ describe("deferred loading for tool search", () => {
   });
 
   it("defers the portal evidence tool, which few questions need", () => {
-    expect(ALWAYS_LOADED).not.toContain("fetch_portal_evidence");
+    expect(ALWAYS_LOADED).not.toContain("get_portal_evidence");
     const deferred = toolsFor("operator", { defer: true });
-    expect(deferred.find((t) => t.name === "fetch_portal_evidence")?.deferLoading).toBe(true);
-    expect(toolsFor("operator").find((t) => t.name === "fetch_portal_evidence")).not.toHaveProperty("deferLoading");
+    expect(deferred.find((t) => t.name === "get_portal_evidence")?.deferLoading).toBe(true);
+    expect(toolsFor("operator").find((t) => t.name === "get_portal_evidence")).not.toHaveProperty("deferLoading");
   });
 
   it("names only registered tools offered to the operator as always loaded, and nothing else", () => {

@@ -108,19 +108,22 @@ async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   // Every plan is built and checked before anything connects.
   const plans = args.carriers.map((c) => buildCarrierPlan(c, args.anchor));
+  // The portal plans too: one that throws stops the run here, before any tenant's data is
+  // replaced.
+  const portalPlans = plans.map((plan) => buildPortalPlan(plan));
   if (args.dryRun) {
-    for (const plan of plans) {
+    plans.forEach((plan, i) => {
       const counts = countRows(plan.rows);
       for (const t of TENANT_TABLES) {
         console.log(`${plan.carrier.slug} ${t}: would insert ${counts[t]}`);
       }
-      console.log(`${plan.carrier.slug} portal_loads: would insert ${buildPortalPlan(plan).loads.length}`);
-    }
+      console.log(`${plan.carrier.slug} portal_loads: would insert ${portalPlans[i].loads.length}`);
+    });
     return;
   }
   const { admin, app } = await openDbs(args.target);
   try {
-    for (const plan of plans) {
+    for (const [i, plan] of plans.entries()) {
       const slug = plan.carrier.slug;
       const tenantId = await findDemoTenant(admin, plan.carrier);
       // Settled payout rows first, then the agent's rows, then the replace, then settled booking
@@ -157,7 +160,7 @@ async function main(): Promise<void> {
       for (const t of TENANT_TABLES) {
         console.log(`${slug} ${t}: deleted ${report.deleted[t]}, inserted ${report.inserted[t]}`);
       }
-      const portal = await seedTenantPortal(admin, tenantId, buildPortalPlan(plan));
+      const portal = await seedTenantPortal(admin, tenantId, portalPlans[i]);
       console.log(`${slug} portal_loads: inserted ${portal}`);
       // Only the carrier with the hero has one; its net read back must be the worked example.
       const net = await heroNet(app, tenantId, plan);
