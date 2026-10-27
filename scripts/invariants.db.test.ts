@@ -229,6 +229,9 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "portal_run_checks",
     "portal_evidence",
     "evidence_clips",
+    "sweep_runs",
+    "sweep_items",
+    "approval_batches",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -388,6 +391,31 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'delivery', 'invariants-test',
              'dock.mp4', $3, 4, 640, 360, 10, 100, 10000, 'redacting')`,
           [randomUUID(), load.id, randomBytes(32).toString("hex")],
+        );
+        // A finished sweep of the open week with one finding left for a person, and a batch
+        // approval refused before any leg was reserved (0018).
+        const sweep = randomUUID();
+        await q.execute(
+          `INSERT INTO sweep_runs (id, tenant_id, period_id, trigger, started_by, status, phase, cap_cents,
+             finished_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'button', 'invariants-test', 'done',
+             'done', 100, now())`,
+          [sweep, c.settlement.period],
+        );
+        await q.execute(
+          `INSERT INTO sweep_items (id, tenant_id, run_id, seen_run_id, period_id, finding_key, check_name,
+             category, kind, driver_id, status)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($2 AS uuid), CAST($3 AS uuid),
+             'invariants-test', 'invariants_test', 'invariants_test', 'needs_person', CAST($4 AS uuid),
+             'needs_person')`,
+          [randomUUID(), sweep, c.settlement.period, c.settlement.driver],
+        );
+        await q.execute(
+          `INSERT INTO approval_batches (id, tenant_id, scope, item_ids, total_cents, status, requested_by,
+             finished_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'proposals', ARRAY[CAST($2 AS uuid)], 10000, 'refused',
+             'invariants-test', now())`,
+          [randomUUID(), proposal],
         );
       });
       ids.proposals.push(proposal);
