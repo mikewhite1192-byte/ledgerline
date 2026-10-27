@@ -1,9 +1,9 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
-// and 0005, then the outside text and its screenings from 0008, in an order where every table
-// comes after the tables it references (insert in this order, delete in reverse). Each column says how
-// it travels: the Data API sends strings as text, so uuid, date, timestamptz and jsonb columns
-// need a CAST on the way in, and reads turn timestamptz into one ISO form and jsonb into text so
-// both drivers return the same values. tenant_id and created_at are never listed: tenant_id is
+// and 0005, the outside text and its screenings from 0008, and the fuel cards on file from 0017, in
+// an order where every table comes after the tables it references (insert in this order, delete in
+// reverse). Each column says how it travels: the Data API sends strings as text, so uuid, date,
+// timestamptz and jsonb columns need a CAST on the way in, and reads turn timestamptz into one ISO
+// form and jsonb into text so both drivers return the same values. tenant_id and created_at are never listed: tenant_id is
 // always current_tenant_id() and created_at is the database's own.
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
@@ -16,6 +16,7 @@ export type TableSpec = {
 export const TENANT_TABLES = [
   "customers",
   "drivers",
+  "driver_cards",
   "loads",
   "load_state_miles",
   "load_accessorials",
@@ -70,6 +71,21 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["active_from", "date"],
       ["active_to", "date"],
       ["preferred_language", "text"],
+    ],
+  },
+  driver_cards: {
+    table: "driver_cards",
+    columns: [
+      ["id", "uuid"],
+      ["driver_id", "uuid"],
+      ["rail", "text"],
+      ["provider", "text"],
+      ["provider_token", "text"],
+      ["last4", "text"],
+      ["status", "text"],
+      ["sim_behavior", "text"],
+      ["source", "text"],
+      ["closed_at", "timestamptz"],
     ],
   },
   loads: {
@@ -327,8 +343,9 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
 };
 
 // Table and column names are spliced into SQL text, so each is checked against this whole
-// pattern before use; values always travel as parameters.
-const IDENTIFIER = /^[a-z][a-z_]*$/;
+// pattern before use; values always travel as parameters. Digits are allowed after the first
+// letter (driver_cards.last4, 0017); quotes, spaces and anything else never are.
+const IDENTIFIER = /^[a-z][a-z0-9_]*$/;
 
 export function assertIdentifier(name: string): string {
   if (!IDENTIFIER.test(name)) throw new Error("not a plain identifier");

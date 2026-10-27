@@ -47,9 +47,17 @@ export type AdvanceListRow = {
   source: string;
   fromFlow: boolean;
   payoutState: string | null;
+  // The driver's active fuel card, last four only; null when none is on file.
+  cardLast4: string | null;
 };
 
 const LIST_LIMIT = 200;
+const LAST4 = /^[0-9]{4}$/;
+
+// Four digits or nothing: a value of any other shape is never shown.
+function last4Of(value: unknown): string | null {
+  return typeof value === "string" && LAST4.test(value) ? value : null;
+}
 
 function whole(value: unknown): number {
   const n = Number(value);
@@ -75,6 +83,7 @@ export async function readAdvanceList(
     source: string;
     from_flow: boolean;
     payout_state: string | null;
+    card_last4: string | null;
   }>(
     `SELECT a.id, a.driver_id, d.code AS driver_code, d.first_name, d.last_name, a.request_ref,
             to_char(a.requested_on, 'YYYY-MM-DD') AS requested_on, a.amount_cents, a.fee_cents,
@@ -82,7 +91,10 @@ export async function readAdvanceList(
             (SELECT m.state FROM money_actions m
               WHERE m.tenant_id = current_tenant_id() AND m.subject_table = 'advances'
                 AND m.subject_id = a.id AND m.kind = 'advance_payout'
-              ORDER BY m.created_at DESC, m.attempt DESC LIMIT 1) AS payout_state
+              ORDER BY m.created_at DESC, m.attempt DESC LIMIT 1) AS payout_state,
+            (SELECT c.last4 FROM driver_cards c
+              WHERE c.tenant_id = current_tenant_id() AND c.driver_id = a.driver_id
+                AND c.status = 'active') AS card_last4
        FROM advances a
        JOIN drivers d ON d.tenant_id = a.tenant_id AND d.id = a.driver_id
       WHERE a.tenant_id = current_tenant_id() AND d.tenant_id = current_tenant_id()
@@ -104,6 +116,7 @@ export async function readAdvanceList(
     source: r.source,
     fromFlow: r.from_flow === true,
     payoutState: r.payout_state,
+    cardLast4: last4Of(r.card_last4),
   }));
 }
 
@@ -135,6 +148,8 @@ export type LedgerEntry = {
   attempt: number;
   amountCents: number;
   failureCategory: string | null;
+  // Which provider answered (fuel_card_sim, stripe_test, mock, qbo_sandbox); null until one did.
+  outsideSystem: string | null;
   // The outside record's id, last four characters only.
   outsideTail: string | null;
   createdAt: string;
@@ -154,6 +169,7 @@ function entryOf(a: MoneyAction): LedgerEntry {
     attempt: a.attempt,
     amountCents: a.amountCents,
     failureCategory: a.failureCategory,
+    outsideSystem: a.outsideSystem,
     outsideTail: outsideTail(a.outsideId),
     createdAt: a.createdAt,
     settledAt: a.settledAt,
@@ -189,9 +205,15 @@ export type InputSummary = { id: string; kind: string; receivedAt: string };
 
 export type RecordActions = { retry: boolean; check: boolean; post: boolean };
 
+// The fuel card an advance pays: last four and whether it is still the active card.
+export type CardSummary = { last4: string; status: "active" | "closed" };
+
 export type AdvanceRecord = {
   advance: AdvanceView;
   driver: { id: string; code: string; name: string };
+  // The card this advance's latest payout attempt recorded, else the driver's active card, else
+  // null (no fuel card on file).
+  card: CardSummary | null;
   proposal: ProposalSummary | null;
   ledger: LedgerEntry[];
   input: InputSummary | null;
@@ -225,6 +247,31 @@ export function actionsFor(advance: AdvanceView, ledger: readonly LedgerEntry[])
     check: ledger.some((e) => e.state === "unknown" || e.state === "sent"),
     post: advance.status === "paid" && flags.accountingEnabled === true && retryable(lastPost),
   };
+}
+
+function cardSummaryOf(row: { last4: string; status: string } | undefined): CardSummary | null {
+  const last4 = last4Of(row?.last4);
+  if (!row || !last4 || (row.status !== "active" && row.status !== "closed")) return null;
+  return { last4, status: row.status };
+}
+
+// The card the record page names: the one the advance recorded (it must be the advance's own
+// driver's), else the driver's active card.
+async function readRecordCard(q: Queryable, advanceId: string, driverId: string): Promise<CardSummary | null> {
+  const recorded = await q.query<{ last4: string; status: string }>(
+    `SELECT c.last4, c.status
+       FROM advances a
+       JOIN driver_cards c ON c.tenant_id = a.tenant_id AND c.id = a.card_id AND c.driver_id = a.driver_id
+      WHERE a.tenant_id = current_tenant_id() AND a.id = CAST($1 AS uuid)`,
+    [advanceId],
+  );
+  if (recorded.length === 1) return cardSummaryOf(recorded[0]);
+  const active = await q.query<{ last4: string; status: string }>(
+    `SELECT last4, status FROM driver_cards
+      WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid) AND status = 'active'`,
+    [driverId],
+  );
+  return active.length === 1 ? cardSummaryOf(active[0]) : null;
 }
 
 // One advance with everything its page shows; null for a missing or another carrier's id (the
@@ -288,6 +335,7 @@ export async function readAdvanceRecord(
   }
 
   const ledger = (await readBySubject(q, "advances", advance.id)).map(entryOf);
+  const card = await readRecordCard(q, advance.id, advance.driverId);
 
   // Last: the engine as of now, no model. A failure shows as "could not be checked".
   let eligibility: EligibilityNow | null = null;
@@ -313,6 +361,7 @@ export async function readAdvanceRecord(
   return {
     advance,
     driver: { id: d.id, code: d.code, name: `${d.first_name} ${d.last_name}` },
+    card,
     proposal,
     ledger,
     input,

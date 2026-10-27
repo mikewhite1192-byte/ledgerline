@@ -53,6 +53,9 @@ export type ProposalView = {
   auditorCheckedAt: string | null;
   // A person's override of a block: their words, a role label (never the sub or email), when.
   auditorOverride: { reason: string; byLabel: string; at: string } | null;
+  // Where an advance would land, read at render, never stored: "fuel card ···· 4417" (last4 set) or
+  // "no fuel card on file" (last4 null). Null for a kind that pays no card.
+  destination: { label: string; last4: string | null; testMode: true } | null;
 };
 
 // An outside message this turn read that failed screening. quote is shown to the person only, in

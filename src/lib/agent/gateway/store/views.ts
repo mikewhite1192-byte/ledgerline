@@ -1,6 +1,7 @@
 import type { Queryable } from "../../../db";
 import { argStrings, parseReportArgs } from "../../../reports/args";
 import { isReportName } from "../../../reports/types";
+import { cardLabel } from "../../../advances/cards";
 import { reasonSentence } from "../../reasons";
 import {
   turnErrorFor,
@@ -59,6 +60,7 @@ type ProposalRow = {
   auditor_override_reason: string | null;
   auditor_override_at: string | null;
   override_role: string | null;
+  card_last4: string | null;
 };
 type FlagRow = { input_id: string; body_text: string; categories: string | null };
 
@@ -146,10 +148,21 @@ function proposalView(r: ProposalRow): ProposalView {
     auditorConcerns: stringsOf(r.auditor_concerns).filter((c) => CONCERN.test(c)),
     auditorCheckedAt: r.auditor_checked_at,
     auditorOverride: overrideOf(r),
+    destination: destinationOf(r),
   };
 }
 
 const ISO = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
+const LAST4 = /^[0-9]{4}$/;
+
+// Where an advance would land, read at render like the subject label: the driver's active fuel
+// card by its last four, or a plain "no fuel card on file". Other kinds move no money to a card.
+function destinationOf(r: ProposalRow): ProposalView["destination"] {
+  if (r.kind !== "advance_payout") return null;
+  const last4 = typeof r.card_last4 === "string" && LAST4.test(r.card_last4) ? r.card_last4 : null;
+  return { label: last4 ? cardLabel(last4) : "no fuel card on file", last4, testMode: true };
+}
 
 const PROPOSAL_SQL = `
   SELECT p.id, p.kind, p.subject_table, p.subject_id,
@@ -168,7 +181,11 @@ const PROPOSAL_SQL = `
          ${ISO("p.auditor_checked_at")} AS auditor_checked_at,
          p.auditor_override_reason, ${ISO("p.auditor_override_at")} AS auditor_override_at,
          (SELECT m.role FROM memberships m
-           WHERE m.tenant_id = p.tenant_id AND m.cognito_sub = p.auditor_override_by) AS override_role
+           WHERE m.tenant_id = p.tenant_id AND m.cognito_sub = p.auditor_override_by) AS override_role,
+         CASE WHEN p.kind = 'advance_payout' AND p.subject_table = 'drivers' THEN
+           (SELECT c.last4 FROM driver_cards c
+             WHERE c.tenant_id = p.tenant_id AND c.driver_id = p.subject_id AND c.status = 'active')
+         END AS card_last4
     FROM proposals p`;
 
 async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {

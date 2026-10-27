@@ -137,6 +137,7 @@ describe("the sentences a person sees", () => {
         "before_start",
         "disabled",
         "eligibility_unavailable",
+        "no_card",
         "not_armed",
         "over_cap",
         "payout_failed",
@@ -147,6 +148,11 @@ describe("the sentences a person sees", () => {
       ].sort(),
     );
     expect(ADVANCE_APPROVE_NOTICE.over_cap).toBe(outcomeSentence("over_cap"));
+  });
+
+  it("says plainly when the driver has no fuel card on file", () => {
+    expect(outcomeSentence("no_card")).toBe("This driver has no fuel card on file, so nothing was paid.");
+    expect(ADVANCE_APPROVE_NOTICE.no_card).toBe(outcomeSentence("no_card"));
   });
 
   it("reads a decision note from its codes only", () => {
@@ -244,6 +250,7 @@ describe("the record page's buttons", () => {
     attempt: 1,
     amountCents: 25_000,
     failureCategory: "declined",
+    outsideSystem: null,
     outsideTail: null,
     createdAt: "2026-11-02T16:00:00.000Z",
     settledAt: null,

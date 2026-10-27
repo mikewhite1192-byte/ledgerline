@@ -4,6 +4,8 @@ import {
   UNKNOWN_CATEGORIES,
   type AccountingAdapter,
   type PaymentAdapter,
+  type PayoutDestination,
+  type PayoutRequest,
   type Ready,
   type SendContext,
   type SendOutcome,
@@ -30,8 +32,9 @@ import {
   KIND_SHAPES,
   MoneyError,
   isMoneyFailure,
+  railOf,
   type MoneyAction,
-  type MoneyChannel,
+  type MoneyActionKind,
   type MoneyDraft,
   type MoneyFailure,
   type OutsideSystem,
@@ -55,6 +58,10 @@ export type MoneyHooks = {
   // Accounting kinds only: the one outside call for this action. Payouts go through the payment
   // adapter and must not pass this.
   send?(action: MoneyAction, ctx: SendContext): Promise<SendOutcome>;
+  // Payment kinds only: where this payout lands (the driver's fuel card), read in the reserve
+  // transaction for a row about to be sent. A throw rolls the reservation back. Null means there
+  // is nowhere to send it: the row is refused validation before any call.
+  destination?(q: Queryable, action: MoneyAction): Promise<PayoutDestination | null>;
 };
 
 // The ledger functions the executor and the reconcile pass use; tests swap in a fake.
@@ -85,7 +92,9 @@ export const DEFAULT_TIMEOUT_MS = 20_000;
 
 export type MoneyDeps = {
   store: LedgerStore;
-  payment: PaymentAdapter;
+  // One adapter for every rail; tests inject it. Absent, each row's rail picks the app's adapter
+  // (paymentFor).
+  payment?: PaymentAdapter;
   accounting: AccountingAdapter;
   // The outside call's limit; past it the outcome is unknown.
   timeoutMs: number;
@@ -103,7 +112,7 @@ export type MoneyDeps = {
 export function resolveDeps(p: Partial<MoneyDeps> = {}): MoneyDeps {
   const d: MoneyDeps = {
     store: p.store ?? dbLedgerStore,
-    payment: p.payment ?? paymentAdapter(),
+    payment: p.payment,
     accounting: p.accounting ?? accountingAdapter(),
     timeoutMs: p.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     waitMs: p.waitMs ?? 8_000,
@@ -164,10 +173,32 @@ const DEFINITE_FAILURES: readonly MoneyFailure[] = [
   "validation",
   "auth",
   "rate_limited",
+  // The card provider declined the load: nothing landed on the card.
+  "declined",
 ];
 
-export function systemFor(channel: MoneyChannel, d: MoneyDeps): OutsideSystem {
-  return channel === "payment" ? d.payment.system : d.accounting.system;
+// The payment adapter for a payout kind: the injected one, else the app's adapter for the kind's
+// rail. A kind with no rail (an accounting post) has no payment adapter.
+export function paymentFor(kind: MoneyActionKind, d: MoneyDeps): PaymentAdapter {
+  if (d.payment) return d.payment;
+  const rail = railOf(kind);
+  if (rail === null) throw new MoneyError("validation");
+  return paymentAdapter(rail);
+}
+
+export function systemFor(kind: MoneyActionKind, d: MoneyDeps): OutsideSystem {
+  return KIND_SHAPES[kind].channel === "payment" ? paymentFor(kind, d).system : d.accounting.system;
+}
+
+// The adapters that cannot send without a destination: a fuel-card load needs the card.
+const NEEDS_DESTINATION: Readonly<Record<PaymentAdapter["system"], boolean>> = {
+  mock: false,
+  stripe_test: false,
+  fuel_card_sim: true,
+};
+
+export function needsDestination(adapter: PaymentAdapter): boolean {
+  return NEEDS_DESTINATION[adapter.system] === true;
 }
 
 // What an adapter's answer means for the row, checked whole. A confirmation needs a usable id,
@@ -204,17 +235,17 @@ export function settlementFor(
   return { to: "unknown", category: "unknown" };
 }
 
-// The channel's adapter, asked again. A throw is "not ready", never "ready".
+// The kind's adapter, asked again. A throw is "not ready", never "ready".
 export async function adapterReady(
   db: TenantDb,
   tenantId: string,
-  channel: MoneyChannel,
+  kind: MoneyActionKind,
   d: MoneyDeps,
 ): Promise<Ready> {
   try {
     const r =
-      channel === "payment"
-        ? await d.payment.ready()
+      KIND_SHAPES[kind].channel === "payment"
+        ? await paymentFor(kind, d).ready()
         : await db.withTenant(tenantId, (q) => d.accounting.ready(q));
     if (r?.ok === true) return { ok: true };
     return { ok: false, category: isMoneyFailure(r?.category) ? r.category : "unknown" };
@@ -223,13 +254,29 @@ export async function adapterReady(
   }
 }
 
-export function payoutOf(action: MoneyAction) {
+// What the payment adapter is asked to pay: the row's own values, its kind's rail, and the
+// destination the caller's hook read (none for the bank rail).
+export function payoutOf(action: MoneyAction, destination: PayoutDestination | null = null): PayoutRequest {
+  const rail = railOf(action.kind);
+  if (rail === null) throw new MoneyError("validation");
   return {
     actionId: action.id,
     driverId: action.counterpartyId,
     amountCents: action.amountCents,
     memoCode: memoCodeOf(action),
+    rail,
+    ...(destination ? { destination } : {}),
   };
+}
+
+// True when a payout cannot go out: the caller's hook found nowhere to send it, or the adapter
+// needs a destination and none was given.
+export function destinationMissing(
+  hooks: Pick<MoneyHooks, "destination">,
+  adapter: PaymentAdapter,
+  destination: PayoutDestination | null,
+): boolean {
+  return destination === null && (typeof hooks.destination === "function" || needsDestination(adapter));
 }
 
 async function readNow(db: TenantDb, tenantId: string, id: string, d: MoneyDeps) {
@@ -274,29 +321,40 @@ export async function executeMoneyAction(
   if ((channel === "accounting") !== (typeof hooks.send === "function")) {
     throw new MoneyError("validation");
   }
+  if (channel === "accounting" && hooks.destination !== undefined) throw new MoneyError("validation");
   const tenantId = session?.tenantId;
   if (typeof tenantId !== "string") throw new MoneyError("validation");
+  // The kind's rail picks the adapter once for this whole call.
+  const rail = railOf(clean.kind);
+  const pinned: MoneyDeps = channel === "payment" ? { ...d, payment: paymentFor(clean.kind, d) } : d;
+  const via = systemFor(clean.kind, pinned);
+  const railWord = rail ? `${rail} ` : "";
 
   // The switch and the adapter before anything is written.
   if (!switchOn(channel)) {
-    const via = systemFor(channel, d);
     const flag = channel === "payment" ? "payoutsEnabled" : "accountingEnabled";
     d.log(
       `money: would send ${clean.kind} ${clean.amountCents}c for ${subjectTable} ` +
-        `${clean.subjectId} via ${via} (${flag} off)`,
+        `${clean.subjectId} via ${railWord}${via} (${flag} off)`,
     );
     throw new MoneyError("disabled");
   }
-  const before = await adapterReady(db, tenantId, channel, d);
+  const before = await adapterReady(db, tenantId, clean.kind, pinned);
   if (!before.ok) throw new MoneyError(before.category);
 
-  // (1) Approve and reserve, with the caller's own write, in one transaction.
+  // (1) Approve and reserve, with the caller's own write, in one transaction. A row about to be
+  // sent also reads its destination here (a replayed reserved row too: its sender died before
+  // the send), so what goes out is what was true when the row was reserved.
   const first = await db.withTenant(tenantId, async (q) => {
     const approval = await d.store.approvalFrom(q, session);
     const tenantZone = await d.store.tenantZone(q);
     const r = await d.store.reserve(q, approval, asDraft, d.newActionId());
     if (r.created) await hooks.onReserved(q, r.action);
-    return { ...r, tenantZone };
+    const destination =
+      channel === "payment" && r.action.state === "reserved" && hooks.destination
+        ? await hooks.destination(q, r.action)
+        : null;
+    return { ...r, tenantZone, destination };
   });
   const created = first.created;
   let action = first.action;
@@ -304,10 +362,18 @@ export async function executeMoneyAction(
   if (action.state === "sent") action = await waitForSettle(db, tenantId, action.id, d);
   if (action.state !== "reserved") return { action, created, sent: false };
 
-  // (2) The switch and the adapter again, outside any transaction. A refusal settles the row.
-  const now: Ready = switchOn(channel)
-    ? await adapterReady(db, tenantId, channel, d)
+  // (2) The switch, the adapter and the destination again, outside any transaction. A refusal
+  // settles the row.
+  // Only a payment kind sends through the payment adapter (and needs its destination); an
+  // accounting post ignores an injected payment adapter.
+  const payment = channel === "payment" ? pinned.payment : undefined;
+  const ready: Ready = switchOn(channel)
+    ? await adapterReady(db, tenantId, clean.kind, pinned)
     : { ok: false, category: "disabled" };
+  const now: Ready =
+    ready.ok && payment && destinationMissing(hooks, payment, first.destination)
+      ? { ok: false, category: "validation" }
+      : ready;
   if (!now.ok) {
     const refused = await db.withTenant(tenantId, async (q) => {
       const s: Settlement = { to: "failed", via: "refused", category: now.category };
@@ -343,13 +409,13 @@ export async function executeMoneyAction(
   // caller's hook, so its switch is checked here, at the write: off means a definite disabled
   // answer and no call.
   const work =
-    channel === "payment"
-      ? () => d.payment.sendPayout(payoutOf(sending), ctx)
+    channel === "payment" && payment
+      ? () => payment.sendPayout(payoutOf(sending, first.destination), ctx)
       : async (): Promise<SendOutcome> => {
           if (!switchOn("accounting")) return { kind: "failed", category: "disabled" };
           return (hooks.send as NonNullable<MoneyHooks["send"]>)(sending, ctx);
         };
-  d.log(`money: sending ${action.id} ${action.kind} ${action.amountCents}c`);
+  d.log(`money: sending ${action.id} ${action.kind} ${action.amountCents}c via ${railWord}${via}`);
   let outcome: unknown;
   try {
     outcome = await withTimeout<unknown>(work, d.timeoutMs, () => ({
@@ -360,7 +426,7 @@ export async function executeMoneyAction(
     const c = categoryOf(err);
     outcome = { kind: "unknown", category: isUnknownCategory(c) ? c : "unknown" };
   }
-  const s = settlementFor(outcome, action, systemFor(channel, d));
+  const s = settlementFor(outcome, action, via);
 
   // (5) Settle, and the caller's follow-up write, in one transaction.
   try {

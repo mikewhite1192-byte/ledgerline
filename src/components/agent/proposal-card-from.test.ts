@@ -24,6 +24,12 @@ const view: ProposalView = {
   auditorConcerns: [],
   auditorCheckedAt: null,
   auditorOverride: null,
+  destination: { label: "fuel card ···· 4417", last4: "4417", testMode: true },
+};
+
+const noCard: ProposalView = {
+  ...view,
+  destination: { label: "no fuel card on file", last4: null, testMode: true },
 };
 
 describe("proposalCardFrom", () => {
@@ -34,10 +40,29 @@ describe("proposalCardFrom", () => {
       title: "Pay advance for BR-D07",
       impact: { cents: 20_000, direction: "out" },
       status: "proposed",
-      confirmQuestion: "Pay $200.00 to BR-D07?",
+      destination: { label: "To fuel card ···· 4417", testMode: true },
+      confirmQuestion: "Pay $200.00 to BR-D07's fuel card ···· 4417? Test mode.",
     });
     expect(card.flagNote).toBeUndefined();
     expect(card.reasons).toEqual([{ text: view.reasons[0].text, source: { table: "drivers", id: DRIVER } }]);
+  });
+
+  it("says no card is on file, without Test mode, and asks the plain question", () => {
+    const card = proposalCardFrom(noCard);
+    expect(card.destination).toEqual({ label: "No fuel card on file", testMode: false });
+    expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07?");
+  });
+
+  it("shows no destination for a kind that pays no card", () => {
+    const card = proposalCardFrom({ ...view, kind: "pay_correction", destination: null });
+    expect(card.destination).toBeUndefined();
+    expect(card.confirmQuestion).toBeUndefined();
+  });
+
+  it("keeps the flag question on a flagged proposal even with a card on file", () => {
+    const card = proposalCardFrom({ ...view, flagged: true, flagCategories: ["authority_claim"] });
+    expect(card.confirmQuestion).toBe(FLAG_QUESTION);
+    expect(card.destination).toEqual({ label: "To fuel card ···· 4417", testMode: true });
   });
 
   it("asks the flag question and names the flag on a flagged proposal", () => {
@@ -116,8 +141,9 @@ describe("the auditor on the card", () => {
     );
     // No verdict yet reads as not checked.
     expect(proposalCardFrom(view, on).confirmQuestion).toBe("Not checked by the auditor. Approve anyway?");
-    expect(proposalCardFrom({ ...view, auditorVerdict: "pass" }, on).confirmQuestion).toBe("Pay $200.00 to BR-D07?");
-    expect(proposalCardFrom({ ...view, auditorVerdict: "block" }, on).confirmQuestion).toBe("Pay $200.00 to BR-D07?");
+    const pay = "Pay $200.00 to BR-D07's fuel card ···· 4417? Test mode.";
+    expect(proposalCardFrom({ ...view, auditorVerdict: "pass" }, on).confirmQuestion).toBe(pay);
+    expect(proposalCardFrom({ ...view, auditorVerdict: "block" }, on).confirmQuestion).toBe(pay);
   });
 
   it("lets the flag question win over the audit question", () => {
@@ -128,6 +154,6 @@ describe("the auditor on the card", () => {
   it("adds no audit line and no audit question without the page's audit context", () => {
     const card = proposalCardFrom({ ...view, auditorVerdict: "concerns", auditorConcerns: ["source_missing"] });
     expect(card).not.toHaveProperty("audit");
-    expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07?");
+    expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07's fuel card ···· 4417? Test mode.");
   });
 });

@@ -46,6 +46,15 @@ export function auditFor(p: ProposalView, ctx: AuditContext): ProposalAudit {
   return ctx.checking && p.status === "proposed" ? { state: "checking" } : { state: "unknown" };
 }
 
+// Where an advance would land, as the card's line under the amount. Only a card on file says
+// "Test mode": a missing card is a plain fact, not a test-mode payout.
+function destinationFor(p: ProposalView): ProposalCardProps["destination"] {
+  if (!p.destination) return undefined;
+  return p.destination.last4
+    ? { label: `To ${p.destination.label}`, testMode: true }
+    : { label: "No fuel card on file", testMode: false };
+}
+
 export function proposalCardFrom(
   p: ProposalView,
   audit?: AuditContext,
@@ -60,7 +69,9 @@ export function proposalCardFrom(
   if (p.flagged) confirmQuestion = FLAG_QUESTION;
   else if (auditQuestion) confirmQuestion = auditQuestion;
   else if (p.kind === "advance_payout" && p.subjectLabel && p.amountCents > 0) {
-    confirmQuestion = `Pay ${formatCents(p.amountCents)} to ${p.subjectLabel}?`;
+    confirmQuestion = p.destination?.last4
+      ? `Pay ${formatCents(p.amountCents)} to ${p.subjectLabel}'s ${p.destination.label}? Test mode.`
+      : `Pay ${formatCents(p.amountCents)} to ${p.subjectLabel}?`;
   }
   return {
     id: p.id,
@@ -69,6 +80,7 @@ export function proposalCardFrom(
     reasons: p.reasons.map((r) => (r.source ? { text: r.text, source: r.source } : { text: r.text })),
     sources: p.sources,
     status: p.status,
+    destination: destinationFor(p),
     confirmQuestion,
     flagNote: p.flagged ? flagNoteFor(p.flagCategories) : undefined,
     ...(audit ? { audit: auditFor(p, audit) } : {}),

@@ -17,6 +17,7 @@ const SECTION_HEADINGS = [
   "Stat cards",
   "Data table",
   "Proposal card",
+  "Fuel card",
   "Chat thread",
   "Paystub",
   "States",

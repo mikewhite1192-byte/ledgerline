@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
+import { FuelCardChip } from "@/components/app/fuel-card";
+import { LedgerEntryRow } from "@/components/app/ledger-entry";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdvanceFrame, problemOf, ReadFailed, type ReadProblem } from "@/app/advances/frame";
-import { readAdvanceRecord, readShell, type AdvanceRecord, type LedgerEntry, type Shell } from "@/lib/advances/read";
+import { readAdvanceRecord, readShell, type AdvanceRecord, type Shell } from "@/lib/advances/read";
 import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
 import { advancesOn } from "@/lib/advances/switches";
@@ -48,7 +50,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
       </AdvanceFrame>
     );
   }
-  const { advance, driver, proposal, ledger, input, eligibility, actions } = record;
+  const { advance, driver, card, proposal, ledger, input, eligibility, actions } = record;
   const when = (iso: string | null) => (iso ? formatInstant(iso, shell.timezone) : "Not yet");
   return (
     <AdvanceFrame shell={shell} title={`Advance ${advance.requestRef}`}>
@@ -76,6 +78,9 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
             <Item label="Requested">{when(advance.requestedAt)}</Item>
             <Item label="Approved">{when(advance.decidedAt)}</Item>
             <Item label="Paid">{when(advance.paidAt)}</Item>
+            <Item label={advance.status === "paid" ? "Paid to" : "Pays to"}>
+              {card ? <FuelCardChip last4={card.last4} status={card.status} /> : "No fuel card on file"}
+            </Item>
           </dl>
         </CardBody>
       </Card>
@@ -174,7 +179,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
           ) : (
             <ol className="grid gap-3">
               {ledger.map((e) => (
-                <LedgerRow key={e.id} entry={e} when={when} />
+                <LedgerEntryRow key={e.id} entry={e} when={when} />
               ))}
             </ol>
           )}
@@ -190,28 +195,5 @@ function Item({ label, children }: { label: string; children: ReactNode }) {
       <dt className="text-small text-muted-foreground">{label}</dt>
       <dd className="text-body text-foreground">{children}</dd>
     </div>
-  );
-}
-
-const KIND_WORDS: Readonly<Record<string, string>> = {
-  advance_payout: "Payout",
-  advance_expense: "QuickBooks post",
-};
-
-function LedgerRow({ entry, when }: { entry: LedgerEntry; when: (iso: string | null) => string }) {
-  return (
-    <li className="grid gap-1 rounded-lg border border-border px-4 py-3">
-      <p className="flex flex-wrap items-center gap-2 text-body text-foreground">
-        {KIND_WORDS[entry.kind] ?? codeToWords(entry.kind)}, attempt {entry.attempt}
-        <StatusBadge status={entry.state} />
-        <Money cents={entry.amountCents} className="ml-auto" />
-      </p>
-      <p className="text-small text-muted-foreground">
-        Reserved {when(entry.createdAt)}
-        {entry.settledAt ? `, settled ${when(entry.settledAt)}` : ""}
-        {entry.outsideTail ? `, outside id ending ${entry.outsideTail}` : ""}
-        {entry.failureCategory ? `, ${codeToWords(entry.failureCategory).toLowerCase()}` : ""}
-      </p>
-    </li>
   );
 }
