@@ -26,6 +26,8 @@ import type { FetchFn } from "./providers/http";
 import { JPEG_BYTES, makeWav, PDF_BYTES, PNG_BYTES } from "./test-fixtures";
 
 const KEY = "test-key-abcdefghijklmnop";
+// The standby host's key: a different value, so a test can tell which key went where.
+const FW_KEY = "standby-key-for-tests";
 const PROMPT = "Say hello to the money desk.";
 const TRACE = "22222222-2222-4222-8222-222222222222";
 const SESSION: Session = {
@@ -59,11 +61,13 @@ const BASE_ENV: Record<string, string | undefined> = {
   META_MODEL_IMAGE: "muse-image-1.0",
   META_MODEL_SAM: "sam-3.1",
   BASETEN_MODEL_ID: "meta-models/muse-spark-open-1026",
+  FIREWORKS_MODEL_ID: "accounts/fireworks/models/muse-spark-open",
   AI_SPEND_CAP_CENTS: "12000",
   AI_WONDER_CAP_CENTS: "3000",
   META_CONTRIBUTOR_MODE: undefined,
   META_API_KEY: KEY,
   BASETEN_API_KEY: KEY,
+  FIREWORKS_API_KEY: FW_KEY,
 };
 
 function baseEnv() {
@@ -134,6 +138,7 @@ type Row = {
   reserved: number;
   status: string;
   target: string;
+  provider: string;
   model: string;
   kind: string;
   effort: Param;
@@ -189,6 +194,7 @@ function fakeLedger(
         steps.push("insert call");
         rows.set(String(params[0]), {
           target: String(params[1]),
+          provider: String(params[2]),
           model: String(params[3]),
           kind: String(params[4]),
           effort: params[6],
@@ -283,6 +289,7 @@ let logged: string[];
 
 beforeEach(() => {
   flags.aiEnabled = true;
+  flags.sparkOpenFallback = "off";
   logged = [];
   const record = (...args: unknown[]) => {
     logged.push(args.map(String).join(" "));
@@ -294,6 +301,7 @@ beforeEach(() => {
 
 afterEach(() => {
   flags.aiEnabled = false;
+  flags.sparkOpenFallback = "off";
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
@@ -703,12 +711,13 @@ describe("complete, one call", () => {
 
     // The reservation was the worst case for this exact body; settling released all of it.
     const reserved = estimateReserve(
-      priceFor("spark", "muse-spark-1.3") as TokenPrice,
+      priceFor("spark", "meta", "muse-spark-1.3") as TokenPrice,
       new TextEncoder().encode(String(init.body)).length,
       1024,
     );
     expect(ledger.rows.get(result.callId)).toEqual({
       target: "spark",
+      provider: "meta",
       model: "muse-spark-1.3",
       kind: "text",
       effort: "low",
@@ -775,7 +784,7 @@ describe("complete, one call", () => {
       `data:application/pdf;base64,${Buffer.from(PDF_BYTES).toString("base64")}`.length;
     // One image (1,600) and a one-page PDF (4,000).
     const reserved = estimateReserve(
-      priceFor("spark", "muse-spark-1.3") as TokenPrice,
+      priceFor("spark", "meta", "muse-spark-1.3") as TokenPrice,
       new TextEncoder().encode(body).length - dataChars,
       1024,
       5_600,
@@ -838,6 +847,7 @@ describe("complete, one call", () => {
     expect(JSON.parse(String(init.body))).not.toHaveProperty("reasoning");
     expect(ledger.rows.get(result.callId)).toMatchObject({
       target: "spark_open",
+      provider: "baseten",
       model: "meta-models/muse-spark-open-1026",
       effort: null,
       status: "ok",
@@ -1065,6 +1075,7 @@ describe("transcribe, generateImage and segment, one call each", () => {
     // 2.18 s reserves 4 s; the answer's 2,240 ms is metered as 2 s, 0.01 cent.
     expect(ledger.rows.get(result.callId)).toEqual({
       target: "voice",
+      provider: "meta",
       model: "muse-voice-transcribe-1.0",
       kind: "transcribe",
       effort: null,
@@ -1183,5 +1194,703 @@ describe("transcribe, generateImage and segment, one call each", () => {
     const [row] = [...ledger.rows.values()];
     expect(row.status).toBe("unknown");
     expect(ledger.counter).toMatchObject({ spent: 0, reserved: 250_000_000, calls: 1 });
+  });
+});
+
+describe("Muse Spark Open's standby host", () => {
+  const BASETEN_URL = "https://inference.baseten.co/v1/chat/completions";
+  const FIREWORKS_URL = "https://api.fireworks.ai/inference/v1/chat/completions";
+  const BASETEN_MODEL = "meta-models/muse-spark-open-1026";
+  const FIREWORKS_MODEL = "accounts/fireworks/models/muse-spark-open";
+  const esc = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+
+  function fireworksAnswer(message: Record<string, unknown> = { content: "triage: load" }) {
+    return {
+      id: "fw-cmpl-1",
+      choices: [{ finish_reason: "stop", message: { role: "assistant", ...message } }],
+      usage: {
+        prompt_tokens: 15,
+        prompt_tokens_details: { cached_tokens: 0 },
+        completion_tokens: 64,
+        completion_tokens_details: { reasoning_tokens: 50 },
+      },
+    };
+  }
+
+  const status = (code: number) => () => Response.json({ error: { message: PROMPT } }, { status: code });
+  const dropped = () => {
+    throw new TypeError("fetch failed");
+  };
+
+  // Baseten answers with `first`; Fireworks with `standby` (an answer unless given).
+  function hosts(
+    first: () => Response,
+    standby: () => Response = () => Response.json(fireworksAnswer()),
+  ) {
+    return (url: string) => {
+      if (url.includes("baseten")) return first();
+      if (url.includes("fireworks")) return standby();
+      return answerFor(url);
+    };
+  }
+
+  // A monotonic clock that moves only when a test moves it, so no test reads the real one.
+  function fakeClock() {
+    const state = { now: 50_000 };
+    return { clock: () => state.now, state };
+  }
+
+  function setup(first: () => Response, standby?: () => Response) {
+    const ledger = fakeLedger();
+    const { clock, state } = fakeClock();
+    const fetchFn = fakeFetch(ledger.steps, hosts(first, standby));
+    logged = [];
+    return { ledger, clock, state, fetchFn, deps: { fetch: fetchFn, db: ledger.db, clock } };
+  }
+
+  const urls = (fetchFn: ReturnType<typeof fakeFetch>) => fetchFn.mock.calls.map(([url]) => url);
+
+  beforeEach(() => {
+    flags.sparkOpenFallback = "fireworks";
+  });
+
+  it("with the switch off, a Baseten 503 fails as it always has: one row, its reservation kept", async () => {
+    flags.sparkOpenFallback = "off";
+    const { ledger, fetchFn, deps } = setup(status(503));
+    const err = await refusal(complete("spark_open", REQUEST, SESSION, deps));
+    expect(err.category).toBe("unavailable");
+    expect(err.httpStatus).toBe(503);
+    expect(urls(fetchFn)).toEqual([BASETEN_URL]);
+    const rows = [...ledger.rows.values()];
+    expect(rows.map((r) => [r.provider, r.status])).toEqual([["baseten", "unknown"]]);
+    expect(ledger.counter).toMatchObject({ spent: 0, reserved: rows[0].reserved, calls: 1 });
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("unknown unavailable http=503");
+  });
+
+  it("tries Fireworks once after a connection failure, a 5xx or a 403, with its own key, row and log line", async () => {
+    const cases: [() => Response, string, string][] = [
+      [status(503), "unavailable", "503"],
+      [() => new Response("oops", { status: 500 }), "unavailable", "500"],
+      [dropped, "network", "none"],
+      [() => new Response("no", { status: 403 }), "auth", "403"],
+    ];
+    for (const [first, category, http] of cases) {
+      const { ledger, fetchFn, deps } = setup(first);
+      const result = await complete("spark_open", { ...REQUEST, traceId: TRACE }, SESSION, deps);
+
+      expect(urls(fetchFn), category).toEqual([BASETEN_URL, FIREWORKS_URL]);
+      const [[, baseten], [, fireworks]] = fetchFn.mock.calls;
+      expect(baseten.headers).toMatchObject({ authorization: `Bearer ${KEY}` });
+      expect(fireworks.headers).toMatchObject({ authorization: `Bearer ${FW_KEY}` });
+      expect(JSON.stringify(fireworks.headers)).not.toContain(KEY);
+      const sent = JSON.parse(String(fireworks.body));
+      expect(sent.model).toBe(FIREWORKS_MODEL);
+      expect(sent.messages).toEqual(JSON.parse(String(baseten.body)).messages);
+
+      const [[firstId, firstRow], [secondId, secondRow]] = [...ledger.rows.entries()];
+      expect(ledger.rows.size).toBe(2);
+      expect(firstRow).toMatchObject({
+        target: "spark_open",
+        provider: "baseten",
+        model: BASETEN_MODEL,
+        status: "unknown",
+        cost: null,
+        trace: TRACE,
+      });
+      expect(secondRow).toEqual({
+        target: "spark_open",
+        provider: "fireworks",
+        model: FIREWORKS_MODEL,
+        kind: "text",
+        effort: null,
+        trace: TRACE,
+        reserved: estimateReserve(
+          priceFor("spark_open", "fireworks", FIREWORKS_MODEL) as TokenPrice,
+          new TextEncoder().encode(String(fireworks.body)).length,
+          1024,
+        ),
+        status: "ok",
+        cost: COST,
+        units: null,
+      });
+      // The first reservation stays counted; the second settled at its real cost.
+      expect(ledger.counter).toEqual({
+        spent: COST,
+        reserved: firstRow.reserved,
+        calls: 2,
+        wonderSpent: 0,
+        wonderReserved: 0,
+      });
+      expect(result).toMatchObject({
+        callId: secondId,
+        status: "ok",
+        text: "triage: load",
+        costNanocents: COST,
+        upstreamId: "fw-cmpl-1",
+      });
+      expect(logged).toEqual([
+        expect.stringMatching(
+          new RegExp(
+            `^ai: spark_open ${esc(BASETEN_MODEL)} text proof unknown ${category} http=${http}` +
+              ` ms=0 reservation kept call=${firstId} trace=${TRACE}$`,
+          ),
+        ),
+        `ai: spark_open falling back to fireworks after ${category} http=${http} call=${firstId} trace=${TRACE}`,
+        expect.stringMatching(
+          new RegExp(
+            `^ai: spark_open ${esc(FIREWORKS_MODEL)} text proof ok in=15 cached=0 out=64` +
+              ` reasoning=50 cost=\\S+c ms=0 id=fw-cmpl-1 call=${secondId} trace=${TRACE}$`,
+          ),
+        ),
+      ]);
+      expect(logged.join("\n")).not.toContain(PROMPT);
+      expect(logged.join("\n")).not.toContain(FW_KEY);
+    }
+  });
+
+  it("tries Fireworks after a definite 429, 401 or 402, the first reservation released", async () => {
+    for (const [code, category] of [
+      [429, "rate_limited"],
+      [401, "auth"],
+      [402, "billing"],
+    ] as const) {
+      const { ledger, fetchFn, deps } = setup(status(code));
+      const result = await complete("spark_open", REQUEST, SESSION, deps);
+      expect(urls(fetchFn), category).toEqual([BASETEN_URL, FIREWORKS_URL]);
+      const rows = [...ledger.rows.values()];
+      expect(rows.map((r) => [r.provider, r.status])).toEqual([
+        ["baseten", "failed"],
+        ["fireworks", "ok"],
+      ]);
+      expect(ledger.counter).toMatchObject({ spent: COST, reserved: 0, calls: 2 });
+      expect(result.text).toBe("triage: load");
+      expect(logged[1]).toBe(`ai: spark_open falling back to fireworks after ${category} http=${code} call=${[...ledger.rows.keys()][0]}`);
+    }
+  });
+
+  it("forgets Baseten's refused key and keeps Fireworks' own, read from their own secrets in production", async () => {
+    vi.stubEnv("DB_CLUSTER_ARN", "test-cluster");
+    vi.stubEnv("BASETEN_API_KEY", "");
+    vi.stubEnv("FIREWORKS_API_KEY", "");
+    vi.stubEnv("BASETEN_API_KEY_SECRET_NAME", "payday-copilot/baseten-api-key");
+    vi.stubEnv("FIREWORKS_API_KEY_SECRET_NAME", "payday-copilot/fireworks-api-key");
+    forgetKey("baseten");
+    forgetKey("fireworks");
+    const read: string[] = [];
+    const secrets = {
+      send: vi.fn(async (command: { input: { SecretId?: string } }) => {
+        const name = String(command.input.SecretId);
+        read.push(name);
+        return { SecretString: name.includes("fireworks") ? FW_KEY : KEY };
+      }),
+    };
+    const statuses = [401, 200];
+    const { fetchFn, ledger, clock } = setup(() => {
+      const code = statuses.shift();
+      return code === 200 ? Response.json(basetenAnswer()) : status(code ?? 500)();
+    });
+    const deps = { fetch: fetchFn, db: ledger.db, clock, secrets };
+
+    const first = await complete("spark_open", REQUEST, SESSION, deps);
+    expect(first.text).toBe("triage: load");
+    expect(urls(fetchFn)).toEqual([BASETEN_URL, FIREWORKS_URL]);
+    expect(fetchFn.mock.calls[1][1].headers).toMatchObject({ authorization: `Bearer ${FW_KEY}` });
+    expect(read).toEqual(["payday-copilot/baseten-api-key", "payday-copilot/fireworks-api-key"]);
+
+    // Baseten's key was forgotten, so the next call reads it again; it answers, so no standby.
+    await complete("spark_open", REQUEST, SESSION, deps);
+    expect(urls(fetchFn)).toEqual([BASETEN_URL, FIREWORKS_URL, BASETEN_URL]);
+    expect(read).toEqual([
+      "payday-copilot/baseten-api-key",
+      "payday-copilot/fireworks-api-key",
+      "payday-copilot/baseten-api-key",
+    ]);
+    expect(logged.join("\n")).not.toContain(KEY);
+    expect(logged.join("\n")).not.toContain(FW_KEY);
+    forgetKey("baseten");
+    forgetKey("fireworks");
+  });
+
+  it("forgets a refused Fireworks key too, without another attempt", async () => {
+    vi.stubEnv("DB_CLUSTER_ARN", "test-cluster");
+    vi.stubEnv("BASETEN_API_KEY", "");
+    vi.stubEnv("FIREWORKS_API_KEY", "");
+    vi.stubEnv("BASETEN_API_KEY_SECRET_NAME", "payday-copilot/baseten-api-key");
+    vi.stubEnv("FIREWORKS_API_KEY_SECRET_NAME", "payday-copilot/fireworks-api-key");
+    forgetKey("baseten");
+    forgetKey("fireworks");
+    const read: string[] = [];
+    const secrets = {
+      send: vi.fn(async (command: { input: { SecretId?: string } }) => {
+        read.push(String(command.input.SecretId));
+        return { SecretString: String(command.input.SecretId).includes("fireworks") ? FW_KEY : KEY };
+      }),
+    };
+    const { fetchFn, ledger, clock } = setup(status(503), status(401));
+    const deps = { fetch: fetchFn, db: ledger.db, clock, secrets };
+    expect((await refusal(complete("spark_open", REQUEST, SESSION, deps))).category).toBe("auth");
+    expect(urls(fetchFn)).toEqual([BASETEN_URL, FIREWORKS_URL]);
+    expect((await refusal(complete("spark_open", REQUEST, SESSION, deps))).category).toBe("auth");
+    // Baseten's key was kept (a 503 is not a key problem); Fireworks' was read again.
+    expect(read).toEqual([
+      "payday-copilot/baseten-api-key",
+      "payday-copilot/fireworks-api-key",
+      "payday-copilot/fireworks-api-key",
+    ]);
+    forgetKey("baseten");
+    forgetKey("fireworks");
+  });
+
+  it("sends to Fireworks when Baseten's key or model id is missing, with one line saying why", async () => {
+    const cases: [string, string | undefined, string][] = [
+      ["BASETEN_API_KEY", undefined, "ai: spark_open not configured (no baseten key)"],
+      ["BASETEN_API_KEY", "short", "ai: spark_open not configured (no baseten key)"],
+      ["BASETEN_MODEL_ID", undefined, "ai: spark_open not configured (no baseten model id)"],
+      // Fireworks' id is not one of Baseten's price rows.
+      ["BASETEN_MODEL_ID", FIREWORKS_MODEL, "ai: spark_open not configured (no baseten model id)"],
+    ];
+    for (const [name, value, why] of cases) {
+      baseEnv();
+      vi.stubEnv(name, value);
+      const { ledger, fetchFn, deps } = setup(status(500));
+      const result = await complete("spark_open", REQUEST, SESSION, deps);
+      expect(urls(fetchFn), `${name}=${value}`).toEqual([FIREWORKS_URL]);
+      const rows = [...ledger.rows.values()];
+      expect(rows.map((r) => [r.provider, r.status])).toEqual([["fireworks", "ok"]]);
+      expect(result.callId).toBe([...ledger.rows.keys()][0]);
+      expect(logged.slice(0, 2)).toEqual([
+        why,
+        "ai: spark_open falling back to fireworks after not_configured http=none call=none",
+      ]);
+      expect(logged).toHaveLength(3);
+
+      // With the switch off, the same configuration is refused as it always was.
+      flags.sparkOpenFallback = "off";
+      const off = setup(status(500));
+      expect((await refusal(complete("spark_open", REQUEST, SESSION, off.deps))).category).toBe(
+        "not_configured",
+      );
+      expect(off.ledger.steps).toEqual([]);
+      expect(off.fetchFn).not.toHaveBeenCalled();
+      flags.sparkOpenFallback = "fireworks";
+    }
+  });
+
+  it("never tries Fireworks after a timeout or a 504", async () => {
+    const timeouts: [() => Response, string][] = [
+      [
+        () => {
+          throw new DOMException("timed out", "TimeoutError");
+        },
+        "none",
+      ],
+      [() => new Response("gateway", { status: 504 }), "504"],
+    ];
+    for (const [first, http] of timeouts) {
+      const { ledger, fetchFn, deps } = setup(first);
+      const err = await refusal(complete("spark_open", REQUEST, SESSION, deps));
+      expect(err.category).toBe("timeout");
+      expect(urls(fetchFn)).toEqual([BASETEN_URL]);
+      const rows = [...ledger.rows.values()];
+      expect(rows.map((r) => [r.provider, r.status])).toEqual([["baseten", "unknown"]]);
+      expect(ledger.counter).toMatchObject({ reserved: rows[0].reserved, calls: 1 });
+      expect(logged).toEqual([expect.stringContaining(`unknown timeout http=${http}`)]);
+    }
+  });
+
+  it("never tries Fireworks after a 400, 404, 413 or another status", async () => {
+    for (const [code, category] of [
+      [400, "bad_request"],
+      [404, "bad_request"],
+      [413, "too_long"],
+      [418, "unknown"],
+    ] as const) {
+      const { ledger, fetchFn, deps } = setup(status(code));
+      const err = await refusal(complete("spark_open", REQUEST, SESSION, deps));
+      expect(err.category, String(code)).toBe(category);
+      expect(urls(fetchFn)).toEqual([BASETEN_URL]);
+      expect(ledger.rows.size).toBe(1);
+      expect(logged).toHaveLength(1);
+    }
+  });
+
+  it("never tries Fireworks after a 200 that cannot be read, its reservation kept", async () => {
+    const unreadable: (() => Response)[] = [
+      () => new Response("not json", { status: 200 }),
+      () => Response.json({ choices: [] }),
+      () => Response.json({ ...basetenAnswer(), usage: { prompt_tokens: 15 } }),
+    ];
+    for (const first of unreadable) {
+      const { ledger, fetchFn, deps } = setup(first);
+      const err = await refusal(complete("spark_open", REQUEST, SESSION, deps));
+      expect(err.category).toBe("unknown");
+      expect(urls(fetchFn)).toEqual([BASETEN_URL]);
+      const [row] = [...ledger.rows.values()];
+      expect(row.status).toBe("unknown");
+      expect(ledger.counter).toMatchObject({ reserved: row.reserved, calls: 1 });
+    }
+  });
+
+  it("never tries Fireworks after an answer, even an incomplete or empty one", async () => {
+    const answers = [
+      { ...basetenAnswer(), choices: [{ finish_reason: "length", message: { content: "tri" } }] },
+      { ...basetenAnswer(), choices: [{ finish_reason: "stop", message: { content: "" } }] },
+    ];
+    for (const answer of answers) {
+      const { ledger, fetchFn, deps } = setup(() => Response.json(answer));
+      const result = await complete("spark_open", REQUEST, SESSION, deps);
+      expect(urls(fetchFn)).toEqual([BASETEN_URL]);
+      expect(ledger.rows.size).toBe(1);
+      expect(result.costNanocents).toBe(COST);
+    }
+  });
+
+  it("gives Fireworks only what is left of the caller's time, and nothing under one second", async () => {
+    // 900 ms of a 25,000 ms budget left after Baseten: no second attempt, Baseten's error stands.
+    const short = setup(status(503));
+    short.fetchFn.mockImplementationOnce(async () => {
+      short.state.now += 24_100;
+      return status(503)();
+    });
+    const err = await refusal(complete("spark_open", REQUEST, SESSION, short.deps));
+    expect(err.category).toBe("unavailable");
+    expect(urls(short.fetchFn)).toEqual([BASETEN_URL]);
+    expect(short.ledger.rows.size).toBe(1);
+    const firstId = [...short.ledger.rows.keys()][0];
+    expect(logged).toEqual([
+      expect.stringContaining("unknown unavailable http=503 ms=24100"),
+      `ai: spark_open fallback skipped (900 ms left) call=${firstId}`,
+    ]);
+
+    // Exactly 1,000 ms left: Fireworks is tried with a 1,000 ms timeout.
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const edge = setup(status(503));
+    edge.fetchFn.mockImplementationOnce(async () => {
+      edge.state.now += 24_000;
+      return status(503)();
+    });
+    const result = await complete("spark_open", REQUEST, SESSION, edge.deps);
+    expect(result.text).toBe("triage: load");
+    expect(urls(edge.fetchFn)).toEqual([BASETEN_URL, FIREWORKS_URL]);
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([25_000, 1_000]);
+
+    // A caller's own shorter budget is shared the same way.
+    timeout.mockClear();
+    const own = setup(status(503));
+    own.fetchFn.mockImplementationOnce(async () => {
+      own.state.now += 3_250;
+      return status(503)();
+    });
+    await complete("spark_open", { ...REQUEST, timeoutMs: 8_000 }, SESSION, own.deps);
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([8_000, 4_750]);
+
+    // A primary that was never sent has no row, and the line says so instead of naming one.
+    vi.stubEnv("BASETEN_API_KEY", undefined);
+    const unsent = setup(status(503));
+    const late = await refusal(
+      complete("spark_open", { ...REQUEST, timeoutMs: 900 }, SESSION, unsent.deps),
+    );
+    expect(late.category).toBe("not_configured");
+    expect(unsent.fetchFn).not.toHaveBeenCalled();
+    expect(unsent.ledger.rows.size).toBe(0);
+    expect(logged).toEqual([
+      "ai: spark_open not configured (no baseten key)",
+      "ai: spark_open fallback skipped (900 ms left) primary not sent",
+    ]);
+  });
+
+  it("lets Baseten's error stand, with one line and nothing thrown from configuration, when Fireworks is not set up", async () => {
+    const cases: [string, string | undefined, string][] = [
+      ["FIREWORKS_API_KEY", undefined, "ai: spark_open fallback not configured (no fireworks key)"],
+      ["FIREWORKS_API_KEY", "short", "ai: spark_open fallback not configured (no fireworks key)"],
+      [
+        "FIREWORKS_MODEL_ID",
+        undefined,
+        "ai: spark_open fallback not configured (no fireworks model id)",
+      ],
+      // Baseten's id is not one of Fireworks' price rows, so it never reaches Fireworks.
+      [
+        "FIREWORKS_MODEL_ID",
+        BASETEN_MODEL,
+        "ai: spark_open fallback not configured (no fireworks model id)",
+      ],
+    ];
+    for (const [name, value, why] of cases) {
+      baseEnv();
+      vi.stubEnv(name, value);
+      const { ledger, fetchFn, deps } = setup(status(503));
+      const err = await refusal(complete("spark_open", REQUEST, SESSION, deps));
+      expect(err.category, `${name}=${value}`).toBe("unavailable");
+      expect(err.httpStatus).toBe(503);
+      expect(urls(fetchFn)).toEqual([BASETEN_URL]);
+      expect(ledger.rows.size).toBe(1);
+      expect(logged).toEqual([expect.stringContaining("unknown unavailable http=503"), why]);
+    }
+  });
+
+  it("refuses the second reservation at the cap, the first row kept and nothing sent to Fireworks, and never logs that it fell back", async () => {
+    const cap = 12_000 * NANOCENTS_PER_CENT;
+    // Room for one reservation (about 0.45 cents) but not two.
+    const ledger = fakeLedger({ spent: cap - 600_000_000 });
+    const { clock } = fakeClock();
+    const fetchFn = fakeFetch(ledger.steps, hosts(status(503)));
+    logged = [];
+    const err = await refusal(
+      complete("spark_open", REQUEST, SESSION, { fetch: fetchFn, db: ledger.db, clock }),
+    );
+    expect(err.category).toBe("cap");
+    expect(urls(fetchFn)).toEqual([BASETEN_URL]);
+    const rows = [...ledger.rows.values()];
+    expect(rows.map((r) => [r.provider, r.status])).toEqual([["baseten", "unknown"]]);
+    expect(ledger.counter).toMatchObject({ spent: cap - 600_000_000, reserved: rows[0].reserved });
+    const firstId = [...ledger.rows.keys()][0];
+    expect(logged).toEqual([
+      expect.stringContaining(`unknown unavailable http=503 ms=0 reservation kept call=${firstId}`),
+      `ai: spark_open fallback refused (cap) call=${firstId}`,
+    ]);
+
+    // With no Baseten key nothing was sent first, and the refusal line says so.
+    vi.stubEnv("BASETEN_API_KEY", undefined);
+    const full = fakeLedger({ spent: cap });
+    const unsentFetch = fakeFetch(full.steps, hosts(status(503)));
+    logged = [];
+    const unsent = await refusal(
+      complete("spark_open", REQUEST, SESSION, { fetch: unsentFetch, db: full.db, clock }),
+    );
+    expect(unsent.category).toBe("cap");
+    expect(unsentFetch).not.toHaveBeenCalled();
+    expect(full.rows.size).toBe(0);
+    expect(logged).toEqual([
+      "ai: spark_open not configured (no baseten key)",
+      "ai: spark_open fallback refused (cap) primary not sent",
+    ]);
+
+    // Any other refusal at the second reservation is named by its category, never its text.
+    const outsider = setup(status(503));
+    outsider.ledger.breaks.membership = true;
+    await expect(complete("spark_open", REQUEST, SESSION, outsider.deps)).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    expect(outsider.fetchFn).not.toHaveBeenCalled();
+    expect(logged).toEqual([
+      "ai: spark_open not configured (no baseten key)",
+      "ai: spark_open fallback refused (membership) primary not sent",
+    ]);
+  });
+
+  it("never tries Fireworks when the first settle fails", async () => {
+    const { ledger, fetchFn, deps } = setup(status(503));
+    ledger.breaks.settleThrows = true;
+    const err = await refusal(complete("spark_open", REQUEST, SESSION, deps));
+    expect(err.category).toBe("unknown");
+    expect(urls(fetchFn)).toEqual([BASETEN_URL]);
+    expect([...ledger.rows.values()].map((r) => r.status)).toEqual(["reserved"]);
+    expect(logged).toEqual([expect.stringContaining("not settled (unavailable); reservation kept")]);
+  });
+
+  it("never tries a standby for Muse Spark or Muse Wonder", async () => {
+    for (const target of ["spark", "wonder"] as const) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps, status(503));
+      const err = await refusal(
+        complete(target, REQUEST, SESSION, { fetch: fetchFn, db: ledger.db, clock: () => 0 }),
+      );
+      expect(err.category).toBe("unavailable");
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      expect(ledger.rows.size).toBe(1);
+    }
+    expect(logged.join("\n")).not.toContain("falling back");
+  });
+
+  it("never sends structured output, attachments or a reasoning setting to Fireworks", async () => {
+    // The same refusals as Baseten, before any reservation, even when Baseten would be skipped.
+    vi.stubEnv("BASETEN_MODEL_ID", undefined);
+    const schema = { type: "object" };
+    const refused: AiRequest[] = [
+      { ...REQUEST, format: { name: "f", schema } },
+      {
+        ...REQUEST,
+        messages: [
+          {
+            role: "user",
+            content: PROMPT,
+            attachments: [{ kind: "image", mime: "image/png", bytes: PNG_BYTES }],
+          },
+        ],
+      },
+      { ...REQUEST, reasoningEffort: "max" },
+    ];
+    for (const request of refused) {
+      const { ledger, fetchFn, deps } = setup(status(503));
+      expect((await refusal(complete("spark_open", request, SESSION, deps))).category).toBe(
+        "bad_request",
+      );
+      expect(ledger.steps).toEqual([]);
+      expect(fetchFn).not.toHaveBeenCalled();
+    }
+
+    baseEnv();
+    const { fetchFn, deps, ledger } = setup(status(503));
+    await complete("spark_open", { ...REQUEST, reasoningEffort: "high" }, SESSION, deps);
+    const sent = JSON.parse(String(fetchFn.mock.calls[1][1].body));
+    expect(Object.keys(sent).sort()).toEqual(["max_tokens", "messages", "model", "stream"]);
+    expect([...ledger.rows.values()].map((r) => r.effort)).toEqual([null, null]);
+  });
+
+  it("never tries Fireworks after the wrapper's own refusals", async () => {
+    // Too expensive for the caller's limit.
+    const pricey = setup(status(503));
+    const err = await refusal(
+      complete(
+        "spark_open",
+        { ...REQUEST, maxCostCents: 1, maxOutputTokens: 8192 },
+        SESSION,
+        pricey.deps,
+      ),
+    );
+    expect(err.category).toBe("too_expensive");
+    expect(pricey.fetchFn).not.toHaveBeenCalled();
+
+    // The cap refuses the first reservation.
+    const full = fakeLedger({ spent: 12_000 * NANOCENTS_PER_CENT });
+    const fetchFn = fakeFetch(full.steps, hosts(status(503)));
+    const capped = await refusal(
+      complete("spark_open", REQUEST, SESSION, { fetch: fetchFn, db: full.db, clock: () => 0 }),
+    );
+    expect(capped.category).toBe("cap");
+    expect(fetchFn).not.toHaveBeenCalled();
+
+    // No membership.
+    const outsider = setup(status(503));
+    outsider.ledger.breaks.membership = true;
+    await expect(complete("spark_open", REQUEST, SESSION, outsider.deps)).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    expect(outsider.fetchFn).not.toHaveBeenCalled();
+
+    // A shared configuration problem: the cap unset, or a bad tenant.
+    for (const [name, value, session] of [
+      ["AI_SPEND_CAP_CENTS", "", SESSION],
+      ["AI_SPEND_CAP_CENTS", "12000", { ...SESSION, tenantId: "not-a-uuid" }],
+    ] as const) {
+      baseEnv();
+      vi.stubEnv(name, value);
+      vi.stubEnv("BASETEN_API_KEY", undefined);
+      const shared = setup(status(503));
+      expect((await refusal(complete("spark_open", REQUEST, session, shared.deps))).category).toBe(
+        "not_configured",
+      );
+      expect(shared.fetchFn).not.toHaveBeenCalled();
+      expect(logged).toEqual(["ai: spark_open not configured (cap, model id or test fetch)"]);
+    }
+
+    // Contributor mode on in production refuses every target, the standby too.
+    baseEnv();
+    vi.stubEnv("DB_CLUSTER_ARN", "test-cluster");
+    vi.stubEnv("META_CONTRIBUTOR_MODE", "true");
+    const contributor = setup(status(503));
+    expect(
+      (await refusal(complete("spark_open", REQUEST, SESSION, contributor.deps))).category,
+    ).toBe("not_configured");
+    expect(contributor.fetchFn).not.toHaveBeenCalled();
+    expect(logged.join("\n")).not.toContain("falling back");
+  });
+
+  it("returns Fireworks' own failure when the second attempt fails, and never makes a third", async () => {
+    for (const [standby, category, rowStatus] of [
+      [status(429), "rate_limited", "failed"],
+      [status(503), "unavailable", "unknown"],
+      [dropped, "network", "unknown"],
+    ] as const) {
+      const { ledger, fetchFn, deps } = setup(status(503), standby);
+      const err = await refusal(complete("spark_open", REQUEST, SESSION, deps));
+      expect(err.category).toBe(category);
+      expect(urls(fetchFn)).toEqual([BASETEN_URL, FIREWORKS_URL]);
+      expect([...ledger.rows.values()].map((r) => [r.provider, r.status])).toEqual([
+        ["baseten", "unknown"],
+        ["fireworks", rowStatus],
+      ]);
+      expect(logged).toHaveLength(3);
+    }
+  });
+
+  it("drops one leading think block from Fireworks' text and reads any other think tag as unreadable", async () => {
+    const read: [unknown, string][] = [
+      ["<think>Plan the triage.</think>\n\ntriage: load", "triage: load"],
+      ["  <think></think>triage: load", "triage: load"],
+      ["triage: load", "triage: load"],
+      ["We are thinking about <thinking> tags.", "We are thinking about <thinking> tags."],
+    ];
+    for (const [content, text] of read) {
+      const { ledger, fetchFn, deps } = setup(status(503), () =>
+        Response.json(fireworksAnswer({ content })),
+      );
+      const result = await complete("spark_open", REQUEST, SESSION, deps);
+      expect(result.text, String(content)).toBe(text);
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+      expect([...ledger.rows.values()].map((r) => r.status)).toEqual(["unknown", "ok"]);
+    }
+
+    // Tool calls are never touched.
+    const tools = setup(status(503), () =>
+      Response.json(
+        fireworksAnswer({
+          content: "<think>Look it up.</think>",
+          tool_calls: [
+            { id: "call_1", type: "function", function: { name: "find_load", arguments: "{}" } },
+          ],
+        }),
+      ),
+    );
+    const withTools = await complete("spark_open", REQUEST, SESSION, tools.deps);
+    expect(withTools.text).toBe("");
+    expect(withTools.toolCalls).toEqual([{ id: "call_1", name: "find_load", argumentsJson: "{}" }]);
+
+    const unreadable: unknown[] = [
+      "<think>Still thinking",
+      "<think>a<think>b</think>c</think>triage: load",
+      "<think>a</think><think>b</think>triage: load",
+      "triage: load</think>",
+      "triage: <think>x</think> load",
+      "<THINK>x</THINK>triage: load",
+      "<think attr>x</think>triage: load",
+      [{ type: "text", text: "triage: load" }],
+      { text: "triage: load" },
+    ];
+    for (const content of unreadable) {
+      const { ledger, fetchFn, deps } = setup(status(503), () =>
+        Response.json(fireworksAnswer({ content })),
+      );
+      const err = await refusal(complete("spark_open", REQUEST, SESSION, deps));
+      expect(err.category, JSON.stringify(content)).toBe("unknown");
+      // Exactly two attempts: no third host, and the unreadable answer's reservation is kept.
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+      const rows = [...ledger.rows.values()];
+      expect(rows.map((r) => [r.provider, r.status])).toEqual([
+        ["baseten", "unknown"],
+        ["fireworks", "unknown"],
+      ]);
+      expect(ledger.counter).toMatchObject({
+        spent: 0,
+        reserved: rows[0].reserved + rows[1].reserved,
+        calls: 2,
+      });
+      expect(logged.join("\n")).not.toContain("triage: load");
+    }
+  });
+
+  it("reads the switch on every call", async () => {
+    const { fetchFn, deps } = setup(status(503));
+    await complete("spark_open", REQUEST, SESSION, deps);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    flags.sparkOpenFallback = "off";
+    expect((await refusal(complete("spark_open", REQUEST, SESSION, deps))).category).toBe(
+      "unavailable",
+    );
+    expect(fetchFn).toHaveBeenCalledTimes(3);
+    flags.sparkOpenFallback = "fireworks";
+    await complete("spark_open", REQUEST, SESSION, deps);
+    expect(fetchFn).toHaveBeenCalledTimes(5);
   });
 });

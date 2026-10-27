@@ -10,6 +10,8 @@ export const GITHUB_TOKEN_SECRET_NAME = "payday-copilot/github-token";
 // them by name; the branch variables carry only the names.
 export const META_API_KEY_SECRET_NAME = "payday-copilot/meta-api-key";
 export const BASETEN_API_KEY_SECRET_NAME = "payday-copilot/baseten-api-key";
+// Muse Spark Open's standby host, used only while flags.sparkOpenFallback is "fireworks".
+export const FIREWORKS_API_KEY_SECRET_NAME = "payday-copilot/fireworks-api-key";
 // The money adapters' secrets, stored by hand the same way: the QuickBooks client secret, the key
 // that seals the QuickBooks tokens at rest, and the Stripe test key.
 export const QBO_CLIENT_SECRET_NAME = "payday-copilot/qbo-client-secret";
@@ -59,6 +61,8 @@ export const BRANCH_ENV_NAMES = [
   "META_API_KEY_SECRET_NAME",
   "BASETEN_MODEL_ID",
   "BASETEN_API_KEY_SECRET_NAME",
+  "FIREWORKS_MODEL_ID",
+  "FIREWORKS_API_KEY_SECRET_NAME",
   "QBO_ENVIRONMENT",
   "QBO_MINOR_VERSION",
   "QBO_CLIENT_SECRET_NAME",
@@ -178,6 +182,8 @@ export type HostingStackProps = StackProps & {
   aiWonderCapCents: number;
   metaModels: MetaModels;
   basetenModelId: string;
+  // Muse Spark Open's id on its standby host, as Fireworks lists it.
+  fireworksModelId: string;
   money?: MoneySettings;
 };
 
@@ -255,14 +261,15 @@ export class HostingStack extends Stack {
     const keyArns = [
       Secret.fromSecretNameV2(this, "MetaApiKey", META_API_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "BasetenApiKey", BASETEN_API_KEY_SECRET_NAME),
+      Secret.fromSecretNameV2(this, "FireworksApiKey", FIREWORKS_API_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "QboClientSecret", QBO_CLIENT_SECRET_NAME),
       Secret.fromSecretNameV2(this, "QboTokenKey", QBO_TOKEN_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "StripeTestKey", STRIPE_SECRET_KEY_SECRET_NAME),
     ].map((secret) => `${secret.secretArn}-??????`);
 
     // The SSR runtime's credentials: the Data API on this cluster, the app's own database login,
-    // the two model API keys and the three money secrets, nothing else. No Cognito permission is needed (sign-in is an
-    // unauthenticated API). Set on the branch, not the app, as Amplify recommends for a public
+    // the three model API keys and the three money secrets, nothing else. No Cognito permission
+    // is needed (sign-in is an unauthenticated API). Set on the branch, not the app, as Amplify recommends for a public
     // repository. Amplify may assume it only for this account and this app's main branch; the
     // app does not refer to this role, so naming the app here is no cycle.
     const branchName = "main";
@@ -304,6 +311,8 @@ export class HostingStack extends Stack {
       META_API_KEY_SECRET_NAME,
       BASETEN_MODEL_ID: props.basetenModelId,
       BASETEN_API_KEY_SECRET_NAME,
+      FIREWORKS_MODEL_ID: props.fireworksModelId,
+      FIREWORKS_API_KEY_SECRET_NAME,
       QBO_ENVIRONMENT: "sandbox",
       QBO_MINOR_VERSION,
       QBO_CLIENT_SECRET_NAME,

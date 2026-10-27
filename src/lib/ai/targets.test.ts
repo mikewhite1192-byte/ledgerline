@@ -3,6 +3,8 @@ import { actualCost, priceFor, type TokenPrice } from "./prices";
 import {
   CONTRIBUTOR_IDS,
   contributorMode,
+  contributorRefusesAll,
+  FALLBACKS,
   isTarget,
   modelFor,
   modelIdFor,
@@ -16,6 +18,7 @@ const ENV = {
   META_MODEL_IMAGE: "muse-image-1.0",
   META_MODEL_SAM: "sam-3.1",
   BASETEN_MODEL_ID: "meta-models/muse-spark-open-1026",
+  FIREWORKS_MODEL_ID: "accounts/fireworks/models/muse-spark-open",
 };
 
 afterEach(() => {
@@ -36,6 +39,28 @@ describe("TARGETS", () => {
     for (const bad of ["meta", "baseten", "toString", "__proto__", 1, null]) {
       expect(isTarget(bad), String(bad)).toBe(false);
     }
+  });
+});
+
+describe("FALLBACKS", () => {
+  it("gives Muse Spark Open, and only it, a standby host with its own variable", () => {
+    expect(FALLBACKS).toEqual({
+      spark_open: { provider: "fireworks", env: "FIREWORKS_MODEL_ID" },
+    });
+  });
+});
+
+describe("contributorRefusesAll", () => {
+  it("refuses every target for a junk mode, or the mode on in production", () => {
+    expect(contributorRefusesAll({})).toBe(false);
+    expect(contributorRefusesAll({ META_CONTRIBUTOR_MODE: "false", DB_CLUSTER_ARN: "x" })).toBe(
+      false,
+    );
+    expect(contributorRefusesAll({ META_CONTRIBUTOR_MODE: "true" })).toBe(false);
+    expect(contributorRefusesAll({ META_CONTRIBUTOR_MODE: "true", DB_CLUSTER_ARN: "x" })).toBe(
+      true,
+    );
+    expect(contributorRefusesAll({ META_CONTRIBUTOR_MODE: "yes" })).toBe(true);
   });
 });
 
@@ -114,13 +139,52 @@ describe("modelIdFor", () => {
 
   it("lists a priced Contributor id for every Standard id it replaces", () => {
     for (const [standard, contributor] of Object.entries(CONTRIBUTOR_IDS)) {
-      expect(priceFor("spark", standard), standard).not.toBeNull();
-      expect(priceFor("spark", contributor), contributor).not.toBeNull();
+      expect(priceFor("spark", "meta", standard), standard).not.toBeNull();
+      expect(priceFor("spark", "meta", contributor), contributor).not.toBeNull();
     }
   });
 });
 
+describe("modelIdFor, by host", () => {
+  it("reads the standby host's own variable, and none for a host that does not serve the target", () => {
+    expect(modelIdFor("spark_open", ENV, "baseten")).toBe("meta-models/muse-spark-open-1026");
+    expect(modelIdFor("spark_open", ENV, "fireworks")).toBe(
+      "accounts/fireworks/models/muse-spark-open",
+    );
+    expect(modelIdFor("spark_open", ENV, "meta")).toBeNull();
+    expect(modelIdFor("spark", ENV, "fireworks")).toBeNull();
+    expect(modelIdFor("spark", ENV, "baseten")).toBeNull();
+    expect(modelIdFor("spark", ENV, "meta")).toBe("muse-spark-1.3");
+    expect(modelIdFor("spark_open", { ...ENV, FIREWORKS_MODEL_ID: undefined }, "fireworks")).toBe(
+      "",
+    );
+  });
+
+  it("refuses the standby host too when the Contributor switch refuses every target", () => {
+    const env = { ...ENV, META_CONTRIBUTOR_MODE: "true", DB_CLUSTER_ARN: "x" };
+    expect(modelIdFor("spark_open", env, "fireworks")).toBeNull();
+    expect(modelIdFor("spark_open", { ...ENV, META_CONTRIBUTOR_MODE: "on" }, "fireworks")).toBeNull();
+  });
+});
+
 describe("modelFor", () => {
+  it("prices the standby host's id only on that host", () => {
+    vi.stubEnv("META_CONTRIBUTOR_MODE", "false");
+    vi.stubEnv("DB_CLUSTER_ARN", "");
+    vi.stubEnv("BASETEN_MODEL_ID", "meta-models/muse-spark-open-1026");
+    vi.stubEnv("FIREWORKS_MODEL_ID", "accounts/fireworks/models/muse-spark-open");
+    expect(modelFor("spark_open", "tokens")?.model).toBe("meta-models/muse-spark-open-1026");
+    expect(modelFor("spark_open", "tokens", "fireworks")).toEqual({
+      model: "accounts/fireworks/models/muse-spark-open",
+      price: { unit: "tokens", input: 125_000, cached: 15_000, output: 425_000 },
+    });
+    // Each host's id in the other's variable is refused, never sent.
+    vi.stubEnv("FIREWORKS_MODEL_ID", "meta-models/muse-spark-open-1026");
+    expect(modelFor("spark_open", "tokens", "fireworks")).toBeNull();
+    vi.stubEnv("BASETEN_MODEL_ID", "accounts/fireworks/models/muse-spark-open");
+    expect(modelFor("spark_open", "tokens")).toBeNull();
+  });
+
   it("prices the model actually called", () => {
     vi.stubEnv("META_MODEL_SPARK", "muse-spark-1.3");
     vi.stubEnv("META_CONTRIBUTOR_MODE", "true");

@@ -9,6 +9,12 @@ export type Flags = {
   aiProofRoute: boolean;
   // Which model triages inbound email: "meta" (Muse Spark) until Baseten credits land.
   triageProvider: "meta" | "baseten";
+  // Muse Spark Open's standby host. "off": a call Baseten cannot serve fails as it always has.
+  // "fireworks": when Baseten fails for a reason that is Baseten's (no key, 429, 401/403, 402, a
+  // connection failure, a 5xx other than 504), the wrapper makes one more attempt on Fireworks
+  // with its own reservation and ledger row, inside the time the caller had left. The wrapper
+  // reads it at the moment of that decision; callers never do.
+  sparkOpenFallback: "off" | "fireworks";
   // Any payout through the payment adapter, mock included. Off means the money executor refuses
   // before reserving a ledger row, and the adapter refuses again at send.
   payoutsEnabled: boolean;
@@ -63,6 +69,7 @@ export const flags: Flags = {
   aiEnabled: false,
   aiProofRoute: false,
   triageProvider: "meta",
+  sparkOpenFallback: "off",
   payoutsEnabled: false,
   paymentProvider: "mock",
   accountingEnabled: false,
