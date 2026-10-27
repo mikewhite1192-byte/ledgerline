@@ -177,6 +177,16 @@ describe("outcome labels", () => {
     expect(outcomeLabel(null)).toBe(OUTCOME_FALLBACK);
   });
 
+  it("words the refusals an invoice post and a payment post share so they fit either one", () => {
+    // postInvoice and postCustomerPayment both answer validation and attempts_used.
+    for (const category of ["validation", "attempts_used"]) {
+      expect(outcomeLabel(category), category).not.toBe(OUTCOME_FALLBACK);
+      expect(outcomeLabel(category), category).not.toMatch(/\b(form|invoice|payment)\b/i);
+    }
+    expect(outcomeLabel("validation")).toMatch(/Nothing was saved or sent/);
+    expect(outcomeLabel("attempts_used")).toMatch(/Check QuickBooks first/);
+  });
+
   it("never says nothing changed when the outcome is not known", () => {
     for (const category of ["unknown", "unavailable"]) {
       expect(outcomeLabel(category), category).toMatch(/Refresh the page/);

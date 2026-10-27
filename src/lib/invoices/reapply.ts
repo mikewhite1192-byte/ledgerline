@@ -13,10 +13,11 @@ import { matchWrongInvoiceFinding, type ReapplyIds } from "./match";
 // it sits on to the open invoice the rules engine says it was meant for. Everything happens in one
 // tenant transaction with the proposal, the payment, the application and both invoices locked: the
 // engine's finding is re-run on the rows as they are now and must still name exactly these four
-// records, or nothing moves (stale). A payment already posted to QuickBooks, or with a post
-// reserved, sent or not yet known (a customer_payment ledger row that is not failed), is refused
-// (posted_outside): moving it here alone would leave the two books disagreeing, so a person moves
-// it there by hand. No money moves and nothing outside is called, so there is no ledger row. With
+// records, or nothing moves (stale). A target that owes less than the amount moved is refused
+// (over_applied), as recording a payment refuses one. A payment already posted to QuickBooks, or
+// with a post reserved, sent or not yet known (a customer_payment ledger row that is not failed),
+// is refused (posted_outside): moving it here alone would leave the two books disagreeing, so a
+// person moves it there by hand. No money moves and nothing outside is called, so there is no ledger row. With
 // the customer payments switch off nothing runs and the proposal stays approved.
 //
 // The same approval twice changes one application: the second run finds the proposal done.
@@ -59,8 +60,8 @@ async function lockRows(q: Queryable, ids: ReapplyIds) {
     [ids.applicationId],
   );
   // Both invoices in one statement, in id order, so two moves never lock them crosswise.
-  const invoices = await q.query<{ id: string; customer_id: string; status: string }>(
-    `SELECT id, customer_id, status FROM invoices
+  const invoices = await q.query<{ id: string; customer_id: string; status: string; amount_cents: number | string }>(
+    `SELECT id, customer_id, status, amount_cents FROM invoices
       WHERE tenant_id = current_tenant_id() AND id IN (CAST($1 AS uuid), CAST($2 AS uuid))
       ORDER BY id FOR UPDATE`,
     [ids.fromInvoiceId, ids.toInvoiceId],
@@ -94,6 +95,18 @@ async function move(
   const input = await readReceivablesInput(q, localDateOf(now.toISOString(), tenant.timezone));
   const finding = matchWrongInvoiceFinding(findPaymentOnWrongInvoice(input), ids);
   if (!finding || finding.amountCents !== amountCents) return failApproved(q, proposal.id, "stale");
+  // The target must still owe at least what moves, or the move leaves it over-applied (the engine
+  // only asks that it owe something). It is locked above, and the only other writer of an
+  // application, recording a payment, locks the invoice first, so what it owes holds until commit.
+  const target = invoices.find((i) => i.id === ids.toInvoiceId);
+  const [onTargetNow] = await q.query<{ n: number | string | null }>(
+    `SELECT sum(amount_cents) AS n FROM payment_applications
+      WHERE tenant_id = current_tenant_id() AND invoice_id = CAST($1 AS uuid)`,
+    [ids.toInvoiceId],
+  );
+  if (!target || Number(target.amount_cents) - Number(onTargetNow?.n ?? 0) < amountCents) {
+    return failApproved(q, proposal.id, "over_applied");
+  }
 
   // The payment may already sit on the target invoice: fold this application into that one.
   const [onTarget] = await q.query<{ id: string }>(

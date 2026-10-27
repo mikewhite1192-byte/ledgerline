@@ -1197,6 +1197,72 @@ describe("invoices against a seeded database", () => {
     const findingsNow = (t: Carrier) =>
       app.withTenant(t.id, async (q) => findPaymentOnWrongInvoice(await readReceivablesInput(q, TODAY)));
 
+    it("refuses a move onto an invoice another payment already partly paid, moving nothing", async () => {
+      const t = BR;
+      const w = t.plan.planted.wrongInvoice;
+      const ids = {
+        paymentId: w.paymentId,
+        applicationId: w.applicationId,
+        fromInvoiceId: w.appliedToInvoiceId,
+        toInvoiceId: w.meantForInvoiceId,
+      };
+      const [{ amount_cents: appliedText }] = await adminRows<{ amount_cents: string }>(
+        t,
+        "SELECT amount_cents::text FROM payment_applications WHERE tenant_id = $1 AND id = CAST($2 AS uuid)",
+        [t.id, ids.applicationId],
+      );
+      const amountCents = Number(appliedText);
+      const before = await invoiceById(t, ids.toInvoiceId);
+      // Another payment pays one cent of the target: it still owes something, so the engine still
+      // names it, but less than the application being moved.
+      const otherPayment = randomUUID();
+      const otherApplication = randomUUID();
+      await adminWrite(
+        t,
+        `INSERT INTO customer_payments (id, tenant_id, customer_id, received_on, amount_cents, method, payment_ref, source)
+         VALUES (CAST($2 AS uuid), $1, CAST($3 AS uuid), CAST($4 AS date), 1, 'ach', 'partly-paid-target', 'seed')`,
+        [t.id, otherPayment, before.customer_id, addDays(TODAY, -1)],
+      );
+      try {
+        await adminWrite(
+          t,
+          `INSERT INTO payment_applications (id, tenant_id, payment_id, invoice_id, amount_cents)
+           VALUES (CAST($2 AS uuid), $1, CAST($3 AS uuid), CAST($4 AS uuid), 1)`,
+          [t.id, otherApplication, otherPayment, ids.toInvoiceId],
+        );
+        expect(Number(before.amount_cents) - 1).toBeLessThan(amountCents);
+        expect(matchWrongInvoiceFinding(await findingsNow(t), ids)).not.toBeNull();
+        const id = await proposeMove(t, { ...ids, amountCents }, amountCents);
+        expect(await approve(t, id)).toEqual({ ok: false, category: "over_applied", retryable: false });
+        expect(await proposalById(t, id)).toMatchObject({ status: "failed", decision_note: "over_applied" });
+        const onSource = await adminRows<{ id: string }>(
+          t,
+          "SELECT id FROM payment_applications WHERE tenant_id = $1 AND id = CAST($2 AS uuid) AND invoice_id = CAST($3 AS uuid)",
+          [t.id, ids.applicationId, ids.fromInvoiceId],
+        );
+        expect(onSource).toHaveLength(1);
+        const onTarget = await adminRows<{ id: string }>(
+          t,
+          `SELECT id FROM payment_applications
+            WHERE tenant_id = $1 AND payment_id = CAST($2 AS uuid) AND invoice_id = CAST($3 AS uuid)`,
+          [t.id, ids.paymentId, ids.toInvoiceId],
+        );
+        expect(onTarget).toEqual([]);
+        expect(await invoiceById(t, ids.toInvoiceId)).toEqual(before);
+      } finally {
+        await adminWrite(t, "DELETE FROM payment_applications WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [
+          t.id,
+          otherApplication,
+        ]);
+        await adminWrite(t, "DELETE FROM customer_payments WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [
+          t.id,
+          otherPayment,
+        ]);
+      }
+      // The plant is whole again for the move below.
+      expect(matchWrongInvoiceFinding(await findingsNow(t), ids)).not.toBeNull();
+    });
+
     for (const which of ["blue-ridge", "prairie-wind"] as const) {
       it(`${which}: the engine's finding becomes a proposal, moves on approval, and is gone after`, async () => {
         const t = tenants.find((x) => x.carrier.slug === which) as Carrier;

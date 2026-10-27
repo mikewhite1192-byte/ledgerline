@@ -89,7 +89,8 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // The full union 0013, 0015 and 0022 each re-create the check with, kinds without code included.
+    // 0013, 0015 and 0022 each re-create the check, so whichever ran last decides it. Every one of
+    // them lists these kinds, kinds without code included.
     const union = [
       "advance_payout",
       "pay_correction",
@@ -100,6 +101,9 @@ describe("proposal kinds and origins on a fresh database", () => {
       "settlement_approve",
       "detention_charge",
     ];
+    // 0013 and 0015 list these three more; 0022 does not, so a fresh database in number order ends
+    // without them and one where 0013 or 0015 ran last keeps them.
+    const widest = [...union, "factoring_request", "bill_defer", "collections_chase"];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);
     }
@@ -110,7 +114,9 @@ describe("proposal kinds and origins on a fresh database", () => {
       ),
     );
     const listed = [...def.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
-    expect([...listed].sort()).toEqual([...union].sort());
+    expect(listed).toEqual(expect.arrayContaining(union));
+    expect(widest).toEqual(expect.arrayContaining(listed));
+    expect(new Set(listed).size).toBe(listed.length);
   });
 
   it("keeps the dedupe key the engine computes inside the table's pattern", () => {
