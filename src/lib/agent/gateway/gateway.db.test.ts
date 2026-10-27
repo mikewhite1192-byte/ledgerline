@@ -60,6 +60,7 @@ const cleanScreen: CompleteFn = async () => {
     costNanocents: 1,
     upstreamId: null,
     replay: [],
+    toolSearches: 0,
   } satisfies AiResult;
 };
 

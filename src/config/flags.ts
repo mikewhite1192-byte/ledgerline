@@ -63,6 +63,29 @@ export type Flags = {
   auditorRequired: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
+  // The advance flow: approving an advance proposal, Retry, Check pending, Post to QuickBooks and
+  // the request desk. Off means each refuses with disabled before any write. The agent can still
+  // propose an advance (that writes only our own tables).
+  advancesEnabled: boolean;
+  // The advance payout path, on top of advancesEnabled and payoutsEnabled. Every approval and
+  // retry checks all of it before the ledger reserves a row: armed, the amount at or under
+  // capCents, and the tenant's local date on or after startDate (YYYY-MM-DD).
+  advancePayouts: { armed: boolean; capCents: number; startDate: string };
+  advancesLimits: {
+    // Advance proposals one carrier can make in one of its local days.
+    proposalsPerDay: number;
+    // Payout tries per advance, the first included; Retry stops at this many.
+    maxPayoutAttempts: number;
+    // The QuickBooks post runs in the approve request only with this much of its time left.
+    legTwoMinRemainingMs: number;
+  };
+  // Operator turns on Muse Spark send the tools no question needs at first as a name and a
+  // description only, with the API's search tool to load one. Off sends every tool in full.
+  agentToolSearch: boolean;
+  // Operator turns on Muse Spark send a shared prompt cache key and keep the turn's state summary
+  // out of the cached prefix. Off sends today's request. "24h" is a retention hint with its own
+  // price: read the pricing page before choosing it.
+  agentPromptCache: { enabled: boolean; retention: "in_memory" | "24h" };
   // Driver notes: a short note in the driver's language explaining a settled week's pay, written
   // by Muse Spark, checked against the paystub, and shown to the driver only after a person
   // approves it. Off means the pages show the switched-off state and the routes refuse before any
@@ -127,6 +150,11 @@ export const flags: Flags = {
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
   approverRole: { adminAboveCents: 200_000 },
+  advancesEnabled: false,
+  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-27" },
+  advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
+  agentToolSearch: false,
+  agentPromptCache: { enabled: false, retention: "in_memory" },
   driverNotesEnabled: false,
   driverNotesEmailEnabled: false,
   driverNotesEmailAllowlist: [],

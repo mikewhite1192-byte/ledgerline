@@ -60,6 +60,25 @@ describe("flags", () => {
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
   });
 
+  it("ships the advance flow dark, disarmed, capped and dated", () => {
+    expect(flags.advancesEnabled).toBe(false);
+    expect(flags.advancePayouts).toEqual({ armed: false, capCents: 50_000, startDate: "2026-10-27" });
+    expect(isLocalDate(flags.advancePayouts.startDate)).toBe(true);
+    expect(flags.advancesLimits).toEqual({
+      proposalsPerDay: 30,
+      maxPayoutAttempts: 3,
+      legTwoMinRemainingMs: 12_000,
+    });
+    for (const v of [flags.advancePayouts.capCents, ...Object.values(flags.advancesLimits)]) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+  });
+
+  it("ships tool search and the prompt cache off, with the default retention", () => {
+    expect(flags.agentToolSearch).toBe(false);
+    expect(flags.agentPromptCache).toEqual({ enabled: false, retention: "in_memory" });
+  });
+
   it("keeps driver notes dark, with no email address allowed and small caps", () => {
     expect(flags.driverNotesEnabled).toBe(false);
     expect(flags.driverNotesEmailEnabled).toBe(false);

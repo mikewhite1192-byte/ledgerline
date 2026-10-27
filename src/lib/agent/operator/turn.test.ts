@@ -3,8 +3,12 @@ import { flags } from "../../../config/flags";
 import { callTool } from "../gateway";
 import { FakeDb } from "../gateway/__tests__/fake-db";
 import type { StepView } from "../view";
-import { LOOP_TEXT } from "../policy";
-import { AiError, runTurn, type TurnDeps } from "./turn";
+import { ALWAYS_LOADED } from "../gateway/loading";
+import { toolsFor } from "../gateway/registry";
+import { planDb, blueRidgePlan } from "../gateway/__tests__/plan-db";
+import { sampleArgs } from "../gateway/__tests__/sample-args";
+import { LOOP_TEXT, OPERATOR_PROMPT, REPORT_PROMPT, TOOL_SEARCH_RULE, operatorCacheKey } from "../policy";
+import { AiError, runTurn, turnRequest, type TurnDeps } from "./turn";
 import { WITHHELD } from "./figures";
 
 // The operator loop with a fake model, a fake gateway and an in-memory store. No database, no
@@ -107,6 +111,7 @@ function result(partial: Partial<Result>): Result {
     costNanocents: 500_000_000,
     upstreamId: null,
     replay: [],
+    toolSearches: 0,
     ...partial,
   };
 }
@@ -236,6 +241,7 @@ describe("runTurn", () => {
     const out = await h.run();
     expect(h.requests.map((r) => r.target)).toEqual(["spark", "spark", "wonder", "spark"]);
     expect(h.requests[2].request.tools?.map((t) => t.name)).toEqual(["propose_advance"]);
+    expect(h.requests[2].request.tools?.[0]).not.toHaveProperty("deferLoading");
     expect(h.steps.filter((s) => s.kind === "escalation")).toHaveLength(1);
     expect(h.steps.find((s) => s.kind === "escalation")!.detail).toMatchObject({ finishedBy: "wonder", attempts: 2 });
     expect(h.proposals.size).toBe(1);
@@ -558,5 +564,252 @@ describe("runTurn", () => {
     const step = h.steps.find((s) => s.kind === "tool")!;
     expect(step.label).toBe("Checking a tool");
     expect(step.detail).not.toHaveProperty("report");
+  });
+});
+
+// Tool search and the prompt cache: the same scripted answers give the same turn either way, and
+// the shared part of the request (the static prompt and the tools) carries nothing of a tenant.
+describe("runTurn with tool search and the prompt cache", () => {
+  const DEFERRED: TurnDeps["tools"] = TOOLS.map((t) => (ALWAYS_LOADED.includes(t.name) ? t : { ...t, deferLoading: true }));
+  const ON = turnRequest(DEFERRED, true, { enabled: true, retention: "in_memory" });
+
+  const script = () => [
+    result({ callId: "call-m1", toolCalls: [call("c1", "get_pay_items", { driverId: DRIVER })] }),
+    result({ callId: "call-m2", toolCalls: [call("c2", "propose_advance", { driverId: DRIVER, amountCents: 20_000 })], toolSearches: 1 }),
+    result({ callId: "call-m3", text: "A card is ready." }),
+  ];
+  const gateway = (c: Call): Outcome =>
+    c.name === "propose_advance"
+      ? allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT })
+      : allowed(c.name, { totalCents: 150_000 });
+
+  it("gives the same outcome, gateway calls and proposals with both on as with both off", async () => {
+    const off = harness(script(), gateway);
+    const on = harness(script(), gateway);
+    on.deps.tools = DEFERRED;
+    on.deps.request = ON;
+    const a = await off.run();
+    const b = await on.run();
+    expect(b).toEqual(a);
+    expect(on.calls).toEqual(off.calls);
+    expect([...on.proposals.values()]).toEqual([...off.proposals.values()]);
+    expect(on.steps.map((s) => [s.kind, s.label, s.state])).toEqual(off.steps.map((s) => [s.kind, s.label, s.state]));
+  });
+
+  it("sends today's request with both off: no search, no cache, no placement, no deferred tool", async () => {
+    const h = harness(script(), gateway);
+    await h.run();
+    for (const { request } of h.requests) {
+      expect(request).not.toHaveProperty("toolSearch");
+      expect(request).not.toHaveProperty("cache");
+      expect(request.messages[0].content).toBe(OPERATOR_PROMPT);
+      for (const m of request.messages) expect(m).not.toHaveProperty("placement");
+      for (const t of request.tools ?? []) expect(t).not.toHaveProperty("deferLoading");
+    }
+  });
+
+  it("sends today's request with both off and the report tools on: their full schemas and the report lines", async () => {
+    flags.reportsEnabled = true;
+    onTestFinished(() => {
+      flags.reportsEnabled = false;
+    });
+    const tools = toolsFor("operator");
+    expect(tools.filter((t) => t.name.startsWith("report_"))).toHaveLength(5);
+    const h = harness(script(), gateway);
+    h.deps.tools = tools;
+    h.deps.request = turnRequest(tools, false, { enabled: false, retention: "in_memory" });
+    await h.run();
+    expect(h.requests.length).toBeGreaterThan(0);
+    for (const { request } of h.requests) {
+      expect(request).not.toHaveProperty("toolSearch");
+      expect(request).not.toHaveProperty("cache");
+      expect(request.messages[0]).toEqual({ role: "system", content: `${OPERATOR_PROMPT}\n${REPORT_PROMPT}` });
+      for (const m of request.messages) expect(m).not.toHaveProperty("placement");
+      expect(JSON.stringify(request.tools)).toBe(JSON.stringify(tools));
+      for (const t of request.tools ?? []) expect(t).not.toHaveProperty("deferLoading");
+    }
+  });
+
+  it("asks Muse Spark to search the deferred tools, keys the cache and puts the summary in input", async () => {
+    const h = harness(script(), gateway);
+    h.deps.tools = DEFERRED;
+    h.deps.request = ON;
+    await h.run();
+    expect(ON.toolSearch).toBe(true);
+    expect(ON.cache?.key).toMatch(/^ledgerline-operator-[0-9a-f]{16}$/);
+    for (const { target, request } of h.requests) {
+      expect(target).toBe("spark");
+      expect(request.toolSearch).toBe(true);
+      expect(request.cache).toEqual({ key: ON.cache!.key, retention: "in_memory" });
+      expect(request.messages[0]).toEqual({ role: "system", content: `${OPERATOR_PROMPT}\n${TOOL_SEARCH_RULE}` });
+      expect(request.messages[1]).toEqual({ role: "system", content: "STATE", placement: "input" });
+      expect(request.tools?.find((t) => t.name === "propose_advance")?.deferLoading).toBe(true);
+      expect(request.tools?.find((t) => t.name === "get_pay_items")).not.toHaveProperty("deferLoading");
+    }
+    // The model step records how many searches its answer ran.
+    const models = h.steps.filter((s) => s.kind === "model");
+    expect(models.map((s) => (s.detail as { toolSearches?: number }).toolSearches)).toEqual([0, 1, 0]);
+  });
+
+  it("turns search on only when a tool is deferred, and the cache only when asked", () => {
+    expect(turnRequest(TOOLS, true, { enabled: false, retention: "in_memory" })).toEqual({ toolSearch: false, cache: null });
+    expect(turnRequest(DEFERRED, false, { enabled: false, retention: "in_memory" })).toEqual({ toolSearch: false, cache: null });
+    const cacheOnly = turnRequest(TOOLS, false, { enabled: true, retention: "24h" });
+    expect(cacheOnly).toEqual({ toolSearch: false, cache: { key: operatorCacheKey(OPERATOR_PROMPT, TOOLS), retention: "24h" } });
+  });
+
+  it("builds one cache key and one shared prefix for every tenant, changing only with the prompt or the tools", async () => {
+    const tools = toolsFor("operator", { defer: true });
+    const first = turnRequest(tools, true, { enabled: true, retention: "in_memory" });
+    const second = turnRequest(toolsFor("operator", { defer: true }), true, { enabled: true, retention: "in_memory" });
+    expect(second.cache?.key).toBe(first.cache?.key);
+    expect(operatorCacheKey(`${OPERATOR_PROMPT} `, tools)).not.toBe(operatorCacheKey(OPERATOR_PROMPT, tools));
+    expect(operatorCacheKey(OPERATOR_PROMPT, tools.slice(1))).not.toBe(operatorCacheKey(OPERATOR_PROMPT, tools));
+
+    // Two carriers' turns: the instructions and the tools are byte for byte the same, and each
+    // carrier's state appears only in its own input-placed summary.
+    const runFor = async (tenantId: string, summary: string) => {
+      const h = harness([result({ text: "ok" })], gateway);
+      h.deps.tools = tools;
+      h.deps.request = first;
+      await runTurn({ session: { ...SESSION, tenantId }, turn: { ...TURN, summary }, text: "Why is pay low?", startedAt: h.now.t }, h.deps);
+      return h.requests[0].request;
+    };
+    const a = await runFor("00000000-0000-4000-8000-0000000000aa", "Carrier: Blue Ridge Freight. Driver BR-D16 owes $50.00.");
+    const b = await runFor("00000000-0000-4000-8000-0000000000bb", "Carrier: Prairie Wind Haulers. Driver PW-D03 owes $75.00.");
+    const prefix = (r: Request) =>
+      JSON.stringify({ instructions: r.messages.filter((m) => m.role === "system" && !("placement" in m)), tools: r.tools, cache: r.cache });
+    expect(prefix(a)).toBe(prefix(b));
+    for (const word of ["Blue Ridge", "Prairie Wind", "BR-D16", "PW-D03", "00000000-0000-4000-8000-0000000000aa"]) {
+      expect(prefix(a)).not.toContain(word);
+    }
+    expect(a.messages[1]).toMatchObject({ placement: "input", content: expect.stringContaining("Blue Ridge") });
+    expect(b.messages[1]).toMatchObject({ placement: "input", content: expect.stringContaining("Prairie Wind") });
+  });
+
+  it("dispatches a tool found by search through the real gateway and registry", async () => {
+    const plan = blueRidgePlan();
+    const db = planDb(plan);
+    const h = harness(
+      [result({ toolCalls: [call("f1", "get_invoices", sampleArgs(plan).get_invoices as Record<string, unknown>)], toolSearches: 1 }), result({ text: "Done." })],
+      () => {
+        throw new Error("the real gateway answers here");
+      },
+    );
+    h.deps.tools = toolsFor("operator", { defer: true });
+    h.deps.request = turnRequest(h.deps.tools, true, { enabled: true, retention: "in_memory" });
+    expect(h.deps.tools.find((t) => t.name === "get_invoices")?.deferLoading).toBe(true);
+    h.deps.callTool = (ctx, c) => callTool(ctx, c, { db, clock: h.deps.clock });
+    const out = await h.run();
+    expect(out.status).toBe("done");
+    expect(db.decisions).toHaveLength(1);
+    expect(db.decisions[0]).toMatchObject({ tool: "get_invoices", decision: "allowed" });
+    expect(h.steps.find((s) => s.kind === "tool")).toMatchObject({ state: "done", detail: { tool: "get_invoices", decision: "allowed" } });
+  });
+
+  it("ends a function call named tool_search as an unknown tool, with no tool run", async () => {
+    const db = planDb(blueRidgePlan());
+    const h = harness([result({ toolCalls: [call("t1", "tool_search", { query: "advance" })] }), result({ text: "Done." })], () => {
+      throw new Error("the real gateway answers here");
+    });
+    h.deps.tools = toolsFor("operator", { defer: true });
+    h.deps.request = turnRequest(h.deps.tools, true, { enabled: true, retention: "in_memory" });
+    h.deps.callTool = (ctx, c) => callTool(ctx, c, { db, clock: h.deps.clock });
+    await h.run();
+    expect(db.decisions).toHaveLength(1);
+    expect(db.decisions[0]).toMatchObject({ tool: "tool_search", decision: "unknown_tool" });
+    expect(h.steps.find((s) => s.kind === "tool")).toMatchObject({ detail: { decision: "unknown_tool" } });
+    // Nothing was read: the decision insert is the only statement past the membership check.
+    expect(db.statements.some((st) => /FROM invoices|FROM loads|FROM pay_items/.test(st.sql))).toBe(false);
+  });
+
+  it("keeps each answer's search items pinned to it and sends its reasoning with the next call only", async () => {
+    const reasoning1 = { type: "reasoning" as const, encrypted_content: "r1" };
+    const reasoning2 = { type: "reasoning" as const, encrypted_content: "r2" };
+    const searchCall = { type: "tool_search_call" as const, call_id: null, execution: "server", arguments: { paths: [""] } };
+    const searchOutput = { type: "tool_search_output" as const, call_id: null, execution: "server", tools: [] };
+    const h = harness(
+      [
+        result({
+          callId: "call-m1",
+          toolCalls: [call("c1", "propose_advance", { driverId: DRIVER, amountCents: 20_000 })],
+          replay: [reasoning1, searchCall, searchOutput],
+          toolSearches: 1,
+        }),
+        result({ callId: "call-m2", toolCalls: [call("c2", "get_pay_items", { driverId: DRIVER })], replay: [reasoning2] }),
+        result({ callId: "call-m3", text: "A card is ready." }),
+      ],
+      gateway,
+    );
+    h.deps.tools = DEFERRED;
+    h.deps.request = ON;
+    await h.run();
+    expect(h.requests).toHaveLength(3);
+    const [, second, third] = h.requests.map((r) => r.request);
+    // The second call gets the first answer's whole list, in the order returned.
+    expect(second.replay).toEqual([reasoning1, searchCall, searchOutput]);
+    expect(second.messages[3]).toEqual({
+      role: "assistant",
+      content: "",
+      toolCalls: [call("c1", "propose_advance", { driverId: DRIVER, amountCents: 20_000 })],
+      replay: [searchCall, searchOutput],
+    });
+    // The third still carries the first answer's search items before its call to the deferred
+    // tool; the second answer, which did not search, has none; only its reasoning is replayed.
+    expect(third.messages.map((m) => m.role)).toEqual(["system", "system", "user", "assistant", "tool", "assistant", "tool"]);
+    expect(third.messages[3]).toEqual(second.messages[3]);
+    expect(third.messages[5]).toEqual({ role: "assistant", content: "", toolCalls: [call("c2", "get_pay_items", { driverId: DRIVER })] });
+    expect(third.replay).toEqual([reasoning2]);
+  });
+
+  it("sends the escalation today's message shape with the cache on: no input placement, no search items", async () => {
+    const searchCall = { type: "tool_search_call" as const, call_id: null, execution: "server", arguments: { paths: [""] } };
+    const h = harness(
+      [
+        result({ toolCalls: [call("s1", "propose_advance")], replay: [searchCall], toolSearches: 1 }),
+        result({ toolCalls: [call("s2", "propose_advance")] }),
+        result({ toolCalls: [call("w1", "propose_advance", { driverId: DRIVER })] }),
+        result({ text: "A card is ready." }),
+      ],
+      (c) => (c.id === "w1" ? allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT }) : invalid("propose_advance")),
+    );
+    h.deps.tools = DEFERRED;
+    h.deps.request = ON;
+    await h.run();
+    expect(h.requests.map((r) => r.target)).toEqual(["spark", "spark", "wonder", "spark"]);
+    const wonder = h.requests[2].request;
+    expect(wonder.messages[1]).toEqual({ role: "system", content: "STATE" });
+    for (const m of wonder.messages) {
+      expect(m).not.toHaveProperty("placement");
+      expect(m).not.toHaveProperty("replay");
+    }
+    expect(wonder.messages[3]).toEqual({ role: "assistant", content: "", toolCalls: [call("s1", "propose_advance")] });
+    expect(wonder).not.toHaveProperty("replay");
+    // Muse Spark's next call keeps both the input placement and the pinned search items.
+    const after = h.requests[3].request;
+    expect(after.messages[1]).toEqual({ role: "system", content: "STATE", placement: "input" });
+    expect(after.messages[3]).toMatchObject({ role: "assistant", replay: [searchCall] });
+  });
+
+  it("sends the escalation its one tool in full, with no search and no cache", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [call("s1", "propose_advance")] }),
+        result({ toolCalls: [call("s2", "propose_advance")] }),
+        result({ toolCalls: [call("w1", "propose_advance", { driverId: DRIVER })] }),
+        result({ text: "A card is ready." }),
+      ],
+      (c) => (c.id === "w1" ? allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT }) : invalid("propose_advance")),
+    );
+    h.deps.tools = DEFERRED;
+    h.deps.request = ON;
+    await h.run();
+    expect(h.requests.map((r) => r.target)).toEqual(["spark", "spark", "wonder", "spark"]);
+    const wonder = h.requests[2].request;
+    expect(wonder).not.toHaveProperty("toolSearch");
+    expect(wonder).not.toHaveProperty("cache");
+    expect(wonder.tools).toHaveLength(1);
+    expect(wonder.tools?.[0]).toMatchObject({ name: "propose_advance", deferLoading: false });
+    expect(h.requests[3].request.toolSearch).toBe(true);
   });
 });

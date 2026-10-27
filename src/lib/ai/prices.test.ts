@@ -17,6 +17,7 @@ import {
   SAM_NANOCENTS,
   SAM_VIDEO_FRAME_NANOCENTS,
   SAM_VIDEO_MIN_FRAMES,
+  savedByCache,
   VIDEO_FRAME_RESERVE_TOKENS,
   VIDEO_SECOND_RESERVE_TOKENS,
   videoFramesCost,
@@ -279,5 +280,33 @@ describe("prices", () => {
     expect(dollarsToDisplay(1)).toBe("$0.01");
     expect(dollarsToDisplay(12_000 * NANOCENTS_PER_CENT)).toBe("$120.00");
     expect(dollarsToDisplay(12_345 * NANOCENTS_PER_CENT + 1)).toBe("$123.46");
+  });
+});
+
+describe("savedByCache", () => {
+  it("is the cached tokens at the full input price less what they were billed, for every token price", () => {
+    const priced: [string, string, string, number][] = [
+      ["spark", "meta", "muse-spark-1.3", 110_000],
+      ["spark", "meta", "muse-spark-1.3-contributor", 9_800],
+      ["wonder", "meta", "muse-wonder-1.0", 380_000],
+      ["spark_open", "baseten", "meta-models/muse-spark-open-1026", 110_000],
+      ["spark_open", "fireworks", "accounts/fireworks/models/muse-spark-open", 110_000],
+    ];
+    for (const [target, provider, model, perToken] of priced) {
+      const price = tokens(priceFor(target as never, provider as never, model));
+      expect(savedByCache(price, 0), model).toBe(0);
+      expect(savedByCache(price, 1_912), model).toBe(1_912 * perToken);
+      expect(Number.isSafeInteger(savedByCache(price, 1_912)), model).toBe(true);
+      // Never more than the input would have cost at the full price.
+      expect(savedByCache(price, 2_480)).toBeLessThan(actualCost(price, { input: 2_480, cached: 0, output: 0, reasoning: 0 }));
+    }
+  });
+
+  it("matches the drop in cost when the same input is read from the cache", () => {
+    const price = tokens(priceFor("spark", "meta", "muse-spark-1.3"));
+    const usage = { input: 2_480, cached: 0, output: 300, reasoning: 200 };
+    const uncached = actualCost(price, usage);
+    const cached = actualCost(price, { ...usage, cached: 1_912 });
+    expect(uncached - cached).toBe(savedByCache(price, 1_912));
   });
 });

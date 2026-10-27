@@ -268,6 +268,94 @@ describe("reconcileMoneyActions", () => {
     expect(t.ledger.row(t.id).checkCount).toBe(2);
   });
 
+  it("checks only the named subject's rows when a subject is given", async () => {
+    const t = await unknownPayout();
+    const mine = t.ledger.row(t.id).subjectId;
+    // Another advance's payout, left unknown the same way.
+    const other = "33333333-3333-4333-8333-333333333333";
+    const p = nextId();
+    t.ledger.rows.set(p, { ...t.ledger.row(t.id), id: p, requestId: requestIdOf(p), subjectId: other });
+
+    const s = await reconcileMoneyActions(
+      t.db,
+      SESSION,
+      { hooks: t.hooks, subject: { table: "advances", id: other } },
+      t.deps,
+    );
+    expect(s).toEqual({ checked: 1, confirmed: 1, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 });
+    expect(t.ledger.row(p).state).toBe("confirmed");
+    expect(t.ledger.row(t.id)).toMatchObject({ state: "unknown", checkCount: 0 });
+    expect(t.onConfirmed).toHaveBeenCalledTimes(1);
+
+    const next = await reconcileMoneyActions(
+      t.db,
+      SESSION,
+      { hooks: t.hooks, subject: { table: "advances", id: mine } },
+      t.deps,
+    );
+    expect(next).toMatchObject({ checked: 1, confirmed: 1 });
+    expect(t.ledger.row(t.id).state).toBe("confirmed");
+  });
+
+  it("lets a person's check of one subject read back a row at the limit, and only a definite answer moves it", async () => {
+    const answers = [
+      ["confirmed", found(), { confirmed: 1 }],
+      ["failed", found({ status: "failed" }), { failed: 1 }],
+      ["unknown", found({ status: "pending" }), { stillUnknown: 1 }],
+    ] as const;
+    for (const [state, readBack, counted] of answers) {
+      const t = await unknownPayout(readBack);
+      t.ledger.rows.set(t.id, { ...t.ledger.row(t.id), checkCount: 50 });
+      const subject = { table: "advances" as const, id: t.ledger.row(t.id).subjectId };
+      // Another advance's payout at the limit too, which this check must leave alone.
+      const other = nextId();
+      t.ledger.rows.set(other, {
+        ...t.ledger.row(t.id),
+        id: other,
+        requestId: requestIdOf(other),
+        subjectId: "55555555-5555-4555-8555-555555555555",
+      });
+      const sendsBefore = t.payment.sends;
+
+      // The automatic pass keeps the limit, scoped or not.
+      expect((await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks }, t.deps)).checked, state).toBe(0);
+      expect((await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks, subject }, t.deps)).checked, state).toBe(0);
+      expect(t.payment.readBacks, state).toBe(0);
+
+      const s = await reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks, subject, ignoreCheckLimit: true }, t.deps);
+      expect(s, state).toEqual({
+        checked: 1,
+        confirmed: 0,
+        failed: 0,
+        stillUnknown: 0,
+        skipped: 0,
+        errors: 0,
+        ...counted,
+      });
+      expect(t.ledger.row(t.id), state).toMatchObject({ state, checkCount: 50 });
+      expect(t.ledger.row(other), state).toMatchObject({ state: "unknown", checkCount: 50 });
+      expect(t.payment.readBacks, state).toBe(1);
+      // A read-back only: nothing is sent again.
+      expect(t.payment.sends, state).toBe(sendsBefore);
+    }
+  });
+
+  it("refuses to lift the check limit without one named subject, before reading anything", async () => {
+    const t = await unknownPayout();
+    t.ledger.rows.set(t.id, { ...t.ledger.row(t.id), checkCount: 50 });
+    const subject = { table: "advances" as const, id: t.ledger.row(t.id).subjectId };
+    await expect(
+      reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks, ignoreCheckLimit: true }, t.deps),
+    ).rejects.toThrow(RangeError);
+    // A value from outside the type is refused too, never read as true.
+    const notBoolean = "yes" as unknown as boolean;
+    await expect(
+      reconcileMoneyActions(t.db, SESSION, { hooks: t.hooks, subject, ignoreCheckLimit: notBoolean }, t.deps),
+    ).rejects.toThrow(RangeError);
+    expect(t.payment.readBacks).toBe(0);
+    expect(t.ledger.row(t.id)).toMatchObject({ state: "unknown", checkCount: 50 });
+  });
+
   it("refuses a session without a membership before reading anything", async () => {
     const t = await unknownPayout();
     await expect(

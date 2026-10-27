@@ -19,6 +19,9 @@ const call = (id: string, over: Partial<TraceCall>): TraceCall => ({
   failure: null,
   durationMs: 1_000,
   costNanocents: 100_000_000,
+  inputTokens: null,
+  cachedTokens: null,
+  savedNanocents: null,
   ...over,
 });
 
@@ -57,6 +60,7 @@ const step = {
   category: null,
   result: null,
   toolCalls: null,
+  toolSearches: null,
   incomplete: false,
   escalation: null,
   call: null,

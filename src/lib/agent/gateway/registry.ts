@@ -12,6 +12,7 @@ import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
 import { getProposal } from "./tools/read/get-proposal";
+import { ALWAYS_LOADED } from "./loading";
 import { getPayItems } from "./tools/read/get-pay-items";
 import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstanding";
 import { reportArAging } from "./tools/read/report-ar-aging";
@@ -99,9 +100,22 @@ const OFFERED: Readonly<Record<AgentRole, readonly AiTool[]>> = Object.freeze(
   ) as Record<AgentRole, readonly AiTool[]>,
 );
 
-export function toolsFor(role: AgentRole): AiTool[] {
+// Every always-loaded name must be a real tool the operator is offered, or deferral would hide a
+// tool nobody can load. Checked once, when the registry loads.
+for (const name of ALWAYS_LOADED) {
+  if (!OFFERED.operator.some((t) => t.name === name)) {
+    throw new Error("an always-loaded tool is not offered to the operator");
+  }
+}
+
+// What a role is offered, as a fresh list, leaving out a tool its switch keeps off. With defer,
+// each tool ALWAYS_LOADED does not name is marked deferLoading (sent as a name and a description
+// until the model searches for it); the names, schemas and order are the same either way.
+export function toolsFor(role: AgentRole, options: { defer?: boolean } = {}): AiTool[] {
   if (!Object.hasOwn(OFFERED, role)) return [];
-  return OFFERED[role].filter((t) => switchedOn(t.name));
+  const offered = OFFERED[role].filter((t) => switchedOn(t.name));
+  if (!options.defer) return offered;
+  return offered.map((t) => (ALWAYS_LOADED.includes(t.name) ? t : { ...t, deferLoading: true }));
 }
 
 // Every enum value any tool schema declares: the only free strings the decision log keeps.
