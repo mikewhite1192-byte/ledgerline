@@ -11,12 +11,16 @@ import type {
   TenantRows,
 } from "../data/rows";
 import {
+  activeSchedule,
   assertCents,
   assertPayConfig,
   cents,
   ConfigError,
   INSURANCE_APPLIES_TO,
   PERCENT_BASES,
+  settleDriver,
+  type Cents,
+  type PayConfig,
   type SettlementInput,
   type SourceRef,
 } from "../rules-engine";
@@ -52,6 +56,8 @@ import {
 //     moves to the next week start, and the card says so), at most 366 days ahead;
 //   - no saved version starts after it (that later version would undo it when it starts);
 //   - it differs from the rule in force on that date;
+//   - escrow per week changes only while no driver's escrow schedule runs in or after that week
+//     (the engine takes each schedule's own amount, so the carrier's would change nothing);
 //   - no approved or paid pay names the version it would edit or falls on or after its date;
 //   - a version it would edit was made by a person, never by the seed.
 
@@ -67,6 +73,7 @@ export type RuleChangeRefusal =
   | "too_far_ahead"
   | "later_version"
   | "no_change"
+  | "escrow_on_driver_schedules"
   | "locked_version"
   | "no_pay_config"
   | "week_shape";
@@ -158,31 +165,58 @@ function configRefusal(error: unknown): RuleChangeRefusal {
 // The escrow a frozen week ran from, from that week's own stored records only. The driver's
 // balance now already holds what that week (and any week after it) took, so it is never used.
 // The engine stores the balance a week started from on the week's escrow line
-// (meta.balanceBeforeCents), so both runs start from it. A week that took no escrow stored no
-// balance: its escrow stays out of both runs, at the none the week took, rather than guessed.
-// A line without a whole stored balance, or two escrow lines on one settlement, throws (unknown).
+// (meta.balanceBeforeCents), so both runs start from it. A line without a whole stored balance, or
+// two escrow lines on one settlement, throws (unknown).
+//
+// A week that took no escrow stored no balance, so it is known only as far as the week's own run
+// bounds it: under the week's own version it took none, so it started at or above that version's
+// target, unless no balance at all would have let it take any (the net pay floor left no room, the
+// week fell below zero). Both runs start from the lowest such balance. Escrow taken only falls as
+// the balance rises, so when neither run takes any escrow from that balance, neither takes any from
+// the balance the week really started from, and the figure is exact. When either run would take
+// some (a raised escrow target, or a change that leaves room above the floor), what it takes
+// depends on the balance nobody stored: the figure is unknown, never zero, and it throws.
+// `runs` holds the two configs the impact compares; none (a rule the settlement math does not
+// read) skips the runs.
 function escrowAsPaid(
   settlementId: string,
   lines: readonly SettlementLineRow[],
   input: SettlementInput,
+  runs: readonly PayConfig[],
 ): SettlementInput {
   const own = lines.filter((l) => l.settlement_id === settlementId && l.kind === "escrow");
   if (own.length > 1) throw new Error("a settlement has more than one escrow line");
-  if (own.length === 0) {
+  if (own.length === 1) {
     return {
       ...input,
-      schedules: input.schedules.filter((s) => s.kind !== "escrow"),
-      escrowBalanceCents: cents(0),
+      escrowBalanceCents: assertCents(own[0].meta?.balanceBeforeCents, "the escrow line's starting balance"),
     };
   }
-  return {
-    ...input,
-    escrowBalanceCents: assertCents(own[0].meta?.balanceBeforeCents, "the escrow line's starting balance"),
-  };
+  if (runs.length === 0) return { ...input, escrowBalanceCents: cents(0) };
+  const lowest = lowestStartingBalance(input);
+  for (const config of runs) {
+    if (settleDriver({ ...input, config, escrowBalanceCents: lowest }).escrowDeltaCents !== 0) {
+      throw new Error("a week that took no escrow could take some under this change; its starting balance is unknown");
+    }
+  }
+  return { ...input, escrowBalanceCents: lowest };
+}
+
+// The lowest escrow balance a week that took no escrow could have started from, under the week's
+// own version (input.config): 0 when the week takes none even from 0, else the target its escrow
+// schedule stops at (below it, the week would have taken some).
+function lowestStartingBalance(input: SettlementInput): Cents {
+  if (settleDriver({ ...input, escrowBalanceCents: cents(0) }).escrowDeltaCents === 0) return cents(0);
+  const schedule = activeSchedule(input.schedules, "escrow", input.period);
+  if (!schedule) throw new Error("escrow was taken with no escrow schedule");
+  return schedule.targetCents ?? input.config.escrowTargetCents;
 }
 
 // The newest frozen week and its frozen settlements, each with the engine's input for it.
-function comparedWeek(rows: RuleChangeRows): {
+function comparedWeek(
+  rows: RuleChangeRows,
+  runs: readonly PayConfig[],
+): {
   period: SettlementPeriodRow | null;
   drivers: ImpactDriver[];
 } {
@@ -203,7 +237,7 @@ function comparedWeek(rows: RuleChangeRows): {
         code: driver.code,
         workerType: driver.worker_type,
         settlementId: s.id,
-        input: escrowAsPaid(s.id, rows.settlement_lines, settlementInputOf(rows, driver.id, span)),
+        input: escrowAsPaid(s.id, rows.settlement_lines, settlementInputOf(rows, driver.id, span), runs),
       };
     })
     .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
@@ -264,7 +298,16 @@ export function ruleChangeOf(
   }
   const oldValue = valueOf(base, spec.key);
   if (oldValue === newValue) return no("no_change");
-  // 7. Edit the version that starts that week, or add one; never touch frozen pay. Only a version
+  // 7. Escrow per week reaches no pay while a driver's escrow schedule runs: the engine takes each
+  //    schedule's own amount, and a schedule is a person's record, never edited here. Refused
+  //    while any escrow schedule is active in or after the week the change starts.
+  if (
+    spec.key === "escrow_per_settlement_cents" &&
+    rows.deduction_schedules.some((s) => s.kind === "escrow" && (s.active_to === null || s.active_to >= effectiveFrom))
+  ) {
+    return no("escrow_on_driver_schedules");
+  }
+  // 8. Edit the version that starts that week, or add one; never touch frozen pay. Only a version
   //    a person made is edited in place; a seeded one is locked.
   const applied = base.effective_from === effectiveFrom ? "edited_version" : "new_version";
   if (applied === "edited_version" && !PERSON_MADE.has(base.source)) return no("locked_version");
@@ -278,10 +321,10 @@ export function ruleChangeOf(
     }) ||
     rows.settlement_periods.some((p) => FROZEN.has(p.status) && p.period_start >= effectiveFrom);
   if (locked) return no("locked_version");
-  // 8. The engine's impact on the newest settled week.
+  // 9. The engine's impact on the newest settled week.
   const baseConfig = payConfigOf(base);
   const candidate = assertPayConfig(payConfigOf(applyRule(base, spec.key, newValue)));
-  const week = comparedWeek(rows);
+  const week = comparedWeek(rows, spec.affects === "settlement" ? [baseConfig, candidate] : []);
   const impact = ruleImpact(
     spec,
     week.period

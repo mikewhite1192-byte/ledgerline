@@ -20,6 +20,8 @@ const zone = plan.carrier.timezone;
 const TUESDAY = new Date("2026-10-27T15:00:00Z");
 const SENTENCE = "Starting Nov 2, owner-operator insurance goes to $12 a day";
 const ASK: RuleChangeArgs = { ruleKey: "insurance_per_day_cents", newValue: 1_200, askedFrom: "2026-11-02" };
+const ESCROW_ASK: RuleChangeArgs = { ruleKey: "escrow_per_settlement_cents", newValue: 7_500, askedFrom: "2026-11-02" };
+const ESCROW_SAID = "From Nov 2, escrow is $75 a week";
 const ctx: GatewayContext = context({ now: TUESDAY, timeZone: zone, userText: SENTENCE });
 const CAP = flags.gatewayLimits.ruleChangeImpactMaxCents;
 
@@ -138,6 +140,7 @@ describe("preview_rule_change", () => {
     ["there is no sentence outside a turn", ASK, { userText: null }, "value_not_in_message"],
     ["this week has begun", { ...ASK, askedFrom: "2026-10-26" }, { userText: "From Oct 26 insurance is $12 a day" }, "effective_in_past"],
     ["the value is already the rule", { ...ASK, newValue: 1_100 }, { userText: "insurance stays $11 a day from Nov 2" }, "no_change"],
+    ["drivers' escrow schedules set escrow per week", ESCROW_ASK, { userText: ESCROW_SAID }, "escrow_on_driver_schedules"],
   ] as const)("refuses when %s, as a category and the one fixed line", async (_why, args, over, category) => {
     flags.rulesByTalkingEnabled = true;
     const { out } = await run("preview_rule_change", args, over);
@@ -218,6 +221,14 @@ describe("propose_rule_change", () => {
     flags.rulesByTalkingEnabled = true;
     const { out } = await run("propose_rule_change", proposeArgs(engine()), { userText: "make insurance higher" });
     expect(out).toMatchObject({ decision: "blocked", reason: "engine_refused" });
+  });
+
+  it("refuses escrow per week while drivers' escrow schedules set it", async () => {
+    flags.rulesByTalkingEnabled = true;
+    const args = { ...ESCROW_ASK, effectiveFrom: "2026-11-02", oldValue: 10_000, impactCents: 0, sourceRefs: [] };
+    const { out, db } = await run("propose_rule_change", args, { userText: ESCROW_SAID });
+    expect(out).toMatchObject({ decision: "blocked", reason: "engine_refused" });
+    for (const st of db.statements) expect(st.sql).not.toMatch(/^(INSERT INTO|UPDATE) (pay_configs|pay_rule_changes|proposals)\b/);
   });
 
   it("is never offered to the auditor", async () => {

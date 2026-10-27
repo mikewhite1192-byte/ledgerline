@@ -10,6 +10,7 @@ import {
   type RuleChangeRows,
 } from "./change";
 import { rowsFor, versionFrom } from "./__tests__/rows";
+import { HELP_EXAMPLE } from "./words";
 
 // The shared check at fixed instants, on the seed's two carriers at the golden anchor. Oct 27,
 // 2026 is a Tuesday: Blue Ridge (New York, Monday weeks) is in the week of Oct 26, Prairie Wind
@@ -103,6 +104,55 @@ describe("the rule and the value", () => {
 
   it("refuses a change to the value already in force", () => {
     expect(reason(check(rowsFor("blue-ridge"), { newValue: 1100 }, "insurance $11 from Nov 2"))).toBe("no_change");
+  });
+
+  describe("escrow per week", () => {
+    // The engine takes each driver's escrow from their own schedule's amount, never the carrier's
+    // escrow per week, so a change to it while any escrow schedule still runs would change nothing.
+    const ESCROW: Partial<RuleChangeArgs> = { ruleKey: "escrow_per_settlement_cents", newValue: 7500 };
+    const SAID = "From Nov 2, escrow is $75 a week";
+    const withEscrowSchedules = (fields: { active_from?: string; active_to: string | null }) => {
+      const rows = rowsFor("blue-ridge");
+      return {
+        ...rows,
+        deduction_schedules: rows.deduction_schedules.map((s) => (s.kind === "escrow" ? { ...s, ...fields } : s)),
+      };
+    };
+
+    it("refuses while a driver's escrow schedule runs in or after the week it would start", () => {
+      const rows = rowsFor("blue-ridge");
+      expect(rows.deduction_schedules.some((s) => s.kind === "escrow" && s.active_to === null)).toBe(true);
+      expect(reason(check(rows, ESCROW, SAID))).toBe("escrow_on_driver_schedules");
+      // A schedule that ends on the first day of that week still runs in it.
+      expect(reason(check(withEscrowSchedules({ active_to: "2026-11-02" }), ESCROW, SAID))).toBe(
+        "escrow_on_driver_schedules",
+      );
+      // A schedule that only starts after that week would take its own amount then too.
+      expect(
+        reason(check(withEscrowSchedules({ active_from: "2026-11-16", active_to: null }), ESCROW, SAID)),
+      ).toBe("escrow_on_driver_schedules");
+      // The executor and the auditor re-check it without the sentence.
+      expect(reason(ruleChangeOf(rows, { ...INSURANCE, ...ESCROW }, "skip", TUESDAY))).toBe(
+        "escrow_on_driver_schedules",
+      );
+    });
+
+    it("is not the rule the help under the question box gives as its example; that one is accepted", () => {
+      expect(HELP_EXAMPLE).not.toMatch(/escrow/i);
+      const floor = { ruleKey: "net_pay_floor_cents", newValue: 35_000, askedFrom: "2026-11-09" } as const;
+      for (const slug of ["blue-ridge", "prairie-wind"] as const) {
+        expect(reason(check(rowsFor(slug), floor, HELP_EXAMPLE))).toBe("ok");
+      }
+    });
+
+    it("allows it once every escrow schedule has ended before that week", () => {
+      const rows = withEscrowSchedules({ active_to: "2026-11-01" });
+      const c = ok(check(rows, ESCROW, SAID));
+      expect(c.oldValue).toBe(10_000);
+      expect(c.newValue).toBe(7500);
+      // The source rows are untouched.
+      expect(rowsFor("blue-ridge").deduction_schedules.some((s) => s.active_to === "2026-11-01")).toBe(false);
+    });
   });
 
   it("names the old value from the version in force that week", () => {

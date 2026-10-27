@@ -27,6 +27,8 @@ describe("reason sentences", () => {
       "engine_total",
       "payment_on_wrong_invoice",
       "missing_rate",
+      "rule_change_sized_by_engine",
+      "escrow_on_driver_schedules",
     ];
     for (const c of all) expect(REASON_SENTENCE_CATEGORIES).toContain(c);
   });

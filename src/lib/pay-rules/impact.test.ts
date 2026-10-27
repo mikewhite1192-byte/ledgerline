@@ -201,4 +201,47 @@ describe("the escrow a compared week ran from", () => {
     const { rows } = rowsWith("BR-D07", 200_000, null);
     expect(() => ruleChangeOf(rows, TARGET_195, "skip", NOW)).toThrow();
   });
+
+  it("refuses to size a raised target on a week that took none, as its starting balance is unknown", () => {
+    // BR-D11's week took no escrow although its schedule runs and $0 held would take $100, so it
+    // started at the $2,000 target or above. A $2,050 target takes $50 that week from $2,000 and
+    // nothing from $2,050: which one is unknown, so the change is not sized at all.
+    const { rows, driver, line } = rowsWith("BR-D11", 0);
+    expect(line).toBeNull();
+    const fromZero = settleDriver({ ...settlementInputOf(rows, driver.id, WEEK), escrowBalanceCents: cents(0) });
+    expect(fromZero.escrowDeltaCents).toBe(10_000);
+    expect(() => ruleChangeOf(rows, { ...TARGET_195, newValue: 205_000 }, "skip", NOW)).toThrow(
+      /starting balance is unknown/,
+    );
+  });
+
+  it("sizes a raised carrier target as no change where each schedule carries its own target", () => {
+    // The seed's escrow schedules hold their own $2,000 target, which the engine takes over the
+    // carrier's, so every week that took none still takes none.
+    const rows = rowsFor("blue-ridge");
+    const escrow = rows.deduction_schedules.filter((s) => s.kind === "escrow");
+    expect(escrow.length).toBeGreaterThan(0);
+    expect(escrow.every((s) => s.target_cents === 200_000)).toBe(true);
+    const i = impactOf(rows, { ...TARGET_195, newValue: 205_000 });
+    expect(i.driversChanged).toBe(0);
+    expect(i.netDeltaCents).toBe(0);
+  });
+
+  it("refuses to size a lower floor on a week the floor kept from taking escrow, as its balance is unknown", () => {
+    // BR-D25 netted $8.81 that week, under the $300 floor, so the floor left no room for escrow and
+    // the week says nothing about the balance. With no floor, that week takes escrow or not
+    // depending on that balance, so the change is not sized at all.
+    const rows = rowsFor("blue-ridge");
+    const driver = rows.drivers.find((d) => d.code === "BR-D25");
+    const period = rows.settlement_periods.find((p) => p.period_start === WEEK.start);
+    const settlement = rows.settlements.find((s) => s.period_id === period?.id && s.driver_id === driver?.id);
+    if (!driver || !settlement) throw new Error("no such driver week");
+    expect(rows.settlement_lines.some((l) => l.settlement_id === settlement.id && l.kind === "escrow")).toBe(false);
+    const fromZero = settleDriver({ ...settlementInputOf(rows, driver.id, WEEK), escrowBalanceCents: cents(0) });
+    expect(fromZero.escrowDeltaCents).toBe(0);
+    expect(fromZero.netCents).toBe(settlement.net_cents);
+    expect(settlement.net_cents).toBeLessThan(30_000);
+    const noFloor: RuleChangeArgs = { ruleKey: "net_pay_floor_cents", newValue: 0, askedFrom: "2026-11-02" };
+    expect(() => ruleChangeOf(rows, noFloor, "skip", NOW)).toThrow(/starting balance is unknown/);
+  });
 });

@@ -1,5 +1,5 @@
 import type { Queryable } from "../db";
-import { configForDay } from "../data/config-version";
+import { configForDay, firstPeriodOf } from "../data/config-version";
 import { readPayConfigVersions, readTenant } from "../data/read";
 import type { PayConfigRow, PayRuleChangeRow } from "../data/rows";
 import { ConfigError } from "../rules-engine";
@@ -42,7 +42,9 @@ export async function readNextWeekStart(q: Queryable, now: Date): Promise<LocalD
   return nextWeekStart(now, tenant.timezone, first.week_start_dow);
 }
 
-export type PayRulesVersion = PayConfigRow & { weeksPaid: number };
+// firstWeek: the first pay week the version runs under (a version dated mid-week starts with the
+// next week), or null when a later version replaced it before that week began.
+export type PayRulesVersion = PayConfigRow & { weeksPaid: number; firstWeek: LocalDate | null };
 
 export type PayRulesPage = {
   timeZone: string;
@@ -77,7 +79,7 @@ export async function readPayRulesPage(q: Queryable, sub: string, now: Date): Pr
   return {
     timeZone: tenant.timezone,
     nextStart: nextWeekStart(now, tenant.timezone, versions[0].week_start_dow),
-    versions: versions.map((v) => ({ ...v, weeksPaid: weeks.get(v.id) ?? 0 })),
+    versions: versions.map((v) => ({ ...v, weeksPaid: weeks.get(v.id) ?? 0, firstWeek: firstPeriodOf(versions, v) })),
     currentId: configForDay(versions, today).id,
     role: members.length === 1 ? members[0].role : null,
   };

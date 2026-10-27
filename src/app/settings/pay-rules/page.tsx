@@ -22,6 +22,7 @@ import {
   IN_FORCE_TITLE,
   LOAD_FAILED_BODY,
   LOAD_FAILED_TITLE,
+  NEVER_RAN,
   PAGE_SUBTITLE,
   PAGE_TITLE,
   SET_BY,
@@ -47,10 +48,11 @@ type View = {
 
 const SET_BY_TONE: Readonly<Record<string, BadgeTone>> = { seed: "neutral", ui: "info", proposal: "success" };
 
-// The Pay rules page: every version of the carrier's pay rules by the week it started, the rules in
-// force this week in plain words, and the pay rule changes waiting to be saved. Read in the
-// request's tenant transaction. With the switch off the rules are still listed, nothing waiting is
-// read, and the page says how to turn changes on. Signed out: withRequestTenant redirects.
+// The Pay rules page: every version of the carrier's pay rules by the first week it runs, the
+// rules a sentence can change as they stand this week in plain words, and the pay rule changes
+// waiting to be saved. Read in the request's tenant transaction. With the switch off the rules are
+// still listed, nothing waiting is read, and the page says how to turn changes on. Signed out:
+// withRequestTenant redirects.
 export default async function PayRulesSettings() {
   let view: View | null = null;
   let problem: "forbidden" | "unreadable" | null = null;
@@ -127,7 +129,7 @@ function Versions({ rules }: { rules: PayRulesPage }) {
           header: "Starts",
           cell: (v) => (
             <span className="inline-flex items-center gap-2">
-              {formatLocalDate(v.effective_from)}
+              {v.firstWeek ? formatLocalDate(v.firstWeek) : NEVER_RAN}
               {v.id === rules.currentId ? <Badge tone="success">{CURRENT_BADGE}</Badge> : null}
             </span>
           ),

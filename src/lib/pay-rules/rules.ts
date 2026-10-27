@@ -2,11 +2,13 @@ import type { PayConfigKnobs } from "../data/rows";
 import { formatCents } from "../format/money";
 import { INSURANCE_APPLIES_TO, PERCENT_BASES } from "../rules-engine";
 
-// The pay rules a person may change by talking: the 13 per-tenant knobs of one pay_configs
+// The pay rules a person may change by talking: 13 of the per-tenant knobs of one pay_configs
 // version. Each one names its column, its unit, the range a sentence may set and whether the
 // settlement math reads it (so a change has a weekly impact) or only the advance check does.
 // week_start_dow is not a rule: the versions refuse a change of week shape, and per-driver rates
-// and deduction schedules are a person's records, not the carrier's rules. Pure.
+// and deduction schedules are a person's records, not the carrier's rules. The per-load advance
+// cap (advance_per_load_bps_of_pay) is not one either, so the Pay rules page does not list it.
+// Escrow per week is refused while a driver's escrow schedule runs (change.ts). Pure.
 
 export const RULE_KEYS = [
   "insurance_per_day_cents",

@@ -1,3 +1,4 @@
+import { reasonSentence } from "../agent/reasons";
 import { formatLocalDate } from "../format/dates";
 import { formatCents } from "../format/money";
 import { addDays, dayOfWeek, localDateOf, periodContaining, type LocalDate } from "../time/local-date";
@@ -22,6 +23,7 @@ export const REFUSAL_LINES: Readonly<Record<RuleChangeRefusal, string>> = {
   later_version:
     "A later change to the pay rules is already saved, so this one would be undone when it starts. When should it start? Pick a date on or after the last saved change.",
   no_change: "That is the same as today's rule, so nothing to change.",
+  escrow_on_driver_schedules: reasonSentence("escrow_on_driver_schedules"),
   locked_version: "Pay for that week is already approved, so its rules cannot change. When should it start? Pick a later week.",
   no_pay_config: "The pay rules for that date could not be read. Nothing was changed.",
   week_shape: "The pay rules for that date could not be read. Nothing was changed.",
@@ -177,10 +179,11 @@ export const FAILED_LINE =
 
 export const REJECTED_LINE = "Not saved. Nothing changed.";
 
-// The home chip and the help under the question box when it is used.
+// The home chip and the help under the question box when it is used. The example names a rule a
+// carrier can change while its drivers' escrow schedules run (escrow per week cannot).
 export const CHIP_LABEL = "Change a pay rule";
-export const COMPOSER_HELP =
-  "Say the rule, the new amount and the date it starts. Example: 'From Nov 9, escrow is $75 a week.'";
+export const HELP_EXAMPLE = "From Nov 9, the net pay floor is $350 a week.";
+export const COMPOSER_HELP = `Say the rule, the new amount and the date it starts. Example: '${HELP_EXAMPLE}'`;
 
 // The first week start after the week that holds now, in the carrier's zone and week shape: the
 // earliest date a change may start.
@@ -200,7 +203,8 @@ export const PAGE_TITLE = "Pay rules";
 export const PAGE_SUBTITLE =
   "What the carrier pays and deducts, by the week it started. Past weeks keep the rules they were paid under.";
 export const VERSIONS_TITLE = "Rules by start date";
-export const IN_FORCE_TITLE = "Rules in force this week";
+// Only the rules a sentence can change are listed, so the title says so.
+export const IN_FORCE_TITLE = "Rules you can change, in force this week";
 export const WAITING_TITLE = "Waiting for you";
 // The empty and error states show their sentences as a title and the rest below it.
 export const WAITING_EMPTY_TITLE = "No changes waiting.";
@@ -212,6 +216,8 @@ export const LOAD_FAILED_TITLE = "The rules could not be loaded.";
 export const LOAD_FAILED_BODY = "Nothing was changed. Reload the page; if it keeps happening, tell the owner.";
 export const LOAD_FAILED = `${LOAD_FAILED_TITLE} ${LOAD_FAILED_BODY}`;
 export const STARTING_RULES = "Starting rules";
+// A version a later one replaced before its first week began: it never ran.
+export const NEVER_RAN = "Never ran: replaced before its first week";
 export const CURRENT_BADGE = "Current";
 
 // Who set a version, by its source.

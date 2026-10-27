@@ -17,7 +17,7 @@ describe("ruleChangeSuggestion", () => {
       id: "change-pay-rule",
       label: "Change a pay rule",
       fill: "Starting Nov 2, owner-operator insurance goes to $12 a day",
-      help: "Say the rule, the new amount and the date it starts. Example: 'From Nov 9, escrow is $75 a week.'",
+      help: "Say the rule, the new amount and the date it starts. Example: 'From Nov 9, the net pay floor is $350 a week.'",
     });
   });
 });

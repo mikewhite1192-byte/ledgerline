@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { reasonSentence } from "../agent/reasons";
 import {
   adminOnlyLabel,
   exampleSentence,
@@ -106,6 +107,15 @@ describe("the questions back", () => {
     expect(refusalLine("value_not_in_message")).toBe("What should it change to? I did not see that amount in your message.");
     expect(refusalLine("bad_date")).toBe("When should it start? Give me a date.");
     expect(refusalLine("no_change")).toBe("That is the same as today's rule, so nothing to change.");
+  });
+
+  it("says why escrow per week cannot change while a driver's escrow schedule runs, in the reason table's words", () => {
+    const line = refusalLine("escrow_on_driver_schedules");
+    expect(line).toBe(reasonSentence("escrow_on_driver_schedules"));
+    expect(line).not.toBe(reasonSentence("not_a_category"));
+    expect(line).toBe(
+      "Each driver's escrow schedule sets what is held back each week, so changing the carrier's escrow per week would not change anyone's pay. Nothing was changed.",
+    );
   });
 });
 

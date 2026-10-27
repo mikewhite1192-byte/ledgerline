@@ -591,6 +591,46 @@ describe("approving a pay rule change", () => {
     }
   });
 
+  it("fails as stale and writes nothing when a driver's escrow schedule now sets escrow per week", async () => {
+    // C has no escrow schedule when escrow per week is proposed, so the engine sizes it. Once a
+    // driver's schedule runs in that week, the engine would take the schedule's amount, never the
+    // carrier's, so approving the change would write a rule that changes no one's pay.
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const escrow: RuleChangeArgs = { ruleKey: "escrow_per_settlement_cents", newValue: 7_500, askedFrom: NEXT_WEEK };
+    const c = await changeFor(C, escrow);
+    expect(c.oldValue).toBe(0);
+    const id = await addProposal(C, c);
+    const schedule = randomUUID();
+    await admin.withTenant(C.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO deduction_schedules (id, tenant_id, driver_id, kind, amount_cents, target_cents, description,
+           active_from, active_to)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'escrow', 7500, NULL, 'Escrow',
+           CAST('2026-10-05' AS date), NULL)`,
+        [schedule, C.driverId],
+      ),
+    );
+    try {
+      const before = await versionsOf(C);
+      expect(await approve(C, id)).toEqual({ ok: false, category: "stale", retryable: false });
+      expect(await proposalOf(C, id)).toEqual({ status: "failed", decision_note: "stale" });
+      expect(await versionsOf(C)).toEqual(before);
+      expect(await changesOf(C)).toEqual([]);
+      const [held] = await adminRows<{ amount_cents: string }>(
+        C,
+        "SELECT CAST(amount_cents AS text) AS amount_cents FROM deduction_schedules WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [schedule],
+      );
+      expect(held).toEqual({ amount_cents: "7500" });
+    } finally {
+      await admin.withTenant(C.tenantId, (q) =>
+        q.execute("DELETE FROM deduction_schedules WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+          schedule,
+        ]),
+      );
+    }
+  });
+
   it("refuses with the switch off before anything is written, keeps one live change per version, and shows another carrier nothing", async () => {
     const c = await changeFor(C, INSURANCE);
     const id = await addProposal(C, c);
