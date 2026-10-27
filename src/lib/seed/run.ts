@@ -91,8 +91,11 @@ export async function clearTenantLedger(admin: Db, tenantId: string): Promise<nu
 // has no DELETE on these tables (they are the record of what the agent did), so the admin login
 // removes them, naming the tenant in every statement. Children first, in one transaction. A
 // proposal a ledger row still references (one the ledger clear kept) makes the delete fail and
-// the transaction roll back, so nothing is half cleared. Returns the rows deleted.
+// the transaction roll back, so nothing is half cleared. Driver notes (0019) go first: each names
+// a settlement and a driver the replace deletes, and the app role has no DELETE on them either.
+// Returns the rows deleted.
 const AGENT_CLEAR = [
+  "DELETE FROM driver_notes WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM turn_steps WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM proposals WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM turns WHERE tenant_id = CAST($1 AS uuid)",

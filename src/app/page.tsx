@@ -25,6 +25,7 @@ import { formatInstant } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { AiProofForm } from "./ai-proof-form";
+import { appNav } from "./shell";
 
 type ModelLedger = { calls: CallRow[]; spend: Spend };
 type Carrier = {

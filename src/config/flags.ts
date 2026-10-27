@@ -51,6 +51,19 @@ export type Flags = {
   auditorRequired: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
+  // Driver notes: a short note in the driver's language explaining a settled week's pay, written
+  // by Muse Spark, checked against the paystub, and shown to the driver only after a person
+  // approves it. Off means the pages show the switched-off state and the routes refuse before any
+  // model call. aiEnabled must also be on for a draft to reach a model.
+  driverNotesEnabled: boolean;
+  // Approved notes also go by email, to allowlisted addresses only. Off: delivery is the driver
+  // view and the email path logs "would send" instead of sending.
+  driverNotesEmailEnabled: boolean;
+  // Exact, lower-cased addresses the email path may send to. Empty refuses every address.
+  driverNotesEmailAllowlist: string[];
+  // Caps on note drafting: one note's worst case, the spend of one period's notes, and the
+  // output budget of one note.
+  driverNoteLimits: { maxNoteCents: number; maxBatchCents: number; maxOutputTokens: number };
 };
 
 export const flags: Flags = {
@@ -75,4 +88,8 @@ export const flags: Flags = {
   proposalMaxAgeDays: 7,
   auditorRequired: false,
   approverRole: { adminAboveCents: 200_000 },
+  driverNotesEnabled: false,
+  driverNotesEmailEnabled: false,
+  driverNotesEmailAllowlist: [],
+  driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
 };
