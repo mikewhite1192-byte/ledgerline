@@ -140,6 +140,7 @@ describe("the sentences a person sees", () => {
         "not_armed",
         "over_cap",
         "payout_failed",
+        "payout_pending",
         "payouts_off",
         "ref_collision",
         "stale_eligibility",

@@ -6,7 +6,8 @@ import type { AccountingAdapter, PaymentAdapter } from "../adapters/types";
 import { DAILY_CAP_SQL } from "../agent/gateway/daily-cap";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, TenantDb } from "../db/types";
+import { dbLedgerStore, type LedgerStore } from "../money/execute";
 import { addAdvance, clearLedger, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal, type Executor, type ExecutorRegistry } from "../proposals/execute";
 import {
@@ -190,6 +191,35 @@ const ledger = (f: Fixture = A) =>
          FROM money_actions WHERE tenant_id = current_tenant_id() ORDER BY kind, attempt`,
     ),
   );
+
+// A database that runs close() once its first transaction has committed: stands in for a switch
+// turned off between a caller's own checks and the payout.
+function closingAfterFirst(db: TenantDb, close: () => void): TenantDb {
+  let n = 0;
+  return {
+    withTenant: async (tenantId, fn) => {
+      const result = await db.withTenant(tenantId, fn);
+      n += 1;
+      if (n === 1) close();
+      return result;
+    },
+  };
+}
+
+// A QuickBooks stand-in that confirms every purchase and counts them.
+function countingAccounting(): { adapter: AccountingAdapter; created: () => number } {
+  let created = 0;
+  const adapter = {
+    system: "qbo_sandbox",
+    ready: async () => ({ ok: true }),
+    ensureVendor: async () => ({ outsideId: "V-77" }),
+    createExpense: async (_q: unknown, e: { amountCents: number; feeCents: number }) => {
+      created += 1;
+      return { kind: "confirmed", system: "qbo_sandbox", type: "Purchase", id: `P-${created}`, amountCents: e.amountCents + e.feeCents };
+    },
+  } as unknown as AccountingAdapter;
+  return { adapter, created: () => created };
+}
 
 function openSwitches() {
   flags.advancesEnabled = true;
@@ -568,6 +598,199 @@ describe("the advance flow", () => {
       category: "already_posted",
     });
     expect(sent).toHaveLength(1);
+  });
+
+  it("asks the payout gate again right before a retry pays, so a switch closed after its checks reserves nothing", async () => {
+    const id = await addProposal();
+    mock.failNext("rate_limited");
+    expect(await approve(id)).toMatchObject({ ok: false, category: "payout_failed" });
+    const [adv] = await flowAdvances();
+    const closes: [() => void, string][] = [
+      [() => { flags.advancePayouts = { ...flags.advancePayouts, armed: false }; }, "not_armed"],
+      [() => { flags.advancePayouts = { ...flags.advancePayouts, capCents: 10_000 }; }, "over_cap"],
+      // Nov 2 in the tenant's zone at the fixed clock, before this start date.
+      [() => { flags.advancePayouts = { ...flags.advancePayouts, startDate: "2026-11-03" }; }, "before_start"],
+    ];
+    for (const [close, category] of closes) {
+      expect(await retryAdvancePayout(A.session, adv.id, { ...deps(), db: closingAfterFirst(app, close) })).toEqual({
+        ok: false,
+        category,
+        retryable: false,
+      });
+      expect(await ledger()).toEqual([expect.objectContaining({ state: "failed", attempt: 1 })]);
+      openSwitches();
+    }
+    expect(mock.sendCount).toBe(1);
+    expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: true, status: "paid" });
+    expect(mock.sendCount).toBe(2);
+  });
+
+  it("asks the payout gate again right before an approval pays, and a later approval resumes it", async () => {
+    const id = await addProposal();
+    const closing: ExecutorRegistry = {
+      advance_payout: Object.assign(
+        (...[db, ...rest]: Parameters<Executor>) =>
+          executeAdvanceProposal(
+            closingAfterFirst(db, () => {
+              flags.advancePayouts = { ...flags.advancePayouts, armed: false };
+            }),
+            ...rest,
+          ),
+        { precheck: precheckAdvanceProposal },
+      ),
+    };
+    expect(await approve(id, false, { ...deps(), executors: closing })).toEqual({
+      ok: false,
+      category: "not_armed",
+      retryable: false,
+    });
+    // Nothing reserved and nothing sent: the advance waits as requested for a later approval.
+    expect(await flowAdvances()).toEqual([expect.objectContaining({ status: "requested" })]);
+    expect(await ledger()).toEqual([]);
+    expect(mock.sendCount).toBe(0);
+    openSwitches();
+    expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+    expect(await ledger()).toEqual([expect.objectContaining({ state: "confirmed", attempt: 1 })]);
+    expect(mock.sendCount).toBe(1);
+  });
+
+  it("tells Check pending a payout sent under a minute ago is waiting, and reads it back once the window passes", async () => {
+    const id = await addProposal();
+    // The send's settle does not commit, so its row stays sent.
+    let lose = true;
+    const store: LedgerStore = {
+      ...dbLedgerStore,
+      settle: async (...args) => {
+        if (lose) {
+          lose = false;
+          throw new Error("settle did not commit");
+        }
+        return dbLedgerStore.settle(...args);
+      },
+    };
+    expect(await approve(id, false, deps({ store }))).toMatchObject({ ok: true, status: "executing" });
+    const [adv] = await flowAdvances();
+    expect(await ledger()).toEqual([expect.objectContaining({ kind: "advance_payout", state: "sent" })]);
+
+    expect(await checkAdvancePayouts(A.session, adv.id, deps())).toEqual({
+      ok: true,
+      summary: expect.objectContaining({ checked: 0 }),
+      tooNew: 1,
+    });
+    expect(await ledger()).toEqual([expect.objectContaining({ state: "sent" })]);
+
+    // Once the window has passed (its length set to zero here), the pass reads it back as paid.
+    const later: LedgerStore = {
+      ...dbLedgerStore,
+      readPending: (q, _olderThan, ...rest) => dbLedgerStore.readPending(q, 0, ...rest),
+    };
+    expect(await checkAdvancePayouts(A.session, adv.id, deps({ store: later }))).toEqual({
+      ok: true,
+      summary: expect.objectContaining({ checked: 1, confirmed: 1 }),
+      tooNew: 0,
+    });
+    expect((await flowAdvances())[0]).toMatchObject({ status: "paid", paid: true });
+    expect(mock.sendCount).toBe(1);
+  });
+
+  it("reports a payout whose row could not be read after the send as pending, and never retries it", async () => {
+    const id = await addProposal();
+    // After the payout is sent, the settle and the read of its row both fail.
+    const lostRead: LedgerStore = {
+      ...dbLedgerStore,
+      settle: async (...args) => {
+        if (mock.sendCount > 0) throw new Error("settle did not commit");
+        return dbLedgerStore.settle(...args);
+      },
+      readAction: async (...args) => {
+        if (mock.sendCount > 0) throw new Error("read failed");
+        return dbLedgerStore.readAction(...args);
+      },
+    };
+    expect(await approve(id, false, deps({ store: lostRead }))).toEqual({
+      ok: false,
+      category: "payout_pending",
+      retryable: false,
+    });
+    expect(mock.sendCount).toBe(1);
+    expect(await ledger()).toEqual([expect.objectContaining({ kind: "advance_payout", state: "sent" })]);
+    const [adv] = await flowAdvances();
+    expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "payout_pending" });
+    expect(mock.sendCount).toBe(1);
+  });
+
+  it("reports a payout as pending when the read of a row another request is sending fails", async () => {
+    const id = await addProposal();
+    // Stands in for another request holding the send: the claim is lost, then the wait's read fails.
+    const held: LedgerStore = {
+      ...dbLedgerStore,
+      markSent: async () => false,
+      readAction: async () => {
+        throw new Error("read failed");
+      },
+    };
+    expect(await approve(id, false, deps({ store: held }))).toEqual({
+      ok: false,
+      category: "payout_pending",
+      retryable: false,
+    });
+    expect(mock.sendCount).toBe(0);
+    expect(await ledger()).toEqual([expect.objectContaining({ kind: "advance_payout", state: "reserved" })]);
+  });
+
+  it("reports a QuickBooks post whose row could not be read after the send as pending, never as nothing written", async () => {
+    const id = await addProposal();
+    expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+    const [adv] = await flowAdvances();
+    flags.accountingEnabled = true;
+    const qbo = countingAccounting();
+    // After the purchase is made, the settle and the read of its row both fail.
+    const lostRead: LedgerStore = {
+      ...dbLedgerStore,
+      settle: async (...args) => {
+        if (qbo.created() > 0) throw new Error("settle did not commit");
+        return dbLedgerStore.settle(...args);
+      },
+      readAction: async (...args) => {
+        if (qbo.created() > 0) throw new Error("read failed");
+        return dbLedgerStore.readAction(...args);
+      },
+    };
+    expect(await postAdvanceExpense(A.session, adv.id, deps({ accounting: qbo.adapter, store: lostRead }))).toEqual({
+      ok: false,
+      category: "post_pending",
+      retryable: false,
+    });
+    expect(qbo.created()).toBe(1);
+    expect(await ledger()).toContainEqual(expect.objectContaining({ kind: "advance_expense", state: "sent" }));
+    // Never posted twice: the page's next press finds the post pending.
+    expect(await postAdvanceExpense(A.session, adv.id, deps({ accounting: qbo.adapter }))).toMatchObject({
+      ok: false,
+      category: "post_pending",
+    });
+    expect(qbo.created()).toBe(1);
+  });
+
+  it("reports a QuickBooks post as pending when the read of a row another request is sending fails", async () => {
+    const id = await addProposal();
+    expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+    const [adv] = await flowAdvances();
+    flags.accountingEnabled = true;
+    const qbo = countingAccounting();
+    // Stands in for another request holding the send: the claim is lost, then the wait's read fails.
+    const held: LedgerStore = {
+      ...dbLedgerStore,
+      markSent: async () => false,
+      readAction: async () => {
+        throw new Error("read failed");
+      },
+    };
+    expect(await postAdvanceExpense(A.session, adv.id, deps({ accounting: qbo.adapter, store: held }))).toEqual({
+      ok: false,
+      category: "post_pending",
+      retryable: false,
+    });
+    expect(qbo.created()).toBe(0);
   });
 
   it("counts a tenant's advance proposals per local day for the gateway's daily ceiling", async () => {

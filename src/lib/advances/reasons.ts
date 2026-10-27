@@ -118,6 +118,7 @@ const CARD_OUTCOMES = [
   "eligibility_unavailable",
   "ref_collision",
   "payout_failed",
+  "payout_pending",
 ] as const satisfies readonly FlowOutcome[];
 
 export const ADVANCE_APPROVE_NOTICE: Readonly<Record<string, string>> = Object.fromEntries(

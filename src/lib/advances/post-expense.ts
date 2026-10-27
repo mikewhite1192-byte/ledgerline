@@ -194,10 +194,16 @@ export async function postAdvanceExpense(
     if (err instanceof MoneyError) {
       if (err.category === "disabled") return no("accounting_off");
       if (err.category === "validation" || err.category === "duplicate") return no("unavailable");
+      // The send happened and even the read of its row failed: the purchase may exist, so the
+      // outcome is unknown (Check pending reads it back), never "nothing was written". An adapter
+      // not ready for a reason it cannot name lands here too; pending is the safe side of that.
+      if (err.category === "unknown") return no("post_pending");
       return no("unavailable", true);
     }
     if (err instanceof Error && err.name === "ForbiddenError") throw err;
     console.error("advance post did not finish:", err instanceof Error ? err.name : "unknown");
-    return no("unavailable", true);
+    // Not always before a send: a read of the row can fail while this request waits on another
+    // that holds the send, so the purchase may exist. Unknown, never "nothing was written".
+    return no("post_pending");
   }
 }

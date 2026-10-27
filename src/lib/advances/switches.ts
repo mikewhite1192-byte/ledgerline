@@ -3,8 +3,8 @@ import type { LocalDate } from "../time/local-date";
 
 // The advance flow's switches, read fresh on every call (never cached), so a switch turned off
 // stops the next request. The payout gate is asked before the ledger reserves a row, on approval
-// and on every retry; the money executor and the payment adapter then check payoutsEnabled again
-// at the write.
+// and on every retry, and once more right before the money executor; the money executor and the
+// payment adapter then check payoutsEnabled again at the write.
 
 export type PayoutRefusal = "disabled" | "payouts_off" | "not_armed" | "over_cap" | "before_start";
 

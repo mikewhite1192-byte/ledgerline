@@ -21,7 +21,7 @@ import { localDateOf } from "../time/local-date";
 import { expenseReconcileHooks, postAdvanceExpense } from "./post-expense";
 import { requestRefOf, sourceOfInput } from "./request";
 import { readFlowAdvance, readFlowAdvanceByProposal, type FlowAdvance } from "./rows";
-import { advancesOn, payoutGate } from "./switches";
+import { advancesOn, payoutGate, type PayoutRefusal } from "./switches";
 
 // A person approves an advance proposal, and only then does the advance exist (design D2). The
 // proposal gate (src/lib/proposals/execute.ts) has already checked the role, the auditor and the
@@ -189,6 +189,10 @@ async function sourceOf(
 function moneyRefusal(category: MoneyFailure, disabledAs: string) {
   if (category === "disabled") return no(disabledAs);
   if (category === "validation" || category === "duplicate") return no("unavailable");
+  // The send happened and even the read of its row failed: money may have moved, so the outcome
+  // is unknown and Check pending reads it back; never a retry. An adapter not ready for a reason
+  // it cannot name lands here too; pending is the safe side of that.
+  if (category === "unknown") return no("payout_pending");
   return no("unavailable", true);
 }
 
@@ -384,6 +388,20 @@ async function pay(
   deps: AdvanceDeps,
   disabledAs: string,
 ): Promise<Paid> {
+  // The payout gate once more, right before the money executor: both callers asked it in an
+  // earlier transaction, and the executor itself re-checks only payoutsEnabled and the adapter,
+  // not armed, the cap or the start date. A refusal here is a definite no with nothing reserved,
+  // and so is a gate that cannot be read.
+  let refusal: PayoutRefusal | null;
+  try {
+    const now = (deps.clock ?? (() => new Date()))();
+    const zone = await db.withTenant(session.tenantId, (q) => readTenantZone(q));
+    refusal = payoutGate(advance.amountCents, localDateOf(now.toISOString(), zone));
+  } catch (err) {
+    console.error("advance payout gate could not be read:", err instanceof Error ? err.name : "unknown");
+    return no("unavailable", true);
+  }
+  if (refusal) return no(refusal);
   try {
     const r = await executeMoneyAction(
       db,
@@ -409,7 +427,9 @@ async function pay(
     if (err instanceof MoneyError) return moneyRefusal(err.category, disabledAs);
     if (err instanceof Error && err.name === "ForbiddenError") throw err;
     console.error("advance payout did not finish:", err instanceof Error ? err.name : "unknown");
-    return no("unavailable", true);
+    // Not always before a send: a read of the row can fail while this request waits on another
+    // that holds the send, so money may have moved. Unknown, never a retry.
+    return no("payout_pending");
   }
 }
 
@@ -503,6 +523,16 @@ export async function retryAdvancePayout(
   return { ok: true, advanceId: picked.advance.id, status: "pending", moneyActionId: paid.actionId };
 }
 
+// The reconcile pass reads back a row still sent only once it is this old (an unknown row at
+// once), so a send still in flight is not read back as if it had been lost.
+const CHECK_AFTER_SECONDS = 60;
+
+export type CheckResult =
+  // tooNew: this advance's rows still sent too recently for the pass to read back, counted only
+  // when the pass checked nothing, so the notice says "check again in a minute", not "nothing".
+  | { ok: true; summary: ReconcileSummary; tooNew: number }
+  | { ok: false; category: string; retryable: boolean };
+
 // Check pending: the reconcile pass over this advance's own open payouts and posts (each read back
 // by its request id), so the check and its notice cover only this advance. Never sends anything
 // new; a payout found paid gets the same follow-up write the approval would have made.
@@ -510,7 +540,7 @@ export async function checkAdvancePayouts(
   session: Session,
   advanceId: string,
   deps: AdvanceDeps = {},
-): Promise<{ ok: true; summary: ReconcileSummary } | { ok: false; category: string; retryable: boolean }> {
+): Promise<CheckResult> {
   if (!advancesOn()) return no("disabled");
   const db = deps.db ?? getDb();
   // The button lives on one advance's page: it must be this carrier's flow advance.
@@ -528,10 +558,19 @@ export async function checkAdvancePayouts(
         advance_expense: expenseReconcileHooks(db, session.tenantId, deps.money),
       },
       limit: 5,
-      olderThanSeconds: 60,
+      olderThanSeconds: CHECK_AFTER_SECONDS,
       subject: { table: "advances", id: found.id },
     },
     deps.money,
   );
-  return { ok: true, summary };
+  // By the database's clock, the one the pass's window uses. A row the pass read back is no
+  // longer sent, so only rows it left for later are counted.
+  let tooNew = 0;
+  if (summary.checked === 0) {
+    const rows = await db.withTenant(session.tenantId, (q) => readBySubject(q, "advances", found.id));
+    tooNew = rows.filter(
+      (a) => a.state === "sent" && a.sentSecondsAgo !== null && a.sentSecondsAgo <= CHECK_AFTER_SECONDS,
+    ).length;
+  }
+  return { ok: true, summary, tooNew };
 }

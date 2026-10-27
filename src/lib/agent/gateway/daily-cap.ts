@@ -7,6 +7,11 @@ import type { GatewayContext, LimitResult } from "./types";
 // asked before the rules engine sizes the amount. It bounds what a looping or misled agent can put
 // in front of a person; it never decides an amount. Over the ceiling the call is blocked as
 // "budget"; a count that cannot be read is limit_unavailable (unknown is not zero).
+//
+// The ceiling is advisory, not hard: the count is read here and the proposal is written later in
+// a separate transaction, so turns running at the same time can each pass it, overshooting by up
+// to the number of concurrent turns. Money safety never depends on it: a person approves every
+// payout, and the payout cap (flags.advancePayouts.capCents) is a separate check at approval.
 
 // The tenant's local day of the call, compared in the database so the zone's rules apply.
 export const DAILY_CAP_SQL =
