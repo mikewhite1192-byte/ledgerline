@@ -21,6 +21,7 @@ import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { COMPARE_PURPOSE, type CompareComplete } from "./compare";
+import { FUEL_STATUS_WORDS, fuelRowStatus } from "./help";
 import { dismissFuelFinding, proposeFuelCorrection } from "./propose";
 import { runFuelCheck, type FuelRunDeps } from "./run";
 import { readFuelPage } from "./view";
@@ -158,12 +159,12 @@ async function ledgerCall(createdAt: Date, costNanocents: number): Promise<strin
 }
 
 const COST = Math.round(1.5 * NANOCENTS_PER_CENT);
-function answer(text: string): CompareComplete {
+function answer(text: string, status: AiResult["status"] = "ok"): CompareComplete {
   return async () => {
     const callId = await ledgerCall(NOW, COST);
     const result: AiResult = {
       callId,
-      status: "ok",
+      status,
       text,
       toolCalls: [],
       usage: { input: 900, cached: 0, output: 20, reasoning: 0 },
@@ -509,6 +510,14 @@ describe("proposeFuelCorrection", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0].driver_id).toBe(want.driverId);
     expect(Math.abs(Number(lines[0].amount_cents))).toBe(want.amountCents);
+
+    // The finding keeps its status; the page reads the done card and says Corrected, also after a rerun.
+    for (const pass of ["after approval", "after a rerun"]) {
+      if (pass === "after a rerun") await run();
+      const row = (await readFuelPage(SESSION, { db: app })).rows.find((r) => r.id === off.id);
+      expect(row, pass).toMatchObject({ status: "proposed", proposal: { id: card.proposalId, status: "done" } });
+      expect(FUEL_STATUS_WORDS[fuelRowStatus(row!)], pass).toBe("Corrected");
+    }
   });
 });
 
@@ -581,6 +590,70 @@ describe("the receipt compare", () => {
     expect((await finding("fuel_duplicate")).compare_verdict).toBe("same");
   });
 
+  it("keeps a cut-short answer open to try again, with its call and its cost", async () => {
+    await filePhotos();
+    complete.mockImplementation(answer(SAME, "incomplete"));
+    expect(await run()).toMatchObject({ ok: true });
+    const cut = await finding("fuel_duplicate");
+    expect(cut).toMatchObject({ compare_verdict: "unknown", compare_category: "timeout", compare_confidence: null });
+    expect(cut.compare_call_id).toMatch(UUID);
+    expect((await runs())[0]).toMatchObject({ compare_count: 1, spent_cents: 2 });
+
+    complete.mockImplementation(answer(SAME));
+    await run();
+    expect(complete).toHaveBeenCalledTimes(2);
+    const kept = await finding("fuel_duplicate");
+    expect(kept).toMatchObject({ compare_verdict: "same", compare_confidence: "high", compare_category: null });
+    expect(kept.compare_call_id).toMatch(UUID);
+    expect(kept.compare_call_id).not.toBe(cut.compare_call_id);
+  });
+
+  it("checks the allowance before reading any photo", async () => {
+    // No photos on file and no allowance left: the finding says budget, never no_photos, so no
+    // photo was looked for.
+    await ledgerCall(new Date(NOW.getTime() - 60 * 60_000), COST);
+    flags.fuelAnomalyLimits = { ...LIMITS, comparesPerTenantPerDay: 1 };
+    expect(await run()).toMatchObject({ ok: true });
+    expect(complete).not.toHaveBeenCalled();
+    expect(await finding("fuel_duplicate")).toMatchObject({ compare_verdict: "unknown", compare_category: "budget" });
+  });
+
+  it("takes at most the run's bound of duplicates, those waiting for photos last", async () => {
+    // A second same-fill-twice pair for the planted duplicate's driver, paid by the driver, off any
+    // load and inside the tank, so it adds one duplicate finding and nothing else.
+    const dup = planted("fuel_duplicate");
+    const extra = [randomUUID(), randomUUID()];
+    const insert = (id: string, i: number) =>
+      admin.withTenant(T, (q) =>
+        q.execute(
+          `INSERT INTO fuel_purchases (id, tenant_id, driver_id, load_id, purchased_at, purchased_on, state,
+             gallons_milli, amount_cents, paid_with, purchase_ref)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), NULL, CAST($3 AS timestamptz),
+             CAST($4 AS date), $5, 50000, 18000, 'driver_own', $6)`,
+          [id, dup.driverId, `${dup.purchasedOn}T15:0${i}:00.000Z`, dup.purchasedOn, dup.state, `fuel-bound-test-${i}`],
+        ),
+      );
+    try {
+      for (const [i, id] of extra.entries()) await insert(id, i);
+      flags.fuelAnomalyLimits = { ...LIMITS, comparesPerRun: 1 };
+      expect(await run()).toMatchObject({ ok: true });
+      const dups = () => findings().then((rows) => rows.filter((r) => r.check_name === "fuel_duplicate"));
+      const first = await dups();
+      expect(first).toHaveLength(2);
+      // One looked at (no photos on file), the other untouched.
+      expect(first.map((r) => r.compare_category).sort()).toEqual(["no_photos", null]);
+      // The next run takes the untouched one first, so a wait for photos never crowds it out.
+      await run();
+      expect((await dups()).map((r) => r.compare_category)).toEqual(["no_photos", "no_photos"]);
+      expect(complete).not.toHaveBeenCalled();
+    } finally {
+      await clearTenantAgent(admin, T);
+      await admin.withTenant(T, (q) =>
+        q.execute("DELETE FROM fuel_purchases WHERE id = ANY(CAST($1 AS uuid[]))", [`{${extra.join(",")}}`]),
+      );
+    }
+  });
+
   it("keeps an unreadable answer as final and never stores its text", async () => {
     await filePhotos();
     complete.mockImplementation(answer("They look alike to me."));
@@ -648,6 +721,10 @@ describe("tenant walls and guards", () => {
     // The app's role has no delete on either table, and no write to a finding's identity.
     expect(await sqlStateOf(asApp("DELETE FROM fuel_findings WHERE id = CAST($1 AS uuid)", [off.id]))).toBe("42501");
     expect(await sqlStateOf(asApp("DELETE FROM fuel_check_runs WHERE id = CAST($1 AS uuid)", [run1.id]))).toBe("42501");
+    // Nor a change to the day a run checked.
+    expect(
+      await sqlStateOf(asApp("UPDATE fuel_check_runs SET as_of = as_of WHERE id = CAST($1 AS uuid)", [run1.id])),
+    ).toBe("42501");
     expect(
       await sqlStateOf(asApp("UPDATE fuel_findings SET category = 'other' WHERE id = CAST($1 AS uuid)", [off.id])),
     ).toBe("42501");

@@ -23,6 +23,7 @@ import {
   FUEL_STATUS_TONE,
   FUEL_STATUS_WORDS,
   fuelHelp,
+  fuelRowStatus,
   gallonsText,
   noSuggestionLine,
   proposeLabel,
@@ -251,7 +252,7 @@ export function FuelChecks({ page, auditorOn, timezone }: { page: FuelPage; audi
               {FUEL_LABELS[open.check]}: {open.driverName}
             </h2>
             <div className="flex items-center gap-2">
-              <StatusBadge status={FUEL_STATUS_TONE[open.status] ?? "draft"} label={FUEL_STATUS_WORDS[open.status] ?? open.status} />
+              <RowStatus row={open} />
               <Button variant="ghost" size="sm" onClick={() => setOpenId(null)}>
                 {W.hideDetails}
               </Button>
@@ -370,7 +371,7 @@ export function FuelChecks({ page, auditorOn, timezone }: { page: FuelPage; audi
           {
             key: "status",
             header: "Status",
-            cell: (r) => <StatusBadge status={FUEL_STATUS_TONE[r.status] ?? "draft"} label={FUEL_STATUS_WORDS[r.status] ?? r.status} />,
+            cell: (r) => <RowStatus row={r} />,
           },
           {
             key: "open",
@@ -395,6 +396,12 @@ export function FuelChecks({ page, auditorOn, timezone }: { page: FuelPage; audi
       />
     </div>
   );
+}
+
+// The row's status word, read from its card once the correction was carried out.
+function RowStatus({ row }: { row: FuelRowView }) {
+  const shown = fuelRowStatus(row);
+  return <StatusBadge status={FUEL_STATUS_TONE[shown] ?? "draft"} label={FUEL_STATUS_WORDS[shown] ?? shown} />;
 }
 
 function RowActions({

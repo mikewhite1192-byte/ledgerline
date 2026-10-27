@@ -124,7 +124,7 @@ describe("compareReceipts", () => {
     expect(await compareReceipts(INPUT, SESSION, { complete })).toMatchObject({ verdict: "different", confidence: "medium" });
   });
 
-  it("calls a malformed or cut-short answer unreadable, keeping its call and cost", async () => {
+  it("calls a malformed answer unreadable, keeping its call and cost", async () => {
     const bad = vi.fn(async () => answer("They look alike."));
     expect(await compareReceipts(INPUT, SESSION, { complete: bad })).toEqual({
       verdict: "unknown",
@@ -132,8 +132,18 @@ describe("compareReceipts", () => {
       callId: "call-1",
       costNanocents: 41_000_000,
     });
-    const cut = vi.fn(async () => answer('{"same_receipt":true,"confidence":"high","differs_in":[]}', { status: "incomplete" }));
-    expect(await compareReceipts(INPUT, SESSION, { complete: cut })).toMatchObject({ verdict: "unknown", category: "unreadable" });
+  });
+
+  it("calls a cut-short answer a timeout to try again, keeping its call and its known cost, whatever text came back", async () => {
+    for (const text of ['{"same_receipt":true,"confidence":"high","differs_in":[]}', "", '{"same_receipt":tr']) {
+      const cut = vi.fn(async () => answer(text, { status: "incomplete" }));
+      expect(await compareReceipts(INPUT, SESSION, { complete: cut })).toEqual({
+        verdict: "unknown",
+        category: "timeout",
+        callId: "call-1",
+        costNanocents: 41_000_000,
+      });
+    }
   });
 
   it("calls a cap refusal budget at no cost, and a timeout unknown at an unknown cost", async () => {

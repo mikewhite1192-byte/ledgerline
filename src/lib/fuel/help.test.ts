@@ -7,7 +7,10 @@ import {
   DISMISS_WORDS,
   FUEL_LABELS,
   FUEL_PAGE_WORDS,
+  FUEL_STATUS_TONE,
+  FUEL_STATUS_WORDS,
   fuelHelp,
+  fuelRowStatus,
   fuelSentence,
   gallonsText,
   noSuggestionLine,
@@ -53,6 +56,7 @@ function everyLine(): string[] {
     ...Object.values(FUEL_LABELS),
     ...Object.values(DISMISS_WORDS),
     ...Object.values(FUEL_PAGE_WORDS),
+    ...Object.values(FUEL_STATUS_WORDS),
     runLine(464, 4),
     proposeLabel(-36_575),
   ];
@@ -103,6 +107,10 @@ describe("fuel page words", () => {
     expect(noSuggestionLine("over_tank", 32_100)).toBe(
       "No pay change suggested: the gallons over the tank cost $321.00. Check them with the driver.",
     );
+    // True for no payback and for a part payback alike.
+    expect(noSuggestionLine("not_paid_back", null)).toBe(
+      "No pay change suggested: the driver was not paid back the full amount twice",
+    );
   });
 
   it("counts fill-ups in plain words", () => {
@@ -137,5 +145,17 @@ describe("fuel page words", () => {
     );
     expect(compareLine({ verdict: "unknown", confidence: null, category: "no_photos" })).toMatch(/Upload the receipt photos/);
     expect(compareLine({ verdict: "same", confidence: "sure", category: null })).toBe("The photos have not been compared yet.");
+  });
+
+  it("says Corrected only for a finding sent for approval whose card was carried out", () => {
+    expect(fuelRowStatus({ status: "proposed", proposal: { status: "done" } })).toBe("corrected");
+    for (const card of ["proposed", "approved", "executing", "unknown", "failed", "rejected", "expired"]) {
+      expect(fuelRowStatus({ status: "proposed", proposal: { status: card } })).toBe("proposed");
+    }
+    expect(fuelRowStatus({ status: "proposed", proposal: null })).toBe("proposed");
+    for (const status of ["open", "dismissed", "cleared"]) {
+      expect(fuelRowStatus({ status, proposal: { status: "done" } })).toBe(status);
+    }
+    expect([FUEL_STATUS_WORDS.corrected, FUEL_STATUS_TONE.corrected]).toEqual(["Corrected", "done"]);
   });
 });

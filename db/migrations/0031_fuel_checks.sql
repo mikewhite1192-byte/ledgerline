@@ -59,8 +59,8 @@ ALTER TABLE fuel_check_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON fuel_check_runs
   USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
 GRANT SELECT, INSERT ON fuel_check_runs TO payday_app;
-GRANT UPDATE (as_of, status, fail_category, checked_count, found_count, compare_count, spent_cents,
-              finished_at) ON fuel_check_runs TO payday_app;
+GRANT UPDATE (status, fail_category, checked_count, found_count, compare_count, spent_cents, finished_at)
+  ON fuel_check_runs TO payday_app;
 
 -- fuel_findings: one row per problem. finding_key (check:purchase, and :older purchase for a
 -- duplicate) is the dedupe key: a rerun updates the live fields of the row it finds again and

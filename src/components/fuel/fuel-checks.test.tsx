@@ -202,6 +202,21 @@ describe("FuelChecks", () => {
     await waitFor(() => expect(urls()).toEqual([`/api/proposals/${CARD_ID}/approve`]));
   });
 
+  it("reads a sent row's status from its card: a carried-out correction says Corrected", () => {
+    const done = { ...card, status: "done" } as ProposalView;
+    show(page([row({ id: SENT_ID, status: "proposed", driverName: "Sam Ortiz", proposal: done })]));
+    expect(screen.getByText("Corrected")).toBeTruthy();
+    expect(screen.queryByText("Sent for approval")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /^See details: Fuel bought off the route, Sam Ortiz/ }));
+    expect(screen.getAllByText("Corrected")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /Propose a pay correction/ })).toBeNull();
+    cleanup();
+    // A card still waiting keeps the row at Sent for approval.
+    show(page(ROWS));
+    expect(screen.queryByText("Corrected")).toBeNull();
+    expect(screen.getByText("Sent for approval")).toBeTruthy();
+  });
+
   it("says what to do when nothing was found, and when no check has run", () => {
     show(page([]));
     expect(screen.getByText("No fuel problems found this week.")).toBeTruthy();

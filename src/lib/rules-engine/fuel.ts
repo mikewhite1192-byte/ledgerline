@@ -36,8 +36,9 @@ import {
 //   on a day off (company card)     -> the whole fill-up back (D1)
 //   either of those two, when a fuel deduction already takes the fill-up from the driver's
 //   pay                             -> none (taking it again would charge the driver twice)
-//   the same fill-up twice          -> the second payback back, naming its pay line, when the
-//                                      driver was paid back for it; otherwise none
+//   the same fill-up twice          -> the second payback back, naming its pay line, when it
+//                                      paid back the whole fill-up; otherwise none (a part
+//                                      payback is never charged back as the whole amount)
 // runFuelChecks then caps it at the correction limit and drops fill-ups before the start date.
 
 export const FUEL_CHECK_NAMES = [
@@ -352,14 +353,17 @@ export function findFuelDuplicate(input: CheckInput, windowMinutes: number): Fue
         purchaseRef(older.p),
         ...(payback ? [itemRefOf(payback)] : []),
       ]);
+      // The take-back is what the driver got: only a payback of the whole fill-up is taken back in
+      // full. A part payback is listed with its pay line and no suggestion, so a person handles it.
+      const paidBackWhole = payback !== undefined && payback.amountCents === p.amountCents;
       out.push({
         ...found,
         findingKey: `${found.findingKey}:${older.p.id}`,
         otherPurchaseId: older.p.id,
         payItemId: payback?.id ?? null,
-        ...(payback
+        ...(paidBackWhole
           ? chargeBack(p)
-          : none(p.paidWith === "company_card" ? "card_double_charge" : "not_paid_back")),
+          : none(payback || p.paidWith !== "company_card" ? "not_paid_back" : "card_double_charge")),
       });
     }
   }

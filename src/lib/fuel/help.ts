@@ -16,6 +16,7 @@ export const FUEL_LABELS: Readonly<Record<FuelCheckName, string>> = {
 export const FUEL_STATUS_WORDS: Readonly<Record<string, string>> = {
   open: "Needs you",
   proposed: "Sent for approval",
+  corrected: "Corrected",
   dismissed: "Dismissed",
   cleared: "Cleared",
 };
@@ -24,9 +25,16 @@ export const FUEL_STATUS_WORDS: Readonly<Record<string, string>> = {
 export const FUEL_STATUS_TONE: Readonly<Record<string, string>> = {
   open: "unknown",
   proposed: "approved",
+  corrected: "done",
   dismissed: "draft",
   cleared: "done",
 };
+
+// The status a row shows. A finding sent for approval keeps that status in the database; once its
+// card was approved and carried out, the row reads the card and says Corrected.
+export function fuelRowStatus(row: { status: string; proposal: { status: string } | null }): string {
+  return row.status === "proposed" && row.proposal?.status === "done" ? "corrected" : row.status;
+}
 
 export const DISMISS_CATEGORIES = ["driver_explained", "pump_error", "provider_reversed", "other"] as const;
 export type DismissCategory = (typeof DISMISS_CATEGORIES)[number];
@@ -116,7 +124,7 @@ export function noSuggestionLine(reason: NoSuggestionReason, excessCents: number
     case "card_double_charge":
       return "No pay change suggested: the card was charged twice, and the card company reverses that";
     case "not_paid_back":
-      return "No pay change suggested: the driver was not paid back for it twice";
+      return "No pay change suggested: the driver was not paid back the full amount twice";
     case "over_limit":
       return "Above the correction limit, handle by hand";
   }

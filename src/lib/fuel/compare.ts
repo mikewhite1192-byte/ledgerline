@@ -10,7 +10,9 @@ import { readDocumentBytes } from "../documents/store";
 // says whether they are one paper receipt. Evidence only: the verdict never changes an amount, and
 // the finding stands on the records whatever it says. Anything but a clean answer under the strict
 // format is "unknown" with a category (budget, timeout, unreadable); no photo pair is "no_photos"
-// and costs nothing. The raw error never leaves this file; the log gets its category.
+// and costs nothing. An answer cut short (out of output room) is a timeout, not unreadable: it may
+// be tried again under the daily allowance. The raw error never leaves this file; the log gets its
+// category.
 
 export const COMPARE_PURPOSE = "fuel_receipt_compare";
 // Room for a short answer under the run route's 30 seconds, with the engine pass before it.
@@ -173,7 +175,12 @@ export async function compareReceipts(
     }
     return { verdict: "unknown", category: "unreadable", callId: null, costNanocents };
   }
-  const parsed = result.status === "ok" ? parseCompare(result.text) : null;
+  // Cut short: charged and its call kept, but not a final answer, so a later run may ask again.
+  if (result.status !== "ok") {
+    console.error(`fuel: compare for ${input.findingId} failed category=incomplete`);
+    return { verdict: "unknown", category: "timeout", callId: result.callId, costNanocents: result.costNanocents };
+  }
+  const parsed = parseCompare(result.text);
   if (!parsed) {
     console.error(`fuel: compare for ${input.findingId} failed category=unreadable`);
     return { verdict: "unknown", category: "unreadable", callId: result.callId, costNanocents: result.costNanocents };

@@ -239,8 +239,11 @@ type Candidate = {
 type Spent = { calls: number; knownNanocents: number; unknownCost: number };
 
 // The receipt compares: duplicates still undecided or worth trying again, open or sent for
-// approval. The allowance is the smaller of the run's bound and what is left of the carrier's day
-// (counted from the model call ledger by purpose, so a call that never answered still counts).
+// approval, at most the run's bound of them (never-tried and retryable ones before those still
+// waiting for photos, so a long wait for photos never crowds out the rest). The allowance is the
+// smaller of the run's bound and what is left of the carrier's day (counted from the model call
+// ledger by purpose, so a call that never answered still counts), and it is checked before any
+// photo is read: past it a candidate is marked budget and no photo leaves the database.
 async function compareDuplicates(
   db: TenantDb,
   session: Session,
@@ -251,13 +254,6 @@ async function compareDuplicates(
   const limits = flags.fuelAnomalyLimits;
   const nowIso = now.toISOString();
   const plan = await db.withTenant(session.tenantId, async (q) => {
-    const candidates = await q.query<Candidate>(
-      `SELECT f.id, f.amount_cents, f.gallons_milli, CAST(f.purchased_on AS text) AS purchased_on, d.truck_unit
-         FROM fuel_findings f
-         JOIN drivers d ON d.tenant_id = f.tenant_id AND d.id = f.driver_id
-        WHERE f.check_name = 'fuel_duplicate' AND f.status IN ('open', 'proposed') AND (${RETRYABLE})
-        ORDER BY f.purchased_on, f.finding_key`,
-    );
     const used = await q.query<{ n: number | string }>(
       `SELECT count(*) AS n FROM model_calls
         WHERE purpose = $1 AND created_at > CAST($2 AS timestamptz) AND created_at <= CAST($3 AS timestamptz)`,
@@ -265,8 +261,21 @@ async function compareDuplicates(
     );
     const usedToday = Number(used[0]?.n ?? 0);
     let allowance = Math.max(0, Math.min(limits.comparesPerRun, limits.comparesPerTenantPerDay - usedToday));
+    const candidates = await q.query<Candidate>(
+      `SELECT f.id, f.amount_cents, f.gallons_milli, CAST(f.purchased_on AS text) AS purchased_on, d.truck_unit
+         FROM fuel_findings f
+         JOIN drivers d ON d.tenant_id = f.tenant_id AND d.id = f.driver_id
+        WHERE f.check_name = 'fuel_duplicate' AND f.status IN ('open', 'proposed') AND (${RETRYABLE})
+        ORDER BY CASE WHEN f.compare_category = 'no_photos' THEN 1 ELSE 0 END, f.purchased_on, f.finding_key
+        LIMIT $1`,
+      [limits.comparesPerRun],
+    );
     const calls: { id: string; photos: ComparePhoto[] }[] = [];
     for (const c of candidates) {
+      if (allowance === 0) {
+        await keepCompare(q, c.id, { verdict: "unknown", category: "budget" }, [], nowIso);
+        continue;
+      }
       const photos = await pairPhotos(q, {
         amountCents: Number(c.amount_cents),
         gallonsMilli: c.gallons_milli,
@@ -275,11 +284,9 @@ async function compareDuplicates(
       });
       if (!photos) {
         await keepCompare(q, c.id, { verdict: "unknown", category: "no_photos" }, [], nowIso);
-      } else if (allowance > 0) {
+      } else {
         allowance -= 1;
         calls.push({ id: c.id, photos });
-      } else {
-        await keepCompare(q, c.id, { verdict: "unknown", category: "budget" }, [], nowIso);
       }
     }
     return calls;

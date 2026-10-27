@@ -267,6 +267,30 @@ describe("the same receipt turned in twice", () => {
     expect([swipe.suggestedCents, swipe.noSuggestion]).toEqual([null, "card_double_charge"]);
   });
 
+  it("never takes back more than the second payback paid: a part payback lists its line and suggests nothing", () => {
+    const part = item({ id: "ib", kind: "reimbursement", subkind: "fuel", amountCents: c(20_000), refTable: "fuel_purchases", refId: "pb" });
+    for (const paidWith of ["driver_own", "company_card"] as const) {
+      const records = [{ ...older, paidWith }, purchase({ id: "pb", paidWith, purchasedAt: at(6) })];
+      const [f, ...rest] = findFuelDuplicate(input({ fuelPurchases: records, items: [payback("ia", "pa"), part] }), 60);
+      expect(rest).toEqual([]);
+      expect([f.suggestedCents, f.noSuggestion, f.payItemId, f.amountCents]).toEqual([null, "not_paid_back", "ib", 31_996]);
+      expect(f.sources).toEqual([
+        { table: "fuel_purchases", id: "pb" },
+        { table: "fuel_purchases", id: "pa" },
+        { table: "pay_items", id: "ib" },
+      ]);
+    }
+    // A payback of more than the fill-up is not taken back by the fill-up's amount either.
+    const over = { ...part, amountCents: c(31_997) };
+    const [more] = findFuelDuplicate(input({ fuelPurchases: pair(6), items: [over] }), 60);
+    expect([more.suggestedCents, more.noSuggestion, more.payItemId]).toEqual([null, "not_paid_back", "ib"]);
+    // A whole payback is still taken back in full, through the limit, by runFuelChecks too.
+    const [whole] = runFuelChecks(input({ fuelPurchases: pair(6), items: [payback("ib", "pb")] }), LIMITS).filter(
+      (f) => f.check === "fuel_duplicate",
+    );
+    expect([whole.suggestedCents, whole.noSuggestion, whole.payItemId]).toEqual([-31_996, null, "ib"]);
+  });
+
   it("names the newer of each pair, whatever order the records arrive in", () => {
     const third = purchase({ id: "pc", paidWith: "driver_own", purchasedAt: at(12) });
     const records = [third, ...pair(6)];
