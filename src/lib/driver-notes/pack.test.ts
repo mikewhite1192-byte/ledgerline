@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPack, packText, type PackInput } from "./pack";
+import { buildPack, packText, recheckNote, type PackInput } from "./pack";
 import { verifyNote } from "./verify";
 
 const INPUT: PackInput = {
@@ -84,5 +84,42 @@ describe("packText", () => {
       "Ana, su pago neto es $1,100.00 [línea 1]. Manejó 1000 millas y el combustible fue $150.00 [línea 2]. Subió $100.00.";
     const result = verifyNote(JSON.stringify({ language: "Spanish", body, cited_seqs: [1, 2] }), pack);
     expect(result).toMatchObject({ ok: true, citedSeqs: [1, 2] });
+  });
+});
+
+describe("recheckNote", () => {
+  const SETTLED = { ...INPUT, settlement: { ...INPUT.settlement, status: "approved" as const } };
+  const NOTE = {
+    language: "es",
+    body: "Ana, su pago neto es $1,100.00 [línea 1]. El combustible fue $150.00 [línea 2].",
+    cited_seqs: "[1, 2]",
+  };
+
+  it("passes a stored note while its settlement still shows the same numbers and lines", () => {
+    expect(recheckNote(SETTLED, NOTE)).toBe(true);
+    expect(recheckNote({ ...SETTLED, settlement: { ...SETTLED.settlement, status: "paid" } }, NOTE)).toBe(true);
+    // The note keeps the language it was drafted in, even if the driver's setting changed since.
+    expect(recheckNote({ ...SETTLED, driver: { ...SETTLED.driver, preferred_language: "en" } }, NOTE)).toBe(true);
+  });
+
+  it("fails a note whose settlement changed after drafting", () => {
+    const corrected = {
+      ...SETTLED,
+      settlement: { ...SETTLED.settlement, deductions_cents: 20000, net_cents: 105000 },
+      lines: SETTLED.lines.map((l) => (l.seq === 2 ? { ...l, amount_cents: -20000 } : l)),
+    };
+    expect(recheckNote(corrected, NOTE)).toBe(false);
+    // A cited line that is gone.
+    expect(recheckNote({ ...SETTLED, lines: SETTLED.lines.filter((l) => l.seq !== 2) }, NOTE)).toBe(false);
+    // A settlement no longer settled.
+    expect(recheckNote({ ...SETTLED, settlement: { ...SETTLED.settlement, status: "draft" } }, NOTE)).toBe(false);
+  });
+
+  it("fails closed on a stored note it cannot read", () => {
+    expect(recheckNote(SETTLED, { ...NOTE, body: null })).toBe(false);
+    expect(recheckNote(SETTLED, { ...NOTE, cited_seqs: null })).toBe(false);
+    expect(recheckNote(SETTLED, { ...NOTE, cited_seqs: "not json" })).toBe(false);
+    expect(recheckNote(SETTLED, { ...NOTE, cited_seqs: '["1"]' })).toBe(false);
+    expect(recheckNote(SETTLED, { ...NOTE, language: "fr" })).toBe(false);
   });
 });

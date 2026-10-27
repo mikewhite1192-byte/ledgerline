@@ -1,27 +1,15 @@
-import { House, NotebookPen } from "lucide-react";
-import type { NavItem } from "@/components/app/app-shell";
 import { ErrorState } from "@/components/app/states";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
 import { DbError, type Queryable } from "@/lib/db";
 import { ForbiddenError } from "@/lib/tenant/context";
 
-// What every signed-in page's shell needs: the navigation, the sign-out form and the carrier's
-// name, time zone and the member's email. A page section appears in the navigation only when its
-// switch is on.
+// What every signed-in page's shell needs besides the navigation (src/components/app/app-nav):
+// the sign-out form and the carrier's name, time zone and the member's email.
 
 export type ShellInfo = { name: string; timezone: string; email: string };
-
-export function appNav(current: string): NavItem[] {
-  const items: NavItem[] = [{ href: "/", label: "Home", icon: <House aria-hidden /> }];
-  if (flags.driverNotesEnabled) {
-    items.push({ href: "/driver-notes", label: "Driver notes", icon: <NotebookPen aria-hidden /> });
-  }
-  return items.map((item) => (item.href === current ? { ...item, current: true } : item));
-}
 
 export function SignOutForm() {
   return (

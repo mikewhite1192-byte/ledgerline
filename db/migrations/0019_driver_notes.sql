@@ -75,11 +75,30 @@ CREATE INDEX driver_notes_tenant_period ON driver_notes (tenant_id, period_id);
 -- check's record are written once, on the step out of drafting, and never again: approval never
 -- edits the text. Status moves forward only. over_cap may go back to drafting (the period's cap
 -- was raised and someone drafts the rest); refused, rejected and approved are final. The channel
--- may move from the driver view to email once, when an allowlisted email is sent.
+-- may move from the driver view to email once, when an allowlisted email is sent. A new row is
+-- only ever a bare reservation (drafting, or over_cap with no call made): no text, citations,
+-- check record, refusal, model call, decision or delivery, so every later state goes through the
+-- update rules and nothing can be inserted already approved.
 CREATE FUNCTION driver_notes_guard() RETURNS trigger
   LANGUAGE plpgsql
   AS $$
 BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.status NOT IN ('drafting', 'over_cap')
+       OR NEW.body IS NOT NULL
+       OR NEW.cited_seqs IS DISTINCT FROM CAST('[]' AS jsonb)
+       OR NEW.verification IS NOT NULL
+       OR NEW.refusal_category IS NOT NULL
+       OR NEW.model_call_id IS NOT NULL
+       OR NEW.decided_by IS NOT NULL
+       OR NEW.decided_at IS NOT NULL
+       OR NEW.delivered_at IS NOT NULL
+       OR NEW.channel IS NOT NULL THEN
+      RAISE EXCEPTION 'driver_notes: a new note must be a bare reservation'
+        USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+  END IF;
   IF NEW.id IS DISTINCT FROM OLD.id
      OR NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
      OR NEW.settlement_id IS DISTINCT FROM OLD.settlement_id
@@ -122,7 +141,7 @@ END
 $$;
 
 CREATE TRIGGER driver_notes_guard
-  BEFORE UPDATE ON driver_notes
+  BEFORE INSERT OR UPDATE ON driver_notes
   FOR EACH ROW EXECUTE FUNCTION driver_notes_guard();
 
 ALTER TABLE driver_notes ENABLE ROW LEVEL SECURITY;

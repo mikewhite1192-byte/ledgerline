@@ -4,7 +4,7 @@ import type { DriverRow, SettlementLineRow, SettlementPeriodRow, SettlementRow }
 import { formatPeriod } from "../format/dates";
 import { codeToWords, lineKindLabel } from "../format/labels";
 import { formatCents } from "../format/money";
-import { normalizeNumber, type NoteCheck } from "./verify";
+import { MODEL_LANGUAGE, normalizeNumber, verifyNote, type NoteCheck } from "./verify";
 
 // The paystub pack: everything a note may say, read from stored rows only. The model sees the
 // driver's first name and the paystub's lines and totals, never a record id, an email or a last
@@ -176,6 +176,33 @@ export function packText(pack: NotePack): string {
   }
   out.push(`Loads this period: ${pack.loadCount}`);
   return out.join("\n");
+}
+
+// A stored note as the recheck reads it: cited_seqs is the jsonb column cast to text.
+export type StoredNote = { language: string; body: string | null; cited_seqs: string | null };
+
+// The check a note passed when it was drafted, run again on its settlement as it is now: the same
+// pack drafting builds, in the note's own language, and the same reply shape drafting verified.
+// False when the settlement is no longer settled, the stored note cannot be read, or any number or
+// line the note names is no longer on the paystub. Approval and the driver view both run it, so a
+// note is never approved or shown against a paystub that changed after it was drafted.
+export function recheckNote(
+  source: PackInput & { settlement: PackInput["settlement"] & Pick<SettlementRow, "status"> },
+  note: StoredNote,
+): boolean {
+  if (source.settlement.status !== "approved" && source.settlement.status !== "paid") return false;
+  const { language, body } = note;
+  if (body === null || note.cited_seqs === null) return false;
+  if (language !== "en" && language !== "es") return false;
+  let citedSeqs: unknown;
+  try {
+    citedSeqs = JSON.parse(note.cited_seqs);
+  } catch {
+    return false;
+  }
+  const pack: NotePack = { ...buildPack(source), language };
+  const reply = JSON.stringify({ language: MODEL_LANGUAGE[language], body, cited_seqs: citedSeqs });
+  return verifyNote(reply, pack).ok;
 }
 
 export type StoredNoteSource = PackInput & {

@@ -9,8 +9,9 @@
 // amount on the pack (sign ignored: "a $120.00 deduction" is the -12000 line). A bare figure with
 // exactly two decimals is read as dollars the same way. Any other bare figure (miles, days, a
 // date, a load number, a percent) must be one of the pack's own numbers. A figure in any other
-// shape (1.234,56, 1,23) cannot be read with certainty and is refused. The limit: a number spelled
-// out in words ("three loads") is not checked; the prompt asks for digits.
+// shape (1.234,56, 1,23) cannot be read with certainty and is refused, and so is a digit of any
+// script but ASCII 0-9. The limit: a number spelled out in words ("three loads") is not checked;
+// the prompt asks for digits.
 
 export type NoteLanguage = "en" | "es";
 export type ModelLanguage = "English" | "Spanish";
@@ -73,6 +74,13 @@ export function parseReply(text: string): NoteReply | null {
 const HIDDEN = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/;
 const LINK = /https?:|www\.|:\/\//i;
 const SENTENCE = /[A-Za-zÁÉÍÓÚÑÜáéíóúñü][\s\S]*[.!?]/;
+// The figure scan below reads ASCII digits only, so a digit of any other script (Arabic-Indic,
+// fullwidth and the like) would pass unread: a body with one is refused before the scan.
+const DECIMAL_DIGIT = /\p{Nd}/u;
+
+function hasOtherDigit(body: string): boolean {
+  return DECIMAL_DIGIT.test(body.replace(/[0-9]/g, ""));
+}
 
 // A citation: [line 3], [lines 3 and 4], [línea 3], [líneas 3, 4 y 5].
 const BRACKET = /\[([^\][]{1,60})\]/g;
@@ -166,7 +174,7 @@ export function verifyNote(text: string, check: NoteCheck): VerifyResult {
   if (!reply) return fail("format");
   const body = reply.body.trim();
   if (body.length === 0 || body.length > MAX_BODY_CHARS) return fail("format");
-  if (HIDDEN.test(body) || LINK.test(body) || !SENTENCE.test(body)) return fail("format");
+  if (HIDDEN.test(body) || LINK.test(body) || hasOtherDigit(body) || !SENTENCE.test(body)) return fail("format");
 
   if (reply.language !== MODEL_LANGUAGE[check.language]) return fail("language");
 

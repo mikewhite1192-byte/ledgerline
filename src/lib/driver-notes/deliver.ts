@@ -9,8 +9,8 @@ import { periodWords } from "./words";
 // (decide.ts). Email is the only outside write here, and it is off: it needs its own switch
 // (driverNotesEmailEnabled), the driver's address on the allowlist (exact, lower-cased; an empty
 // list refuses every address) and a configured sender. Until all three hold, delivery logs
-// "would send note <id> to <masked address>" and sends nothing. No sender ships in this change, so
-// production never sends; tests hand in a fake one.
+// "would send note <id> (<category>)", never the address, and sends nothing. No sender ships in
+// this change, so production never sends; tests hand in a fake one.
 //
 // An email is sent at most once: the note's channel moves from driver_view to email in its own
 // transaction before the send (the reservation), so a retry, a second click or a crash after the
@@ -29,14 +29,6 @@ export type DeliverDeps = {
   log?: (line: string) => void;
   clock?: () => Date;
 };
-
-// "dr***@blueridge.example": the first two characters of the name part and the domain.
-export function maskEmail(email: string): string {
-  const at = email.lastIndexOf("@");
-  if (at <= 0) return "***";
-  const name = email.slice(0, at);
-  return `${name.slice(0, Math.min(2, name.length - 1))}***${email.slice(at)}`;
-}
 
 // The allowlist check alone: exact whole-address match, lower-cased and trimmed on both sides.
 export function isAllowlisted(email: string, allowlist: readonly string[]): boolean {
@@ -83,10 +75,10 @@ export async function deliverNoteEmail(
   if (note.status !== "approved" || note.body === null) return { sent: false, category: "not_approved" };
   if (note.channel === "email") return { sent: false, category: "already_sent" };
 
-  // Every check re-reads its switch here, whoever called.
-  const masked = maskEmail(note.email);
+  // Every check re-reads its switch here, whoever called. The log line names the note and the
+  // category only.
   const refuse = (category: EmailRefusal): EmailResult => {
-    log(`would send note ${noteId} to ${masked} (${category})`);
+    log(`would send note ${noteId} (${category})`);
     return { sent: false, category };
   };
   if (!flags.driverNotesEmailEnabled) return refuse("disabled");

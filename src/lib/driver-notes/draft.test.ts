@@ -34,7 +34,7 @@ describe("noteRequest", () => {
     expect(request.traceId).toBe(TRACE);
     expect(request.maxOutputTokens).toBe(flags.driverNoteLimits.maxOutputTokens);
     expect(request.maxCostCents).toBe(flags.driverNoteLimits.maxNoteCents);
-    expect(request.reasoningEffort).toBe("low");
+    expect(request.reasoningEffort).toBe("minimal");
     expect(request.format).toBe(NOTE_FORMAT);
     expect(NOTE_FORMAT.strict).toBe(true);
     const user = request.messages.find((m) => m.role === "user")?.content ?? "";

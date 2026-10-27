@@ -15,7 +15,8 @@ import { listNotePeriods, readDriverView, readPeriodNotes } from "./view";
 // Driver notes against the real database, as the app's role, with a fake model. Each settled
 // settlement gets at most one note however many passes run; a note that fails the check keeps no
 // text and is never approvable; approval delivers to the driver view and never edits the text;
-// email stays refused (and logged as "would send") until its switch, the allowlist and a sender
+// a note whose paystub changed after drafting is neither approved nor shown; a note can only be
+// inserted as a bare reservation; email stays refused (and logged as "would send") until its switch, the allowlist and a sender
 // all agree, and sends at most once; the period's cap stops drafting with no call; and another
 // carrier sees none of it. Only this file's tenants are made, and they are removed after.
 
@@ -240,6 +241,20 @@ describe("driver notes", () => {
     expect(await draft()).toMatchObject({ ok: true, drafted: 1, refused: 1, missing: 0 });
   });
 
+  it("stores an answer cut off by the output budget as incomplete, with no check record", async () => {
+    const cut: CompleteFn = async () => ({ ...result('{"language": "English", "body": "Hi, your'), status: "incomplete" });
+    expect(await draft(cut)).toMatchObject({ ok: true, refused: 2, drafted: 0 });
+    const rows = await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ status: string; refusal_category: string | null; body: string | null; verification: unknown }>(
+        "SELECT status, refusal_category, body, verification FROM driver_notes WHERE tenant_id = current_tenant_id()",
+      ),
+    );
+    expect(rows).toEqual([
+      { status: "refused", refusal_category: "incomplete", body: null, verification: null },
+      { status: "refused", refusal_category: "incomplete", body: null, verification: null },
+    ]);
+  });
+
   it("starts no note that cannot finish before the slice ends", async () => {
     expect(await draft(goodModel, new Date(NOW + 5_000))).toMatchObject({
       ok: true,
@@ -325,6 +340,55 @@ describe("driver notes", () => {
     ]);
   });
 
+  it("checks a note again on its settlement as it is now, at approval and in the driver view", async () => {
+    await draft();
+    const [n1, n2] = await notesOf(A);
+    expect(await approveNote(A.session, n1.id, { db: app, clock })).toEqual({ ok: true });
+    // Both settlements are corrected after their notes were drafted: more fuel on the first, a new
+    // load amount on the second. The originals are put back after, for the tests that follow.
+    const setPay = (fuelCents: number, net1Cents: number, load2Cents: number) =>
+      admin.withTenant(A.tenantId, async (q) => {
+        await q.execute(
+          `UPDATE settlements SET deductions_cents = $2, net_cents = $3
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [settlement1, fuelCents, net1Cents],
+        );
+        await q.execute(
+          `UPDATE settlement_lines SET amount_cents = $2
+            WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid) AND seq = 2`,
+          [settlement1, -fuelCents],
+        );
+        await q.execute(
+          `UPDATE settlements SET gross_cents = $2, net_cents = $2
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [settlement2, load2Cents],
+        );
+        await q.execute(
+          `UPDATE settlement_lines SET amount_cents = $2
+            WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid) AND seq = 1`,
+          [settlement2, load2Cents],
+        );
+      });
+    await setPay(20000, 105000, 95000);
+    try {
+      // The drafted note's $900.00 is no longer on its paystub: not approvable, and nothing changes.
+      expect(await approveNote(A.session, n2.id, { db: app, clock })).toEqual({ ok: false, category: "not_approvable" });
+      expect((await notesOf(A))[1]).toMatchObject({ status: "drafted", decided_by: null, channel: null });
+      // The approved note's $1,100.00 is gone too: the driver sees the short pay line, at the new net.
+      const view = await app.withTenant(A.tenantId, (q) => readDriverView(q, settlement1));
+      expect(view?.message).toEqual({
+        kind: "fallback",
+        body: "Your pay for Oct 26 to Nov 1, 2026 is $1,050.00. Your paystub lists every line.",
+      });
+    } finally {
+      await setPay(15000, 110000, 90000);
+    }
+    // With the paystubs back as they were, the notes match again.
+    expect(await approveNote(A.session, n2.id, { db: app, clock })).toEqual({ ok: true });
+    const view = await app.withTenant(A.tenantId, (q) => readDriverView(q, settlement1));
+    expect(view?.message).toEqual({ kind: "note", body: "Hi, your net pay is $1,100.00 [line 1].", language: "en" });
+  });
+
   it("keeps email refused and logged as would send until the switch, the allowlist and a sender agree", async () => {
     await draft();
     const [n1, n2] = await notesOf(A);
@@ -338,7 +402,7 @@ describe("driver notes", () => {
       deliverNoteEmail(A.session, id, { db: app, log: (l) => lines.push(l), clock, send: withSender ? send : undefined });
 
     expect(await deliver(n1.id)).toEqual({ sent: false, category: "disabled" });
-    expect(lines).toEqual([`would send note ${n1.id} to dr***@${slugA}.example (disabled)`]);
+    expect(lines).toEqual([`would send note ${n1.id} (disabled)`]);
     flags.driverNotesEmailEnabled = true;
     expect(await deliver(n1.id)).toEqual({ sent: false, category: "not_allowlisted" });
     flags.driverNotesEmailAllowlist = [`DRV-1@${slugA}.example`];
@@ -346,6 +410,7 @@ describe("driver notes", () => {
     expect(await deliver(n2.id)).toEqual({ sent: false, category: "not_approved" });
     expect(sent).toHaveLength(0);
     expect(lines).toHaveLength(3);
+    expect(lines.join("\n")).not.toContain("@");
 
     expect(await deliver(n1.id)).toEqual({ sent: true });
     expect(await deliver(n1.id)).toEqual({ sent: false, category: "already_sent" });
@@ -392,6 +457,29 @@ describe("driver notes", () => {
     expect(await sqlStateOf(asApp("DELETE FROM driver_notes WHERE id = CAST($1 AS uuid)"))).toBe("42501");
     expect(await sqlStateOf(asApp("UPDATE driver_notes SET language = 'es' WHERE id = CAST($1 AS uuid)"))).toBe("42501");
     expect((await notesOf(A))[0].body).toBe("Hi, your net pay is $1,100.00 [line 1].");
+  });
+
+  it("refuses a note inserted past its reservation, from the app role or the admin login", async () => {
+    // Each row passes every column check, so only the guard can refuse it.
+    const decided = new Date(NOW).toISOString();
+    const insert = (db: Db, status: "approved" | "drafted") =>
+      db.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO driver_notes (id, tenant_id, settlement_id, driver_id, period_id, language, status, body,
+             trace_id, decided_by, decided_at, delivered_at, channel)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid), 'en',
+             $5, 'Hi, your net pay is $9,999.99.', CAST($6 AS uuid), $7, CAST($8 AS timestamptz),
+             CAST($9 AS timestamptz), $10)`,
+          status === "approved"
+            ? [randomUUID(), settlement1, A.driverId, periodId, status, randomUUID(), "someone", decided, decided, "driver_view"]
+            : [randomUUID(), settlement1, A.driverId, periodId, status, randomUUID(), null, null, null, null],
+        ),
+      );
+    for (const db of [app, admin]) {
+      expect(await sqlStateOf(insert(db, "approved"))).toBe("23514");
+      expect(await sqlStateOf(insert(db, "drafted"))).toBe("23514");
+    }
+    expect(await notesOf(A)).toEqual([]);
   });
 
   it("shows another carrier none of it", async () => {

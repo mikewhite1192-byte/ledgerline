@@ -1,6 +1,7 @@
 import { NotebookPen } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState, ErrorState } from "@/components/app/states";
@@ -11,7 +12,6 @@ import { formatInstant, formatPeriod } from "@/lib/format/dates";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { isUuid } from "@/lib/uuid";
 import {
-  appNav,
   readShell,
   shellProblemOf,
   ShellProblemPage,

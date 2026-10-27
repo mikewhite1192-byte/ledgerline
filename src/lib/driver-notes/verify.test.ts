@@ -161,6 +161,22 @@ describe("verifyNote", () => {
     expect(verifyNote(reply("Your pay is ready.\nYour paystub has every line."), CHECK).ok).toBe(true);
   });
 
+  it("refuses digits of any script but ASCII, which the figure scan would not read", () => {
+    for (const body of [
+      // Arabic-Indic: $9,999.99 and 999 miles.
+      "Your net pay is $٩,٩٩٩.٩٩.",
+      "You drove ٩٩٩ miles.",
+      // Fullwidth: $9,999.99 and 999 miles.
+      "Your net pay is $９,９９９.９９.",
+      "You drove ９９９ miles.",
+      // One such digit beside good ASCII figures still fails.
+      "Your net pay is $1,234.56 for 1١ days.",
+    ]) {
+      expect(verifyNote(reply(body), CHECK), body).toMatchObject({ ok: false, category: "format" });
+    }
+    expect(verifyNote(reply("Your net pay is $1,234.56 [line 1]."), CHECK).ok).toBe(true);
+  });
+
   it("stores amounts and numbers on a refusal, never the text", () => {
     const result = verifyNote(reply("You drove 999 miles for $5.00."), CHECK);
     expect(result.ok).toBe(false);

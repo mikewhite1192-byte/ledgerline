@@ -1,5 +1,5 @@
 import type { Queryable } from "../db";
-import { readNoteSource, type StoredNoteSource } from "./pack";
+import { readNoteSource, recheckNote, type StoredNote, type StoredNoteSource } from "./pack";
 import type { NoteLanguage } from "./verify";
 import { fallbackLine } from "./words";
 
@@ -171,26 +171,29 @@ export type DriverView = {
   message: { kind: "note"; body: string; language: NoteLanguage } | { kind: "fallback"; body: string } | null;
 };
 
-// The driver's view of one settlement: the paystub, and the note only once a person approved it.
-// A note that failed the check or was rejected shows the code-built fallback line instead.
+// The driver's view of one settlement: the paystub, and the note only once a person approved it
+// and only while it still passes the check on the settlement as it is now (pack.ts recheckNote).
+// A note that failed the check, was rejected, or no longer matches a changed paystub shows the
+// code-built fallback line instead.
 export async function readDriverView(q: Queryable, settlementId: string): Promise<DriverView | null> {
   const source = await readNoteSource(q, settlementId);
   if (!source) return null;
-  const notes = await q.query<{ status: string; body: string | null; language: string }>(
-    `SELECT status, body, language FROM driver_notes
+  const notes = await q.query<StoredNote & { status: string }>(
+    `SELECT status, body, language, CAST(cited_seqs AS text) AS cited_seqs FROM driver_notes
       WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid)`,
     [settlementId],
   );
   const note = notes[0];
   const language = asLanguage(note ? note.language : source.driver.preferred_language);
+  const fallback = (): DriverView["message"] => ({
+    kind: "fallback",
+    body: fallbackLine(language, source.period.period_start, source.period.period_end, source.settlement.net_cents),
+  });
   let message: DriverView["message"] = null;
   if (note?.status === "approved" && note.body) {
-    message = { kind: "note", body: note.body, language };
+    message = recheckNote(source, note) ? { kind: "note", body: note.body, language } : fallback();
   } else if (note && (note.status === "refused" || note.status === "rejected")) {
-    message = {
-      kind: "fallback",
-      body: fallbackLine(language, source.period.period_start, source.period.period_end, source.settlement.net_cents),
-    };
+    message = fallback();
   }
   return { source, message };
 }

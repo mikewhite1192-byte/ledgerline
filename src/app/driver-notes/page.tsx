@@ -1,5 +1,6 @@
 import { NotebookPen } from "lucide-react";
 import Link from "next/link";
+import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
 import { EmptyState } from "@/components/app/states";
@@ -8,7 +9,7 @@ import { flags } from "@/config/flags";
 import { listNotePeriods, type NotePeriod } from "@/lib/driver-notes/view";
 import { formatPeriod } from "@/lib/format/dates";
 import { withRequestTenant } from "@/lib/tenant/context";
-import { appNav, readShell, shellProblemOf, ShellProblemPage, SignOutForm, type ShellInfo, type ShellProblem } from "../shell";
+import { readShell, shellProblemOf, ShellProblemPage, SignOutForm, type ShellInfo, type ShellProblem } from "../shell";
 
 export const dynamic = "force-dynamic";
 

@@ -94,7 +94,8 @@ type Candidate = { settlement_id: string; note_id: string | null; status: string
 export function noteRequest(pack: NotePack, traceId: string): AiRequest {
   return {
     purpose: NOTE_PURPOSE,
-    reasoningEffort: "low",
+    // Reasoning tokens count against the note's small output budget, so as little as possible.
+    reasoningEffort: "minimal",
     maxOutputTokens: flags.driverNoteLimits.maxOutputTokens,
     maxCostCents: flags.driverNoteLimits.maxNoteCents,
     timeoutMs: NOTE_TIMEOUT_MS,
@@ -358,21 +359,27 @@ export async function draftDriverNotes(
       stoppedBy = "model";
       break;
     }
-    const checked = verifyNote(result.status === "ok" ? result.text : "", claim.pack);
-    const finish: Finish = checked.ok
-      ? {
-          status: "drafted",
-          body: checked.body,
-          citedSeqs: checked.citedSeqs,
-          verification: checked.verification,
-          modelCallId: result.callId,
-        }
-      : {
-          status: "refused",
-          category: result.status === "ok" ? checked.category : "incomplete",
-          verification: checked.verification,
-          modelCallId: result.callId,
-        };
+    let finish: Finish;
+    if (result.status !== "ok") {
+      // Cut off by the output budget: nothing was checked, so no check record is stored.
+      finish = { status: "refused", category: "incomplete", verification: null, modelCallId: result.callId };
+    } else {
+      const checked = verifyNote(result.text, claim.pack);
+      finish = checked.ok
+        ? {
+            status: "drafted",
+            body: checked.body,
+            citedSeqs: checked.citedSeqs,
+            verification: checked.verification,
+            modelCallId: result.callId,
+          }
+        : {
+            status: "refused",
+            category: checked.category,
+            verification: checked.verification,
+            modelCallId: result.callId,
+          };
+    }
     if (await finishNote(db, session, claim.noteId, finish, iso())) written += 1;
   }
 
