@@ -9,6 +9,9 @@ export type Flags = {
   aiProofRoute: boolean;
   // Which model triages inbound email: "meta" (Muse Spark) until Baseten credits land.
   triageProvider: "meta" | "baseten";
+  // Any payout through the payment adapter, mock included. Off means the money executor refuses
+  // before reserving a ledger row, and the adapter refuses again at send.
+  payoutsEnabled: boolean;
   // Payouts: the mock card-load adapter unless Stripe test mode is switched on.
   paymentProvider: "mock" | "stripe_test";
   // Posts to the QuickBooks Online sandbox company. Never a production company.
@@ -21,6 +24,7 @@ export const flags: Flags = {
   aiEnabled: false,
   aiProofRoute: false,
   triageProvider: "meta",
+  payoutsEnabled: false,
   paymentProvider: "mock",
   accountingEnabled: false,
   inboundEmailEnabled: false,
