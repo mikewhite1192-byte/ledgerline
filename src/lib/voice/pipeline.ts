@@ -4,7 +4,7 @@ import { AiError, complete, transcribe, type TranscribeRequest, type TranscribeR
 import { readWav } from "../ai/wav";
 import { readDriverCode } from "../advances/read";
 import { screenUntrustedInput } from "../agent/gateway";
-import { dbTurnStore, openAgentTurn } from "../agent/gateway/store";
+import { dbTurnStore, openAgentTurn, type StoreDeps } from "../agent/gateway/store";
 import { UNTRUSTED_WARNING } from "../agent/gateway/tools/read/get-inbound-message";
 import { runTriage, type TriageResult } from "../agent/gateway/triage/run";
 import type { CompleteFn, GatewayContext, GatewayDeps } from "../agent/gateway/types";
@@ -13,7 +13,7 @@ import { LOOP_TEXT } from "../agent/policy";
 import type { TurnStatus } from "../agent/view";
 import type { Session } from "../auth/claims";
 import { untrustedContentHash } from "../data/content-hash";
-import { getDb, type Queryable, type TenantDb } from "../db";
+import { DbError, getDb, type Queryable, type TenantDb } from "../db";
 import { readTenantZone } from "../money/read";
 import { assertMembership } from "../tenant/context";
 import { isUuid } from "../uuid";
@@ -25,7 +25,8 @@ import { REPLY_FORMAT, REPLY_SYSTEM, parseTranslated, replyTemplate, type ReplyO
 // A driver's voice note, in four steps, each one request inside the 30 second window and each
 // resumable from voice_notes.status:
 //   1. upload: check the clip, transcribe it (Muse Voice Transcribe), store the transcript as an
-//      untrusted input and the original recording for playback. Status 'transcribed'.
+//      untrusted input with its note, then the original recording for playback on its own (a
+//      recording the database refuses costs only the recording). Status 'transcribed'.
 //   2. prepare: the gateway's safety screen (Muse Spark Open), then one Muse Spark call for the
 //      language and an English copy, then the gateway's triage. Status 'ready', or 'blocked'.
 //   3. handOff: one agent turn with the fixed sentence "Handle voice note <id>". The agent reads
@@ -59,8 +60,9 @@ export const REPLY_CALL = { purpose: "voice_note_reply", maxCostCents: 2, timeou
 export const STEP_BUDGET_MS = 27_000;
 export const MIN_CALL_MS = 3_000;
 
-// Model failures worth another press of the button: the note keeps its status.
-const TRANSIENT = new Set(["timeout", "unavailable", "rate_limited", "network"]);
+// Model failures worth another press of the button: the note keeps its status. A spent budget, a
+// switch, missing keys or a billing hold pass once someone fixes them, so they keep it too.
+const TRANSIENT = new Set(["timeout", "unavailable", "rate_limited", "network", "cap", "not_configured", "disabled", "billing"]);
 
 type Opened = Awaited<ReturnType<typeof openAgentTurn>>;
 type OpenTurn = Exclude<Opened, { refused: unknown }>;
@@ -96,6 +98,12 @@ function aiCategory(err: unknown): string | null {
   return err instanceof AiError ? err.category : null;
 }
 
+// What the log may say about a failure that is not a model's: a category or a name, never text.
+function errorName(err: unknown): string {
+  if (err instanceof DbError) return err.category;
+  return err instanceof Error ? err.name : "unknown";
+}
+
 // --- 1. upload ---
 
 export type UploadInput = {
@@ -128,11 +136,17 @@ const INSERT_INPUT_SQL =
   " CAST($5 AS timestamptz))";
 
 const INSERT_NOTE_SQL =
-  "INSERT INTO voice_notes (id, tenant_id, driver_id, input_id, trace_id, created_by, status, audio," +
-  " audio_mime, audio_bytes, duration_ms, transcript_call_id, created_at, updated_at)" +
+  "INSERT INTO voice_notes (id, tenant_id, driver_id, input_id, trace_id, created_by, status," +
+  " duration_ms, transcript_call_id, created_at, updated_at)" +
   " VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid), $5," +
-  " 'transcribed', decode($6, 'base64'), $7, $8, $9, CAST($10 AS uuid), CAST($11 AS timestamptz)," +
-  " CAST($11 AS timestamptz))";
+  " 'transcribed', $6, CAST($7 AS uuid), CAST($8 AS timestamptz), CAST($8 AS timestamptz))";
+
+// The recording travels as one base64 parameter of up to 933,336 characters. The Data API
+// documents a limit on the SQL text and on the answer, not on a parameter, so this statement runs
+// alone, after the note is stored.
+const INSERT_AUDIO_SQL =
+  "INSERT INTO voice_note_audio (tenant_id, voice_note_id, audio, audio_mime, audio_bytes)" +
+  " VALUES (current_tenant_id(), CAST($1 AS uuid), decode($2, 'base64'), $3, $4)";
 
 // The checks that need no database, in order: switches, sizes, the recording's type, the WAV.
 export function checkUpload(input: UploadInput): { durationMs: number } | Refusal {
@@ -205,7 +219,6 @@ export async function uploadVoiceNote(
   }
 
   const inputId = newId();
-  const original = input.original;
   await inTenant(db, session, async (q) => {
     await q.execute(INSERT_INPUT_SQL, [inputId, driverId, transcript, untrustedContentHash("transcript", transcript), nowIso]);
     await q.execute(INSERT_NOTE_SQL, [
@@ -214,14 +227,24 @@ export async function uploadVoiceNote(
       inputId,
       traceId,
       session.sub,
-      original ? base64(original.bytes) : null,
-      original ? original.mime : null,
-      original ? original.bytes.byteLength : null,
       checked.durationMs,
       isUuid(result.callId) ? result.callId : null,
       nowIso,
     ]);
   });
+
+  // The note and its transcript are stored. A refused recording leaves the note without one (its
+  // page says no recording was kept) and is never a reason to transcribe again.
+  const original = input.original;
+  if (original) {
+    try {
+      await inTenant(db, session, (q) =>
+        q.execute(INSERT_AUDIO_SQL, [noteId, base64(original.bytes), original.mime, original.bytes.byteLength]),
+      );
+    } catch (err) {
+      console.error("voice note recording not kept:", errorName(err));
+    }
+  }
   return { ok: true, voiceNoteId: noteId, status: "transcribed" };
 }
 
@@ -396,24 +419,29 @@ const LINK_SQL =
   "UPDATE voice_notes SET conversation_id = CAST($2 AS uuid), updated_at = CAST($3 AS timestamptz)" +
   " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'handed_off'";
 
+// A turn that failed or will never run, closed as failed so it does not stay running.
+async function closeFailedTurn(session: Session, turnId: string, store: StoreDeps = {}): Promise<void> {
+  try {
+    await dbTurnStore(session, store).finishTurn(turnId, {
+      status: "failed",
+      endedReason: "store",
+      text: LOOP_TEXT.failed,
+      summary: "",
+      stepCount: 0,
+      modelCallCount: 0,
+      costNanocents: 0,
+    });
+  } catch (err) {
+    console.error("voice note turn could not be closed:", errorName(err));
+  }
+}
+
 async function runDefault(session: Session, turn: OpenTurn, text: string, startedAt: number): Promise<TurnStatus> {
   try {
     return (await runTurn({ session, turn, text, startedAt }, defaultTurnDeps(session))).status;
   } catch (err) {
     console.error("voice note turn failed:", err instanceof Error ? err.name : "unknown");
-    try {
-      await dbTurnStore(session).finishTurn(turn.turnId, {
-        status: "failed",
-        endedReason: "store",
-        text: LOOP_TEXT.failed,
-        summary: "",
-        stepCount: 0,
-        modelCallCount: 0,
-        costNanocents: 0,
-      });
-    } catch {
-      console.error("voice note turn could not be closed");
-    }
+    await closeFailedTurn(session, turn.turnId);
     return "failed";
   }
 }
@@ -458,7 +486,20 @@ export async function handOffVoiceNote(session: Session, voiceNoteId: string, de
     await inTenant(db, session, (q) => q.execute(UNCLAIM_SQL, [id, iso()]));
     return refused(opened.refused === "busy" ? "busy" : "not_found", opened.refused === "busy");
   }
-  await inTenant(db, session, (q) => q.execute(LINK_SQL, [id, opened.conversationId, iso()]));
+  try {
+    await inTenant(db, session, (q) => q.execute(LINK_SQL, [id, opened.conversationId, iso()]));
+  } catch (err) {
+    // The turn opened but the note may not name it. Give the claim back (UNCLAIM touches only a
+    // note with no conversation, so a link that did land stays) and close the turn that will not
+    // run.
+    try {
+      await inTenant(db, session, (q) => q.execute(UNCLAIM_SQL, [id, iso()]));
+    } catch (unclaimErr) {
+      console.error("voice note claim not given back:", errorName(unclaimErr));
+    }
+    await closeFailedTurn(session, opened.turnId, { db, clock: () => new Date(clock()) });
+    throw err;
+  }
   const turnStatus = await (deps.run ?? runDefault)(session, opened, text, startedAt);
   return { ok: true, voiceNoteId: id, status: "handed_off", conversationId: opened.conversationId, turnId: opened.turnId, turnStatus };
 }

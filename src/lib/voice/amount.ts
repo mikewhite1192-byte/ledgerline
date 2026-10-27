@@ -32,7 +32,7 @@ const WORDS: Readonly<Record<string, number>> = {
 type Token = { text: string; kind: "word" | "number" | "dollar" };
 
 function tokens(text: string): Token[] {
-  const plain = text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+  const plain = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const out: Token[] = [];
   for (const m of plain.matchAll(/\$|\d[\d,.]*\d|\d|[a-z]+/g)) {
     const t = m[0];

@@ -78,8 +78,9 @@ step is its own request, so a slow model never times out the rest, and a stopped
 pressed again from the note's page.
 
 1. **Transcribe.** The browser turns the clip into 16 kHz mono audio and **Muse Voice Transcribe**
-   writes it down, biased to Spanish and English. The transcript is stored as untrusted input; the
-   original clip is kept for playback (up to 700 KB). A failed transcription keeps no recording.
+   writes it down, biased to Spanish and English. The transcript is stored as untrusted input with
+   its note first; the original clip (up to 700 KB) is then kept for playback on its own, so a
+   recording the database refuses never costs the note. A failed transcription keeps no recording.
 2. **Screen, translate, sort.** The gateway's safety screen (**Muse Spark Open**) reads the
    transcript first. A held note goes no further and no model reads its words. Then **Muse Spark**
    names the language and writes an English copy, and the triage model sorts the note through the
@@ -94,4 +95,4 @@ pressed again from the note's page.
 
 The note's page shows who did what: each model call with its latency and cost. Voice intake ships
 off behind its own switch, with a per-carrier daily limit and caps on clip size and length.
-`scripts/voice/make-samples.sh` makes the synthetic sample clips in `public/samples/`.
+`scripts/voice/make-samples.sh` (macOS only) makes the synthetic sample clips in `public/samples/`.

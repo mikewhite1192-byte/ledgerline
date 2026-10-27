@@ -3,7 +3,7 @@ import { flags } from "../../config/flags";
 import { AiError, type AiResult, type TranscribeRequest, type TranscribeResult } from "../ai";
 import type { ScreenOutcome } from "../agent/gateway/screen";
 import { UNTRUSTED_WARNING } from "../agent/gateway/tools/read/get-inbound-message";
-import type { Param, Queryable, TenantDb } from "../db";
+import { DbError, type Param, type Queryable, type TenantDb } from "../db";
 import {
   checkUpload,
   draftVoiceReply,
@@ -97,6 +97,8 @@ type Fake = {
   proposal?: Record<string, unknown> | null;
   // Rows affected per statement, by a word it contains; 1 when not named.
   affected?: Record<string, number>;
+  // Statements that throw, by a word they contain. The attempt is still listed in writes.
+  fail?: string[];
 };
 
 type Written = { sql: string; params: Param[] };
@@ -125,6 +127,7 @@ function fakeDb(f: Fake = {}): TenantDb & { writes: Written[]; reads: string[] }
     },
     async execute(sql: string, params: Param[] = []): Promise<number> {
       writes.push({ sql, params });
+      if ((f.fail ?? []).some((word) => sql.includes(word))) throw new DbError("sql", "54000");
       for (const [word, n] of Object.entries(f.affected ?? {})) if (sql.includes(word)) return n;
       return 1;
     },
@@ -250,7 +253,7 @@ describe("uploadVoiceNote", () => {
     };
   }
 
-  it("stores the transcript as an untrusted input and the recording as base64", async () => {
+  it("stores the transcript with its note, then the recording as base64 in its own statement", async () => {
     const db = fakeDb();
     const d = deps(db, async () => transcribed(`  ${TRANSCRIPT}  `));
     const input = upload();
@@ -259,34 +262,41 @@ describe("uploadVoiceNote", () => {
     expect(d.sent[0].traceId).toBe(TRACE);
     expect(d.sent[0].wav).toBe(input.wav);
     expect(db.reads.find((s) => s.includes("count(*)"))).toBeDefined();
-    const [inputRow, noteRow] = db.writes;
+    expect(db.writes).toHaveLength(3);
+    const [inputRow, noteRow, audioRow] = db.writes;
     expect(inputRow.sql).toMatch(/^INSERT INTO untrusted_inputs/);
     expect(inputRow.params.slice(0, 3)).toEqual([INPUT, DRIVER, TRANSCRIPT]);
     expect(inputRow.params[3]).toMatch(/^[0-9a-f]{64}$/);
     expect(inputRow.params[4]).toBe("2026-11-02T16:00:00.000Z");
     expect(noteRow.sql).toMatch(/^INSERT INTO voice_notes/);
-    expect(noteRow.sql).toContain("decode($6, 'base64')");
-    expect(noteRow.params).toEqual([
-      NOTE,
-      DRIVER,
-      INPUT,
-      TRACE,
-      "sub-1",
-      Buffer.from([1, 2, 3, 4]).toString("base64"),
-      "audio/webm",
-      4,
-      1_000,
-      CALL,
-      "2026-11-02T16:00:00.000Z",
-    ]);
+    expect(noteRow.sql).not.toContain("audio");
+    expect(noteRow.params).toEqual([NOTE, DRIVER, INPUT, TRACE, "sub-1", 1_000, CALL, "2026-11-02T16:00:00.000Z"]);
+    expect(audioRow.sql).toMatch(/^INSERT INTO voice_note_audio/);
+    expect(audioRow.sql).toContain("decode($2, 'base64')");
+    expect(audioRow.params).toEqual([NOTE, Buffer.from([1, 2, 3, 4]).toString("base64"), "audio/webm", 4]);
   });
 
   it("keeps no recording when none was sent, and no call id that is not one", async () => {
     const db = fakeDb();
     const d = deps(db, async () => ({ ...transcribed(), callId: "not-an-id" }));
     await uploadVoiceNote(session, upload({ original: null }), d);
-    expect(db.writes[1].params.slice(5, 8)).toEqual([null, null, null]);
-    expect(db.writes[1].params[9]).toBeNull();
+    expect(db.writes).toHaveLength(2);
+    expect(db.writes.some((w) => w.sql.includes("voice_note_audio"))).toBe(false);
+    expect(db.writes[1].params[6]).toBeNull();
+  });
+
+  it("keeps the note and its transcript when the recording is refused, and never transcribes again", async () => {
+    const db = fakeDb({ fail: ["INSERT INTO voice_note_audio"] });
+    const d = deps(db, async () => transcribed());
+    expect(await uploadVoiceNote(session, upload(), d)).toEqual({ ok: true, voiceNoteId: NOTE, status: "transcribed" });
+    expect(d.sent).toHaveLength(1);
+    expect(db.writes.map((w) => w.sql.slice(0, 30))).toEqual([
+      expect.stringContaining("INSERT INTO untrusted_inputs"),
+      expect.stringContaining("INSERT INTO voice_notes"),
+      expect.stringContaining("INSERT INTO voice_note_audio"),
+    ]);
+    // The log names the category only: no SQL, no parameter, no bytes.
+    expect(logged).toEqual([["voice note recording not kept:", "sql"]]);
   });
 
   it("refuses an unknown driver and a full day before any model call", async () => {
@@ -311,7 +321,9 @@ describe("uploadVoiceNote", () => {
     ["unavailable", true],
     ["rate_limited", true],
     ["network", true],
-    ["cap", false],
+    ["cap", true],
+    ["billing", true],
+    ["not_configured", true],
     ["too_expensive", false],
     ["bad_request", false],
     ["auth", false],
@@ -418,24 +430,29 @@ describe("prepareVoiceNote", () => {
     expect(d.calls.complete).toHaveLength(1);
   });
 
-  it("keeps the note's place on a passing model failure and stops it on a lasting one", async () => {
-    const passing = fakeDb();
-    const p = deps(passing, {
-      complete: async () => {
-        throw new AiError("timeout");
-      },
-    });
-    expect(await prepareVoiceNote(session, NOTE, p)).toEqual({ ok: false, category: "timeout", retryable: true, voiceNoteId: NOTE });
-    expect(passing.writes).toHaveLength(0);
+  it.each(["timeout", "unavailable", "rate_limited", "network", "cap", "not_configured", "disabled", "billing"] as const)(
+    "keeps the note's place on a %s failure, to be pressed again",
+    async (category) => {
+      const passing = fakeDb();
+      const p = deps(passing, {
+        complete: async () => {
+          throw new AiError(category);
+        },
+      });
+      expect(await prepareVoiceNote(session, NOTE, p)).toEqual({ ok: false, category, retryable: true, voiceNoteId: NOTE });
+      expect(passing.writes).toHaveLength(0);
+    },
+  );
 
+  it.each(["too_expensive", "auth", "bad_request", "unknown"] as const)("stops the note on a lasting %s failure", async (category) => {
     const lasting = fakeDb();
     const l = deps(lasting, {
       complete: async () => {
-        throw new AiError("cap");
+        throw new AiError(category);
       },
     });
-    expect(await prepareVoiceNote(session, NOTE, l)).toEqual({ ok: true, voiceNoteId: NOTE, status: "failed", category: "cap" });
-    expect(lasting.writes[0].params.slice(0, 3)).toEqual([NOTE, "failed", "cap"]);
+    expect(await prepareVoiceNote(session, NOTE, l)).toEqual({ ok: true, voiceNoteId: NOTE, status: "failed", category });
+    expect(lasting.writes[0].params.slice(0, 3)).toEqual([NOTE, "failed", category]);
   });
 
   it("stops on an answer it cannot use", async () => {
@@ -578,6 +595,29 @@ describe("handOffVoiceNote", () => {
     const db = fakeDb({ note: stepRow({ status: "ready" }) });
     await expect(handOffVoiceNote(session, NOTE, deps(db, "throw").d)).rejects.toThrow("store down");
     expect(db.writes.at(-1)!.sql).toContain("SET status = 'ready'");
+  });
+
+  it("gives the claim back and closes the unrun turn when the link fails", async () => {
+    const db = fakeDb({ note: stepRow({ status: "ready" }), fail: ["SET conversation_id"] });
+    const { d, calls } = deps(db);
+    await expect(handOffVoiceNote(session, NOTE, d)).rejects.toThrow(DbError);
+    expect(calls.open).toHaveLength(1);
+    expect(calls.run).toHaveLength(0);
+    const sqls = db.writes.map((w) => w.sql);
+    expect(sqls[0]).toContain("SET status = 'handed_off'");
+    expect(sqls[1]).toContain("SET conversation_id");
+    expect(sqls[2]).toContain("SET status = 'ready'");
+    expect(sqls[2]).toContain("conversation_id IS NULL");
+    expect(db.writes[2].params[0]).toBe(NOTE);
+    expect(sqls[3]).toMatch(/UPDATE turns\s+SET status = \$2/);
+    expect(db.writes[3].params.slice(0, 3)).toEqual([TURN, "failed", "store"]);
+  });
+
+  it("still answers the link failure when the claim cannot be given back", async () => {
+    const db = fakeDb({ note: stepRow({ status: "ready" }), fail: ["SET conversation_id", "SET status = 'ready'"] });
+    await expect(handOffVoiceNote(session, NOTE, deps(db).d)).rejects.toThrow(DbError);
+    expect(logged).toContainEqual(["voice note claim not given back:", "sql"]);
+    expect(db.writes.at(-2)!.sql).toMatch(/UPDATE turns/);
   });
 
   it("answers a note already handed over without a new turn, and refuses one not ready", async () => {

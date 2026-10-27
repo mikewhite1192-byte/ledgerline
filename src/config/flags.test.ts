@@ -85,7 +85,7 @@ describe("flags", () => {
     expect(flags.voiceLimits).toEqual({
       maxWavBytes: 2_000_000,
       maxOriginalBytes: 700_000,
-      maxDurationMs: 90_000,
+      maxDurationMs: 60_000,
       voiceNotesPerDay: 20,
     });
     for (const v of Object.values(flags.voiceLimits)) {
@@ -93,5 +93,8 @@ describe("flags", () => {
     }
     // One stored recording reads back under the Data API's 1 MiB answer limit.
     expect(Math.ceil(flags.voiceLimits.maxOriginalBytes / 3) * 4).toBeLessThan(1_048_576);
+    // The longest clip fits the WAV cap (16 kHz 16-bit mono is 32 bytes a millisecond after the
+    // 44-byte header), so the duration check is the one that binds.
+    expect(flags.voiceLimits.maxDurationMs).toBeLessThanOrEqual(Math.floor((flags.voiceLimits.maxWavBytes - 44) / 32));
   });
 });

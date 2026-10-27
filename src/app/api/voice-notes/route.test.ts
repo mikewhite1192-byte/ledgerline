@@ -99,6 +99,22 @@ describe("POST /api/voice-notes", () => {
     expect(mocks.uploadVoiceNote).not.toHaveBeenCalled();
   });
 
+  it("refuses a recording or an original past its own cap before copying its bytes", async () => {
+    flags.voiceLimits.maxWavBytes = 3;
+    const wavTooBig = await post({ driverId: DRIVER, wav: wav() });
+    expect(wavTooBig.status).toBe(413);
+    expect(await wavTooBig.json()).toEqual({ error: "too_large", retryable: false });
+
+    Object.assign(flags, structuredClone(saved));
+    flags.voiceIntakeEnabled = true;
+    flags.voiceLimits.maxOriginalBytes = 1;
+    const original = new Blob([new Uint8Array([5, 6])], { type: "audio/webm" });
+    const originalTooBig = await post({ driverId: DRIVER, wav: wav(), original });
+    expect(originalTooBig.status).toBe(413);
+    expect(await originalTooBig.json()).toEqual({ error: "too_large", retryable: false });
+    expect(mocks.uploadVoiceNote).not.toHaveBeenCalled();
+  });
+
   it("refuses missing fields", async () => {
     expect((await post({ wav: wav() })).status).toBe(400);
     expect((await post({ driverId: DRIVER })).status).toBe(400);
@@ -170,16 +186,89 @@ describe("a voice note's step routes", () => {
 });
 
 describe("GET /api/voice-notes/:id/audio", () => {
-  const get = (id = NOTE) => audio(new Request(`https://app.example/api/voice-notes/${id}/audio`), { params: Promise.resolve({ id }) });
+  const get = (id = NOTE, headers: Record<string, string> = {}) =>
+    audio(new Request(`https://app.example/api/voice-notes/${id}/audio`, { headers }), { params: Promise.resolve({ id }) });
+  const ranged = (range: string, more: Record<string, string> = {}) => get(NOTE, { range, ...more });
+  const bytesOf = async (response: Response) => Array.from(new Uint8Array(await response.arrayBuffer()));
 
-  it("serves the recording privately, never cached or sniffed", async () => {
+  it("serves the recording privately, never cached or sniffed, and says it takes ranges", async () => {
     const response = await get();
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("audio/webm");
     expect(response.headers.get("content-length")).toBe("3");
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(response.headers.get("content-range")).toBeNull();
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([9, 8, 7]);
+    expect(await bytesOf(response)).toEqual([9, 8, 7]);
+  });
+
+  it.each([
+    ["bytes=0-1", "bytes 0-1/3", [9, 8]],
+    ["bytes=1-", "bytes 1-2/3", [8, 7]],
+    ["bytes=-2", "bytes 1-2/3", [8, 7]],
+    ["bytes=-9", "bytes 0-2/3", [9, 8, 7]],
+    ["bytes=1-99", "bytes 1-2/3", [8, 7]],
+    ["bytes=2-2", "bytes 2-2/3", [7]],
+  ])("answers the single range %s as 206 with %s", async (range, contentRange, body) => {
+    const response = await ranged(range);
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-range")).toBe(contentRange);
+    expect(response.headers.get("content-length")).toBe(String(body.length));
+    expect(response.headers.get("content-type")).toBe("audio/webm");
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await bytesOf(response)).toEqual(body);
+  });
+
+  it.each(["bytes=3-", "bytes=9-12", "bytes=-0"])("answers the range %s that cannot be met as 416", async (range) => {
+    const response = await ranged(range);
+    expect(response.status).toBe(416);
+    expect(response.headers.get("content-range")).toBe("bytes */3");
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await bytesOf(response)).toEqual([]);
+  });
+
+  it.each(["bytes=0-0,1-1", "bytes=abc", "items=0-1", "bytes=2-1", "bytes=-"])(
+    "answers %s, several ranges or a malformed one, with the whole clip",
+    async (range) => {
+      const response = await ranged(range);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-range")).toBeNull();
+      expect(response.headers.get("content-length")).toBe("3");
+      expect(await bytesOf(response)).toEqual([9, 8, 7]);
+    },
+  );
+
+  it("answers a range sent with If-Range with the whole clip, since it sends no validator", async () => {
+    const response = await ranged("bytes=0-1", { "if-range": '"abc"' });
+    expect(response.status).toBe(200);
+    expect(await bytesOf(response)).toEqual([9, 8, 7]);
+  });
+
+  it("still checks membership and the switch before serving a range", async () => {
+    mocks.member = false;
+    expect((await ranged("bytes=0-1")).status).toBe(403);
+    mocks.member = true;
+    flags.voiceIntakeEnabled = false;
+    expect((await ranged("bytes=0-1")).status).toBe(403);
+    expect(mocks.readVoiceAudio).not.toHaveBeenCalled();
+  });
+
+  it("answers a failed read with its category, never the error", async () => {
+    mocks.readVoiceAudio.mockRejectedValue(new Error("Database returned more than the allowed response size limit"));
+    const response = await get();
+    expect(response.status).toBe(503);
+    const text = await response.text();
+    expect(text).not.toContain("response size");
+    expect(JSON.parse(text)).toEqual({ error: "unavailable", retryable: true });
+  });
+
+  it("refuses an empty recording as missing", async () => {
+    mocks.readVoiceAudio.mockResolvedValue({ mime: "audio/webm", bytes: Buffer.alloc(0) });
+    expect((await get()).status).toBe(404);
   });
 
   it("refuses a missing recording, a bad id, a non-member and no login", async () => {

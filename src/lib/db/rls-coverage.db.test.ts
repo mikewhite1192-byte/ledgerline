@@ -70,6 +70,7 @@ describe("row-level security coverage", () => {
         "tenants",
         "turn_steps",
         "turns",
+        "voice_note_audio",
         "voice_notes",
         ...TENANT_TABLES,
       ]),

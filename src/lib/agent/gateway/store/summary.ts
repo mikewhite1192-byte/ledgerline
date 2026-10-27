@@ -50,7 +50,9 @@ const LABEL_SQL = `CASE p.subject_table
     WHEN 'invoices' THEN (SELECT i.invoice_number FROM invoices i WHERE i.id = p.subject_id)
   END`;
 
-// The sentence the voice note page hands the agent. Only this exact form adds the note's section.
+// The sentence the voice note page hands the agent. Only this exact form adds the note's section,
+// and only while the page's hand-off holds the note: status handed_off, no conversation linked yet.
+// The same sentence typed in a chat finds the note either not claimed or already linked.
 export const VOICE_NOTE_TEXT =
   /^Handle voice note ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/;
 
@@ -64,17 +66,17 @@ type VoiceRow = {
   amount_cents: number | string | null;
   driver_id: string | null;
   driver_code: string | null;
+  conversation_id: string | null;
   local_date: string;
 };
 
 const VOICE_SQL =
   "SELECT CAST(v.id AS text) AS id, CAST(v.input_id AS text) AS input_id, v.status, v.language," +
   " v.triage_category, v.triage_urgency, v.amount_cents, CAST(v.driver_id AS text) AS driver_id," +
-  " d.code AS driver_code, to_char(timezone($2, v.created_at), 'YYYY-MM-DD') AS local_date" +
+  " d.code AS driver_code, CAST(v.conversation_id AS text) AS conversation_id," +
+  " to_char(timezone($2, v.created_at), 'YYYY-MM-DD') AS local_date" +
   " FROM voice_notes v LEFT JOIN drivers d ON d.tenant_id = v.tenant_id AND d.id = v.driver_id" +
   " WHERE v.tenant_id = current_tenant_id() AND v.id = CAST($1 AS uuid)";
-
-const READY_FOR_AGENT = new Set(["ready", "handed_off", "replied"]);
 
 // The voice note a turn was handed: ids, enums, the driver's code and the amount heard, never the
 // note's words (the agent reads those through get_voice_note, screened and inside the warning).
@@ -82,7 +84,7 @@ export function voiceNoteLines(row: VoiceRow | undefined, money: (n: number) => 
   if (!row) return ["That voice note is not on file for this carrier. Say so and do nothing else."];
   const lines = [`Voice note ${row.id}, status ${row.status}, received ${row.local_date}`];
   lines.push(row.driver_id ? `Driver: ${row.driver_code ?? "unknown code"} (driverId ${row.driver_id})` : "Driver: not matched");
-  if (!READY_FOR_AGENT.has(row.status) || !row.input_id) {
+  if (row.status !== "handed_off" || row.conversation_id !== null || !row.input_id) {
     lines.push(`It is not ready for the agent. Say so and do nothing else.`);
     return lines;
   }

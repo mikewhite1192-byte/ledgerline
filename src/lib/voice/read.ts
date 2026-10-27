@@ -1,3 +1,4 @@
+import { flags } from "../../config/flags";
 import { DbError, type Queryable } from "../db";
 import { isUuid } from "../uuid";
 import type { VoiceStatus } from "./pipeline";
@@ -131,10 +132,11 @@ export async function readVoiceDetail(q: Queryable, id: string): Promise<VoiceDe
   if (!isUuid(id)) return null;
   const [r] = await q.query<DetailRow>(
     `SELECT ${BASE_COLUMNS}, CAST(v.input_id AS text) AS input_id, CAST(v.trace_id AS text) AS trace_id,` +
-      " (v.audio IS NOT NULL) AS has_audio, v.audio_mime, v.language_confidence_milli, v.english_text," +
+      " (a.voice_note_id IS NOT NULL) AS has_audio, a.audio_mime, v.language_confidence_milli, v.english_text," +
       " v.reply_text, CAST(v.conversation_id AS text) AS conversation_id, i.body_text, i.content_hash" +
       " FROM voice_notes v LEFT JOIN drivers d ON d.tenant_id = v.tenant_id AND d.id = v.driver_id" +
       " LEFT JOIN untrusted_inputs i ON i.tenant_id = v.tenant_id AND i.id = v.input_id" +
+      " LEFT JOIN voice_note_audio a ON a.tenant_id = v.tenant_id AND a.voice_note_id = v.id" +
       " WHERE v.tenant_id = current_tenant_id() AND v.id = CAST($1 AS uuid)",
     [id.toLowerCase()],
   );
@@ -209,13 +211,16 @@ export async function readVoiceDetail(q: Queryable, id: string): Promise<VoiceDe
   };
 }
 
-// The stored recording as base64 (the Data API returns bytea that way), with its type.
+// The stored recording as base64 (the Data API returns bytea that way), with its type. null when
+// the note kept none, or when it is over the playback cap (its bytes are then never sent, so the
+// answer stays under the Data API's limit). A copy that does not match its size throws.
 export async function readVoiceAudio(q: Queryable, id: string): Promise<{ mime: string; bytes: Buffer } | null> {
   if (!isUuid(id)) return null;
   const [r] = await q.query<{ audio_mime: string | null; audio_b64: string | null; audio_bytes: number | string | null }>(
-    "SELECT audio_mime, encode(audio, 'base64') AS audio_b64, audio_bytes FROM voice_notes" +
-      " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
-    [id.toLowerCase()],
+    "SELECT audio_mime, audio_bytes," +
+      " CASE WHEN audio_bytes <= CAST($2 AS integer) THEN encode(audio, 'base64') END AS audio_b64" +
+      " FROM voice_note_audio WHERE tenant_id = current_tenant_id() AND voice_note_id = CAST($1 AS uuid)",
+    [id.toLowerCase(), flags.voiceLimits.maxOriginalBytes],
   );
   if (!r || r.audio_mime === null || r.audio_b64 === null) return null;
   const bytes = Buffer.from(r.audio_b64.replace(/\s+/g, ""), "base64");

@@ -4,8 +4,15 @@
 # no real names: the driver codes are the seed's synthetic ones. Each clip is 16 kHz mono 16-bit
 # WAV, the format the transcription model takes, and well under the 700 KB playback cap.
 #
+# macOS only: `say` and `afconvert` ship with macOS and nowhere else.
+#
 # Usage: scripts/voice/make-samples.sh
 set -euo pipefail
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "make-samples.sh runs on macOS only (it needs say and afconvert)." >&2
+  exit 1
+fi
 
 cd "$(dirname "$0")/../.."
 out="public/samples"

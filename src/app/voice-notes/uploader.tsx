@@ -61,6 +61,22 @@ async function toWav(clip: Blob): Promise<{ wav: Uint8Array; durationMs: number 
   return { wav: encodeWav(rendered.getChannelData(0), VOICE_SAMPLE_RATE), durationMs: Math.round(decoded.duration * 1000) };
 }
 
+// Why the clip itself will not be kept for playback, in plain words; null when it will be. The note
+// and its transcript are kept either way.
+function originalNotKept(clip: Blob, maxBytes: number): string | null {
+  if (clip.size > maxBytes) {
+    return `The recording itself will not be kept: it is over ${Math.floor(maxBytes / 1000)} KB. The note and its transcript will be.`;
+  }
+  if (!isVoiceMime(voiceMime(clip.type))) {
+    return "The recording itself will not be kept: its file type cannot be played back here. The note and its transcript will be.";
+  }
+  return null;
+}
+
+// The recorder stops this much before the cap: a recording runs a little past its timer, and a
+// clip over the cap is refused.
+const STOP_EARLY_MS = 500;
+
 const noSubscribe = () => () => undefined;
 const browserCanRecord = () => typeof window.MediaRecorder !== "undefined" && navigator.mediaDevices !== undefined;
 
@@ -116,7 +132,7 @@ export function Uploader({
       recorder.current = rec;
       rec.start();
       setRecording(true);
-      stopTimer.current = window.setTimeout(() => rec.state === "recording" && rec.stop(), longestMs);
+      stopTimer.current = window.setTimeout(() => rec.state === "recording" && rec.stop(), longestMs - STOP_EARLY_MS);
     } catch {
       setNotice("The microphone could not be opened. Pick a clip instead.");
     }
@@ -153,9 +169,8 @@ export function Uploader({
       const form = new FormData();
       form.set("driverId", driverId);
       form.set("wav", new Blob([new Uint8Array(converted.wav)], { type: "audio/wav" }), "clip.wav");
-      const type = voiceMime(clip.type);
-      if (clip.size > 0 && clip.size <= limits.maxOriginalBytes && isVoiceMime(type)) {
-        form.set("original", new Blob([clip], { type }), "original");
+      if (clip.size > 0 && originalNotKept(clip, limits.maxOriginalBytes) === null) {
+        form.set("original", new Blob([clip], { type: voiceMime(clip.type) }), "original");
       }
 
       setStage("transcribing");
@@ -189,6 +204,8 @@ export function Uploader({
   }
 
   const busy = stage !== null;
+  const picked = recorded ?? file;
+  const notKept = picked && !recording ? originalNotKept(picked, limits.maxOriginalBytes) : null;
   const shown = agentOn ? STAGES : STAGES.filter((s) => s.key !== "handing_off");
   const at = stage ? shown.findIndex((s) => s.key === stage) : -1;
   return (
@@ -240,6 +257,7 @@ export function Uploader({
           </div>
         )}
       </Field>
+      {notKept ? <p className="text-small text-foreground-2">{notKept}</p> : null}
       {busy ? (
         <ol aria-live="polite" className="grid gap-1.5 text-small">
           {shown.map((s, i) => (

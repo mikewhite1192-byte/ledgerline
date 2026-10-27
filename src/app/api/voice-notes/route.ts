@@ -30,6 +30,10 @@ export async function POST(request: Request) {
   const original = read.form.get("original");
   if (typeof driverId !== "string" || !(wav instanceof Blob)) return voiceRefuse("bad_request");
   if (original !== null && !(original instanceof Blob)) return voiceRefuse("bad_request");
+  // Each part against its own cap before its bytes are copied out of the form.
+  if (wav.size > limits.maxWavBytes || (original !== null && original.size > limits.maxOriginalBytes)) {
+    return voiceRefuse("too_large");
+  }
   try {
     const result = await uploadVoiceNote(session, {
       driverId,

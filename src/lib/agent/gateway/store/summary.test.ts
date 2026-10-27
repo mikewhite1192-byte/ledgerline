@@ -47,6 +47,7 @@ describe("the voice note section", () => {
     amount_cents: "30000",
     driver_id: "22222222-2222-4222-8222-222222222222",
     driver_code: "BR-C01",
+    conversation_id: null,
     local_date: "2026-11-02",
   };
 
@@ -75,5 +76,18 @@ describe("the voice note section", () => {
     expect(blocked.at(-1)).toBe("It is not ready for the agent. Say so and do nothing else.");
     expect(blocked.join("\n")).not.toContain("get_voice_note");
     expect(voiceNoteLines(undefined, money)).toEqual(["That voice note is not on file for this carrier. Say so and do nothing else."]);
+  });
+
+  it("adds the note only under the page's hand-off claim, never for the sentence typed in a chat", () => {
+    const notReady = "It is not ready for the agent. Say so and do nothing else.";
+    // Typed on a note no hand-off claimed yet.
+    const ready = voiceNoteLines({ ...row, status: "ready" }, money);
+    expect(ready.at(-1)).toBe(notReady);
+    expect(ready.join("\n")).not.toContain("propose_advance");
+    // Typed on a note whose hand-off already linked its own conversation, or already replied.
+    const linked = voiceNoteLines({ ...row, conversation_id: "99999999-9999-4999-8999-999999999999" }, money);
+    expect(linked.at(-1)).toBe(notReady);
+    expect(voiceNoteLines({ ...row, status: "replied" }, money).at(-1)).toBe(notReady);
+    expect(voiceNoteLines({ ...row, input_id: null }, money).at(-1)).toBe(notReady);
   });
 });

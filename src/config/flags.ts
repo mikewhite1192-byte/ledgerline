@@ -118,7 +118,8 @@ export type Flags = {
     // The original recording kept for playback; one row must read back under the Data API's
     // 1 MiB answer limit (base64 of 700,000 bytes is 933,336 characters).
     maxOriginalBytes: number;
-    // Longer audio is refused before the transcription call.
+    // Longer audio is refused before the transcription call: the 60 seconds the page promises,
+    // inside what the WAV cap holds, so the words, the recorder and the server agree.
     maxDurationMs: number;
     // Voice notes one carrier can upload in one of its local days.
     voiceNotesPerDay: number;
@@ -162,5 +163,5 @@ export const flags: Flags = {
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
   reportsEnabled: false,
   voiceIntakeEnabled: false,
-  voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 90_000, voiceNotesPerDay: 20 },
+  voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
 };

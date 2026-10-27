@@ -1,20 +1,22 @@
--- A driver's voice note: the recording kept for playback, where it is in the pipeline (transcribed,
--- screened, translated, sorted, handed to the agent, replied), and the ids of the model calls that
--- worked on it. The transcript itself is an untrusted input (0008, kind 'transcript', source
+-- A driver's voice note: where it is in the pipeline (transcribed, screened, translated, sorted,
+-- handed to the agent, replied), the ids of the model calls that worked on it, and the recording
+-- kept for playback. The transcript itself is an untrusted input (0008, kind 'transcript', source
 -- 'voice'), so it is screened like any other outside message before a model reads it.
 --
--- The table follows db/README.md: tenant_id with ON DELETE CASCADE, ENABLE and FORCE row-level
+-- Both tables follow db/README.md: tenant_id with ON DELETE CASCADE, ENABLE and FORCE row-level
 -- security and the one tenant_isolation policy. Ids are made by the app. Every reference to another
 -- tenant table is a composite foreign key on (tenant_id, x_id); removing the driver, the input or
 -- the conversation clears only that column.
 --
--- Grants: SELECT, INSERT and DELETE, and UPDATE on the pipeline's own columns only. The recording
--- (audio, audio_mime, audio_bytes), its driver, its input, its trace and its tenant are fixed once
--- the row is written.
+-- Grants on voice_notes: SELECT and INSERT, and UPDATE on the pipeline's own columns only. Its
+-- driver, its input, its trace and its tenant are fixed once the row is written. Nothing in the app
+-- removes a note; a demo reseed clears them through the admin login.
 --
--- The recording is stored here (design D1), capped at 700,000 bytes so one row reads back under the
--- Data API's 1 MiB answer limit. The WAV sent to the model is not stored. Numbers are integers
--- (the Data API takes no floats): the language confidence is in thousandths.
+-- The recording has its own table (voice_note_audio), written by its own statement after the note
+-- and its transcript are stored, so a recording the database refuses costs only the recording,
+-- never the note or the transcription already paid for. It is capped at 700,000 bytes so one row
+-- reads back under the Data API's 1 MiB answer limit. The WAV sent to the model is not stored.
+-- Numbers are integers (the Data API takes no floats): the language confidence is in thousandths.
 
 CREATE TABLE voice_notes (
   id                        uuid PRIMARY KEY,
@@ -26,10 +28,6 @@ CREATE TABLE voice_notes (
   status                    text NOT NULL CHECK (status IN
                               ('transcribed', 'blocked', 'ready', 'handed_off', 'replied', 'failed')),
   fail_category             text CHECK (fail_category ~ '^[a-z_]{2,40}$'),
-  audio                     bytea,
-  audio_mime                text CHECK (audio_mime IN
-                              ('audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/ogg')),
-  audio_bytes               integer CHECK (audio_bytes BETWEEN 1 AND 700000),
   duration_ms               integer CHECK (duration_ms BETWEEN 1 AND 600000),
   transcript_call_id        uuid,
   language                  text CHECK (language IN ('en', 'es', 'other', 'unknown')),
@@ -45,9 +43,6 @@ CREATE TABLE voice_notes (
   reply_call_id             uuid,
   created_at                timestamptz NOT NULL DEFAULT now(),
   updated_at                timestamptz NOT NULL DEFAULT now(),
-  -- The recording, its type and its size come together, and the size is the stored length.
-  CHECK ((audio IS NULL) = (audio_mime IS NULL) AND (audio IS NULL) = (audio_bytes IS NULL)),
-  CHECK (audio IS NULL OR octet_length(audio) = audio_bytes),
   -- A stopped note says why, as a category; a note still moving has no category.
   CHECK ((status IN ('failed', 'blocked')) = (fail_category IS NOT NULL)),
   -- Past the safety screen and the translation, a note has its language and English text; a
@@ -72,8 +67,30 @@ ALTER TABLE voice_notes FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON voice_notes
   USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
 
-GRANT SELECT, INSERT, DELETE ON voice_notes TO payday_app;
+GRANT SELECT, INSERT ON voice_notes TO payday_app;
 GRANT UPDATE (status, fail_category, language, language_confidence_milli, english_text,
               prepare_call_id, triage_category, triage_urgency, triage_call_id, amount_cents,
               conversation_id, reply_text, reply_call_id, updated_at)
   ON voice_notes TO payday_app;
+
+-- The recording of one note, as recorded or picked, with its type; the size column is the stored
+-- length. A note without a row here kept no recording (none was sent, or the database refused it).
+-- The app may read and add a recording, never change or remove one; it goes with its note.
+CREATE TABLE voice_note_audio (
+  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  voice_note_id  uuid NOT NULL,
+  audio          bytea NOT NULL,
+  audio_mime     text NOT NULL CHECK (audio_mime IN
+                   ('audio/webm', 'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/ogg')),
+  audio_bytes    integer NOT NULL CHECK (audio_bytes BETWEEN 1 AND 700000),
+  CHECK (octet_length(audio) = audio_bytes),
+  PRIMARY KEY (tenant_id, voice_note_id),
+  FOREIGN KEY (tenant_id, voice_note_id) REFERENCES voice_notes (tenant_id, id) ON DELETE CASCADE
+);
+
+ALTER TABLE voice_note_audio ENABLE ROW LEVEL SECURITY;
+ALTER TABLE voice_note_audio FORCE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON voice_note_audio
+  USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
+
+GRANT SELECT, INSERT ON voice_note_audio TO payday_app;

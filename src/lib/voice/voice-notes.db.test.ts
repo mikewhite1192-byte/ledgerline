@@ -7,7 +7,7 @@ import { buildStateSummary } from "../agent/gateway/store/summary";
 import { VOICE_NOTE_SQL } from "../agent/gateway/tools/read/get-voice-note";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, Queryable, TenantDb } from "../db/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { assertMembership } from "../tenant/context";
 import {
@@ -24,9 +24,10 @@ import { encodeWav } from "./wav-encode";
 
 // Voice notes against a real database, as the app's own role, with the models, the screen and
 // the agent faked: a note goes from upload to reply draft; the recording reads back byte for byte;
-// the words stay hidden until the screen passed them; the daily count follows the carrier's own
-// day; the recording, its tenant and its driver cannot be changed; the checks hold; another
-// carrier sees nothing. Fixed instants only. Every tenant made here is removed after each test.
+// a recording that cannot be stored leaves the note and its transcript; the words stay hidden
+// until the screen passed them; the daily count follows the carrier's own day; the recording, its
+// tenant and its driver cannot be changed; the checks hold; another carrier sees nothing. Fixed
+// instants only. Every tenant made here is removed after each test.
 
 const saved = structuredClone(flags);
 // 10:00 in Chicago on Monday Nov 2, 2026.
@@ -119,12 +120,23 @@ async function addNote(f: Fixture, cols: Record<string, string | number | null> 
   await admin.withTenant(f.tenantId, (q) =>
     q.execute(
       `INSERT INTO voice_notes (tenant_id, ${names.join(", ")}) VALUES (current_tenant_id(), ${names
-        .map((n, i) => (n === "audio" ? `decode($${i + 1}, 'base64')` : `$${i + 1}`))
+        .map((_n, i) => `$${i + 1}`)
         .join(", ")})`,
       names.map((n) => row[n]),
     ),
   );
   return id;
+}
+
+// A recording row written by the admin login, so its checks can be tried directly.
+async function addAudio(f: Fixture, voiceNoteId: string, audioB64: string, mime: string | null, bytes: number) {
+  await admin.withTenant(f.tenantId, (q) =>
+    q.execute(
+      "INSERT INTO voice_note_audio (tenant_id, voice_note_id, audio, audio_mime, audio_bytes)" +
+        " VALUES (current_tenant_id(), CAST($1 AS uuid), decode($2, 'base64'), $3, $4)",
+      [voiceNoteId, audioB64, mime, bytes],
+    ),
+  );
 }
 
 describe("voice notes (database)", () => {
@@ -197,27 +209,43 @@ describe("voice notes (database)", () => {
         f.session.sub,
       ]),
     );
+    const summaryFor = (text: string) =>
+      app.withTenant(f.tenantId, (q) => buildStateSummary(q, f.session, conversationId, new Date(NOW), 10_000, text));
+    const NOT_READY = "It is not ready for the agent. Say so and do nothing else.";
+
+    // The same sentence typed in a chat before the page hands the note over finds it not claimed.
+    const early = await summaryFor(handOffText(id));
+    expect(early.text).toContain(NOT_READY);
+    expect(early.text).not.toContain(`requestRef ${inputId}`);
+
+    // The state summary is built while the turn opens, under the page's claim: it names the
+    // note's ids, never its words.
+    let summary: { text: string } | undefined;
     const handed = await handOffVoiceNote(
       f.session,
       id,
       deps({
         newId: () => randomUUID(),
-        open: async (_s, input) => ({ conversationId, turnId: input.turnId }) as never,
+        open: async (_s, input) => {
+          summary = await summaryFor(input.text);
+          return { conversationId, turnId: input.turnId } as never;
+        },
         run: async () => "done",
       }),
     );
     expect(handed).toMatchObject({ ok: true, status: "handed_off", conversationId, turnStatus: "done" });
     expect((await read(id))?.conversationId).toBe(conversationId);
+    expect(summary?.text).toContain("Voice note to handle:");
+    expect(summary?.text).toContain(`requestRef ${inputId}`);
+    expect(summary?.text).toContain("requestedOn 2026-11-02");
+    expect(summary?.text).not.toContain(NOT_READY);
+    expect(summary?.text).not.toContain("adelanto");
+    expect(summary?.text).not.toContain("diesel");
 
-    // The state summary for the hand-off sentence names the note's ids, never its words.
-    const summary = await app.withTenant(f.tenantId, (q) =>
-      buildStateSummary(q, f.session, conversationId, new Date(NOW), 10_000, handOffText(id)),
-    );
-    expect(summary.text).toContain("Voice note to handle:");
-    expect(summary.text).toContain(`requestRef ${inputId}`);
-    expect(summary.text).toContain("requestedOn 2026-11-02");
-    expect(summary.text).not.toContain("adelanto");
-    expect(summary.text).not.toContain("diesel");
+    // Once the note names its conversation, the typed sentence finds it already handled.
+    const late = await summaryFor(handOffText(id));
+    expect(late.text).toContain(NOT_READY);
+    expect(late.text).not.toContain(`requestRef ${inputId}`);
 
     // No proposal yet: the draft says the note was received, translated back to Spanish.
     const spanish = "Recibimos tu nota de voz. La oficina la está revisando y te responderá.";
@@ -279,6 +307,49 @@ describe("voice notes (database)", () => {
     expect(audio?.mime).toBe("audio/webm");
     expect(audio?.bytes.byteLength).toBe(original.byteLength);
     expect(sha(audio!.bytes)).toBe(sha(original));
+  });
+
+  it("keeps the note and its transcript when the recording cannot be stored, and transcribes once", async () => {
+    const f = A!;
+    // The app's own database, refusing only the recording's statement.
+    const refusing: TenantDb = {
+      withTenant: <T,>(tenantId: string, fn: (q: Queryable) => Promise<T>) =>
+        app.withTenant(tenantId, (q) =>
+          fn({
+            query: (sql, params) => q.query(sql, params),
+            execute: async (sql, params) => {
+              if (sql.includes("voice_note_audio")) throw new Error("payload too large");
+              return q.execute(sql, params);
+            },
+          }),
+        ),
+    };
+    let transcribed = 0;
+    const r = await uploadVoiceNote(
+      f.session,
+      { driverId: f.driverId, wav: wav(), original: { bytes: randomBytes(1_000), mime: "audio/webm" } },
+      deps({
+        db: refusing,
+        transcribe: async (): Promise<TranscribeResult> => {
+          transcribed += 1;
+          return { callId: randomUUID(), transcript: TRANSCRIPT, turns: [], audioDurationMs: 1_000, costNanocents: 1 };
+        },
+      }),
+    );
+    expect(r).toMatchObject({ ok: true, status: "transcribed" });
+    expect(transcribed).toBe(1);
+    const id = (r as { voiceNoteId: string }).voiceNoteId;
+    const detail = await app.withTenant(f.tenantId, (q) => readVoiceDetail(q, id));
+    expect(detail).toMatchObject({ status: "transcribed", hasAudio: false, audioMime: null });
+    expect(detail?.inputId).not.toBeNull();
+    const [input] = await app.withTenant(f.tenantId, (q) =>
+      q.query<{ body_text: string }>(
+        "SELECT body_text FROM untrusted_inputs WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [detail!.inputId!],
+      ),
+    );
+    expect(input.body_text).toBe(TRANSCRIPT);
+    expect(await app.withTenant(f.tenantId, (q) => readVoiceAudio(q, id))).toBeNull();
   });
 
   it("keeps no recording and no input for a failed transcription", async () => {
@@ -360,31 +431,43 @@ describe("voice notes (database)", () => {
       ),
     );
     expect(state).toBe("42501");
+    // Nor a recording written into carrier A's note from carrier B.
+    const audioState = await sqlStateOf(
+      app.withTenant(b.tenantId, (q) =>
+        q.execute(
+          "INSERT INTO voice_note_audio (tenant_id, voice_note_id, audio, audio_mime, audio_bytes) VALUES (CAST($1 AS uuid), CAST($2 AS uuid), decode('AAAA', 'base64'), 'audio/webm', 3)",
+          [A!.tenantId, id],
+        ),
+      ),
+    );
+    expect(audioState).toBe("42501");
     const changed = await app.withTenant(b.tenantId, (q) =>
       q.execute("UPDATE voice_notes SET status = 'failed', fail_category = 'timeout' WHERE id = CAST($1 AS uuid)", [id]),
     );
     expect(changed).toBe(0);
   });
 
-  it("fixes the recording, its driver, its input and its tenant once written", async () => {
+  it("fixes the recording, its driver, its input and its tenant once written, and deletes nothing", async () => {
     const f = A!;
     const id = await uploaded(f);
+    const asApp = (sql: string) => sqlStateOf(app.withTenant(f.tenantId, (q) => q.execute(sql, [id])));
     for (const set of [
-      "audio = decode('AAAA', 'base64')",
-      "audio_mime = 'audio/wav'",
-      "audio_bytes = 3",
       "driver_id = NULL",
       "input_id = NULL",
       "trace_id = gen_random_uuid()",
       `tenant_id = CAST('${B!.tenantId}' AS uuid)`,
     ]) {
-      const state = await sqlStateOf(
-        app.withTenant(f.tenantId, (q) =>
-          q.execute(`UPDATE voice_notes SET ${set} WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`, [id]),
-        ),
-      );
-      expect(state, set).toBe("42501");
+      expect(await asApp(`UPDATE voice_notes SET ${set} WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`), set).toBe("42501");
     }
+    for (const set of ["audio = decode('AAAA', 'base64')", "audio_mime = 'audio/wav'", "audio_bytes = 3"]) {
+      expect(
+        await asApp(`UPDATE voice_note_audio SET ${set} WHERE tenant_id = current_tenant_id() AND voice_note_id = CAST($1 AS uuid)`),
+        set,
+      ).toBe("42501");
+    }
+    expect(await asApp("DELETE FROM voice_note_audio WHERE tenant_id = current_tenant_id() AND voice_note_id = CAST($1 AS uuid)")).toBe("42501");
+    expect(await asApp("DELETE FROM voice_notes WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)")).toBe("42501");
+    expect(await app.withTenant(f.tenantId, (q) => readVoiceAudio(q, id))).not.toBeNull();
   });
 
   it("holds the table's checks", async () => {
@@ -396,13 +479,20 @@ describe("voice notes (database)", () => {
     expect(await refused({ status: "transcribed", fail_category: "timeout" })).toBe("23514");
     expect(await refused({ status: "ready", fail_category: null })).toBe("23514");
     expect(await refused({ fail_category: "Upstream said 500" })).toBe("23514");
-    expect(await refused({ audio: b64(10), audio_mime: "text/html", audio_bytes: 10 })).toBe("23514");
-    expect(await refused({ audio: b64(10), audio_mime: "audio/webm", audio_bytes: 11 })).toBe("23514");
-    expect(await refused({ audio: b64(10), audio_mime: null, audio_bytes: 10 })).toBe("23514");
-    expect(await refused({ audio: b64(700_001), audio_mime: "audio/webm", audio_bytes: 700_001 })).toBe("23514");
     expect(await refused({ amount_cents: 0 })).toBe("23514");
     expect(await refused({ language_confidence_milli: 1_001 })).toBe("23514");
     expect(await refused({ status: "nonsense" })).toBe("23514");
-    expect(await refused({ audio: b64(10), audio_mime: "audio/webm", audio_bytes: 10 })).toBe("no error");
+    expect(await refused({})).toBe("no error");
+
+    const note = await addNote(f);
+    const audioRefused = (audioB64: string, mime: string | null, bytes: number) => sqlStateOf(addAudio(f, note, audioB64, mime, bytes));
+    expect(await audioRefused(b64(10), "text/html", 10)).toBe("23514");
+    expect(await audioRefused(b64(10), "audio/webm", 11)).toBe("23514");
+    expect(await audioRefused(b64(10), null, 10)).toBe("23502");
+    expect(await audioRefused(b64(700_001), "audio/webm", 700_001)).toBe("23514");
+    expect(await audioRefused(b64(10), "audio/webm", 10)).toBe("no error");
+    expect(await audioRefused(b64(10), "audio/webm", 10)).toBe("23505");
+    // A recording for a note that is not on file is refused.
+    expect(await sqlStateOf(addAudio(f, randomUUID(), b64(10), "audio/webm", 10))).toBe("23503");
   });
 });
