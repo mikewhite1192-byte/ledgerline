@@ -57,6 +57,20 @@ export type Flags = {
   auditorRequired: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
+  // Document upload and the one Muse Spark read of each file. Off means the routes answer 404,
+  // the pages say reading is off, and no model call is made (the reader re-checks it).
+  documentsEnabled: boolean;
+  // The crop step before a photo is read. Off: the photo goes to the model as uploaded. The crop
+  // itself is a later item; on does nothing new until it lands.
+  documentCrop: boolean;
+  // Upload limits: bytes per file, PDF pages, the per-read cost bound in cents (the wrapper's own
+  // spend cap still applies) and uploads per carrier in any rolling 24 hours.
+  documentLimits: {
+    maxBytes: number;
+    maxPdfPages: number;
+    readMaxCostCents: number;
+    perTenantPerDay: number;
+  };
 };
 
 export const flags: Flags = {
@@ -83,4 +97,7 @@ export const flags: Flags = {
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
   approverRole: { adminAboveCents: 200_000 },
+  documentsEnabled: false,
+  documentCrop: false,
+  documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
 };

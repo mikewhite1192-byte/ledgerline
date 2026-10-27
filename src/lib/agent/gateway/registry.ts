@@ -4,6 +4,7 @@ import { classifyMessage } from "./tools/triage/classify-message";
 import { explainPaystub } from "./tools/read/explain-paystub";
 import { getAdvances } from "./tools/read/get-advances";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
+import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
 import { getInboundMessage } from "./tools/read/get-inbound-message";
 import { getInvoices } from "./tools/read/get-invoices";
@@ -14,6 +15,7 @@ import { getPayItems } from "./tools/read/get-pay-items";
 import { runChecks } from "./tools/read/run-checks";
 import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
+import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
@@ -41,9 +43,11 @@ const TOOLS: readonly AnyToolDef[] = [
   runChecks,
   getInboundMessage,
   getProposal,
+  getDocument,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,
+  proposeLoadRate,
   classifyMessage,
 ];
 

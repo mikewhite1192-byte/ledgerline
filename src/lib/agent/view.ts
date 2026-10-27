@@ -30,7 +30,7 @@ export type ReasonView = { category: string; text: string; source: RefView | nul
 
 export type ProposalView = {
   id: string;
-  kind: "advance_payout" | "pay_correction" | "invoice_fix";
+  kind: "advance_payout" | "pay_correction" | "invoice_fix" | "load_rate_fill";
   subjectTable: string;
   subjectId: string;
   // The subject's code (a driver's or an invoice's number), read at render, never stored.

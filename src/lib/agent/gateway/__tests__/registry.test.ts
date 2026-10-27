@@ -13,9 +13,11 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   explain_paystub: { tier: "read", roles: ["operator"] },
   run_checks: { tier: "read", roles: ["operator", "auditor"] },
   get_inbound_message: { tier: "read", roles: ["operator", "triage"] },
+  get_document: { tier: "read", roles: ["operator", "auditor"] },
   propose_advance: { tier: "propose", roles: ["operator"] },
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
+  propose_load_rate: { tier: "propose", roles: ["operator"] },
   classify_message: { tier: "read", roles: ["triage"] },
   get_proposal: { tier: "read", roles: ["auditor"] },
 };
@@ -40,7 +42,7 @@ describe("tool registry", () => {
 
   it("gives every propose tool an engine limit", () => {
     const propose = Object.values(TOOL_REGISTRY).filter((t) => t.tier === "propose");
-    expect(propose).toHaveLength(3);
+    expect(propose).toHaveLength(4);
     for (const tool of propose) expect(typeof tool.limit).toBe("function");
   });
 
@@ -55,10 +57,10 @@ describe("tool registry", () => {
 
   it("offers each role only its own tools, as copies", () => {
     const counts = Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]));
-    expect(counts).toEqual({ operator: 13, auditor: 9, triage: 2 });
+    expect(counts).toEqual({ operator: 15, auditor: 10, triage: 2 });
     const first = toolsFor("operator");
     first.pop();
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(15);
     expect(toolsFor("nobody" as AgentRole)).toEqual([]);
   });
 

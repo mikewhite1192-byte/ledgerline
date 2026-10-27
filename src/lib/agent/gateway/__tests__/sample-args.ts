@@ -10,6 +10,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const paid = rows.settlement_periods.find((p) => p.status === "paid")!;
   const invoice = rows.invoices.find((i) => i.source === "load" && i.status === "open")!;
   const input = rows.untrusted_inputs[0];
+  const doc = rows.untrusted_inputs.find((i) => i.kind === "document") ?? input;
+  const noRate = rows.loads.find((l) => l.id === plan.planted.noRateLoadId)!;
   const refs = [{ table: "drivers", id: hero.id }];
   return {
     get_driver: { driverId: hero.id },
@@ -22,6 +24,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     explain_paystub: { driverId: hero.id, periodId: paid.id },
     run_checks: {},
     get_inbound_message: { inputId: input.id },
+    get_document: { inputId: doc.id },
     propose_advance: {
       driverId: hero.id,
       amountCents: 10_000,
@@ -43,6 +46,14 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       newAmountCents: invoice.amount_cents + 100,
       reasonCategories: ["rate_mismatch"],
       sourceRefs: [{ table: "invoices", id: invoice.id }],
+    },
+    propose_load_rate: {
+      loadId: noRate.id,
+      linehaulCents: 245 * noRate.loaded_miles,
+      fuelSurchargeCents: noRate.fuel_surcharge_cents,
+      ratePerMileCents: 245,
+      requestRef: doc.id,
+      sourceRefs: [{ table: "loads", id: noRate.id }],
     },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     // Proposals are not in a seed plan; any well-formed id parses.

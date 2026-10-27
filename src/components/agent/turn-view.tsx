@@ -139,6 +139,7 @@ export function AgentChat({
   suggestions,
   intro,
   auditorOn = false,
+  initialDraft,
 }: {
   initialTurns: TurnView[];
   streamMode: "sse" | "poll";
@@ -148,8 +149,11 @@ export function AgentChat({
   disabledReason?: string;
   suggestions?: Suggestion[];
   intro?: string;
+  // Text the box starts with (the documents page's "Ask the agent" link); the person sends it.
+  initialDraft?: string;
 }) {
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
+  const [draft, setDraft] = useState(initialDraft ?? "");
   const [conversationId, setConversationId] = useState<string | null>(
     initialTurns.length > 0 ? initialTurns[initialTurns.length - 1].conversationId : null,
   );
@@ -424,7 +428,12 @@ export function AgentChat({
         disabled: Boolean(disabledReason),
         disabledReason,
         pending,
-        onSubmit: (text) => void send(text),
+        value: draft,
+        onChange: setDraft,
+        onSubmit: (text) => {
+          setDraft("");
+          void send(text);
+        },
       }}
     />
   );

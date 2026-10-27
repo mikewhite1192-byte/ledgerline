@@ -146,6 +146,7 @@ const PROPOSAL_SQL = `
          CASE p.subject_table
            WHEN 'drivers' THEN (SELECT d.code FROM drivers d WHERE d.id = p.subject_id)
            WHEN 'invoices' THEN (SELECT i.invoice_number FROM invoices i WHERE i.id = p.subject_id)
+           WHEN 'loads' THEN (SELECT l.load_number FROM loads l WHERE l.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.title,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources, p.status,

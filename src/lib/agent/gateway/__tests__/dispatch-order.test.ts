@@ -399,6 +399,11 @@ describe("callTool dispatch order", () => {
         expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
         continue;
       }
+      // propose_load_rate names a document the plan has no reading for: refused before a draft.
+      if (name === "propose_load_rate") {
+        expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
+        continue;
+      }
       expect(out, name).toMatchObject({ decision: "allowed" });
       expect(JSON.stringify(out.result).length, name).toBeLessThanOrEqual(MAX_RESULT_CHARS);
       const logged = db.decisions.find((d) => d.tool === name)!;

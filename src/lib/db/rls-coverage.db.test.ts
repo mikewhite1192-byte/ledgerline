@@ -58,6 +58,7 @@ describe("row-level security coverage", () => {
     expect(names).toEqual(
       expect.arrayContaining([
         "conversations",
+        "documents",
         "gateway_decisions",
         "memberships",
         "model_calls",
