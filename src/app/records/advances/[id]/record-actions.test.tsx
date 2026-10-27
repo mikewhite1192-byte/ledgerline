@@ -36,10 +36,10 @@ describe("the advance page's buttons", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("says a payment the pass could not settle is still waiting, never that nothing was waiting", async () => {
+  it("says a payout or post the pass could not settle is still waiting, never that nothing was waiting", async () => {
     for (const [stillWaiting, text] of [
-      [1, "1 payment is still waiting on the payment provider. Nothing was changed. Check again later."],
-      [2, "2 payments are still waiting on the payment provider. Nothing was changed. Check again later."],
+      [1, "1 payout or post is still waiting on an outside answer. Nothing was changed. Check again later."],
+      [2, "2 payouts or posts are still waiting on an outside answer. Nothing was changed. Check again later."],
     ] as const) {
       answer(200, { ok: true, summary: summary(0), tooNew: 0, stillWaiting });
       const view = render(<RecordActionButtons advanceId={ADVANCE} actions={{ ...NONE, check: true }} />);

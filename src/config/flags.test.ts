@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isLocalDate } from "../lib/time/local-date";
 import { flags } from "./flags";
 
 describe("flags", () => {
@@ -47,7 +48,7 @@ describe("flags", () => {
   it("ships the advance flow dark, disarmed, capped and dated", () => {
     expect(flags.advancesEnabled).toBe(false);
     expect(flags.advancePayouts).toEqual({ armed: false, capCents: 50_000, startDate: "2026-10-27" });
-    expect(flags.advancePayouts.startDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(isLocalDate(flags.advancePayouts.startDate)).toBe(true);
     expect(flags.advancesLimits).toEqual({
       proposalsPerDay: 30,
       maxPayoutAttempts: 3,

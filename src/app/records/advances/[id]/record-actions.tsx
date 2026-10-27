@@ -29,8 +29,8 @@ function done(action: Action, body: Body): string {
       // Still sent or unknown, but not settled by this pass: waiting, so never "nothing".
       if (typeof body.stillWaiting === "number" && body.stillWaiting > 0) {
         const n = body.stillWaiting;
-        const what = n === 1 ? "1 payment is" : `${n} payments are`;
-        return `${what} still waiting on the payment provider. Nothing was changed. Check again later.`;
+        const what = n === 1 ? "1 payout or post is" : `${n} payouts or posts are`;
+        return `${what} still waiting on an outside answer. Nothing was changed. Check again later.`;
       }
       return "Nothing was waiting to be checked.";
     }
