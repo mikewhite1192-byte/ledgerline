@@ -61,7 +61,10 @@ function screenModel(text: string): CompleteFn {
     }) satisfies AiResult;
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  flags.detentionEnabled = false;
+});
 
 describe("callTool dispatch order", () => {
   it("1: refuses a name not in the registry, before any read, and logs it with no tier", async () => {
@@ -415,7 +418,9 @@ describe("callTool dispatch order", () => {
   });
 
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
-    // The report tools run only with their switch on; it is put back after this test.
+    // Every registered tool, the switched-off ones included. The detention switch is put back by
+    // the afterEach above; the report switch after this test.
+    flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;

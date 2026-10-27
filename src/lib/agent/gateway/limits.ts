@@ -1,5 +1,6 @@
 import { flags } from "../../../config/flags";
 import type { Queryable } from "../../db";
+import { detentionChargeOf, readDetentionChargeRows } from "../../data/detention-charge";
 import { loadsOf } from "../../data/records";
 import { readAdvanceInput, readRowsWhereId, readSettlementInput } from "../../data/read";
 import {
@@ -254,5 +255,45 @@ export async function loadRateLimit(
     };
   } catch {
     return unavailable(null);
+  }
+}
+
+// ---- Detention charges ----
+
+export type DetentionChargeLimitArgs = { loadId: string; amountCents: number };
+
+// The detention the engine computes for the load, from its stop times and its customer's terms,
+// is the only number a detention proposal may carry, and only onto the load's open invoice that
+// was never posted and still equals the engine's total. Anything else is engine_refused; above
+// detentionChargeMaxCents it is amount_over_limit. The switch is read here too.
+export async function detentionChargeLimit(
+  q: Queryable,
+  _ctx: GatewayContext,
+  args: DetentionChargeLimitArgs,
+): Promise<LimitResult> {
+  const max = flags.gatewayLimits.detentionChargeMaxCents;
+  if (!flags.detentionEnabled || !Number.isSafeInteger(max) || max <= 0) {
+    return unavailable(args.amountCents);
+  }
+  try {
+    const rows = await readDetentionChargeRows(q, args.loadId);
+    if (!rows) return unavailable(args.amountCents);
+    const check = detentionChargeOf(rows);
+    // No charge the engine would add (no detention, already billed, no open unposted invoice,
+    // or an invoice that already differs from the engine): nothing to allow.
+    if (!check.ok) return refused("engine_refused", null, args.amountCents);
+    const engine = check.charge.amountCents;
+    if (args.amountCents !== engine) return refused("engine_refused", Math.min(engine, max), args.amountCents);
+    if (engine > max) return refused("amount_over_limit", max, args.amountCents);
+    return {
+      ok: true,
+      limitCents: cents(Math.min(engine, max)),
+      requestedCents: cents(args.amountCents),
+      exceptions: [],
+      reasons: [],
+      sources: check.charge.sources,
+    };
+  } catch {
+    return unavailable(args.amountCents);
   }
 }

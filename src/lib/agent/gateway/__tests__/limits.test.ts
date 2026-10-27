@@ -1,11 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { flags } from "../../../../config/flags";
+import type { CarrierPlan } from "../../../seed/plan";
 import { loadsOf } from "../../../data/records";
 import { readAdvanceInput } from "../../../data/read";
 import { advanceEligibility, invoiceAmount } from "../../../rules-engine";
 import { instantAt } from "../../../seed/calendar";
 import { CASE_A_ASK_CENTS } from "../../../seed/untrusted-inputs";
 import { addDays } from "../../../time/local-date";
-import { advanceLimit, invoiceFixLimit, payCorrectionLimit } from "../limits";
+import { advanceLimit, detentionChargeLimit, invoiceFixLimit, payCorrectionLimit } from "../limits";
 import type { GatewayContext } from "../types";
 import { context, OTHER_ID } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
@@ -226,5 +228,105 @@ describe("invoice fix limit", () => {
 
   it("is limit_unavailable for an invoice it cannot read", async () => {
     expect(await run(OTHER_ID, 1000)).toMatchObject({ ok: false, reason: "limit_unavailable" });
+  });
+});
+
+describe("detention charge limit", () => {
+  // The seed's four planted loads and the cents the seed golden records for them.
+  const ids = plan.planted.detentionLoadIds;
+  const GOLDEN = [41_250, 30_000, 37_500, 26_250];
+  const [first] = ids;
+  const firstInvoice = plan.rows.invoices.find((i) => i.load_id === first)!;
+
+  type Rows = CarrierPlan["rows"];
+  const planWith = (change: (rows: Rows) => Partial<Rows>): CarrierPlan => ({
+    ...plan,
+    rows: { ...plan.rows, ...change(plan.rows) },
+  });
+  const withInvoice = (over: Partial<Rows["invoices"][number]>) =>
+    planWith((r) => ({ invoices: r.invoices.map((i) => (i.id === firstInvoice.id ? { ...i, ...over } : i)) }));
+  const withLoad = (over: Partial<Rows["loads"][number]>) =>
+    planWith((r) => ({ loads: r.loads.map((l) => (l.id === first ? { ...l, ...over } : l)) }));
+
+  const run = (amountCents: number, loadId: string = first, p: CarrierPlan = plan) =>
+    planDb(p).withTenant(ctx.session.tenantId, (q) => detentionChargeLimit(q, ctx, { loadId, amountCents }));
+
+  const on = () => {
+    flags.detentionEnabled = true;
+  };
+  afterEach(() => {
+    flags.detentionEnabled = false;
+  });
+
+  it("allows exactly the engine's cents for each planted load, citing the load, customer and invoice", async () => {
+    on();
+    for (const [i, loadId] of ids.entries()) {
+      const out = await run(GOLDEN[i], loadId);
+      expect(out, loadId).toMatchObject({ ok: true, limitCents: GOLDEN[i], requestedCents: GOLDEN[i] });
+      if (out.ok) expect(out.sources.map((s) => s.table)).toEqual(["loads", "customers", "invoices"]);
+    }
+  });
+
+  it("refuses any other cents and names the engine's figure", async () => {
+    on();
+    expect(await run(GOLDEN[0] + 1)).toMatchObject({ ok: false, reason: "engine_refused", limitCents: GOLDEN[0] });
+    expect(await run(GOLDEN[0] - 1)).toMatchObject({ ok: false, reason: "engine_refused", limitCents: GOLDEN[0] });
+  });
+
+  it("refuses a load that already carries a detention charge", async () => {
+    on();
+    const billed = planWith((r) => ({
+      load_accessorials: [
+        ...r.load_accessorials,
+        {
+          id: "0d7c1f9e-2a4b-4c6d-8e0f-1a2b3c4d5e6f",
+          load_id: first,
+          kind: "detention",
+          seq: 1,
+          amount_cents: GOLDEN[0],
+          paid_by_driver: false,
+          description: "Detention",
+        },
+      ],
+    }));
+    expect(await run(GOLDEN[0], first, billed)).toMatchObject({ ok: false, reason: "engine_refused", limitCents: null });
+  });
+
+  it("refuses an invoice posted to accounting, paid, or already different from the engine", async () => {
+    on();
+    for (const p of [
+      withInvoice({ qbo_id: "1042" }),
+      withInvoice({ status: "paid" }),
+      withInvoice({ amount_cents: firstInvoice.amount_cents + 100 }),
+      planWith((r) => ({ invoices: r.invoices.filter((i) => i.id !== firstInvoice.id) })),
+    ]) {
+      expect(await run(GOLDEN[0], first, p)).toMatchObject({ ok: false, reason: "engine_refused", limitCents: null });
+    }
+  });
+
+  it("refuses a load whose stop times are not known: unknown is not zero", async () => {
+    on();
+    const none = withLoad({ pickup_arrived_at: null, pickup_departed_at: null });
+    expect(await run(GOLDEN[0], first, none)).toMatchObject({ ok: false, reason: "engine_refused" });
+    // One time of a stop missing is malformed: the limit cannot be computed.
+    const half = withLoad({ delivery_departed_at: null });
+    expect(await run(GOLDEN[0], first, half)).toMatchObject({ ok: false, reason: "limit_unavailable" });
+  });
+
+  it("refuses above the cap even when it is the engine's figure", async () => {
+    on();
+    const cap = flags.gatewayLimits.detentionChargeMaxCents;
+    flags.gatewayLimits.detentionChargeMaxCents = 30_000;
+    try {
+      expect(await run(GOLDEN[0])).toMatchObject({ ok: false, reason: "amount_over_limit", limitCents: 30_000 });
+    } finally {
+      flags.gatewayLimits.detentionChargeMaxCents = cap;
+    }
+  });
+
+  it("is unavailable while switched off and for a load it cannot read", async () => {
+    expect(await run(GOLDEN[0])).toMatchObject({ ok: false, reason: "limit_unavailable" });
+    on();
+    expect(await run(1000, OTHER_ID)).toMatchObject({ ok: false, reason: "limit_unavailable" });
   });
 });

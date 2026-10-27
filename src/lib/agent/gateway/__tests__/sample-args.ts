@@ -12,6 +12,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const input = rows.untrusted_inputs[0];
   const doc = rows.untrusted_inputs.find((i) => i.kind === "document") ?? input;
   const noRate = rows.loads.find((l) => l.id === plan.planted.noRateLoadId)!;
+  // The first planted unbilled detention: 41,250 cents in October.
+  const detentionLoad = plan.planted.detentionLoadIds[0];
   const refs = [{ table: "drivers", id: hero.id }];
   return {
     get_driver: { driverId: hero.id },
@@ -54,6 +56,12 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       ratePerMileCents: 245,
       requestRef: doc.id,
       sourceRefs: [{ table: "loads", id: noRate.id }],
+    },
+    find_unbilled_detention: { month: "2026-10" },
+    propose_detention_charge: {
+      loadId: detentionLoad,
+      amountCents: 41_250,
+      sourceRefs: [{ table: "loads", id: detentionLoad }],
     },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     report_ar_aging: { asOf: "2026-11-02" },

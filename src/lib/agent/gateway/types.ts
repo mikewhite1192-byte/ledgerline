@@ -31,6 +31,8 @@ export const REASON_CATEGORIES = [
   "result_truncated",
   "tool_failed",
   "budget",
+  // The tool sits behind a release switch that is off (flags.ts): it is neither offered nor run.
+  "disabled",
   // A proposal exception, never a decision reason: the advance was cut to what the engine allows
   // after a larger ask in the same trace was refused (design 4.2).
   "capped_to_eligible",
@@ -126,7 +128,12 @@ export type RunExtras = {
   limit: Extract<LimitResult, { ok: true }> | null;
 };
 
-export type ProposalKind = "advance_payout" | "pay_correction" | "invoice_fix" | "load_rate_fill";
+export type ProposalKind =
+  | "advance_payout"
+  | "pay_correction"
+  | "invoice_fix"
+  | "load_rate_fill"
+  | "detention_charge";
 
 // What a propose tool hands the loop. The loop persists it (AGENT-CORE); a person approves it.
 export type ProposalDraft = {
@@ -158,6 +165,10 @@ export interface ToolDef<A> {
   limit?: (q: Queryable, ctx: GatewayContext, args: A) => Promise<LimitResult>;
   // The untrusted input this call shows a model; the gateway screens it before run.
   screens?: (args: A) => string;
+  // A tool behind a release switch: read on every offer and every call. False means the tool is
+  // not offered to any role and a call to it is blocked as disabled before its args are read.
+  // The tool's own limit and run check the same switch again.
+  enabled?: () => boolean;
   run: (q: Queryable, ctx: GatewayContext, args: A, extras: RunExtras) => Promise<ToolResult>;
 }
 
