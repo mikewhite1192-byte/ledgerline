@@ -2,13 +2,16 @@ import type { AiTarget, AiUsage, Metered } from "./types";
 
 // Prices in nanocents (1 cent = 1,000,000,000 nanocents), so every listed price is an exact
 // integer. $1.25 per million tokens is 125 cents / 1,000,000 = 125,000 nanocents a token.
-// The $150 credit is 1.5e13 nanocents, far under 2^53, so every sum stays a safe integer through
-// the pg parser and the Data API's JSON. Source for every Meta price:
+// The $400 cap ceiling is 4e13 nanocents, far under 2^53, so every sum stays a safe integer
+// through the pg parser and the Data API's JSON. Source for every Meta price:
 // https://dev.meta.ai/docs/pricing-rate-limits.
 export const NANOCENTS_PER_CENT = 1_000_000_000;
 
-// The Meta credit, in cents. A cap above it is refused: the vendor's spend limit only notifies.
-export const CREDIT_CENTS = 15_000;
+// The highest AI_SPEND_CAP_CENTS may be, in cents ($400). The $150 Meta credit is spent first
+// and the card on file covers the rest, up to the cap. A cap above it is refused: the caps are
+// the only real stop, since the vendor's spend limit only notifies. Kept equal to infra's
+// AI_CAP_CEILING_CENTS.
+export const CAP_CEILING_CENTS = 40_000;
 
 // Muse Voice Transcribe: $0.18 per hour of audio, metered in whole seconds rounded down.
 export const VOICE_NANOCENTS_PER_SECOND = 5_000_000;
@@ -134,11 +137,11 @@ export function meteredCost(price: Price, metered: Metered): number | null {
 }
 
 // AI_SPEND_CAP_CENTS as nanocents, or null when it is unset, not a whole number of cents, zero,
-// or above the credit. Null refuses every call.
+// or above the ceiling. Null refuses every call.
 export function capNanocents(value: string | undefined): number | null {
   if (!value || !/^[1-9][0-9]{0,5}$/.test(value)) return null;
   const cents = Number(value);
-  if (cents > CREDIT_CENTS) return null;
+  if (cents > CAP_CEILING_CENTS) return null;
   return cents * NANOCENTS_PER_CENT;
 }
 
