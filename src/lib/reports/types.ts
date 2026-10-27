@@ -1,0 +1,156 @@
+// The five reports: their names, titles, columns and result shape. Plain data with no imports, so
+// the chat, the turn view and the download route can all use it without reaching the records or
+// the rules engine. The numbers themselves are computed in the files next to this one, from the
+// records and the engine's own functions; a model only picks a report and fills its typed args.
+
+export const REPORT_NAMES = [
+  "ar_aging",
+  "driver_pay_summary",
+  "advances_outstanding",
+  "cash_needed",
+  "margin_per_load",
+] as const;
+export type ReportName = (typeof REPORT_NAMES)[number];
+
+export function isReportName(value: unknown): value is ReportName {
+  return typeof value === "string" && (REPORT_NAMES as readonly string[]).includes(value);
+}
+
+// The gateway tool for each report is its name with this prefix.
+export const REPORT_TOOL_PREFIX = "report_";
+
+export function reportToolName(name: ReportName): string {
+  return `${REPORT_TOOL_PREFIX}${name}`;
+}
+
+// The report a tool name stands for, by whole-name match only.
+export function reportOfTool(tool: unknown): ReportName | null {
+  return REPORT_NAMES.find((n) => reportToolName(n) === tool) ?? null;
+}
+
+export const REPORT_TITLES: Readonly<Record<ReportName, string>> = {
+  ar_aging: "Receivables aging",
+  driver_pay_summary: "Driver pay summary",
+  advances_outstanding: "Advances outstanding",
+  cash_needed: "Cash needed for the pay run",
+  margin_per_load: "Margin per load",
+};
+
+// cents: integer cents. int: a count. pct: basis points (1234 is 12.34%). date: YYYY-MM-DD in the
+// carrier's time zone. ref: a record ({ table, id, label }). text: fixed words.
+export type ColumnKind = "text" | "cents" | "int" | "pct" | "date" | "ref";
+export type ReportColumn = { key: string; header: string; kind: ColumnKind };
+
+export type RefCell = { table: string; id: string; label: string };
+export type ReportCell = string | number | null | RefCell;
+export type ReportRow = Record<string, ReportCell>;
+
+// Why a report has no rows: no pay run for the week asked about, or nothing matched.
+export type EmptyReason = "no_pay_run" | "no_rows";
+
+export type ReportSubtotal = { label: string; totals: Record<string, number> };
+
+export type ReportResult = {
+  report: ReportName;
+  title: string;
+  // The carrier-local date the report was computed on (or the date asked for).
+  asOf: string;
+  // The args after defaults were filled in, so the same report can be computed again.
+  args: Record<string, string>;
+  // The pay week or date window the rows cover, when the report has one.
+  period?: { start: string; end: string };
+  columns: ReportColumn[];
+  rows: ReportRow[];
+  // Keyed by column key; summed by the code, never by a model.
+  totals?: Record<string, number>;
+  subtotals?: ReportSubtotal[];
+  // True when rows holds fewer than rowsTotal rows.
+  truncated: boolean;
+  rowsTotal: number;
+  emptyReason?: EmptyReason;
+};
+
+// Every cents column key ends in "Cents", so the agent's figure check accepts what a report says.
+export const REPORT_COLUMNS: Readonly<Record<ReportName, readonly ReportColumn[]>> = {
+  ar_aging: [
+    { key: "customer", header: "Customer", kind: "ref" },
+    { key: "currentCents", header: "Current", kind: "cents" },
+    { key: "days1To30Cents", header: "1 to 30 days", kind: "cents" },
+    { key: "days31To60Cents", header: "31 to 60 days", kind: "cents" },
+    { key: "days61To90Cents", header: "61 to 90 days", kind: "cents" },
+    { key: "over90Cents", header: "Over 90 days", kind: "cents" },
+    { key: "totalCents", header: "Total", kind: "cents" },
+  ],
+  driver_pay_summary: [
+    { key: "driver", header: "Driver", kind: "ref" },
+    { key: "workerType", header: "Type", kind: "text" },
+    { key: "status", header: "Status", kind: "text" },
+    { key: "grossCents", header: "Gross", kind: "cents" },
+    { key: "deductionsCents", header: "Deductions", kind: "cents" },
+    { key: "netCents", header: "Net pay", kind: "cents" },
+    { key: "carryForwardCents", header: "Carried forward", kind: "cents" },
+    { key: "exceptions", header: "Exceptions", kind: "int" },
+  ],
+  advances_outstanding: [
+    { key: "driver", header: "Driver", kind: "ref" },
+    { key: "advances", header: "Advances", kind: "int" },
+    { key: "outstandingCents", header: "Outstanding", kind: "cents" },
+    { key: "oldestRequestedOn", header: "Oldest request", kind: "date" },
+    { key: "limitCents", header: "Limit", kind: "cents" },
+    { key: "headroomCents", header: "Room left", kind: "cents" },
+  ],
+  cash_needed: [
+    { key: "driver", header: "Driver", kind: "ref" },
+    { key: "workerType", header: "Type", kind: "text" },
+    { key: "status", header: "Status", kind: "text" },
+    { key: "netDueCents", header: "Net due", kind: "cents" },
+  ],
+  margin_per_load: [
+    { key: "load", header: "Load", kind: "ref" },
+    { key: "deliveredOn", header: "Delivered", kind: "date" },
+    { key: "customer", header: "Customer", kind: "ref" },
+    { key: "driver", header: "Driver", kind: "ref" },
+    { key: "revenueCents", header: "Revenue", kind: "cents" },
+    { key: "driverPayCents", header: "Driver pay", kind: "cents" },
+    { key: "marginCents", header: "Margin", kind: "cents" },
+    { key: "marginBps", header: "Margin %", kind: "pct" },
+    { key: "note", header: "Note", kind: "text" },
+  ],
+};
+
+// What an empty report says, in plain words.
+export const EMPTY_TEXT: Readonly<Record<EmptyReason, { title: string; body: string }>> = {
+  no_pay_run: {
+    title: "No pay run for this week yet",
+    body: "Build the pay run for this week first.",
+  },
+  no_rows: { title: "Nothing to show", body: "No records match this report." },
+};
+
+// Rows a tool result or the chat table carries; the download has every row.
+export const REPORT_ROW_CAP = 50;
+
+// The same result with at most `cap` rows, saying when rows were left out.
+export function capRows(result: ReportResult, cap: number = REPORT_ROW_CAP): ReportResult {
+  if (result.rows.length <= cap) return result;
+  return { ...result, rows: result.rows.slice(0, cap), truncated: true };
+}
+
+export function isRefCell(value: unknown): value is RefCell {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.table === "string" && typeof v.id === "string" && typeof v.label === "string";
+}
+
+// The download route serves CSV (every row) or JSON (the chat's table, capped like a tool result).
+export const REPORT_FORMATS = ["csv", "json"] as const;
+export type ReportFormat = (typeof REPORT_FORMATS)[number];
+
+// The route path for a report: the same args, as a query string, in a fixed order.
+export function reportPath(name: ReportName, args: Record<string, string>, format: ReportFormat): string {
+  const params = new URLSearchParams({ format });
+  for (const key of Object.keys(args).sort()) {
+    if (key !== "format") params.set(key, args[key]);
+  }
+  return `/api/reports/${name}?${params.toString()}`;
+}

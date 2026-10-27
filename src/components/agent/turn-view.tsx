@@ -5,8 +5,10 @@ import { ChatThread, type ChatMessage, type Part } from "@/components/app/chat-t
 import type { Suggestion } from "@/components/app/prompt-chips";
 import { decodeEvents } from "@/lib/agent/operator/stream";
 import { flagWords } from "@/lib/agent/reasons";
-import type { StepView, TurnView } from "@/lib/agent/view";
+import type { ReportView, StepView, TurnView } from "@/lib/agent/view";
+import { reportPath } from "@/lib/reports/types";
 import { proposalCardFrom, type AuditContext } from "./proposal-card-from";
+import { reportResultOf, reportTable, type ReportLoad } from "./report-table";
 
 // The live chat. A question posts one turn; its steps stream in over server-sent events, and if
 // no event arrives within 3 seconds (or the stream mode is poll) the view reads the turn back
@@ -61,8 +63,14 @@ function placeholder(turnId: string, conversationId: string | null, text: string
     steps: [],
     proposals: [],
     flags: [],
+    reports: [],
     error: null,
   };
+}
+
+// Which report table a state entry belongs to: one per turn and tool step.
+function reportKey(turnId: string, report: ReportView): string {
+  return `${turnId}:${report.stepId}`;
 }
 
 function noticeOf(map: Readonly<Record<string, string>>, category: unknown, fallback: string): string {
@@ -74,9 +82,13 @@ function noticeOf(map: Readonly<Record<string, string>>, category: unknown, fall
 // The auditor's state for the cards: switched on or not, and which checks this page waits on.
 export type AuditPage = { on: boolean; checking: Readonly<Record<string, boolean>> };
 
+// onShow, when set, is called as a report's table first scrolls into view, so its rows are read
+// then and not for every table of a long thread at page load.
 export function toMessages(
   turns: LocalTurn[],
   notices: Readonly<Record<string, string>>,
+  reports: Readonly<Record<string, ReportLoad>> = {},
+  onShow?: (turnId: string, report: ReportView) => void,
   audit?: AuditPage,
 ): ChatMessage[] {
   const out: ChatMessage[] = [];
@@ -99,8 +111,20 @@ export function toMessages(
     }
     if (t.error) parts.push({ kind: "error", category: t.error });
     else if (t.text) parts.push({ kind: "text", text: t.text });
+    for (const r of t.reports ?? []) {
+      const load = reports[reportKey(t.id, r)] ?? { state: "loading" };
+      parts.push({
+        kind: "table",
+        table: reportTable(r.name, load),
+        ...(onShow ? { onVisible: () => onShow(t.id, r) } : {}),
+      });
+      if (load.state === "ready" && load.result.rows.length > 0) {
+        parts.push({ kind: "link", href: reportPath(r.name, r.args, "csv"), label: "Download CSV" });
+      }
+    }
     // How it was worked out: once the turn has finished and the server holds its steps. A turn
-    // that never reached the server has none, so it gets no disclosure.
+    // that never reached the server has none, so it gets no disclosure. It sits under the whole
+    // answer, its report tables included, since it explains the steps that built them too.
     const traced = t.status !== "running" && t.steps.length > 0;
     if (traced) parts.push({ kind: "trace", turnId: t.id });
     for (const p of t.proposals) {
@@ -123,6 +147,18 @@ async function readTurn(turnId: string): Promise<TurnView | null> {
   if (!res.ok) return null;
   const body = (await res.json()) as { turn?: TurnView };
   return body.turn ?? null;
+}
+
+// One report's table from the report route, recomputed with the args the tool used.
+async function readReport(report: ReportView): Promise<ReportLoad> {
+  try {
+    const res = await fetch(reportPath(report.name, report.args, "json"), { cache: "no-store" });
+    if (!res.ok) return { state: "error", category: res.status === 403 ? "forbidden" : "unreadable" };
+    const result = reportResultOf(report.name, await res.json());
+    return result ? { state: "ready", result } : { state: "error", category: "unreadable" };
+  } catch {
+    return { state: "error", category: "unreadable" };
+  }
 }
 
 async function errorOf(res: Response): Promise<unknown> {
@@ -157,10 +193,12 @@ export function AgentChat({
   const [pending, setPending] = useState(false);
   const [busyProposal, setBusyProposal] = useState<string | null>(null);
   const [notices, setNotices] = useState<Record<string, string>>({});
+  const [reports, setReports] = useState<Record<string, ReportLoad>>({});
   const [checking, setChecking] = useState<Record<string, boolean>>({});
   const audited = useRef(new Set<string>());
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const alive = useRef(true);
+  const asked = useRef(new Set<string>());
 
   useEffect(() => {
     alive.current = true;
@@ -178,6 +216,17 @@ export function AgentChat({
       if (alive.current) fn();
     }, ms);
     timers.current.add(t);
+  }, []);
+
+  // A report's table is fetched when it first scrolls into view, and once only, however often it
+  // is seen again or remounted; until it arrives its table shows loading rows.
+  const showReport = useCallback((turnId: string, r: ReportView) => {
+    const key = reportKey(turnId, r);
+    if (asked.current.has(key)) return;
+    asked.current.add(key);
+    void readReport(r).then((load) => {
+      if (alive.current) setReports((all) => ({ ...all, [key]: load }));
+    });
   }, []);
 
   const patch = useCallback((turnId: string, next: (t: LocalTurn) => LocalTurn) => {
@@ -390,7 +439,7 @@ export function AgentChat({
     }
   }
 
-  const messages = toMessages(turns, notices, { on: auditorOn, checking }).map((m) => ({
+  const messages = toMessages(turns, notices, reports, showReport, { on: auditorOn, checking }).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
       if (p.kind !== "proposal") return p;

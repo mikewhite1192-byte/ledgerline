@@ -219,6 +219,9 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       tank_gallons: role === "company_flat" ? 150 : side.int(20, 30) * 10,
       active_from: addDays(anchor, -rng.int(120, 1500)),
       active_to: null,
+      // Every fourth driver by position reads Spanish, so each carrier has Spanish pay notes.
+      // Decided by index, not the random stream, so no other seeded value moves.
+      preferred_language: i % 4 === 3 ? "es" : "en",
     };
   });
   const byCode = new Map(drivers.map((d) => [d.code, d]));

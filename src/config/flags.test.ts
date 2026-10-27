@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isLocalDate } from "../lib/time/local-date";
 import { flags } from "./flags";
 
 describe("flags", () => {
@@ -11,6 +12,9 @@ describe("flags", () => {
     expect(flags.paymentProvider).toBe("mock");
     expect(flags.triageProvider).toBe("meta");
     expect(flags.agentEnabled).toBe(false);
+    expect(flags.reportsEnabled).toBe(false);
+    // Spark Open's standby host is dark until the owner turns it on in its own PR.
+    expect(flags.sparkOpenFallback).toBe("off");
     expect(flags.detentionEnabled).toBe(false);
   });
 
@@ -44,5 +48,18 @@ describe("flags", () => {
     expect(flags.auditorRequired).toBe(true);
     expect(Number.isNaN(Date.parse(flags.auditorStart))).toBe(false);
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
+  });
+
+  it("keeps driver notes dark, with no email address allowed and small caps", () => {
+    expect(flags.driverNotesEnabled).toBe(false);
+    expect(flags.driverNotesEmailEnabled).toBe(false);
+    expect(flags.driverNotesEmailAllowlist).toEqual([]);
+    expect(flags.driverNotesEmailFrom).toBe("2026-10-27");
+    expect(isLocalDate(flags.driverNotesEmailFrom)).toBe(true);
+    expect(flags.driverNoteLimits).toEqual({ maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 });
+    for (const v of Object.values(flags.driverNoteLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 });

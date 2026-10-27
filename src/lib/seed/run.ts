@@ -125,11 +125,14 @@ async function clearSettled(
 // (it deletes every untrusted input of the tenant), so the clear refuses up front, deleting
 // nothing, while one exists: a person must review it. A ledger row that comes to name a proposal
 // after the check still makes the delete fail and the transaction roll back, so nothing is half
-// cleared. Returns the rows deleted.
+// cleared. Driver notes (0019) go first: each names a settlement and a driver the replace
+// deletes, they name no proposal, and the app role has no DELETE on them either. Returns the
+// rows deleted.
 const NAMED_BY_LEDGER = `SELECT 1 FROM money_actions m
    WHERE m.tenant_id = CAST($1 AS uuid) AND m.proposal_id = p.id`;
 
 const AGENT_CLEAR = [
+  "DELETE FROM driver_notes WHERE tenant_id = CAST($1 AS uuid)",
   `DELETE FROM turn_steps s
     WHERE s.tenant_id = CAST($1 AS uuid)
       AND NOT EXISTS (SELECT 1 FROM proposals p

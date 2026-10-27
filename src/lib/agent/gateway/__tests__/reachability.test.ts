@@ -17,13 +17,17 @@ const ARGS = sampleArgs(plan);
 const TOOLS = Object.values(TOOL_REGISTRY);
 const call = (name: string, args: unknown) => ({ id: "c", name, argumentsJson: JSON.stringify(args) });
 
-// Every tool's switch on, so each test below reaches every tool; the switch's own cases are in
-// detention-tools.test.ts.
+// Every tool's switch on (detention and reports), so each test below reaches every registered
+// tool. The detention switch's own cases are in detention-tools.test.ts; the last test here checks
+// the report switch-off path.
 beforeEach(() => {
   flags.detentionEnabled = true;
+  flags.reportsEnabled = true;
 });
+
 afterEach(() => {
   flags.detentionEnabled = false;
+  flags.reportsEnabled = false;
   vi.restoreAllMocks();
 });
 
@@ -98,5 +102,25 @@ describe("reachability", () => {
       });
     }
     expect(Object.keys(ARGS).sort()).toEqual(TOOLS.map((t) => t.name).sort());
+  });
+
+  it("(e) with the report switch off, refuses and logs every report tool as unknown, for every role", async () => {
+    flags.reportsEnabled = false;
+    const reports = TOOLS.filter((t) => t.name.startsWith("report_"));
+    expect(reports).toHaveLength(5);
+    for (const role of AGENT_ROLES) {
+      expect(toolsFor(role).map((t) => t.name).filter((n) => n.startsWith("report_")), role).toEqual([]);
+      for (const tool of reports) {
+        const db = new FakeDb({});
+        const out = await callTool(context({ role }), call(tool.name, ARGS[tool.name]), { db, clock: fixedClock });
+        expect(out, `${role} ${tool.name}`).toMatchObject({ decision: "unknown_tool", reason: "unknown_tool" });
+        expect(db.decisions, tool.name).toHaveLength(1);
+        // The membership check and the decision row only: no record is read.
+        const read = db.statements.filter(
+          (st) => !st.sql.includes("FROM memberships") && !st.sql.startsWith("INSERT INTO gateway_decisions"),
+        );
+        expect(read, tool.name).toEqual([]);
+      }
+    }
   });
 });

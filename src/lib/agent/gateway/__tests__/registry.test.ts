@@ -18,6 +18,11 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
   classify_message: { tier: "read", roles: ["triage"] },
+  report_ar_aging: { tier: "read", roles: ["operator"] },
+  report_driver_pay_summary: { tier: "read", roles: ["operator"] },
+  report_advances_outstanding: { tier: "read", roles: ["operator"] },
+  report_cash_needed: { tier: "read", roles: ["operator"] },
+  report_margin_per_load: { tier: "read", roles: ["operator"] },
   get_proposal: { tier: "read", roles: ["auditor"] },
   find_unbilled_detention: { tier: "read", roles: ["operator", "auditor"] },
   propose_detention_charge: { tier: "propose", roles: ["operator"] },
@@ -25,6 +30,11 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
 const DETENTION_TOOLS = ["find_unbilled_detention", "propose_detention_charge"];
+const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_"));
+
+afterEach(() => {
+  flags.reportsEnabled = false;
+});
 
 describe("tool registry", () => {
   afterEach(() => {
@@ -88,8 +98,32 @@ describe("tool registry", () => {
     expect(toolsFor("operator")).toHaveLength(13);
   });
 
+  it("offers and finds the report tools only while their switch is on, read on every call", () => {
+    expect(flags.reportsEnabled).toBe(false);
+    for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
+    expect(toolsFor("operator").map((t) => t.name).filter((n) => n.startsWith("report_"))).toEqual([]);
+
+    flags.reportsEnabled = true;
+    expect(toolsFor("operator")).toHaveLength(18);
+    expect(toolsFor("auditor")).toHaveLength(9);
+    expect(toolsFor("triage")).toHaveLength(2);
+    for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
+    expect(toolsFor("operator").map((t) => t.name)).toEqual(expect.arrayContaining(REPORT_TOOLS));
+
+    flags.reportsEnabled = false;
+    for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
+    expect(toolsFor("operator")).toHaveLength(13);
+  });
+
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
     flags.detentionEnabled = true;
+    flags.reportsEnabled = true;
+    // Both switches on: every registered tool is offered to each of its roles.
+    expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
+      operator: 20,
+      auditor: 10,
+      triage: 2,
+    });
     for (const role of AGENT_ROLES) {
       for (const tool of toolsFor(role)) {
         const params = tool.parameters as Record<string, unknown>;
