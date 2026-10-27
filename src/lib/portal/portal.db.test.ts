@@ -1,0 +1,531 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { flags } from "../../config/flags";
+import type { ComputerRequest, ComputerResult, ComputerScreenshot, SafetyCheck } from "../ai";
+import { PNG_BYTES } from "../ai/test-fixtures";
+import type { Session } from "../auth/claims";
+import { createPgDb } from "../db/pg";
+import { adminUrl, appUrl } from "../db/test-urls";
+import type { Db, Queryable } from "../db/types";
+import type { PortalPlan } from "../seed/portal";
+import { clearTenantPortal, seedTenantPortal } from "../seed/portal-db";
+import { decideCheck } from "./decide";
+import { findPortalLoads, portalLoadByReference, portalPod } from "./read";
+import type { CapturedPod, PortalDriver } from "./runner/driver";
+import { runPortalRun, type RunDeps, type StepFn } from "./runner/run";
+import { dbRunStore } from "./runner/store";
+import { cookieValue, signIn } from "./session";
+import { createRunIn } from "./start";
+import { withPortalTenant } from "./tenant";
+import { evidencePod, latestEvidence, listRuns, runView, stepScreenshot } from "./views";
+
+// The portal tables against a real database: the runner start to finish through the real store,
+// paused on a safety check and resumed after a person approved it; the live-run index and the
+// claim under a race; the largest screenshot and POD through the same base64 path the Data API
+// uses; the tenant walls and the app login's grants; and the seed's clear and re-seed.
+
+const PORTAL_TABLES = [
+  "portal_accounts",
+  "portal_loads",
+  "portal_sessions",
+  "portal_runs",
+  "portal_run_steps",
+  "portal_run_checks",
+  "portal_evidence",
+] as const;
+
+const A = randomUUID();
+const B = randomUUID();
+const SUB_A = `portal-member-${A.slice(0, 8)}`;
+const ORIGIN = "http://localhost:3000";
+const REF_TIMES = "FFE-100001";
+const REF_PENDING = "FFE-100002";
+const DETAIL = `${ORIGIN}/portal/loads/${REF_TIMES}`;
+const T0 = Date.parse("2026-10-27T15:00:00Z");
+
+// One carrier number per tenant; the column is unique across tenants.
+const carrierOf = (id: string) => `MC-${String(100000 + (parseInt(id.slice(0, 5), 16) % 899999)).padStart(6, "0")}`;
+const CARRIER_A = carrierOf(A);
+const CARRIER_B = carrierOf(B) === CARRIER_A ? "MC-999998" : carrierOf(B);
+
+type TenantSetup = { customerId: string; timesLoad: string; pendingLoad: string; loadNumbers: [string, string] };
+const setup: Record<string, TenantSetup> = {
+  [A]: { customerId: randomUUID(), timesLoad: randomUUID(), pendingLoad: randomUUID(), loadNumbers: ["PA-1001", "PA-1002"] },
+  [B]: { customerId: randomUUID(), timesLoad: randomUUID(), pendingLoad: randomUUID(), loadNumbers: ["PB-1001", "PB-1002"] },
+};
+
+// The largest screenshot a step may store, and the largest POD a run may keep.
+const BIG_SHOT: ComputerScreenshot = { mime: "image/png", bytes: padded(PNG_BYTES, 400_000) };
+const BIG_POD = padded(new Uint8Array(Buffer.from("%PDF-1.4 synthetic\n")), 300_000);
+
+function padded(head: Uint8Array, size: number): Uint8Array {
+  const out = new Uint8Array(size);
+  out.set(head);
+  for (let i = head.length; i < size; i++) out[i] = (i * 31) % 251;
+  return out;
+}
+
+function planFor(tenantId: string, carrierNumber: string): PortalPlan {
+  const s = setup[tenantId];
+  return {
+    carrierNumber,
+    carrierName: "Test Carrier Lines",
+    loads: [
+      {
+        id: randomUUID(),
+        loadId: s.timesLoad,
+        loadNumber: s.loadNumbers[0],
+        reference: REF_TIMES,
+        shipperName: "Sample Shipper Co",
+        consigneeName: "Sample Receiver Inc",
+        consigneeCity: "Joliet",
+        consigneeState: "IL",
+        scheduledFrom: "2026-10-20T13:00:00.000Z",
+        scheduledTo: "2026-10-20T15:00:00.000Z",
+        // 09:05 to 11:10 Central on Oct 20 (CDT, UTC-5).
+        checkedIn: "2026-10-20T14:05:00.000Z",
+        checkedOut: "2026-10-20T16:10:00.000Z",
+        facilityTimeZone: "America/Chicago",
+        podStatus: "available",
+        podSignedBy: "Dana Reyes",
+        podSignedAt: "2026-10-20T16:12:00.000Z",
+        notes: null,
+        seedKey: null,
+      },
+      {
+        id: randomUUID(),
+        loadId: s.pendingLoad,
+        loadNumber: s.loadNumbers[1],
+        reference: REF_PENDING,
+        shipperName: "Sample Shipper Co",
+        consigneeName: "Sample Receiver Inc",
+        consigneeCity: "Dayton",
+        consigneeState: "OH",
+        scheduledFrom: "2026-10-21T13:00:00.000Z",
+        scheduledTo: "2026-10-21T15:00:00.000Z",
+        checkedIn: null,
+        checkedOut: null,
+        facilityTimeZone: "America/New_York",
+        podStatus: "pending",
+        podSignedBy: null,
+        podSignedAt: null,
+        notes: null,
+        seedKey: null,
+      },
+    ],
+  };
+}
+
+let admin: Db;
+let app: Db;
+
+async function sqlStateOf(work: Promise<unknown>): Promise<string | undefined> {
+  const err = await work.then(
+    () => undefined,
+    (e: unknown) => e,
+  );
+  expect(err).toBeDefined();
+  return (err as { sqlState?: string }).sqlState;
+}
+
+async function createTenant(id: string, prefix: string): Promise<void> {
+  const s = setup[id];
+  await admin.withTenant(id, async (q) => {
+    await q.execute("INSERT INTO tenants (id, slug, name, timezone) VALUES (current_tenant_id(), $1, $2, $3)", [
+      `${prefix}-${id.slice(0, 8)}`,
+      "Portal Test Carrier",
+      "America/Chicago",
+    ]);
+    await q.execute(
+      "INSERT INTO customers (id, tenant_id, code, name, terms_days, city, state)" +
+        " VALUES (CAST($1 AS uuid), current_tenant_id(), 'PT-1', 'Sample Shipper Co', 30, 'Joliet', 'IL')",
+      [s.customerId],
+    );
+    for (const [i, loadId] of [s.timesLoad, s.pendingLoad].entries()) {
+      await q.execute(
+        "INSERT INTO loads (id, tenant_id, load_number, customer_id, status, origin_city, origin_state, dest_city," +
+          " dest_state, pickup_on, loaded_miles) VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid)," +
+          " 'planned', 'Gary', 'IN', 'Joliet', 'IL', CAST('2026-10-20' AS date), 120)",
+        [loadId, s.loadNumbers[i], s.customerId],
+      );
+    }
+  });
+}
+
+// A browser that runs nothing real: every screenshot is the largest allowed, and the click on
+// the detail page captures the POD the portal serves.
+function fakeDriver(pod: Uint8Array) {
+  const state = { url: "about:blank", pod: null as CapturedPod | null, ran: 0, opened: [] as string[] };
+  const driver: PortalDriver = {
+    async open(url) {
+      state.opened.push(url);
+      state.url = url;
+    },
+    async run(action) {
+      state.ran += 1;
+      if (action.type === "click") {
+        state.url = DETAIL;
+        state.pod = { bytes: pod, url: `${DETAIL}/pod` };
+      }
+    },
+    async settle() {},
+    async screenshot() {
+      return BIG_SHOT;
+    },
+    url: () => state.url,
+    pod: () => state.pod,
+    async close() {},
+  };
+  return { driver, state };
+}
+
+const CHECK: SafetyCheck = { id: "sc_portal_1", code: "malicious_instructions", message: "The page asks for something unusual." };
+
+function callResult(n: number, actions: Record<string, unknown>[], checks: SafetyCheck[] = []): ComputerResult {
+  const callId = `call_${n}`;
+  const raw = { type: "computer_call", call_id: callId, actions, pending_safety_checks: checks, status: "completed" };
+  return {
+    callId: randomUUID(),
+    status: "ok",
+    text: "",
+    toolCalls: [],
+    usage: { input: 10, cached: 0, output: 10, reasoning: 0 },
+    costNanocents: 2_000_000_000,
+    upstreamId: null,
+    replay: [],
+    toolSearches: 0,
+    call: { callId, actions, pendingSafetyChecks: checks, checks, status: "completed", raw },
+  };
+}
+
+function answerResult(text: string): ComputerResult {
+  return { ...callResult(0, []), call: null, text };
+}
+
+function scripted(results: ComputerResult[]) {
+  const requests: ComputerRequest[] = [];
+  const step = vi.fn<StepFn>(async (_target, request) => {
+    requests.push(request);
+    const next = results.shift();
+    if (!next) throw new Error("script ran out");
+    return next;
+  });
+  return { step, requests };
+}
+
+let clock = T0;
+const tick = () => new Date((clock += 1_000));
+
+function deps(driver: PortalDriver, step: StepFn): RunDeps {
+  return {
+    store: dbRunStore(A, app),
+    openDriver: async () => driver,
+    step,
+    screen: async () => "clean",
+    now: tick,
+    sleep: async () => undefined,
+    origin: ORIGIN,
+    recordDir: null,
+  };
+}
+
+const memberA: Session = { sub: SUB_A, email: "member@example.test", tenantId: A };
+const asApp = <T>(tenantId: string, fn: (q: Queryable) => Promise<T>) => app.withTenant(tenantId, fn);
+
+describe("the portal tables", () => {
+  const LIMITS = { ...flags.portalRunLimits };
+  let flowRunId = "";
+  let sessionA = "";
+
+  beforeAll(async () => {
+    vi.stubEnv("DB_CLUSTER_ARN", "");
+    vi.stubEnv("PORTAL_RUNNER_MODE", "");
+    vi.stubEnv("PORTAL_BASE_URL", "");
+    flags.portalRunnerEnabled = true;
+    flags.portalRunLimits = { ...LIMITS };
+    admin = createPgDb({ connectionString: adminUrl() });
+    app = createPgDb({ connectionString: appUrl() });
+    await createTenant(A, "portal-a");
+    await createTenant(B, "portal-b");
+    await admin.withTenant(A, (q) =>
+      q.execute(
+        "INSERT INTO memberships (tenant_id, cognito_sub, email, role) VALUES (current_tenant_id(), $1, $2, 'staff')",
+        [SUB_A, memberA.email],
+      ),
+    );
+    expect(await seedTenantPortal(admin, A, planFor(A, CARRIER_A))).toBe(2);
+    expect(await seedTenantPortal(admin, B, planFor(B, CARRIER_B))).toBe(2);
+  });
+
+  afterAll(async () => {
+    flags.portalRunnerEnabled = false;
+    flags.portalRunLimits = { ...LIMITS };
+    vi.unstubAllEnvs();
+    // Only what this file made: the two tenants, and every row under them by cascade, after the
+    // portal rows that point at each other are let go.
+    for (const id of [A, B]) {
+      await clearTenantPortal(admin, id);
+      await admin.withTenant(id, (q) => q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"));
+    }
+    await app?.close();
+    await admin?.close();
+  });
+
+  it("reads each tenant's own portal rows, and a session from one tenant opens nothing in another", async () => {
+    const lines = await asApp(B, (q) => findPortalLoads(q, REF_TIMES));
+    expect(lines).toEqual([
+      { reference: REF_TIMES, loadNumber: "PB-1001", consignee: "Sample Receiver Inc", destination: "Joliet, IL", podStatus: "available" },
+    ]);
+    const detailA = await asApp(A, (q) => portalLoadByReference(q, REF_TIMES));
+    expect(detailA?.loadNumber).toBe("PA-1001");
+    expect(await asApp(A, (q) => portalPod(q, REF_PENDING))).toBeNull();
+    const podA = await asApp(A, (q) => portalPod(q, REF_TIMES));
+    expect(podA && Buffer.from(podA.slice(0, 5)).toString()).toBe("%PDF-");
+  });
+
+  it("runs, pauses on a safety check, resumes once a member approves it, and stores matching evidence", async () => {
+    const podA = (await asApp(A, (q) => portalPod(q, REF_TIMES)))!;
+    const started = await asApp(A, (q) =>
+      createRunIn(q, memberA, { loadId: setup[A].timesLoad, refresh: false, turnId: null }, tick()),
+    );
+    expect(started.kind).toBe("queued");
+    flowRunId = (started as { runId: string }).runId;
+
+    // First pass: sign-in typed, then a call that carries a safety check pauses before acting.
+    const first = scripted([
+      callResult(1, [{ type: "type", text: "CODE" }, { type: "keypress", keys: ["Enter"] }]),
+      callResult(2, [{ type: "click", x: 100, y: 200, button: "left" }], [CHECK]),
+    ]);
+    const d1 = fakeDriver(podA);
+    expect(await runPortalRun({ tenantId: A, runId: flowRunId }, deps(d1.driver, first.step))).toEqual({ kind: "paused" });
+    expect(d1.state.ran).toBe(2);
+    expect(d1.state.opened).toEqual([`${ORIGIN}/portal?t=${A}`]);
+
+    const paused = await asApp(A, (q) =>
+      q.query<{ status: string; claim_token: string | null; step_count: number }>(
+        "SELECT status, claim_token, step_count FROM portal_runs WHERE id = CAST($1 AS uuid)",
+        [flowRunId],
+      ),
+    );
+    expect(paused).toEqual([{ status: "waiting_approval", claim_token: null, step_count: 2 }]);
+    const checks = await asApp(A, (q) =>
+      q.query<{ id: string; check_id: string; status: string; created_at: Date }>(
+        "SELECT id, check_id, status, created_at FROM portal_run_checks WHERE run_id = CAST($1 AS uuid)",
+        [flowRunId],
+      ),
+    );
+    expect(checks.map((c) => [c.check_id, c.status])).toEqual([[CHECK.id, "pending"]]);
+    // Stamped by the runner's clock, so the approval wait never depends on the database's.
+    expect(new Date(checks[0].created_at).getTime()).toBeGreaterThan(T0);
+
+    // The page signs the session in with the code the runner minted for this run.
+    const code = /Access code: ([A-Z0-9]{8})/.exec(first.requests[0].task)?.[1];
+    expect(code).toBeDefined();
+    expect(await asApp(B, (q) => signIn(q, { carrierNumber: CARRIER_A, code: code!, now: tick() }))).toBeNull();
+    sessionA = (await asApp(A, (q) => signIn(q, { carrierNumber: CARRIER_A, code: code!, now: tick() })))!;
+    expect(sessionA).toMatch(/^[0-9a-f-]{36}$/);
+    // Single use.
+    expect(await asApp(A, (q) => signIn(q, { carrierNumber: CARRIER_A, code: code!, now: tick() }))).toBeNull();
+
+    expect(
+      await asApp(A, (q) => decideCheck(q, memberA, { runId: flowRunId, checkId: checks[0].id, decision: "approve" }, tick())),
+    ).toEqual({ kind: "approved", resume: true });
+
+    // Second pass: the approved click runs, and the answer comes back with the approval on it.
+    const answer = {
+      found: true,
+      reference: REF_TIMES,
+      deliveryCheckedIn: "2026-10-20 09:05",
+      deliveryCheckedOut: "2026-10-20 11:10",
+      timeZoneLabel: "CT",
+      podDownloaded: true,
+      podSignedBy: "Dana Reyes",
+      notes: "",
+    };
+    const second = scripted([answerResult(JSON.stringify(answer))]);
+    const d2 = fakeDriver(podA);
+    expect(await runPortalRun({ tenantId: A, runId: flowRunId }, deps(d2.driver, second.step))).toEqual({
+      kind: "ended",
+      status: "done",
+      reason: "ok",
+    });
+    expect(d2.state.ran).toBe(1);
+    const resumed = second.requests[0];
+    expect(resumed.history).toHaveLength(2);
+    expect(resumed.history[0].output.acknowledged).toEqual([]);
+    expect(resumed.history[1].output.acknowledged).toEqual([CHECK]);
+    // Every screenshot came back from the table byte for byte, at the largest size allowed.
+    expect(Buffer.from(resumed.screenshot.bytes).equals(Buffer.from(BIG_SHOT.bytes))).toBe(true);
+    expect(Buffer.from(resumed.history[0].output.screenshot.bytes).equals(Buffer.from(BIG_SHOT.bytes))).toBe(true);
+
+    const evidence = await asApp(A, (q) => latestEvidence(q, setup[A].timesLoad));
+    expect(evidence).toMatchObject({
+      runId: flowRunId,
+      checkedInAt: "2026-10-20T14:05:00.000Z",
+      checkedOutAt: "2026-10-20T16:10:00.000Z",
+      zoneLabel: "CT",
+      minutesAtDock: 125,
+      pod: "present",
+      podBytes: podA.length,
+      screenVerdict: "clean",
+      readback: "matches",
+    });
+    const kept = await asApp(A, (q) => evidencePod(q, flowRunId));
+    expect(kept && Buffer.from(kept).equals(Buffer.from(podA))).toBe(true);
+    const stored = await asApp(A, (q) =>
+      q.query<{ kind: string; source: string }>(
+        "SELECT kind, source FROM untrusted_inputs WHERE id = CAST($1 AS uuid)",
+        [evidence!.untrustedInputId],
+      ),
+    );
+    expect(stored).toEqual([{ kind: "portal", source: "portal_run" }]);
+
+    const view = await asApp(A, (q) => runView(q, flowRunId, tick()));
+    expect(view?.run.status).toBe("done");
+    expect(view?.steps.map((s) => [s.seq, s.kind, s.executed])).toEqual([
+      [0, "opening", true],
+      [1, "action", true],
+      [2, "action", true],
+      [3, "answer", false],
+    ]);
+    expect(view?.checks.map((c) => c.status)).toEqual(["approved"]);
+    expect((await asApp(A, (q) => listRuns(q, tick()))).map((r) => r.id)).toEqual([flowRunId]);
+
+    // Done means the same ask again reuses the evidence.
+    const again = await asApp(A, (q) =>
+      createRunIn(q, memberA, { loadId: setup[A].timesLoad, refresh: false, turnId: null }, tick()),
+    );
+    expect(again).toMatchObject({ kind: "done", runId: flowRunId });
+  });
+
+  it("makes one live run per load when two asks race, and lets only one worker claim it", async () => {
+    const ask = () =>
+      asApp(A, (q) => createRunIn(q, memberA, { loadId: setup[A].pendingLoad, refresh: false, turnId: null }, tick()));
+    const both = await Promise.all([ask(), ask()]);
+    expect(both.map((o) => o.kind).sort()).toEqual(["live", "queued"]);
+    const runId = (both[0] as { runId: string }).runId;
+    expect((both[1] as { runId: string }).runId).toBe(runId);
+
+    // The index itself refuses a second live run, whoever writes it.
+    expect(
+      await sqlStateOf(
+        asApp(A, (q) =>
+          q.execute(
+            "INSERT INTO portal_runs (id, tenant_id, load_id, reference, requested_by, trace_id, model, status)" +
+              " VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, 'wonder', 'queued')",
+            [randomUUID(), setup[A].pendingLoad, REF_PENDING, SUB_A, randomUUID()],
+          ),
+        ),
+      ),
+    ).toBe("23505");
+
+    const store = dbRunStore(A, app);
+    const tokens = [randomUUID(), randomUUID()];
+    const claims = await Promise.all(tokens.map((t) => store.claim(runId, t, tick())));
+    expect(claims.map((c) => c.kind).sort()).toEqual(["claimed", "not_queued"]);
+    const token = tokens[claims.findIndex((c) => c.kind === "claimed")];
+    expect(await store.claim(randomUUID(), randomUUID(), tick())).toEqual({ kind: "missing" });
+
+    // The largest screenshot and POD go in through decode and come back through encode, whole;
+    // one byte more is refused by the table.
+    const tooBigShot: ComputerScreenshot = { mime: "image/png", bytes: padded(PNG_BYTES, 400_001) };
+    const step = {
+      seq: 0,
+      modelCallId: null,
+      call: null,
+      summary: [],
+      executed: true,
+      stoppedEarly: false,
+      urlAfter: `${ORIGIN}/portal`,
+      costNanocents: 0,
+      pendingCheckCount: 0,
+    };
+    expect(await sqlStateOf(store.insertStep(runId, token, { ...step, screenshot: tooBigShot }))).toBe("23514");
+    await store.insertStep(runId, token, { ...step, screenshot: BIG_SHOT });
+    const shot = await asApp(A, (q) => stepScreenshot(q, runId, 0));
+    expect(shot?.mime).toBe("image/png");
+    expect(shot && Buffer.from(shot.bytes).equals(Buffer.from(BIG_SHOT.bytes))).toBe(true);
+
+    const inputId = await store.storeAnswer('{"found":false}', tick());
+    const evidence = (pod: Uint8Array) => ({
+      checkedIn: null,
+      checkedOut: null,
+      zone: null,
+      timesStepSeq: null,
+      pod: { bytes: pod, hash: "a".repeat(64), stepSeq: 0 },
+      answer: { found: false },
+      untrustedInputId: inputId,
+      screenVerdict: "clean" as const,
+      readback: "differs" as const,
+    });
+    const progress = { costNanocents: 0, modelCallCount: 0, stepCount: 1, lastUrl: null };
+    const ending = { status: "done" as const, reason: "ok" };
+    const tooBigPod = padded(BIG_POD.slice(0, 20), 300_001);
+    expect(
+      await sqlStateOf(store.finishWithEvidence(runId, token, setup[A].pendingLoad, evidence(tooBigPod), ending, progress, tick())),
+    ).toBe("23514");
+    await store.finishWithEvidence(runId, token, setup[A].pendingLoad, evidence(BIG_POD), ending, progress, tick());
+    const pod = await asApp(A, (q) => evidencePod(q, runId));
+    expect(pod && Buffer.from(pod).equals(Buffer.from(BIG_POD))).toBe(true);
+    // A finished run gives up its claim token.
+    await expect(store.progress(runId, token, progress)).rejects.toThrow();
+  });
+
+  it("keeps every portal table inside its tenant and the app login inside its grants", async () => {
+    for (const table of PORTAL_TABLES) {
+      const own = await asApp(A, (q) => q.query<{ n: number }>(`SELECT CAST(count(*) AS integer) AS n FROM ${table}`));
+      expect(own[0].n, table).toBeGreaterThan(0);
+      const seen = await asApp(B, (q) =>
+        q.query<{ n: number }>(`SELECT CAST(count(*) AS integer) AS n FROM ${table} WHERE tenant_id = CAST($1 AS uuid)`, [A]),
+      );
+      expect(seen[0].n, table).toBe(0);
+    }
+
+    // Another tenant's id is refused by the policy; another tenant's load by the composite key.
+    expect(
+      await sqlStateOf(
+        asApp(B, (q) =>
+          q.execute(
+            "INSERT INTO portal_runs (id, tenant_id, load_id, reference, requested_by, trace_id, model, status)" +
+              " VALUES (CAST($1 AS uuid), CAST($2 AS uuid), CAST($3 AS uuid), $4, 'x', 'trace', 'wonder', 'queued')",
+            [randomUUID(), A, setup[A].pendingLoad, REF_PENDING],
+          ),
+        ),
+      ),
+    ).toBe("42501");
+    expect(
+      await sqlStateOf(
+        asApp(B, (q) =>
+          q.execute(
+            "INSERT INTO portal_runs (id, tenant_id, load_id, reference, requested_by, trace_id, model, status)" +
+              " VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'x', 'trace', 'wonder', 'queued')",
+            [randomUUID(), setup[A].pendingLoad, REF_PENDING],
+          ),
+        ),
+      ),
+    ).toBe("23503");
+
+    // No deletes, no writes to the portal's own records, only the named columns.
+    expect(await sqlStateOf(asApp(A, (q) => q.execute("DELETE FROM portal_runs")))).toBe("42501");
+    expect(await sqlStateOf(asApp(A, (q) => q.execute("UPDATE portal_loads SET notes = 'x'")))).toBe("42501");
+    expect(await sqlStateOf(asApp(A, (q) => q.execute("UPDATE portal_runs SET reference = 'FFE-999999'")))).toBe("42501");
+    expect(await sqlStateOf(asApp(A, (q) => q.execute("UPDATE portal_run_checks SET code = 'other'")))).toBe("42501");
+
+    // The portal cookie names a tenant; a session from another tenant opens nothing.
+    expect(await withPortalTenant(cookieValue(B, sessionA), tick(), async () => "open", app)).toBeNull();
+    expect(await withPortalTenant(cookieValue(A, sessionA), tick(), async () => "open", app)).toBe("open");
+  });
+
+  it("clears one tenant's portal rows in an order the keys allow, then seeds them again", async () => {
+    const before = await asApp(B, (q) => q.query<{ n: number }>("SELECT CAST(count(*) AS integer) AS n FROM portal_loads"));
+    // Evidence 2, checks 1, steps 5, sessions 1, runs 2, loads 2, account 1.
+    expect(await clearTenantPortal(admin, A)).toBe(14);
+    for (const table of PORTAL_TABLES) {
+      const left = await asApp(A, (q) => q.query<{ n: number }>(`SELECT CAST(count(*) AS integer) AS n FROM ${table}`));
+      expect(left[0].n, table).toBe(0);
+    }
+    const after = await asApp(B, (q) => q.query<{ n: number }>("SELECT CAST(count(*) AS integer) AS n FROM portal_loads"));
+    expect(after).toEqual(before);
+    expect(await seedTenantPortal(admin, A, planFor(A, CARRIER_A))).toBe(2);
+  });
+});

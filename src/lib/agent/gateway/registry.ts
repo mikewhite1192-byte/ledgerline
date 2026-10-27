@@ -25,6 +25,7 @@ import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
+import { fetchPortalEvidence } from "./tools/record/fetch-portal-evidence";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
 
@@ -61,6 +62,7 @@ const TOOLS: readonly AnyToolDef[] = [
   proposePayCorrection,
   proposeInvoiceFix,
   proposeDetentionCharge,
+  fetchPortalEvidence,
   classifyMessage,
 ];
 

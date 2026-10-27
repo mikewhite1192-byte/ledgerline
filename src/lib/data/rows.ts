@@ -228,8 +228,8 @@ export type PaymentApplicationRow = {
 
 export type UntrustedInputRow = {
   id: string;
-  kind: "email" | "transcript" | "document";
-  source: "inbound" | "upload" | "voice" | "seed_benign" | "seed_injection";
+  kind: "email" | "transcript" | "document" | "portal";
+  source: "inbound" | "upload" | "voice" | "seed_benign" | "seed_injection" | "portal_run";
   driver_id: string | null;
   from_address: string | null;
   subject: string | null;

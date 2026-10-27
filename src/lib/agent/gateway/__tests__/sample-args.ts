@@ -12,6 +12,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const input = rows.untrusted_inputs[0];
   // The first planted unbilled detention: 41,250 cents in October.
   const detentionLoad = plan.planted.detentionLoadIds[0];
+  const delivered = rows.loads.find((l) => l.status === "delivered") ?? rows.loads[0];
   const refs = [{ table: "drivers", id: hero.id }];
   return {
     get_driver: { driverId: hero.id },
@@ -52,6 +53,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       amountCents: 41_250,
       sourceRefs: [{ table: "loads", id: detentionLoad }],
     },
+    fetch_portal_evidence: { loadId: delivered.id },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     report_ar_aging: { asOf: "2026-11-02" },
     report_driver_pay_summary: { periodStart: paid.period_start, driverId: hero.id },

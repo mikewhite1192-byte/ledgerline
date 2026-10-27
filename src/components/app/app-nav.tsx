@@ -1,4 +1,4 @@
-import { Cpu, HandCoins, House, NotebookPen } from "lucide-react";
+import { Cpu, Globe, HandCoins, House, NotebookPen } from "lucide-react";
 import { flags } from "@/config/flags";
 import type { NavItem } from "./nav-list";
 
@@ -9,6 +9,7 @@ const ITEMS = [
   { href: "/advances", label: "Advances", icon: <HandCoins aria-hidden />, shown: () => flags.advancesEnabled === true },
   { href: "/driver-notes", label: "Driver notes", icon: <NotebookPen aria-hidden />, shown: () => flags.driverNotesEnabled === true },
   { href: "/models", label: "Meta models", icon: <Cpu aria-hidden />, shown: () => true },
+  { href: "/portal-runs", label: "Portal runs", icon: <Globe aria-hidden />, shown: () => flags.portalRunnerEnabled === true },
 ] as const;
 
 export function appNav(current: string): NavItem[] {

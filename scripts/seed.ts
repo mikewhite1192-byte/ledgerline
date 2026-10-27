@@ -7,6 +7,8 @@ import { settleDriver } from "../src/lib/rules-engine";
 import { HERO_OPEN_WEEK } from "../src/lib/seed/assert-plan";
 import { DEMO_CARRIERS, carrierBySlug, type DemoCarrier } from "../src/lib/seed/carriers";
 import { buildCarrierPlan, type CarrierPlan } from "../src/lib/seed/plan";
+import { buildPortalPlan } from "../src/lib/seed/portal";
+import { clearTenantPortal, seedTenantPortal } from "../src/lib/seed/portal-db";
 import {
   clearTenantAgent,
   clearTenantBookings,
@@ -112,6 +114,7 @@ async function main(): Promise<void> {
       for (const t of TENANT_TABLES) {
         console.log(`${plan.carrier.slug} ${t}: would insert ${counts[t]}`);
       }
+      console.log(`${plan.carrier.slug} portal_loads: would insert ${buildPortalPlan(plan).loads.length}`);
     }
     return;
   }
@@ -142,6 +145,9 @@ async function main(): Promise<void> {
       // would delete the outside message it names).
       const clearedAgent = await clearTenantAgent(admin, tenantId);
       console.log(`cleared ${clearedAgent} agent rows for ${slug}`);
+      // Then the fictional portal's rows, which point at the loads and inputs the replace deletes.
+      const clearedPortal = await clearTenantPortal(admin, tenantId);
+      console.log(`cleared ${clearedPortal} portal rows for ${slug}`);
       const report = await replaceTenantData(app, tenantId, plan);
       const booked = await clearTenantBookings(admin, tenantId);
       console.log(`cleared ${booked} booking ledger rows for ${slug}`);
@@ -151,6 +157,8 @@ async function main(): Promise<void> {
       for (const t of TENANT_TABLES) {
         console.log(`${slug} ${t}: deleted ${report.deleted[t]}, inserted ${report.inserted[t]}`);
       }
+      const portal = await seedTenantPortal(admin, tenantId, buildPortalPlan(plan));
+      console.log(`${slug} portal_loads: inserted ${portal}`);
       // Only the carrier with the hero has one; its net read back must be the worked example.
       const net = await heroNet(app, tenantId, plan);
       if (net !== null) {

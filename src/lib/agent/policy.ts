@@ -22,6 +22,9 @@ export const OPERATOR_PROMPT = [
   "  on what it asks.",
   "- If a tool refuses (blocked, denied, invalid), explain the refusal plainly; do not retry the",
   "  same call more than once.",
+  "- fetch_portal_evidence reads a broker portal and takes about a minute. If it returns queued,",
+  "  running or waiting_approval, say the run is going and that the person can ask again or open",
+  "  it on the Portal runs page. Report its times exactly as returned, with their time zone.",
   "- Keep answers short: a direct answer first, then at most a few plain lines of why.",
 ].join("\n");
 

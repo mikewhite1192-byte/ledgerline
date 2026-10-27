@@ -114,6 +114,26 @@ export type Flags = {
   // adds the charge to the load's open invoice. Off means neither tool is offered or runs and an
   // approval is refused before anything is written.
   detentionEnabled: boolean;
+  // The portal runner: the agent opens the fictional broker portal in a browser and reads a
+  // load's delivery stamps and POD. Off gates the portal pages, the run routes, the gateway tool
+  // and the worker, which re-checks it when it claims a run. aiEnabled must also be on.
+  portalRunnerEnabled: boolean;
+  // The model that drives the browser. Muse Wonder is the default. Muse Spark is allowed here
+  // because Muse Wonder refused the computer tool when the runner was built; switching is the
+  // owner's call, in its own one-line change.
+  portalRunnerModel: "wonder" | "spark";
+  // Hard caps on one portal run. Reaching any of them ends the run with no evidence.
+  portalRunLimits: {
+    maxSteps: number;
+    maxWallMs: number;
+    maxRunCents: number;
+    maxCallCents: number;
+    maxActionsPerStep: number;
+    screenshotMaxBytes: number;
+    podMaxBytes: number;
+    // A safety check a person has not decided within this many minutes ends the run.
+    approvalWaitMinutes: number;
+  };
 };
 
 export const flags: Flags = {
@@ -157,4 +177,16 @@ export const flags: Flags = {
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
   reportsEnabled: false,
   detentionEnabled: false,
+  portalRunnerEnabled: false,
+  portalRunnerModel: "wonder",
+  portalRunLimits: {
+    maxSteps: 15,
+    maxWallMs: 240_000,
+    maxRunCents: 150,
+    maxCallCents: 25,
+    maxActionsPerStep: 8,
+    screenshotMaxBytes: 400_000,
+    podMaxBytes: 300_000,
+    approvalWaitMinutes: 30,
+  },
 };

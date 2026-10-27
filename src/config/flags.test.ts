@@ -81,4 +81,23 @@ describe("flags", () => {
     }
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
+
+  it("ships the portal runner dark, on Muse Wonder, with every run capped", () => {
+    expect(flags.portalRunnerEnabled).toBe(false);
+    expect(flags.portalRunnerModel).toBe("wonder");
+    expect(flags.portalRunLimits).toEqual({
+      maxSteps: 15,
+      maxWallMs: 240_000,
+      maxRunCents: 150,
+      maxCallCents: 25,
+      maxActionsPerStep: 8,
+      screenshotMaxBytes: 400_000,
+      podMaxBytes: 300_000,
+      approvalWaitMinutes: 30,
+    });
+    for (const v of Object.values(flags.portalRunLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.portalRunLimits.maxCallCents).toBeLessThanOrEqual(flags.portalRunLimits.maxRunCents);
+  });
 });

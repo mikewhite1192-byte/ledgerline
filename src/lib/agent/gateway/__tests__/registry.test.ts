@@ -18,6 +18,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_advance: { tier: "propose", roles: ["operator"] },
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
+  fetch_portal_evidence: { tier: "record", roles: ["operator"] },
   classify_message: { tier: "read", roles: ["triage"] },
   report_ar_aging: { tier: "read", roles: ["operator"] },
   report_driver_pay_summary: { tier: "read", roles: ["operator"] },
@@ -77,10 +78,10 @@ describe("tool registry", () => {
 
   it("offers each role only its own tools, as copies", () => {
     const counts = Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]));
-    expect(counts).toEqual({ operator: 13, auditor: 9, triage: 2 });
+    expect(counts).toEqual({ operator: 14, auditor: 9, triage: 2 });
     const first = toolsFor("operator");
     first.pop();
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(14);
     expect(toolsFor("nobody" as AgentRole)).toEqual([]);
   });
 
@@ -89,7 +90,7 @@ describe("tool registry", () => {
     for (const role of AGENT_ROLES) for (const n of DETENTION_TOOLS) expect(names(role)).not.toContain(n);
     flags.detentionEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 15,
+      operator: 16,
       auditor: 10,
       triage: 2,
     });
@@ -97,7 +98,7 @@ describe("tool registry", () => {
     expect(names("auditor")).toContain("find_unbilled_detention");
     expect(names("auditor")).not.toContain("propose_detention_charge");
     flags.detentionEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(14);
   });
 
   it("offers and finds the report tools only while their switch is on, read on every call", () => {
@@ -106,7 +107,7 @@ describe("tool registry", () => {
     expect(toolsFor("operator").map((t) => t.name).filter((n) => n.startsWith("report_"))).toEqual([]);
 
     flags.reportsEnabled = true;
-    expect(toolsFor("operator")).toHaveLength(18);
+    expect(toolsFor("operator")).toHaveLength(19);
     expect(toolsFor("auditor")).toHaveLength(9);
     expect(toolsFor("triage")).toHaveLength(2);
     for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
@@ -114,7 +115,7 @@ describe("tool registry", () => {
 
     flags.reportsEnabled = false;
     for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(14);
   });
 
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
@@ -122,7 +123,7 @@ describe("tool registry", () => {
     flags.reportsEnabled = true;
     // Both switches on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 20,
+      operator: 21,
       auditor: 10,
       triage: 2,
     });
@@ -183,6 +184,13 @@ describe("deferred loading for tool search", () => {
       expect(plain.find((t) => t.name === name), name).not.toHaveProperty("deferLoading");
     }
     expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...ALWAYS_LOADED].sort());
+  });
+
+  it("defers the portal evidence tool, which few questions need", () => {
+    expect(ALWAYS_LOADED).not.toContain("fetch_portal_evidence");
+    const deferred = toolsFor("operator", { defer: true });
+    expect(deferred.find((t) => t.name === "fetch_portal_evidence")?.deferLoading).toBe(true);
+    expect(toolsFor("operator").find((t) => t.name === "fetch_portal_evidence")).not.toHaveProperty("deferLoading");
   });
 
   it("names only registered tools offered to the operator as always loaded, and nothing else", () => {
