@@ -276,6 +276,18 @@ const PROPOSAL_SQL = `
          CAST(p.exceptions AS text) AS exceptions
     FROM proposals p`;
 
+// Proposals by id, for the sweep's run page (any staff member of the carrier sees a run's drafts,
+// as the approve gate allows). Row security limits them to the carrier on the session.
+export async function readProposalViews(q: Queryable, ids: readonly string[]): Promise<ProposalView[]> {
+  // Only whole uuids go into the array literal.
+  const safe = ids.filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+  if (safe.length === 0) return [];
+  const rows = await q.query<ProposalRow>(`${PROPOSAL_SQL} WHERE p.id = ANY(CAST($1 AS uuid[])) ORDER BY p.id`, [
+    `{${safe.join(",")}}`,
+  ]);
+  return rows.map(proposalView);
+}
+
 async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
   const steps = await q.query<StepRow>(
     `SELECT id, seq, kind, label, state, CAST(detail->'report' AS text) AS report
