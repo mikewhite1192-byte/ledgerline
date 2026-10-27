@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
+import { createFuelCardSimAdapter, loadId } from "../adapters/payment/fuel-card-sim";
 import { createMockPaymentAdapter } from "../adapters/payment/mock";
-import type { AccountingAdapter, PaymentAdapter, SendOutcome } from "../adapters/types";
+import type { AccountingAdapter, FuelCardDestination, PaymentAdapter, SendOutcome } from "../adapters/types";
 import {
   executeMoneyAction,
+  payoutOf,
   settlementFor,
   type LedgerStore,
   type MoneyDeps,
@@ -18,7 +20,7 @@ import {
   SESSION,
   steps,
 } from "./test-fakes";
-import { MoneyError, type MoneyAction } from "./types";
+import { KIND_SHAPES, MONEY_ACTION_KINDS, MoneyError, RAIL_OF_KIND, type MoneyAction } from "./types";
 
 const saved = { ...flags };
 
@@ -117,6 +119,7 @@ describe("executeMoneyAction", () => {
           driverId: r.action.counterpartyId,
           amountCents: 25_000,
           memoCode: `advances:${r.action.subjectId}`,
+          rail: "fuel_card",
         },
         ctx: { requestId: r.action.requestId, timeoutMs: 1_000, tenantZone: "America/Chicago" },
       },
@@ -164,7 +167,7 @@ describe("executeMoneyAction", () => {
     expect(t.payment.sends).toBe(0);
     expect(t.lines).toEqual([
       expect.stringMatching(
-        /^money: would send advance_payout 25000c for advances [0-9a-f-]{36} via mock \(payoutsEnabled off\)$/,
+        /^money: would send advance_payout 25000c for advances [0-9a-f-]{36} via fuel_card mock \(payoutsEnabled off\)$/,
       ),
     ]);
   });
@@ -455,5 +458,150 @@ describe("settlementFor", () => {
       to: "unknown",
       category: "unknown",
     });
+  });
+});
+
+describe("the fuel-card rail", () => {
+  const DEST: FuelCardDestination = {
+    rail: "fuel_card",
+    provider: "fuel_card_sim",
+    token: "fcs_card_0123456789abcdef01234567",
+    last4: "4417",
+    simBehavior: "ok",
+  };
+  const sim = () => createFuelCardSimAdapter({ log: () => {} });
+  const withCard = (hooks: MoneyHooks, dest: FuelCardDestination | null = DEST): MoneyHooks => ({
+    ...hooks,
+    destination: async () => dest,
+  });
+
+  it("maps exactly the payment kinds to a rail: advances to the card, settlements to the bank", () => {
+    const paymentKinds = MONEY_ACTION_KINDS.filter((k) => KIND_SHAPES[k].channel === "payment");
+    expect(Object.keys(RAIL_OF_KIND).sort()).toEqual([...paymentKinds].sort());
+    expect(RAIL_OF_KIND).toEqual({ advance_payout: "fuel_card", settlement_payout: "bank" });
+  });
+
+  it("builds the payout with its rail and the card, and refuses a kind with no rail", () => {
+    const action = {
+      id: "aaaaaaaa-0000-4000-8000-000000000001",
+      kind: "advance_payout",
+      subjectTable: "advances",
+      subjectId: "bbbbbbbb-0000-4000-8000-000000000001",
+      counterpartyId: "cccccccc-0000-4000-8000-000000000001",
+      amountCents: 25_000,
+    } as MoneyAction;
+    expect(payoutOf(action, DEST)).toEqual({
+      actionId: action.id,
+      driverId: action.counterpartyId,
+      amountCents: 25_000,
+      memoCode: `advances:${action.subjectId}`,
+      rail: "fuel_card",
+      destination: DEST,
+    });
+    expect(payoutOf(action)).not.toHaveProperty("destination");
+    expect(() => payoutOf({ ...action, kind: "advance_expense" })).toThrow(MoneyError);
+  });
+
+  it("loads the card the hook names, confirmed by the simulated provider", async () => {
+    const t = setup(sim());
+    const r = await executeMoneyAction(t.db, SESSION, payoutDraft(), withCard(t.hooks), t.deps);
+    expect(r.action).toMatchObject({
+      state: "confirmed",
+      settledVia: "response",
+      outsideSystem: "fuel_card_sim",
+      outsideId: loadId(r.action.requestId),
+      outsideAmountCents: 25_000,
+    });
+    expect(t.payment.sends).toBe(1);
+    expect(t.onConfirmed).toHaveBeenCalledTimes(1);
+    expect(t.lines).toContainEqual(expect.stringMatching(/ via fuel_card fuel_card_sim$/));
+    expect(t.lines.join(" ")).not.toContain(DEST.token);
+  });
+
+  it("refuses before any send when the hook finds no card", async () => {
+    const t = setup(sim());
+    const r = await executeMoneyAction(t.db, SESSION, payoutDraft(), withCard(t.hooks, null), t.deps);
+    expect(r.action).toMatchObject({ state: "failed", settledVia: "refused", failureCategory: "validation" });
+    expect(t.payment.sends).toBe(0);
+    expect(t.onFailed).toHaveBeenCalledTimes(1);
+    expect(steps(t.ledger.events)).not.toContain("markSent");
+  });
+
+  it("refuses before any send when the provider needs a card and no hook gives one", async () => {
+    const t = setup(sim());
+    const r = await executeMoneyAction(t.db, SESSION, payoutDraft(), t.hooks, t.deps);
+    expect(r.action).toMatchObject({ state: "failed", settledVia: "refused", failureCategory: "validation" });
+    expect(t.payment.sends).toBe(0);
+  });
+
+  it("settles a declined card failed by response: definite, nothing moved", async () => {
+    const t = setup(sim());
+    const r = await executeMoneyAction(
+      t.db,
+      SESSION,
+      payoutDraft(),
+      withCard(t.hooks, { ...DEST, simBehavior: "declined" }),
+      t.deps,
+    );
+    expect(r.action).toMatchObject({ state: "failed", settledVia: "response", failureCategory: "declined" });
+    expect(t.payment.sends).toBe(1);
+    expect(t.onFailed).toHaveBeenCalledTimes(1);
+    expect(t.onConfirmed).not.toHaveBeenCalled();
+    expect(settlementFor({ kind: "failed", category: "declined" }, r.action, "fuel_card_sim")).toEqual({
+      to: "failed",
+      via: "response",
+      category: "declined",
+    });
+  });
+
+  it("leaves a slow card unknown for the read-back, and treats a confirmation from another system as unknown", async () => {
+    const t = setup(sim());
+    const r = await executeMoneyAction(
+      t.db,
+      SESSION,
+      payoutDraft(),
+      withCard(t.hooks, { ...DEST, simBehavior: "slow" }),
+      t.deps,
+    );
+    expect(r.action).toMatchObject({ state: "unknown", failureCategory: "timeout" });
+    const fromMock = { kind: "confirmed", system: "mock", type: "card_load", id: "fcs_load_1", amountCents: 25_000 };
+    expect(settlementFor(fromMock, r.action, "fuel_card_sim")).toEqual({ to: "unknown", category: "unknown" });
+  });
+
+  it("sends an accounting post through its own hook even with the card provider injected", async () => {
+    flags.accountingEnabled = true;
+    const t = setup(sim());
+    const accounting = { system: "qbo_sandbox", ready: async () => ({ ok: true }) } as unknown as AccountingAdapter;
+    const send = vi.fn(
+      async (): Promise<SendOutcome> => ({
+        kind: "confirmed",
+        system: "qbo_sandbox",
+        type: "Purchase",
+        id: "qbo_1",
+        amountCents: 25_000,
+      }),
+    );
+    const r = await executeMoneyAction(t.db, SESSION, payoutDraft({ kind: "advance_expense" }), { ...t.hooks, send }, {
+      ...t.deps,
+      accounting,
+    });
+    expect(r.action).toMatchObject({ state: "confirmed", outsideSystem: "qbo_sandbox", outsideId: "qbo_1" });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(t.payment.sends).toBe(0);
+  });
+
+  it("refuses a destination hook on an accounting kind before any transaction", async () => {
+    flags.accountingEnabled = true;
+    const t = setup();
+    const accounting = { system: "qbo_sandbox", ready: async () => ({ ok: true }) } as unknown as AccountingAdapter;
+    const send = vi.fn(async (): Promise<SendOutcome> => ({ kind: "unknown", category: "timeout" }));
+    await expect(
+      executeMoneyAction(t.db, SESSION, payoutDraft({ kind: "advance_expense" }), withCard({ ...t.hooks, send }), {
+        ...t.deps,
+        accounting,
+      }),
+    ).rejects.toMatchObject({ category: "validation" });
+    expect(t.db.transactions).toBe(0);
+    expect(send).not.toHaveBeenCalled();
   });
 });

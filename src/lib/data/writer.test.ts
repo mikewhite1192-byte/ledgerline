@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Param, Queryable } from "../db";
-import { TENANT_TABLES } from "./tables";
+import { assertIdentifier, TENANT_TABLES } from "./tables";
 import {
   deleteTenantRows,
   insertRows,
@@ -48,6 +48,16 @@ function fakeQ(affected: (sql: string, params: Param[]) => number) {
 
 const statementChars = (s: { sql: string; params: Param[] }) =>
   s.sql.length + s.params.reduce((n: number, p) => n + (p === null ? 4 : String(p).length), 0);
+
+describe("assertIdentifier", () => {
+  it("allows a lowercase name with digits after the first letter, and nothing else", () => {
+    expect(assertIdentifier("last4")).toBe("last4");
+    expect(assertIdentifier("driver_cards")).toBe("driver_cards");
+    for (const bad of ["4last", "_x", "Last4", "a-b", "a b", "a;b", 'a"b', ""]) {
+      expect(() => assertIdentifier(bad)).toThrow("not a plain identifier");
+    }
+  });
+});
 
 describe("insertStatements", () => {
   it("splits rows into batches of at most 100", () => {
