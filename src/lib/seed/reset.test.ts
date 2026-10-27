@@ -34,23 +34,43 @@ describe("the demo reset's lists", () => {
   });
 });
 
-describe("the function's demo-carrier gate", () => {
-  // Every migration that creates or re-creates the function (0025, then 0033 with the sweep's
-  // second checks, then 0038 with the Inbox messages), so whichever ran last keeps the same gate.
-  const dir = new URL("../../../db/migrations/", import.meta.url);
-  const defining = readdirSync(dir)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .filter((f) => /FUNCTION demo_reset_clear\(\)\s+RETURNS/.test(readFileSync(new URL(f, dir), "utf8")));
+// Every migration that creates or re-creates demo_reset_clear(): the last one is the live function,
+// and each must keep the gate whole.
+const MIGRATIONS = new URL("../../../db/migrations/", import.meta.url);
+// Any spelling: either case, any whitespace, with or without OR REPLACE, a public. prefix or quotes.
+const DEFINES = /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?public"?\s*\.\s*)?"?demo_reset_clear"?\s*\(/i;
+const DEFINITIONS = readdirSync(MIGRATIONS)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .filter((f) => DEFINES.test(readFileSync(new URL(f, MIGRATIONS), "utf8")));
 
-  it("is defined by 0025 and re-created whole by 0033 and 0038", () => {
-    expect(defining[0]).toBe("0025_demo_reset.sql");
-    expect(defining).toContain("0033_demo_reset_fanout.sql");
-    expect(defining).toContain("0038_demo_reset_inbound.sql");
+describe("the function's demo-carrier gate", () => {
+  it("is defined by 0025 first and re-created whole by any later migration", () => {
+    expect(DEFINITIONS[0]).toBe("0025_demo_reset.sql");
   });
 
-  it.each(defining)("%s lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", (file) => {
-    const sql = readFileSync(new URL(file, dir), "utf8");
+  // 0033 added the sweep's second checks, 0034 the fuel checks and 0038 the Inbox messages, each
+  // re-creating the function whole, so whichever ran last keeps the same gate.
+  it("is re-created whole by 0033, 0034 and 0038", () => {
+    expect(DEFINITIONS).toEqual(expect.arrayContaining(["0033_demo_reset_fanout.sql", "0034_fuel_reset.sql", "0038_demo_reset_inbound.sql"]));
+  });
+
+  it("finds a definition in any spelling, and never a call or a longer name", () => {
+    for (const sql of [
+      "CREATE FUNCTION demo_reset_clear()",
+      "create or replace function public.demo_reset_clear()",
+      "CREATE  OR\n  REPLACE FUNCTION\tdemo_reset_clear ()",
+      'CREATE OR REPLACE FUNCTION "public"."demo_reset_clear"()',
+    ]) {
+      expect(DEFINES.test(sql)).toBe(true);
+    }
+    for (const sql of ["SELECT * FROM demo_reset_clear()", "CREATE FUNCTION demo_reset_clear_all()"]) {
+      expect(DEFINES.test(sql)).toBe(false);
+    }
+  });
+
+  it.each(DEFINITIONS)("%s lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", (file) => {
+    const sql = readFileSync(new URL(file, MIGRATIONS), "utf8");
     const gate =
       /IF NOT FOUND OR \(\(v_slug, v_name, v_timezone\) IN \(([^;]*?)\)\) IS NOT TRUE THEN\s+RAISE EXCEPTION 'demo reset: not a demo tenant' USING ERRCODE = 'LR002';/.exec(
         sql,
@@ -71,9 +91,9 @@ describe("the function's demo-carrier gate", () => {
   // every earlier one deletes gives both the same function.
   it("keeps every table an earlier definition deletes in the newest one, which deletes exactly FUNCTION_TABLES", () => {
     const deletes = (file: string) =>
-      new Set([...readFileSync(new URL(file, dir), "utf8").matchAll(/DELETE FROM public\.(\w+) /g)].map((m) => m[1]));
-    const newest = deletes(defining[defining.length - 1]);
-    for (const file of defining) {
+      new Set([...readFileSync(new URL(file, MIGRATIONS), "utf8").matchAll(/DELETE FROM public\.(\w+) /g)].map((m) => m[1]));
+    const newest = deletes(DEFINITIONS[DEFINITIONS.length - 1]);
+    for (const file of DEFINITIONS) {
       for (const table of deletes(file)) expect(newest.has(table), `${file} deletes ${table}`).toBe(true);
     }
     expect([...newest].sort()).toEqual([...FUNCTION_TABLES].sort());

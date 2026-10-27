@@ -17,6 +17,7 @@ import { ToastProvider } from "@/components/app/toast";
 import { ApproveAll } from "@/components/settlements/approve-all";
 import { ContinueBatch } from "@/components/settlements/continue-batch";
 import { doneNote } from "@/components/settlements/action-button";
+import { FuelChecks } from "@/components/fuel/fuel-checks";
 import { HowWorkedOut } from "@/components/trace/how-worked-out";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { flags } from "@/config/flags";
@@ -26,8 +27,19 @@ import type { Session } from "@/lib/auth/claims";
 import type { Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
 import { TERMS } from "@/lib/format/terms";
+import {
+  compareLine,
+  DISMISS_WORDS,
+  FUEL_LABELS,
+  FUEL_PAGE_WORDS,
+  FUEL_STATUS_WORDS,
+  fuelHelp,
+  noSuggestionLine,
+  runLine,
+} from "@/lib/fuel/help";
 import { SUBJECT_STATUSES } from "@/lib/money/types";
 import { INVOICE_REVIEW_STATUSES } from "@/lib/rules-engine";
+import { FUEL_CHECK_NAMES, NO_SUGGESTION_REASONS } from "@/lib/rules-engine/fuel";
 import { REPORT_COLUMNS, REPORT_NAMES, REPORT_TITLES, type ReportName, type ReportResult, type ReportRow } from "@/lib/reports/types";
 import { DEMO_ANCHOR } from "@/lib/seed/anchor";
 import { DEMO_CARRIERS } from "@/lib/seed/carriers";
@@ -255,6 +267,10 @@ vi.mock("@/lib/sweep/view", async (importOriginal) => ({
   readSweepHome: async () => get("sweepHome"),
   readSweepPage: async () => get("sweepPage"),
 }));
+vi.mock("@/lib/fuel/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/fuel/view")>()),
+  readFuelPage: async () => get("fuelPage"),
+}));
 vi.mock("@/lib/portal/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/portal/views")>()),
   runView: async () => get("runView"),
@@ -332,6 +348,7 @@ function defaults(): Record<string, unknown> {
     alerts: fx.ALERTS,
     sweepHome: fx.SWEEP_HOME,
     sweepPage: fx.SWEEP_PAGE,
+    fuelPage: fx.FUEL_PAGE,
     runView: fx.RUN_VIEW,
     runs: fx.RUNS,
     runChoices: fx.RUN_CHOICES,
@@ -788,6 +805,36 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "sweep/fuel/page.tsx",
+    variants: [
+      { name: "findings", load: async () => (await import("@/app/sweep/fuel/page")).default(), shows: FUEL_LABELS.fuel_duplicate },
+      {
+        name: "never checked",
+        setup: () => (state.fx.fuelPage = { lastRun: null, needYou: 0, rows: [] }),
+        load: async () => (await import("@/app/sweep/fuel/page")).default(),
+        shows: FUEL_PAGE_WORDS.neverTitle,
+      },
+      {
+        name: "nothing found",
+        setup: () => (state.fx.fuelPage = { lastRun: fx.FUEL_RUN, needYou: 0, rows: [] }),
+        load: async () => (await import("@/app/sweep/fuel/page")).default(),
+        shows: FUEL_PAGE_WORDS.emptyTitle,
+      },
+      {
+        name: "checking",
+        setup: () => (state.fx.fuelPage = { ...fx.FUEL_PAGE, lastRun: { ...fx.FUEL_RUN, status: "running", finishedAt: null } }),
+        load: async () => (await import("@/app/sweep/fuel/page")).default(),
+        shows: FUEL_PAGE_WORDS.running,
+      },
+      {
+        name: "last check did not finish",
+        setup: () => (state.fx.fuelPage = { ...fx.FUEL_PAGE, lastRun: { ...fx.FUEL_RUN, status: "failed" } }),
+        load: async () => (await import("@/app/sweep/fuel/page")).default(),
+        shows: FUEL_PAGE_WORDS.failed,
+      },
+    ],
+  },
+  {
     file: "voice-notes/page.tsx",
     variants: [
       { name: "list", load: async () => (await import("@/app/voice-notes/page")).default() },
@@ -834,6 +881,7 @@ const PAGES: PageCase[] = [
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
   loading("records/loading.tsx", () => import("@/app/records/loading")),
   loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
+  loading("sweep/fuel/loading.tsx", () => import("@/app/sweep/fuel/loading")),
 ];
 
 // Route files this test does not render as a page, each with the reason. Keep it short: a new page
@@ -1162,6 +1210,116 @@ describe("no internal word on a pay week's buttons and notes", () => {
       doneNote("run", { counts: { drafts: 3, exceptions: 1, locked: 1, truncated: true } }),
       ...states.map((st) => doneNote("retry", { state: st })),
       ...states.map((st) => doneNote("post", { legs: { bill: st, billPayment: st } })),
+    ];
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+// The fuel checks page's parts that show only after a click: each row's detail (the dismiss picker
+// open on a row that needs a person), every note an action can leave, and every fixed line.
+describe("no internal word on a fuel check's detail and notes", () => {
+  const showFuel = () => render(<FuelChecks page={fx.FUEL_PAGE} auditorOn timezone={fx.TENANT.timezone} />);
+  const click = async (name: string | RegExp) => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name }));
+    });
+  };
+  // A row's own button in the table, by its place: it reads "See details: ..." or "Hide details: ...".
+  const toggleRow = async (n: number) => {
+    await act(async () => {
+      fireEvent.click(screen.getAllByRole("button", { name: /^(See|Hide) details: / })[n]);
+    });
+  };
+  // Every POST answers with this refusal category; with none, it succeeds.
+  const answer = (error: string | null) =>
+    vi.stubGlobal("fetch", async () =>
+      error === null ? new Response(JSON.stringify({ ok: true }), { status: 200 }) : new Response(JSON.stringify({ error }), { status: 409 }),
+    );
+
+  it("every row's detail, opened, with the dismiss picker on a row that needs a person", async () => {
+    showFuel();
+    const hits: Hit[] = [];
+    for (const [n, row] of fx.FUEL_PAGE.rows.entries()) {
+      await toggleRow(n);
+      expect(screen.getByRole("region").textContent).toContain(row.sentence);
+      if (row.status === "open") await click(FUEL_PAGE_WORDS.dismiss);
+      hits.push(...scan(document.body));
+      await toggleRow(n);
+    }
+    expect(hits).toEqual([]);
+  });
+
+  it("every note after checking, proposing, dismissing, approving and rejecting", async () => {
+    showFuel();
+    const hits: Hit[] = [];
+    const seen = new Set<string>();
+    const read = () => {
+      for (const s of screen.queryAllByRole("status")) if (s.textContent) seen.add(s.textContent);
+      hits.push(...scan(document.body));
+    };
+    try {
+      for (const error of ["busy", "failed", "unknown", "not_configured", "refused"]) {
+        answer(error);
+        await click(FUEL_PAGE_WORDS.run);
+        read();
+      }
+      await toggleRow(0);
+      for (const error of [null, "live_exists", "changed", "no_open_period", "already_decided", "not_configured", "unknown", "refused"]) {
+        answer(error);
+        await click(/^Propose a pay correction/);
+        read();
+      }
+      for (const error of ["changed", "unknown", "refused"]) {
+        answer(error);
+        await click(FUEL_PAGE_WORDS.dismiss);
+        await click(FUEL_PAGE_WORDS.dismissConfirm);
+        read();
+        await click(FUEL_PAGE_WORDS.cancel);
+      }
+      await toggleRow(0);
+      await toggleRow(fx.FUEL_PAGE.rows.findIndex((r) => r.status === "proposed" && r.proposal?.status === "proposed"));
+      const approveErrors = ["already_decided", "expired", "role", "auditor_required", "override_required", "stale", "needs_confirm"];
+      for (const error of [...approveErrors, "not_found", "not_executable", "refused", "unknown"]) {
+        answer(error);
+        if (!screen.queryByRole("button", { name: "Confirm" })) await click(/^Approve/);
+        await click("Confirm");
+        read();
+      }
+      await click("Cancel");
+      for (const error of ["refused", "unknown"]) {
+        answer(error);
+        await click("Reject");
+        read();
+      }
+    } finally {
+      vi.stubGlobal("fetch", () => new Promise(() => {}));
+    }
+    // Each action left its own note, so every path above was read.
+    expect(seen.size).toBeGreaterThanOrEqual(20);
+    expect(hits).toEqual([]);
+  });
+
+  it("every label, status, hover help, no-change reason, photo line and run line", () => {
+    const words = [
+      ...Object.values(FUEL_PAGE_WORDS),
+      ...Object.values(FUEL_LABELS),
+      ...Object.values(FUEL_STATUS_WORDS),
+      ...Object.values(DISMISS_WORDS),
+      ...FUEL_CHECK_NAMES.map((c) => fuelHelp(c, 250, 286_400)),
+      ...NO_SUGGESTION_REASONS.flatMap((r) => [noSuggestionLine(r, 14_014), noSuggestionLine(r, null)]),
+      ...[null, "same", "different"].flatMap((verdict) =>
+        ["high", "medium", "low", null].map((confidence) => compareLine({ verdict, confidence, category: null })),
+      ),
+      ...["no_photos", "budget", "timeout", "unreadable", null].map((category) => compareLine({ verdict: "unknown", confidence: null, category })),
+      runLine(1, 1),
+      runLine(464, 4),
     ];
     const { container } = render(
       <ul>
