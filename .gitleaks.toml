@@ -2,11 +2,13 @@
 [extend]
 useDefault = true
 
-# A report column definition names its field in camelCase ending in Cents (days1To30Cents), and the
-# generic key rule reads the digits as a random key. Only that exact line shape, with kind "cents",
-# is let through, and only for that one rule.
+# Three aging report column keys (days1To30Cents and the two after it) read as random keys to the
+# generic key rule because of their digits. The exception matches the extracted value against
+# exactly those three names, only in the report types file, and only for that one rule.
 [[allowlists]]
-description = "Report column definitions: a camelCase field name ending in Cents is a column key, not a credential"
+description = "Aging report column keys in src/lib/reports/types.ts are field names, not credentials"
 targetRules = ["generic-api-key"]
-regexTarget = "line"
-regexes = ['''^\s*\{ key: "[a-z][A-Za-z0-9]*Cents", header: "[^"]*", kind: "cents" \},?\s*$''']
+condition = "AND"
+paths = ['''^src/lib/reports/types\.ts$''']
+regexTarget = "secret"
+regexes = ['''^(days1To30Cents|days31To60Cents|days61To90Cents)$''']
