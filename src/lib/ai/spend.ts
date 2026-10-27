@@ -10,6 +10,7 @@ import {
   type AiTarget,
   type AiUsage,
 } from "./types";
+import { checkJob, type JobVerdict } from "./watch";
 
 // The spend ledger: one model_calls row per call and the global counter in ops.ai_spend
 // (db/migrations/0002_ai_spend.sql, 0003_model_calls.sql). Reserve before the call, settle after, each
@@ -57,17 +58,25 @@ export type Reservation = {
   capNanocents: number;
   // Required for a wonder reservation, ignored otherwise.
   wonderCapNanocents: number | null;
+  // The job's hourly allowance (./watch.ts).
+  jobCapNanocents: number;
+  // When the call is reserved, as an ISO instant: the row's created_at and the end of the job's
+  // window. Null is the database clock, which is what production passes; tests pass an instant.
+  at: string | null;
 };
 
 // The counter's row lock serializes reservations: a second one waits for the first to commit,
 // then sees its reservation. Two calls can never both pass a cap. A wonder reservation must pass
-// the overall cap and the Wonder cap, both read under the same lock. Throws AiError("cap") with
-// nothing written, AiError("not_configured") for a wonder reservation without a Wonder cap, or
-// the tenant module's ForbiddenError when the session has no membership.
+// the overall cap and the Wonder cap, both read under the same lock, and then its job's hourly
+// allowance (./watch.ts), under that lock too. Throws AiError("cap") with nothing written,
+// AiError("job_cap") with nothing written to the ledger (the job's one alert row commits first),
+// AiError("not_configured") for a wonder reservation without a Wonder cap, the tenant module's
+// ForbiddenError when the session has no membership, or DbError when the job's spend cannot be
+// read (fail closed).
 export async function reserve(db: TenantDb, session: Session, r: Reservation): Promise<void> {
   const wonder = r.target === "wonder";
   if (wonder && r.wonderCapNanocents === null) throw new AiError("not_configured");
-  await db.withTenant(session.tenantId, async (q) => {
+  const verdict = await db.withTenant(session.tenantId, async (q): Promise<JobVerdict> => {
     await assertMembership(q, session);
     const counter = checked(
       (
@@ -89,11 +98,20 @@ export async function reserve(db: TenantDb, session: Session, r: Reservation): P
     ) {
       throw new AiError("cap");
     }
+    // Returned, not thrown: a throw would roll back the alert the watch just wrote.
+    const job = await checkJob(q, {
+      traceId: r.traceId,
+      purpose: r.purpose,
+      at: r.at,
+      jobCapNanocents: r.jobCapNanocents,
+      reserveNanocents: r.reserveNanocents,
+    });
+    if (job === "job_cap") return "job_cap";
     const inserted = await q.execute(
       `INSERT INTO model_calls (id, tenant_id, target, provider, model, kind, purpose,
-                                reasoning_effort, trace_id, status, reserved_nanocents)
+                                reasoning_effort, trace_id, status, reserved_nanocents, created_at)
        VALUES (CAST($1 AS uuid), current_tenant_id(), $2, $3, $4, $5, $6, $7, CAST($8 AS uuid),
-               'reserved', CAST($9 AS bigint))`,
+               'reserved', CAST($9 AS bigint), COALESCE(CAST($10 AS timestamptz), now()))`,
       [
         r.callId,
         r.target,
@@ -104,6 +122,7 @@ export async function reserve(db: TenantDb, session: Session, r: Reservation): P
         r.reasoningEffort,
         r.traceId,
         r.reserveNanocents,
+        r.at,
       ],
     );
     const updated = await q.execute(
@@ -115,7 +134,9 @@ export async function reserve(db: TenantDb, session: Session, r: Reservation): P
       [r.reserveNanocents, wonder ? r.reserveNanocents : 0],
     );
     if (inserted !== 1 || updated !== 1) throw new DbError("unknown");
+    return "ok";
   });
+  if (verdict === "job_cap") throw new AiError("job_cap");
 }
 
 // answered: the provider reported what the price needs, so the reservation is released and the

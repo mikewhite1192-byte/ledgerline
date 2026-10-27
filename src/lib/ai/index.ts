@@ -32,6 +32,7 @@ import {
 import { reserve, settle, type Settlement } from "./spend";
 import { shouldFallBack, standbyFor, type FirstAttempt } from "./standby";
 import { TARGETS, contributorMode, contributorRefusesAll, modelFor } from "./targets";
+import { jobCapNanocents } from "./watch";
 import {
   AiError,
   type AiAttachment,
@@ -104,12 +105,15 @@ export type {
 
 // Tests inject fetch and a database; under NODE_ENV=test a missing fetch is refused, so no test
 // can reach the network. clock is monotonic milliseconds (default performance.now), for each
-// attempt's duration and the time a standby attempt has left; tests inject a fake one.
+// attempt's duration and the time a standby attempt has left; tests inject a fake one. now is the
+// instant a reservation is stamped with and the job spend watch measures its hour back from;
+// unset (production) means the database's own clock, and tests inject a fixed instant.
 export type AiDeps = {
   fetch?: FetchFn;
   db?: TenantDb;
   secrets?: SecretsClient;
   clock?: () => number;
+  now?: () => Date;
 };
 
 const PURPOSE = /^[a-z][a-z0-9_]{2,39}$/;
@@ -234,6 +238,7 @@ type CallContext<T, U extends Price["unit"]> = {
   clock: () => number;
   cap: number;
   wonderCap: number | null;
+  jobCap: number;
   c: Common;
   trace: string;
   plan: PlanFn<T, U>;
@@ -274,8 +279,8 @@ async function prepare<T, U extends Price["unit"]>(
 }
 
 // One attempt: reserve, one HTTP call, settle, one log line. A failure the host reported comes
-// back as "failed" with the error to throw; a refusal at the reserve (cap, membership, the
-// database) and a failed settle throw from here. reserved() runs once the reservation is written,
+// back as "failed" with the error to throw; a refusal at the reserve (cap, the job's hourly
+// allowance, membership, the database) and a failed settle throw from here. reserved() runs once the reservation is written,
 // before anything is sent.
 async function send<T, U extends Price["unit"]>(
   ctx: CallContext<T, U>,
@@ -290,19 +295,28 @@ async function send<T, U extends Price["unit"]>(
   // The dedupe key: the row's primary key, made here, before the reservation.
   const callId = randomUUID();
   const where = `ai: ${target} ${model} ${kind} ${c.purpose}`;
-  await reserve(db, session, {
-    callId,
-    target,
-    provider,
-    model,
-    kind,
-    purpose: c.purpose,
-    reasoningEffort: p.reasoningEffort,
-    traceId: c.traceId,
-    reserveNanocents: p.reserveNanocents,
-    capNanocents: ctx.cap,
-    wonderCapNanocents: ctx.wonderCap,
-  });
+  try {
+    await reserve(db, session, {
+      callId,
+      target,
+      provider,
+      model,
+      kind,
+      purpose: c.purpose,
+      reasoningEffort: p.reasoningEffort,
+      traceId: c.traceId,
+      reserveNanocents: p.reserveNanocents,
+      capNanocents: ctx.cap,
+      wonderCapNanocents: ctx.wonderCap,
+      jobCapNanocents: ctx.jobCap,
+      at: ctx.deps.now ? ctx.deps.now().toISOString() : null,
+    });
+  } catch (err) {
+    if (err instanceof AiError && err.category === "job_cap") {
+      console.error(`${where} refused: the job is over its hourly allowance${trace}`);
+    }
+    throw err;
+  }
   reserved();
 
   const started = ctx.clock();
@@ -391,6 +405,7 @@ async function runCall<T, U extends Price["unit"]>(
   // Unset or invalid refuses Wonder calls only.
   const wonderCap =
     target === "wonder" ? wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap) : null;
+  const jobCap = jobCapNanocents(flags.aiJobHourlyCapCents);
   if (contributorMode(process.env.META_CONTRIBUTOR_MODE) === null) {
     console.error("ai: META_CONTRIBUTOR_MODE must be unset, true or false; every call is refused");
     throw new AiError("not_configured");
@@ -402,6 +417,7 @@ async function runCall<T, U extends Price["unit"]>(
   if (
     !fetchFn ||
     cap === null ||
+    jobCap === null ||
     contributorRefusesAll(process.env) ||
     !isUuid(session.tenantId) ||
     (target === "wonder" && wonderCap === null) ||
@@ -423,6 +439,7 @@ async function runCall<T, U extends Price["unit"]>(
     clock,
     cap,
     wonderCap,
+    jobCap,
     c,
     trace,
     plan,

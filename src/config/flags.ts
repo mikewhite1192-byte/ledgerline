@@ -5,6 +5,11 @@
 export type Flags = {
   // Model calls through src/lib/ai. Off until the wrapper and its spend cap are live.
   aiEnabled: boolean;
+  // The most one job may spend on model calls in any 60 minutes, in cents, inside the overall
+  // budget. A job is one trace, or a carrier's calls for one purpose with no trace. A call that
+  // would take its job past this is refused, and the job stays stopped until an admin clears its
+  // alert on the Meta models page. Live from the start: it only ever refuses.
+  aiJobHourlyCapCents: number;
   // The model connection check on the home page; on only to prove a deploy.
   aiProofRoute: boolean;
   // Which model triages inbound email: "meta" (Muse Spark) until Baseten credits land.
@@ -118,6 +123,7 @@ export type Flags = {
 
 export const flags: Flags = {
   aiEnabled: false,
+  aiJobHourlyCapCents: 1000,
   aiProofRoute: false,
   triageProvider: "meta",
   sparkOpenFallback: "off",

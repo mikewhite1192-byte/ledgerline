@@ -12,8 +12,6 @@ import { formatPeriod } from "@/lib/format/dates";
 // prompt cache share and typical time this week, then the gateway's and the screener's totals.
 // Plain data in, no reads.
 
-export type DemoBudget = { spentNanocents: number; capNanocents: number | null };
-
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3 py-1">
@@ -80,7 +78,7 @@ function ModelCard({ m }: { m: ModelTotals }) {
   );
 }
 
-export function ModelWeekView({ week, budget }: { week: ModelWeek; budget?: DemoBudget | null }) {
+export function ModelWeekView({ week }: { week: ModelWeek }) {
   const period = formatPeriod(week.week.start, week.week.end);
   const cacheLine = weekCacheLine(week);
   const quiet = week.calls === 0 && week.decisions.total === 0 && week.screenings.total === 0;
@@ -131,13 +129,6 @@ export function ModelWeekView({ week, budget }: { week: ModelWeek; budget?: Demo
           />
         </div>
       )}
-
-      {budget ? (
-        <p className="text-small text-foreground-2">
-          Demo budget used, across every carrier: {formatSpend(budget.spentNanocents)}
-          {budget.capNanocents === null ? ", with no cap set, so every call is refused." : ` of ${formatSpend(budget.capNanocents)}.`}
-        </p>
-      ) : null}
 
       {cacheLine ? <p className="text-small text-foreground-2">{cacheLine}</p> : null}
 
