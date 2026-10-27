@@ -6,7 +6,9 @@ import {
   billDocNumber,
   billKeyOf,
   billPaymentBody,
+  checkEmail,
   customerDisplayName,
+  INVOICE_EMAIL_STATUS,
   invoiceBody,
   isVoided,
   keyedDocNumber,
@@ -94,6 +96,7 @@ describe("QuickBooks bodies", () => {
       customerOutsideId: "58",
       issuedOn: "2026-11-02",
       dueOn: "2026-12-02",
+      billingEmail: "ar@br-c01.example",
     };
     const line = (over: object) => ({ kind: "linehaul" as const, description: "Linehaul", amountCents: 100, ...over });
     expect(invoiceBody({ ...base, lines: [line({})] }, ITEMS, KEY).totalCents).toBe(100);
@@ -117,6 +120,48 @@ describe("QuickBooks bodies", () => {
       "validation",
     );
     expect(refused(() => invoiceBody({ ...base, lines: [line({})] }, ITEMS, "T5B0"))).toBe("validation");
+  });
+
+  it("makes every invoice unsent, carrying its synthetic billing address whole", () => {
+    const { body } = invoiceBody(
+      {
+        actionId: ACTION,
+        invoiceNumber: "BR-INV-1",
+        customerOutsideId: "58",
+        issuedOn: "2026-11-02",
+        dueOn: "2026-12-02",
+        billingEmail: "ar@br-c01.example",
+        lines: [{ kind: "linehaul", description: "Linehaul", amountCents: 100 }],
+      },
+      ITEMS,
+      KEY,
+    );
+    expect(INVOICE_EMAIL_STATUS).toBe("NeedToSend");
+    expect(body.EmailStatus).toBe("NeedToSend");
+    expect(body.BillEmail).toEqual({ Address: "ar@br-c01.example" });
+  });
+
+  it("accepts only a lowercase .example billing address", () => {
+    expect(checkEmail("ar@br-c01.example")).toBe("ar@br-c01.example");
+    expect(checkEmail("billing.team_1@pw-c10.example")).toBe("billing.team_1@pw-c10.example");
+    for (const e of [
+      "ar@shipper.com",
+      "ar@br-c01.example.com",
+      "AR@BR-C01.EXAMPLE",
+      "ar@br-c01.Example",
+      "ar@sub.br-c01.example",
+      "ar br@br-c01.example",
+      "ar@br-c01.example\n",
+      "@br-c01.example",
+      "ar@.example",
+      "",
+      null,
+      undefined,
+      42,
+      { Address: "ar@br-c01.example" },
+    ]) {
+      expect(refused(() => checkEmail(e)), JSON.stringify(e)).toBe("validation");
+    }
   });
 
   it("keys an invoice number or payment reference with the tenant, refusing a result past 21", () => {
@@ -273,8 +318,18 @@ describe("QuickBooks bodies", () => {
 describe("QuickBooks replies", () => {
   it("reads a record whole, or not at all", () => {
     expect(recordOf("Invoice", { Id: "901", DocNumber: "BR-INV-1", TotalAmt: 0.1, CustomerRef: { value: "58" } })).toEqual(
-      { id: "901", ref: "BR-INV-1", amountCents: 10, partyId: "58", voided: false, ourNote: false, applied: null, unappliedCents: null },
+      { id: "901", ref: "BR-INV-1", amountCents: 10, partyId: "58", voided: false, ourNote: false, applied: null, unappliedCents: null, emailStatus: null },
     );
+    expect(recordOf("Invoice", { Id: "901", TotalAmt: 1, EmailStatus: "EmailSent" })).toMatchObject({
+      emailStatus: "EmailSent",
+    });
+    expect(recordOf("Invoice", { Id: "901", TotalAmt: 1, EmailStatus: "emailsent" })).toMatchObject({
+      emailStatus: null,
+    });
+    // Only an invoice carries an email state here.
+    expect(recordOf("Payment", { Id: "5", TotalAmt: 1, EmailStatus: "NeedToSend" })).toMatchObject({
+      emailStatus: null,
+    });
     expect(recordOf("Payment", { Id: "5", PaymentRefNum: "CHK-1", TotalAmt: 1.005 })).toMatchObject({
       ref: "CHK-1",
       amountCents: null,
