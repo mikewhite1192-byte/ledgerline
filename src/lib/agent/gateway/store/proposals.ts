@@ -16,6 +16,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   invoice_post: "Post invoice",
   payment_reapply: "Move payment to the right invoice",
   detention_charge: "Bill unbilled detention",
+  pay_rule_change: "Change a pay rule",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;
@@ -54,6 +55,12 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   if (kind === "invoice_post") return { amountCents, direction: "in" } as const;
   // Money the customer owes the carrier on top of the invoice.
   if (kind === "detention_charge") return { amountCents, direction: "in" } as const;
+  // A pay rule change's amount is the engine's signed change to last settled week's total net pay:
+  // more pay is money out, less pay money kept in, none when no one's pay changes.
+  if (kind === "pay_rule_change") {
+    const direction = amountCents > 0 ? "out" : amountCents < 0 ? "in" : "none";
+    return { amountCents: Math.abs(amountCents), direction } as const;
+  }
   return { amountCents, direction: "out" } as const;
 }
 

@@ -122,4 +122,17 @@ describe("Paystub", () => {
     expect(screen.getByText("−$155.00").closest("td")?.className).toContain("rule-single");
     expect(screen.getByTestId("net-pay").className).toContain("rule-double");
   });
+
+  it("names the pay rules the week was paid under, linked only when a page is given", () => {
+    render(<Paystub {...props} payRules={{ from: "2026-10-19", href: "/settings/pay-rules" }} />);
+    expect(screen.getByRole("link", { name: "Paid under rules from Oct 19" }).getAttribute("href")).toBe(
+      "/settings/pay-rules",
+    );
+    cleanup();
+    render(<Paystub {...props} payRules={{ from: "2026-10-19" }} />);
+    expect(screen.getByText("Paid under rules from Oct 19").closest("a")).toBeNull();
+    cleanup();
+    render(<Paystub {...props} />);
+    expect(screen.queryByText(/Paid under rules/)).toBeNull();
+  });
 });

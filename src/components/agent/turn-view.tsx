@@ -7,8 +7,9 @@ import { decodeEvents } from "@/lib/agent/operator/stream";
 import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
 import type { ReportView, StepView, TurnView } from "@/lib/agent/view";
+import { NOT_NOW_FAILED, SAVE_FAILED, SAVE_NOTICES } from "@/lib/pay-rules/words";
 import { reportPath } from "@/lib/reports/types";
-import { proposalCardFrom, type AuditContext } from "./proposal-card-from";
+import { proposalCardFrom, type AuditContext, type Viewer } from "./proposal-card-from";
 import { reportResultOf, reportTable, type ReportLoad } from "./report-table";
 
 // The live chat. A question posts one turn; its steps stream in over server-sent events, and if
@@ -42,6 +43,11 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
 const APPROVE_FALLBACK = "The approval did not go through. Nothing changed.";
 const REJECT_FAILED = "The rejection did not go through. Try again.";
 
+// A kind with its own words for a refusal: a pay rule change is saved, not approved.
+const KIND_NOTICES: Readonly<Record<string, { approve: Readonly<Record<string, string>>; fallback: string; reject: string }>> = {
+  pay_rule_change: { approve: SAVE_NOTICES, fallback: SAVE_FAILED, reject: NOT_NOW_FAILED },
+};
+
 const START_NOTICE: Readonly<Record<string, string>> = {
   busy: "The agent is still answering your last question.",
   agent_off: "The agent is switched off right now.",
@@ -52,7 +58,7 @@ const START_NOTICE: Readonly<Record<string, string>> = {
 type LocalTurn = TurnView & { notice?: string };
 
 // Where a proposal's card lives and what the approve request needs to say about it.
-type Owner = { turnId: string; flagged: boolean; verdict: string | null; checkedAt: string | null };
+type Owner = { turnId: string; kind: string; flagged: boolean; verdict: string | null; checkedAt: string | null };
 
 function placeholder(turnId: string, conversationId: string | null, text: string): LocalTurn {
   return {
@@ -93,6 +99,7 @@ export function toMessages(
   reports: Readonly<Record<string, ReportLoad>> = {},
   onShow?: (turnId: string, report: ReportView) => void,
   audit?: AuditPage,
+  viewer?: Viewer,
 ): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const t of turns) {
@@ -134,7 +141,7 @@ export function toMessages(
       const ctx: AuditContext | undefined = audit
         ? { on: audit.on, checking: audit.checking[p.id] === true }
         : undefined;
-      parts.push({ kind: "proposal", proposal: proposalCardFrom(p, ctx) });
+      parts.push({ kind: "proposal", proposal: proposalCardFrom(p, ctx, viewer) });
       if (traced) parts.push({ kind: "trace", turnId: t.id, proposalId: p.id });
       const notice = notices[p.id];
       if (notice) parts.push({ kind: "text", text: notice });
@@ -180,6 +187,8 @@ export function AgentChat({
   intro,
   auditorOn = false,
   initialDraft,
+  initialHelp,
+  viewer,
 }: {
   initialTurns: TurnView[];
   streamMode: "sse" | "poll";
@@ -191,9 +200,14 @@ export function AgentChat({
   intro?: string;
   // Text the box starts with (the documents page's "Ask the agent" link); the person sends it.
   initialDraft?: string;
+  // The help line under the box that goes with initialDraft (the Pay rules page's button).
+  initialHelp?: string;
+  // Who is signed in, for a card that says up front that only an admin may approve it.
+  viewer?: Viewer;
 }) {
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
   const [draft, setDraft] = useState(initialDraft ?? "");
+  const [help, setHelp] = useState<string | undefined>(initialHelp);
   const [conversationId, setConversationId] = useState<string | null>(
     initialTurns.length > 0 ? initialTurns[initialTurns.length - 1].conversationId : null,
   );
@@ -408,29 +422,39 @@ export function AgentChat({
       });
       if (!res.ok) {
         const category = await errorOf(res);
-        setNotices((n) => ({ ...n, [proposalId]: noticeOf(APPROVE_NOTICE, category, APPROVE_FALLBACK) }));
+        const words = KIND_NOTICES[o.kind];
+        const notice = words
+          ? noticeOf(words.approve, category, words.fallback)
+          : noticeOf(APPROVE_NOTICE, category, APPROVE_FALLBACK);
+        setNotices((n) => ({ ...n, [proposalId]: notice }));
       }
     } catch {
-      setNotices((n) => ({ ...n, [proposalId]: APPROVE_FALLBACK }));
+      // The request may have reached the server before the reply was lost.
+      const words = KIND_NOTICES[o.kind];
+      setNotices((n) => ({
+        ...n,
+        [proposalId]: words ? noticeOf(words.approve, "unknown", words.fallback) : APPROVE_FALLBACK,
+      }));
     }
     await refresh(o.turnId);
     if (alive.current) setBusyProposal(null);
   }
 
-  async function reject(proposalId: string, turnId: string) {
+  async function reject(proposalId: string, o: Owner) {
     setBusyProposal(proposalId);
     setNotices((n) => ({ ...n, [proposalId]: "" }));
+    const failed = KIND_NOTICES[o.kind]?.reject ?? REJECT_FAILED;
     try {
       const res = await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/reject`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ category: "other" }),
       });
-      if (!res.ok) setNotices((n) => ({ ...n, [proposalId]: REJECT_FAILED }));
+      if (!res.ok) setNotices((n) => ({ ...n, [proposalId]: failed }));
     } catch {
-      setNotices((n) => ({ ...n, [proposalId]: REJECT_FAILED }));
+      setNotices((n) => ({ ...n, [proposalId]: failed }));
     }
-    await refresh(turnId);
+    await refresh(o.turnId);
     if (alive.current) setBusyProposal(null);
   }
 
@@ -439,6 +463,7 @@ export function AgentChat({
     for (const p of t.proposals) {
       owner.set(p.id, {
         turnId: t.id,
+        kind: p.kind,
         flagged: p.flagged,
         verdict: p.auditorVerdict,
         checkedAt: p.auditorCheckedAt,
@@ -446,7 +471,7 @@ export function AgentChat({
     }
   }
 
-  const messages = toMessages(turns, notices, reports, showReport, { on: auditorOn, checking }).map((m) => ({
+  const messages = toMessages(turns, notices, reports, showReport, { on: auditorOn, checking }, viewer).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
       if (p.kind !== "proposal") return p;
@@ -458,7 +483,7 @@ export function AgentChat({
           ...p.proposal,
           pending: busyProposal === p.proposal.id,
           onApprove: (id, overrideReason) => void approve(id, o, overrideReason),
-          onReject: (id) => void reject(id, o.turnId),
+          onReject: (id) => void reject(id, o),
         },
       };
     }),
@@ -473,7 +498,14 @@ export function AgentChat({
           ? undefined
           : (id) => {
               const s = suggestions?.find((x) => x.id === id);
-              if (s) void send(s.label);
+              if (!s) return;
+              // A suggestion that fills the box leaves the sending to the person, who edits it.
+              if (s.fill) {
+                setDraft(s.fill);
+                setHelp(s.help);
+              } else {
+                void send(s.label);
+              }
             }
       }
       intro={intro}
@@ -483,8 +515,10 @@ export function AgentChat({
         pending,
         value: draft,
         onChange: setDraft,
+        help,
         onSubmit: (text) => {
           setDraft("");
+          setHelp(undefined);
           void send(text);
         },
       }}

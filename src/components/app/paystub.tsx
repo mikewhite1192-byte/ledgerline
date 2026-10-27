@@ -4,6 +4,7 @@ import { InlineAlert } from "@/components/ui/inline-alert";
 import { cn } from "@/lib/cn";
 import { formatPeriod } from "@/lib/format/dates";
 import { recordLabel } from "@/lib/format/labels";
+import { paidUnderLine } from "@/lib/pay-rules/words";
 import { hrefOrNull, recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
 import { Money } from "./money";
 import { StatusBadge } from "./status-badge";
@@ -31,6 +32,9 @@ export type PaystubProps = {
   hrefFor?: HrefFor;
   // When set, each line row gets the id `${lineIdPrefix}${seq}`, so a note can link to its line.
   lineIdPrefix?: string;
+  // The pay rules version the week was paid under, by the date it started ("Paid under rules from
+  // Oct 19"), linked to the Pay rules page when href is given (a staff screen, never a driver's).
+  payRules?: { from: string; href?: string };
   className?: string;
 };
 
@@ -105,6 +109,7 @@ export function Paystub({
   exceptions,
   hrefFor = recordHref,
   lineIdPrefix,
+  payRules,
   className,
 }: PaystubProps) {
   const bySeq = [...lines].sort((a, b) => a.seq - b.seq);
@@ -137,6 +142,17 @@ export function Paystub({
             {driver.code}, {WORKER[driver.workerType]}
           </p>
           <p className="mt-0.5 text-small text-foreground-2">Pay period {formatPeriod(period.start, period.end)}</p>
+          {payRules ? (
+            <p className="mt-0.5 text-small text-foreground-2">
+              {payRules.href ? (
+                <Link href={payRules.href} className="text-link underline-offset-4 hover:underline">
+                  {paidUnderLine(payRules.from)}
+                </Link>
+              ) : (
+                paidUnderLine(payRules.from)
+              )}
+            </p>
+          ) : null}
         </div>
         <StatusBadge status={status} />
       </header>

@@ -26,7 +26,7 @@ import { readRecentTurnViews, readTurnView } from "./views";
 export type { OpenedTurn, OpenTurnRefusal, PersistResult, StepFinish, TurnStore } from "./types";
 export { assembleSummary } from "./summary";
 export { PROPOSAL_TITLES, canonicalJson, dedupeKey, impactOf } from "./proposals";
-export { cardStatusOf, readEngineProposalViews } from "./views";
+export { cardStatusOf, readEngineProposalViews, readWaitingRuleChangeViews } from "./views";
 export type { AuditLease, AuditState, VerdictWrite } from "./audit";
 
 export type StoreDeps = { db?: TenantDb; clock?: () => Date };

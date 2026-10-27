@@ -57,6 +57,9 @@ export const DEMO_RESET_CLEARED = {
   approval_batches:
     "approve-all batches; each lists items that go, is named by the proposals it approved and names a " +
     "pay week the replace deletes",
+  pay_rule_changes:
+    "what each saved pay rule change changed (0030); each names its proposal, which goes, and the " +
+    "pay rules version it wrote, which the replace rewrites",
   proposals:
     "the agent's proposals and the invoice queue's cards (0015); each names a subject, an " +
     "outside message or a ledger row the replace deletes",
@@ -112,6 +115,7 @@ export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "sweep_items",
   "sweep_runs",
   "approval_batches",
+  "pay_rule_changes",
   "advances",
   "proposals",
   "turns",
@@ -158,6 +162,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   sweep_items: "Pay sweep findings",
   sweep_runs: "Pay sweep runs",
   approval_batches: "Approve-all batches",
+  pay_rule_changes: "Pay rule changes",
   proposals: "Agent proposals",
   turns: "Agent turns",
   conversations: "Agent conversations",

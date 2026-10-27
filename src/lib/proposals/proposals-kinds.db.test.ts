@@ -101,9 +101,9 @@ describe("proposal kinds and origins on a fresh database", () => {
       "settlement_approve",
       "detention_charge",
     ];
-    // 0013 and 0015 list these three more; 0022 does not, so a fresh database in number order ends
-    // without them and one where 0013 or 0015 ran last keeps them.
-    const widest = [...union, "factoring_request", "bill_defer", "collections_chase"];
+    // 0013 and 0015 list these three more; 0022 does not. 0030 lists all of them and
+    // pay_rule_change, so whichever of them ran last decides which of these the check keeps.
+    const widest = [...union, "factoring_request", "bill_defer", "collections_chase", "pay_rule_change"];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);
     }

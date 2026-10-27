@@ -359,3 +359,74 @@ describe("ProposalCard with the auditor's check", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 });
+
+describe("ProposalCard with a kind's own words", () => {
+  const rule: ProposalCardProps = {
+    id: "p-rule",
+    title: "Owner-operator insurance: $11.00 to $12.00 per day",
+    impact: { cents: 4_100, direction: "none", label: "Would pay out less per week" },
+    reasons: [{ text: "Starts Monday, Nov 2" }],
+    status: "proposed",
+    wording: { approve: "Save this pay rule", approving: "Saving", question: "Save this pay rule?", reject: "Not now" },
+    auditWords: { pass: "Double-checked: the numbers match.", checking: "Double-check still running" },
+    footnote: "Nothing changes until you save it. Past weeks never change.",
+    statusNotes: {
+      done: { text: "Saved. Starts with the week of Nov 2. See it under Pay rules.", link: { href: "/settings/pay-rules", label: "Pay rules" } },
+      rejected: { text: "Not saved. Nothing changed." },
+    },
+  };
+
+  it("saves through its own button and question, with Not now as the secondary", () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(<ProposalCard {...rule} onApprove={onApprove} onReject={onReject} />);
+    expect(button("Reject")).toBeNull();
+    expect(button(/Approve/)).toBeNull();
+    fireEvent.click(button("Not now")!);
+    expect(onReject).toHaveBeenCalledWith("p-rule");
+    fireEvent.click(button("Save this pay rule")!);
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(screen.getByText("Save this pay rule?")).toBeTruthy();
+    fireEvent.click(button("Confirm")!);
+    expect(onApprove).toHaveBeenCalledWith("p-rule");
+  });
+
+  it("shows the footnote on every status and the kind's line for a decided card, its link in place", () => {
+    const { unmount } = render(<ProposalCard {...rule} />);
+    expect(screen.getByText(rule.footnote!)).toBeTruthy();
+    unmount();
+    render(<ProposalCard {...rule} status="done" />);
+    expect(screen.getByText(rule.footnote!)).toBeTruthy();
+    const link = screen.getByRole("link", { name: "Pay rules" });
+    expect(link.getAttribute("href")).toBe("/settings/pay-rules");
+    expect(link.parentElement?.textContent).toBe("Saved. Starts with the week of Nov 2. See it under Pay rules.");
+    expect(screen.queryByText("Done and recorded.")).toBeNull();
+  });
+
+  it("keeps the default line for a status the kind does not word", () => {
+    render(<ProposalCard {...rule} status="expired" />);
+    expect(screen.getByText("Expired before anyone approved it. Nothing changed.")).toBeTruthy();
+  });
+
+  it("disables the main button with the reason when the person cannot save it", () => {
+    const onApprove = vi.fn();
+    render(<ProposalCard {...rule} approveBlockedLabel="Ask an admin to save this (over $2,000 a week)" onApprove={onApprove} />);
+    const main = button("Ask an admin to save this (over $2,000 a week)") as HTMLButtonElement;
+    expect(main.disabled).toBe(true);
+    fireEvent.click(main);
+    expect(screen.queryByRole("group", { name: "Confirm approval" })).toBeNull();
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("says the auditor's state in the kind's words, and keeps a badge for a state it does not word", () => {
+    const { unmount } = render(<ProposalCard {...rule} audit={{ state: "pass" }} />);
+    expect(screen.getByText("Double-checked: the numbers match.")).toBeTruthy();
+    expect(screen.queryByText(/Muse Wonder/)).toBeNull();
+    unmount();
+    const view = render(<ProposalCard {...rule} audit={{ state: "checking" }} />);
+    expect(screen.getByRole("status").textContent).toBe("Double-check still running");
+    view.unmount();
+    render(<ProposalCard {...rule} audit={{ state: "off" }} />);
+    expect(screen.getByText("Auditor off")).toBeTruthy();
+  });
+});

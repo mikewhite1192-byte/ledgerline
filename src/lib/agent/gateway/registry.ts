@@ -35,6 +35,8 @@ import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
+import { proposeRuleChange } from "./tools/propose/propose-rule-change";
+import { previewRuleChange } from "./tools/read/preview-rule-change";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
 
@@ -80,6 +82,8 @@ const TOOLS: readonly AnyToolDef[] = [
   proposePaymentReapply,
   proposeLoadRate,
   proposeDetentionCharge,
+  previewRuleChange,
+  proposeRuleChange,
   getPortalEvidence,
   classifyMessage,
 ];

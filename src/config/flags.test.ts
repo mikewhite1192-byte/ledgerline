@@ -22,6 +22,7 @@ describe("flags", () => {
     expect(flags.detentionEnabled).toBe(false);
     // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
     expect(flags.demoResetEnabled).toBe(false);
+    expect(flags.rulesByTalkingEnabled).toBe(false);
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
@@ -41,6 +42,7 @@ describe("flags", () => {
       payCorrectionMaxCents: 50_000,
       invoiceFixMaxCents: 250_000,
       detentionChargeMaxCents: 100_000,
+      ruleChangeImpactMaxCents: 500_000,
     });
     for (const v of Object.values(flags.gatewayLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);

@@ -2,7 +2,9 @@
 
 import { cn } from "@/lib/cn";
 
-export type Suggestion = { id: string; label: string };
+// fill, when set, puts that sentence in the question box for the person to edit and send, instead
+// of asking the label at once; help is the line shown under the box then.
+export type Suggestion = { id: string; label: string; fill?: string; help?: string };
 
 // Three or four questions to start with. Without onPick they show but do nothing (aria-disabled,
 // so a screen reader still reads them), which is the home before the agent arrives.

@@ -66,6 +66,7 @@ describe("row-level security coverage", () => {
         "memberships",
         "model_calls",
         "money_actions",
+        "pay_rule_changes",
         "proposals",
         "qbo_connections",
         "qbo_entity_ids",

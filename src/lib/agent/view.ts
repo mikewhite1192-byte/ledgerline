@@ -46,6 +46,32 @@ export type DetentionView = {
   }[];
 };
 
+// A pay rule change's figures, read from the proposal's stored args (every field checked by the
+// change's schema): the rule, its two values, the dates, and the engine's impact on the newest
+// settled week. Plain shapes only: this file sits outside the gateway, so it names no type from
+// the pay rules code.
+export type RuleChangeView = {
+  ruleKey: string;
+  oldValue: number | string | null;
+  newValue: number | string | null;
+  askedFrom: string;
+  effectiveFrom: string;
+  snapped: boolean;
+  applied: "new_version" | "edited_version";
+  appliesTo: string;
+  impact: {
+    basis: "settled_week" | "no_settled_week" | "advances_only";
+    periodId: string | null;
+    periodStart: string | null;
+    periodEnd: string | null;
+    driversCompared: number;
+    driversChanged: number;
+    netDeltaCents: number;
+    ownerOperatorsOnly: boolean;
+    top: { driverId: string; code: string; deltaCents: number; settlementId: string }[];
+  };
+};
+
 export type ProposalView = {
   id: string;
   kind: ProposalKind;
@@ -80,6 +106,8 @@ export type ProposalView = {
   // Set on an advance_payout only: the load it is for, with the per-load cap and what was left
   // under it after this advance at proposal time (both null when the carrier has no cap).
   load?: { number: string; capCents: number | null; leftAfterCents: number | null } | null;
+  // Set on a pay_rule_change only, when its stored args read back whole.
+  ruleChange?: RuleChangeView | null;
 };
 
 // An outside message this turn read that failed screening. quote is shown to the person only, in

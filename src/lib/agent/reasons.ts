@@ -40,6 +40,8 @@ const SENTENCES: Readonly<Record<string, string>> = {
     "The payment matches another open invoice for the same customer exactly, and overpays the one it is on.",
   driver_not_armed: "The driver is not armed to receive money. An admin can arm them on the driver page.",
   over_load_cap: "The amount is over what is left under the per-load cap for this load.",
+  // propose_rule_change
+  rule_change_sized_by_engine: "Sized on last week's pay with the same math that pays drivers.",
 };
 
 const GENERIC = "A rule check found this.";

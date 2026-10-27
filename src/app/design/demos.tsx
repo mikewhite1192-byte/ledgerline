@@ -21,6 +21,7 @@ import {
   MONEY_IDENTITY_NOT_ARMED,
   MOVE_PROPOSAL,
   PAYMENT_PROPOSAL,
+  RULE_CHANGE_PROPOSAL,
   SAMPLE_TENANT,
   SUGGESTIONS,
   type LoadRow,
@@ -70,6 +71,16 @@ export function ProposalGallery({ prefix }: { prefix: string }) {
       </Demo>
       <Demo label="The confirm step, open">
         <ProposalCard {...ADVANCE_PROPOSAL} id={`${prefix}advance-confirm`} status="proposed" hrefFor={hrefFor} initialConfirming />
+      </Demo>
+      <Demo label="A pay rule change: Save asks once more; nothing changes until it is saved.">
+        <ProposalCard
+          {...RULE_CHANGE_PROPOSAL}
+          id={`${prefix}rule-change`}
+          status="proposed"
+          hrefFor={hrefFor}
+          onApprove={() => toast({ title: "Saved", body: "Starts with the week of Nov 9. See it under Pay rules." })}
+          onReject={() => toast({ title: "Not saved", body: "Nothing changed." })}
+        />
       </Demo>
       {shown.map((s) => (
         <Demo key={s.key} label={s.note}>

@@ -46,6 +46,8 @@ export type Flags = {
     invoiceFixMaxCents: number;
     // Largest detention charge one proposal may add to an invoice.
     detentionChargeMaxCents: number;
+    // Largest absolute change to last settled week's total net pay a rule change may carry.
+    ruleChangeImpactMaxCents: number;
   };
   // The agent chat. Off means the composer shows its reason text and the turn route refuses
   // before any model call. aiEnabled must also be on for a turn to reach a model.
@@ -197,6 +199,10 @@ export type Flags = {
   // seeded week in one transaction. Off means the page answers 404 and the action refuses before
   // any read or write. It writes only our own database, never an outside system.
   demoResetEnabled: boolean;
+  // Pay rules changed by talking: the two chat tools, the approval executor and the Pay rules
+  // page. Off means neither tool is offered or runs, an approval is refused before anything is
+  // written, and the page shows the switched-off state.
+  rulesByTalkingEnabled: boolean;
   // The pay sweep: checks one open week for every driver, drafts a pay correction for each
   // finding it can fix and lists the rest for a person. It only proposes; a person approves.
   // Off means the Sweep page shows its reason text and the routes refuse before any work.
@@ -260,6 +266,7 @@ export const flags: Flags = {
     payCorrectionMaxCents: 50_000,
     invoiceFixMaxCents: 250_000,
     detentionChargeMaxCents: 100_000,
+    ruleChangeImpactMaxCents: 500_000,
   },
   agentEnabled: false,
   agentStreamMode: "sse",
@@ -308,6 +315,7 @@ export const flags: Flags = {
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
   detentionEnabled: false,
   demoResetEnabled: false,
+  rulesByTalkingEnabled: false,
   sweepEnabled: false,
   sweepScheduleEnabled: false,
   payCorrectionsEnabled: false,

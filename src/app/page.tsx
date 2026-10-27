@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { flags } from "@/config/flags";
-import { homeSuggestions } from "@/components/agent/suggestions";
+import { homeSuggestions, ruleChangeSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
@@ -24,9 +24,12 @@ import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
 import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
+import { readNextWeekStart } from "@/lib/pay-rules/read";
+import { COMPOSER_HELP, exampleSentence } from "@/lib/pay-rules/words";
 import { codeToWords } from "@/lib/format/labels";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
+import type { LocalDate } from "@/lib/time/local-date";
 import { isUuid } from "@/lib/uuid";
 import { AiProofForm } from "./ai-proof-form";
 
@@ -38,19 +41,26 @@ type Carrier = {
   counts: { drivers: number; loads: number; periods: number };
   ledger: ModelLedger | null;
   session: Session;
+  admin: boolean;
+  // The first date a pay rule change may start, while pay rule changes are switched on.
+  nextStart: LocalDate | null;
 };
 
 // The signed-in carrier's shell. Every read runs inside withRequestTenant, so this page can only
 // ever see the carrier on the verified token. Signed out: withRequestTenant redirects to /sign-in.
 // ?document=<input id>, from a document's page: the question box starts with a request to check
 // that document. Only an id is taken from the address; the text around it is fixed.
+// ?rule=1, from the Pay rules page: with pay rule changes switched on, the box starts with the
+// example sentence and the help under it.
 export default async function Home({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const asked = (await searchParams).document;
+  const params = await searchParams;
+  const asked = params.document;
   const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
+  const ruleAsked = params.rule === "1";
   let carrier: Carrier | null = null;
   let problem: "forbidden" | "unreadable" | null = null;
   try {
@@ -58,8 +68,8 @@ export default async function Home({
       const tenants = await q.query<{ name: string; timezone: string }>(
         "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
       );
-      const members = await q.query<{ email: string }>(
-        "SELECT email FROM memberships WHERE cognito_sub = $1",
+      const members = await q.query<{ email: string; role: string }>(
+        "SELECT email, role FROM memberships WHERE cognito_sub = $1",
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
@@ -83,6 +93,8 @@ export default async function Home({
         counts,
         ledger,
         session,
+        admin: members[0].role === "admin",
+        nextStart: flags.rulesByTalkingEnabled ? await readNextWeekStart(q, new Date()) : null,
       };
     });
   } catch (err) {
@@ -149,8 +161,20 @@ export default async function Home({
           initialTurns={agentTurns}
           streamMode={flags.agentStreamMode}
           auditorOn={flags.auditorEnabled}
-          suggestions={flags.detentionEnabled ? [...SUGGESTIONS, DETENTION_SUGGESTION] : SUGGESTIONS}
-          initialDraft={documentInput ? `Check document ${documentInput}` : undefined}
+          suggestions={[
+            ...SUGGESTIONS,
+            ...(flags.detentionEnabled ? [DETENTION_SUGGESTION] : []),
+            ...(carrier.nextStart ? [ruleChangeSuggestion(carrier.nextStart)] : []),
+          ]}
+          initialDraft={
+            documentInput
+              ? `Check document ${documentInput}`
+              : ruleAsked && carrier.nextStart
+                ? exampleSentence(carrier.nextStart)
+                : undefined
+          }
+          initialHelp={!documentInput && ruleAsked && carrier.nextStart ? COMPOSER_HELP : undefined}
+          viewer={{ admin: carrier.admin, adminAboveCents: flags.approverRole.adminAboveCents }}
           intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
           disabledReason={
             flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
