@@ -1,10 +1,12 @@
 // Database test fixtures for the money ledger: a throwaway tenant with one membership, two
-// drivers, a customer and a customer payment, all synthetic. Tests only; every tenant made here is
-// removed by dropTenant (its rows go with it by cascade).
+// drivers (each with an active fuel card that answers "ok"), a customer and a customer payment, all
+// synthetic. Tests only; every tenant made here is removed by dropTenant (its rows go with it by
+// cascade).
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { Session } from "../auth/claims";
 import type { Db } from "../db/types";
+import type { SimBehavior } from "./types";
 
 export type Fixture = {
   tenantId: string;
@@ -45,6 +47,7 @@ export async function makeTenant(admin: Db, slug: string): Promise<Fixture> {
            'per_mile', 60, CAST('2026-01-01' AS date))`,
         [id, code, `${code.toLowerCase()}@${slug}.example`],
       );
+      await q.execute(CARD_INSERT, cardValues(id, "ok"));
     }
     await q.execute(
       `INSERT INTO customers (id, tenant_id, code, name, terms_days, city, state)
@@ -72,6 +75,54 @@ export async function makeTenant(admin: Db, slug: string): Promise<Fixture> {
     customerId,
     paymentId,
   };
+}
+
+// A synthetic card: a random token of the provider's shape and random last four digits.
+const CARD_INSERT = `INSERT INTO driver_cards (id, tenant_id, driver_id, provider, provider_token, last4,
+     status, sim_behavior, source)
+   VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'fuel_card_sim', $3, $4, 'active', $5, 'ui')`;
+
+function cardValues(driverId: string, behavior: SimBehavior): [string, string, string, string, SimBehavior] {
+  const last4 = String(randomBytes(2).readUInt16BE(0) % 10_000).padStart(4, "0");
+  return [randomUUID(), driverId, `fcs_card_${randomBytes(12).toString("hex")}`, last4, behavior];
+}
+
+// What the driver's active card answers when the simulated provider is called.
+export async function setCardBehavior(admin: Db, f: Fixture, driverId: string, behavior: SimBehavior): Promise<void> {
+  await admin.withTenant(f.tenantId, (q) =>
+    q.execute(
+      `UPDATE driver_cards SET sim_behavior = $2
+        WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid) AND status = 'active'`,
+      [driverId, behavior],
+    ),
+  );
+}
+
+// Closes the driver's active card (it stays on file, closed).
+export async function closeCard(admin: Db, f: Fixture, driverId: string): Promise<void> {
+  await admin.withTenant(f.tenantId, (q) =>
+    q.execute(
+      `UPDATE driver_cards SET status = 'closed', closed_at = CAST('2026-11-02T16:30:00Z' AS timestamptz)
+        WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid) AND status = 'active'`,
+      [driverId],
+    ),
+  );
+}
+
+// A new active card for the driver (after closeCard or removeCards); returns its id.
+export async function addCard(admin: Db, f: Fixture, driverId: string, behavior: SimBehavior = "ok"): Promise<string> {
+  const values = cardValues(driverId, behavior);
+  await admin.withTenant(f.tenantId, (q) => q.execute(CARD_INSERT, values));
+  return values[0];
+}
+
+// Every card the driver has, removed (an advance that named one keeps its row, card_id cleared).
+export async function removeCards(admin: Db, f: Fixture, driverId: string): Promise<void> {
+  await admin.withTenant(f.tenantId, (q) =>
+    q.execute("DELETE FROM driver_cards WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid)", [
+      driverId,
+    ]),
+  );
 }
 
 let refs = 0;

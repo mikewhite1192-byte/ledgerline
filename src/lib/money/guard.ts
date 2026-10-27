@@ -22,6 +22,10 @@ const REALM_ID = /^[0-9]{10,20}$/;
 // lists equal). Named here so the guard loads no AWS client.
 export const RAW_SECRET_VARIABLES = ["QBO_CLIENT_SECRET", "QBO_TOKEN_KEY", "STRIPE_SECRET_KEY"] as const;
 
+// The fuel-card rail's providers: the in-app simulation only. Not a switch (a switch with one
+// value is one nobody can flip); a second provider adds its flag and its key check here.
+export const FUEL_CARD_PROVIDERS = ["sim"] as const;
+
 export function assertMoneyEnvSafe(
   env: NodeJS.ProcessEnv,
   f: Pick<Flags, "accountingEnabled" | "paymentProvider" | "payoutsEnabled"> = releaseFlags,
@@ -56,6 +60,12 @@ export function assertMoneyEnvSafe(
     }
   }
 
-  const payouts = f.payoutsEnabled === true ? f.paymentProvider : "off";
-  return `money: guard ok (qbo sandbox only, payouts ${payouts}, accounting ${f.accountingEnabled === true ? "on" : "off"})`;
+  // Both rails: the fuel card's provider (a constant until a second provider exists) and the
+  // bank's (paymentProvider).
+  const payouts = f.payoutsEnabled === true ? "on" : "off";
+  const rails = `fuel_card=${FUEL_CARD_PROVIDERS[0]} bank=${f.paymentProvider}`;
+  return (
+    `money: guard ok (qbo sandbox only, payouts ${payouts} | ${rails}, ` +
+    `accounting ${f.accountingEnabled === true ? "on" : "off"})`
+  );
 }

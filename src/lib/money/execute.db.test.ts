@@ -206,7 +206,7 @@ describe("a send that hangs", () => {
       })),
     ).rejects.toMatchObject({ category: "disabled" });
     expect(lines).toEqual([
-      `money: would send advance_payout 25000c for advances ${advance} via mock (payoutsEnabled off)`,
+      `money: would send advance_payout 25000c for advances ${advance} via fuel_card mock (payoutsEnabled off)`,
     ]);
     const rows = await first.withTenant(A.tenantId, (q) => readBySubject(q, "advances", advance));
     expect(rows).toEqual([]);
