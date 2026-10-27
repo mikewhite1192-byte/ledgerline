@@ -28,9 +28,9 @@ import {
 // ledger. PAY-SWEEP calls runAudit directly, with no model loop around it.
 //
 // Idempotent end to end: a verdict already stored is read back with no call; a 90-second lease on
-// the proposal lets one caller at a time make the call; the verdict is written only where none is
-// set (and the database refuses any change after). At most one Wonder call and one gateway
-// decision per lease.
+// the proposal lets one caller at a time make the call; the verdict is written only on a proposal
+// still waiting with none set (and the database refuses any change after). At most one Wonder call
+// and one gateway decision per lease.
 //
 // This is one of the two agent files that may import the model wrapper (the import-boundary test).
 
@@ -53,8 +53,16 @@ export type AuditDeps = {
 
 // The wrapper refused for money: the card says the demo budget was reached.
 const BUDGET_ERRORS: ReadonlySet<string> = new Set(["cap", "too_expensive", "billing"]);
-// The outcome is not known: give the lease back so the page's one retry can try again.
-const RETRY_ERRORS: ReadonlySet<string> = new Set(["network", "timeout", "unknown"]);
+// The outcome is not known, or Meta was busy (429 rate_limited, 5xx unavailable): give the lease
+// back so the page's one retry can try again. Every other category is a definite refusal and is
+// stored as unknown.
+const RETRY_ERRORS: ReadonlySet<string> = new Set([
+  "network",
+  "timeout",
+  "unknown",
+  "rate_limited",
+  "unavailable",
+]);
 
 function doneOf(state: AuditState): AuditResult {
   const verdict = isAuditVerdict(state.verdict) ? state.verdict : "unknown";
@@ -95,7 +103,8 @@ async function askWonder(
       },
       session,
     );
-    if (result.status !== "ok") return { verdict: NO_VERDICT, callId: result.callId };
+    // An answer cut short at the output budget (incomplete) is no answer: the page's retry asks again.
+    if (result.status !== "ok") return { retry: true };
     return { verdict: parseVerdict(result.text), callId: result.callId };
   } catch (err) {
     const category = err instanceof AiError ? err.category : "unknown";
@@ -138,15 +147,26 @@ export async function runAudit(
       { verdict: verdict.verdict, agrees: agreesOf(verdict.verdict), callId, concerns: verdict.concerns },
       clock(),
     );
-    if (!wrote) console.warn(`auditor: proposal ${proposalId} already had a verdict trace=${traceId}`);
+    if (!wrote) {
+      console.warn(`auditor: proposal ${proposalId} took no verdict (set already, or decided) trace=${traceId}`);
+    }
     const back = await store.read(proposalId);
     if (back?.verdict) return doneOf(back);
-    // Unknown is not zero: a write that did not land and cannot be read back is not done.
+    // Unknown is not zero: a verdict that did not land is never reported. A proposal decided
+    // meanwhile takes none; one still waiting is asked again.
+    return back && back.status === "proposed" ? { state: "in_progress" } : { state: "not_auditable" };
+  };
+
+  // Nothing is known yet: give the lease back so the page's one retry can try again.
+  const retry = async (): Promise<AuditResult> => {
+    await store.release(proposalId, leasedAt);
     return { state: "in_progress" };
   };
 
-  // c. The evidence, through the gateway as the auditor. Anything but allowed is no evidence.
-  // The same database as the store, so an injected one is used end to end.
+  // c. The evidence, through the gateway as the auditor. A refusal (blocked, denied, invalid args,
+  // unknown tool) is no evidence and is stored as unknown; a failure (a tool error, or the evidence
+  // deadline under load) is not a refusal and gives the lease back. The same database as the
+  // store, so an injected one is used end to end.
   const tool = deps.callTool ?? ((ctx, call) => callTool(ctx, call, { db: deps.db }));
   const ctx: GatewayContext = {
     session,
@@ -168,9 +188,9 @@ export async function runAudit(
   } catch (err) {
     // The gateway could not even log its decision: nothing is known, so nothing is stored.
     console.error("auditor: the evidence read failed:", err instanceof Error ? err.name : "unknown");
-    await store.release(proposalId, leasedAt);
-    return { state: "in_progress" };
+    return retry();
   }
+  if (outcome.decision === "failed") return retry();
   if (outcome.decision !== "allowed") return write(NO_VERDICT, null);
 
   // d. Muse Wonder only: any other configured id is refused before a call.
@@ -180,13 +200,11 @@ export async function runAudit(
     return write(NO_VERDICT, null);
   }
 
-  // e. The one call. An outcome that is not known gives the lease back.
+  // e. The one call. An outcome that is not known, Meta being busy, or an answer cut short gives
+  // the lease back.
   const run: CompleteFn = deps.complete ?? ((target, request, s) => complete(target, request, s, { db: deps.db }));
   const called = await askWonder(session, outcome.result, traceId, run);
-  if ("retry" in called) {
-    await store.release(proposalId, leasedAt);
-    return { state: "in_progress" };
-  }
+  if ("retry" in called) return retry();
 
   // f. Write once, then read back what is stored.
   return write(called.verdict, called.callId);

@@ -143,6 +143,23 @@ describe("AgentChat with the auditor", () => {
     expect(audits).toEqual([["/api/proposals/p-1/audit", expect.objectContaining({ method: "POST" })]]);
   });
 
+  it("says plainly when a proposal was made before the auditor started", async () => {
+    const fetchFn = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async (url) => {
+      if (url.endsWith("/approve")) return Response.json({ error: "not_auditable", retryable: false }, { status: 409 });
+      if (url.startsWith("/api/agent/turns/")) return Response.json({ turn: unflagged });
+      return Response.json({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    render(<AgentChat initialTurns={[unflagged]} streamMode="poll" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Approve/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(
+        screen.getByText("This proposal was made before the auditor started. Ask the agent again for a fresh one."),
+      ).toBeTruthy(),
+    );
+  });
+
   it("asks nothing while the auditor is off, and says so on the card", () => {
     const fetchFn = stubFetch(unflagged);
     render(<AgentChat initialTurns={[unflagged]} streamMode="poll" />);

@@ -116,6 +116,7 @@ describe("POST /api/proposals/:id/approve", () => {
       ["already_decided", 409],
       ["expired", 409],
       ["auditor_required", 409],
+      ["not_auditable", 409],
       ["override_required", 409],
       ["stale", 409],
       ["needs_confirm", 409],

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { flags } from "../../../config/flags";
-import type { AiResult } from "../../ai";
+import { AiError, type AiResult } from "../../ai";
 import type { Session } from "../../auth/claims";
 import { createPgDb } from "../../db/pg";
 import { adminUrl, appUrl } from "../../db/test-urls";
@@ -10,7 +10,7 @@ import { runAudit } from "../auditor/run";
 import { CLEAN_SQL } from "../proposals/clean";
 import { callTool } from "./index";
 import { dbAuditStore } from "./store";
-import type { CompleteFn, GatewayContext } from "./types";
+import type { CompleteFn, GatewayContext, ToolCall } from "./types";
 
 // The auditor's columns (0014) against a real database: the verdict words and their agreement,
 // an override only on a block and only 10 to 240 characters with who and when, the guard that
@@ -143,6 +143,9 @@ const auditRow = async (tenantId: string, id: string) =>
       ),
     )
   )[0];
+
+// The gateway's evidence deadline reads this clock, so an audit run never depends on the real date.
+const gatewayAt = (at: number) => (ctx: GatewayContext, call: ToolCall) => callTool(ctx, call, { db: app, clock: () => at });
 
 const passModel = (calls: { n: number }): CompleteFn => async () => {
   calls.n += 1;
@@ -376,7 +379,13 @@ describe("the auditor on a real database", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const id = await addProposal(B, { onDriver: true });
     const calls = { n: 0 };
-    const deps = { db: app, clock: () => new Date(T0), complete: passModel(calls), env: { META_MODEL_WONDER: "muse-wonder-1.0" } };
+    const deps = {
+      db: app,
+      clock: () => new Date(T0),
+      callTool: gatewayAt(T0),
+      complete: passModel(calls),
+      env: { META_MODEL_WONDER: "muse-wonder-1.0" },
+    };
     const out = await runAudit(session(B), id, deps);
     expect(out).toEqual({ state: "done", verdict: "pass", concerns: [], checkedAt: new Date(T0).toISOString() });
     expect(calls.n).toBe(1);
@@ -399,6 +408,68 @@ describe("the auditor on a real database", () => {
     const old = await addProposal(B, { createdAt: "2026-10-26T12:00:00.000Z" });
     expect(await runAudit(session(B), old, deps)).toEqual({ state: "not_auditable" });
     expect(calls.n).toBe(1);
+  });
+
+  it("writes no verdict on a proposal decided after the lease", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const store = dbAuditStore(session(A), { db: app });
+    for (const status of ["rejected", "expired"]) {
+      const id = await addProposal(A);
+      expect(await store.lease(id, new Date(T0), 90_000, randomUUID()), status).not.toBeNull();
+      await asAdmin(
+        "UPDATE proposals SET status = $2, decided_by = 'sub-x', decided_at = now() WHERE id = CAST($1 AS uuid)",
+        [id, status],
+      );
+      const verdict = { verdict: "pass", agrees: true, callId: CALL_ID, concerns: [] };
+      expect(await store.write(id, verdict, new Date(T0 + 5_000)), status).toBe(false);
+      expect(await auditRow(A, id), status).toMatchObject({ auditor_verdict: null, auditor_call_id: null, checked_at: null });
+    }
+
+    // End to end: a reject that lands during the call leaves no verdict, and none is reported.
+    flags.auditorEnabled = true;
+    const id = await addProposal(A);
+    const rejecting: CompleteFn = async (...args) => {
+      await asAdmin(
+        "UPDATE proposals SET status = 'rejected', decided_by = 'sub-x', decided_at = now() WHERE id = CAST($1 AS uuid)",
+        [id],
+      );
+      return passModel({ n: 0 })(...args);
+    };
+    const out = await runAudit(session(A), id, {
+      db: app,
+      clock: () => new Date(T0),
+      callTool: gatewayAt(T0),
+      complete: rejecting,
+      env: { META_MODEL_WONDER: "muse-wonder-1.0" },
+    });
+    expect(out).toEqual({ state: "not_auditable" });
+    expect(await auditRow(A, id)).toMatchObject({ auditor_verdict: null, checked_at: null });
+  });
+
+  it("gives the lease back as the app role when Meta is busy, and the retry stores the verdict on the same trace", async () => {
+    flags.auditorEnabled = true;
+    const id = await addProposal(B);
+    const env = { META_MODEL_WONDER: "muse-wonder-1.0" };
+    let busyCalls = 0;
+    const busy: CompleteFn = async () => {
+      busyCalls += 1;
+      throw new AiError("rate_limited", 429);
+    };
+    const first = { db: app, clock: () => new Date(T0), callTool: gatewayAt(T0), complete: busy, env };
+    expect(await runAudit(session(B), id, first)).toEqual({ state: "in_progress" });
+    expect(busyCalls).toBe(1);
+    const before = await auditRow(B, id);
+    expect(before).toMatchObject({ auditor_verdict: null, started_at: null, checked_at: null });
+    expect(before.trace_id).toMatch(/^[0-9a-f-]{36}$/);
+
+    // The page's retry, well inside the 90 seconds: the lease is free again.
+    const calls = { n: 0 };
+    const later = new Date(T0 + 1_000);
+    const retry = { db: app, clock: () => later, callTool: gatewayAt(later.getTime()), complete: passModel(calls), env };
+    const out = await runAudit(session(B), id, retry);
+    expect(out).toEqual({ state: "done", verdict: "pass", concerns: [], checkedAt: later.toISOString() });
+    expect(calls.n).toBe(1);
+    expect(await auditRow(B, id)).toMatchObject({ auditor_verdict: "pass", trace_id: before.trace_id });
   });
 
   it("finds only the waiting pass with Approve all clean's filter", async () => {

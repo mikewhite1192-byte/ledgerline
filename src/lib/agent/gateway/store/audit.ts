@@ -116,8 +116,9 @@ export type VerdictWrite = {
   concerns: readonly string[];
 };
 
-// Writes the verdict once. False when a verdict was already there (someone else finished first);
-// the caller reads it back.
+// Writes the verdict once, and only on a proposal still waiting. False when a verdict was already
+// there (someone else finished first) or the proposal was decided meanwhile; the caller reads it
+// back.
 export async function writeAuditVerdict(
   q: Queryable,
   proposalId: string,
@@ -129,7 +130,8 @@ export async function writeAuditVerdict(
         SET auditor_verdict = $2, auditor_agrees = $3, auditor_call_id = CAST($4 AS uuid),
             auditor_concerns = CAST($5 AS jsonb), auditor_checked_at = CAST($6 AS timestamptz),
             updated_at = CAST($6 AS timestamptz)
-      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND auditor_verdict IS NULL`,
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND auditor_verdict IS NULL
+        AND status = 'proposed'`,
     [proposalId, v.verdict, v.agrees, v.callId, JSON.stringify(v.concerns), now.toISOString()],
   );
   return n === 1;

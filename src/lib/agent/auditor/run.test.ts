@@ -56,8 +56,9 @@ function fakeStore(over: Partial<AuditState> = {}, missing = false) {
       log.releases += 1;
       if (state.startedAt === startedAt.toISOString()) state.startedAt = null;
     },
+    // As the database: only a waiting proposal with no verdict takes one.
     write: async (_id, v, now) => {
-      if (state.verdict !== null) return false;
+      if (state.verdict !== null || state.status !== "proposed") return false;
       log.writes.push(v);
       state.verdict = v.verdict;
       state.concerns = [...v.concerns];
@@ -138,7 +139,7 @@ describe("runAudit", () => {
     expect(request).toMatchObject({
       purpose: "audit_proposal",
       reasoningEffort: "high",
-      maxOutputTokens: 700,
+      maxOutputTokens: 2_400,
       maxCostCents: 10,
       timeoutMs: 25_000,
       format: { name: "audit_verdict", strict: true },
@@ -167,12 +168,8 @@ describe("runAudit", () => {
     expect(log.writes[0]).toMatchObject({ verdict: "concerns", agrees: false, concerns: ["limit_exceeded"] });
   });
 
-  it("turns a block with no concern, bad JSON or an incomplete answer into unknown", async () => {
-    for (const result of [
-      okResult(verdictText({ verdict: "block" })),
-      okResult("not json"),
-      okResult("", "incomplete"),
-    ]) {
+  it("turns a block with no concern or bad JSON into unknown", async () => {
+    for (const result of [okResult(verdictText({ verdict: "block" })), okResult("not json")]) {
       const { store, log } = fakeStore();
       const out = await runAudit(SESSION, PROPOSAL, deps({ store, complete: fakeModel(() => result) }));
       expect(out).toMatchObject({ state: "done", verdict: "unknown", concerns: ["insufficient_evidence"] });
@@ -201,8 +198,33 @@ describe("runAudit", () => {
     expect(model.mock.calls[0][1].traceId).toBe(first);
   });
 
-  it("writes unknown on any other refusal (auth, not configured)", async () => {
-    for (const category of ["auth", "not_configured", "disabled"] as const) {
+  it.each([
+    ["rate_limited", 429],
+    ["unavailable", 503],
+  ] as const)("gives the lease back when Meta is busy (%s, %i) and stores nothing", async (category, status) => {
+    const { store, log, state } = fakeStore();
+    const model = fakeModel(() => Promise.reject(new AiError(category, status)));
+    const out = await runAudit(SESSION, PROPOSAL, deps({ store, complete: model }));
+    expect(out).toEqual({ state: "in_progress" });
+    expect(model).toHaveBeenCalledTimes(1);
+    expect(log.writes).toEqual([]);
+    expect(log.releases).toBe(1);
+    expect(state).toMatchObject({ verdict: null, startedAt: null });
+  });
+
+  it("gives the lease back on an answer cut short at the output budget, and stores nothing", async () => {
+    for (const text of ["", '{"verdict":"pass","concerns":[],"chec']) {
+      const { store, log, state } = fakeStore();
+      const out = await runAudit(SESSION, PROPOSAL, deps({ store, complete: fakeModel(() => okResult(text, "incomplete")) }));
+      expect(out, text).toEqual({ state: "in_progress" });
+      expect(log.writes, text).toEqual([]);
+      expect(log.releases, text).toBe(1);
+      expect(state, text).toMatchObject({ verdict: null, startedAt: null });
+    }
+  });
+
+  it("writes unknown on any other refusal (auth, not configured, a bad request)", async () => {
+    for (const category of ["auth", "not_configured", "disabled", "bad_request", "too_long"] as const) {
       const { store, log } = fakeStore();
       await runAudit(SESSION, PROPOSAL, deps({ store, complete: fakeModel(() => Promise.reject(new AiError(category))) }));
       expect(log.writes[0], category).toMatchObject({ verdict: "unknown", concerns: ["insufficient_evidence"] });
@@ -274,14 +296,57 @@ describe("runAudit", () => {
     expect(decided.log.leases + old.log.leases + missing.log.leases).toBe(0);
   });
 
-  it("writes unknown with no model call when the gateway does not allow the read", async () => {
-    const { store, log } = fakeStore();
-    const model = fakeModel(() => okResult(verdictText()));
-    const refused: GatewayOutcome = { decision: "blocked", decisionId: "d-2", tool: "get_proposal", reason: "unknown_record", result: {}, latencyMs: 1 };
-    const out = await runAudit(SESSION, PROPOSAL, deps({ store, complete: model, callTool: fakeTool(refused).fn }));
-    expect(out).toMatchObject({ state: "done", verdict: "unknown", concerns: ["insufficient_evidence"] });
-    expect(log.writes[0].callId).toBeNull();
-    expect(model).not.toHaveBeenCalled();
+  it("writes unknown with no model call when the gateway refuses the read", async () => {
+    for (const [decision, reason] of [
+      ["blocked", "unknown_record"],
+      ["denied", "role_not_allowed"],
+      ["invalid_args", "invalid_args"],
+      ["unknown_tool", "unknown_tool"],
+    ] as const) {
+      const { store, log } = fakeStore();
+      const model = fakeModel(() => okResult(verdictText()));
+      const refused: GatewayOutcome = { decision, decisionId: "d-2", tool: "get_proposal", reason, result: {}, latencyMs: 1 };
+      const out = await runAudit(SESSION, PROPOSAL, deps({ store, complete: model, callTool: fakeTool(refused).fn }));
+      expect(out, decision).toMatchObject({ state: "done", verdict: "unknown", concerns: ["insufficient_evidence"] });
+      expect(log.writes, decision).toHaveLength(1);
+      expect(log.writes[0].callId, decision).toBeNull();
+      expect(log.releases, decision).toBe(0);
+      expect(model, decision).not.toHaveBeenCalled();
+    }
+  });
+
+  it("gives the lease back with no model call when the gateway read fails, and stores nothing", async () => {
+    // A tool failure or the evidence deadline, and one whose decision could not be recorded.
+    for (const decisionId of ["d-3", ""]) {
+      const { store, log, state } = fakeStore();
+      const model = fakeModel(() => okResult(verdictText()));
+      const failed: GatewayOutcome = {
+        decision: "failed",
+        decisionId,
+        tool: "get_proposal",
+        reason: "tool_failed",
+        result: { error: "tool_failed" },
+        latencyMs: 1,
+      };
+      const out = await runAudit(SESSION, PROPOSAL, deps({ store, complete: model, callTool: fakeTool(failed).fn }));
+      expect(out, decisionId).toEqual({ state: "in_progress" });
+      expect(log.writes, decisionId).toEqual([]);
+      expect(log.releases, decisionId).toBe(1);
+      expect(state, decisionId).toMatchObject({ verdict: null, startedAt: null });
+      expect(model, decisionId).not.toHaveBeenCalled();
+    }
+  });
+
+  it("reports no verdict when the proposal was decided during the call and took none", async () => {
+    const { store, log, state } = fakeStore();
+    const model = fakeModel(async () => {
+      state.status = "rejected";
+      return okResult(verdictText());
+    });
+    const out = await runAudit(SESSION, PROPOSAL, deps({ store, complete: model }));
+    expect(out).toEqual({ state: "not_auditable" });
+    expect(log.writes).toEqual([]);
+    expect(state.verdict).toBeNull();
   });
 
   it("gives the lease back and stores nothing when the gateway itself throws", async () => {

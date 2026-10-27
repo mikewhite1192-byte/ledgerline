@@ -45,7 +45,7 @@ describe("MODEL_VERDICT", () => {
     expect(AUDIT_CALL).toEqual({
       purpose: "audit_proposal",
       reasoningEffort: "high",
-      maxOutputTokens: 700,
+      maxOutputTokens: 2_400,
       maxCostCents: 10,
       timeoutMs: 25_000,
     });

@@ -374,6 +374,24 @@ describe("approving and rejecting a proposal", () => {
       }
     });
 
+    it("refuses an unchecked proposal made before the auditor started as not auditable, not as waiting", async () => {
+      // The default proposal was made an hour before NOW; this start is half an hour before.
+      flags.auditorStart = new Date(NOW - HOUR / 2).toISOString();
+      const before = await addProposal({ audit: null });
+      const after = await addProposal({ audit: null, ageMs: HOUR / 4 });
+      const passed = await addProposal({ audit: { verdict: "pass" } });
+      expect(await approveWith(before.id, { confirmed: true })).toEqual({ ok: false, category: "not_auditable", retryable: false });
+      expect(await approveWith(after.id, { confirmed: true })).toMatchObject({ ok: false, category: "auditor_required" });
+      // A start that does not read as an instant counts every unchecked proposal as made before it.
+      flags.auditorStart = "not a date";
+      expect(await approveWith(after.id, { confirmed: true })).toMatchObject({ ok: false, category: "not_auditable" });
+      expect(ran).toEqual([]);
+      for (const p of [before, after]) await expectWaiting(p.id);
+      // A stored verdict decides as before, whenever the proposal was made.
+      expect(await approveWith(passed.id, { confirmed: false })).toMatchObject({ ok: true });
+      expect(ran).toEqual([passed.id]);
+    });
+
     it("needs the confirm on a proposal with no verdict when the auditor is not required", async () => {
       flags.auditorRequired = false;
       const p = await addProposal({ audit: null });

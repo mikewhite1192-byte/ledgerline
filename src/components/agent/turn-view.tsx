@@ -26,6 +26,7 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   expired: "This proposal expired. Ask again for a fresh one.",
   role: "An admin must approve an amount this size.",
   auditor_required: "This waits for the auditor's check before anyone can approve it.",
+  not_auditable: "This proposal was made before the auditor started. Ask the agent again for a fresh one.",
   override_required: "Muse Wonder blocked this. Write why you approve it anyway, then confirm.",
   stale: "The auditor's verdict changed. Reload the card.",
   bad_request: "The reason must be 10 to 240 characters. Nothing changed.",

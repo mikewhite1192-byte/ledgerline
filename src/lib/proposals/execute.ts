@@ -11,16 +11,17 @@ import { overrideReasonOf } from "../agent/auditor/words";
 // Every approval passes the same gate first, in one tenant transaction with the proposal locked:
 // it exists, it is still waiting (or approved/executing, which is a resume), it is not past
 // proposalMaxAgeDays (an old one becomes expired, here, with no scheduled job), the member's role
-// covers the amount (approverRole), the auditor's verdict is in when auditorRequired is on, a
-// block carries the person's override reason for the very verdict they saw, and anything other
-// than a pass, or anything flagged, carries the person's second confirm. Then the proposal's kind
-// picks its executor from EXECUTORS. A kind with no executor is refused as not_executable before
-// any write. Every refusal except expired leaves the row proposed and writes nothing. When every
-// check passes, the gate moves the proposal to approved in that same locked transaction (a
-// block's override reason, with who and when, goes in the same statement), so a reject that lands
-// after the gate finds it approved and is refused; only then does the executor run. Each executor
-// reserves its ledger row before any outside call (the money executor) and moves the proposal on
-// from there.
+// covers the amount (approverRole), the auditor's verdict is in when auditorRequired is on (one
+// made before auditorStart, which the auditor never checks, is refused as not_auditable rather
+// than left waiting), a block carries the person's override reason for the very verdict they saw,
+// and anything other than a pass, or anything flagged, carries the person's second confirm. Then
+// the proposal's kind picks its executor from EXECUTORS. A kind with no executor is refused as
+// not_executable before any write. Every refusal except expired leaves the row proposed and writes
+// nothing. When every check passes, the gate moves the proposal to approved in that same locked
+// transaction (a block's override reason, with who and when, goes in the same statement), so a
+// reject that lands after the gate finds it approved and is refused; only then does the executor
+// run. Each executor reserves its ledger row before any outside call (the money executor) and
+// moves the proposal on from there.
 
 export const PROPOSAL_KINDS = ["advance_payout", "pay_correction", "invoice_fix"] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
@@ -60,6 +61,7 @@ export type ProposalRefusal =
   | "expired"
   | "role"
   | "auditor_required"
+  | "not_auditable"
   | "override_required"
   | "stale"
   | "needs_confirm";
@@ -98,6 +100,13 @@ export const EXECUTORS: ExecutorRegistry = {};
 
 const DAY_MS = 86_400_000;
 
+// auditorStart as an instant, or null when it does not read as one. Null counts every proposal as
+// made before it: the auditor itself never checks a proposal against an unreadable start.
+function auditorStartIso(): string | null {
+  const start = Date.parse(flags.auditorStart);
+  return Number.isFinite(start) ? new Date(start).toISOString() : null;
+}
+
 type Row = {
   id: string;
   conversation_id: string;
@@ -115,6 +124,7 @@ type Row = {
   money_action_id: string | null;
   trace_id: string;
   too_old: boolean;
+  before_auditor: boolean;
   auditor_checked_at: string | null;
 };
 
@@ -173,10 +183,11 @@ async function gate(
     `SELECT id, conversation_id, turn_id, kind, subject_table, subject_id, amount_cents, direction,
             CAST(args AS text) AS args, status, flagged_input_id, auditor_verdict, auditor_agrees,
             money_action_id, trace_id, (created_at < CAST($2 AS timestamptz)) AS too_old,
+            (CAST($3 AS timestamptz) IS NULL OR created_at < CAST($3 AS timestamptz)) AS before_auditor,
             to_char(auditor_checked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
               AS auditor_checked_at
        FROM proposals WHERE id = CAST($1 AS uuid) FOR UPDATE`,
-    [proposalId, cutoff],
+    [proposalId, cutoff, auditorStartIso()],
   );
   if (rows.length !== 1) return { result: refused("not_found") };
   const p = rowOf(rows[0]);
@@ -200,7 +211,11 @@ async function gate(
   if (p.amountCents > flags.approverRole.adminAboveCents && member[0]?.role !== "admin") {
     return { result: refused("role") };
   }
-  if (flags.auditorRequired && p.auditorVerdict === null) return { result: refused("auditor_required") };
+  // The auditor never checks a proposal made before auditorStart, so that one would wait for good:
+  // it is refused as not auditable instead.
+  if (flags.auditorRequired && p.auditorVerdict === null) {
+    return { result: refused(rows[0].before_auditor ? "not_auditable" : "auditor_required") };
+  }
   // A block needs a reason, checked again here, for the very verdict the card showed. A stored
   // override only ever sits on a row that is already approved or later, which took the resume path
   // above.

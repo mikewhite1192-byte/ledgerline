@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
+import { AUDIT_CALL } from "../agent/auditor/policy";
 import { runAudit } from "../agent/auditor/run";
+import { MAX_RESULT_CHARS } from "../agent/gateway";
 import type { AuditState, AuditStore } from "../agent/gateway/store";
 import type { Session } from "../auth/claims";
 import type { Param, Queryable, TenantDb } from "../db";
 import { complete } from "./index";
+import { NANOCENTS_PER_CENT } from "./prices";
 import type { FetchFn } from "./providers/http";
 import { CONTRIBUTOR_IDS } from "./targets";
 
@@ -39,8 +42,9 @@ const VERDICT = JSON.stringify({
   checks: ["cause", "sources", "amount", "limit"].map((name) => ({ name, pass: true, note: "holds" })),
 });
 
-// The model-call ledger, answered just well enough for one call to reserve and settle.
-function ledger(): TenantDb {
+// The model-call ledger, answered just well enough for one call to reserve and settle. seen gets
+// the reservation.
+function ledger(seen: { reserved: number } = { reserved: 0 }): TenantDb {
   let reserved = 0;
   const q: Queryable = {
     async query<T>(sql: string): Promise<T[]> {
@@ -60,7 +64,10 @@ function ledger(): TenantDb {
       throw new Error("unexpected query");
     },
     async execute(sql: string, params: Param[] = []): Promise<number> {
-      if (sql.startsWith("INSERT INTO model_calls")) reserved = Number(params[8]);
+      if (sql.startsWith("INSERT INTO model_calls")) {
+        reserved = Number(params[8]);
+        seen.reserved = reserved;
+      }
       return 1;
     },
   };
@@ -144,9 +151,49 @@ describe("the auditor in Contributor mode", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const body = JSON.parse(String(fetchFn.mock.calls[0][1]?.body));
     expect(body.model).toBe("muse-wonder-1.0");
-    expect(body.max_output_tokens).toBe(700);
+    expect(body.max_output_tokens).toBe(2_400);
     expect(body.reasoning).toEqual({ effort: "high" });
     expect(body.text.format).toMatchObject({ type: "json_schema", name: "audit_verdict", strict: true });
+  });
+
+  it("fits the largest evidence the gateway returns inside the audit call's cost cap", async () => {
+    // Every free character 3 bytes long, up to the gateway's result cap.
+    const shell = { proposal: { id: PROPOSAL, title: "" }, engine: { ok: true } };
+    const pack = {
+      ...shell,
+      proposal: { ...shell.proposal, title: "\u4e00".repeat(MAX_RESULT_CHARS - JSON.stringify(shell).length) },
+    };
+    expect(JSON.stringify(pack).length).toBe(MAX_RESULT_CHARS);
+    const fetchFn = vi.fn<FetchFn>(async () =>
+      Response.json({
+        id: "resp_audit2",
+        status: "completed",
+        output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: VERDICT }] }],
+        usage: { input_tokens: 9_000, output_tokens: 2_000 },
+      }),
+    );
+    const seen = { reserved: 0 };
+    const db = ledger(seen);
+    const result = await runAudit(SESSION, PROPOSAL, {
+      clock: () => NOW,
+      store: store(),
+      callTool: async (_ctx, call) => ({
+        decision: "allowed",
+        decisionId: "d-2",
+        tool: call.name,
+        tier: "read",
+        reason: "ok",
+        result: pack,
+        refs: [],
+        latencyMs: 1,
+      }),
+      complete: (target, request, session) => complete(target, request, session, { fetch: fetchFn, db }),
+    });
+    // Not refused as too expensive (which would store the budget concern): the call went out.
+    expect(result).toMatchObject({ state: "done", verdict: "pass", concerns: [] });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(seen.reserved).toBeGreaterThan(0);
+    expect(seen.reserved).toBeLessThanOrEqual(AUDIT_CALL.maxCostCents * NANOCENTS_PER_CENT);
   });
 
   it("has no Contributor id for any Wonder model", () => {
