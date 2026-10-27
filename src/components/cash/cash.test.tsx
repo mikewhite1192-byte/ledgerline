@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CASH_CARD_NOTICES, CHECK_NOT_CONFIRMED, CHECK_NOTICE, explainMissing } from "@/lib/cash/labels";
 import { CashVerdict } from "./cash-verdict";
 import { CHECK_LABEL, CheckCashButton } from "./check-cash-button";
+import { FridayPay, OUT_OF_DATE } from "./friday-pay";
 
 // The Cash page's button and verdict line: one POST per press, fixed sentences for every refusal,
 // a lost reply never read as "nothing saved", and the page read back whatever the answer. No
@@ -76,6 +77,40 @@ describe("CashVerdict", () => {
   });
 });
 
+// The home card: the latest check's answer while its pay day is today or later, out of date once
+// that Friday has passed (carrier-local dates), and a link to the Cash page either way.
+describe("the home Friday card", () => {
+  const home = (payDay: string, gapCents: number) => ({ payDay, gapCents, createdAt: "2026-11-02T14:00:00.000Z" });
+  const card = () => screen.getByRole("region", { name: "Friday's pay run" });
+
+  it("shows the answer through pay day itself", () => {
+    const before = render(<FridayPay home={home("2026-11-06", -680_000)} today="2026-11-05" />);
+    expect(card().textContent).toContain("Short by $6,800.00");
+    expect(card().textContent).toContain("For Friday, Nov 6");
+    before.unmount();
+    render(<FridayPay home={home("2026-11-06", 214_000)} today="2026-11-06" />);
+    expect(card().textContent).toContain("Covered");
+    expect(card().textContent).not.toContain(OUT_OF_DATE);
+  });
+
+  it("says out of date once the pay day has passed, short or covered, and points to the Cash page", () => {
+    for (const gapCents of [-680_000, 214_000]) {
+      const view = render(<FridayPay home={home("2026-11-06", gapCents)} today="2026-11-07" />);
+      const text = card().textContent ?? "";
+      expect(text).toContain(OUT_OF_DATE);
+      expect(text).not.toMatch(/Short by|Covered/);
+      expect(screen.getByRole("link", { name: /last check was for Friday, Nov 6/ }).getAttribute("href")).toBe("/cash");
+      view.unmount();
+    }
+  });
+
+  it("says not checked yet when there is no check", () => {
+    render(<FridayPay home={null} today="2026-11-07" />);
+    expect(card().textContent).toContain("Not checked yet");
+    expect(screen.getByRole("link", { name: "Check it on the Cash page" }).getAttribute("href")).toBe("/cash");
+  });
+});
+
 describe("explainMissing", () => {
   it("says why LedgerLine's own sentence shows, and nothing when there was no attempt", () => {
     expect(explainMissing(null)).toBeNull();
@@ -91,6 +126,7 @@ describe("the Cash page's fixed sentences", () => {
     const sentences = [
       ...Object.values(CHECK_NOTICE),
       CHECK_NOT_CONFIRMED,
+      OUT_OF_DATE,
       ...Object.values(CASH_CARD_NOTICES),
       ...missing.map((c) => explainMissing(c) ?? ""),
     ];

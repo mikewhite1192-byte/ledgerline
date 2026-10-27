@@ -10,6 +10,7 @@ import { StatCard } from "@/components/app/stat-card";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Wordmark } from "@/components/brand/wordmark";
+import { FridayPay } from "@/components/cash/friday-pay";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -19,7 +20,6 @@ import {
   wonderCapNanocents,
 } from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
-import { dayWords, dollars } from "@/lib/cash/explain";
 import { readCashHome, type CashHome } from "@/lib/cash/view";
 import { DbError } from "@/lib/db";
 import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
@@ -30,6 +30,7 @@ import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
+import { carrierToday } from "@/lib/tenant/shell";
 import { isUuid } from "@/lib/uuid";
 import { AiProofForm } from "./ai-proof-form";
 
@@ -133,7 +134,8 @@ export default async function Home({
     }
   }
 
-  // Friday's pay run, when Cash Friday is on: the latest check's verdict, or that there is none.
+  // Friday's pay run, when Cash Friday is on: the latest check's verdict, that it is out of date
+  // (its pay day has passed), or that there is none.
   // A failed read leaves the card out (undefined), never "not checked".
   let cashHome: CashHome | null | undefined;
   if (carrier && flags.cashFridayEnabled) {
@@ -191,7 +193,9 @@ export default async function Home({
           composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
         />
       )}
-      {cashHome !== undefined ? <FridayPay home={cashHome} /> : null}
+      {cashHome !== undefined ? (
+        <FridayPay home={cashHome} today={carrierToday(carrier.timezone, new Date())} />
+      ) : null}
       {lastSweep ? <LastSweep run={lastSweep} /> : null}
       <RecordCounts counts={carrier.counts} />
       {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
@@ -205,26 +209,6 @@ const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, flags.cashFridayEnable
 // Offered only while the detention tools are switched on, so the chip never asks for a tool the
 // agent does not have.
 const DETENTION_SUGGESTION = { id: "unbilled-detention", label: "Find detention we never billed last month" };
-
-// "Friday's pay run: Short by $6,800.00", one click from the Cash page.
-function FridayPay({ home }: { home: CashHome | null }) {
-  const short = home !== null && home.gapCents < 0;
-  return (
-    <section aria-label="Friday's pay run" className="mx-auto mt-12 w-full max-w-[720px]">
-      <StatCard
-        label="Friday's pay run"
-        value={home === null ? "Not checked yet" : short ? `Short by ${dollars(home.gapCents)}` : "Covered"}
-        hint={
-          home === null
-            ? "Check it on the Cash page"
-            : `For ${dayWords(home.payDay)}. See the figures and ways to cover it`
-        }
-        href="/cash"
-        tone={short ? "destructive" : "neutral"}
-      />
-    </section>
-  );
-}
 
 // "Last sweep: 7 problems, 5 fixes drafted, 2 approved", one click from the run.
 function LastSweep({ run }: { run: SweepRunView }) {

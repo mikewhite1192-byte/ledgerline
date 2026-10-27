@@ -396,12 +396,15 @@ export function computeCashFriday(input: CashFridayInput, asOfDate: LocalDate): 
   const paymentsSince = input.payments.filter((p) => within(p.receivedOn, balanceAsOf, asOf));
   const advancesSince = input.advances.filter((a) => within(a.paidOn, balanceAsOf, asOf));
   const settlementsSince = input.settlements.filter((s) => within(s.paidOn, balanceAsOf, asOf));
+  // A bill paid since the balance date has left the bank too; a paid bill is never due again.
+  const billsSince = input.bills.filter((b) => b.status === "paid" && within(b.paidOn, balanceAsOf, asOf));
   const paymentsSinceCents = sum(paymentsSince.map((p) => p.amountCents));
   const advancesPaidSinceCents = sum(advancesSince.map((a) => a.amountCents));
   const settlementsPaidSinceCents = sum(settlementsSince.map((s) => s.netCents));
+  const billsPaidSinceCents = sum(billsSince.map((b) => b.amountCents));
   const cashOnHandCents = sub(
     sum([cents(settings.bankBalanceCents, "bank balance"), paymentsSinceCents]),
-    sum([advancesPaidSinceCents, settlementsPaidSinceCents]),
+    sum([advancesPaidSinceCents, settlementsPaidSinceCents, billsPaidSinceCents]),
   );
 
   const receivables: ReceivablesInput = {
@@ -434,6 +437,7 @@ export function computeCashFriday(input: CashFridayInput, asOfDate: LocalDate): 
     paymentsSinceCents,
     advancesPaidSinceCents,
     settlementsPaidSinceCents,
+    billsPaidSinceCents,
     cashOnHandCents,
     expectedReceiptsCents,
     payRunCents: payRun.cents,

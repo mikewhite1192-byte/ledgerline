@@ -26,14 +26,15 @@ import {
 } from "./types";
 
 // The golden week: the open period is Monday Oct 26 to Sunday Nov 1, so pay day (Friday) is Nov 6,
-// and the check runs on Monday Nov 2. The bank balance is as of Nov 1.
+// and the check runs on Monday Nov 2. The bank balance is as of Nov 1; b7, a bill paid on Nov 2,
+// takes 70,000 of it back out.
 const AS_OF = "2026-11-02";
 const PERIOD = { id: "per-open", periodStart: "2026-10-26", periodEnd: "2026-11-01", status: "open" as const };
 const CLOSED = { id: "per-closed", periodStart: "2026-10-19", periodEnd: "2026-10-25", status: "paid" as const };
 const LIMITS = { graceDays: 14, factoringMaxAgeDays: 45, maxFactorInvoices: 3, maxChaseCustomers: 2 };
 const SETTINGS = {
   id: "cash-1",
-  bankBalanceCents: c(200_000),
+  bankBalanceCents: c(270_000),
   balanceAsOf: "2026-11-01",
   payDayDow: 5,
   factoringAdvanceBps: 9000,
@@ -155,6 +156,7 @@ const BILLS: VendorBillRecord[] = [
   bill({ id: "b4", amountCents: c(90_000), dueOn: "2026-11-07", urgency: "flexible" }),
   bill({ id: "b5", amountCents: c(10_000), dueOn: "2026-10-30", status: "deferred", deferredTo: "2026-11-06" }),
   bill({ id: "b6", amountCents: c(60_000), dueOn: "2026-11-03", status: "deferred", deferredTo: "2026-11-13" }),
+  // Paid on Nov 2: inside the window, so it has left the bank, and it is no longer due.
   bill({ id: "b7", amountCents: c(70_000), dueOn: "2026-11-02", status: "paid", paidOn: "2026-11-02" }),
 ];
 
@@ -211,11 +213,12 @@ describe("computeCashFriday on the golden week", () => {
 
   it("computes every figure to the cent", () => {
     expect(result.figures).toEqual({
-      bankBalanceCents: 200_000,
+      bankBalanceCents: 270_000,
       balanceAsOf: "2026-11-01",
       paymentsSinceCents: 19_999,
       advancesPaidSinceCents: 30_000,
       settlementsPaidSinceCents: 5_000,
+      billsPaidSinceCents: 70_000,
       cashOnHandCents: 184_999,
       expectedReceiptsCents: 175_001,
       payRunCents: 270_000,
@@ -224,6 +227,9 @@ describe("computeCashFriday on the golden week", () => {
       gapCents: -50_000,
     });
     const f = result.figures;
+    expect(
+      f.bankBalanceCents + f.paymentsSinceCents - f.advancesPaidSinceCents - f.settlementsPaidSinceCents - f.billsPaidSinceCents,
+    ).toBe(f.cashOnHandCents);
     expect(f.cashOnHandCents + f.expectedReceiptsCents - f.payRunCents - f.fuelLoadsCents - f.vendorBillsDueCents).toBe(
       f.gapCents,
     );
@@ -368,13 +374,13 @@ describe("computeCashFriday on the golden week", () => {
 
 describe("computeCashFriday when the bank covers the run", () => {
   it("drafts no option", () => {
-    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(300_000) } }));
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(370_000) } }));
     expect(result.figures.gapCents).toBe(50_000);
     expect(result.options).toEqual([]);
   });
 
   it("drafts no option when the gap is exactly zero", () => {
-    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(250_000) } }));
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(320_000) } }));
     expect(result.figures.gapCents).toBe(0);
     expect(result.options).toEqual([]);
   });
@@ -382,7 +388,7 @@ describe("computeCashFriday when the bank covers the run", () => {
 
 describe("computeCashFriday option limits", () => {
   it("takes more invoices when one does not cover a larger short, and says it still falls short", () => {
-    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(100_000) } }));
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(170_000) } }));
     expect(result.figures.gapCents).toBe(-150_000);
     const factoring = result.options[0];
     if (factoring.kind !== "factoring_request") throw new Error("not factoring");
@@ -398,7 +404,7 @@ describe("computeCashFriday option limits", () => {
   });
 
   it("factors a repeat late payer's invoice like any other: the fee and the reserve price the wait", () => {
-    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(100_000) } }));
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(170_000) } }));
     expect(result.lines.find((l) => l.invoiceId === "L2")).toMatchObject({ label: "repeat_late", status: "after_pay_day" });
     const factoring = result.options[0];
     if (factoring.kind !== "factoring_request") throw new Error("not factoring");
@@ -406,7 +412,7 @@ describe("computeCashFriday option limits", () => {
   });
 
   it("never factors an invoice the engine already counts by pay day", () => {
-    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(100_000) } }));
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(170_000) } }));
     const factoring = result.options[0];
     if (factoring.kind !== "factoring_request") throw new Error("not factoring");
     const counted = new Set(result.lines.filter((l) => l.status === "counted").map((l) => l.invoiceId));
@@ -416,7 +422,7 @@ describe("computeCashFriday option limits", () => {
   it("stops at the invoice limit", () => {
     const result = position(
       golden({
-        settings: { ...SETTINGS, bankBalanceCents: c(100_000) },
+        settings: { ...SETTINGS, bankBalanceCents: c(170_000) },
         limits: { ...LIMITS, maxFactorInvoices: 1 },
       }),
     );
@@ -585,6 +591,47 @@ describe("cash on hand window", () => {
     );
     expect(result.figures.advancesPaidSinceCents).toBe(base.advancesPaidSinceCents + 9_000);
     expect(result.figures.fuelLoadsCents).toBe(base.fuelLoadsCents);
+  });
+
+  it("takes a bill paid since the balance date out of cash on hand, through today, and no other", () => {
+    // The window is after Nov 1 (the balance date) through Nov 4 (today). Every bill below is
+    // paid, so none of them is due by pay day either way.
+    const asOf = "2026-11-04";
+    const base = position(golden(), asOf).figures;
+    const paid = (id: string, paidOn: string, amount: number) =>
+      bill({ id, amountCents: c(amount), dueOn: "2026-10-28", status: "paid", paidOn });
+    const result = position(
+      golden({
+        bills: [
+          ...BILLS,
+          paid("p-before", "2026-10-30", 1_000), // before the balance date: in the balance
+          paid("p-balance-day", "2026-11-01", 2_000), // on the balance date: in the balance
+          paid("p-inside", "2026-11-03", 4_000), // inside the window
+          paid("p-today", "2026-11-04", 8_000), // today: the last day of the window
+          paid("p-tomorrow", "2026-11-05", 16_000), // after today: not out yet
+        ],
+      }),
+      asOf,
+    ).figures;
+    expect(base.billsPaidSinceCents).toBe(70_000);
+    expect(result.billsPaidSinceCents).toBe(70_000 + 4_000 + 8_000);
+    expect(result.cashOnHandCents).toBe(base.cashOnHandCents - 12_000);
+    expect(result.vendorBillsDueCents).toBe(base.vendorBillsDueCents);
+    expect(result.gapCents).toBe(base.gapCents - 12_000);
+  });
+
+  it("leaves out a bill paid on the balance date or after today on the golden day", () => {
+    const base = position(golden()).figures;
+    const result = position(
+      golden({
+        bills: [
+          ...BILLS,
+          bill({ id: "p-balance-day", amountCents: c(3_000), status: "paid", paidOn: "2026-11-01" }),
+          bill({ id: "p-tomorrow", amountCents: c(5_000), status: "paid", paidOn: "2026-11-03" }),
+        ],
+      }),
+    ).figures;
+    expect(result).toEqual(base);
   });
 });
 

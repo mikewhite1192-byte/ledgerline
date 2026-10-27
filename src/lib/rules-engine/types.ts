@@ -810,6 +810,8 @@ export type CashFigures = {
   paymentsSinceCents: Cents;
   advancesPaidSinceCents: Cents;
   settlementsPaidSinceCents: Cents;
+  billsPaidSinceCents: Cents;
+  // bank balance + payments since - advances, settlements and bills paid since.
   cashOnHandCents: Cents;
   expectedReceiptsCents: Cents;
   payRunCents: Cents;
