@@ -264,6 +264,9 @@ export type AiErrorCategory =
   | "disabled"
   | "not_configured"
   | "cap"
+  // The call's job (one trace, or one purpose with no trace) is over its hourly allowance, or
+  // was stopped earlier and no admin has cleared it yet (src/lib/ai/watch.ts).
+  | "job_cap"
   | "too_expensive"
   | AiFailureCategory;
 

@@ -68,6 +68,11 @@ export type ProposalView = {
   auditorCheckedAt: string | null;
   // A person's override of a block: their words, a role label (never the sub or email), when.
   auditorOverride: { reason: string; byLabel: string; at: string } | null;
+  // Where an advance lands, read at render, never stored: "fuel card ···· 4417" (last4 set) or
+  // "no fuel card on file" (last4 null, only while proposed or approved). A done proposal names the
+  // card its advance recorded. Null for a kind that pays no card, a done proposal with no recorded
+  // card, and a rejected, expired, executing or failed proposal.
+  destination: { label: string; last4: string | null; testMode: true } | null;
   // Set on a detention_charge only, when its stored args read back whole.
   detention?: DetentionView | null;
 };
@@ -81,7 +86,7 @@ export type FlagView = { inputId: string; categories: string[]; quote: string };
 export type ReportView = { stepId: string; name: ReportName; args: Record<string, string> };
 
 // The error the chat shows instead of an answer: the fixed state, never upstream text.
-export type TurnError = "budget" | "timeout" | "unknown";
+export type TurnError = "budget" | "job_cap" | "timeout" | "unknown";
 
 export type TurnView = {
   id: string;
@@ -108,6 +113,7 @@ export type TurnEvent =
 export function turnErrorFor(status: TurnStatus, endedReason: string | null): TurnError | null {
   if (status !== "failed") return null;
   if (endedReason === "budget") return "budget";
+  if (endedReason === "job_cap") return "job_cap";
   if (endedReason === "clock" || endedReason === "model_timeout") return "timeout";
   return "unknown";
 }

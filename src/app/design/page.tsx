@@ -6,6 +6,7 @@ import {
   Building2,
   CircleDashed,
   ClipboardCheck,
+  CreditCard,
   LayoutGrid,
   Link2,
   MessagesSquare,
@@ -27,6 +28,7 @@ import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
 import { Paystub } from "@/components/app/paystub";
 import { StatCard } from "@/components/app/stat-card";
+import { FuelCardChip } from "@/components/app/fuel-card";
 import { EmptyState, ERROR_CATEGORIES, ErrorState, LoadingState } from "@/components/app/states";
 import { BADGE_STATUSES, StatusBadge } from "@/components/app/status-badge";
 import { TenantPanel } from "@/components/app/tenant-switcher";
@@ -40,7 +42,7 @@ import { contrastRatio } from "@/lib/design/contrast";
 import { isHex, parseTokens, type TokenSet } from "@/lib/design/tokens";
 import { recordLabel, sourceLabel } from "@/lib/format/labels";
 import { ChatDemo, ProposalGallery, SheetDemo, ToastDemo, ToastsAtRest } from "./demos";
-import { LOADS, PAYSTUB, SAMPLE_TENANT, SHORT_WEEK_PAYSTUB, SOURCE_ROWS } from "./sample-data";
+import { FUEL_CARD_LAST4, LOADS, PAYSTUB, SAMPLE_TENANT, SHORT_WEEK_PAYSTUB, SOURCE_ROWS } from "./sample-data";
 import { anchorFor, loadColumns } from "./shared";
 
 // The design review: every piece of the interface in both modes, with invented sample data.
@@ -69,6 +71,7 @@ const SECTIONS = [
   { id: "stat-cards", label: "Stat cards", icon: <LayoutGrid aria-hidden /> },
   { id: "data-table", label: "Data table", icon: <TableIcon aria-hidden /> },
   { id: "proposal-card", label: "Proposal card", icon: <ClipboardCheck aria-hidden /> },
+  { id: "fuel-card", label: "Fuel card", icon: <CreditCard aria-hidden /> },
   { id: "chat-thread", label: "Chat thread", icon: <MessagesSquare aria-hidden /> },
   { id: "paystub", label: "Paystub", icon: <Receipt aria-hidden /> },
   { id: "states", label: "States", icon: <CircleDashed aria-hidden /> },
@@ -394,6 +397,25 @@ export default function DesignPage() {
 
         <ModePair id="proposal-card" note="What the agent wants to do, what it costs and why. A person approves; the agent never moves money.">
           {(mode) => <ProposalGallery prefix={`${mode}-`} />}
+        </ModePair>
+
+        <ModePair id="fuel-card" note="Where an advance lands: the driver's fuel card, by its last four only. Test mode while the card rail is simulated.">
+          {() => (
+            <div className="grid gap-4">
+              <div className="grid gap-2">
+                <Caption>On file</Caption>
+                <FuelCardChip last4={FUEL_CARD_LAST4} />
+              </div>
+              <div className="grid gap-2">
+                <Caption>Closed: an old advance still shows the card it was paid to.</Caption>
+                <FuelCardChip last4={FUEL_CARD_LAST4} status="closed" />
+              </div>
+              <div className="grid gap-2">
+                <Caption>None on file: an advance cannot be paid until one is added.</Caption>
+                <span className="text-body text-muted-foreground">No fuel card on file</span>
+              </div>
+            </div>
+          )}
         </ModePair>
 
         <ModePair id="chat-thread" wide note="The home. Steps stream in plain English; the newest one is read aloud.">

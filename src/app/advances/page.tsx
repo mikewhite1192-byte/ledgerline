@@ -108,12 +108,21 @@ export default async function AdvancesPage({
           {
             key: "payout",
             header: "Payout",
-            cell: (r) =>
-              r.payoutState ? (
-                <StatusBadge status={r.payoutState} />
-              ) : (
-                <span className="text-muted-foreground">{r.fromFlow ? "Not sent" : "On file"}</span>
-              ),
+            cell: (r) => (
+              <span className="whitespace-nowrap">
+                {r.payoutState ? (
+                  <StatusBadge status={r.payoutState} />
+                ) : (
+                  <span className="text-muted-foreground">{r.fromFlow ? "Not sent" : "On file"}</span>
+                )}
+                {r.cardLine ? (
+                  <span className="block text-small text-muted-foreground">
+                    {r.cardLine.label} ···· {r.cardLine.card.last4}
+                    {r.cardLine.card.status === "closed" ? ", closed" : ""}
+                  </span>
+                ) : null}
+              </span>
+            ),
           },
           { key: "source", header: "Source", cell: (r) => sourceWords(r.source) },
         ]}

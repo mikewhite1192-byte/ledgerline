@@ -1,5 +1,5 @@
 import type { Queryable } from "../db";
-import type { MoneyFailure, OutsideSystem } from "../money/types";
+import type { MoneyFailure, OutsideSystem, PayoutRail, SimBehavior } from "../money/types";
 import type {
   AdvanceInput,
   CheckInput,
@@ -70,16 +70,32 @@ export type ReadBack =
 
 export type Ready = { ok: true } | { ok: false; category: MoneyFailure };
 
+// Where a fuel-card load goes: the provider's own reference for the driver's card and its last
+// four digits, never a card number. simBehavior is what the simulated provider answers for this
+// card; a real adapter ignores it.
+export type FuelCardDestination = {
+  rail: "fuel_card";
+  provider: "fuel_card_sim";
+  token: string;
+  last4: string;
+  simBehavior: SimBehavior;
+};
+// The bank rail carries no destination today (the provider pays its own test account).
+export type PayoutDestination = FuelCardDestination;
+
 export type PayoutRequest = {
   actionId: string;
   driverId: string;
   amountCents: number;
   // Which record this pays (memoCodeOf), never a person's name.
   memoCode: string;
+  // Fixed by the row's kind (RAIL_OF_KIND). Each real rail adapter refuses another rail.
+  rail: PayoutRail;
+  destination?: PayoutDestination;
 };
 
 export interface PaymentAdapter {
-  readonly system: "mock" | "stripe_test";
+  readonly system: "mock" | "stripe_test" | "fuel_card_sim";
   // Repeats the switch and key checks on every call.
   ready(): Promise<Ready>;
   sendPayout(p: PayoutRequest, ctx: SendContext): Promise<SendOutcome>;

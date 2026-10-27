@@ -148,6 +148,7 @@ export function assertPlan(plan: CarrierPlan): void {
   }
 
   keysAndReferences(rows);
+  driverCards(rows, carrier.heroCode);
   loadsAndDays(rows, zone, lastDay, openWeek.start);
   receivables(plan, lastDay);
   addendumPlants(plan);
@@ -232,6 +233,32 @@ export function assertPlan(plan: CarrierPlan): void {
     const r = settleDriver(settlementInputOf(rows, hero.id, openWeek));
     const got = { grossCents: r.grossCents, deductionsCents: r.deductionsCents, netCents: r.netCents };
     if (JSON.stringify(got) !== JSON.stringify(HERO_OPEN_WEEK)) fail("the hero's net moved");
+  }
+}
+
+// Fuel cards: one active card per driver, every card naming a driver in the plan, tokens and last
+// four unique, the hero's card plain "ok", and exactly one planted declined and one slow card.
+function driverCards(rows: TenantRows, heroCode: string | null): void {
+  const cards = rows.driver_cards;
+  const driverIds = new Set(rows.drivers.map((d) => d.id));
+  refs(cards, (c) => c.driver_id, driverIds, "a fuel card");
+  unique(cards, (c) => c.provider_token, "card token");
+  unique(cards, (c) => c.last4, "card last four");
+  const active = cards.filter((c) => c.status === "active");
+  unique(active, (c) => c.driver_id, "active card per driver");
+  if (active.length !== rows.drivers.length) fail("a driver has no active fuel card");
+  for (const c of cards) {
+    if (!/^fcs_card_[0-9a-f]{24}$/.test(c.provider_token) || !/^[0-9]{4}$/.test(c.last4)) {
+      fail("a fuel card is malformed");
+    }
+    if (c.sim_behavior === "offline") fail("the seed plants an offline card");
+  }
+  const count = (b: string) => cards.filter((c) => c.sim_behavior === b).length;
+  if (count("declined") !== 1 || count("slow") !== 1) fail("the planted fuel cards are not one declined and one slow");
+  if (heroCode) {
+    const hero = rows.drivers.find((d) => d.code === heroCode);
+    const card = hero ? active.find((c) => c.driver_id === hero.id) : undefined;
+    if (!card || card.sim_behavior !== "ok") fail("the hero's fuel card is not ok");
   }
 }
 

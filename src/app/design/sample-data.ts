@@ -12,6 +12,9 @@ export const SAMPLE_TENANT = {
 };
 
 export const DRIVER = { name: "Dana Whitfield", code: "SF-D07", workerType: "company" as const };
+
+// The sample driver's fuel card, by its last four only (a made-up number).
+export const FUEL_CARD_LAST4 = "4417";
 export const PERIOD = { start: "2026-10-26", end: "2026-11-01" };
 
 const ref = (table: string, id: string): SourceRef => ({ table, id });
@@ -111,7 +114,8 @@ export const ADVANCE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
     { text: `Advance limit: ${formatCents(50_000)}; this request fits`, source: SOURCES.payRules },
   ],
   sources: [SOURCES.load2, SOURCES.load3],
-  confirmQuestion: `Pay ${formatCents(20_000)} to ${DRIVER.name}?`,
+  destination: { label: `To fuel card ···· ${FUEL_CARD_LAST4}`, testMode: true },
+  confirmQuestion: `Pay ${formatCents(20_000)} to ${DRIVER.name}'s fuel card ···· ${FUEL_CARD_LAST4}? Test mode.`,
 };
 
 export const PAYMENT_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
