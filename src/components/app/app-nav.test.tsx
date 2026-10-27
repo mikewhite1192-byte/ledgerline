@@ -20,6 +20,7 @@ const SWITCHES = [
   "clipsEnabled",
   "accountingEnabled",
   "portalRunnerEnabled",
+  "demoResetEnabled",
 ] as const;
 type Switch = (typeof SWITCHES)[number];
 
@@ -40,7 +41,7 @@ describe("appNav", () => {
     setAll(true);
     expect(shape("/invoices")).toEqual([
       ["Today", "/", "Home", false],
-      ["Pay", "/sweep", "Sweep", false],
+      ["Pay", "/sweep", "Pay sweep", false],
       ["Pay", "/driver-notes", "Driver notes", false],
       ["Pay", "/advances", "Advances", false],
       ["Money in", "/invoices", "Invoices", true],
@@ -51,6 +52,7 @@ describe("appNav", () => {
       ["Settings", "/settings/accounting", "QuickBooks", false],
       ["Settings", "/models", "Models and spend", false],
       ["Settings", "/portal-runs", "Portal runs", false],
+      ["Settings", "/settings/demo", "Demo", false],
     ]);
   });
 
@@ -74,6 +76,7 @@ describe("appNav", () => {
       clipsEnabled: "/clips",
       accountingEnabled: "/settings/accounting",
       portalRunnerEnabled: "/portal-runs",
+      demoResetEnabled: "/settings/demo",
     };
     for (const s of SWITCHES) {
       setAll(true);
@@ -130,7 +133,7 @@ describe("NavList", () => {
     setAll(true);
     render(<NavList items={appNav("/advances")} />);
     const pay = screen.getByRole("list", { name: "Pay" });
-    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Sweep", "Driver notes", "Advances"]);
+    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay sweep", "Driver notes", "Advances"]);
     expect(screen.getByRole("link", { name: "Advances" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: "Home" }).getAttribute("aria-current")).toBeNull();
     expect(screen.getAllByText("Money in")).toHaveLength(1);
@@ -194,7 +197,7 @@ describe("every signed-in page is reachable", () => {
   };
 
   it("finds the routes it guards", () => {
-    expect(routes).toEqual(expect.arrayContaining(["/", "/models", "/settings/accounting", "/advances/new"]));
+    expect(routes).toEqual(expect.arrayContaining(["/", "/models", "/settings/accounting", "/settings/demo", "/advances/new"]));
   });
 
   it("reaches each route from the menu or from a menu item's page", () => {

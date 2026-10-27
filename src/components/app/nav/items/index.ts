@@ -5,6 +5,7 @@ export { accounting } from "./accounting";
 export { advances } from "./advances";
 export { clips } from "./clips";
 export { customerPayments } from "./customer-payments";
+export { demo } from "./demo";
 export { documents } from "./documents";
 export { driverNotes } from "./driver-notes";
 export { home } from "./home";

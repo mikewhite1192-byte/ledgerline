@@ -29,7 +29,17 @@ vi.mock("@/lib/tenant/context", async (importOriginal) => {
   };
 });
 
-const SWITCHES = ["voiceIntakeEnabled", "portalRunnerEnabled", "advancesEnabled", "sweepEnabled"] as const;
+const SWITCHES = [
+  "voiceIntakeEnabled",
+  "portalRunnerEnabled",
+  "advancesEnabled",
+  "sweepEnabled",
+  "driverNotesEnabled",
+  "documentsEnabled",
+  "clipsEnabled",
+  "invoicesEnabled",
+  "customerPaymentsEnabled",
+] as const;
 const saved = Object.fromEntries(SWITCHES.map((s) => [s, flags[s]])) as Record<(typeof SWITCHES)[number], boolean>;
 
 beforeEach(() => {
@@ -106,14 +116,63 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
   {
     route: "/sweep",
     load: async () => (await import("./sweep/page")).default(),
-    off: "The pay sweep is off for this carrier",
+    off: "Pay sweep is off for this carrier",
     title: "Pay sweep",
   },
   {
     route: "/sweep/[id]",
     load: async () => (await import("./sweep/[id]/page")).default({ params: params() }),
-    off: "The pay sweep is off for this carrier",
+    off: "Pay sweep is off for this carrier",
     title: "Pay sweep",
+  },
+  {
+    route: "/driver-notes",
+    load: async () => (await import("./driver-notes/page")).default(),
+    off: "Driver notes are off for this carrier",
+    title: "Driver notes",
+  },
+  {
+    route: "/driver-notes/[settlementId]/view",
+    load: async () =>
+      (await import("./driver-notes/[settlementId]/view/page")).default({ params: Promise.resolve({ settlementId: ID }) }),
+    off: "Driver notes are off for this carrier",
+    title: "Driver note",
+  },
+  {
+    route: "/pay/[periodId]/notes",
+    load: async () => (await import("./pay/[periodId]/notes/page")).default({ params: Promise.resolve({ periodId: ID }) }),
+    off: "Driver notes are off for this carrier",
+    title: "Driver notes",
+  },
+  {
+    route: "/documents",
+    load: async () => (await import("./documents/page")).default(),
+    off: "Documents are off for this carrier",
+    title: "Documents",
+  },
+  {
+    route: "/documents/[id]",
+    load: async () => (await import("./documents/[id]/page")).default({ params: params() }),
+    off: "Documents are off for this carrier",
+    title: "Document",
+  },
+  {
+    route: "/clips",
+    load: async () => (await import("./clips/page")).default(),
+    off: "Dock clips are off for this carrier",
+    title: "Dock clips",
+  },
+  {
+    route: "/invoices",
+    load: async () => (await import("./invoices/page")).default({ searchParams: searchParams() }),
+    off: "Invoices are off for this carrier",
+    title: "Invoices",
+  },
+  {
+    route: "/customer-payments/new",
+    load: async () => (await import("./customer-payments/new/page")).default({ searchParams: searchParams() }),
+    off: "Payments are off for this carrier",
+    title: "Record a payment",
   },
 ];
 

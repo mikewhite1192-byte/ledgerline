@@ -89,7 +89,7 @@ export default async function DocumentsPage() {
         <PageHeader title="Documents" description={DESCRIPTION} />
         {!flags.documentsEnabled ? (
           <Card>
-            <FeatureOff name="Document reading" />
+            <FeatureOff name="Documents" plural />
           </Card>
         ) : (
           <>

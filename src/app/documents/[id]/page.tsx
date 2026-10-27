@@ -235,7 +235,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
   if (!flags.documentsEnabled) {
     body = (
       <Card>
-        <FeatureOff name="Document reading" />
+        <FeatureOff name="Documents" plural />
       </Card>
     );
   } else if (readProblem) {

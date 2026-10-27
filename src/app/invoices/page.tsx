@@ -115,7 +115,7 @@ export default async function InvoicesPage({
           {tab === "invoices" ? <AllInvoices rows={view.open.invoices} /> : null}
         </>
       ) : (
-        <FeatureOff name="Invoicing" />
+        <FeatureOff name="Invoices" plural />
       )}
     </SignedInPage>
   );

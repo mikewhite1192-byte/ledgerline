@@ -79,7 +79,7 @@ export async function SweepOffPage({ title, description }: { title: string; desc
     >
       <div className="mx-auto grid w-full max-w-[1080px] gap-6">
         <PageHeader title={title} description={description} />
-        <FeatureOff name="The pay sweep" />
+        <FeatureOff name="Pay sweep" />
       </div>
     </AppShell>
   );

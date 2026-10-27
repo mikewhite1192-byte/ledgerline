@@ -10,7 +10,11 @@ export type ConfirmItem = { key: string; label: ReactNode; cents?: number };
 export type ConfirmPanelProps = {
   // Verb and object, as a question: "Approve 23 paystubs?"
   question: string;
-  // Count and total: "23 drivers, $31,482.15 in total."
+  // Count words for the total line: "23 drivers". Without them the line says "23 items".
+  count?: string;
+  // The line under the question when an item has no amount. When every item has cents the panel
+  // writes the count and total itself, adding the items' own cents, and this line is not shown, so
+  // the total can never disagree with the list.
   summary?: ReactNode;
   // What is confirmed, listed only when there is more than one.
   items?: readonly ConfirmItem[];
@@ -33,6 +37,7 @@ export type ConfirmPanelProps = {
 // unchanged.
 export function ConfirmPanel({
   question,
+  count,
   summary,
   items = [],
   next,
@@ -46,6 +51,8 @@ export function ConfirmPanel({
   className,
 }: ConfirmPanelProps) {
   const titleId = useId();
+  const priced = items.length > 0 && items.every((item) => item.cents !== undefined);
+  const totalCents = items.reduce((sum, item) => sum + (item.cents ?? 0), 0);
   const cancelRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     cancelRef.current?.focus();
@@ -61,7 +68,13 @@ export function ConfirmPanel({
         <p id={titleId} className="text-body font-semibold text-foreground">
           {question}
         </p>
-        {summary ? <p className="text-body text-foreground">{summary}</p> : null}
+        {priced ? (
+          <p className="text-body text-foreground">
+            {count ?? `${items.length} ${items.length === 1 ? "item" : "items"}`}, <Money cents={totalCents} /> in total.
+          </p>
+        ) : summary ? (
+          <p className="text-body text-foreground">{summary}</p>
+        ) : null}
       </div>
       {items.length > 1 ? (
         <ul aria-label="Included" className="grid max-h-48 gap-1 overflow-y-auto rounded-md border border-border bg-card px-3 py-2">

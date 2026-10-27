@@ -5,6 +5,9 @@ import { ConfirmPanel } from "./confirm-panel";
 
 afterEach(cleanup);
 
+// The count and total line, whose dollar amount is its own span.
+const line = (text: string) => screen.getByText((_, el) => el?.tagName === "P" && el.textContent === text);
+
 describe("ConfirmPanel", () => {
   it("asks the question, says what happens next, and starts on Keep reviewing", () => {
     const onConfirm = vi.fn();
@@ -12,7 +15,7 @@ describe("ConfirmPanel", () => {
     render(
       <ConfirmPanel
         question="Approve 2 paystubs?"
-        summary="2 drivers, $2,469.00 in total."
+        count="2 drivers"
         items={[
           { key: "a", label: "Driver one", cents: 123450 },
           { key: "b", label: "Driver two", cents: 123450 },
@@ -23,7 +26,7 @@ describe("ConfirmPanel", () => {
       />,
     );
     expect(screen.getByRole("group", { name: "Approve 2 paystubs?" })).toBeTruthy();
-    expect(screen.getByText("2 drivers, $2,469.00 in total.")).toBeTruthy();
+    expect(line("2 drivers, $2,469.00 in total.")).toBeTruthy();
     expect(screen.getByText("Each driver's pay goes to their bank by test payout.")).toBeTruthy();
     const list = screen.getByRole("list", { name: "Included" });
     expect(list.querySelectorAll("li")).toHaveLength(2);
@@ -50,6 +53,59 @@ describe("ConfirmPanel", () => {
     );
     expect(screen.queryByRole("list")).toBeNull();
     expect(screen.getByRole("button", { name: "Reject" })).toBeTruthy();
+  });
+
+  it("adds the total from the items itself, so a caller's total can never disagree with the list", () => {
+    render(
+      <ConfirmPanel
+        question="Approve 2 paystubs?"
+        count="2 drivers"
+        summary="2 drivers, $9,999.00 in total."
+        items={[
+          { key: "a", label: "Driver one", cents: 123450 },
+          { key: "b", label: "Driver two", cents: 100 },
+        ]}
+        next="Each driver's pay goes to their bank by test payout."
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(line("2 drivers, $1,235.50 in total.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("$9,999.00");
+    cleanup();
+
+    render(
+      <ConfirmPanel
+        question="Approve 3 invoices?"
+        items={[
+          { key: "a", label: "Invoice one", cents: 50000 },
+          { key: "b", label: "Invoice two", cents: 25000 },
+          { key: "c", label: "Invoice three", cents: 25 },
+        ]}
+        next="Each invoice is posted to QuickBooks."
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(line("3 items, $750.25 in total.")).toBeTruthy();
+  });
+
+  it("shows the caller's line only when an item has no amount", () => {
+    render(
+      <ConfirmPanel
+        question="Approve 2 notes?"
+        summary="2 notes, one for each driver."
+        items={[
+          { key: "a", label: "Note one" },
+          { key: "b", label: "Note two", cents: 100 },
+        ]}
+        next="Each driver sees the note above their paystub."
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(screen.getByText("2 notes, one for each driver.")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("in total");
   });
 
   it("holds both buttons while the confirm is pending", () => {

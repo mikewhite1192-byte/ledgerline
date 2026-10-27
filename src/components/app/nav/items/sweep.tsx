@@ -6,7 +6,7 @@ export const sweep = {
   group: "Pay",
   order: 10,
   href: "/sweep",
-  label: "Sweep",
+  label: "Pay sweep",
   icon: <ScanSearch aria-hidden />,
   shown: () => flags.sweepEnabled === true,
 } as const satisfies MenuItem;
