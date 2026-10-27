@@ -19,9 +19,11 @@ export const MAX_ISSUES = 8;
 export const MAX_SOURCES = 4;
 export const MAX_DISAGREEMENTS = 12;
 
-// A dollar sign, five digits in a row, a decimal amount or a thousands group: a figure a model
-// wrote. The page never shows one, so the whole string is replaced.
-const FIGURE = /\$|\d{5,}|\d+\.\d{2}\b|\d{1,3}(?:,\d{3})+/;
+// A dollar or cent sign, five digits in a row, a decimal of any length, a thousands group, or a
+// number with a currency word before or after it ("45 cents", "40 dollars", "USD 40"): a figure a
+// model wrote. The page never shows one, so the whole string is replaced. Other short numbers (a
+// date, a driver code, a load count) stay.
+const FIGURE = /\$|¢|\d{5,}|\d+\.\d+|\d{1,3}(?:,\d{3})+|\d+\s*(?:cents?|dollars?|bucks|usd)\b|\busd\s*\d/i;
 
 export function scrubFigures(text: string, replacement: string, max: number): string {
   const clean = text.replace(/\s+/g, " ").trim();

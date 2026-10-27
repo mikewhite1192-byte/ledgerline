@@ -44,6 +44,12 @@ describe("scrubFigures", () => {
     for (const t of ["owed $40", "short 12345 cents", "about 12.50 less", "the 1,200 mile load"]) {
       expect(scrubFigures(t, "see the records", 100)).toBe("see the records");
     }
+    // Short amounts: a number with a currency word or sign, and a decimal of any length.
+    for (const t of ["short 45 cents", "owed 1234 cents", "paid 40 dollars", "about 12.5 less", "1 cent off", "45¢ short", "40 USD owed", "USD 40 owed", "40bucks"]) {
+      expect(scrubFigures(t, "see the records", 100)).toBe("see the records");
+    }
+    // Dates, driver codes and counts are not amounts.
+    expect(scrubFigures("D-001 had 3 loads on 2026-10-27 and 2 stops", "x", 100)).toBe("D-001 had 3 loads on 2026-10-27 and 2 stops");
     expect(scrubFigures("  two  loads on one day ", "x", 100)).toBe("two loads on one day");
     expect(scrubFigures("abcdef", "x", 3)).toBe("abc");
   });

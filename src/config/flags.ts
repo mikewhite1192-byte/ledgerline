@@ -249,6 +249,8 @@ export type Flags = {
     // Runs with the second opinion one carrier may start in one of its local days.
     runsPerTenantDay: number;
     // A run's whole cap when the second opinion is on (the sweep's own spend included), in cents.
+    // The second opinion holds at most this less sweepLimits.maxRunCents, so the sweep's own
+    // budget is always left for its explanations and audits.
     runCapCents: number;
   };
   // Approve all clean: one deliberate approval over the clean fixes a person saw. A batch whose

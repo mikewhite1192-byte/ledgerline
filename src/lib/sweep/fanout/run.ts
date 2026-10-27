@@ -443,13 +443,17 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
           AND lease_until <= CAST($2 AS timestamptz) AND attempts >= $3`,
       [fx.runId, nowIso, MAX_ATTEMPTS],
     );
+    // The room is what reserveRunCents would still hold: within the run's cap, and within the
+    // second opinion's own part of it (the cap less the sweep's own budget).
     const state = await q.query<{ pending: number | string; live: number | string; room: number | string }>(
       `SELECT COUNT(*) FILTER (WHERE c.status = 'queued' OR (c.status = 'running' AND c.lease_until <= CAST($2 AS timestamptz))) AS pending,
               COUNT(*) FILTER (WHERE c.status = 'running' AND c.lease_until > CAST($2 AS timestamptz)) AS live,
-              (SELECT r.cap_cents - r.spent_cents - r.reserved_cents FROM sweep_runs r
+              (SELECT LEAST(r.cap_cents - r.spent_cents - r.reserved_cents,
+                            r.cap_cents - $3 - (r.spent_cents - r.own_spent_cents) - r.reserved_cents)
+                 FROM sweep_runs r
                 WHERE r.id = CAST($1 AS uuid) AND r.tenant_id = current_tenant_id()) AS room
          FROM sweep_fanout_checks c WHERE c.run_id = CAST($1 AS uuid) AND c.tenant_id = current_tenant_id()`,
-      [fx.runId, nowIso],
+      [fx.runId, nowIso, flags.sweepLimits.maxRunCents],
     );
     const pending = Number(state[0]?.pending ?? 0);
     const live = Number(state[0]?.live ?? 0);

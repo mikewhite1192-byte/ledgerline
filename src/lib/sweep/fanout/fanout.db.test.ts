@@ -335,11 +335,14 @@ describe("the sweep's second opinion", () => {
   it("holds cents against the cap so two slices at once cannot pass it", async () => {
     const runId = await start();
     const token = randomUUID();
+    // The sweep's own budget is all spent, so the run's cap and the second opinion's part of it
+    // have the same 10 cents left.
     await admin.withTenant(T, (q) =>
-      q.execute("UPDATE sweep_runs SET lease_token = CAST($2 AS uuid), spent_cents = cap_cents - 10 WHERE id = CAST($1 AS uuid)", [
-        runId,
-        token,
-      ]),
+      q.execute(
+        `UPDATE sweep_runs SET lease_token = CAST($2 AS uuid), spent_cents = cap_cents - 10, own_spent_cents = $3
+          WHERE id = CAST($1 AS uuid)`,
+        [runId, token, flags.sweepLimits.maxRunCents],
+      ),
     );
     const held = await Promise.all([0, 1].map(() => app.withTenant(T, (q) => reserveRunCents(q, runId, token, 9))));
     expect(held.filter(Boolean)).toHaveLength(1);
@@ -349,6 +352,61 @@ describe("the sweep's second opinion", () => {
     // A cost never read back counts the whole hold; a known one counts itself.
     await app.withTenant(T, (q) => settleRunCents(q, runId, token, 9, null));
     expect(await runRow(runId)).toMatchObject({ reserved_cents: 0, spent_cents: (await runRow(runId)).cap_cents - 1 });
+  });
+
+  it("holds the second opinion's cents within the run's cap less the sweep's own budget", async () => {
+    const own = flags.sweepLimits.maxRunCents;
+    const runId = await start();
+    const token = randomUUID();
+    // The second opinion has spent all but 10 cents of its part; the run's cap has the sweep's
+    // own budget on top of that.
+    await admin.withTenant(T, (q) =>
+      q.execute("UPDATE sweep_runs SET lease_token = CAST($2 AS uuid), spent_cents = cap_cents - $3 - 10 WHERE id = CAST($1 AS uuid)", [
+        runId,
+        token,
+        own,
+      ]),
+    );
+    const before = await runRow(runId);
+    expect(before.cap_cents - before.spent_cents).toBe(own + 10);
+    // 11 cents would fit the run's cap, not the second opinion's part of it.
+    expect(await app.withTenant(T, (q) => reserveRunCents(q, runId, token, 11))).toBe(false);
+    expect(await app.withTenant(T, (q) => reserveRunCents(q, runId, token, 10))).toBe(true);
+    expect(await app.withTenant(T, (q) => reserveRunCents(q, runId, token, 1))).toBe(false);
+    await app.withTenant(T, (q) => settleRunCents(q, runId, token, 10, null));
+    const after = await runRow(runId);
+    expect(after).toMatchObject({ reserved_cents: 0, own_spent_cents: 0, spent_cents: after.cap_cents - own });
+  });
+
+  it("stops the second opinion near its part of the cap, and the sweep's own calls still get their whole budget", async () => {
+    const own = flags.sweepLimits.maxRunCents;
+    const l = flags.fanoutLimits;
+    const runId = await start();
+    // Room in the second opinion's part for one driver's check: not for the plan or the comparison.
+    const left = l.driverCents;
+    expect(left).toBeLessThan(l.planCents);
+    await admin.withTenant(T, (q) =>
+      q.execute("UPDATE sweep_runs SET spent_cents = cap_cents - $2 - $3 WHERE id = CAST($1 AS uuid)", [runId, own, left]),
+    );
+    const done = await runToEnd(runId);
+    expect(done).toMatchObject({ status: "done", phase: "done", truncatedReason: "cap" });
+
+    const purposes = model.mock.calls.map((c) => (c[1] as AiRequest).purpose);
+    expect(purposes.filter((p) => p === "fanout_plan")).toHaveLength(0);
+    expect(purposes.filter((p) => p === "fanout_reconcile")).toHaveLength(0);
+    expect(purposes.filter((p) => p === "fanout_check")).toHaveLength(2);
+    const rows = await checks(runId);
+    expect(rows.filter((c) => c.status === "done")).toHaveLength(1);
+    expect(rows.filter((c) => c.status === "budget")).toHaveLength(rows.length - 1);
+    expect((await fanoutRow(runId)).status).toBe("plan_budget");
+
+    // The sweep's own calls ran in full: the five explanations at two cents each.
+    expect(explain).toHaveBeenCalledTimes(5);
+    const row = await runRow(runId);
+    expect(row).toMatchObject({ own_spent_cents: 10, reserved_cents: 0 });
+    // The second opinion stayed within its part: the one check at two cents.
+    expect(row.spent_cents - row.own_spent_cents).toBe(row.cap_cents - own - left + 2);
+    expect(row.spent_cents - row.own_spent_cents).toBeLessThanOrEqual(row.cap_cents - own);
   });
 
   it.each([

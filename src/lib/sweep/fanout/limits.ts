@@ -31,15 +31,19 @@ export function refusedByProvider(category: string, httpStatus: number | undefin
 }
 
 // Holds cents against the run's cap before a call. The run must still be this worker's (its
-// lease token) and the hold must fit: spent + reserved + cents <= cap. False: no call.
+// lease token) and the hold must fit: spent + reserved + cents <= cap. The second opinion's own
+// part must fit too: its spend (spent less the sweep's own) + reserved + cents <= cap less the
+// sweep's own budget, so the explanations and audits that run after it always keep their whole
+// budget. False: no call.
 export async function reserveRunCents(q: Queryable, runId: string, leaseToken: string, cents: number): Promise<boolean> {
   if (!whole(cents)) return false;
   const rows = await q.query<{ id: string }>(
     `UPDATE sweep_runs SET reserved_cents = reserved_cents + $3
       WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND lease_token = CAST($2 AS uuid)
         AND status = 'running' AND spent_cents + reserved_cents + $3 <= cap_cents
+        AND (spent_cents - own_spent_cents) + reserved_cents + $3 <= cap_cents - $4
       RETURNING id`,
-    [runId, leaseToken, cents],
+    [runId, leaseToken, cents, flags.sweepLimits.maxRunCents],
   );
   return rows.length === 1;
 }
