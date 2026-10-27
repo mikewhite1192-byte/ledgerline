@@ -3,8 +3,8 @@
 // an order where every table comes after the tables it references (insert in this order, delete in
 // reverse). Each column says how it travels: the Data API sends strings as text, so uuid, date,
 // timestamptz and jsonb columns need a CAST on the way in, and reads turn timestamptz into one ISO
-// form and jsonb into text so both drivers return the same values. tenant_id and created_at are never listed: tenant_id is
-// always current_tenant_id() and created_at is the database's own.
+// form and jsonb into text so both drivers return the same values. tenant_id and created_at are
+// never listed: tenant_id is always current_tenant_id() and created_at is the database's own.
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
 

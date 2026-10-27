@@ -184,7 +184,8 @@ const PROPOSAL_SQL = `
            WHERE m.tenant_id = p.tenant_id AND m.cognito_sub = p.auditor_override_by) AS override_role,
          CASE WHEN p.kind = 'advance_payout' AND p.subject_table = 'drivers' THEN
            (SELECT c.last4 FROM driver_cards c
-             WHERE c.tenant_id = p.tenant_id AND c.driver_id = p.subject_id AND c.status = 'active')
+             WHERE c.tenant_id = p.tenant_id AND c.driver_id = p.subject_id AND c.status = 'active'
+             LIMIT 1)
          END AS card_last4
     FROM proposals p`;
 

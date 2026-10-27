@@ -9,7 +9,7 @@ import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdvanceFrame, problemOf, ReadFailed, type ReadProblem } from "@/app/advances/frame";
-import { readAdvanceRecord, readShell, type AdvanceRecord, type Shell } from "@/lib/advances/read";
+import { cardLineFor, readAdvanceRecord, readShell, type AdvanceRecord, type Shell } from "@/lib/advances/read";
 import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
 import { advancesOn } from "@/lib/advances/switches";
@@ -52,6 +52,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
   }
   const { advance, driver, card, proposal, ledger, input, eligibility, actions } = record;
   const when = (iso: string | null) => (iso ? formatInstant(iso, shell.timezone) : "Not yet");
+  const cardLine = cardLineFor(advance.status, card);
   return (
     <AdvanceFrame shell={shell} title={`Advance ${advance.requestRef}`}>
       <PageHeader
@@ -78,9 +79,15 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
             <Item label="Requested">{when(advance.requestedAt)}</Item>
             <Item label="Approved">{when(advance.decidedAt)}</Item>
             <Item label="Paid">{when(advance.paidAt)}</Item>
-            <Item label={advance.status === "paid" ? "Paid to" : "Pays to"}>
-              {card ? <FuelCardChip last4={card.last4} status={card.status} /> : "No fuel card on file"}
-            </Item>
+            {cardLine ? (
+              <Item label={cardLine.label}>
+                {cardLine.card ? (
+                  <FuelCardChip last4={cardLine.card.last4} status={cardLine.card.status} />
+                ) : (
+                  "No fuel card on file"
+                )}
+              </Item>
+            ) : null}
           </dl>
         </CardBody>
       </Card>

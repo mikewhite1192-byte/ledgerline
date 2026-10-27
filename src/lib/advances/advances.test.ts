@@ -4,7 +4,15 @@ import type { Param, Queryable, TenantDb } from "../db";
 import { ADVANCE_REFUSALS } from "../rules-engine/types";
 import { legTwoTimeoutMs } from "./approve";
 import { requestFromDesk, type DeskDeps } from "./desk";
-import { actionsFor, outsideTail, type LedgerEntry } from "./read";
+import {
+  actionsFor,
+  cardLineFor,
+  outsideTail,
+  recordCardFor,
+  type CardSummary,
+  type LedgerEntry,
+  type RecordCard,
+} from "./read";
 import {
   ADVANCE_APPROVE_NOTICE,
   FLOW_OUTCOMES,
@@ -29,8 +37,8 @@ import type { AdvanceView } from "./rows";
 
 // The advance flow's pure rules: typed dollars to cents, the desk's sentence, the reference, the
 // accounting amount, every sentence a person can see, the payout switches in order, the
-// QuickBooks leg's time limit, the record page's buttons, and the desk with its database and
-// agent turn faked. No database, no network.
+// QuickBooks leg's time limit, the record page's buttons and card line, and the desk with its
+// database and agent turn faked. No database, no network.
 
 const saved = structuredClone(flags);
 
@@ -298,6 +306,71 @@ describe("the record page's buttons", () => {
     expect(outsideTail("po_1234567890abcd")).toBe("abcd");
     expect(outsideTail("")).toBeNull();
     expect(outsideTail(null)).toBeNull();
+  });
+});
+
+describe("the record page's card line", () => {
+  const card = (over: Partial<RecordCard> = {}): RecordCard => ({
+    last4: "4417",
+    status: "active",
+    recorded: true,
+    ...over,
+  });
+
+  it("says Paid to for the card a paid advance recorded, and Pays to before it is paid", () => {
+    expect(cardLineFor("paid", card())).toEqual({ label: "Paid to", card: { last4: "4417", status: "active" } });
+    expect(cardLineFor("paid", card({ status: "closed" }))).toEqual({
+      label: "Paid to",
+      card: { last4: "4417", status: "closed" },
+    });
+    expect(cardLineFor("approved", card())).toEqual({ label: "Pays to", card: { last4: "4417", status: "active" } });
+  });
+
+  it("calls the driver's active card the card on file when a paid advance recorded none", () => {
+    expect(cardLineFor("paid", card({ recorded: false }))).toEqual({
+      label: "Card on file",
+      card: { last4: "4417", status: "active" },
+    });
+  });
+
+  it("calls the driver's active card the card on file when a pending advance recorded none", () => {
+    expect(cardLineFor("requested", card({ recorded: false }))).toEqual({
+      label: "Card on file",
+      card: { last4: "4417", status: "active" },
+    });
+    expect(cardLineFor("approved", card({ recorded: false }))).toEqual({
+      label: "Card on file",
+      card: { last4: "4417", status: "active" },
+    });
+  });
+
+  it("shows no card line for a paid advance with no card, and no card on file before it is paid", () => {
+    expect(cardLineFor("paid", null)).toBeNull();
+    expect(cardLineFor("requested", null)).toEqual({ label: "Pays to", card: null });
+  });
+
+  describe("when the recorded card has since closed", () => {
+    const closed: CardSummary = { last4: "4417", status: "closed" };
+    const active: CardSummary = { last4: "9020", status: "active" };
+    const line = (status: string, recorded: CardSummary | null, now: CardSummary | null) =>
+      cardLineFor(status, recordCardFor(status, recorded, now));
+
+    it("shows an unpaid advance the driver's active card as the card on file, since a retry pays it", () => {
+      expect(line("approved", closed, active)).toEqual({ label: "Card on file", card: active });
+    });
+
+    it("says an unpaid advance has no fuel card on file when no card is active", () => {
+      expect(line("approved", closed, null)).toEqual({ label: "Pays to", card: null });
+    });
+
+    it("keeps Paid to the recorded card on a paid advance, closed or not", () => {
+      expect(line("paid", closed, active)).toEqual({ label: "Paid to", card: closed });
+      expect(line("paid", closed, null)).toEqual({ label: "Paid to", card: closed });
+    });
+
+    it("keeps Pays to the recorded card on an unpaid advance while it is still active", () => {
+      expect(line("approved", active, active)).toEqual({ label: "Pays to", card: active });
+    });
   });
 });
 

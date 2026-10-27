@@ -1009,8 +1009,19 @@ describe("the advance flow", () => {
       expect(row).toMatchObject({ state: "confirmed", attempt: 1, outside_system: "fuel_card_sim" });
       expect(row.outside_id).toBe(loadId(row.request_id));
       const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
-      expect(record?.card).toEqual({ last4: card.last4, status: "active" });
+      expect(record?.card).toEqual({ last4: card.last4, status: "active", recorded: true });
       expect(record?.ledger).toEqual([expect.objectContaining({ outsideSystem: "fuel_card_sim", state: "confirmed" })]);
+    });
+
+    it("marks the driver's active card as not recorded when the advance recorded none, and names none once no card is on file", async () => {
+      const id = await addAdvance(admin, A);
+      expect(await advanceCard(id)).toBeNull();
+      const card = await activeCard(A.driverId);
+      const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, id, clock()));
+      expect(record?.card).toEqual({ last4: card.last4, status: "active", recorded: false });
+      await removeCards(admin, A, A.driverId);
+      const none = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, id, clock()));
+      expect(none?.card).toBeNull();
     });
 
     it("refuses a driver with no card on file before approving, and leaves the proposal waiting", async () => {
@@ -1046,7 +1057,13 @@ describe("the advance flow", () => {
         category: "no_card",
       });
       expect(await payouts()).toHaveLength(1);
+      // The unpaid advance no longer names its closed card: none is on file, then the new one is.
+      const closedOut = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(closedOut?.card).toBeNull();
       const fresh = await addCard(admin, A, A.driverId, "ok");
+      const freshCard = await activeCard(A.driverId);
+      const onFile = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(onFile?.card).toEqual({ last4: freshCard.last4, status: "active", recorded: false });
       expect(await retryAdvancePayout(A.session, adv.id, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "paid" });
       expect(await payouts()).toEqual([
         expect.objectContaining({ state: "failed", attempt: 1, failure_category: "declined" }),
@@ -1054,7 +1071,7 @@ describe("the advance flow", () => {
       ]);
       expect(await advanceCard(adv.id)).toBe(fresh);
       const after = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
-      expect(after?.card?.status).toBe("active");
+      expect(after?.card).toEqual({ last4: freshCard.last4, status: "active", recorded: true });
     });
 
     it("keeps a slow load unknown, then Check pending reads it back as paid and the QuickBooks post follows", async () => {
