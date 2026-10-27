@@ -113,6 +113,8 @@ export const LOOP_TEXT = {
   stopped: "I stopped before finishing this answer. Here is what I found so far.",
   schema: "I could not form a valid proposal for that. Nothing was created.",
   budget: "Demo budget reached. The agent pauses until the budget is raised; your data is unchanged.",
+  jobCap:
+    "This job used more than its hourly allowance and was stopped. An admin can clear it on the Meta models page; your data is unchanged.",
   failed: "I could not finish that. Nothing was changed.",
   empty: "I have no answer for that yet.",
 } as const;

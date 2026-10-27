@@ -330,6 +330,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   });
   const modelFailed = (category: string, reducedCap: boolean): Ending => {
     if (category === "cap") return { status: "failed", endedReason: "budget", text: LOOP_TEXT.budget };
+    if (category === "job_cap") return { status: "failed", endedReason: "job_cap", text: LOOP_TEXT.jobCap };
     if (category === "too_expensive" && reducedCap) return stopped("cents");
     if (category === "disabled") return { status: "failed", endedReason: "ai_off", text: LOOP_TEXT.failed };
     const reason = `model_${category}`.slice(0, 40);

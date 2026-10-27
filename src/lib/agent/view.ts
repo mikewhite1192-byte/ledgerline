@@ -88,7 +88,7 @@ export type FlagView = { inputId: string; categories: string[]; quote: string };
 export type ReportView = { stepId: string; name: ReportName; args: Record<string, string> };
 
 // The error the chat shows instead of an answer: the fixed state, never upstream text.
-export type TurnError = "budget" | "timeout" | "unknown";
+export type TurnError = "budget" | "job_cap" | "timeout" | "unknown";
 
 export type TurnView = {
   id: string;
@@ -115,6 +115,7 @@ export type TurnEvent =
 export function turnErrorFor(status: TurnStatus, endedReason: string | null): TurnError | null {
   if (status !== "failed") return null;
   if (endedReason === "budget") return "budget";
+  if (endedReason === "job_cap") return "job_cap";
   if (endedReason === "clock" || endedReason === "model_timeout") return "timeout";
   return "unknown";
 }
