@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { isLocalDate } from "../lib/time/local-date";
 import { flags } from "./flags";
 
 describe("flags", () => {
@@ -50,5 +51,18 @@ describe("flags", () => {
   it("ships tool search and the prompt cache off, with the default retention", () => {
     expect(flags.agentToolSearch).toBe(false);
     expect(flags.agentPromptCache).toEqual({ enabled: false, retention: "in_memory" });
+  });
+
+  it("keeps driver notes dark, with no email address allowed and small caps", () => {
+    expect(flags.driverNotesEnabled).toBe(false);
+    expect(flags.driverNotesEmailEnabled).toBe(false);
+    expect(flags.driverNotesEmailAllowlist).toEqual([]);
+    expect(flags.driverNotesEmailFrom).toBe("2026-10-27");
+    expect(isLocalDate(flags.driverNotesEmailFrom)).toBe(true);
+    expect(flags.driverNoteLimits).toEqual({ maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 });
+    for (const v of Object.values(flags.driverNoteLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 });
