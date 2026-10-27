@@ -16,8 +16,9 @@ import { describe, expect, it } from "vitest";
 //       payment or accounting adapter: under money/ only read, types, keys and format, and under
 //       adapters/ only types and tms/*.
 //
-// A module loaded by a name that is not a string literal, or a local import that does not
-// resolve, fails the walk: what cannot be followed cannot be proven.
+// A module loaded by a name that is not a string literal, a loader named anywhere but as the
+// callee of a direct require("..."), or a local import that does not resolve, fails the walk:
+// what cannot be followed cannot be proven.
 
 type Host = { read(file: string): string | undefined };
 type Edge = { to: string; spec: string };
@@ -30,6 +31,11 @@ const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs
 const TURN = "src/lib/agent/operator/turn.ts";
 const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/;
 const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/;
+// Every name that loads a module with no import line; eslint.config.mjs bans the same set. Regexes,
+// not strings: this file is agent code too, so it names no loader in quotes.
+const LOADER_NAME =
+  /^(require|createRequire|getBuiltinModule|__non_webpack_require__|__webpack_require__|_load|mainModule)$/;
+const REQUIRE = /^require$/;
 
 const diskHost: Host = {
   read(file) {
@@ -47,9 +53,22 @@ function memoryHost(files: Record<string, string>): Host {
 
 const relTo = (root: string, file: string) => relative(root, file).split(sep).join("/");
 
-// Every way a TypeScript file can name another module. A null spec is a name that is not a
-// string literal (import(x), require(x)) or a loader reached without an import
-// (createRequire, process.getBuiltinModule).
+// The require in require(x), which the call itself reports; any other require is a loader.
+function isRequireCallee(node: ts.Node): boolean {
+  return (
+    ts.isIdentifier(node) &&
+    REQUIRE.test(node.text) &&
+    ts.isCallExpression(node.parent) &&
+    node.parent.expression === node
+  );
+}
+
+// Every way a TypeScript file can name another module. A direct require("...") call is an edge.
+// A null spec is a name that is not a string literal (import(x), require(x)), or a loader named
+// any other way, as an identifier or in quotes: an alias of require, module.require,
+// process.mainModule, module.constructor._load, createRequire, process.getBuiltinModule, the
+// bundler's __webpack_require__ and __non_webpack_require__, or a computed member such as
+// ["createRequire"].
 function refsOf(file: string, text: string): { spec: string | null; line: number }[] {
   if (!SOURCE.test(file)) return [];
   const kind = /x$/.test(file) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
@@ -67,13 +86,15 @@ function refsOf(file: string, text: string): { spec: string | null; line: number
       if (ts.isExternalModuleReference(node.moduleReference)) add(node, node.moduleReference.expression);
     } else if (
       ts.isCallExpression(node) &&
-      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-        (ts.isIdentifier(node.expression) && node.expression.text === "require"))
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword || isRequireCallee(node.expression))
     ) {
       add(node, node.arguments[0]);
     } else if (ts.isImportTypeNode(node)) {
       add(node, ts.isLiteralTypeNode(node.argument) ? node.argument.literal : undefined);
-    } else if (ts.isIdentifier(node) && (node.text === "createRequire" || node.text === "getBuiltinModule")) {
+    } else if (
+      ((ts.isIdentifier(node) && !isRequireCallee(node)) || ts.isStringLiteralLike(node)) &&
+      LOADER_NAME.test(node.text)
+    ) {
       add(node, undefined);
     }
     ts.forEachChild(node, visit);
@@ -343,6 +364,45 @@ describe("the walker itself, on fixture trees", () => {
       "src/lib/agent/operator/x.ts:4: a module loaded by a name that is not a string literal",
       "src/lib/agent/operator/x.ts:4: a module loaded by a name that is not a string literal",
       'src/lib/agent/operator/x.ts:5: "./missing" does not resolve',
+    ]);
+  });
+
+  it("refuses every other way to name a loader: an alias, a member, the bundler's, a quoted key", () => {
+    // Each spelling with the lines its problems are on: one problem per loader name it uses.
+    const cases: [code: string, lines: number[]][] = [
+      ['const r = require;\nexport const m = r("../../money/execute");', [1]],
+      ['export const m = module.require("../../money/execute");', [1]],
+      ['export const m = process.mainModule.require("../../money/execute");', [1, 1]],
+      ['export const m = __non_webpack_require__("../../money/execute");', [1]],
+      ['export const m = __webpack_require__("../../money/execute");', [1]],
+      [
+        'export const m = process.getBuiltinModule("node:module")["createRequire"](import.meta.url)("../../money/execute");',
+        [1, 1],
+      ],
+      ['export const m = module.constructor._load("../../money/execute");', [1]],
+      ['export const m = module.constructor[`_load`]("../../money/execute");', [1]],
+    ];
+    for (const [code, lines] of cases) {
+      const out = run({ "src/lib/agent/operator/x.ts": code, "src/lib/money/execute.ts": "" });
+      expect(out.problems, code).toEqual(
+        lines.map((n) => `src/lib/agent/operator/x.ts:${n}: a module loaded by a name that is not a string literal`),
+      );
+    }
+  });
+
+  it("passes names that only look like a loader's, and a direct require is one edge, not a problem", () => {
+    const out = run({
+      "src/lib/agent/operator/names.ts": [
+        'export const schema = { required: ["driverId"], requirements: ["a"] };',
+        'export const loadItems = () => "required";',
+        "export const more = { requireAll: 1, _loaded: true, mainModules: [] };",
+        'export const ok = require("./ok");',
+      ].join("\n"),
+      "src/lib/agent/operator/ok.ts": "",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.graph.edges.get(`${V}/src/lib/agent/operator/names.ts`)).toEqual([
+      { to: `${V}/src/lib/agent/operator/ok.ts`, spec: "./ok" },
     ]);
   });
 

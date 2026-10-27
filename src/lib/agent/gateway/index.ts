@@ -99,6 +99,14 @@ function errorText(err: unknown): string {
   return err instanceof Error ? `${err.name}: ${err.message}` : "error";
 }
 
+// The ids that tie a server log line to its call, so a call whose decision row could not be
+// written (a dead pool) can still be traced. Ids only: never args, personal data or model text.
+const LOG_TRACE = /^[\w.:-]{1,64}$/;
+function callIds(decisionId: string, ctx: GatewayContext): string {
+  const trace = typeof ctx.traceId === "string" && LOG_TRACE.test(ctx.traceId) ? ctx.traceId : "invalid";
+  return `decision=${decisionId} trace=${trace}`;
+}
+
 async function inTenant<T>(
   db: TenantDb,
   ctx: GatewayContext,
@@ -143,7 +151,7 @@ export async function callTool(
     db = deps.db ?? getDb();
     outcome = await dispatch(ctx, call, deps, db, row, decisionId, clock);
   } catch (err) {
-    console.error(`gateway: ${row.tool} failed (${errorText(err)})`);
+    console.error(`gateway: ${row.tool} failed, ${callIds(decisionId, ctx)} (${errorText(err)})`);
     row.decision = "failed";
     row.reason = "tool_failed";
     row.resultChars = null;
@@ -162,7 +170,9 @@ export async function callTool(
     if (!db) throw new Error("no database");
     await logDecision(db, ctx.session, row);
   } catch (err) {
-    console.error(`gateway: the decision for ${row.tool} was not recorded (${errorText(err)})`);
+    console.error(
+      `gateway: the decision for ${row.tool} was not recorded, ${callIds(decisionId, ctx)} (${errorText(err)})`,
+    );
     return {
       decision: "failed",
       decisionId,

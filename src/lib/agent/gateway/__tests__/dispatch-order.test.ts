@@ -206,6 +206,23 @@ describe("callTool dispatch order", () => {
     expect(JSON.stringify(out)).not.toContain(hero.first_name);
   });
 
+  it("with no database the call is failed, and both server log lines name the decision and trace", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubEnv("DB_CLUSTER_ARN", "");
+    vi.stubEnv("DATABASE_URL", "");
+    try {
+      const out = await callTool(ctx, call("get_driver", ARGS.get_driver), { clock: fixedClock });
+      expect(out).toMatchObject({ decision: "failed", reason: "tool_failed", result: { error: "tool_failed" } });
+      expect(err).toHaveBeenCalledTimes(2);
+      for (const [line] of err.mock.calls) {
+        expect(line).toContain(`decision=${out.decisionId} trace=${ctx.traceId}`);
+        expect(line).not.toContain(hero.id);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("a caller with no membership in the tenant gets nothing", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const db = planDb(plan, screenStore);

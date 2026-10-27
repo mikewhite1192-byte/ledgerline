@@ -11,19 +11,36 @@ const compat = new FlatCompat({
 
 const NO_CREATE_REQUIRE = "No createRequire in agent code: every dependency is checked statically.";
 
+// Every name that loads a module with no import line: require (also module.require and
+// process.mainModule.require), createRequire, process.getBuiltinModule (which reaches createRequire
+// with no import), module.constructor._load (the loader under require), and the bundler's own
+// __webpack_require__ and __non_webpack_require__ (Next turns the second into Node's require).
+// Each is refused by name wherever it appears: a call, an alias (const r = require), a member, a
+// destructured key, or a quoted key or computed member ("createRequire", `_load`). Agent code has
+// no use for any of them. A name built at run time is not caught here; the import-boundary test
+// fails on anything it cannot follow.
+const LOADER_NAMES =
+  "^(require|createRequire|getBuiltinModule|__non_webpack_require__|__webpack_require__|_load|mainModule)$";
+const LOADER_LIST =
+  "require, createRequire, getBuiltinModule, _load, mainModule, __webpack_require__ and " +
+  "__non_webpack_require__";
+const NO_QUOTED_LOADER =
+  `No module loader by a quoted name in agent code: a string naming any of ${LOADER_LIST} is ` +
+  "refused, so a computed member cannot reach one.";
+
 const NO_DYNAMIC_LOADING = [
   {
     selector: "ImportExpression",
     message: "No dynamic imports in agent code: every dependency is checked statically.",
   },
   {
-    selector: "CallExpression[callee.name='require']",
-    message: "No require in agent code: every dependency is checked statically.",
+    selector: `Identifier[name=/${LOADER_NAMES}/]`,
+    message: `No module loader in agent code: ${LOADER_LIST} are refused by name, so every dependency is checked statically.`,
   },
+  { selector: `Literal[value=/${LOADER_NAMES}/]`, message: NO_QUOTED_LOADER },
   {
-    // process.getBuiltinModule("node:module").createRequire needs no import.
-    selector: "MemberExpression[property.name='createRequire']",
-    message: NO_CREATE_REQUIRE,
+    selector: `TemplateLiteral[expressions.length=0] > TemplateElement[value.cooked=/${LOADER_NAMES}/]`,
+    message: NO_QUOTED_LOADER,
   },
 ];
 
@@ -100,7 +117,7 @@ const eslintConfig = [
   //      keys, format), adapters/types or a module of adapters/tms. "money/./execute",
   //      "money//execute" and "money/read/../ledger" are refused too.
   //   3. The operator turn may also call the model wrapper.
-  // Every block refuses dynamic import, require and createRequire, so each dependency is
+  // Every block refuses dynamic import and every module loader by name, so each dependency is
   // checked statically. Matching ignores case (case-insensitive file systems). A re-export from
   // a file outside these folders is not caught here; the import-boundary test walks those.
   {
