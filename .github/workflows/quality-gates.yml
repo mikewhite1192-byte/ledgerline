@@ -75,6 +75,14 @@ jobs:
           DATABASE_URL: postgresql://postgres@localhost:5432/postgres
         run: npm run test:db
 
+      # The five money invariants (ledger, keys, approvals, model calls, row security) on a
+      # throwaway database built from every migration and seeded for both invented carriers.
+      # Read-only; the database is dropped after. Fails on any FAIL or UNKNOWN line.
+      - name: Money invariants on a fresh seeded database
+        env:
+          DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+        run: npm run invariants:ci
+
       # House rule: no em dashes in NEW lines (existing files are grandfathered). On a push the
       # change under review is the whole push, not just its last commit. Context values reach the
       # script through env, never inline in run (a branch name is attacker-influenced text).

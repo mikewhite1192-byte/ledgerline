@@ -18,6 +18,8 @@
     "demo:users": "tsx scripts/create-demo-users.ts",
     "seed": "tsx scripts/seed.ts",
     "demo:reset": "tsx scripts/demo-reset.ts",
+    "invariants": "tsx scripts/invariants.ts",
+    "invariants:ci": "tsx scripts/invariants-ci.ts",
     "portal:smoke": "tsx scripts/portal-smoke.ts",
     "policy:pdf": "tsx scripts/render-policy-pdf.ts",
     "docs:render": "tsx scripts/render-sample-docs.ts",
