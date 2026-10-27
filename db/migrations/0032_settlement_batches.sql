@@ -1,51 +1,15 @@
 -- SETTLEMENTS: the week's pay is run, checked against its sources, approved one paystub at a time
--- or all clean ones at once, paid out and booked. This file adds the approval batch, the batch
--- reference on the ledger row, the settlement_approve proposal kind, and the parity columns the
--- paid settlement and the driver carry (escrow as a running balance, the insurance exemption, and
--- the park a draft gets when its lines no longer match their sources).
+-- or all clean ones at once, paid out and booked. This file adds the batch reference on the ledger
+-- row, the settlement_approve proposal kind, and the parity columns the paid settlement and the
+-- driver carry (escrow as a running balance, the insurance exemption, and the park a draft gets
+-- when its lines no longer match their sources).
+--
+-- The approval batch itself (approval_batches, proposals.batch_id) is the SHARED BLOCK that
+-- 0018_sweep.sql already created, as is the pay_items_ref_table_check widening; this file runs
+-- after 0018 on a fresh database and in production alike, so it only uses them.
 --
 -- Nothing here moves money. Every write to the outside world still goes through money_actions,
 -- whose guard below learns one more column that never changes once written.
-
--- SHARED BLOCK approval_batches (design-sweep-notes-reports.md 11): identical in the PAY-SWEEP
--- and SETTLEMENTS migrations, and safe to run twice. Production applies them in merge order and a
--- fresh database in number order, so either may run second; the second one changes nothing.
--- One deliberate approval over a listed set (Discord tip 4). id is the client's batch id, the
--- dedupe key. scope says what item_ids are. requested_by is the session sub (proposals.decided_by
--- holds the same kind of value). Status words: a sweep batch is reserved -> done | refused; a
--- settlements batch is confirmed -> draining -> done | partial.
-CREATE TABLE IF NOT EXISTS approval_batches (
-  id            uuid PRIMARY KEY,
-  tenant_id     uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  scope         text NOT NULL CHECK (scope IN ('proposals', 'settlements')),
-  period_id     uuid,
-  item_ids      uuid[] NOT NULL CHECK (cardinality(item_ids) BETWEEN 1 AND 500),
-  total_cents   bigint NOT NULL CHECK (total_cents >= 0 AND total_cents < 1000000000),
-  legs_reserved integer NOT NULL DEFAULT 0 CHECK (legs_reserved >= 0),
-  status        text NOT NULL CHECK (status IN ('reserved', 'refused', 'confirmed', 'draining',
-                                                'done', 'partial')),
-  result        jsonb CHECK (result IS NULL OR jsonb_typeof(result) = 'object'),
-  requested_by  text NOT NULL CHECK (length(requested_by) BETWEEN 1 AND 128),
-  created_at    timestamptz NOT NULL DEFAULT now(),
-  finished_at   timestamptz,
-  UNIQUE (tenant_id, id),
-  FOREIGN KEY (tenant_id, period_id) REFERENCES settlement_periods (tenant_id, id)
-);
-CREATE INDEX IF NOT EXISTS approval_batches_tenant_created ON approval_batches (tenant_id, created_at DESC);
-ALTER TABLE approval_batches ENABLE ROW LEVEL SECURITY;
-ALTER TABLE approval_batches FORCE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS tenant_isolation ON approval_batches;
-CREATE POLICY tenant_isolation ON approval_batches
-  USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
-GRANT SELECT, INSERT ON approval_batches TO payday_app;
-GRANT UPDATE (status, result, legs_reserved, finished_at) ON approval_batches TO payday_app;
-
-ALTER TABLE proposals ADD COLUMN IF NOT EXISTS batch_id uuid;
-ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_batch_fk;
-ALTER TABLE proposals ADD CONSTRAINT proposals_batch_fk
-  FOREIGN KEY (tenant_id, batch_id) REFERENCES approval_batches (tenant_id, id);
-GRANT UPDATE (batch_id) ON proposals TO payday_app;
--- END SHARED BLOCK
 
 -- The batch reference on the ledger row, written at INSERT (the guard allows no other write of a
 -- reserved row's identity) and never changed.
@@ -60,7 +24,7 @@ ALTER TABLE proposals DROP CONSTRAINT proposals_kind_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_kind_check CHECK (kind IN (
   'advance_payout', 'pay_correction', 'invoice_fix', 'load_rate_fill',
   'invoice_post', 'payment_reapply', 'settlement_approve', 'detention_charge',
-  'factoring_request', 'bill_defer', 'collections_chase'));
+  'factoring_request', 'bill_defer', 'collections_chase', 'pay_rule_change'));
 
 -- The guard from 0006, whole, with one more column in "what was approved never changes":
 -- batch_id.
@@ -154,12 +118,6 @@ ALTER TABLE drivers ADD CONSTRAINT drivers_escrow_balance_cents_check
 ALTER TABLE pay_items DROP CONSTRAINT pay_items_kind_check;
 ALTER TABLE pay_items ADD CONSTRAINT pay_items_kind_check
   CHECK (kind IN ('fuel', 'reimbursement', 'other_deduction', 'carried_shortfall', 'escrow_charge'));
--- Identical to the sweep migration's statement (full union incl. proposals), so either order ends
--- the same.
-ALTER TABLE pay_items DROP CONSTRAINT pay_items_ref_table_check;
-ALTER TABLE pay_items ADD CONSTRAINT pay_items_ref_table_check
-  CHECK (ref_table IS NULL OR ref_table IN ('fuel_purchases', 'load_accessorials', 'loads',
-                                            'settlements', 'proposals'));
 
 -- A driver who carries their own insurance pays no daily insurance charge. A flag read at run
 -- time, so a change applies to the next run as a whole week.
