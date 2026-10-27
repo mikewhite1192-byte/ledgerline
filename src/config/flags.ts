@@ -229,6 +229,8 @@ export const flags: Flags = {
     maxCallCents: 25,
     maxActionsPerStep: 8,
     screenshotMaxBytes: 400_000,
+    // Also the held_pod_pdf CHECK in migration 0021 (300000 bytes): raise both together, or a
+    // paused run cannot hold its POD and its resume ends pod_not_kept.
     podMaxBytes: 300_000,
     approvalWaitMinutes: 30,
   },

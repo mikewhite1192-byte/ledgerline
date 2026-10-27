@@ -19,7 +19,8 @@ export type DecideOutcome =
 
 async function endRun(q: Queryable, runId: string, status: "declined" | "stopped", reason: string, now: string) {
   await q.execute(
-    "UPDATE portal_runs SET status = $2, ended_reason = $3, finished_at = CAST($4 AS timestamptz)" +
+    "UPDATE portal_runs SET status = $2, ended_reason = $3, finished_at = CAST($4 AS timestamptz)," +
+      " held_pod_pdf = NULL, held_pod_step_seq = NULL, paused_pod_hash = NULL" +
       " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'waiting_approval'",
     [runId, status, reason, now],
   );

@@ -100,8 +100,20 @@ CREATE TABLE portal_runs (
   -- When the run last became queued: made, or resumed after a person approved its checks. A
   -- queued run no worker claimed long after this is ended as a runner error.
   queued_at        timestamptz NOT NULL DEFAULT now(),
+  -- The POD the run captured before it paused for a person, held so the resumed run still has
+  -- it, and the step that captured it. It is written on its own just before the pause, so a
+  -- write that fails never stops the pause. paused_pod_hash is the sha256 of the POD the run had
+  -- when it paused: a resumed run takes the held bytes only when they hash to it, and a run that
+  -- had a POD it no longer holds ends without claiming one. Cleared when the run ends; the
+  -- evidence row is where a POD is kept. The 300000-byte limit is portalRunLimits.podMaxBytes in
+  -- src/config/flags.ts: raise both together.
+  held_pod_pdf      bytea CHECK (held_pod_pdf IS NULL OR octet_length(held_pod_pdf) BETWEEN 1 AND 300000),
+  held_pod_step_seq integer CHECK (held_pod_step_seq IS NULL OR held_pod_step_seq >= 0),
+  paused_pod_hash   text CHECK (paused_pod_hash IS NULL OR paused_pod_hash ~ '^[0-9a-f]{64}$'),
   CHECK ((status IN ('done', 'failed', 'declined', 'stopped')) = (finished_at IS NOT NULL)),
   CHECK ((status IN ('done', 'failed', 'declined', 'stopped')) = (ended_reason IS NOT NULL)),
+  CHECK ((held_pod_pdf IS NULL) = (held_pod_step_seq IS NULL)),
+  CHECK (status IN ('queued', 'running', 'waiting_approval') OR (held_pod_pdf IS NULL AND paused_pod_hash IS NULL)),
   UNIQUE (tenant_id, id),
   FOREIGN KEY (tenant_id, load_id) REFERENCES loads (tenant_id, id)
 );
@@ -263,7 +275,8 @@ GRANT SELECT, INSERT ON portal_sessions, portal_runs, portal_run_steps, portal_r
 GRANT UPDATE (signed_in_at, session_expires_at) ON portal_sessions TO payday_app;
 GRANT UPDATE (failed_sign_ins, failed_window_start) ON portal_accounts TO payday_app;
 GRANT UPDATE (status, ended_reason, step_count, model_call_count, cost_nanocents, last_url,
-  session_id, claim_token, claimed_at, resume_step, started_at, finished_at, result, queued_at)
+  session_id, claim_token, claimed_at, resume_step, started_at, finished_at, result, queued_at,
+  held_pod_pdf, held_pod_step_seq, paused_pod_hash)
   ON portal_runs TO payday_app;
 GRANT UPDATE (executed, stopped_early, screenshot_mime, screenshot, screenshot_bytes, url_after)
   ON portal_run_steps TO payday_app;

@@ -14,7 +14,15 @@ import { summarize, validateBatch } from "./actions";
 import { readAnswer, readbackOf } from "./answer";
 import { PORTAL_COOKIE, sameOrigin, type CapturedPod, type DriverFactory, type PortalDriver } from "./driver";
 import { PORTAL_INSTRUCTIONS, taskText } from "./prompt";
-import { LostClaimError, type Ending, type Progress, type RunRow, type RunStore, type StoredStep } from "./store";
+import {
+  LostClaimError,
+  type Ending,
+  type EvidenceRow,
+  type Progress,
+  type RunRow,
+  type RunStore,
+  type StoredStep,
+} from "./store";
 
 // One portal run (design 3.3): claim it, open the portal, then screenshot, ask the model, act,
 // until the model answers or a cap ends the run. The browser and the model call are injected,
@@ -115,6 +123,8 @@ function acknowledgedOf(callItem: Record<string, unknown>, approvedIds: Readonly
       typeof c === "object" && c !== null && typeof (c as { id?: unknown }).id === "string" && approvedIds.has((c as { id: string }).id),
   );
 }
+
+type Pod = NonNullable<EvidenceRow["pod"]>;
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
@@ -294,7 +304,22 @@ export async function runPortalRun(
       return { stoppedEarly, shot };
     };
 
-    let pod: { bytes: Uint8Array; hash: string; stepSeq: number } | null = null;
+    let pod: Pod | null = null;
+    // The hash of a POD this run captured before a pause and no longer holds. Unknown is not
+    // zero: such a run never stores evidence that says it found no POD.
+    let lostPod: string | null = null;
+    // A resumed run picks up the POD it had when it paused, only when the held bytes hash to it.
+    if (resuming) {
+      const kept = await store.heldPod(run.id, token);
+      if (kept.pausedHash !== null) {
+        if (kept.held && sha256(kept.held.bytes) === kept.pausedHash) {
+          pod = { bytes: kept.held.bytes, hash: kept.pausedHash, stepSeq: kept.held.stepSeq };
+        } else {
+          lostPod = kept.pausedHash;
+          console.warn(`portal run ${run.id}: the POD captured before the pause was not held`);
+        }
+      }
+    }
     let seenPod: CapturedPod | null = opened.pod();
     // Only this run's own load's POD counts: the whole path, compared whole. A POD the browser
     // opened for any other load (a misclick, or page text steering the model) is never stored as
@@ -311,6 +336,24 @@ export async function runPortalRun(
         return;
       }
       pod = { bytes: captured.bytes, hash: sha256(captured.bytes), stepSeq: seq };
+      lostPod = null;
+    };
+
+    // Holds the POD on the run for its resume, in its own write before the pause, failing safe:
+    // a POD over the cap is never sent, and a write that fails is logged by category and leaves
+    // the pause to go ahead. The pause records the POD's hash either way, so the resume takes the
+    // held bytes only when they are this POD. Only a lost claim stops the run here.
+    const holdPod = async (p: Pod) => {
+      if (p.bytes.length > limits.podMaxBytes) {
+        console.warn(`portal run ${run.id}: POD over the cap, not held for the resume`);
+        return;
+      }
+      try {
+        await store.holdPod(run.id, token, { bytes: p.bytes, stepSeq: p.stepSeq });
+      } catch (err) {
+        if (err instanceof LostClaimError) throw err;
+        console.warn(`portal run ${run.id}: POD not held for the resume`);
+      }
     };
 
     // 10. Resume: the approved step's actions run now, and its answer carries the approvals.
@@ -391,6 +434,9 @@ export async function runPortalRun(
           costNanocents: result.costNanocents,
           pendingCheckCount: 0,
         });
+        // A POD captured before a pause that the resume did not get back and no later step
+        // downloaded again: the run ends without evidence rather than storing it as no POD.
+        if (lostPod !== null) return await end("failed", "pod_not_kept");
         const read = readAnswer(result.text, run.reference);
         if (!read.ok) return await end("failed", "no_evidence");
         const inputId = await store.storeAnswer(result.text, deps.now());
@@ -398,7 +444,7 @@ export async function runPortalRun(
         if (verdict === "error") return await end("failed", "screen_error");
         const record = await store.portalRecord(run.loadId);
         if (!record) return await end("failed", "no_portal_load");
-        const captured = pod as { bytes: Uint8Array; hash: string; stepSeq: number } | null;
+        const captured = pod as Pod | null;
         const readback = readbackOf(
           { checkedIn: read.checkedIn, checkedOut: read.checkedOut, zone: read.zone, podHash: captured?.hash ?? null },
           record,
@@ -456,7 +502,9 @@ export async function runPortalRun(
           pendingCheckCount: checks ? checks.length : 0,
         });
         if (!checks) return await end("failed", "too_many_checks");
-        await store.pause(run.id, token, stepId, checks, progress(), deps.now());
+        const held = pod as Pod | null;
+        if (held) await holdPod(held);
+        await store.pause(run.id, token, stepId, checks, progress(), held?.hash ?? lostPod, deps.now());
         return { kind: "paused" };
       }
 

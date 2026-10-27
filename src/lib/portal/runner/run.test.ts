@@ -11,6 +11,7 @@ import {
   LostClaimError,
   type Ending,
   type EvidenceRow,
+  type HeldPod,
   type NewStep,
   type Progress,
   type RunRow,
@@ -79,11 +80,16 @@ function fakeStore(options: {
   record?: PortalRecord | null;
   sessionState?: "alive" | "not_signed_in" | "expired";
   loseClaimOn?: string;
+  // What the last pause left on the run, read back by a resume.
+  heldPod?: HeldPod;
+  // A hold that fails as the database would.
+  holdFails?: boolean;
 } = {}) {
   const log: string[] = [];
   const inserted: NewStep[] = [];
   const completed: { seq: number; urlAfter: string; stoppedEarly: boolean }[] = [];
-  const paused: { stepId: string; checks: SafetyCheck[] }[] = [];
+  const paused: { stepId: string; checks: SafetyCheck[]; podHash: string | null }[] = [];
+  const holds: { bytes: Uint8Array; stepSeq: number }[] = [];
   const finished: { ending: Ending; progress: Progress | null }[] = [];
   const evidence: { row: EvidenceRow; ending: Ending; progress: Progress }[] = [];
   const answers: string[] = [];
@@ -126,9 +132,19 @@ function fakeStore(options: {
       log.push(`complete ${seq}`);
       completed.push({ seq, urlAfter: done.urlAfter, stoppedEarly: done.stoppedEarly });
     },
-    async pause(_runId, _token, stepId, checks) {
+    async holdPod(_runId, _token, pod) {
+      lose("holdPod");
+      log.push(`hold ${pod.stepSeq}`);
+      if (options.holdFails) throw Object.assign(new Error("db"), { name: "DbError" });
+      holds.push(pod);
+    },
+    async heldPod() {
+      log.push("held");
+      return options.heldPod ?? { pausedHash: null, held: null };
+    },
+    async pause(_runId, _token, stepId, checks, _progress, podHash) {
       log.push(`pause ${stepId}`);
-      paused.push({ stepId, checks });
+      paused.push({ stepId, checks, podHash });
     },
     async progress() {
       log.push("progress");
@@ -149,7 +165,7 @@ function fakeStore(options: {
       evidence.push({ row, ending, progress });
     },
   };
-  return { store, log, inserted, completed, paused, finished, evidence, answers };
+  return { store, log, inserted, completed, paused, holds, finished, evidence, answers };
 }
 
 // A browser that runs nothing real. Each action may carry an effect: a new URL or a captured POD.
@@ -440,7 +456,9 @@ describe("runPortalRun, safety checks", () => {
     const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, m.step));
     expect(out).toEqual({ kind: "paused" });
     expect(d.state.ran).toEqual([]);
-    expect(s.paused).toEqual([{ stepId: "step-1", checks: [CHECK_A, CHECK_B] }]);
+    expect(s.paused).toEqual([{ stepId: "step-1", checks: [CHECK_A, CHECK_B], podHash: null }]);
+    // No POD yet, so nothing is held.
+    expect(s.holds).toEqual([]);
     expect(s.inserted[1]).toMatchObject({ seq: 1, executed: false, screenshot: null, pendingCheckCount: 2 });
     expect(s.finished).toHaveLength(0);
     expect(d.state.closed).toBe(true);
@@ -540,6 +558,139 @@ describe("runPortalRun, safety checks", () => {
     const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, scripted([]).step));
     expect(out).toEqual({ kind: "ended", status: "failed", reason: "session_expired" });
     expect(d.state.opened).toEqual([]);
+  });
+
+  // A first pass that opens the load, downloads its POD at step 2, then pauses at step 3 on a check.
+  async function podThenPause(store: Parameters<typeof fakeStore>[0] = {}) {
+    const s = fakeStore(store);
+    const d = fakeDriver({ 0: { url: DETAIL }, 1: { pod: true } });
+    const m = scripted([callResult([click()]), callResult([click(120, 220)]), callResult([click(5, 5)], [CHECK_A])]);
+    const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, m.step));
+    return { s, d, out };
+  }
+
+  // The store a resume reads, built from what a first pass wrote, with its checks approved.
+  function resumeOf(first: ReturnType<typeof fakeStore>, heldPod: HeldPod) {
+    const pause = first.paused[0];
+    const pausedSeq = first.inserted.find((st) => `step-${st.seq}` === pause.stepId)!.seq;
+    const steps: StoredStep[] = first.inserted.map((st) => ({
+      id: `step-${st.seq}`,
+      seq: st.seq,
+      callItem: st.call ? st.call.raw : null,
+      upstreamCallId: st.call ? st.call.callId : null,
+      executed: st.executed,
+      urlAfter: st.urlAfter,
+      pendingCheckCount: st.pendingCheckCount,
+    }));
+    const checks: StoredCheck[] = pause.checks.map((c) => ({
+      id: `row-${c.id}`,
+      stepId: pause.stepId,
+      checkId: c.id,
+      status: "approved",
+      createdAt: new Date(T0 - 60_000).toISOString(),
+    }));
+    const screenshots = new Map(first.inserted.filter((st) => st.screenshot).map((st) => [st.seq, st.screenshot!] as const));
+    const run = runRow({
+      sessionId: "sess-1",
+      resumeStep: pausedSeq,
+      stepCount: first.inserted.length - 1,
+      modelCallCount: first.inserted.length - 1,
+      costNanocents: (first.inserted.length - 1) * 2 * CENT,
+      lastUrl: DETAIL,
+    });
+    return { run, steps, checks, screenshots, heldPod, pausedSeq };
+  }
+
+  it("keeps a POD captured before a pause through the resume, and stores it once with its hash", async () => {
+    const first = await podThenPause();
+    expect(first.out).toEqual({ kind: "paused" });
+    // Held in its own write before the pause, which records the POD's hash.
+    expect(first.s.log.slice(-2)).toEqual(["hold 2", "pause step-3"]);
+    expect(first.s.holds).toHaveLength(1);
+    expect(first.s.holds[0].stepSeq).toBe(2);
+    expect(Buffer.from(first.s.holds[0].bytes).equals(Buffer.from(POD_BYTES))).toBe(true);
+    expect(first.s.paused[0].podHash).toBe(POD_HASH);
+
+    // The resume's approved click and its answer download nothing.
+    const r = resumeOf(first.s, { pausedHash: first.s.paused[0].podHash, held: first.s.holds[0] });
+    const s = fakeStore(r);
+    const d = fakeDriver();
+    const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, scripted([answerResult()]).step));
+
+    expect(out).toEqual({ kind: "ended", status: "done", reason: "ok" });
+    expect(d.state.pod).toBeNull();
+    expect(s.completed.map((c) => c.seq)).toEqual([r.pausedSeq]);
+    expect(s.evidence).toHaveLength(1);
+    const { row, ending } = s.evidence[0];
+    expect(row.pod).not.toBeNull();
+    expect(row.pod!.hash).toBe(POD_HASH);
+    expect(row.pod!.stepSeq).toBe(2);
+    expect(Buffer.from(row.pod!.bytes).equals(Buffer.from(POD_BYTES))).toBe(true);
+    expect(row.readback).toBe("matches");
+    expect(ending).toEqual({ status: "done", reason: "ok", result: { readback: "matches", screen: "clean" } });
+    expect(s.finished).toHaveLength(0);
+  });
+
+  it.each([
+    ["a hold the database refuses", { holdFails: true }, ["hold 2", "pause step-3"]],
+    ["a POD over the cap, never sent", { podMaxBytes: POD_BYTES.length - 1 }, ["pause step-3"]],
+  ] as const)("still pauses after %s, and a resume without that POD ends storing nothing", async (_name, how, tail) => {
+    if ("podMaxBytes" in how) flags.portalRunLimits = { ...LIMITS, podMaxBytes: how.podMaxBytes };
+    const first = await podThenPause("holdFails" in how ? { holdFails: true } : {});
+    // The run is not lost: it waits for a person, and the pause still names the POD it had.
+    expect(first.out).toEqual({ kind: "paused" });
+    expect(first.s.log.slice(-2).filter((l) => l.startsWith("hold") || l.startsWith("pause"))).toEqual([...tail]);
+    expect(first.s.holds).toEqual([]);
+    expect(first.s.paused[0].podHash).toBe(POD_HASH);
+    expect(first.s.finished).toHaveLength(0);
+
+    flags.portalRunLimits = { ...LIMITS };
+    const s = fakeStore(resumeOf(first.s, { pausedHash: POD_HASH, held: null }));
+    const out = await runPortalRun(PAYLOAD, deps(s.store, fakeDriver().driver, scripted([answerResult()]).step));
+    // Unknown is not zero: no evidence that says no POD, and no POD claimed.
+    expect(out).toEqual({ kind: "ended", status: "failed", reason: "pod_not_kept" });
+    expect(s.evidence).toEqual([]);
+    expect(s.answers).toEqual([]);
+    expect(s.finished.map((f) => f.ending.reason)).toEqual(["pod_not_kept"]);
+  });
+
+  it("takes held bytes only when they hash to the POD the run paused with", async () => {
+    const first = await podThenPause();
+    const other = new Uint8Array([...Buffer.from("%PDF-1.4 another pod")]);
+    const s = fakeStore(resumeOf(first.s, { pausedHash: POD_HASH, held: { bytes: other, stepSeq: 2 } }));
+    const out = await runPortalRun(PAYLOAD, deps(s.store, fakeDriver().driver, scripted([answerResult()]).step));
+    expect(out).toEqual({ kind: "ended", status: "failed", reason: "pod_not_kept" });
+    expect(s.evidence).toEqual([]);
+  });
+
+  it("stores the POD a resumed run downloads again when the earlier one was not held", async () => {
+    const first = await podThenPause({ holdFails: true });
+    const r = resumeOf(first.s, { pausedHash: POD_HASH, held: null });
+    const s = fakeStore(r);
+    const d = fakeDriver({ 0: { pod: true } });
+    const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, scripted([answerResult()]).step));
+    expect(out).toEqual({ kind: "ended", status: "done", reason: "ok" });
+    expect(s.evidence).toHaveLength(1);
+    expect(s.evidence[0].row.pod).toMatchObject({ hash: POD_HASH, stepSeq: r.pausedSeq });
+  });
+
+  it("names a POD it no longer holds at its next pause, so a later resume still knows", async () => {
+    const first = await podThenPause({ holdFails: true });
+    const s = fakeStore(resumeOf(first.s, { pausedHash: POD_HASH, held: null }));
+    const out = await runPortalRun(
+      PAYLOAD,
+      deps(s.store, fakeDriver().driver, scripted([callResult([click()], [CHECK_B])]).step),
+    );
+    expect(out).toEqual({ kind: "paused" });
+    expect(s.holds).toEqual([]);
+    expect(s.paused.map((p) => p.podHash)).toEqual([POD_HASH]);
+  });
+
+  it("writes nothing more when the claim is lost while holding the POD", async () => {
+    const first = await podThenPause({ loseClaimOn: "holdPod" });
+    expect(first.out).toEqual({ kind: "lost" });
+    expect(first.s.paused).toEqual([]);
+    expect(first.s.finished).toEqual([]);
   });
 });
 

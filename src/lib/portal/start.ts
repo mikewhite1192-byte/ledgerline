@@ -32,7 +32,7 @@ async function endStaleRuns(q: Queryable, loadId: string, now: Date): Promise<vo
   const before = (ms: number) => new Date(now.getTime() - ms).toISOString();
   await q.execute(
     "UPDATE portal_runs SET status = 'failed', ended_reason = 'runner_error', finished_at = CAST($2 AS timestamptz)," +
-      " claim_token = NULL" +
+      " claim_token = NULL, held_pod_pdf = NULL, held_pod_step_seq = NULL, paused_pod_hash = NULL" +
       " WHERE tenant_id = current_tenant_id() AND load_id = CAST($1 AS uuid) AND (" +
       "(status = 'running' AND COALESCE(claimed_at, queued_at) < CAST($3 AS timestamptz))" +
       " OR (status = 'queued' AND queued_at < CAST($4 AS timestamptz)))",

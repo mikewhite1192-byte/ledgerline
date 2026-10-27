@@ -84,6 +84,13 @@ export type EvidenceRow = {
 
 export type Ending = { status: "done" | "failed" | "declined" | "stopped"; reason: string; result?: unknown };
 
+// What a paused run left for its resume: the hash of the POD it had when it paused (null when it
+// had none) and the POD bytes held on the run, which count only when they hash to it.
+export type HeldPod = {
+  pausedHash: string | null;
+  held: { bytes: Uint8Array; stepSeq: number } | null;
+};
+
 export interface RunStore {
   claim(runId: string, token: string, now: Date): Promise<ClaimResult>;
   // The load number and the carrier number the task text needs.
@@ -102,14 +109,20 @@ export interface RunStore {
     seq: number,
     done: { screenshot: ComputerScreenshot; urlAfter: string; stoppedEarly: boolean },
   ): Promise<void>;
+  // Holds the POD captured so far on the run, for its resume. Its own write, before the pause.
+  holdPod(runId: string, token: string, pod: { bytes: Uint8Array; stepSeq: number }): Promise<void>;
+  // What the pause left for this resume.
+  heldPod(runId: string, token: string): Promise<HeldPod>;
   // Pauses the run on a step's checks: one pending row per check, stamped with the runner's clock
-  // (the approval wait counts from it), the run waiting for a person.
+  // (the approval wait counts from it), the run waiting for a person, with the hash of the POD it
+  // had (null for none).
   pause(
     runId: string,
     token: string,
     stepId: string,
     checks: SafetyCheck[],
     progress: Progress,
+    podHash: string | null,
     now: Date,
   ): Promise<void>;
   progress(runId: string, token: string, progress: Progress): Promise<void>;
@@ -195,7 +208,8 @@ async function finishIn(
 ): Promise<void> {
   const n = await q.execute(
     "UPDATE portal_runs SET status = $3, ended_reason = $4, finished_at = CAST($5 AS timestamptz)," +
-      " result = CAST($6 AS jsonb), claim_token = NULL" +
+      " result = CAST($6 AS jsonb), claim_token = NULL, held_pod_pdf = NULL, held_pod_step_seq = NULL," +
+      " paused_pod_hash = NULL" +
       ` WHERE ${GUARD}`,
     [runId, token, ending.status, ending.reason, now.toISOString(), JSON.stringify(ending.result ?? null)],
   );
@@ -380,7 +394,34 @@ export function dbRunStore(tenantId: string, db: TenantDb = getDb()): RunStore {
         if (n !== 1) throw new LostClaimError();
       }),
 
-    pause: (runId, token, stepId, checks, progress, now) =>
+    holdPod: (runId, token, pod) =>
+      tx(async (q) => {
+        const n = await q.execute(
+          `UPDATE portal_runs SET held_pod_pdf = decode($3, 'base64'), held_pod_step_seq = $4 WHERE ${GUARD}`,
+          [runId, token, b64(pod.bytes), pod.stepSeq],
+        );
+        if (n !== 1) throw new LostClaimError();
+      }),
+
+    heldPod: (runId, token) =>
+      tx(async (q) => {
+        const rows = await q.query<{ data: string | null; step_seq: number | null; paused_hash: string | null }>(
+          "SELECT encode(held_pod_pdf, 'base64') AS data, held_pod_step_seq AS step_seq, paused_pod_hash AS paused_hash" +
+            ` FROM portal_runs WHERE ${GUARD}`,
+          [runId, token],
+        );
+        if (rows.length !== 1) throw new LostClaimError();
+        const r = rows[0];
+        return {
+          pausedHash: r.paused_hash,
+          held:
+            r.data === null || r.step_seq === null
+              ? null
+              : { bytes: new Uint8Array(Buffer.from(r.data, "base64")), stepSeq: Number(r.step_seq) },
+        };
+      }),
+
+    pause: (runId, token, stepId, checks, progress, podHash, now) =>
       tx(async (q) => {
         await progressIn(q, runId, token, progress);
         for (const c of checks) {
@@ -392,8 +433,9 @@ export function dbRunStore(tenantId: string, db: TenantDb = getDb()): RunStore {
           );
         }
         const n = await q.execute(
-          `UPDATE portal_runs SET status = 'waiting_approval', claim_token = NULL, resume_step = NULL WHERE ${GUARD}`,
-          [runId, token],
+          "UPDATE portal_runs SET status = 'waiting_approval', claim_token = NULL, resume_step = NULL," +
+            ` paused_pod_hash = $3 WHERE ${GUARD}`,
+          [runId, token, podHash],
         );
         if (n !== 1) throw new LostClaimError();
       }),

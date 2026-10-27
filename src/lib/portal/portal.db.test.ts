@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import type { ComputerRequest, ComputerResult, ComputerScreenshot, SafetyCheck } from "../ai";
@@ -427,6 +427,72 @@ describe("the portal tables", () => {
     expect(again).toMatchObject({ kind: "done", runId: flowRunId });
   });
 
+  it("keeps a POD captured before a pause through the resume, stores it once, and holds none once done", async () => {
+    const podA = (await asApp(A, (q) => portalPod(q, REF_TIMES)))!;
+    const podHash = createHash("sha256").update(podA).digest("hex");
+    const started = await asApp(A, (q) =>
+      createRunIn(q, memberA, { loadId: setup[A].timesLoad, refresh: true, turnId: null }, tick()),
+    );
+    expect(started.kind).toBe("queued");
+    const runId = (started as { runId: string }).runId;
+    const held = () =>
+      asApp(A, (q) =>
+        q.query<{ status: string; data: string | null; step_seq: number | null; paused_hash: string | null }>(
+          "SELECT status, encode(held_pod_pdf, 'base64') AS data, held_pod_step_seq AS step_seq," +
+            " paused_pod_hash AS paused_hash FROM portal_runs WHERE id = CAST($1 AS uuid)",
+          [runId],
+        ),
+      ).then((r) => r[0]);
+
+    // First pass: the click on the detail page downloads the POD, then a call pauses on a check.
+    const first = scripted([
+      callResult(11, [{ type: "click", x: 100, y: 200, button: "left" }]),
+      callResult(12, [{ type: "wait" }], [{ ...CHECK, id: "sc_portal_2" }]),
+    ]);
+    const d1 = fakeDriver(podA, async (typed) => (await asApp(A, (q) => signIn(q, { ...typed, now: tick() }))) !== null);
+    expect(await runPortalRun({ tenantId: A, runId }, deps(d1.driver, first.step))).toEqual({ kind: "paused" });
+    const atPause = await held();
+    expect(atPause).toMatchObject({ status: "waiting_approval", step_seq: 1, paused_hash: podHash });
+    expect(atPause.data !== null && Buffer.from(atPause.data, "base64").equals(Buffer.from(podA))).toBe(true);
+
+    const checks = await asApp(A, (q) =>
+      q.query<{ id: string }>("SELECT id FROM portal_run_checks WHERE run_id = CAST($1 AS uuid)", [runId]),
+    );
+    expect(
+      await asApp(A, (q) => decideCheck(q, memberA, { runId, checkId: checks[0].id, decision: "approve" }, tick())),
+    ).toEqual({ kind: "approved", resume: true });
+
+    // Second pass: the approved wait downloads nothing, and the answer comes back.
+    const answer = {
+      found: true,
+      reference: REF_TIMES,
+      deliveryCheckedIn: "2026-10-20 09:05",
+      deliveryCheckedOut: "2026-10-20 11:10",
+      timeZoneLabel: "CT",
+      podDownloaded: true,
+      podSignedBy: "Dana Reyes",
+      notes: "",
+    };
+    const d2 = fakeDriver(podA);
+    expect(await runPortalRun({ tenantId: A, runId }, deps(d2.driver, scripted([answerResult(JSON.stringify(answer))]).step))).toEqual({
+      kind: "ended",
+      status: "done",
+      reason: "ok",
+    });
+    expect(d2.state.pod).toBeNull();
+    const rows = await asApp(A, (q) =>
+      q.query<{ pod_content_hash: string; pod_step_seq: number; readback_match: string }>(
+        "SELECT pod_content_hash, pod_step_seq, readback_match FROM portal_evidence WHERE run_id = CAST($1 AS uuid)",
+        [runId],
+      ),
+    );
+    expect(rows).toEqual([{ pod_content_hash: podHash, pod_step_seq: 1, readback_match: "matches" }]);
+    const kept = await asApp(A, (q) => evidencePod(q, runId));
+    expect(kept && Buffer.from(kept).equals(Buffer.from(podA))).toBe(true);
+    // The run ended, so the evidence row is the one copy.
+    expect(await held()).toEqual({ status: "done", data: null, step_seq: null, paused_hash: null });
+  });
+
   it("makes one live run per load when two asks race, and lets only one worker claim it", async () => {
     const ask = () =>
       asApp(A, (q) => createRunIn(q, memberA, { loadId: setup[A].pendingLoad, refresh: false, turnId: null }, tick()));
@@ -498,6 +564,70 @@ describe("the portal tables", () => {
     expect(pod && Buffer.from(pod).equals(Buffer.from(BIG_POD))).toBe(true);
     // A finished run gives up its claim token.
     await expect(store.progress(runId, token, progress)).rejects.toThrow();
+  });
+
+  it("holds the largest POD a run may keep, lets it go when a person declines, and never on an ended run", async () => {
+    const runId = randomUUID();
+    await asApp(A, (q) =>
+      q.execute(
+        "INSERT INTO portal_runs (id, tenant_id, load_id, reference, requested_by, trace_id, model, status)" +
+          " VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, 'spark', 'queued')",
+        [runId, setup[A].pendingLoad, REF_PENDING, SUB_A, randomUUID()],
+      ),
+    );
+    const store = dbRunStore(A, app);
+    const token = randomUUID();
+    expect(await store.claim(runId, token, tick())).toMatchObject({ kind: "claimed" });
+
+    // Through decode and back through encode, whole; one byte more is refused by the table.
+    expect(await sqlStateOf(store.holdPod(runId, token, { bytes: padded(BIG_POD.slice(0, 20), 300_001), stepSeq: 1 }))).toBe(
+      "23514",
+    );
+    await store.holdPod(runId, token, { bytes: BIG_POD, stepSeq: 1 });
+    const before = await store.heldPod(runId, token);
+    expect(before.pausedHash).toBeNull();
+    expect(before.held?.stepSeq).toBe(1);
+    expect(before.held && Buffer.from(before.held.bytes).equals(Buffer.from(BIG_POD))).toBe(true);
+    await expect(store.heldPod(runId, randomUUID())).rejects.toBeInstanceOf(LostClaimError);
+
+    const hash = createHash("sha256").update(BIG_POD).digest("hex");
+    const stepId = await store.insertStep(runId, token, {
+      seq: 0,
+      modelCallId: null,
+      call: null,
+      summary: [],
+      executed: false,
+      stoppedEarly: false,
+      screenshot: null,
+      urlAfter: null,
+      costNanocents: 0,
+      pendingCheckCount: 1,
+    });
+    const progress = { costNanocents: 0, modelCallCount: 1, stepCount: 1, lastUrl: null };
+    await store.pause(runId, token, stepId, [{ ...CHECK, id: "sc_hold" }], progress, hash, tick());
+    const row = () =>
+      asApp(A, (q) =>
+        q.query<{ status: string; bytes: number | null; step_seq: number | null; paused_hash: string | null }>(
+          "SELECT status, octet_length(held_pod_pdf) AS bytes, held_pod_step_seq AS step_seq, paused_pod_hash AS paused_hash" +
+            " FROM portal_runs WHERE id = CAST($1 AS uuid)",
+          [runId],
+        ),
+      ).then((r) => r[0]);
+    expect(await row()).toEqual({ status: "waiting_approval", bytes: BIG_POD.length, step_seq: 1, paused_hash: hash });
+
+    const check = await asApp(A, (q) =>
+      q.query<{ id: string }>("SELECT id FROM portal_run_checks WHERE run_id = CAST($1 AS uuid)", [runId]),
+    );
+    expect(await asApp(A, (q) => decideCheck(q, memberA, { runId, checkId: check[0].id, decision: "decline" }, tick()))).toEqual({
+      kind: "declined",
+    });
+    expect(await row()).toEqual({ status: "declined", bytes: null, step_seq: null, paused_hash: null });
+    // The table itself refuses a POD held on a run that has ended.
+    expect(
+      await sqlStateOf(
+        asApp(A, (q) => q.execute("UPDATE portal_runs SET paused_pod_hash = $2 WHERE id = CAST($1 AS uuid)", [runId, hash])),
+      ),
+    ).toBe("23514");
   });
 
   it("claims a run only for a member of the run's own tenant, even on a login that skips row security", async () => {
@@ -652,8 +782,8 @@ describe("the portal tables", () => {
 
   it("clears one tenant's portal rows in an order the keys allow, then seeds them again", async () => {
     const before = await asApp(B, (q) => q.query<{ n: number }>("SELECT CAST(count(*) AS integer) AS n FROM portal_loads"));
-    // Evidence 2, checks 1, steps 5, sessions 1, runs 2, loads 2, account 1.
-    expect(await clearTenantPortal(admin, A)).toBe(14);
+    // Evidence 3, checks 3, steps 10, sessions 2, runs 4, loads 2, account 1.
+    expect(await clearTenantPortal(admin, A)).toBe(25);
     for (const table of PORTAL_TABLES) {
       const left = await asApp(A, (q) => q.query<{ n: number }>(`SELECT CAST(count(*) AS integer) AS n FROM ${table}`));
       expect(left[0].n, table).toBe(0);
