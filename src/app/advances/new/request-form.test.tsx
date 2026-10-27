@@ -1,14 +1,26 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ToastProvider } from "@/components/app/toast";
 import { RequestForm } from "./request-form";
 
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const push = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  push.mockReset();
 });
+
+// The app puts every page under the toast holder; the form says where the answer went through it.
+function renderForm(disabled = false) {
+  return render(
+    <ToastProvider>
+      <RequestForm drivers={DRIVERS} disabled={disabled} />
+    </ToastProvider>,
+  );
+}
 
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
@@ -40,7 +52,7 @@ function suggestRoute() {
 describe("the advance request form's suggested amount", () => {
   it("replaces its own suggestion when another driver is picked, and never a typed amount", async () => {
     suggestRoute();
-    render(<RequestForm drivers={DRIVERS} disabled={false} />);
+    renderForm();
     const driver = screen.getByLabelText("Driver");
     const amount = screen.getByLabelText("Amount") as HTMLInputElement;
 
@@ -59,5 +71,52 @@ describe("the advance request form's suggested amount", () => {
     fireEvent.change(driver, { target: { value: A } });
     await screen.findByText("Suggested: $300.00");
     expect(amount.value).toBe("123");
+  });
+});
+
+describe("sending an advance request", () => {
+  it("names what the button does, then says where the answer is before it moves to Home", async () => {
+    const fetch = vi.fn(async (url: string, init: RequestInit) => {
+      if (url === "/api/advances/request") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      const { driverId } = JSON.parse(String(init.body)) as { driverId: string };
+      const s = SUGGESTED[driverId];
+      const suggestion = { armed: s.armed, maxCents: s.cents, suggestedCents: s.cents, feeCents: 0, load: null };
+      return new Response(JSON.stringify({ loads: [], suggestion }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    renderForm();
+    const amount = screen.getByLabelText("Amount") as HTMLInputElement;
+    fireEvent.change(screen.getByLabelText("Driver"), { target: { value: A } });
+    await waitFor(() => expect(amount.value).toBe("300.00"));
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "fuel" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check this request" }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/"));
+    const sent = fetch.mock.calls.find(([url]) => url === "/api/advances/request");
+    expect(JSON.parse(String(sent?.[1].body))).toEqual({ driverId: A, amountCents: 30_000, category: "fuel" });
+    const toast = screen.getByRole("status", { name: "Notifications" });
+    expect(toast.textContent).toContain("Request checked");
+    expect(toast.textContent).toContain("The answer appears on Home.");
+  });
+
+  it("stays on the form with a plain sentence when the request is refused, and shows no toast", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url === "/api/advances/request"
+          ? new Response(JSON.stringify({ error: "busy" }), { status: 409 })
+          : new Response(JSON.stringify({ loads: [], suggestion: { armed: true, maxCents: 30_000, suggestedCents: 30_000, feeCents: 0, load: null } }), { status: 200 }),
+      ),
+    );
+    renderForm();
+    const amount = screen.getByLabelText("Amount") as HTMLInputElement;
+    fireEvent.change(screen.getByLabelText("Driver"), { target: { value: A } });
+    await waitFor(() => expect(amount.value).toBe("300.00"));
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "fuel" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check this request" }));
+
+    await screen.findByText("The agent is answering another question. Try again in a moment.");
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole("status", { name: "Notifications" }).textContent).not.toContain("Request checked");
   });
 });

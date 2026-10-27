@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { proposalCardFrom } from "@/components/agent/proposal-card-from";
 import { reportTable, type ReportLoad } from "@/components/agent/report-table";
 import { toMessages } from "@/components/agent/turn-view";
 import { ChatThread } from "@/components/app/chat-thread";
@@ -22,7 +23,7 @@ import { HowWorkedOut } from "@/components/trace/how-worked-out";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
-import type { TurnView } from "@/lib/agent/view";
+import type { ProposalView, TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import type { Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
@@ -423,6 +424,103 @@ const loading = (file: string, load: () => Promise<{ default: () => ReactNode }>
   variants: [{ name: "loading", load: async () => (await load()).default() }],
 });
 
+// The advance record page in each state a person meets: waiting, paid, rejected, taken back,
+// recorded by the office before the app, refused by today's pay rules, and unreadable rules.
+const RECORD = fx.ADVANCE_RECORD;
+const EVERY_REFUSAL = [
+  "driver_inactive",
+  "driver_not_armed",
+  "below_minimum",
+  "no_unpaid_earnings",
+  "exceeds_earned_share",
+  "over_driver_limit",
+  "possible_duplicate",
+  "over_load_cap",
+] as const;
+const ADVANCE_RECORD_CASES: [string, typeof RECORD, string][] = [
+  ["approved, payout not confirmed", RECORD, "Advance for Rosa Delgado, Oct 28, 2026"],
+  ["allowed by today's pay rules", RECORD, "Yes, it would be allowed today."],
+  [
+    "waiting for a person",
+    {
+      ...RECORD,
+      advance: { ...RECORD.advance, status: "requested", decidedAt: null, decidedByMembershipId: null },
+      proposal: RECORD.proposal && { ...RECORD.proposal, status: "proposed", decidedAt: null },
+      ledger: [],
+    },
+    "Not yet",
+  ],
+  [
+    "paid",
+    {
+      ...RECORD,
+      advance: { ...RECORD.advance, status: "paid", paidAt: "2026-10-28T14:31:00.000Z", recoveredCents: 5_000 },
+      proposal: RECORD.proposal && { ...RECORD.proposal, status: "done" },
+      ledger: [{ ...RECORD.ledger[0], state: "confirmed", failureCategory: null, settledAt: "2026-10-28T14:31:00.000Z" }],
+    },
+    "Repaid from pay so far",
+  ],
+  [
+    "rejected",
+    {
+      ...RECORD,
+      advance: { ...RECORD.advance, status: "rejected" },
+      proposal: RECORD.proposal && { ...RECORD.proposal, status: "rejected", decisionNote: "Driver already has an advance open." },
+      card: null,
+      ledger: [],
+    },
+    "Rejected",
+  ],
+  [
+    "taken back",
+    {
+      ...RECORD,
+      advance: { ...RECORD.advance, status: "cancelled", takenBackCents: 0, takenBackAt: "2026-10-28T15:00:00.000Z", takebackReason: "wrong_driver" },
+      takeback: { cents: 0, at: "2026-10-28T15:00:00.000Z", reason: "wrong_driver" },
+    },
+    "Canceled before payout",
+  ],
+  [
+    "recorded by the office before the app",
+    {
+      ...RECORD,
+      advance: {
+        ...RECORD.advance,
+        proposalId: null,
+        source: "seed",
+        status: "paid",
+        sourceInputId: null,
+        decidedAt: null,
+        decidedByMembershipId: null,
+        paidAt: null,
+        loadId: null,
+      },
+      proposal: null,
+      ledger: [],
+      input: null,
+      actions: { retry: false, check: false, post: false, takeBack: false },
+      load: null,
+      headroom: null,
+      siblingsOnLoad: [],
+    },
+    "Recorded by the office before this app",
+  ],
+  [
+    "refused by today's pay rules",
+    {
+      ...RECORD,
+      eligibility: RECORD.eligibility && { ...RECORD.eligibility, eligible: false, maxCents: 0, reasons: [...EVERY_REFUSAL] },
+    },
+    "No, it would not be allowed today.",
+  ],
+  ["pay rules unreadable", { ...RECORD, eligibility: null }, "The pay rules could not be checked right now."],
+  [
+    "agent's check not given, flagged message",
+    { ...RECORD, proposal: RECORD.proposal && { ...RECORD.proposal, operatorVerdict: "not_given", flagged: true } },
+    "Not given",
+  ],
+];
+
 // The invoice record page with its Review card in each state worth reading.
 const REVIEW_CASES: [string, InvoiceReviewView][] = [
   ["rate mismatch, not reviewed", fx.INVOICE_REVIEW],
@@ -503,10 +601,22 @@ const PAGES: PageCase[] = [
   {
     file: "advances/page.tsx",
     variants: [
-      { name: "all", load: async () => (await import("@/app/advances/page")).default(sp()) },
+      { name: "all", load: async () => (await import("@/app/advances/page")).default(sp()), shows: "Paid to" },
       { name: "paid", load: async () => (await import("@/app/advances/page")).default(sp({ status: "paid" })) },
       { name: "not armed", load: async () => (await import("@/app/advances/page")).default(sp({ armed: "no" })) },
-      { name: "empty", setup: () => (state.fx.advances = []), load: async () => (await import("@/app/advances/page")).default(sp()) },
+      { name: "empty", setup: () => (state.fx.advances = []), load: async () => (await import("@/app/advances/page")).default(sp()), shows: "Advances appear here" },
+      {
+        name: "empty, paid only",
+        setup: () => (state.fx.advances = []),
+        load: async () => (await import("@/app/advances/page")).default(sp({ status: "paid" })),
+        shows: "advances appear here",
+      },
+      {
+        name: "empty, drivers not armed",
+        setup: () => (state.fx.advances = []),
+        load: async () => (await import("@/app/advances/page")).default(sp({ armed: "no" })),
+        shows: "for drivers not armed appear here",
+      },
     ],
   },
   {
@@ -643,7 +753,12 @@ const PAGES: PageCase[] = [
   },
   {
     file: "records/advances/[id]/page.tsx",
-    variants: [{ name: "record", load: async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }) }],
+    variants: ADVANCE_RECORD_CASES.map(([name, record, shows]) => ({
+      name,
+      setup: () => (state.fx.advanceRecord = record),
+      load: async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }),
+      shows,
+    })),
   },
   {
     file: "records/customer_payments/[id]/page.tsx",
@@ -1021,6 +1136,135 @@ describe("no internal word on a card", () => {
   }
 });
 
+// Every kind's card as the chat builds it, plus a kind the table has no row for, in every status;
+// a waiting card is also read with its approve question open and with its reject question open.
+const KIND_VIEWS: [string, ProposalView][] = (() => {
+  const base: ProposalView = {
+    id: fx.ID,
+    kind: "advance_payout",
+    subjectTable: "drivers",
+    subjectId: fx.ID,
+    subjectLabel: "BR-D07",
+    amountCents: 20_000,
+    direction: "out",
+    title: "Pay advance",
+    reasons: [{ category: "earned_unpaid_covers", text: "Earned, unpaid pay this week covers the advance.", source: { table: "drivers", id: fx.ID } }],
+    sources: [
+      { table: "drivers", id: fx.ID },
+      { table: "loads", id: "0b9f6a52-3c1d-4e8f-9a7b-000000000004" },
+      { table: "loads", id: "0b9f6a52-3c1d-4e8f-9a7b-000000000005" },
+    ],
+    status: "proposed",
+    flagged: false,
+    flagCategories: [],
+    operatorVerdict: "eligible",
+    auditorVerdict: "pass",
+    auditorConcerns: [],
+    auditorCheckedAt: "2026-10-28T15:00:00.000Z",
+    auditorOverride: null,
+    destination: null,
+  };
+  const loads = { subjectTable: "loads", subjectLabel: "BR-L0412" };
+  return [
+    ["advance, card on file", { ...base, destination: { label: "fuel card", last4: "4417", testMode: true } }],
+    ["advance, no card", { ...base, destination: { label: "no fuel card on file", last4: null, testMode: true } }],
+    ["advance, flagged", { ...base, flagged: true, flagCategories: ["authority_claim"], destination: { label: "fuel card", last4: "4417", testMode: true } }],
+    ["pay correction", { ...base, kind: "pay_correction", title: "Correct pay" }],
+    ["load rate", { ...base, ...loads, kind: "load_rate_fill", direction: "none", title: "Fill load rate" }],
+    ["invoice", { ...base, ...loads, kind: "invoice_post", direction: "in", title: "Create invoice" }],
+    ["payment move", { ...base, subjectTable: "payment_applications", subjectLabel: "CHK-1042", kind: "payment_reapply", direction: "none", title: "Move payment" }],
+    ["detention", { ...base, ...loads, kind: "detention_charge", direction: "in", title: "Bill detention" }],
+    ["paystub", { ...base, subjectTable: "settlements", kind: "settlement_approve", title: "Approve paystub" }],
+    ["paystub, no payout", { ...base, subjectTable: "settlements", kind: "settlement_approve", amountCents: 0, title: "Approve paystub" }],
+    ["invoice fix", { ...base, ...loads, kind: "invoice_fix", direction: "none", title: "Fix invoice" }],
+    ["a kind with no row yet", { ...base, kind: "money_code" as ProposalView["kind"], title: "Issue money code" }],
+    ["no subject code", { ...base, subjectLabel: null }],
+  ];
+})();
+
+describe("no internal word on a card built from each kind", () => {
+  for (const [name, view] of KIND_VIEWS) {
+    it(name, async () => {
+      for (const status of STATUSES) {
+        const card = proposalCardFrom({ ...view, status }, { on: true, checking: false, timezone: "America/Chicago" });
+        for (const confirming of [false, true]) {
+          const { container, unmount } = render(
+            <ProposalCard {...card} onApprove={() => {}} onReject={() => {}} initialConfirming={confirming} />,
+          );
+          expect(scan(container), `${status}${confirming ? ", confirm open" : ""}`).toEqual([]);
+          unmount();
+        }
+        if (status === "proposed") {
+          const { container, unmount } = render(<ProposalCard {...card} onApprove={() => {}} onReject={() => {}} />);
+          fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+          expect(screen.getByRole("group", { name: "Confirm rejection" })).toBeTruthy();
+          expect(scan(container), "reject question open").toEqual([]);
+          unmount();
+        }
+      }
+    });
+  }
+});
+
+describe("no internal word on the advance request form", () => {
+  const DRIVER_ID = "0b9f6a52-3c1d-4e8f-9a7b-000000000003";
+  const REFUSALS = ["disabled", "agent_off", "ai_off", "not_found", "busy", "bad_request", "unauthenticated", "forbidden", "something_new"];
+
+  async function fill() {
+    fireEvent.change(screen.getByLabelText("Driver"), { target: { value: DRIVER_ID } });
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "250" } });
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "fuel" } });
+  }
+
+  it("its field errors, and its switched-off look", async () => {
+    const { RequestForm } = await import("@/app/advances/new/request-form");
+    for (const disabled of [false, true]) {
+      const { container, unmount } = render(
+        <ToastProvider>
+          <RequestForm drivers={[{ id: DRIVER_ID, code: "BR-D07", name: "Rosa Delgado" }]} disabled={disabled} />
+        </ToastProvider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Check this request" }));
+      expect(scan(container)).toEqual([]);
+      unmount();
+    }
+  });
+
+  it("every refusal sentence, a lost answer, and the toast after the answer", async () => {
+    const { RequestForm } = await import("@/app/advances/new/request-form");
+    const answers: (Response | "lost")[] = [
+      ...REFUSALS.map((error) => new Response(JSON.stringify({ error }), { status: 409 })),
+      "lost",
+      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+    ];
+    for (const answer of answers) {
+      vi.stubGlobal("fetch", async (url: string) => {
+        if (url !== "/api/advances/request") {
+          return new Response(JSON.stringify({ loads: [], suggestion: { armed: true, maxCents: 25_000, suggestedCents: 25_000, feeCents: 0, load: null } }));
+        }
+        if (answer === "lost") throw new TypeError("network");
+        return answer;
+      });
+      const { container, unmount } = render(
+        <ToastProvider>
+          <RequestForm drivers={[{ id: DRIVER_ID, code: "BR-D07", name: "Rosa Delgado" }]} disabled={false} />
+        </ToastProvider>,
+      );
+      await fill();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Check this request" }));
+      });
+      // Each answer shows its words: the toast after a good answer, a sentence on the form otherwise.
+      if (answer !== "lost" && answer.ok) expect(container.textContent).toContain("The answer appears on Home.");
+      else expect(screen.getByRole("alert").textContent?.length).toBeGreaterThan(0);
+      expect(scan(container)).toEqual([]);
+      unmount();
+    }
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+  });
+});
+
 describe("no internal word on a paystub", () => {
   it("the sample paystubs", () => {
     for (const stub of [PAYSTUB, SHORT_WEEK_PAYSTUB]) {
@@ -1292,10 +1536,14 @@ describe("no internal word on a fuel check's detail and notes", () => {
         await click("Confirm");
         read();
       }
-      await click("Cancel");
+      await click("Keep reviewing");
       for (const error of ["refused", "unknown"]) {
         answer(error);
-        await click("Reject");
+        // Reject asks once: open its question when it is not open, then reject from inside it.
+        if (!screen.queryByRole("group", { name: "Confirm rejection" })) await click("Reject");
+        await act(async () => {
+          fireEvent.click(within(screen.getByRole("group", { name: "Confirm rejection" })).getByRole("button", { name: "Reject" }));
+        });
         read();
       }
     } finally {
@@ -1329,6 +1577,42 @@ describe("no internal word on a fuel check's detail and notes", () => {
       </ul>,
     );
     expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("the advances pages read by driver and date", () => {
+  it("lists the driver first, then when, how much, the fee, where it stands and where it was paid", async () => {
+    await renderPage(async () => (await import("@/app/advances/page")).default(sp()));
+    expect(screen.getAllByRole("columnheader").map((th) => th.textContent)).toEqual([
+      "Driver",
+      "Requested",
+      "Amount",
+      "Fee",
+      "Status",
+      "Paid to",
+    ]);
+    const row = fx.ADVANCES[0];
+    const link = screen.getAllByRole("link", { name: new RegExp(`^Advance for ${row.driverName}, `) })[0];
+    expect(link.getAttribute("href")).toBe(`/records/advances/${row.id}`);
+  });
+
+  it("titles an advance record with the driver's name and the day it was asked for", async () => {
+    await renderPage(async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }));
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/^Advance for Rosa Delgado, Oct 28, 2026/);
+  });
+
+  it("names the driver's other advances on the load by amount, adding the reference only when two match", async () => {
+    const sibling = fx.ADVANCE_RECORD.siblingsOnLoad[0];
+    await renderPage(async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }));
+    expect(screen.getByRole("link", { name: "Advance of $100.00" }).getAttribute("href")).toBe(`/records/advances/${sibling.id}`);
+    expect(screen.queryByText(sibling.requestRef)).toBeNull();
+    cleanup();
+
+    const twin = { ...sibling, id: "0b9f6a52-3c1d-4e8f-9a7b-000000000099", requestRef: "ADV-1041" };
+    state.fx.advanceRecord = { ...fx.ADVANCE_RECORD, siblingsOnLoad: [sibling, twin] };
+    await renderPage(async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }));
+    expect(screen.getByRole("link", { name: "Advance of $100.00, ADV-1040" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Advance of $100.00, ADV-1041" })).toBeTruthy();
   });
 });
 

@@ -105,7 +105,7 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
     route: "/advances/new",
     load: async () => (await import("./advances/new/page")).default(),
     off: "Advances are off for this carrier",
-    title: "New advance request",
+    title: "Request an advance",
   },
   {
     route: "/records/advances/[id]",

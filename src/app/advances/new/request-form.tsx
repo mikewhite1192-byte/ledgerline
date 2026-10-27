@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState, type FormEvent } from "react";
+import { useToast } from "@/components/app/toast";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
@@ -34,11 +35,15 @@ const FALLBACK = "The request did not finish. Open Home to see whether the agent
 
 const AMOUNT_HINT = "Dollars and cents, from $1.00 to $10,000.00, like 300 or 300.50.";
 const SUGGEST_FAILED = "The suggestion could not be read. The agent still checks the pay rules.";
+// The request route returns once the agent has answered, so the toast says the check is done and
+// where the answer is, then the page moves to Home, where it waits for a person.
+const SENT_TOAST = { title: "Request checked", body: "The answer appears on Home.", tone: "success" } as const;
 
 type SuggestBody = { loads?: DeskLoad[]; suggestion?: DeskSuggestion; error?: unknown };
 
 export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; disabled: boolean }) {
   const router = useRouter();
+  const toast = useToast();
   const [driverId, setDriverId] = useState("");
   const [amount, setAmount] = useState("");
   const [category, setCategory] = useState<AdvanceRequestCategory | "">("");
@@ -123,6 +128,7 @@ export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; di
         body: JSON.stringify(loadId ? { driverId, amountCents: cents, category, loadId } : { driverId, amountCents: cents, category }),
       });
       if (res.ok) {
+        toast(SENT_TOAST);
         router.push("/");
         return;
       }
@@ -220,8 +226,8 @@ export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; di
       </Field>
       {notice ? <InlineAlert tone="destructive">{notice}</InlineAlert> : null}
       <div>
-        <Button type="submit" disabled={disabled} pending={pending} pendingLabel="The agent is checking">
-          Ask the agent
+        <Button type="submit" disabled={disabled} pending={pending} pendingLabel="Checking the request">
+          Check this request
         </Button>
       </div>
     </form>

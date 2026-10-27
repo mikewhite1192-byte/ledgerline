@@ -6,8 +6,7 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { flags } from "@/config/flags";
-import { isAdvanceStatus, readAdvanceList, readShell, type AdvanceListRow, type Shell } from "@/lib/advances/read";
-import { sourceWords } from "@/lib/advances/request";
+import { isAdvanceStatus, readAdvanceList, readShell, type AdvanceListRow, type ListCardLine, type Shell } from "@/lib/advances/read";
 import { advancesOn } from "@/lib/advances/switches";
 import { cn } from "@/lib/cn";
 import { formatLocalDate } from "@/lib/format/dates";
@@ -19,11 +18,20 @@ import { AdvanceFrame, AdvancesOffPage, problemOf, ReadFailed, type ReadProblem 
 export const dynamic = "force-dynamic";
 
 const DESCRIPTION =
-  "Money a driver draws against pay already earned. The agent checks the pay rules and proposes; a person approves every payout.";
+  "Pay a driver draws early, against work already done. The agent checks each request against your pay rules, and nothing is paid until a person approves it.";
 
-// Every advance on file, newest first, with the latest payout's state and the load it is for. A
-// row opens the advance's record; the driver opens the driver's page. "Not armed" narrows the list
-// to drivers no one has armed to receive money. Dark while the advances switch is off.
+// Where an advance went, in the Paid to column: the card by its last four, in the words the record
+// page uses for it ("Card on file" is the driver's card now, not one the advance recorded).
+function cardWords(line: ListCardLine): string {
+  const card = `card ending ${line.card.last4}${line.card.status === "closed" ? ", closed" : ""}`;
+  if (line.label === "Card on file") return `On file: ${card}`;
+  return `${card[0].toUpperCase()}${card.slice(1)}`;
+}
+
+// Every advance on file, newest first: who, when, how much, its status and where it was paid. The
+// driver's name opens the advance's record, where the reference, the load and the pay rules check
+// are. "Not armed" narrows the list to drivers no one has armed to receive money. Dark while the
+// advances switch is off.
 export default async function AdvancesPage({
   searchParams,
 }: {
@@ -60,7 +68,7 @@ export default async function AdvancesPage({
         actions={
           canRequest ? (
             <Link href="/advances/new" className={buttonVariants({ variant: "primary" })}>
-              New request
+              Request an advance
             </Link>
           ) : null
         }
@@ -99,25 +107,22 @@ export default async function AdvancesPage({
         rows={page.rows}
         rowKey={(r) => r.id}
         empty={{
-          title: "No advances yet",
-          body: canRequest ? "Ask the agent or start a request." : "Ask the agent once it is switched on.",
+          title: `${status ? `${statusLabel(status)} advances` : "Advances"}${notArmed ? " for drivers not armed" : ""} appear here`,
+          body: canRequest
+            ? "When a driver asks for one, it shows up here with the pay rules check. Use Request an advance to start one."
+            : "When a driver asks for one, it shows up here with the pay rules check. Requests start once the agent is switched on.",
         }}
         columns={[
-          {
-            key: "ref",
-            header: "Reference",
-            cell: (r) => (
-              <Link href={`/records/advances/${r.id}`} className="font-medium text-link underline-offset-4 hover:underline">
-                {r.requestRef}
-              </Link>
-            ),
-          },
           {
             key: "driver",
             header: "Driver",
             cell: (r) => (
               <span className="whitespace-nowrap">
-                <Link href={`/records/drivers/${r.driverId}`} className="text-link underline-offset-4 hover:underline">
+                <Link
+                  href={`/records/advances/${r.id}`}
+                  aria-label={`Advance for ${r.driverName}, ${formatLocalDate(r.requestedOn)}`}
+                  className="font-medium text-link underline-offset-4 hover:underline"
+                >
                   {r.driverName}
                 </Link>
                 <span className="block text-small text-muted-foreground">
@@ -131,35 +136,24 @@ export default async function AdvancesPage({
               </span>
             ),
           },
-          {
-            key: "load",
-            header: "Load",
-            cell: (r) => (r.loadNumber ? <span className="whitespace-nowrap">{r.loadNumber}</span> : <span className="text-muted-foreground">None</span>),
-          },
           { key: "requested", header: "Requested", cell: (r) => <span className="whitespace-nowrap">{formatLocalDate(r.requestedOn)}</span> },
           { key: "amount", header: "Amount", align: "right", cell: (r) => <Money cents={r.amountCents} /> },
           { key: "fee", header: "Fee", align: "right", cell: (r) => <Money cents={r.feeCents} /> },
           { key: "status", header: "Status", cell: (r) => <StatusBadge status={r.status} /> },
           {
-            key: "payout",
-            header: "Payout",
+            key: "paidTo",
+            header: "Paid to",
             cell: (r) => (
               <span className="whitespace-nowrap">
+                {r.cardLine ? <span className="block">{cardWords(r.cardLine)}</span> : null}
                 {r.payoutState ? (
                   <StatusBadge status={r.payoutState} />
                 ) : (
-                  <span className="text-muted-foreground">{r.fromFlow ? "Not sent" : "Paid before this app"}</span>
+                  <span className="block text-small text-muted-foreground">{r.fromFlow ? "Not sent yet" : "Before this app"}</span>
                 )}
-                {r.cardLine ? (
-                  <span className="block text-small text-muted-foreground">
-                    {r.cardLine.label} ···· {r.cardLine.card.last4}
-                    {r.cardLine.card.status === "closed" ? ", closed" : ""}
-                  </span>
-                ) : null}
               </span>
             ),
           },
-          { key: "source", header: "Requested through", cell: (r) => sourceWords(r.source) },
         ]}
       />
     </AdvanceFrame>
