@@ -669,6 +669,42 @@ describe("the demo reset", () => {
     expect(await printOf(null)).toEqual(shared);
   });
 
+  it("refuses a carrier that took a demo slug unless its name and timezone are that carrier's too, touching nothing", async () => {
+    // The app login may update its own tenant row: blue-ridge gives its slug up and the other
+    // carrier takes it, each as payday_app under row-level security.
+    const setTenant = (id: string, t: { slug: string; name: string; timezone: string }) =>
+      app.withTenant(id, (q) =>
+        q.execute(
+          "UPDATE tenants SET slug = $1, name = $2, timezone = $3 WHERE id = current_tenant_id()",
+          [t.slug, t.name, t.timezone],
+        ),
+      );
+    expect(OTHER.name).not.toBe(BR.name);
+    expect(OTHER.timezone).not.toBe(BR.timezone);
+    expect(PW.timezone).not.toBe(BR.timezone);
+    try {
+      await setTenant(A, { ...BR, slug: `reset-moved-${A.slice(0, 8)}` });
+      for (const pose of [
+        { slug: BR.slug, name: OTHER.name, timezone: BR.timezone },
+        { slug: BR.slug, name: BR.name, timezone: OTHER.timezone },
+        // Each field is some demo carrier's, but not all three the same one's.
+        { slug: BR.slug, name: PW.name, timezone: PW.timezone },
+      ]) {
+        await setTenant(C, pose);
+        const [a, b, c, shared] = [await printOf(A), await printOf(B), await printOf(C), await printOf(null)];
+        expect(c.proposals.n).toBe(1);
+        expect(await sqlStateOf(clearDirectly(C)), JSON.stringify(pose)).toBe(RESET_SQLSTATE.notDemo);
+        expect(await printOf(A)).toEqual(a);
+        expect(await printOf(B)).toEqual(b);
+        expect(await printOf(C)).toEqual(c);
+        expect(await printOf(null)).toEqual(shared);
+      }
+    } finally {
+      await setTenant(C, OTHER);
+      await setTenant(A, BR);
+    }
+  });
+
   it("rolls the clear back when the replace fails after it, so the carrier is left as it was", async () => {
     await withMoneySwitches(async () => {
       await dress(A, planA, "a");

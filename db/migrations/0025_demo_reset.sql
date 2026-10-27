@@ -17,8 +17,10 @@
 --   * EXECUTE is revoked from PUBLIC and granted to payday_app only.
 --   * It acts on the calling transaction's tenant, current_tenant_id(), and on nothing else. Its
 --     owner is not bound by row-level security, so every statement names that tenant itself.
---   * It refuses any tenant whose slug is not one of the two demo carriers, so a real carrier can
---     never be reset this way.
+--   * It refuses any tenant whose slug, name and timezone are not all one demo carrier's (the seed's
+--     DEMO_CARRIERS in src/lib/seed/carriers.ts; src/lib/seed/reset.test.ts keeps the two in step),
+--     so a real carrier can never be reset this way. The slug alone is not enough: payday_app may
+--     update its own tenant row, so a carrier could take a slug a demo carrier gave up.
 --   * It takes the tenant row lock first. Two resets of one carrier run one after the other, a
 --     write already in flight for that carrier (every tenant table references tenants, and an
 --     insert holds a key-share lock on its tenant row) lands before the counts are read, and no
@@ -58,6 +60,8 @@ CREATE FUNCTION demo_reset_clear()
 DECLARE
   v_tenant        uuid := public.current_tenant_id();
   v_slug          text;
+  v_name          text;
+  v_timezone      text;
   v_open          bigint;
   v_mismatch      bigint;
   v_flagged       bigint;
@@ -76,8 +80,12 @@ BEGIN
     RAISE EXCEPTION 'demo reset: no tenant is set' USING ERRCODE = 'LR001';
   END IF;
 
-  SELECT t.slug INTO v_slug FROM public.tenants t WHERE t.id = v_tenant FOR UPDATE;
-  IF NOT FOUND OR v_slug IS NULL OR v_slug NOT IN ('blue-ridge', 'prairie-wind') THEN
+  SELECT t.slug, t.name, t.timezone INTO v_slug, v_name, v_timezone
+    FROM public.tenants t WHERE t.id = v_tenant FOR UPDATE;
+  -- Whole values, all three from the same carrier. A NULL makes the IN unknown, which refuses too.
+  IF NOT FOUND OR ((v_slug, v_name, v_timezone) IN (
+       ('blue-ridge', 'Blue Ridge Freight Lines', 'America/New_York'),
+       ('prairie-wind', 'Prairie Wind Transport', 'America/Chicago'))) IS NOT TRUE THEN
     RAISE EXCEPTION 'demo reset: not a demo tenant' USING ERRCODE = 'LR002';
   END IF;
 

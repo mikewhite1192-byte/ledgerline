@@ -3,6 +3,7 @@ import { TENANT_TABLES } from "../data/tables";
 import { createPgDb } from "../db/pg";
 import { adminUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
+import { DEMO_CARRIERS } from "./carriers";
 import { CLEARED_TABLES, DEMO_RESET_CLEARED, DEMO_RESET_KEPT, FUNCTION_TABLES } from "./reset";
 
 // The demo reset's coverage guard. Every table in the database has a reset decision: rewritten by
@@ -91,9 +92,13 @@ describe("demo reset coverage", () => {
       expect(where, statement).toMatch(new RegExp(`^[a-z]\\.tenant_id = v_tenant\\b`));
       expect(table, statement).not.toBe("tenants");
     }
-    // The tenant is the transaction's own, read once, and the slug list is the two demo carriers.
+    // The tenant is the transaction's own, read once, and the gate is the two demo carriers' slug,
+    // name and timezone together.
     expect(fn.body).toContain("v_tenant        uuid := public.current_tenant_id();");
-    expect(fn.body).toContain("v_slug NOT IN ('blue-ridge', 'prairie-wind')");
+    expect(fn.body).toContain("SELECT t.slug, t.name, t.timezone INTO v_slug, v_name, v_timezone");
+    expect(fn.body).toContain("IF NOT FOUND OR ((v_slug, v_name, v_timezone) IN (");
+    for (const c of DEMO_CARRIERS) expect(fn.body).toContain(`('${c.slug}', '${c.name}', '${c.timezone}')`);
+    expect(fn.body).not.toContain("v_slug NOT IN");
   });
 
   it("keeps every rewritten and cleared table under its tenant, so the tenant row lock holds back new rows", async () => {

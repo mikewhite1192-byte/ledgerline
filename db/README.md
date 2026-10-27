@@ -201,7 +201,9 @@ function and checked by tests:
 - The tenant is the transaction's own `current_tenant_id()`, read once, and every statement names
   it (`tenant_id = v_tenant`), since the owner is not held by the policies. No tenant set raises
   LR001.
-- Only the two demo slugs (`blue-ridge`, `prairie-wind`); any other carrier raises LR002.
+- Only a tenant whose slug, name and timezone all equal one of the two demo carriers' (`blue-ridge`,
+  `prairie-wind`, as `src/lib/seed/carriers.ts` defines them); any other raises LR002. The slug
+  alone is not enough, since `payday_app` may update its own tenant row.
 - It locks the tenant's row (`FOR UPDATE`), so no new row naming that tenant can be inserted
   until the reset's transaction ends, then refuses (LR003, counts only, nothing deleted) while a
   ledger row is reserved, sent or unknown, a row failed as `amount_mismatch`, or a ledger row

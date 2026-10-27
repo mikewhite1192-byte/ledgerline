@@ -2,8 +2,9 @@ import type { PayConfigKnobs } from "../data/rows";
 
 // The two invented demo carriers. slug, name and timezone must equal the tenant rows that
 // scripts/create-demo-users.ts creates (a unit test compares the two files): the seed refuses a
-// tenant whose row differs, so a wrong database fails before anything is written. Driver email
-// addresses use the reserved .example domains: no real mailbox.
+// tenant whose row differs, so a wrong database fails before anything is written. The demo reset's
+// gate in db/migrations/0025_demo_reset.sql repeats all three (src/lib/seed/reset.test.ts compares
+// it with this list). Driver email addresses use the reserved .example domains: no real mailbox.
 
 export type DemoCarrier = {
   slug: "blue-ridge" | "prairie-wind";

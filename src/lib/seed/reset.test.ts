@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { TENANT_TABLES } from "../data/tables";
 import golden from "./golden.json";
 import { DEMO_ANCHOR } from "./anchor";
+import { DEMO_CARRIERS } from "./carriers";
 import {
   CLEARED_TABLES,
   DEMO_RESET_CLEARED,
@@ -29,6 +31,25 @@ describe("the demo reset's lists", () => {
 
   it("keeps the error codes the function raises", () => {
     expect(RESET_SQLSTATE).toEqual({ noTenant: "LR001", notDemo: "LR002", refused: "LR003" });
+  });
+});
+
+describe("the function's demo-carrier gate", () => {
+  it("lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", () => {
+    const sql = readFileSync(new URL("../../../db/migrations/0025_demo_reset.sql", import.meta.url), "utf8");
+    const gate =
+      /IF NOT FOUND OR \(\(v_slug, v_name, v_timezone\) IN \(([^;]*?)\)\) IS NOT TRUE THEN\s+RAISE EXCEPTION 'demo reset: not a demo tenant' USING ERRCODE = 'LR002';/.exec(
+        sql,
+      );
+    expect(gate).not.toBeNull();
+    const tuple = /\('([^']*)', '([^']*)', '([^']*)'\)/g;
+    const listed = [...gate![1].matchAll(tuple)].map(([, slug, name, timezone]) => ({ slug, name, timezone }));
+    expect(listed).toEqual(DEMO_CARRIERS.map(({ slug, name, timezone }) => ({ slug, name, timezone })));
+    // Nothing else in the list: only those tuples, the commas between them and whitespace.
+    expect(gate![1].replace(tuple, "").replace(/[\s,]/g, "")).toBe("");
+    // One gate, and no slug-only check left beside it.
+    expect(sql.match(/ERRCODE = 'LR002'/g)).toHaveLength(1);
+    expect(sql).not.toMatch(/v_slug (NOT )?IN/);
   });
 });
 
