@@ -6,16 +6,19 @@ import { classifyMessage } from "./tools/triage/classify-message";
 import { explainPaystub } from "./tools/read/explain-paystub";
 import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention";
 import { getAdvances } from "./tools/read/get-advances";
+import { getArAging } from "./tools/read/get-ar-aging";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
 import { getInboundMessage } from "./tools/read/get-inbound-message";
+import { getInvoiceQueue } from "./tools/read/get-invoice-queue";
 import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
 import { getPayItems } from "./tools/read/get-pay-items";
+import { getPaymentsIn } from "./tools/read/get-payments-in";
 import { getPortalEvidence } from "./tools/read/get-portal-evidence";
 import { getVoiceNote } from "./tools/read/get-voice-note";
 import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstanding";
@@ -29,6 +32,7 @@ import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
+import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
 
@@ -59,6 +63,9 @@ const TOOLS: readonly AnyToolDef[] = [
   reportCashNeeded,
   reportMarginPerLoad,
   getInboundMessage,
+  getInvoiceQueue,
+  getArAging,
+  getPaymentsIn,
   getVoiceNote,
   getProposal,
   getDocument,
@@ -66,6 +73,7 @@ const TOOLS: readonly AnyToolDef[] = [
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,
+  proposePaymentReapply,
   proposeLoadRate,
   proposeDetentionCharge,
   getPortalEvidence,

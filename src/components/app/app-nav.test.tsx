@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
-import { appNav } from "./app-nav";
+import { appNav, type NavKey } from "./app-nav";
 
 const saved = {
   driverNotes: flags.driverNotesEnabled,
@@ -13,7 +13,7 @@ afterEach(() => {
   flags.documentsEnabled = saved.documents;
 });
 
-const shape = (current: string) => appNav(current).map((i) => [i.href, i.label, i.current ?? false]);
+const shape = (current: NavKey) => appNav(current).map((i) => [i.href, i.label, i.current ?? false]);
 
 describe("appNav", () => {
   it("lists driver notes only while their switch is on, and marks the current page", () => {

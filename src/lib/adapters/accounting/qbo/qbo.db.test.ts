@@ -11,6 +11,7 @@ import { createQboConnect, type TenantRun } from "./connect";
 import {
   addOAuthState,
   connectionSummary,
+  isTenantCustomer,
   loadConnection,
   saveConnection,
   storeEntityId,
@@ -245,6 +246,55 @@ describe("QuickBooks store", () => {
       ),
     );
     expect(await inA((q) => takeOAuthState(q, state))).toEqual({ membershipId: A.memberId, fresh: false });
+  });
+});
+
+describe("Tenant document keys (0015)", () => {
+  it("gives two tenants whose ids start alike their own key, and loads it with the connection", async () => {
+    // A tenant whose id starts with A's first four hex digits: the key once taken from the id.
+    const twin = `${A.tenantId.slice(0, 4)}${randomUUID().slice(4)}`;
+    const keyOf = (tenantId: string) =>
+      admin.withTenant(tenantId, (q) =>
+        q.query<{ doc_key: string }>("SELECT doc_key FROM tenants WHERE id = current_tenant_id()"),
+      );
+    try {
+      await admin.withTenant(twin, (q) =>
+        q.execute(
+          `INSERT INTO tenants (id, slug, name, timezone)
+           VALUES (current_tenant_id(), $1, 'Twin', 'America/Chicago')`,
+          [`qbo-twin-${twin.slice(0, 8)}`],
+        ),
+      );
+      const [[a], [b], [other]] = [await keyOf(A.tenantId), await keyOf(twin), await keyOf(B.tenantId)];
+      for (const k of [a, b, other]) expect(k.doc_key).toMatch(/^T[0-9A-F]{4}$/);
+      expect(new Set([a.doc_key, b.doc_key, other.doc_key]).size).toBe(3);
+      // The database never holds one key twice, nor one out of shape.
+      expect(
+        await sqlStateOf(
+          admin.withTenant(twin, (q) =>
+            q.execute("UPDATE tenants SET doc_key = $1 WHERE id = current_tenant_id()", [a.doc_key]),
+          ),
+        ),
+      ).toBe("23505");
+      expect(
+        await sqlStateOf(
+          admin.withTenant(twin, (q) =>
+            q.execute("UPDATE tenants SET doc_key = 't0001' WHERE id = current_tenant_id()"),
+          ),
+        ),
+      ).toBe("23514");
+      await inA((q) => saveConnection(q, KEY, { ...mapping, membershipId: A.memberId }));
+      expect(await inA((q) => loadConnection(q, KEY, { lock: false }))).toMatchObject({ docKey: a.doc_key });
+    } finally {
+      await admin.withTenant(twin, (q) => q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"));
+    }
+  });
+
+  it("knows a customer id only when this tenant stored it", async () => {
+    await inA((q) => storeEntityId(q, "customers", A.customerId, "58"));
+    expect(await inA((q) => isTenantCustomer(q, "58"))).toBe(true);
+    expect(await inA((q) => isTenantCustomer(q, "5"))).toBe(false);
+    expect(await inB((q) => isTenantCustomer(q, "58"))).toBe(false);
   });
 });
 

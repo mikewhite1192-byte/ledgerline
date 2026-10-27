@@ -10,6 +10,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const paid = rows.settlement_periods.find((p) => p.status === "paid")!;
   const invoice = rows.invoices.find((i) => i.source === "load" && i.status === "open")!;
   const input = rows.untrusted_inputs[0];
+  const wrong = plan.planted.wrongInvoice;
   const doc = rows.untrusted_inputs.find((i) => i.kind === "document") ?? input;
   const noRate = rows.loads.find((l) => l.id === plan.planted.noRateLoadId)!;
   // The first planted unbilled detention: 41,250 cents in October.
@@ -50,6 +51,16 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       newAmountCents: invoice.amount_cents + 100,
       reasonCategories: ["rate_mismatch"],
       sourceRefs: [{ table: "invoices", id: invoice.id }],
+    },
+    get_invoice_queue: {},
+    get_ar_aging: { asOf: open.period_end, minBucket: "1_30" },
+    get_payments_in: { from: paid.period_start, to: open.period_end },
+    propose_payment_reapply: {
+      paymentId: wrong.paymentId,
+      applicationId: wrong.applicationId,
+      fromInvoiceId: wrong.appliedToInvoiceId,
+      toInvoiceId: wrong.meantForInvoiceId,
+      sourceRefs: [{ table: "customer_payments", id: wrong.paymentId }],
     },
     propose_load_rate: {
       loadId: noRate.id,
