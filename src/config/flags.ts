@@ -189,6 +189,31 @@ export type Flags = {
   // adds the charge to the load's open invoice. Off means neither tool is offered or runs and an
   // approval is refused before anything is written.
   detentionEnabled: boolean;
+  // The pay sweep: checks one open week for every driver, drafts a pay correction for each
+  // finding it can fix and lists the rest for a person. It only proposes; a person approves.
+  // Off means the Sweep page shows its reason text and the routes refuse before any work.
+  sweepEnabled: boolean;
+  // The nightly kicker (infra sweep stack). Off means the internal route refuses every call.
+  sweepScheduleEnabled: boolean;
+  // A person's approval of a pay correction (drafted by the sweep or in chat) writes its pay item
+  // for the next pay run. Off means the kind has no executor: an approval or a resume is refused
+  // as not_executable before anything is written, and the proposal stays as it was.
+  payCorrectionsEnabled: boolean;
+  sweepLimits: {
+    // Findings kept per run; the rest are left for the next run with a visible line.
+    maxItems: number;
+    // Model spend one run may count, in cents (explanations plus audits).
+    maxRunCents: number;
+    // The cap on one explanation call, in cents.
+    maxExplainCents: number;
+    // How long one request works before it answers "running" and the page asks again.
+    sliceMs: number;
+    // Audit tries per item while the auditor answers "in progress".
+    maxAuditAttempts: number;
+  };
+  // Approve all clean: one deliberate approval over the clean fixes a person saw. A batch whose
+  // total is over approverRole.adminAboveCents needs an admin, like a single proposal.
+  approveAllLimits: { maxItems: number };
   // The portal runner: the agent opens the fictional broker portal in a browser and reads a
   // load's delivery stamps and POD. Off gates the portal pages, the run routes, the gateway tool
   // and the worker, which re-checks it when it claims a run. aiEnabled must also be on.
@@ -273,6 +298,11 @@ export const flags: Flags = {
   voiceIntakeEnabled: false,
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
   detentionEnabled: false,
+  sweepEnabled: false,
+  sweepScheduleEnabled: false,
+  payCorrectionsEnabled: false,
+  sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
+  approveAllLimits: { maxItems: 25 },
   portalRunnerEnabled: false,
   portalRunnerModel: "spark",
   portalRunLimits: {

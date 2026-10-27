@@ -43,6 +43,7 @@ const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs
 const MODEL_CALLERS: ReadonlySet<string> = new Set([
   "src/lib/agent/operator/turn.ts",
   "src/lib/agent/auditor/run.ts",
+  "src/lib/agent/sweep/explain.ts",
 ]);
 // Every area match ignores case: on a case-insensitive file system "../../Money/execute" resolves.
 const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/i;

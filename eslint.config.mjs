@@ -185,8 +185,8 @@ const eslintConfig = [
   //      keys, format), adapters/types or a module of adapters/tms. "money/./execute",
   //      "money//execute" and "money/read/../ledger" are refused too. rules-engine/money, the
   //      engine's cents math, is not the ledger and is allowed.
-  //   3. The operator turn and the auditor run may also call the model wrapper; the package rule
-  //      of 1 still holds.
+  //   3. The operator turn, the auditor run and the sweep's explanation may also call the model
+  //      wrapper; the package rule of 1 still holds.
   // Every block refuses dynamic import, every module loader by name and code from a string (vm
   // included), so each dependency is checked statically, and every block refuses fetch,
   // XMLHttpRequest, WebSocket and EventSource, bare or through globalThis, window, self or global
@@ -212,7 +212,7 @@ const eslintConfig = [
     },
   },
   {
-    files: ["src/lib/agent/operator/turn.ts", "src/lib/agent/auditor/run.ts"],
+    files: ["src/lib/agent/operator/turn.ts", "src/lib/agent/auditor/run.ts", "src/lib/agent/sweep/explain.ts"],
     rules: {
       "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, ...NO_DIRECT_IO, ...DOCUMENT_READS, NO_VM])],
     },
