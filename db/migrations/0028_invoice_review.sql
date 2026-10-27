@@ -10,6 +10,9 @@
 --    qbo_*: the accounting system's send state and amount, read from the reply to the create. The
 --      amount is stored whenever an accounting id is; the send state may be missing (a reply that
 --      did not carry it is stored null, never guessed), but never without an accounting id.
+--      invoices_qbo_pair is checked against existing rows: an invoice posted before this migration
+--      holds an accounting id with no amount, so the whole migration fails and nothing is applied.
+--      None exist while the invoice post switches have never been released.
 ALTER TABLE invoices
   ADD COLUMN reviewed_at timestamptz,
   ADD COLUMN reviewed_by_membership_id uuid,
