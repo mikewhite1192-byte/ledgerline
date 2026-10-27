@@ -1,5 +1,6 @@
 "use client";
 
+import { CreditCard } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
@@ -42,6 +43,9 @@ export type ProposalCardProps = {
   reasons: { text: string; source?: SourceRef }[];
   sources?: SourceRef[];
   status: ProposalStatus;
+  // Where the money would land, one small line under the amount, e.g. "To fuel card ···· 4417".
+  // testMode adds " · Test mode" to it.
+  destination?: { label: string; testMode: boolean };
   // The second question before a money action, e.g. "Pay $200.00 to Dana Whitfield?"
   confirmQuestion?: string;
   // A warning shown above the buttons, e.g. why this proposal needs a second look.
@@ -137,6 +141,7 @@ export function ProposalCard({
   reasons,
   sources = [],
   status,
+  destination,
   confirmQuestion,
   flagNote,
   audit,
@@ -179,14 +184,25 @@ export function ProposalCard({
         <StatusBadge status={status} />
       </div>
 
-      <div className="mx-4 mt-3 flex items-baseline justify-between gap-4 border-b border-border pb-3 sm:mx-5">
-        <span className="text-small text-foreground-2">{impact.label ?? impactLabel(impact.direction, status)}</span>
-        {impact.direction === "none" ? (
-          // Money that changes place but not hands: the amount, unsigned and uncolored.
-          <Money cents={Math.abs(impact.cents)} sign="never" tone="plain" className="text-h2 text-muted-foreground" />
-        ) : (
-          <Money cents={shown} sign={impact.direction === "in" ? "always" : "auto"} className="text-h2" />
-        )}
+      <div className="mx-4 mt-3 border-b border-border pb-3 sm:mx-5">
+        <div className="flex items-baseline justify-between gap-4">
+          <span className="text-small text-foreground-2">{impact.label ?? impactLabel(impact.direction, status)}</span>
+          {impact.direction === "none" ? (
+            // Money that changes place but not hands: the amount, unsigned and uncolored.
+            <Money cents={Math.abs(impact.cents)} sign="never" tone="plain" className="text-h2 text-muted-foreground" />
+          ) : (
+            <Money cents={shown} sign={impact.direction === "in" ? "always" : "auto"} className="text-h2" />
+          )}
+        </div>
+        {destination ? (
+          <p className="mt-1 flex items-center gap-1.5 text-small text-muted-foreground">
+            <CreditCard className="size-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0">
+              {destination.label}
+              {destination.testMode ? " · Test mode" : ""}
+            </span>
+          </p>
+        ) : null}
       </div>
 
       <div className="px-4 pt-3 pb-4 sm:px-5">

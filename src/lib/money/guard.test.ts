@@ -25,14 +25,14 @@ afterEach(() => {
 
 describe("money start-up guard", () => {
   it("passes an empty environment and says what is on", () => {
-    expect(assertMoneyEnvSafe(env({}), off)).toBe("money: guard ok (qbo sandbox only, payouts off, accounting off)");
+    expect(assertMoneyEnvSafe(env({}), off)).toBe("money: guard ok (qbo sandbox only, payouts off | fuel_card=sim bank=mock, accounting off)");
     expect(
       assertMoneyEnvSafe(env({ STRIPE_SECRET_KEY: key("sk", "test", "0".repeat(24)), QBO_ENVIRONMENT: "sandbox" }), {
         accountingEnabled: false,
         paymentProvider: "stripe_test",
         payoutsEnabled: true,
       }),
-    ).toBe("money: guard ok (qbo sandbox only, payouts stripe_test, accounting off)");
+    ).toBe("money: guard ok (qbo sandbox only, payouts on | fuel_card=sim bank=stripe_test, accounting off)");
   });
 
   it("refuses a production QuickBooks environment, naming the variable and not the value", () => {

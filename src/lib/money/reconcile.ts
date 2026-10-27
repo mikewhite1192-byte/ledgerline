@@ -1,9 +1,11 @@
-import type { ReadBack, SendContext } from "../adapters/types";
+import type { PayoutDestination, ReadBack, SendContext } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import type { Queryable, TenantDb } from "../db";
 import {
   adapterReady,
   categoryOf,
+  needsDestination,
+  paymentFor,
   payoutOf,
   resolveDeps,
   systemFor,
@@ -15,9 +17,9 @@ import type { PendingSubject } from "./read";
 import {
   KIND_SHAPES,
   MONEY_ACTION_KINDS,
+  railOf,
   type MoneyAction,
   type MoneyActionKind,
-  type MoneyChannel,
   type MoneyFailure,
 } from "./types";
 
@@ -41,6 +43,9 @@ export type ReconcileHooks = {
   // Accounting kinds only: the read-back for this action. Payouts read back through the payment
   // adapter and must not pass this.
   readBack?(action: MoneyAction, ctx: SendContext): Promise<ReadBack>;
+  // Payment kinds only, the executor's hook: where the payout went, read again for the read-back.
+  // A kind whose adapter needs a destination is skipped without it, never guessed at.
+  destination?(q: Queryable, action: MoneyAction): Promise<PayoutDestination | null>;
 };
 
 export type ReconcileOptions = {
@@ -68,20 +73,36 @@ export type ReconcileSummary = {
 type Found = Extract<ReadBack, { found: true }>;
 
 async function readBackOf(
+  db: TenantDb,
+  tenantId: string,
   action: MoneyAction,
   hooks: ReconcileHooks,
   ctx: SendContext,
   d: MoneyDeps,
 ): Promise<Found | { category: MoneyFailure }> {
   const { channel } = KIND_SHAPES[action.kind];
-  const work =
-    channel === "payment"
-      ? () =>
-          d.payment.readBack(
-            { requestId: action.requestId, outsideId: action.outsideId, payout: payoutOf(action) },
-            ctx,
-          )
-      : () => (hooks.readBack as NonNullable<ReconcileHooks["readBack"]>)(action, ctx);
+  let work: () => Promise<ReadBack>;
+  if (channel === "payment") {
+    const payment = paymentFor(action.kind, d);
+    // The destination the send used, read again in its own short transaction.
+    let destination: PayoutDestination | null = null;
+    if (hooks.destination) {
+      const read = hooks.destination;
+      try {
+        destination = await db.withTenant(tenantId, (q) => read(q, action));
+      } catch (err) {
+        return { category: categoryOf(err) };
+      }
+      if (destination === null) return { category: "validation" };
+    } else if (needsDestination(payment)) {
+      return { category: "validation" };
+    }
+    const payout = payoutOf(action, destination);
+    work = () =>
+      payment.readBack({ requestId: action.requestId, outsideId: action.outsideId, payout }, ctx);
+  } else {
+    work = () => (hooks.readBack as NonNullable<ReconcileHooks["readBack"]>)(action, ctx);
+  }
   try {
     const rb = await withTimeout<ReadBack | null>(work, d.timeoutMs, () => null);
     if (rb === null) return { category: "timeout" };
@@ -107,7 +128,7 @@ function settlementOf(
     ref: rb.ref ?? null,
     amountCents: rb.amountCents,
   };
-  const expected = systemFor(KIND_SHAPES[action.kind].channel, d);
+  const expected = systemFor(action.kind, d);
   if (!isOutsideRecord(outside) || outside.system !== expected) return { category: "unknown" };
   const status: unknown = rb.status;
   if (status === "succeeded") {
@@ -122,34 +143,41 @@ function settlementOf(
   return { category: "unknown" };
 }
 
-// The hooks a kind needs: onConfirmed always, and a readBack for accounting kinds only.
-function hooksFit(kind: MoneyActionKind, hooks: ReconcileHooks | undefined): hooks is ReconcileHooks {
-  return (
-    typeof hooks === "object" &&
-    hooks !== null &&
-    typeof hooks.onConfirmed === "function" &&
-    (KIND_SHAPES[kind].channel === "accounting") === (typeof hooks.readBack === "function")
-  );
+// The hooks a kind needs: onConfirmed always, a readBack for accounting kinds only, a
+// destination for payment kinds only, and that destination whenever the kind's adapter needs one.
+function hooksFit(
+  kind: MoneyActionKind,
+  hooks: ReconcileHooks | undefined,
+  d: MoneyDeps,
+): hooks is ReconcileHooks {
+  if (typeof hooks !== "object" || hooks === null || typeof hooks.onConfirmed !== "function") {
+    return false;
+  }
+  const accounting = KIND_SHAPES[kind].channel === "accounting";
+  if (accounting !== (typeof hooks.readBack === "function")) return false;
+  if (accounting) return hooks.destination === undefined;
+  return typeof hooks.destination === "function" || !needsDestination(paymentFor(kind, d));
 }
 
 // The kinds this pass can finish now: hooks that fit, the channel's switch on and its adapter
-// ready (asked once per channel). The pending read asks for these kinds only, so rows the pass
-// would skip never take the places of rows it can finish.
+// ready (asked once per rail, and once for accounting). The pending read asks for these kinds
+// only, so rows the pass would skip never take the places of rows it can finish.
 async function servableKinds(
   db: TenantDb,
   tenantId: string,
   hooks: ReconcileOptions["hooks"] | undefined,
   d: MoneyDeps,
 ): Promise<MoneyActionKind[]> {
-  const ready = new Map<MoneyChannel, boolean>();
+  const ready = new Map<string, boolean>();
   const kinds: MoneyActionKind[] = [];
   for (const kind of MONEY_ACTION_KINDS) {
     const { channel } = KIND_SHAPES[kind];
-    if (!hooksFit(kind, hooks?.[kind]) || !switchOn(channel)) continue;
-    let ok = ready.get(channel);
+    if (!hooksFit(kind, hooks?.[kind], d) || !switchOn(channel)) continue;
+    const key = channel === "payment" ? `payment:${railOf(kind)}` : "accounting";
+    let ok = ready.get(key);
     if (ok === undefined) {
-      ok = (await adapterReady(db, tenantId, channel, d)).ok;
-      ready.set(channel, ok);
+      ok = (await adapterReady(db, tenantId, kind, d)).ok;
+      ready.set(key, ok);
     }
     if (ok) kinds.push(kind);
   }
@@ -200,16 +228,16 @@ export async function reconcileMoneyActions(
     const hooks = options.hooks?.[action.kind];
     // Asked again per row: a switch or an adapter can change during the pass.
     if (
-      !hooksFit(action.kind, hooks) ||
+      !hooksFit(action.kind, hooks, d) ||
       !switchOn(channel) ||
-      !(await adapterReady(db, tenantId, channel, d)).ok
+      !(await adapterReady(db, tenantId, action.kind, d)).ok
     ) {
       summary.skipped += 1;
       continue;
     }
     summary.checked += 1;
     const ctx: SendContext = { requestId: action.requestId, timeoutMs: d.timeoutMs, tenantZone };
-    const rb = await readBackOf(action, hooks, ctx, d);
+    const rb = await readBackOf(db, tenantId, action, hooks, ctx, d);
     const s = "found" in rb ? settlementOf(action, rb, d) : rb;
     try {
       const state = await db.withTenant(tenantId, async (q) => {

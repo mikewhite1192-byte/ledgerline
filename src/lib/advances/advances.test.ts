@@ -1,10 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Param, Queryable, TenantDb } from "../db";
+import { SUBJECT_STATUSES } from "../money/types";
 import { ADVANCE_REFUSALS } from "../rules-engine/types";
 import { legTwoTimeoutMs } from "./approve";
 import { requestFromDesk, type DeskDeps } from "./desk";
-import { actionsFor, outsideTail, type LedgerEntry } from "./read";
+import {
+  actionsFor,
+  cardLineFor,
+  listCardLineFor,
+  outsideTail,
+  recordCardFor,
+  type CardSummary,
+  type LedgerEntry,
+  type RecordCard,
+} from "./read";
 import {
   ADVANCE_APPROVE_NOTICE,
   FLOW_OUTCOMES,
@@ -29,8 +39,8 @@ import type { AdvanceView } from "./rows";
 
 // The advance flow's pure rules: typed dollars to cents, the desk's sentence, the reference, the
 // accounting amount, every sentence a person can see, the payout switches in order, the
-// QuickBooks leg's time limit, the record page's buttons, and the desk with its database and
-// agent turn faked. No database, no network.
+// QuickBooks leg's time limit, the record page's buttons and card line, and the desk with its
+// database and agent turn faked. No database, no network.
 
 const saved = structuredClone(flags);
 
@@ -137,6 +147,7 @@ describe("the sentences a person sees", () => {
         "before_start",
         "disabled",
         "eligibility_unavailable",
+        "no_card",
         "not_armed",
         "over_cap",
         "payout_failed",
@@ -147,6 +158,11 @@ describe("the sentences a person sees", () => {
       ].sort(),
     );
     expect(ADVANCE_APPROVE_NOTICE.over_cap).toBe(outcomeSentence("over_cap"));
+  });
+
+  it("says plainly when the driver has no fuel card on file", () => {
+    expect(outcomeSentence("no_card")).toBe("This driver has no fuel card on file, so nothing was paid.");
+    expect(ADVANCE_APPROVE_NOTICE.no_card).toBe(outcomeSentence("no_card"));
   });
 
   it("reads a decision note from its codes only", () => {
@@ -244,6 +260,7 @@ describe("the record page's buttons", () => {
     attempt: 1,
     amountCents: 25_000,
     failureCategory: "declined",
+    outsideSystem: null,
     outsideTail: null,
     createdAt: "2026-11-02T16:00:00.000Z",
     settledAt: null,
@@ -291,6 +308,143 @@ describe("the record page's buttons", () => {
     expect(outsideTail("po_1234567890abcd")).toBe("abcd");
     expect(outsideTail("")).toBeNull();
     expect(outsideTail(null)).toBeNull();
+  });
+});
+
+describe("the record page's card line", () => {
+  const card = (over: Partial<RecordCard> = {}): RecordCard => ({
+    last4: "4417",
+    status: "active",
+    recorded: true,
+    ...over,
+  });
+
+  it("says Paid to for the card a paid advance recorded, and Pays to before it is paid", () => {
+    expect(cardLineFor("paid", card())).toEqual({ label: "Paid to", card: { last4: "4417", status: "active" } });
+    expect(cardLineFor("paid", card({ status: "closed" }))).toEqual({
+      label: "Paid to",
+      card: { last4: "4417", status: "closed" },
+    });
+    expect(cardLineFor("approved", card())).toEqual({ label: "Pays to", card: { last4: "4417", status: "active" } });
+  });
+
+  it("calls the driver's active card the card on file when a paid advance recorded none", () => {
+    expect(cardLineFor("paid", card({ recorded: false }))).toEqual({
+      label: "Card on file",
+      card: { last4: "4417", status: "active" },
+    });
+  });
+
+  it("calls the driver's active card the card on file when a pending advance recorded none", () => {
+    expect(cardLineFor("requested", card({ recorded: false }))).toEqual({
+      label: "Card on file",
+      card: { last4: "4417", status: "active" },
+    });
+    expect(cardLineFor("approved", card({ recorded: false }))).toEqual({
+      label: "Card on file",
+      card: { last4: "4417", status: "active" },
+    });
+  });
+
+  it("shows no card line for a paid advance with no card, and no card on file before it is paid", () => {
+    expect(cardLineFor("paid", null)).toBeNull();
+    expect(cardLineFor("requested", null)).toEqual({ label: "Pays to", card: null });
+  });
+
+  describe("when the recorded card has since closed", () => {
+    const closed: CardSummary = { last4: "4417", status: "closed" };
+    const active: CardSummary = { last4: "9020", status: "active" };
+    const line = (status: string, recorded: CardSummary | null, now: CardSummary | null) =>
+      cardLineFor(status, recordCardFor(status, recorded, now));
+
+    it("shows an unpaid advance the driver's active card as the card on file, since a retry pays it", () => {
+      expect(line("approved", closed, active)).toEqual({ label: "Card on file", card: active });
+    });
+
+    it("says an unpaid advance has no fuel card on file when no card is active", () => {
+      expect(line("approved", closed, null)).toEqual({ label: "Pays to", card: null });
+    });
+
+    it("keeps Paid to the recorded card on a paid advance, closed or not", () => {
+      expect(line("paid", closed, active)).toEqual({ label: "Paid to", card: closed });
+      expect(line("paid", closed, null)).toEqual({ label: "Paid to", card: closed });
+    });
+
+    it("keeps Pays to the recorded card on an unpaid advance while it is still active", () => {
+      expect(line("approved", active, active)).toEqual({ label: "Pays to", card: active });
+    });
+  });
+});
+
+describe("the advance list's card line", () => {
+  const closed = { last4: "4417", status: "closed" };
+  const active = { last4: "9020", status: "active" };
+
+  it("names the card a paid advance was paid to, even after that card closed", () => {
+    expect(listCardLineFor("paid", closed, active)).toEqual({ label: "Paid to", card: closed });
+    expect(listCardLineFor("paid", closed, null)).toEqual({ label: "Paid to", card: closed });
+    expect(listCardLineFor("paid", active, active)).toEqual({ label: "Paid to", card: active });
+  });
+
+  it("names no card for a paid advance that recorded none, never the driver's card now", () => {
+    expect(listCardLineFor("paid", null, active)).toBeNull();
+    expect(listCardLineFor("paid", null, null)).toBeNull();
+  });
+
+  it("names the driver's active card as the card on file for an unpaid advance that recorded none", () => {
+    expect(listCardLineFor("requested", null, active)).toEqual({ label: "Card on file", card: active });
+    expect(listCardLineFor("approved", null, active)).toEqual({ label: "Card on file", card: active });
+  });
+
+  it("names an unpaid advance's recorded card while it is active, else the card on file", () => {
+    expect(listCardLineFor("approved", active, active)).toEqual({ label: "Pays to", card: active });
+    expect(listCardLineFor("approved", closed, active)).toEqual({ label: "Card on file", card: active });
+  });
+
+  it("shows no line when no card would be named", () => {
+    expect(listCardLineFor("requested", null, null)).toBeNull();
+    expect(listCardLineFor("approved", closed, null)).toBeNull();
+  });
+
+  it("names nothing when the recorded card has any other shape, and never puts the active card in its place", () => {
+    expect(listCardLineFor("paid", { last4: "12a4", status: "closed" }, active)).toBeNull();
+    expect(listCardLineFor("approved", { last4: "4417", status: "lost" }, active)).toBeNull();
+    expect(listCardLineFor("requested", null, { last4: "", status: "active" })).toBeNull();
+  });
+});
+
+describe("a card line for an advance that is never paid", () => {
+  const closed: CardSummary = { last4: "4417", status: "closed" };
+  const active: CardSummary = { last4: "9020", status: "active" };
+
+  for (const status of ["rejected", "cancelled"]) {
+    it(`names no card for a ${status} advance, recorded or on file`, () => {
+      expect(recordCardFor(status, active, active)).toBeNull();
+      expect(recordCardFor(status, closed, active)).toBeNull();
+      expect(recordCardFor(status, null, active)).toBeNull();
+      expect(cardLineFor(status, { ...active, recorded: true })).toBeNull();
+      expect(cardLineFor(status, { ...active, recorded: false })).toBeNull();
+      expect(cardLineFor(status, null)).toBeNull();
+      expect(listCardLineFor(status, active, active)).toBeNull();
+      expect(listCardLineFor(status, closed, active)).toBeNull();
+      expect(listCardLineFor(status, null, active)).toBeNull();
+    });
+  }
+
+  it("names no card for a status it does not know", () => {
+    expect(recordCardFor("refunded", active, active)).toBeNull();
+    expect(cardLineFor("refunded", { ...active, recorded: true })).toBeNull();
+    expect(cardLineFor("refunded", null)).toBeNull();
+    expect(listCardLineFor("refunded", null, active)).toBeNull();
+  });
+
+  it("names a card only for an advance that can still be paid or was paid, across every advance status", () => {
+    const naming = SUBJECT_STATUSES.advances.filter((status) => listCardLineFor(status, active, active) !== null);
+    expect(naming).toEqual(["requested", "approved", "paid"]);
+    const recordNaming = SUBJECT_STATUSES.advances.filter(
+      (status) => cardLineFor(status, recordCardFor(status, active, active)) !== null,
+    );
+    expect(recordNaming).toEqual(["requested", "approved", "paid"]);
   });
 });
 
