@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { nextWeekStart } from "@/lib/pay-rules/words";
 import { homeSuggestions, ruleChangeSuggestion, withPaystubSuggestion } from "./suggestions";
 
 describe("homeSuggestions", () => {
@@ -17,8 +18,20 @@ describe("ruleChangeSuggestion", () => {
       id: "change-pay-rule",
       label: "Change a pay rule",
       fill: "Starting Nov 2, owner-operator insurance goes to $12 a day",
-      help: "Say the rule, the new amount and the date it starts. Example: 'From Nov 9, the net pay floor is $350 a week.'",
+      help: "Say the rule, the new amount and the date it starts. Example: 'From Nov 2, the net pay floor is $350 a week.'",
     });
+  });
+
+  it("dates the help's example by the same week as the sentence, so it moves on after Nov 9", () => {
+    // Tuesday Nov 10, 2026: a fixed example dated Nov 9 would name a week that has begun.
+    const nextStart = nextWeekStart(new Date("2026-11-10T15:00:00Z"), "America/New_York", 1);
+    expect(nextStart).toBe("2026-11-16");
+    const s = ruleChangeSuggestion(nextStart);
+    expect(s.fill).toBe("Starting Nov 16, owner-operator insurance goes to $12 a day");
+    expect(s.help).toBe(
+      "Say the rule, the new amount and the date it starts. Example: 'From Nov 16, the net pay floor is $350 a week.'",
+    );
+    expect(s.help).not.toContain("Nov 9");
   });
 });
 

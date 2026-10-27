@@ -180,10 +180,17 @@ export const FAILED_LINE =
 export const REJECTED_LINE = "Not saved. Nothing changed.";
 
 // The home chip and the help under the question box when it is used. The example names a rule a
-// carrier can change while its drivers' escrow schedules run (escrow per week cannot).
+// carrier can change while its drivers' escrow schedules run (escrow per week cannot), dated the
+// first week a change can start, like the chip's sentence, so it never names a week that has begun.
 export const CHIP_LABEL = "Change a pay rule";
-export const HELP_EXAMPLE = "From Nov 9, the net pay floor is $350 a week.";
-export const COMPOSER_HELP = `Say the rule, the new amount and the date it starts. Example: '${HELP_EXAMPLE}'`;
+
+export function helpExample(nextStart: LocalDate): string {
+  return `From ${monthDay(nextStart)}, the net pay floor is $350 a week.`;
+}
+
+export function composerHelp(nextStart: LocalDate): string {
+  return `Say the rule, the new amount and the date it starts. Example: '${helpExample(nextStart)}'`;
+}
 
 // The first week start after the week that holds now, in the carrier's zone and week shape: the
 // earliest date a change may start.

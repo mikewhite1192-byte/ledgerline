@@ -25,7 +25,6 @@ import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
 import { readNextWeekStart } from "@/lib/pay-rules/read";
-import { COMPOSER_HELP, exampleSentence } from "@/lib/pay-rules/words";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
@@ -164,6 +163,9 @@ export default async function Home({
     ...(carrier.nextStart ? [ruleChangeSuggestion(carrier.nextStart)] : []),
   ];
   const suggestions = withPaystubSuggestion(base, carrier.paystub);
+  // ?rule=1 starts the box with the chip's own sentence and help, both dated the first week a
+  // change can start.
+  const ruleAsk = !documentInput && ruleAsked && carrier.nextStart ? ruleChangeSuggestion(carrier.nextStart) : null;
 
   return (
     <AppShell
@@ -179,14 +181,8 @@ export default async function Home({
           streamMode={flags.agentStreamMode}
           auditorOn={flags.auditorEnabled}
           suggestions={suggestions}
-          initialDraft={
-            documentInput
-              ? `Check document ${documentInput}`
-              : ruleAsked && carrier.nextStart
-                ? exampleSentence(carrier.nextStart)
-                : undefined
-          }
-          initialHelp={!documentInput && ruleAsked && carrier.nextStart ? COMPOSER_HELP : undefined}
+          initialDraft={documentInput ? `Check document ${documentInput}` : ruleAsk?.fill}
+          initialHelp={ruleAsk?.help}
           viewer={{ admin: carrier.admin, adminAboveCents: flags.approverRole.adminAboveCents }}
           intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
           disabledReason={

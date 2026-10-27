@@ -86,6 +86,9 @@ export default async function PayRulesSettings() {
   }
   if (!view) return <NoCarrierPage problem={problem ?? "unreadable"} />;
   const { rules, cards } = view;
+  // The button opens the chat with an example change, so it shows only while the chat can take
+  // one: pay rule changes, the agent and the models all on. Otherwise it is left out.
+  const chatTakesChanges = flags.rulesByTalkingEnabled && flags.agentEnabled && flags.aiEnabled;
 
   return (
     <SignedInPage tenant={view.shell} current="/settings/pay-rules" title={PAGE_TITLE}>
@@ -93,7 +96,7 @@ export default async function PayRulesSettings() {
         title={PAGE_TITLE}
         description={PAGE_SUBTITLE}
         actions={
-          flags.rulesByTalkingEnabled && rules ? (
+          chatTakesChanges && rules ? (
             <Link href="/?rule=1" className={buttonVariants({ variant: "primary" })}>
               {CHIP_LABEL}
             </Link>

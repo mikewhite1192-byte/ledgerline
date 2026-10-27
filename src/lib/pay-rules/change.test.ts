@@ -10,7 +10,7 @@ import {
   type RuleChangeRows,
 } from "./change";
 import { rowsFor, versionFrom } from "./__tests__/rows";
-import { HELP_EXAMPLE } from "./words";
+import { helpExample, nextWeekStart } from "./words";
 
 // The shared check at fixed instants, on the seed's two carriers at the golden anchor. Oct 27,
 // 2026 is a Tuesday: Blue Ridge (New York, Monday weeks) is in the week of Oct 26, Prairie Wind
@@ -138,11 +138,23 @@ describe("the rule and the value", () => {
     });
 
     it("is not the rule the help under the question box gives as its example; that one is accepted", () => {
-      expect(HELP_EXAMPLE).not.toMatch(/escrow/i);
-      const floor = { ruleKey: "net_pay_floor_cents", newValue: 35_000, askedFrom: "2026-11-09" } as const;
+      // The example is dated the carrier's first week a change can start, now and after Nov 9
+      // (Tuesday Nov 10), when a fixed Nov 9 is already refused on Monday weeks.
+      const afterNov9 = new Date("2026-11-10T15:00:00Z");
       for (const slug of ["blue-ridge", "prairie-wind"] as const) {
-        expect(reason(check(rowsFor(slug), floor, HELP_EXAMPLE))).toBe("ok");
+        const rows = rowsFor(slug);
+        for (const now of [TUESDAY, afterNov9]) {
+          const next = nextWeekStart(now, rows.tenant.timezone, rows.pay_configs[0].week_start_dow);
+          const example = helpExample(next);
+          expect(example).not.toMatch(/escrow/i);
+          const floor = { ruleKey: "net_pay_floor_cents", newValue: 35_000, askedFrom: next } as const;
+          expect(reason(check(rows, floor, example, now))).toBe("ok");
+        }
       }
+      // A fixed "From Nov 9" is refused by then on Monday weeks, where Nov 9 starts the week under way.
+      const nov9 = { ruleKey: "net_pay_floor_cents", newValue: 35_000, askedFrom: "2026-11-09" } as const;
+      const fixed = "From Nov 9, the net pay floor is $350 a week.";
+      expect(reason(check(rowsFor("blue-ridge"), nov9, fixed, afterNov9))).toBe("effective_in_past");
     });
 
     it("allows it once every escrow schedule has ended before that week", () => {
