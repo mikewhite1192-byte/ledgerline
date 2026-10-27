@@ -36,6 +36,20 @@ export type DriverRow = {
   preferred_language: "en" | "es";
 };
 
+// The driver's fuel card on file (0017): the provider's own token and the last four digits only.
+export type DriverCardRow = {
+  id: string;
+  driver_id: string;
+  rail: "fuel_card";
+  provider: "fuel_card_sim";
+  provider_token: string;
+  last4: string;
+  status: "active" | "closed";
+  sim_behavior: "ok" | "declined" | "slow" | "offline";
+  source: "seed" | "ui";
+  closed_at: string | null;
+};
+
 export type LoadRow = {
   id: string;
   load_number: string;
@@ -256,6 +270,7 @@ export type ScreeningRow = {
 export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
+  driver_cards: DriverCardRow[];
   loads: LoadRow[];
   load_state_miles: LoadStateMilesRow[];
   load_accessorials: LoadAccessorialRow[];
