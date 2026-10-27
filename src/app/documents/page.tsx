@@ -5,7 +5,7 @@ import { AppShell } from "@/components/app/app-shell";
 import { DataTable, type Column } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
-import { EmptyState } from "@/components/app/states";
+import { FeatureOff } from "@/components/app/states";
 import { kindLabel, matchedLabel, partyOf, readStatusBadge } from "@/components/documents/labels";
 import { UploadForm } from "@/components/documents/upload-form";
 import { Badge } from "@/components/ui/badge";
@@ -89,10 +89,7 @@ export default async function DocumentsPage() {
         <PageHeader title="Documents" description={DESCRIPTION} />
         {!flags.documentsEnabled ? (
           <Card>
-            <EmptyState
-              title="Document reading is not switched on."
-              body="When it is, upload a receipt or a rate confirmation here and Muse Spark reads it."
-            />
+            <FeatureOff name="Documents" plural />
           </Card>
         ) : (
           <>

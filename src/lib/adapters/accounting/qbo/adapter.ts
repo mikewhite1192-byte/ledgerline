@@ -260,6 +260,7 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
       id: found.id,
       ref: found.ref ?? ref,
       amountCents: found.amountCents as number,
+      ...(type === "Invoice" && found.emailStatus ? { emailStatus: found.emailStatus } : {}),
     };
   }
 
@@ -470,6 +471,7 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
         ...(found.ref ? { ref: found.ref } : {}),
         amountCents: found.amountCents,
         status: voided ? "canceled" : "succeeded",
+        ...(type === "Invoice" && found.emailStatus ? { emailStatus: found.emailStatus } : {}),
       };
     },
   };

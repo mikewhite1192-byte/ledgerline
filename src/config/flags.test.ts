@@ -137,6 +137,7 @@ describe("flags", () => {
   it("ships invoicing and customer payments dark, with small caps and a start date", () => {
     expect(flags.invoicesEnabled).toBe(false);
     expect(flags.customerPaymentsEnabled).toBe(false);
+    expect(flags.invoiceReviewEnabled).toBe(false);
     expect(flags.invoicesStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(flags.invoicesStart).toBe("2026-10-05");
     expect(flags.invoiceLimits).toEqual({ proposalsPerRun: 50, maxPostAttempts: 3 });

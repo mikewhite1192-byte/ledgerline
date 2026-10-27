@@ -249,6 +249,11 @@ export type Flags = {
     // A safety check a person has not decided within this many minutes ends the run.
     approvalWaitMinutes: number;
   };
+  // Invoice review: the Review tab, the review card on an invoice, Mark reviewed, Mark as sent and
+  // the agent's two review read tools. Off: the tab and card are hidden, the routes answer 404 and
+  // the tools are not offered. invoicesEnabled must also be on. A post to accounting is always
+  // left unsent there (a constant on the adapter, not a switch); LedgerLine never sends one.
+  invoiceReviewEnabled: boolean;
 };
 
 export const flags: Flags = {
@@ -335,6 +340,7 @@ export const flags: Flags = {
     podMaxBytes: 300_000,
     approvalWaitMinutes: 30,
   },
+  invoiceReviewEnabled: false,
 };
 
 applyLocalOverrides(flags);

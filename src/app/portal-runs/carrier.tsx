@@ -1,5 +1,8 @@
+import { appNav } from "@/components/app/app-nav";
+import { AppShell } from "@/components/app/app-shell";
+import { PageHeader } from "@/components/app/page-header";
 import { Wordmark } from "@/components/brand/wordmark";
-import { ErrorState } from "@/components/app/states";
+import { ErrorState, FeatureOff } from "@/components/app/states";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Session } from "@/lib/auth/claims";
@@ -54,5 +57,26 @@ export function CarrierProblem({ problem }: { problem: "forbidden" | "unreadable
         </Card>
       </div>
     </main>
+  );
+}
+
+// A portal run page while the portal runner is off: the shell, the page's title, and the off
+// state. It reads only the carrier chip, never a run.
+export async function PortalRunsOffPage({ title, description }: { title: string; description?: string }) {
+  const read = await readCarrier(async () => null);
+  if ("problem" in read) return <CarrierProblem problem={read.problem} />;
+  const { carrier } = read;
+  return (
+    <AppShell
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      nav={appNav("/portal-runs")}
+      title={title}
+      signOut={signOut}
+    >
+      <div className="mx-auto grid w-full max-w-[1080px] gap-6">
+        <PageHeader title={title} description={description} />
+        <FeatureOff name="Portal runs" plural />
+      </div>
+    </AppShell>
   );
 }

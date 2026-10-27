@@ -1,8 +1,7 @@
-import { Video } from "lucide-react";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
-import { EmptyState, ErrorState } from "@/components/app/states";
+import { ErrorState, FeatureOff } from "@/components/app/states";
 import { Wordmark } from "@/components/brand/wordmark";
 import { ClipsPanel } from "@/components/clips/clips-panel";
 import type { LoadOption } from "@/components/clips/redactor";
@@ -109,7 +108,7 @@ export default async function ClipsPage() {
         />
         {!flags.clipsEnabled ? (
           <Card>
-            <EmptyState icon={<Video aria-hidden />} title="Dock clips are turned off" body="Nothing is uploaded or read while they are off." />
+            <FeatureOff name="Dock clips" plural />
           </Card>
         ) : clips ? (
           <ClipsPanel clips={clips} loads={carrier.loads} />

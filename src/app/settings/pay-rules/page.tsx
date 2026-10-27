@@ -86,7 +86,7 @@ export default async function PayRulesSettings() {
   const { rules, cards } = view;
 
   return (
-    <SignedInPage tenant={view.shell} current="none" title={PAGE_TITLE}>
+    <SignedInPage tenant={view.shell} current="/settings/pay-rules" title={PAGE_TITLE}>
       <PageHeader
         title={PAGE_TITLE}
         description={PAGE_SUBTITLE}

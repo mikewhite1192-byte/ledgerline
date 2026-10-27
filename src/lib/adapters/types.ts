@@ -32,6 +32,11 @@ export const UNKNOWN_CATEGORIES: readonly UnknownCategory[] = [
   "unknown",
 ];
 
+// An accounting invoice's email state as the outside system reports it. Read only: no adapter
+// member sends anything.
+export const INVOICE_EMAIL_STATUSES = ["NotSet", "NeedToSend", "EmailSent"] as const;
+export type InvoiceEmailStatus = (typeof INVOICE_EMAIL_STATUSES)[number];
+
 export type SendOutcome =
   | {
       kind: "confirmed";
@@ -40,6 +45,8 @@ export type SendOutcome =
       id: string;
       ref?: string;
       amountCents: number;
+      // An invoice's email state, only when the reply carried a known one.
+      emailStatus?: InvoiceEmailStatus;
     }
   | { kind: "failed"; category: MoneyFailure; httpStatus?: number }
   | { kind: "unknown"; category: UnknownCategory; httpStatus?: number };
@@ -65,6 +72,8 @@ export type ReadBack =
       ref?: string;
       amountCents: number;
       status: ReadBackStatus;
+      // An invoice's email state, only when the record carried a known one.
+      emailStatus?: InvoiceEmailStatus;
     }
   | { found: false };
 
@@ -141,6 +150,9 @@ export interface AccountingAdapter {
       issuedOn: LocalDate;
       dueOn: LocalDate;
       lines: InvoiceLine[];
+      // The customer's billing address, recorded on the invoice so it waits in the outside
+      // system's send queue. Synthetic .example addresses only; nothing is ever sent from here.
+      billingEmail: string;
     },
     ctx: SendContext,
   ): Promise<SendOutcome>;
