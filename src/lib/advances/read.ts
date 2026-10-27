@@ -212,7 +212,7 @@ export async function readDeskLoads(q: Queryable, driverId: string, now: Date): 
       WHERE l.tenant_id = current_tenant_id() AND l.driver_id = CAST($1 AS uuid)
         AND l.delivered_on IS NOT NULL
         AND l.delivered_on <= CAST(CAST($2 AS timestamptz) AT TIME ZONE t.timezone AS date)
-        AND l.delivered_on > CAST(CAST($2 AS timestamptz) AT TIME ZONE t.timezone AS date) - $3::int
+        AND l.delivered_on > CAST(CAST($2 AS timestamptz) AT TIME ZONE t.timezone AS date) - CAST($3 AS int)
       ORDER BY l.delivered_on DESC, l.load_number
       LIMIT 50`,
     [driverId, now.toISOString(), DESK_LOAD_DAYS],

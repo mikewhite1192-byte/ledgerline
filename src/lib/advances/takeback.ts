@@ -4,15 +4,18 @@ import { isCanonicalUuid } from "../money/keys";
 import { readBySubject } from "../money/read";
 import type { MoneyAction } from "../money/types";
 import { flags } from "../../config/flags";
+import { failAdvanceProposal } from "./approve";
 import { readMember } from "./member";
 import { readAdvanceView, type AdvanceView } from "./rows";
 import { advancesOn } from "./switches";
-import { isTakebackReason } from "./takeback-words";
+import { CANCELLED_BY_TAKEBACK, isTakebackReason } from "./takeback-words";
 
 // Taking an advance back (decision D-034: record only). An advance not yet paid, with no payout
 // that may have moved money, is cancelled: nothing was paid, so nothing is taken. A paid advance
 // records the amount taken back, which stops counting as owed (outstandingCents) and is not
 // recovered from settlements; nothing is pulled off the card and no outside system is called.
+// A cancelled advance born from an approval ends its proposal too, as failed with a note, so the
+// approval is never left running on an advance that is gone (resume and retry then refuse it).
 // One per advance: the same amount again returns the row unchanged, a different amount is
 // refused. One tenant transaction with the advance locked. Staff may take back up to the
 // approver rule's line; above it, only an admin.
@@ -117,6 +120,12 @@ export async function takeBackAdvance(
           );
     // The row is locked, so a miss means it is not what was just read: never a silent success.
     if (changed !== 1) return no("not_takeable");
+    // Cancelled before any payout row was reserved: the proposal it came from (approved, or
+    // executing with no ledger row) has nothing left to run. The advance lock comes first here, as
+    // in the ledger's reserve, so the two never wait on each other in turn.
+    if (plan.kind === "cancel" && advance.proposalId !== null) {
+      await failAdvanceProposal(q, advance.proposalId, CANCELLED_BY_TAKEBACK, nowIso);
+    }
     return plan.kind === "cancel"
       ? { ok: true, changed: true, status: "cancelled", takenBackCents: 0 }
       : { ok: true, changed: true, status: "paid", takenBackCents: plan.cents };

@@ -201,6 +201,9 @@ describe("the sentences a person sees", () => {
       "The numbers changed before approval (exceeds earned share, the amount allowed changed), so nothing was paid.",
     );
     expect(decisionNoteSentence("expired")).toBe("No one decided in time, so it expired.");
+    expect(decisionNoteSentence("advance_cancelled")).toBe(
+      "The advance was taken back before any money moved, so nothing was paid.",
+    );
     expect(decisionNoteSentence("wrong_amount")).toBe("Decision: wrong amount.");
   });
 });

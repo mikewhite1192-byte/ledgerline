@@ -17,7 +17,7 @@
         "deduction_schedules": 18,
         "settlement_periods": 4,
         "settlements": 75,
-        "settlement_lines": 527,
+        "settlement_lines": 528,
         "pay_items": 245,
         "advances": 21,
         "invoices": 335,
@@ -92,7 +92,7 @@
       "settledNetCents": [
         {
           "periodStart": "2026-10-05",
-          "netCents": 2699384
+          "netCents": 2664384
         },
         {
           "periodStart": "2026-10-12",
@@ -271,7 +271,7 @@
       "settledNetCents": [
         {
           "periodStart": "2026-10-04",
-          "netCents": 2288830
+          "netCents": 2266330
         },
         {
           "periodStart": "2026-10-11",

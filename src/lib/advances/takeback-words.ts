@@ -19,3 +19,7 @@ export const TAKEBACK_REASON_LABELS: Readonly<Record<TakebackReason, string>> = 
 export function takebackReasonWords(reason: string): string {
   return isTakebackReason(reason) ? TAKEBACK_REASON_LABELS[reason] : "Other";
 }
+
+// The note an advance's proposal ends with when a take-back cancels the advance before any money
+// moved: a code, said in words on the record.
+export const CANCELLED_BY_TAKEBACK = "advance_cancelled";

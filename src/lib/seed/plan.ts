@@ -40,6 +40,7 @@ import {
   armedAt,
   armEvents,
   chooseDisarmed,
+  chooseTakeBack,
   driverIdentities,
   linkAdvanceLoads,
   parityCards,
@@ -917,7 +918,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     advance(driver(carrier.heroCode), weekday(openWeek, 3), [10, 15], 20000, 25).fee_cents = 0;
   }
   // Parity plants (0027), from the parity stream: two advances on one load for a driver with none,
-  // the load each other advance is for, and one settled advance taken back in full.
+  // the load each other advance is for, and the settled advance to take back in full (recorded
+  // after history, below).
   const allVictims = new Set<string>([...Object.values(victims), ...Object.values(fuelVictims)]);
   const withAdvance = new Set(advanceDrafts.map((a) => a.driver_id));
   const pair = plantLoadPair({
@@ -937,7 +939,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   });
   advanceDrafts.push(...pair.rows);
   linkAdvanceLoads(advanceDrafts, drivers, loadRecords, versions);
-  const takenBack = plantTakeBack(parity, placedDrafts, periods);
+  const takenBackId = chooseTakeBack(parity, placedDrafts, periods);
   let advanceN = 0;
   const advances: AdvanceRow[] = advanceDrafts
     .map((a, i) => [a, i] as const)
@@ -1043,6 +1045,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     screenings: [],
   };
   applyHistory({ slug, zone, rows, newId });
+  // The take-back is recorded after history, so no settled week's recovery is re-run.
+  const takenBack = plantTakeBack(rows.advances, takenBackId);
   // Outside text for the agent's screener, from its own id stream so no other row changes.
   rows.untrusted_inputs = buildUntrustedInputs({ carrier, anchor, rows });
 

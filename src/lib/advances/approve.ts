@@ -140,6 +140,18 @@ async function onPayoutFailed(q: Queryable, action: MoneyAction): Promise<void> 
   );
 }
 
+// An advance proposal that ends without paying, with a note code the record says in words. Only
+// from approved or executing, the two states the proposal guard lets move to failed; one already
+// ended is left as it is. Returns the rows changed.
+export function failAdvanceProposal(q: Queryable, proposalId: string, note: string, nowIso: string): Promise<number> {
+  return q.execute(
+    `UPDATE proposals SET status = 'failed', decision_note = $2, updated_at = CAST($3 AS timestamptz)
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind = 'advance_payout'
+        AND status IN ('approved', 'executing')`,
+    [proposalId, note.slice(0, NOTE_MAX), nowIso],
+  );
+}
+
 // The hooks for one payout attempt to the card resolved for it. A resumed row (reserved by an
 // earlier request) never runs onReserved, so it passes no card and keeps the one it recorded;
 // the destination is always read back by advances.card_id.
@@ -357,12 +369,7 @@ async function prepare(q: Queryable, p: ProposalRow, now: Date, newId: () => str
     if (!decision.eligible || decision.approvedCents !== p.amountCents) {
       // The numbers changed since the proposal: it is never paid. Written and returned (the
       // commit keeps the outcome), so the card and the record say why.
-      await q.execute(
-        `UPDATE proposals SET status = 'failed', decision_note = $2, updated_at = CAST($3 AS timestamptz)
-          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
-            AND status IN ('approved', 'executing')`,
-        [p.id, noteOf(decision), nowIso],
-      );
+      await failAdvanceProposal(q, p.id, noteOf(decision), nowIso);
       return { kind: "stale" };
     }
     const from = await sourceOf(q, p.args.requestRef);

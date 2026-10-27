@@ -1,6 +1,7 @@
 import { codeToWords } from "../format/labels";
 import { dollars } from "../money/format";
 import { ADVANCE_REFUSALS, type AdvanceRefusal } from "../rules-engine/types";
+import { CANCELLED_BY_TAKEBACK } from "./takeback-words";
 
 // Every sentence the advance flow shows a person, from a closed list. The rules engine's refusal
 // codes and the flow's own outcome categories each have one fixed sentence; numbers in them are
@@ -155,7 +156,8 @@ export const ADVANCE_APPROVE_NOTICE: Readonly<Record<string, string>> = Object.f
 );
 
 // A proposal's decision note in words. Notes are codes written by this app (a reject category,
-// "expired", or the stale-eligibility codes), never a person's or a model's text.
+// "expired", the stale-eligibility codes, or a take-back's cancel), never a person's or a model's
+// text.
 const STALE_NOTE = /^stale_eligibility: ([a-z_]+(?:,[a-z_]+)*)$/;
 
 export function decisionNoteSentence(note: string | null): string | null {
@@ -166,6 +168,7 @@ export function decisionNoteSentence(note: string | null): string | null {
     return `The numbers changed before approval (${why.join(", ")}), so nothing was paid.`;
   }
   if (note === "expired") return "No one decided in time, so it expired.";
+  if (note === CANCELLED_BY_TAKEBACK) return "The advance was taken back before any money moved, so nothing was paid.";
   return `Decision: ${codeToWords(note).toLowerCase()}.`;
 }
 

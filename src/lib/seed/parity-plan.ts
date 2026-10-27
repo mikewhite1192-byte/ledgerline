@@ -25,7 +25,7 @@ export type ParityPlanted = {
   // Two paid advances on one load in the open week, together under the load's cap.
   loadPairLoadId: string;
   loadPairAdvanceIds: [string, string];
-  // A paid advance in the oldest settled week taken back in full (wrong driver).
+  // A paid advance in the oldest settled week taken back in full (wrong driver), after history.
   takenBackAdvanceId: string;
   // On a carrier with a hero only: a second named card on the hero's neighbor, a generic card and
   // a closed card. Null elsewhere.
@@ -192,22 +192,29 @@ export function linkAdvanceLoads(
   }
 }
 
-// One paid advance in the oldest settled week that has one, taken back in full three hours after
-// it was paid because it went to the wrong driver. Set before history runs, so that week's
-// settlement recovers only its fee.
-export function plantTakeBack(parity: Rng, candidates: readonly AdvanceDraft[], periods: readonly Period[]): AdvanceDraft {
+// The advance to take back: one paid advance in the oldest settled week that has one. Drawn here,
+// before history, so its draw keeps its place on the parity stream; plantTakeBack records it.
+export function chooseTakeBack(parity: Rng, candidates: readonly AdvanceDraft[], periods: readonly Period[]): string {
   for (const p of periods.slice(0, 3)) {
     const inWeek = candidates
       .filter((x) => x.status === "paid" && x.paid_at !== null && isWithin(x.requested_on, p))
       .sort((x, y) => compareText(x.requested_at, y.requested_at) || compareText(x.id, y.id));
     if (inWeek.length === 0) continue;
-    const x = parity.pick(inWeek);
-    x.taken_back_cents = x.amount_cents;
-    x.taken_back_at = new Date(Date.parse(x.paid_at!) + 3 * 60 * 60_000).toISOString();
-    x.takeback_reason = "wrong_driver";
-    return x;
+    return parity.pick(inWeek).id;
   }
   throw new Error("no settled advance to take back");
+}
+
+// The chosen advance, taken back in full three hours after it was paid because it went to the
+// wrong driver. Set after history has run: the seed's recoveries are not re-run, so its settlement
+// keeps what it recovered and every settled week keeps its net.
+export function plantTakeBack(advances: readonly AdvanceRow[], id: string): AdvanceRow {
+  const x = advances.find((a) => a.id === id);
+  if (!x || x.status !== "paid" || x.paid_at === null) throw new Error("the advance to take back is not paid");
+  x.taken_back_cents = x.amount_cents;
+  x.taken_back_at = new Date(Date.parse(x.paid_at) + 3 * 60 * 60_000).toISOString();
+  x.takeback_reason = "wrong_driver";
+  return x;
 }
 
 // The disarmed driver: the highest code that is not the hero, holds no planted card behavior, has

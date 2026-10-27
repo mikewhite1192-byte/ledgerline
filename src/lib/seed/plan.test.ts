@@ -388,7 +388,7 @@ describe("advance parity", () => {
     }
   });
 
-  it("takes back one advance in the oldest settled week in full, so that week recovers only its fee", () => {
+  it("takes back one advance in the oldest settled week in full, after history, so its settlement keeps what it recovered", () => {
     for (const plan of plans) {
       const { rows, periods } = plan;
       const back = rows.advances.find((a) => a.id === plan.planted.parity.takenBackAdvanceId)!;
@@ -400,7 +400,12 @@ describe("advance parity", () => {
       ]);
       expect(Date.parse(back.taken_back_at!) - Date.parse(back.paid_at!)).toBe(3 * 3600_000);
       expect(back.taken_back_by_membership_id).toBeNull();
-      expect(back.recovered_cents).toBe(back.fee_cents);
+      // History ran before the take-back: the recovery lines that cite it stand, and match it.
+      const recovered = rows.settlement_lines
+        .filter((l) => l.kind === "advance_recovery" && l.sources.some((x) => x.table === "advances" && x.id === back.id))
+        .reduce((n, l) => n - l.amount_cents, 0);
+      expect(recovered).toBeGreaterThan(back.fee_cents);
+      expect(back.recovered_cents).toBe(recovered);
       expect(outstandingCents(advanceOf(back))).toBe(0);
       expect(rows.advances.filter((a) => a.taken_back_at !== null)).toHaveLength(1);
     }
