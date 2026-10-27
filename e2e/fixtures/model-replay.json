@@ -38,58 +38,15 @@
           }
         ],
         "usage": {
-          "input_tokens": 8623,
-          "input_tokens_details": {
-            "cached_tokens": 0
-          },
-          "output_tokens": 154,
-          "output_tokens_details": {
-            "reasoning_tokens": 66
-          },
-          "total_tokens": 8777
-        },
-        "incomplete_details": null
-      }
-    },
-    "3e9ec6f432181856": {
-      "label": "muse-spark-1.3 /v1/responses tools=24 results=5 user \"Propose a $100.00 advance for Monique Vasquez (BR-D07), requested on ...\"",
-      "path": "/v1/responses",
-      "body": {
-        "object": "response",
-        "status": "completed",
-        "model": "muse-spark-1.3",
-        "output": [
-          {
-            "type": "message",
-            "role": "assistant",
-            "content": [
-              {
-                "type": "output_text",
-                "text": "Eligibility checks out \u2014 I'll draft the $100 advance card for approval.",
-                "annotations": [],
-                "logprobs": []
-              }
-            ],
-            "phase": "commentary",
-            "status": "completed"
-          },
-          {
-            "type": "function_call",
-            "name": "propose_advance",
-            "arguments": "{\"amountCents\":10000,\"driverId\":\"11655986-7168-4c21-a58c-0a33c542be93\",\"operatorVerdict\":\"eligible\",\"reasonCategories\":[\"driver_asked\",\"earned_unpaid_covers\"],\"requestedOn\":\"2026-10-27\",\"sourceRefs\":[{\"id\":\"11655986-7168-4c21-a58c-0a33c542be93\",\"table\":\"drivers\"},{\"id\":\"4aa11bf4-7344-40a1-8abd-d4ace3f7c932\",\"table\":\"loads\"},{\"id\":\"ad616d6e-0624-4ad7-8db8-7179554be62a\",\"table\":\"advances\"}]}",
-            "status": "completed"
-          }
-        ],
-        "usage": {
-          "input_tokens": 12510,
+          "input_tokens": 8713,
           "input_tokens_details": {
             "cached_tokens": 8689
           },
-          "output_tokens": 526,
+          "output_tokens": 158,
           "output_tokens_details": {
-            "reasoning_tokens": 234
+            "reasoning_tokens": 70
           },
-          "total_tokens": 13036
+          "total_tokens": 8871
         },
         "incomplete_details": null
       }
@@ -108,7 +65,7 @@
             "content": [
               {
                 "type": "output_text",
-                "text": "{\"checks\": [{\"name\": \"sources\", \"note\": \"driver_id matches\", \"pass\": true}, {\"name\": \"amount\", \"note\": \"10000=10000\", \"pass\": true}, {\"name\": \"limit\", \"note\": \"10000<=50000\", \"pass\": true}, {\"name\": \"cause\", \"note\": \"eligible drives\", \"pass\": true}], \"concerns\": [], \"verdict\": \"pass\"}",
+                "text": "{\"checks\": [{\"name\": \"cause\", \"note\": \"operatorVerdict 'eligible' and reason 'driver_asked' match args and engine eligible=true with no refusals.\", \"pass\": true}, {\"name\": \"sources\", \"note\": \"Engine source IDs match proposal sources for driver 11655986-7168-4c21-a58c-0a33c542be93, delivered load 4aa11bf4-7344-40a1-8abd-d4ace3f7c932 assigned to that\\n \",\n        \"pass\": true}, {\"name\": \"amount\", \"note\": \"Proposal amountCents 10000 equals engine proposedCents 10000 and approvedCents 10000.\", \"pass\": true}, {\"name\": \"limit\", \"note\": \"AmountCents 10000 is within engine maxCents 21250 and limitCents 50000.\", \"pass\": true}], \"concerns\": [], \"verdict\": \"pass\"}",
                 "annotations": [],
                 "logprobs": []
               }
@@ -117,15 +74,58 @@
           }
         ],
         "usage": {
-          "input_tokens": 966,
+          "input_tokens": 893,
           "input_tokens_details": {
-            "cached_tokens": 0
+            "cached_tokens": 116
           },
-          "output_tokens": 1386,
+          "output_tokens": 1630,
           "output_tokens_details": {
-            "reasoning_tokens": 1282
+            "reasoning_tokens": 1411
           },
-          "total_tokens": 2352
+          "total_tokens": 2523
+        },
+        "incomplete_details": null
+      }
+    },
+    "5510b778268562bf": {
+      "label": "muse-spark-1.3 /v1/responses tools=24 results=1 user \"Propose a $100.00 advance for Monique Vasquez (BR-D07), requested on ...\"",
+      "path": "/v1/responses",
+      "body": {
+        "object": "response",
+        "status": "completed",
+        "model": "muse-spark-1.3",
+        "output": [
+          {
+            "type": "message",
+            "role": "assistant",
+            "content": [
+              {
+                "type": "output_text",
+                "text": "Found her \u2014 proposing the $100 advance for approval now.",
+                "annotations": [],
+                "logprobs": []
+              }
+            ],
+            "phase": "commentary",
+            "status": "completed"
+          },
+          {
+            "type": "function_call",
+            "name": "propose_advance",
+            "arguments": "{\"amountCents\":10000,\"driverId\":\"11655986-7168-4c21-a58c-0a33c542be93\",\"operatorVerdict\":\"eligible\",\"reasonCategories\":[\"driver_asked\"],\"requestedOn\":\"2026-10-27\",\"sourceRefs\":[{\"id\":\"11655986-7168-4c21-a58c-0a33c542be93\",\"table\":\"drivers\"}]}",
+            "status": "completed"
+          }
+        ],
+        "usage": {
+          "input_tokens": 11332,
+          "input_tokens_details": {
+            "cached_tokens": 8689
+          },
+          "output_tokens": 422,
+          "output_tokens_details": {
+            "reasoning_tokens": 209
+          },
+          "total_tokens": 11754
         },
         "incomplete_details": null
       }
@@ -144,7 +144,7 @@
             "content": [
               {
                 "type": "output_text",
-                "text": "Three drivers have a problem on the week of 2026-10-19 to 2026-10-25:\n\n- Ellen Kowalski (BR-D09) \u2014 net pay $0.00, $483.71 carried forward, 1 exception\n- Kevin Yarborough (BR-D04) \u2014 net pay $0.00, $682.75 carried forward, 1 exception\n- Wesley Delgado (BR-D20) \u2014 net pay $0.00, $146.61 carried forward, 1 exception\n\nWeek totals: net pay $23,122.27 with $1,313.07 carried forward and 3 exceptions.\n\nThe full table is below.\n",
+                "text": "Three drivers have a problem on the week of 2026-10-19 to 2026-10-25 \u2014 each shows 1 exception and $0.00 net pay:\n\n* Ellen Kowalski (BR-D09) \u2014 $0.00 net, $483.71 carried forward\n* Kevin Yarborough (BR-D04) \u2014 $0.00 net, $682.75 carried forward\n* Wesley Delgado (BR-D20) \u2014 $0.00 net, $146.61 carried forward\n\nWeek totals were $38,969.29 gross, $23,122.27 net, with $1,313.07 carried forward. The full table is below.",
                 "annotations": [],
                 "logprobs": []
               }
@@ -153,51 +153,15 @@
           }
         ],
         "usage": {
-          "input_tokens": 12037,
+          "input_tokens": 12127,
           "input_tokens_details": {
-            "cached_tokens": 0
+            "cached_tokens": 8689
           },
-          "output_tokens": 639,
+          "output_tokens": 661,
           "output_tokens_details": {
-            "reasoning_tokens": 491
+            "reasoning_tokens": 511
           },
-          "total_tokens": 12676
-        },
-        "incomplete_details": null
-      }
-    },
-    "6539edc8898c2740": {
-      "label": "muse-spark-1.3 /v1/responses tools=24 results=6 user \"Propose a $100.00 advance for Monique Vasquez (BR-D07), requested on ...\"",
-      "path": "/v1/responses",
-      "body": {
-        "object": "response",
-        "status": "completed",
-        "model": "muse-spark-1.3",
-        "output": [
-          {
-            "type": "message",
-            "role": "assistant",
-            "content": [
-              {
-                "type": "output_text",
-                "text": "Proposed a $100.00 advance for Monique Vasquez (BR-D07), requested 2026-10-27.\n\nIt is within her $212.50 limit and still needs a person to approve before anything is paid.",
-                "annotations": [],
-                "logprobs": []
-              }
-            ],
-            "status": "completed"
-          }
-        ],
-        "usage": {
-          "input_tokens": 12889,
-          "input_tokens_details": {
-            "cached_tokens": 12401
-          },
-          "output_tokens": 355,
-          "output_tokens_details": {
-            "reasoning_tokens": 298
-          },
-          "total_tokens": 13244
+          "total_tokens": 12788
         },
         "incomplete_details": null
       }
@@ -216,43 +180,24 @@
             "content": [
               {
                 "type": "output_text",
-                "text": "Found Monique Vasquez in the pay records \u2014 now checking her advance eligibility.",
+                "text": "Proposed a $100.00 advance for Monique Vasquez (BR-D07), requested 2026-10-27.\n\nIt is within her $212.50 limit from the check. This only creates a card \u2014 a person must approve it before anything is paid.",
                 "annotations": [],
                 "logprobs": []
               }
             ],
-            "phase": "commentary",
-            "status": "completed"
-          },
-          {
-            "type": "function_call",
-            "name": "get_driver",
-            "arguments": "{\"driverId\":\"11655986-7168-4c21-a58c-0a33c542be93\"}",
-            "status": "completed"
-          },
-          {
-            "type": "function_call",
-            "name": "get_advances",
-            "arguments": "{\"driverId\":\"11655986-7168-4c21-a58c-0a33c542be93\"}",
-            "status": "completed"
-          },
-          {
-            "type": "function_call",
-            "name": "get_advance_headroom",
-            "arguments": "{\"amountCents\":10000,\"driverId\":\"11655986-7168-4c21-a58c-0a33c542be93\"}",
             "status": "completed"
           }
         ],
         "usage": {
-          "input_tokens": 11815,
+          "input_tokens": 11632,
           "input_tokens_details": {
-            "cached_tokens": 0
+            "cached_tokens": 113
           },
-          "output_tokens": 367,
+          "output_tokens": 246,
           "output_tokens_details": {
-            "reasoning_tokens": 111
+            "reasoning_tokens": 181
           },
-          "total_tokens": 12182
+          "total_tokens": 11878
         },
         "incomplete_details": null
       }
@@ -271,18 +216,12 @@
             "content": [
               {
                 "type": "output_text",
-                "text": "I'll put together that $100 advance for Monique Vasquez \u2014 first locating her record to confirm eligibility.",
+                "text": "I'll pull that week's pay summary to locate Monique Vasquez for the advance.",
                 "annotations": [],
                 "logprobs": []
               }
             ],
             "phase": "commentary",
-            "status": "completed"
-          },
-          {
-            "type": "function_call",
-            "name": "report_advances_outstanding",
-            "arguments": "{}",
             "status": "completed"
           },
           {
@@ -293,15 +232,15 @@
           }
         ],
         "usage": {
-          "input_tokens": 8694,
+          "input_tokens": 8778,
           "input_tokens_details": {
             "cached_tokens": 0
           },
-          "output_tokens": 345,
+          "output_tokens": 192,
           "output_tokens_details": {
-            "reasoning_tokens": 217
+            "reasoning_tokens": 108
           },
-          "total_tokens": 9039
+          "total_tokens": 8970
         },
         "incomplete_details": null
       }
