@@ -212,12 +212,12 @@ function Position({ check, timezone, today }: { check: CashCheckView; timezone: 
       </section>
       <Card className="grid gap-2 px-4 py-4 sm:px-5">
         <p className="text-small font-semibold text-foreground-2">
-          {check.explanation ? "Muse Wonder explains" : "The rules engine says"}
+          {check.explanation ? "Muse Wonder explains" : "LedgerLine says"}
         </p>
         <p className="text-body text-foreground">{check.explanation ?? engineSentence(check.payDay, f)}</p>
         {check.explanation ? (
           <p className="text-small text-muted-foreground">
-            Written by Muse Wonder from the engine&apos;s figures; every dollar amount in it was checked against them.{" "}
+            Written by Muse Wonder from LedgerLine&apos;s figures; every dollar amount in it was checked against them.{" "}
             <Link href="/models" className="text-link underline-offset-4 hover:underline">
               See the model calls
             </Link>

@@ -54,24 +54,24 @@ export const CASH_CARD_NOTICES: Readonly<Record<string, string>> = {
   stale: "The bill changed after this card was made. Nothing was moved. Press Check Friday's cash for a fresh card.",
   expired: "This card expired. Nothing was moved. Press Check Friday's cash for a fresh card.",
   not_auditable:
-    "This card was made before the auditor started. Nothing was moved. Press Check Friday's cash for a fresh card.",
+    "This card was made before the second check started. Nothing was moved. Press Check Friday's cash for a fresh card.",
   not_executable: "Cash Friday is switched off right now. Nothing was moved or sent.",
 };
 
-// Why the page shows the engine's sentence instead of Muse Wonder's paragraph.
+// Why the page shows LedgerLine's own sentence instead of Muse Wonder's paragraph.
 const EXPLAIN_MISSING: Readonly<Record<string, string>> = {
-  figures: "Muse Wonder's paragraph named a dollar amount the engine did not give, so it is not shown.",
-  disabled: "Muse Wonder is switched off, so the engine's own sentence is shown.",
-  not_configured: "Muse Wonder is not set up here, so the engine's own sentence is shown.",
-  timeout: "Muse Wonder took too long, so the engine's own sentence is shown.",
-  cap: "The model budget is used up, so the engine's own sentence is shown.",
-  job_cap: "The model budget for this hour is used up, so the engine's own sentence is shown.",
-  too_expensive: "The model budget for one check is too small, so the engine's own sentence is shown.",
+  figures: "Muse Wonder's paragraph named a dollar amount LedgerLine did not give, so it is not shown.",
+  disabled: "Muse Wonder is switched off, so LedgerLine's own sentence is shown.",
+  not_configured: "Muse Wonder is not set up here, so LedgerLine's own sentence is shown.",
+  timeout: "Muse Wonder took too long, so LedgerLine's own sentence is shown.",
+  cap: "The model budget is used up, so LedgerLine's own sentence is shown.",
+  job_cap: "The model budget for this hour is used up, so LedgerLine's own sentence is shown.",
+  too_expensive: "The model budget for one check is too small, so LedgerLine's own sentence is shown.",
 };
 
 export function explainMissing(category: string | null): string | null {
   if (category === null) return null;
   return Object.hasOwn(EXPLAIN_MISSING, category)
     ? EXPLAIN_MISSING[category]
-    : "Muse Wonder's paragraph could not be used, so the engine's own sentence is shown.";
+    : "Muse Wonder's paragraph could not be used, so LedgerLine's own sentence is shown.";
 }

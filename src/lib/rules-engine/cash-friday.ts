@@ -16,9 +16,11 @@ import {
   type Cents,
   type ChaseLine,
   type ChaseOption,
+  type CustomerPaymentRecord,
   type FactoringLine,
   type FactoringOption,
   type InvoiceRecord,
+  type PaymentApplicationRecord,
   type PaymentLabel,
   type PaymentProfile,
   type ReceiptLine,
@@ -161,6 +163,36 @@ export function expectedReceipts(
       compareText(a.invoiceNumber, b.invoiceNumber) ||
       compareText(a.invoiceId, b.invoiceId),
   );
+}
+
+// A payment received since the balance date is already in cash on hand. The part of it not yet
+// applied to an invoice still sits in that customer's open balances, so it would count a second
+// time as expected: it comes off that customer's counted lines, in line order, never below zero.
+// Each dollar counts once.
+function lessUnappliedSince(
+  lines: readonly ReceiptLine[],
+  paymentsSince: readonly CustomerPaymentRecord[],
+  applications: readonly PaymentApplicationRecord[],
+): ReceiptLine[] {
+  const applied = new Map<string, Cents>();
+  for (const a of applications) applied.set(a.paymentId, sum([applied.get(a.paymentId) ?? 0, a.amountCents]));
+  const unapplied = new Map<string, { cents: Cents; sources: SourceRef[] }>();
+  for (const p of paymentsSince) {
+    const left = sub(p.amountCents, applied.get(p.id) ?? 0);
+    if (left <= 0) continue;
+    const own = unapplied.get(p.customerId);
+    unapplied.set(p.customerId, {
+      cents: sum([own?.cents ?? 0, left]),
+      sources: [...(own?.sources ?? []), { table: "customer_payments", id: p.id }],
+    });
+  }
+  return lines.map((line) => {
+    const own = unapplied.get(line.customerId);
+    if (!own || own.cents <= 0 || line.expectedCents <= 0) return line;
+    const take = own.cents < line.expectedCents ? own.cents : line.expectedCents;
+    own.cents = sub(own.cents, take);
+    return { ...line, expectedCents: sub(line.expectedCents, take), sources: [...line.sources, ...own.sources] };
+  });
 }
 
 // Within (after, through]: left the bank after the balance date, on or before today.
@@ -380,7 +412,11 @@ export function computeCashFriday(input: CashFridayInput, asOfDate: LocalDate): 
   };
   const openInvoiceList = openInvoices(input);
   const profiles = profilesFor(openInvoiceList, receivables, asOf);
-  const lines = expectedReceipts(openInvoiceList, profiles, asOf, payDay, limits.graceDays);
+  const lines = lessUnappliedSince(
+    expectedReceipts(openInvoiceList, profiles, asOf, payDay, limits.graceDays),
+    paymentsSince,
+    input.applications,
+  );
   const expectedReceiptsCents = sum(lines.map((l) => l.expectedCents));
 
   const fuel = input.advances.filter((a) => a.status === "requested" || a.status === "approved");

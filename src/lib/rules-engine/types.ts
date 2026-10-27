@@ -795,7 +795,9 @@ export type ReceiptLine = {
   onTimeBps: number;
   label: PaymentLabel;
   status: ReceiptStatus;
-  // mulBps(balance, onTimeBps) when counted, else 0.
+  // mulBps(balance, onTimeBps) when counted, else 0; less any part of the customer's payments
+  // received since the balance date that is not applied to an invoice (already in cash on hand),
+  // taken from its counted lines in order, never below 0.
   expectedCents: Cents;
   sources: SourceRef[];
 };

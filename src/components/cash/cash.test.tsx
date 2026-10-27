@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CHECK_NOT_CONFIRMED, CHECK_NOTICE, explainMissing } from "@/lib/cash/labels";
+import { CASH_CARD_NOTICES, CHECK_NOT_CONFIRMED, CHECK_NOTICE, explainMissing } from "@/lib/cash/labels";
 import { CashVerdict } from "./cash-verdict";
 import { CHECK_LABEL, CheckCashButton } from "./check-cash-button";
 
@@ -77,9 +77,25 @@ describe("CashVerdict", () => {
 });
 
 describe("explainMissing", () => {
-  it("says why the engine's sentence shows, and nothing when there was no attempt", () => {
+  it("says why LedgerLine's own sentence shows, and nothing when there was no attempt", () => {
     expect(explainMissing(null)).toBeNull();
-    expect(explainMissing("figures")).toMatch(/dollar amount the engine did not give/);
+    expect(explainMissing("figures")).toMatch(/dollar amount LedgerLine did not give/);
     expect(explainMissing("some_new_category")).toMatch(/could not be used/);
+  });
+});
+
+// The plain-word list: none of the Cash page's fixed sentences uses a word kept off screens.
+describe("the Cash page's fixed sentences", () => {
+  it("never say engine, auditor, proposal, verdict or the other internal words", () => {
+    const missing = ["figures", "disabled", "not_configured", "timeout", "cap", "job_cap", "too_expensive", "other"];
+    const sentences = [
+      ...Object.values(CHECK_NOTICE),
+      CHECK_NOT_CONFIRMED,
+      ...Object.values(CASH_CARD_NOTICES),
+      ...missing.map((c) => explainMissing(c) ?? ""),
+    ];
+    for (const s of sentences) {
+      expect(s).not.toMatch(/\b(engine|auditor|proposals?|verdict|ledger|tenant|executor|execute|gateway|payload|idempotency)\b/i);
+    }
   });
 });

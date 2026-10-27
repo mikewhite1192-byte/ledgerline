@@ -268,7 +268,7 @@ describe("computeCashFriday on the golden week", () => {
     ]);
   });
 
-  it("factors the largest recent invoice of a customer who is not a repeat late payer", () => {
+  it("factors the largest recent invoice not expected by pay day", () => {
     const factoring = result.options[0];
     expect(factoring).toMatchObject({
       kind: "factoring_request",
@@ -395,6 +395,14 @@ describe("computeCashFriday option limits", () => {
     ]);
     expect(factoring.amountCents).toBe(117_455);
     expect(factoring.coversShort).toBe(false);
+  });
+
+  it("factors a repeat late payer's invoice like any other: the fee and the reserve price the wait", () => {
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(100_000) } }));
+    expect(result.lines.find((l) => l.invoiceId === "L2")).toMatchObject({ label: "repeat_late", status: "after_pay_day" });
+    const factoring = result.options[0];
+    if (factoring.kind !== "factoring_request") throw new Error("not factoring");
+    expect(factoring.invoices.find((i) => i.invoiceId === "L2")).toMatchObject({ customerId: "cust-l", netCents: 21_750 });
   });
 
   it("never factors an invoice the engine already counts by pay day", () => {
@@ -577,6 +585,55 @@ describe("cash on hand window", () => {
     );
     expect(result.figures.advancesPaidSinceCents).toBe(base.advancesPaidSinceCents + 9_000);
     expect(result.figures.fuelLoadsCents).toBe(base.fuelLoadsCents);
+  });
+});
+
+describe("an unapplied payment counts once", () => {
+  // The golden week's own payments: pay-m1 (Nov 2) is applied in full to M1, and pay-old (Nov 1,
+  // unapplied) is in the balance itself. Neither takes anything off the counted lines.
+  const base = position(golden());
+  const counted = (r: CashPosition, id: string) => r.lines.find((l) => l.invoiceId === id)?.expectedCents;
+
+  it("takes a payment received since the balance date and not applied off its customer's expected receipts", () => {
+    const result = position(golden({ payments: [...golden().payments, payment("pay-r-new", "cust-r", "2026-11-02", 30_000)] }));
+    // In cash on hand once, out of R1's counted 100,000 once: the gap does not move.
+    expect(result.figures.cashOnHandCents).toBe(base.figures.cashOnHandCents + 30_000);
+    expect(counted(result, "R1")).toBe(70_000);
+    expect(result.figures.expectedReceiptsCents).toBe(base.figures.expectedReceiptsCents - 30_000);
+    expect(result.figures.gapCents).toBe(base.figures.gapCents);
+    expect(result.lines.find((l) => l.invoiceId === "R1")?.sources).toContainEqual({
+      table: "customer_payments",
+      id: "pay-r-new",
+    });
+    // Every other line keeps its count.
+    for (const l of result.lines.filter((x) => x.invoiceId !== "R1")) expect(l.expectedCents).toBe(counted(base, l.invoiceId));
+  });
+
+  it("never takes a customer's expected receipts below zero", () => {
+    const result = position(golden({ payments: [...golden().payments, payment("pay-n-new", "cust-n", "2026-11-02", 40_000)] }));
+    // N1 counted 15,000; the other 25,000 of the payment is cash on hand with nothing to offset.
+    expect(counted(result, "N1")).toBe(0);
+    expect(result.figures.expectedReceiptsCents).toBe(base.figures.expectedReceiptsCents - 15_000);
+    expect(result.figures.gapCents).toBe(base.figures.gapCents + 25_000);
+  });
+
+  it("takes off only the part of a payment that is not applied", () => {
+    const result = position(
+      golden({
+        payments: [...golden().payments, payment("pay-r-part", "cust-r", "2026-11-02", 50_000)],
+        applications: [...golden().applications, applied("app-r-part", "pay-r-part", "R2", 20_000)],
+      }),
+    );
+    // 20,000 pays R2 (not expected by Friday), so 30,000 is left to come off R1.
+    expect(counted(result, "R1")).toBe(70_000);
+    expect(result.lines.find((l) => l.invoiceId === "R2")?.balanceCents).toBe(30_000);
+    expect(result.figures.gapCents).toBe(base.figures.gapCents + 20_000);
+  });
+
+  it("leaves the counted lines alone for a payment received on or before the balance date", () => {
+    const result = position(golden({ payments: [...golden().payments, payment("pay-r-old", "cust-r", "2026-10-31", 30_000)] }));
+    expect(counted(result, "R1")).toBe(100_000);
+    expect(result.figures).toEqual(base.figures);
   });
 });
 
