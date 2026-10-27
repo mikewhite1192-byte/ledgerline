@@ -59,6 +59,7 @@ describe("row-level security coverage", () => {
       expect.arrayContaining([
         "conversations",
         "driver_notes",
+        "evidence_clips",
         "gateway_decisions",
         "memberships",
         "model_calls",

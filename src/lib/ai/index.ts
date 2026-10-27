@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { DbError, getDb, type TenantDb } from "../db";
+import { readMp4Header, type Mp4Header } from "../clips/mp4";
 import { ForbiddenError } from "../tenant/context";
 import { isUuid } from "../uuid";
 import { apiKey, forgetKey, type SecretsClient } from "./keys";
@@ -13,6 +14,7 @@ import {
   mediaReserveTokens,
   meteredCost,
   NANOCENTS_PER_CENT,
+  videoFramesCost,
   wonderCapNanocents,
   type Price,
 } from "./prices";
@@ -22,7 +24,7 @@ import { post, type FetchFn } from "./providers/http";
 import { dataUrlLength, IMAGE_MIMES, looksLike, pdfPages } from "./providers/media";
 import { META_RESPONSES_URL, metaBody, parseMeta } from "./providers/meta";
 import { imageBody, META_IMAGES_URL, parseImage } from "./providers/meta-image";
-import { parseSam, samBody } from "./providers/meta-sam";
+import { parseSam, parseSamVideo, samBody, samVideoBody } from "./providers/meta-sam";
 import {
   META_TRANSCRIBE_ACCEPT,
   META_TRANSCRIBE_URL,
@@ -49,6 +51,8 @@ import {
   type Metered,
   type SegmentRequest,
   type SegmentResult,
+  type SegmentVideoRequest,
+  type SegmentVideoResult,
   type TranscribeRequest,
   type TranscribeResult,
 } from "./types";
@@ -78,13 +82,15 @@ export type {
   SegmentMatch,
   SegmentRequest,
   SegmentResult,
+  SegmentVideoRequest,
+  SegmentVideoResult,
   TranscribeRequest,
   TranscribeResult,
   TranscribeTurn,
 } from "./types";
 
 // The one door to a model. Every runtime model call in the app goes through complete(),
-// transcribe(), generateImage() or segment(), and all four through runCall(): it checks the
+// transcribe(), generateImage(), segment() or segmentVideo(), and all of them through runCall(): it checks the
 // switch, reserves the call's worst-case cost in the spend ledger, calls the provider once,
 // settles the ledger to the real cost, and writes one log line. It never retries a host. Muse
 // Spark Open alone has a standby host (./standby.ts): while flags.sparkOpenFallback names it,
@@ -130,6 +136,10 @@ const IMAGE_FORMATS: readonly string[] = ["png", "jpeg", "webp"];
 const MAX_ATTACHMENTS = 8;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
+// The evidence clip cap, the same as the table's CHECK: 933,336 base64 characters inline, well
+// under the 1 MiB request body Meta accepts.
+const MAX_VIDEO_BYTES = 700_000;
+const MAX_VIDEOS_PER_CALL = 1;
 const MAX_IMAGES_PER_CALL = 4;
 const MAX_PROMPT_CHARS = 4_000;
 const MAX_KEYWORDS = 20;
@@ -144,6 +154,8 @@ const DEFAULT_TIMEOUT_MS = 25_000;
 const SLOW_TIMEOUT_MS = 60_000;
 // A standby attempt is started only with at least this much of the caller's time left.
 const MIN_STANDBY_MS = 1_000;
+// Two of these run in parallel inside one upload request, so each stays well inside its budget.
+const SEGMENT_VIDEO_TIMEOUT_MS = 20_000;
 
 function inRange(value: unknown, min: number, max: number): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
@@ -196,7 +208,7 @@ type Failed<T> = Exclude<CallOutcome<T>, { kind: "answered" }>;
 // The ledger's units column: what a call that is not billed by tokens is billed by.
 function unitsOf(metered: Metered): number | null {
   if (metered.unit === "audio_seconds") return metered.seconds;
-  if (metered.unit === "images") return metered.count;
+  if (metered.unit === "images" || metered.unit === "video_frames") return metered.count;
   return null;
 }
 
@@ -485,6 +497,25 @@ function refusalCategory(err: unknown): string {
 
 type TextOptions = { maxOutputTokens: number; reasoningEffort: AiReasoningEffort };
 
+// A video's header when it is an MP4 under the cap that reads as a clip and whose declared frame
+// count is the header's own; null otherwise. The reserve is computed from that count, so a
+// caller cannot shrink it by declaring fewer frames.
+function videoHeader(video: unknown): Mp4Header | null {
+  if (typeof video !== "object" || video === null) return null;
+  const v = video as { mime?: unknown; bytes?: unknown; frameCount?: unknown };
+  if (
+    v.mime !== "video/mp4" ||
+    !(v.bytes instanceof Uint8Array) ||
+    v.bytes.length === 0 ||
+    v.bytes.length > MAX_VIDEO_BYTES ||
+    !looksLike("video/mp4", v.bytes)
+  ) {
+    return null;
+  }
+  const read = readMp4Header(v.bytes);
+  return read.ok && read.header.frameCount === v.frameCount ? read.header : null;
+}
+
 function validAttachment(a: AiAttachment): boolean {
   if (typeof a !== "object" || a === null || !(a.bytes instanceof Uint8Array)) return false;
   if (a.kind === "image") {
@@ -503,6 +534,7 @@ function validAttachment(a: AiAttachment): boolean {
       (a.filename === undefined || (typeof a.filename === "string" && FILE_NAME.test(a.filename)))
     );
   }
+  if (a.kind === "video") return videoHeader(a) !== null;
   return false;
 }
 
@@ -518,6 +550,7 @@ function validateText(target: AiTextTarget, request: AiRequest): TextOptions {
   const attachments = messages.flatMap((m) =>
     m.role === "user" && Array.isArray(m.attachments) ? m.attachments : [],
   );
+  const videos = attachments.filter((a) => a?.kind === "video").length;
   const ok =
     inRange(options.maxOutputTokens, 16, 8192) &&
     efforts.includes(options.reasoningEffort) &&
@@ -562,6 +595,10 @@ function validateText(target: AiTextTarget, request: AiRequest): TextOptions {
         (format.strict === undefined || typeof format.strict === "boolean"))) &&
     attachments.length <= MAX_ATTACHMENTS &&
     attachments.every(validAttachment) &&
+    // A video goes to Muse Spark only, one a call, and only from a caller that sized the call's
+    // cost for it: the default maxCostCents is for text and images.
+    (videos === 0 ||
+      (target === "spark" && videos <= MAX_VIDEOS_PER_CALL && request.maxCostCents !== undefined)) &&
     // Structured output and attachments are not checked on Baseten yet.
     (meta || (format === undefined && attachments.length === 0)) &&
     replay.every((item) => item?.type === "reasoning") &&
@@ -609,13 +646,19 @@ export async function complete(
       let attachmentChars = 0;
       let images = 0;
       let pages = 0;
+      let video: { frames: number; durationMs: number } | null = null;
       for (const m of request.messages) {
         if (m.role !== "user") continue;
         for (const a of m.attachments ?? []) {
-          const mime = a.kind === "image" ? a.mime : "application/pdf";
+          const mime = a.kind === "pdf" ? "application/pdf" : a.mime;
           attachmentChars += dataUrlLength(mime, a.bytes.length);
           if (a.kind === "image") images += 1;
-          else pages += pdfPages(a.bytes);
+          else if (a.kind === "video") {
+            // validateText already read this header; at most one video per call.
+            const header = videoHeader(a);
+            if (!header) bad();
+            video = { frames: header.frameCount, durationMs: header.durationMs };
+          } else pages += pdfPages(a.bytes);
         }
       }
       const textBytes = new TextEncoder().encode(body).length - attachmentChars;
@@ -626,7 +669,7 @@ export async function complete(
           price,
           textBytes,
           options.maxOutputTokens,
-          mediaReserveTokens(images, pages),
+          mediaReserveTokens(images, pages, video),
         ),
         // Baseten and Fireworks take no reasoning setting, so none is recorded for them.
         reasoningEffort: meta ? options.reasoningEffort : null,
@@ -763,7 +806,7 @@ export async function segment(
 ): Promise<SegmentResult> {
   const { callId, answer, costNanocents } = await runCall(
     "sam",
-    "images",
+    "segmentation",
     request,
     DEFAULT_TIMEOUT_MS,
     session,
@@ -804,6 +847,62 @@ export async function segment(
     imageWidth: answer.value.imageWidth,
     imageHeight: answer.value.imageHeight,
     matches: answer.value.matches,
+    costNanocents,
+  };
+}
+
+// --- segmentVideo: SAM 3.1 tracking through a video ---
+
+export async function segmentVideo(
+  request: SegmentVideoRequest,
+  session: Session,
+  deps: AiDeps = {},
+): Promise<SegmentVideoResult> {
+  const { callId, answer, costNanocents } = await runCall(
+    "sam",
+    "segmentation",
+    request,
+    SEGMENT_VIDEO_TIMEOUT_MS,
+    session,
+    deps,
+    (model, price) => {
+      const header = videoHeader(request.video);
+      const propagation = request.propagation ?? "both";
+      const maskEncoding = request.maskEncoding ?? "one_bit";
+      const includeConfidence = request.includeConfidence ?? true;
+      if (
+        !header ||
+        typeof request.prompt !== "string" ||
+        !SAM_PROMPT.test(request.prompt) ||
+        (propagation !== "both" && propagation !== "forward" && propagation !== "backward") ||
+        (maskEncoding !== "lossless" && maskEncoding !== "one_bit") ||
+        typeof includeConfidence !== "boolean"
+      ) {
+        bad();
+      }
+      return {
+        url: META_RESPONSES_URL,
+        body: JSON.stringify(
+          samVideoBody(model, request.video, request.prompt, {
+            maskEncoding,
+            includeConfidence,
+            propagation,
+          }),
+        ),
+        // Every frame of the clip, never under the per-request floor.
+        reserveNanocents: videoFramesCost(price, header.frameCount),
+        reasoningEffort: null,
+        parse: parseSamVideo(header.frameCount - 1),
+      };
+    },
+  );
+  if (answer.metered.unit !== "video_frames") throw new AiError("unknown");
+  return {
+    callId,
+    frames: answer.value.frames,
+    width: answer.value.width,
+    height: answer.value.height,
+    framesProcessed: answer.value.framesProcessed,
     costNanocents,
   };
 }

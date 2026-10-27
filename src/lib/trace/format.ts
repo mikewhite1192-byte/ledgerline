@@ -32,7 +32,7 @@ const TARGET_JOBS: Readonly<Record<string, string>> = {
   spark_open: "Screens outside text, like an email, before the agent reads it.",
   voice: "Turns a spoken question into text.",
   image: "Reads document images.",
-  sam: "Finds and crops a document in a photo.",
+  sam: "Finds faces and license plates in a dock clip so they are blurred, and finds a document in a photo.",
 };
 
 const has = (map: Readonly<Record<string, string>>, key: string) =>

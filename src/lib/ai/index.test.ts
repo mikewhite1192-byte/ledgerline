@@ -3,11 +3,14 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { DbError, type Param, type Queryable, type TenantDb } from "../db";
 import { ForbiddenError } from "../tenant/context";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   AiError,
   complete,
   generateImage,
   segment,
+  segmentVideo,
   transcribe,
   type AiDeps,
   type AiRequest,
@@ -19,6 +22,7 @@ import {
   NANOCENTS_PER_CENT,
   priceFor,
   type TokenPrice,
+  videoReserveTokens,
   VOICE_NANOCENTS_PER_SECOND,
 } from "./prices";
 import { forgetKey } from "./keys";
@@ -1892,5 +1896,188 @@ describe("Muse Spark Open's standby host", () => {
     flags.sparkOpenFallback = "fireworks";
     await complete("spark_open", REQUEST, SESSION, deps);
     expect(fetchFn).toHaveBeenCalledTimes(5);
+  });
+});
+
+// A real two-frame clip (64x64, 2 fps, H.264), made by scripts/make-dock-clip.ts.
+const CLIP = new Uint8Array(readFileSync(join(__dirname, "../clips/fixtures/tiny.mp4")));
+const CLIP_FRAMES = 2;
+const SAM_VIDEO_TEXT =
+  "<0f>0<|box;x1=10;y1=12;x2=30;y2=40;w=64;h=64;c=0.9|><|mask;x=0;y=0;c=0.9;data=28,20,!ab|>\n";
+const samVideoAnswer = (processed: unknown = 50) =>
+  Response.json({
+    id: "resp_video1",
+    status: "completed",
+    output: [{ type: "message", content: [{ type: "output_text", text: SAM_VIDEO_TEXT }] }],
+    usage: { video_frames_processed: processed },
+  });
+const videoRequest = (overrides: object = {}) => ({
+  purpose: "clip_redact_face",
+  video: { mime: "video/mp4" as const, bytes: CLIP, frameCount: CLIP_FRAMES },
+  prompt: "face",
+  ...overrides,
+});
+const videoMessage = (frameCount = CLIP_FRAMES): AiRequest => ({
+  purpose: "clip_read",
+  maxCostCents: 10,
+  messages: [
+    {
+      role: "user",
+      content: "Read the clock.",
+      attachments: [{ kind: "video", mime: "video/mp4", bytes: CLIP, frameCount }],
+    },
+  ],
+});
+
+describe("video", () => {
+  it("tracks a concept through a clip: reserves the 50-frame floor, charges what was billed", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => samVideoAnswer(50));
+    const result = await segmentVideo(videoRequest({ traceId: TRACE }), SESSION, {
+      fetch: fetchFn,
+      db: ledger.db,
+    });
+    const sent = JSON.parse(String(fetchFn.mock.calls[0][1].body));
+    expect(sent.model).toBe("sam-3.1");
+    expect(sent.store).toBe(false);
+    // Two frames still reserve and bill the 50-frame minimum.
+    expect(ledger.rows.get(result.callId)).toMatchObject({
+      target: "sam",
+      kind: "segment",
+      reserved: 50 * 20_000_000,
+      cost: 50 * 20_000_000,
+      units: 50,
+      trace: TRACE,
+    });
+    expect(result.framesProcessed).toBe(50);
+    expect(result.width).toBe(64);
+    expect([...result.frames.keys()]).toEqual([0]);
+    expect(result.frames.get(0)?.[0].box).toEqual({ x1: 10, y1: 12, x2: 30, y2: 40 });
+    expect(logged.join("\n")).not.toContain(Buffer.from(CLIP).toString("base64").slice(0, 40));
+  });
+
+  it("stops both video calls at the switch, the Contributor check and the spend cap, with nothing sent", async () => {
+    const calls = [
+      (deps: AiDeps) => segmentVideo(videoRequest(), SESSION, deps),
+      (deps: AiDeps) => complete("spark", videoMessage(), SESSION, deps),
+    ];
+    for (const call of calls) {
+      flags.aiEnabled = false;
+      let ledger = fakeLedger();
+      let fetchFn = fakeFetch(ledger.steps);
+      expect((await refusal(call({ fetch: fetchFn, db: ledger.db }))).category).toBe("disabled");
+      expect(ledger.steps).toEqual([]);
+      flags.aiEnabled = true;
+
+      vi.stubEnv("META_CONTRIBUTOR_MODE", "yes");
+      ledger = fakeLedger();
+      fetchFn = fakeFetch(ledger.steps);
+      expect((await refusal(call({ fetch: fetchFn, db: ledger.db }))).category).toBe("not_configured");
+      expect(ledger.steps).toEqual([]);
+      baseEnv();
+
+      // A tenth of a cent left under the overall cap: either reserve is over it.
+      const start = { spent: 12_000 * NANOCENTS_PER_CENT - 1_000_000, calls: 7 };
+      ledger = fakeLedger(start);
+      fetchFn = fakeFetch(ledger.steps);
+      expect((await refusal(call({ fetch: fetchFn, db: ledger.db }))).category).toBe("cap");
+      expect(ledger.steps).toEqual(["tx tenant", "membership", "lock counter"]);
+      expect(ledger.counter).toMatchObject({ ...start, reserved: 0 });
+      expect(fetchFn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses a clip whose declared frame count, type or phrase is wrong before any reserve", async () => {
+    const cases = [
+      videoRequest({ video: { mime: "video/mp4", bytes: CLIP, frameCount: 1 } }),
+      videoRequest({ video: { mime: "video/quicktime", bytes: CLIP, frameCount: CLIP_FRAMES } }),
+      videoRequest({ video: { mime: "video/mp4", bytes: PNG_BYTES, frameCount: CLIP_FRAMES } }),
+      videoRequest({ video: { mime: "video/mp4", bytes: new Uint8Array(700_001), frameCount: 2 } }),
+      videoRequest({ prompt: "box;x1=1" }),
+      videoRequest({ prompt: "face 2" }),
+      videoRequest({ propagation: "sideways" }),
+      videoRequest({ maskEncoding: "rle" }),
+      videoRequest({ includeConfidence: "yes" }),
+    ];
+    for (const request of cases) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps, () => samVideoAnswer());
+      const err = await refusal(segmentVideo(request as never, SESSION, { fetch: fetchFn, db: ledger.db }));
+      expect(err.category, JSON.stringify(request).slice(0, 160)).toBe("bad_request");
+      expect(ledger.steps).toEqual([]);
+    }
+  });
+
+  it("refuses a clip whose reserve is over the caller's cost limit, with nothing sent", async () => {
+    // The synthetic dock clip: 144 frames reserve 2.88 cents, over a 2-cent limit.
+    const demo = new Uint8Array(readFileSync(join(__dirname, "../../../public/demo/dock-clip-br-l10216.mp4")));
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => samVideoAnswer());
+    const request = videoRequest({ maxCostCents: 2, video: { mime: "video/mp4", bytes: demo, frameCount: 144 } });
+    const err = await refusal(segmentVideo(request, SESSION, { fetch: fetchFn, db: ledger.db }));
+    expect(err.category).toBe("too_expensive");
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(ledger.counter.reserved).toBe(0);
+  });
+
+  it("keeps the reservation when a tracking answer cannot be read", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => samVideoAnswer("50"));
+    expect((await refusal(segmentVideo(videoRequest(), SESSION, { fetch: fetchFn, db: ledger.db }))).category).toBe(
+      "unknown",
+    );
+    const [row] = [...ledger.rows.values()];
+    expect(row.status).toBe("unknown");
+    expect(ledger.counter).toMatchObject({ spent: 0, reserved: 50 * 20_000_000, calls: 1 });
+  });
+
+  it("sends a clip to Muse Spark inline and reserves its seconds and frames, not its base64", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps);
+    const request = videoMessage();
+    const result = await complete("spark", request, SESSION, { fetch: fetchFn, db: ledger.db });
+    const body = String(fetchFn.mock.calls[0][1].body);
+    const sent = JSON.parse(body);
+    const part = sent.input[0].content.find((c: { type: string }) => c.type === "input_video");
+    expect(part.video_url).toBe(`data:video/mp4;base64,${Buffer.from(CLIP).toString("base64")}`);
+    const dataChars = part.video_url.length;
+    const reserved = estimateReserve(
+      priceFor("spark", "meta", "muse-spark-1.3") as TokenPrice,
+      new TextEncoder().encode(body).length - dataChars,
+      1024,
+      videoReserveTokens(CLIP_FRAMES, 1000),
+    );
+    expect(ledger.rows.get(result.callId)).toMatchObject({ reserved });
+  });
+
+  it("refuses a clip sent to another model, two clips, a wrong frame count or no cost limit", async () => {
+    const two: AiRequest = {
+      ...videoMessage(),
+      messages: [
+        {
+          role: "user",
+          content: "Read both.",
+          attachments: [
+            { kind: "video", mime: "video/mp4", bytes: CLIP, frameCount: CLIP_FRAMES },
+            { kind: "video", mime: "video/mp4", bytes: CLIP, frameCount: CLIP_FRAMES },
+          ],
+        },
+      ],
+    };
+    const noLimit: AiRequest = { ...videoMessage(), maxCostCents: undefined };
+    const cases: [AiTextTarget, AiRequest][] = [
+      ["wonder", videoMessage()],
+      ["spark_open", videoMessage()],
+      ["spark", two],
+      ["spark", videoMessage(3)],
+      ["spark", noLimit],
+    ];
+    for (const [target, request] of cases) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      const err = await refusal(complete(target, request, SESSION, { fetch: fetchFn, db: ledger.db }));
+      expect(err.category, target).toBe("bad_request");
+      expect(ledger.steps).toEqual([]);
+    }
   });
 });

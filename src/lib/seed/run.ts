@@ -132,6 +132,9 @@ const NAMED_BY_LEDGER = `SELECT 1 FROM money_actions m
    WHERE m.tenant_id = CAST($1 AS uuid) AND m.proposal_id = p.id`;
 
 const AGENT_CLEAR = [
+  // Dock clips first: each names a load the replace deletes. The app role has no DELETE on them
+  // (a redacted clip is evidence), so only this reseed path removes them.
+  "DELETE FROM evidence_clips WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM driver_notes WHERE tenant_id = CAST($1 AS uuid)",
   `DELETE FROM turn_steps s
     WHERE s.tenant_id = CAST($1 AS uuid)

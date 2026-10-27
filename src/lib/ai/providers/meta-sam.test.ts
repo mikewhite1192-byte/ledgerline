@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { META_SAM_URL, parseSam, parseSegmentation, samBody } from "./meta-sam";
+import {
+  META_SAM_URL,
+  parseSam,
+  parseSamVideo,
+  parseSegmentation,
+  parseSegmentationFrames,
+  samBody,
+  samVideoBody,
+} from "./meta-sam";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 // A payload in the shape SAM returned: base85, with "=", ":" and quotes inside it.
@@ -160,5 +168,102 @@ describe("parseSam", () => {
       metered: { unit: "images", count: 1 },
       value: { matches: [] },
     });
+  });
+});
+
+// Three frame lines from the measured license plate answer on the synthetic dock clip (frames 32,
+// 33 and 57 of 144; every frame with no match is left out of the answer).
+const PLATE_LINES = [
+  "<32f>0<|box;x1=232;y1=237;x2=406;y2=300;w=640;h=360;c=0.8632478713989258|><|mask;x=0;y=0;c=0.8632478713989258;data=64,175,!!!!!OI70r'(Q)w`MO#?svHEcP&a[R2RC3@z%lH+wW'3sJ({l[aE9FjR!!|>",
+  "<33f>0<|box;x1=231;y1=237;x2=406;y2=301;w=640;h=360;c=0.8632478713989258|><|mask;x=0;y=0;c=0.8632478713989258;data=65,176,!!!!!ZH3bkT:N^a755knHn3bE2!vioR/u.sd^P_vAA3=5kk`NAJMbl'1[fs/*kg7jVo&oEW|>",
+  "<57f>0<|box;x1=158;y1=112;x2=219;y2=174;w=640;h=360;c=0.8632478713989258|><|mask;x=0;y=0;c=0.8632478713989258;data=63,62,!!!!!jEbTeynrG%5guCO(DwzkpKN1Hpluy@qk#*S.s7m9E?Oa1FBOylyl(Ky+X@u?M?txm9cxc6F$Ow(:lKAHQ:K/A|>",
+];
+
+function videoAnswer(text: string, usage: unknown = { video_frames_processed: 144 }, status = "completed") {
+  return {
+    id: "resp_video",
+    status,
+    output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text }] }],
+    usage,
+    store: false,
+  };
+}
+
+describe("samVideoBody", () => {
+  it("sends the phrase and the clip inline with the tracking settings as strings, nothing stored", () => {
+    const bytes = new Uint8Array([0, 0, 0, 8, 0x66, 0x74, 0x79, 0x70]);
+    expect(
+      samVideoBody("sam-3.1", { bytes }, "license plate", {
+        maskEncoding: "one_bit",
+        includeConfidence: true,
+        propagation: "both",
+      }),
+    ).toEqual({
+      model: "sam-3.1",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "license plate" },
+            { type: "input_video", video_url: `data:video/mp4;base64,${Buffer.from(bytes).toString("base64")}` },
+          ],
+        },
+      ],
+      metadata: { mask_encoding: "one_bit", include_confidence: "true", propagation_direction: "both" },
+      store: false,
+    });
+  });
+});
+
+describe("parseSegmentationFrames", () => {
+  it("reads the measured lines: frames from 0, boxes in the clip's pixels, one size", () => {
+    const answer = parseSegmentationFrames(PLATE_LINES.join("\n"), 143);
+    expect(answer).not.toBeNull();
+    expect([...answer!.frames.keys()]).toEqual([32, 33, 57]);
+    expect(answer!.width).toBe(640);
+    expect(answer!.height).toBe(360);
+    expect(answer!.frames.get(32)![0].box).toEqual({ x1: 232, y1: 237, x2: 406, y2: 300 });
+    expect(answer!.frames.get(57)![0].box).toEqual({ x1: 158, y1: 112, x2: 219, y2: 174 });
+    expect(answer!.frames.get(33)![0].confidence).toBeCloseTo(0.8632, 4);
+  });
+
+  it("reads an answer with no frames as nothing matched", () => {
+    expect(parseSegmentationFrames("", 143)).toEqual({ frames: new Map(), width: null, height: null });
+  });
+
+  it("refuses a frame past the clip, a repeated frame and text before the first frame", () => {
+    expect(parseSegmentationFrames(PLATE_LINES.join("\n"), 56)).toBeNull();
+    expect(parseSegmentationFrames([PLATE_LINES[0], PLATE_LINES[0]].join("\n"), 143)).toBeNull();
+    expect(parseSegmentationFrames(`note ${PLATE_LINES[0]}`, 143)).toBeNull();
+  });
+});
+
+describe("parseSamVideo", () => {
+  it("charges the frames the provider processed", () => {
+    const outcome = parseSamVideo(143)(videoAnswer(PLATE_LINES.join("\n")), 200);
+    expect(outcome).toMatchObject({
+      kind: "answered",
+      status: "ok",
+      upstreamId: "resp_video",
+      metered: { unit: "video_frames", count: 144 },
+      value: { width: 640, height: 360, framesProcessed: 144 },
+    });
+  });
+
+  it("is unknown without a positive whole frame count, when not completed, or when the text does not parse", () => {
+    const parse = parseSamVideo(143);
+    for (const json of [
+      videoAnswer("", {}),
+      videoAnswer("", { video_frames_processed: 0 }),
+      videoAnswer("", { video_frames_processed: 1.5 }),
+      videoAnswer("", { video_frames_processed: "144" }),
+      videoAnswer("", null),
+      videoAnswer("", { video_frames_processed: 144 }, "incomplete"),
+      videoAnswer("free text"),
+      null,
+    ]) {
+      expect(parse(json, 200), JSON.stringify(json)).toEqual({ kind: "unknown", category: "unknown", httpStatus: 200 });
+    }
   });
 });
