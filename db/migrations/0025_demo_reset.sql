@@ -34,6 +34,10 @@
 --     FLOW_ADVANCE_ROWS in src/lib/seed/run.ts) is left out on purpose: once the refusals pass,
 --     every money_actions row of the carrier is settled, and this function deletes them all before
 --     the advances, in one transaction, so no ledger row can be left naming a deleted advance.
+--   * A pay sweep still running, or an approve-all batch not yet finished, is not a refusal, on
+--     purpose: neither moves money itself (a batch pays through ledger rows, which the refusals
+--     above already check). The reset cuts it off; the sweep's next lease finds no run and stops,
+--     and the batch's later items find no proposal and are refused.
 --
 -- It deletes, for that tenant only: the settled ledger rows (confirmed or failed, never
 -- amount_mismatch), the uploaded documents, the dock clips (0023; each names a load the replace
@@ -41,16 +45,17 @@
 -- broker portal's loads (0021; each names a load the replace deletes, and only the seed's admin
 -- login writes them back, so the portal has no loads until npm run seed runs again), the voice
 -- notes' recordings and the voice notes (0013, 0012; each names an inbound message the replace
--- deletes), the driver notes, the agent's turn steps, the advances an approval created (they name
--- a proposal), the proposals, turns and conversations. Children go first, so each count is the
--- rows that table lost; a portal run and its session name each other, so those two go in one
--- statement, whose foreign keys are checked at its end. A row that still names a deleted one
--- makes the delete fail and the whole transaction roll back. The caller then rewrites the seeded
--- tables as payday_app, under row-level security, in the same transaction (src/lib/seed/reset.ts),
--- so a failure anywhere leaves the carrier as it was. Nothing else is touched: logins, model
--- charges, spend alerts, the gateway's audit log (a deleted turn only clears its turn_id there),
--- the portal's sign-in account, the QuickBooks link and every other tenant stay as they are. It
--- returns one row per table it deleted from, with the count.
+-- deletes), the driver notes, the agent's turn steps, the pay sweep's findings and runs (0018),
+-- the advances an approval created (they name a proposal), the proposals, the approve-all batches
+-- (0018; an approved proposal names its batch), turns and conversations. Children go first, so
+-- each count is the rows that table lost; a portal run and its session name each other, so those
+-- two go in one statement, whose foreign keys are checked at its end. A row that still names a
+-- deleted one makes the delete fail and the whole transaction roll back. The caller then rewrites
+-- the seeded tables as payday_app, under row-level security, in the same transaction
+-- (src/lib/seed/reset.ts), so a failure anywhere leaves the carrier as it was. Nothing else is
+-- touched: logins, model charges, spend alerts, the gateway's audit log (a deleted turn only
+-- clears its turn_id there), the portal's sign-in account, the QuickBooks link and every other
+-- tenant stay as they are. It returns one row per table it deleted from, with the count.
 --
 -- Errors, a custom SQLSTATE class read by src/lib/seed/reset.ts:
 --   LR001  no tenant is set for the transaction
@@ -172,15 +177,16 @@ BEGIN
   DELETE FROM public.sweep_runs sr WHERE sr.tenant_id = v_tenant;
   GET DIAGNOSTICS v_sweep_runs = ROW_COUNT;
 
-  -- An approve-all batch lists proposal ids that go, and names a pay week the replace deletes.
-  DELETE FROM public.approval_batches ab WHERE ab.tenant_id = v_tenant;
-  GET DIAGNOSTICS v_batches = ROW_COUNT;
-
   DELETE FROM public.advances a WHERE a.tenant_id = v_tenant AND a.proposal_id IS NOT NULL;
   GET DIAGNOSTICS v_advances = ROW_COUNT;
 
   DELETE FROM public.proposals p WHERE p.tenant_id = v_tenant;
   GET DIAGNOSTICS v_proposals = ROW_COUNT;
+
+  -- A proposal an approve-all batch approved names that batch (proposals.batch_id, 0018), so the
+  -- batches go after the proposals. A batch also names a pay week the replace deletes.
+  DELETE FROM public.approval_batches ab WHERE ab.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_batches = ROW_COUNT;
 
   DELETE FROM public.turns t WHERE t.tenant_id = v_tenant;
   GET DIAGNOSTICS v_turns = ROW_COUNT;

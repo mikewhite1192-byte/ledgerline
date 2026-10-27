@@ -405,13 +405,20 @@ describe("the demo reset", () => {
            CAST($5 AS uuid))`,
         [randomUUID(), sweep, settlement.period_id, settlement.driver_id, detention],
       );
+      const batch = randomUUID();
       await q.execute(
         `INSERT INTO approval_batches (id, tenant_id, scope, period_id, item_ids, total_cents, status, requested_by,
            finished_at)
          VALUES (CAST($1 AS uuid), current_tenant_id(), 'proposals', CAST($2 AS uuid), ARRAY[CAST($3 AS uuid)],
            4500, 'done', $4, now())`,
-        [randomUUID(), settlement.period_id, detention, session.sub],
+        [batch, settlement.period_id, detention, session.sub],
       );
+      // As Approve all clean does: the approved proposal names its batch, so the batch can only go
+      // after the proposal.
+      await q.execute("UPDATE proposals SET batch_id = CAST($1 AS uuid) WHERE id = CAST($2 AS uuid)", [
+        batch,
+        detention,
+      ]);
     });
 
     const input = await seededInput(tenantId);
