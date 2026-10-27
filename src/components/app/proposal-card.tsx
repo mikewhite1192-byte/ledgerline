@@ -2,8 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
+import { OVERRIDE_REASON, overrideReasonOf } from "@/lib/agent/auditor/words";
 import { cn } from "@/lib/cn";
 import { recordLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
@@ -21,6 +26,15 @@ export type ProposalStatus =
   | "expired"
   | "unknown";
 
+// The auditor's check, shown above the buttons (design 4.2). Every word is fixed text: text is the
+// plain sentence per concern, never the model's words; override is a person's reason, shown with
+// who (a role label) and when.
+export type ProposalAudit = {
+  state: "checking" | "pass" | "concerns" | "block" | "unknown" | "off" | "budget";
+  text?: string;
+  override?: { reason: string; byLabel: string; at: string };
+};
+
 export type ProposalCardProps = {
   id: string;
   title: string;
@@ -32,7 +46,9 @@ export type ProposalCardProps = {
   confirmQuestion?: string;
   // A warning shown above the buttons, e.g. why this proposal needs a second look.
   flagNote?: string;
-  onApprove?: (id: string) => void;
+  audit?: ProposalAudit;
+  // overrideReason is set only when the person approves over a block, with their trimmed reason.
+  onApprove?: (id: string, overrideReason?: string) => void;
   onReject?: (id: string) => void;
   pending?: boolean;
   hrefFor?: HrefFor;
@@ -67,8 +83,46 @@ const STATUS_NOTE: Record<Exclude<ProposalStatus, "proposed">, string> = {
   unknown: "Sent, waiting on the read-back.",
 };
 
+const AUDIT_BADGE: Record<Exclude<ProposalAudit["state"], "checking">, { tone: BadgeTone; label: string }> = {
+  pass: { tone: "success", label: "Checked by Muse Wonder: pass" },
+  concerns: { tone: "warning", label: "Muse Wonder has concerns" },
+  block: { tone: "destructive", label: "Muse Wonder blocked this" },
+  unknown: { tone: "neutral", label: "Not checked" },
+  budget: { tone: "neutral", label: "Not checked: demo budget reached" },
+  off: { tone: "neutral", label: "Auditor off" },
+};
+
+const BUDGET_TEXT = "The auditor could not check this proposal. Your data is unchanged.";
+
+function AuditLine({ audit }: { audit: ProposalAudit }) {
+  if (audit.state === "checking") {
+    return (
+      <div role="status" className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
+        <span className="text-small text-foreground-2">Muse Wonder is checking...</span>
+        <Skeleton className="w-48 max-w-full" />
+      </div>
+    );
+  }
+  const badge = AUDIT_BADGE[audit.state];
+  const text = audit.state === "budget" ? BUDGET_TEXT : audit.text;
+  return (
+    <div className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={badge.tone}>{badge.label}</Badge>
+      </div>
+      {text && audit.state !== "pass" ? <p className="text-small text-foreground">{text}</p> : null}
+      {audit.override ? (
+        <p className="text-small text-foreground-2">
+          Overridden by {audit.override.byLabel} on {audit.override.at}: {audit.override.reason}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 // What the agent wants to do, what it costs, and why, with each reason one click from its record.
-// A money action never happens on one tap: Approve asks once more, and only Confirm fires.
+// A money action never happens on one tap: Approve asks once more, and only Confirm fires. A
+// proposal the auditor blocked has no Approve: the person writes why, then confirms the override.
 export function ProposalCard({
   id,
   title,
@@ -78,6 +132,7 @@ export function ProposalCard({
   status,
   confirmQuestion,
   flagNote,
+  audit,
   onApprove,
   onReject,
   pending = false,
@@ -86,6 +141,10 @@ export function ProposalCard({
   className,
 }: ProposalCardProps) {
   const [confirming, setConfirming] = useState(initialConfirming);
+  const [reason, setReason] = useState("");
+  const [overriding, setOverriding] = useState(false);
+  const blocked = audit?.state === "block" && !audit.override;
+  const validReason = overrideReasonOf(reason);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const approveRef = useRef<HTMLButtonElement>(null);
   const opened = useRef(false);
@@ -159,6 +218,8 @@ export function ProposalCard({
         ) : null}
       </div>
 
+      {audit ? <AuditLine audit={audit} /> : null}
+
       {flagNote ? (
         <p role="note" className="mx-4 mb-3 rounded-md border border-warning bg-warning-soft px-3 py-2 text-small text-foreground sm:mx-5">
           {flagNote}
@@ -173,7 +234,9 @@ export function ProposalCard({
             className="flex flex-col gap-3 border-t border-border bg-secondary px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5"
           >
             <p className="text-body font-semibold text-foreground">
-              {confirmQuestion ?? (noAmount ? "Approve this?" : `Approve ${amount}?`)}
+              {overriding
+                ? "Approve over Muse Wonder's block?"
+                : (confirmQuestion ?? (noAmount ? "Approve this?" : `Approve ${amount}?`))}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button
@@ -183,12 +246,54 @@ export function ProposalCard({
                 onClick={() => {
                   cancelled.current = true;
                   setConfirming(false);
+                  setOverriding(false);
                 }}
               >
                 Cancel
               </Button>
-              <Button pending={pending} pendingLabel="Approving" onClick={() => onApprove?.(id)}>
+              <Button
+                pending={pending}
+                pendingLabel="Approving"
+                disabled={overriding ? validReason === null : blocked}
+                onClick={() =>
+                  overriding && validReason !== null ? onApprove?.(id, validReason) : onApprove?.(id)
+                }
+              >
                 Confirm
+              </Button>
+            </div>
+          </div>
+        ) : blocked ? (
+          <div className="grid gap-2 border-t border-border px-4 py-3 sm:px-5">
+            <Label htmlFor={`override-${id}`}>
+              Why approve it anyway? ({OVERRIDE_REASON.min} to {OVERRIDE_REASON.max} characters)
+            </Label>
+            <Textarea
+              id={`override-${id}`}
+              value={reason}
+              disabled={pending}
+              maxLength={OVERRIDE_REASON.max * 2}
+              aria-describedby={`override-count-${id}`}
+              className="w-full"
+              onChange={(e) => setReason(e.target.value)}
+            />
+            <p id={`override-count-${id}`} className="text-small text-muted-foreground">
+              {reason.trim().length} of {OVERRIDE_REASON.max}
+            </p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button variant="outline" disabled={pending} onClick={() => onReject?.(id)}>
+                Reject
+              </Button>
+              <Button
+                ref={approveRef}
+                disabled={pending || validReason === null}
+                onClick={() => {
+                  opened.current = true;
+                  setOverriding(true);
+                  setConfirming(true);
+                }}
+              >
+                Override and approve
               </Button>
             </div>
           </div>

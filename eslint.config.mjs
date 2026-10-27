@@ -132,7 +132,7 @@ const NO_DIRECT_IO = [
 
 const AI_ONLY = {
   regex: "(^|/)ai(/|$)",
-  message: "Only the gateway's screener and the operator turn call the model wrapper.",
+  message: "Only the gateway's screener, the operator turn and the auditor run call the model wrapper.",
 };
 
 function agentImportRule(patterns) {
@@ -170,7 +170,8 @@ const eslintConfig = [
   //      keys, format), adapters/types or a module of adapters/tms. "money/./execute",
   //      "money//execute" and "money/read/../ledger" are refused too. rules-engine/money, the
   //      engine's cents math, is not the ledger and is allowed.
-  //   3. The operator turn may also call the model wrapper; the package rule of 1 still holds.
+  //   3. The operator turn and the auditor run may also call the model wrapper; the package rule
+  //      of 1 still holds.
   // Every block refuses dynamic import, every module loader by name and code from a string (vm
   // included), so each dependency is checked statically, and every block refuses fetch,
   // XMLHttpRequest, WebSocket and EventSource, bare or through globalThis, window, self or global
@@ -195,7 +196,7 @@ const eslintConfig = [
     },
   },
   {
-    files: ["src/lib/agent/operator/turn.ts"],
+    files: ["src/lib/agent/operator/turn.ts", "src/lib/agent/auditor/run.ts"],
     rules: {
       "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, ...NO_DIRECT_IO, NO_VM])],
     },

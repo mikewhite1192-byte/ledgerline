@@ -166,8 +166,8 @@ describe("traceLines", () => {
     expect(lines[7]).toMatchObject({
       who: "Auditor (Muse Wonder)",
       meta: ["high effort", "4.1 s", "5.8 cents"],
-      text: "Agrees with the proposal",
-      badge: { tone: "success", label: "Agrees" },
+      text: "Checked the proposal and found no problem",
+      badge: { tone: "success", label: "Pass" },
     });
   });
 
@@ -252,14 +252,14 @@ describe("traceLines", () => {
         { ...SAMPLE_CALLS.screen, afterSeq: 2, screen: { verdict: "flagged", via: "model" } },
         { ...SAMPLE_CALLS.plan, id: "c0000001-0000-4000-8000-0000000000cc", target: "llama", model: "llama-9", purpose: "something_else", afterSeq: 8, screen: null },
       ],
-      proposals: [{ ...base.proposals[0], flagged: true, auditorVerdict: "disagree" }],
+      proposals: [{ ...base.proposals[0], flagged: true, auditorVerdict: "block" }],
     };
     const card = traceLines(trace, SAMPLE_PROPOSAL_ID);
     expect(card.map((l) => l.badge?.label ?? null)).toContain("Flagged");
     expect(card.find((l) => l.key === `call:${SAMPLE_CALLS.screen.id}`)?.text).toBe(
       "Screened outside text before the agent read it: flagged, so it was shown as data and not followed",
     );
-    expect(card.at(-1)).toMatchObject({ text: "Disagrees with the proposal", badge: { tone: "warning", label: "Disagrees" } });
+    expect(card.at(-1)).toMatchObject({ text: "Checked the proposal and blocked it", badge: { tone: "destructive", label: "Blocked" } });
     const whole = traceLines(trace);
     expect(whole.at(-1)).toMatchObject({ who: "Other model", text: "Made a model call for this turn" });
   });

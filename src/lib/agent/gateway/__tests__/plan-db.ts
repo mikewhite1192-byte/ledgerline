@@ -52,3 +52,78 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
   if (where === "status = $1") return all.filter((r) => r.status === params[0]);
   throw new Error(`unexpected where clause: ${where.slice(0, 60)}`);
 }
+
+// The proposal id sample-args gives get_proposal. Proposals are not in a seed plan, so a test
+// serves one stored proposal through withProposal.
+export const PROPOSAL_ID = "6a1f0c2e-9d3b-4c5a-8e7f-1b2c3d4e5f60";
+
+export type ProposalKindName = "advance_payout" | "pay_correction" | "invoice_fix";
+
+// One stored proposal per kind, as get_proposal's select returns it, over the plan's own records.
+export function proposalRowFor(plan: CarrierPlan, kind: ProposalKindName, over: Row = {}): Row {
+  const rows = plan.rows;
+  const hero = rows.drivers.find((d) => d.code === plan.carrier.heroCode) ?? rows.drivers[0];
+  const open = rows.settlement_periods.find((p) => p.status === "open")!;
+  const invoice = rows.invoices.find((i) => i.source === "load" && i.status === "open")!;
+  const base: Row = {
+    id: PROPOSAL_ID,
+    kind,
+    status: "proposed",
+    reasons: JSON.stringify([{ category: "driver_asked" }]),
+    exceptions: "[]",
+    flagged: false,
+    flag_categories: null,
+  };
+  if (kind === "advance_payout") {
+    return {
+      ...base,
+      title: "Pay advance",
+      subject_table: "drivers",
+      subject_id: hero.id,
+      subject_label: hero.code,
+      amount_cents: 10_000,
+      direction: "out",
+      operator_verdict: "eligible",
+      sources: JSON.stringify([{ table: "drivers", id: hero.id }]),
+      args: JSON.stringify({ driverId: hero.id, amountCents: 10_000, requestedOn: "2026-10-31" }),
+      ...over,
+    };
+  }
+  if (kind === "pay_correction") {
+    return {
+      ...base,
+      title: "Pay correction",
+      subject_table: "drivers",
+      subject_id: hero.id,
+      subject_label: hero.code,
+      amount_cents: 2_500,
+      direction: "out",
+      operator_verdict: "owed_to_driver",
+      sources: JSON.stringify([{ table: "drivers", id: hero.id }, { table: "settlement_periods", id: open.id }]),
+      args: JSON.stringify({ driverId: hero.id, periodId: open.id, deltaCents: 2_500 }),
+      ...over,
+    };
+  }
+  return {
+    ...base,
+    title: "Invoice fix",
+    subject_table: "invoices",
+    subject_id: invoice.id,
+    subject_label: invoice.invoice_number,
+    amount_cents: 100,
+    direction: "in",
+    operator_verdict: "not_given",
+    sources: JSON.stringify([{ table: "invoices", id: invoice.id }]),
+    args: JSON.stringify({ invoiceId: invoice.id, newAmountCents: invoice.amount_cents + 100 }),
+    ...over,
+  };
+}
+
+// Serves one stored proposal: the gateway's reference check and get_proposal's select.
+export function withProposal(row: Row, extra?: Handler): Handler {
+  return (sql, params) => {
+    if (sql.startsWith("SELECT 1 AS ok FROM proposals ")) return params[0] === row.id ? [{ ok: 1 }] : [];
+    if (sql.includes("FROM proposals p")) return params[0] === row.id ? [{ ...row }] : [];
+    return extra?.(sql, params);
+  };
+}

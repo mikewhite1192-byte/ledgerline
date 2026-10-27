@@ -194,9 +194,11 @@ const OPERATOR_VERDICTS: Readonly<Record<string, string>> = {
   owed_by_driver: "money is owed by the driver",
 };
 
+// The auditor's four verdict words (migration 0014), worded as the card words them.
 const AUDITOR_VERDICTS: Readonly<Record<string, string>> = {
-  agree: "Agrees with the proposal",
-  disagree: "Disagrees with the proposal",
+  pass: "Checked the proposal and found no problem",
+  concerns: "Checked the proposal and has concerns",
+  block: "Checked the proposal and blocked it",
   unknown: "Could not decide",
 };
 
@@ -453,11 +455,13 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
       meta: p.auditorCall ? callMeta(p.auditorCall) : [],
       text: verdict,
       badge:
-        p.auditorVerdict === "disagree"
-          ? { tone: "warning", label: "Disagrees" }
-          : p.auditorVerdict === "agree"
-            ? { tone: "success", label: "Agrees" }
-            : null,
+        p.auditorVerdict === "block"
+          ? { tone: "destructive", label: "Blocked" }
+          : p.auditorVerdict === "concerns"
+            ? { tone: "warning", label: "Concerns" }
+            : p.auditorVerdict === "pass"
+              ? { tone: "success", label: "Pass" }
+              : null,
       refs: [],
     });
   }

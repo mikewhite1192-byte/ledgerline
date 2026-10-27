@@ -44,6 +44,11 @@ type ProposalRow = {
   flag_categories: string | null;
   operator_verdict: string;
   auditor_verdict: string | null;
+  auditor_concerns: string | null;
+  auditor_checked_at: string | null;
+  auditor_override_reason: string | null;
+  auditor_override_at: string | null;
+  override_role: string | null;
 };
 type FlagRow = { input_id: string; body_text: string; categories: string | null };
 
@@ -86,6 +91,25 @@ function stringsOf(text: string | null): string[] {
   return parseArray(text).filter((c): c is string => typeof c === "string");
 }
 
+const CONCERN = /^[a-z_]{2,40}$/;
+
+// Who overrode, as the card says it: the member's role, never their sub or email (memberships
+// hold no display name).
+function overrideLabel(role: string | null): string {
+  if (role === "admin") return "an admin";
+  if (role === "staff") return "a staff member";
+  return "a member";
+}
+
+function overrideOf(r: ProposalRow): ProposalView["auditorOverride"] {
+  if (r.auditor_override_reason === null || r.auditor_override_at === null) return null;
+  return {
+    reason: r.auditor_override_reason,
+    byLabel: overrideLabel(r.override_role),
+    at: r.auditor_override_at,
+  };
+}
+
 function proposalView(r: ProposalRow): ProposalView {
   const reasons = parseArray(r.reasons).flatMap((x) => {
     const category = x && typeof x === "object" ? (x as Record<string, unknown>).category : null;
@@ -109,8 +133,13 @@ function proposalView(r: ProposalRow): ProposalView {
     flagCategories: stringsOf(r.flag_categories),
     operatorVerdict: r.operator_verdict,
     auditorVerdict: r.auditor_verdict,
+    auditorConcerns: stringsOf(r.auditor_concerns).filter((c) => CONCERN.test(c)),
+    auditorCheckedAt: r.auditor_checked_at,
+    auditorOverride: overrideOf(r),
   };
 }
+
+const ISO = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
 const PROPOSAL_SQL = `
   SELECT p.id, p.kind, p.subject_table, p.subject_id,
@@ -124,7 +153,12 @@ const PROPOSAL_SQL = `
          p.flagged_input_id,
          (SELECT CAST(s.categories AS text) FROM screenings s WHERE s.input_id = p.flagged_input_id
            ORDER BY s.created_at DESC, s.id DESC LIMIT 1) AS flag_categories,
-         p.operator_verdict, p.auditor_verdict
+         p.operator_verdict, p.auditor_verdict,
+         CAST(p.auditor_concerns AS text) AS auditor_concerns,
+         ${ISO("p.auditor_checked_at")} AS auditor_checked_at,
+         p.auditor_override_reason, ${ISO("p.auditor_override_at")} AS auditor_override_at,
+         (SELECT m.role FROM memberships m
+           WHERE m.tenant_id = p.tenant_id AND m.cognito_sub = p.auditor_override_by) AS override_role
     FROM proposals p`;
 
 async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {

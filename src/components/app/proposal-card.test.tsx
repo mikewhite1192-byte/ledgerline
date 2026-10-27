@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProposalCard, type ProposalCardProps, type ProposalStatus } from "./proposal-card";
+import { ProposalCard, type ProposalAudit, type ProposalCardProps, type ProposalStatus } from "./proposal-card";
 
 afterEach(cleanup);
 
@@ -180,5 +180,116 @@ describe("ProposalCard", () => {
   it("says nothing changed when a proposal is rejected", () => {
     render(<ProposalCard {...card} status="rejected" />);
     expect(screen.getByText("Rejected. Nothing changed.")).toBeTruthy();
+  });
+});
+
+describe("ProposalCard with the auditor's check", () => {
+  it("shows a fixed badge per verdict, and the plain sentence for every verdict but pass", () => {
+    const cases: [ProposalAudit["state"], string][] = [
+      ["pass", "Checked by Muse Wonder: pass"],
+      ["concerns", "Muse Wonder has concerns"],
+      ["block", "Muse Wonder blocked this"],
+      ["unknown", "Not checked"],
+      ["budget", "Not checked: demo budget reached"],
+      ["off", "Auditor off"],
+    ];
+    for (const [state, label] of cases) {
+      const { unmount } = render(<ProposalCard {...card} audit={{ state, text: "A source record is missing." }} />);
+      expect(screen.getByText(label), state).toBeTruthy();
+      expect(screen.queryByText("A source record is missing.") !== null, state).toBe(state !== "pass" && state !== "budget");
+      unmount();
+    }
+  });
+
+  it("says the data is unchanged when the demo budget stopped the check", () => {
+    render(<ProposalCard {...card} audit={{ state: "budget" }} />);
+    expect(screen.getByText("The auditor could not check this proposal. Your data is unchanged.")).toBeTruthy();
+    expect(button("Approve $200.00")).toBeTruthy();
+  });
+
+  it("says Muse Wonder is checking, as a status", () => {
+    render(<ProposalCard {...card} audit={{ state: "checking" }} />);
+    expect(screen.getByRole("status").textContent).toContain("Muse Wonder is checking...");
+  });
+
+  it("asks the given confirm question on concerns", () => {
+    const onApprove = vi.fn();
+    render(
+      <ProposalCard
+        {...card}
+        audit={{ state: "concerns", text: "The amount does not match the records." }}
+        confirmQuestion="Muse Wonder has concerns. Approve anyway?"
+        onApprove={onApprove}
+      />,
+    );
+    fireEvent.click(button("Approve $200.00")!);
+    expect(screen.getByText("Muse Wonder has concerns. Approve anyway?")).toBeTruthy();
+    fireEvent.click(button("Confirm")!);
+    expect(onApprove).toHaveBeenCalledWith("p-1");
+  });
+
+  it("offers no Approve on a block, only a reason box, a counter and Override", () => {
+    render(<ProposalCard {...card} audit={{ state: "block", text: "The amount does not match the records." }} />);
+    expect(button("Approve $200.00")).toBeNull();
+    expect(button("Reject")).toBeTruthy();
+    const box = screen.getByLabelText("Why approve it anyway? (10 to 240 characters)");
+    expect(screen.getByText("0 of 240")).toBeTruthy();
+    const override = button("Override and approve") as HTMLButtonElement;
+    expect(override.disabled).toBe(true);
+
+    fireEvent.change(box, { target: { value: "too short" } });
+    expect(screen.getByText("9 of 240")).toBeTruthy();
+    expect(override.disabled).toBe(true);
+
+    fireEvent.change(box, { target: { value: "          " } });
+    expect(override.disabled).toBe(true);
+
+    fireEvent.change(box, { target: { value: "a".repeat(241) } });
+    expect(screen.getByText("241 of 240")).toBeTruthy();
+    expect(override.disabled).toBe(true);
+
+    fireEvent.change(box, { target: { value: "Driver showed the receipt" } });
+    expect(override.disabled).toBe(false);
+  });
+
+  it("sends the trimmed reason only from the override confirm", () => {
+    const onApprove = vi.fn();
+    render(<ProposalCard {...card} audit={{ state: "block" }} onApprove={onApprove} />);
+    fireEvent.change(screen.getByLabelText(/Why approve it anyway/), { target: { value: "  Driver showed the receipt  " } });
+    fireEvent.click(button("Override and approve")!);
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(screen.getByText("Approve over Muse Wonder's block?")).toBeTruthy();
+    expect(document.activeElement).toBe(button("Cancel"));
+
+    fireEvent.click(button("Cancel")!);
+    expect(button("Confirm")).toBeNull();
+    expect(document.activeElement).toBe(button("Override and approve"));
+
+    fireEvent.click(button("Override and approve")!);
+    fireEvent.click(button("Confirm")!);
+    expect(onApprove).toHaveBeenCalledTimes(1);
+    expect(onApprove).toHaveBeenCalledWith("p-1", "Driver showed the receipt");
+  });
+
+  it("keeps Confirm disabled on a block that opens with the confirm row and no reason", () => {
+    const onApprove = vi.fn();
+    render(<ProposalCard {...card} audit={{ state: "block" }} onApprove={onApprove} initialConfirming />);
+    const confirm = button("Confirm") as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.click(confirm);
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("shows who overrode a block, when and why", () => {
+    render(
+      <ProposalCard
+        {...card}
+        status="approved"
+        audit={{ state: "block", override: { reason: "Driver showed the receipt", byLabel: "an admin", at: "Oct 28, 2026, 3:00 PM UTC" } }}
+      />,
+    );
+    expect(screen.getByText("Muse Wonder blocked this")).toBeTruthy();
+    expect(screen.getByText("Overridden by an admin on Oct 28, 2026, 3:00 PM UTC: Driver showed the receipt")).toBeTruthy();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 });
