@@ -8,7 +8,8 @@ import { failed, objectBody, refused, reply } from "../../reply";
 // POST: "Approve all clean". Body { batchId (a uuid the page made), proposalIds (1..25),
 // totalCents }: the list and total the button showed. The server re-checks every one; any change
 // refuses the whole batch (409 changed, with what is clean now) so the person confirms what they
-// saw. A replayed batch id answers with the stored result and never executes twice.
+// saw. A replayed batch id with the same list and total answers with the stored result and never
+// executes twice; the same id with a different list or total is refused (409 batch_reused).
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;

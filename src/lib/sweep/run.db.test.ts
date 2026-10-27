@@ -299,6 +299,60 @@ describe("a sweep of the open week", () => {
     expect((await proposals()).map((p) => p.id)).toEqual(first.map((p) => p.id));
   });
 
+  it("gives the item places to findings not yet settled, so a week with more findings than places finishes", async () => {
+    flags.sweepLimits = { ...flags.sweepLimits, maxItems: 3 };
+    const runs: string[] = [];
+    const seen: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      const runId = await start();
+      await runToEnd(runId);
+      runs.push(runId);
+      seen.push((await items(runId)).length);
+      if ((await run(runId)).truncated_reason === null) break;
+    }
+    // The first run is cut at the places; each later run takes the next findings, and settled
+    // ones stay on the run without holding a place, so every run sees more than the one before.
+    expect(runs.length).toBeGreaterThan(1);
+    expect((await run(runs[0])).truncated_reason).toBe("max_items");
+    for (const id of runs.slice(0, -1)) expect((await run(id)).truncated_reason).toBe("max_items");
+    seen.slice(1).forEach((n, i) => expect(n, `run ${i + 2}`).toBeGreaterThan(seen[i]));
+    const last = await items(runs.at(-1) as string);
+    expect(last).toHaveLength(8);
+    expect(last.filter((i) => i.kind === "fix").map((i) => i.status)).toEqual(Array(5).fill("drafted"));
+    expect(last.filter((i) => i.kind === "needs_person")).toHaveLength(3);
+    expect(await proposals()).toHaveLength(5);
+    // No fix was drafted twice across the runs.
+    expect(explain).toHaveBeenCalledTimes(5);
+  });
+
+  it("says an earlier fix that expired undecided expired, and drafts no second one", async () => {
+    await runToEnd(await start());
+    const first = await proposals();
+    const gone = first[0];
+    await admin.withTenant(T, async (q) => {
+      // As the approve path writes it when the window passes with nobody deciding.
+      await q.execute(
+        `UPDATE proposals SET status = 'expired', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                              decision_note = 'expired' WHERE id = CAST($1 AS uuid)`,
+        [gone.id, SESSION.sub, NOW.toISOString()],
+      );
+      await q.execute("DELETE FROM sweep_items WHERE tenant_id = current_tenant_id()");
+      await q.execute("DELETE FROM sweep_runs WHERE tenant_id = current_tenant_id()");
+    });
+    explain.mockClear();
+    const runId = await start();
+    await runToEnd(runId);
+    const fixes = (await items(runId)).filter((i) => i.kind === "fix");
+    expect(fixes.filter((i) => i.status === "expired_earlier").map((i) => i.proposal_id)).toEqual([gone.id]);
+    expect(fixes.filter((i) => i.status === "drafted")).toHaveLength(4);
+    expect((await proposals()).map((p) => p.id)).toEqual(first.map((p) => p.id));
+    // The four still waiting are linked again and explained; the expired one is not touched.
+    expect(explain).toHaveBeenCalledTimes(4);
+    const page = await readSweepPage(SESSION, runId, { db: app });
+    expect(page?.counts).toMatchObject({ expired_earlier: 1, declined_earlier: 0, fixes_drafted: 4 });
+    expect(page?.clean.proposalIds).not.toContain(gone.id);
+  });
+
   it("carries a run cut off by its deadline on in the next slice", async () => {
     const runId = await start();
     // Too little time for any draft: the find phase runs, then the slice hands the run back.

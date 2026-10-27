@@ -28,7 +28,18 @@ export async function POST(request: Request) {
     key = null;
   }
   if (!key) return refused("not_configured");
-  if (!keyMatches(request.headers.get("x-sweep-key"), key)) return reply({ error: "forbidden" }, 403);
+  const given = request.headers.get("x-sweep-key");
+  if (!keyMatches(given, key)) {
+    // The key may have rotated since it was read: read it once more (at most once a minute)
+    // before refusing. Anything short of a match is still a refusal.
+    let fresh: string | null;
+    try {
+      fresh = await internalKey({}, { fresh: true });
+    } catch {
+      fresh = null;
+    }
+    if (!fresh || !keyMatches(given, fresh)) return reply({ error: "forbidden" }, 403);
+  }
   const body = await objectBody(request);
   if (!body || !isUuid(body.tenantId)) return refused("bad_request");
   const action = body.action;

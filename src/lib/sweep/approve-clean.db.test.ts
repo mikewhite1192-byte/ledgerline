@@ -180,12 +180,48 @@ describe("approve all clean", () => {
     expect(await statuses()).toEqual(Array(5).fill("proposed"));
     expect(await correctionCount()).toBe(0);
     expect(await batch(batchId)).toMatchObject({ status: "refused" });
-    // The same batch id answers the same refusal; it never turns into an approval.
-    expect(await approveAll(runId, { batchId, proposalIds: ids, totalCents: total })).toMatchObject({
+    // The same batch id with the same list and total answers the same refusal.
+    expect(await approveAll(runId, { batchId, proposalIds: ids, totalCents: total + 1 })).toMatchObject({
       ok: false,
       category: "changed",
     });
+    // The same id with the corrected total is not a replay: it is refused, never approved.
+    expect(await approveAll(runId, { batchId, proposalIds: ids, totalCents: total })).toEqual({
+      ok: false,
+      category: "batch_reused",
+    });
+    expect(await statuses()).toEqual(Array(5).fill("proposed"));
     expect(await correctionCount()).toBe(0);
+  });
+
+  it("refuses a batch id used again for a different list, and replays it for its own list", async () => {
+    const { runId, fixes, ids, total } = await sweep();
+    const two = fixes.slice(0, 2);
+    const twoIds = two.map((f) => f.id);
+    const twoTotal = two.reduce((n, f) => n + Number(f.amount_cents), 0);
+    const batchId = randomUUID();
+    expect(await approveAll(runId, { batchId, proposalIds: twoIds, totalCents: twoTotal })).toMatchObject({
+      ok: true,
+      done: 2,
+      replay: false,
+    });
+    // The stored answer for two fixes is never given for all five: the five stay waiting.
+    expect(await approveAll(runId, { batchId, proposalIds: ids, totalCents: total })).toEqual({
+      ok: false,
+      category: "batch_reused",
+    });
+    expect((await statuses()).filter((st) => st === "proposed")).toHaveLength(3);
+    expect(await correctionCount()).toBe(2);
+    expect(await batch(batchId)).toMatchObject({ status: "done", total_cents: String(twoTotal) });
+    // Its own list, in any order, still replays.
+    expect(await approveAll(runId, { batchId, proposalIds: [...twoIds].reverse(), totalCents: twoTotal })).toEqual({
+      ok: true,
+      batchId,
+      done: 2,
+      refused: [],
+      replay: true,
+    });
+    expect(await correctionCount()).toBe(2);
   });
 
   it("refuses the whole batch when one fix is no longer clean, or one was never in the run", async () => {

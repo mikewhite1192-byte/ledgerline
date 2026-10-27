@@ -4,7 +4,14 @@ import { maxDuration as advanceLimitS } from "../../app/api/sweeps/[id]/advance/
 import { maxDuration as startLimitS } from "../../app/api/sweeps/route";
 import { flags } from "../../config/flags";
 import { EXPLAIN_TIMEOUT_MS } from "../agent/sweep/explain";
-import { DRAFT_LEASE_S, DRAFT_STEP_OVERRUN_MS, MAX_DRAFT_ATTEMPTS, STOP_BEFORE_MS, TRANSIENT_REFUSALS } from "./run";
+import {
+  DRAFT_LEASE_S,
+  DRAFT_STEP_OVERRUN_MS,
+  earlierOutcome,
+  MAX_DRAFT_ATTEMPTS,
+  STOP_BEFORE_MS,
+  TRANSIENT_REFUSALS,
+} from "./run";
 
 // The draft lease covers the worst draft step. A slice's deadline is set before its lease is
 // taken, so the lease starts at most sliceMs before that deadline; a step may start just over
@@ -33,5 +40,14 @@ describe("the sweep's draft retries", () => {
       expect(TRANSIENT_REFUSALS as readonly string[]).not.toContain(lasting);
     }
     expect(Number.isSafeInteger(MAX_DRAFT_ATTEMPTS) && MAX_DRAFT_ATTEMPTS > 1).toBe(true);
+  });
+});
+
+describe("an earlier fix's outcome", () => {
+  it("names a done fix fixed, an undecided one expired, and a turned-down one declined", () => {
+    expect(earlierOutcome("done")).toBe("fixed_earlier");
+    expect(earlierOutcome("expired")).toBe("expired_earlier");
+    expect(earlierOutcome("rejected")).toBe("declined_earlier");
+    expect(earlierOutcome("failed")).toBe("declined_earlier");
   });
 });

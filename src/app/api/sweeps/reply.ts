@@ -15,6 +15,7 @@ export const SWEEP_STATUS: Readonly<Record<string, number>> = {
   forbidden: 403,
   changed: 409,
   batch_taken: 409,
+  batch_reused: 409,
 };
 
 export function reply(body: unknown, status: number) {

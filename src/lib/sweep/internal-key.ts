@@ -6,9 +6,18 @@ import type { SecretsClient } from "../adapters/secrets";
 // it from Secrets Manager by the name in SWEEP_INTERNAL_KEY_SECRET_NAME, through the SSR compute
 // role; Amplify copies branch variables into the build as plain text, so a raw key is refused
 // there. Local development reads SWEEP_INTERNAL_KEY from .env.local. The value is never logged,
-// stored or returned; a missing or short key means the route answers not_configured.
+// stored or returned; a missing or short key means the route answers not_configured. The read is
+// kept for the life of the instance; after a rotation the route asks once for a fresh read on a
+// mismatch, at most once a minute, so a wrong key cannot turn into a stream of secret reads.
 
-export type KeyDeps = { env?: Record<string, string | undefined>; secrets?: SecretsClient; log?: (line: string) => void };
+export type KeyDeps = {
+  env?: Record<string, string | undefined>;
+  secrets?: SecretsClient;
+  log?: (line: string) => void;
+  now?: () => number;
+};
+
+export const REFRESH_MIN_MS = 60_000;
 
 const SECRET_NAME = /^[A-Za-z0-9/_+=.@-]{1,512}$/;
 // At least 32 printable characters, no spaces.
@@ -16,8 +25,9 @@ const USABLE = /^[\x21-\x7e]{32,512}$/;
 
 let client: SecretsClient | undefined;
 let kept: Promise<string | null> | undefined;
+let keptAt = 0;
 
-export async function internalKey(deps: KeyDeps = {}): Promise<string | null> {
+export async function internalKey(deps: KeyDeps = {}, opts: { fresh?: boolean } = {}): Promise<string | null> {
   const env = deps.env ?? process.env;
   const log = deps.log ?? ((line: string) => console.error(line));
   if (!env.DB_CLUSTER_ARN) return usable(env.SWEEP_INTERNAL_KEY);
@@ -30,12 +40,17 @@ export async function internalKey(deps: KeyDeps = {}): Promise<string | null> {
     log("sweep: SWEEP_INTERNAL_KEY_SECRET_NAME is not set");
     return null;
   }
-  if (deps.secrets) return read(name, deps.secrets, log);
+  const now = (deps.now ?? Date.now)();
+  // A fresh read drops the kept value only when it is at least a minute old.
+  if (opts.fresh && kept && now - keptAt >= REFRESH_MIN_MS) kept = undefined;
   if (!kept) {
-    kept = read(name, (client ??= new SecretsManagerClient({ region: env.AWS_REGION ?? "us-east-2" })), log);
+    const secrets = deps.secrets ?? (client ??= new SecretsManagerClient({ region: env.AWS_REGION ?? "us-east-2" }));
+    const reading = read(name, secrets, log);
+    kept = reading;
+    keptAt = now;
     // A failed read is not kept, so a key stored after the deploy is picked up without one.
-    void kept.then((v) => {
-      if (!v) kept = undefined;
+    void reading.then((v) => {
+      if (!v && kept === reading) kept = undefined;
     });
   }
   return kept;
@@ -69,4 +84,5 @@ export function keyMatches(given: string | null, key: string): boolean {
 // Tests only.
 export function forgetInternalKey(): void {
   kept = undefined;
+  keptAt = 0;
 }

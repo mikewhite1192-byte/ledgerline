@@ -49,6 +49,7 @@ export type SweepCounts = Record<
   | "needs_person"
   | "fixed_earlier"
   | "declined_earlier"
+  | "expired_earlier"
   | "refused"
   | "blocked_live"
   | "mismatch"
@@ -415,17 +416,51 @@ async function findPhase(ctx: Ctx, run: Run): Promise<boolean> {
     for (const e of await settlementExceptions(q, period.id)) {
       add({ check: "settlement" as Finding["check"], category: e.category as Finding["category"], sources: [{ table: "settlements", id: e.settlementId }] }, settlementPlanFor(e, input));
     }
-    // The first maxItems findings by (driver code, check); the rest wait for a later run.
+    // A finding this week already settled (drafted, decided earlier, listed for a person, or
+    // refused for good) needs no work: it joins this run without taking one of the maxItems
+    // places, because the engine reports it again every run and would otherwise hold the same
+    // places all week. The other findings take the places by (driver code, check); the rest wait
+    // for a later run, which they reach as the ones before them settle.
     groups.sort((a, b) => (a[0].order < b[0].order ? -1 : a[0].order > b[0].order ? 1 : a[0].key < b[0].key ? -1 : 1));
-    const max = flags.sweepLimits.maxItems;
-    const kept = groups.slice(0, Math.max(0, max));
+    const settled = await settledKeys(q, run.period_id);
+    const max = Math.max(0, flags.sweepLimits.maxItems);
+    const seenAgain: string[] = [];
+    const kept: Planned[][] = [];
+    let waiting = 0;
+    for (const g of groups) {
+      if (g.every((p) => settled.has(p.key))) seenAgain.push(...g.map((p) => p.key));
+      else if (kept.length < max) kept.push(g);
+      else waiting += 1;
+    }
+    if (seenAgain.length > 0) {
+      await q.execute(
+        `UPDATE sweep_items SET seen_run_id = CAST($1 AS uuid), updated_at = CAST($4 AS timestamptz)
+          WHERE period_id = CAST($2 AS uuid)
+            AND finding_key IN (SELECT jsonb_array_elements_text(CAST($3 AS jsonb)))`,
+        [ctx.runId, run.period_id, JSON.stringify(seenAgain), now],
+      );
+    }
     for (const leg of kept.flat()) await writeItem(q, ctx, run, leg, now);
     await q.execute(
       `UPDATE sweep_runs SET phase = 'draft', truncated_reason = $2 WHERE id = CAST($1 AS uuid)`,
-      [ctx.runId, groups.length > kept.length ? "max_items" : null],
+      [ctx.runId, waiting > 0 ? "max_items" : null],
     );
     return true;
   });
+}
+
+// This week's findings that no run drafts again: every status but found and over_cap (the draft
+// phase takes those), less a refusal for a passing reason with tries left (writeItem puts it back
+// to found).
+async function settledKeys(q: Queryable, periodId: string): Promise<Set<string>> {
+  const rows = await q.query<{ finding_key: string }>(
+    `SELECT finding_key FROM sweep_items
+      WHERE period_id = CAST($1 AS uuid) AND status NOT IN ('found', 'over_cap')
+        AND NOT (kind = 'fix' AND status = 'refused' AND refusal_category = ANY(CAST($2 AS text[]))
+                 AND draft_attempts < $3)`,
+    [periodId, `{${TRANSIENT_REFUSALS.join(",")}}`, MAX_DRAFT_ATTEMPTS],
+  );
+  return new Set(rows.map((r) => r.finding_key));
 }
 
 // The stored settlement exceptions the checks do not cover (SETTLEMENTS' pay-run proposals).
@@ -448,9 +483,10 @@ async function settlementExceptions(q: Queryable, periodId: string): Promise<Set
   }));
 }
 
-// A pay correction for this driver and this record that already ran (or a person turned down) in
-// any week: the engine still reports the finding, because a correction does not clear it, so
-// without this a second week would pay it twice.
+// A pay correction for this driver and this record that already ran, that a person turned down,
+// or that expired with nobody deciding, in any week: the engine still reports the finding, because
+// a correction does not clear it, so without this a second week would pay it twice. An expired
+// one is not drafted again either (its dedupe key is taken), and says so as its own outcome.
 async function earlierFix(q: Queryable, leg: FixLeg, at: Finding["sources"][number]) {
   const rows = await q.query<{ id: string; status: string }>(
     `SELECT id, status FROM proposals
@@ -460,7 +496,15 @@ async function earlierFix(q: Queryable, leg: FixLeg, at: Finding["sources"][numb
     [leg.driverId, JSON.stringify([{ table: at.table, id: at.id }])],
   );
   if (!rows[0]) return null;
-  return { proposalId: rows[0].id, status: rows[0].status === "done" ? "fixed_earlier" : "declined_earlier" };
+  return { proposalId: rows[0].id, status: earlierOutcome(rows[0].status) };
+}
+
+// The item's word for an earlier proposal with the same fix: done, expired with nobody deciding,
+// or turned down (rejected, or failed when it ran).
+export function earlierOutcome(proposalStatus: string): "fixed_earlier" | "expired_earlier" | "declined_earlier" {
+  if (proposalStatus === "done") return "fixed_earlier";
+  if (proposalStatus === "expired") return "expired_earlier";
+  return "declined_earlier";
 }
 
 async function writeItem(q: Queryable, ctx: Ctx, run: Run, p: Planned, now: string): Promise<void> {
@@ -624,8 +668,7 @@ async function draftNext(ctx: Ctx): Promise<Step> {
     return "done";
   }
   if (saved.kind === "already_decided") {
-    const status = saved.status === "done" ? "fixed_earlier" : "declined_earlier";
-    await writeStatus(ctx, item.id, { status, proposalId: saved.proposalId });
+    await writeStatus(ctx, item.id, { status: earlierOutcome(saved.status), proposalId: saved.proposalId });
     return "done";
   }
 
@@ -894,6 +937,7 @@ export async function countItems(q: Queryable, runId: string): Promise<SweepCoun
     needs_person: 0,
     fixed_earlier: 0,
     declined_earlier: 0,
+    expired_earlier: 0,
     refused: 0,
     blocked_live: 0,
     mismatch: 0,

@@ -12,7 +12,9 @@ import { isUuid } from "../uuid";
 // whole batch and answers with what is clean now, so the person confirms what they actually saw.
 // Then each proposal goes through the same gate and executor as a single approve, one by one; a
 // refusal on one (role, stale) never undoes the others. The batch id is the dedupe key: a replay
-// answers with the stored result and never executes twice.
+// with the same list and total answers with the stored result and never executes twice; the same
+// id with a different list or total is refused as batch_reused, so a stored answer for one list is
+// never given for another.
 
 export type ApproveCleanInput = { batchId: string; proposalIds: string[]; totalCents: number };
 
@@ -21,7 +23,7 @@ export type BatchOutcome = { proposalId: string; ok: boolean; category: string |
 export type ApproveCleanResult =
   | { ok: true; batchId: string; done: number; refused: BatchOutcome[]; replay: boolean }
   | { ok: false; category: "changed"; clean: string[]; totalCents: number }
-  | { ok: false; category: "disabled" | "bad_request" | "not_found" | "role" | "batch_taken" };
+  | { ok: false; category: "disabled" | "bad_request" | "not_found" | "role" | "batch_taken" | "batch_reused" };
 
 export type ApproveCleanDeps = {
   db?: TenantDb;
@@ -43,7 +45,7 @@ export function parseApproveClean(body: unknown): ApproveCleanInput | null {
   return { batchId: (b.batchId as string).toLowerCase(), proposalIds: [...lower].sort(), totalCents: total };
 }
 
-type Batch = { status: string; result: string | null; item_ids: string; requested_by: string };
+type Batch = { status: string; result: string | null; item_ids: string; total_cents: string; requested_by: string };
 
 type Clean = { id: string; amount_cents: number | string };
 
@@ -129,7 +131,8 @@ export async function approveClean(
     );
     if (inserted.length !== 1) {
       const rows = await q.query<Batch>(
-        `SELECT status, CAST(result AS text) AS result, array_to_string(item_ids, ',') AS item_ids, requested_by
+        `SELECT status, CAST(result AS text) AS result, array_to_string(item_ids, ',') AS item_ids,
+                CAST(total_cents AS text) AS total_cents, requested_by
            FROM approval_batches WHERE id = CAST($1 AS uuid) AND scope = 'proposals' FOR UPDATE`,
         [input.batchId],
       );
@@ -137,6 +140,11 @@ export async function approveClean(
       // never ours to replay.
       const batch = rows[0];
       if (!batch || batch.requested_by !== session.sub) return { answer: { ok: false, category: "batch_taken" } };
+      // A replay is the same list and the same total, whole; anything else is a reused id.
+      const whole = (ids: readonly string[]) => ids.map((i) => i.toLowerCase()).sort().join(",");
+      if (whole(batch.item_ids.split(",")) !== whole(input.proposalIds) || batch.total_cents !== String(input.totalCents)) {
+        return { answer: { ok: false, category: "batch_reused" } };
+      }
       const stored = storedAnswer(input.batchId, batch);
       if (stored) return { answer: stored };
       // A batch left reserved by a request that stopped part way: carry on with its own list,
@@ -181,7 +189,9 @@ export async function approveClean(
     return { ids: input.proposalIds };
   });
   if ("answer" in gate) {
-    if (!gate.answer.ok && gate.answer.category === "role") console.info(`sweep batch ${input.batchId} refused=role`);
+    if (!gate.answer.ok && (gate.answer.category === "role" || gate.answer.category === "batch_reused")) {
+      console.info(`sweep batch ${input.batchId} refused=${gate.answer.category}`);
+    }
     return gate.answer;
   }
 

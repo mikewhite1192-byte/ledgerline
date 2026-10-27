@@ -103,6 +103,27 @@ describe("POST /api/internal/sweep", () => {
     expect(mocks.startSweep).not.toHaveBeenCalled();
   });
 
+  it("reads the key once more on a mismatch, so a rotated key is taken", async () => {
+    const rotated = "Rq7".repeat(16);
+    mocks.internalKey.mockResolvedValueOnce(KEY).mockResolvedValueOnce(rotated);
+    const res = await call({ action: "start", tenantId: TENANT }, rotated);
+    expect(res.status).toBe(200);
+    expect(mocks.internalKey).toHaveBeenCalledTimes(2);
+    expect(mocks.internalKey.mock.calls[1][1]).toEqual({ fresh: true });
+  });
+
+  it("still refuses a wrong key after the second read, and when that read fails", async () => {
+    const wrong = "Wx9".repeat(16);
+    const res = await call({ action: "start", tenantId: TENANT }, wrong);
+    expect(res.status).toBe(403);
+    expect(mocks.internalKey).toHaveBeenCalledTimes(2);
+    mocks.internalKey.mockResolvedValueOnce(KEY).mockResolvedValueOnce(null);
+    expect((await call({ action: "start", tenantId: TENANT }, wrong)).status).toBe(403);
+    mocks.internalKey.mockResolvedValueOnce(KEY).mockRejectedValueOnce(new Error("boom"));
+    expect((await call({ action: "start", tenantId: TENANT }, wrong)).status).toBe(403);
+    expect(mocks.startSweep).not.toHaveBeenCalled();
+  });
+
   it("answers 503 not_configured when there is no key, and 403 for a cross-site request", async () => {
     mocks.internalKey.mockResolvedValueOnce(null);
     const missing = await call({ action: "start", tenantId: TENANT });

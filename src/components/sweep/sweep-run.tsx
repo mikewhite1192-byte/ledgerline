@@ -16,12 +16,13 @@ import { codeToWords, recordLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
+import { batchFor, type HeldBatch } from "./batch-id";
 
 // A sweep run's page (design 3.10): the run's counts, then Clean fixes (each card keeps its own
 // Approve and Reject, plus one "Approve all clean" bar), Needs a look, Needs a person, and the
-// fixed and declined ones folded away. While the run is running the page carries it on one slice
-// at a time. Every word is a fixed label; the only model text is an explanation that passed the
-// figures check.
+// fixed, declined and expired ones folded away. While the run is running the page carries it on
+// one slice at a time. Every word is a fixed label; the only model text is an explanation that
+// passed the figures check.
 
 const ADVANCE_LIMIT = 60;
 const BUSY_WAIT_MS = 3_000;
@@ -31,12 +32,13 @@ const NOT_DRAFTED: Readonly<Record<string, string>> = {
   blocked_live: "Not drafted: an open proposal already covers this driver.",
   audit_pending: "Waiting on Muse Wonder's check.",
   over_cap: "Not drafted: the sweep's model budget for this run ran out.",
+  expired_earlier: "Not drafted: an earlier fix for this expired before anyone decided it.",
   found: "Not drafted yet.",
 };
 
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   already_decided: "This fix was already decided.",
-  expired: "This fix expired. Run the sweep again for a fresh one.",
+  expired: "This fix expired before anyone decided it. The sweep does not draft it again; add it by hand if it is still owed.",
   role: "An admin must approve an amount this size.",
   auditor_required: "This waits for the auditor's check before anyone can approve it.",
   override_required: "Muse Wonder blocked this. Write why you approve it anyway, then confirm.",
@@ -87,7 +89,7 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
   const [notices, setNotices] = useState<Record<string, string>>({});
   const [confirmAll, setConfirmAll] = useState(false);
   const [allNotice, setAllNotice] = useState("");
-  const [batchId, setBatchId] = useState<string | null>(null);
+  const [batch, setBatch] = useState<HeldBatch | null>(null);
   const alive = useRef(true);
   const runId = page.run.id;
 
@@ -184,21 +186,21 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
     if (alive.current) setBusy(null);
   }
 
-  // One batch id per confirmed list: a retry of the same confirm replays it, a new list gets a
-  // new id.
+  // One batch id per confirmed list and total (batch-id.ts): a retry of the same confirm replays
+  // it, a changed list or total gets a new id.
   async function approveAll() {
     const ids = page.clean.proposalIds;
     if (ids.length === 0) return;
-    const id = batchId ?? crypto.randomUUID();
-    setBatchId(id);
+    const held = batchFor(batch, ids, page.clean.totalCents, () => crypto.randomUUID());
+    setBatch(held);
     setBusy("all");
     setAllNotice("");
-    let next: string | null = null;
+    let next: HeldBatch | null = null;
     try {
       const res = await fetch(`/api/sweeps/${encodeURIComponent(runId)}/approve-clean`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ batchId: id, proposalIds: ids, totalCents: page.clean.totalCents }),
+        body: JSON.stringify({ batchId: held.id, proposalIds: ids, totalCents: page.clean.totalCents }),
       });
       if (res.ok) {
         const r = (await res.json()) as { done: number; refused: unknown[] };
@@ -216,17 +218,20 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
           setAllNotice(`The clean list changed: it now has ${n} ${n === 1 ? "fix" : "fixes"}, ${total} total. Check them and approve again. Nothing was approved.`);
         } else if (error === "role") {
           setAllNotice("An admin must approve a batch this size. Nothing was approved.");
+        } else if (error === "batch_reused" || error === "batch_taken") {
+          // This id can never be ours again: the next try takes a new one.
+          setAllNotice("The approval did not go through. Nothing was approved.");
         } else {
           setAllNotice("The approval did not go through. Nothing was approved.");
-          next = id;
+          next = held;
         }
       }
     } catch {
       // Unknown outcome: keep the same batch id, so trying again replays rather than repeats.
       setAllNotice("The answer did not come back. Try again; a repeat never approves twice.");
-      next = id;
+      next = held;
     }
-    setBatchId(next);
+    setBatch(next);
     setConfirmAll(false);
     await refresh();
     if (alive.current) setBusy(null);
@@ -242,14 +247,20 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
     return true;
   };
   const clean = fixes.filter((i) => i.clean && proposalOf(i)?.status === "proposed").filter(once);
-  const earlier = (i: SweepItemView) => i.status === "fixed_earlier" || i.status === "declined_earlier";
+  const earlier = (i: SweepItemView) =>
+    i.status === "fixed_earlier" || i.status === "declined_earlier" || i.status === "expired_earlier";
   const look = fixes
     .filter((i) => !i.clean && !earlier(i) && (proposalOf(i)?.status ?? "proposed") === "proposed")
     .filter(once);
   const fixed = fixes.filter((i) => i.status === "fixed_earlier" || proposalOf(i)?.status === "done").filter(once);
+  // Expired with nobody deciding is not a person's no, so it is never listed as declined.
+  const expired = fixes
+    .filter((i) => i.status === "expired_earlier" || proposalOf(i)?.status === "expired")
+    .filter(once);
   const declined = fixes
     .filter((i) => {
       const s = proposalOf(i)?.status;
+      if (i.status === "expired_earlier" || s === "expired") return false;
       return i.status === "declined_earlier" || (s !== undefined && s !== "proposed" && s !== "done");
     })
     .filter(once);
@@ -403,6 +414,18 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
             Declined ({declined.length})
           </summary>
           <div className="mt-3 grid gap-3">{declined.map(card)}</div>
+        </details>
+      ) : null}
+      {expired.length > 0 ? (
+        <details className="rounded-lg border border-border bg-card px-4 py-3">
+          <summary className="cursor-pointer text-body font-semibold text-foreground">
+            Expired undecided ({expired.length})
+          </summary>
+          <p className="mt-2 text-small text-foreground-2">
+            Each of these expired before anyone decided it. The sweep does not draft them again; add one
+            by hand if it is still owed.
+          </p>
+          <div className="mt-3 grid gap-3">{expired.map(card)}</div>
         </details>
       ) : null}
 
