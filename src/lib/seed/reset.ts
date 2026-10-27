@@ -20,7 +20,7 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      same things again under the tenant row lock and deletes the settled ledger rows, the
 //      agent's records and the fictional broker portal's loads (the app role has no DELETE on
 //      them); the portal's loads come back only with npm run seed, since the app cannot write them;
-//   4. the seed's replace of the 19 seeded tables, as the app role, under row-level security;
+//   4. the seed's replace of the 20 seeded tables, as the app role, under row-level security;
 //   5. the read-back: every seeded table equals the plan, every cleared table is empty, and the
 //      hero's open-week net is the worked example.
 // Any failure rolls the whole transaction back, so a carrier is either reset or left as it was.
@@ -48,14 +48,18 @@ export const DEMO_RESET_CLEARED = {
   voice_notes: "each names a driver, an inbound message and a conversation that go",
   driver_notes: "each names a settlement, a driver and a pay period the replace deletes",
   turn_steps: "the agent's steps of the turns that go",
-  proposals: "each names a subject, an outside message or a ledger row the replace deletes",
+  proposals:
+    "the agent's proposals and the invoice queue's cards (0015); each names a subject, an " +
+    "outside message or a ledger row the replace deletes",
   turns: "the agent's turns, which point at the inputs and subjects that go",
   conversations: "the agent's conversations, empty once their turns go",
 } as const;
 
 // The tables the reset never touches, each with why.
 export const DEMO_RESET_KEPT = {
-  tenants: "the carrier itself",
+  tenants:
+    "the carrier itself, with its document key (0015), so the invoice and payment numbers it " +
+    "sends keep the same key",
   memberships: "the staff and admin logins, so nobody is signed out of the carrier",
   model_calls: "the record of every model charge",
   portal_accounts:
