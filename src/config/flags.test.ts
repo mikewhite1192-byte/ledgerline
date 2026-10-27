@@ -12,6 +12,8 @@ describe("flags", () => {
     expect(flags.paymentProvider).toBe("mock");
     expect(flags.triageProvider).toBe("meta");
     expect(flags.agentEnabled).toBe(false);
+    expect(flags.documentsEnabled).toBe(false);
+    expect(flags.documentCrop).toBe(false);
     expect(flags.reportsEnabled).toBe(false);
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
@@ -62,6 +64,18 @@ describe("flags", () => {
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
   });
 
+  it("keeps document uploads small, few and cheap to read", () => {
+    expect(flags.documentLimits).toEqual({
+      maxBytes: 700_000,
+      maxPdfPages: 3,
+      readMaxCostCents: 8,
+      perTenantPerDay: 20,
+    });
+    for (const v of Object.values(flags.documentLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+  });
+
   it("ships the advance flow dark, disarmed, capped and dated", () => {
     expect(flags.advancesEnabled).toBe(false);
     expect(flags.advancePayouts).toEqual({ armed: false, capCents: 50_000, startDate: "2026-10-27" });
@@ -92,6 +106,24 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
+  });
+
+  it("ships voice intake dark, with its upload sizes and daily count capped", () => {
+    expect(flags.voiceIntakeEnabled).toBe(false);
+    expect(flags.voiceLimits).toEqual({
+      maxWavBytes: 2_000_000,
+      maxOriginalBytes: 700_000,
+      maxDurationMs: 60_000,
+      voiceNotesPerDay: 20,
+    });
+    for (const v of Object.values(flags.voiceLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // One stored recording reads back under the Data API's 1 MiB answer limit.
+    expect(Math.ceil(flags.voiceLimits.maxOriginalBytes / 3) * 4).toBeLessThan(1_048_576);
+    // The longest clip fits the WAV cap (16 kHz 16-bit mono is 32 bytes a millisecond after the
+    // 44-byte header), so the duration check is the one that binds.
+    expect(flags.voiceLimits.maxDurationMs).toBeLessThanOrEqual(Math.floor((flags.voiceLimits.maxWavBytes - 44) / 32));
   });
 
   it("stops any one model job at $10 in an hour", () => {

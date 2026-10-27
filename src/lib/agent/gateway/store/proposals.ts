@@ -12,6 +12,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   advance_payout: "Pay advance",
   pay_correction: "Pay correction",
   invoice_fix: "Invoice correction",
+  load_rate_fill: "Fill missing rate",
   detention_charge: "Bill unbilled detention",
 };
 
@@ -43,6 +44,8 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
     return { amountCents: Math.abs(amountCents), direction: amountCents < 0 ? "in" : "out" } as const;
   }
   if (kind === "invoice_fix") return { amountCents, direction: "none" } as const;
+  // A rate fill moves no money.
+  if (kind === "load_rate_fill") return { amountCents: 0, direction: "none" } as const;
   // Money the customer owes the carrier on top of the invoice.
   if (kind === "detention_charge") return { amountCents, direction: "in" } as const;
   return { amountCents, direction: "out" } as const;
