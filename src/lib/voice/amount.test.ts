@@ -25,6 +25,10 @@ describe("extractAmountCents", () => {
     ["ciento veinte dólares", 12_000],
     ["one thousand two hundred dollars", 120_000],
     ["first $200, then later $500", 20_000],
+    // The most a note can hold (the amount_cents CHECK), in digits and in words.
+    ["$1,000,000", 100_000_000],
+    ["$1,000,000.00", 100_000_000],
+    ["ten hundred thousand dollars", 100_000_000],
   ])("%s is %i cents", (text, cents) => {
     expect(extractAmountCents(text)).toBe(cents);
   });
@@ -38,6 +42,10 @@ describe("extractAmountCents", () => {
     "$0 for now",
     "",
     "$5,000,001 dollars",
+    // Whole dollars at the cap plus cents is past it: no amount, never a row the database refuses.
+    "$1,000,000.50",
+    "$1,000,000.01",
+    "1000000.99 dollars",
   ])("%s states no amount", (text) => {
     expect(extractAmountCents(text)).toBeNull();
   });

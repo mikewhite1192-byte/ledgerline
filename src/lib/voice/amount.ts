@@ -4,6 +4,9 @@
 // advanced. null when no amount is stated, and the agent then asks instead of guessing.
 
 const MAX_DOLLARS = 1_000_000;
+// The most a note can hold: voice_notes.amount_cents is CHECKed BETWEEN 1 AND 100000000. Anything
+// above it is "no amount stated", never a row the database refuses after the model calls are paid.
+const MAX_CENTS = MAX_DOLLARS * 100;
 
 const CURRENCY = new Set(["dollars", "dollar", "bucks", "dolares", "dolar"]);
 const CONNECTORS = new Set(["and", "y"]);
@@ -58,7 +61,7 @@ function numberCents(text: string): number | null {
   const dollars = Number(whole);
   if (!Number.isSafeInteger(dollars) || dollars > MAX_DOLLARS) return null;
   const cents = dollars * 100 + (fraction ? Number(fraction) : 0);
-  return cents > 0 ? cents : null;
+  return cents > 0 && cents <= MAX_CENTS ? cents : null;
 }
 
 function isNumberWord(list: readonly Token[], i: number): boolean {
@@ -92,6 +95,7 @@ function wordsValue(run: readonly string[]): number | null {
     seen = true;
   }
   const value = total + current;
+  // Whole dollars only, so value * 100 stays within MAX_CENTS.
   return seen && value > 0 && value <= MAX_DOLLARS ? value : null;
 }
 

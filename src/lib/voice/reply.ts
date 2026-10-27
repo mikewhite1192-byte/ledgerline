@@ -73,8 +73,15 @@ export function figuresOf(text: string): string[] {
   return [...text.matchAll(/\$\d{1,3}(?:,\d{3})*\.\d{2}/g)].map((m) => m[0]);
 }
 
-// The translation, or null when it is not JSON of the right shape or it lost or changed any of
-// the template's dollar figures: a number the engine did not write never reaches a driver.
+// Every run of number characters a text holds, in any script, sorted: "$1,250.50" gives "1",
+// "250" and "50". Catches numbers in any form ("$50", "50 dólares", "5.000").
+function numberRuns(text: string): string[] {
+  return [...text.matchAll(/\p{N}+/gu)].map((m) => m[0]).sort();
+}
+
+// The translation, or null when it is not JSON of the right shape, it lost or changed any of the
+// template's dollar figures, or it holds any number run the template does not: a number the
+// engine did not write never reaches a driver.
 export function parseTranslated(answer: string, template: string): string | null {
   let raw: unknown;
   try {
@@ -89,5 +96,8 @@ export function parseTranslated(answer: string, template: string): string | null
   const want = figuresOf(template);
   const got = figuresOf(reply);
   if (want.length !== got.length || want.some((f, i) => f !== got[i])) return null;
+  const wantRuns = numberRuns(template);
+  const gotRuns = numberRuns(reply);
+  if (wantRuns.length !== gotRuns.length || wantRuns.some((r, i) => r !== gotRuns[i])) return null;
   return reply;
 }
