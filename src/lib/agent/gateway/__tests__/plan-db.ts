@@ -11,7 +11,9 @@ import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 // handler or fails the test.
 
 const FROM =
-  /^SELECT .+? FROM (\w+) WHERE tenant_id = current_tenant_id\(\)(?: AND (.+))? ORDER BY \w+$/s;
+  /^SELECT .+? FROM (\w+) WHERE tenant_id = current_tenant_id\(\)(?: AND (.+))? ORDER BY (\w+)(?: LIMIT (\d+))?$/s;
+// A paged read: its filter in parentheses and, after the first page, the last key it saw.
+const AFTER_KEY = " AND id > CAST($3 AS uuid)";
 const BY_COLUMN = /^(\w+) = CAST\(\$1 AS uuid\)$/;
 const BY_DRIVER_LOADS =
   "load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid))";
@@ -41,9 +43,34 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     const m = FROM.exec(sql);
     if (!m) return undefined;
     const all = tables[m[1]] ?? [];
+    if (m[4] !== undefined) return pageRows(plan.rows, all, m[2], m[3], Number(m[4]), params);
     return filterRows(plan.rows, all, m[2], params).map((r) => ({ ...r }));
   };
   return new FakeDb(tables, handler);
+}
+
+// One page as the database gives it: the filter's rows in key order, after the last key seen, up
+// to the limit.
+function pageRows(
+  rows: TenantRows,
+  all: Row[],
+  where: string | undefined,
+  key: string,
+  limit: number,
+  params: Param[],
+): Row[] {
+  if (where === undefined || key !== "id") throw new Error("unexpected paged read");
+  const after = where.endsWith(AFTER_KEY) ? String(params[2]) : null;
+  const inner = after === null ? where : where.slice(0, -AFTER_KEY.length);
+  if (!inner.startsWith("(") || !inner.endsWith(")")) {
+    throw new Error(`unexpected paged where clause: ${inner.slice(0, 60)}`);
+  }
+  const filterParams = after === null ? params : params.slice(0, -1);
+  return filterRows(rows, all, inner.slice(1, -1), filterParams)
+    .filter((r) => after === null || String(r.id) > after)
+    .sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))
+    .slice(0, limit)
+    .map((r) => ({ ...r }));
 }
 
 function filterRows(rows: TenantRows, all: Row[], where: string | undefined, params: Param[]): Row[] {

@@ -284,10 +284,63 @@ export async function readReportInput<K extends TenantTable>(
   return out as Pick<TenantRows, K>;
 }
 
+// A paged read that reached its page bound. The whole read fails: a partial set is never returned.
+export class ReadLimitError extends Error {
+  readonly category = "too_many_rows";
+
+  constructor() {
+    super("read stopped at its page bound: too_many_rows");
+    this.name = "ReadLimitError";
+  }
+}
+
+// Rows per statement and statements per table for a paged read. A page of the widest of the
+// month's tables (a load, under 1 KB as JSON) stays far under the Data API's 1 MiB response cap;
+// the bound (100,000 rows of one table in one month) stops a runaway read.
+export type Paging = { pageSize: number; maxPages: number };
+const DELIVERED_PAGING: Paging = { pageSize: 200, maxPages: 500 };
+
+// readWhere in pages, keyed on the table's uuid primary key (its first column, the one selectSql
+// orders by): every matching row once, in the order one unpaged read gives. A page shorter than
+// the page size ends the read, so an exact multiple ends with one empty page.
+async function readWherePaged<K extends TenantTable>(
+  q: Queryable,
+  table: K,
+  where: string,
+  params: Param[],
+  paging: Paging,
+): Promise<TenantRows[K]> {
+  const { pageSize, maxPages } = paging;
+  for (const n of [pageSize, maxPages]) {
+    if (!Number.isSafeInteger(n) || n < 1) throw new RangeError("paging is not a positive count");
+  }
+  const [key, kind] = TABLE_SPECS[table].columns[0];
+  if (kind !== "uuid") throw new Error("a paged read needs a uuid key");
+  const after = `${assertIdentifier(key)} > CAST($${params.length + 1} AS uuid)`;
+  const first = `${selectSql(table, `(${where})`)} LIMIT ${pageSize}`;
+  const next = `${selectSql(table, `(${where}) AND ${after}`)} LIMIT ${pageSize}`;
+  const out: unknown[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const rows: unknown[] =
+      cursor === null
+        ? await readRows(q, table, first, params)
+        : await readRows(q, table, next, [...params, cursor]);
+    if (rows.length > pageSize) throw new Error("a page is larger than its page size");
+    out.push(...rows);
+    if (rows.length < pageSize) return out as TenantRows[K];
+    const last = (rows[rows.length - 1] as Record<string, unknown>)[key];
+    if (!isUuid(last)) throw new Error("a page key is not a uuid");
+    cursor = last;
+  }
+  throw new ReadLimitError();
+}
+
 // Loads delivered inside one tenant-local date range, first to last day, and only the rows those
 // loads need: their customers, state miles, accessorials and invoices. The other tables are read
 // through the same delivered-date filter on loads, so a month's read never pulls the rest of the
-// tenant's history (the Data API caps a response at 1 MiB).
+// tenant's history, and each table is read in pages, because the Data API ends a statement whose
+// result passes 1 MiB.
 const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)";
 const DELIVERED_LOADS =
   "load_id IN (SELECT id FROM loads" +
@@ -301,16 +354,20 @@ export type DeliveredRows = Pick<
   "loads" | "customers" | "load_state_miles" | "load_accessorials" | "invoices"
 >;
 
-export async function readDeliveredBetween(q: Queryable, period: Period): Promise<DeliveredRows> {
+export async function readDeliveredBetween(
+  q: Queryable,
+  period: Period,
+  paging: Paging = DELIVERED_PAGING,
+): Promise<DeliveredRows> {
   const start = assertLocalDate(period.start, "period start");
   const end = assertLocalDate(period.end, "period end");
   if (end < start) throw new RangeError("period ends before it starts");
   const p = [start, end];
   return {
-    loads: await readWhere(q, "loads", DELIVERED_BETWEEN, p),
-    customers: await readWhere(q, "customers", DELIVERED_CUSTOMERS, p),
-    load_state_miles: await readWhere(q, "load_state_miles", DELIVERED_LOADS, p),
-    load_accessorials: await readWhere(q, "load_accessorials", DELIVERED_LOADS, p),
-    invoices: await readWhere(q, "invoices", DELIVERED_LOADS, p),
+    loads: await readWherePaged(q, "loads", DELIVERED_BETWEEN, p, paging),
+    customers: await readWherePaged(q, "customers", DELIVERED_CUSTOMERS, p, paging),
+    load_state_miles: await readWherePaged(q, "load_state_miles", DELIVERED_LOADS, p, paging),
+    load_accessorials: await readWherePaged(q, "load_accessorials", DELIVERED_LOADS, p, paging),
+    invoices: await readWherePaged(q, "invoices", DELIVERED_LOADS, p, paging),
   };
 }

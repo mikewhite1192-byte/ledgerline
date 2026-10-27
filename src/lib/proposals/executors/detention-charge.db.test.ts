@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { flags } from "../../../config/flags";
 import { chargeArgsOf, detentionChargeOf, readDetentionChargeRows } from "../../data/detention-charge";
-import { readDeliveredBetween } from "../../data/read";
+import { ReadLimitError, readDeliveredBetween } from "../../data/read";
 import { createPgDb } from "../../db/pg";
 import { adminUrl, appUrl } from "../../db/test-urls";
 import type { Db, Param, Queryable } from "../../db/types";
@@ -455,5 +455,68 @@ describe("approving a detention charge", () => {
     // Two reads of five tables, then the tool's five: every one filtered by the delivered date.
     expect(sent).toHaveLength(15);
     for (const sql of sent) expect(sql).toContain("delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)");
+  });
+
+  it("reads a month in pages: every row once, in key order, and never part of a month", async () => {
+    // Five loads with their invoices, moved to August so the month holds only this test's rows,
+    // and four state-mile rows (an exact multiple of the page of two).
+    const august = [await addLoad(B), await addLoad(B), await addLoad(B), await addLoad(B), await addLoad(B)];
+    const miles = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    await admin.withTenant(B.tenantId, async (q) => {
+      for (const load of august) {
+        await q.execute(
+          `UPDATE loads SET pickup_on = CAST('2026-08-13' AS date), delivered_on = CAST('2026-08-14' AS date),
+             delivered_at = CAST('2026-08-14T16:00:00Z' AS timestamptz),
+             pickup_arrived_at = CAST('2026-08-13T13:00:00Z' AS timestamptz),
+             pickup_departed_at = CAST('2026-08-13T20:00:00Z' AS timestamptz),
+             delivery_arrived_at = CAST('2026-08-14T15:00:00Z' AS timestamptz),
+             delivery_departed_at = CAST('2026-08-14T16:00:00Z' AS timestamptz)
+           WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [load.loadId],
+        );
+      }
+      for (const [i, id] of miles.entries()) {
+        await q.execute(
+          `INSERT INTO load_state_miles (id, tenant_id, load_id, state, miles)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'OH', 120)`,
+          [id, august[i].loadId],
+        );
+      }
+    });
+
+    const month = { start: "2026-08-01", end: "2026-08-31" };
+    const sent: string[] = [];
+    const out = await app.withTenant(B.tenantId, async (q) => {
+      const recorder: Queryable = {
+        query: <T>(sql: string, params?: Param[]) => {
+          sent.push(sql);
+          return q.query<T>(sql, params);
+        },
+        execute: () => Promise.reject(new Error("the reader never writes")),
+      };
+      const paged = await readDeliveredBetween(recorder, month, { pageSize: 2, maxPages: 3 });
+      const pages = sent.length;
+      const whole = await readDeliveredBetween(q, month);
+      const bounded = await readDeliveredBetween(q, month, { pageSize: 2, maxPages: 2 }).then(
+        () => "returned",
+        (err: unknown) => (err instanceof ReadLimitError ? err.category : "other error"),
+      );
+      return { paged, pages, whole, bounded };
+    });
+
+    const ids = (rows: { id: string }[]) => rows.map((r) => r.id);
+    const sorted = (values: string[]) => [...values].sort();
+    // Every row, once, in key order, and the same rows a single page reads.
+    expect(ids(out.paged.loads)).toEqual(sorted(august.map((l) => l.loadId)));
+    expect(ids(out.paged.invoices)).toEqual(sorted(august.map((l) => l.invoiceId)));
+    expect(ids(out.paged.load_state_miles)).toEqual(sorted(miles));
+    expect(ids(out.paged.customers)).toEqual([B.customerId]);
+    expect(out.paged.load_accessorials).toEqual([]);
+    expect(out.paged).toEqual(out.whole);
+    // Loads and invoices take three pages (2, 2, 1), miles three (2, 2, then an empty page), the
+    // customer and the empty accessorials one each.
+    expect(out.pages).toBe(11);
+    // Five loads need three pages of two: a bound of two throws instead of returning four.
+    expect(out.bounded).toBe("too_many_rows");
   });
 });
