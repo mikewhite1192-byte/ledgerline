@@ -191,8 +191,10 @@ export function findPaymentOnWrongInvoice(input: ReceivablesInput): Finding[] {
 }
 
 // How one customer pays (addendum B4), derived from its own invoices issued in the 180 days
-// before asOf, void ones left out. A paid invoice was paid on the latest date of the payments
-// applied to it; days late run from the due date to that day. late share is over paid invoices.
+// before asOf, void ones left out. Only payments received by asOf count, so the profile as of a
+// past day does not move when a later payment arrives (the same rule as daysToPay). A paid
+// invoice was paid on the latest date of the payments applied to it; days late run from the due
+// date to that day. late share is over paid invoices.
 // reliable: at most 20% paid late and nothing over 30 days late, paid or open. repeat_late: at
 // least half paid late, or two paid more than 30 days late, or two open more than 30 days past
 // due. Anything else, and a customer with nothing paid yet, is mixed.
@@ -215,7 +217,12 @@ export function paymentProfile(
   const late: number[] = [];
   let openPast30 = 0;
   for (const invoice of invoices) {
-    const own = applications.filter((a) => a.invoiceId === invoice.id);
+    const own = applications.filter((a) => {
+      if (a.invoiceId !== invoice.id) return false;
+      const payment = payments.get(a.paymentId);
+      if (!payment) throw new InputError(`application ${a.id} names no known payment`);
+      return payment.receivedOn <= on;
+    });
     const applied = sum(own.map((a) => a.amountCents));
     const { status } = invoiceStatus(invoice.amountCents, applied);
     if (status !== "paid") {

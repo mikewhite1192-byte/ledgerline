@@ -32,9 +32,10 @@ afterEach(() => {
 });
 
 describe("POST /api/briefs/profit", () => {
-  it("refuses a cross-site post, either switch off, no session, and a body that is not exactly a week", async () => {
+  it("refuses a cross-site post, no session, either switch off, and a body that is not exactly a week", async () => {
     const body = JSON.stringify({ periodStart: WEEK });
     expect((await press(body, "cross-site")).status).toBe(403);
+    expect(mocks.getSession).not.toHaveBeenCalled();
     flags.profitBriefEnabled = false;
     const off = await press(body);
     expect(off.status).toBe(409);
@@ -43,11 +44,27 @@ describe("POST /api/briefs/profit", () => {
     flags.aiEnabled = false;
     expect(await (await press(body)).json()).toEqual({ error: "ai_off" });
     flags.aiEnabled = true;
-    expect(mocks.getSession).not.toHaveBeenCalled();
     mocks.getSession.mockResolvedValueOnce(null);
     expect((await press(body)).status).toBe(401);
     for (const bad of ["{", JSON.stringify({ periodStart: "Oct 19" }), JSON.stringify({ periodStart: WEEK, model: "wonder" }), "[]"]) {
       expect((await press(bad)).status, bad).toBe(400);
+    }
+    expect(mocks.writeBrief).not.toHaveBeenCalled();
+  });
+
+  it("tells a caller with no session nothing about the switches", async () => {
+    const body = JSON.stringify({ periodStart: WEEK });
+    for (const [brief, ai] of [
+      [false, true],
+      [true, false],
+      [true, true],
+    ]) {
+      flags.profitBriefEnabled = brief;
+      flags.aiEnabled = ai;
+      mocks.getSession.mockResolvedValueOnce(null);
+      const response = await press(body);
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: "unauthenticated" });
     }
     expect(mocks.writeBrief).not.toHaveBeenCalled();
   });

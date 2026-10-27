@@ -83,7 +83,7 @@ const SENTENCE = /[A-Za-zÁÉÍÓÚÑÜáéíóúñü][\s\S]*[.!?]/;
 // fullwidth and the like) would pass unread: a body with one is refused before the scan.
 const DECIMAL_DIGIT = /\p{Nd}/u;
 
-export function hasOtherDigit(body: string): boolean {
+function hasOtherDigit(body: string): boolean {
   return DECIMAL_DIGIT.test(body.replace(/[0-9]/g, ""));
 }
 

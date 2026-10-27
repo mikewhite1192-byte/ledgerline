@@ -229,10 +229,15 @@ export async function writeBrief(
   if (typeof reserved === "string") return { ok: false, category: reserved };
 
   const done = async (f: Finish): Promise<WriteBriefResult> => {
-    await finish(db, session, reserved.briefId, f, clock().toISOString());
-    const category = f.status === "drafted" ? null : f.category;
-    log(`briefs: profit_week ${f.status}${category ? ` (${category})` : ""} ${reserved.briefId}`);
-    return { ok: true, briefId: reserved.briefId, status: f.status, category };
+    // A row that already left drafting was marked interrupted by a later press once its lease ran
+    // out: these words were never stored, so the answer is never drafted. The page reads the row.
+    const moved = await finish(db, session, reserved.briefId, f, clock().toISOString());
+    const out: Finish = moved
+      ? f
+      : { status: "refused", category: "interrupted", verification: null, modelCallId: null };
+    const category = out.status === "drafted" ? null : out.category;
+    log(`briefs: profit_week ${out.status}${category ? ` (${category})` : ""} ${reserved.briefId}`);
+    return { ok: true, briefId: reserved.briefId, status: out.status, category };
   };
 
   // The switch can go off while the figures are read: checked again right before the call.

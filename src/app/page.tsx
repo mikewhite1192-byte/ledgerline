@@ -186,7 +186,7 @@ export default async function Home({
 }
 
 // Shown before the agent can answer; they light up when it can.
-const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, flags.profitBriefEnabled);
+const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, { profitOn: flags.profitBriefEnabled });
 
 // Offered only while the detention tools are switched on, so the chip never asks for a tool the
 // agent does not have.

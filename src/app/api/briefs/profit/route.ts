@@ -32,10 +32,11 @@ function reply(body: unknown, status: number) {
 
 export async function POST(request: Request) {
   if (isCrossSite(request)) return reply({ error: "forbidden" }, 403);
-  if (!flags.profitBriefEnabled) return reply({ error: "brief_off" }, 409);
-  if (!flags.aiEnabled) return reply({ error: "ai_off" }, 409);
+  // The session first, so a caller with none learns nothing about the switches.
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  if (!flags.profitBriefEnabled) return reply({ error: "brief_off" }, 409);
+  if (!flags.aiEnabled) return reply({ error: "ai_off" }, 409);
   let periodStart: string;
   try {
     const parsed = Body.safeParse(await request.json());

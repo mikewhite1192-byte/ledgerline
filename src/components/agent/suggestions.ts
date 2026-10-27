@@ -16,7 +16,10 @@ const MARGIN: Suggestion = { id: "margin-per-load", label: "What was our margin 
 
 const PROFIT: Suggestion = { id: "profit-brief", label: "How did we do last week?" };
 
-export function homeSuggestions(reportsOn: boolean, profitOn = false): Suggestion[] {
+// Each other switch comes in by name, so a call that passes one switch for another fails to build.
+type HomeSwitches = { profitOn?: boolean };
+
+export function homeSuggestions(reportsOn: boolean, { profitOn = false }: HomeSwitches = {}): Suggestion[] {
   return BASE.map((s) => {
     if (s.id !== "advance-limit") return { ...s };
     if (profitOn) return { ...PROFIT };

@@ -15,7 +15,7 @@ import { buildCarrierPlan } from "../seed/plan";
 import { replaceTenantData } from "../seed/run";
 import { localDateOf } from "../time/local-date";
 import { closedWeeks } from "./figures";
-import { readProfitBriefs, readProfitView } from "./view";
+import { BRIEF_LEASE_MS, readProfitBriefs, readProfitView } from "./view";
 import { writeBrief, type CompleteFn } from "./write";
 
 // The profit brief against the real database, as the app's role, on the seeded Blue Ridge carrier,
@@ -336,6 +336,30 @@ describe("profit briefs", () => {
     // Its own week can be written again.
     expect(await press(older.start)).toMatchObject({ ok: true, status: "drafted" });
     expect((await rows()).find((r) => r.id === stale)?.status).toBe("superseded");
+  });
+
+  it("answers refused, never drafted, when a later press marked its row interrupted during the call", async () => {
+    const later = () => new Date(NOW + BRIEF_LEASE_MS + 60_000);
+    const slow: CompleteFn = async (target, request, s) => {
+      // The call runs past its lease: a press for another week marks this row interrupted first.
+      expect(await press(older.start, goodModel, { clock: later })).toMatchObject({ ok: true, status: "drafted" });
+      return goodModel(target, request, s);
+    };
+    expect(await press(newest.start, slow)).toEqual({
+      ok: true,
+      briefId: expect.any(String),
+      status: "refused",
+      category: "interrupted",
+    });
+    expect(seen).toHaveLength(2);
+    const mine = (await rows()).filter((r) => r.period_start === newest.start);
+    expect(mine.map((r) => [r.status, r.refusal_category, r.body, r.model_call_id])).toEqual([
+      ["refused", "interrupted", null, null],
+    ]);
+    // The page shows the row as it is, and the week can be written again.
+    const view = await app.withTenant(tenantId, (q) => readProfitView(q, TODAY, newest.start, flags.profitBriefLimits, clock()));
+    expect(view.brief).toEqual({ kind: "refused", category: "interrupted" });
+    expect(await press(newest.start)).toMatchObject({ ok: true, status: "drafted" });
   });
 
   it("another carrier cannot read the brief", async () => {

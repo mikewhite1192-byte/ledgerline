@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  customerPaying,
   marginBpsOf,
   profitFigures,
   profitTotals,
@@ -174,6 +175,23 @@ describe("daysToPay", () => {
     // As of a day after the late payment, i5 is paid too (29 days): mean of 30, 10, 29 is 23.
     expect(daysToPay("cust-a", input, "2026-10-31")).toMatchObject({ paidCount: 3, meanDays: 23, medianDays: 29 });
     expect(daysToPay("cust-c", input, AS_OF)).toEqual({ customerId: "cust-c", paidCount: 0, meanDays: null, medianDays: null });
+  });
+
+  it("measures a customer's days to pay and payment habit to the same day", () => {
+    // Issued and due Sep 1, paid Oct 30: as of Oct 25 neither column counts it as paid.
+    const input: ReceivablesInput = {
+      asOf: AS_OF,
+      invoices: [invoice("i1", 10_000, "2026-09-01")],
+      payments: [payment("p1", 10_000, "2026-10-30")],
+      applications: [apply("a1", "p1", "i1", 10_000)],
+    };
+    expect(customerPaying(["cust-a"], input, AS_OF)).toEqual([
+      { customerId: "cust-a", meanDays: null, paidCount: 0, habit: "mixed" },
+    ]);
+    // On the day it arrives, both count it: 59 days, paid more than 30 days late.
+    expect(customerPaying(["cust-a"], input, "2026-10-30")).toEqual([
+      { customerId: "cust-a", meanDays: 59, paidCount: 1, habit: "repeat_late" },
+    ]);
   });
 
   it("counts only invoices paid in the 180 days before the day asked", () => {

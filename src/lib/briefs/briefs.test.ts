@@ -30,7 +30,8 @@ const db = () => planDb(plan);
 const REPORT: FigureSource = { report: "margin_per_load", args: { periodStart: "2026-10-19", periodEnd: "2026-10-25" } };
 const CUSTOMER = "7d1c2b3a-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
 
-// A small figure list by hand: totals, a route that lost money, a customer whose name has a digit.
+// A small figure list by hand: totals, a route that lost money, a customer whose name holds a
+// number word.
 const FIGURES: BriefFigure[] = [
   { key: "f1", label: "Revenue", kind: "cents", value: 4_821_000, source: REPORT },
   { key: "f2", label: "Driver pay", kind: "cents", value: 3_010_000, source: REPORT },
@@ -47,18 +48,18 @@ const FIGURES: BriefFigure[] = [
   },
   {
     key: "f7",
-    label: "Customer Route 9 Foods: average days to pay",
+    label: "Customer Second Street Foods: average days to pay",
     kind: "int",
     value: 41,
     source: { table: "customers", id: CUSTOMER },
-    subject: "Route 9 Foods",
+    subject: "Second Street Foods",
   },
 ];
 
 const GOOD =
   "Revenue was $48,210.00 [f1] against driver pay of $30,100.00 [f2], a margin of $18,110.00 [f3] or " +
   "37.56% [f4] on 12 [f5] priced loads. Roanoke, VA to Charlotte, NC ran at a loss of $125.00 [f6]. " +
-  "Route 9 Foods takes 41 [f7] days to pay.";
+  "Second Street Foods takes 41 [f7] days to pay.";
 
 const reply = (text: string) => JSON.stringify({ text });
 const check = (text: string) => verifyBrief(reply(text), FIGURES);
@@ -213,6 +214,52 @@ describe("the number check", () => {
     expect(check("Revenue was $48,210.00 [f1] across two routes.")).toMatchObject({ ok: false, category: "untagged" });
   });
 
+  it("refuses numbers written as words, whatever the word", () => {
+    for (const words of [
+      "One route lost money and zero customers paid late.",
+      "Margin came from a quarter of loads.",
+      "The first route led and the second trailed.",
+      "Margin was half of revenue.",
+      "Thousands of miles ran this week.",
+      "Pay ran twice as high.",
+      "Margin rose by a few basis points.",
+      "Margin was up a dozen percent.",
+    ]) {
+      const text = `Revenue was $48,210.00 [f1]. ${words}`;
+      expect(check(text), words).toMatchObject({ ok: false, category: "untagged" });
+    }
+  });
+
+  it("refuses any number character that is not a plain digit", () => {
+    for (const text of [
+      "Revenue was $48,210.00 [f1], ½ of revenue.",
+      "Margin was 12² [f3].",
+      // f5 is 12: the superscript would otherwise ride along on a figure that matches.
+      "Loads priced: 12² [f5].",
+      "Loads priced: Ⅻ [f5].",
+      "Loads priced: １２ [f5].",
+    ]) {
+      expect(check(text), text).toMatchObject({ ok: false, category: "format" });
+    }
+  });
+
+  it("refuses a figure with a letter or a size right after it", () => {
+    for (const text of [
+      "Revenue was $48k [f1].",
+      "Revenue was $48,210.00k [f1].",
+      "Revenue was $48 K [f1].",
+      "Revenue was $48,210.00 M [f1].",
+      "Revenue was $48 grand [f1].",
+      "Margin was 37.56%x [f4].",
+      "Loads priced: 12th [f5].",
+    ]) {
+      expect(check(text), text).toMatchObject({ ok: false, category: "number_mismatch" });
+    }
+    // A word after the tag, or a unit before it, is not a size.
+    expect(check("Second Street Foods takes 41 [f7] days to pay.").ok).toBe(true);
+    expect(check("Second Street Foods takes 41 days [f7] to pay.").ok).toBe(true);
+  });
+
   it("a brief citing a tag that does not exist is refused", () => {
     expect(check("Revenue was $48,210.00 [f99].")).toMatchObject({ ok: false, category: "unknown_tag" });
     expect(check("Revenue was $48,210.00 [source].")).toMatchObject({ ok: false, category: "unknown_tag" });
@@ -247,9 +294,40 @@ describe("the number check", () => {
     expect(check("Margin was -$18,110.00 [f3].")).toMatchObject({ ok: false, category: "number_mismatch" });
   });
 
+  it("needs a loss word in the loss's own clause, never one that belongs to the figure before it", () => {
+    // f6 is below zero: the loss word before it belongs to f3, so f6 would read as a gain.
+    expect(check("Lost $18,110.00 [f3]; margin $125.00 [f6].")).toMatchObject({ ok: false, category: "number_mismatch" });
+    expect(check("A loss of $18,110.00 [f3], then $125.00 [f6].")).toMatchObject({ ok: false, category: "number_mismatch" });
+    // A loss word in an earlier sentence or clause is not this figure's either.
+    expect(check("We lost ground. Margin was $125.00 [f6].")).toMatchObject({ ok: false, category: "number_mismatch" });
+    expect(check("No loss; margin was $125.00 [f6].")).toMatchObject({ ok: false, category: "number_mismatch" });
+    const own = "Margin was $18,110.00 [f3]; Roanoke, VA to Charlotte, NC lost $125.00 [f6].";
+    expect(check(own).ok).toBe(true);
+    expect(check("Margin was $18,110.00 [f3] and Roanoke, VA to Charlotte, NC ran at a loss of $125.00 [f6].").ok).toBe(true);
+  });
+
   it("reads the names a figure is about as names, never as numbers", () => {
-    expect(check("Route 9 Foods takes 41 [f7] days to pay.").ok).toBe(true);
-    expect(check("Route 9 Foods takes 9 [f7] days to pay.")).toMatchObject({ ok: false, category: "number_mismatch" });
+    // "Second" in the name is a name here, not a number word.
+    expect(check("Second Street Foods takes 41 [f7] days to pay.").ok).toBe(true);
+    expect(check("Second Street Foods takes 9 [f7] days to pay.")).toMatchObject({ ok: false, category: "number_mismatch" });
+    // A name never stands in for a loss word.
+    const named = FIGURES.map((f) => (f.key === "f6" ? { ...f, subject: "Lost Creek Farms" } : f));
+    expect(checkBriefText("Lost Creek Farms made $125.00 [f6].", named)).toMatchObject({ ok: false, category: "number_mismatch" });
+  });
+
+  it("refuses words that use a name holding a number, since that number would go unchecked", () => {
+    const named = (subject: string) => FIGURES.map((f) => (f.key === "f7" ? { ...f, subject } : f));
+    expect(checkBriefText("Route 9 Foods takes 41 [f7] days to pay.", named("Route 9 Foods"))).toMatchObject({
+      ok: false,
+      category: "untagged",
+    });
+    const forged = named("Revenue was $999,999.00");
+    expect(checkBriefText("Revenue was $999,999.00 and takes 41 [f7] days to pay.", forged)).toMatchObject({
+      ok: false,
+      category: "untagged",
+    });
+    // A name the words do not use hides nothing.
+    expect(checkBriefText("Revenue was $48,210.00 [f1].", forged).ok).toBe(true);
   });
 
   it("refuses a reply that is not exactly the text it asked for", () => {
@@ -311,10 +389,10 @@ describe("a checked brief on the page", () => {
   });
 
   it("reads a tag with no number before it as a source link", () => {
-    const text = "Route 9 Foods paid slowest [f7].";
+    const text = "Second Street Foods paid slowest [f7].";
     expect(checkBriefText(text, FIGURES).ok).toBe(true);
     expect(briefLinks(text, FIGURES, hrefFor)).toEqual([
-      { text: "Route 9 Foods paid slowest ", href: null },
+      { text: "Second Street Foods paid slowest ", href: null },
       { text: "(source)", href: `/records/customers/${CUSTOMER}`, label: FIGURES[6].label },
       { text: ".", href: null },
     ]);
