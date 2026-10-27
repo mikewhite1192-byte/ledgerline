@@ -41,6 +41,10 @@ export type Mp4Refusal =
 export type Mp4Read = { ok: true; header: Mp4Header } | { ok: false; reason: Mp4Refusal };
 
 const CODECS: readonly string[] = ["avc1", "avc3", "hvc1", "hev1"];
+// The MP4 brands a phone, a camera, ffmpeg or our own muxer write as the file's major brand. The
+// one list for the upload check here and the model wrapper's check before a call, so a file one
+// takes the other never refuses after the clip is kept.
+export const MP4_BRANDS: readonly string[] = ["isom", "iso2", "iso5", "iso6", "mp41", "mp42", "avc1"];
 const MAX_DEPTH = 8;
 // The identity transform in a track header, 16.16 and 2.30 fixed point.
 const IDENTITY = [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000];
@@ -168,7 +172,10 @@ function readTrack(bytes: Uint8Array, view: DataView, trak: Box): Track | null {
 function read(bytes: Uint8Array, limits: Mp4Limits): Mp4Read {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const top = children(bytes, view, 0, bytes.length);
-  if (top.length === 0 || top[0].type !== "ftyp") return { ok: false, reason: "not_mp4" };
+  // The file type box first, with a plain 8-byte header, so its major brand is the four bytes at
+  // offset 8: where the model wrapper reads it.
+  if (top.length === 0 || top[0].type !== "ftyp" || top[0].start !== 8) return { ok: false, reason: "not_mp4" };
+  if (!MP4_BRANDS.includes(fourcc(bytes, 8, top[0].end))) return { ok: false, reason: "not_mp4" };
   const moov = only(top, "moov");
   const tracks = children(bytes, view, moov.start, moov.end)
     .filter((b) => b.type === "trak")

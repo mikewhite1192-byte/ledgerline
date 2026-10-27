@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { MP4_LIMITS, readMp4Header } from "./mp4";
+import { looksLike } from "../ai/providers/media";
+import { MP4_BRANDS, MP4_LIMITS, readMp4Header } from "./mp4";
 import { muxAvc } from "./mux";
 
 const TINY = new Uint8Array(readFileSync(join(__dirname, "fixtures/tiny.mp4")));
@@ -62,6 +63,34 @@ describe("readMp4Header", () => {
     });
     expect(readMp4Header(TINY.slice(0, 200))).toEqual({ ok: false, reason: "not_mp4" });
     expect(readMp4Header("not bytes" as never)).toEqual({ ok: false, reason: "not_mp4" });
+  });
+
+  it("takes exactly the major brands the model wrapper takes, so the upload refuses the rest", () => {
+    const branded = (brand: string) => {
+      const out = TINY.slice();
+      out.set(Array.from(brand, (c) => c.charCodeAt(0)), 8);
+      return out;
+    };
+    for (const brand of MP4_BRANDS) {
+      expect(readMp4Header(branded(brand)), brand).toMatchObject({ ok: true });
+      expect(looksLike("video/mp4", branded(brand)), brand).toBe(true);
+    }
+    for (const brand of ["qt  ", "M4V ", "3gp4"]) {
+      expect(readMp4Header(branded(brand)), brand).toEqual({ ok: false, reason: "not_mp4" });
+      expect(looksLike("video/mp4", branded(brand)), brand).toBe(false);
+    }
+    // The same file type box with a 64-bit size puts the brand past offset 8, where the wrapper
+    // does not look: refused here too.
+    const ftypSize = new DataView(TINY.buffer, TINY.byteOffset).getUint32(0);
+    const wide = new Uint8Array(TINY.length + 8);
+    const view = new DataView(wide.buffer);
+    view.setUint32(0, 1);
+    wide.set(TINY.subarray(4, 8), 4);
+    view.setUint32(8, 0);
+    view.setUint32(12, ftypSize + 8);
+    wide.set(TINY.subarray(8), 16);
+    expect(readMp4Header(wide)).toEqual({ ok: false, reason: "not_mp4" });
+    expect(looksLike("video/mp4", wide)).toBe(false);
   });
 
   it("refuses a codec it does not take and a rotated track", () => {

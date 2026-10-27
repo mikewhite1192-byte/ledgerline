@@ -371,7 +371,7 @@ describe("dock clip pipeline", () => {
     expect(ai.sent).toHaveLength(4);
   });
 
-  it("refuses a segmentation answer in another size as unsupported, with no retry offered", async () => {
+  it("refuses a segmentation answer in another size as unsupported, with no retry offered or paid for", async () => {
     const ai = fakeAi({ samLine: SAM_LINE.replace(/w=64;h=64/, "w=128;h=128") });
     expect(await upload(ai)).toMatchObject({ ok: false, category: "unsupported", retryable: false });
     // Both answers were asked for once, and neither is kept.
@@ -379,8 +379,25 @@ describe("dock clip pipeline", () => {
     const [clip] = await admin.withTenant(A.tenantId, (q) =>
       q.query<{ id: string }>("SELECT CAST(id AS text) AS id FROM evidence_clips WHERE tenant_id = current_tenant_id()"),
     );
-    expect(await row(clip.id)).toMatchObject({ redact_attempts: 1, face_call_id: null, plate_call_id: null, lease_free: true });
+    // The same file gets the same answer, so every try is spent at once.
+    expect(await row(clip.id)).toMatchObject({ redact_attempts: 3, face_call_id: null, plate_call_id: null, lease_free: true });
     expect(logged.join("\n")).toContain("SegmentationSizeError");
+    // The same file again makes no model call.
+    expect(await upload(ai)).toMatchObject({ ok: false, category: "failed", retryable: false, clipId: clip.id });
+    expect(ai.sent).toHaveLength(2);
+    expect((await row(clip.id)).redact_attempts).toBe(3);
+  });
+
+  it("refuses a file whose major brand the model call would refuse, before any row or call", async () => {
+    const ai = fakeAi();
+    const quicktime = RAW.slice();
+    quicktime.set(Array.from("qt  ", (c) => c.charCodeAt(0)), 8);
+    expect(await upload(ai, quicktime)).toEqual({ ok: false, category: "unsupported", retryable: false });
+    expect(ai.fetch).not.toHaveBeenCalled();
+    const rows = await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ n: number }>("SELECT CAST(count(*) AS integer) AS n FROM evidence_clips WHERE tenant_id = current_tenant_id()"),
+    );
+    expect(rows[0].n).toBe(0);
   });
 
   it("answers with the kept plan when freeing the redaction lease fails", async () => {

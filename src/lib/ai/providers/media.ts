@@ -1,3 +1,4 @@
+import { MP4_BRANDS } from "../../clips/mp4";
 import { PDF_MAX_PAGES } from "../prices";
 import type { AiImageMime } from "../types";
 
@@ -26,9 +27,6 @@ function startsWith(bytes: Uint8Array, prefix: readonly number[], at = 0): boole
 }
 
 const ascii = (s: string) => [...s].map((c) => c.charCodeAt(0));
-
-// The MP4 brands a phone, a camera, ffmpeg or our own muxer write as the file's major brand.
-const MP4_BRANDS: readonly string[] = ["isom", "iso2", "iso5", "iso6", "mp41", "mp42", "avc1"];
 
 // Whether the bytes begin the way the declared type's files do. A mislabeled or corrupt file is
 // refused before any reservation instead of reaching the model as a 400.

@@ -178,6 +178,16 @@ export async function releaseRedactLease(q: Queryable, id: string): Promise<void
   await q.execute(`UPDATE evidence_clips SET redact_started_at = NULL WHERE id = ${ID}`, [id]);
 }
 
+// Spends every redaction try a clip has left, for an answer the same file will always get (one in
+// another size than the clip), so a repeat upload pays for no more calls.
+export async function exhaustRedactAttempts(q: Queryable, id: string): Promise<void> {
+  await q.execute(
+    `UPDATE evidence_clips SET redact_attempts = ${MAX_ATTEMPTS}
+      WHERE id = ${ID} AND status = 'redacting' AND redact_attempts < ${MAX_ATTEMPTS}`,
+    [id],
+  );
+}
+
 export type ClipFacts = {
   id: string;
   status: ClipStatus;

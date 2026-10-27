@@ -69,19 +69,27 @@ export function ClipUploader({ loads, onDone }: { loads: LoadOption[]; onDone: (
   async function start(event: FormEvent) {
     event.preventDefault();
     if (!file || !loadId || busy) return;
+    // Busy from here, so a second submit while this one reads the file is ignored; every early
+    // refusal below replaces it.
+    setPhase({ kind: "finding" });
     pending.current = null;
     // Everything this browser can check is checked before the upload, so no model call is paid
     // for a clip it could not blur.
     if (!webCodecsReady()) return setPhase({ kind: "error", category: "no_webcodecs", retry: null });
     if (file.size > MP4_LIMITS.maxBytes) return setPhase({ kind: "error", category: "too_large", retry: null });
-    const header = readMp4Header(new Uint8Array(await file.arrayBuffer()));
+    // A file the browser cannot read is refused, never left waiting.
+    const bytes = await file.arrayBuffer().then(
+      (b) => new Uint8Array(b),
+      () => null,
+    );
+    if (!bytes) return setPhase({ kind: "error", category: "decode", retry: null });
+    const header = readMp4Header(bytes);
     if (!header.ok) {
       const category = header.reason === "too_large" ? "too_large" : header.reason === "too_long" ? "too_long" : "unsupported";
       return setPhase({ kind: "error", category, retry: null });
     }
     if (!(await encoderSupports(header.header))) return setPhase({ kind: "error", category: "no_webcodecs", retry: null });
 
-    setPhase({ kind: "finding" });
     const uploaded = await uploadRaw(file, loadId, stop);
     if (!uploaded.ok) return setPhase({ kind: "error", category: uploaded.category, retry: null });
     const { clip, plan } = uploaded.value;

@@ -14,6 +14,7 @@ import {
   clipFacts,
   clipView,
   countToday,
+  exhaustRedactAttempts,
   findByRawHash,
   findLoad,
   findReadState,
@@ -204,6 +205,8 @@ export async function uploadClip(session: Session, input: UploadInput, deps: Cli
 
   let worst: RedactRefusal | null = null;
   if (claim.kind === "run") {
+    // Tracked on its own: a higher-ranked refusal for the other concept must not hide it.
+    let sizeMismatch = false;
     const size = { width: header.width, height: header.height, frameCount: header.frameCount };
     const settled = await Promise.allSettled(
       claim.missing.map(async (concept) => {
@@ -230,6 +233,7 @@ export async function uploadClip(session: Session, input: UploadInput, deps: Cli
     for (const s of settled) {
       if (s.status === "fulfilled") continue;
       logFailure("redaction", s.reason);
+      if (s.reason instanceof SegmentationSizeError) sizeMismatch = true;
       const category: RedactRefusal =
         s.reason instanceof AiError && s.reason.category === "disabled"
           ? "disabled"
@@ -239,6 +243,15 @@ export async function uploadClip(session: Session, input: UploadInput, deps: Cli
               ? "budget"
               : "failed";
       if (worst === null || RANK[category] > RANK[worst]) worst = category;
+    }
+    if (sizeMismatch) {
+      // The same file gets the same answer, so its remaining tries are spent now, not paid for.
+      // In its own transaction, so a failure to free the lease below cannot undo it.
+      try {
+        await tx(session, deps, (q) => exhaustRedactAttempts(q, claim.id));
+      } catch (err) {
+        logFailure("exhaust", err);
+      }
     }
     try {
       await tx(session, deps, (q) => releaseRedactLease(q, claim.id));

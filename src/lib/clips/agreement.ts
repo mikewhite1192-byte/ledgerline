@@ -81,9 +81,10 @@ export function agreementOf(reading: ClipReading, times: StopTimes): Agreement {
     arrivalMinutesOff: arrival?.minutesOff ?? null,
     departureMinutesOff: departure?.minutesOff ?? null,
   };
+  // A side that disagrees is reported first: a missing time on the other side never hides it.
+  if (sides.some((s) => s !== null && !s.agrees)) return { result: "differs", ...offs };
   if (pairs.some(([clock, instant]) => clock !== null && instant === null)) {
     return { result: "no_times", ...offs };
   }
-  const agrees = sides.every((s) => s === null || s.agrees);
-  return { result: agrees ? "matches" : "differs", ...offs };
+  return { result: "matches", ...offs };
 }

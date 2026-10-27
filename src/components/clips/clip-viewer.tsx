@@ -40,6 +40,8 @@ type Loaded = { clip: ClipView; plan: RedactionPlan | null; fileUrl: string | nu
 export function ClipViewer({ clipId, onChange }: { clipId: string; onChange?: () => void }) {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // A refused "Read the clip" is shown next to the button; the clip stays on screen to try again.
+  const [readProblem, setReadProblem] = useState<string | null>(null);
   const [showBoxes, setShowBoxes] = useState(false);
   const [reading, setReading] = useState(false);
   const [version, setVersion] = useState(0);
@@ -105,10 +107,12 @@ export function ClipViewer({ clipId, onChange }: { clipId: string; onChange?: ()
 
   async function readAgain() {
     setReading(true);
+    setReadProblem(null);
     const answer = await readClip(clipId);
     setReading(false);
-    if (!answer.ok) return setProblem(answer.category);
+    // Reloaded either way, so the status shown is the one the server kept after this call.
     setVersion((n) => n + 1);
+    if (!answer.ok) return setReadProblem(answer.category);
     onChange?.();
   }
 
@@ -140,6 +144,7 @@ export function ClipViewer({ clipId, onChange }: { clipId: string; onChange?: ()
           </Button>
         ) : null}
       </div>
+      {readProblem ? <InlineAlert tone="destructive">{clipMessage(readProblem)}</InlineAlert> : null}
       {fileUrl ? (
         <div className="relative w-full overflow-hidden rounded-lg border border-border bg-black" style={{ aspectRatio: `${clip.width} / ${clip.height}` }}>
           <video ref={video} src={fileUrl} controls muted playsInline className="absolute inset-0 size-full" />

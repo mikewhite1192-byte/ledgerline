@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RedactionPlan } from "@/lib/clips/redaction";
@@ -98,6 +100,30 @@ describe("ClipViewer", () => {
     render(<ClipViewer clipId={ID} />);
     expect(await screen.findByText("That load or clip was not found.")).toBeTruthy();
   });
+
+  it("keeps the clip and its button when a reading is refused, and reloads the clip's status", async () => {
+    const waiting: ClipView = { ...CLIP, status: "budget", reading: null, readAt: null };
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith("/file")
+        ? new Response(new Blob([Uint8Array.of(0, 0, 0, 8)], { type: "video/mp4" }))
+        : url.endsWith("/read")
+          ? Response.json({ error: "budget", retryable: true }, { status: 409 })
+          : Response.json({ ok: true, clip: waiting, plan: PLAN }),
+    );
+    const { container } = render(<ClipViewer clipId={ID} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Read the clip" }));
+    expect(await screen.findByText("The AI spending cap was reached. Try again later.")).toBeTruthy();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(5));
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      `/api/clips/${ID}`,
+      `/api/clips/${ID}/file`,
+      `/api/clips/${ID}/read`,
+      `/api/clips/${ID}`,
+      `/api/clips/${ID}/file`,
+    ]);
+    expect(await screen.findByRole("button", { name: "Read the clip" })).toBeTruthy();
+    expect(container.querySelector("video")).not.toBeNull();
+  });
 });
 
 describe("ClipUploader", () => {
@@ -109,6 +135,44 @@ describe("ClipUploader", () => {
     fireEvent.change(input, { target: { files: [new File([Uint8Array.of(0, 0, 0, 8)], "dock.mp4", { type: "video/mp4" })] } });
     fireEvent.click(screen.getByRole("button", { name: "Upload and blur" }));
     await waitFor(() => expect(screen.getByText(/This browser cannot blur video/)).toBeTruthy());
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("is busy from the first submit, so a second one while the file is read starts nothing", async () => {
+    const tiny = new Uint8Array(readFileSync(join(__dirname, "../../lib/clips/fixtures/tiny.mp4")));
+    vi.stubGlobal("VideoEncoder", Object.assign(function VideoEncoder() {}, { isConfigSupported: async () => ({ supported: true }) }));
+    vi.stubGlobal("VideoFrame", function VideoFrame() {});
+    fetchMock.mockImplementation(async () => Response.json({ error: "limit", retryable: false }, { status: 429 }));
+    let release: (bytes: ArrayBuffer) => void = () => {};
+    const file = new File([tiny], "dock.mp4", { type: "video/mp4" });
+    const arrayBuffer = vi.fn(() => new Promise<ArrayBuffer>((resolve) => (release = resolve)));
+    Object.defineProperty(file, "arrayBuffer", { value: arrayBuffer });
+    const { container } = render(
+      <ClipUploader loads={[{ id: CLIP.loadId, loadNumber: "BR-L10216", label: "BR-L10216" }]} onDone={() => {}} />,
+    );
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    const form = container.querySelector("form")!;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(arrayBuffer).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Upload and blur" })).toHaveProperty("disabled", true);
+    release(tiny.slice().buffer);
+    await waitFor(() => expect(screen.getByText(/today's clip limit/)).toBeTruthy());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a file the browser cannot read instead of staying busy", async () => {
+    vi.stubGlobal("VideoEncoder", Object.assign(function VideoEncoder() {}, { isConfigSupported: async () => ({ supported: true }) }));
+    vi.stubGlobal("VideoFrame", function VideoFrame() {});
+    const file = new File([Uint8Array.of(0, 0, 0, 8)], "dock.mp4", { type: "video/mp4" });
+    Object.defineProperty(file, "arrayBuffer", { value: () => Promise.reject(new Error("NotReadableError")) });
+    const { container } = render(
+      <ClipUploader loads={[{ id: CLIP.loadId, loadNumber: "BR-L10216", label: "BR-L10216" }]} onDone={() => {}} />,
+    );
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("button", { name: "Upload and blur" }));
+    await waitFor(() => expect(screen.getByText(/could not play this file/)).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Upload and blur" })).toHaveProperty("disabled", false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

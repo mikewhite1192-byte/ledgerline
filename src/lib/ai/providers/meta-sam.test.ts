@@ -286,4 +286,24 @@ describe("parseSamVideo", () => {
     expect(short(videoAnswer("", { video_frames_processed: 52 }), 200)).toMatchObject({ kind: "answered" });
     expect(short(videoAnswer("", { video_frames_processed: 53 }), 200)).toMatchObject({ kind: "unknown" });
   });
+
+  it("is unknown when the frames processed fall short of the clip or the floor by more than the slack", () => {
+    const text = PLATE_LINES.join("\n");
+    // A 144-frame clip: 142 is believed; 141, or 10 (most frames never looked at), is not.
+    expect(parseSamVideo(143, 50)(videoAnswer(text, { video_frames_processed: 142 }), 200)).toMatchObject({
+      kind: "answered",
+      metered: { unit: "video_frames", count: 142 },
+    });
+    for (const n of [141, 10, 1]) {
+      expect(parseSamVideo(143, 50)(videoAnswer(text, { video_frames_processed: n }), 200), String(n)).toEqual({
+        kind: "unknown",
+        category: "unknown",
+        httpStatus: 200,
+      });
+    }
+    // A 10-frame clip reports the 50-frame floor (measured): 48 is believed, 47 is not.
+    const short = parseSamVideo(9, 50);
+    expect(short(videoAnswer("", { video_frames_processed: 48 }), 200)).toMatchObject({ kind: "answered" });
+    expect(short(videoAnswer("", { video_frames_processed: 47 }), 200)).toMatchObject({ kind: "unknown" });
+  });
 });

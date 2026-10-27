@@ -102,6 +102,19 @@ describe("agreementOf", () => {
     expect(agreementOf(reading(clock("4:05 AM"), null), TIMES).result).toBe("matches");
   });
 
+  it("says differs when one side disagrees, even when the other side has no stored time", () => {
+    const noDeparture: StopTimes = { ...TIMES, departedAt: null };
+    const off = agreementOf(reading(clock("7:05 AM"), clock("11:25 AM")), noDeparture);
+    expect(off).toEqual({ result: "differs", arrivalMinutesOff: 180, departureMinutesOff: null });
+    expect(agreementText(off)).toBe("Differs from the stored stop times (arrival 180 minutes off)");
+    const noArrival: StopTimes = { ...TIMES, arrivedAt: null };
+    expect(agreementOf(reading(clock("4:05 AM"), clock("2:25 PM")), noArrival)).toEqual({
+      result: "differs",
+      arrivalMinutesOff: null,
+      departureMinutesOff: 180,
+    });
+  });
+
   it("treats a clock that is not a real time as differing, with no gap shown", () => {
     expect(agreementOf(reading(clock("13:05 PM"), null), TIMES)).toEqual({
       result: "differs",
