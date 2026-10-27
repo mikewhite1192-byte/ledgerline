@@ -8,8 +8,10 @@ import type { Executor, ProposalResult } from "../execute";
 // status change, so a crash leaves either all of it or none of it.
 //
 // The write also holds the load to what the proposal was checked against: a status that can take
-// a rate (the limit's list) and loaded miles that times the rate per mile make the linehaul. A
-// load cancelled or re-miled since then is not written.
+// a rate (the limit's list), loaded miles that times the rate per mile make the linehaul, and a
+// fuel surcharge that is still the column's default 0 or already the document's value (the rule
+// matchDocument uses). A load cancelled, re-miled or given another surcharge since then is not
+// written.
 //
 // On a resume (the proposal approved or executing), the load write finds no empty rate: if the
 // load now carries exactly these values the fill already happened and the proposal is done; any
@@ -78,7 +80,8 @@ export const loadRateFill: Executor = async (db, session, proposal, _opts, deps)
       `UPDATE loads SET linehaul_cents = $2, fuel_surcharge_cents = $3
         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND linehaul_cents IS NULL
           AND status IN ('planned', 'in_transit', 'delivered')
-          AND CAST(loaded_miles AS bigint) * $4 = $2`,
+          AND CAST(loaded_miles AS bigint) * $4 = $2
+          AND (fuel_surcharge_cents = 0 OR fuel_surcharge_cents = $3)`,
       [proposal.subjectId, linehaulCents, fuelSurchargeCents, ratePerMileCents],
     );
     if (written === 1) return finish(q, proposal.id, status, nowIso);

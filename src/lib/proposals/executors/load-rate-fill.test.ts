@@ -52,7 +52,10 @@ class ScriptDb implements TenantDb {
       expect(sql).toContain("tenant_id = current_tenant_id()");
       expect(sql).toContain(SQL_STATUSES);
       expect(sql).toContain("CAST(loaded_miles AS bigint) * $4 = $2");
+      expect(sql).toContain("(fuel_surcharge_cents = 0 OR fuel_surcharge_cents = $3)");
       if (!this.load || this.load.linehaul_cents !== null) return 0;
+      const fsc = this.load.fuel_surcharge_cents;
+      if (fsc !== 0 && fsc !== params[2]) return 0;
       const status = this.load.status ?? "delivered";
       const miles = this.load.loaded_miles ?? 612;
       if (!(RATE_FILL_STATUSES as readonly string[]).includes(status)) return 0;
@@ -139,6 +142,21 @@ describe("loadRateFill", () => {
     const db = new ScriptDb("approved", { linehaul_cents: null, fuel_surcharge_cents: 0, loaded_miles: 613 });
     expect(await run(db)).toEqual({ ok: false, category: "changed_since", retryable: false });
     expect(db.loadWrites).toBe(0);
+    expect(db.moves).toEqual([["approved", "failed", "changed_since"]]);
+  });
+
+  it("fills a load whose surcharge is already the document's value", async () => {
+    const db = new ScriptDb("approved", { linehaul_cents: null, fuel_surcharge_cents: 18_360 });
+    expect(await run(db)).toMatchObject({ ok: true, status: "done" });
+    expect(db.load).toEqual({ linehaul_cents: 149_940, fuel_surcharge_cents: 18_360 });
+    expect(db.loadWrites).toBe(1);
+  });
+
+  it("fails with changed_since when the load was given another surcharge after the proposal, writing nothing", async () => {
+    const db = new ScriptDb("approved", { linehaul_cents: null, fuel_surcharge_cents: 9_000 });
+    expect(await run(db)).toEqual({ ok: false, category: "changed_since", retryable: false });
+    expect(db.loadWrites).toBe(0);
+    expect(db.load).toEqual({ linehaul_cents: null, fuel_surcharge_cents: 9_000 });
     expect(db.moves).toEqual([["approved", "failed", "changed_since"]]);
   });
 

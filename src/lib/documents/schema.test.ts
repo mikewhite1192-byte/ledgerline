@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DOCUMENT_FORMAT, MAX_CENTS, MAX_TEXT_LINES, parseRead, rawOf } from "./schema";
+import {
+  DOCUMENT_FORMAT,
+  MAX_CENTS,
+  MAX_TEXT_LINES,
+  NO_TEXT_LINE,
+  parseRead,
+  rawOf,
+  READ_VALUES_LINE,
+  transcriptionOf,
+} from "./schema";
 import { CONFIDENCE_FIELDS } from "./types";
 
 // The parser is strict: a reading is exactly the schema's shape within its limits, or nothing.
@@ -123,5 +132,45 @@ describe("DOCUMENT_FORMAT", () => {
     const schema = DOCUMENT_FORMAT.schema as { required: string[]; additionalProperties: boolean };
     expect(schema.additionalProperties).toBe(false);
     expect([...schema.required].sort()).toEqual(Object.keys(allNull()).sort());
+  });
+});
+
+describe("transcriptionOf", () => {
+  it("is the printed lines, then each string value read, labelled, so the screen reads every one", () => {
+    const read = parseRead(JSON.stringify({ ...rateCon(), text_lines: ["RATE CONFIRMATION", "LOAD BR-1042"] }))!;
+    expect(transcriptionOf(read)).toBe(
+      [
+        "RATE CONFIRMATION",
+        "LOAD BR-1042",
+        READ_VALUES_LINE,
+        "load number: BR-1042",
+        "customer name: Sample Customer Co",
+        "stop 1 pickup arrived: 10/21/2026 7:40 AM EDT",
+      ].join("\n"),
+    );
+  });
+
+  it("stands in a line for no printed text, and adds nothing when no string was read", () => {
+    const empty = parseRead(JSON.stringify(allNull()))!;
+    expect(transcriptionOf(empty)).toBe(NO_TEXT_LINE);
+    const blank = parseRead(JSON.stringify({ ...allNull(), text_lines: [" ", ""], vendor: "Sample Vendor" }))!;
+    expect(transcriptionOf(blank)).toBe([NO_TEXT_LINE, READ_VALUES_LINE, "vendor: Sample Vendor"].join("\n"));
+  });
+
+  it("stays far under the stored text's 200,000 character limit at the schema's largest", () => {
+    const longest = parseRead(
+      JSON.stringify({
+        ...allNull(),
+        vendor: "v".repeat(120),
+        customer_name: "c".repeat(120),
+        date_mmddyyyy: "d".repeat(40),
+        load_number: "l".repeat(40),
+        truck_unit: "t".repeat(40),
+        stops: Array.from({ length: 4 }, () => ({ role: "delivery", arrived: "a".repeat(40), departed: "b".repeat(40) })),
+        text_lines: Array.from({ length: MAX_TEXT_LINES }, () => "x".repeat(160)),
+      }),
+    )!;
+    expect(longest).not.toBeNull();
+    expect(transcriptionOf(longest).length).toBeLessThan(15_000);
   });
 });

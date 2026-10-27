@@ -12,7 +12,15 @@ import type { DocumentMime, DocumentRead } from "./types";
 // row stays pending for Read again, or unreadable (a definite failure, including a cut answer or
 // one off the schema). The raw error never leaves this file; the log gets its name.
 
-export const READ_MAX_OUTPUT_TOKENS = 1_200;
+// Room for the schema's largest answer: 80 lines of 160 characters, every field at its longest,
+// four stops and the confidences come to about 14,610 characters of JSON, 7,305 tokens even at
+// two characters a token (English runs nearer four), so this, the most the AI wrapper allows,
+// leaves room for low effort reasoning. Its worst case reserve at Muse Spark's standard price,
+// for a 3 page PDF (4,000 tokens a page) and about 3,500 bytes of prompt and schema (1,763
+// tokens at two bytes a token), is (1,763 + 12,000) x 125,000 + 8,192 x 425,000 =
+// 5,201,975,000 nanocents, 5.2 cents, under flags.documentLimits.readMaxCostCents (8).
+// read.test.ts pins both.
+export const READ_MAX_OUTPUT_TOKENS = 8_192;
 export const READ_TIMEOUT_MS = 25_000;
 
 export type ReadFailureCategory =

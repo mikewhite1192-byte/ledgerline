@@ -142,7 +142,7 @@ async function patchFor(
       callId: outcome.callId,
     };
   }
-  const inputId = await insertTranscription(q, outcome.read.textLines, nowIso);
+  const inputId = await insertTranscription(q, outcome.read, nowIso);
   // A failed record read leaves the comparison empty (not compared), never "no record".
   let match: Record<string, unknown> = {};
   try {

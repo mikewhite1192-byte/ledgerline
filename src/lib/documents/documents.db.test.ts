@@ -81,23 +81,44 @@ function fakeModel(text: string) {
   );
 }
 
-const loadRate = async () =>
+const loadRate = async (id = loadId) =>
   (
     await admin.withTenant(A.tenantId, (q) =>
       q.query<{ linehaul_cents: string | number | null; fuel_surcharge_cents: string | number }>(
         "SELECT linehaul_cents, fuel_surcharge_cents FROM loads WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
-        [loadId],
+        [id],
       ),
     )
   )[0];
 
+// A delivered load of MILES with no rate yet, carrying the given surcharge, in carrier A.
+async function addLoad(loadNumber: string, fuelSurchargeCents: number): Promise<string> {
+  const id = randomUUID();
+  await admin.withTenant(A.tenantId, (q) =>
+    q.execute(
+      `INSERT INTO loads (id, tenant_id, load_number, customer_id, driver_id, status, origin_city, origin_state,
+         dest_city, dest_state, pickup_on, delivered_on, delivered_at, loaded_miles, linehaul_cents,
+         fuel_surcharge_cents)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid), CAST($4 AS uuid), 'delivered',
+         'Springfield', 'IL', 'Fairview', 'OH', CAST('2026-10-28' AS date), CAST('2026-10-29' AS date),
+         CAST('2026-10-29T18:00:00Z' AS timestamptz), $5, NULL, $6)`,
+      [id, loadNumber, A.customerId, A.driverId, MILES, fuelSurchargeCents],
+    ),
+  );
+  return id;
+}
+
 // A waiting load_rate_fill proposal with the conversation, turn and gateway decision a real one
 // hangs from, written by the admin login so created_at and the auditor's pass can be set (only a
 // pass goes through without the second confirm).
-async function addRateProposal(linehaulCents: number, extra: Record<string, unknown> = {}): Promise<string> {
+async function addRateProposal(
+  linehaulCents: number,
+  extra: Record<string, unknown> = {},
+  load = loadId,
+): Promise<string> {
   const [conversation, turn, decision, id, trace] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const created = new Date(NOW - HOUR).toISOString();
-  const args = { loadId, linehaulCents, fuelSurchargeCents: FUEL, ratePerMileCents: 245, ...extra };
+  const args = { loadId: load, linehaulCents, fuelSurchargeCents: FUEL, ratePerMileCents: 245, ...extra };
   await admin.withTenant(A.tenantId, async (q) => {
     await q.execute(
       `INSERT INTO conversations (id, tenant_id, created_by) VALUES (CAST($1 AS uuid), current_tenant_id(), $2)`,
@@ -126,11 +147,11 @@ async function addRateProposal(linehaulCents: number, extra: Record<string, unkn
         id,
         conversation,
         turn,
-        loadId,
+        load,
         JSON.stringify(args),
         decision,
         // Unique per call: two tests may propose the same cents for this load.
-        `load_rate_fill:${loadId}:${randomUUID().replace(/-/g, "").padStart(64, "0")}`,
+        `load_rate_fill:${load}:${randomUUID().replace(/-/g, "").padStart(64, "0")}`,
         trace,
         created,
       ],
@@ -155,18 +176,7 @@ describe("documents in the database", () => {
     app = createPgDb({ connectionString: appUrl() });
     A = await makeTenant(admin, `docs-a-${randomUUID().slice(0, 8)}`);
     B = await makeTenant(admin, `docs-b-${randomUUID().slice(0, 8)}`);
-    loadId = randomUUID();
-    await admin.withTenant(A.tenantId, (q) =>
-      q.execute(
-        `INSERT INTO loads (id, tenant_id, load_number, customer_id, driver_id, status, origin_city, origin_state,
-           dest_city, dest_state, pickup_on, delivered_on, delivered_at, loaded_miles, linehaul_cents,
-           fuel_surcharge_cents)
-         VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid), CAST($4 AS uuid), 'delivered',
-           'Springfield', 'IL', 'Fairview', 'OH', CAST('2026-10-28' AS date), CAST('2026-10-29' AS date),
-           CAST('2026-10-29T18:00:00Z' AS timestamptz), $5, NULL, $6)`,
-        [loadId, LOAD_NUMBER, A.customerId, A.driverId, MILES, FUEL],
-      ),
-    );
+    loadId = await addLoad(LOAD_NUMBER, FUEL);
   });
 
   beforeEach(() => {
@@ -209,7 +219,15 @@ describe("documents in the database", () => {
         [view.inputId],
       ),
     );
-    expect(transcription).toEqual([{ kind: "document", source: "upload", body_text: `SAMPLE RATE CONFIRMATION\nLOAD ${LOAD_NUMBER}` }]);
+    // The printed lines, then every string the reading claims, so the screen reads each one.
+    const body = [
+      "SAMPLE RATE CONFIRMATION",
+      `LOAD ${LOAD_NUMBER}`,
+      "(values read from this document)",
+      `load number: ${LOAD_NUMBER}`,
+      "customer name: Test Shipper",
+    ].join("\n");
+    expect(transcription).toEqual([{ kind: "document", source: "upload", body_text: body }]);
 
     const back = await readDocumentFile(A.session, view.id, { db: app });
     expect(back?.mime).toBe("image/png");
@@ -415,5 +433,31 @@ describe("documents in the database", () => {
     });
     expect(await proposalStatus(other)).toMatchObject({ status: "failed", decision_note: "changed_since" });
     expect(Number((await loadRate()).linehaul_cents)).toBe(245 * MILES);
+  });
+
+  it("fills a rate over the default 0 surcharge, and fails a fill whose load was given another surcharge since", async () => {
+    const fresh = await addLoad("DOC-L2", 0);
+    const id = await addRateProposal(245 * MILES, {}, fresh);
+    expect(await executeProposal(A.session, id, { confirmed: false }, { db: app, clock })).toMatchObject({ ok: true });
+    const filled = await loadRate(fresh);
+    expect(Number(filled.linehaul_cents)).toBe(245 * MILES);
+    expect(Number(filled.fuel_surcharge_cents)).toBe(FUEL);
+
+    const moved = await addLoad("DOC-L3", 0);
+    const stale = await addRateProposal(245 * MILES, {}, moved);
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute(
+        "UPDATE loads SET fuel_surcharge_cents = 9000 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [moved],
+      ),
+    );
+    expect(await executeProposal(A.session, stale, { confirmed: false }, { db: app, clock })).toMatchObject({
+      ok: false,
+      category: "changed_since",
+    });
+    expect(await proposalStatus(stale)).toMatchObject({ status: "failed", decision_note: "changed_since" });
+    const unchanged = await loadRate(moved);
+    expect(unchanged.linehaul_cents).toBeNull();
+    expect(Number(unchanged.fuel_surcharge_cents)).toBe(9_000);
   });
 });

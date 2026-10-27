@@ -428,6 +428,18 @@ describe("callTool dispatch order", () => {
     for (const [name, args] of Object.entries(ARGS)) {
       const auditor = name === "get_proposal";
       const db = planDb(plan, auditor ? withProposal(proposalRowFor(plan, "advance_payout"), screenStore) : screenStore);
+      // get_document reads only an uploaded document: the seeded document input gets one, not read.
+      if (name === "get_document") {
+        db.tables.documents = [
+          {
+            id: "77777777-7777-4777-8777-777777777777",
+            untrusted_input_id: (args as { inputId: string }).inputId,
+            read_status: "budget",
+            document_kind: null,
+            reading: null,
+          },
+        ];
+      }
       const role = name === "classify_message" ? "triage" : auditor ? "auditor" : "operator";
       const out = await callTool({ ...ctx, role }, call(name, args), {
         db,

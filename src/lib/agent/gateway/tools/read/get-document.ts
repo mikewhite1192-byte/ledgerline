@@ -2,6 +2,7 @@ import { z } from "zod";
 import { readRowsWhereId } from "../../../../data/read";
 import { loadCandidates } from "../../../../documents/candidates";
 import { matchDocument } from "../../../../documents/match";
+import { transcriptionOf } from "../../../../documents/schema";
 import { readDocumentForInput } from "../../store/document-reads";
 import { defineTool } from "../../types";
 import { idField } from "../../validate";
@@ -9,9 +10,10 @@ import { OPERATOR_AUDITOR } from "../shared";
 import { MAX_MESSAGE_CHARS, UNTRUSTED_WARNING } from "./get-inbound-message";
 
 // An uploaded document, after the gateway screens its transcription (screens below). What Muse
-// Spark read on it comes back under `claims`: values printed on a page, never facts. The
-// comparison is worked out again here against the records as they are now, so a record changed
-// since the upload shows its current value.
+// Spark read on it comes back under `claims`: values printed on a page, never facts. Every string
+// claim is in the screened transcription, so none skips the screen. The comparison is worked out
+// again here against the records as they are now, so a record changed since the upload shows its
+// current value.
 
 // The gateway replaces any result over 8,000 characters with a note, so the text gets what room
 // the rest of the result leaves (and never more than MAX_MESSAGE_CHARS), measured as JSON.
@@ -49,14 +51,20 @@ export const getDocument = defineTool({
     if (!screen) throw new Error("a document must be screened before it is read");
     const [input] = await readRowsWhereId(q, "untrusted_inputs", "id", a.inputId);
     if (!input) throw new Error("input vanished after the ref check");
+    // Only an uploaded document. An email or a transcript belongs to get_inbound_message, which
+    // the auditor does not hold; this refusal reaches the model only as the failed category.
+    if (input.kind !== "document") throw new Error("the input is not an uploaded document");
     const doc = await readDocumentForInput(q, a.inputId);
-    const read = doc?.read ?? null;
+    if (!doc) throw new Error("the input has no uploaded document");
+    // Claims only when the screened text is exactly the reading's transcription, which carries
+    // every string the reading claims (transcriptionOf). Any other row returns its text alone.
+    const read = doc.read && input.body_text === transcriptionOf(doc.read) ? doc.read : null;
     const match = read ? matchDocument(read, await loadCandidates(q, read)) : null;
     const result = {
       inputId: input.id,
-      documentId: doc?.id ?? null,
-      kind: doc?.kind ?? null,
-      readStatus: doc?.readStatus ?? null,
+      documentId: doc.id,
+      kind: doc.kind,
+      readStatus: doc.readStatus,
       claims: read ? read.fields : null,
       confidence: read ? read.confidence : null,
       match,

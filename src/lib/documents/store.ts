@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { Queryable } from "../db";
 import { untrustedContentHash } from "../data/content-hash";
-import { READ_ATTEMPTS_MAX, type DocumentKind, type DocumentMime, type ReadStatus } from "./types";
+import { transcriptionOf } from "./schema";
+import {
+  READ_ATTEMPTS_MAX,
+  type DocumentKind,
+  type DocumentMime,
+  type DocumentRead,
+  type ReadStatus,
+} from "./types";
 
 // The documents table, inside a tenant transaction the caller opened (row-level security scopes
 // every statement, and each one also names the tenant). Bytes travel as base64 both ways; no
@@ -172,19 +179,11 @@ export async function finishRead(q: Queryable, id: string, patch: ReadPatch, now
   );
 }
 
-// The line stored when a document had no readable text, so the transcription row is never empty.
-export const NO_TEXT_LINE = "(no text was read from this document)";
-
-// The document's transcription as an outside input the gateway screens before any model sees it.
-// One row per document: the screening cache already dedupes equal text by its content hash.
-// Returns the new input's id.
-export async function insertTranscription(
-  q: Queryable,
-  textLines: readonly string[],
-  nowIso: string,
-): Promise<string> {
-  const body = textLines.length > 0 ? textLines.join("\n") : NO_TEXT_LINE;
-  const text = body.trim() === "" ? NO_TEXT_LINE : body;
+// The document's transcription (transcriptionOf: the printed lines and every string value read)
+// as an outside input the gateway screens before any model sees it. One row per document: the
+// screening cache already dedupes equal text by its content hash. Returns the new input's id.
+export async function insertTranscription(q: Queryable, read: DocumentRead, nowIso: string): Promise<string> {
+  const text = transcriptionOf(read);
   const id = randomUUID();
   await q.execute(
     `INSERT INTO untrusted_inputs (id, tenant_id, kind, source, body_text, content_hash, received_at)

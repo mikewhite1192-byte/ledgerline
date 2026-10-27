@@ -197,6 +197,36 @@ export function parseRead(text: string): DocumentRead | null {
   };
 }
 
+// The line stored when a document had no readable text, so the transcription row is never empty.
+export const NO_TEXT_LINE = "(no text was read from this document)";
+
+// The line above the values the reading took off the page.
+export const READ_VALUES_LINE = "(values read from this document)";
+
+// The transcription stored for the screen: every printed line, then each string value the reading
+// claims, one labelled line each. The document tool returns claims only when the stored text is
+// exactly this, so every string it returns was screened (numbers and fixed words carry no text).
+export function transcriptionOf(read: DocumentRead): string {
+  const printed = read.textLines.join("\n");
+  const lines = [printed.trim() === "" ? NO_TEXT_LINE : printed];
+  const f = read.fields;
+  const values: string[] = [];
+  const add = (label: string, value: string | null) => {
+    if (value !== null) values.push(`${label}: ${value}`);
+  };
+  add("vendor", f.vendor);
+  add("date", f.date);
+  add("load number", f.loadNumber);
+  add("truck unit", f.truckUnit);
+  add("customer name", f.customerName);
+  f.stops.forEach((s, i) => {
+    add(`stop ${i + 1} ${s.role} arrived`, s.arrived);
+    add(`stop ${i + 1} ${s.role} departed`, s.departed);
+  });
+  if (values.length > 0) lines.push(READ_VALUES_LINE, ...values);
+  return lines.join("\n");
+}
+
 // A DocumentRead back in the schema's own shape: what the documents row stores, so a stored
 // reading goes back through parseRead.
 export function rawOf(read: DocumentRead): Record<string, unknown> {
