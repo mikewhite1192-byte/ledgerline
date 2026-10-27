@@ -85,6 +85,26 @@ export type Flags = {
   // The five report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
+  // The invoice queue: Refresh turns each delivered, rated load into an invoice card, and an
+  // approval records the invoice here. Posting it to the books still needs accountingEnabled.
+  invoicesEnabled: boolean;
+  // Loads delivered on or after this tenant-local date enter the queue; older ones never do.
+  invoicesStart: string;
+  invoiceLimits: {
+    // Cards one Refresh makes; past it the run stops and says so.
+    proposalsPerRun: number;
+    // Tries at posting one invoice; a retry follows only a definite failure.
+    maxPostAttempts: number;
+  };
+  // Recording a customer's payment against open invoices. Posting it to the books still needs
+  // accountingEnabled.
+  customerPaymentsEnabled: boolean;
+  customerPaymentLimits: {
+    // Payments one carrier may record in one tenant-local day.
+    perDay: number;
+    // Largest single payment.
+    maxCents: number;
+  };
 };
 
 export const flags: Flags = {
@@ -118,4 +138,9 @@ export const flags: Flags = {
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
   reportsEnabled: false,
+  invoicesEnabled: false,
+  invoicesStart: "2026-10-05",
+  invoiceLimits: { proposalsPerRun: 50, maxPostAttempts: 3 },
+  customerPaymentsEnabled: false,
+  customerPaymentLimits: { perDay: 50, maxCents: 5_000_000 },
 };

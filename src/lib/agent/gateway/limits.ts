@@ -1,14 +1,21 @@
 import { flags } from "../../../config/flags";
 import type { Queryable } from "../../db";
 import { loadsOf } from "../../data/records";
-import { readAdvanceInput, readRowsWhereId, readSettlementInput } from "../../data/read";
+import {
+  readAdvanceInput,
+  readReceivablesInput,
+  readRowsWhereId,
+  readSettlementInput,
+} from "../../data/read";
+import { matchWrongInvoiceFinding, type ReapplyIds } from "../../invoices/match";
 import {
   advanceEligibility,
   cents,
+  findPaymentOnWrongInvoice,
   invoiceAmount,
   type AdvanceDecision,
 } from "../../rules-engine";
-import { isWithin } from "../../time/local-date";
+import { isWithin, localDateOf } from "../../time/local-date";
 import type { GatewayContext, GatewayRef, LimitResult } from "./types";
 
 // Amount limits for the propose tools. The rules engine sizes every number; the gateway only
@@ -190,6 +197,42 @@ export async function invoiceFixLimit(
       exceptions: [],
       reasons: [],
       sources: [{ table: "invoices", id: invoice.id }, ...engine.sources],
+    };
+  } catch {
+    return unavailable(null);
+  }
+}
+
+// ---- Payment moves ----
+
+// A payment move exists only for a payment_on_wrong_invoice finding the rules engine makes now,
+// matched on all four ids whole and in order. The amount is the application's, never the
+// model's. A payment already posted to the accounting system is refused here too: moving it in
+// this app alone would leave the two books disagreeing.
+export async function paymentReapplyLimit(
+  q: Queryable,
+  ctx: GatewayContext,
+  args: ReapplyIds,
+): Promise<LimitResult> {
+  try {
+    const [application] = await readRowsWhereId(q, "payment_applications", "id", args.applicationId);
+    const [payment] = await readRowsWhereId(q, "customer_payments", "id", args.paymentId);
+    if (!application || !payment) return unavailable(null);
+    const amount = application.amount_cents;
+    if (payment.qbo_id !== null) return refused("engine_refused", amount, amount);
+    const asOf = localDateOf(ctx.now.toISOString(), ctx.timeZone);
+    const finding = matchWrongInvoiceFinding(
+      findPaymentOnWrongInvoice(await readReceivablesInput(q, asOf)),
+      args,
+    );
+    if (!finding || finding.amountCents !== amount) return refused("engine_refused", amount, amount);
+    return {
+      ok: true,
+      limitCents: cents(amount),
+      requestedCents: cents(amount),
+      exceptions: [],
+      reasons: ["payment_on_wrong_invoice"],
+      sources: finding.sources,
     };
   } catch {
     return unavailable(null);

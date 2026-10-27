@@ -5,7 +5,7 @@ import { advanceEligibility, invoiceAmount } from "../../../rules-engine";
 import { instantAt } from "../../../seed/calendar";
 import { CASE_A_ASK_CENTS } from "../../../seed/untrusted-inputs";
 import { addDays } from "../../../time/local-date";
-import { advanceLimit, invoiceFixLimit, payCorrectionLimit } from "../limits";
+import { advanceLimit, invoiceFixLimit, paymentReapplyLimit, payCorrectionLimit } from "../limits";
 import type { GatewayContext } from "../types";
 import { context, OTHER_ID } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
@@ -226,5 +226,72 @@ describe("invoice fix limit", () => {
 
   it("is limit_unavailable for an invoice it cannot read", async () => {
     expect(await run(OTHER_ID, 1000)).toMatchObject({ ok: false, reason: "limit_unavailable" });
+  });
+});
+
+describe("payment reapply limit", () => {
+  const w = plan.planted.wrongInvoice;
+  const ids = {
+    paymentId: w.paymentId,
+    applicationId: w.applicationId,
+    fromInvoiceId: w.appliedToInvoiceId,
+    toInvoiceId: w.meantForInvoiceId,
+  };
+  const applied = plan.rows.payment_applications.find((a) => a.id === w.applicationId)!;
+  const run = (p: typeof plan, args: typeof ids) =>
+    planDb(p).withTenant(ctx.session.tenantId, (q) => paymentReapplyLimit(q, ctx, args));
+
+  it("allows exactly the engine's planted finding, for the application's amount", async () => {
+    const out = await run(plan, ids);
+    expect(out).toMatchObject({
+      ok: true,
+      limitCents: applied.amount_cents,
+      requestedCents: applied.amount_cents,
+      reasons: ["payment_on_wrong_invoice"],
+    });
+    if (out.ok) {
+      expect(out.sources).toEqual([
+        { table: "customer_payments", id: ids.paymentId },
+        { table: "payment_applications", id: ids.applicationId },
+        { table: "invoices", id: ids.fromInvoiceId },
+        { table: "invoices", id: ids.toInvoiceId },
+      ]);
+    }
+  });
+
+  it("refuses any target the engine did not name, and the reverse move", async () => {
+    const other = plan.rows.invoices.find(
+      (i) => i.customer_id === w.customerId && i.id !== ids.fromInvoiceId && i.id !== ids.toInvoiceId,
+    );
+    if (other) {
+      expect(await run(plan, { ...ids, toInvoiceId: other.id })).toMatchObject({ ok: false, reason: "engine_refused" });
+    }
+    expect(
+      await run(plan, { ...ids, fromInvoiceId: ids.toInvoiceId, toInvoiceId: ids.fromInvoiceId }),
+    ).toMatchObject({ ok: false, reason: "engine_refused" });
+  });
+
+  it("refuses a payment already posted to QuickBooks", async () => {
+    const posted = {
+      ...plan,
+      rows: {
+        ...plan.rows,
+        customer_payments: plan.rows.customer_payments.map((p) =>
+          p.id === ids.paymentId ? { ...p, qbo_id: "9001" } : p,
+        ),
+      },
+    };
+    expect(await run(posted, ids)).toMatchObject({ ok: false, reason: "engine_refused" });
+  });
+
+  it("is limit_unavailable for an application or payment it cannot read", async () => {
+    expect(await run(plan, { ...ids, applicationId: OTHER_ID })).toMatchObject({
+      ok: false,
+      reason: "limit_unavailable",
+    });
+    expect(await run(plan, { ...ids, paymentId: OTHER_ID })).toMatchObject({
+      ok: false,
+      reason: "limit_unavailable",
+    });
   });
 });

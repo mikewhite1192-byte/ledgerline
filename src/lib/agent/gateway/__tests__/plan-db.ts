@@ -1,4 +1,5 @@
 import type { Param } from "../../../db";
+import { QUEUE_CHILDREN, QUEUE_LOADS } from "../../../data/read";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
@@ -50,6 +51,21 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
     return all.filter((r) => loadIds.has(r.load_id as string));
   }
   if (where === "status = $1") return all.filter((r) => r.status === params[0]);
+  if (where === QUEUE_LOADS || where === QUEUE_CHILDREN) {
+    const invoiced = new Set(rows.invoices.map((i) => i.load_id));
+    const queued = new Set(
+      rows.loads
+        .filter(
+          (l) =>
+            l.status === "delivered" &&
+            l.delivered_on !== null &&
+            l.delivered_on >= (params[0] as string) &&
+            !invoiced.has(l.id),
+        )
+        .map((l) => l.id),
+    );
+    return all.filter((r) => queued.has((where === QUEUE_LOADS ? r.id : r.load_id) as string));
+  }
   throw new Error(`unexpected where clause: ${where.slice(0, 60)}`);
 }
 

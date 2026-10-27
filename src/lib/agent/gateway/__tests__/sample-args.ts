@@ -10,6 +10,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const paid = rows.settlement_periods.find((p) => p.status === "paid")!;
   const invoice = rows.invoices.find((i) => i.source === "load" && i.status === "open")!;
   const input = rows.untrusted_inputs[0];
+  const wrong = plan.planted.wrongInvoice;
   const refs = [{ table: "drivers", id: hero.id }];
   return {
     get_driver: { driverId: hero.id },
@@ -43,6 +44,16 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       newAmountCents: invoice.amount_cents + 100,
       reasonCategories: ["rate_mismatch"],
       sourceRefs: [{ table: "invoices", id: invoice.id }],
+    },
+    get_invoice_queue: {},
+    get_ar_aging: { asOf: open.period_end, minBucket: "1_30" },
+    get_payments_in: { from: paid.period_start, to: open.period_end },
+    propose_payment_reapply: {
+      paymentId: wrong.paymentId,
+      applicationId: wrong.applicationId,
+      fromInvoiceId: wrong.appliedToInvoiceId,
+      toInvoiceId: wrong.meantForInvoiceId,
+      sourceRefs: [{ table: "customer_payments", id: wrong.paymentId }],
     },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     report_ar_aging: { asOf: "2026-11-02" },

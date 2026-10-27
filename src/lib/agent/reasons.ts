@@ -29,6 +29,11 @@ const SENTENCES: Readonly<Record<string, string>> = {
   over_driver_limit: "The amount is over the driver's advance limit.",
   exceeds_earned_share: "The amount is over the share of earned pay the rules allow.",
   possible_duplicate: "A similar advance was asked for recently.",
+  // the invoice queue (engine proposals)
+  engine_total: "The rules engine computed this total from the load's rate and charges.",
+  // propose_payment_reapply
+  payment_on_wrong_invoice:
+    "The payment matches another open invoice for the same customer exactly, and overpays the one it is on.",
 };
 
 const GENERIC = "A rule check found this.";

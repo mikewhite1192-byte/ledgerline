@@ -12,11 +12,13 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   advance_payout: "Pay advance",
   pay_correction: "Pay correction",
   invoice_fix: "Invoice correction",
+  invoice_post: "Post invoice",
+  payment_reapply: "Move payment to the right invoice",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;
 const LIVE = "('proposed', 'approved', 'executing')";
-const LIVE_STATUSES: readonly string[] = ["proposed", "approved", "executing"];
+export const LIVE_STATUSES: readonly string[] = ["proposed", "approved", "executing"];
 
 // JSON with object keys sorted at every level, so equal args hash equally.
 export function canonicalJson(value: unknown): string {
@@ -41,7 +43,11 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   if (kind === "pay_correction") {
     return { amountCents: Math.abs(amountCents), direction: amountCents < 0 ? "in" : "out" } as const;
   }
-  if (kind === "invoice_fix") return { amountCents, direction: "none" } as const;
+  if (kind === "invoice_fix" || kind === "payment_reapply") {
+    return { amountCents, direction: "none" } as const;
+  }
+  // An invoice is money the customer owes in; nothing moves until they pay it.
+  if (kind === "invoice_post") return { amountCents, direction: "in" } as const;
   return { amountCents, direction: "out" } as const;
 }
 
@@ -53,9 +59,9 @@ function categoriesOf(args: Record<string, unknown>, reasons: readonly string[])
   return [...new Set(all)].slice(0, 12);
 }
 
-type Existing = { id: string; flagged_input_id: string | null; status: string };
+export type Existing = { id: string; flagged_input_id: string | null; status: string };
 
-async function findByDedupe(q: Queryable, key: string): Promise<Existing | null> {
+export async function findByDedupe(q: Queryable, key: string): Promise<Existing | null> {
   const rows = await q.query<Existing>(
     "SELECT id, flagged_input_id, status FROM proposals WHERE dedupe_key = $1",
     [key],
@@ -63,7 +69,7 @@ async function findByDedupe(q: Queryable, key: string): Promise<Existing | null>
   return rows[0] ?? null;
 }
 
-async function findLive(q: Queryable, kind: ProposalKind, subjectId: string): Promise<string | null> {
+export async function findLive(q: Queryable, kind: ProposalKind, subjectId: string): Promise<string | null> {
   const rows = await q.query<{ id: string }>(
     `SELECT id FROM proposals
       WHERE kind = $1 AND subject_id = CAST($2 AS uuid) AND status IN ${LIVE}`,

@@ -4,6 +4,7 @@
 // agent's final answer and, for a flagged input, the quoted text the person is warned about.
 
 import type { ReportName } from "../reports/types";
+import type { ProposalKind } from "./gateway/types";
 
 export const TURN_STATUSES = ["running", "done", "partial", "failed"] as const;
 export type TurnStatus = (typeof TURN_STATUSES)[number];
@@ -32,10 +33,11 @@ export type ReasonView = { category: string; text: string; source: RefView | nul
 
 export type ProposalView = {
   id: string;
-  kind: "advance_payout" | "pay_correction" | "invoice_fix";
+  kind: ProposalKind;
   subjectTable: string;
   subjectId: string;
-  // The subject's code (a driver's or an invoice's number), read at render, never stored.
+  // The subject's code (a driver's code, an invoice's or a load's number, a payment's reference),
+  // read at render, never stored.
   subjectLabel: string | null;
   amountCents: number;
   direction: "in" | "out" | "none";

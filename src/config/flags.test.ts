@@ -60,4 +60,16 @@ describe("flags", () => {
     }
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
+
+  it("ships invoicing and customer payments dark, with small caps and a start date", () => {
+    expect(flags.invoicesEnabled).toBe(false);
+    expect(flags.customerPaymentsEnabled).toBe(false);
+    expect(flags.invoicesStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(flags.invoicesStart).toBe("2026-10-05");
+    expect(flags.invoiceLimits).toEqual({ proposalsPerRun: 50, maxPostAttempts: 3 });
+    expect(flags.customerPaymentLimits).toEqual({ perDay: 50, maxCents: 5_000_000 });
+    for (const v of [...Object.values(flags.invoiceLimits), ...Object.values(flags.customerPaymentLimits)]) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+  });
 });

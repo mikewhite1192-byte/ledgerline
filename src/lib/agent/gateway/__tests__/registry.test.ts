@@ -14,9 +14,13 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   explain_paystub: { tier: "read", roles: ["operator"] },
   run_checks: { tier: "read", roles: ["operator", "auditor"] },
   get_inbound_message: { tier: "read", roles: ["operator", "triage"] },
+  get_invoice_queue: { tier: "read", roles: ["operator"] },
+  get_ar_aging: { tier: "read", roles: ["operator"] },
+  get_payments_in: { tier: "read", roles: ["operator"] },
   propose_advance: { tier: "propose", roles: ["operator"] },
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
+  propose_payment_reapply: { tier: "propose", roles: ["operator"] },
   classify_message: { tier: "read", roles: ["triage"] },
   report_ar_aging: { tier: "read", roles: ["operator"] },
   report_driver_pay_summary: { tier: "read", roles: ["operator"] },
@@ -52,7 +56,7 @@ describe("tool registry", () => {
 
   it("gives every propose tool an engine limit", () => {
     const propose = Object.values(TOOL_REGISTRY).filter((t) => t.tier === "propose");
-    expect(propose).toHaveLength(3);
+    expect(propose).toHaveLength(4);
     for (const tool of propose) expect(typeof tool.limit).toBe("function");
   });
 
@@ -67,10 +71,10 @@ describe("tool registry", () => {
 
   it("offers each role only its own tools, as copies", () => {
     const counts = Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]));
-    expect(counts).toEqual({ operator: 13, auditor: 9, triage: 2 });
+    expect(counts).toEqual({ operator: 17, auditor: 9, triage: 2 });
     const first = toolsFor("operator");
     first.pop();
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(17);
     expect(toolsFor("nobody" as AgentRole)).toEqual([]);
   });
 
@@ -80,7 +84,7 @@ describe("tool registry", () => {
     expect(toolsFor("operator").map((t) => t.name).filter((n) => n.startsWith("report_"))).toEqual([]);
 
     flags.reportsEnabled = true;
-    expect(toolsFor("operator")).toHaveLength(18);
+    expect(toolsFor("operator")).toHaveLength(22);
     expect(toolsFor("auditor")).toHaveLength(9);
     expect(toolsFor("triage")).toHaveLength(2);
     for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
@@ -88,7 +92,7 @@ describe("tool registry", () => {
 
     flags.reportsEnabled = false;
     for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(17);
   });
 
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {

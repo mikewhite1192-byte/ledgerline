@@ -5,14 +5,17 @@ import { enumValuesOf } from "./redact";
 import { classifyMessage } from "./tools/triage/classify-message";
 import { explainPaystub } from "./tools/read/explain-paystub";
 import { getAdvances } from "./tools/read/get-advances";
+import { getArAging } from "./tools/read/get-ar-aging";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDriver } from "./tools/read/get-driver";
 import { getInboundMessage } from "./tools/read/get-inbound-message";
+import { getInvoiceQueue } from "./tools/read/get-invoice-queue";
 import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
 import { getProposal } from "./tools/read/get-proposal";
 import { getPayItems } from "./tools/read/get-pay-items";
+import { getPaymentsIn } from "./tools/read/get-payments-in";
 import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstanding";
 import { reportArAging } from "./tools/read/report-ar-aging";
 import { reportCashNeeded } from "./tools/read/report-cash-needed";
@@ -22,6 +25,7 @@ import { runChecks } from "./tools/read/run-checks";
 import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
+import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
 
@@ -52,10 +56,14 @@ const TOOLS: readonly AnyToolDef[] = [
   reportCashNeeded,
   reportMarginPerLoad,
   getInboundMessage,
+  getInvoiceQueue,
+  getArAging,
+  getPaymentsIn,
   getProposal,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,
+  proposePaymentReapply,
   classifyMessage,
 ];
 
