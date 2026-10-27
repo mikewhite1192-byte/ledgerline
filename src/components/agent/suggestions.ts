@@ -18,10 +18,14 @@ const MARGIN: Suggestion = { id: "margin-per-load", label: "What was our margin 
 // answers it), in place of the advance limit or margin per load.
 const REMINDER: Suggestion = { id: "payment-reminder", label: "Who needs a payment reminder?" };
 
-export function homeSuggestions(reportsOn: boolean, collectionsOn = false): Suggestion[] {
+// Switches past the reports one come by name, so two switches can never be passed in each
+// other's place.
+export type SuggestionSwitches = { collections?: boolean };
+
+export function homeSuggestions(reportsOn: boolean, on: SuggestionSwitches = {}): Suggestion[] {
   return BASE.map((s) => {
     if (s.id !== "advance-limit") return { ...s };
-    if (collectionsOn) return { ...REMINDER };
+    if (on.collections) return { ...REMINDER };
     return reportsOn ? { ...MARGIN } : { ...s };
   });
 }

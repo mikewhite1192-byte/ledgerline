@@ -24,9 +24,11 @@
 -- status:
 --   drafting  reserved before the model call; no text yet
 --   drafted   the reminder passed the check and waits for a person
---   refused   the check or the model call failed; no text, refusal_category says why
---   over_cap  not drafted, waiting for the next run: the run's spend reached its cap, or the model
---             call was turned down before any request went out (no call was made)
+--   refused   the check or the model call failed, or the invoice reached a later stage while the
+--             reminder was still waiting (stage_passed); no text, refusal_category says why
+--   over_cap  not drafted, waiting for the next run: the run's spend reached its cap, the model
+--             call was turned down before any request went out (no call was made), or a run was cut
+--             off mid-draft (the next run's lease puts it back here)
 --   approved  a person approved it; recorded (channel 'logged'), and emailed only when allowed
 --   rejected  a person rejected it
 --
@@ -82,15 +84,17 @@ CREATE INDEX collection_drafts_tenant_status ON collection_drafts (tenant_id, st
 -- What a reminder may become, and what never changes. The text and the check's record are written
 -- once, on the step out of drafting, and never again: approval never edits the text. The invoice,
 -- customer and stage never change. The figures, tone and run (trace_id) change only when a waiting
--- reminder is picked up again (over_cap to drafting), before any text exists. Status moves forward only. over_cap may go back to
--- drafting (the next run picks it up), and drafting may go back to over_cap while the reminder names
--- no model call (its call was turned down before any request went out); refused, rejected and
--- approved are final. The channel is set to 'logged' at approval and may move to 'email' once,
--- when an allowlisted email is reserved (before the send); sent_at is written once, after the send
--- went out, on a reminder already reserved for email. A new row is only
--- ever a bare reservation (drafting, or over_cap with no call made): no text, check record,
--- refusal, model call, decision or channel, so every later state goes through the update rules and
--- nothing can be inserted already approved.
+-- reminder is picked up again (over_cap to drafting), before any text exists. Status moves forward
+-- only. over_cap may go back to drafting (the next run picks it up), and drafting may go back to
+-- over_cap while the reminder names no model call (its call was turned down before any request went
+-- out, or the run was cut off and the lease ran out). A waiting reminder whose invoice has since
+-- reached a later stage is closed as refused with stage_passed, naming no model call, and nothing
+-- else changes on that step. refused, rejected and approved are final. The channel is set to
+-- 'logged' at approval and may move to 'email' once, when an allowlisted email is reserved (before
+-- the send); sent_at is written once, after the send went out, on a reminder already reserved for
+-- email. A new row is only ever a bare reservation (drafting, or over_cap with no call made): no
+-- text, check record, refusal, model call, decision or channel, so every later state goes through
+-- the update rules and nothing can be inserted already approved.
 CREATE FUNCTION collection_drafts_guard() RETURNS trigger
   LANGUAGE plpgsql
   AS $$
@@ -131,6 +135,9 @@ BEGIN
     OR (OLD.status = 'over_cap' AND NEW.status = 'drafting')
     OR (OLD.status = 'drafting' AND NEW.status = 'over_cap'
         AND OLD.model_call_id IS NULL AND NEW.model_call_id IS NULL)
+    OR (OLD.status = 'over_cap' AND NEW.status = 'refused'
+        AND NEW.refusal_category IS NOT DISTINCT FROM 'stage_passed'
+        AND OLD.model_call_id IS NULL AND NEW.model_call_id IS NULL)
     OR (OLD.status = 'drafted' AND NEW.status IN ('approved', 'rejected'))) THEN
     RAISE EXCEPTION 'collection_drafts: status transition not allowed' USING ERRCODE = 'check_violation';
   END IF;
@@ -138,7 +145,8 @@ BEGIN
      AND (NEW.subject IS DISTINCT FROM OLD.subject
        OR NEW.body IS DISTINCT FROM OLD.body
        OR NEW.verification IS DISTINCT FROM OLD.verification
-       OR NEW.refusal_category IS DISTINCT FROM OLD.refusal_category
+       OR (NEW.refusal_category IS DISTINCT FROM OLD.refusal_category
+           AND NOT (OLD.status = 'over_cap' AND NEW.status = 'refused'))
        OR NEW.model_call_id IS DISTINCT FROM OLD.model_call_id) THEN
     RAISE EXCEPTION 'collection_drafts: the text of a reminder never changes once written'
       USING ERRCODE = 'check_violation';

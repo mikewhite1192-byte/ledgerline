@@ -28,12 +28,24 @@ describe("collections words", () => {
   });
 
   it("says why a reminder was not kept without its category, and that nothing was sent", () => {
-    for (const category of ["number_mismatch", "banned_phrase", "subject", "format", "language", "timeout", "interrupted", null, "unheard_of"]) {
+    for (const category of [
+      "number_mismatch", "banned_phrase", "subject", "format", "language", "timeout", "interrupted", "stage_passed",
+      "job_cap", "bad_request", "auth", "billing", "too_long", "unknown", null, "unheard_of",
+    ]) {
       const words = refusalWords(category);
       expect(words, String(category)).toMatch(/^Not kept, and nothing was sent: /);
       expect(words, String(category)).not.toMatch(CODE);
     }
     expect(refusalWords("banned_phrase")).toContain("fees, interest or legal action");
+    // Every category the model wrapper can return has its own fixed sentence.
+    const sentences = [
+      "disabled", "not_configured", "cap", "job_cap", "too_expensive", "rate_limited", "unavailable", "timeout",
+      "bad_request", "auth", "billing", "too_long", "network", "unknown",
+    ].map(refusalWords);
+    expect(new Set(sentences).size).toBe(sentences.length);
+    expect(refusalWords("stage_passed")).toBe(
+      "Not kept, and nothing was sent: the invoice reached its next reminder before this one was drafted.",
+    );
   });
 
   it("says Test mode until an email really went, with the send time in the carrier's zone", () => {
@@ -61,7 +73,8 @@ describe("collections words", () => {
       /\b(?:proposals?|tenants?|ledger|executor|execut\w*|idempoten\w*|payload|kind|rules engine|engine total|auditor|verdict|gateway|allowed|effort|read-back|reserved|outcome unknown|in progress|cut short|cap|hourly allowance|upstream|trace|call log|retired|aging|accessorials?|lane|unapplied|muse|spark|sam|utc)\b|[A-Za-z]+\/[A-Za-z_]+|\d{4}-\d{2}-\d{2}/i;
     const categories = [
       "number_mismatch", "line_mismatch", "subject", "banned_phrase", "language", "format", "incomplete", "interrupted",
-      "disabled", "not_configured", "cap", "too_expensive", "rate_limited", "unavailable", "timeout", "network", null, "unheard_of",
+      "stage_passed", "disabled", "not_configured", "cap", "job_cap", "too_expensive", "rate_limited", "unavailable",
+      "timeout", "bad_request", "auth", "billing", "too_long", "network", "unknown", null, "unheard_of",
     ];
     const words = [
       ...Object.values(REMINDER_STATUS_WORDS),

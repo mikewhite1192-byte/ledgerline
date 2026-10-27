@@ -9,7 +9,9 @@ import type { ReminderPack } from "./pack";
 //   3. numbers: the subject and body together pass the driver-note number check (verifyNote): every
 //      amount is the invoice total or the balance, the first amount is the balance due, every
 //      other number is one of the pack's own (days late, the invoice number's digits, the due
-//      date's day and year), no link, no hidden characters, at least one sentence.
+//      date's day and year), no link, no hidden characters, at least one sentence. A digit in the
+//      customer's or carrier's name counts only inside that exact name, written as a whole token;
+//      anywhere else, or in a name written differently, it is a number like any other.
 // A reminder that fails is never shown as approvable: the caller stores the category and the
 // amounts compared, never the text.
 
@@ -62,6 +64,34 @@ export function namesInvoice(subject: string, invoiceNumber: string): boolean {
   return false;
 }
 
+// What a figure may be read with at a name's edge, by the number check's own markers: a dollar
+// mark or a digit group before a leading digit, a decimal or a currency word after a trailing one.
+const MONEY_BEFORE = /(?:US\$|\$|USD\s?)\s?$|\d[.,]$/i;
+const MONEY_AFTER = /^(?:[.,]\d|\s*(?:dollars?|d[óo]lares|USD|cents?|centavos)\b)/i;
+const DIGIT = /[0-9]/;
+
+// The text with the digits of each name's exact, whole-token appearances (namesInvoice's rule)
+// turned to letters, so the number check never reads them. An appearance whose edge digit could be
+// read as part of an amount ("$66 Haulers", "66 Haulers.50") keeps its digits, and so does any
+// altered spelling: those are checked like any other number and fail closed. Same length out, so
+// every other character stays where it was.
+export function blankNames(text: string, names: readonly string[]): string {
+  const withDigits = [...new Set(names)].filter((n) => DIGIT.test(n)).sort((a, b) => b.length - a.length);
+  let out = text;
+  for (const name of withDigits) {
+    for (let at = out.indexOf(name); at !== -1; at = out.indexOf(name, at + 1)) {
+      const end = at + name.length;
+      const before = at === 0 ? "" : out[at - 1];
+      const after = out.slice(end, end + 1);
+      if (TOKEN_CHAR.test(before) || TOKEN_CHAR.test(after)) continue;
+      if (DIGIT.test(name[0]) && MONEY_BEFORE.test(out.slice(0, at))) continue;
+      if (DIGIT.test(name[name.length - 1]) && MONEY_AFTER.test(out.slice(end))) continue;
+      out = `${out.slice(0, at)}${name.replace(/[0-9]/g, "N")}${out.slice(end)}`;
+    }
+  }
+  return out;
+}
+
 export function verifyReminder(text: string, pack: ReminderPack): ReminderResult {
   const empty: ReminderVerification = {
     allowed: [...new Set(pack.allowedCents.map((c) => Math.abs(c)))].sort((a, b) => a - b),
@@ -83,7 +113,11 @@ export function verifyReminder(text: string, pack: ReminderPack): ReminderResult
   if (!namesInvoice(subject, pack.invoiceNumber)) return fail("subject");
   if (BANNED.test(subject) || BANNED.test(body)) return fail("banned_phrase");
 
-  const checked = verifyNote(JSON.stringify({ language: "English", body: `${subject}\n${body}`, cited_seqs: [] }), pack);
+  const names = [pack.customerName, pack.carrierName];
+  const checked = verifyNote(
+    JSON.stringify({ language: "English", body: blankNames(`${subject}\n${body}`, names), cited_seqs: [] }),
+    pack,
+  );
   if (!checked.ok) return fail(checked.category, checked.verification);
   return { ok: true, subject, body, verification: { ...checked.verification, category: null } };
 }

@@ -10,6 +10,10 @@ import { parseFigures } from "./pack";
 // one carrier). The late invoices come from the rules engine on today's carrier date, the same
 // planner drafting uses, so the page and a run always agree on what needs a reminder.
 
+// A reminder left drafting longer than this was cut off mid-call (the route runs at most 30 s): the
+// next run puts it back to waiting and drafts it again, so the page already lists it as waiting.
+export const DRAFTING_LEASE_MS = 60_000;
+
 export type ReminderCard = {
   id: string;
   invoiceId: string;
@@ -67,6 +71,7 @@ type DraftRow = {
   channel: string | null;
   decided_at: string | null;
   sent_at: string | null;
+  updated_at: string;
 };
 
 const STATUSES = new Set(["drafting", "drafted", "refused", "over_cap", "approved", "rejected"]);
@@ -88,9 +93,14 @@ export async function readCollectionsView(q: Queryable, now: Date): Promise<Coll
   const rows = await q.query<DraftRow>(
     `SELECT CAST(id AS text) AS id, CAST(invoice_id AS text) AS invoice_id, CAST(customer_id AS text) AS customer_id,
             stage, tone, status, CAST(figures AS text) AS figures, subject, body, refusal_category, channel,
-            ${ISO("decided_at")} AS decided_at, ${ISO("sent_at")} AS sent_at
+            ${ISO("decided_at")} AS decided_at, ${ISO("sent_at")} AS sent_at, ${ISO("updated_at")} AS updated_at
        FROM collection_drafts WHERE tenant_id = current_tenant_id()`,
   );
+  // Waiting for a run: not drafted yet, or cut off mid-draft past its lease (an unreadable time
+  // counts as cut off, so the reminder is never stuck showing "Drafting").
+  const leaseEnd = now.getTime() - DRAFTING_LEASE_MS;
+  const waits = (r: DraftRow) =>
+    r.status === "over_cap" || (r.status === "drafting" && !(Date.parse(r.updated_at) >= leaseEnd));
 
   const nameOf = (id: string) => names.get(id) ?? "Customer";
   const byKey = new Map(rows.map((r) => [`${r.invoice_id}:${r.stage}`, r]));
@@ -108,7 +118,7 @@ export async function readCollectionsView(q: Queryable, now: Date): Promise<Coll
   const toDraft = candidates
     .filter((c) => {
       const row = byKey.get(`${c.invoiceId}:${c.stage}`);
-      return !row || row.status === "over_cap";
+      return !row || waits(row);
     })
     .map(late);
 
@@ -118,7 +128,7 @@ export async function readCollectionsView(q: Queryable, now: Date): Promise<Coll
     const figures = parseFigures(r.figures);
     if (!figures || !STATUSES.has(r.status) || !STAGES.has(r.stage) || !TONES.has(r.tone)) continue;
     // A reminder still waiting from an earlier run shows in the "not drafted yet" list instead.
-    if (r.status === "over_cap") continue;
+    if (waits(r)) continue;
     cards.push({
       id: r.id,
       invoiceId: r.invoice_id,

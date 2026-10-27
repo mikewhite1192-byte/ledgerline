@@ -28,14 +28,21 @@ const REFUSAL_WORDS: Record<string, string> = {
   format: "it was not a readable email.",
   incomplete: "it stopped early.",
   interrupted: "drafting stopped before it finished.",
+  stage_passed: "the invoice reached its next reminder before this one was drafted.",
   disabled: "the models were switched off.",
   not_configured: "the model connection is not set up.",
   cap: "the model budget was used up.",
+  job_cap: "drafting used up its budget for the hour.",
   too_expensive: "it would have cost more than its limit.",
   rate_limited: "the model was busy.",
   unavailable: "the model did not answer.",
   timeout: "the model did not answer in time.",
   network: "the model could not be reached.",
+  bad_request: "the model could not read the request.",
+  auth: "the model connection was not accepted.",
+  billing: "the model account needs attention.",
+  too_long: "the request was too long for the model.",
+  unknown: "the model call failed.",
 };
 
 // "Did not pass its check, so it was not kept. Nothing was sent: it had a number that is not on

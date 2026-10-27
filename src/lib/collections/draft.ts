@@ -10,6 +10,9 @@ import { assertMembership } from "../tenant/context";
 import { carrierToday } from "../tenant/shell";
 import { buildReminderPack, figuresOf, packText, type ReminderPack } from "./pack";
 import { MAX_SUBJECT_CHARS, verifyReminder } from "./verify";
+import { DRAFTING_LEASE_MS } from "./view";
+
+export { DRAFTING_LEASE_MS };
 
 // Drafts payment reminders for invoices at least minDaysLate past due. The only file in
 // src/lib/collections that reaches a model, and only through complete() in src/lib/ai, which
@@ -22,8 +25,15 @@ import { MAX_SUBJECT_CHARS, verifyReminder } from "./verify";
 //
 // Each reminder is reserved first: its row is written (drafting) before the model call, under
 // UNIQUE (tenant_id, invoice_id, stage), so a second click, a second tab or a retry never drafts
-// the same invoice and stage twice. A row left drafting by a crash is marked refused
-// (interrupted) once its lease runs out, so it is never shown as approvable.
+// the same invoice and stage twice. A row left drafting by a crash, a deploy or an error that is
+// not the model's goes back to waiting (over_cap) once its lease runs out, and the run that finds
+// it drafts it again under the same caps; it is never shown as approvable meanwhile. Only the run
+// that reserved a reminder (its trace id) may finish it or give it back, so a run cut off late
+// never writes over the run that picked its reminder up again.
+//
+// A reminder still waiting at a stage its invoice has since passed (waiting at 30, the invoice now
+// 60 days late) is closed as refused (stage_passed) when a run plans, so it shows as not kept
+// instead of waiting unseen; the invoice's new stage gets its own reminder.
 //
 // A call complete() turned down before any request went out (AI switched off, not configured,
 // over the reminder's own limit, or over the spend cap) never reached a model, so the reminder goes
@@ -40,8 +50,6 @@ import { MAX_SUBJECT_CHARS, verifyReminder } from "./verify";
 export const REMINDER_PURPOSE = "collections_draft";
 // A call's own limit; a reminder starts only if its call can finish before the request ends.
 export const REMINDER_TIMEOUT_MS = 12_000;
-// A row left drafting longer than this was cut off mid-call (the route runs at most 30 s).
-export const DRAFTING_LEASE_MS = 60_000;
 const NANOCENTS_PER_CENT = 1_000_000_000;
 
 export const REMINDER_FORMAT: AiFormat = {
@@ -96,7 +104,8 @@ export type DraftSummary =
       drafted: number;
       refused: number;
       overCap: number;
-      // Late invoices that already have a reminder at their stage.
+      // Late invoices that already have a reminder at their stage, and waiting reminders closed
+      // because their invoice reached a later stage.
       skipped: number;
       // Late invoices this run did not reach (over maxDraftsPerRun, or stopped early).
       remaining: number;
@@ -145,9 +154,14 @@ type Plan = { carrierName: string; asOf: string; work: WorkItem[]; skipped: numb
 type ExistingRow = { id: string; invoice_id: string; stage: string; status: string };
 
 async function readPlan(q: Queryable, now: Date, nowIso: string): Promise<Plan> {
-  // A reminder left drafting past its lease was cut off mid-call: it is never shown as approvable.
+  // A reminder left drafting past its lease was cut off. With no model call named it goes back to
+  // waiting and this run drafts it again; one naming a call would stay refused (interrupted). 0041
+  // keeps a drafting row's call id null (the id is written only on the step out of drafting), so
+  // today every stale reminder waits again.
   await q.execute(
-    `UPDATE collection_drafts SET status = 'refused', refusal_category = 'interrupted',
+    `UPDATE collection_drafts
+        SET status = CASE WHEN model_call_id IS NULL THEN 'over_cap' ELSE 'refused' END,
+            refusal_category = CASE WHEN model_call_id IS NULL THEN NULL ELSE 'interrupted' END,
             updated_at = CAST($1 AS timestamptz)
       WHERE tenant_id = current_tenant_id() AND status = 'drafting' AND updated_at < CAST($2 AS timestamptz)`,
     [nowIso, new Date(now.getTime() - DRAFTING_LEASE_MS).toISOString()],
@@ -164,8 +178,22 @@ async function readPlan(q: Queryable, now: Date, nowIso: string): Promise<Plan> 
   const byKey = new Map(existing.map((r) => [`${r.invoice_id}:${r.stage}`, r]));
   const candidates = planCollections(input, null, flags.collectionsLimits.minDaysLate);
 
-  const work: WorkItem[] = [];
+  // A waiting reminder at a stage its invoice has passed is never drafted: it is closed, and counted
+  // with the skipped, so it shows on the page as not kept rather than waiting unseen.
   let skipped = 0;
+  const stageNow = new Map(candidates.map((c) => [c.invoiceId, Number(c.stage)]));
+  for (const row of existing) {
+    const current = stageNow.get(row.invoice_id);
+    if (row.status !== "over_cap" || current === undefined || Number(row.stage) >= current) continue;
+    skipped += await q.execute(
+      `UPDATE collection_drafts SET status = 'refused', refusal_category = 'stage_passed',
+              updated_at = CAST($2 AS timestamptz)
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'over_cap'`,
+      [row.id, nowIso],
+    );
+  }
+
+  const work: WorkItem[] = [];
   for (const candidate of candidates) {
     const row = byKey.get(`${candidate.invoiceId}:${candidate.stage}`);
     const customerName = names.get(candidate.customerId);
@@ -265,14 +293,22 @@ type Finish =
   | { status: "drafted"; subject: string; body: string; verification: object; modelCallId: string }
   | { status: "refused"; category: string; verification: object | null; modelCallId: string | null };
 
-async function finish(db: TenantDb, session: Session, id: string, f: Finish, now: string): Promise<boolean> {
+async function finish(
+  db: TenantDb,
+  session: Session,
+  id: string,
+  traceId: string,
+  f: Finish,
+  now: string,
+): Promise<boolean> {
   return db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
     const n = await q.execute(
       `UPDATE collection_drafts
           SET status = $2, subject = $3, body = $4, verification = CAST($5 AS jsonb), refusal_category = $6,
               model_call_id = CAST($7 AS uuid), updated_at = CAST($8 AS timestamptz)
-        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'drafting'`,
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'drafting'
+          AND trace_id = CAST($9 AS uuid)`,
       [
         id,
         f.status,
@@ -282,6 +318,7 @@ async function finish(db: TenantDb, session: Session, id: string, f: Finish, now
         f.status === "refused" ? f.category : null,
         f.modelCallId,
         now,
+        traceId,
       ],
     );
     return n === 1;
@@ -289,15 +326,15 @@ async function finish(db: TenantDb, session: Session, id: string, f: Finish, now
 }
 
 // A reminder whose call never went out goes back to waiting for the next run. Only a reminder still
-// drafting that names no model call moves.
-async function giveBack(db: TenantDb, session: Session, id: string, now: string): Promise<boolean> {
+// drafting under this run that names no model call moves.
+async function giveBack(db: TenantDb, session: Session, id: string, traceId: string, now: string): Promise<boolean> {
   return db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
     const n = await q.execute(
       `UPDATE collection_drafts SET status = 'over_cap', updated_at = CAST($2 AS timestamptz)
         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'drafting'
-          AND model_call_id IS NULL`,
-      [id, now],
+          AND model_call_id IS NULL AND trace_id = CAST($3 AS uuid)`,
+      [id, now, traceId],
     );
     return n === 1;
   });
@@ -349,16 +386,19 @@ export async function draftCollections(session: Session, deadlineAt: Date, deps:
     try {
       result = await call("spark", reminderRequest(claimed.pack, traceId), session);
     } catch (err) {
+      // Any other error leaves the reminder drafting, an outcome not known: the next run's lease
+      // puts it back to waiting once any call it made has ended, and the page lists it as waiting.
       if (!(err instanceof AiError)) throw err;
       if (BEFORE_ANY_REQUEST.has(err.category)) {
         // No request went out: the reminder waits for the next run with the rest.
-        if (await giveBack(db, session, claimed.id, iso())) overCap += 1;
+        if (await giveBack(db, session, claimed.id, traceId, iso())) overCap += 1;
       } else {
         // The category only; the row keeps no text. The rest wait for the next run.
         const done = await finish(
           db,
           session,
           claimed.id,
+          traceId,
           { status: "refused", category: err.category, verification: null, modelCallId: null },
           iso(),
         );
@@ -383,7 +423,7 @@ export async function draftCollections(session: Session, deadlineAt: Date, deps:
           }
         : { status: "refused", category: checked.category, verification: checked.verification, modelCallId: result.callId };
     }
-    if (await finish(db, session, claimed.id, f, iso())) {
+    if (await finish(db, session, claimed.id, traceId, f, iso())) {
       if (f.status === "drafted") drafted += 1;
       else refused += 1;
     }

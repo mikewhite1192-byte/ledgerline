@@ -64,7 +64,8 @@ describe("buildReminderPack", () => {
     const pack = buildReminderPack(FIGURES, "direct", "Cobble Ridge Furniture", "Example Freight 2 Lines");
     expect(pack.netCents).toBe(222_500);
     expect([...pack.allowedCents].sort()).toEqual([222_500, 245_000]);
-    expect([...pack.allowedNumbers].sort()).toEqual(["10012", "2", "2026", "23", "34"].sort());
+    // A digit in a name is not an allowed number: it passes only inside the exact name (verify.ts).
+    expect([...pack.allowedNumbers].sort()).toEqual(["10012", "2026", "23", "34"].sort());
     expect(pack.seqs).toEqual([]);
     expect(pack.language).toBe("en");
   });

@@ -12,12 +12,12 @@ describe("homeSuggestions", () => {
 
   it("asks who needs a payment reminder in the fourth place only while collections is on", () => {
     for (const reportsOn of [false, true]) {
-      const on = homeSuggestions(reportsOn, true);
+      const on = homeSuggestions(reportsOn, { collections: true });
       expect(on.map((s) => s.id)).toEqual(["paystub-problems", "past-60", "pay-run-cost", "payment-reminder"]);
       expect(on[3].label).toBe("Who needs a payment reminder?");
     }
-    expect(homeSuggestions(false, false)).toEqual(homeSuggestions(false));
-    expect(homeSuggestions(true, false)).toEqual(homeSuggestions(true));
+    expect(homeSuggestions(false, { collections: false })).toEqual(homeSuggestions(false));
+    expect(homeSuggestions(true, { collections: false })).toEqual(homeSuggestions(true));
   });
 });
 

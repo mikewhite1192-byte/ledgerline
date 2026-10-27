@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildReminderPack, type ReminderFigures } from "./pack";
-import { BANNED, MAX_SUBJECT_CHARS, namesInvoice, parseReminder, verifyReminder } from "./verify";
+import { BANNED, MAX_SUBJECT_CHARS, blankNames, namesInvoice, parseReminder, verifyReminder } from "./verify";
 
 // The check every drafted reminder passes before a person sees it (design 4.2): exact shape, a
 // subject that names the invoice, no banned words, and every number from the invoice's own figures
@@ -112,10 +112,63 @@ describe("verifyReminder", () => {
     expect(verifyReminder(reply({ body: " " }), PACK)).toMatchObject({ ok: false, category: "format" });
   });
 
+  it("accepts a name's digits only inside that exact name, written as a whole token", () => {
+    const pack = buildReminderPack(FIGURES, "direct", "Route 66 Haulers", "Example Freight 9 Lines");
+    const body = BODY.replace("Cobble Ridge Furniture", "Route 66 Haulers").replace("Example Freight Lines", "Example Freight 9 Lines");
+    // Both names verbatim pass.
+    expect(verifyReminder(reply({ body }), pack)).toMatchObject({ ok: true });
+    // The name's number alone, anywhere else, is refused.
+    const alone = body.replace("Please send payment", "Your 66 loads are noted. Please send payment");
+    expect(verifyReminder(reply({ body: alone }), pack)).toMatchObject({ ok: false, category: "number_mismatch" });
+    expect(verifyReminder(reply({ body: body.replace("Thank you,", "Thank you, team 9,") }), pack)).toMatchObject({
+      ok: false,
+      category: "number_mismatch",
+    });
+    // A name written differently is not the name: its digits are checked and fail closed.
+    for (const altered of ["Route-66 Haulers", "Route 66 Hauling", "route 66 Haulers", "Route 66 Haulers-East", "XRoute 66 Haulers"]) {
+      const out = verifyReminder(reply({ body: body.replace("Route 66 Haulers team", `${altered} team`) }), pack);
+      expect(out, altered).toMatchObject({ ok: false, category: "number_mismatch" });
+    }
+    // A name with no digit changes nothing.
+    expect(verifyReminder(reply(), PACK)).toMatchObject({ ok: true });
+  });
+
   it("stores amounts and numbers only, never the text, on a refusal", () => {
     const out = verifyReminder(reply({ body: BODY.replace("$2,225.00", "$9,999.00") }), PACK);
     expect(out.ok).toBe(false);
     expect(JSON.stringify(out.verification)).not.toMatch(/Cobble|Hello|invoice/i);
+  });
+});
+
+describe("blankNames", () => {
+  it("turns the digits of each exact, whole-token name to letters and keeps the length", () => {
+    expect(blankNames("Hi Route 66 Haulers team", ["Route 66 Haulers"])).toBe("Hi Route NN Haulers team");
+    expect(blankNames("Route 66 Haulers", ["Route 66 Haulers"])).toBe("Route NN Haulers");
+    expect(blankNames("Route 66 Haulers, and Route 66 Haulers.", ["Route 66 Haulers"])).toBe(
+      "Route NN Haulers, and Route NN Haulers.",
+    );
+    // Not whole, or not exact: unchanged.
+    expect(blankNames("XRoute 66 Haulers", ["Route 66 Haulers"])).toBe("XRoute 66 Haulers");
+    expect(blankNames("Route 66 Haulers-East", ["Route 66 Haulers"])).toBe("Route 66 Haulers-East");
+    expect(blankNames("Route 66 Hauling", ["Route 66 Haulers"])).toBe("Route 66 Hauling");
+    expect(blankNames("just 66", ["Route 66 Haulers"])).toBe("just 66");
+    // A name with no digit, or none at all, leaves the text alone.
+    expect(blankNames("Cobble Ridge 12", ["Cobble Ridge", ""])).toBe("Cobble Ridge 12");
+  });
+
+  it("keeps a name's digits where they could be read as part of an amount", () => {
+    expect(blankNames("owe $66 Haulers", ["66 Haulers"])).toBe("owe $66 Haulers");
+    expect(blankNames("owe USD 66 Haulers", ["66 Haulers"])).toBe("owe USD 66 Haulers");
+    expect(blankNames("1,66 Haulers", ["66 Haulers"])).toBe("1,66 Haulers");
+    expect(blankNames("Freight 9.50 due", ["Freight 9"])).toBe("Freight 9.50 due");
+    expect(blankNames("Freight 9 dollars", ["Freight 9"])).toBe("Freight 9 dollars");
+    expect(blankNames("Freight 9 cents", ["Freight 9"])).toBe("Freight 9 cents");
+    // A plain sentence end is not an amount.
+    expect(blankNames("from Freight 9.", ["Freight 9"])).toBe("from Freight N.");
+  });
+
+  it("blanks the longer of two overlapping names first", () => {
+    expect(blankNames("Lines 7 Group", ["Lines 7", "Lines 7 Group"])).toBe("Lines N Group");
   });
 });
 

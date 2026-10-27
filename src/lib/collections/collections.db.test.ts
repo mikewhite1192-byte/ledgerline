@@ -172,6 +172,34 @@ async function applyPayment(invoiceId: string, cents: number) {
   return id;
 }
 
+// A reminder reserved by an earlier run, as the app writes one: the invoice's figures as of the
+// fixture's date, last touched at the given time.
+async function reserve(inv: (typeof INVOICES)[keyof typeof INVOICES], stage: string, status: string, touched: number) {
+  const id = randomUUID();
+  const traceId = randomUUID();
+  const at = new Date(touched).toISOString();
+  const daysLate = Math.round((NOW - Date.parse(`${inv.due}T16:00:00Z`)) / 86_400_000);
+  const figures = {
+    invoiceNumber: inv.number,
+    amountCents: inv.amount,
+    balanceCents: inv.amount,
+    dueOn: inv.due,
+    daysLate,
+    asOf: "2026-11-02",
+    profileLabel: "repeat_late",
+  };
+  await app.withTenant(A.tenantId, (q) =>
+    q.execute(
+      `INSERT INTO collection_drafts (id, tenant_id, invoice_id, customer_id, stage, tone, status, figures, trace_id,
+         created_at, updated_at)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), $4, 'direct', $5,
+         CAST($6 AS jsonb), CAST($7 AS uuid), CAST($8 AS timestamptz), CAST($8 AS timestamptz))`,
+      [id, inv.id, A.customerId, stage, status, JSON.stringify(figures), traceId, at],
+    ),
+  );
+  return { id, traceId };
+}
+
 async function clearA() {
   await admin.withTenant(A.tenantId, async (q) => {
     await q.execute("DELETE FROM collection_drafts WHERE tenant_id = current_tenant_id()");
@@ -337,20 +365,208 @@ describe("collections", () => {
     expect(picked!.trace_id).not.toBe(waiting!.trace_id);
   });
 
-  it("a reminder left drafting past its lease is refused as interrupted on the next run", async () => {
-    const old = new Date(NOW - DRAFTING_LEASE_MS - 1_000).toISOString();
-    await app.withTenant(A.tenantId, (q) =>
-      q.execute(
-        `INSERT INTO collection_drafts (id, tenant_id, invoice_id, customer_id, stage, tone, status, figures, trace_id,
-           created_at, updated_at)
-         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), '30', 'direct', 'drafting',
-           CAST('{}' AS jsonb), CAST($4 AS uuid), CAST($5 AS timestamptz), CAST($5 AS timestamptz))`,
-        [randomUUID(), INVOICES.L34.id, A.customerId, randomUUID(), old],
+  it("a reminder left drafting past its lease with no model call waits again, and the next run drafts it once", async () => {
+    const stale = await reserve(INVOICES.L34, "30", "drafting", NOW - DRAFTING_LEASE_MS - 1_000);
+    // The page lists it as waiting, never as a card stuck on "Drafting".
+    const before = await app.withTenant(A.tenantId, (q) => readCollectionsView(q, clock()));
+    expect(before.toDraft.map((l) => l.invoiceId)).toContain(INVOICES.L34.id);
+    expect(before.cards.map((c) => c.id)).not.toContain(stale.id);
+    const out = await draft();
+    if (!out.ok) throw new Error("not drafted");
+    expect(out).toMatchObject({ drafted: 3, refused: 0, overCap: 0, skipped: 0, more: false });
+    // One call for it, under this run, and still one row for the invoice and stage.
+    expect(seen.filter((r) => fact(r, "Invoice number") === INVOICES.L34.number)).toHaveLength(1);
+    const row = await rowFor(INVOICES.L34.id);
+    expect(row).toMatchObject({ id: stale.id, status: "drafted", refusal_category: null, trace_id: out.traceId });
+    expect(row!.model_call_id).not.toBeNull();
+    expect(await rowsOf(A)).toHaveLength(3);
+    // Once: the run after finds nothing to draft.
+    expect(await draft()).toMatchObject({ ok: true, drafted: 0, skipped: 3 });
+    expect(seen).toHaveLength(3);
+  });
+
+  it("an error that is not the model's leaves the reminder drafting, and past its lease it waits and is drafted again", async () => {
+    const broken: CompleteFn = async () => {
+      throw new Error("socket closed");
+    };
+    await expect(draft(broken)).rejects.toThrow("socket closed");
+    const [left] = await rowsOf(A);
+    expect(left).toMatchObject({ invoice_id: INVOICES.L97.id, stage: "90", status: "drafting", model_call_id: null });
+    // Inside its lease it shows as drafting; past it, as waiting, never stuck.
+    const inside = await app.withTenant(A.tenantId, (q) => readCollectionsView(q, clock()));
+    expect(inside.cards.find((c) => c.id === left.id)?.status).toBe("drafting");
+    const later = new Date(NOW + DRAFTING_LEASE_MS + 1_000);
+    const past = await app.withTenant(A.tenantId, (q) => readCollectionsView(q, later));
+    expect(past.cards.map((c) => c.id)).not.toContain(left.id);
+    expect(past.toDraft.map((l) => l.invoiceId)).toContain(INVOICES.L97.id);
+    const out = await draftCollections(A.session, new Date(later.getTime() + 20_000), {
+      db: app,
+      complete: goodModel,
+      clock: () => later,
+      log: () => {},
+    });
+    if (!out.ok) throw new Error("not drafted");
+    expect(out).toMatchObject({ drafted: 3, refused: 0, skipped: 0 });
+    expect(await rowFor(INVOICES.L97.id)).toMatchObject({ id: left.id, status: "drafted", trace_id: out.traceId });
+  });
+
+  it("a reminder drafting inside its lease is left alone and shows as drafting", async () => {
+    const fresh = await reserve(INVOICES.L34, "30", "drafting", NOW - 1_000);
+    const view = await app.withTenant(A.tenantId, (q) => readCollectionsView(q, clock()));
+    expect(view.toDraft.map((l) => l.invoiceId)).not.toContain(INVOICES.L34.id);
+    expect(view.cards.find((c) => c.id === fresh.id)?.status).toBe("drafting");
+    expect(await draft()).toMatchObject({ ok: true, drafted: 2, skipped: 1 });
+    expect(await rowFor(INVOICES.L34.id)).toMatchObject({ status: "drafting", trace_id: fresh.traceId });
+  });
+
+  it("a reminder picked up again after its lease is drafted under the run's cap, one call per run", async () => {
+    flags.collectionsLimits = { ...flags.collectionsLimits, maxDraftCents: 2, maxRunCents: 2 };
+    costCents = 2;
+    await reserve(INVOICES.L34, "30", "drafting", NOW - DRAFTING_LEASE_MS - 1_000);
+    const runs = [];
+    for (let i = 0; i < 4; i++) runs.push(await draft());
+    expect(runs.map((r) => (r.ok ? [r.drafted, r.overCap] : null))).toEqual([[1, 2], [1, 1], [1, 0], [0, 0]]);
+    // Three calls in all, one for each invoice, and the stale reminder drafted exactly once.
+    expect(seen).toHaveLength(3);
+    expect(seen.filter((r) => fact(r, "Invoice number") === INVOICES.L34.number)).toHaveLength(1);
+    expect((await rowsOf(A)).map((r) => r.status)).toEqual(["drafted", "drafted", "drafted"]);
+  });
+
+  it("a run cut off past its lease never writes over the run that took its reminder back", async () => {
+    let t = NOW;
+    const run = (complete: CompleteFn) =>
+      draftCollections(A.session, new Date(t + 20_000), { db: app, complete, clock: () => new Date(t), log: () => {} });
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let entered!: () => void;
+    const started = new Promise<void>((r) => (entered = r));
+    let slowInvoice = "";
+    const slow: CompleteFn = async (_t, request, session) => {
+      slowInvoice = fact(request, "Invoice number");
+      entered();
+      await gate;
+      return result(request, session, goodText(request));
+    };
+    const first = run(slow);
+    await started;
+    t += DRAFTING_LEASE_MS + 1_000;
+    // The second run takes the reminder back and, while its own call is out, the first run's late
+    // answer comes back and tries to land.
+    const racing: CompleteFn = async (_t, request, session) => {
+      seen.push(request);
+      if (fact(request, "Invoice number") === slowInvoice) {
+        release();
+        await first;
+      }
+      return result(request, session, goodText(request));
+    };
+    const second = await run(racing);
+    if (!second.ok) throw new Error("not drafted");
+    expect(second).toMatchObject({ drafted: 3, refused: 0, skipped: 0 });
+    expect(await first).toMatchObject({ ok: true, drafted: 0, refused: 0, stoppedBy: "deadline" });
+    const rows = await rowsOf(A);
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.status === "drafted" && r.trace_id === second.traceId)).toBe(true);
+    // The reminder names the second run's call, not the late one.
+    const calls = await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ id: string }>(
+        `SELECT CAST(id AS text) AS id FROM model_calls WHERE tenant_id = current_tenant_id() AND trace_id = CAST($1 AS uuid)`,
+        [second.traceId],
       ),
     );
+    const slowRow = rows.find((r) => r.subject === `Invoice ${slowInvoice} is past due`);
+    expect(slowRow).toBeDefined();
+    expect(calls.map((c) => c.id)).toContain(slowRow!.model_call_id);
+  });
+
+  it("the table never lets a drafting reminder name a model call, and a refused one stays refused", async () => {
+    const drafting = await reserve(INVOICES.L34, "30", "drafting", NOW);
+    const callId = randomUUID();
+    await admin.withTenant(A.tenantId, (q) => ledgerRow(q, callId, { purpose: REMINDER_PURPOSE, messages: [] } as unknown as AiRequest));
+    const state = await sqlStateOf(
+      app.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE collection_drafts SET model_call_id = CAST($2 AS uuid)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [drafting.id, callId],
+        ),
+      ),
+    );
+    expect(state).toBe("23514");
+    // A reminder refused after a real call keeps its call and its category, however old.
+    await clearA();
+    const wrong: CompleteFn = async (_t, request, session) => {
+      seen.push(request);
+      const balance = fact(request, "Balance due");
+      return result(request, session, goodText(request, balance === "$500.00" ? "$550.00" : balance));
+    };
+    await draft(wrong);
+    const refused = (await rowFor(INVOICES.L34.id))!;
+    expect(refused).toMatchObject({ status: "refused", refusal_category: "number_mismatch" });
+    expect(refused.model_call_id).not.toBeNull();
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute(
+        `UPDATE collection_drafts SET updated_at = CAST($2 AS timestamptz)
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [refused.id, new Date(NOW - 10 * DRAFTING_LEASE_MS).toISOString()],
+      ),
+    );
+    expect(await draft()).toMatchObject({ ok: true, drafted: 0, skipped: 3 });
+    expect(await rowFor(INVOICES.L34.id)).toMatchObject({
+      status: "refused",
+      refusal_category: "number_mismatch",
+      model_call_id: refused.model_call_id,
+    });
+  });
+
+  it("a waiting reminder at a stage its invoice has passed is closed as not kept, counted and shown", async () => {
+    // Waiting at 30 days; the invoice is now 62 days late, at 60.
+    const passed = await reserve(INVOICES.L62, "30", "over_cap", NOW - 40 * 86_400_000);
+    // An invoice no longer late enough has no reminder due: its waiting one is left as it is.
+    const notDue = await reserve(INVOICES.L12, "30", "over_cap", NOW - 40 * 86_400_000);
     const out = await draft();
-    expect(out).toMatchObject({ ok: true, drafted: 2, skipped: 1 });
-    expect(await rowFor(INVOICES.L34.id)).toMatchObject({ status: "refused", refusal_category: "interrupted" });
+    expect(out).toMatchObject({ ok: true, drafted: 3, refused: 0, overCap: 0, skipped: 1, more: false });
+    const rows = await rowsOf(A);
+    expect(rows.find((r) => r.id === passed.id)).toMatchObject({
+      status: "refused",
+      refusal_category: "stage_passed",
+      model_call_id: null,
+      subject: null,
+      body: null,
+      trace_id: passed.traceId,
+    });
+    expect(rows.find((r) => r.invoice_id === INVOICES.L62.id && r.stage === "60")?.status).toBe("drafted");
+    expect(rows.find((r) => r.id === notDue.id)?.status).toBe("over_cap");
+    // The page shows it as a card that was not kept, with its own reason.
+    const view = await app.withTenant(A.tenantId, (q) => readCollectionsView(q, clock()));
+    expect(view.cards.find((c) => c.id === passed.id)).toMatchObject({ status: "refused", refusalCategory: "stage_passed", stage: "30" });
+    expect(view.toDraft).toEqual([]);
+    // Closed once: the next run does not count it again.
+    expect(await draft()).toMatchObject({ ok: true, drafted: 0, skipped: 3 });
+    expect((await rowsOf(A)).find((r) => r.id === passed.id)?.status).toBe("refused");
+  });
+
+  it("the table closes a waiting reminder as stage_passed only, with nothing else changed, and never reopens it", async () => {
+    const row = await reserve(INVOICES.L62, "30", "over_cap", NOW);
+    const callId = randomUUID();
+    await admin.withTenant(A.tenantId, (q) => ledgerRow(q, callId, { purpose: REMINDER_PURPOSE, messages: [] } as unknown as AiRequest));
+    const asApp = (sql: string, params: Param[] = []) =>
+      sqlStateOf(app.withTenant(A.tenantId, (q) => q.execute(sql, params)));
+    const byId = "WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
+    const close = "SET status = 'refused', refusal_category = 'stage_passed'";
+    expect(await asApp(`UPDATE collection_drafts SET status = 'refused', refusal_category = 'timeout' ${byId}`, [row.id])).toBe("23514");
+    expect(await asApp(`UPDATE collection_drafts SET status = 'refused' ${byId}`, [row.id])).toBe("23514");
+    expect(await asApp(`UPDATE collection_drafts ${close}, subject = 'Invoice x' ${byId}`, [row.id])).toBe("23514");
+    expect(await asApp(`UPDATE collection_drafts ${close}, tone = 'firm' ${byId}`, [row.id])).toBe("23514");
+    expect(
+      await asApp(`UPDATE collection_drafts ${close}, model_call_id = CAST($2 AS uuid) ${byId}`, [row.id, callId]),
+    ).toBe("23514");
+    // A waiting reminder's category never changes on its own.
+    expect(await asApp(`UPDATE collection_drafts SET refusal_category = 'stage_passed' ${byId}`, [row.id])).toBe("23514");
+    expect(await asApp(`UPDATE collection_drafts ${close} ${byId}`, [row.id])).toBe("no error");
+    // Final: it never goes back to waiting or drafting.
+    expect(await asApp(`UPDATE collection_drafts SET status = 'over_cap', refusal_category = NULL ${byId}`, [row.id])).toBe("23514");
+    expect(await asApp(`UPDATE collection_drafts SET status = 'drafting', refusal_category = NULL ${byId}`, [row.id])).toBe("23514");
   });
 
   it("approve refuses paid_since when the invoice was paid after drafting", async () => {

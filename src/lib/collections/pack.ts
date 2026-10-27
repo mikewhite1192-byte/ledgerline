@@ -9,7 +9,9 @@ import { isLocalDate } from "../time/local-date";
 // model sees the customer's name, the carrier's name, the invoice number, its total and balance,
 // the due date and how many days late it is, and the tone code picked. Never a record id, an email
 // address or another customer's figures. Every amount and number here goes on the check's allowed
-// lists, so a reminder can repeat these and nothing else.
+// lists, so a reminder can repeat these and nothing else. A digit in the customer's or carrier's
+// name is not one of them: it is accepted only inside that exact name (verify.ts), so "Route 66
+// Freight" never lets a stray 66 into the reminder.
 
 // What a reminder is written from, stored on the row (collection_drafts.figures) as cents, whole
 // days and dates, so the page and the approval check never read them back from the text.
@@ -100,8 +102,6 @@ export function buildReminderPack(
     ...digitRuns(figures.invoiceNumber),
     normalizeNumber(day),
     normalizeNumber(year),
-    ...digitRuns(customerName),
-    ...digitRuns(carrierName),
   ]);
   return {
     language: "en",
