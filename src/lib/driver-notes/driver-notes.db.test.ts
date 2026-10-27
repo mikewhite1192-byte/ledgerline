@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import { AiError, type AiRequest, type AiResult } from "../ai";
+import type { Session } from "../auth/claims";
+import type { Queryable } from "../db";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
@@ -15,9 +17,10 @@ import { listNotePeriods, readDriverView, readPeriodNotes } from "./view";
 // Driver notes against the real database, as the app's role, with a fake model. Each settled
 // settlement gets at most one note however many passes run; a note that fails the check keeps no
 // text and is never approvable; approval delivers to the driver view and never edits the text;
-// a note whose paystub changed after drafting is neither approved nor shown; a note can only be
-// inserted as a bare reservation; email stays refused (and logged as "would send") until its switch, the allowlist and a sender
-// all agree, and sends at most once; the period's cap stops drafting with no call; and another
+// a note whose paystub changed after drafting is neither approved, shown nor emailed; a note can
+// only be inserted as a bare reservation and only names a model call of its own carrier; email
+// stays refused (and logged as "would send") until its switch, the allowlist and a sender all
+// agree, and sends at most once; the period's cap stops drafting with no call; and another
 // carrier sees none of it. Only this file's tenants are made, and they are removed after.
 
 const saved = { ...flags, driverNoteLimits: { ...flags.driverNoteLimits }, driverNotesEmailAllowlist: [...flags.driverNotesEmailAllowlist] };
@@ -44,10 +47,29 @@ function netOf(request: AiRequest): string {
   if (!m) throw new Error("the pack has no net pay");
   return m[1];
 }
-function result(text: string): AiResult {
+// The call's row in the model ledger, as complete() writes it before it returns the call's id: a
+// note names the call that wrote it, so the id must be a real call of the same carrier. It costs
+// nothing, so the period's cap counts only what a test charges on purpose.
+async function ledgerRow(q: Queryable, id: string, purpose: string, traceId: string | null) {
+  await q.execute(
+    `INSERT INTO model_calls (id, tenant_id, target, provider, model, kind, purpose, trace_id, status,
+       reserved_nanocents, cost_nanocents)
+     VALUES (CAST($1 AS uuid), current_tenant_id(), 'spark', 'meta', 'test-model', 'text', $2,
+       CAST($3 AS uuid), 'ok', 0, 0)`,
+    [id, purpose, traceId],
+  );
+}
+async function result(
+  request: AiRequest,
+  session: Session,
+  text: string,
+  status: AiResult["status"] = "ok",
+): Promise<AiResult> {
+  const callId = randomUUID();
+  await admin.withTenant(session.tenantId, (q) => ledgerRow(q, callId, request.purpose, request.traceId ?? null));
   return {
-    callId: randomUUID(),
-    status: "ok",
+    callId,
+    status,
     text,
     toolCalls: [],
     usage: { input: 0, cached: 0, output: 0, reasoning: 0 },
@@ -56,12 +78,12 @@ function result(text: string): AiResult {
     replay: [],
   };
 }
-const goodModel: CompleteFn = async (_target, request) => {
+const goodModel: CompleteFn = async (_target, request, session) => {
   seen.push(request);
   const spanish = request.messages.some((m) => m.content.includes("Language: Spanish"));
   const net = netOf(request);
   const body = spanish ? `Hola, su pago neto es ${net} [línea 1].` : `Hi, your net pay is ${net} [line 1].`;
-  return result(JSON.stringify({ language: spanish ? "Spanish" : "English", body, cited_seqs: [1] }));
+  return result(request, session, JSON.stringify({ language: spanish ? "Spanish" : "English", body, cited_seqs: [1] }));
 };
 
 const draft = (complete: CompleteFn = goodModel, at = deadline()) =>
@@ -87,6 +109,32 @@ async function notesOf(f: Fixture) {
     ),
   );
 }
+
+// Corrects both settlements after their notes were drafted: fuel and net pay on the first, the
+// load amount on the second. setPay(15000, 110000, 90000) puts the seeded paystubs back.
+const setPay = (fuelCents: number, net1Cents: number, load2Cents: number) =>
+  admin.withTenant(A.tenantId, async (q) => {
+    await q.execute(
+      `UPDATE settlements SET deductions_cents = $2, net_cents = $3
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+      [settlement1, fuelCents, net1Cents],
+    );
+    await q.execute(
+      `UPDATE settlement_lines SET amount_cents = $2
+        WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid) AND seq = 2`,
+      [settlement1, -fuelCents],
+    );
+    await q.execute(
+      `UPDATE settlements SET gross_cents = $2, net_cents = $2
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+      [settlement2, load2Cents],
+    );
+    await q.execute(
+      `UPDATE settlement_lines SET amount_cents = $2
+        WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid) AND seq = 1`,
+      [settlement2, load2Cents],
+    );
+  });
 
 async function seedPay(f: Fixture) {
   const payConfig = randomUUID();
@@ -176,10 +224,11 @@ describe("driver notes", () => {
   afterAll(async () => {
     Object.assign(flags, saved);
     if (A) {
+      // Notes first: each names its model call.
+      await clearTenantAgent(admin, A.tenantId);
       await admin.withTenant(A.tenantId, (q) =>
         q.execute("DELETE FROM model_calls WHERE tenant_id = current_tenant_id()"),
       );
-      await clearTenantAgent(admin, A.tenantId);
     }
     await dropTenant(admin, A);
     await dropTenant(admin, B);
@@ -210,8 +259,8 @@ describe("driver notes", () => {
   });
 
   it("stores a note that fails the check as refused, with no text, and never approvable", async () => {
-    const wrong: CompleteFn = async () =>
-      result(JSON.stringify({ language: "English", body: "Hi, your net pay is $9,999.99.", cited_seqs: [] }));
+    const wrong: CompleteFn = async (_target, request, session) =>
+      result(request, session, JSON.stringify({ language: "English", body: "Hi, your net pay is $9,999.99.", cited_seqs: [] }));
     expect(await draft(wrong)).toMatchObject({ ok: true, refused: 2, drafted: 0 });
     const notes = await notesOf(A);
     expect(notes[0]).toMatchObject({ status: "refused", refusal_category: "number_mismatch", body: null });
@@ -225,6 +274,7 @@ describe("driver notes", () => {
     const view = await app.withTenant(A.tenantId, (q) => readDriverView(q, settlement2));
     expect(view?.message).toEqual({
       kind: "fallback",
+      language: "es",
       body: "Su pago del 26 de octubre al 1 de noviembre de 2026 es $900.00. Su recibo de pago muestra cada línea.",
     });
   });
@@ -242,7 +292,8 @@ describe("driver notes", () => {
   });
 
   it("stores an answer cut off by the output budget as incomplete, with no check record", async () => {
-    const cut: CompleteFn = async () => ({ ...result('{"language": "English", "body": "Hi, your'), status: "incomplete" });
+    const cut: CompleteFn = async (_target, request, session) =>
+      result(request, session, '{"language": "English", "body": "Hi, your', "incomplete");
     expect(await draft(cut)).toMatchObject({ ok: true, refused: 2, drafted: 0 });
     const rows = await admin.withTenant(A.tenantId, (q) =>
       q.query<{ status: string; refusal_category: string | null; body: string | null; verification: unknown }>(
@@ -346,29 +397,6 @@ describe("driver notes", () => {
     expect(await approveNote(A.session, n1.id, { db: app, clock })).toEqual({ ok: true });
     // Both settlements are corrected after their notes were drafted: more fuel on the first, a new
     // load amount on the second. The originals are put back after, for the tests that follow.
-    const setPay = (fuelCents: number, net1Cents: number, load2Cents: number) =>
-      admin.withTenant(A.tenantId, async (q) => {
-        await q.execute(
-          `UPDATE settlements SET deductions_cents = $2, net_cents = $3
-            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
-          [settlement1, fuelCents, net1Cents],
-        );
-        await q.execute(
-          `UPDATE settlement_lines SET amount_cents = $2
-            WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid) AND seq = 2`,
-          [settlement1, -fuelCents],
-        );
-        await q.execute(
-          `UPDATE settlements SET gross_cents = $2, net_cents = $2
-            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
-          [settlement2, load2Cents],
-        );
-        await q.execute(
-          `UPDATE settlement_lines SET amount_cents = $2
-            WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid) AND seq = 1`,
-          [settlement2, load2Cents],
-        );
-      });
     await setPay(20000, 105000, 95000);
     try {
       // The drafted note's $900.00 is no longer on its paystub: not approvable, and nothing changes.
@@ -378,6 +406,7 @@ describe("driver notes", () => {
       const view = await app.withTenant(A.tenantId, (q) => readDriverView(q, settlement1));
       expect(view?.message).toEqual({
         kind: "fallback",
+        language: "en",
         body: "Your pay for Oct 26 to Nov 1, 2026 is $1,050.00. Your paystub lists every line.",
       });
     } finally {
@@ -437,9 +466,71 @@ describe("driver notes", () => {
       throw new Error("mail down");
     };
     const deliver = () => deliverNoteEmail(A.session, n1.id, { db: app, log: () => undefined, clock, send: failing });
-    expect(await deliver()).toEqual({ sent: false, category: "send_failed" });
+    // The provider may have taken it before the error: unknown, and the reservation stays.
+    expect(await deliver()).toEqual({ sent: false, category: "unknown" });
+    expect((await notesOf(A))[0].channel).toBe("email");
     expect(await deliver()).toEqual({ sent: false, category: "already_sent" });
     expect(calls).toBe(1);
+  });
+
+  it("emails nothing for an approved note whose paystub changed after approval", async () => {
+    await draft();
+    const [n1] = await notesOf(A);
+    expect(await approveNote(A.session, n1.id, { db: app, clock })).toEqual({ ok: true });
+    flags.driverNotesEmailEnabled = true;
+    flags.driverNotesEmailAllowlist = [`drv-1@${slugA}.example`];
+    const sent: EmailMessage[] = [];
+    const deliver = () =>
+      deliverNoteEmail(A.session, n1.id, {
+        db: app,
+        log: () => undefined,
+        clock,
+        send: async (m) => {
+          sent.push(m);
+        },
+      });
+    await setPay(20000, 105000, 95000);
+    try {
+      // The note's $1,100.00 is no longer the net pay: refused, nothing reserved, nothing sent.
+      expect(await deliver()).toEqual({ sent: false, category: "stale" });
+      expect(sent).toEqual([]);
+      expect((await notesOf(A))[0].channel).toBe("driver_view");
+    } finally {
+      await setPay(15000, 110000, 90000);
+    }
+    // With the paystub back as it was, the note matches again and goes out once.
+    expect(await deliver()).toEqual({ sent: true });
+    expect(sent).toHaveLength(1);
+  });
+
+  it("ties a note's model call to a call of the same carrier", async () => {
+    const noteId = randomUUID();
+    const callA = randomUUID();
+    const callB = randomUUID();
+    await admin.withTenant(A.tenantId, (q) => ledgerRow(q, callA, "driver_note", null));
+    await admin.withTenant(B.tenantId, (q) => ledgerRow(q, callB, "driver_note", null));
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO driver_notes (id, tenant_id, settlement_id, driver_id, period_id, language, status, trace_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid), 'en',
+           'drafting', CAST($5 AS uuid))`,
+        [noteId, settlement1, A.driverId, periodId, randomUUID()],
+      ),
+    );
+    // Even the admin login, which row security does not hold, cannot point a note at another
+    // carrier's call or at no call at all.
+    const finish = (callId: string) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE driver_notes SET status = 'refused', refusal_category = 'incomplete',
+                  model_call_id = CAST($2 AS uuid)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [noteId, callId],
+        ),
+      );
+    expect(await sqlStateOf(finish(callB))).toBe("23503");
+    expect(await sqlStateOf(finish(randomUUID()))).toBe("23503");
+    expect(await sqlStateOf(finish(callA))).toBe("no error");
   });
 
   it("refuses any change to an approved note's text, even from the admin login", async () => {

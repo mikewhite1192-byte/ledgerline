@@ -85,6 +85,23 @@ describe("packText", () => {
     const result = verifyNote(JSON.stringify({ language: "Spanish", body, cited_seqs: [1, 2] }), pack);
     expect(result).toMatchObject({ ok: true, citedSeqs: [1, 2] });
   });
+
+  it("refuses a note that gives another paystub amount as the net pay", () => {
+    const pack = buildPack(INPUT);
+    expect(pack.netCents).toBe(110000);
+    for (const body of [
+      // Gross pay, then the fuel line, named as the net pay: both amounts are on the paystub.
+      "Ana, su pago neto es $1,250.00 [línea 1].",
+      "Ana, su pago neto es $150.00 [línea 2].",
+      // The net pay is there, but not first.
+      "Ana, el combustible fue $150.00 [línea 2] y su pago neto es $1,100.00 [línea 1].",
+      // No net pay at all.
+      "Ana, el combustible fue $150.00 [línea 2].",
+    ]) {
+      const result = verifyNote(JSON.stringify({ language: "Spanish", body, cited_seqs: [] }), pack);
+      expect(result, body).toMatchObject({ ok: false, category: "number_mismatch" });
+    }
+  });
 });
 
 describe("recheckNote", () => {
@@ -100,6 +117,15 @@ describe("recheckNote", () => {
     expect(recheckNote({ ...SETTLED, settlement: { ...SETTLED.settlement, status: "paid" } }, NOTE)).toBe(true);
     // The note keeps the language it was drafted in, even if the driver's setting changed since.
     expect(recheckNote({ ...SETTLED, driver: { ...SETTLED.driver, preferred_language: "en" } }, NOTE)).toBe(true);
+  });
+
+  it("fails a stored note that does not lead with the net pay", () => {
+    for (const body of [
+      "Ana, su pago bruto es $1,250.00 [línea 1] y su pago neto es $1,100.00.",
+      "Ana, el combustible fue $150.00 [línea 2].",
+    ]) {
+      expect(recheckNote(SETTLED, { ...NOTE, body }), body).toBe(false);
+    }
   });
 
   it("fails a note whose settlement changed after drafting", () => {

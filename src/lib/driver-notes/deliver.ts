@@ -2,6 +2,7 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { getDb, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
+import { readNoteSource, recheckNote } from "./pack";
 import { periodWords } from "./words";
 
 // Getting an approved note to the driver. The driver view is the delivery: approval marks the note
@@ -10,18 +11,31 @@ import { periodWords } from "./words";
 // (driverNotesEmailEnabled), the driver's address on the allowlist (exact, lower-cased; an empty
 // list refuses every address) and a configured sender. Until all three hold, delivery logs
 // "would send note <id> (<category>)", never the address, and sends nothing. No sender ships in
-// this change, so production never sends; tests hand in a fake one.
+// this change, so production never sends; tests hand in a fake one. The notes switch itself
+// (driverNotesEnabled) is re-checked here too: with it off, nothing is emailed.
+//
+// An email cannot be recalled, so the note is checked once more against its settlement as it is
+// now (pack.ts recheckNote) in the same transaction that reserves the send: a note whose paystub
+// changed after approval is refused (stale) and nothing is sent.
 //
 // An email is sent at most once: the note's channel moves from driver_view to email in its own
 // transaction before the send (the reservation), so a retry, a second click or a crash after the
-// send never sends again. A send that fails after the reservation is left as it is (unknown, never
-// re-sent) and logged by category.
+// send never sends again. Everything the message needs is worked out before the reservation, so
+// nothing after it can fail but the send. A send that throws after the reservation may still have
+// reached the provider: its outcome is unknown, it is never re-sent, and it is logged by category.
 
 export type EmailMessage = { noteId: string; to: string; subject: string; text: string };
 export type EmailSender = (message: EmailMessage) => Promise<void>;
 
-export type EmailRefusal = "disabled" | "not_allowlisted" | "no_sender" | "not_approved" | "already_sent" | "not_found";
-export type EmailResult = { sent: true } | { sent: false; category: EmailRefusal | "send_failed" };
+export type EmailRefusal =
+  | "disabled"
+  | "not_allowlisted"
+  | "no_sender"
+  | "not_approved"
+  | "already_sent"
+  | "not_found"
+  | "stale";
+export type EmailResult = { sent: true } | { sent: false; category: EmailRefusal | "unknown" };
 
 export type DeliverDeps = {
   db?: TenantDb;
@@ -41,6 +55,8 @@ type NoteForEmail = {
   status: string;
   channel: string | null;
   body: string | null;
+  cited_seqs: string | null;
+  settlement_id: string;
   email: string;
   period_start: string;
   period_end: string;
@@ -60,6 +76,7 @@ export async function deliverNoteEmail(
     await assertMembership(q, session);
     const rows = await q.query<NoteForEmail>(
       `SELECT n.status, n.channel, n.body, n.language, d.email,
+              CAST(n.settlement_id AS text) AS settlement_id, CAST(n.cited_seqs AS text) AS cited_seqs,
               to_char(p.period_start, 'YYYY-MM-DD') AS period_start,
               to_char(p.period_end, 'YYYY-MM-DD') AS period_end
          FROM driver_notes n
@@ -81,12 +98,21 @@ export async function deliverNoteEmail(
     log(`would send note ${noteId} (${category})`);
     return { sent: false, category };
   };
+  if (!flags.driverNotesEnabled) return refuse("disabled");
   if (!flags.driverNotesEmailEnabled) return refuse("disabled");
   if (!isAllowlisted(note.email, flags.driverNotesEmailAllowlist)) return refuse("not_allowlisted");
   if (!deps.send) return refuse("no_sender");
 
+  // Before the reservation, so a date the words cannot read leaves the note unreserved.
+  const language = note.language === "es" ? "es" : "en";
+  const period = periodWords(language, note.period_start, note.period_end);
+
   const reserved = await db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
+    // The text never changes once written (the table's guard), so the note read above is the
+    // note; the settlement is read now. A missing settlement or a failed check sends nothing.
+    const source = await readNoteSource(q, note.settlement_id);
+    if (source === null || !recheckNote(source, note)) return "stale" as const;
     return q.execute(
       `UPDATE driver_notes SET channel = 'email', updated_at = CAST($2 AS timestamptz)
         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
@@ -94,10 +120,9 @@ export async function deliverNoteEmail(
       [noteId, now],
     );
   });
+  if (reserved === "stale") return { sent: false, category: "stale" };
   if (reserved !== 1) return { sent: false, category: "already_sent" };
 
-  const language = note.language === "es" ? "es" : "en";
-  const period = periodWords(language, note.period_start, note.period_end);
   try {
     await deps.send({
       noteId,
@@ -107,7 +132,8 @@ export async function deliverNoteEmail(
     });
     return { sent: true };
   } catch (err) {
-    console.error("driver note email failed:", err instanceof Error ? err.name : "unknown");
-    return { sent: false, category: "send_failed" };
+    // The provider may have taken the message before the error: unknown, never "not sent".
+    console.error("driver note email outcome unknown:", err instanceof Error ? err.name : "unknown");
+    return { sent: false, category: "unknown" };
   }
 }

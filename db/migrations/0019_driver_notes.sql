@@ -21,6 +21,12 @@
 ALTER TABLE drivers ADD COLUMN preferred_language text NOT NULL DEFAULT 'en'
   CHECK (preferred_language IN ('en', 'es'));
 
+-- A note names the model call that wrote it, and that call must be the same carrier's. The
+-- composite foreign key below needs a (tenant_id, id) key on the model ledger. id is already its
+-- primary key, so every existing row meets it; nothing else on model_calls changes (its policy,
+-- forced row-level security and grants stay as 0003 left them).
+ALTER TABLE model_calls ADD CONSTRAINT model_calls_tenant_id_id_key UNIQUE (tenant_id, id);
+
 -- One note per settlement. The row is written (drafting) before the model call, so a second
 -- click or a crash never makes a second note: UNIQUE (tenant_id, settlement_id) is the dedupe key.
 --
@@ -33,7 +39,8 @@ ALTER TABLE drivers ADD COLUMN preferred_language text NOT NULL DEFAULT 'en'
 --   rejected  a person rejected it; the driver sees the code-built fallback line
 --
 -- trace_id groups the note's model call in model_calls (the batch cap sums the period's calls by
--- it). verification holds the amounts the check allowed and found, in cents, and the category.
+-- it); model_call_id names the call whose answer was checked. verification holds the amounts the
+-- check allowed and found, in cents, and the category.
 CREATE TABLE driver_notes (
   id               uuid PRIMARY KEY,
   tenant_id        uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -67,7 +74,9 @@ CREATE TABLE driver_notes (
   UNIQUE (tenant_id, settlement_id),
   FOREIGN KEY (tenant_id, settlement_id) REFERENCES settlements (tenant_id, id),
   FOREIGN KEY (tenant_id, driver_id) REFERENCES drivers (tenant_id, id),
-  FOREIGN KEY (tenant_id, period_id) REFERENCES settlement_periods (tenant_id, id)
+  FOREIGN KEY (tenant_id, period_id) REFERENCES settlement_periods (tenant_id, id),
+  -- Null until the call is made, and left null when it never was (no row to point at).
+  FOREIGN KEY (tenant_id, model_call_id) REFERENCES model_calls (tenant_id, id)
 );
 CREATE INDEX driver_notes_tenant_period ON driver_notes (tenant_id, period_id);
 

@@ -7,8 +7,11 @@
 // What counts as a number: every run of digits in the body outside a line citation. A figure
 // marked as money ($1,234.56, 1,234.56 dollars, USD 12) is parsed to cents and must equal an
 // amount on the pack (sign ignored: "a $120.00 deduction" is the -12000 line). A bare figure with
-// exactly two decimals is read as dollars the same way. Any other bare figure (miles, days, a
-// date, a load number, a percent) must be one of the pack's own numbers. A figure in any other
+// exactly two decimals is read as dollars the same way. The first amount in the note must be the
+// settlement's net pay: the drafting prompt asks for the net pay first, and a note that leaves it
+// out, or leads with another paystub amount (gross pay, a fuel line), is refused, so the figure a
+// driver reads first is never a different amount from the paystub. Any other bare figure (miles,
+// days, a date, a load number, a percent) must be one of the pack's own numbers. A figure in any other
 // shape (1.234,56, 1,23) cannot be read with certainty and is refused, and so is a digit of any
 // script but ASCII 0-9. The limit: a number spelled out in words ("three loads") is not checked;
 // the prompt asks for digits.
@@ -26,6 +29,8 @@ export const MAX_BODY_CHARS = 1200;
 // What the check compares against, built by pack.ts from stored rows only.
 export type NoteCheck = {
   language: NoteLanguage;
+  // The settlement's net pay in cents: the note's first amount must be this (sign ignored).
+  netCents: number;
   // Every amount on the pack, in cents, as absolute values.
   allowedCents: readonly number[];
   // Every other number on the pack, normalized ("72.5", "1042", "2026").
@@ -197,6 +202,9 @@ export function verifyNote(text: string, check: NoteCheck): VerifyResult {
 
   const scan = scanFigures(rest);
   if (scan.unreadable) return fail("number_mismatch", scan.cents, scan.numbers);
+  if (scan.cents.length === 0 || scan.cents[0] !== Math.abs(check.netCents)) {
+    return fail("number_mismatch", scan.cents, scan.numbers);
+  }
   const allowedCents = new Set(allowed);
   const allowedNumbers = new Set(check.allowedNumbers);
   if (scan.cents.some((c) => !allowedCents.has(c)) || scan.numbers.some((n) => !allowedNumbers.has(n))) {

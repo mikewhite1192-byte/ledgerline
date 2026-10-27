@@ -168,7 +168,10 @@ export async function readPeriodNotes(q: Queryable, periodId: string): Promise<P
 export type DriverView = {
   source: StoredNoteSource;
   // What the driver sees above the paystub: the approved note, the fallback line, or nothing yet.
-  message: { kind: "note"; body: string; language: NoteLanguage } | { kind: "fallback"; body: string } | null;
+  message:
+    | { kind: "note"; body: string; language: NoteLanguage }
+    | { kind: "fallback"; body: string; language: NoteLanguage }
+    | null;
 };
 
 // The driver's view of one settlement: the paystub, and the note only once a person approved it
@@ -187,6 +190,7 @@ export async function readDriverView(q: Queryable, settlementId: string): Promis
   const language = asLanguage(note ? note.language : source.driver.preferred_language);
   const fallback = (): DriverView["message"] => ({
     kind: "fallback",
+    language,
     body: fallbackLine(language, source.period.period_start, source.period.period_end, source.settlement.net_cents),
   });
   let message: DriverView["message"] = null;

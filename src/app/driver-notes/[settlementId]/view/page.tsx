@@ -86,7 +86,7 @@ export default async function DriverViewPage({ params }: { params: Promise<{ set
                     {view.message.kind === "note" ? "Note about this pay" : "About this pay"}
                   </p>
                   <p
-                    lang={view.message.kind === "note" ? view.message.language : undefined}
+                    lang={view.message.language}
                     className="text-body whitespace-pre-line text-foreground"
                   >
                     {view.message.body}

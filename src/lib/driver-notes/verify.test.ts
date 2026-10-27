@@ -3,10 +3,14 @@ import { MAX_BODY_CHARS, normalizeNumber, parseReply, verifyNote, type NoteCheck
 
 const CHECK: NoteCheck = {
   language: "en",
+  netCents: 123456,
   allowedCents: [123456, -12000, 50, 62],
   allowedNumbers: ["2026", "10", "26", "11", "1", "3", "1042", "25", "72.5"],
   seqs: [1, 2, 3],
 };
+
+// What every passing note leads with: the net pay, the first amount the driver reads.
+const NET = "Your net pay is $1,234.56.";
 
 function reply(body: string, extra: Record<string, unknown> = {}): string {
   return JSON.stringify({ language: "English", body, cited_seqs: [], ...extra });
@@ -62,9 +66,9 @@ describe("verifyNote", () => {
       "Your pay is USD 1234.56.",
       "Your pay is 1234.56 today.",
       "Su pago es 1,234.56 dólares.",
-      "A deduction of −$120.00 came out.",
-      "Your bonus is 50 cents.",
-      "Your rate is 62 cents a mile.",
+      `${NET} A deduction of −$120.00 came out.`,
+      `${NET} Your bonus is 50 cents.`,
+      `${NET} Your rate is 62 cents a mile.`,
     ]) {
       const check = body.startsWith("Su") ? { ...CHECK, language: "es" as const } : CHECK;
       const language = body.startsWith("Su") ? "Spanish" : "English";
@@ -74,21 +78,42 @@ describe("verifyNote", () => {
   });
 
   it("refuses a dollar amount that is not on the paystub", () => {
-    const result = verifyNote(reply("Your net pay is $1,234.57 this week."), CHECK);
+    const result = verifyNote(reply("Your net pay is $1,234.56 and fuel took $121.00 this week."), CHECK);
     expect(result).toMatchObject({ ok: false, category: "number_mismatch" });
     if (result.ok) return;
-    expect(result.verification.found).toEqual([123457]);
+    expect(result.verification.found).toEqual([12100, 123456]);
   });
 
   it("refuses a bare two-decimal figure that is not on the paystub", () => {
-    expect(verifyNote(reply("You earned 99.99 more."), CHECK)).toMatchObject({ ok: false, category: "number_mismatch" });
+    expect(verifyNote(reply(`${NET} You earned 99.99 more.`), CHECK)).toMatchObject({
+      ok: false,
+      category: "number_mismatch",
+    });
   });
 
   it("refuses a bare number, a percent or a date part that is not on the paystub", () => {
     for (const body of ["You drove 999 miles.", "You keep 30% of linehaul.", "Paid on Oct 30."]) {
+      expect(verifyNote(reply(`${NET} ${body}`), CHECK), body).toMatchObject({ ok: false, category: "number_mismatch" });
+    }
+    expect(verifyNote(reply(`${NET} You keep 25% of linehaul and drove 72.5 empty miles.`), CHECK).ok).toBe(true);
+  });
+
+  it("refuses a note that leaves out the net pay", () => {
+    for (const body of ["Your fuel was $120.00 [line 2].", "Your pay is ready.", "You drove 1042 loaded miles."]) {
       expect(verifyNote(reply(body), CHECK), body).toMatchObject({ ok: false, category: "number_mismatch" });
     }
-    expect(verifyNote(reply("You keep 25% of linehaul and drove 72.5 empty miles."), CHECK).ok).toBe(true);
+  });
+
+  it("refuses a note that leads with another paystub amount, even with the net pay after it", () => {
+    for (const body of [
+      "Your net pay is $120.00 this week.",
+      "Your fuel was $120.00 and your net pay is $1,234.56.",
+      "At 62 cents a mile, your net pay is $1,234.56.",
+    ]) {
+      expect(verifyNote(reply(body), CHECK), body).toMatchObject({ ok: false, category: "number_mismatch" });
+    }
+    // Numbers that are not amounts (dates, miles) may come before it.
+    expect(verifyNote(reply("For Oct 26 to Nov 1, 2026, your net pay is $1,234.56."), CHECK).ok).toBe(true);
   });
 
   it("refuses a figure it cannot read with certainty", () => {
@@ -114,7 +139,7 @@ describe("verifyNote", () => {
       category: "line_mismatch",
     });
     // A bracket with no line number is text, not a citation.
-    expect(verifyNote(reply("See the fuel line [lines]."), CHECK).ok).toBe(true);
+    expect(verifyNote(reply(`${NET} See the fuel line [lines].`), CHECK).ok).toBe(true);
   });
 
   it("reads Spanish citations", () => {
@@ -137,7 +162,8 @@ describe("verifyNote", () => {
   });
 
   it("holds the body to its length", () => {
-    const fits = `${"A".repeat(MAX_BODY_CHARS - 1)}.`;
+    const fits = `${NET} ${"A".repeat(MAX_BODY_CHARS - NET.length - 2)}.`;
+    expect(fits).toHaveLength(MAX_BODY_CHARS);
     expect(verifyNote(reply(fits), CHECK).ok).toBe(true);
     expect(verifyNote(reply(`A${fits}`), CHECK)).toMatchObject({ ok: false, category: "format" });
     expect(verifyNote(reply("   "), CHECK)).toMatchObject({ ok: false, category: "format" });
@@ -158,7 +184,7 @@ describe("verifyNote", () => {
       const text = body === "not json at all" ? body : reply(body);
       expect(verifyNote(text, CHECK), body).toMatchObject({ ok: false, category: "format" });
     }
-    expect(verifyNote(reply("Your pay is ready.\nYour paystub has every line."), CHECK).ok).toBe(true);
+    expect(verifyNote(reply(`${NET}\nYour paystub has every line.`), CHECK).ok).toBe(true);
   });
 
   it("refuses digits of any script but ASCII, which the figure scan would not read", () => {
