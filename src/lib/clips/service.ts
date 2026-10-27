@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
-import { AiError, complete, segmentVideo, type AiDeps } from "../ai";
+import { AiError, complete, segmentVideo, spendRoom, type AiDeps, type AiRequest } from "../ai";
 import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
@@ -22,6 +22,7 @@ import {
   listViews,
   lockTenantClips,
   markBudget,
+  markBudgetUntried,
   readRedactedBytes,
   redactedFile,
   releaseReadLease,
@@ -47,6 +48,8 @@ import { CLIP_STOPS, type ClipFailure, type ClipRefusal, type ClipStop, type Cli
 //     builds from the redacted column) and its answer is kept with how its clocks compare with the
 //     stored stop times. The reading never changes a time or a number.
 // Every entry checks clipsEnabled itself; the model wrapper checks aiEnabled and the caps again.
+// Only a model call uses up a try: a reading the wrapper's spend checks would refuse waits on the
+// cap before its lease is taken.
 
 export type ClipDeps = { db?: TenantDb; ai?: AiDeps };
 
@@ -335,7 +338,8 @@ export async function readClip(session: Session, id: string, deps: ClipDeps = {}
   if (!flags.clipsEnabled || !flags.aiEnabled) return fail("disabled");
   if (!isUuid(id)) return fail("not_found");
 
-  const gate = readGate(await tx(session, deps, (q) => findReadState(q, id)));
+  const state = await tx(session, deps, (q) => findReadState(q, id));
+  const gate = readGate(state);
   if (gate !== null && gate !== "done") return gate;
 
   if (gate === null) {
@@ -349,9 +353,21 @@ export async function readClip(session: Session, id: string, deps: ClipDeps = {}
     }
     if (!clip) return fail("read_failed", true);
 
+    // One request for the spend check and the call, so both see the same reserve.
+    const call = readCall(clip, state?.traceId ?? randomUUID());
     const claim = await tx(session, deps, async (q) => {
-      const leased = await takeReadLease(q, id);
-      if (leased) return { traceId: leased.traceId ?? randomUUID(), attempts: leased.attempts };
+      // The wrapper's own spend checks, read without a lock: a reading they would refuse now makes
+      // no model call, so it waits on the cap with no try counted and reads once there is room.
+      const room = await spendRoom("spark", call.request, q);
+      if (room === "cap" || room === "too_expensive") {
+        if ((await markBudgetUntried(q, id)) === 1) {
+          console.error("clip reading waits on the cap:", room);
+          return fail("budget", true);
+        }
+      } else {
+        const leased = await takeReadLease(q, id);
+        if (leased) return { attempts: leased.attempts };
+      }
       // Another request got there between the two reads: answer as it left the clip.
       return readGate(await findReadState(q, id)) ?? fail("busy", true);
     });
@@ -359,11 +375,13 @@ export async function readClip(session: Session, id: string, deps: ClipDeps = {}
     if ("ok" in claim) return claim;
 
     const release = () => tx(session, deps, (q) => releaseReadLease(q, id)).catch((err) => logFailure("release", err));
-    const outcome = await readRedacted(session, clip, claim.traceId, deps);
+    const outcome = await readRedacted(session, call, deps);
     if (outcome.kind === "error") {
       if (outcome.budget) {
+        // Refused after the lease (another call took the room since the check): the try counts,
+        // so these stay bounded by MAX_ATTEMPTS.
         await tx(session, deps, (q) => markBudget(q, id));
-        return fail("budget", true);
+        return fail("budget", claim.attempts < MAX_ATTEMPTS);
       }
       await release();
       return fail(outcome.disabled ? "disabled" : "read_failed", !outcome.disabled && claim.attempts < MAX_ATTEMPTS);
@@ -389,28 +407,33 @@ type ReadOutcome =
   | { kind: "unreadable"; callId: string }
   | { kind: "error"; budget: boolean; disabled: boolean };
 
-// The one reading call. It takes a RedactedClip, so the raw file cannot reach it.
-async function readRedacted(session: Session, clip: RedactedClip, traceId: string, deps: ClipDeps): Promise<ReadOutcome> {
+type ReadCall = { readonly clip: RedactedClip; readonly request: AiRequest };
+
+// The one reading request, built only from a RedactedClip, so the raw file cannot reach the model.
+function readCall(clip: RedactedClip, traceId: string): ReadCall {
+  return {
+    clip,
+    request: {
+      purpose: "clip_read",
+      messages: [
+        {
+          role: "user",
+          content: CLIP_PROMPT,
+          attachments: [{ kind: "video", mime: "video/mp4", bytes: clip.bytes, frameCount: clip.frameCount }],
+        },
+      ],
+      format: CLIP_FORMAT,
+      maxOutputTokens: READ_OUTPUT_TOKENS,
+      maxCostCents: flags.clipLimits.readMaxCostCents,
+      traceId,
+    },
+  };
+}
+
+// The one reading call.
+async function readRedacted(session: Session, { clip, request }: ReadCall, deps: ClipDeps): Promise<ReadOutcome> {
   try {
-    const result = await complete(
-      "spark",
-      {
-        purpose: "clip_read",
-        messages: [
-          {
-            role: "user",
-            content: CLIP_PROMPT,
-            attachments: [{ kind: "video", mime: "video/mp4", bytes: clip.bytes, frameCount: clip.frameCount }],
-          },
-        ],
-        format: CLIP_FORMAT,
-        maxOutputTokens: READ_OUTPUT_TOKENS,
-        maxCostCents: flags.clipLimits.readMaxCostCents,
-        traceId,
-      },
-      session,
-      deps.ai,
-    );
+    const result = await complete("spark", request, session, deps.ai);
     if (result.status !== "ok") return { kind: "unreadable", callId: result.callId };
     const parsed = parseClipReading(result.text, clip.durationMs);
     if (!parsed.ok) {

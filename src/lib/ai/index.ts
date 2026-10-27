@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
-import { DbError, getDb, type TenantDb } from "../db";
+import { DbError, getDb, type Queryable, type TenantDb } from "../db";
 import { readMp4Header, type Mp4Header } from "../clips/mp4";
 import { ForbiddenError } from "../tenant/context";
 import { isUuid } from "../uuid";
@@ -31,7 +31,7 @@ import {
   parseVoice,
   voiceBody,
 } from "./providers/meta-voice";
-import { reserve, settle, type Settlement } from "./spend";
+import { overCap, readSpend, reserve, settle, type Settlement } from "./spend";
 import { shouldFallBack, standbyFor, type FirstAttempt } from "./standby";
 import { TARGETS, contributorMode, contributorRefusesAll, modelFor } from "./targets";
 import {
@@ -56,6 +56,7 @@ import {
   type SegmentResult,
   type SegmentVideoRequest,
   type SegmentVideoResult,
+  type TextAnswer,
   type TranscribeRequest,
   type TranscribeResult,
 } from "./types";
@@ -264,6 +265,20 @@ type Sent<T> =
   | { kind: "answered"; callId: string; answer: Answered<T>; costNanocents: number }
   | { kind: "failed"; callId: string; outcome: Failed<T>; error: AiError };
 
+// A reserve over the call's own maxCostCents: refused too_expensive before anything is reserved.
+function overCallCost(reserveNanocents: number, c: Common): boolean {
+  return reserveNanocents > c.maxCostCents * NANOCENTS_PER_CENT;
+}
+
+// The overall cap and, for Wonder only, its own cap inside it, read on every call. Null refuses.
+function capsFor(target: AiTarget): { cap: number | null; wonderCap: number | null } {
+  const cap = capNanocents(process.env.AI_SPEND_CAP_CENTS);
+  // Unset or invalid refuses Wonder calls only.
+  const wonderCap =
+    target === "wonder" ? wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap) : null;
+  return { cap, wonderCap };
+}
+
 // Builds one attempt for one host: validates the call's own input and builds its body (plan),
 // reads the host's key, and checks the reserve against the call's maxCostCents. Null, with one
 // log line naming the host, when the host's key is missing or unreadable: nothing was sent.
@@ -279,9 +294,7 @@ async function prepare<T, U extends Price["unit"]>(
     console.error(`ai: ${ctx.target} ${label}not configured (no ${provider} key)`);
     return null;
   }
-  if (p.reserveNanocents > ctx.c.maxCostCents * NANOCENTS_PER_CENT) {
-    throw new AiError("too_expensive");
-  }
+  if (overCallCost(p.reserveNanocents, ctx.c)) throw new AiError("too_expensive");
   return { provider, model: configured.model, price: configured.price, p, key };
 }
 
@@ -399,10 +412,7 @@ async function runCall<T, U extends Price["unit"]>(
   const clock = deps.clock ?? (() => performance.now());
   const started = clock();
   const fetchFn = deps.fetch ?? (process.env.NODE_ENV === "test" ? undefined : fetch);
-  const cap = capNanocents(process.env.AI_SPEND_CAP_CENTS);
-  // Unset or invalid refuses Wonder calls only.
-  const wonderCap =
-    target === "wonder" ? wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap) : null;
+  const { cap, wonderCap } = capsFor(target);
   if (contributorMode(process.env.META_CONTRIBUTOR_MODE) === null) {
     console.error("ai: META_CONTRIBUTOR_MODE must be unset, true or false; every call is refused");
     throw new AiError("not_configured");
@@ -687,6 +697,56 @@ const TEXT_HOSTS: Record<
   fireworks: { url: FIREWORKS_CHAT_URL, parse: parseFireworks },
 };
 
+// A text call's plan for one host: its body, its reserve and how its answer is read. complete()
+// sends it; spendRoom() reads only its reserve, so the two always reserve the same amount.
+function textPlan(target: AiTextTarget, request: AiRequest): PlanFn<TextAnswer, "tokens"> {
+  return (model, price, provider) => {
+    const options = validateText(target, request);
+    const meta = provider === "meta";
+    // Fireworks takes Baseten's body: the same OpenAI chat shape.
+    const body = JSON.stringify(
+      meta
+        ? metaBody(model, request, options)
+        : basetenBody(model, request, { maxOutputTokens: options.maxOutputTokens }),
+    );
+    // The reserve counts the request's text, not its attachment data: each image and each
+    // PDF page is reserved at its own token figure instead.
+    let attachmentChars = 0;
+    let images = 0;
+    let pages = 0;
+    let video: { frames: number; durationMs: number } | null = null;
+    for (const m of request.messages) {
+      if (m.role !== "user") continue;
+      for (const a of m.attachments ?? []) {
+        const mime = a.kind === "pdf" ? "application/pdf" : a.mime;
+        attachmentChars += dataUrlLength(mime, a.bytes.length);
+        if (a.kind === "image") images += 1;
+        else if (a.kind === "video") {
+          // validateText already read this header; at most one video per call.
+          const header = videoHeader(a);
+          if (!header) bad();
+          video = { frames: header.frameCount, durationMs: header.durationMs };
+        } else pages += pdfPages(a.bytes);
+      }
+    }
+    const textBytes = new TextEncoder().encode(body).length - attachmentChars;
+    return {
+      url: TEXT_HOSTS[provider].url,
+      body,
+      reserveNanocents: estimateReserve(
+        price,
+        // Only a Meta request carries search; the standby host never gets it.
+        meta && request.toolSearch === true ? textBytes * SEARCH_INPUT_FACTOR : textBytes,
+        options.maxOutputTokens,
+        mediaReserveTokens(images, pages, video),
+      ),
+      // Baseten and Fireworks take no reasoning setting, so none is recorded for them.
+      reasoningEffort: meta ? options.reasoningEffort : null,
+      parse: TEXT_HOSTS[provider].parse,
+    };
+  };
+}
+
 export async function complete(
   target: AiTextTarget,
   request: AiRequest,
@@ -701,51 +761,7 @@ export async function complete(
     DEFAULT_TIMEOUT_MS,
     session,
     deps,
-    (model, price, provider) => {
-      const options = validateText(target, request);
-      const meta = provider === "meta";
-      // Fireworks takes Baseten's body: the same OpenAI chat shape.
-      const body = JSON.stringify(
-        meta
-          ? metaBody(model, request, options)
-          : basetenBody(model, request, { maxOutputTokens: options.maxOutputTokens }),
-      );
-      // The reserve counts the request's text, not its attachment data: each image and each
-      // PDF page is reserved at its own token figure instead.
-      let attachmentChars = 0;
-      let images = 0;
-      let pages = 0;
-      let video: { frames: number; durationMs: number } | null = null;
-      for (const m of request.messages) {
-        if (m.role !== "user") continue;
-        for (const a of m.attachments ?? []) {
-          const mime = a.kind === "pdf" ? "application/pdf" : a.mime;
-          attachmentChars += dataUrlLength(mime, a.bytes.length);
-          if (a.kind === "image") images += 1;
-          else if (a.kind === "video") {
-            // validateText already read this header; at most one video per call.
-            const header = videoHeader(a);
-            if (!header) bad();
-            video = { frames: header.frameCount, durationMs: header.durationMs };
-          } else pages += pdfPages(a.bytes);
-        }
-      }
-      const textBytes = new TextEncoder().encode(body).length - attachmentChars;
-      return {
-        url: TEXT_HOSTS[provider].url,
-        body,
-        reserveNanocents: estimateReserve(
-          price,
-          // Only a Meta request carries search; the standby host never gets it.
-          meta && request.toolSearch === true ? textBytes * SEARCH_INPUT_FACTOR : textBytes,
-          options.maxOutputTokens,
-          mediaReserveTokens(images, pages, video),
-        ),
-        // Baseten and Fireworks take no reasoning setting, so none is recorded for them.
-        reasoningEffort: meta ? options.reasoningEffort : null,
-        parse: TEXT_HOSTS[provider].parse,
-      };
-    },
+    textPlan(target, request),
   );
   if (answer.metered.unit !== "tokens") throw new AiError("unknown");
   return {
@@ -759,6 +775,54 @@ export async function complete(
     replay: answer.value.replay,
     toolSearches: answer.value.toolSearches,
   };
+}
+
+export type SpendRoom = "room" | "cap" | "too_expensive";
+
+// What complete(target, request) would meet at its spend checks right now, read with one SELECT
+// of the counter and no lock and no write: the caps, model, price and reserve runCall uses, then
+// prepare's maxCostCents test ("too_expensive") and the reserve's own cap test ("cap"). Null when
+// the call would be refused for another reason first (the switch, the configuration, a malformed
+// request): the call then answers for itself. A counter that cannot be read throws, as at the
+// reserve. Nothing is held, so a call that starts after this read can still take the room; the
+// reserve, under its lock, stays the real stop. Muse Spark Open's standby host is not checked.
+export async function spendRoom(
+  target: AiTextTarget,
+  request: AiRequest,
+  q: Queryable,
+): Promise<SpendRoom | null> {
+  if (!flags.aiEnabled || !TEXT_TARGETS.includes(target)) return null;
+  const { cap, wonderCap } = capsFor(target);
+  const configured = modelFor(target, "tokens");
+  if (
+    cap === null ||
+    (target === "wonder" && wonderCap === null) ||
+    contributorRefusesAll(process.env) ||
+    !configured
+  ) {
+    return null;
+  }
+  let reserveNanocents: number;
+  let c: Common;
+  try {
+    c = common(request, DEFAULT_TIMEOUT_MS);
+    reserveNanocents = textPlan(target, request)(
+      configured.model,
+      configured.price,
+      TARGETS[target].provider,
+    ).reserveNanocents;
+  } catch (err) {
+    if (err instanceof AiError) return null;
+    throw err;
+  }
+  if (overCallCost(reserveNanocents, c)) return "too_expensive";
+  const refused = overCap(await readSpend(q), {
+    target,
+    reserveNanocents,
+    capNanocents: cap,
+    wonderCapNanocents: wonderCap,
+  });
+  return refused ? "cap" : "room";
 }
 
 // --- transcribe: Muse Voice Transcribe ---

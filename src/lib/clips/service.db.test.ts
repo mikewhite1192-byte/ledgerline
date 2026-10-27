@@ -445,17 +445,87 @@ describe("dock clip pipeline", () => {
     expect(await row(up.clip.id)).toMatchObject({ status: "redacted", read_attempts: 3, read_lease_free: true });
   });
 
-  it("marks a reading refused by the spend cap as budget, and reads it later", async () => {
+  it("waits on the spend cap with no try used and no model call, and reads once there is room", async () => {
     const ai = fakeAi();
     const up = await upload(ai);
     if (!up.ok) throw new Error(`upload ${up.category}`);
     await storeRedacted(A.session, up.clip.id, blurred(6), deps(ai));
     // Two segmentation calls have already spent more than a one-cent cap.
     vi.stubEnv("AI_SPEND_CAP_CENTS", "1");
-    expect(await readClip(A.session, up.clip.id, deps(ai))).toEqual({ ok: false, category: "budget", retryable: true });
-    expect((await row(up.clip.id)).status).toBe("budget");
+    const spendBefore = await app.withTenant(A.tenantId, (q) => readSpend(q));
+    for (let i = 0; i < 3; i += 1) {
+      expect(await readClip(A.session, up.clip.id, deps(ai))).toEqual({ ok: false, category: "budget", retryable: true });
+    }
+    expect(await row(up.clip.id)).toMatchObject({ status: "budget", read_attempts: 0, read_lease_free: true });
+    // Only the two segmentation calls were sent, and nothing was reserved for a reading.
+    expect(ai.sent).toHaveLength(2);
+    expect(await app.withTenant(A.tenantId, (q) => readSpend(q))).toEqual(spendBefore);
+    expect(logged.join("\n")).toContain("clip reading waits on the cap: cap");
+
     vi.stubEnv("AI_SPEND_CAP_CENTS", "40000");
     expect(await readClip(A.session, up.clip.id, deps(ai))).toMatchObject({ ok: true, clip: { status: "read" } });
+    expect(ai.sent).toHaveLength(3);
+    expect(await row(up.clip.id)).toMatchObject({ status: "read", read_attempts: 1 });
+  });
+
+  it("still counts a cap refusal that lands after the lease, and stops at three", async () => {
+    const ai = fakeAi();
+    const up = await upload(ai);
+    if (!up.ok) throw new Error(`upload ${up.category}`);
+    await storeRedacted(A.session, up.clip.id, blurred(12), deps(ai));
+    // The check before the lease reads the counter as it was before another call took the room;
+    // the wrapper's reserve then reads the real one. A two-cent cap fits the reading's reserve
+    // (about 1.1 cents) on an empty counter, but not on top of this test's two segmentation cents.
+    const stale: TenantDb = {
+      withTenant: (tenantId, fn) =>
+        app.withTenant(tenantId, (q) =>
+          fn({
+            query: (sql, params) =>
+              sql.includes("FROM ops.ai_spend")
+                ? Promise.resolve([
+                    { spent_nanocents: 0, reserved_nanocents: 0, calls: 0, wonder_spent_nanocents: 0, wonder_reserved_nanocents: 0 },
+                  ])
+                : q.query(sql, params),
+            execute: (sql, params) => q.execute(sql, params),
+          } as Queryable),
+        ),
+    };
+    vi.stubEnv("AI_SPEND_CAP_CENTS", "2");
+    expect(await readClip(A.session, up.clip.id, deps(ai, stale))).toEqual({ ok: false, category: "budget", retryable: true });
+    expect(await readClip(A.session, up.clip.id, deps(ai, stale))).toEqual({ ok: false, category: "budget", retryable: true });
+    expect(await readClip(A.session, up.clip.id, deps(ai, stale))).toEqual({ ok: false, category: "budget", retryable: false });
+    expect(await readClip(A.session, up.clip.id, deps(ai, stale))).toEqual({ ok: false, category: "read_spent", retryable: false });
+    expect(await row(up.clip.id)).toMatchObject({ status: "budget", read_attempts: 3, read_lease_free: true });
+    // The reserve refused each one before anything was sent.
+    expect(ai.sent).toHaveLength(2);
+  });
+
+  it("answers busy and marks nothing when the cap check finds another request holding the lease", async () => {
+    const ai = fakeAi();
+    const up = await upload(ai);
+    if (!up.ok) throw new Error(`upload ${up.category}`);
+    await storeRedacted(A.session, up.clip.id, blurred(13), deps(ai));
+    // Another request takes the lease between this one's first read and its cap check.
+    const racing: TenantDb = {
+      withTenant: (tenantId, fn) =>
+        app.withTenant(tenantId, (q) =>
+          fn({
+            query: async (sql, params) => {
+              if (sql.includes("FROM ops.ai_spend")) {
+                await admin.withTenant(A.tenantId, (a) =>
+                  a.execute("UPDATE evidence_clips SET read_started_at = now() WHERE id = CAST($1 AS uuid)", [up.clip.id]),
+                );
+              }
+              return q.query(sql, params);
+            },
+            execute: (sql, params) => q.execute(sql, params),
+          } as Queryable),
+        ),
+    };
+    vi.stubEnv("AI_SPEND_CAP_CENTS", "1");
+    expect(await readClip(A.session, up.clip.id, deps(ai, racing))).toEqual({ ok: false, category: "busy", retryable: true });
+    expect(await row(up.clip.id)).toMatchObject({ status: "redacted", read_attempts: 0, read_lease_free: false });
+    expect(ai.sent).toHaveLength(2);
   });
 
   it("keeps a reading outside its format as unreadable, with no text from the model", async () => {

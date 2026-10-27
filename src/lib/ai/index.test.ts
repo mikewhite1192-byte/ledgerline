@@ -11,6 +11,7 @@ import {
   generateImage,
   segment,
   segmentVideo,
+  spendRoom,
   transcribe,
   type AiDeps,
   type AiRequest,
@@ -2216,5 +2217,153 @@ describe("video", () => {
       expect(err.category, target).toBe("bad_request");
       expect(ledger.steps).toEqual([]);
     }
+  });
+});
+
+describe("spendRoom, the read-only check before a call", () => {
+  // The counter as the reserve reads it, from a Queryable that refuses any write and records
+  // every statement.
+  function counterOnly(
+    start: Partial<Record<"spent" | "reserved" | "wonderSpent" | "wonderReserved", number>> = {},
+  ) {
+    const sql: string[] = [];
+    const c = { spent: 0, reserved: 0, wonderSpent: 0, wonderReserved: 0, ...start };
+    const q: Queryable = {
+      async query<T>(text: string): Promise<T[]> {
+        sql.push(text);
+        if (!text.includes("FROM ops.ai_spend")) throw new Error("unexpected query");
+        return [
+          {
+            spent_nanocents: c.spent,
+            reserved_nanocents: c.reserved,
+            calls: 3,
+            wonder_spent_nanocents: c.wonderSpent,
+            wonder_reserved_nanocents: c.wonderReserved,
+          },
+        ] as T[];
+      },
+      async execute(): Promise<number> {
+        throw new Error("spendRoom never writes");
+      },
+    };
+    return { q, sql };
+  }
+
+  // What complete() reserved for a request, from a run against the fake ledger.
+  async function reservedBy(target: AiTextTarget, request: AiRequest): Promise<number> {
+    const ledger = fakeLedger();
+    const result = await complete(target, request, SESSION, {
+      fetch: fakeFetch(ledger.steps),
+      db: ledger.db,
+    });
+    return ledger.rows.get(result.callId)!.reserved;
+  }
+
+  it("agrees with the reserve at the overall cap's edge, for a clip reading and a text call", async () => {
+    const cap = 12_000 * NANOCENTS_PER_CENT;
+    for (const request of [videoMessage(), REQUEST]) {
+      const reserve = await reservedBy("spark", request);
+      expect(reserve).toBeGreaterThan(0);
+      // Exactly the reserve left: the check finds room and the call goes through.
+      const edge = { spent: cap - reserve - 5, reserved: 5 };
+      const atEdge = counterOnly(edge);
+      expect(await spendRoom("spark", request, atEdge.q)).toBe("room");
+      let ledger = fakeLedger(edge);
+      await complete("spark", request, SESSION, { fetch: fakeFetch(ledger.steps), db: ledger.db });
+      expect(ledger.counter.spent).toBeGreaterThan(edge.spent);
+      // One nanocent less: the check says cap, and so does the reserve, with nothing sent.
+      const over = { spent: cap - reserve - 4, reserved: 5 };
+      expect(await spendRoom("spark", request, counterOnly(over).q)).toBe("cap");
+      ledger = fakeLedger(over);
+      const fetchFn = fakeFetch(ledger.steps);
+      expect(
+        (await refusal(complete("spark", request, SESSION, { fetch: fetchFn, db: ledger.db })))
+          .category,
+      ).toBe("cap");
+      expect(fetchFn).not.toHaveBeenCalled();
+      // One read of the counter, without the reserve's lock.
+      expect(atEdge.sql).toHaveLength(1);
+      expect(atEdge.sql[0]).not.toContain("FOR UPDATE");
+    }
+  });
+
+  it("holds Wonder to its own cap as the reserve does, and leaves Spark to the overall cap", async () => {
+    const wonderCap = 3_000 * NANOCENTS_PER_CENT;
+    const reserve = await reservedBy("wonder", REQUEST);
+    const edge = { spent: wonderCap - reserve, wonderSpent: wonderCap - reserve };
+    expect(await spendRoom("wonder", REQUEST, counterOnly(edge).q)).toBe("room");
+    const over = { spent: wonderCap - reserve + 1, wonderSpent: wonderCap - reserve + 1 };
+    expect(await spendRoom("wonder", REQUEST, counterOnly(over).q)).toBe("cap");
+    const ledger = fakeLedger(over);
+    const fetchFn = fakeFetch(ledger.steps);
+    expect(
+      (await refusal(complete("wonder", REQUEST, SESSION, { fetch: fetchFn, db: ledger.db }))).category,
+    ).toBe("cap");
+    expect(fetchFn).not.toHaveBeenCalled();
+    // Spark has no cap of its own: the same spend leaves it room under the overall cap.
+    expect(await spendRoom("spark", REQUEST, counterOnly(over).q)).toBe("room");
+  });
+
+  it("says too_expensive when the reserve is over the call's own cost limit, before reading the counter", async () => {
+    // 8,192 output tokens at Spark's output price reserve 3.48 cents, over a 1-cent limit.
+    const request: AiRequest = { ...REQUEST, maxCostCents: 1, maxOutputTokens: 8192 };
+    const check = counterOnly();
+    expect(await spendRoom("spark", request, check.q)).toBe("too_expensive");
+    expect(check.sql).toEqual([]);
+    const ledger = fakeLedger();
+    expect(
+      (
+        await refusal(
+          complete("spark", request, SESSION, { fetch: fakeFetch(ledger.steps), db: ledger.db }),
+        )
+      ).category,
+    ).toBe("too_expensive");
+  });
+
+  it("leaves the answer to the call when it would be refused for another reason first", async () => {
+    const cases: [string, () => void][] = [
+      ["switch off", () => (flags.aiEnabled = false)],
+      ["no cap", () => vi.stubEnv("AI_SPEND_CAP_CENTS", undefined)],
+      ["cap over the ceiling", () => vi.stubEnv("AI_SPEND_CAP_CENTS", "40001")],
+      ["no model id", () => vi.stubEnv("META_MODEL_SPARK", "")],
+      ["unpriced model id", () => vi.stubEnv("META_MODEL_SPARK", "muse-spark-9")],
+      ["bad Contributor mode", () => vi.stubEnv("META_CONTRIBUTOR_MODE", "yes")],
+    ];
+    for (const [name, set] of cases) {
+      baseEnv();
+      flags.aiEnabled = true;
+      set();
+      const check = counterOnly();
+      expect(await spendRoom("spark", REQUEST, check.q), name).toBeNull();
+      expect(check.sql, name).toEqual([]);
+    }
+    baseEnv();
+    flags.aiEnabled = true;
+    // A malformed request, a video with the wrong frame count, a target that is not a text model.
+    for (const [target, request] of [
+      ["spark", { ...REQUEST, messages: [] }],
+      ["spark", videoMessage(3)],
+      ["spark", { ...REQUEST, maxCostCents: 0 }],
+      ["voice", REQUEST],
+    ] as [AiTextTarget, AiRequest][]) {
+      const check = counterOnly();
+      expect(await spendRoom(target, request, check.q)).toBeNull();
+      expect(check.sql).toEqual([]);
+    }
+    // Wonder without its own cap.
+    vi.stubEnv("AI_WONDER_CAP_CENTS", undefined);
+    expect(await spendRoom("wonder", REQUEST, counterOnly().q)).toBeNull();
+  });
+
+  it("throws when the counter cannot be read, as the reserve does", async () => {
+    const q: Queryable = {
+      async query<T>(): Promise<T[]> {
+        return [];
+      },
+      async execute(): Promise<number> {
+        throw new Error("spendRoom never writes");
+      },
+    };
+    await expect(spendRoom("spark", REQUEST, q)).rejects.toBeInstanceOf(DbError);
   });
 });

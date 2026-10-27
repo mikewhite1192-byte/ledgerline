@@ -363,6 +363,18 @@ export async function markBudget(q: Queryable, id: string): Promise<void> {
   );
 }
 
+// The spend checks would refuse the reading, so the clip waits on the cap with no try counted and
+// no lease taken. Only a clip free to read (lease free, tries left) is marked. Rows affected: 1
+// marked, 0 when another request holds it or its tries are spent.
+export async function markBudgetUntried(q: Queryable, id: string): Promise<number> {
+  return q.execute(
+    `UPDATE evidence_clips SET status = 'budget'
+      WHERE id = ${ID} AND status IN ('redacted', 'budget') AND read_attempts < ${MAX_ATTEMPTS}
+        AND ${LEASE_FREE("read_started_at")}`,
+    [id],
+  );
+}
+
 type ViewRow = {
   id: string;
   load_id: string;
