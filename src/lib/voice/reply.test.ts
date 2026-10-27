@@ -1,0 +1,56 @@
+import { describe, expect, it } from "vitest";
+import { figuresOf, parseTranslated, REPLY_MAX_CHARS, replyTemplate, type ReplyOutcome } from "./reply";
+
+// The reply draft: a fixed sentence per outcome with the engine's numbers, and a translation kept
+// only when it carries every dollar figure exactly as written.
+
+describe("replyTemplate", () => {
+  it.each<[ReplyOutcome, string]>([
+    [{ kind: "received" }, "We got your voice note. The office is looking at it and will get back to you."],
+    [{ kind: "need_amount" }, "We got your voice note asking for an advance. How much do you need? Reply with the amount in dollars."],
+    [
+      { kind: "proposed", amountCents: 30_000 },
+      "We got your request for an advance of $300.00. It is waiting for approval, and we will let you know when it is paid.",
+    ],
+    [
+      { kind: "approved", amountCents: 125_050 },
+      "Your advance of $1,250.50 was approved. The payment has not gone through yet; the office will let you know when it does.",
+    ],
+    [
+      { kind: "paid", amountCents: 30_000, feeCents: 500 },
+      "Your advance of $300.00 was approved and sent. A fee of $5.00 applies, and both are repaid from your settlement pay.",
+    ],
+    [{ kind: "rejected", note: "expired" }, "Your advance request was not approved. No one decided in time, so it expired. Call the office if you have questions."],
+    [{ kind: "rejected", note: null }, "Your advance request was not approved. Call the office if you have questions."],
+  ])("%j", (outcome, text) => {
+    expect(replyTemplate(outcome)).toBe(text);
+    expect(text.length).toBeLessThanOrEqual(REPLY_MAX_CHARS);
+  });
+});
+
+describe("parseTranslated", () => {
+  const template = replyTemplate({ kind: "paid", amountCents: 30_000, feeCents: 500 });
+  const spanish = "Tu adelanto de $300.00 fue aprobado y enviado. Se aplica una comisión de $5.00, y ambos se descuentan de tu pago.";
+
+  it("finds every dollar figure in order", () => {
+    expect(figuresOf(template)).toEqual(["$300.00", "$5.00"]);
+    expect(figuresOf("$1,250.50 and $12,000.00")).toEqual(["$1,250.50", "$12,000.00"]);
+  });
+
+  it("keeps a translation with the same figures in the same order", () => {
+    expect(parseTranslated(JSON.stringify({ reply: spanish }), template)).toBe(spanish);
+  });
+
+  it.each([
+    ["not JSON", spanish],
+    ["an extra field", JSON.stringify({ reply: spanish, note: "x" })],
+    ["an empty reply", JSON.stringify({ reply: "  " })],
+    ["a changed figure", JSON.stringify({ reply: spanish.replace("$300.00", "$3,000.00") })],
+    ["a dropped figure", JSON.stringify({ reply: spanish.replace(" de $5.00", "") })],
+    ["swapped figures", JSON.stringify({ reply: "Comisión $5.00, adelanto $300.00." })],
+    ["an added figure", JSON.stringify({ reply: `${spanish} Bono de $50.00.` })],
+    ["a reply past the cap", JSON.stringify({ reply: "x".repeat(601) })],
+  ])("refuses %s", (_label, answer) => {
+    expect(parseTranslated(answer, template)).toBeNull();
+  });
+});

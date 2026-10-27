@@ -108,6 +108,21 @@ export type Flags = {
   // The five report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
+  // Driver voice notes: upload, transcribe (Muse Voice Transcribe), screen, translate (Muse
+  // Spark), sort (the triage model) and hand to the agent. Off means every voice route refuses
+  // with disabled before reading the upload or calling a model.
+  voiceIntakeEnabled: boolean;
+  voiceLimits: {
+    // The 16 kHz mono WAV sent for transcription: about 62 seconds.
+    maxWavBytes: number;
+    // The original recording kept for playback; one row must read back under the Data API's
+    // 1 MiB answer limit (base64 of 700,000 bytes is 933,336 characters).
+    maxOriginalBytes: number;
+    // Longer audio is refused before the transcription call.
+    maxDurationMs: number;
+    // Voice notes one carrier can upload in one of its local days.
+    voiceNotesPerDay: number;
+  };
 };
 
 export const flags: Flags = {
@@ -146,4 +161,6 @@ export const flags: Flags = {
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
   reportsEnabled: false,
+  voiceIntakeEnabled: false,
+  voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 90_000, voiceNotesPerDay: 20 },
 };

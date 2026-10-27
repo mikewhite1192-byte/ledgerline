@@ -167,11 +167,14 @@ async function clearSettled(
 // are replaced after. While a ledger row names one of those advances, the clear also refuses up
 // front, deleting nothing (see FLOW_ADVANCE_ROWS). It locks them before it counts, and reserve()
 // locks its advance before it writes a row, so a payout or post reserved for one either lands
-// before the count or finds its advance gone after the delete. Returns the rows deleted.
+// before the count or finds its advance gone after the delete. Voice notes (0012) go first of
+// all: each names a conversation and an input, and nothing names a voice note. Returns the rows
+// deleted.
 const NAMED_BY_LEDGER = `SELECT 1 FROM money_actions m
    WHERE m.tenant_id = CAST($1 AS uuid) AND m.proposal_id = p.id`;
 
 const AGENT_CLEAR = [
+  "DELETE FROM voice_notes WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM driver_notes WHERE tenant_id = CAST($1 AS uuid)",
   `DELETE FROM turn_steps s
     WHERE s.tenant_id = CAST($1 AS uuid)

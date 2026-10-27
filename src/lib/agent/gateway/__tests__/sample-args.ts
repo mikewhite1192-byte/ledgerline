@@ -22,6 +22,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     explain_paystub: { driverId: hero.id, periodId: paid.id },
     run_checks: {},
     get_inbound_message: { inputId: input.id },
+    get_voice_note: { inputId: input.id },
     propose_advance: {
       driverId: hero.id,
       amountCents: 10_000,

@@ -159,6 +159,28 @@ No new table. An advance born from a person's approval of an advance proposal ca
   as the app role. The reseed's agent clear deletes flow advances (`proposal_id IS NOT NULL`)
   through the admin login before it deletes proposals.
 
+## Voice notes (`voice_notes`, 0012)
+
+A driver's voice note, as staff upload it: the recording for playback, where it is in the
+pipeline, and the ids of the model calls that worked on it. The transcript is an untrusted input
+(`untrusted_inputs`, kind `transcript`, source `voice`), screened like any outside message before a
+model reads it; this table holds the English text only after that screen passed.
+
+- The one tenant policy (ENABLE and FORCE), `tenant_id` with `ON DELETE CASCADE`, and composite
+  `(tenant_id, x)` foreign keys to `drivers`, `untrusted_inputs` and `conversations`, each
+  `ON DELETE SET NULL` on its own column.
+- The app role gets `SELECT, INSERT, DELETE` and `UPDATE` on the pipeline columns only (status,
+  category, language, English text, triage, amount, conversation, reply, the model call ids,
+  `updated_at`). The recording, its driver, input, trace and tenant never change.
+- The recording is `bytea`, at most 700,000 bytes, so one row reads back under the Data API's 1 MiB
+  answer limit; the size column equals the stored length. The WAV sent to the model is not kept.
+- `status` moves `transcribed` to `ready` (or `blocked`, `failed`), then `handed_off`, then
+  `replied`; every move is `UPDATE ... WHERE status = <expected>`, so a repeated request changes
+  nothing. A `failed` or `blocked` note carries a category, never upstream text.
+- One note per input (`UNIQUE (tenant_id, input_id)` where set). Not in `TENANT_TABLES`: the reseed's
+  agent clear deletes voice notes through the admin login first, before the conversations and the
+  inputs they name.
+
 ## Local, from a fresh database
 
 With a local Postgres 16 and its admin login:

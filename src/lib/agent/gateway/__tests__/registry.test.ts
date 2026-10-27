@@ -15,6 +15,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   explain_paystub: { tier: "read", roles: ["operator"] },
   run_checks: { tier: "read", roles: ["operator", "auditor"] },
   get_inbound_message: { tier: "read", roles: ["operator", "triage"] },
+  get_voice_note: { tier: "read", roles: ["operator"] },
   propose_advance: { tier: "propose", roles: ["operator"] },
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
@@ -68,10 +69,10 @@ describe("tool registry", () => {
 
   it("offers each role only its own tools, as copies", () => {
     const counts = Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]));
-    expect(counts).toEqual({ operator: 13, auditor: 9, triage: 2 });
+    expect(counts).toEqual({ operator: 14, auditor: 9, triage: 2 });
     const first = toolsFor("operator");
     first.pop();
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(14);
     expect(toolsFor("nobody" as AgentRole)).toEqual([]);
   });
 
@@ -81,7 +82,7 @@ describe("tool registry", () => {
     expect(toolsFor("operator").map((t) => t.name).filter((n) => n.startsWith("report_"))).toEqual([]);
 
     flags.reportsEnabled = true;
-    expect(toolsFor("operator")).toHaveLength(18);
+    expect(toolsFor("operator")).toHaveLength(19);
     expect(toolsFor("auditor")).toHaveLength(9);
     expect(toolsFor("triage")).toHaveLength(2);
     for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
@@ -89,7 +90,7 @@ describe("tool registry", () => {
 
     flags.reportsEnabled = false;
     for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(14);
   });
 
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
@@ -147,6 +148,10 @@ describe("deferred loading for tool search", () => {
       // Off, each report tool is sent in full, with no deferLoading key.
       expect(plain.find((t) => t.name === name), name).not.toHaveProperty("deferLoading");
     }
+    // The voice note read is needed only when a note is handed to the agent, so it is deferred
+    // like get_inbound_message.
+    expect(ALWAYS_LOADED).not.toContain("get_voice_note");
+    expect(deferred.find((t) => t.name === "get_voice_note")?.deferLoading).toBe(true);
     expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...ALWAYS_LOADED].sort());
   });
 
