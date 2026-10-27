@@ -30,6 +30,7 @@ const STATUS_LABELS: Record<string, string> = {
   proposed: "Waiting for approval",
   executing: "In progress",
   done: "Done",
+  expired: "Expired",
   // model calls
   ok: "Answered",
   incomplete: "Cut short",

@@ -85,6 +85,31 @@ tenant table" pattern above, on purpose:
 Dedupe keys: `UNIQUE (tenant_id, idempotency_key)` with the key `kind:subject_id:attempt`, and
 at most one row that is not `failed` per `(tenant_id, kind, subject_id)`.
 
+## The agent's records (`conversations`, `turns`, `turn_steps`, `proposals`, 0009)
+
+A conversation holds turns, a turn holds its steps, and a proposal is what the agent wants done,
+waiting for a person. Each table has the one tenant policy (ENABLE and FORCE) and composite
+`(tenant_id, x)` foreign keys. They differ from the "Every tenant table" pattern on purpose:
+
+- The app role gets `SELECT, INSERT` and column-level `UPDATE` only (a turn's outcome, a step's
+  state, a proposal's decision, flag and ledger link), and no `DELETE`. What a person asked and
+  what was proposed (kind, subject, amount, args) never changes. They are not in `TENANT_TABLES`,
+  since the app role cannot delete them; the RLS coverage test lists them by name.
+- The `proposals_guard` trigger (invoker rights) moves a proposal only forward: `proposed` to
+  `approved`, `rejected` or `expired`; `approved` to `executing` or `failed`; `executing` to `done`
+  or `failed`. A flag (`flagged_input_id`), once set, never changes, and the ledger link
+  (`money_action_id`) never changes once set. A refused change raises SQLSTATE 23514.
+- `money_actions.proposal_id` references the proposal with no delete action, so a proposal the
+  ledger names cannot be removed while that row exists, and `proposals.flagged_input_id`
+  references the untrusted input the same way.
+- Dedupe: `UNIQUE (tenant_id, dedupe_key)` with the key `kind:subject_id:sha256(args)`, and at
+  most one `proposed`, `approved` or `executing` proposal per `(tenant_id, kind, subject_id)`.
+
+A demo reseed clears in this order, each step through the admin login: the settled ledger rows,
+then the agent's rows (steps, proposals, turns, conversations), then the replace. Done the other
+way round, the ledger's reference blocks the agent clear, and a proposal's flag blocks the
+replace (which deletes the untrusted inputs); either refusal changes nothing.
+
 ## Local, from a fresh database
 
 With a local Postgres 16 and its admin login:

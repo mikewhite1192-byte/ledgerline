@@ -27,6 +27,7 @@ const TONES: Record<string, BadgeTone> = {
   failed: "destructive",
   void: "destructive",
   cancelled: "destructive",
+  expired: "warning",
 };
 
 // Every status that has a tone of its own, for /design to show.

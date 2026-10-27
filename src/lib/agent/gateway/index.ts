@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { getDb, type Queryable, type TenantDb } from "../../db";
 import type { Cents } from "../../rules-engine";
-import { assertMembership } from "../../tenant/context";
 import { isUuid } from "../../uuid";
 import { INVALID_TRACE, isTraceId, logDecision, type DecisionRow } from "./decisions";
 import { redactArgs } from "./redact";
 import { assertRefsExist, distinctRefs } from "./refs";
 import { REDACT_ENUMS, TOOL_NAME, toolNamed } from "./registry";
 import { screenUntrustedInput } from "./screen";
+import { withAgentTenant } from "./tenant";
 import type {
   GatewayContext,
   GatewayDeps,
@@ -37,6 +37,7 @@ import { parseArgs } from "./validate";
 
 export { toolsFor, TOOL_REGISTRY } from "./registry";
 export { screenUntrustedInput } from "./screen";
+export { withAgentTenant } from "./tenant";
 export type {
   AgentRole,
   GatewayContext,
@@ -132,10 +133,7 @@ async function inTenant<T>(
   ctx: GatewayContext,
   fn: (q: Queryable) => Promise<T>,
 ): Promise<T> {
-  return db.withTenant(ctx.session.tenantId, async (q) => {
-    await assertMembership(q, ctx.session);
-    return fn(q);
-  });
+  return withAgentTenant(db, ctx.session, fn);
 }
 
 export async function callTool(

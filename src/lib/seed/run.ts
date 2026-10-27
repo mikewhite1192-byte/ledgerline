@@ -86,6 +86,27 @@ export async function clearTenantLedger(admin: Db, tenantId: string): Promise<nu
   });
 }
 
+// The agent's records go next, after the ledger and before the replace: a settled money action
+// names its proposal, and a proposal names the untrusted input the replace deletes. The app role
+// has no DELETE on these tables (they are the record of what the agent did), so the admin login
+// removes them, naming the tenant in every statement. Children first, in one transaction. A
+// proposal a ledger row still references (one the ledger clear kept) makes the delete fail and
+// the transaction roll back, so nothing is half cleared. Returns the rows deleted.
+const AGENT_CLEAR = [
+  "DELETE FROM turn_steps WHERE tenant_id = CAST($1 AS uuid)",
+  "DELETE FROM proposals WHERE tenant_id = CAST($1 AS uuid)",
+  "DELETE FROM turns WHERE tenant_id = CAST($1 AS uuid)",
+  "DELETE FROM conversations WHERE tenant_id = CAST($1 AS uuid)",
+] as const;
+
+export async function clearTenantAgent(admin: Db, tenantId: string): Promise<number> {
+  return admin.withTenant(tenantId, async (q) => {
+    let deleted = 0;
+    for (const sql of AGENT_CLEAR) deleted += await q.execute(sql, [tenantId]);
+    return deleted;
+  });
+}
+
 // Inside the tenant transaction: the current tenant is the carrier the plan was built for.
 export async function verifyTenant(q: Queryable, carrier: DemoCarrier): Promise<void> {
   const tenant = await readTenant(q);

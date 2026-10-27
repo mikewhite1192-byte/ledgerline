@@ -39,7 +39,7 @@ import { instantAt } from "./calendar";
 import { DEMO_CARRIERS, type DemoCarrier } from "./carriers";
 import golden from "./golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "./plan";
-import { clearTenantLedger, findDemoTenant, replaceTenantData } from "./run";
+import { clearTenantAgent, clearTenantLedger, findDemoTenant, replaceTenantData } from "./run";
 import { countRows } from "./summary";
 import { CASE_A_ASK_CENTS, UNTRUSTED_SEED_KEYS } from "./untrusted-inputs";
 
@@ -677,6 +677,111 @@ describe("seeding the demo carriers", () => {
       expect(await clearTenantLedger(admin, B)).toBe(rowsB);
       expect(await ledgerRows(B)).toBe(0);
       expect(await ledgerRows(A)).toBe(rowsA);
+    } finally {
+      Object.assign(flags, saved);
+    }
+  });
+
+  it("clears the agent's rows after the ledger and before a replace, so a proposal a payout names never blocks a reseed", async () => {
+    const saved = { ...flags };
+    flags.payoutsEnabled = true;
+    flags.paymentProvider = "mock";
+    try {
+      const sessionB = await member(B, "agent");
+      const advance = planB.rows.advances[0];
+      const [input] = await admin.withTenant(B, (q) =>
+        q.query<{ id: string }>(
+          "SELECT CAST(id AS text) AS id FROM untrusted_inputs WHERE tenant_id = current_tenant_id() ORDER BY id LIMIT 1",
+        ),
+      );
+      expect(input).toBeDefined();
+      const [conversation, turn, decision, proposal] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+      // The agent's chain as the app role writes it: a conversation, a turn, the gateway's
+      // decision and a proposal flagged by a seeded outside message.
+      await app.withTenant(B, async (q) => {
+        await q.execute(
+          "INSERT INTO conversations (id, tenant_id, created_by) VALUES (CAST($1 AS uuid), current_tenant_id(), $2)",
+          [conversation, sessionB.sub],
+        );
+        await q.execute(
+          `INSERT INTO turns (id, tenant_id, conversation_id, seq, user_text, status, trace_id, finished_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 1, 'Pay the advance?', 'done', $3, now())`,
+          [turn, conversation, `trace-${turn.slice(0, 8)}`],
+        );
+        await q.execute(
+          `INSERT INTO gateway_decisions (id, tenant_id, turn_id, trace_id, role, model, tool, tier, decision,
+             reason, latency_ms)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'operator', 'spark',
+             'propose_advance', 'propose', 'allowed', 'ok', 1)`,
+          [decision, turn, `trace-${turn.slice(0, 8)}`],
+        );
+        await q.execute(
+          `INSERT INTO turn_steps (id, tenant_id, turn_id, seq, kind, label, state, gateway_decision_id, finished_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 1, 'tool', 'Checking advance eligibility',
+             'done', CAST($3 AS uuid), now())`,
+          [randomUUID(), turn, decision],
+        );
+        await q.execute(
+          `INSERT INTO proposals (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+             amount_cents, direction, title, args, operator_verdict, flagged_input_id, gateway_decision_id,
+             dedupe_key, trace_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'advance_payout',
+             'advances', CAST($4 AS uuid), $5, 'out', 'Pay advance', CAST('{}' AS jsonb), 'eligible',
+             CAST($6 AS uuid), CAST($7 AS uuid), $8, $9)`,
+          [
+            proposal,
+            conversation,
+            turn,
+            advance.id,
+            advance.amount_cents,
+            input.id,
+            decision,
+            `advance_payout:${advance.id}:${"0".repeat(64)}`,
+            `trace-${turn.slice(0, 8)}`,
+          ],
+        );
+      });
+      // A settled payout that names the proposal.
+      expect(await requested(B, advance.id)).toBe(1);
+      await app.withTenant(B, async (q) => {
+        const { action } = await reserve(q, await approvalFrom(q, sessionB), {
+          kind: "advance_payout",
+          subjectId: advance.id,
+          counterpartyId: advance.driver_id,
+          amountCents: advance.amount_cents,
+          proposedBy: "agent",
+          proposalId: proposal,
+          subjectStatuses: ["requested"],
+        });
+        expect(await markSent(q, action.id)).toBe(true);
+        expect(await settle(q, action.id, { to: "failed", via: "response", category: "outside_failed" })).toBe(true);
+      });
+      const agentRows = () =>
+        admin.withoutTenant(async (q) => {
+          const [row] = await q.query<{ n: number }>(
+            `SELECT (SELECT count(*) FROM conversations WHERE tenant_id = CAST($1 AS uuid))
+                  + (SELECT count(*) FROM turns WHERE tenant_id = CAST($1 AS uuid))
+                  + (SELECT count(*) FROM turn_steps WHERE tenant_id = CAST($1 AS uuid))
+                  + (SELECT count(*) FROM proposals WHERE tenant_id = CAST($1 AS uuid)) AS n`,
+            [B],
+          );
+          return Number(row.n);
+        });
+      expect(await agentRows()).toBe(4);
+
+      // Out of order, each step fails whole: the replace cannot delete a message a proposal names,
+      // and the agent clear cannot delete a proposal a ledger row names.
+      expect(await sqlStateOf(replaceTenantData(app, B, planB))).toBe("23503");
+      expect(await sqlStateOf(clearTenantAgent(admin, B))).toBe("23503");
+      expect(await agentRows()).toBe(4);
+      expect(await ledgerRows(B)).toBe(1);
+
+      // What npm run seed does: the ledger, then the agent's rows, then the replace.
+      expect(await clearTenantLedger(admin, B)).toBe(1);
+      expect(await clearTenantAgent(admin, B)).toBe(4);
+      await replaceTenantData(app, B, planB);
+      expect(await agentRows()).toBe(0);
+      expect(await countsOf(app, B)).toEqual(golden.carriers[planB.carrier.slug].counts);
     } finally {
       Object.assign(flags, saved);
     }

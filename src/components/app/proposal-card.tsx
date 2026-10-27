@@ -18,6 +18,7 @@ export type ProposalStatus =
   | "executing"
   | "done"
   | "failed"
+  | "expired"
   | "unknown";
 
 export type ProposalCardProps = {
@@ -29,6 +30,8 @@ export type ProposalCardProps = {
   status: ProposalStatus;
   // The second question before a money action, e.g. "Pay $200.00 to Dana Whitfield?"
   confirmQuestion?: string;
+  // A warning shown above the buttons, e.g. why this proposal needs a second look.
+  flagNote?: string;
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;
   pending?: boolean;
@@ -46,6 +49,7 @@ const IMPACT_LABEL: Record<ProposalStatus, { in: string; out: string }> = {
   done: { out: "Paid out", in: "Came in" },
   rejected: { out: "Not paid", in: "Not received" },
   failed: { out: "Not paid", in: "Not received" },
+  expired: { out: "Not paid", in: "Not received" },
   unknown: { out: "Pay out, not confirmed", in: "Coming in, not confirmed" },
 };
 
@@ -59,6 +63,7 @@ const STATUS_NOTE: Record<Exclude<ProposalStatus, "proposed">, string> = {
   done: "Done and recorded.",
   rejected: "Rejected. Nothing changed.",
   failed: "Failed. Check the record before trying again.",
+  expired: "Expired before anyone approved it. Nothing changed.",
   unknown: "Sent, waiting on the read-back.",
 };
 
@@ -72,6 +77,7 @@ export function ProposalCard({
   sources = [],
   status,
   confirmQuestion,
+  flagNote,
   onApprove,
   onReject,
   pending = false,
@@ -152,6 +158,12 @@ export function ProposalCard({
           </p>
         ) : null}
       </div>
+
+      {flagNote ? (
+        <p role="note" className="mx-4 mb-3 rounded-md border border-warning bg-warning-soft px-3 py-2 text-small text-foreground sm:mx-5">
+          {flagNote}
+        </p>
+      ) : null}
 
       {status === "proposed" ? (
         confirming ? (

@@ -48,7 +48,7 @@ export function LoadingState({
   );
 }
 
-export const ERROR_CATEGORIES = ["unreadable", "forbidden", "timeout", "not_found", "unknown"] as const;
+export const ERROR_CATEGORIES = ["unreadable", "forbidden", "timeout", "not_found", "budget", "unknown"] as const;
 export type ErrorCategory = (typeof ERROR_CATEGORIES)[number];
 
 // A fixed message per category: what failed and what to do. The raw error never reaches a prop.
@@ -68,6 +68,10 @@ const ERROR_COPY: Record<ErrorCategory, { title: string; body: string }> = {
   not_found: {
     title: "That record is not here",
     body: "It may have been removed, or it may belong to another carrier.",
+  },
+  budget: {
+    title: "Demo budget reached",
+    body: "The agent pauses until the budget is raised; your data is unchanged.",
   },
   unknown: {
     title: "Something failed and the cause is not known",

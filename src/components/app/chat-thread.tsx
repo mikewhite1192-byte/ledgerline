@@ -13,7 +13,8 @@ import { ErrorState } from "./states";
 export type Step = { id: string; label: string; state: "running" | "done" | "failed" };
 
 export type Part =
-  | { kind: "text"; text: string }
+  // warning: outside text the person should read with care; shown in a marked quote block.
+  | { kind: "text"; text: string; warning?: string }
   | { kind: "steps"; steps: Step[] }
   | { kind: "proposal"; proposal: Omit<ProposalCardProps, "hrefFor"> }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a thread mixes tables of any row shape
@@ -127,7 +128,12 @@ export function ChatThread({
                   {m.parts.map((p, i) => {
                     switch (p.kind) {
                       case "text":
-                        return (
+                        return p.warning ? (
+                          <figure key={i} className="grid max-w-[68ch] gap-1.5 rounded-lg border border-warning bg-warning-soft px-4 py-3">
+                            <figcaption className="text-small font-semibold text-foreground">{p.warning}</figcaption>
+                            <blockquote className="whitespace-pre-wrap break-words text-body text-foreground">{p.text}</blockquote>
+                          </figure>
+                        ) : (
                           <p key={i} className="max-w-[68ch] text-body text-foreground">
                             {p.text}
                           </p>
