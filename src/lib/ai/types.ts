@@ -1,7 +1,8 @@
 // The wrapper's shapes. Every runtime model call goes through ./index.ts (complete, transcribe,
 // generateImage, segment); agent code sees these types and nothing provider-specific.
 
-export type AiProvider = "meta" | "baseten";
+// Who serves a call. Fireworks is Muse Spark Open's standby host (./targets.ts FALLBACKS).
+export type AiProvider = "meta" | "baseten" | "fireworks";
 
 // A call names the model slot it wants, not a provider. ./targets.ts maps each to its provider,
 // the variable that holds its model id, and its price.

@@ -240,7 +240,7 @@ describe("the trace and the model week", () => {
     expect(trace.steps.map((s) => s.kind)).toEqual(["model", "tool", "escalation", "proposal"]);
     expect(trace.steps[0]).toMatchObject({
       toolCalls: 1,
-      call: { id: a.plan, target: "spark", model: "muse-spark-1.3", effort: "low", durationMs: 1_840, costNanocents: 700_000_000 },
+      call: { id: a.plan, target: "spark", provider: "meta", model: "muse-spark-1.3", effort: "low", durationMs: 1_840, costNanocents: 700_000_000 },
     });
     expect(trace.steps[1].decision).toEqual({
       id: a.blocked,
@@ -257,7 +257,7 @@ describe("the trace and the model week", () => {
     });
     expect(trace.steps[3]).toMatchObject({ proposalId: a.proposal, result: "created" });
     expect(trace.extraCalls).toEqual([
-      expect.objectContaining({ id: a.screen, target: "spark_open", afterSeq: 2, screen: { verdict: "clean", via: "model" } }),
+      expect.objectContaining({ id: a.screen, target: "spark_open", provider: "baseten", afterSeq: 2, screen: { verdict: "clean", via: "model" } }),
     ]);
     expect(trace.proposals).toEqual([
       expect.objectContaining({ id: a.proposal, gatewayDecisionId: a.allowed, operatorVerdict: "partial", exceptions: ["capped_to_eligible"], flagged: false }),

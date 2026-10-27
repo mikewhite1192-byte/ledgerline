@@ -142,4 +142,39 @@ describe("apiKey, production", () => {
       SecretId: "payday-copilot/baseten-api-key",
     });
   });
+
+  it("reads the standby host's key from its own secret, and refuses its raw variable unlogged", async () => {
+    const { apiKey } = await load();
+    vi.stubEnv("FIREWORKS_API_KEY_SECRET_NAME", "payday-copilot/fireworks-api-key");
+    vi.stubEnv("FIREWORKS_API_KEY", "");
+    const secrets = fakeSecrets("standby-key-abcdefghijklmnop");
+    expect(await apiKey("fireworks", secrets)).toBe("standby-key-abcdefghijklmnop");
+    expect(secrets.send.mock.calls[0][0].input).toEqual({
+      SecretId: "payday-copilot/fireworks-api-key",
+    });
+
+    const fresh = await load();
+    vi.stubEnv("FIREWORKS_API_KEY", KEY);
+    const unused = fakeSecrets(KEY);
+    expect(await fresh.apiKey("fireworks", unused)).toBeNull();
+    expect(unused.send).not.toHaveBeenCalled();
+    expect(logged).toEqual([
+      "ai: FIREWORKS_API_KEY is refused in production; the key belongs in Secrets Manager",
+    ]);
+    expect(logged.join("\n")).not.toContain(KEY);
+  });
+});
+
+describe("apiKey, the standby host locally", () => {
+  it("reads FIREWORKS_API_KEY and nothing else", async () => {
+    const { apiKey } = await load();
+    vi.stubEnv("FIREWORKS_API_KEY", KEY);
+    vi.stubEnv("BASETEN_API_KEY", "");
+    const secrets = fakeSecrets(KEY);
+    expect(await apiKey("fireworks", secrets)).toBe(KEY);
+    expect(await apiKey("baseten", secrets)).toBeNull();
+    expect(secrets.send).not.toHaveBeenCalled();
+    vi.stubEnv("FIREWORKS_API_KEY", "short");
+    expect(await apiKey("fireworks", secrets)).toBeNull();
+  });
 });

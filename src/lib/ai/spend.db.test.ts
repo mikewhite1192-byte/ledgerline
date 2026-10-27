@@ -595,4 +595,70 @@ describe("model spend ledger", () => {
     );
     expect(row).toMatchObject({ target: "voice", kind: "transcribe", units: 2 });
   });
+
+  it("logs a call to Spark Open's standby host under its own host, and refuses any other host", async () => {
+    const start = await spend();
+    const r = reservation({
+      target: "spark_open",
+      provider: "fireworks",
+      model: "accounts/fireworks/models/muse-spark-open",
+      reasoningEffort: null,
+    });
+    await reserve(app, session(A), r);
+    expect(
+      await settle(app, session(A), r.callId, {
+        kind: "answered",
+        status: "ok",
+        usage: USAGE,
+        units: null,
+        costNanocents: 29_075_000,
+        upstreamId: "chatcmpl-test1",
+        httpStatus: 200,
+        durationMs: 640,
+      }),
+    ).toBe(true);
+    const hostOf = (callId: string) =>
+      admin.withTenant(A, async (q) => {
+        const rows = await q.query<{ provider: string; model: string; status: string }>(
+          "SELECT provider, model, status FROM model_calls WHERE id = CAST($1 AS uuid)",
+          [callId],
+        );
+        return rows;
+      });
+    expect(await hostOf(r.callId)).toEqual([
+      { provider: "fireworks", model: "accounts/fireworks/models/muse-spark-open", status: "ok" },
+    ]);
+    const settled = {
+      ...start,
+      spentNanocents: start.spentNanocents + 29_075_000,
+      calls: start.calls + 1,
+    };
+    expect(await spend()).toEqual(settled);
+
+    // A host the log does not know is refused, and the reservation's counter move goes with it.
+    const other = reservation({
+      target: "spark_open",
+      provider: "together" as Reservation["provider"],
+      model: "muse-spark-open",
+      reasoningEffort: null,
+    });
+    const err = await failureOf(reserve(app, session(A), other));
+    expect((err as { sqlState?: string }).sqlState).toBe("23514");
+    expect(await hostOf(other.callId)).toEqual([]);
+    expect(await spend()).toEqual(settled);
+
+    // The check carries the log's own name now, lists the standby host, and the old name is gone.
+    const checks = await admin.withoutTenant((q) =>
+      q.query<{ name: string; def: string }>(
+        `SELECT con.conname AS name, pg_get_constraintdef(con.oid) AS def
+           FROM pg_constraint con
+          WHERE con.conrelid = to_regclass('public.model_calls')
+            AND con.conname IN ('model_calls_provider_check', 'ai_calls_provider_check')`,
+      ),
+    );
+    expect(checks.map((c) => c.name)).toEqual(["model_calls_provider_check"]);
+    for (const host of ["meta", "baseten", "fireworks"]) {
+      expect(checks[0]?.def).toContain(`'${host}'`);
+    }
+  });
 });
