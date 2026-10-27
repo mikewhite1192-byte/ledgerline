@@ -1,8 +1,9 @@
 -- Spend watch: a per-job stop inside the overall model budget. Before a model call is reserved,
--- the wrapper sums what the same job spent in the last 60 minutes (src/lib/ai/watch.ts). A call
--- that would take the job past its hourly allowance is refused, nothing is written to the model
--- ledger, and one alert row is written here. The job then stays stopped until an admin clears
--- the alert on the Meta models page; the clear records who and when.
+-- the wrapper sums what the same job spent in the last 60 minutes, or since its last clear when
+-- that is more recent (src/lib/ai/watch.ts). A call that would take the job past its hourly
+-- allowance is refused, nothing is written to the model ledger, and one alert row is written
+-- here. The job then stays stopped until an admin clears the alert on the Meta models page; the
+-- clear records who and when.
 --
 -- A job is one trace (the calls behind one answer) when the call has a trace, and otherwise the
 -- carrier's calls for one purpose with no trace.

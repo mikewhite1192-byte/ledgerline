@@ -258,8 +258,10 @@ type Sent<T> =
   | { kind: "failed"; callId: string; outcome: Failed<T>; error: AiError };
 
 // Builds one attempt for one host: validates the call's own input and builds its body (plan),
-// reads the host's key, and checks the reserve against the call's maxCostCents. Null, with one
-// log line naming the host, when the host's key is missing or unreadable: nothing was sent.
+// reads the host's key, and checks the reserve against the call's maxCostCents and the job's
+// hourly allowance. A call that alone is over the allowance would be refused job_cap again right
+// after every clear, so it is refused here, before any reservation or alert. Null, with one log
+// line naming the host, when the host's key is missing or unreadable: nothing was sent.
 async function prepare<T, U extends Price["unit"]>(
   ctx: CallContext<T, U>,
   provider: AiProvider,
@@ -272,7 +274,10 @@ async function prepare<T, U extends Price["unit"]>(
     console.error(`ai: ${ctx.target} ${label}not configured (no ${provider} key)`);
     return null;
   }
-  if (p.reserveNanocents > ctx.c.maxCostCents * NANOCENTS_PER_CENT) {
+  if (
+    p.reserveNanocents > ctx.c.maxCostCents * NANOCENTS_PER_CENT ||
+    p.reserveNanocents > ctx.jobCap
+  ) {
     throw new AiError("too_expensive");
   }
   return { provider, model: configured.model, price: configured.price, p, key };

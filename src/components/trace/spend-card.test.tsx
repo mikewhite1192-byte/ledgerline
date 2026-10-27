@@ -44,7 +44,7 @@ describe("SpendCard", () => {
     expect(screen.getByText("Demo budget used, across every carrier: $1.24 of $150.00.")).toBeTruthy();
     expect(screen.getByText("Muse Wonder used, across every carrier: 45.0 cents of $40.00.")).toBeTruthy();
     expect(screen.getByText("This carrier, last 24 hours: 87.0 cents across 12 calls.")).toBeTruthy();
-    expect(screen.getByText(/Any one job may spend up to \$10\.00 in an hour\./)).toBeTruthy();
+    expect(screen.getByText(/Any one job may spend up to \$10\.00 in the last hour, or since it was last cleared if that is more recent\./)).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Stopped jobs" })).toBeTruthy();
     expect(screen.getByText("No job has gone past its hourly allowance.")).toBeTruthy();
   });

@@ -111,7 +111,7 @@ export function SpendCard({ demo, wonder, day, jobCapNanocents, alerts, timeZone
           <p>
             {jobCapNanocents === null
               ? "No hourly allowance is set for a job, so every call is refused."
-              : `Any one job may spend up to ${formatSpend(jobCapNanocents)} in an hour. A call that would go past it is refused, and the job stays stopped until an admin clears it here.`}
+              : `Any one job may spend up to ${formatSpend(jobCapNanocents)} in the last hour, or since it was last cleared if that is more recent. A call that would go past it is refused, and the job stays stopped until an admin clears it here.`}
           </p>
         </div>
         <section aria-labelledby="spend-alerts-heading" className="grid gap-2">

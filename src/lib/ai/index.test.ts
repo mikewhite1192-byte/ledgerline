@@ -863,6 +863,35 @@ describe("the job's hourly allowance", () => {
     expect(ledger.alerts).toEqual([]);
   });
 
+  it("refuses a call that alone is over the allowance before reserving, with no alert", async () => {
+    // 8192 output tokens could cost 3.48 cents on Spark: over a 3 cent allowance, under 4.
+    const saved = flags.aiJobHourlyCapCents;
+    const request = { ...REQUEST, maxOutputTokens: 8192, traceId: TRACE };
+    try {
+      flags.aiJobHourlyCapCents = 3;
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      const err = await refusal(
+        complete("spark", request, SESSION, { fetch: fetchFn, db: ledger.db, now }),
+      );
+      expect(err.category).toBe("too_expensive");
+      expect(ledger.steps).toEqual([]);
+      expect(ledger.alerts).toEqual([]);
+      expect(fetchFn).not.toHaveBeenCalled();
+
+      flags.aiJobHourlyCapCents = 4;
+      const fits = fakeLedger();
+      await complete("spark", request, SESSION, {
+        fetch: fakeFetch(fits.steps),
+        db: fits.db,
+        now,
+      });
+      expect([...fits.rows.values()].map((r) => r.status)).toEqual(["ok"]);
+    } finally {
+      flags.aiJobHourlyCapCents = saved;
+    }
+  });
+
   it("refuses every call when the allowance is not a positive whole number of cents", async () => {
     const saved = flags.aiJobHourlyCapCents;
     try {
