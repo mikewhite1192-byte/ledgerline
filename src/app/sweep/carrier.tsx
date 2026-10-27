@@ -1,4 +1,7 @@
-import { ErrorState } from "@/components/app/states";
+import { appNav } from "@/components/app/app-nav";
+import { AppShell } from "@/components/app/app-shell";
+import { PageHeader } from "@/components/app/page-header";
+import { ErrorState, FeatureOff } from "@/components/app/states";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -58,5 +61,26 @@ export function NoCarrier({ problem }: { problem: "forbidden" | "unreadable" }) 
         </Card>
       </div>
     </main>
+  );
+}
+
+// A sweep page while the sweep switch is off: the shell, the page's title, and the off state. It
+// reads only the carrier chip, never a sweep.
+export async function SweepOffPage({ title, description }: { title: string; description?: string }) {
+  const read = await readCarrier();
+  if ("problem" in read) return <NoCarrier problem={read.problem} />;
+  const { carrier } = read;
+  return (
+    <AppShell
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      nav={appNav("/sweep")}
+      title={title}
+      signOut={<SignOut />}
+    >
+      <div className="mx-auto grid w-full max-w-[1080px] gap-6">
+        <PageHeader title={title} description={description} />
+        <FeatureOff name="Pay sweep" />
+      </div>
+    </AppShell>
   );
 }

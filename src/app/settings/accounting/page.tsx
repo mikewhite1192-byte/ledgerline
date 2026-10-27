@@ -1,6 +1,5 @@
-import Link from "next/link";
-import { ErrorState } from "@/components/app/states";
-import { Wordmark } from "@/components/brand/wordmark";
+import { PageHeader } from "@/components/app/page-header";
+import { NoCarrierPage, SignedInPage } from "@/components/app/signed-in-page";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
@@ -8,6 +7,7 @@ import { connectionSummary, membershipOf } from "@/lib/adapters/accounting/qbo/s
 import { DbError } from "@/lib/db";
 import { formatInstant } from "@/lib/format/dates";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
+import { readShell, type ShellTenant } from "@/lib/tenant/shell";
 
 export const dynamic = "force-dynamic";
 
@@ -30,13 +30,14 @@ const NOTES: Record<string, Note> = {
 };
 
 type View = {
+  shell: ShellTenant;
   admin: boolean;
-  timezone: string;
   connection: { realmTail: string; connectedAt: string } | null;
 };
 
-// The carrier's QuickBooks connection: the sandbox company's last four digits and when it was
-// connected, and connect or disconnect for an admin. Signed out: withRequestTenant redirects.
+// The carrier's QuickBooks connection, inside the signed-in shell under Settings: the sandbox
+// company's last four digits and when it was connected, and connect or disconnect for an admin.
+// Signed out: withRequestTenant redirects.
 export default async function AccountingSettings({
   searchParams,
 }: {
@@ -47,15 +48,13 @@ export default async function AccountingSettings({
   let view: View | null = null;
   let problem: "forbidden" | "unreadable" | null = null;
   try {
-    view = await withRequestTenant(async (q, session) => {
-      const [tenant] = await q.query<{ timezone: string }>(
-        "SELECT timezone FROM tenants WHERE id = current_tenant_id()",
-      );
+    view = await withRequestTenant(async (q, session): Promise<View> => {
+      const shell = await readShell(q, session);
       const member = await membershipOf(q, session.sub);
-      if (!tenant || !member) throw new ForbiddenError();
+      if (!member) throw new ForbiddenError();
       return {
+        shell,
         admin: member.role === "admin",
-        timezone: tenant.timezone,
         connection: await connectionSummary(q),
       };
     });
@@ -65,49 +64,43 @@ export default async function AccountingSettings({
     else throw err;
   }
 
+  if (!view) return <NoCarrierPage problem={problem ?? "unreadable"} />;
+
   return (
-    <main className="flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
-      <div className="grid w-full max-w-[520px] gap-6">
-        <Link href="/" aria-label="LedgerLine home" className="justify-self-center rounded-md">
-          <Wordmark size="lg" />
-        </Link>
-        <h1 className="text-h2 text-foreground">Accounting</h1>
-        {note ? <InlineAlert tone={note.tone}>{note.text}</InlineAlert> : null}
-        <Card>
-          {view ? (
-            <>
-              <CardHeader>
-                <div className="grid gap-0.5">
-                  <CardTitle>QuickBooks sandbox</CardTitle>
-                  <CardDescription>
-                    {view.connection
-                      ? `Connected to the company ending ${view.connection.realmTail} since ${formatInstant(view.connection.connectedAt, view.timezone)}.`
-                      : "Not connected. Nothing is booked to QuickBooks."}
-                  </CardDescription>
-                </div>
-              </CardHeader>
-              <CardBody>
-                {!view.admin ? (
-                  <p className="text-body text-foreground-2">An admin of this carrier can change this.</p>
-                ) : view.connection ? (
-                  <form action="/api/qbo/disconnect" method="post">
-                    <Button type="submit" variant="outline">
-                      Disconnect
-                    </Button>
-                  </form>
-                ) : (
-                  // A plain link, never prefetched: following it starts the connection.
-                  <a href="/api/qbo/connect" className={buttonVariants({ variant: "primary" })}>
-                    Connect QuickBooks
-                  </a>
-                )}
-              </CardBody>
-            </>
+    <SignedInPage tenant={view.shell} current="/settings/accounting" title="QuickBooks">
+      <PageHeader
+        title="QuickBooks"
+        description="Where approved invoices and customer payments are booked. This app connects only to a QuickBooks sandbox company."
+      />
+      {note ? <InlineAlert tone={note.tone}>{note.text}</InlineAlert> : null}
+      <Card className="max-w-[640px]">
+        <CardHeader>
+          <div className="grid gap-0.5">
+            <CardTitle>QuickBooks sandbox</CardTitle>
+            <CardDescription>
+              {view.connection
+                ? `Connected to the company ending ${view.connection.realmTail} since ${formatInstant(view.connection.connectedAt, view.shell.timezone)}.`
+                : "Not connected. Nothing is booked to QuickBooks."}
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardBody>
+          {!view.admin ? (
+            <p className="text-body text-foreground-2">An admin of this carrier can change this.</p>
+          ) : view.connection ? (
+            <form action="/api/qbo/disconnect" method="post">
+              <Button type="submit" variant="outline">
+                Disconnect
+              </Button>
+            </form>
           ) : (
-            <ErrorState category={problem === "forbidden" ? "forbidden" : "unreadable"} />
+            // A plain link, never prefetched: following it starts the connection.
+            <a href="/api/qbo/connect" className={buttonVariants({ variant: "primary" })}>
+              Connect QuickBooks
+            </a>
           )}
-        </Card>
-      </div>
-    </main>
+        </CardBody>
+      </Card>
+    </SignedInPage>
   );
 }

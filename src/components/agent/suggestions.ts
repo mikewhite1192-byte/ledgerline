@@ -1,4 +1,5 @@
 import type { Suggestion } from "@/components/app/prompt-chips";
+import { formatLocalDate } from "@/lib/format/dates";
 
 // The home screen's suggested questions: four, each one a tool can answer. With the reports on,
 // the advance-limit question gives its place to margin per load; "past 60 days" and "Friday's
@@ -14,4 +15,18 @@ const MARGIN: Suggestion = { id: "margin-per-load", label: "What was our margin 
 
 export function homeSuggestions(reportsOn: boolean): Suggestion[] {
   return BASE.map((s) => (reportsOn && s.id === "advance-limit" ? MARGIN : { ...s }));
+}
+
+// "Ask about this paystub" on a paystub's page lands on the home screen with that paystub's
+// question first, ahead of three of the usual four. The name and the week come from the database.
+export function withPaystubSuggestion(
+  base: readonly Suggestion[],
+  paystub: { driverName: string; periodEnd: string } | null,
+): Suggestion[] {
+  if (paystub === null) return base.map((s) => ({ ...s }));
+  const first: Suggestion = {
+    id: "explain-paystub",
+    label: `Explain ${paystub.driverName}'s paystub for the week ending ${formatLocalDate(paystub.periodEnd)}.`,
+  };
+  return [first, ...base.slice(0, 3).map((s) => ({ ...s }))];
 }

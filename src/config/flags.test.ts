@@ -204,6 +204,23 @@ describe("flags", () => {
     expect(flags.aiJobHourlyCapCents).toBe(1000);
     expect(Number.isSafeInteger(flags.aiJobHourlyCapCents)).toBe(true);
   });
+
+  it("ships the pay run and batch approval dark, with small caps and a start date", () => {
+    expect(flags.settlementsEnabled).toBe(false);
+    expect(flags.batchApproveEnabled).toBe(false);
+    expect(flags.settlementsStart).toBe("2026-10-05");
+    expect(flags.settlementLimits).toEqual({
+      driversPerRun: 200,
+      maxPayoutAttempts: 3,
+      legTwoMinRemainingMs: 12_000,
+    });
+    expect(flags.batchLimits).toEqual({ maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 });
+    for (const v of [...Object.values(flags.settlementLimits), ...Object.values(flags.batchLimits)]) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The batch cap fits approval_batches.total_cents.
+    expect(flags.batchLimits.maxTotalCents).toBeLessThan(1_000_000_000);
+  });
 });
 
 describe("local overrides for the demo-path test", () => {

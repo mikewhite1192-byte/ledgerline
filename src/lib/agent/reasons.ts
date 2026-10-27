@@ -45,6 +45,21 @@ const SENTENCES: Readonly<Record<string, string>> = {
   gallons_over_tank: "The fill-up was more fuel than the truck's tank holds.",
   no_load_or_day: "The company card bought fuel on a day with no load and no dispatch day.",
   same_fill_twice: "The same fill-up was turned in and paid back twice.",
+  // the pay run: an exempt driver, a $0 week
+  insurance_exempt: "The driver carries their own insurance, so no daily charge applies.",
+  net_below_zero: "Deductions were more than pay this week; net is $0 and the rest carries to next week.",
+  // the pay run's check before an approve (a parked paystub): the lines against the draft
+  line_amount_changed: "A pay line's amount changed since the draft was made.",
+  line_missing: "A pay line on the draft is gone now.",
+  line_added: "A new pay line appeared since the draft was made.",
+  line_sources_changed: "A pay line now comes from different records than on the draft.",
+  total_changed: "The paystub's totals changed since the draft was made.",
+  // ... and the records behind the lines
+  source_missing: "A record behind a pay line no longer exists.",
+  source_settled_elsewhere: "A reimbursement or deduction on this paystub was already paid on another week.",
+  source_changed: "A load behind a pay line is no longer delivered in this week.",
+  advance_overrecovered: "An advance would be taken back for more than the driver owes.",
+  schedule_inactive: "A deduction schedule on this paystub is no longer active this week.",
 };
 
 const GENERIC = "A rule check found this.";

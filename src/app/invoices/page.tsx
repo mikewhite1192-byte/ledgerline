@@ -6,7 +6,7 @@ import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
 import { NoCarrierPage, SignedInPage } from "@/components/app/signed-in-page";
-import { EmptyState } from "@/components/app/states";
+import { EmptyState, FeatureOff } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Day, RecordLink } from "@/components/invoices/cells";
 import { InvoiceCards, type InvoiceCard } from "@/components/invoices/invoice-cards";
@@ -132,11 +132,7 @@ export default async function InvoicesPage({
           {tab === "invoices" ? <AllInvoices rows={view.open.invoices} /> : null}
         </>
       ) : (
-        <EmptyState
-          icon={<FileText aria-hidden />}
-          title="Invoicing is off in this environment"
-          body="Nothing here is read or written until it is switched on."
-        />
+        <FeatureOff name="Invoices" plural />
       )}
     </SignedInPage>
   );

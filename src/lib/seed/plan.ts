@@ -292,6 +292,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       // Armed from the day they started (set just below); one planted driver is disarmed later.
       money_armed: true,
       money_armed_at: null,
+      own_insurance: false,
     };
   });
   for (const d of drivers) d.money_armed_at = armedAt(d.active_from, zone);

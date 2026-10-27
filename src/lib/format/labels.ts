@@ -20,15 +20,18 @@ const STATUS_LABELS: Record<string, string> = {
   void: "Void",
   partially_paid: "Partly paid",
   past_due: "Past due",
-  // money actions (ledger)
-  reserved: "Reserved",
+  // money actions (ledger). A reserved row is approved but not sent yet: if its sender stopped
+  // there, it goes out on the next try, so it never says it is being sent.
+  reserved: "Waiting to send",
   sent: "Sent",
   confirmed: "Confirmed",
-  unknown: "Outcome unknown",
+  // The outcome is not read back yet: it is checked again, and nothing is paid twice.
+  unknown: "Not confirmed yet",
   failed: "Failed",
   // proposals
   proposed: "Waiting for approval",
-  executing: "In progress",
+  // Already approved and being carried out, between Approved and Done.
+  executing: "Processing",
   done: "Done",
   expired: "Expired",
   // portal runs
@@ -39,7 +42,7 @@ const STATUS_LABELS: Record<string, string> = {
   stopped: "Stopped",
   // model calls
   ok: "Answered",
-  incomplete: "Cut short",
+  incomplete: "Stopped early",
   // invoice review (the same words as the invoice screens' review labels)
   sync_error: "Accounting sync error",
   rate_mismatch: "Rate mismatch",
@@ -76,6 +79,12 @@ export function statusLabel(status: string): string {
   return Object.hasOwn(STATUS_LABELS, status) ? STATUS_LABELS[status] : codeToWords(status);
 }
 
+// A model call's status. Its row is reserved while the call is out, unlike a money action's, so
+// there it reads "Being sent"; every other status reads as statusLabel says.
+export function modelCallStatusLabel(status: string): string {
+  return status === "reserved" ? "Being sent" : statusLabel(status);
+}
+
 export function lineKindLabel(kind: string): string {
   return Object.hasOwn(LINE_KIND_LABELS, kind) ? LINE_KIND_LABELS[kind] : codeToWords(kind);
 }
@@ -103,8 +112,16 @@ export function sourceLabel(table: string): string {
   return Object.hasOwn(SOURCE_LABELS, table) ? SOURCE_LABELS[table] : codeToWords(table);
 }
 
-// A record's name for a link: "Load L-10421", or "Load ending 7c41e2" for a long generated id.
-export function recordLabel(ref: { table: string; id: string }): string {
+// Records a person knows by name: the name alone is the label ("Monique Vasquez", never "Driver
+// Monique Vasquez").
+const NAMED_BY_REFERENCE = new Set(["drivers", "customers"]);
+
+// A record's name for a link. With the record's own reference, the words a person uses: "Load
+// BR-L10244", or a driver's or customer's name alone. Without one: "Load L-10421", or "Load ending
+// 7c41e2" for a long generated id.
+export function recordLabel(ref: { table: string; id: string }, reference?: string | null): string {
   const kind = sourceLabel(ref.table);
+  const named = reference?.trim();
+  if (named) return NAMED_BY_REFERENCE.has(ref.table) ? named : `${kind} ${named}`;
   return ref.id.length > 12 ? `${kind} ending ${ref.id.slice(-6)}` : `${kind} ${ref.id}`;
 }

@@ -84,6 +84,7 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["preferred_language", "text"],
       ["money_armed", "bool"],
       ["money_armed_at", "timestamptz"],
+      ["own_insurance", "bool"],
     ],
   },
   driver_cards: {
@@ -256,6 +257,12 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["carry_forward_cents", "int"],
       ["exception_count", "int"],
       ["paid_at", "timestamptz"],
+      ["escrow_opening_cents", "int"],
+      ["escrow_charges_cents", "int"],
+      ["escrow_withheld_cents", "int"],
+      ["escrow_closing_cents", "int"],
+      ["parked_reason", "text"],
+      ["parked_at", "timestamptz"],
     ],
   },
   settlement_lines: {

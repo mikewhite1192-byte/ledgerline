@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { formatInstant } from "@/lib/format/dates";
-import { statusLabel } from "@/lib/format/labels";
+import { modelCallStatusLabel } from "@/lib/format/labels";
 import { endedWords } from "@/lib/portal/words";
 import { formatCallCost, formatLatency, formatSpend, targetName } from "@/lib/trace/format";
 import type { CheckView, EvidenceView, RunView, StepView } from "@/lib/portal/views";
@@ -257,7 +257,7 @@ export function PortalRunLive({ initial, timeZone }: { initial: RunView; timeZon
               <ul className="grid gap-1 text-small">
                 {view.calls.map((c) => (
                   <li key={c.id}>
-                    {targetName(c.target)}, {c.purpose.replace(/_/g, " ")}: {statusLabel(c.status)}, {formatCallCost(c.costNanocents)}
+                    {targetName(c.target)}, {c.purpose.replace(/_/g, " ")}: {modelCallStatusLabel(c.status)}, {formatCallCost(c.costNanocents)}
                     {formatLatency(c.durationMs) ? `, ${formatLatency(c.durationMs)}` : ""}
                     {c.inputTokens !== null ? `, ${c.inputTokens} tokens in` : ""}
                     {c.outputTokens !== null ? `, ${c.outputTokens} out` : ""}

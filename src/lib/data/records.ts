@@ -81,6 +81,7 @@ export function driverOf(r: DriverRow): DriverRecord {
     flatPerLoadCents: cn(r.flat_per_load_cents),
     advanceLimitCents: cn(r.advance_limit_cents),
     escrowBalanceCents: c(r.escrow_balance_cents),
+    ownInsurance: r.own_insurance,
     truckUnit: r.truck_unit,
     tankGallons: r.tank_gallons,
     activeFrom: r.active_from,

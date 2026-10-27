@@ -41,6 +41,8 @@ export type DriverRow = {
   // Armed to receive money, separate from the card (0027). Off until a person arms the driver.
   money_armed: boolean;
   money_armed_at: string | null;
+  // The driver carries their own insurance, so no daily insurance charge applies (0032).
+  own_insurance: boolean;
 };
 
 // A fuel card on file (0017): the provider's own token and the last four digits only. A driver
@@ -194,6 +196,15 @@ export type SettlementRow = {
   carry_forward_cents: number;
   exception_count: number;
   paid_at: string | null;
+  // What the paid settlement did to escrow (0032): closing = opening - charges + withheld. A draft
+  // keeps zeros until it is booked.
+  escrow_opening_cents: number;
+  escrow_charges_cents: number;
+  escrow_withheld_cents: number;
+  escrow_closing_cents: number;
+  // A draft whose lines no longer matched their sources at approval (0032); both null otherwise.
+  parked_reason: string | null;
+  parked_at: string | null;
 };
 
 export type SettlementLineRow = {
