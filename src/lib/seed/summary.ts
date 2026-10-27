@@ -158,7 +158,7 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
 
   const codeOf = new Map(rows.drivers.map((d) => [d.id, d.code]));
   const anomalies = fuelAnomalyIds(rows);
-  const fuelAnomalies = (["offRoute", "overTank", "parked"] as const).flatMap((rule) =>
+  const fuelAnomalies = (["offRoute", "overTank", "parked", "duplicate"] as const).flatMap((rule) =>
     anomalies[rule].map((id) => {
       const f = rows.fuel_purchases.find((x) => x.id === id)!;
       return {

@@ -1,6 +1,8 @@
 import { z } from "zod";
+import { flags } from "../../../../../config/flags";
 import { readCheckInput, readReceivablesInput } from "../../../../data/read";
 import { findPaymentOnWrongInvoice, runAllChecks } from "../../../../rules-engine";
+import { runFuelChecks } from "../../../../rules-engine/fuel";
 import { localDateOf } from "../../../../time/local-date";
 import { defineTool, type GatewayRef } from "../../types";
 import { idField } from "../../validate";
@@ -19,11 +21,9 @@ export const runChecks = defineTool({
   refs: (a): GatewayRef[] => (a.driverId ? [{ table: "drivers", id: a.driverId }] : []),
   run: async (q, ctx, a) => {
     const asOf = localDateOf(ctx.now.toISOString(), ctx.timeZone);
-    const findings = [
-      ...runAllChecks(await readCheckInput(q)),
-      ...findPaymentOnWrongInvoice(await readReceivablesInput(q, asOf)),
-    ];
-    const rows = findings
+    const input = await readCheckInput(q);
+    const findings = [...runAllChecks(input), ...findPaymentOnWrongInvoice(await readReceivablesInput(q, asOf))];
+    const rows: Record<string, unknown>[] = findings
       .filter((f) => !a.driverId || f.driverId === a.driverId)
       .map((f) => ({
         check: f.check,
@@ -32,6 +32,21 @@ export const runChecks = defineTool({
         amountCents: f.amountCents ?? null,
         sources: f.sources,
       }));
+    // The fuel checks join the list only while their switch is on, with the engine's signed
+    // suggested correction (null when it suggests none). The description stays the same either way.
+    if (flags.fuelAnomalyEnabled) {
+      for (const f of runFuelChecks(input, flags.fuelAnomalyLimits)) {
+        if (a.driverId && f.driverId !== a.driverId) continue;
+        rows.push({
+          check: f.check,
+          category: f.category,
+          driverId: f.driverId,
+          amountCents: f.amountCents,
+          sources: f.sources,
+          suggestedCents: f.suggestedCents,
+        });
+      }
+    }
     return { result: { asOf, rows } };
   },
 });
