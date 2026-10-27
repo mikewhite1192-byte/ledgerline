@@ -1,6 +1,7 @@
 // Invented names and numbers for the design review only. Nothing here comes from the seed, a
 // database or any real carrier, so /design renders the same for anyone, signed in or not.
 import type { ProposalCardProps } from "@/components/app/proposal-card";
+import type { DriverIdentity } from "@/lib/advances/identity";
 import type { PaystubProps } from "@/components/app/paystub";
 import { formatCents } from "@/lib/format/money";
 import type { SourceRef } from "@/lib/records/href";
@@ -16,6 +17,29 @@ export const DRIVER = { name: "Dana Whitfield", code: "SF-D07", workerType: "com
 // The sample driver's fuel card, by its last four only (a made-up number).
 export const FUEL_CARD_LAST4 = "4417";
 export const PERIOD = { start: "2026-10-26", end: "2026-11-01" };
+
+// The sample driver's money panel: armed, one dispatch id, a default card in their name, a pool
+// card with its portal placeholder, and an old closed card. Made-up ids and numbers.
+export const MONEY_IDENTITY: DriverIdentity = {
+  driverId: "00000000-0000-4000-8000-0000000000d7",
+  code: DRIVER.code,
+  name: DRIVER.name,
+  activeTo: null,
+  armed: { on: true, since: "2026-10-05T13:00:00.000Z" },
+  tmsIds: ["TMS-40217"],
+  cards: [
+    { id: "00000000-0000-4000-8000-0000000000c1", last4: FUEL_CARD_LAST4, status: "active", isDefault: true, holderKind: "named", portalName: null, testMode: true },
+    { id: "00000000-0000-4000-8000-0000000000c2", last4: "0932", status: "active", isDefault: false, holderKind: "generic", portalName: "POOL CARD 3", testMode: true },
+    { id: "00000000-0000-4000-8000-0000000000c3", last4: "7710", status: "closed", isDefault: false, holderKind: "named", portalName: null, testMode: true },
+  ],
+};
+
+export const MONEY_IDENTITY_NOT_ARMED: DriverIdentity = {
+  ...MONEY_IDENTITY,
+  armed: { on: false, since: null },
+  tmsIds: [],
+  cards: [],
+};
 
 const ref = (table: string, id: string): SourceRef => ({ table, id });
 

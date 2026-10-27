@@ -30,6 +30,7 @@ export const BLUE_RIDGE: PayConfig = {
   advanceLimitDefaultCents: c(50_000),
   advanceMaxBpsOfEarned: 5_000,
   advanceMinCents: c(5_000),
+  advancePerLoadBpsOfPay: 4_000,
 };
 
 export const PRAIRIE_WIND: PayConfig = {
@@ -47,6 +48,7 @@ export const PRAIRIE_WIND: PayConfig = {
   advanceLimitDefaultCents: c(75_000),
   advanceMaxBpsOfEarned: 6_000,
   advanceMinCents: c(5_000),
+  advancePerLoadBpsOfPay: 5_000,
 };
 
 export const DRIVER_ID = "drv-1";
@@ -68,6 +70,7 @@ export function driver(over: Partial<DriverRecord> = {}): DriverRecord {
     truckUnit: "T-101",
     activeFrom: "2026-01-05",
     activeTo: null,
+    moneyArmed: true,
     ...over,
   };
 }
@@ -160,6 +163,8 @@ export function advance(over: Partial<AdvanceRecord> & { id: string }): AdvanceR
     source: "seed",
     reasonCategory: null,
     paidAt: "2026-10-28T16:00:00Z",
+    loadId: null,
+    takenBackCents: c(0),
     ...over,
   };
 }

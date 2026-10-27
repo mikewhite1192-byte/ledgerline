@@ -48,12 +48,22 @@ export function isDeskAmount(cents: unknown): cents is number {
 
 // The question the desk hands the agent, the same words every time. The driver is named by code
 // (no name, no contact detail), the amount by the shared money format.
-export function deskRequestText(amountCents: number, driverCode: string, category: AdvanceRequestCategory): string {
+export function deskRequestText(
+  amountCents: number,
+  driverCode: string,
+  category: AdvanceRequestCategory,
+  loadNumber: string | null = null,
+): string {
   if (!isDeskAmount(amountCents)) throw new RangeError("amount is outside the desk's range");
   if (!/^[A-Z0-9-]{1,20}$/.test(driverCode)) throw new RangeError("driver code is not a plain code");
   if (!isRequestCategory(category)) throw new RangeError("unknown request category");
-  return `Request an advance of ${dollars(amountCents)} for driver ${driverCode} (${category})`;
+  if (loadNumber !== null && !DESK_LOAD_NUMBER.test(loadNumber)) throw new RangeError("load number is not a plain number");
+  const load = loadNumber === null ? "" : ` for load ${loadNumber}`;
+  return `Request an advance of ${dollars(amountCents)} for driver ${driverCode} (${category})${load}`;
 }
+
+// A load number the desk will put in its sentence: letters, digits and dashes only.
+export const DESK_LOAD_NUMBER = /^[A-Z0-9-]{1,30}$/;
 
 // A flow advance's reference: ADV- and the first 12 hex characters of its proposal's id, upper
 // case. Derived from the proposal's random id, never from a counter, so it cannot collide with
@@ -96,4 +106,25 @@ export function expenseAmountCents(advance: { amountCents: number; feeCents: num
     throw new RangeError("advance amounts must be whole cents");
   }
   return total;
+}
+
+// The desk's suggestion in words, from the engine's numbers only. A driver nobody armed, or one
+// the rules allow nothing for, says so instead of suggesting.
+export type SuggestionNumbers = {
+  armed: boolean;
+  suggestedCents: number;
+  load: { capCents: number; openOnLoadCents: number } | null;
+};
+
+export function suggestionLine(s: SuggestionNumbers): string {
+  if (!s.armed) return "This driver is not armed to receive money yet. An admin can arm them on the driver page.";
+  if (s.suggestedCents <= 0) return "The pay rules allow no advance for this driver right now.";
+  const load = s.load ? ` (cap ${dollars(s.load.capCents)}, open ${dollars(s.load.openOnLoadCents)})` : "";
+  return `Suggested: ${dollars(s.suggestedCents)}${load}`;
+}
+
+// The suggested amount as the amount field writes it ("300.00").
+export function suggestionInput(cents: number): string {
+  if (!Number.isSafeInteger(cents) || cents <= 0) return "";
+  return `${Math.floor(cents / 100)}.${String(cents % 100).padStart(2, "0")}`;
 }

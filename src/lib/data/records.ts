@@ -84,6 +84,7 @@ export function driverOf(r: DriverRow): DriverRecord {
     truckUnit: r.truck_unit,
     activeFrom: r.active_from,
     activeTo: r.active_to,
+    moneyArmed: r.money_armed,
   };
 }
 
@@ -201,6 +202,8 @@ export function advanceOf(r: AdvanceRow): AdvanceRecord {
     source: r.source,
     reasonCategory: r.reason_category,
     paidAt: r.paid_at,
+    loadId: r.load_id,
+    takenBackCents: c(r.taken_back_cents),
   };
 }
 

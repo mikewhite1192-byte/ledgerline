@@ -34,9 +34,14 @@ export type DriverRow = {
   active_to: string | null;
   // The language the driver's pay note is written in (migration 0019).
   preferred_language: "en" | "es";
+  // Armed to receive money, separate from the card (0027). Off until a person arms the driver.
+  money_armed: boolean;
+  money_armed_at: string | null;
 };
 
-// The driver's fuel card on file (0017): the provider's own token and the last four digits only.
+// A fuel card on file (0017): the provider's own token and the last four digits only. A driver
+// may hold several (0027); the one active default is the card paid. A generic card's portal name
+// is a placeholder the provider's portal shows, never a person's name.
 export type DriverCardRow = {
   id: string;
   driver_id: string;
@@ -46,8 +51,30 @@ export type DriverCardRow = {
   last4: string;
   status: "active" | "closed";
   sim_behavior: "ok" | "declined" | "slow" | "offline";
-  source: "seed" | "ui";
+  source: "seed" | "ui" | "recon";
   closed_at: string | null;
+  is_default: boolean;
+  holder_kind: "named" | "generic";
+  portal_name: string | null;
+};
+
+// The id another system knows a driver by (0027).
+export type DriverIdentityRow = {
+  id: string;
+  driver_id: string;
+  system: "tms";
+  external_id: string;
+  source: "seed" | "ui" | "recon";
+};
+
+// One arm or disarm, append-only (0027). The seed's rows name no member.
+export type DriverArmEventRow = {
+  id: string;
+  driver_id: string;
+  armed: boolean;
+  note: string | null;
+  membership_id: string | null;
+  source: "seed" | "ui";
 };
 
 export type LoadRow = {
@@ -122,6 +149,8 @@ export type PayConfigKnobs = {
   advance_limit_default_cents: number;
   advance_max_bps_of_earned: number;
   advance_min_cents: number;
+  // Advances on one load capped at this share of the driver's pay for it; null is no cap (0027).
+  advance_per_load_bps_of_pay: number | null;
 };
 
 export type PayConfigRow = PayConfigKnobs & {
@@ -206,6 +235,12 @@ export type AdvanceRow = {
   source_input_id: string | null;
   decided_at: string | null;
   decided_by_membership_id: string | null;
+  // The load the advance is for, and a take-back (0027).
+  load_id: string | null;
+  taken_back_cents: number;
+  taken_back_at: string | null;
+  taken_back_by_membership_id: string | null;
+  takeback_reason: string | null;
 };
 
 export type InvoiceRow = {
@@ -272,6 +307,8 @@ export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
   driver_cards: DriverCardRow[];
+  driver_identities: DriverIdentityRow[];
+  driver_arm_events: DriverArmEventRow[];
   loads: LoadRow[];
   load_state_miles: LoadStateMilesRow[];
   load_accessorials: LoadAccessorialRow[];

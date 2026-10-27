@@ -18,7 +18,7 @@ import type {
 import { advanceEligibility, type AdvanceDecision } from "../rules-engine";
 import { assertMembership } from "../tenant/context";
 import { localDateOf } from "../time/local-date";
-import { readActiveCard, readCardDestination, type CardOnFile } from "./cards";
+import { readCardDestination, readPayoutCard, type CardOnFile } from "./cards";
 import { expenseReconcileHooks, postAdvanceExpense } from "./post-expense";
 import { requestRefOf, sourceOfInput } from "./request";
 import { readFlowAdvance, readFlowAdvanceByProposal, type FlowAdvance } from "./rows";
@@ -74,8 +74,10 @@ function steadyOf(deps: AdvanceDeps): () => number {
 
 // In the reserve transaction: the advance becomes approved, naming the member whose approval
 // reserved it, records the fuel card this attempt pays (every new attempt records its own), and
-// the proposal records its first ledger row. The card must still be the driver's active card.
-// Must change the advance or throw; a throw rolls the reservation back.
+// the proposal records its first ledger row. The card must still be one of the driver's active
+// cards and the driver must still be armed to receive money, asked here because this is the
+// transaction the payout is reserved in. Must change the advance or throw; a throw rolls the
+// reservation back.
 async function onPayoutReserved(q: Queryable, action: MoneyAction, cardId: string | null): Promise<void> {
   if (!isCanonicalUuid(cardId)) throw new MoneyError("validation");
   const changed = await q.execute(
@@ -88,7 +90,10 @@ async function onPayoutReserved(q: Queryable, action: MoneyAction, cardId: strin
         AND status IN ('requested', 'approved')
         AND EXISTS (SELECT 1 FROM driver_cards c
                      WHERE c.tenant_id = current_tenant_id() AND c.id = CAST($4 AS uuid)
-                       AND c.driver_id = advances.driver_id AND c.status = 'active')`,
+                       AND c.driver_id = advances.driver_id AND c.status = 'active')
+        AND EXISTS (SELECT 1 FROM drivers d
+                     WHERE d.tenant_id = current_tenant_id() AND d.id = advances.driver_id
+                       AND d.money_armed)`,
     [action.subjectId, action.approverMembershipId, action.createdAt, cardId],
   );
   if (changed !== 1) throw new MoneyError("validation");
@@ -135,6 +140,18 @@ async function onPayoutFailed(q: Queryable, action: MoneyAction): Promise<void> 
   );
 }
 
+// An advance proposal that ends without paying, with a note code the record says in words. Only
+// from approved or executing, the two states the proposal guard lets move to failed; one already
+// ended is left as it is. Returns the rows changed.
+export function failAdvanceProposal(q: Queryable, proposalId: string, note: string, nowIso: string): Promise<number> {
+  return q.execute(
+    `UPDATE proposals SET status = 'failed', decision_note = $2, updated_at = CAST($3 AS timestamptz)
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind = 'advance_payout'
+        AND status IN ('approved', 'executing')`,
+    [proposalId, note.slice(0, NOTE_MAX), nowIso],
+  );
+}
+
 // The hooks for one payout attempt to the card resolved for it. A resumed row (reserved by an
 // earlier request) never runs onReserved, so it passes no card and keeps the one it recorded;
 // the destination is always read back by advances.card_id.
@@ -171,20 +188,36 @@ async function payoutRows(q: Queryable, advanceId: string): Promise<MoneyAction[
   return (await readBySubject(q, "advances", advanceId)).filter((a) => a.kind === "advance_payout");
 }
 
-async function driverExists(q: Queryable, driverId: string): Promise<boolean> {
-  const rows = await q.query<{ id: string }>(
-    "SELECT id FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+// Whether the driver is armed to receive money: null when there is no such driver here. Only
+// true arms; the column is never null, and anything else reads as not armed.
+async function driverArmed(q: Queryable, driverId: string, lock: boolean): Promise<boolean | null> {
+  const rows = await q.query<{ money_armed: boolean }>(
+    `SELECT money_armed FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)${
+      lock ? " FOR UPDATE" : ""
+    }`,
     [driverId],
   );
-  return rows.length === 1;
+  return rows.length === 1 ? rows[0].money_armed === true : null;
 }
 
-async function lockDriver(q: Queryable, driverId: string): Promise<boolean> {
-  const rows = await q.query<{ id: string }>(
-    "SELECT id FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) FOR UPDATE",
-    [driverId],
+// The card and the load a proposal names, when it names them (validProposal has checked both are
+// canonical ids or absent).
+const namedCard = (p: ProposalRow): string | null => (isCanonicalUuid(p.args.cardId) ? p.args.cardId : null);
+const namedLoad = (p: ProposalRow): string | null => (isCanonicalUuid(p.args.loadId) ? p.args.loadId : null);
+
+// The card a flow advance's proposal named, for a retry; null when it named none.
+async function proposalCard(q: Queryable, proposalId: string): Promise<string | null> {
+  const rows = await q.query<{ card_id: string | null }>(
+    `SELECT args ->> 'cardId' AS card_id FROM proposals
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+    [proposalId],
   );
-  return rows.length === 1;
+  if (rows.length !== 1) throw new Stop("not_found");
+  const cardId = rows[0].card_id;
+  if (cardId === null) return null;
+  // A malformed id never passed validProposal, so it never reached a payout; refuse it whole.
+  if (!isCanonicalUuid(cardId)) throw new Stop("card_not_drivers");
+  return cardId;
 }
 
 // Where the ask came from: the outside message the proposal names, when it is this tenant's.
@@ -227,6 +260,8 @@ type Prepared =
   | { kind: "stale" }
   | { kind: "failed" };
 
+const absentOrId = (v: unknown) => v === undefined || v === null || isCanonicalUuid(v);
+
 function validProposal(p: ProposalRow): boolean {
   return (
     p.kind === "advance_payout" &&
@@ -235,7 +270,9 @@ function validProposal(p: ProposalRow): boolean {
     p.args.driverId === p.subjectId &&
     Number.isSafeInteger(p.amountCents) &&
     p.amountCents > 0 &&
-    p.args.amountCents === p.amountCents
+    p.args.amountCents === p.amountCents &&
+    absentOrId(p.args.cardId) &&
+    absentOrId(p.args.loadId)
   );
 }
 
@@ -243,7 +280,9 @@ function validProposal(p: ProposalRow): boolean {
 // the gate's proposal lock before the proposal becomes approved: a refusal leaves it waiting, with
 // Approve still on its card. Reads only. It asks what the executor asks before the advances row
 // exists: the advances switch, the proposal's shape, the payout gate on the tenant's local date,
-// the driver, the driver's fuel card on file, and whether the pay rules can be read and run. The
+// the driver and whether they are armed to receive money, the card it pays (the one the proposal
+// names, never the default in its place, else the default), the load it names, and whether the
+// pay rules can be read and run. The
 // driver is read, not locked: the
 // lock would end when the gate commits, before the executor's own transaction, which locks the
 // driver itself. What the pay rules decide is left to the executor: a proposal whose numbers no
@@ -260,13 +299,20 @@ export async function precheckAdvanceProposal(
   const zone = await readTenantZone(q);
   const refusal = payoutGate(p.amountCents, localDateOf(nowIso, zone));
   if (refusal) return no(refusal);
-  if (!(await driverExists(q, p.subjectId))) return no("not_found");
-  if (!(await readActiveCard(q, p.subjectId))) return no("no_card");
+  const armed = await driverArmed(q, p.subjectId, false);
+  if (armed === null) return no("not_found");
+  if (!armed) return no("driver_not_armed");
+  const cardId = namedCard(p);
+  if (!(await readPayoutCard(q, p.subjectId, cardId))) return no(cardId ? "card_not_drivers" : "no_card");
+  const loadId = namedLoad(p);
+  let input: Awaited<ReturnType<typeof readAdvanceInput>>;
   try {
-    advanceEligibility(await readAdvanceInput(q, p.subjectId, nowIso, p.amountCents));
+    input = await readAdvanceInput(q, p.subjectId, nowIso, p.amountCents, loadId);
+    advanceEligibility(input);
   } catch {
     return no("eligibility_unavailable", true);
   }
+  if (loadId && !input.load) return no("load_not_drivers");
   return null;
 }
 
@@ -293,40 +339,47 @@ async function prepare(q: Queryable, p: ProposalRow, now: Date, newId: () => str
   const zone = await readTenantZone(q);
   const refusal = payoutGate(p.amountCents, localDateOf(nowIso, zone));
   if (refusal) throw new Stop(refusal);
-  if (!(await lockDriver(q, p.subjectId))) throw new Stop("not_found");
+  // The arm state under the driver lock: arming takes the same lock, so it cannot change between
+  // this read and the commit.
+  const armed = await driverArmed(q, p.subjectId, true);
+  if (armed === null) throw new Stop("not_found");
+  if (!armed) throw new Stop("driver_not_armed");
 
   let advance = await readFlowAdvanceByProposal(q, p.id);
   const rows = advance ? await payoutRows(q, advance.id) : [];
   const latest = rows.at(-1) ?? null;
-  // A new ledger row pays the driver's active card, asked under the driver lock. A resume of a
-  // row already reserved keeps the card that row recorded, so it is not asked for one.
-  const card = latest === null ? await readActiveCard(q, p.subjectId) : null;
-  if (latest === null && !card) throw new Stop("no_card");
+  // A new ledger row pays the card the proposal names (never the default in its place) or else
+  // the driver's default card, asked under the driver lock. A resume of a row already reserved
+  // keeps the card that row recorded, so it is not asked for one.
+  const cardId = namedCard(p);
+  const card = latest === null ? await readPayoutCard(q, p.subjectId, cardId) : null;
+  if (latest === null && !card) throw new Stop(cardId ? "card_not_drivers" : "no_card");
 
   if (!advance) {
+    const loadId = namedLoad(p);
     let decision: AdvanceDecision;
+    let input: Awaited<ReturnType<typeof readAdvanceInput>>;
     try {
-      decision = advanceEligibility(await readAdvanceInput(q, p.subjectId, nowIso, p.amountCents));
+      input = await readAdvanceInput(q, p.subjectId, nowIso, p.amountCents, loadId);
+      decision = advanceEligibility(input);
     } catch {
       throw new Stop("eligibility_unavailable", true);
     }
+    if (loadId && !input.load) throw new Stop("load_not_drivers");
     if (!decision.eligible || decision.approvedCents !== p.amountCents) {
       // The numbers changed since the proposal: it is never paid. Written and returned (the
       // commit keeps the outcome), so the card and the record say why.
-      await q.execute(
-        `UPDATE proposals SET status = 'failed', decision_note = $2, updated_at = CAST($3 AS timestamptz)
-          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
-            AND status IN ('approved', 'executing')`,
-        [p.id, noteOf(decision), nowIso],
-      );
+      await failAdvanceProposal(q, p.id, noteOf(decision), nowIso);
       return { kind: "stale" };
     }
     const from = await sourceOf(q, p.args.requestRef);
     await q.execute(
       `INSERT INTO advances (id, tenant_id, driver_id, request_ref, requested_at, requested_on,
-                             amount_cents, fee_cents, status, source, proposal_id, source_input_id)
+                             amount_cents, fee_cents, status, source, proposal_id, source_input_id,
+                             load_id)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, CAST($4 AS timestamptz),
-               CAST($5 AS date), $6, $7, 'requested', $8, CAST($9 AS uuid), CAST($10 AS uuid))
+               CAST($5 AS date), $6, $7, 'requested', $8, CAST($9 AS uuid), CAST($10 AS uuid),
+               CAST($11 AS uuid))
        ON CONFLICT (tenant_id, proposal_id) WHERE proposal_id IS NOT NULL DO NOTHING`,
       [
         newId(),
@@ -339,6 +392,7 @@ async function prepare(q: Queryable, p: ProposalRow, now: Date, newId: () => str
         from.source,
         p.id,
         from.inputId,
+        input.load?.id ?? null,
       ],
     );
     advance = await readFlowAdvanceByProposal(q, p.id);
@@ -532,10 +586,17 @@ export async function retryAdvancePayout(
       const zone = await readTenantZone(q);
       const refusal = payoutGate(advance.amountCents, localDateOf(now.toISOString(), zone));
       if (refusal) throw new Stop(refusal);
-      // The driver's current active card, not the failed attempt's: a declined card is usually
-      // the one being replaced. The new attempt records the card it pays.
-      const card = await readActiveCard(q, advance.driverId);
-      if (!card) throw new Stop("no_card");
+      // Armed, asked under the driver lock (the reserve asks it once more).
+      const armed = await driverArmed(q, advance.driverId, true);
+      if (armed === null) throw new Stop("not_found");
+      if (!armed) throw new Stop("driver_not_armed");
+      // The card the proposal named, refused once it is no longer one of the driver's active cards
+      // (never swapped for the default); with none named, the driver's current default, not the
+      // failed attempt's: a declined card is usually the one being replaced. The new attempt
+      // records the card it pays.
+      const cardId = await proposalCard(q, advance.proposalId);
+      const card = await readPayoutCard(q, advance.driverId, cardId);
+      if (!card) throw new Stop(cardId ? "card_not_drivers" : "no_card");
       return { advance, attempt, traceId: latest?.traceId ?? null, card };
     });
   } catch (err) {
