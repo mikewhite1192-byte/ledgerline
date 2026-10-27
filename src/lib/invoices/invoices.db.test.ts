@@ -12,6 +12,7 @@ import { readInvoiceQueue, readReceivablesInput } from "../data/read";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param } from "../db/types";
+import { dbLedgerStore, type LedgerStore } from "../money/execute";
 import { EXECUTORS, executeProposal, type ExecutorRegistry } from "../proposals/execute";
 import { rejectProposal } from "../proposals/reject";
 import { findPaymentOnWrongInvoice } from "../rules-engine";
@@ -564,6 +565,60 @@ describe("invoices against a seeded database", () => {
         flags.accountingEnabled = false;
       }
     });
+
+    it("never posts a seeded load invoice or an opening balance, and reserves nothing for either", async () => {
+      // Seeded invoices are dated before this file's own (all issued today), some after the start.
+      const [seeded] = await adminRows<{ id: string }>(
+        BR,
+        `SELECT id FROM invoices
+          WHERE tenant_id = $1 AND source = 'load' AND status <> 'void' AND qbo_id IS NULL
+            AND issued_on >= CAST($2 AS date) AND issued_on < CAST($3 AS date)
+          ORDER BY invoice_number LIMIT 1`,
+        [BR.id, flags.invoicesStart, TODAY],
+      );
+      const [opening] = await adminRows<{ id: string }>(
+        BR,
+        `SELECT id FROM invoices
+          WHERE tenant_id = $1 AND source = 'opening' AND status <> 'void' AND qbo_id IS NULL
+          ORDER BY invoice_number LIMIT 1`,
+        [BR.id],
+      );
+      if (!seeded || !opening) throw new Error("the seed has no unposted load invoice or opening balance");
+      flags.accountingEnabled = true;
+      try {
+        const books = testBooks();
+        const deps = moneyDeps(books, []);
+        for (const id of [seeded.id, opening.id]) {
+          expect(await postInvoice(app, BR.session, id, deps)).toEqual({ ok: false, category: "history" });
+          expect(await ledgerFor(BR, id)).toEqual([]);
+          expect((await invoiceById(BR, id)).qbo_id).toBeNull();
+        }
+        expect(books.seen.invoices).toEqual([]);
+      } finally {
+        flags.accountingEnabled = false;
+      }
+    });
+
+    it("never posts an invoice the queue made before the invoices start date", async () => {
+      const [card] = await waitingCards(BR);
+      expect(await approve(BR, card.id)).toMatchObject({ ok: true, status: "done" });
+      const [inv] = await invoicesFor(BR, card.subject_id);
+      const start = flags.invoicesStart;
+      flags.accountingEnabled = true;
+      flags.invoicesStart = addDays(TODAY, 1);
+      try {
+        const books = testBooks();
+        expect(await postInvoice(app, BR.session, inv.id, moneyDeps(books, []))).toEqual({
+          ok: false,
+          category: "history",
+        });
+        expect(await ledgerFor(BR, inv.id)).toEqual([]);
+        expect(books.seen.invoices).toEqual([]);
+      } finally {
+        flags.invoicesStart = start;
+        flags.accountingEnabled = false;
+      }
+    });
   });
 
   describe("guards, follow-ups and the auditor on invoice cards", () => {
@@ -1007,6 +1062,63 @@ describe("invoices against a seeded database", () => {
         flags.accountingEnabled = false;
       }
     });
+
+    it("rolls back a payment post whose applications changed after it was read, sending nothing", async () => {
+      const [inv] = await adminRows<InvoiceRow>(
+        BR,
+        `SELECT id, invoice_number, amount_cents::text, CAST(issued_on AS text) AS issued_on,
+                CAST(due_on AS text) AS due_on, status, qbo_id, customer_id
+           FROM invoices
+          WHERE tenant_id = $1 AND source = 'load' AND issued_on = CAST($2 AS date)
+            AND status IN ('open', 'partially_paid') AND qbo_id IS NOT NULL
+          ORDER BY invoice_number LIMIT 1`,
+        [BR.id, TODAY],
+      );
+      if (!inv) throw new Error("no posted invoice from this file with a balance");
+      const recorded = await recordCustomerPayment(app, BR.session, form(inv, "ACH-POST-2", 500), clock());
+      expect(recorded).toMatchObject({ ok: true, created: true, posting: "not_posted" });
+      const paymentId = recorded.ok ? recorded.paymentId : "";
+      const shift = (by: number) =>
+        adminWrite(
+          BR,
+          "UPDATE payment_applications SET amount_cents = amount_cents + $3 WHERE tenant_id = $1 AND payment_id = CAST($2 AS uuid)",
+          [BR.id, paymentId, by],
+        );
+      // Another session changes the payment's applications after the post read them and before
+      // it reserves: the reserve transaction reads them again and rolls itself back.
+      let moved = false;
+      const store: LedgerStore = {
+        ...dbLedgerStore,
+        approvalFrom: async (q, session) => {
+          if (!moved) {
+            moved = true;
+            await shift(-1);
+          }
+          return dbLedgerStore.approvalFrom(q, session);
+        },
+      };
+      flags.accountingEnabled = true;
+      try {
+        const books = testBooks();
+        const deps = { accounting: books.adapter, waitMs: 2_000, pollMs: 10, log: () => {} };
+        expect(await postCustomerPayment(app, BR.session, paymentId, { ...deps, store })).toEqual({
+          ok: true,
+          posting: "applications_changed",
+        });
+        expect(moved).toBe(true);
+        expect(books.seen.payments).toEqual([]);
+        expect(await ledgerFor(BR, paymentId)).toEqual([]);
+        // Nothing was left reserved, so the next press reads the payment again and posts it.
+        await shift(1);
+        expect(await postCustomerPayment(app, BR.session, paymentId, deps)).toEqual({ ok: true, posting: "confirmed" });
+        expect(books.seen.payments).toEqual(["ACH-POST-2"]);
+        expect(await ledgerFor(BR, paymentId)).toEqual([
+          { kind: "customer_payment", state: "confirmed", attempt: 1, proposal_id: null },
+        ]);
+      } finally {
+        flags.accountingEnabled = false;
+      }
+    });
   });
 
   describe("payments that did not come from the form", () => {
@@ -1122,6 +1234,7 @@ describe("invoices against a seeded database", () => {
             reason: "engine_refused",
           });
           const blocked = await proposeMove(t, args, limit.requestedCents);
+          expect((await packFor(t, blocked)).engine).toMatchObject({ postedOutside: true });
           expect(await approve(t, blocked)).toEqual({ ok: false, category: "posted_outside", retryable: false });
           expect(await proposalById(t, blocked)).toMatchObject({ status: "failed", decision_note: "posted_outside" });
         } finally {
@@ -1154,6 +1267,8 @@ describe("invoices against a seeded database", () => {
             reason: "engine_refused",
           });
           const pending = await proposeMove(t, args, limit.requestedCents);
+          // The auditor's pack reads it the executor's way: no outside id, but a post reserved.
+          expect((await packFor(t, pending)).engine).toMatchObject({ postedOutside: true });
           expect(await approve(t, pending)).toEqual({ ok: false, category: "posted_outside", retryable: false });
           expect(await proposalById(t, pending)).toMatchObject({ status: "failed", decision_note: "posted_outside" });
         } finally {

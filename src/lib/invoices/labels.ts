@@ -27,6 +27,8 @@ export const OUTCOME_LABELS: Readonly<Record<string, string>> = {
   already_posted: "This is already posted to QuickBooks.",
   disabled: "This is off in this environment.",
   amount_mismatch: "QuickBooks holds this number at a different amount. Check it there by hand.",
+  applications_changed: "This payment's invoices changed while it was being posted. Nothing was sent. Refresh the page and post again.",
+  history: "Only invoices made from the invoice queue post from here. This one came from earlier records.",
   // The reply was lost or could not be read, or the service was down: the work may have happened,
   // so these never say nothing changed.
   unknown: "The outcome is not known yet. Refresh the page to see where it stands before trying again.",

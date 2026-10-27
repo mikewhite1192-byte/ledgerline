@@ -2,7 +2,7 @@ import { z } from "zod";
 import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
 import { readReceivablesInput, readTenant } from "../data/read";
-import { readBySubject } from "../money/read";
+import { paymentPostedOutside } from "./posted-outside";
 import type { Executor, ProposalResult, ProposalRow } from "../proposals/execute";
 import { findPaymentOnWrongInvoice } from "../rules-engine";
 import { localDateOf } from "../time/local-date";
@@ -78,11 +78,7 @@ async function move(
   if (!payment || !application || invoices.length !== 2 || ids.fromInvoiceId === ids.toInvoiceId) {
     return failApproved(q, proposal.id, "stale");
   }
-  if (payment.qbo_id !== null) return failApproved(q, proposal.id, "posted_outside");
-  const posts = (await readBySubject(q, "customer_payments", payment.id)).filter(
-    (a) => a.kind === "customer_payment",
-  );
-  if (posts.some((a) => a.state !== "failed")) return failApproved(q, proposal.id, "posted_outside");
+  if (await paymentPostedOutside(q, payment)) return failApproved(q, proposal.id, "posted_outside");
   const amountCents = Number(application.amount_cents);
   if (
     application.payment_id !== ids.paymentId ||

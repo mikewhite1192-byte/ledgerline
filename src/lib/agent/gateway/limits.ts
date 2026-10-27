@@ -9,7 +9,7 @@ import {
   readSettlementInput,
 } from "../../data/read";
 import { matchWrongInvoiceFinding, type ReapplyIds } from "../../invoices/match";
-import { readBySubject } from "../../money/read";
+import { paymentPostedOutside } from "../../invoices/posted-outside";
 import {
   advanceEligibility,
   cents,
@@ -223,10 +223,7 @@ export async function paymentReapplyLimit(
     const [payment] = await readRowsWhereId(q, "customer_payments", "id", args.paymentId);
     if (!application || !payment) return unavailable(null);
     const amount = application.amount_cents;
-    const posts = (await readBySubject(q, "customer_payments", args.paymentId)).filter(
-      (a) => a.kind === "customer_payment",
-    );
-    if (payment.qbo_id !== null || posts.some((a) => a.state !== "failed")) {
+    if (await paymentPostedOutside(q, { id: payment.id, qbo_id: payment.qbo_id })) {
       return refused("engine_refused", amount, amount);
     }
     const asOf = localDateOf(ctx.now.toISOString(), ctx.timeZone);

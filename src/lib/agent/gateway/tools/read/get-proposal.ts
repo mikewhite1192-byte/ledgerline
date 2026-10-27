@@ -10,6 +10,7 @@ import {
 } from "../../../../data/read";
 import { TENANT_TABLES, type TenantTable } from "../../../../data/tables";
 import { matchWrongInvoiceFinding } from "../../../../invoices/match";
+import { paymentPostedOutside } from "../../../../invoices/posted-outside";
 import { lineSummary, sameLines, type LineSummary } from "../../../../invoices/queue";
 import {
   advanceEligibility,
@@ -398,8 +399,9 @@ async function detentionEngine(q: Queryable, p: ProposalRow): Promise<Engine> {
 }
 
 // A payment move (payment_reapply), checked the way its executor checks it: the payment is not in
-// QuickBooks yet, the application is where the card says, and the engine's payment_on_wrong_invoice
-// finding still names exactly these four records for the application's amount.
+// QuickBooks yet and has no post reserved, sent or not yet known (the executor's own rule), the
+// application is where the card says, and the engine's payment_on_wrong_invoice finding still
+// names exactly these four records for the application's amount.
 async function paymentReapplyEngine(
   q: Queryable,
   ctx: GatewayContext,
@@ -421,6 +423,7 @@ async function paymentReapplyEngine(
   const [payment] = await readRowsWhereId(q, "customer_payments", "id", paymentId);
   if (!application || !payment) return { ok: true, check: "payment_on_wrong_invoice", found: false };
   const amount = application.amount_cents;
+  const postedOutside = await paymentPostedOutside(q, { id: payment.id, qbo_id: payment.qbo_id });
   const asOf = localDateOf(ctx.now.toISOString(), ctx.timeZone);
   const finding = matchWrongInvoiceFinding(findPaymentOnWrongInvoice(await readReceivablesInput(q, asOf)), {
     paymentId,
@@ -435,7 +438,7 @@ async function paymentReapplyEngine(
     proposedCents: Number(p.amount_cents),
     applicationCents: amount,
     applicationOnFromInvoice: application.payment_id === paymentId && application.invoice_id === fromInvoiceId,
-    postedOutside: payment.qbo_id !== null,
+    postedOutside,
     findingMatches: finding !== null && finding.amountCents === amount,
     findingCents: finding?.amountCents ?? null,
     sources: finding ? refList(finding.sources, MAX_ENGINE_SOURCES) : [],

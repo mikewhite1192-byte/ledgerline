@@ -104,6 +104,18 @@ async function recordPaymentQboId(q: Queryable, paymentId: string, action: Money
   );
 }
 
+// Thrown in the reserve transaction when the payment's applications are no longer the ones read
+// before it. The throw rolls the reservation back, so nothing is reserved and nothing is sent.
+class ApplicationsChanged extends Error {}
+
+// Whole lists of what would be sent: each application's outside invoice id and amount.
+function sameApplications(a: PostablePayment["applications"], b: PostablePayment["applications"]): boolean {
+  const key = (x: PostablePayment["applications"][number]) => `${x.invoiceOutsideId ?? ""}:${x.amountCents}`;
+  const left = a.map(key).sort();
+  const right = b.map(key).sort();
+  return left.length === right.length && left.every((k, i) => k === right[i]);
+}
+
 // The one money action that posts a payment. Refuses (not_configured) before any reserve while
 // an applied invoice is not in the accounting system yet.
 async function postPaymentAction(
@@ -134,8 +146,16 @@ async function postPaymentAction(
         proposalId: null,
       },
       {
-        // The payment row is the record; nothing else moves at reserve time.
-        onReserved: async () => {},
+        // The payment row is the record; nothing else moves at reserve time. The payment is read
+        // again under its row lock: a payment move that ran after the read above changed what
+        // would be sent, so the reservation is rolled back (applications_changed). Once the row
+        // is reserved, a move is refused (posted_outside) until the post settles or fails.
+        onReserved: async (q) => {
+          const current = await readPostablePayment(q, payment.id);
+          if (!current || !sameApplications(current.applications, payment.applications)) {
+            throw new ApplicationsChanged("applications changed");
+          }
+        },
         onConfirmed: (q, action) => recordPaymentQboId(q, payment.id, action),
         send: async (action, ctx) => {
           let customerOutsideId: string;
@@ -166,6 +186,7 @@ async function postPaymentAction(
     );
     return out.action.state;
   } catch (err) {
+    if (err instanceof ApplicationsChanged) return "applications_changed";
     if (!(err instanceof MoneyError)) throw err;
     return err.category === "disabled" ? "not_posted" : err.category;
   }
