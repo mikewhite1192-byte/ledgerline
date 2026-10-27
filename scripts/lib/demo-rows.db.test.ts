@@ -52,6 +52,9 @@ describe("demo rows through a login that skips row-level security", () => {
         `CREATE ROLE ${ROLE} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS`,
       );
       await q.execute(`GRANT SELECT, INSERT ON tenants, memberships TO ${ROLE}`);
+      // A new tenant's document key comes from this sequence (0015). The master user that runs the
+      // migrations owns it on Aurora, so the stand-in gets the same use of it.
+      await q.execute(`GRANT USAGE ON SEQUENCE tenant_doc_key_seq TO ${ROLE}`);
     });
     const url = new URL(adminUrl());
     url.username = ROLE;

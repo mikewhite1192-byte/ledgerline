@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import type { CarrierPlan } from "../../../seed/plan";
 import { loadsOf } from "../../../data/records";
@@ -7,10 +7,16 @@ import { advanceEligibility, invoiceAmount } from "../../../rules-engine";
 import { instantAt } from "../../../seed/calendar";
 import { CASE_A_ASK_CENTS } from "../../../seed/untrusted-inputs";
 import { addDays } from "../../../time/local-date";
-import { advanceLimit, detentionChargeLimit, invoiceFixLimit, payCorrectionLimit } from "../limits";
+import {
+  advanceLimit,
+  detentionChargeLimit,
+  invoiceFixLimit,
+  paymentReapplyLimit,
+  payCorrectionLimit,
+} from "../limits";
 import type { GatewayContext } from "../types";
-import { context, OTHER_ID } from "./fake-db";
-import { blueRidgePlan, planDb } from "./plan-db";
+import { context, OTHER_ID, TENANT } from "./fake-db";
+import { blueRidgePlan, LEDGER_BY_SUBJECT, planDb } from "./plan-db";
 
 // The limits run on the real readers and the real rules engine, over a synthetic seed plan
 // served by a fake database. The gateway only compares: every number here comes from the engine.
@@ -228,6 +234,137 @@ describe("invoice fix limit", () => {
 
   it("is limit_unavailable for an invoice it cannot read", async () => {
     expect(await run(OTHER_ID, 1000)).toMatchObject({ ok: false, reason: "limit_unavailable" });
+  });
+});
+
+describe("payment reapply limit", () => {
+  const w = plan.planted.wrongInvoice;
+  const ids = {
+    paymentId: w.paymentId,
+    applicationId: w.applicationId,
+    fromInvoiceId: w.appliedToInvoiceId,
+    toInvoiceId: w.meantForInvoiceId,
+  };
+  const applied = plan.rows.payment_applications.find((a) => a.id === w.applicationId)!;
+  const run = (p: typeof plan, args: typeof ids) =>
+    planDb(p).withTenant(ctx.session.tenantId, (q) => paymentReapplyLimit(q, ctx, args));
+
+  // A customer_payment ledger row for the planted payment, as money/read.ts reads it back.
+  const postRow = (state: string) => {
+    const id = "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b";
+    const settled = state === "failed" || state === "confirmed";
+    return {
+      id,
+      tenant_id: TENANT,
+      kind: "customer_payment",
+      channel: "accounting",
+      subject_table: "customer_payments",
+      subject_id: ids.paymentId,
+      attempt: 1,
+      idempotency_key: `customer_payment:${ids.paymentId}:1`,
+      request_id: id.replace(/-/g, ""),
+      amount_cents: applied.amount_cents,
+      counterparty_table: "customers",
+      counterparty_id: w.customerId,
+      state,
+      failure_category: state === "failed" ? "timeout" : null,
+      settled_via: settled ? "read_back" : null,
+      outside_system: state === "confirmed" ? "qbo_sandbox" : null,
+      outside_type: null,
+      outside_id: state === "confirmed" ? "9001" : null,
+      outside_ref: null,
+      outside_amount_cents: state === "confirmed" ? applied.amount_cents : null,
+      proposed_by: "person",
+      proposal_id: null,
+      trace_id: null,
+      approver_membership_id: OTHER_ID,
+      check_count: 0,
+      created_at: "2026-10-30T15:00:00.000Z",
+      sent_at: state === "reserved" ? null : "2026-10-30T15:00:01.000Z",
+      settled_at: settled ? "2026-10-30T15:05:00.000Z" : null,
+      last_checked_at: null,
+      sent_seconds_ago: state === "reserved" ? null : 60,
+    };
+  };
+  const withLedger = (rows: ReturnType<typeof postRow>[]) =>
+    planDb(plan, (sql, params) => {
+      if (!LEDGER_BY_SUBJECT.test(sql)) return undefined;
+      expect(params).toEqual(["customer_payments", ids.paymentId]);
+      return rows;
+    }).withTenant(ctx.session.tenantId, (q) => paymentReapplyLimit(q, ctx, ids));
+
+  beforeEach(() => {
+    flags.customerPaymentsEnabled = true;
+  });
+  afterEach(() => {
+    flags.customerPaymentsEnabled = false;
+  });
+
+  it("is limit_unavailable with customer payments switched off", async () => {
+    flags.customerPaymentsEnabled = false;
+    expect(await run(plan, ids)).toMatchObject({ ok: false, reason: "limit_unavailable" });
+  });
+
+  it("allows exactly the engine's planted finding, for the application's amount", async () => {
+    const out = await run(plan, ids);
+    expect(out).toMatchObject({
+      ok: true,
+      limitCents: applied.amount_cents,
+      requestedCents: applied.amount_cents,
+      reasons: ["payment_on_wrong_invoice"],
+    });
+    if (out.ok) {
+      expect(out.sources).toEqual([
+        { table: "customer_payments", id: ids.paymentId },
+        { table: "payment_applications", id: ids.applicationId },
+        { table: "invoices", id: ids.fromInvoiceId },
+        { table: "invoices", id: ids.toInvoiceId },
+      ]);
+    }
+  });
+
+  it("refuses any target the engine did not name, and the reverse move", async () => {
+    const other = plan.rows.invoices.find(
+      (i) => i.customer_id === w.customerId && i.id !== ids.fromInvoiceId && i.id !== ids.toInvoiceId,
+    );
+    expect(other).toBeDefined();
+    expect(await run(plan, { ...ids, toInvoiceId: other!.id })).toMatchObject({ ok: false, reason: "engine_refused" });
+    expect(
+      await run(plan, { ...ids, fromInvoiceId: ids.toInvoiceId, toInvoiceId: ids.fromInvoiceId }),
+    ).toMatchObject({ ok: false, reason: "engine_refused" });
+  });
+
+  it("refuses a payment already posted to QuickBooks", async () => {
+    const posted = {
+      ...plan,
+      rows: {
+        ...plan.rows,
+        customer_payments: plan.rows.customer_payments.map((p) =>
+          p.id === ids.paymentId ? { ...p, qbo_id: "9001" } : p,
+        ),
+      },
+    };
+    expect(await run(posted, ids)).toMatchObject({ ok: false, reason: "engine_refused" });
+  });
+
+  it("refuses a payment whose post is reserved, sent or not yet known, and allows one that failed", async () => {
+    for (const state of ["unknown", "reserved", "sent", "confirmed"]) {
+      expect(await withLedger([postRow(state)]), state).toMatchObject({ ok: false, reason: "engine_refused" });
+    }
+    // A post that failed made nothing outside, so the move may go.
+    expect(await withLedger([postRow("failed")])).toMatchObject({ ok: true, reasons: ["payment_on_wrong_invoice"] });
+    expect(await withLedger([])).toMatchObject({ ok: true });
+  });
+
+  it("is limit_unavailable for an application or payment it cannot read", async () => {
+    expect(await run(plan, { ...ids, applicationId: OTHER_ID })).toMatchObject({
+      ok: false,
+      reason: "limit_unavailable",
+    });
+    expect(await run(plan, { ...ids, paymentId: OTHER_ID })).toMatchObject({
+      ok: false,
+      reason: "limit_unavailable",
+    });
   });
 });
 

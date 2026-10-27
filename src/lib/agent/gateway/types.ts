@@ -128,12 +128,19 @@ export type RunExtras = {
   limit: Extract<LimitResult, { ok: true }> | null;
 };
 
-export type ProposalKind =
-  | "advance_payout"
-  | "pay_correction"
-  | "invoice_fix"
-  | "load_rate_fill"
-  | "detention_charge";
+// The one list of proposal kinds. src/lib/proposals/execute.ts imports it from here (the ledger
+// side may import the agent tree; the reverse is what the import-boundary test forbids). The
+// database CHECK carries this list plus kinds that later items add (0013, 0015, 0022).
+export const PROPOSAL_KINDS = [
+  "advance_payout",
+  "pay_correction",
+  "invoice_fix",
+  "load_rate_fill",
+  "invoice_post",
+  "payment_reapply",
+  "detention_charge",
+] as const;
+export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 
 // What a propose tool hands the loop. The loop persists it (AGENT-CORE); a person approves it.
 export type ProposalDraft = {

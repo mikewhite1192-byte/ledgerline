@@ -131,7 +131,6 @@ type Draft = {
 };
 
 export type ReceivablesArgs = {
-  slug: string;
   prefix: string;
   anchor: LocalDate;
   rng: Rng;
@@ -144,7 +143,7 @@ export type ReceivablesArgs = {
 };
 
 export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
-  const { slug, prefix, anchor, rng, newId, customers } = args;
+  const { prefix, anchor, rng, newId, customers } = args;
   const lastDay = addDays(anchor, -1);
   const terms = new Map(customers.map((c) => [c.id, c.terms_days]));
   const classes = new Map(customers.map((c, i) => [c.id, customerClassOf(i)]));
@@ -370,7 +369,7 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
   const y = draft("opening", null, c.id, yAmount, addDays(anchor, -150));
   const x = draft("opening", null, c.id, xAmount, addDays(anchor, -140));
   // P: X's amount, three days before X was due, applied in full to Y.
-  const p = pay(c.id, addDays(x.invoice.due_on, -3), [[y, xAmount]], `${slug}-pay-wrong-inv`);
+  const p = pay(c.id, addDays(x.invoice.due_on, -3), [[y, xAmount]], `${prefix}-PAY-WRONG`);
 
   // Numbers and refs in date order; statuses from the applications, by the engine's rule.
   const byIssued = [...drafts].sort(
@@ -383,7 +382,7 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
   let n = 0;
   const payments: CustomerPaymentRow[] = byReceived.map(([q]) => ({
     ...q.row,
-    payment_ref: q.ref ?? `${slug}-pay-${++n}`,
+    payment_ref: q.ref ?? `${prefix}-PAY-${++n}`,
   }));
   const applications: PaymentApplicationRow[] = [];
   const applied = new Map<Draft, { cents: number; on: LocalDate }>();
