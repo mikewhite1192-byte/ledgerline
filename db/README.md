@@ -67,7 +67,10 @@ tenant table" pattern above, on purpose:
 - The app role gets `SELECT, INSERT, UPDATE` and no `DELETE`: the app never removes a ledger
   row. Test fixtures clear their rows with the admin login. A demo reseed (`npm run seed`)
   clears the reseeded tenant's settled rows (`confirmed` or `failed`) through the admin login
-  (`WHERE tenant_id = $1`, since that login ignores row-level security) before the replace. While
+  (`WHERE tenant_id = $1`, since that login ignores row-level security) in two halves: settled
+  payment rows before the replace, settled accounting rows after it commits. A payout's subject
+  refuses a second payout by its own status if the replace fails; a booking has no such status,
+  so its ledger row stays until the replace has landed. While
   any row of that tenant is still `reserved`, `sent` or `unknown` (its outside outcome not yet
   known), or has `failure_category = 'amount_mismatch'` in any state (the outside system reported
   a payout for another amount, so `reserve()` keeps that subject closed until a person reviews
@@ -84,6 +87,27 @@ tenant table" pattern above, on purpose:
 
 Dedupe keys: `UNIQUE (tenant_id, idempotency_key)` with the key `kind:subject_id:attempt`, and
 at most one row that is not `failed` per `(tenant_id, kind, subject_id)`.
+
+## QuickBooks (`qbo_connections`, `qbo_oauth_states`, `qbo_entity_ids`, 0007)
+
+Each carrier's link to the one allowed QuickBooks Online sandbox company. All three follow the
+"Every tenant table" pattern (forced row-level security, the one `tenant_isolation` policy), with
+these differences:
+
+- `qbo_connections` has one row per tenant (`tenant_id` is the key). The two token columns hold
+  AES-256-GCM ciphertext sealed by the app with a key that never reaches the database
+  (`QBO_TOKEN_KEY`, from Secrets Manager in production), bound to the tenant, the company id and
+  the column, so a copied value opens nowhere else. The app refreshes tokens with the row held
+  `FOR UPDATE` and stores both new tokens. `connected_by_membership_id` is a composite foreign
+  key to `memberships (tenant_id, id)` with no cascade. The app gets `SELECT, INSERT, UPDATE,
+  DELETE` (a disconnect deletes the row).
+- `qbo_oauth_states` holds a connect in progress: the random state, its membership (composite
+  foreign key, cascading), matched whole on the callback, deleted on first use and refused after
+  ten minutes (database clock). The app gets `SELECT, INSERT, DELETE`: a state is never changed.
+- `qbo_entity_ids` records the company's id for each customer or driver already created there,
+  so a second post finds it instead of making another. No foreign key to the local row (a reseed
+  replaces those rows and the outside record stays). The app gets `SELECT, INSERT` only: an
+  outside id never changes and goes only with the tenant.
 
 ## The agent's records (`conversations`, `turns`, `turn_steps`, `proposals`, 0009)
 
@@ -105,10 +129,15 @@ waiting for a person. Each table has the one tenant policy (ENABLE and FORCE) an
 - Dedupe: `UNIQUE (tenant_id, dedupe_key)` with the key `kind:subject_id:sha256(args)`, and at
   most one `proposed`, `approved` or `executing` proposal per `(tenant_id, kind, subject_id)`.
 
-A demo reseed clears in this order, each step through the admin login: the settled ledger rows,
-then the agent's rows (steps, proposals, turns, conversations), then the replace. Done the other
-way round, the ledger's reference blocks the agent clear, and a proposal's flag blocks the
-replace (which deletes the untrusted inputs); either refusal changes nothing.
+A demo reseed clears in this order, each clear through the admin login: the settled payout rows,
+then the agent's rows (steps, proposals, turns, conversations), then the replace, then the
+settled booking rows, then the agent's rows once more. The agent clear keeps every proposal a
+ledger row still names, with its turn, that turn's steps and its conversation: before the replace
+those are the proposals behind booking rows, which stay until the replace lands, and the second
+agent clear removes them once the booking rows are gone. A kept proposal that carries a flag
+would block the replace (which deletes the untrusted inputs), so the agent clear refuses while
+one exists, with the count only, and deletes nothing; a person reviews it first. Run before the
+agent clear, the replace is refused by a proposal's flag and changes nothing.
 
 ## The advance flow (`advances` columns, 0011)
 

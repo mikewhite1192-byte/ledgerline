@@ -9,6 +9,7 @@ import { DEMO_CARRIERS, carrierBySlug, type DemoCarrier } from "../src/lib/seed/
 import { buildCarrierPlan, type CarrierPlan } from "../src/lib/seed/plan";
 import {
   clearTenantAgent,
+  clearTenantBookings,
   clearTenantLedger,
   findDemoTenant,
   replaceTenantData,
@@ -119,19 +120,31 @@ async function main(): Promise<void> {
     for (const plan of plans) {
       const slug = plan.carrier.slug;
       const tenantId = await findDemoTenant(admin, plan.carrier);
-      // Ledger rows first, then the replace. The clear refuses, deleting nothing, while any row
-      // is still reserved, sent or unknown (its outcome is not known yet) or failed as
-      // amount_mismatch (money may have moved for another amount, so a person must review it
-      // and the subject stays closed to a new payout). The two run on different logins, so they
-      // cannot share a transaction: if the replace then fails, the old subjects stay without
-      // their settled ledger rows. A paid advance or settlement still refuses a second payout by
-      // its own status; run the seed again before approving anything.
+      // Settled payout rows first, then the agent's rows, then the replace, then settled booking
+      // rows, then the agent's rows a booking row kept. Both ledger clears refuse, deleting
+      // nothing, while any row is still reserved, sent or unknown (its outcome is not known yet)
+      // or failed as amount_mismatch (money may have moved for another amount, so a person must
+      // review it and the subject stays closed). The clears and the replace run on different
+      // logins, so they cannot share a transaction. If the replace fails, the old subjects stay:
+      // a paid advance or settlement refuses a second payout by its own status, and the booking
+      // rows are still there, with any proposal they name, so approving a booking again replays
+      // its row instead of posting twice. If the booking clear refuses after the replace, the
+      // proposals kept for it stay beside the new subjects until a later run clears them, and a
+      // new proposal with the same dedupe key is refused meanwhile. Either way, run the seed again
+      // before approving anything.
       const cleared = await clearTenantLedger(admin, tenantId);
-      console.log(`cleared ${cleared} ledger rows for ${slug}`);
-      // Then the agent's conversations and proposals, which point at the ledger and the inputs.
+      console.log(`cleared ${cleared} payout ledger rows for ${slug}`);
+      // The agent's conversations and proposals point at the ledger and the inputs. This keeps
+      // a proposal a booking row names, and refuses if one of those is flagged (the replace
+      // would delete the outside message it names).
       const clearedAgent = await clearTenantAgent(admin, tenantId);
       console.log(`cleared ${clearedAgent} agent rows for ${slug}`);
       const report = await replaceTenantData(app, tenantId, plan);
+      const booked = await clearTenantBookings(admin, tenantId);
+      console.log(`cleared ${booked} booking ledger rows for ${slug}`);
+      // No booking row names a proposal now, so the ones kept above go too.
+      const clearedKept = await clearTenantAgent(admin, tenantId);
+      console.log(`cleared ${clearedKept} agent rows the booking rows kept for ${slug}`);
       for (const t of TENANT_TABLES) {
         console.log(`${slug} ${t}: deleted ${report.deleted[t]}, inserted ${report.inserted[t]}`);
       }
