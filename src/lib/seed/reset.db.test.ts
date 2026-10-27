@@ -385,6 +385,35 @@ describe("the demo reset", () => {
       ),
     );
 
+    // A finished pay sweep whose finding drafted the detention proposal, in the detention chain's
+    // conversation, and an approve-all batch over that proposal (0018): each names a row that goes.
+    const sweep = randomUUID();
+    await app.withTenant(tenantId, async (q) => {
+      await q.execute(
+        `INSERT INTO sweep_runs (id, tenant_id, period_id, trigger, started_by, status, phase, cap_cents,
+           conversation_id, finished_at)
+         SELECT CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'button', $3, 'done', 'done', 100,
+           p.conversation_id, now()
+           FROM proposals p WHERE p.id = CAST($4 AS uuid)`,
+        [sweep, settlement.period_id, session.sub, detention],
+      );
+      await q.execute(
+        `INSERT INTO sweep_items (id, tenant_id, run_id, seen_run_id, period_id, finding_key, check_name, category,
+           kind, driver_id, plan, status, proposal_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($2 AS uuid), CAST($3 AS uuid),
+           'reset-test', 'reset_test', 'reset_test', 'fix', CAST($4 AS uuid), CAST('{}' AS jsonb), 'drafted',
+           CAST($5 AS uuid))`,
+        [randomUUID(), sweep, settlement.period_id, settlement.driver_id, detention],
+      );
+      await q.execute(
+        `INSERT INTO approval_batches (id, tenant_id, scope, period_id, item_ids, total_cents, status, requested_by,
+           finished_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'proposals', CAST($2 AS uuid), ARRAY[CAST($3 AS uuid)],
+           4500, 'done', $4, now())`,
+        [randomUUID(), settlement.period_id, detention, session.sub],
+      );
+    });
+
     const input = await seededInput(tenantId);
     const voiceNote = randomUUID();
     await app.withTenant(tenantId, async (q) => {
@@ -514,6 +543,9 @@ describe("the demo reset", () => {
         voice_notes: 1,
         driver_notes: 1,
         turn_steps: 3,
+        sweep_items: 1,
+        sweep_runs: 1,
+        approval_batches: 1,
         proposals: 3,
         turns: 3,
         conversations: 3,
@@ -539,6 +571,9 @@ describe("the demo reset", () => {
         voice_notes: 1,
         driver_notes: 1,
         turn_steps: 3,
+        sweep_items: 1,
+        sweep_runs: 1,
+        approval_batches: 1,
         advances: 1,
         proposals: 3,
         turns: 3,

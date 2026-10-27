@@ -48,6 +48,11 @@ export const DEMO_RESET_CLEARED = {
   voice_notes: "each names a driver, an inbound message and a conversation that go",
   driver_notes: "each names a settlement, a driver and a pay period the replace deletes",
   turn_steps: "the agent's steps of the turns that go",
+  sweep_items:
+    "the pay sweep's findings; each names a run that goes, a pay week the replace deletes and " +
+    "its drafted proposal",
+  sweep_runs: "the pay sweep's runs; each names a pay week the replace deletes and a conversation that goes",
+  approval_batches: "approve-all batches; each lists proposals that go and names a pay week the replace deletes",
   proposals:
     "the agent's proposals and the invoice queue's cards (0015); each names a subject, an " +
     "outside message or a ledger row the replace deletes",
@@ -100,6 +105,9 @@ export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "voice_notes",
   "driver_notes",
   "turn_steps",
+  "sweep_items",
+  "sweep_runs",
+  "approval_batches",
   "advances",
   "proposals",
   "turns",
@@ -141,6 +149,9 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   voice_notes: "Voice notes",
   driver_notes: "Driver notes",
   turn_steps: "Agent steps",
+  sweep_items: "Pay sweep findings",
+  sweep_runs: "Pay sweep runs",
+  approval_batches: "Approve-all batches",
   proposals: "Agent proposals",
   turns: "Agent turns",
   conversations: "Agent conversations",

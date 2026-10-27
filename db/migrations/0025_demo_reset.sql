@@ -84,6 +84,9 @@ DECLARE
   v_voice_notes   bigint;
   v_notes         bigint;
   v_steps         bigint;
+  v_sweep_items   bigint;
+  v_sweep_runs    bigint;
+  v_batches       bigint;
   v_advances      bigint;
   v_proposals     bigint;
   v_turns         bigint;
@@ -162,6 +165,17 @@ BEGIN
   DELETE FROM public.turn_steps s WHERE s.tenant_id = v_tenant;
   GET DIAGNOSTICS v_steps = ROW_COUNT;
 
+  -- The pay sweep's findings name a proposal and a run; its runs name a conversation (0018).
+  DELETE FROM public.sweep_items si WHERE si.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_sweep_items = ROW_COUNT;
+
+  DELETE FROM public.sweep_runs sr WHERE sr.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_sweep_runs = ROW_COUNT;
+
+  -- An approve-all batch lists proposal ids that go, and names a pay week the replace deletes.
+  DELETE FROM public.approval_batches ab WHERE ab.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_batches = ROW_COUNT;
+
   DELETE FROM public.advances a WHERE a.tenant_id = v_tenant AND a.proposal_id IS NOT NULL;
   GET DIAGNOSTICS v_advances = ROW_COUNT;
 
@@ -188,6 +202,9 @@ BEGIN
     (CAST('voice_notes' AS text), v_voice_notes),
     (CAST('driver_notes' AS text), v_notes),
     (CAST('turn_steps' AS text), v_steps),
+    (CAST('sweep_items' AS text), v_sweep_items),
+    (CAST('sweep_runs' AS text), v_sweep_runs),
+    (CAST('approval_batches' AS text), v_batches),
     (CAST('advances' AS text), v_advances),
     (CAST('proposals' AS text), v_proposals),
     (CAST('turns' AS text), v_turns),
