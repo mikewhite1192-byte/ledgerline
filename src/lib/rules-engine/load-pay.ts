@@ -223,6 +223,14 @@ export function byLoadNumber(a: LoadRecord, b: LoadRecord): number {
   return compareText(a.loadNumber, b.loadNumber) || compareText(a.id, b.id);
 }
 
+// What the driver earns on one load: load pay plus their share of its detention, layover and stop
+// pay. The per-load advance cap is a share of this.
+export function driverPayOnLoad(config: PayConfig, driver: DriverRecord, load: LoadRecord): Cents {
+  const pay = loadPay(config, driver, load).line.amountCents;
+  const extra = accessorialPay(config, driver, load)?.amountCents ?? 0;
+  return sum([pay, extra]);
+}
+
 // Load pay for the driver's loads delivered on or before `requestedOn` that no paid settlement
 // has covered yet: what an advance requested that day can be drawn against, so a replayed request
 // is never credited with later loads. A percent or flat load with no rate adds no load pay here,
@@ -246,9 +254,7 @@ export function earnedUnpaid(
     .filter((l) => !periods.some((p) => isWithin(l.deliveredOn ?? "", p)))
     .sort(byLoadNumber);
   for (const load of unpaid) {
-    const pay = loadPay(config, driver, load).line.amountCents;
-    const extra = accessorialPay(config, driver, load)?.amountCents ?? 0;
-    const total = sum([pay, extra]);
+    const total = driverPayOnLoad(config, driver, load);
     if (total > 0) {
       amounts.push(total);
       sources.push({ table: "loads", id: load.id });

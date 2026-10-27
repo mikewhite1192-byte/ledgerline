@@ -5,11 +5,13 @@ import { enumValuesOf } from "./redact";
 import { classifyMessage } from "./tools/triage/classify-message";
 import { explainPaystub } from "./tools/read/explain-paystub";
 import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention";
+import { getAdvanceHeadroom } from "./tools/read/get-advance-headroom";
 import { getAdvances } from "./tools/read/get-advances";
 import { getArAging } from "./tools/read/get-ar-aging";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
+import { getDriverIdentity } from "./tools/read/get-driver-identity";
 import { getInboundMessage } from "./tools/read/get-inbound-message";
 import { getInvoiceQueue } from "./tools/read/get-invoice-queue";
 import { getInvoiceReview } from "./tools/read/get-invoice-review";
@@ -74,6 +76,8 @@ const TOOLS: readonly AnyToolDef[] = [
   getProposal,
   getDocument,
   findUnbilledDetentionTool,
+  getDriverIdentity,
+  getAdvanceHeadroom,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,

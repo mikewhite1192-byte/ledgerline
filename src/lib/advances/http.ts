@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { z } from "zod";
 import type { Session } from "../auth/claims";
 import { getSession } from "../auth/session";
 import { isCrossSite } from "../http/same-site";
@@ -42,6 +43,43 @@ export async function advanceAction<T extends Outcome>(
   if (!isUuid(id)) return refuse("bad_request");
   try {
     const result = await run(session, id.toLowerCase());
+    if (result.ok) return reply(result, 200);
+    return refuse(result.category, result.retryable);
+  } catch (err) {
+    if (err instanceof Error && err.name === "ForbiddenError") return refuse("forbidden");
+    console.error("advance action failed:", err instanceof Error ? err.name : "unknown");
+    return refuse("unavailable", true);
+  }
+}
+
+// The same shape for a press that sends a small JSON body (the driver's money panel, Take back):
+// every id in the path well formed, the body parsed strictly, then run with lower-case ids.
+export async function bodyAction<P extends Record<string, string>, B, T extends Outcome>(
+  request: Request,
+  params: Promise<P>,
+  schema: z.ZodType<B>,
+  run: (session: Session, ids: P, body: B) => Promise<T>,
+): Promise<NextResponse> {
+  if (isCrossSite(request)) return refuse("forbidden");
+  if (!advancesOn()) return refuse("disabled");
+  const session = await getSession();
+  if (!session) return refuse("unauthenticated");
+  const raw = await params;
+  const ids = {} as Record<string, string>;
+  for (const [key, value] of Object.entries(raw)) {
+    if (!isUuid(value)) return refuse("bad_request");
+    ids[key] = value.toLowerCase();
+  }
+  let body: B;
+  try {
+    const parsed = schema.safeParse(await request.json());
+    if (!parsed.success) return refuse("bad_request");
+    body = parsed.data;
+  } catch {
+    return refuse("bad_request");
+  }
+  try {
+    const result = await run(session, ids as P, body);
     if (result.ok) return reply(result, 200);
     return refuse(result.category, result.retryable);
   } catch (err) {

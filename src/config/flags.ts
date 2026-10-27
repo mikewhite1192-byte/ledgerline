@@ -105,6 +105,10 @@ export type Flags = {
     // The QuickBooks post runs in the approve request only with this much of its time left.
     legTwoMinRemainingMs: number;
   };
+  // Taking an advance back: an unpaid one is cancelled, a paid one records the amount taken back
+  // (it stops counting as owed; nothing is pulled off the card). Off refuses with disabled before
+  // any write. maxCents bounds one take-back, on top of the advance's own bound.
+  advanceTakeback: { enabled: boolean; maxCents: number };
   // Operator turns on Muse Spark send the tools no question needs at first as a name and a
   // description only, with the API's search tool to load one. Off sends every tool in full.
   agentToolSearch: boolean;
@@ -282,6 +286,7 @@ export const flags: Flags = {
   advancesEnabled: false,
   advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-27" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
+  advanceTakeback: { enabled: false, maxCents: 100_000 },
   agentToolSearch: false,
   agentPromptCache: { enabled: false, retention: "in_memory" },
   driverNotesEnabled: false,

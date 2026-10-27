@@ -26,6 +26,7 @@ export {
   accessorialPay,
   assertStateMiles,
   checkLoad,
+  driverPayOnLoad,
   earnedUnpaid,
   isDelivered,
   loadPay,
@@ -48,7 +49,7 @@ export {
 } from "./deductions";
 export { checkAdvance, DUPLICATE_WINDOW_MS, outstandingCents, recoverAdvances } from "./recovery";
 export { settleDriver } from "./settlement";
-export { advanceEligibility } from "./advances";
+export { advanceEligibility, floorToDollars } from "./advances";
 export { invoiceAmount } from "./invoices";
 export {
   DOCUMENT_KINDS,
@@ -70,6 +71,7 @@ export type {
   PostingState,
 } from "./invoice-review";
 export {
+  findAdvanceOverLoadCap,
   findDeliveredWithoutRate,
   findDuplicateAdvances,
   findFuelOnWrongDriver,

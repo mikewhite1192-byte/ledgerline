@@ -11,6 +11,7 @@ const SENTENCES: Readonly<Record<string, string>> = {
   driver_asked: "The driver asked for it.",
   // gateway exceptions
   capped_to_eligible: "Cut to the most the pay rules allow after a larger ask was refused.",
+  card_not_drivers: "The card named is not one of this driver's active cards, so it cannot be paid.",
   // propose_pay_correction
   missed_pay: "Pay the driver earned is missing from the statement.",
   wrong_rate: "The pay line used the wrong rate.",
@@ -37,6 +38,8 @@ const SENTENCES: Readonly<Record<string, string>> = {
   // propose_payment_reapply
   payment_on_wrong_invoice:
     "The payment matches another open invoice for the same customer exactly, and overpays the one it is on.",
+  driver_not_armed: "The driver is not armed to receive money. An admin can arm them on the driver page.",
+  over_load_cap: "The amount is over what is left under the per-load cap for this load.",
 };
 
 const GENERIC = "A rule check found this.";

@@ -1,6 +1,7 @@
 import type { Param, Queryable } from "../db";
 import type { TenantRows } from "./rows";
 import {
+  APP_KEEPS_TABLES,
   assertIdentifier,
   TABLE_SPECS,
   TENANT_TABLES,
@@ -105,10 +106,15 @@ export async function insertRows(
 }
 
 // Deletes the current tenant's rows from every tenant table, children first. Returns the rows
-// deleted per table.
+// deleted per table. A table the app role never deletes from (APP_KEEPS_TABLES) gets no statement
+// and reports 0: the admin login clears it before the replace, and its rows go with their drivers.
 export async function deleteTenantRows(q: Queryable): Promise<Record<TenantTable, number>> {
   const out = {} as Record<TenantTable, number>;
   for (const table of [...TENANT_TABLES].reverse()) {
+    if (APP_KEEPS_TABLES.has(table)) {
+      out[table] = 0;
+      continue;
+    }
     out[table] = await q.execute(
       `DELETE FROM ${assertIdentifier(table)} WHERE tenant_id = current_tenant_id()`,
     );

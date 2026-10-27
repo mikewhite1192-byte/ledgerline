@@ -119,9 +119,10 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
         .reduce((n, s) => n + s.net_cents, 0),
     }));
 
+  // As the engine counts it (outstandingCents): an amount taken back is no longer owed.
   const advancesOutstandingCents = rows.advances
     .filter((a) => a.status === "approved" || a.status === "paid")
-    .reduce((n, a) => n + a.amount_cents + a.fee_cents - a.recovered_cents, 0);
+    .reduce((n, a) => n + Math.max(0, a.amount_cents + a.fee_cents - a.recovered_cents - a.taken_back_cents), 0);
 
   const input = receivablesInputOf(rows, anchor);
   const aging = ageReceivables(input);

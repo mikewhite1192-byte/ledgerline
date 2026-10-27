@@ -93,6 +93,11 @@ describe("flags", () => {
     }
   });
 
+  it("ships the advance take-back off, with a whole-cent cap", () => {
+    expect(flags.advanceTakeback).toEqual({ enabled: false, maxCents: 100_000 });
+    expect(Number.isSafeInteger(flags.advanceTakeback.maxCents)).toBe(true);
+  });
+
   it("ships tool search and the prompt cache off, with the default retention", () => {
     expect(flags.agentToolSearch).toBe(false);
     expect(flags.agentPromptCache).toEqual({ enabled: false, retention: "in_memory" });

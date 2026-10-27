@@ -51,8 +51,8 @@ function rows<T>(q: Queryable, sql: string, params: Param[]): Promise<T[]> {
 
 export const dbTmsAdapter: TmsAdapter = {
   settlementInput: (q, driverId, periodId) => readSettlementInput(q, driverId, periodId),
-  advanceInput: (q, driverId, amountCents, requestedAt) =>
-    readAdvanceInput(q, driverId, requestedAt, amountCents),
+  advanceInput: (q, driverId, amountCents, requestedAt, loadId) =>
+    readAdvanceInput(q, driverId, requestedAt, amountCents, loadId),
   checkInput: (q) => readCheckInput(q),
   receivablesInput: (q, asOf) => readReceivablesInput(q, asOf),
 

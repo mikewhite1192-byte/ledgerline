@@ -36,6 +36,19 @@ import { applyHistory } from "./history";
 import { HERO_LANES, LANES, laneMiles, reverseLane, type Lane } from "./lanes";
 import { CUSTOMERS, FIRST_NAMES, LAST_NAMES } from "./names";
 import { Rng } from "./prng";
+import {
+  armedAt,
+  armEvents,
+  chooseDisarmed,
+  chooseTakeBack,
+  driverIdentities,
+  linkAdvanceLoads,
+  parityCards,
+  plantLoadPair,
+  plantTakeBack,
+  type AdvanceDraft,
+  type ParityPlanted,
+} from "./parity-plan";
 import { planInvoiceReview, type ReviewPlant } from "./review-plan";
 import { buildUntrustedInputs } from "./untrusted-inputs";
 
@@ -90,6 +103,8 @@ export type Planted = {
   detentionLoadIds: string[];
   collections: CollectionsPlant[];
   invoiceReview: ReviewPlant;
+  // Arming, the extra cards, the load pair and the take-back (parity-plan.ts).
+  parity: ParityPlanted;
 };
 
 export type CarrierPlan = {
@@ -176,6 +191,10 @@ export function buildDriverCards(seed: string, drivers: readonly DriverRow[], he
       sim_behavior: behaviorOf(d.code),
       source: "seed",
       closed_at: null,
+      // Each driver's one card is their default (0027); parity-plan.ts adds the extra cards.
+      is_default: true,
+      holder_kind: "named",
+      portal_name: null,
     };
   });
 }
@@ -187,6 +206,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   const rng = new Rng(`${seed}:plan`);
   const side = new Rng(`${seed}:side`);
   const ids = new Rng(`${seed}:ids`);
+  // The advance parity rows (0027) draw only from here, so no other row moves.
+  const parity = new Rng(`${seed}:parity`);
   const newId = () => ids.uuid();
   const { prefix, slug } = carrier;
   const lanes = LANES[prefix];
@@ -264,8 +285,12 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       // Every fourth driver by position reads Spanish, so each carrier has Spanish pay notes.
       // Decided by index, not the random stream, so no other seeded value moves.
       preferred_language: i % 4 === 3 ? "es" : "en",
+      // Armed from the day they started (set just below); one planted driver is disarmed later.
+      money_armed: true,
+      money_armed_at: null,
     };
   });
+  for (const d of drivers) d.money_armed_at = armedAt(d.active_from, zone);
   const byCode = new Map(drivers.map((d) => [d.code, d]));
   const driver = (code: string) => {
     const d = byCode.get(code);
@@ -810,7 +835,6 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   }
 
   // ---- Advances ----
-  type AdvanceDraft = Omit<AdvanceRow, "request_ref"> & { ref?: string };
   const advanceDrafts: AdvanceDraft[] = [];
   const advance = (
     d: DriverRow,
@@ -837,6 +861,11 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       source_input_id: null,
       decided_at: null,
       decided_by_membership_id: null,
+      load_id: null,
+      taken_back_cents: 0,
+      taken_back_at: null,
+      taken_back_by_membership_id: null,
+      takeback_reason: null,
       ref,
     };
     advanceDrafts.push(row);
@@ -861,6 +890,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   };
   const ownAdvances = new Set([carrier.heroCode, victims.duplicateAdvance, victims.overLimit]);
   let placed = 0;
+  const placedDrafts: AdvanceDraft[] = [];
   for (const d of rng.shuffle(drivers.filter((x) => !ownAdvances.has(x.code)))) {
     if (placed === 14) break;
     const week = placed < 10 ? rng.int(0, 2) : 3;
@@ -875,7 +905,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     const cap = most(d, instantAt(day, time[0], time[1], zone));
     const amount = Math.min(rng.int(4, 16) * 2500, Math.floor(cap / 2500) * 2500);
     if (amount < 10000) continue;
-    advance(d, day, time, amount, rng.int(20, 90));
+    placedDrafts.push(advance(d, day, time, amount, rng.int(20, 90)));
     placed++;
   }
   if (placed < 14) throw new Error("too few drivers earned enough for an advance");
@@ -892,6 +922,29 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   if (carrier.heroCode) {
     advance(driver(carrier.heroCode), weekday(openWeek, 3), [10, 15], 20000, 25).fee_cents = 0;
   }
+  // Parity plants (0027), from the parity stream: two advances on one load for a driver with none,
+  // the load each other advance is for, and the open-week advance to take back in full (one no
+  // settlement has recovered from; recorded after history, below).
+  const allVictims = new Set<string>([...Object.values(victims), ...Object.values(fuelVictims)]);
+  const withAdvance = new Set(advanceDrafts.map((a) => a.driver_id));
+  const pair = plantLoadPair({
+    parity,
+    slug,
+    zone,
+    drivers,
+    skip: new Set([
+      ...(carrier.heroCode ? [carrier.heroCode] : []),
+      ...drivers.filter((d) => withAdvance.has(d.id)).map((d) => d.code),
+    ]),
+    victims: allVictims,
+    loads: loadRecords,
+    versions,
+    periods,
+    lastDay: addDays(anchor, -1),
+  });
+  advanceDrafts.push(...pair.rows);
+  linkAdvanceLoads(advanceDrafts, drivers, loadRecords, versions);
+  const takenBackId = chooseTakeBack(parity, placedDrafts, periods);
   let advanceN = 0;
   const advances: AdvanceRow[] = advanceDrafts
     .map((a, i) => [a, i] as const)
@@ -963,10 +1016,34 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     applications: ar.applications,
   });
 
+  // Parity, after every other draw on the parity stream above: the disarmed driver, the cards,
+  // the dispatch-system ids and the arming log.
+  const baseCards = buildDriverCards(seed, drivers, carrier.heroCode ?? null);
+  const disarmed = chooseDisarmed(
+    drivers,
+    baseCards,
+    carrier.heroCode ?? null,
+    new Set(advanceDrafts.map((a) => a.driver_id)),
+    allVictims,
+  );
+  disarmed.money_armed = false;
+  disarmed.money_armed_at = null;
+  const cardPlan = parityCards({
+    parity,
+    base: baseCards,
+    drivers,
+    heroCode: carrier.heroCode ?? null,
+    avoid: new Set([disarmed.id]),
+    anchor,
+    zone,
+  });
+
   const rows: TenantRows = {
     customers,
     drivers,
-    driver_cards: buildDriverCards(seed, drivers, carrier.heroCode ?? null),
+    driver_cards: cardPlan.cards,
+    driver_identities: driverIdentities(parity, drivers, prefix),
+    driver_arm_events: armEvents(parity, drivers),
     loads,
     load_state_miles: stateMiles,
     load_accessorials: accessorials,
@@ -992,6 +1069,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     screenings: [],
   };
   applyHistory({ slug, zone, rows, newId });
+  // The take-back is recorded after history, which never recovered from it, so no settled week moves.
+  const takenBack = plantTakeBack(rows.advances, takenBackId);
   // Outside text for the agent's screener, from its own id stream so no other row changes.
   rows.untrusted_inputs = buildUntrustedInputs({ carrier, anchor, rows });
 
@@ -1015,6 +1094,15 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       detentionLoadIds: detentionLoads.map((x) => x.row.id),
       collections: ar.collections,
       invoiceReview,
+      parity: {
+        disarmedDriverId: disarmed.id,
+        loadPairLoadId: pair.loadId,
+        loadPairAdvanceIds: [pair.rows[0].id, pair.rows[1].id],
+        takenBackAdvanceId: takenBack.id,
+        extraCardId: cardPlan.extra,
+        genericCardId: cardPlan.generic,
+        closedCardId: cardPlan.closed,
+      },
     },
     rows,
   };

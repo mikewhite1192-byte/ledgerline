@@ -8,7 +8,7 @@ export const getDriver = defineTool({
   name: "get_driver",
   description:
     "Read one driver: code, name, worker type, pay basis and rates, advance limit, escrow " +
-    "balance and active dates. Money is in integer cents.",
+    "balance, active dates and whether they are armed to receive money. Money is in integer cents.",
   tier: "read",
   roles: OPERATOR_AUDITOR,
   label: "Reading the driver",
@@ -33,6 +33,7 @@ export const getDriver = defineTool({
           truckUnit: d.truck_unit,
           activeFrom: d.active_from,
           activeTo: d.active_to,
+          moneyArmed: d.money_armed === true,
         },
       },
     };

@@ -367,6 +367,22 @@ describe("the demo reset", () => {
         [randomUUID(), load.id, detention],
       ),
     );
+    // A person disarming a driver and adding the id the dispatch system knows them by (0027). The
+    // app role cannot delete the arming log, so the reset's replace removes it with its drivers
+    // (the foreign key cascades) and writes the plan's log again.
+    await app.withTenant(tenantId, async (q) => {
+      await q.execute(
+        `INSERT INTO driver_arm_events (id, tenant_id, driver_id, armed, note, membership_id, source)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), false, 'Paused after a call',
+           (SELECT id FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $3), 'ui')`,
+        [randomUUID(), other.id, session.sub],
+      );
+      await q.execute(
+        `INSERT INTO driver_identities (id, tenant_id, driver_id, system, external_id, source)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'tms', 'reset-test-1', 'ui')`,
+        [randomUUID(), other.id],
+      );
+    });
 
     await agentChain(
       tenantId,
@@ -559,6 +575,8 @@ describe("the demo reset", () => {
       });
       expect(preview.current.advances).toBe(planA.rows.advances.length + 1);
       expect(preview.current.load_accessorials).toBe(planA.rows.load_accessorials.length + 1);
+      expect(preview.current.driver_arm_events).toBe(planA.rows.driver_arm_events.length + 1);
+      expect(preview.current.driver_identities).toBe(planA.rows.driver_identities.length + 1);
 
       const report = await resetDemoTenant(app, A, planA);
       expect(report.slug).toBe("blue-ridge");
@@ -617,7 +635,9 @@ describe("the demo reset", () => {
     const b = await printOf(B);
     const report = await resetDemoTenant(app, A, planA);
     expect(Object.values(report.cleared).every((n) => n === 0)).toBe(true);
-    expect(report.replaced.deleted).toEqual(countRows(planA.rows));
+    // The arming log reports no deletes: the app role never deletes from it, and its rows went with
+    // their drivers (the foreign key cascades) before the plan's log was written again.
+    expect(report.replaced.deleted).toEqual({ ...countRows(planA.rows), driver_arm_events: 0 });
     expect(report.replaced.inserted).toEqual(countRows(planA.rows));
     expect(report.heroNetCents).toBe(HERO_OPEN_WEEK.netCents);
     expect(await rowsOf(A)).toEqual(before);

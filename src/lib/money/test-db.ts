@@ -42,9 +42,10 @@ export async function makeTenant(admin: Db, slug: string): Promise<Fixture> {
     ]) {
       await q.execute(
         `INSERT INTO drivers (id, tenant_id, code, first_name, last_name, email, worker_type,
-           pay_basis, per_mile_cents, active_from)
+           pay_basis, per_mile_cents, active_from, money_armed, money_armed_at)
          VALUES (CAST($1 AS uuid), current_tenant_id(), $2, 'Test', 'Driver', $3, 'company',
-           'per_mile', 60, CAST('2026-01-01' AS date))`,
+           'per_mile', 60, CAST('2026-01-01' AS date), true,
+           CAST('2026-01-01T14:00:00Z' AS timestamptz))`,
         [id, code, `${code.toLowerCase()}@${slug}.example`],
       );
       await q.execute(CARD_INSERT, cardValues(id, "ok"));
@@ -77,17 +78,22 @@ export async function makeTenant(admin: Db, slug: string): Promise<Fixture> {
   };
 }
 
-// A synthetic card: a random token of the provider's shape and random last four digits.
+// A synthetic card: a random token of the provider's shape and random last four digits. Each
+// fixture driver's first card is their default.
 const CARD_INSERT = `INSERT INTO driver_cards (id, tenant_id, driver_id, provider, provider_token, last4,
-     status, sim_behavior, source)
-   VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'fuel_card_sim', $3, $4, 'active', $5, 'ui')`;
+     status, sim_behavior, source, is_default)
+   VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'fuel_card_sim', $3, $4, 'active', $5, 'ui', $6)`;
 
-function cardValues(driverId: string, behavior: SimBehavior): [string, string, string, string, SimBehavior] {
+function cardValues(
+  driverId: string,
+  behavior: SimBehavior,
+  isDefault = true,
+): [string, string, string, string, SimBehavior, boolean] {
   const last4 = String(randomBytes(2).readUInt16BE(0) % 10_000).padStart(4, "0");
-  return [randomUUID(), driverId, `fcs_card_${randomBytes(12).toString("hex")}`, last4, behavior];
+  return [randomUUID(), driverId, `fcs_card_${randomBytes(12).toString("hex")}`, last4, behavior, isDefault];
 }
 
-// What the driver's active card answers when the simulated provider is called.
+// What the driver's active cards answer when the simulated provider is called.
 export async function setCardBehavior(admin: Db, f: Fixture, driverId: string, behavior: SimBehavior): Promise<void> {
   await admin.withTenant(f.tenantId, (q) =>
     q.execute(
@@ -98,22 +104,42 @@ export async function setCardBehavior(admin: Db, f: Fixture, driverId: string, b
   );
 }
 
-// Closes the driver's active card (it stays on file, closed).
+// Closes the driver's active cards (they stay on file, closed and no longer the default).
 export async function closeCard(admin: Db, f: Fixture, driverId: string): Promise<void> {
   await admin.withTenant(f.tenantId, (q) =>
     q.execute(
-      `UPDATE driver_cards SET status = 'closed', closed_at = CAST('2026-11-02T16:30:00Z' AS timestamptz)
+      `UPDATE driver_cards SET status = 'closed', is_default = false,
+              closed_at = CAST('2026-11-02T16:30:00Z' AS timestamptz)
         WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid) AND status = 'active'`,
       [driverId],
     ),
   );
 }
 
-// A new active card for the driver (after closeCard or removeCards); returns its id.
-export async function addCard(admin: Db, f: Fixture, driverId: string, behavior: SimBehavior = "ok"): Promise<string> {
-  const values = cardValues(driverId, behavior);
+// A new active card for the driver; returns its id. The default unless `isDefault` is false (a
+// second default for the same driver fails with 23505).
+export async function addCard(
+  admin: Db,
+  f: Fixture,
+  driverId: string,
+  behavior: SimBehavior = "ok",
+  isDefault = true,
+): Promise<string> {
+  const values = cardValues(driverId, behavior, isDefault);
   await admin.withTenant(f.tenantId, (q) => q.execute(CARD_INSERT, values));
   return values[0];
+}
+
+// Arms or disarms a fixture driver directly (the service and its log are tested on their own).
+export async function setArmed(admin: Db, f: Fixture, driverId: string, armed: boolean): Promise<void> {
+  await admin.withTenant(f.tenantId, (q) =>
+    q.execute(
+      `UPDATE drivers SET money_armed = $2,
+              money_armed_at = CASE WHEN $2 THEN CAST('2026-01-01T14:00:00Z' AS timestamptz) ELSE NULL END
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+      [driverId, armed],
+    ),
+  );
 }
 
 // Every card the driver has, removed (an advance that named one keeps its row, card_id cleared).

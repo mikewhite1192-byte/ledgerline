@@ -36,6 +36,8 @@ export const REASON_CATEGORIES = [
   // A proposal exception, never a decision reason: the advance was cut to what the engine allows
   // after a larger ask in the same trace was refused (design 4.2).
   "capped_to_eligible",
+  // A proposal exception: the advance names a card that is not one of the driver's active cards.
+  "card_not_drivers",
 ] as const;
 export type ReasonCategory = (typeof REASON_CATEGORIES)[number];
 
