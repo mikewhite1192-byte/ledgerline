@@ -287,7 +287,9 @@ describe("approving a detention charge", () => {
   it("refuses an invoice posted to accounting or no longer open, and writes nothing", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     for (const change of [
-      "UPDATE invoices SET qbo_id = '1042' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+      // A posted invoice carries the accounting system's amount with its id (0028's qbo pair).
+      `UPDATE invoices SET qbo_id = '1042', qbo_amount_cents = amount_cents
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
       "UPDATE invoices SET status = 'partially_paid' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
     ]) {
       const load = await addLoad(A);

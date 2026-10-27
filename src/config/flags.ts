@@ -219,6 +219,42 @@ export type Flags = {
     // Audit tries per item while the auditor answers "in progress".
     maxAuditAttempts: number;
   };
+  // The sweep's second opinion: Muse Wonder orders the drivers, one short Muse Spark check per
+  // driver reads that driver's records, and Muse Wonder writes how the two views compare. It
+  // reads and labels only: no proposal, no number, nothing for a model to approve. An issue only
+  // a checker raised waits for a person. Read when a run leaves find and again before every model
+  // call. sweepEnabled must also be on.
+  fanoutEnabled: boolean;
+  fanoutLimits: {
+    // Drivers checked per run, busiest week first; the rest are listed as over the limit.
+    maxDrivers: number;
+    // Checks run side by side in one slice.
+    parallel: number;
+    // Model calls one driver's check may make.
+    maxCallsPerDriver: number;
+    // Record reads one driver's check may make.
+    maxToolSteps: number;
+    // The cap on one check call, in cents.
+    callCents: number;
+    // The cap on one driver's check, all its calls together, in cents.
+    driverCents: number;
+    // The caps on the ordering call and the comparison call, in cents.
+    planCents: number;
+    reconcileCents: number;
+    // One driver's check, start to answer, in milliseconds.
+    childTimeoutMs: number;
+    // Sweep model spend one carrier may count in one of its local days, in cents. A run that
+    // reaches the second opinion with the day already at it skips it and finishes as a plain
+    // sweep, and every hold the second opinion takes must fit what is left of it across the
+    // carrier's runs that day.
+    tenantDayCents: number;
+    // Runs with the second opinion one carrier may start in one of its local days.
+    runsPerTenantDay: number;
+    // A run's whole cap when the second opinion is on (the sweep's own spend included), in cents.
+    // The second opinion holds at most this less sweepLimits.maxRunCents, so the sweep's own
+    // budget is always left for its explanations and audits.
+    runCapCents: number;
+  };
   // Approve all clean: one deliberate approval over the clean fixes a person saw. A batch whose
   // total is over approverRole.adminAboveCents needs an admin, like a single proposal.
   approveAllLimits: { maxItems: number };
@@ -243,6 +279,36 @@ export type Flags = {
     // A safety check a person has not decided within this many minutes ends the run.
     approvalWaitMinutes: number;
   };
+  // The weekly pay run: "Run the week" drafts each driver's paystub and a card a person approves;
+  // an approval pays the driver and books the bill. Paying still needs payoutsEnabled and booking
+  // still needs accountingEnabled; each write re-checks its own switch.
+  settlementsEnabled: boolean;
+  // Pay periods that start on or after this tenant-local date can be run; older ones never are.
+  settlementsStart: string;
+  settlementLimits: {
+    // Drivers one run drafts; past it the run stops and says so.
+    driversPerRun: number;
+    // Tries at paying one settlement; a retry follows only a definite failure.
+    maxPayoutAttempts: number;
+    // A single approval books the bill only when at least this much of the request is left.
+    legTwoMinRemainingMs: number;
+  };
+  // "Approve all clean": one approval over the clean paystubs of a week, then a drain that sends
+  // each reserved leg. The legs still need payoutsEnabled and accountingEnabled.
+  batchApproveEnabled: boolean;
+  batchLimits: {
+    // Paystubs in one batch.
+    maxItems: number;
+    // The batch total, in cents.
+    maxTotalCents: number;
+    // How long one drain request may send before it stops and says what is left.
+    drainBudgetMs: number;
+  };
+  // Invoice review: the Review tab, the review card on an invoice, Mark reviewed, Mark as sent and
+  // the agent's two review read tools. Off: the tab and card are hidden, the routes answer 404 and
+  // the tools are not offered. invoicesEnabled must also be on. A post to accounting is always
+  // left unsent there (a constant on the adapter, not a switch); LedgerLine never sends one.
+  invoiceReviewEnabled: boolean;
 };
 
 export const flags: Flags = {
@@ -312,6 +378,21 @@ export const flags: Flags = {
   sweepScheduleEnabled: false,
   payCorrectionsEnabled: false,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
+  fanoutEnabled: false,
+  fanoutLimits: {
+    maxDrivers: 30,
+    parallel: 6,
+    maxCallsPerDriver: 3,
+    maxToolSteps: 4,
+    callCents: 3,
+    driverCents: 9,
+    planCents: 12,
+    reconcileCents: 12,
+    childTimeoutMs: 15_000,
+    tenantDayCents: 1_000,
+    runsPerTenantDay: 3,
+    runCapCents: 450,
+  },
   approveAllLimits: { maxItems: 25 },
   portalRunnerEnabled: false,
   portalRunnerModel: "spark",
@@ -327,6 +408,12 @@ export const flags: Flags = {
     podMaxBytes: 300_000,
     approvalWaitMinutes: 30,
   },
+  settlementsEnabled: false,
+  settlementsStart: "2026-10-05",
+  settlementLimits: { driversPerRun: 200, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
+  batchApproveEnabled: false,
+  batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
+  invoiceReviewEnabled: false,
 };
 
 applyLocalOverrides(flags);

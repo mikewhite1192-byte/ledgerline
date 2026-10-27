@@ -143,11 +143,15 @@ export function driverRate(driver: DriverRecord): DriverRate {
   }
 }
 
-// The driver fields the math reads: id, worker type, dates and the rate for the pay basis.
+// The driver fields the math reads: id, worker type, the insurance flag, dates and the rate for
+// the pay basis.
 export function checkDriver(driver: DriverRecord | null | undefined): DriverRecord {
   if (!driver || typeof driver !== "object") throw new InputError("driver is missing");
   assertId(driver.id, "driver id");
   assertOneOf(driver.workerType, WORKER_TYPES, `driver ${driver.id} workerType`);
+  if (typeof driver.ownInsurance !== "boolean") {
+    throw new InputError(`driver ${driver.id} ownInsurance is not a boolean`);
+  }
   assertDate(driver.activeFrom, `driver ${driver.id} activeFrom`);
   if (driver.activeTo !== null) assertDate(driver.activeTo, `driver ${driver.id} activeTo`);
   if (typeof driver.moneyArmed !== "boolean") {
@@ -157,7 +161,10 @@ export function checkDriver(driver: DriverRecord | null | undefined): DriverReco
   return driver;
 }
 
+// One place, so the paystub's insurance line and the day-not-driven check always agree: a driver
+// who carries their own insurance is never charged and never produces that finding.
 export function insuranceApplies(config: PayConfig, driver: DriverRecord): boolean {
+  if (driver.ownInsurance) return false;
   return config.insuranceAppliesTo === "all" || driver.workerType === "owner_operator";
 }
 

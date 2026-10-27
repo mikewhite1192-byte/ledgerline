@@ -9,6 +9,7 @@ import {
   CreditCard,
   LayoutGrid,
   Link2,
+  ListChecks,
   MessagesSquare,
   MousePointerClick,
   Palette,
@@ -42,6 +43,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { contrastRatio } from "@/lib/design/contrast";
 import { isHex, parseTokens, type TokenSet } from "@/lib/design/tokens";
 import { recordLabel, sourceLabel } from "@/lib/format/labels";
+import { accountingLine, REVIEW_STATUS_LABELS } from "@/lib/invoices/labels";
+import { INVOICE_REVIEW_STATUSES } from "@/lib/rules-engine/invoice-review";
 import { ChatDemo, MoneyPanelDemo, ProposalGallery, SheetDemo, ToastDemo, ToastsAtRest } from "./demos";
 import { FUEL_CARD_LAST4, LOADS, PAYSTUB, SAMPLE_TENANT, SHORT_WEEK_PAYSTUB, SOURCE_ROWS } from "./sample-data";
 import { anchorFor, loadColumns } from "./shared";
@@ -69,6 +72,7 @@ const SECTIONS = [
   { id: "buttons", label: "Buttons", icon: <MousePointerClick aria-hidden /> },
   { id: "fields", label: "Fields", icon: <TextCursorInput aria-hidden /> },
   { id: "badges", label: "Badges", icon: <Tag aria-hidden /> },
+  { id: "invoice-review", label: "Invoice review", icon: <ListChecks aria-hidden /> },
   { id: "stat-cards", label: "Stat cards", icon: <LayoutGrid aria-hidden /> },
   { id: "data-table", label: "Data table", icon: <TableIcon aria-hidden /> },
   { id: "proposal-card", label: "Proposal card", icon: <ClipboardCheck aria-hidden /> },
@@ -362,6 +366,27 @@ export default function DesignPage() {
               {BADGE_STATUSES.map((s) => (
                 <StatusBadge key={s} status={s} />
               ))}
+            </div>
+          )}
+        </ModePair>
+
+        <ModePair
+          id="invoice-review"
+          note="The six review statuses, worst first, and where an invoice stands in accounting. Nothing here sends an invoice."
+        >
+          {() => (
+            <div className="grid gap-3">
+              <div className="flex flex-wrap gap-2">
+                {INVOICE_REVIEW_STATUSES.map((s) => (
+                  <StatusBadge key={s} status={s} label={REVIEW_STATUS_LABELS[s]} />
+                ))}
+              </div>
+              <ul className="grid gap-1 text-small text-foreground-2">
+                <li>{accountingLine({ posted: false, madeByQueue: true, emailStatus: null, sentOn: null, sentBy: null })}</li>
+                <li>{accountingLine({ posted: false, madeByQueue: false, emailStatus: null, sentOn: null, sentBy: null })}</li>
+                <li>{accountingLine({ posted: true, madeByQueue: true, emailStatus: "need_to_send", sentOn: null, sentBy: null })}</li>
+                <li>{accountingLine({ posted: true, madeByQueue: true, emailStatus: "need_to_send", sentOn: "Oct 30, 2026", sentBy: "staff" })}</li>
+              </ul>
             </div>
           )}
         </ModePair>

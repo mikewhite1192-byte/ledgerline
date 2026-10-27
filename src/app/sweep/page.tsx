@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { flags } from "@/config/flags";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
@@ -14,7 +13,7 @@ import { formatInstant, formatPeriod } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { readSweepHome, type SweepHome, type SweepRunView } from "@/lib/sweep/view";
-import { NoCarrier, readCarrier, SignOut } from "./carrier";
+import { NoCarrier, readCarrier, SignOut, SweepOffPage } from "./carrier";
 
 // The sweep's page: run it for the open week, the last run's line and counts, and the runs so far.
 export const dynamic = "force-dynamic";
@@ -47,8 +46,11 @@ function lastLine(run: SweepRunView): string {
     : `LedgerLine checked the week of ${week(run)}, found ${problems} and drafted ${fixes}.`;
 }
 
+const DESCRIPTION =
+  "LedgerLine checks every driver's pay for the open week, drafts a fix for each problem it can, and lists the rest for a person. Nothing changes until someone approves.";
+
 export default async function SweepPage() {
-  if (!flags.sweepEnabled) notFound();
+  if (!flags.sweepEnabled) return <SweepOffPage title="Pay sweep" description={DESCRIPTION} />;
   const read = await readCarrier();
   if ("problem" in read) return <NoCarrier problem={read.problem} />;
   const { carrier } = read;
@@ -71,10 +73,7 @@ export default async function SweepPage() {
       signOut={<SignOut />}
     >
       <div className="mx-auto grid w-full max-w-[1080px] gap-6 px-4 py-6 md:px-6 md:py-8">
-        <PageHeader
-          title="Pay sweep"
-          description="LedgerLine checks every driver's pay for the open week, drafts a fix for each problem it can, and lists the rest for a person. Nothing changes until someone approves."
-        />
+        <PageHeader title="Pay sweep" description={DESCRIPTION} />
         {home === null ? (
           <Card>
             <ErrorState category="unreadable" />

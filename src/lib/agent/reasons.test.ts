@@ -16,6 +16,21 @@ const ENGINE_ADVANCE_REASONS = [
   "possible_duplicate",
 ];
 
+// Every reason a paystub can be parked, as settlements/reconcile.ts names them (written out for
+// the same reason; settlements/reconcile.test.ts checks the module against these sentences).
+const PARK_REASON_LIST = [
+  "line_amount_changed",
+  "line_missing",
+  "line_added",
+  "line_sources_changed",
+  "total_changed",
+  "source_missing",
+  "source_settled_elsewhere",
+  "source_changed",
+  "advance_overrecovered",
+  "schedule_inactive",
+];
+
 describe("reason sentences", () => {
   it("has a fixed sentence for every category a propose tool or the engine can give", () => {
     const all = [
@@ -27,8 +42,21 @@ describe("reason sentences", () => {
       "engine_total",
       "payment_on_wrong_invoice",
       "missing_rate",
+      "insurance_exempt",
+      "net_below_zero",
+      ...PARK_REASON_LIST,
     ];
     for (const c of all) expect(REASON_SENTENCE_CATEGORIES).toContain(c);
+  });
+
+  it("words the pay run's notes and every reason a paystub can be parked", () => {
+    expect(reasonSentence("insurance_exempt")).toBe(
+      "The driver carries their own insurance, so no daily charge applies.",
+    );
+    expect(reasonSentence("net_below_zero")).toBe(
+      "Deductions were more than pay this week; net is $0 and the rest carries to next week.",
+    );
+    for (const c of PARK_REASON_LIST) expect(reasonSentence(c)).not.toBe("A rule check found this.");
   });
 
   it("shows the generic line for a category it does not know, even a prototype name", () => {

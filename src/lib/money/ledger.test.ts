@@ -38,8 +38,8 @@ describe("validateDraft", () => {
       { subjectStatuses: ["requested", "approve"] },
       { subjectStatuses: undefined },
       { kind: "customer_payment", subjectStatuses: ["requested"] },
-      // No batch column yet, so any batch id is refused rather than dropped.
-      { batchId: "44444444-4444-4444-8444-444444444444" },
+      // A batch id is a lowercase UUID or nothing.
+      { batchId: "4444444A-4444-4444-8444-444444444444" },
       { batchId: "" },
     ];
     for (const over of bad) {
@@ -49,7 +49,10 @@ describe("validateDraft", () => {
     }
     expect(validateDraft(payoutDraft({ kind: "customer_payment", subjectStatuses: undefined })))
       .toMatchObject({ subjectStatuses: null });
-    expect(validateDraft(payoutDraft({ batchId: null }))).toMatchObject({ kind: "advance_payout" });
+    expect(validateDraft(payoutDraft({ batchId: null }))).toMatchObject({ batchId: null });
+    expect(
+      validateDraft(payoutDraft({ batchId: "44444444-4444-4444-8444-444444444444" })),
+    ).toMatchObject({ batchId: "44444444-4444-4444-8444-444444444444" });
   });
 });
 

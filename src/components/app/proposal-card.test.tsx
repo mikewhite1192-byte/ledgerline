@@ -109,7 +109,7 @@ describe("ProposalCard", () => {
   it("says it is waiting on the read-back when the outcome is unknown", () => {
     render(<ProposalCard {...card} status="unknown" />);
     expect(screen.getByText("Sent, waiting on the read-back.")).toBeTruthy();
-    expect(screen.getByText("Outcome unknown")).toBeTruthy();
+    expect(screen.getByText("Not confirmed yet")).toBeTruthy();
   });
 
   it("shows the detail line under the title only when there is one", () => {

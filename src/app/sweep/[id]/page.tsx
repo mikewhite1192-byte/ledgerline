@@ -2,19 +2,20 @@ import { notFound } from "next/navigation";
 import { flags } from "@/config/flags";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
+import { PageHeader } from "@/components/app/page-header";
 import { ErrorState } from "@/components/app/states";
 import { SweepRun } from "@/components/sweep/sweep-run";
 import { Card } from "@/components/ui/card";
 import { readSweepPage, type SweepPage } from "@/lib/sweep/view";
 import { isUuid } from "@/lib/uuid";
-import { NoCarrier, readCarrier, SignOut } from "../carrier";
+import { NoCarrier, readCarrier, SignOut, SweepOffPage } from "../carrier";
 
 // One sweep run: its counts, its drafted fixes and the lines for a person. The page carries a
 // running run on itself, one slice per request.
 export const dynamic = "force-dynamic";
 
 export default async function SweepRunPage({ params }: { params: Promise<{ id: string }> }) {
-  if (!flags.sweepEnabled) notFound();
+  if (!flags.sweepEnabled) return <SweepOffPage title="Pay sweep" />;
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const read = await readCarrier();
@@ -41,7 +42,8 @@ export default async function SweepRunPage({ params }: { params: Promise<{ id: s
       {page ? (
         <SweepRun initial={page} auditorOn={flags.auditorEnabled} />
       ) : (
-        <div className="mx-auto w-full max-w-[880px] px-4 py-6 md:px-6 md:py-8">
+        <div className="mx-auto grid w-full max-w-[880px] gap-6 px-4 py-6 md:px-6 md:py-8">
+          <PageHeader title="Pay sweep" />
           <Card>
             <ErrorState category={problem ?? "unknown"} />
           </Card>

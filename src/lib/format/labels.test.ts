@@ -5,6 +5,7 @@ import {
   KNOWN_LINE_KINDS,
   KNOWN_STATUSES,
   lineKindLabel,
+  modelCallStatusLabel,
   recordLabel,
   statusLabel,
 } from "./labels";
@@ -30,11 +31,33 @@ describe("statusLabel", () => {
     for (const s of vocabularies.flat()) expect(KNOWN_STATUSES).toContain(s);
   });
 
+  it("says the in-between states in plain words", () => {
+    expect(statusLabel("reserved")).toBe("Waiting to send");
+    expect(statusLabel("unknown")).toBe("Not confirmed yet");
+    expect(statusLabel("executing")).toBe("Processing");
+    expect(statusLabel("incomplete")).toBe("Stopped early");
+    expect(statusLabel("cancelled")).toBe("Canceled");
+    expect(statusLabel("proposed")).toBe("Waiting for approval");
+  });
+
   it("degrades an unknown status to words and never throws", () => {
     expect(statusLabel("partly_shipped")).toBe("Partly shipped");
     expect(statusLabel("")).toBe("Not set");
     expect(statusLabel("__")).toBe("Not set");
     expect(statusLabel("toString")).toBe("Tostring");
+  });
+
+  it("never says a money action is being sent before it is, while a model call that is out says so", () => {
+    expect(statusLabel("reserved")).not.toMatch(/being sent/i);
+    expect(modelCallStatusLabel("reserved")).toBe("Being sent");
+    for (const s of ["ok", "incomplete", "failed", "unknown", "new_code"]) {
+      expect(modelCallStatusLabel(s)).toBe(statusLabel(s));
+    }
+  });
+
+  it("never calls an approved proposal that is running Approving", () => {
+    expect(statusLabel("approved")).toBe("Approved");
+    expect(statusLabel("executing")).not.toMatch(/approv/i);
   });
 });
 
@@ -83,5 +106,21 @@ describe("recordLabel", () => {
     );
     expect(recordLabel({ table: "pay_configs", id: "1" })).toBe("Pay rules 1");
     expect(recordLabel({ table: "odd_table", id: "9" })).toBe("Odd table 9");
+  });
+
+  it("uses the record's own reference when it has one: a name alone for a person or customer", () => {
+    const long = "0b9f6a52-3c1d-4e8f-9a7b-5d2c1e7c41e2";
+    expect(recordLabel({ table: "drivers", id: long }, "Monique Vasquez")).toBe("Monique Vasquez");
+    expect(recordLabel({ table: "customers", id: long }, "Tanglewood Grocery Supply")).toBe("Tanglewood Grocery Supply");
+    expect(recordLabel({ table: "loads", id: long }, "BR-L10244")).toBe("Load BR-L10244");
+    expect(recordLabel({ table: "invoices", id: long }, " BR-INV-10001 ")).toBe("Invoice BR-INV-10001");
+  });
+
+  it("falls back to the old label when the reference is missing or blank", () => {
+    const long = "0b9f6a52-3c1d-4e8f-9a7b-5d2c1e7c41e2";
+    for (const none of [undefined, null, "", "   "]) {
+      expect(recordLabel({ table: "loads", id: long }, none)).toBe("Load ending 7c41e2");
+      expect(recordLabel({ table: "loads", id: "L-10421" }, none)).toBe("Load L-10421");
+    }
   });
 });
