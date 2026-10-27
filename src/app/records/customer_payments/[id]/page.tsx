@@ -9,6 +9,7 @@ import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
 import { PostButton } from "@/components/invoices/post-button";
+import { quickBooksStanding } from "@/lib/invoices/labels";
 import { readPaymentRecord } from "@/lib/invoices/views";
 import { readRecordPage } from "../../read-record";
 
@@ -50,7 +51,7 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
               { label: "Credit left", value: <Money cents={p.creditCents} tone="plain" /> },
               { label: "Received", value: <Day value={p.receivedOn} /> },
               { label: "Method", value: METHOD_WORDS[p.method] ?? p.method },
-              { label: "QuickBooks", value: p.qboTail ? `Posted, id ending ${p.qboTail}` : "Not posted" },
+              { label: "QuickBooks", value: quickBooksStanding(p.qboTail, p.ledger.map((r) => r.state)) },
             ]}
           />
         </CardBody>
@@ -59,7 +60,7 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
       {canCheck ? <CheckButton url={`/api/customer-payments/${encodeURIComponent(p.id)}/reconcile`} /> : null}
       {!confirmed && !p.invoicesPosted ? (
         <p className="text-body text-foreground-2">
-          Posting waits until every invoice this payment applies to is posted to QuickBooks.
+          This payment can be sent to QuickBooks once every invoice it applies to is there.
         </p>
       ) : null}
       <DataTable

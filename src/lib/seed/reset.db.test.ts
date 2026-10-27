@@ -715,7 +715,7 @@ describe("the demo reset", () => {
       expect(refused).toBeInstanceOf(DemoResetRefused);
       expect((refused as DemoResetRefused).refusals).toEqual([{ kind: "open", count: 1 }]);
       expect((refused as Error).message).toBe(
-        "1 ledger row(s) still reserved, sent or unknown; settle them before a reset (nothing was cleared)",
+        "1 payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset (nothing was cleared)",
       );
       // Past the app's own check, the function refuses under the tenant lock.
       expect(await sqlStateOf(clearDirectly(A))).toBe(RESET_SQLSTATE.refused);
@@ -812,7 +812,7 @@ describe("the demo reset", () => {
       const refused = await errorOf(resetDemoTenant(app, A, planA));
       expect((refused as DemoResetRefused).refusals).toEqual([{ kind: "flagged", count: 1 }]);
       expect((refused as Error).message).toBe(
-        "1 proposal(s) a ledger row names carry a flag from an outside message; a person must " +
+        "1 card(s) behind a payment record carry a flag from an outside message; a person must " +
           "review them before a reset (nothing was cleared)",
       );
       expect(await sqlStateOf(clearDirectly(A))).toBe(RESET_SQLSTATE.refused);

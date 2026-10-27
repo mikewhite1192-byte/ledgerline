@@ -23,7 +23,7 @@ export function ContinueBatch({ batchId }: { batchId: string }) {
     if (reply.ok) {
       const d = reply.data;
       setNote(
-        `${whole(d.confirmed)} confirmed, ${whole(d.failed)} failed, ${whole(d.unknown)} waiting on a read-back, ` +
+        `${whole(d.confirmed)} confirmed, ${whole(d.failed)} failed, ${whole(d.unknown)} not confirmed yet, ` +
           `${whole(d.remaining)} still to send.`,
       );
     } else {

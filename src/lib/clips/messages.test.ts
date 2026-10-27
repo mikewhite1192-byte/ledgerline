@@ -34,6 +34,11 @@ describe("clip messages", () => {
     expect(clipMessage("ECONNRESET: socket hang up")).toBe(fallback);
   });
 
+  it("names every requirement a refused file can miss, the video format included", () => {
+    const words = clipMessage("unsupported");
+    for (const need of ["MP4", "H.264 or H.265", "steady frame rate", "even width and height"]) expect(words, need).toContain(need);
+  });
+
   it("names each status and each agreement", () => {
     expect(clipStatusText("redacting")).toBe("Waiting for the blurred clip");
     expect(clipStatusText("unreadable")).toBe("Needs a person to read it");

@@ -9,7 +9,7 @@ import { VisuallyHidden } from "@/components/ui/visually-hidden";
 import { traceLines, traceTotals, type TraceLine } from "@/lib/trace/format";
 import type { TurnTrace } from "@/lib/trace/types";
 import { cn } from "@/lib/cn";
-import { recordLabel } from "@/lib/format/labels";
+import { recordNamer } from "@/lib/format/labels";
 import { NOTE_REF_TABLE, noteHref } from "@/lib/memory/links";
 import { hrefOrNull, recordHref, type HrefFor } from "@/lib/records/href";
 
@@ -58,7 +58,7 @@ export function traceAnchor(turnId: string, proposalId?: string): string {
   return `trace-${proposalId ?? turnId}`;
 }
 
-function Line({ line, hrefFor }: { line: TraceLine; hrefFor: HrefFor }) {
+function Line({ line, hrefFor, name }: { line: TraceLine; hrefFor: HrefFor; name: ReturnType<typeof recordNamer> }) {
   return (
     <li className="grid gap-1 border-l-2 border-border pl-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -75,7 +75,7 @@ function Line({ line, hrefFor }: { line: TraceLine; hrefFor: HrefFor }) {
           {line.refs.map((ref) => {
             // A carrier note links to its row on the Memory page, never to a record page.
             const href = ref.table === NOTE_REF_TABLE ? noteHref(ref.id) : hrefOrNull(hrefFor, ref);
-            const label = ref.label ?? recordLabel(ref);
+            const label = ref.label ?? name(ref);
             return (
               <li key={`${ref.table}:${ref.id}`} className="text-small">
                 {href ? (
@@ -215,17 +215,19 @@ function Body({
       <EmptyState
         icon={<ListTree aria-hidden />}
         title="Nothing on file for this yet"
-        body="No model calls or gateway checks were recorded for it."
+        body="No model calls or safety checks were recorded for it."
         className="py-4"
       />
     );
   }
   const totals = traceTotals(state.trace, proposalId);
+  // One name per record across every step, so a record read twice reads the same both times.
+  const name = recordNamer(lines.flatMap((l) => l.refs));
   return (
     <div className="grid gap-3">
       <ol className="grid gap-3" aria-label="Steps, in order">
         {lines.map((line) => (
-          <Line key={line.key} line={line} hrefFor={hrefFor} />
+          <Line key={line.key} line={line} hrefFor={hrefFor} name={name} />
         ))}
       </ol>
       {totals ? <p className="border-t border-border pt-2 text-small text-muted-foreground tabular-nums">{totals}</p> : null}

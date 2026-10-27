@@ -144,8 +144,8 @@ function ReadResult({ view }: { view: DocumentView }) {
     if (!view.stalled) {
       return (
         <InlineAlert tone="info" title="Still reading">
-          Muse Spark is reading this document, or its last try could not finish. Reload the page in a minute or
-          two to see where it stands.
+          The document model is reading this document, or its last try could not finish. Reload the page in a
+          minute or two to see where it stands.
         </InlineAlert>
       );
     }
@@ -276,9 +276,15 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
           <div className="grid min-w-0 gap-4">
             <ReadResult view={view} />
             {view.readStatus === "read" || view.readCallId !== null ? (
-              <p className="text-caption text-muted-foreground">
-                Read by Muse Spark 1.3. Trace <span className="font-mono break-all">{view.traceId}</span>
-              </p>
+              <div className="grid gap-1 text-caption text-muted-foreground">
+                <p>Read by the document model.</p>
+                <details>
+                  <summary className="cursor-pointer text-link">Details</summary>
+                  <p>
+                    Reference <span className="font-mono break-all">{view.traceId}</span>
+                  </p>
+                </details>
+              </div>
             ) : null}
           </div>
         </div>
@@ -296,7 +302,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
       <div className="mx-auto grid w-full max-w-[1080px] gap-6">
         <PageHeader
           title={view ? kindLabel(view.kind) : "Document"}
-          description="What Muse Spark read, next to what your records say. Values from the document are claims."
+          description="What the document model read, next to what your records say. Values from the document are claims."
           actions={back}
         />
         {body}

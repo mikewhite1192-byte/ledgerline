@@ -29,7 +29,7 @@ const isTenantTable = (t: string): t is TenantTable => (TENANT_TABLES as readonl
 // What is kept, in plain words (DEMO_RESET_KEPT in src/lib/seed/reset.ts holds the full list).
 const KEPT = [
   "the carrier itself and every login",
-  "the record of model charges, the model spend alerts and the agent gateway's audit log",
+  "the record of model charges, the model spend alerts and the agent's safety check log",
   "the QuickBooks sandbox link",
 ];
 
@@ -85,7 +85,7 @@ export default async function DemoSettings() {
                   <CardTitle>{`Put ${view.name} back to its seeded week`}</CardTitle>
                   <CardDescription>
                     {`Every seeded record is rewritten exactly as the seed writes it for ${formatLocalDate(DEMO_ANCHOR)}. ` +
-                      "The agent's conversations and proposals, uploaded documents, voice notes, driver notes, " +
+                      "The agent's conversations and cards, uploaded documents, voice notes, driver notes, " +
                       "and settled test-mode payouts and bookings are deleted. " +
                       "It all happens at once: if any step fails, nothing changes."}
                   </CardDescription>

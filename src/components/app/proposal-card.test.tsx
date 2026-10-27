@@ -106,9 +106,9 @@ describe("ProposalCard", () => {
     expect((button(/Approving/) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("says it is waiting on the read-back when the outcome is unknown", () => {
+  it("says it is waiting for confirmation when the outcome is unknown", () => {
     render(<ProposalCard {...card} status="unknown" />);
-    expect(screen.getByText("Sent, waiting on the read-back.")).toBeTruthy();
+    expect(screen.getByText("Sent. Waiting for it to be confirmed; it is checked again on its own, and nothing is paid twice.")).toBeTruthy();
     expect(screen.getByText("Not confirmed yet")).toBeTruthy();
   });
 
@@ -252,12 +252,12 @@ describe("ProposalCard", () => {
 describe("ProposalCard with the auditor's check", () => {
   it("shows a fixed badge per verdict, and the plain sentence for every verdict but pass", () => {
     const cases: [ProposalAudit["state"], string][] = [
-      ["pass", "Checked by Muse Wonder: pass"],
-      ["concerns", "Muse Wonder has concerns"],
-      ["block", "Muse Wonder blocked this"],
-      ["unknown", "Not checked"],
-      ["budget", "Not checked: demo budget reached"],
-      ["off", "Auditor off"],
+      ["pass", "Second check passed"],
+      ["concerns", "Second check has concerns"],
+      ["block", "Second check did not pass"],
+      ["unknown", "Second check could not run"],
+      ["budget", "Second check skipped: demo budget reached"],
+      ["off", "Second check is off"],
     ];
     for (const [state, label] of cases) {
       const { unmount } = render(<ProposalCard {...card} audit={{ state, text: "A source record is missing." }} />);
@@ -269,13 +269,13 @@ describe("ProposalCard with the auditor's check", () => {
 
   it("says the data is unchanged when the demo budget stopped the check", () => {
     render(<ProposalCard {...card} audit={{ state: "budget" }} />);
-    expect(screen.getByText("The auditor could not check this proposal. Your data is unchanged.")).toBeTruthy();
+    expect(screen.getByText("The second check could not run on this request. Your data is unchanged.")).toBeTruthy();
     expect(button("Approve $200.00")).toBeTruthy();
   });
 
-  it("says Muse Wonder is checking, as a status", () => {
+  it("says the second check is running, as a status", () => {
     render(<ProposalCard {...card} audit={{ state: "checking" }} />);
-    expect(screen.getByRole("status").textContent).toContain("Muse Wonder is checking...");
+    expect(screen.getByRole("status").textContent).toContain("Running the second check...");
   });
 
   it("asks the given confirm question on concerns", () => {
@@ -284,12 +284,12 @@ describe("ProposalCard with the auditor's check", () => {
       <ProposalCard
         {...card}
         audit={{ state: "concerns", text: "The amount does not match the records." }}
-        confirmQuestion="Muse Wonder has concerns. Approve anyway?"
+        confirmQuestion="The second check has concerns. Approve anyway?"
         onApprove={onApprove}
       />,
     );
     fireEvent.click(button("Approve $200.00")!);
-    expect(screen.getByText("Muse Wonder has concerns. Approve anyway?")).toBeTruthy();
+    expect(screen.getByText("The second check has concerns. Approve anyway?")).toBeTruthy();
     fireEvent.click(button("Confirm")!);
     expect(onApprove).toHaveBeenCalledWith("p-1");
   });
@@ -324,7 +324,7 @@ describe("ProposalCard with the auditor's check", () => {
     fireEvent.change(screen.getByLabelText(/Why approve it anyway/), { target: { value: "  Driver showed the receipt  " } });
     fireEvent.click(button("Override and approve")!);
     expect(onApprove).not.toHaveBeenCalled();
-    expect(screen.getByText("Approve over Muse Wonder's block?")).toBeTruthy();
+    expect(screen.getByText("Approve even though the second check did not pass?")).toBeTruthy();
     expect(document.activeElement).toBe(button("Cancel"));
 
     fireEvent.click(button("Cancel")!);
@@ -354,8 +354,9 @@ describe("ProposalCard with the auditor's check", () => {
         audit={{ state: "block", override: { reason: "Driver showed the receipt", byLabel: "an admin", at: "Oct 28, 2026, 3:00 PM UTC" } }}
       />,
     );
-    expect(screen.getByText("Muse Wonder blocked this")).toBeTruthy();
+    expect(screen.getByText("Second check did not pass")).toBeTruthy();
     expect(screen.getByText("Overridden by an admin on Oct 28, 2026, 3:00 PM UTC: Driver showed the receipt")).toBeTruthy();
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    // The only button left is the help on the second check's words; no Approve, Reject or Confirm.
+    expect(screen.queryAllByRole("button").map((b) => b.textContent)).toEqual(["Second check did not pass"]);
   });
 });

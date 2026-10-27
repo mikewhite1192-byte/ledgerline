@@ -88,7 +88,7 @@ export function UploadForm({ maxBytes, maxPdfPages }: { maxBytes: number; maxPdf
         </Button>
       </div>
       {pending ? (
-        <InlineAlert tone="info">Muse Spark is reading the document. This can take up to half a minute.</InlineAlert>
+        <InlineAlert tone="info">The document model is reading the document. This can take up to half a minute.</InlineAlert>
       ) : null}
     </form>
   );

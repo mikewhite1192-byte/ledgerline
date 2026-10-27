@@ -63,8 +63,8 @@ describe("HowWorkedOut", () => {
     expect(screen.getByText("Checking advance eligibility: blocked, the amount is over the eligible limit ($412.00)")).toBeTruthy();
     expect(screen.getByText("Blocked")).toBeTruthy();
     expect(screen.getByText("5 model calls, 2.6 cents in all, 7.4 s of model time")).toBeTruthy();
-    const link = screen.getByRole("link", { name: /Pay item ending/ });
-    expect(link.getAttribute("href")).toMatch(/^\/records\/pay_items\//);
+    const links = screen.getAllByRole("link", { name: "Pay item" });
+    expect(links[0].getAttribute("href")).toMatch(/^\/records\/pay_items\//);
   });
 
   it("links each carrier note it remembered to its row on Memory, by its label", async () => {
@@ -95,9 +95,9 @@ describe("HowWorkedOut", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: CARD }));
     await screen.findByRole("list", { name: "Steps, in order" });
-    expect(screen.queryByText("Reading pay items: allowed")).toBeNull();
-    expect(screen.getByText("Auditor (Muse Wonder)")).toBeTruthy();
-    expect(screen.getByText("Checked the proposal and found no problem")).toBeTruthy();
+    expect(screen.queryByText("Reading pay items: passed the safety check")).toBeNull();
+    expect(screen.getByText("Second check (Muse Wonder)")).toBeTruthy();
+    expect(screen.getByText("Gave the card a second check: passed")).toBeTruthy();
     expect(screen.getByText("3 model calls, 7.3 cents in all, 8.1 s of model time")).toBeTruthy();
   });
 

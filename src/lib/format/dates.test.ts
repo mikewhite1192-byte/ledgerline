@@ -86,7 +86,15 @@ describe("zoneName", () => {
   });
 
   it("drops Standard from a zone with no daylight time", () => {
-    expect(zoneName("America/Phoenix", summer)).toBe("Mountain time");
+    expect(zoneName("Asia/Tokyo", summer)).toBe("Japan time");
+  });
+
+  it("tells Arizona, which keeps standard time all year, apart from Mountain time", () => {
+    for (const at of [summer, winter]) {
+      expect(zoneName("America/Phoenix", at)).toBe("Arizona time");
+      expect(zoneName("US/Arizona", at)).toBe("Arizona time");
+      expect(zoneName("America/Denver", at)).toBe("Mountain time");
+    }
   });
 
   it("reads UTC as UTC and an unknown id as the last part of it, never a raw id", () => {
