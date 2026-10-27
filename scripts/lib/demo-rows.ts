@@ -39,5 +39,14 @@ export async function ensureRows(db: Db, carrier: DemoCarrier, tenantId: string,
     if (member.length !== 1 || member[0].email !== carrier.email) {
       throw new Error(`${carrier.email} is linked to another tenant; fix it by hand`);
     }
+    // The pay sweep's own login for this carrier (migration 0018 adds it for tenants that
+    // already exist): staff, and its sub is not a Cognito id, so no person can sign in as it.
+    await q.execute(
+      `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+       VALUES (current_tenant_id(), 'service:sweep:' || CAST(current_tenant_id() AS text),
+               'sweep@' || $1 || '.invalid', 'staff')
+       ON CONFLICT (cognito_sub) DO NOTHING`,
+      [carrier.slug],
+    );
   });
 }

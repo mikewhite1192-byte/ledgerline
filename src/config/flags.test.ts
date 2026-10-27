@@ -108,6 +108,22 @@ describe("flags", () => {
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 
+  it("keeps the sweep off, its schedule off, its fixes unable to run and its caps small", () => {
+    expect(flags.sweepEnabled).toBe(false);
+    expect(flags.sweepScheduleEnabled).toBe(false);
+    expect(flags.payCorrectionsEnabled).toBe(false);
+    expect(flags.sweepLimits).toEqual({
+      maxItems: 40,
+      maxRunCents: 150,
+      maxExplainCents: 5,
+      sliceMs: 20_000,
+      maxAuditAttempts: 3,
+    });
+    // One slice answers inside the 30 second route limit with room for the last write.
+    expect(flags.sweepLimits.sliceMs).toBeLessThan(25_000);
+    expect(flags.approveAllLimits).toEqual({ maxItems: 25 });
+  });
+
   it("ships invoicing and customer payments dark, with small caps and a start date", () => {
     expect(flags.invoicesEnabled).toBe(false);
     expect(flags.customerPaymentsEnabled).toBe(false);

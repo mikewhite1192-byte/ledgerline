@@ -17,6 +17,9 @@ export const FIREWORKS_API_KEY_SECRET_NAME = "payday-copilot/fireworks-api-key";
 export const QBO_CLIENT_SECRET_NAME = "payday-copilot/qbo-client-secret";
 export const QBO_TOKEN_KEY_SECRET_NAME = "payday-copilot/qbo-token-key";
 export const STRIPE_SECRET_KEY_SECRET_NAME = "payday-copilot/stripe-test-key";
+// The nightly sweep kicker's key (PaydayCopilotSweep generates it); the app checks the kicker's
+// header against it. Read by name, like the others.
+export const SWEEP_INTERNAL_KEY_SECRET_NAME = "payday-copilot/sweep-internal-key";
 // The QuickBooks API minor version the adapter asks for (Intuit retired those below 75).
 export const QBO_MINOR_VERSION = "75";
 // The highest a spend cap may be set, in cents ($400). The $150 Meta credit is spent first and the
@@ -68,6 +71,7 @@ export const BRANCH_ENV_NAMES = [
   "QBO_CLIENT_SECRET_NAME",
   "QBO_TOKEN_KEY_SECRET_NAME",
   "STRIPE_SECRET_KEY_SECRET_NAME",
+  "SWEEP_INTERNAL_KEY_SECRET_NAME",
   ...OPTIONAL_BRANCH_ENV_NAMES,
 ];
 
@@ -265,6 +269,7 @@ export class HostingStack extends Stack {
       Secret.fromSecretNameV2(this, "QboClientSecret", QBO_CLIENT_SECRET_NAME),
       Secret.fromSecretNameV2(this, "QboTokenKey", QBO_TOKEN_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "StripeTestKey", STRIPE_SECRET_KEY_SECRET_NAME),
+      Secret.fromSecretNameV2(this, "SweepInternalKey", SWEEP_INTERNAL_KEY_SECRET_NAME),
     ].map((secret) => `${secret.secretArn}-??????`);
 
     // The SSR runtime's credentials: the Data API on this cluster, the app's own database login,
@@ -318,6 +323,7 @@ export class HostingStack extends Stack {
       QBO_CLIENT_SECRET_NAME,
       QBO_TOKEN_KEY_SECRET_NAME,
       STRIPE_SECRET_KEY_SECRET_NAME,
+      SWEEP_INTERNAL_KEY_SECRET_NAME,
       ...money,
     };
 
