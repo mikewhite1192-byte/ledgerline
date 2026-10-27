@@ -17,13 +17,14 @@ const ARGS = sampleArgs(plan);
 const TOOLS = Object.values(TOOL_REGISTRY);
 const call = (name: string, args: unknown) => ({ id: "c", name, argumentsJson: JSON.stringify(args) });
 
-// Every tool's switch on (detention, reports, invoicing and customer payments), so each test
+// Every tool's switch on (detention, reports, invoicing, invoice review and customer payments), so each test
 // below reaches every registered tool. The detention switch's own cases are in detention-tools.test.ts; the last test here checks
 // the report switch-off path.
 beforeEach(() => {
   flags.detentionEnabled = true;
   flags.reportsEnabled = true;
   flags.invoicesEnabled = true;
+  flags.invoiceReviewEnabled = true;
   flags.customerPaymentsEnabled = true;
 });
 
@@ -31,6 +32,7 @@ afterEach(() => {
   flags.detentionEnabled = false;
   flags.reportsEnabled = false;
   flags.invoicesEnabled = false;
+  flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
   vi.restoreAllMocks();
 });

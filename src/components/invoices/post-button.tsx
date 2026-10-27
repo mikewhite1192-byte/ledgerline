@@ -18,7 +18,7 @@ const STATE_NOTE: Readonly<Record<string, string>> = {
 
 // "Post to QuickBooks" on a record page. The server's ledger key makes a second click a replay of
 // the first attempt; this button only keeps a click from going out twice while one is running.
-export function PostButton({ url }: { url: string }) {
+export function PostButton({ url, label = "Post to QuickBooks" }: { url: string; label?: string }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [note, setNote] = useState("");
@@ -41,7 +41,7 @@ export function PostButton({ url }: { url: string }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
       <Button type="button" variant="primary" pending={pending} onClick={() => void post()}>
-        Post to QuickBooks
+        {label}
       </Button>
       <p role="status" className="text-small text-foreground-2">
         {note}
