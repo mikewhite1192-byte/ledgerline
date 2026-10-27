@@ -141,6 +141,29 @@ describe("findingInWeek", () => {
     }
   });
 
+  it("keeps a finding whose record at fault is dated exactly on the week's first or last day", () => {
+    const dup = byCheck.get("duplicate_advance")!;
+    const fuel = byCheck.get("fuel_on_wrong_driver")!;
+    const day = byCheck.get("insurance_day_not_driven")!;
+    const reimb = byCheck.get("missing_reimbursement")!;
+    const rate = byCheck.get("delivered_without_rate")!;
+    expect(openWeek.start < openWeek.end).toBe(true);
+    for (const on of [openWeek.start, openWeek.end]) {
+      const dated = {
+        ...input,
+        advances: input.advances.map((a) => (a.id === at(dup) ? { ...a, requestedOn: on } : a)),
+        items: input.items.map((i) => (i.id === at(fuel) ? { ...i, itemDate: on } : i)),
+        days: input.days.map((d) => (d.id === at(day) ? { ...d, day: on } : d)),
+        loads: input.loads.map((l) =>
+          l.id === loadOf(reimb) || l.id === at(rate) ? { ...l, deliveredOn: on } : l,
+        ),
+      };
+      for (const f of [dup, fuel, day, reimb, rate]) {
+        expect([f.check, on, findingInWeek(f, dated, openWeek)]).toEqual([f.check, on, true]);
+      }
+    }
+  });
+
   it("leaves out a finding whose day cannot be read", () => {
     const rate = byCheck.get("delivered_without_rate")!;
     const undated = { ...input, loads: input.loads.map((l) => (l.id === at(rate) ? { ...l, deliveredOn: null } : l)) };
