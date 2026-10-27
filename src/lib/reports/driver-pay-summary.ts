@@ -5,7 +5,17 @@ import {
   type SettlementPeriodRecord,
   type SettlementRecord,
 } from "../rules-engine";
-import { argsOf, byId, driverCell, labelOf, mustGet, reportOf, SETTLEMENT_WORDS, WORKER_WORDS } from "./build";
+import {
+  argsOf,
+  byId,
+  driverCell,
+  labelOf,
+  mustGet,
+  periodHolding,
+  reportOf,
+  SETTLEMENT_WORDS,
+  WORKER_WORDS,
+} from "./build";
 import type { ReportResult, ReportRow } from "./types";
 
 // Each driver's pay for one week, from the settlements the pay run stored (the engine's own
@@ -20,9 +30,10 @@ export type DriverPaySummaryInput = {
 
 export type DriverPaySummaryArgs = { periodStart?: string; driverId?: string };
 
-// The week asked for, or the latest week the pay run has settlements for.
-function weekOf(input: DriverPaySummaryInput, periodStart?: string): SettlementPeriodRecord | null {
-  if (periodStart !== undefined) return input.periods.find((p) => p.periodStart === periodStart) ?? null;
+// The week that holds the day asked for (its first day or any day in it), or the latest week the
+// pay run has settlements for. The result's args name the first day of the week used.
+function weekOf(input: DriverPaySummaryInput, day?: string): SettlementPeriodRecord | null {
+  if (day !== undefined) return periodHolding(input.periods, day);
   const settled = new Set(input.settlements.map((s) => s.periodId));
   const withRows = input.periods.filter((p) => settled.has(p.id));
   withRows.sort((a, b) => compareText(b.periodStart, a.periodStart));

@@ -1,3 +1,5 @@
+import { createElement, Fragment, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { REPORT_COLUMNS, REPORT_TITLES, type ReportResult } from "@/lib/reports/types";
 import { formatBps, reportResultOf, reportTable } from "./report-table";
@@ -49,6 +51,62 @@ describe("reportTable", () => {
   });
 });
 
+describe("reportTable captions and cells", () => {
+  const aging: ReportResult = {
+    report: "ar_aging",
+    title: REPORT_TITLES.ar_aging,
+    asOf: "2026-10-15",
+    args: { asOf: "2026-10-15" },
+    columns: [...REPORT_COLUMNS.ar_aging],
+    rows: [{ customer: { table: "customers", id: "c1", label: "Harbor Foods" }, currentCents: 100, totalCents: 100 }],
+    totals: { currentCents: 100, totalCents: 100 },
+    truncated: false,
+    rowsTotal: 1,
+  };
+
+  it("says the aging is today's open balances, aged as of the date asked", () => {
+    const t = reportTable("ar_aging", { state: "ready", result: aging });
+    expect(t.caption).toBe("Receivables aging, open balances today, by how late they are as of Oct 15, 2026");
+  });
+
+  it("keeps the plain as-of caption for a report with no week", () => {
+    const advances: ReportResult = {
+      ...aging,
+      report: "advances_outstanding",
+      title: REPORT_TITLES.advances_outstanding,
+      columns: [...REPORT_COLUMNS.advances_outstanding],
+      rows: [],
+      totals: undefined,
+      rowsTotal: 0,
+    };
+    const t = reportTable("advances_outstanding", { state: "ready", result: advances });
+    expect(t.caption).toBe("Advances outstanding, as of Oct 15, 2026");
+  });
+
+  it("shows a malformed date cell as not known instead of breaking the chat", () => {
+    const html = (node: ReactNode) => renderToStaticMarkup(createElement(Fragment, null, node));
+    const advances = (oldestRequestedOn: string): ReportResult => ({
+      ...aging,
+      report: "advances_outstanding",
+      title: REPORT_TITLES.advances_outstanding,
+      columns: [...REPORT_COLUMNS.advances_outstanding],
+      rows: [{ driver: { table: "drivers", id: "d1", label: "Ann" }, advances: 1, outstandingCents: 5000, oldestRequestedOn }],
+      totals: undefined,
+    });
+    const cellFor = (value: string) => {
+      const t = reportTable("advances_outstanding", { state: "ready", result: advances(value) });
+      const column = t.columns.find((c) => c.key === "oldestRequestedOn");
+      if (!column) throw new Error("date column missing");
+      return html(column.cell(t.rows[0]));
+    };
+    expect(cellFor("2026-10-12")).toBe("Oct 12, 2026");
+    for (const bad of ["2026-02-30", "10/12/2026", "", "2026-1-2"]) {
+      expect(() => cellFor(bad), bad).not.toThrow();
+      expect(cellFor(bad), bad).toContain("Not known");
+    }
+  });
+});
+
 describe("reportResultOf", () => {
   it("takes only the report that was asked for, in the expected shape", () => {
     expect(reportResultOf("cash_needed", result)).toBe(result);
@@ -56,5 +114,15 @@ describe("reportResultOf", () => {
     expect(reportResultOf("cash_needed", { ...result, rows: "x" })).toBeNull();
     expect(reportResultOf("cash_needed", { error: "not_found" })).toBeNull();
     expect(reportResultOf("cash_needed", null)).toBeNull();
+  });
+
+  it("refuses a body whose caption dates are not calendar dates, so the chat never throws on them", () => {
+    expect(reportResultOf("cash_needed", { ...result, asOf: "2026-02-30" })).toBeNull();
+    expect(reportResultOf("cash_needed", { ...result, period: { start: "2026-10-26", end: "soon" } })).toBeNull();
+    expect(reportResultOf("cash_needed", { ...result, period: { start: "2026-11-01", end: "2026-10-26" } })).toBeNull();
+    expect(reportResultOf("cash_needed", { ...result, period: null })).toBeNull();
+    const noPeriod: ReportResult = { ...result };
+    delete noPeriod.period;
+    expect(reportResultOf("cash_needed", noPeriod)).toEqual(noPeriod);
   });
 });

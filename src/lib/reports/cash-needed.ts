@@ -1,16 +1,27 @@
 import {
   compareText,
+  ConfigError,
   sum,
   type DriverRecord,
   type SettlementPeriodRecord,
   type SettlementRecord,
 } from "../rules-engine";
-import { argsOf, byId, driverCell, labelOf, mustGet, reportOf, SETTLEMENT_WORDS, WORKER_WORDS } from "./build";
+import {
+  argsOf,
+  byId,
+  driverCell,
+  labelOf,
+  mustGet,
+  periodHolding,
+  reportOf,
+  SETTLEMENT_WORDS,
+  WORKER_WORDS,
+} from "./build";
 import type { ReportResult, ReportRow, ReportSubtotal } from "./types";
 
 // What the next pay run will pay out: the stored settlements of one week that are not paid yet
 // (draft or approved) with net pay above zero, by worker type, with the total. The week is the
-// one asked for, or the open week.
+// one that holds the day asked for, or the open week.
 
 export type CashNeededInput = {
   periods: readonly SettlementPeriodRecord[];
@@ -25,10 +36,12 @@ const GROUPS: readonly { type: DriverRecord["workerType"]; label: string }[] = [
   { type: "owner_operator", label: "Owner-operators" },
 ];
 
-function weekOf(input: CashNeededInput, periodStart?: string): SettlementPeriodRecord | null {
-  if (periodStart !== undefined) return input.periods.find((p) => p.periodStart === periodStart) ?? null;
+// The week that holds the day asked for (its first day or any day in it), or the one open week.
+// Two open weeks are refused with the engine's own category, never picked between.
+function weekOf(input: CashNeededInput, day?: string): SettlementPeriodRecord | null {
+  if (day !== undefined) return periodHolding(input.periods, day);
   const open = input.periods.filter((p) => p.status === "open");
-  open.sort((a, b) => compareText(b.periodStart, a.periodStart));
+  if (open.length > 1) throw new ConfigError("more_than_one_open_period");
   return open[0] ?? null;
 }
 

@@ -69,10 +69,13 @@ function noticeOf(map: Readonly<Record<string, string>>, category: unknown, fall
     : fallback;
 }
 
+// onShow, when set, is called as a report's table first scrolls into view, so its rows are read
+// then and not for every table of a long thread at page load.
 export function toMessages(
   turns: LocalTurn[],
   notices: Readonly<Record<string, string>>,
   reports: Readonly<Record<string, ReportLoad>> = {},
+  onShow?: (turnId: string, report: ReportView) => void,
 ): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const t of turns) {
@@ -96,7 +99,11 @@ export function toMessages(
     else if (t.text) parts.push({ kind: "text", text: t.text });
     for (const r of t.reports ?? []) {
       const load = reports[reportKey(t.id, r)] ?? { state: "loading" };
-      parts.push({ kind: "table", table: reportTable(r.name, load) });
+      parts.push({
+        kind: "table",
+        table: reportTable(r.name, load),
+        ...(onShow ? { onVisible: () => onShow(t.id, r) } : {}),
+      });
       if (load.state === "ready" && load.result.rows.length > 0) {
         parts.push({ kind: "link", href: reportPath(r.name, r.args, "csv"), label: "Download CSV" });
       }
@@ -189,19 +196,16 @@ export function AgentChat({
     timers.current.add(t);
   }, []);
 
-  // Each report a turn built is fetched once; until it arrives its table shows loading rows.
-  useEffect(() => {
-    for (const t of turns) {
-      for (const r of t.reports ?? []) {
-        const key = reportKey(t.id, r);
-        if (asked.current.has(key)) continue;
-        asked.current.add(key);
-        void readReport(r).then((load) => {
-          if (alive.current) setReports((all) => ({ ...all, [key]: load }));
-        });
-      }
-    }
-  }, [turns]);
+  // A report's table is fetched when it first scrolls into view, and once only, however often it
+  // is seen again or remounted; until it arrives its table shows loading rows.
+  const showReport = useCallback((turnId: string, r: ReportView) => {
+    const key = reportKey(turnId, r);
+    if (asked.current.has(key)) return;
+    asked.current.add(key);
+    void readReport(r).then((load) => {
+      if (alive.current) setReports((all) => ({ ...all, [key]: load }));
+    });
+  }, []);
 
   const patch = useCallback((turnId: string, next: (t: LocalTurn) => LocalTurn) => {
     setTurns((all) => all.map((t) => (t.id === turnId ? next(t) : t)));
@@ -359,7 +363,7 @@ export function AgentChat({
   const owner = new Map<string, { turnId: string; flagged: boolean }>();
   for (const t of turns) for (const p of t.proposals) owner.set(p.id, { turnId: t.id, flagged: p.flagged });
 
-  const messages = toMessages(turns, notices, reports).map((m) => ({
+  const messages = toMessages(turns, notices, reports, showReport).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
       if (p.kind !== "proposal") return p;

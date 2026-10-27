@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { blueRidgePlan, planDb } from "../agent/gateway/__tests__/plan-db";
 import { TENANT } from "../agent/gateway/__tests__/fake-db";
-import { advanceOf, driverOf, periodOf, settlementOf } from "../data/records";
+import { configForDay } from "../data/config-version";
+import { advanceOf, customerOf, driverOf, loadsOf, payConfigOf, periodOf, settlementOf } from "../data/records";
 import golden from "../seed/golden.json";
 import { computeAdvancesOutstanding } from "./advances-outstanding";
 import { parseReportArgs, type ReportRequest } from "./args";
 import { computeCashNeeded } from "./cash-needed";
+import { reportCsv } from "./csv";
+import { computeDriverPaySummary } from "./driver-pay-summary";
+import { computeMarginPerLoad, type MarginPerLoadInput } from "./margin-per-load";
 import { computeReport } from "./run";
 import { REPORT_COLUMNS, REPORT_NAMES, type ReportResult, type ReportRow } from "./types";
 
@@ -97,6 +101,40 @@ describe("driver_pay_summary", () => {
     const missing = await run("driver_pay_summary", { periodStart: "2025-01-06" });
     expect(missing.emptyReason).toBe("no_pay_run");
   });
+
+  it("finds the week that holds a mid-week day, and names that week's first day in its args", async () => {
+    const start = await run("driver_pay_summary", { periodStart: "2026-10-19" });
+    for (const day of ["2026-10-21", "2026-10-25"]) {
+      const mid = await run("driver_pay_summary", { periodStart: day });
+      expect(mid.period, day).toEqual({ start: "2026-10-19", end: "2026-10-25" });
+      expect(mid.args, day).toEqual({ periodStart: "2026-10-19" });
+      expect(mid.totals, day).toEqual(start.totals);
+      expect(mid.rows, day).toEqual(start.rows);
+    }
+  });
+
+  it("still says no pay run for a day no week holds", async () => {
+    const r = await run("driver_pay_summary", { periodStart: "2025-01-08" });
+    expect(r.rows).toEqual([]);
+    expect(r.emptyReason).toBe("no_pay_run");
+    expect(r.period).toBeUndefined();
+    expect(r.args).toEqual({ periodStart: "2025-01-08" });
+  });
+
+  it("refuses two weeks that hold the same day instead of picking one", () => {
+    const periods = plan.rows.settlement_periods.map(periodOf);
+    const week = periods.find((p) => p.periodStart === "2026-10-19");
+    if (!week) throw new Error("seed week missing");
+    const overlap = { ...week, id: "33333333-3333-4333-8333-333333333333", periodStart: "2026-10-21", periodEnd: "2026-10-27" };
+    const input = {
+      periods: [...periods, overlap],
+      settlements: plan.rows.settlements.map(settlementOf),
+      drivers: plan.rows.drivers.map(driverOf),
+    };
+    expect(() => computeDriverPaySummary(input, { periodStart: "2026-10-22" }, "2026-11-02")).toThrow(
+      "two pay weeks hold the same day",
+    );
+  });
 });
 
 describe("advances_outstanding", () => {
@@ -153,6 +191,43 @@ describe("cash_needed", () => {
     expect(r.emptyReason).toBe("no_rows");
   });
 
+  it("finds the week that holds a mid-week day, and says no pay run for a day no week holds", async () => {
+    const mid = await run("cash_needed", { periodStart: "2026-10-21" });
+    expect(mid.period).toEqual({ start: "2026-10-19", end: "2026-10-25" });
+    expect(mid.args).toEqual({ periodStart: "2026-10-19" });
+    expect(mid.emptyReason).toBe("no_rows");
+
+    const open = await run("cash_needed", { periodStart: "2026-10-29" });
+    expect(open.period).toEqual({ start: "2026-10-26", end: "2026-11-01" });
+    expect(open.emptyReason).toBe("no_pay_run");
+
+    const none = await run("cash_needed", { periodStart: "2025-01-08" });
+    expect(none.period).toBeUndefined();
+    expect(none.args).toEqual({ periodStart: "2025-01-08" });
+    expect(none.emptyReason).toBe("no_pay_run");
+  });
+
+  it("refuses two open weeks with the engine's own category instead of picking one", () => {
+    const periods = plan.rows.settlement_periods.map(periodOf);
+    const open = periods.filter((p) => p.status === "open");
+    expect(open).toHaveLength(1);
+    const paid = periods.find((p) => p.periodStart === "2026-10-19");
+    if (!paid) throw new Error("seed week missing");
+    const input = {
+      periods: periods.map((p) => (p.id === paid.id ? { ...p, status: "open" as const } : p)),
+      settlements: plan.rows.settlements.map(settlementOf),
+      drivers: plan.rows.drivers.map(driverOf),
+    };
+    expect(() => computeCashNeeded(input, {}, "2026-11-02")).toThrow(
+      expect.objectContaining({ name: "ConfigError", message: "more_than_one_open_period" }),
+    );
+    // A day asked for names its own week, so two open weeks do not matter then.
+    expect(computeCashNeeded(input, { periodStart: "2026-10-21" }, "2026-11-02").period).toEqual({
+      start: "2026-10-19",
+      end: "2026-10-25",
+    });
+  });
+
   it("sums unpaid settlements above zero by worker type", () => {
     const periods = plan.rows.settlement_periods.map(periodOf);
     const week = periods.find((p) => p.periodStart === "2026-10-19");
@@ -175,7 +250,7 @@ describe("cash_needed", () => {
 describe("margin_per_load", () => {
   const window = { periodStart: "2026-10-05", periodEnd: "2026-11-01" };
 
-  it("leaves the load with no rate empty with a note, and totals only what is known", async () => {
+  it("leaves the load with no rate empty with a note, and sums only what is known", async () => {
     const noRate = plan.rows.loads.find((l) => l.id === plan.planted.noRateLoadId);
     expect(noRate?.delivered_on && noRate.delivered_on >= window.periodStart && noRate.delivered_on <= window.periodEnd).toBe(true);
     const r = await run("margin_per_load", window);
@@ -187,14 +262,80 @@ describe("margin_per_load", () => {
     expect(String(row?.note)).toContain("No rate");
 
     const known = r.rows.filter((x) => typeof x.revenueCents === "number" && typeof x.driverPayCents === "number");
-    expect(r.totals?.revenueCents).toBe(total(column(known, "revenueCents")));
-    expect(r.totals?.driverPayCents).toBe(total(column(known, "driverPayCents")));
-    expect(r.totals?.marginCents).toBe((r.totals?.revenueCents ?? 0) - (r.totals?.driverPayCents ?? 0));
+    // Not every load is priced, so the sums are a labeled row and there is no Total.
+    expect(r.totals).toBeUndefined();
+    expect(r.subtotals).toHaveLength(1);
+    const sums = r.subtotals?.[0];
+    expect(sums?.label).toBe(`Priced loads: ${known.length} of ${r.rows.length}`);
+    expect(sums?.totals.revenueCents).toBe(total(column(known, "revenueCents")));
+    expect(sums?.totals.driverPayCents).toBe(total(column(known, "driverPayCents")));
+    expect(sums?.totals.marginCents).toBe((sums?.totals.revenueCents ?? 0) - (sums?.totals.driverPayCents ?? 0));
     for (const x of known) expect(x.marginCents).toBe((x.revenueCents as number) - (x.driverPayCents as number));
     expect(r.period).toEqual({ start: window.periodStart, end: window.periodEnd });
     const days = r.rows.map((x) => String(x.deliveredOn));
     expect(days).toEqual([...days].sort());
     expect(days.every((d) => d >= window.periodStart && d <= window.periodEnd)).toBe(true);
+  });
+
+  // The Blue Ridge records as the report's input, with only the loads a test keeps. A day named in
+  // noRulesOn reads as one no pay rules cover.
+  function marginInput(keep: (loadId: string) => boolean, noRulesOn?: string): MarginPerLoadInput {
+    const rows = plan.rows;
+    return {
+      loads: loadsOf(rows.loads, rows.load_state_miles, rows.load_accessorials).filter((l) => keep(l.id)),
+      drivers: rows.drivers.map(driverOf),
+      customers: rows.customers.map(customerOf),
+      payConfigOn: (day) => (day === noRulesOn ? null : payConfigOf(configForDay(rows.pay_configs, day))),
+    };
+  }
+
+  // The rows of the loads in the window with both revenue and driver pay known.
+  async function pricedRows(): Promise<ReportRow[]> {
+    const full = await run("margin_per_load", window);
+    return full.rows.filter((x) => typeof x.revenueCents === "number" && typeof x.driverPayCents === "number");
+  }
+
+  const loadId = (row: ReportRow | undefined) => (row?.load as { id: string } | undefined)?.id ?? "";
+
+  it("shows a Total only when every load is priced, and then it foots to every column", async () => {
+    const priced = new Set((await pricedRows()).map(loadId));
+    expect(priced.size).toBeGreaterThan(0);
+    const r = computeMarginPerLoad(marginInput((id) => priced.has(id)), window, "2026-11-02");
+    expect(r.rows).toHaveLength(priced.size);
+    expect(r.subtotals).toBeUndefined();
+    for (const key of ["revenueCents", "driverPayCents", "marginCents"]) {
+      expect(r.totals?.[key], key).toBe(total(column(r.rows, key)));
+    }
+    expect(reportCsv(r).trimEnd().split("\r\n").at(-1)?.startsWith("Total,")).toBe(true);
+  });
+
+  it("puts the sums on a row labeled with how many loads they cover when a load has revenue but no pay", async () => {
+    const priced = await pricedRows();
+    const [first] = priced;
+    const day = String(first.deliveredOn);
+    const others = priced.filter((x) => x.deliveredOn !== day).slice(0, 2);
+    expect(others).toHaveLength(2);
+    const chosen = new Set([first, ...others].map(loadId));
+    const r = computeMarginPerLoad(marginInput((id) => chosen.has(id), day), window, "2026-11-02");
+    expect(r.rows).toHaveLength(3);
+    const unpriced = r.rows.find((x) => loadId(x) === loadId(first));
+    expect(unpriced?.note).toBe("No pay rules");
+    expect(unpriced?.revenueCents).toBe(first.revenueCents);
+    expect(unpriced?.driverPayCents).toBeNull();
+    expect(r.totals).toBeUndefined();
+    expect(r.subtotals?.map((s) => s.label)).toEqual(["Priced loads: 2 of 3"]);
+    const covered = r.rows.filter((x) => x !== unpriced);
+    expect(r.subtotals?.[0].totals.revenueCents).toBe(total(column(covered, "revenueCents")));
+    expect(r.subtotals?.[0].totals.driverPayCents).toBe(total(column(covered, "driverPayCents")));
+    // The Revenue column holds the unpriced load too, so it does not foot to the sums row.
+    expect(total(column(r.rows, "revenueCents"))).toBe(
+      (r.subtotals?.[0].totals.revenueCents ?? 0) + (first.revenueCents as number),
+    );
+    // The download carries the same labeled row and no Total row.
+    const lines = reportCsv(r).trimEnd().split("\r\n");
+    expect(lines).toHaveLength(1 + 3 + 1);
+    expect(lines.at(-1)?.startsWith("Priced loads: 2 of 3,")).toBe(true);
+    expect(lines.some((l) => l.startsWith("Total,"))).toBe(false);
   });
 
   it("narrows to one customer", async () => {

@@ -19,7 +19,14 @@ describe("fitResult", () => {
     if (!request) throw new Error("bad args");
     const full = await planDb(plan).withTenant(TENANT, (q) => computeReport(q, request, CLOCK));
     expect(full.rows.length).toBeGreaterThan(50);
-    const fitted = fitResult(full) as { rows: unknown[]; rowsShown: number; rowsTotal: number; truncated: boolean; totals: unknown };
+    const fitted = fitResult(full) as {
+      rows: unknown[];
+      rowsShown: number;
+      rowsTotal: number;
+      truncated: boolean;
+      totals: unknown;
+      subtotals: unknown;
+    };
     expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(MAX_RESULT_CHARS);
     expect(fitted.rows.length).toBeGreaterThan(0);
     expect(fitted.rows.length).toBeLessThanOrEqual(50);
@@ -28,6 +35,9 @@ describe("fitResult", () => {
     expect(fitted.rowsTotal).toBe(full.rows.length);
     expect(fitted.truncated).toBe(true);
     expect(fitted.totals).toEqual(full.totals);
+    // Not every load in this window is priced, so the sums ride on a labeled row, kept whole too.
+    expect(full.subtotals).toHaveLength(1);
+    expect(fitted.subtotals).toEqual(full.subtotals);
   });
 
   it("leaves a small report whole", async () => {

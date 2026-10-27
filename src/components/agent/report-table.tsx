@@ -3,6 +3,7 @@ import type { Column, DataTableProps } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { formatLocalDate, formatPeriod } from "@/lib/format/dates";
 import { hrefOrNull, recordHref, type HrefFor } from "@/lib/records/href";
+import { isLocalDate } from "@/lib/time/local-date";
 import {
   EMPTY_TEXT,
   isRefCell,
@@ -59,16 +60,22 @@ function cellOf(column: ReportColumn, value: ReportCell, hrefFor: HrefFor): Reac
     case "pct":
       return typeof value === "number" ? <span className="tabular-nums">{formatBps(value)}</span> : null;
     case "date":
-      return typeof value === "string" ? formatLocalDate(value) : null;
+      // A malformed date shows as not known instead of breaking the whole chat.
+      if (typeof value !== "string") return null;
+      return isLocalDate(value) ? formatLocalDate(value) : <Unknown />;
     case "text":
       return typeof value === "string" ? value : null;
   }
 }
 
+// The aging uses today's open balances whatever date it ages them on, so its caption says so
+// instead of reading as the position on that date.
 function captionOf(result: ReportResult): string {
   const when = result.period
     ? formatPeriod(result.period.start, result.period.end)
-    : `as of ${formatLocalDate(result.asOf)}`;
+    : result.report === "ar_aging"
+      ? `open balances today, by how late they are as of ${formatLocalDate(result.asOf)}`
+      : `as of ${formatLocalDate(result.asOf)}`;
   const cut = result.truncated
     ? `. Showing the first ${result.rows.length} of ${result.rowsTotal} rows; the CSV has them all`
     : "";
@@ -133,7 +140,10 @@ export function reportResultOf(name: ReportName, body: unknown): ReportResult | 
   if (!body || typeof body !== "object") return null;
   const r = body as Partial<ReportResult>;
   if (!isReportName(r.report) || r.report !== name) return null;
-  if (!Array.isArray(r.rows) || !Array.isArray(r.columns) || typeof r.asOf !== "string") return null;
+  if (!Array.isArray(r.rows) || !Array.isArray(r.columns) || !isLocalDate(r.asOf)) return null;
   if (typeof r.title !== "string" || typeof r.rowsTotal !== "number") return null;
+  // The caption formats these dates, so a malformed one is refused here, not thrown at render.
+  const p = r.period;
+  if (p !== undefined && !(isLocalDate(p?.start) && isLocalDate(p?.end) && p.start <= p.end)) return null;
   return r as ReportResult;
 }

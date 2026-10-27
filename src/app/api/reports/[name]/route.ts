@@ -13,7 +13,8 @@ import { capRows } from "@/lib/reports/types";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const NO_STORE = { "cache-control": "no-store" };
+// On every answer, JSON and CSV alike: never cached, and never sniffed as another type.
+const NO_STORE = { "cache-control": "no-store", "x-content-type-options": "nosniff" };
 
 function reply(body: unknown, status: number) {
   return NextResponse.json(body, { status, headers: NO_STORE });
@@ -35,7 +36,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ name
         ...NO_STORE,
         "content-type": "text/csv; charset=utf-8",
         "content-disposition": `attachment; filename="${result.report}-${result.asOf}.csv"`,
-        "x-content-type-options": "nosniff",
       },
     });
   } catch (err) {

@@ -71,6 +71,7 @@ describe("GET /api/reports/:name", () => {
     const response = await get("ar_aging");
     expect(response.status).toBe(404);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await response.json()).toEqual({ error: "not_found" });
     expect(mocks.getSession).not.toHaveBeenCalled();
     expect(mocks.reportForSession).not.toHaveBeenCalled();
@@ -103,11 +104,12 @@ describe("GET /api/reports/:name", () => {
     expect(mocks.reportForSession).not.toHaveBeenCalled();
   });
 
-  it("serves the chat's table as JSON, capped at 50 rows, never cached", async () => {
+  it("serves the chat's table as JSON, capped at 50 rows, never cached or sniffed", async () => {
     mocks.reportForSession.mockResolvedValue(aging(60));
     const response = await get("ar_aging", "?format=json&asOf=2026-11-02");
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     const body = (await response.json()) as ReportResult;
     expect(body.rows).toHaveLength(50);
     expect(body.truncated).toBe(true);
@@ -143,6 +145,7 @@ describe("GET /api/reports/:name", () => {
     const failed = await get("ar_aging");
     expect(failed.status).toBe(503);
     expect(failed.headers.get("cache-control")).toBe("no-store");
+    expect(failed.headers.get("x-content-type-options")).toBe("nosniff");
     const text = await failed.text();
     expect(text).toBe('{"error":"unavailable"}');
     expect(JSON.stringify(log.mock.calls)).not.toContain("secret_table");

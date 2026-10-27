@@ -1,4 +1,4 @@
-import { compareText, mul, roundHalfUp, type DriverRecord } from "../rules-engine";
+import { compareText, mul, roundHalfUp, type DriverRecord, type SettlementPeriodRecord } from "../rules-engine";
 import {
   REPORT_COLUMNS,
   REPORT_TITLES,
@@ -83,6 +83,17 @@ export function ratioBps(part: number, whole: number): number | null {
   if (whole <= 0) return null;
   const magnitude = roundHalfUp(mul(Math.abs(part), 10_000, "part x 10000"), whole);
   return part < 0 ? -magnitude : magnitude;
+}
+
+// The pay week that holds a carrier-local day (start to end inclusive), or null when no week
+// does. Two weeks holding the same day is refused, never guessed between.
+export function periodHolding(
+  periods: readonly SettlementPeriodRecord[],
+  day: string,
+): SettlementPeriodRecord | null {
+  const found = periods.filter((p) => p.periodStart <= day && day <= p.periodEnd);
+  if (found.length > 1) throw new Error("two pay weeks hold the same day");
+  return found[0] ?? null;
 }
 
 // Records by id, refusing a list that names one id twice.

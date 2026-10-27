@@ -9,8 +9,10 @@ import {
 import { byId, byLargest, mustGet, reportOf } from "./build";
 import type { ReportResult, ReportRow } from "./types";
 
-// What each customer owes and how late, from the engine's own aging (ageReceivables): open
-// balances of invoices that are not void, by days past due as of a carrier-local date.
+// What each customer owes and how late, from the engine's own aging (ageReceivables): today's
+// open balances of invoices that are not void, by days past due as of a carrier-local date. A
+// past date is not the position on that date: every payment applied since and every invoice
+// issued since still count, so the chat's caption and the tool's description say exactly that.
 
 const BUCKET_KEYS: Readonly<Record<AgingBucket, string>> = {
   current: "currentCents",

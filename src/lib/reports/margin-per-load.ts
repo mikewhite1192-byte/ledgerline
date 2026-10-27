@@ -120,20 +120,27 @@ export function computeMarginPerLoad(
   picked.sort((a, b) => compareText(a.day, b.day) || compareText(a.load.loadNumber, b.load.loadNumber));
   const lines = picked.map((p) => lineOf(p.load, p.day, drivers, customers, input.payConfigOn));
 
-  // Totals cover the loads with both numbers known, so revenue less pay equals the margin shown.
+  // The sums cover the loads with both numbers known, so revenue less pay equals the margin shown.
+  // They are the Total only when every load is priced. Otherwise a load can show revenue it adds
+  // nothing to (no driver, no pay rules), so the sums go on one row whose label says how many
+  // loads they cover, and there is no Total row for a column to be read against.
   const known = lines.flatMap((l) => (l.revenue !== null && l.pay !== null ? [{ revenue: l.revenue, pay: l.pay }] : []));
   const revenue = sum(known.map((l) => l.revenue));
   const pay = sum(known.map((l) => l.pay));
   const margin = sub(revenue, pay);
   const bps = ratioBps(margin, revenue);
-  const totals: Record<string, number> = { revenueCents: revenue, driverPayCents: pay, marginCents: margin };
-  if (bps !== null) totals.marginBps = bps;
+  const sums: Record<string, number> = { revenueCents: revenue, driverPayCents: pay, marginCents: margin };
+  if (bps !== null) sums.marginBps = bps;
+  const coverage =
+    known.length === lines.length
+      ? { totals: sums }
+      : { subtotals: [{ label: `Priced loads: ${known.length} of ${lines.length}`, totals: sums }] };
 
   return reportOf("margin_per_load", {
     asOf,
     args: argsOf({ periodStart: args.periodStart, periodEnd: args.periodEnd, customerId: args.customerId }),
     period: { start: args.periodStart, end: args.periodEnd },
     rows: lines.map((l) => l.row),
-    totals,
+    ...coverage,
   });
 }

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TurnView } from "@/lib/agent/view";
 import { REPORT_COLUMNS, REPORT_TITLES, type ReportResult } from "@/lib/reports/types";
@@ -138,6 +139,18 @@ describe("toMessages with a report", () => {
     expect(a.parts[2]).toMatchObject({ table: { state: "empty", empty: { title: "Nothing to show" } } });
   });
 
+  it("asks for a table's rows through onShow, with the turn and the report it belongs to", () => {
+    const shown: [string, string][] = [];
+    const [, a] = toMessages([reported], {}, {}, (turnId, r) => shown.push([turnId, r.stepId]));
+    const part = a.parts[2] as { kind: string; onVisible?: () => void };
+    expect(part.kind).toBe("table");
+    expect(shown).toEqual([]);
+    part.onVisible?.();
+    expect(shown).toEqual([["t-1", "s-9"]]);
+    const [, plain] = toMessages([reported], {});
+    expect(plain.parts[2]).not.toHaveProperty("onVisible");
+  });
+
   it("shows the error state when the table could not be read", () => {
     const [, a] = toMessages([reported], {}, { "t-1:s-9": { state: "error", category: "forbidden" } });
     expect(a.parts[2]).toMatchObject({ table: { state: "error", error: { category: "forbidden" } } });
@@ -206,6 +219,80 @@ describe("AgentChat", () => {
     const link = screen.getByRole("link", { name: "Download CSV" });
     expect(link.getAttribute("href")).toBe("/api/reports/ar_aging?format=csv&asOf=2026-11-02");
     expect(link.hasAttribute("download")).toBe(true);
+    expect(asked).toEqual(["/api/reports/ar_aging?format=json&asOf=2026-11-02"]);
+  });
+
+  it("fetches a report's table only once it scrolls into view, and only once however often it is seen", async () => {
+    // A stand-in for the browser's observer: the test says when the table is on screen. Every
+    // observer ever made is kept, so a late entry after a disconnect can be delivered too.
+    const made: FakeObserver[] = [];
+    class FakeObserver {
+      private targets: Element[] = [];
+      constructor(private readonly cb: IntersectionObserverCallback) {
+        made.push(this);
+      }
+      get watching(): number {
+        return this.targets.length;
+      }
+      fire(on: boolean) {
+        const entry = { isIntersecting: on, target: this.targets[0] ?? document.body } as IntersectionObserverEntry;
+        this.cb([entry], this as unknown as IntersectionObserver);
+      }
+      observe(el: Element) {
+        this.targets.push(el);
+      }
+      unobserve() {}
+      disconnect() {
+        this.targets = [];
+      }
+      takeRecords() {
+        return [];
+      }
+    }
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        asked.push(url);
+        return new Response(JSON.stringify(agingResult(1)), { status: 200 });
+      }),
+    );
+    render(<AgentChat initialTurns={[reported]} streamMode="poll" />);
+    expect(made.filter((o) => o.watching > 0)).toHaveLength(1);
+    // Off screen: nothing is read, and the table waits in its loading state.
+    await act(async () => {});
+    expect(asked).toEqual([]);
+    act(() => made.forEach((o) => o.fire(false)));
+    await act(async () => {});
+    expect(asked).toEqual([]);
+    // On screen: read once, and the observer stops watching.
+    act(() => made.forEach((o) => o.fire(true)));
+    expect(await screen.findByRole("link", { name: "Harbor Foods" })).toBeTruthy();
+    expect(asked).toEqual(["/api/reports/ar_aging?format=json&asOf=2026-11-02"]);
+    expect(made.every((o) => o.watching === 0)).toBe(true);
+    // A late entry, delivered anyway, reads nothing more.
+    act(() => made.forEach((o) => o.fire(true)));
+    await act(async () => {});
+    expect(asked).toHaveLength(1);
+  });
+
+  it("reads the table at once where the browser has no IntersectionObserver, still once when effects run twice", async () => {
+    expect(typeof IntersectionObserver).toBe("undefined");
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        asked.push(url);
+        return new Response(JSON.stringify(agingResult(1)), { status: 200 });
+      }),
+    );
+    render(
+      <StrictMode>
+        <AgentChat initialTurns={[reported]} streamMode="poll" />
+      </StrictMode>,
+    );
+    expect(await screen.findByRole("link", { name: "Harbor Foods" })).toBeTruthy();
     expect(asked).toEqual(["/api/reports/ar_aging?format=json&asOf=2026-11-02"]);
   });
 
