@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 // The operator's system prompt and the turn's fixed policy, in one file, so a change to how the
 // loop prompts or sequences lands in one place. Nothing here is read from the database or from a
 // model: these are constants.
@@ -23,6 +25,37 @@ export const OPERATOR_PROMPT = [
   "- Keep answers short: a direct answer first, then at most a few plain lines of why.",
 ].join("\n");
 
+// The rule added to the operator prompt when tool search is on (flags.agentToolSearch), so a turn
+// with it off sends exactly the prompt above. The design had this line in the prompt always; it
+// rides the flag instead so the off request stays byte for byte today's, which means an A/B of
+// the flag compares the prompt and the tools together, not the tools alone.
+export const TOOL_SEARCH_RULE = [
+  "- Some tools show only a name and description until you search for them; use tool_search to",
+  "  load one before calling it. Never say a thing cannot be done without searching first.",
+].join("\n");
+
+export function withToolSearchRule(prompt: string, toolSearch: boolean): string {
+  return toolSearch ? `${prompt}\n${TOOL_SEARCH_RULE}` : prompt;
+}
+
+// The shape of a tool as the cache key reads it; the registry's tools fit it.
+type CachedTool = {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: unknown;
+  readonly deferLoading?: boolean;
+};
+
+// One prompt cache key per prompt version, shared by every tenant: a hash of the static prompt
+// and the tool list, so it carries no tenant data and changes by itself when either changes.
+// The state summary is never part of it.
+export function operatorCacheKey(instructions: string, tools: readonly CachedTool[]): string {
+  const digest = createHash("sha256")
+    .update(instructions + JSON.stringify(tools))
+    .digest("hex");
+  return `${OPERATOR_CALL.cacheKeyPrefix}-${digest.slice(0, 16)}`;
+}
+
 // Added to the prompt only while the report tools are offered (flags.reportsEnabled).
 export const REPORT_PROMPT = [
   "",
@@ -38,10 +71,13 @@ export const REPORT_PROMPT = [
   "  (the total or the largest rows) in one or two lines and say the full table is below.",
 ].join("\n");
 
-// The operator's system prompt for the tools this turn offers.
-export function operatorPrompt(toolNames: readonly string[]): string {
+// The operator's system prompt for the tools this turn offers: the tool search rule while search
+// is on (it is one of the rules), then the report section while the report tools are offered.
+// With search off it is the prompt above, plus the report section when reports are on.
+export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
+  const prompt = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
-  return reports ? `${OPERATOR_PROMPT}\n${REPORT_PROMPT}` : OPERATOR_PROMPT;
+  return reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
 }
 
 export const STATE_HEADER = "Current state (from the database, for this turn only):";
@@ -52,6 +88,7 @@ export const OPERATOR_CALL = {
   reasoningEffort: "low",
   maxOutputTokens: 1200,
   maxCostCents: 10,
+  cacheKeyPrefix: "ledgerline-operator",
 } as const;
 
 // The one escalation per turn to Muse Wonder after two schema failures on the same tool.

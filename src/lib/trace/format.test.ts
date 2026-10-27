@@ -3,7 +3,10 @@ import { TARGETS } from "@/lib/ai/targets";
 import {
   decisionSentence,
   effortWords,
+  formatCached,
+  formatCachedShare,
   formatCallCost,
+  formatSaved,
   formatLatency,
   formatSpend,
   modelName,
@@ -391,5 +394,83 @@ describe("traceTotals", () => {
       "2 model calls, 0 cents in all, 3.9 s of model time; 1 call is not settled yet; 1 call has no known cost",
     );
     expect(traceTotals({ ...base, steps: [base.steps[1]], extraCalls: [], proposals: [] })).toBeNull();
+  });
+});
+
+describe("prompt cache and tool search lines", () => {
+  const plan = SAMPLE_CALLS.plan;
+
+  it("states the cached share of one call and what it saved, rounded down", () => {
+    // 1,912 cached Muse Spark tokens saved 1,912 x 110,000 nanocents = 0.21 cents.
+    expect(formatCached({ ...plan, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: 1_912 * 110_000 })).toBe(
+      "1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price",
+    );
+    expect(formatCached({ ...plan, inputTokens: 2_480, cachedTokens: 0, savedNanocents: 0 })).toBe("no input tokens from cache");
+    expect(formatCached({ ...plan, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: null })).toBe(
+      "1,912 of 2,480 input tokens from cache, saving not known",
+    );
+  });
+
+  it("shows no cache line when a count is missing or the counts do not fit", () => {
+    expect(formatCached(plan)).toBeNull();
+    expect(formatCached({ ...plan, inputTokens: 2_480, cachedTokens: null })).toBeNull();
+    expect(formatCached({ ...plan, inputTokens: null, cachedTokens: 10 })).toBeNull();
+    expect(formatCached({ ...plan, inputTokens: 10, cachedTokens: 11, savedNanocents: 0 })).toBeNull();
+    expect(formatCached({ ...plan, inputTokens: 10.5, cachedTokens: 1, savedNanocents: 0 })).toBeNull();
+  });
+
+  it("rounds a saving down, never up, the opposite of spend", () => {
+    expect(formatSaved(199_999_999)).toBe("0.1 cents");
+    expect(formatSpend(199_999_999)).toBe("0.2 cents");
+    expect(formatSaved(99_999_999)).toBe("under 0.1 cents");
+    expect(formatSaved(0)).toBe("nothing");
+    expect(formatSaved(84_390_000_000)).toBe("84.3 cents");
+    expect(formatSaved(124_900_000_000)).toBe("$1.24");
+    expect(formatSaved(null)).toBe("not known");
+    expect(formatSaved(-1)).toBe("not known");
+  });
+
+  it("writes the cached share as a whole percent, and under 1% rather than 0% when some was cached", () => {
+    expect(formatCachedShare(71, 1_912)).toBe("71%");
+    expect(formatCachedShare(0, 3)).toBe("under 1%");
+    expect(formatCachedShare(0, 0)).toBe("0%");
+    expect(formatCachedShare(null, 0)).toBeNull();
+    expect(formatCachedShare(101, 5)).toBeNull();
+  });
+
+  it("puts the cache line under each model call that has counts, and says a search on its step", () => {
+    const trace = sampleTrace();
+    const cached = { ...plan, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: 1_912 * 110_000 };
+    trace.steps[0] = { ...trace.steps[0], call: cached, toolSearches: 1 };
+    const lines = traceLines(trace);
+    expect(lines[0]).toMatchObject({
+      text: "Planned the next step: asked for 1 tool, after one tool search",
+      cache: "1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price",
+    });
+    // A gateway row shows no model call, so it has no cache line; calls with no counts have none.
+    expect(lines[1]).not.toHaveProperty("cache");
+    expect(lines.filter((l) => l.cache !== undefined)).toHaveLength(1);
+
+    trace.steps[0] = { ...trace.steps[0], toolSearches: 2 };
+    expect(traceLines(trace)[0].text).toBe("Planned the next step: asked for 1 tool, after 2 tool searches");
+    trace.steps[0] = { ...trace.steps[0], toolSearches: 0 };
+    expect(traceLines(trace)[0].text).toBe("Planned the next step: asked for 1 tool");
+  });
+
+  it("names the standby host and the cache saving on the same call line", () => {
+    const trace = sampleTrace();
+    const standby = {
+      ...SAMPLE_CALLS.screen,
+      model: "accounts/fireworks/models/muse-spark-open",
+      provider: "fireworks",
+      inputTokens: 10_000,
+      cachedTokens: 4_000,
+      savedNanocents: 4_000 * 110_000,
+    };
+    const lines = traceLines({ ...trace, extraCalls: [{ ...standby, afterSeq: 2, screen: { verdict: "clean", via: "model" } }] });
+    expect(lines.find((l) => l.key === `call:${standby.id}`)).toMatchObject({
+      who: "Muse Spark Open (via Fireworks)",
+      cache: "4,000 of 10,000 input tokens from cache, saved 0.4 cents at list price",
+    });
   });
 });

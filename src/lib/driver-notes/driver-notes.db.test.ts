@@ -77,6 +77,7 @@ async function result(
     costNanocents: 0,
     upstreamId: null,
     replay: [],
+    toolSearches: 0,
   };
 }
 const goodModel: CompleteFn = async (_target, request, session) => {
