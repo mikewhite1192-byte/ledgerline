@@ -464,6 +464,53 @@ describe("the demo reset", () => {
       ]);
     });
 
+    // A fuel check whose finding names a seeded fill-up, its load, one of the driver's pay lines and
+    // a card it sent for approval (0031): the finding must go before the proposals and before the
+    // replace deletes the fill-up, and its run after it.
+    const fill = plan.rows.fuel_purchases.find((f) => f.load_id !== null);
+    const payLine = plan.rows.pay_items.find((i) => fill !== undefined && i.driver_id === fill.driver_id);
+    if (!fill || !payLine) throw new Error("the plan has no fill-up on a load with a pay line for its driver");
+    await app.withTenant(tenantId, async (q) => {
+      const fuelRun = randomUUID();
+      const finding = randomUUID();
+      await q.execute(
+        `INSERT INTO fuel_check_runs (id, tenant_id, as_of, started_by, status, checked_count, found_count,
+           finished_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS date), $3, 'done', 1, 1, now())`,
+        [fuelRun, fill.purchased_on, session.sub],
+      );
+      await q.execute(
+        `INSERT INTO fuel_findings (id, tenant_id, finding_key, check_name, category, driver_id, fuel_purchase_id,
+           load_id, pay_item_id, purchased_on, state, gallons_milli, tank_gallons, paid_with, amount_cents,
+           suggested_cents, sources, first_run_id, last_run_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), $13, 'fuel_off_route', 'state_not_on_route',
+           CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid), CAST($5 AS uuid), CAST($6 AS date), $7, $8, 150,
+           $9, $10, $11, CAST('[]' AS jsonb), CAST($12 AS uuid), CAST($12 AS uuid))`,
+        [
+          finding,
+          fill.driver_id,
+          fill.id,
+          fill.load_id,
+          payLine.id,
+          fill.purchased_on,
+          fill.state,
+          fill.gallons_milli,
+          fill.paid_with,
+          fill.amount_cents,
+          -fill.amount_cents,
+          fuelRun,
+          `reset-test:${finding}`,
+        ],
+      );
+      expect(
+        await q.execute(
+          `UPDATE fuel_findings SET status = 'proposed', proposal_id = CAST($2 AS uuid)
+            WHERE id = CAST($1 AS uuid)`,
+          [finding, detention],
+        ),
+      ).toBe(1);
+    });
+
     const input = await seededInput(tenantId);
     const voiceNote = randomUUID();
     await app.withTenant(tenantId, async (q) => {
@@ -597,6 +644,8 @@ describe("the demo reset", () => {
         sweep_fanout: 1,
         sweep_items: 1,
         sweep_runs: 1,
+        fuel_findings: 1,
+        fuel_check_runs: 1,
         approval_batches: 1,
         proposals: 3,
         turns: 3,
@@ -630,6 +679,8 @@ describe("the demo reset", () => {
         sweep_fanout: 1,
         sweep_items: 1,
         sweep_runs: 1,
+        fuel_findings: 1,
+        fuel_check_runs: 1,
         approval_batches: 1,
         advances: 1,
         proposals: 3,
@@ -709,7 +760,7 @@ describe("the demo reset", () => {
       expect(refused).toBeInstanceOf(DemoResetRefused);
       expect((refused as DemoResetRefused).refusals).toEqual([{ kind: "open", count: 1 }]);
       expect((refused as Error).message).toBe(
-        "1 ledger row(s) still reserved, sent or unknown; settle them before a reset (nothing was cleared)",
+        "1 payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset (nothing was cleared)",
       );
       // Past the app's own check, the function refuses under the tenant lock.
       expect(await sqlStateOf(clearDirectly(A))).toBe(RESET_SQLSTATE.refused);
@@ -806,7 +857,7 @@ describe("the demo reset", () => {
       const refused = await errorOf(resetDemoTenant(app, A, planA));
       expect((refused as DemoResetRefused).refusals).toEqual([{ kind: "flagged", count: 1 }]);
       expect((refused as Error).message).toBe(
-        "1 proposal(s) a ledger row names carry a flag from an outside message; a person must " +
+        "1 card(s) behind a payment record carry a flag from an outside message; a person must " +
           "review them before a reset (nothing was cleared)",
       );
       expect(await sqlStateOf(clearDirectly(A))).toBe(RESET_SQLSTATE.refused);

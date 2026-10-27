@@ -44,7 +44,7 @@ describe("paystubCardFrom", () => {
     expect(concerns.confirmQuestion).toMatch(/Approve anyway\?$/);
     expect(concerns.confirmQuestion).not.toBe(NO_PAYOUT_QUESTION);
     const unchecked = paystubCardFrom({ ...card, auditorVerdict: null, auditorCheckedAt: null }, audit, 0);
-    expect(unchecked.confirmQuestion).toBe("Not checked by the auditor. Approve anyway?");
+    expect(unchecked.confirmQuestion).toBe("The second check could not run. Approve anyway?");
   });
 
   it("leaves a paystub with money to send as the shared card builds it", () => {

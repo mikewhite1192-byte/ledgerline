@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { TENANT_TABLES } from "../data/tables";
 import golden from "./golden.json";
@@ -34,9 +34,37 @@ describe("the demo reset's lists", () => {
   });
 });
 
+// Every migration that creates or re-creates demo_reset_clear(): the last one is the live function,
+// and each must keep the gate whole.
+const MIGRATIONS = new URL("../../../db/migrations/", import.meta.url);
+// Any spelling: either case, any whitespace, with or without OR REPLACE, a public. prefix or quotes.
+const DEFINES = /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?public"?\s*\.\s*)?"?demo_reset_clear"?\s*\(/i;
+const DEFINITIONS = readdirSync(MIGRATIONS)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .filter((f) => DEFINES.test(readFileSync(new URL(f, MIGRATIONS), "utf8")));
+
 describe("the function's demo-carrier gate", () => {
-  it("lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", () => {
-    const sql = readFileSync(new URL("../../../db/migrations/0025_demo_reset.sql", import.meta.url), "utf8");
+  it("is defined by 0025 first and re-created whole by any later migration", () => {
+    expect(DEFINITIONS[0]).toBe("0025_demo_reset.sql");
+  });
+
+  it("finds a definition in any spelling, and never a call or a longer name", () => {
+    for (const sql of [
+      "CREATE FUNCTION demo_reset_clear()",
+      "create or replace function public.demo_reset_clear()",
+      "CREATE  OR\n  REPLACE FUNCTION\tdemo_reset_clear ()",
+      'CREATE OR REPLACE FUNCTION "public"."demo_reset_clear"()',
+    ]) {
+      expect(DEFINES.test(sql)).toBe(true);
+    }
+    for (const sql of ["SELECT * FROM demo_reset_clear()", "CREATE FUNCTION demo_reset_clear_all()"]) {
+      expect(DEFINES.test(sql)).toBe(false);
+    }
+  });
+
+  it.each(DEFINITIONS)("%s lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", (file) => {
+    const sql = readFileSync(new URL(file, MIGRATIONS), "utf8");
     const gate =
       /IF NOT FOUND OR \(\(v_slug, v_name, v_timezone\) IN \(([^;]*?)\)\) IS NOT TRUE THEN\s+RAISE EXCEPTION 'demo reset: not a demo tenant' USING ERRCODE = 'LR002';/.exec(
         sql,
@@ -56,21 +84,21 @@ describe("the function's demo-carrier gate", () => {
 describe("a refusal", () => {
   it("names counts only, and says nothing was cleared", () => {
     expect(refusalText({ kind: "open", count: 2 })).toBe(
-      "2 ledger row(s) still reserved, sent or unknown; settle them before a reset",
+      "2 payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset",
     );
     expect(refusalText({ kind: "mismatch", count: 1 })).toBe(
-      "1 ledger row(s) failed as amount_mismatch; a person must review them before a reset",
+      "1 payment record(s) failed because the amount did not match; a person must review them before a reset",
     );
     expect(refusalText({ kind: "flagged", count: 3 })).toBe(
-      "3 proposal(s) a ledger row names carry a flag from an outside message; a person must review them before a reset",
+      "3 card(s) behind a payment record carry a flag from an outside message; a person must review them before a reset",
     );
     const err = new DemoResetRefused([
       { kind: "open", count: 1 },
       { kind: "mismatch", count: 1 },
     ]);
     expect(err.message).toBe(
-      "1 ledger row(s) still reserved, sent or unknown; settle them before a reset; " +
-        "1 ledger row(s) failed as amount_mismatch; a person must review them before a reset " +
+      "1 payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset; " +
+        "1 payment record(s) failed because the amount did not match; a person must review them before a reset " +
         "(nothing was cleared)",
     );
   });

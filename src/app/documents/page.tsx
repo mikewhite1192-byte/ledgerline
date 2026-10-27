@@ -20,7 +20,7 @@ import { NoCarrier, problemOf, readCarrier, SignOut } from "./carrier";
 // on the verified token. Behind flags.documentsEnabled.
 export const dynamic = "force-dynamic";
 
-const DESCRIPTION = "Receipts, rate confirmations and bills of lading, read by Muse Spark";
+const DESCRIPTION = "Receipts, rate confirmations and bills of lading, read by the document model";
 
 export default async function DocumentsPage() {
   const { carrier, problem } = await readCarrier();
@@ -97,8 +97,8 @@ export default async function DocumentsPage() {
               <CardHeader>
                 <CardTitle>Upload a document</CardTitle>
                 <CardDescription>
-                  Muse Spark reads the document once. What it reads is a claim, shown next to what your records
-                  say; nothing changes until a person approves it.
+                  The document model reads the document once. What it reads is a claim, shown next to what your
+                  records say; nothing changes until a person approves it.
                 </CardDescription>
               </CardHeader>
               <CardBody>

@@ -6,6 +6,7 @@ import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Card, CardBody } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
+import { Term } from "@/components/app/term";
 import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { lineKindLabel } from "@/lib/format/labels";
 import { QUEUE_REASON_LABELS } from "@/lib/invoices/labels";
@@ -14,8 +15,8 @@ import { readRecordPage } from "../../read-record";
 
 export const dynamic = "force-dynamic";
 
-// One load, as the invoice queue sees it: its fields, accessorials and state miles, its invoice if
-// it has one, and what the rules engine would invoice for it now.
+// One load, as the invoice queue sees it: its fields, extra charges and state miles, its invoice if
+// it has one, and what the carrier's rate rules would bill for it today.
 export default async function LoadRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const page = await readRecordPage(id, (q, rid) => readLoadRecord(q, rid));
@@ -40,22 +41,23 @@ export default async function LoadRecord({ params }: { params: Promise<{ id: str
         <CardBody>
           <Facts
             items={[
-              { label: "Lane", value: l.lane },
+              { label: "Route", value: l.lane },
               { label: "Picked up", value: <Day value={l.pickupOn} /> },
               { label: "Delivered", value: <Day value={l.deliveredOn} /> },
-              { label: "Loaded miles", value: l.loadedMiles.toLocaleString("en-US") },
-              { label: "Empty miles", value: l.emptyMiles.toLocaleString("en-US") },
+              { label: "Loaded miles", term: "loaded-miles", value: l.loadedMiles.toLocaleString("en-US") },
+              { label: "Empty miles", term: "empty-miles", value: l.emptyMiles.toLocaleString("en-US") },
               {
-                label: "Linehaul rate",
+                label: "Linehaul",
+                term: "linehaul",
                 value: l.linehaulCents === null ? "No rate" : <Money cents={l.linehaulCents} tone="plain" />,
               },
-              { label: "Fuel surcharge", value: <Money cents={l.fuelSurchargeCents} tone="plain" /> },
+              { label: "Fuel surcharge", term: "fuel-surcharge", value: <Money cents={l.fuelSurchargeCents} tone="plain" /> },
               {
                 label: "Invoice",
                 value: l.invoice ? (
                   <RecordLink table="invoices" id={l.invoice.id}>{l.invoice.invoiceNumber}</RecordLink>
                 ) : (
-                  "Not invoiced"
+                  "Not invoiced yet"
                 ),
               },
             ]}
@@ -64,7 +66,7 @@ export default async function LoadRecord({ params }: { params: Promise<{ id: str
       </Card>
       {l.engine.ok ? (
         <DataTable
-          caption="What the rules engine would invoice now"
+          caption="What this load would bill today, from your rate rules"
           rows={l.engine.lines}
           rowKey={(r) => r.kind}
           columns={[
@@ -76,12 +78,12 @@ export default async function LoadRecord({ params }: { params: Promise<{ id: str
         <InlineAlert tone="warning">Cannot be invoiced: {QUEUE_REASON_LABELS[l.engine.reason]}.</InlineAlert>
       )}
       <DataTable
-        caption="Accessorials"
+        caption="Extra charges"
         rows={l.accessorials}
         rowKey={(r) => r.id}
-        empty={{ title: "No accessorials on this load" }}
+        empty={{ title: "No extra charges on this load" }}
         columns={[
-          { key: "kind", header: "Kind", cell: (r) => lineKindLabel(r.kind) },
+          { key: "kind", header: <Term id="extra-charges">Charge</Term>, cell: (r) => lineKindLabel(r.kind) },
           { key: "amount", header: "Amount", align: "right", cell: (r) => <Money cents={r.amountCents} tone="plain" /> },
         ]}
       />

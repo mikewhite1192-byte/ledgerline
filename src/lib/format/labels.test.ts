@@ -8,6 +8,8 @@ import {
   modelCallStatusLabel,
   paymentHabitLabel,
   recordLabel,
+  recordNamer,
+  stepLabel,
   statusLabel,
 } from "./labels";
 
@@ -100,10 +102,10 @@ describe("the rules engine's vocabularies", () => {
 });
 
 describe("recordLabel", () => {
-  it("names a short id in full and a long one by its tail", () => {
+  it("names a short id in full and a long one by its kind alone, never an id tail", () => {
     expect(recordLabel({ table: "loads", id: "L-10421" })).toBe("Load L-10421");
     expect(recordLabel({ table: "advances", id: "0b9f6a52-3c1d-4e8f-9a7b-5d2c1e7c41e2" })).toBe(
-      "Advance ending 7c41e2",
+      "Advance",
     );
     expect(recordLabel({ table: "pay_configs", id: "1" })).toBe("Pay rules 1");
     expect(recordLabel({ table: "odd_table", id: "9" })).toBe("Odd table 9");
@@ -117,10 +119,10 @@ describe("recordLabel", () => {
     expect(recordLabel({ table: "invoices", id: long }, " BR-INV-10001 ")).toBe("Invoice BR-INV-10001");
   });
 
-  it("falls back to the old label when the reference is missing or blank", () => {
+  it("falls back to the kind when the reference is missing or blank", () => {
     const long = "0b9f6a52-3c1d-4e8f-9a7b-5d2c1e7c41e2";
     for (const none of [undefined, null, "", "   "]) {
-      expect(recordLabel({ table: "loads", id: long }, none)).toBe("Load ending 7c41e2");
+      expect(recordLabel({ table: "loads", id: long }, none)).toBe("Load");
       expect(recordLabel({ table: "loads", id: "L-10421" }, none)).toBe("Load L-10421");
     }
   });
@@ -132,5 +134,42 @@ describe("paymentHabitLabel", () => {
     expect(paymentHabitLabel("mixed")).toBe("Mixed");
     expect(paymentHabitLabel("repeat_late")).toBe("Often late");
     expect(paymentHabitLabel("brand_new")).toBe("Brand new");
+  });
+});
+
+describe("recordNamer", () => {
+  const LOAD_A = { table: "loads", id: "0b9f6a52-3c1d-4e8f-9a7b-5d2c1e7c41e2" };
+  const LOAD_B = { table: "loads", id: "7d1e2f30-4a5b-4c6d-8e9f-a0b1c2d3e4f5" };
+  const DRIVER = { table: "drivers", id: "11111111-2222-4333-8444-555555555555" };
+
+  it("tells two records of one kind apart by their place, never by an id tail", () => {
+    const name = recordNamer([LOAD_A, DRIVER, LOAD_B]);
+    expect([LOAD_A, DRIVER, LOAD_B].map(name)).toEqual(["Load 1 of 2", "Driver", "Load 2 of 2"]);
+  });
+
+  it("keeps one name for a record listed twice, and the kind alone when it is the only one", () => {
+    const name = recordNamer([LOAD_A, LOAD_A, DRIVER]);
+    expect([LOAD_A, LOAD_A, DRIVER].map(name)).toEqual(["Load", "Load", "Driver"]);
+    expect(recordNamer([LOAD_A, LOAD_B, LOAD_A])(LOAD_A)).toBe("Load 1 of 2");
+  });
+
+  it("leaves a short id as it is and names a record it was not given by its kind", () => {
+    const short = { table: "loads", id: "L-10421" };
+    const name = recordNamer([LOAD_A, short, LOAD_B]);
+    expect(name(short)).toBe("Load L-10421");
+    expect(name({ table: "loads", id: "99999999-8888-4777-8666-555555555555" })).toBe("Load");
+  });
+});
+
+describe("stepLabel", () => {
+  it("reads a saved step label with an internal word in plain words", () => {
+    expect(stepLabel("Reading the proposal and its evidence")).toBe("Reading the card and its evidence");
+    expect(stepLabel("Aging the receivables")).toBe("Sorting open invoices by how late they are");
+    expect(stepLabel("Preparing a proposal card")).toBe("Preparing a card");
+  });
+
+  it("leaves every other label as saved", () => {
+    expect(stepLabel("Reading loads")).toBe("Reading loads");
+    expect(stepLabel("")).toBe("");
   });
 });

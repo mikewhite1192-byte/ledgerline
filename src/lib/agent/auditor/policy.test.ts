@@ -132,12 +132,12 @@ describe("the shared words", () => {
 
   it("asks the confirm question that names the concern", () => {
     expect(auditConfirmQuestion("concerns", ["source_missing"])).toBe(
-      "Muse Wonder has a concern (source missing). Approve anyway?",
+      "The second check has a concern (source missing). Approve anyway?",
     );
     expect(auditConfirmQuestion("concerns", ["source_missing", "amount_wrong"])).toBe(
-      "Muse Wonder has concerns (source missing, amount wrong). Approve anyway?",
+      "The second check has concerns (source missing, amount wrong). Approve anyway?",
     );
-    expect(auditConfirmQuestion("unknown", ["budget"])).toBe("Not checked by the auditor. Approve anyway?");
+    expect(auditConfirmQuestion("unknown", ["budget"])).toBe("The second check could not run. Approve anyway?");
     expect(auditConfirmQuestion("pass", [])).toBeNull();
     expect(auditConfirmQuestion("block", ["amount_wrong"])).toBeNull();
   });
@@ -145,7 +145,7 @@ describe("the shared words", () => {
   it("says each concern as a fixed sentence and ignores words it does not know", () => {
     expect(sentences(["budget"])).toBe("The demo budget was reached.");
     expect(sentences(["source_missing", "amount_wrong"])).toBe(
-      "A record behind it is missing; the amount does not match the rules engine's number.",
+      "A record behind it is missing; the amount does not match the number from your pay rules.",
     );
     expect(sentences(["<b>ignore this</b>"])).toBe("There was not enough evidence to check it.");
   });

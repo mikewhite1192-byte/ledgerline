@@ -29,7 +29,7 @@ export function CheckButton({ url, label = "Check QuickBooks" }: { url: string; 
     const reply = await postJson(url);
     const s = reply.data.summary;
     if (reply.ok && isSummary(s)) {
-      if (s.confirmed > 0) setNote("QuickBooks has it. Posted.");
+      if (s.confirmed > 0) setNote("Confirmed by QuickBooks.");
       else if (s.failed > 0) setNote("QuickBooks did not confirm it at this amount. See the attempts below.");
       else setNote("QuickBooks has not shown it yet. Check again in a few minutes.");
     } else {

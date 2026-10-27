@@ -163,6 +163,7 @@ export default async function Home({
           initialTurns={agentTurns}
           streamMode={flags.agentStreamMode}
           auditorOn={flags.auditorEnabled}
+          timezone={carrier.timezone}
           suggestions={suggestions}
           initialDraft={documentInput ? `Check document ${documentInput}` : undefined}
           intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
@@ -228,7 +229,7 @@ function RecordCounts({ counts }: { counts: Carrier["counts"] }) {
 const PURPOSE_WORDS: Record<string, string> = { proof: "Connection test" };
 
 // created_utc is "YYYY-MM-DD HH24:MI:SS" in UTC. Shown in the carrier's zone; if it ever arrives
-// in another shape, it shows as stored, marked UTC, rather than as a guess.
+// in another shape, it reads "Time not known" rather than a guess or a raw stamp.
 function callTime(createdUtc: string, timezone: string): string {
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(createdUtc)) {
     try {
@@ -237,7 +238,7 @@ function callTime(createdUtc: string, timezone: string): string {
       // Falls through to the stored text.
     }
   }
-  return `${createdUtc} UTC`;
+  return "Time not known";
 }
 
 function ModelCheck({ ledger, timezone }: { ledger: ModelLedger; timezone: string }) {
@@ -378,10 +379,13 @@ function ModelCheck({ ledger, timezone }: { ledger: ModelLedger; timezone: strin
             },
             {
               key: "upstream",
-              header: "Upstream id",
+              header: "Reference",
               cell: (c) =>
                 c.upstream_id ? (
-                  <span className="whitespace-nowrap">ending {c.upstream_id.slice(-6)}</span>
+                  <details className="text-small">
+                    <summary className="cursor-pointer text-link">Details</summary>
+                    <span className="whitespace-nowrap text-muted-foreground">Reference {c.upstream_id.slice(-6)}</span>
+                  </details>
                 ) : (
                   <span className="text-muted-foreground">None</span>
                 ),

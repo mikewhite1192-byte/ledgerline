@@ -2,11 +2,12 @@ import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatInstant } from "@/lib/format/dates";
-import { countWords, formatSpend } from "@/lib/trace/format";
+import { countWords, formatDollars } from "@/lib/trace/format";
 
 // The Meta models page's Spend card: the demo budget and Muse Wonder's share of it (both shared by
-// every carrier), this carrier's last 24 hours, the hourly allowance of one job, and the jobs the
-// spend watch stopped, with a Clear control on each open one for an admin. Plain data in, no reads.
+// every carrier), this carrier's last 24 hours, the hourly budget of one job, and the jobs the
+// spend watch paused, with a Clear control on each open one for an admin. Every amount reads in
+// dollars and cents. Plain data in, no reads.
 
 export type Budget = { spentNanocents: number; capNanocents: number | null };
 
@@ -39,27 +40,28 @@ export type SpendCardProps = {
 
 const JOB_WORDS: Readonly<Record<string, string>> = {
   agent_operator_turn: "Chat answer",
-  agent_operator_escalation: "Proposal handed to Muse Wonder",
+  agent_operator_escalation: "Card handed to Muse Wonder",
   screen_untrusted_input: "Screening outside text",
-  audit_proposal: "Auditor check",
+  audit_proposal: "Second check",
   driver_note: "Driver note",
   proof: "Model connection check",
 };
 
-// What the stopped job was doing, from the purpose of the call that was refused.
+// What the paused job was doing, from the purpose of the call that was refused.
 export function jobWords(purpose: string): string {
   return Object.hasOwn(JOB_WORDS, purpose) ? JOB_WORDS[purpose] : `Model calls for ${purpose.replaceAll("_", " ")}`;
 }
 
-// Which calls make up the job: one answer's trace, or every call for the purpose with no trace.
+// Which calls make up the job: one answer (by its reference), or every call for the job made
+// outside an answer.
 export function jobScope(alert: Pick<SpendAlert, "traceId">): string {
-  return alert.traceId ? `One answer, trace ${alert.traceId.slice(0, 8)}` : "Every call for this purpose with no trace";
+  return alert.traceId ? `One answer, reference ${alert.traceId.slice(0, 8)}` : "Every call for this job made outside an answer";
 }
 
 function budgetLine(label: string, b: Budget, refused: string): string {
   return b.capNanocents === null
-    ? `${label}: ${formatSpend(b.spentNanocents)}, with no cap set, so ${refused} is refused.`
-    : `${label}: ${formatSpend(b.spentNanocents)} of ${formatSpend(b.capNanocents)}.`;
+    ? `${label}: ${formatDollars(b.spentNanocents)}, with no budget set, so ${refused} is refused.`
+    : `${label}: ${formatDollars(b.spentNanocents)} of ${formatDollars(b.capNanocents)}.`;
 }
 
 function AlertRow({ a, timeZone, clear }: { a: SpendAlert; timeZone: string; clear?: SpendCardProps["clear"] }) {
@@ -69,14 +71,14 @@ function AlertRow({ a, timeZone, clear }: { a: SpendAlert; timeZone: string; cle
       <div className="grid min-w-0 gap-0.5">
         <p className="flex flex-wrap items-center gap-2 text-body font-medium text-foreground">
           {jobWords(a.purpose)}
-          <Badge tone={open ? "destructive" : "neutral"}>{open ? "Stopped" : "Cleared"}</Badge>
+          <Badge tone={open ? "destructive" : "neutral"}>{open ? "Paused" : "Cleared"}</Badge>
         </p>
         <p className="text-small text-foreground-2">
-          {jobScope(a)}. Would have reached {formatSpend(a.spentNanocents)} in an hour, over its{" "}
-          {formatSpend(a.limitNanocents)} allowance.
+          {jobScope(a)}. Would have reached {formatDollars(a.spentNanocents)} in an hour, over its{" "}
+          {formatDollars(a.limitNanocents)} hourly budget.
         </p>
         <p className="text-small text-foreground-2">
-          Stopped {formatInstant(a.createdAt, timeZone)}.
+          Paused {formatInstant(a.createdAt, timeZone)}.
           {open
             ? " Every call of this job is refused until it is cleared."
             : ` Cleared ${a.clearedAt ? formatInstant(a.clearedAt, timeZone) : ""} by ${a.clearedByEmail ?? "an admin"}.`}
@@ -98,28 +100,31 @@ export function SpendCard({ demo, wonder, day, jobCapNanocents, alerts, timeZone
     <Card>
       <CardHeader>
         <CardTitle>Spend</CardTitle>
-        <CardDescription>What the models have cost, and any job that went past its hourly allowance.</CardDescription>
+        <CardDescription>
+          What the models have cost, and any job that went past its hourly budget. The demo budget is shared by every
+          carrier.
+        </CardDescription>
       </CardHeader>
       <CardBody className="grid gap-5">
         <div className="grid gap-1 text-small text-foreground-2 tabular-nums">
-          <p>{budgetLine("Demo budget used, across every carrier", demo, "every call")}</p>
-          <p>{budgetLine("Muse Wonder used, across every carrier", wonder, "every Muse Wonder call")}</p>
+          <p>{budgetLine("Spent so far this demo", demo, "every call")}</p>
+          <p>{budgetLine("Muse Wonder's share so far", wonder, "every Muse Wonder call")}</p>
           <p>
-            This carrier, last 24 hours: {formatSpend(day.spentNanocents)} across{" "}
+            This carrier, last 24 hours: {formatDollars(day.spentNanocents)} across{" "}
             {countWords(day.calls, "call", "calls")}.
           </p>
           <p>
             {jobCapNanocents === null
-              ? "No hourly allowance is set for a job, so every call is refused."
-              : `Any one job may spend up to ${formatSpend(jobCapNanocents)} in the last hour, or since it was last cleared if that is more recent. A call that would go past it is refused, and the job stays stopped until an admin clears it here.`}
+              ? "No hourly budget is set for a job, so every call is refused."
+              : `Any one job may spend up to ${formatDollars(jobCapNanocents)} in the last hour, or since it was last cleared if that is more recent. A call that would go past it is refused, and the job stays paused until an admin clears it here.`}
           </p>
         </div>
         <section aria-labelledby="spend-alerts-heading" className="grid gap-2">
           <h3 id="spend-alerts-heading" className="text-h3 text-foreground">
-            Stopped jobs
+            Paused jobs
           </h3>
           {alerts.length === 0 ? (
-            <p className="text-small text-foreground-2">No job has gone past its hourly allowance.</p>
+            <p className="text-small text-foreground-2">No job has gone past its hourly budget.</p>
           ) : (
             <ul className="divide-y divide-border rounded-lg border border-border">
               {alerts.map((a) => (

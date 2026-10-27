@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { Money } from "@/components/app/money";
+import { Term } from "@/components/app/term";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
@@ -316,7 +317,8 @@ export function PaymentForm({
       <p className="text-body text-foreground" aria-live="polite">
         Applied <Money cents={appliedCents} tone="plain" />
         {" · "}
-        Unapplied credit <Money cents={Math.max(0, (amountCents ?? 0) - appliedCents)} tone="plain" />
+        <Term id="credit-on-account">Credit on account</Term>{" "}
+        <Money cents={Math.max(0, (amountCents ?? 0) - appliedCents)} tone="plain" />
       </p>
       {badApp ? <InlineAlert tone="warning">An amount is not valid or is more than that invoice owes.</InlineAlert> : null}
       {overApplied ? <InlineAlert tone="warning">More is applied than the payment.</InlineAlert> : null}

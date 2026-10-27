@@ -59,7 +59,7 @@ export default async function SettlementsPage({
     <SignedInPage tenant={view.shell} current="/settlements" title="Settlements">
       <PageHeader
         title="Settlements"
-        description="The rules engine computes every paystub. Run the week to draft them, then approve."
+        description="Your pay rules work out every paystub. Run the week to draft them, then approve."
         actions={
           period && isOpen ? (
             <SettlementAction
@@ -124,7 +124,7 @@ export default async function SettlementsPage({
               <p className="text-small text-foreground-2">
                 Nothing clean yet.{" "}
                 {open.awaitingAuditor > 0
-                  ? `${open.awaitingAuditor} ${open.awaitingAuditor === 1 ? "paystub waits" : "paystubs wait"} for the auditor's check.`
+                  ? `${open.awaitingAuditor} ${open.awaitingAuditor === 1 ? "paystub waits" : "paystubs wait"} for the second check.`
                   : "Every paystub has an exception, is parked, or pays $0. Open one to approve it on its own."}
               </p>
             ) : null
@@ -161,7 +161,7 @@ function SettlementTable({ rows, isOpen }: { rows: SettlementListRow[]; isOpen: 
         { key: "deductions", header: "Deductions", align: "right", cell: (r) => <Money cents={r.deductionsCents} tone="plain" /> },
         { key: "net", header: "Net", align: "right", cell: (r) => <Money cents={r.netCents} tone="plain" /> },
         { key: "exceptions", header: "Exceptions", align: "right", cell: (r) => String(r.exceptionCount) },
-        { key: "auditor", header: "Auditor", cell: (r) => (r.auditor ? (AUDITOR_WORDS[r.auditor] ?? "") : "Not checked") },
+        { key: "auditor", header: "Second check", cell: (r) => (r.auditor ? (AUDITOR_WORDS[r.auditor] ?? "") : "Not checked") },
         {
           key: "status",
           header: "Status",
