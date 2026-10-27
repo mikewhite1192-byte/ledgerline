@@ -103,7 +103,12 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 // One executor per kind. advance_payout comes with ADVANCES (it creates the advances row the
 // ledger needs at approval); pay_correction and invoice_fix have none yet. detention_charge is
 // read through its release switch on every approval: with detentionEnabled off the kind has no
-// executor, so the gate refuses it as not_executable before it approves or writes anything.
+// executor, so a detention_charge can be neither approved nor executed. On a resume (a row already
+// approved or executing), gate refuses it as not_executable before the executor runs. Otherwise
+// that refusal is gate's last check before the approve write, and every earlier outcome comes
+// first: the membership check, not_found, already_decided, expiring an aged proposal (which writes
+// the row as expired), the role refusal, the auditor refusals (not_auditable, auditor_required,
+// override_required, stale) and needs_confirm.
 export const EXECUTORS: ExecutorRegistry = {
   get detention_charge() {
     return flags.detentionEnabled ? executeDetentionCharge : undefined;
