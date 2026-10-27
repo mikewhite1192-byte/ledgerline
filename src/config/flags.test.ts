@@ -22,6 +22,24 @@ describe("flags", () => {
     expect(flags.detentionEnabled).toBe(false);
     // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
     expect(flags.demoResetEnabled).toBe(false);
+    expect(flags.fuelAnomalyEnabled).toBe(false);
+  });
+
+  it("starts fuel checks on a fixed date and keeps the receipt compare and corrections small", () => {
+    expect(flags.fuelAnomalyLimits).toEqual({
+      from: "2026-10-27",
+      duplicateWindowMinutes: 60,
+      chargebackMaxCents: 50_000,
+      compareMaxCostCents: 5,
+      compareMaxOutputTokens: 200,
+      comparesPerRun: 10,
+      comparesPerTenantPerDay: 20,
+    });
+    expect(isLocalDate(flags.fuelAnomalyLimits.from)).toBe(true);
+    // A suggested correction the page offers is one the gateway would also accept.
+    expect(flags.fuelAnomalyLimits.chargebackMaxCents).toBeLessThanOrEqual(
+      flags.gatewayLimits.payCorrectionMaxCents,
+    );
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { TENANT_TABLES } from "../data/tables";
 import golden from "./golden.json";
@@ -34,9 +34,21 @@ describe("the demo reset's lists", () => {
   });
 });
 
+// Every migration that creates or re-creates demo_reset_clear(): the last one is the live function,
+// and each must keep the gate whole.
+const MIGRATIONS = new URL("../../../db/migrations/", import.meta.url);
+const DEFINITIONS = readdirSync(MIGRATIONS)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .filter((f) => /CREATE (OR REPLACE )?FUNCTION demo_reset_clear\(\)/.test(readFileSync(new URL(f, MIGRATIONS), "utf8")));
+
 describe("the function's demo-carrier gate", () => {
-  it("lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", () => {
-    const sql = readFileSync(new URL("../../../db/migrations/0025_demo_reset.sql", import.meta.url), "utf8");
+  it("is defined by 0025 first and re-created whole by any later migration", () => {
+    expect(DEFINITIONS[0]).toBe("0025_demo_reset.sql");
+  });
+
+  it.each(DEFINITIONS)("%s lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", (file) => {
+    const sql = readFileSync(new URL(file, MIGRATIONS), "utf8");
     const gate =
       /IF NOT FOUND OR \(\(v_slug, v_name, v_timezone\) IN \(([^;]*?)\)\) IS NOT TRUE THEN\s+RAISE EXCEPTION 'demo reset: not a demo tenant' USING ERRCODE = 'LR002';/.exec(
         sql,

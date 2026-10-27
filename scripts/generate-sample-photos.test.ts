@@ -211,7 +211,7 @@ describe("the sample photo run", () => {
     expect(flags.aiEnabled).toBe(false);
     expect(out).toEqual({ docs: [], spentNanocents: 0, stopped: null });
     expect(existsSync(io.publicDir) || existsSync(io.manifestPath)).toBe(false);
-    expect(printed.filter((l) => /prompt=\d+ chars/.test(l))).toHaveLength(6);
+    expect(printed.filter((l) => /prompt=\d+ chars/.test(l))).toHaveLength(8);
   });
 
   it("keeps a generated photo whose read matches, stamped and described", async () => {
@@ -274,7 +274,7 @@ describe("the sample photo run", () => {
       ]),
     );
     expect(out.docs.find((d) => d.id === DOC_ID)?.attempts).toBe(1);
-    expect(counts.read).toBe(1 + 5 * 3);
+    expect(counts.read).toBe(1 + 7 * 3);
     for (const d of out.docs) {
       const doc = entry(written(), d.id);
       const file = readFileSync(join(io.publicDir, doc.file));
@@ -395,7 +395,7 @@ describe("the sample photo run", () => {
     expect(parseCap(undefined)).toBe(DEFAULT_CAP_CENTS);
     expect(parseCap("25")).toBe(25);
     for (const bad of ["0", "-1", "2.5", "abc", "501"]) expect(() => parseCap(bad)).toThrow();
-    expect(photosToRun(MANIFEST, null)).toHaveLength(6);
+    expect(photosToRun(MANIFEST, null)).toHaveLength(8);
     expect(photosToRun(MANIFEST, DOC_ID).map((d) => d.id)).toEqual([DOC_ID]);
     expect(() => photosToRun(MANIFEST, "br-l10259-ratecon")).toThrow();
     expect(() => photosToRun(MANIFEST, "nope")).toThrow();

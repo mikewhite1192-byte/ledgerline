@@ -5,7 +5,7 @@ import { flags } from "../../src/config/flags";
 import { AiError, complete, generateImage, type AiDeps, type AiErrorCategory } from "../../src/lib/ai";
 import type { Session } from "../../src/lib/auth/claims";
 import { DbError } from "../../src/lib/db";
-import { composeReceipt } from "../../src/lib/seed/docs/compose";
+import { composeReceipt, turnRgba } from "../../src/lib/seed/docs/compose";
 import { receiptLines } from "../../src/lib/seed/docs/documents";
 import type { Rgba } from "../../src/lib/seed/docs/font";
 import {
@@ -191,9 +191,13 @@ class Spend {
   }
 }
 
+// A retake of another entry's receipt is the same lines, turned this many degrees.
+export const RETAKE_DEGREES = 3;
+
 async function composed(doc: PhotoDoc, background: Buffer | null): Promise<Buffer> {
   const img = await composeReceipt(receiptLines(doc), background);
-  return encodeWebp(stampRgba(img), PHOTO_SAMPLE_SENTENCE);
+  const shot = doc.retakeOf ? await turnRgba(img, RETAKE_DEGREES) : img;
+  return encodeWebp(stampRgba(shot), PHOTO_SAMPLE_SENTENCE);
 }
 
 function record(

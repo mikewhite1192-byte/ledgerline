@@ -236,6 +236,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     // app role wrote.
     "driver_arm_events",
     "driver_identities",
+    "fuel_check_runs",
+    "fuel_findings",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -433,6 +435,29 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'tms', 'invariants-test', 'ui')`,
           [randomUUID(), c.driver],
         );
+        // A finished fuel check with one finding left for a person, on one of the carrier's own
+        // fill-ups (0031).
+        const fuelRun = randomUUID();
+        await q.execute(
+          `INSERT INTO fuel_check_runs (id, tenant_id, as_of, started_by, status, checked_count, found_count,
+             finished_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST('2026-10-28' AS date), 'invariants-test', 'done', 1,
+             1, now())`,
+          [fuelRun],
+        );
+        const fuelFound = await q.execute(
+          `INSERT INTO fuel_findings (id, tenant_id, finding_key, check_name, category, driver_id, fuel_purchase_id,
+             purchased_on, state, gallons_milli, tank_gallons, paid_with, amount_cents, excess_cents, no_suggestion,
+             sources, first_run_id, last_run_id)
+           SELECT CAST($1 AS uuid), current_tenant_id(), 'invariants-test', 'fuel_over_tank', 'gallons_over_tank',
+             f.driver_id, f.id, f.purchased_on, f.state, f.gallons_milli, 150, f.paid_with, f.amount_cents, 1,
+             'over_tank', CAST('[]' AS jsonb), CAST($2 AS uuid), CAST($2 AS uuid)
+             FROM fuel_purchases f
+            ORDER BY f.purchase_ref
+            LIMIT 1`,
+          [randomUUID(), fuelRun],
+        );
+        expect(fuelFound).toBe(1);
       });
       ids.proposals.push(proposal);
       ids.accountingRows.push(action);

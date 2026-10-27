@@ -73,6 +73,8 @@ describe("row-level security coverage", () => {
         "spend_alerts",
         "sweep_items",
         "sweep_runs",
+        "fuel_check_runs",
+        "fuel_findings",
         "tenants",
         "turn_steps",
         "turns",
