@@ -12,6 +12,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   advance_payout: "Pay advance",
   pay_correction: "Pay correction",
   invoice_fix: "Invoice correction",
+  load_rate_fill: "Fill missing rate",
   invoice_post: "Post invoice",
   payment_reapply: "Move payment to the right invoice",
   detention_charge: "Bill unbilled detention",
@@ -47,6 +48,8 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   if (kind === "invoice_fix" || kind === "payment_reapply") {
     return { amountCents, direction: "none" } as const;
   }
+  // A rate fill moves no money.
+  if (kind === "load_rate_fill") return { amountCents: 0, direction: "none" } as const;
   // An invoice is money the customer owes in; nothing moves until they pay it.
   if (kind === "invoice_post") return { amountCents, direction: "in" } as const;
   // Money the customer owes the carrier on top of the invoice.

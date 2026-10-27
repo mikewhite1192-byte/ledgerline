@@ -21,13 +21,16 @@ import {
 import { localDateOf } from "../../../../time/local-date";
 import { isUuid } from "../../../../uuid";
 import { defineTool, type AgentRole, type GatewayContext } from "../../types";
+import { loadRateLimit } from "../../limits";
 import { idField } from "../../validate";
 
 // The auditor's evidence for one proposal (design 4.2 step 3): the proposal as stored, the
 // records it cites with their current figures, and the rules engine's own number for it. Built
 // from records and the engine only. Nothing is read from untrusted_inputs: whether the proposal
-// was flagged, and why, comes from the proposal and its screening. A person's override reason is
-// never selected. Every string that reaches the pack is a code, an enum, an id or a date.
+// was flagged, and why, comes from the proposal and its screening. For a rate fill the check is
+// the gateway's own rate limit run again now (the stored reading compared with the load in code);
+// only its outcome, as codes, reaches the pack, never the document's text. A person's override
+// reason is never selected. Every string that reaches the pack is a code, an enum, an id or a date.
 
 const AUDITOR: readonly AgentRole[] = ["auditor"];
 
@@ -361,6 +364,44 @@ async function invoicePostEngine(q: Queryable, p: ProposalRow, args: Record<stri
   };
 }
 
+// A rate fill moves no money; its check is whether the gateway's rate limit still takes these
+// exact numbers for this load (the load still has no rate and can take one, miles times the rate
+// per mile is the linehaul, and the named document's reading supports the fill with these cents).
+// A refusal carries the limit's reason; a read error is unavailable.
+async function rateFillEngine(
+  q: Queryable,
+  ctx: GatewayContext,
+  p: ProposalRow,
+  args: Record<string, unknown>,
+): Promise<Engine> {
+  const { loadId, linehaulCents, fuelSurchargeCents, ratePerMileCents, requestRef } = args;
+  if (
+    p.subject_table !== "loads" ||
+    !isUuid(loadId) ||
+    loadId !== p.subject_id ||
+    !isUuid(requestRef) ||
+    typeof linehaulCents !== "number" ||
+    typeof fuelSurchargeCents !== "number" ||
+    typeof ratePerMileCents !== "number" ||
+    !Number.isSafeInteger(linehaulCents) ||
+    !Number.isSafeInteger(fuelSurchargeCents) ||
+    !Number.isSafeInteger(ratePerMileCents)
+  ) {
+    return UNAVAILABLE;
+  }
+  const limit = await loadRateLimit(q, ctx, { loadId, linehaulCents, fuelSurchargeCents, ratePerMileCents, requestRef });
+  if (!limit.ok && limit.reason === "limit_unavailable") return UNAVAILABLE;
+  const base = {
+    ok: true,
+    check: "load_rate_fill",
+    proposedLinehaulCents: linehaulCents,
+    proposedFuelSurchargeCents: fuelSurchargeCents,
+    ratePerMileCents,
+  };
+  if (!limit.ok) return { ...base, supported: false, refusal: limit.reason };
+  return { ...base, supported: true, reasons: limit.reasons.filter((r) => CATEGORY.test(r)) };
+}
+
 // The detention the engine finds on the load today, the invoice it would go on, and whether the
 // stored figures (stops, instants, terms, invoice and its amount before) still match it exactly.
 // The stored args are parsed whole with their own schema here: the pack's safe args drop the stops.
@@ -458,6 +499,7 @@ async function engineFor(
     if (p.kind === "advance_payout") return await advanceEngine(q, ctx, p, amount);
     if (p.kind === "pay_correction") return await payCorrectionEngine(q, args);
     if (p.kind === "invoice_fix") return await invoiceEngine(q, p, args);
+    if (p.kind === "load_rate_fill") return await rateFillEngine(q, ctx, p, args);
     // The card's lines are objects, which safeArgs leaves out; this check reads them as stored.
     if (p.kind === "invoice_post") return await invoicePostEngine(q, p, raw);
     if (p.kind === "payment_reapply") return await paymentReapplyEngine(q, ctx, p, args);

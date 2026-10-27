@@ -22,6 +22,8 @@ const SENTENCES: Readonly<Record<string, string>> = {
   missing_accessorial: "An accessorial on the load is missing from the invoice.",
   fuel_surcharge_wrong: "The fuel surcharge on the invoice is wrong.",
   duplicate_line: "The same line appears twice on the invoice.",
+  // propose_load_rate
+  missing_rate: "The load has no rate yet; this fills it from the load's rate confirmation.",
   // the rules engine's advance reasons
   driver_inactive: "The driver is not active on that date.",
   below_minimum: "The amount is below the carrier's minimum advance.",

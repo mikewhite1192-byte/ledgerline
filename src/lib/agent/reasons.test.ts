@@ -26,6 +26,7 @@ describe("reason sentences", () => {
       "capped_to_eligible",
       "engine_total",
       "payment_on_wrong_invoice",
+      "missing_rate",
     ];
     for (const c of all) expect(REASON_SENTENCE_CATEGORIES).toContain(c);
   });

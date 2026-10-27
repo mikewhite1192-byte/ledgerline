@@ -7,6 +7,7 @@ import type { NavItem } from "./nav-list";
 // page still says it is off if someone types the address.
 const ITEMS = [
   { href: "/", label: "Home", icon: <House aria-hidden />, shown: () => true },
+  { href: "/documents", label: "Documents", icon: <FileText aria-hidden />, shown: () => flags.documentsEnabled === true },
   { href: "/advances", label: "Advances", icon: <HandCoins aria-hidden />, shown: () => flags.advancesEnabled === true },
   { href: "/driver-notes", label: "Driver notes", icon: <NotebookPen aria-hidden />, shown: () => flags.driverNotesEnabled === true },
   { href: "/invoices", label: "Invoices", icon: <FileText aria-hidden />, shown: () => flags.invoicesEnabled === true },

@@ -174,6 +174,9 @@ const NAMED_BY_LEDGER = `SELECT 1 FROM money_actions m
    WHERE m.tenant_id = CAST($1 AS uuid) AND m.proposal_id = p.id`;
 
 const AGENT_CLEAR = [
+  // Uploaded documents first: each points at its transcription in untrusted_inputs, and no
+  // proposal or ledger row names a document, so none is kept.
+  "DELETE FROM documents WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM voice_notes WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM driver_notes WHERE tenant_id = CAST($1 AS uuid)",
   `DELETE FROM turn_steps s

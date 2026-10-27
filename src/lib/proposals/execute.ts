@@ -8,6 +8,7 @@ import { executePaymentReapply } from "../invoices/reapply";
 import { assertMembership } from "../tenant/context";
 import { overrideReasonOf } from "../agent/auditor/words";
 import { executeDetentionCharge } from "./executors/detention-charge";
+import { loadRateFill } from "./executors/load-rate-fill";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
 // purpose: approval is the only road from a proposal to the ledger, and the agent tree cannot
@@ -115,11 +116,12 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 
 // One executor per kind. advance_payout creates the advances row at approval and pays it through
 // the money executor (src/lib/advances/approve.ts), with a precheck that refuses before the
-// approval when the payout could not run; invoice_post writes the approved invoice and
-// payment_reapply moves one payment application. pay_correction and invoice_fix have none yet, so
-// they are refused as not_executable. detention_charge is read through its release switch on every
-// approval: with detentionEnabled off the kind has no executor, so a detention_charge can be
-// neither approved nor executed. On a resume (a row already approved or executing), gate refuses
+// approval when the payout could not run. load_rate_fill writes a load's missing rate and moves
+// no money; invoice_post writes the approved invoice and payment_reapply moves one payment
+// application. pay_correction and invoice_fix have none yet, so they are refused as
+// not_executable. detention_charge is read through its release switch on every approval: with
+// detentionEnabled off the kind has no executor, so a detention_charge can be neither approved nor
+// executed. On a resume (a row already approved or executing), gate refuses
 // it as not_executable before the executor runs. Otherwise that refusal is gate's last check
 // before the approve write, and every earlier outcome comes first: the membership check,
 // not_found, already_decided, expiring an aged proposal (which writes the row as expired), the
@@ -130,6 +132,7 @@ export const EXECUTORS: ExecutorRegistry = {
     (...args: Parameters<Executor>) => executeAdvanceProposal(...args),
     { precheck: precheckAdvanceProposal },
   ),
+  load_rate_fill: loadRateFill,
   invoice_post: executeInvoicePost,
   payment_reapply: executePaymentReapply,
   get detention_charge() {

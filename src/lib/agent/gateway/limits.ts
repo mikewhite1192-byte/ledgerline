@@ -17,7 +17,10 @@ import {
   invoiceAmount,
   type AdvanceDecision,
 } from "../../rules-engine";
+import { loadCandidates } from "../../documents/candidates";
+import { matchDocument, RATE_FILL_STATUSES } from "../../documents/match";
 import { isWithin, localDateOf } from "../../time/local-date";
+import { readDocumentForInput } from "./store/document-reads";
 import type { GatewayContext, GatewayRef, LimitResult } from "./types";
 
 // Amount limits for the propose tools. The rules engine sizes every number; the gateway only
@@ -239,6 +242,64 @@ export async function paymentReapplyLimit(
       exceptions: [],
       reasons: ["payment_on_wrong_invoice"],
       sources: finding.sources,
+    };
+  } catch {
+    return unavailable(null);
+  }
+}
+
+// ---- Load rate fill ----
+
+export type LoadRateLimitArgs = {
+  loadId: string;
+  linehaulCents: number;
+  fuelSurchargeCents: number;
+  ratePerMileCents: number;
+  requestRef: string;
+};
+
+// A fill moves no money (limit 0, requested 0); what it guards is that the numbers are the
+// document's and the document is this load's. The load must still have no rate and be in a status
+// that can take one, miles times the rate per mile must be the linehaul, and the rate
+// confirmation named by requestRef must be read, compared again now with this load, support the
+// fill, and carry exactly these cents.
+export async function loadRateLimit(
+  q: Queryable,
+  _ctx: GatewayContext,
+  args: LoadRateLimitArgs,
+): Promise<LimitResult> {
+  try {
+    const [load] = await readRowsWhereId(q, "loads", "id", args.loadId);
+    if (!load) return unavailable(0);
+    if (load.linehaul_cents !== null || !RATE_FILL_STATUSES.includes(load.status)) {
+      return refused("engine_refused", 0, 0);
+    }
+    const linehaul = args.ratePerMileCents * load.loaded_miles;
+    if (!Number.isSafeInteger(linehaul) || linehaul !== args.linehaulCents) return refused("engine_refused", 0, 0);
+    const doc = await readDocumentForInput(q, args.requestRef);
+    const read = doc?.read ?? null;
+    if (!doc || doc.readStatus !== "read" || !read || read.kind !== "rate_confirmation") {
+      return refused("engine_refused", 0, 0);
+    }
+    const match = matchDocument(read, await loadCandidates(q, read));
+    if (!match.found || match.supports !== "load_rate_fill" || match.loadId !== load.id) {
+      return refused("engine_refused", 0, 0);
+    }
+    const f = read.fields;
+    if (
+      f.linehaulCents !== args.linehaulCents ||
+      f.fuelSurchargeCents !== args.fuelSurchargeCents ||
+      f.ratePerMileCents !== args.ratePerMileCents
+    ) {
+      return refused("engine_refused", 0, 0);
+    }
+    return {
+      ok: true,
+      limitCents: cents(0),
+      requestedCents: cents(0),
+      exceptions: [],
+      reasons: ["missing_rate"],
+      sources: [{ table: "loads", id: load.id }],
     };
   } catch {
     return unavailable(null);
