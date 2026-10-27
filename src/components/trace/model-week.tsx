@@ -6,10 +6,10 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { countWords, formatCachedShare, formatLatency, formatSaved, formatSpend } from "@/lib/trace/format";
 import type { ModelTotals, ModelWeek } from "@/lib/trace/week";
-import { formatPeriod } from "@/lib/format/dates";
+import { formatPeriod, zoneName } from "@/lib/format/dates";
 
 // The Meta models page's body: one card per model with what it does here, its calls, spend,
-// prompt cache share and typical time this week, then the gateway's and the screener's totals.
+// prompt cache share and typical time this week, then the safety check's and the screener's totals.
 // Plain data in, no reads.
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -87,8 +87,8 @@ export function ModelWeekView({ week }: { week: ModelWeek }) {
       <div className="grid gap-1">
         <h2 className="text-h2 text-foreground">This pay week</h2>
         <p className="text-body text-foreground-2">
-          {period}, in {week.week.zone} time. Every model call the assistant made for this carrier, read
-          from the call log.
+          {period}, in {zoneName(week.week.zone, new Date(`${week.week.start}T12:00:00Z`))}. Every model call the
+          assistant made for this carrier.
         </p>
       </div>
 
@@ -118,14 +118,14 @@ export function ModelWeekView({ week }: { week: ModelWeek }) {
             }
           />
           <StatCard
-            label="Gateway checks"
+            label="Safety checks"
             value={count(week.decisions.total)}
             hint={`${count(week.decisions.blocked)} blocked, ${count(week.decisions.refused)} refused`}
           />
           <StatCard
             label="Handed to Muse Wonder"
             value={count(week.escalations)}
-            hint="Proposals Muse Spark could not form"
+            hint="Cards Muse Spark could not form"
           />
         </div>
       )}
@@ -152,13 +152,13 @@ export function ModelWeekView({ week }: { week: ModelWeek }) {
             <Card className="min-w-0">
               <CardHeader>
                 <div className="grid gap-0.5">
-                  <CardTitle>Gateway</CardTitle>
+                  <CardTitle>Safety check</CardTitle>
                   <CardDescription>Every tool a model asks for passes here first.</CardDescription>
                 </div>
               </CardHeader>
               <CardBody>
                 <dl className="grid divide-y divide-border">
-                  <Row label="Allowed" value={count(week.decisions.allowed)} />
+                  <Row label="Passed" value={count(week.decisions.allowed)} />
                   <Row label="Blocked by a rule" value={count(week.decisions.blocked)} />
                   <Row label="Refused (wrong form, tool or role)" value={count(week.decisions.refused)} />
                   <Row label="Did not finish" value={count(week.decisions.failed)} />

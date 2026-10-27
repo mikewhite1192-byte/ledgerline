@@ -8,6 +8,7 @@ import { StatCard } from "@/components/app/stat-card";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { buttonVariants } from "@/components/ui/button";
+import { Term } from "@/components/app/term";
 import { Card, CardBody } from "@/components/ui/card";
 import { BUCKET_WORDS, Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { formatCents } from "@/lib/format/money";
@@ -19,7 +20,7 @@ export const dynamic = "force-dynamic";
 
 const METHOD_WORDS: Readonly<Record<string, string>> = { check: "Check", ach: "ACH", wire: "Wire" };
 
-// One customer: what they owe by age, their invoices, their payments and the credit they have.
+// One customer: what they owe by how late it is, their invoices, their payments and the credit they have.
 export default async function CustomerRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const page = await readRecordPage(id, readCustomerRecord);
@@ -37,7 +38,7 @@ export default async function CustomerRecord({ params }: { params: Promise<{ id:
     <SignedInPage tenant={page.shell} current="none" title={c.name}>
       <PageHeader
         title={c.name}
-        description={`${c.code} · net ${c.termsDays} days`}
+        description={`${c.code} · Pays within ${c.termsDays} days`}
         actions={
           flags.customerPaymentsEnabled ? (
             <Link
@@ -56,7 +57,7 @@ export default async function CustomerRecord({ params }: { params: Promise<{ id:
         ))}
       </section>
       <p className="text-body text-foreground">
-        Unapplied credit <Money cents={c.creditCents} tone="plain" />
+        <Term id="credit-on-account">Credit on account</Term> <Money cents={c.creditCents} tone="plain" />
       </p>
       {flags.invoicesEnabled && flags.invoiceReviewEnabled ? (
         <Card>
@@ -80,7 +81,7 @@ export default async function CustomerRecord({ params }: { params: Promise<{ id:
           { key: "status", header: "Status", cell: (r) => <StatusBadge status={r.status} /> },
           { key: "balance", header: "Balance", align: "right", cell: (r) => <Money cents={r.balanceCents} tone="plain" /> },
           { key: "due", header: "Due", cell: (r) => <Day value={r.dueOn} /> },
-          { key: "bucket", header: "Aging", cell: (r) => (r.bucket ? BUCKET_WORDS[r.bucket] : "") },
+          { key: "bucket", header: "How late", cell: (r) => (r.bucket ? BUCKET_WORDS[r.bucket] : "") },
         ]}
       />
       <DataTable

@@ -1,3 +1,4 @@
+import { stepLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { reasonSentence } from "@/lib/agent/reasons";
 import type { TraceCall, TraceDecision, TraceExtraCall, TraceProposal, TraceStep, TurnTrace } from "./types";
@@ -28,8 +29,8 @@ export const OTHER_MODEL = "Other model";
 
 // What each model does in LedgerLine, for the models page.
 const TARGET_JOBS: Readonly<Record<string, string>> = {
-  spark: "Answers questions in the chat and drafts proposals from the tools' records.",
-  wonder: "Takes over when a proposal will not form, and checks proposals as the auditor.",
+  spark: "Answers questions in the chat and drafts cards for a person to approve, from the tools' records.",
+  wonder: "Takes over when a card will not form, and gives each card its second check.",
   spark_open: "Screens outside text, like an email, before the agent reads it.",
   voice: "Turns a spoken question into text.",
   image: "Reads document images.",
@@ -154,6 +155,13 @@ export function countWords(n: number, one: string, many: string): string {
   return `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 }
 
+// A total in dollars and cents for copy that a person reads as money ("$0.00 of $2.00"), rounded
+// up to the cent so it never looks smaller than the ledger.
+export function formatDollars(nanocents: number): string {
+  if (!isNanocents(nanocents)) return "unknown";
+  return dollarsUp(nanocents);
+}
+
 // A cache saving, rounded down: "0.2 cents", "84.3 cents", then "$1.24" from a dollar up, and
 // "under 0.1 cents" for a saving too small to show.
 export function formatSaved(nanocents: number | null): string {
@@ -204,9 +212,9 @@ export function failureWords(category: string | null): string {
   return category !== null && has(FAILURE_WORDS, category) ? FAILURE_WORDS[category] : "the cause is not known";
 }
 
-// The decision sentence for a gateway step, after the step's own fixed label.
+// The decision sentence for a safety check step, after the step's own fixed label.
 const DECISION_WORDS: Readonly<Record<string, string>> = {
-  allowed: "allowed",
+  allowed: "passed the safety check",
   blocked: "blocked",
   invalid_args: "refused, the request was not in the right form",
   denied: "refused, this assistant may not use that tool",
@@ -229,9 +237,9 @@ const BLOCK_REASONS: Readonly<Record<string, string>> = {
 export function decisionSentence(d: TraceDecision): string {
   const head = has(DECISION_WORDS, d.decision) ? DECISION_WORDS[d.decision] : "outcome not known";
   if (d.decision === "allowed") {
-    if (d.reason === "capped_to_eligible") return "allowed, cut to the most the pay rules allow";
-    if (d.reason === "result_truncated") return "allowed, the result was cut to fit";
-    if (d.reason === "duplicate") return "allowed, the same request was already answered";
+    if (d.reason === "capped_to_eligible") return "passed the safety check, cut to the most the pay rules allow";
+    if (d.reason === "result_truncated") return "passed the safety check, the result was cut to fit";
+    if (d.reason === "duplicate") return "passed the safety check, the same request was already answered";
     return head;
   }
   if (d.decision !== "blocked") return head;
@@ -251,27 +259,27 @@ const OPERATOR_VERDICTS: Readonly<Record<string, string>> = {
   owed_by_driver: "money is owed by the driver",
 };
 
-// The auditor's four verdict words (migration 0014), worded as the card words them.
+// The second check's four results (migration 0014), worded as the card words them.
 const AUDITOR_VERDICTS: Readonly<Record<string, string>> = {
-  pass: "Checked the proposal and found no problem",
-  concerns: "Checked the proposal and has concerns",
-  block: "Checked the proposal and blocked it",
+  pass: "Gave the card a second check: passed",
+  concerns: "Gave the card a second check: has concerns",
+  block: "Gave the card a second check: did not pass",
   unknown: "Could not decide",
 };
 
 const PROPOSAL_RESULTS: Readonly<Record<string, string>> = {
-  created: "Saved the proposal card for a person to approve",
-  duplicate: "Found the same proposal already on file, so no second card was made",
-  live_exists: "An open proposal for this is already waiting, so no new card was made",
-  already_decided: "That proposal was already decided, so no new card was made",
-  store_failed: "Could not save the proposal card",
+  created: "Saved the card for a person to approve",
+  duplicate: "Found the same card already saved, so no second card was made",
+  live_exists: "A card for this is already waiting for approval, so no new card was made",
+  already_decided: "That card was already decided, so no new card was made",
+  store_failed: "Could not save the card",
 };
 
 const SCREEN_PURPOSE = "screen_untrusted_input";
 
 const PURPOSE_WORDS: Readonly<Record<string, string>> = {
   agent_operator_turn: "Thought it through",
-  agent_operator_escalation: "Formed the proposal",
+  agent_operator_escalation: "Formed the card",
   screen_untrusted_input: "Screened outside text before the agent read it",
 };
 
@@ -336,8 +344,8 @@ function modelStepLine(s: TraceStep, call: TraceCall | null): TraceLine {
 function toolStepLine(s: TraceStep): TraceLine {
   const d = s.decision;
   if (!d) {
-    const text = s.state === "running" ? `${s.label}: still running` : `${s.label}: did not finish`;
-    return { key: `step:${s.seq}`, who: "Gateway", meta: [], text, badge: null, refs: [] };
+    const text = s.state === "running" ? `${stepLabel(s.label)}: still running` : `${stepLabel(s.label)}: did not finish`;
+    return { key: `step:${s.seq}`, who: "Safety check", meta: [], text, badge: null, refs: [] };
   }
   const badge: TraceLine["badge"] =
     d.decision === "allowed"
@@ -349,9 +357,9 @@ function toolStepLine(s: TraceStep): TraceLine {
           : { tone: "warning", label: "Refused" };
   return {
     key: `step:${s.seq}`,
-    who: "Gateway",
+    who: "Safety check",
     meta: [],
-    text: `${s.label}: ${decisionSentence(d)}`,
+    text: `${stepLabel(s.label)}: ${decisionSentence(d)}`,
     badge,
     refs: d.refs,
   };
@@ -360,12 +368,12 @@ function toolStepLine(s: TraceStep): TraceLine {
 function escalationLine(s: TraceStep, call: TraceCall | null): TraceLine {
   const attempts = s.escalation?.attempts ?? 2;
   const times = attempts === 2 ? "twice" : countWords(attempts, "time", "times");
-  let text = `Took over after Muse Spark failed the proposal format ${times}`;
+  let text = `Took over after Muse Spark could not form the card ${times}`;
   const done = s.escalation?.finishedBy === "wonder" && s.state === "done";
   if (s.state === "running") text += ", still working";
   else if (!done) {
     const trouble = call ? callTrouble(call) : s.category !== null ? failureWords(s.category) : null;
-    text += trouble ? `, but did not finish: ${trouble}` : ", but did not finish the proposal";
+    text += trouble ? `, but did not finish: ${trouble}` : ", but did not finish the card";
   }
   return {
     key: `step:${s.seq}`,
@@ -385,9 +393,9 @@ function proposalStepLine(s: TraceStep): TraceLine {
     result !== null
       ? PROPOSAL_RESULTS[result]
       : s.state === "running"
-        ? "Preparing a proposal card"
+        ? "Preparing a card"
         : s.state === "done"
-          ? "Prepared a proposal card"
+          ? "Prepared a card"
           : PROPOSAL_RESULTS.store_failed;
   const failed = result !== null ? result === "store_failed" : s.state !== "running" && s.state !== "done";
   const badge: TraceLine["badge"] = failed ? { tone: "destructive", label: "Failed" } : null;
@@ -477,7 +485,7 @@ function lineOfStep(s: TraceStep, call: TraceCall | null): TraceLine {
         key: `step:${s.seq}`,
         who: call ? modelName(call.target, call.model, call.provider) : "LedgerLine",
         meta: call ? callMeta(call) : [],
-        text: s.label,
+        text: stepLabel(s.label),
         badge: null,
         refs: [],
       };
@@ -499,7 +507,7 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
   p.exceptions.forEach((category, i) => {
     out.push({
       key: `proposal:${p.id}:exception:${i}`,
-      who: "Gateway",
+      who: "Safety check",
       meta: [],
       text: reasonSentence(category),
       badge: null,
@@ -509,7 +517,7 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
   if (p.flagged) {
     out.push({
       key: `proposal:${p.id}:flagged`,
-      who: "Gateway",
+      who: "Safety check",
       meta: [],
       text: "Outside text this turn read was flagged, so this card needs a closer look before approval",
       badge: { tone: "warning", label: "Flagged" },
@@ -520,19 +528,19 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
     const verdict =
       p.auditorVerdict !== null && has(AUDITOR_VERDICTS, p.auditorVerdict)
         ? AUDITOR_VERDICTS[p.auditorVerdict]
-        : "Has not given a verdict yet";
+        : "Has not finished the second check yet";
     out.push(withCache({
       key: `proposal:${p.id}:auditor`,
-      who: `Auditor (${p.auditorCall ? modelName(p.auditorCall.target, p.auditorCall.model, p.auditorCall.provider) : "Muse Wonder"})`,
+      who: `Second check (${p.auditorCall ? modelName(p.auditorCall.target, p.auditorCall.model, p.auditorCall.provider) : "Muse Wonder"})`,
       meta: p.auditorCall ? callMeta(p.auditorCall) : [],
       text: verdict,
       badge:
         p.auditorVerdict === "block"
-          ? { tone: "destructive", label: "Blocked" }
+          ? { tone: "destructive", label: "Did not pass" }
           : p.auditorVerdict === "concerns"
             ? { tone: "warning", label: "Concerns" }
             : p.auditorVerdict === "pass"
-              ? { tone: "success", label: "Pass" }
+              ? { tone: "success", label: "Passed" }
               : null,
       refs: [],
     }, p.auditorCall));

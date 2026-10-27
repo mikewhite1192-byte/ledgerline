@@ -118,7 +118,8 @@ describe("the desk's sentence, the reference and the accounting amount", () => {
     expect(sourceOfInput(null)).toBe("ui");
     expect(sourceOfInput("upload")).toBe("ui");
     expect(sourceWords("voice")).toBe("Voice note");
-    expect(sourceWords("seed")).toBe("On file");
+    expect(sourceWords("seed")).toBe("The office");
+    expect(sourceWords("ui")).toBe("This app");
     expect(sourceWords("toString")).toBe("Other");
   });
 });

@@ -84,10 +84,10 @@ export function sourceOfInput(kind: string | null): AdvanceSource {
 
 // Where an advance came from, in words for the pages.
 const SOURCE_WORDS: Readonly<Record<AdvanceSource, string>> = {
-  ui: "In the app",
+  ui: "This app",
   email: "Email",
   voice: "Voice note",
-  seed: "On file",
+  seed: "The office",
 };
 
 export function sourceWords(source: string): string {
