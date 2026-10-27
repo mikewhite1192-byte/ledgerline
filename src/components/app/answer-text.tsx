@@ -12,7 +12,9 @@ export type AnswerRun = { text: string; bold: boolean };
 export type AnswerBlock = { kind: "paragraph"; lines: AnswerRun[][] } | { kind: "bullet"; runs: AnswerRun[] };
 
 const BULLET = /^[*-][ \t]+(\S.*)$/;
-const BOLD = /\*\*(?=\S)(.+?)(?<=\S)\*\*/g;
+// Bold text starts and ends on a non-space; the shortest such run wins. No lookbehind: older
+// Safari cannot parse one, and a regex it cannot parse stops the whole page script from loading.
+const BOLD = /\*\*(\S(?:.*?\S)??)\*\*/g;
 
 // One line's runs: the text between pairs of ** is bold; a ** with no partner stays as written.
 export function answerRuns(line: string): AnswerRun[] {

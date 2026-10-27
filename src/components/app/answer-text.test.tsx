@@ -55,6 +55,14 @@ describe("answerRuns", () => {
     expect(answerRuns("2 ** 3 is not bold")).toEqual([{ text: "2 ** 3 is not bold", bold: false }]);
     expect(answerRuns("** spaced **")).toEqual([{ text: "** spaced **", bold: false }]);
   });
+
+  it("bolds one character, and stops at the first closing pair", () => {
+    expect(answerRuns("**A**")).toEqual([{ text: "A", bold: true }]);
+    expect(answerRuns("**a** b**")).toEqual([
+      { text: "a", bold: true },
+      { text: " b**", bold: false },
+    ]);
+  });
 });
 
 describe("AnswerText", () => {
@@ -96,5 +104,10 @@ describe("AnswerText", () => {
       const source = readFileSync(join(__dirname, file), "utf8");
       expect(source, file).not.toMatch(/dangerouslySetInnerHTML|innerHTML/);
     }
+  });
+
+  // Older Safari cannot parse a lookbehind, and one it cannot parse stops the page script loading.
+  it("uses no regex lookbehind", () => {
+    expect(readFileSync(join(__dirname, "answer-text.tsx"), "utf8")).not.toMatch(/\(\?<[=!]/);
   });
 });

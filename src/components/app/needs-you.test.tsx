@@ -50,9 +50,11 @@ describe("NeedsYou", () => {
     expect(screen.getByRole("status").textContent).toBe(NEEDS_YOU_UNREAD);
   });
 
-  it("says a count was cut off rather than give a short one", () => {
+  it("says a count and its total were cut off rather than give short ones", () => {
     const full = Array.from({ length: 200 }, (_, i) => advance({ id: `r${i}`, status: "requested", amountCents: 100 }));
     render(<NeedsYou view={{ rows: [advancesRow(full)!], unread: false }} />);
-    expect(screen.getByRole("listitem").textContent).toContain("200 or more advance requests waiting for a decision");
+    expect(screen.getByRole("listitem").textContent).toBe(
+      "200 or more advance requests waiting for a decisionAt least $200.00 requestedOpen requested advances",
+    );
   });
 });

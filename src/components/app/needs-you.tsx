@@ -4,8 +4,9 @@ import { Card } from "@/components/ui/card";
 import type { NeedsYouView } from "@/lib/home/needs-you";
 
 // "Needs you" at the top of Home, drawn from what src/lib/home/needs-you.ts read on the server.
-// Amounts are integer cents, shown by the shared formatter. A read that failed never shows as
-// "nothing is waiting".
+// Amounts are integer cents, shown by the shared formatter. A count cut off at its read's limit
+// reads "or more", and its total "At least", since it sums only the rows read. A read that failed
+// never shows as "nothing is waiting".
 
 export const NEEDS_YOU_EMPTY = "Nothing is waiting on you. Ask a question or open a page from the menu.";
 export const NEEDS_YOU_UNREAD = "Could not check everything that is waiting right now. Reload the page to try again.";
@@ -32,6 +33,7 @@ export function NeedsYou({ view }: { view: NeedsYouView }) {
                   {r.what}
                   {r.amounts.map((a) => (
                     <span key={a.label} className="block text-small text-foreground-2">
+                      {r.atLeast ? "At least " : null}
                       <Money cents={a.cents} tone="plain" /> {a.label}
                     </span>
                   ))}
