@@ -115,10 +115,12 @@ async function main(): Promise<void> {
       const slug = plan.carrier.slug;
       const tenantId = await findDemoTenant(admin, plan.carrier);
       // Ledger rows first, then the replace. The clear refuses, deleting nothing, while any row
-      // is still reserved, sent or unknown (its outcome is not known yet). The two run on
-      // different logins, so they cannot share a transaction: if the replace then fails, the old
-      // subjects stay without their settled ledger rows. A paid advance or settlement still
-      // refuses a second payout by its own status; run the seed again before approving anything.
+      // is still reserved, sent or unknown (its outcome is not known yet) or failed as
+      // amount_mismatch (money may have moved for another amount, so a person must review it
+      // and the subject stays closed to a new payout). The two run on different logins, so they
+      // cannot share a transaction: if the replace then fails, the old subjects stay without
+      // their settled ledger rows. A paid advance or settlement still refuses a second payout by
+      // its own status; run the seed again before approving anything.
       const cleared = await clearTenantLedger(admin, tenantId);
       console.log(`cleared ${cleared} ledger rows for ${slug}`);
       const report = await replaceTenantData(app, tenantId, plan);
