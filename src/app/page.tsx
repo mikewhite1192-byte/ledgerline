@@ -1,6 +1,6 @@
-import { House } from "lucide-react";
 import { flags } from "@/config/flags";
 import { AgentChat } from "@/components/agent/turn-view";
+import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { ChatThread } from "@/components/app/chat-thread";
 import { DataTable } from "@/components/app/data-table";
@@ -118,7 +118,7 @@ export default async function Home() {
   return (
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
-      nav={[{ href: "/", label: "Home", icon: <House aria-hidden />, current: true }]}
+      nav={appNav("/")}
       title="Home"
       signOut={signOut}
     >
