@@ -38,6 +38,8 @@ export function addStacks(app: App, env: Environment, money: MoneySettings = {})
       sam: "sam-3.1",
     },
     basetenModelId: "meta-models/muse-spark-open-1026",
+    // The standby host's id for the same model, used only while the fallback switch is on.
+    fireworksModelId: "accounts/fireworks/models/muse-spark-open",
     money,
   });
   hosting.addStackDependency(data);

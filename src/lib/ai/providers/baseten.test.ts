@@ -110,6 +110,7 @@ describe("parseBaseten", () => {
         text: "Classifying.",
         toolCalls: [{ id: "call_2", name: "classify", argumentsJson: "{}" }],
         replay: [],
+        toolSearches: 0,
       },
     });
   });

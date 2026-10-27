@@ -8,6 +8,7 @@ import type { AiProvider } from "./types";
 const SOURCES: Record<AiProvider, { raw: string; secretName: string }> = {
   meta: { raw: "META_API_KEY", secretName: "META_API_KEY_SECRET_NAME" },
   baseten: { raw: "BASETEN_API_KEY", secretName: "BASETEN_API_KEY_SECRET_NAME" },
+  fireworks: { raw: "FIREWORKS_API_KEY", secretName: "FIREWORKS_API_KEY_SECRET_NAME" },
 };
 
 // Secrets Manager's own name rule.

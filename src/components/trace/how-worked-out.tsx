@@ -62,6 +62,7 @@ function Line({ line, hrefFor }: { line: TraceLine; hrefFor: HrefFor }) {
         {line.badge ? <Badge tone={line.badge.tone}>{line.badge.label}</Badge> : null}
       </div>
       <p className="text-body text-foreground-2">{line.text}</p>
+      {line.cache ? <p className="text-small text-muted-foreground tabular-nums">{line.cache}</p> : null}
       {line.refs.length > 0 ? (
         <ul className="flex flex-wrap gap-x-3 gap-y-1" aria-label="Records it read">
           {line.refs.map((ref) => {

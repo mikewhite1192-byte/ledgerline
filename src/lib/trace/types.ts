@@ -6,17 +6,25 @@
 
 export type TraceRef = { table: string; id: string };
 
-// One model_calls row. costNanocents is null until the call settles.
+// One model_calls row. costNanocents is null until the call settles. inputTokens and cachedTokens
+// are the provider's counts (null until settled, or for a call not metered in tokens);
+// savedNanocents is what the cached share saved at list price, null when either count or the
+// price is not known.
 export type TraceCall = {
   id: string;
   target: string;
   model: string;
+  // The host that served it: "meta", "baseten" or "fireworks" (the standby host).
+  provider: string;
   purpose: string;
   effort: string | null;
   status: string;
   failure: string | null;
   durationMs: number | null;
   costNanocents: number | null;
+  inputTokens: number | null;
+  cachedTokens: number | null;
+  savedNanocents: number | null;
 };
 
 // One gateway_decisions row. issuedBy is the model call that asked for the tool.
@@ -30,8 +38,9 @@ export type TraceDecision = {
   refs: TraceRef[];
 };
 
-// One turn_steps row with what it links to. category, result, toolCalls and escalation come from
-// the step's detail and are fixed codes or counts; anything else in detail is never read.
+// One turn_steps row with what it links to. category, result, toolCalls, toolSearches and
+// escalation come from the step's detail and are fixed codes or counts; anything else in detail
+// is never read.
 export type TraceStep = {
   seq: number;
   kind: string;
@@ -43,6 +52,7 @@ export type TraceStep = {
   category: string | null;
   result: string | null;
   toolCalls: number | null;
+  toolSearches: number | null;
   incomplete: boolean;
   escalation: { attempts: number; finishedBy: string } | null;
 };
@@ -72,7 +82,9 @@ export type TurnTrace = {
   proposals: TraceProposal[];
 };
 
-// The Meta models page: this carrier's week, grouped in SQL, summed in week.ts.
+// The Meta models page: this carrier's week, grouped in SQL, summed in week.ts. The token sums
+// and the saving cover the group's settled calls that carry token counts; savedNanocents is null
+// when the group's price is not known.
 export type WeekCallGroup = {
   target: string;
   model: string;
@@ -81,6 +93,9 @@ export type WeekCallGroup = {
   costNanocents: number;
   heldNanocents: number;
   unsettled: number;
+  inputTokens: number;
+  cachedTokens: number;
+  savedNanocents: number | null;
 };
 
 export type WeekRaw = {

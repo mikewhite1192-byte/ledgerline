@@ -39,8 +39,9 @@ export type ReasonCategory = (typeof REASON_CATEGORIES)[number];
 
 // Names held for tools that later items register. A reserved name is not in the registry, so a
 // call to it is unknown_tool until the item that owns it lands. get_proposal, the auditor's
-// evidence read, was reserved here until AUDITOR registered it.
-export const RESERVED_TOOL_NAMES = ["create_case"] as const;
+// evidence read, was reserved here until AUDITOR registered it. tool_search is the model API's
+// own search tool and is never registered: a function call by that name is unknown_tool.
+export const RESERVED_TOOL_NAMES = ["create_case", "tool_search"] as const;
 
 // The tables a tool's ids may point at: the engine's tables plus the outside text. A citation in
 // the operator's answer may name only these.

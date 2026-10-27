@@ -13,8 +13,8 @@ export type HttpCall = {
   accept?: string;
 };
 
-// The documented codes (https://dev.meta.ai/docs/error-handling); Baseten is OpenAI-compatible
-// and uses the same ones. 403 is not documented and reads as a key problem.
+// The documented codes (https://dev.meta.ai/docs/error-handling); Baseten and Fireworks are
+// OpenAI-compatible and use the same ones. 403 is not documented and reads as a key problem.
 export function categoryForStatus(status: number): AiFailureCategory {
   switch (status) {
     case 400:

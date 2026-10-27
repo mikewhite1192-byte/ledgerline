@@ -48,13 +48,23 @@ async function call(
   model: string,
   purpose: string,
   at: string,
-  opts: { effort?: string; ms?: number; cost?: number | null; trace?: string | null; status?: string } = {},
+  opts: {
+    effort?: string;
+    ms?: number;
+    cost?: number | null;
+    trace?: string | null;
+    status?: string;
+    input?: number;
+    cached?: number;
+  } = {},
 ) {
   await q.execute(
     `INSERT INTO model_calls (id, tenant_id, provider, model, purpose, status, reserved_nanocents,
-       cost_nanocents, duration_ms, created_at, settled_at, target, reasoning_effort, trace_id)
+       cost_nanocents, duration_ms, created_at, settled_at, target, reasoning_effort, trace_id,
+       input_tokens, cached_tokens)
      VALUES (CAST($1 AS uuid), current_tenant_id(), $2, $3, $4, $5, 2000000000, $6, $7,
-       CAST($8 AS timestamptz), CAST($8 AS timestamptz), $9, $10, CAST($11 AS uuid))`,
+       CAST($8 AS timestamptz), CAST($8 AS timestamptz), $9, $10, CAST($11 AS uuid),
+       CAST($12 AS integer), CAST($13 AS integer))`,
     [
       id,
       target === "spark_open" ? "baseten" : "meta",
@@ -67,6 +77,8 @@ async function call(
       target,
       opts.effort ?? null,
       opts.trace ?? null,
+      opts.input ?? null,
+      opts.cached ?? null,
     ],
   );
 }
@@ -112,19 +124,27 @@ async function seed(tenantId: string, slug: string, payWeekFromWednesday: boolea
          CAST('2026-11-02T14:00:08Z' AS timestamptz))`,
       [x.turn, x.conversation, x.trace],
     );
+    // Carrier A's first call read most of its input from the prompt cache after a tool search;
+    // carrier B's has no token counts.
     await call(q, x.plan, "spark", "muse-spark-1.3", "agent_operator_turn", "2026-11-02T14:00:01Z", {
       effort: "low",
       ms: 1_840,
       cost: 700_000_000,
       trace: x.trace,
+      ...(tenantId === A ? { input: 2_480, cached: 1_912 } : {}),
     });
     await q.execute(
       `INSERT INTO turn_steps (id, tenant_id, turn_id, seq, kind, label, state, model_call_id, detail,
          started_at, finished_at)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 1, 'model', 'Thinking it through',
-         'done', CAST($3 AS uuid), CAST('{"status":"ok","toolCalls":1}' AS jsonb),
+         'done', CAST($3 AS uuid), CAST($4 AS jsonb),
          CAST('2026-11-02T14:00:00Z' AS timestamptz), CAST('2026-11-02T14:00:02Z' AS timestamptz))`,
-      [randomUUID(), x.turn, x.plan],
+      [
+        randomUUID(),
+        x.turn,
+        x.plan,
+        JSON.stringify(tenantId === A ? { status: "ok", toolCalls: 1, toolSearches: 1 } : { status: "ok", toolCalls: 1 }),
+      ],
     );
     if (tenantId !== A) return;
 
@@ -166,6 +186,8 @@ async function seed(tenantId: string, slug: string, payWeekFromWednesday: boolea
       ms: 4_100,
       cost: 5_800_000_000,
       trace: x.trace,
+      input: 3_000,
+      cached: 0,
     });
     await q.execute(
       `INSERT INTO turn_steps (id, tenant_id, turn_id, seq, kind, label, state, model_call_id, detail,
@@ -205,7 +227,11 @@ async function seed(tenantId: string, slug: string, payWeekFromWednesday: boolea
     // Two calls with no turn: one a second before A's pay week starts (Wednesday Oct 28, 00:00 in
     // New York, still daylight time, so 04:00 UTC) and one right at the start.
     await call(q, x.old, "spark", "muse-spark-1.3", "ai_proof", "2026-10-28T03:59:59Z", { cost: 1_000_000_000 });
-    await call(q, x.edge, "spark", "muse-spark-1.3", "ai_proof", "2026-10-28T04:00:00Z", { cost: 100_000_000 });
+    await call(q, x.edge, "spark", "muse-spark-1.3", "ai_proof", "2026-10-28T04:00:00Z", {
+      cost: 100_000_000,
+      input: 1_000,
+      cached: 500,
+    });
   });
 }
 
@@ -240,7 +266,20 @@ describe("the trace and the model week", () => {
     expect(trace.steps.map((s) => s.kind)).toEqual(["model", "tool", "escalation", "proposal"]);
     expect(trace.steps[0]).toMatchObject({
       toolCalls: 1,
-      call: { id: a.plan, target: "spark", model: "muse-spark-1.3", effort: "low", durationMs: 1_840, costNanocents: 700_000_000 },
+      toolSearches: 1,
+      call: {
+        id: a.plan,
+        target: "spark",
+        provider: "meta",
+        model: "muse-spark-1.3",
+        effort: "low",
+        durationMs: 1_840,
+        costNanocents: 700_000_000,
+        inputTokens: 2_480,
+        cachedTokens: 1_912,
+        // The cached tokens at Muse Spark's full input price less their cached price.
+        savedNanocents: 1_912 * 110_000,
+      },
     });
     expect(trace.steps[1].decision).toEqual({
       id: a.blocked,
@@ -251,24 +290,42 @@ describe("the trace and the model week", () => {
       issuedBy: a.plan,
       refs: [{ table: "drivers", id: a.driver }],
     });
+    expect(trace.steps[1].toolSearches).toBeNull();
     expect(trace.steps[2]).toMatchObject({
-      call: { id: a.wonder, target: "wonder", effort: "high", costNanocents: 5_800_000_000 },
+      call: { id: a.wonder, target: "wonder", effort: "high", costNanocents: 5_800_000_000, inputTokens: 3_000, cachedTokens: 0, savedNanocents: 0 },
       escalation: { attempts: 2, finishedBy: "wonder" },
     });
     expect(trace.steps[3]).toMatchObject({ proposalId: a.proposal, result: "created" });
     expect(trace.extraCalls).toEqual([
-      expect.objectContaining({ id: a.screen, target: "spark_open", afterSeq: 2, screen: { verdict: "clean", via: "model" } }),
+      expect.objectContaining({
+        id: a.screen,
+        target: "spark_open",
+        provider: "baseten",
+        afterSeq: 2,
+        screen: { verdict: "clean", via: "model" },
+        // No token counts: no saving, never a zero one.
+        inputTokens: null,
+        cachedTokens: null,
+        savedNanocents: null,
+      }),
     ]);
     expect(trace.proposals).toEqual([
       expect.objectContaining({ id: a.proposal, gatewayDecisionId: a.allowed, operatorVerdict: "partial", exceptions: ["capped_to_eligible"], flagged: false }),
     ]);
     const text = traceLines(trace).map((l) => `${l.who}: ${l.text}`);
     expect(text).toEqual([
-      "Muse Spark 1.3: Planned the next step: asked for 1 tool",
+      "Muse Spark 1.3: Planned the next step: asked for 1 tool, after one tool search",
       "Gateway: Checking advance eligibility: blocked, the amount is over the eligible limit ($412.00)",
       "Muse Spark Open: Screened outside text before the agent read it: clean",
       "Muse Wonder: Took over after Muse Spark failed the proposal format twice",
       "LedgerLine: Saved the proposal card for a person to approve",
+    ]);
+    expect(traceLines(trace).map((l) => l.cache ?? null)).toEqual([
+      "1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price",
+      null,
+      null,
+      "no input tokens from cache",
+      null,
     ]);
   });
 
@@ -279,6 +336,7 @@ describe("the trace and the model week", () => {
     const own = await readAgentTurnTrace(session(B), IDS[B].turn, deps());
     expect(JSON.stringify(own)).not.toContain(IDS[A].plan);
     expect(own?.steps[0].call?.id).toBe(IDS[B].plan);
+    expect(own?.steps[0]).toMatchObject({ toolSearches: null, call: { inputTokens: null, cachedTokens: null, savedNanocents: null } });
   });
 
   it("sums only this carrier's calls inside its own pay week", async () => {
@@ -288,7 +346,12 @@ describe("the trace and the model week", () => {
     expect(a.costNanocents).toBe(700_000_000 + 50_000_000 + 5_800_000_000 + 100_000_000);
     const spark = a.models.find((m) => m.target === "spark");
     expect(spark).toMatchObject({ calls: 2, ok: 2, costNanocents: 800_000_000, versions: ["Muse Spark 1.3"] });
+    // The plan call and the call at the week's edge: 2,412 of 3,480 input tokens cached (69%).
+    expect(spark).toMatchObject({ inputTokens: 3_480, cachedTokens: 2_412, savedNanocents: 2_412 * 110_000, cachedShare: 69 });
     expect(a.models.find((m) => m.target === "wonder")).toMatchObject({ calls: 1, p50Ms: 4_100 });
+    expect(a.models.find((m) => m.target === "wonder")).toMatchObject({ inputTokens: 3_000, cachedTokens: 0, savedNanocents: 0, cachedShare: 0 });
+    expect(a.models.find((m) => m.target === "spark_open")).toMatchObject({ inputTokens: 0, cachedTokens: 0, cachedShare: null });
+    expect(a).toMatchObject({ inputTokens: 6_480, cachedTokens: 2_412, savedNanocents: 2_412 * 110_000, cachedShare: 37 });
     expect(a.decisions).toEqual({ allowed: 1, blocked: 1, refused: 0, failed: 0, total: 2 });
     expect(a.screenings).toMatchObject({ clean: 1, flagged: 0, byModel: 1, total: 1 });
     expect(a.escalations).toBe(1);
@@ -298,6 +361,7 @@ describe("the trace and the model week", () => {
     expect(b.week).toEqual({ start: "2026-11-02", end: "2026-11-08", zone: "America/New_York" });
     expect(b.calls).toBe(1);
     expect(b.costNanocents).toBe(700_000_000);
+    expect(b).toMatchObject({ inputTokens: 0, cachedTokens: 0, savedNanocents: 0, cachedShare: null });
     expect(b.decisions.total).toBe(0);
     expect(b.screenings.total).toBe(0);
     expect(b.escalations).toBe(0);

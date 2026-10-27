@@ -69,6 +69,7 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["tank_gallons", "int"],
       ["active_from", "date"],
       ["active_to", "date"],
+      ["preferred_language", "text"],
     ],
   },
   loads: {

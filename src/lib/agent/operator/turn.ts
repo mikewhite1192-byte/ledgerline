@@ -1,7 +1,7 @@
 import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import { AiError, complete, type AiMessage, type AiReplayItem, type AiResult, type AiTool } from "../../ai";
-import { callTool, toolsFor, TOOL_REGISTRY } from "../gateway";
+import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY } from "../gateway";
 import { dbTurnStore, type OpenedTurn, type StepFinish, type TurnStore } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
 import {
@@ -10,9 +10,10 @@ import {
   ESCALATION_CALL,
   LOOP_TEXT,
   OPERATOR_CALL,
-  OPERATOR_PROMPT,
+  operatorPrompt,
   TURN_SUMMARY_CHARS,
   invalidArgsNote,
+  operatorCacheKey,
 } from "../policy";
 import type { StepView } from "../view";
 import { TurnBudget, type CapReason, type TurnLimits } from "./budget";
@@ -29,6 +30,15 @@ import type { TurnEmitter } from "./stream";
 
 export { AiError };
 
+// How the operator's Muse Spark calls are shaped: tool search over the deferred tools, and the
+// shared prompt cache key. Both off sends today's request unchanged.
+export type TurnRequest = {
+  toolSearch: boolean;
+  cache: { key: string; retention: "in_memory" | "24h" } | null;
+};
+
+const PLAIN_REQUEST: TurnRequest = { toolSearch: false, cache: null };
+
 export type TurnDeps = {
   complete: CompleteFn;
   callTool: (ctx: GatewayContext, call: ToolCall) => Promise<GatewayOutcome>;
@@ -37,6 +47,8 @@ export type TurnDeps = {
   clock: () => number;
   limits: TurnLimits;
   emit?: TurnEmitter;
+  // Absent means both off.
+  request?: TurnRequest;
 };
 
 export type TurnInput = { session: Session; turn: OpenedTurn; text: string; startedAt: number };
@@ -50,15 +62,37 @@ export type TurnOutcome = {
   costNanocents: number;
 };
 
+// The flags are read here, once per turn.
 export function defaultTurnDeps(session: Session, emit?: TurnEmitter): TurnDeps {
+  const tools = toolsFor("operator", { defer: flags.agentToolSearch });
   return {
     complete: (target, request, s) => complete(target, request, s),
     callTool: (ctx, call) => callTool(ctx, call),
     store: dbTurnStore(session),
-    tools: toolsFor("operator"),
+    tools,
     clock: Date.now,
     limits: flags.agentTurnLimits,
     emit,
+    request: turnRequest(tools, flags.agentToolSearch, flags.agentPromptCache),
+  };
+}
+
+// Search only when a tool is actually deferred (the API refuses it otherwise), and a cache key
+// built from the static prompt and the tools as they will be sent.
+export function turnRequest(
+  tools: readonly AiTool[],
+  toolSearch: boolean,
+  cache: { enabled: boolean; retention: "in_memory" | "24h" },
+): TurnRequest {
+  const search = toolSearch && tools.some((t) => t.deferLoading === true);
+  return {
+    toolSearch: search,
+    cache: cache.enabled
+      ? {
+          key: operatorCacheKey(operatorPrompt(tools.map((t) => t.name), search), tools),
+          retention: cache.retention,
+        }
+      : null,
   };
 }
 
@@ -67,11 +101,10 @@ const ESCALATION_LABEL = "Asking Muse Wonder to form the proposal";
 const PROPOSAL_LABEL = "Preparing a proposal card";
 const UNKNOWN_TOOL_LABEL = "Checking a tool";
 
-// The fixed label the registry holds for a tool; never the name the model typed.
+// The fixed label the registry holds for a tool that is switched on; never the name the model
+// typed, and never a switched-off tool's label for a call the gateway will refuse.
 function labelFor(name: string): string {
-  return Object.prototype.hasOwnProperty.call(TOOL_REGISTRY, name)
-    ? TOOL_REGISTRY[name].label
-    : UNKNOWN_TOOL_LABEL;
+  return toolNamed(name)?.label ?? UNKNOWN_TOOL_LABEL;
 }
 
 function toolNameFor(name: string): string {
@@ -84,12 +117,28 @@ function summaryLine(text: string): string {
 
 type Ending = { status: TurnOutcome["status"]; endedReason: string | null; text: string };
 
+// A message as the escalation to Muse Wonder sends it: today's shape, with no input placement and
+// no tool search items (Wonder's call offers neither search nor the cache). A message with
+// neither is passed as it is.
+function plainMessage(m: AiMessage): AiMessage {
+  if (m.role === "system" && m.placement !== undefined) return { role: "system", content: m.content };
+  if (m.role === "assistant" && m.replay !== undefined) {
+    return m.toolCalls ? { role: "assistant", content: m.content, toolCalls: m.toolCalls } : { role: "assistant", content: m.content };
+  }
+  return m;
+}
+
 export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOutcome> {
   const { session, turn } = input;
+  const request = deps.request ?? PLAIN_REQUEST;
   const budget = new TurnBudget(deps.limits, input.startedAt, deps.clock);
+  // With the cache on, the state summary (this tenant's data) goes in input after the static
+  // prompt, so the prompt and the tools stay one prefix every tenant shares.
   const messages: AiMessage[] = [
-    { role: "system", content: OPERATOR_PROMPT },
-    { role: "system", content: turn.summary },
+    { role: "system", content: operatorPrompt(deps.tools.map((t) => t.name), request.toolSearch) },
+    request.cache
+      ? { role: "system", content: turn.summary, placement: "input" }
+      : { role: "system", content: turn.summary },
     { role: "user", content: input.text },
   ];
   const allowedCents = new Set<number>(turn.summaryCents.map((n) => Math.abs(n)));
@@ -141,7 +190,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         target,
         {
           purpose: policy.purpose,
-          messages,
+          messages: target === "spark" ? messages : messages.map(plainMessage),
           tools,
           reasoningEffort: policy.reasoningEffort,
           maxOutputTokens: policy.maxOutputTokens,
@@ -149,6 +198,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
           timeoutMs: Math.max(1_000, Math.floor(timeoutMs)),
           traceId: turn.traceId,
           ...(target === "spark" && replay.length > 0 ? { replay } : {}),
+          // Muse Spark only: the escalation to Muse Wonder keeps today's request shape.
+          ...(target === "spark" && request.toolSearch ? { toolSearch: true } : {}),
+          ...(target === "spark" && request.cache ? { cache: request.cache } : {}),
         },
         session,
       );
@@ -177,6 +229,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       };
     }
     budget.addToolStep();
+    const report = outcome.decision === "allowed" ? reportRefOf(outcome.tool, outcome.result) : null;
     if (outcome.decision === "allowed") {
       toolsDone += 1;
       centsIn(outcome.result, allowedCents);
@@ -197,6 +250,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         ...(outcome.decision === "allowed" && outcome.flaggedInputId
           ? { flaggedInputId: outcome.flaggedInputId }
           : {}),
+        // A report's name and typed args (dates and ids), so the chat can show its table again.
+        ...(report ? { report } : {}),
       },
     });
     if (outcome.decision === "allowed" && outcome.draft) {
@@ -296,7 +351,11 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       await finish(step, "failed", { detail: { ...detail, finishedBy: "none", category: callCap } });
       return "failed";
     }
-    const tools = deps.tools.filter((t) => t.name === toolName);
+    // Sent in full: Wonder's call offers no search, so a deferred tool would be refused. A tool
+    // that was never deferred goes as it is, so the request is today's with the flags off.
+    const tools = deps.tools
+      .filter((t) => t.name === toolName)
+      .map((t) => (t.deferLoading ? { ...t, deferLoading: false } : t));
     const called = tools.length === 1 ? await modelCall("wonder", tools) : { error: "unknown", reducedCap: false };
     if ("error" in called) {
       await finish(step, "failed", { detail: { ...detail, finishedBy: "none", category: called.error } });
@@ -343,6 +402,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         detail: {
           status: result.status,
           toolCalls: result.toolCalls.length,
+          toolSearches: result.toolSearches,
           textChars: result.text.length,
           maskedFigures: shown.masked,
         },
@@ -355,7 +415,15 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         }
         return { status: "done", endedReason: null, text: shown.text };
       }
-      messages.push({ role: "assistant", content: result.text, toolCalls: result.toolCalls });
+      // The answer's tool search items stay pinned to it, so every later call sends them back
+      // before its tool calls; its reasoning goes back with the next call only.
+      const searched = result.replay.filter((item) => item.type !== "reasoning");
+      messages.push({
+        role: "assistant",
+        content: result.text,
+        toolCalls: result.toolCalls,
+        ...(searched.length > 0 ? { replay: searched } : {}),
+      });
       replay = result.replay;
       // Parallel calls run one by one, in the order returned, so the step cap is exact.
       for (let i = 0; i < result.toolCalls.length; i += 1) {

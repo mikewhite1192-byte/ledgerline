@@ -161,16 +161,18 @@ async function clearSettled(
 // (it deletes every untrusted input of the tenant), so the clear refuses up front, deleting
 // nothing, while one exists: a person must review it. A ledger row that comes to name a proposal
 // after the check still makes the delete fail and the transaction roll back, so nothing is half
-// cleared. An advance born from an approval names its proposal, so those advances go first; the
-// seeded ones are replaced after. While a ledger row names one of those advances, the clear also
-// refuses up front, deleting nothing (see FLOW_ADVANCE_ROWS). It locks them before it counts,
-// and reserve() locks its advance before it writes a row, so a payout or post reserved for one
-// either lands before the count or finds its advance gone after the delete. Returns the rows
-// deleted.
+// cleared. Driver notes (0019) go first: each names a settlement and a driver the replace
+// deletes, they name no proposal, and the app role has no DELETE on them either. An advance born
+// from an approval names its proposal, so those advances go before the proposals; the seeded ones
+// are replaced after. While a ledger row names one of those advances, the clear also refuses up
+// front, deleting nothing (see FLOW_ADVANCE_ROWS). It locks them before it counts, and reserve()
+// locks its advance before it writes a row, so a payout or post reserved for one either lands
+// before the count or finds its advance gone after the delete. Returns the rows deleted.
 const NAMED_BY_LEDGER = `SELECT 1 FROM money_actions m
    WHERE m.tenant_id = CAST($1 AS uuid) AND m.proposal_id = p.id`;
 
 const AGENT_CLEAR = [
+  "DELETE FROM driver_notes WHERE tenant_id = CAST($1 AS uuid)",
   `DELETE FROM turn_steps s
     WHERE s.tenant_id = CAST($1 AS uuid)
       AND NOT EXISTS (SELECT 1 FROM proposals p
