@@ -264,17 +264,22 @@ export async function replaceTenantData(
   tenantId: string,
   plan: CarrierPlan,
 ): Promise<SeedReport> {
-  return app.withTenant(tenantId, async (q) => {
-    await verifyTenant(q, plan.carrier);
-    const deleted = await deleteTenantRows(q);
-    const inserted = await insertTenantRows(q, plan.rows);
-    const counts = await countTenantRows(q);
-    const expected = countRows(plan.rows);
-    for (const table of TENANT_TABLES) {
-      if (inserted[table] !== expected[table] || counts[table] !== expected[table]) {
-        throw new Error(`${table}: the rows read back differ from the plan`);
-      }
+  return app.withTenant(tenantId, (q) => replaceInTransaction(q, plan));
+}
+
+// The replace itself, inside a tenant transaction the caller opened (the demo reset runs it after
+// its clear, in the same transaction). Any difference throws, and the caller's transaction rolls
+// back.
+export async function replaceInTransaction(q: Queryable, plan: CarrierPlan): Promise<SeedReport> {
+  await verifyTenant(q, plan.carrier);
+  const deleted = await deleteTenantRows(q);
+  const inserted = await insertTenantRows(q, plan.rows);
+  const counts = await countTenantRows(q);
+  const expected = countRows(plan.rows);
+  for (const table of TENANT_TABLES) {
+    if (inserted[table] !== expected[table] || counts[table] !== expected[table]) {
+      throw new Error(`${table}: the rows read back differ from the plan`);
     }
-    return { deleted, inserted };
-  });
+  }
+  return { deleted, inserted };
 }

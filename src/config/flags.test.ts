@@ -20,6 +20,8 @@ describe("flags", () => {
     expect(flags.sparkOpenFallback).toBe("off");
     expect(flags.clipsEnabled).toBe(false);
     expect(flags.detentionEnabled).toBe(false);
+    // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
+    expect(flags.demoResetEnabled).toBe(false);
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {

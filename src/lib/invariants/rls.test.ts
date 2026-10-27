@@ -81,9 +81,9 @@ describe("judgeRls", () => {
     expect(r.counts).toEqual({ tables: 3, probed: 3, both_tenants: 2, no_select: 0 });
   });
 
-  it("starts with no extra global tables or definer functions", () => {
+  it("starts with no extra global tables, and only the demo reset as a definer function", () => {
     expect(GLOBAL_TABLES).toEqual(["ops.ai_spend"]);
-    expect(ALLOWED_DEFINERS).toEqual([]);
+    expect(ALLOWED_DEFINERS).toEqual(["public.demo_reset_clear"]);
   });
 
   it("catches a new tenant table with row security off, not forced, or owned by the app", () => {
