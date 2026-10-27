@@ -98,11 +98,16 @@ export function toMessages(
     }
     if (t.error) parts.push({ kind: "error", category: t.error });
     else if (t.text) parts.push({ kind: "text", text: t.text });
+    // How it was worked out: once the turn has finished and the server holds its steps. A turn
+    // that never reached the server has none, so it gets no disclosure.
+    const traced = t.status !== "running" && t.steps.length > 0;
+    if (traced) parts.push({ kind: "trace", turnId: t.id });
     for (const p of t.proposals) {
       const ctx: AuditContext | undefined = audit
         ? { on: audit.on, checking: audit.checking[p.id] === true }
         : undefined;
       parts.push({ kind: "proposal", proposal: proposalCardFrom(p, ctx) });
+      if (traced) parts.push({ kind: "trace", turnId: t.id, proposalId: p.id });
       const notice = notices[p.id];
       if (notice) parts.push({ kind: "text", text: notice });
     }

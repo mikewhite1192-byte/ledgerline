@@ -2,6 +2,7 @@
 
 import { Check, X } from "lucide-react";
 import { Mark } from "@/components/brand/mark";
+import { HowWorkedOut, type TraceLoader } from "@/components/trace/how-worked-out";
 import { cn } from "@/lib/cn";
 import { recordHref, type HrefFor } from "@/lib/records/href";
 import { Composer, type ComposerProps } from "./composer";
@@ -19,7 +20,9 @@ export type Part =
   | { kind: "proposal"; proposal: Omit<ProposalCardProps, "hrefFor"> }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a thread mixes tables of any row shape
   | { kind: "table"; table: DataTableProps<any> }
-  | { kind: "error"; category: string };
+  | { kind: "error"; category: string }
+  // "How this was worked out" for the turn, or for one proposal card when proposalId is set.
+  | { kind: "trace"; turnId: string; proposalId?: string; load?: TraceLoader };
 
 export type ChatMessage = { id: string; role: "user" | "agent"; at?: string; parts: Part[] };
 
@@ -150,6 +153,17 @@ export function ChatThread({
                           <div key={i} className="rounded-lg border border-border bg-card">
                             <ErrorState category={p.category} className="py-6" />
                           </div>
+                        );
+                      case "trace":
+                        // Keyed by what it explains, so an open disclosure stays open across reads.
+                        return (
+                          <HowWorkedOut
+                            key={`trace:${p.proposalId ?? p.turnId}`}
+                            turnId={p.turnId}
+                            proposalId={p.proposalId}
+                            load={p.load}
+                            hrefFor={hrefFor}
+                          />
                         );
                     }
                   })}

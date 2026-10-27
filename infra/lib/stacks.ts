@@ -22,10 +22,12 @@ export function addStacks(app: App, env: Environment) {
     dbName: data.dbName,
     userPoolId: auth.userPool.userPoolId,
     userPoolClientId: auth.client.userPoolClientId,
-    // $120 of the $150 model credit, leaving $30 for the live finals. One variable to change.
-    aiSpendCapCents: 12_000,
-    // $30 of that for Muse Wonder, the auditor.
-    aiWonderCapCents: 3_000,
+    // $400: the $150 model credit first, then the card on file. Judging reserve (an operating
+    // rule, not code): once the demo video is recorded, keep at least $40 of this unspent so
+    // judges never hit the cap; the /models page shows the spend. One variable to change.
+    aiSpendCapCents: 40_000,
+    // $150 of that for Muse Wonder, the auditor.
+    aiWonderCapCents: 15_000,
     // Standard tier: Meta does not train on the content.
     metaModels: {
       spark: "muse-spark-1.3",

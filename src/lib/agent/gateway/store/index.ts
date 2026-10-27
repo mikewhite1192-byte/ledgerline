@@ -1,5 +1,7 @@
 import type { Session } from "../../../auth/claims";
 import { DbError, getDb, type Queryable, type TenantDb } from "../../../db";
+import type { TurnTrace } from "../../../trace/types";
+import { summarizeModelWeek, type ModelWeek } from "../../../trace/week";
 import type { TurnView } from "../../view";
 import { withAgentTenant } from "../tenant";
 import {
@@ -14,6 +16,7 @@ import {
 import { findProposalConflict, flagTurnProposals, persistProposal } from "./proposals";
 import { finishStep, finishTurn, openTurn, startStep, type OpenTurnInput } from "./turns";
 import type { OpenTurnRefusal, OpenedTurn, TurnStore } from "./types";
+import { readModelWeek, readTurnTrace } from "./trace";
 import { readRecentTurnViews, readTurnView } from "./views";
 
 // The agent side's only door to its own tables (design 3.7): every call opens the gateway's
@@ -107,4 +110,20 @@ export function dbAuditStore(session: Session, deps: StoreDeps = {}): AuditStore
     write: (proposalId, verdict, now, startedAt) =>
       tx((q) => writeAuditVerdict(q, proposalId, verdict, now, startedAt)),
   };
+}
+
+// How a turn was worked out (MODEL-TRACE), only for the person who started its conversation.
+export async function readAgentTurnTrace(
+  session: Session,
+  turnId: string,
+  deps: StoreDeps = {},
+): Promise<TurnTrace | null> {
+  return withAgentTenant(deps.db ?? getDb(), session, (q) => readTurnTrace(q, session.sub, turnId));
+}
+
+// This carrier's model calls, gateway decisions and screenings for the pay week holding now.
+export async function readAgentModelWeek(session: Session, deps: StoreDeps = {}): Promise<ModelWeek> {
+  const now = (deps.clock ?? (() => new Date()))();
+  const raw = await withAgentTenant(deps.db ?? getDb(), session, (q) => readModelWeek(q, now));
+  return summarizeModelWeek(raw);
 }
