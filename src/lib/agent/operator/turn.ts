@@ -284,13 +284,20 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   };
   const schemaEnd = (): Ending => ({ status: "partial", endedReason: "schema", text: LOOP_TEXT.schema });
 
-  // The one escalation: Muse Wonder gets the same messages and only the tool that failed.
+  // The one escalation: Muse Wonder gets the same messages and only the tool that failed. The
+  // turn's caps hold here too: no Wonder call without a model call and a tool step left for it,
+  // and no dispatch past the step cap or the clock.
   const escalate = async (toolName: string): Promise<"ok" | "failed"> => {
     escalated = true;
     const step = await start("escalation", ESCALATION_LABEL);
+    const detail = { reason: "schema_failed_twice", attempts: ESCALATE_AFTER_INVALID, from: "spark", toolName };
+    const callCap = budget.beforeModelCall() ?? budget.beforeToolStep();
+    if (callCap) {
+      await finish(step, "failed", { detail: { ...detail, finishedBy: "none", category: callCap } });
+      return "failed";
+    }
     const tools = deps.tools.filter((t) => t.name === toolName);
     const called = tools.length === 1 ? await modelCall("wonder", tools) : { error: "unknown", reducedCap: false };
-    const detail = { reason: "schema_failed_twice", attempts: ESCALATE_AFTER_INVALID, from: "spark", toolName };
     if ("error" in called) {
       await finish(step, "failed", { detail: { ...detail, finishedBy: "none", category: called.error } });
       return "failed";
@@ -298,6 +305,14 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     const call = called.result.toolCalls.find((c) => c.name === toolName);
     if (!call) {
       await finish(step, "failed", { modelCallId: called.result.callId, detail: { ...detail, finishedBy: "none" } });
+      return "failed";
+    }
+    const stepCap = budget.beforeToolStep();
+    if (stepCap) {
+      await finish(step, "failed", {
+        modelCallId: called.result.callId,
+        detail: { ...detail, finishedBy: "none", category: stepCap },
+      });
       return "failed";
     }
     await finish(step, "done", { modelCallId: called.result.callId, detail: { ...detail, finishedBy: "wonder" } });

@@ -188,6 +188,9 @@ export function AgentChat({
       if (finished) return;
       finished = true;
       if (!turn && fallback) patch(turnId, (t) => ({ ...t, ...fallback }));
+      // The read-back names the conversation too, so the next question stays in it even when no
+      // start event arrived (poll mode, or a stream that fell back before its first event).
+      if (turn && alive.current) setConversationId(turn.conversationId);
       if (alive.current) setPending(false);
     };
     const poll = (tries: number) => {

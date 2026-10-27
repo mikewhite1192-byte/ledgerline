@@ -204,8 +204,10 @@ CREATE POLICY tenant_isolation ON proposals
 ALTER TABLE turn_steps ADD CONSTRAINT turn_steps_proposal_fk
   FOREIGN KEY (tenant_id, proposal_id) REFERENCES proposals (tenant_id, id)
   ON DELETE SET NULL (proposal_id);
+-- NOT VALID: gateway_decisions rows written before this file are not checked; new rows are.
 ALTER TABLE gateway_decisions ADD CONSTRAINT gateway_decisions_turn_fk
-  FOREIGN KEY (tenant_id, turn_id) REFERENCES turns (tenant_id, id) ON DELETE SET NULL (turn_id);
+  FOREIGN KEY (tenant_id, turn_id) REFERENCES turns (tenant_id, id) ON DELETE SET NULL (turn_id)
+  NOT VALID;
 -- The ledger's open item: a money action names the proposal it carried out, and that proposal
 -- cannot be deleted while the action exists.
 ALTER TABLE money_actions ADD CONSTRAINT money_actions_proposal_fk

@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { callTool } from "../gateway";
+import { FakeDb } from "../gateway/__tests__/fake-db";
 import type { StepView } from "../view";
 import { LOOP_TEXT } from "../policy";
 import { AiError, runTurn, type TurnDeps } from "./turn";
@@ -40,7 +42,11 @@ const TOOLS: TurnDeps["tools"] = [
 const keyOf = (draft: Persist["draft"]) => `${draft.kind}:${draft.subjectId}:${JSON.stringify(draft.args)}`;
 
 function memoryStore() {
-  const steps: (StepView & { detail: Record<string, unknown>; proposalId: string | null })[] = [];
+  const steps: (StepView & {
+    detail: Record<string, unknown>;
+    proposalId: string | null;
+    gatewayDecisionId: string | null;
+  })[] = [];
   const proposals = new Map<string, { id: string; input: Persist }>();
   // The same proposal already on record and decided by a person (rejected, expired, done, failed).
   const decided = new Map<string, { id: string; status: string }>();
@@ -56,6 +62,7 @@ function memoryStore() {
         state: "running" as const,
         detail: {},
         proposalId: null,
+        gatewayDecisionId: null,
       };
       steps.push(step);
       return { id: step.id, seq: step.seq, kind: step.kind, label: step.label, state: step.state };
@@ -65,6 +72,7 @@ function memoryStore() {
       step.state = f.state;
       step.detail = { ...step.detail, ...(f.detail ?? {}) };
       step.proposalId = f.proposalId ?? null;
+      step.gatewayDecisionId = f.gatewayDecisionId ?? null;
       return { id: step.id, seq: step.seq, kind: step.kind, label: step.label, state: step.state };
     },
     async persistProposal(input) {
@@ -264,6 +272,96 @@ describe("runTurn", () => {
     const out = await h.run();
     expect(h.requests.map((r) => r.target)).toEqual(["spark", "spark", "spark"]);
     expect(out.endedReason).toBe("schema");
+  });
+
+  it("does not call Muse Wonder at the model call cap: the escalation fails on the cap", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [call("r1", "get_pay_items")] }),
+        result({ toolCalls: [call("r2", "get_pay_items")] }),
+        result({ toolCalls: [call("s1", "propose_advance")] }),
+        result({ toolCalls: [call("s2", "propose_advance")] }),
+        result({ toolCalls: [call("w1", "propose_advance", { driverId: DRIVER })] }),
+      ],
+      (c) => (c.name === "get_pay_items" ? allowed("get_pay_items", {}) : invalid("propose_advance")),
+    );
+    const out = await h.run();
+    expect(h.requests.map((r) => r.target)).toEqual(["spark", "spark", "spark", "spark"]);
+    expect(h.calls.map((c) => c.id)).toEqual(["r1", "r2", "s1", "s2"]);
+    expect(h.steps.find((s) => s.kind === "escalation")).toMatchObject({
+      state: "failed",
+      detail: { finishedBy: "none", category: "model_calls" },
+    });
+    expect(out).toMatchObject({ status: "partial", endedReason: "schema", modelCallCount: 4 });
+  });
+
+  it("does not escalate at the tool step cap: no Wonder call and nothing dispatched", async () => {
+    const reads = Array.from({ length: 4 }, (_, i) => call(`r${i}`, "get_pay_items"));
+    const h = harness(
+      [
+        result({ toolCalls: [...reads, call("s1", "propose_advance")] }),
+        result({ toolCalls: [call("s2", "propose_advance")] }),
+        result({ toolCalls: [call("w1", "propose_advance", { driverId: DRIVER })] }),
+      ],
+      (c) => (c.name === "get_pay_items" ? allowed("get_pay_items", {}) : invalid("propose_advance")),
+    );
+    const out = await h.run();
+    expect(h.calls).toHaveLength(LIMITS.maxToolSteps);
+    expect(h.calls.map((c) => c.id)).not.toContain("w1");
+    expect(h.requests.map((r) => r.target)).toEqual(["spark", "spark"]);
+    expect(h.steps.find((s) => s.kind === "escalation")).toMatchObject({
+      state: "failed",
+      detail: { finishedBy: "none", category: "steps" },
+    });
+    expect(out.endedReason).toBe("schema");
+  });
+
+  it("dispatches nothing when Muse Wonder answers after the turn's clock ran out", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [call("s1", "propose_advance")] }),
+        result({ toolCalls: [call("s2", "propose_advance")] }),
+        result({ toolCalls: [call("w1", "propose_advance", { driverId: DRIVER })] }),
+      ],
+      () => invalid("propose_advance"),
+    );
+    const complete = h.deps.complete;
+    h.deps.complete = async (target, request, session) => {
+      const out = await complete(target, request, session);
+      if (target === "wonder") h.now.t += LIMITS.wallClockMs;
+      return out;
+    };
+    const out = await h.run();
+    expect(h.requests.map((r) => r.target)).toEqual(["spark", "spark", "wonder"]);
+    expect(h.calls.map((c) => c.id)).toEqual(["s1", "s2"]);
+    expect(h.steps.find((s) => s.kind === "escalation")).toMatchObject({
+      state: "failed",
+      detail: { finishedBy: "none", category: "clock" },
+    });
+    expect(out.endedReason).toBe("schema");
+  });
+
+  it("records the tool step with no decision id when the gateway could not write its decision row", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const db = new FakeDb();
+      db.failDecisionInsert = true;
+      const h = harness([result({ toolCalls: [call("x1", "pay_driver_now")] }), result({ text: "Done." })], () => {
+        throw new Error("the real gateway answers here");
+      });
+      h.deps.callTool = (ctx, c) => callTool(ctx, c, { db, clock: h.deps.clock });
+      const out = await h.run();
+      // No row holds the call's id, so the step names none (the step's foreign key would refuse
+      // it) and the turn carries on.
+      expect(h.steps.find((s) => s.kind === "tool")).toMatchObject({
+        state: "failed",
+        gatewayDecisionId: null,
+        detail: { decision: "failed", reason: "tool_failed" },
+      });
+      expect(out.status).toBe("done");
+    } finally {
+      err.mockRestore();
+    }
   });
 
   it("turns a spend cap refusal into the budget state, never the raw error", async () => {

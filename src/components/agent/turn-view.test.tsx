@@ -1,10 +1,13 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TurnView } from "@/lib/agent/view";
 import { AgentChat, toMessages } from "./turn-view";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const DRIVER = "11111111-1111-4111-8111-111111111111";
 
@@ -74,5 +77,33 @@ describe("AgentChat", () => {
     render(<AgentChat initialTurns={[turn]} streamMode="poll" />);
     expect(screen.getByText(turn.userText)).toBeTruthy();
     expect(screen.getByRole("article", { name: "Pay advance for BR-D07" })).toBeTruthy();
+  });
+
+  it("keeps the next question in the same conversation in poll mode, where no start event comes", async () => {
+    const posted: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/agent/turn") {
+          posted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return new Response(JSON.stringify({ ok: true }), { status: 202 });
+        }
+        const id = decodeURIComponent(url.split("/").at(-1) ?? "");
+        const back: TurnView = { ...turn, id, conversationId: "c-9", proposals: [], flags: [] };
+        return new Response(JSON.stringify({ turn: back }), { status: 200 });
+      }),
+    );
+    render(<AgentChat initialTurns={[]} streamMode="poll" />);
+    const ask = async (text: string) => {
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
+      fireEvent.click(await screen.findByRole("button", { name: "Send" }));
+    };
+
+    await ask("Can BR-D07 get an advance?");
+    await waitFor(() => expect(posted).toHaveLength(1));
+    expect(posted[0]).not.toHaveProperty("conversationId");
+    await ask("And next week?");
+    await waitFor(() => expect(posted).toHaveLength(2));
+    expect(posted[1]).toMatchObject({ conversationId: "c-9", text: "And next week?" });
   });
 });

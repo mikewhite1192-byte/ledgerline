@@ -74,5 +74,5 @@ export const flags: Flags = {
   },
   proposalMaxAgeDays: 7,
   auditorRequired: false,
-  approverRole: { adminAboveCents: 100_000 },
+  approverRole: { adminAboveCents: 200_000 },
 };

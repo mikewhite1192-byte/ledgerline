@@ -275,7 +275,8 @@ describe("callTool dispatch order", () => {
     const db = planDb(plan, screenStore);
     db.failDecisionInsert = true;
     const out = await callTool(ctx, call("get_driver", ARGS.get_driver), { db, clock: fixedClock });
-    expect(out).toMatchObject({ decision: "failed", reason: "tool_failed", result: { error: "tool_failed" } });
+    // No row was written, so the outcome names none for a step to reference.
+    expect(out).toMatchObject({ decision: "failed", decisionId: "", reason: "tool_failed", result: { error: "tool_failed" } });
     expect(JSON.stringify(out)).not.toContain(hero.first_name);
     expect(err.mock.calls[0][0]).toContain("(Error)");
     expect(err.mock.calls[0][0]).not.toContain("insert refused");
@@ -287,10 +288,12 @@ describe("callTool dispatch order", () => {
     vi.stubEnv("DATABASE_URL", "");
     try {
       const out = await callTool(ctx, call("get_driver", ARGS.get_driver), { clock: fixedClock });
-      expect(out).toMatchObject({ decision: "failed", reason: "tool_failed", result: { error: "tool_failed" } });
+      expect(out).toMatchObject({ decision: "failed", decisionId: "", reason: "tool_failed", result: { error: "tool_failed" } });
       expect(err).toHaveBeenCalledTimes(2);
+      const id = /decision=([0-9a-f-]{36}) /.exec(err.mock.calls[0][0] as string)?.[1];
+      expect(id).toBeDefined();
       for (const [line] of err.mock.calls) {
-        expect(line).toContain(`decision=${out.decisionId} trace=${ctx.traceId}`);
+        expect(line).toContain(`decision=${id} trace=${ctx.traceId}`);
         expect(line).not.toContain(hero.id);
       }
     } finally {

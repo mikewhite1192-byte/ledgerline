@@ -194,9 +194,11 @@ export async function callTool(
     console.error(
       `gateway: the decision for ${row.tool} was not recorded, ${callIds(decisionId, traceId)} (${errorText(err)})`,
     );
+    // No row holds this id, so nothing may reference it: the caller stores no decision id. The
+    // log line above keeps it for tracing.
     return {
       decision: "failed",
-      decisionId,
+      decisionId: "",
       tool: row.tool,
       reason: "tool_failed",
       result: { error: "tool_failed" },

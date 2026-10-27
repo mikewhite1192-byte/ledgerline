@@ -197,7 +197,7 @@ describe("approving and rejecting a proposal", () => {
   });
 
   it("holds a staff member to the admin line, a missing auditor verdict and the second confirm", async () => {
-    const big = await addProposal({ amountCents: 100_001 });
+    const big = await addProposal({ amountCents: flags.approverRole.adminAboveCents + 1 });
     expect(await approve(big.id, false, withPayout)).toMatchObject({ ok: false, category: "role" });
 
     flags.auditorRequired = true;
