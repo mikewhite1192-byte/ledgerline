@@ -12,8 +12,9 @@ import { describe, expect, it } from "vitest";
 // agent folders, so a re-export from a helper elsewhere cannot carry a forbidden module in.
 //
 //   P1. Outside src/lib/agent/gateway, agent code reaches the database, the record readers, the
-//       rules engine, the model wrapper, money/ and adapters/ only through the gateway. The one
-//       exception is the operator turn, which calls the model wrapper directly.
+//       rules engine, the model wrapper, money/ and adapters/ only through the gateway. The two
+//       exceptions are the operator turn and the auditor run, which call the model wrapper
+//       directly.
 //   P2. Nothing reachable from any agent file, the gateway included, is a money write or a
 //       payment or accounting adapter: under money/ only read, types, keys and format, and under
 //       adapters/ only types and tms/*.
@@ -36,7 +37,11 @@ const ROOT = resolve(fileURLToPath(new URL("../../../..", import.meta.url)));
 const AGENT_DIRS = ["src/lib/agent", "src/app/api/agent"];
 const SOURCE = /\.[cm]?[jt]sx?$/;
 const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".d.ts", ".js", ".jsx", ".mjs", ".cjs"];
-const TURN = "src/lib/agent/operator/turn.ts";
+// The agent files that may import the model wrapper directly, and nothing else restricted.
+const MODEL_CALLERS: ReadonlySet<string> = new Set([
+  "src/lib/agent/operator/turn.ts",
+  "src/lib/agent/auditor/run.ts",
+]);
 // Every area match ignores case: on a case-insensitive file system "../../Money/execute" resolves.
 const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/i;
 const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/i;
@@ -189,7 +194,7 @@ function boundaryViolations(root: string, agentFiles: string[], graph: Graph): s
         if (isGateway(to)) continue;
         const area = restrictedArea(to);
         if (area) {
-          if (!(area === "ai" && relTo(root, file) === TURN)) out.push([...chain, to].join(" -> "));
+          if (!(area === "ai" && MODEL_CALLERS.has(relTo(root, file)))) out.push([...chain, to].join(" -> "));
           continue;
         }
         if (!seen.has(edge.to)) {

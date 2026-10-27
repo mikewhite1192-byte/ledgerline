@@ -2,6 +2,14 @@ import type { Session } from "../../../auth/claims";
 import { DbError, getDb, type Queryable, type TenantDb } from "../../../db";
 import type { TurnView } from "../../view";
 import { withAgentTenant } from "../tenant";
+import {
+  readAuditState,
+  releaseAuditLease,
+  takeAuditLease,
+  writeAuditVerdict,
+  type AuditState,
+  type VerdictWrite,
+} from "./audit";
 import { findProposalConflict, flagTurnProposals, persistProposal } from "./proposals";
 import { finishStep, finishTurn, openTurn, startStep, type OpenTurnInput } from "./turns";
 import type { OpenTurnRefusal, OpenedTurn, TurnStore } from "./types";
@@ -15,6 +23,7 @@ export type { OpenedTurn, OpenTurnRefusal, PersistResult, StepFinish, TurnStore 
 export { assembleSummary } from "./summary";
 export { PROPOSAL_TITLES, canonicalJson, dedupeKey, impactOf } from "./proposals";
 export { cardStatusOf } from "./views";
+export type { AuditState, VerdictWrite } from "./audit";
 
 export type StoreDeps = { db?: TenantDb; clock?: () => Date };
 
@@ -69,4 +78,29 @@ export async function readRecentAgentTurns(
   deps: StoreDeps = {},
 ): Promise<TurnView[]> {
   return withAgentTenant(deps.db ?? getDb(), session, (q) => readRecentTurnViews(q, session.sub));
+}
+
+// The auditor's door to its rows on a proposal (design 4.2 step 4). Each call is its own tenant
+// transaction with the membership check; each write is guarded in its WHERE clause.
+export interface AuditStore {
+  read(proposalId: string): Promise<AuditState | null>;
+  // The audit's trace id when this caller now holds the lease, null when someone else does.
+  lease(proposalId: string, now: Date, leaseMs: number, traceId: string): Promise<string | null>;
+  release(proposalId: string, startedAt: Date): Promise<void>;
+  // False when a verdict was already there.
+  write(proposalId: string, verdict: VerdictWrite, now: Date): Promise<boolean>;
+}
+
+export function dbAuditStore(session: Session, deps: StoreDeps = {}): AuditStore {
+  const db = deps.db ?? getDb();
+  const tx = <T>(fn: (q: Queryable) => Promise<T>) => withAgentTenant(db, session, fn);
+  return {
+    read: (proposalId) => tx((q) => readAuditState(q, proposalId)),
+    lease: (proposalId, now, leaseMs, traceId) =>
+      tx((q) => takeAuditLease(q, proposalId, now, leaseMs, traceId)),
+    release: async (proposalId, startedAt) => {
+      await tx((q) => releaseAuditLease(q, proposalId, startedAt));
+    },
+    write: (proposalId, verdict, now) => tx((q) => writeAuditVerdict(q, proposalId, verdict, now)),
+  };
 }

@@ -66,7 +66,14 @@ describe("POST /api/proposals/:id/approve", () => {
   });
 
   it("refuses a body with an unknown key, a wrong type or broken JSON", async () => {
-    for (const body of ['{"confirmed":true,"amountCents":1}', '{"confirmed":"yes"}', "{", "[]"]) {
+    for (const body of [
+      '{"confirmed":true,"amountCents":1}',
+      '{"confirmed":"yes"}',
+      "{",
+      "[]",
+      '{"confirmed":true,"overrideReason":"too short"}',
+      '{"confirmed":true,"auditedAt":"yesterday"}',
+    ]) {
       const response = await approve({ body });
       expect(response.status, body).toBe(400);
       expect(await response.json(), body).toEqual({ error: "bad_request" });
@@ -80,10 +87,25 @@ describe("POST /api/proposals/:id/approve", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(await response.json()).toEqual({ ok: true, proposalId: ID, status: "confirmed", moneyActionId: null });
-    expect(mocks.executeProposal).toHaveBeenCalledWith(SESSION, ID, { confirmed: true });
+    expect(mocks.executeProposal).toHaveBeenCalledWith(SESSION, ID, { confirmed: true, overrideReason: null, auditedAt: null });
 
     await approve();
-    expect(mocks.executeProposal).toHaveBeenLastCalledWith(SESSION, ID, { confirmed: false });
+    expect(mocks.executeProposal).toHaveBeenLastCalledWith(SESSION, ID, {
+      confirmed: false,
+      overrideReason: null,
+      auditedAt: null,
+    });
+
+    // An override reason (trimmed) and the audit instant the card showed go through to the gate.
+    const auditedAt = "2026-11-02T15:30:00.000Z";
+    await approve({
+      body: JSON.stringify({ confirmed: true, overrideReason: "  Driver showed the receipt  ", auditedAt }),
+    });
+    expect(mocks.executeProposal).toHaveBeenLastCalledWith(SESSION, ID, {
+      confirmed: true,
+      overrideReason: "Driver showed the receipt",
+      auditedAt,
+    });
   });
 
   it("maps each refusal category to its status, with the category only in the reply", async () => {
@@ -94,6 +116,8 @@ describe("POST /api/proposals/:id/approve", () => {
       ["already_decided", 409],
       ["expired", 409],
       ["auditor_required", 409],
+      ["override_required", 409],
+      ["stale", 409],
       ["needs_confirm", 409],
     ];
     for (const [category, status] of cases) {
