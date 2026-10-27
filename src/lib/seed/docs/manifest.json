@@ -1,0 +1,513 @@
+{
+  "anchor": "2026-11-02",
+  "background": {
+    "file": "samples/docs/bg/paper-flat.webp",
+    "mime": "image/webp",
+    "bytes": 31304,
+    "sha256": "92b55e3d485b008076369555f92173492db8d70509d32ae2920a42325760a2a9",
+    "width": 1008,
+    "height": 1344,
+    "origin": "generated"
+  },
+  "entries": [
+    {
+      "id": "br-l10262-lumper",
+      "kind": "lumper_receipt",
+      "file": "samples/docs/br-l10262-lumper.webp",
+      "mime": "image/webp",
+      "bytes": 155534,
+      "sha256": "c7c3c1adb327f1e223f0bd99f1fc7d90e71b51a7c48a695208d84e979055f775",
+      "width": 1008,
+      "height": 1344,
+      "cabAngle": true,
+      "origin": "generated",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "load_accessorials",
+        "id": "5e9c59bb-14ba-4f8d-8236-a2143e90d115",
+        "humanRef": "BR-L10262",
+        "loadNumber": "BR-L10262"
+      },
+      "expect": {
+        "vendor": "Dock Services",
+        "date": "2026-10-27",
+        "amountCents": 17500,
+        "loadNumber": "BR-L10262",
+        "truckUnit": "BR-T124",
+        "gallonsMilli": null,
+        "priceCents": null,
+        "paidByDriver": true
+      },
+      "shows": {}
+    },
+    {
+      "id": "br-l10247-toll",
+      "kind": "toll_receipt",
+      "file": "samples/docs/br-l10247-toll.webp",
+      "mime": "image/webp",
+      "bytes": 78756,
+      "sha256": "6e1cd95513e5ae87a4d8a8a2a8042c14e59906fb0b66b8e95c856efcb41132ec",
+      "width": 1008,
+      "height": 1344,
+      "cabAngle": false,
+      "origin": "generated",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "pay_items",
+        "id": "4ffcf32d-6b2b-4cb0-9f04-034d48d38d11",
+        "humanRef": "blue-ridge-item-177",
+        "loadNumber": "BR-L10247"
+      },
+      "expect": {
+        "vendor": "Sample Turnpike Authority",
+        "date": "2026-10-26",
+        "amountCents": 4500,
+        "loadNumber": null,
+        "truckUnit": "BR-T107",
+        "gallonsMilli": null,
+        "priceCents": null
+      },
+      "shows": {
+        "plaza": "Plaza 12"
+      }
+    },
+    {
+      "id": "br-l10269-toll",
+      "kind": "toll_receipt",
+      "file": "samples/docs/br-l10269-toll.webp",
+      "mime": "image/webp",
+      "bytes": 180022,
+      "sha256": "1f3924874fe000253f4db4232342a1e36a7a343a1a10da18b634b6ab5ffc5e41",
+      "width": 1008,
+      "height": 1344,
+      "cabAngle": true,
+      "origin": "generated",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "pay_items",
+        "id": "974a8262-6746-40ca-b337-e3b3ba7bbf7e",
+        "humanRef": "blue-ridge-item-192",
+        "loadNumber": "BR-L10269"
+      },
+      "expect": {
+        "vendor": "Sample Turnpike Authority",
+        "date": "2026-10-27",
+        "amountCents": 3500,
+        "loadNumber": null,
+        "truckUnit": "BR-T107",
+        "gallonsMilli": null,
+        "priceCents": null
+      },
+      "shows": {
+        "plaza": "Plaza 4"
+      }
+    },
+    {
+      "id": "br-item-218-fuel",
+      "kind": "fuel_receipt",
+      "file": "samples/docs/br-item-218-fuel.webp",
+      "mime": "image/webp",
+      "bytes": 64864,
+      "sha256": "fc26edb1e19e19258621ae642f86aa56ab6e9ad8af8a80b73ece835a4e2fda92",
+      "width": 1008,
+      "height": 1344,
+      "cabAngle": false,
+      "origin": "generated",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "pay_items",
+        "id": "a0ec60e6-72d3-4757-bf08-48bd4253dedd",
+        "humanRef": "blue-ridge-item-218",
+        "loadNumber": null
+      },
+      "expect": {
+        "vendor": "Roadside Fuel Stop",
+        "date": "2026-10-29",
+        "amountCents": 10000,
+        "loadNumber": null,
+        "truckUnit": "BR-T107",
+        "gallonsMilli": null,
+        "priceCents": null
+      },
+      "shows": {}
+    },
+    {
+      "id": "br-fuel-374",
+      "kind": "fuel_receipt",
+      "file": "samples/docs/br-fuel-374.webp",
+      "mime": "image/webp",
+      "bytes": 76074,
+      "sha256": "647e2f29eb004a93734c77127676f3f5bbff6d8391c0f46cb2fe067f16460f8b",
+      "width": 1008,
+      "height": 1344,
+      "cabAngle": false,
+      "origin": "generated",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "fuel_purchases",
+        "id": "ad4659ba-bdf3-44eb-befe-86b9d2e6288f",
+        "humanRef": "blue-ridge-fuel-374",
+        "loadNumber": "BR-L10267"
+      },
+      "expect": {
+        "vendor": "Roadside Fuel Stop",
+        "date": "2026-10-27",
+        "amountCents": 28640,
+        "loadNumber": null,
+        "truckUnit": "BR-T105",
+        "gallonsMilli": 71600,
+        "priceCents": 400,
+        "purchasedAt": "2026-10-27T18:20:00.000Z",
+        "localTime": "2:20 PM",
+        "state": "SC",
+        "paidWith": "company_card"
+      },
+      "shows": {
+        "city": "Gaffney"
+      }
+    },
+    {
+      "id": "br-fuel-418",
+      "kind": "fuel_receipt",
+      "file": "samples/docs/br-fuel-418.webp",
+      "mime": "image/webp",
+      "bytes": 171926,
+      "sha256": "16ec18e76a9030a0bea822e43851aead3df4af8e461c0b55ee7a0d80b0959b62",
+      "width": 1008,
+      "height": 1344,
+      "cabAngle": true,
+      "origin": "generated",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "fuel_purchases",
+        "id": "f8f68138-f8db-4b35-bf0d-af47dc54247d",
+        "humanRef": "blue-ridge-fuel-418",
+        "loadNumber": "BR-L10291"
+      },
+      "expect": {
+        "vendor": "Roadside Fuel Stop",
+        "date": "2026-10-29",
+        "amountCents": 36575,
+        "loadNumber": null,
+        "truckUnit": "BR-T112",
+        "gallonsMilli": 95000,
+        "priceCents": 385,
+        "purchasedAt": "2026-10-29T10:29:00.000Z",
+        "localTime": "6:29 AM",
+        "state": "FL",
+        "paidWith": "company_card"
+      },
+      "shows": {
+        "city": "Lake City"
+      }
+    },
+    {
+      "id": "br-l10259-ratecon",
+      "kind": "rate_confirmation",
+      "file": "samples/docs/br-l10259-ratecon.pdf",
+      "mime": "application/pdf",
+      "bytes": 6917,
+      "sha256": "438f1ab689bf6344d85ef9adf34f6daecf80f4d253bea33149003d56a5e76601",
+      "pages": 1,
+      "origin": "rendered",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "loads",
+        "id": "2ddf2dc4-b452-4a32-83ff-82c382ff300e",
+        "humanRef": "BR-L10259",
+        "loadNumber": "BR-L10259"
+      },
+      "expect": {
+        "date": "2026-10-26",
+        "loadNumber": "BR-L10259",
+        "customer": {
+          "name": "Millbrook Textile Works",
+          "city": "Spartanburg",
+          "state": "SC"
+        },
+        "carrier": "Blue Ridge Freight Lines",
+        "origin": {
+          "city": "Charlotte",
+          "state": "NC"
+        },
+        "destination": {
+          "city": "Atlanta",
+          "state": "GA"
+        },
+        "pickupOn": "2026-10-26",
+        "deliveredOn": "2026-10-26",
+        "truckUnit": "BR-T122",
+        "driverCode": "BR-D22",
+        "loadedMiles": 245,
+        "ratePerMileCents": 280,
+        "linehaulCents": 68600,
+        "fuelSurchargeCents": 13000,
+        "totalCents": 81600
+      }
+    },
+    {
+      "id": "pw-l10235-ratecon",
+      "kind": "rate_confirmation",
+      "file": "samples/docs/pw-l10235-ratecon.pdf",
+      "mime": "application/pdf",
+      "bytes": 6920,
+      "sha256": "a1944588d5ebf1921763ede11709c204300d84834557a7dff0b60b1f7295993e",
+      "pages": 1,
+      "origin": "rendered",
+      "tenant": "prairie-wind",
+      "ref": {
+        "table": "loads",
+        "id": "266848b7-ac4b-4e8c-aab7-89b85e46964b",
+        "humanRef": "PW-L10235",
+        "loadNumber": "PW-L10235"
+      },
+      "expect": {
+        "date": "2026-10-25",
+        "loadNumber": "PW-L10235",
+        "customer": {
+          "name": "Sunbreak Grain Handlers",
+          "city": "Wichita",
+          "state": "KS"
+        },
+        "carrier": "Prairie Wind Transport",
+        "origin": {
+          "city": "Lawrence",
+          "state": "KS"
+        },
+        "destination": {
+          "city": "Columbia",
+          "state": "MO"
+        },
+        "pickupOn": "2026-10-25",
+        "deliveredOn": "2026-10-25",
+        "truckUnit": "PW-T106",
+        "driverCode": "PW-D06",
+        "loadedMiles": 165,
+        "ratePerMileCents": 260,
+        "linehaulCents": 42900,
+        "fuelSurchargeCents": 8700,
+        "totalCents": 51600
+      }
+    },
+    {
+      "id": "br-l10216-bol",
+      "kind": "bill_of_lading",
+      "file": "samples/docs/br-l10216-bol.pdf",
+      "mime": "application/pdf",
+      "bytes": 9172,
+      "sha256": "cb022a857609e8e7ca173026d4838e1eb6522819879afa2167b9008a924f6fac",
+      "pages": 1,
+      "origin": "rendered",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "loads",
+        "id": "3733f536-df1e-4ed7-9c14-dc861e841048",
+        "humanRef": "BR-L10216",
+        "loadNumber": "BR-L10216"
+      },
+      "expect": {
+        "date": "2026-10-22",
+        "loadNumber": "BR-L10216",
+        "customer": {
+          "name": "Bluefern Beverage Group",
+          "city": "Richmond",
+          "state": "VA"
+        },
+        "carrier": "Blue Ridge Freight Lines",
+        "origin": {
+          "city": "Greensboro",
+          "state": "NC"
+        },
+        "destination": {
+          "city": "Columbus",
+          "state": "OH"
+        },
+        "pickupOn": "2026-10-21",
+        "deliveredOn": "2026-10-22",
+        "truckUnit": "BR-T120",
+        "driverCode": "BR-D20",
+        "stops": {
+          "pickupArrivedAt": "2026-10-21T11:40:00.000Z",
+          "pickupDepartedAt": "2026-10-21T12:22:00.000Z",
+          "deliveryArrivedAt": "2026-10-22T08:05:00.000Z",
+          "deliveryDepartedAt": "2026-10-22T15:25:00.000Z"
+        },
+        "stopsLocal": {
+          "pickupArrivedAt": "10/21/2026 7:40 AM EDT",
+          "pickupDepartedAt": "10/21/2026 8:22 AM EDT",
+          "deliveryArrivedAt": "10/22/2026 4:05 AM EDT",
+          "deliveryDepartedAt": "10/22/2026 11:25 AM EDT"
+        }
+      },
+      "shows": {
+        "commodity": "General freight, palletized",
+        "pallets": 22
+      }
+    },
+    {
+      "id": "br-l10195-bol",
+      "kind": "bill_of_lading",
+      "file": "samples/docs/br-l10195-bol.pdf",
+      "mime": "application/pdf",
+      "bytes": 9180,
+      "sha256": "6c62b4ef5f26bcad966aa84a6b5ac5c44e77fb539aa13988755c74e5dce390ed",
+      "pages": 1,
+      "origin": "rendered",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "loads",
+        "id": "93adabec-df18-4756-96c6-c22d6da5f8bf",
+        "humanRef": "BR-L10195",
+        "loadNumber": "BR-L10195"
+      },
+      "expect": {
+        "date": "2026-10-21",
+        "loadNumber": "BR-L10195",
+        "customer": {
+          "name": "Tanglewood Grocery Supply",
+          "city": "Charlotte",
+          "state": "NC"
+        },
+        "carrier": "Blue Ridge Freight Lines",
+        "origin": {
+          "city": "Nashville",
+          "state": "TN"
+        },
+        "destination": {
+          "city": "Charlotte",
+          "state": "NC"
+        },
+        "pickupOn": "2026-10-20",
+        "deliveredOn": "2026-10-21",
+        "truckUnit": "BR-T114",
+        "driverCode": "BR-D14",
+        "stops": {
+          "pickupArrivedAt": "2026-10-20T10:32:00.000Z",
+          "pickupDepartedAt": "2026-10-20T11:45:00.000Z",
+          "deliveryArrivedAt": "2026-10-21T05:57:00.000Z",
+          "deliveryDepartedAt": "2026-10-21T13:57:00.000Z"
+        },
+        "stopsLocal": {
+          "pickupArrivedAt": "10/20/2026 6:32 AM EDT",
+          "pickupDepartedAt": "10/20/2026 7:45 AM EDT",
+          "deliveryArrivedAt": "10/21/2026 1:57 AM EDT",
+          "deliveryDepartedAt": "10/21/2026 9:57 AM EDT"
+        }
+      },
+      "shows": {
+        "commodity": "General freight, palletized",
+        "pallets": 18
+      }
+    },
+    {
+      "id": "br-l10117-bol",
+      "kind": "bill_of_lading",
+      "file": "samples/docs/br-l10117-bol.pdf",
+      "mime": "application/pdf",
+      "bytes": 9187,
+      "sha256": "d1e5017a7f8b96ce1780ca4ca91bd451e29c9abea71b95f637fcc4f025c99b33",
+      "pages": 1,
+      "origin": "rendered",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "loads",
+        "id": "a29771f5-3608-41d8-838d-38080c0cfbec",
+        "humanRef": "BR-L10117",
+        "loadNumber": "BR-L10117"
+      },
+      "expect": {
+        "date": "2026-10-14",
+        "loadNumber": "BR-L10117",
+        "customer": {
+          "name": "Juniper Hollow Foods",
+          "city": "Roanoke",
+          "state": "VA"
+        },
+        "carrier": "Blue Ridge Freight Lines",
+        "origin": {
+          "city": "Roanoke",
+          "state": "VA"
+        },
+        "destination": {
+          "city": "Harrisburg",
+          "state": "PA"
+        },
+        "pickupOn": "2026-10-13",
+        "deliveredOn": "2026-10-14",
+        "truckUnit": "BR-T125",
+        "driverCode": "BR-D25",
+        "stops": {
+          "pickupArrivedAt": "2026-10-13T14:00:00.000Z",
+          "pickupDepartedAt": "2026-10-13T21:00:00.000Z",
+          "deliveryArrivedAt": "2026-10-14T10:18:00.000Z",
+          "deliveryDepartedAt": "2026-10-14T11:22:00.000Z"
+        },
+        "stopsLocal": {
+          "pickupArrivedAt": "10/13/2026 10:00 AM EDT",
+          "pickupDepartedAt": "10/13/2026 5:00 PM EDT",
+          "deliveryArrivedAt": "10/14/2026 6:18 AM EDT",
+          "deliveryDepartedAt": "10/14/2026 7:22 AM EDT"
+        }
+      },
+      "shows": {
+        "commodity": "General freight, palletized",
+        "pallets": 24
+      }
+    },
+    {
+      "id": "br-l10220-bol",
+      "kind": "bill_of_lading",
+      "file": "samples/docs/br-l10220-bol.pdf",
+      "mime": "application/pdf",
+      "bytes": 9144,
+      "sha256": "6d230dc50b11ad14b89539c3167546c9982cae8c27ebd1e674d4cf8f8fc10d8b",
+      "pages": 1,
+      "origin": "rendered",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "loads",
+        "id": "bbc5ab7a-3156-442b-8078-f65d8b5c38e9",
+        "humanRef": "BR-L10220",
+        "loadNumber": "BR-L10220"
+      },
+      "expect": {
+        "date": "2026-10-23",
+        "loadNumber": "BR-L10220",
+        "customer": {
+          "name": "Ashgrove Building Products",
+          "city": "Raleigh",
+          "state": "NC"
+        },
+        "carrier": "Blue Ridge Freight Lines",
+        "origin": {
+          "city": "Raleigh",
+          "state": "NC"
+        },
+        "destination": {
+          "city": "Philadelphia",
+          "state": "PA"
+        },
+        "pickupOn": "2026-10-22",
+        "deliveredOn": "2026-10-23",
+        "truckUnit": "BR-T102",
+        "driverCode": "BR-D02",
+        "stops": {
+          "pickupArrivedAt": "2026-10-22T14:32:00.000Z",
+          "pickupDepartedAt": "2026-10-22T15:07:00.000Z",
+          "deliveryArrivedAt": "2026-10-23T05:42:00.000Z",
+          "deliveryDepartedAt": "2026-10-23T12:57:00.000Z"
+        },
+        "stopsLocal": {
+          "pickupArrivedAt": "10/22/2026 10:32 AM EDT",
+          "pickupDepartedAt": "10/22/2026 11:07 AM EDT",
+          "deliveryArrivedAt": "10/23/2026 1:42 AM EDT",
+          "deliveryDepartedAt": "10/23/2026 8:57 AM EDT"
+        }
+      },
+      "shows": {
+        "commodity": "General freight, palletized",
+        "pallets": 20
+      }
+    }
+  ]
+}
