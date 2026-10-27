@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { GetSecretValueCommand, SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { createPgDb } from "../src/lib/db/pg";
@@ -7,7 +7,7 @@ import { carrierBySlug } from "../src/lib/seed/carriers";
 import { parseManifest } from "../src/lib/seed/docs/manifest";
 import { findDemoTenant } from "../src/lib/seed/run";
 import { localDatabaseUrl } from "./lib/local-db";
-import { parseCap, runPhotos, type PhotoMode, type PhotoCalls } from "./lib/sample-photos";
+import { loadPhotoArgs, parseCap, runPhotos, type PhotoCalls } from "./lib/sample-photos";
 
 // npm run docs:photos [-- --go | --compose] [--only <id>] [--cap <cents>]
 //
@@ -15,36 +15,14 @@ import { parseCap, runPhotos, type PhotoMode, type PhotoCalls } from "./lib/samp
 // Without --go it is a dry run: the list, prompt lengths and the estimate, no call. --go calls
 // Muse Image and Muse Spark through the app's wrapper, against the LOCAL database's ledger only
 // (the demo tenants seeded there), with the switch turned on in this process alone; the run
-// stops at SEED_DOCS_CAP_CENTS (default 60) or --cap. --compose draws every photo as the
-// composed fallback with no key and no database. The key comes from META_API_KEY (.env.local)
-// or Secrets Manager by name, is set in this process only and is never printed.
+// stops at --cap, else SEED_DOCS_CAP_CENTS (the shell, then .env.local), else 60 cents. --compose
+// draws every photo as the composed fallback with no key and no database. The key comes from
+// META_API_KEY (.env.local) or Secrets Manager by name, is set in this process only and is never
+// printed.
 
 const MANIFEST_PATH = join(process.cwd(), "src", "lib", "seed", "docs", "manifest.json");
 const PUBLIC = join(process.cwd(), "public");
 const DEFAULT_SECRET = "payday-copilot/meta-api-key";
-
-type Args = { mode: PhotoMode; only: string | null; cap: string | undefined };
-
-function parseArgs(argv: string[]): Args {
-  let mode: PhotoMode = "dry";
-  let only: string | null = null;
-  let cap: string | undefined = process.env.SEED_DOCS_CAP_CENTS;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--go" || a === "--compose") {
-      const next: PhotoMode = a === "--go" ? "go" : "compose";
-      if (mode !== "dry" && mode !== next) throw new Error("--go and --compose do not mix");
-      mode = next;
-    } else if (a === "--only" && argv[i + 1]) {
-      only = argv[++i];
-    } else if (a === "--cap" && argv[i + 1]) {
-      cap = argv[++i];
-    } else {
-      throw new Error(`unknown argument ${a}`);
-    }
-  }
-  return { mode, only, cap };
-}
 
 // The key as scripts/ai-models.ts reads it, set in this process for the wrapper to read.
 async function loadKey(): Promise<void> {
@@ -80,7 +58,8 @@ async function localSession(admin: Db): Promise<PhotoCalls["session"]> {
 }
 
 async function main(): Promise<number> {
-  const args = parseArgs(process.argv.slice(2));
+  // .env.local is read before the command line, so a cap set there counts.
+  const args = loadPhotoArgs(process.argv.slice(2), ".env.local");
   const capCents = parseCap(args.cap);
   const manifest = parseManifest(JSON.parse(readFileSync(MANIFEST_PATH, "utf8")));
   const io = { publicDir: PUBLIC, manifestPath: MANIFEST_PATH, log: (l: string) => console.log(l) };
@@ -89,7 +68,6 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  if (existsSync(".env.local")) process.loadEnvFile(".env.local");
   // Production reads its key and database another way; this script is for a laptop only.
   if (process.env.DB_CLUSTER_ARN) throw new Error("DB_CLUSTER_ARN is set: run this locally only");
   await loadKey();

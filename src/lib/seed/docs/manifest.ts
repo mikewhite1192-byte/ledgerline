@@ -114,7 +114,9 @@ export type PhotoDoc = FileFields & {
   mime: "image/webp";
   width: number;
   height: number;
-  // A wide shot in a truck cab, the receipt small and skewed: an input for cropping.
+  // A wide shot in a truck cab, the receipt small and skewed: an input for cropping. It is the
+  // design's intent and stays as written; a composed file is flat whatever it says, so a reader
+  // takes origin "composed" as flat.
   cabAngle: boolean;
   origin: "generated" | "composed";
   expect: ReceiptExpect;

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -14,12 +14,14 @@ import {
   type Manifest,
   type PhotoDoc,
 } from "../src/lib/seed/docs/manifest";
-import { LINES_INTRO } from "../src/lib/seed/docs/prompts";
+import { LINES_INTRO, PLACEMENT, imagePrompt } from "../src/lib/seed/docs/prompts";
 import { imageDescription } from "../src/lib/seed/docs/stamp";
 import type { ReceiptRead } from "../src/lib/seed/docs/verify";
 import {
   DEFAULT_CAP_CENTS,
+  loadPhotoArgs,
   parseCap,
+  parsePhotoArgs,
   photosToRun,
   runPhotos,
   type PhotoCalls,
@@ -242,11 +244,41 @@ describe("the sample photo run", () => {
     ]);
     expect(counts).toEqual({ image: 4, read: 3 });
     expect(printed.filter((l) => l.includes("mismatch on total_cents"))).toHaveLength(3);
+    // The fallback leaves the design's cab angle alone, so a later run still prompts for it.
     const doc = entry(written());
-    expect([doc.origin, doc.cabAngle]).toEqual(["composed", false]);
+    expect([doc.origin, doc.cabAngle]).toEqual(["composed", true]);
+    expect(imagePrompt(doc).startsWith(PLACEMENT.cab)).toBe(true);
     expect(await imageDescription(readFileSync(join(io.publicDir, doc.file)))).toBe(
       PHOTO_SAMPLE_SENTENCE,
     );
+  }, 30_000);
+
+  it("composes a photo too large for its byte cap and finishes the run", async () => {
+    const { fetch, counts } = provider({});
+    const m = freshManifest();
+    const out = await runPhotos(
+      m,
+      { mode: "go", only: null, capCents: 60 },
+      io,
+      { ...calls(fetch), maxBytes: 100 },
+    );
+    expect(out.stopped).toBeNull();
+    // The read matches only DOC_ID, so it alone reaches the byte cap; the photo after it still runs.
+    expect(out.docs.map((d) => [d.id, d.origin, d.reason])).toEqual(
+      photosToRun(m, null).map((d) => [
+        d.id,
+        "composed",
+        d.id === DOC_ID ? "too large" : "three failed reads",
+      ]),
+    );
+    expect(out.docs.find((d) => d.id === DOC_ID)?.attempts).toBe(1);
+    expect(counts.read).toBe(1 + 5 * 3);
+    for (const d of out.docs) {
+      const doc = entry(written(), d.id);
+      const file = readFileSync(join(io.publicDir, doc.file));
+      expect([doc.origin, doc.bytes, doc.sha256]).toEqual(["composed", file.length, d.sha256]);
+    }
+    expect(printed.some((l) => l.startsWith("total cents="))).toBe(true);
   }, 30_000);
 
   it("stops at the run cap before the next image call", async () => {
@@ -305,6 +337,18 @@ describe("the sample photo run", () => {
     expect(entry(written()).origin).toBe("composed");
   }, 30_000);
 
+  it("composes the same flat receipt whatever cabAngle says, and leaves cabAngle as it was", async () => {
+    const shas: string[] = [];
+    for (const cabAngle of [true, false]) {
+      const m = freshManifest();
+      entry(m).cabAngle = cabAngle;
+      const out = await runPhotos(m, { mode: "compose", only: DOC_ID, capCents: 60 }, io);
+      shas.push(out.docs[0].sha256);
+      expect([entry(written()).origin, entry(written()).cabAngle]).toEqual(["composed", cabAngle]);
+    }
+    expect(shas[0]).toBe(shas[1]);
+  }, 30_000);
+
   it("reads the cap and the photo list strictly", () => {
     expect(parseCap(undefined)).toBe(DEFAULT_CAP_CENTS);
     expect(parseCap("25")).toBe(25);
@@ -313,5 +357,26 @@ describe("the sample photo run", () => {
     expect(photosToRun(MANIFEST, DOC_ID).map((d) => d.id)).toEqual([DOC_ID]);
     expect(() => photosToRun(MANIFEST, "br-l10259-ratecon")).toThrow();
     expect(() => photosToRun(MANIFEST, "nope")).toThrow();
+    expect(parsePhotoArgs([], {})).toEqual({ mode: "dry", only: null, cap: undefined });
+    expect(parsePhotoArgs(["--go", "--only", DOC_ID, "--cap", "9"], { SEED_DOCS_CAP_CENTS: "7" })).toEqual(
+      { mode: "go", only: DOC_ID, cap: "9" },
+    );
+    expect(parsePhotoArgs(["--compose"], { SEED_DOCS_CAP_CENTS: "7" }).cap).toBe("7");
+    for (const bad of [["--go", "--compose"], ["--cap"], ["--only"], ["--nope"]]) {
+      expect(() => parsePhotoArgs(bad, {})).toThrow();
+    }
+  });
+
+  it("reads the env file before the command line, so its cap counts and --cap still wins", () => {
+    const envFile = join(dir, ".env.local");
+    writeFileSync(envFile, "SEED_DOCS_CAP_CENTS=7\n");
+    // Unset here; restored after the test, which also removes what the env file set.
+    vi.stubEnv("SEED_DOCS_CAP_CENTS", undefined);
+    expect(loadPhotoArgs(["--go"], join(dir, "missing.env")).cap).toBeUndefined();
+    expect(loadPhotoArgs(["--go"], envFile)).toEqual({ mode: "go", only: null, cap: "7" });
+    expect(loadPhotoArgs(["--go", "--cap", "9"], envFile).cap).toBe("9");
+    // A value already set in the shell keeps its place over the file.
+    vi.stubEnv("SEED_DOCS_CAP_CENTS", "5");
+    expect(loadPhotoArgs([], envFile).cap).toBe("5");
   });
 });

@@ -83,8 +83,16 @@ export async function plainWebp(img: Rgba): Promise<Buffer> {
     .toBuffer();
 }
 
+// Even the lowest quality step does not fit the byte cap.
+export class TooLargeError extends Error {
+  constructor(maxBytes: number) {
+    super(`the image does not fit in ${maxBytes} bytes`);
+    this.name = "TooLargeError";
+  }
+}
+
 // The kept file: webp with the description in EXIF, at quality 80, stepping down until it fits
-// the cap. Throws when even the lowest step does not fit.
+// the cap. Throws a TooLargeError when even the lowest step does not fit.
 export async function encodeWebp(
   img: Rgba,
   description: string,
@@ -100,7 +108,7 @@ export async function encodeWebp(
       .toBuffer();
     if (out.length <= maxBytes) return out;
   }
-  throw new Error(`the image does not fit in ${maxBytes} bytes`);
+  throw new TooLargeError(maxBytes);
 }
 
 // The ImageDescription (tag 0x010E) from a raw EXIF block, as sharp's metadata() returns it:

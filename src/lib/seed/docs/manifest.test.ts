@@ -254,7 +254,6 @@ describe("the sample documents manifest", () => {
         expect([doc.width, doc.height]).toEqual([PHOTO_WIDTH, PHOTO_HEIGHT]);
         expect(await imageDescription(bytes)).toBe(PHOTO_SAMPLE_SENTENCE);
         expect(["generated", "composed"]).toContain(doc.origin);
-        if (doc.origin === "composed") expect(doc.cabAngle).toBe(false);
       } else {
         expect(bytes.toString("latin1", 0, 5)).toBe("%PDF-");
         expect(bytes.length).toBeLessThanOrEqual(PDF_MAX_BYTES);

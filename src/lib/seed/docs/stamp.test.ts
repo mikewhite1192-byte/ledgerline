@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { GLYPH_HEIGHT, dots } from "./font";
 import { PHOTO_SAMPLE_SENTENCE } from "./manifest";
 import {
+  TooLargeError,
   bandHeight,
   encodeWebp,
   exifDescription,
@@ -59,7 +60,7 @@ describe("the SAMPLE stamp", () => {
     expect(webp.toString("latin1", 8, 12)).toBe("WEBP");
     expect(await imageDescription(webp)).toBe(PHOTO_SAMPLE_SENTENCE);
     expect(await imageDescription(await pngOf(img))).toBeNull();
-    await expect(encodeWebp(img, PHOTO_SAMPLE_SENTENCE, 10)).rejects.toThrow();
+    await expect(encodeWebp(img, PHOTO_SAMPLE_SENTENCE, 10)).rejects.toThrow(TooLargeError);
   });
 
   it("parses both byte orders and refuses a broken block", () => {

@@ -18,7 +18,7 @@ import {
   type PhotoDoc,
 } from "../../src/lib/seed/docs/manifest";
 import { BACKGROUND_PROMPT, imagePrompt } from "../../src/lib/seed/docs/prompts";
-import { encodeWebp, plainWebp, stampRgba, toRgba } from "../../src/lib/seed/docs/stamp";
+import { TooLargeError, encodeWebp, plainWebp, stampRgba, toRgba } from "../../src/lib/seed/docs/stamp";
 import {
   VERIFY_FORMAT,
   VERIFY_PROMPT,
@@ -33,10 +33,10 @@ import { ForbiddenError } from "../../src/lib/tenant/context";
 // estimate, and calls nothing. compose: draws every photo as the composed fallback, with no key
 // and no database. go: per photo, up to three attempts of generate, then a vision read checked
 // against the manifest by whole value; a kept image gets the SAMPLE stamp and EXIF, a photo
-// that fails three reads (or meets the run cap) is composed instead. Every model call goes
-// through the wrapper, which checks the switch, reserves the cost and writes the ledger. Nothing
-// printed holds a key, a prompt, an image or model text: file names, counts, field names, bytes,
-// sha256 and cents only.
+// that fails three reads (or meets the run cap, or whose kept file does not fit its byte cap) is
+// composed instead. Every model call goes through the wrapper, which checks the switch, reserves
+// the cost and writes the ledger. Nothing printed holds a key, a prompt, an image or model text:
+// file names, counts, field names, bytes, sha256 and cents only.
 
 export const IMAGE_MAX_CENTS = 2;
 export const VERIFY_MAX_CENTS = 3;
@@ -62,7 +62,9 @@ export type PhotoMode = "dry" | "go" | "compose";
 export type PhotoOptions = { mode: PhotoMode; only: string | null; capCents: number };
 export type PhotoIo = { publicDir: string; manifestPath: string; log: (line: string) => void };
 // go only: who the calls are made as, and the wrapper's dependencies (tests pass fakes).
-export type PhotoCalls = { session: Session; ai: AiDeps };
+// maxBytes is the kept photo's byte cap (PHOTO_MAX_BYTES when left out; tests pass a tiny one).
+export type PhotoCalls = { session: Session; ai: AiDeps; maxBytes?: number };
+export type PhotoArgs = { mode: PhotoMode; only: string | null; cap: string | undefined };
 
 export type DocOutcome = {
   id: string;
@@ -95,6 +97,38 @@ export function parseCap(raw: string | undefined): number {
   const n = Number(raw);
   if (!Number.isSafeInteger(n) || n < 1 || n > 500) throw new Error("the cap must be 1 to 500 cents");
   return n;
+}
+
+// The command line. The cap is --cap, else SEED_DOCS_CAP_CENTS from env.
+export function parsePhotoArgs(
+  argv: readonly string[],
+  env: Readonly<Record<string, string | undefined>>,
+): PhotoArgs {
+  let mode: PhotoMode = "dry";
+  let only: string | null = null;
+  let cap: string | undefined = env.SEED_DOCS_CAP_CENTS;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--go" || a === "--compose") {
+      const next: PhotoMode = a === "--go" ? "go" : "compose";
+      if (mode !== "dry" && mode !== next) throw new Error("--go and --compose do not mix");
+      mode = next;
+    } else if (a === "--only" && argv[i + 1]) {
+      only = argv[++i];
+    } else if (a === "--cap" && argv[i + 1]) {
+      cap = argv[++i];
+    } else {
+      throw new Error(`unknown argument ${a}`);
+    }
+  }
+  return { mode, only, cap };
+}
+
+// The env file (when there is one) is loaded into this process before the command line is read,
+// so a cap set there counts. A variable already set in the shell keeps its value; --cap wins.
+export function loadPhotoArgs(argv: readonly string[], envFile: string): PhotoArgs {
+  if (existsSync(envFile)) process.loadEnvFile(envFile);
+  return parsePhotoArgs(argv, process.env);
 }
 
 export function photosToRun(manifest: Manifest, only: string | null): PhotoDoc[] {
@@ -177,8 +211,8 @@ function record(
   doc.width = PHOTO_WIDTH;
   doc.height = PHOTO_HEIGHT;
   doc.origin = origin;
-  // A composed receipt is always flat and top-down.
-  if (origin === "composed") doc.cabAngle = false;
+  // cabAngle is the design's intent and is left as it is: a composed receipt is flat whatever
+  // cabAngle says, so a reader takes origin "composed" as flat.
   writeManifest(manifest, io);
   return { id: doc.id, origin, attempts, bytes: doc.bytes, sha256: doc.sha256, reason };
 }
@@ -387,11 +421,21 @@ export async function runPhotos(
     const background = readBackground(manifest, io);
     for (const d of docs) {
       const start = spend.nanocents;
-      const { kept, attempts, reason } = await attempt(d, calls, spend, io);
-      const bytes = kept
-        ? await encodeWebp(stampRgba(kept), PHOTO_SAMPLE_SENTENCE)
-        : await composed(d, background);
-      const outcome = record(manifest, io, d, bytes, kept ? "generated" : "composed", attempts, reason);
+      const tried = await attempt(d, calls, spend, io);
+      let reason = tried.reason;
+      let kept: Buffer | null = null;
+      if (tried.kept) {
+        try {
+          kept = await encodeWebp(stampRgba(tried.kept), PHOTO_SAMPLE_SENTENCE, calls.maxBytes);
+        } catch (err) {
+          // A photo too detailed for its byte cap is composed instead, so the run still finishes.
+          if (!(err instanceof TooLargeError)) throw err;
+          reason = "too large";
+        }
+      }
+      const bytes = kept ?? (await composed(d, background));
+      const origin = kept ? "generated" : "composed";
+      const outcome = record(manifest, io, d, bytes, origin, tried.attempts, reason);
       summary(io, outcome, start, spend.nanocents);
       out.push(outcome);
     }
