@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { flags } from "../../config/flags";
 import { configFor, configForDay, sortVersions } from "../data/config-version";
 import {
   advanceOf,
@@ -23,6 +24,7 @@ import {
   mulBps,
   outstandingCents,
   paymentProfile,
+  runFuelChecks,
   settleDriver,
 } from "../rules-engine";
 import { addDays, daysBetween } from "../time/local-date";
@@ -102,12 +104,12 @@ describe("buildCarrierPlan", () => {
       rows.driver_days.find((d) => d.id === planted.dispatchDayId)?.driver_id,
       lumper ? driverOfLoad(lumper.load_id) : undefined,
       driverOfLoad(planted.noRateLoadId),
-      ...[planted.fuelOffRouteId, planted.fuelOverTankId, planted.fuelParkedId].map(
+      ...[planted.fuelOffRouteId, planted.fuelOverTankId, planted.fuelParkedId, ...planted.fuelDuplicateIds].map(
         (id) => rows.fuel_purchases.find((f) => f.id === id)?.driver_id,
       ),
       ...planted.detentionLoadIds.map(driverOfLoad),
     ];
-    expect(touched).toHaveLength(16);
+    expect(touched).toHaveLength(18);
     for (const id of touched) {
       expect(id).toBeDefined();
       expect(id).not.toBe(hero.id);
@@ -374,6 +376,21 @@ describe("advance parity", () => {
     }
   });
 
+  // At these anchors the duplicate-receipt driver (victim 11) is the one the parity stream would
+  // otherwise pick: disarmed on Sep 28 (both carriers), the load pair on Nov 9 (Prairie Wind).
+  it.each(["2026-09-28", "2026-11-09"])(
+    "never disarms or plants the load pair on the duplicate-receipt driver (anchor %s)",
+    (anchor) => {
+      for (const c of DEMO_CARRIERS) {
+        const plan = buildCarrierPlan(c, anchor);
+        const { rows, planted, victims } = plan;
+        const pairLoad = rows.loads.find((l) => l.id === planted.parity.loadPairLoadId)!;
+        expect(Object.values(victims)).not.toContain(codeOf(plan, planted.parity.disarmedDriverId));
+        expect(codeOf(plan, pairLoad.driver_id!)).not.toBe(victims.fuelDuplicate);
+      }
+    },
+  );
+
   it("names the driver's own recent load on an advance only while the load's cap holds", () => {
     for (const plan of plans) {
       const { rows } = plan;
@@ -493,10 +510,53 @@ describe("planted fuel anomalies", () => {
       return !spanned && !dayRow;
     });
 
-    it(`finds each of ${plan.carrier.slug}'s three by exactly its rule`, () => {
+    // The same fill-up twice: one driver, the same gallons, amount and state, within an hour.
+    const twice = rows.fuel_purchases.flatMap((a) =>
+      rows.fuel_purchases
+        .filter((b) => {
+          const gap = Date.parse(b.purchased_at) - Date.parse(a.purchased_at);
+          return (
+            b.id !== a.id &&
+            b.driver_id === a.driver_id &&
+            b.gallons_milli === a.gallons_milli &&
+            b.amount_cents === a.amount_cents &&
+            b.state === a.state &&
+            (gap > 0 || (gap === 0 && b.id > a.id)) &&
+            gap <= 60 * 60_000
+          );
+        })
+        .map((b) => [a.id, b.id]),
+    );
+
+    it(`finds each of ${plan.carrier.slug}'s four by exactly its rule`, () => {
       expect(offRoute.map((f) => f.id)).toEqual([planted.fuelOffRouteId]);
       expect(overTank.map((f) => f.id)).toEqual([planted.fuelOverTankId]);
       expect(parked.map((f) => f.id)).toEqual([planted.fuelParkedId]);
+      expect(twice).toEqual([planted.fuelDuplicateIds]);
+    });
+
+    it(`plants ${plan.carrier.slug}'s receipt turned in twice as the design states`, () => {
+      const [older, newer] = planted.fuelDuplicateIds.map(
+        (id) => rows.fuel_purchases.find((f) => f.id === id)!,
+      );
+      const driver = rows.drivers.find((d) => d.id === newer.driver_id)!;
+      expect(driver.code).toBe(plan.victims.fuelDuplicate);
+      for (const f of [older, newer]) {
+        expect([f.gallons_milli, f.amount_cents, f.paid_with]).toEqual([84200, 31996, "driver_own"]);
+        expect(f.purchased_on >= addDays(plan.periods[3].start, 2)).toBe(true);
+        expect(statesOf(f.load_id!).has(f.state)).toBe(true);
+      }
+      expect(Date.parse(newer.purchased_at) - Date.parse(older.purchased_at)).toBe(6 * 60_000);
+      expect(newer.purchased_on).toBe(older.purchased_on);
+      const paybacks = planted.fuelDuplicatePaybackIds.map(
+        (id) => rows.pay_items.find((i) => i.id === id)!,
+      );
+      expect(
+        paybacks.map((i) => [i.kind, i.subkind, i.driver_id, i.amount_cents, i.ref_id, i.settlement_id]),
+      ).toEqual([
+        ["reimbursement", "fuel", driver.id, 31996, older.id, null],
+        ["reimbursement", "fuel", driver.id, 31996, newer.id, null],
+      ]);
     });
 
     it(`plants ${plan.carrier.slug}'s three as the design states`, () => {
@@ -531,6 +591,33 @@ describe("planted fuel anomalies", () => {
       }
     });
   }
+
+  // What the fuel checks page lists for each carrier, with the engine's numbers. Prairie Wind's
+  // fill-up on a day off is from before the checks' start date, so it is never listed.
+  it("lists each carrier's fill-ups from the start date on, to the cent", () => {
+    const listed = plans.map(({ rows }) =>
+      runFuelChecks(checkInputOf(rows), flags.fuelAnomalyLimits).map((f) => [
+        f.check,
+        f.purchasedOn,
+        f.amountCents,
+        f.suggestedCents ?? f.noSuggestion,
+        f.excessCents,
+      ]),
+    );
+    expect(listed).toEqual([
+      [
+        ["fuel_off_route", "2026-10-29", 36575, -36575, null],
+        ["fuel_over_tank", "2026-10-28", 111696, "over_tank", 33696],
+        ["fuel_while_parked", "2026-10-31", 43896, -43896, null],
+        ["fuel_duplicate", "2026-10-28", 31996, -31996, null],
+      ],
+      [
+        ["fuel_off_route", "2026-10-29", 36575, -36575, null],
+        ["fuel_over_tank", "2026-10-27", 111696, "over_tank", 33696],
+        ["fuel_duplicate", "2026-10-30", 31996, -31996, null],
+      ],
+    ]);
+  });
 
   it("fits every ordinary purchase in its driver's tank", () => {
     for (const { rows } of plans) {

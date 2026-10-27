@@ -16,8 +16,9 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      seed's fourth refusal (a ledger row naming a flow advance, FLOW_ADVANCE_ROWS in run.ts) is
 //      not needed here on purpose: the function deletes every settled money_actions row before
 //      the flow advances, in one transaction, so no ledger row can outlive the advance it names;
-//   3. demo_reset_clear() (migration 0025, re-created by 0033), the one security-definer
-//      function, which checks the same things again under the tenant row lock and deletes the settled ledger rows, the
+//   3. demo_reset_clear() (migration 0025, re-created by 0033, then by 0034 to empty the fuel
+//      checks too), the one security-definer function, which checks the same things again under
+//      the tenant row lock and deletes the settled ledger rows, the
 //      agent's records and the fictional broker portal's loads (the app role has no DELETE on
 //      them); the portal's loads come back only with npm run seed, since the app cannot write them;
 //   4. the seed's replace of the 23 seeded tables, as the app role, under row-level security (the
@@ -58,6 +59,10 @@ export const DEMO_RESET_CLEARED = {
     "the pay sweep's findings; each names a run that goes, a pay week the replace deletes and " +
     "its drafted proposal",
   sweep_runs: "the pay sweep's runs; each names a pay week the replace deletes and a conversation that goes",
+  fuel_findings:
+    "the fuel checks' findings (0031); each names a fill-up, a driver, a load and a pay line the " +
+    "replace deletes, and the card it drafted",
+  fuel_check_runs: "the fuel checks' runs; each is named by the findings that go",
   approval_batches:
     "approve-all batches; each lists items that go, is named by the proposals it approved and names a " +
     "pay week the replace deletes",
@@ -117,6 +122,8 @@ export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "sweep_fanout",
   "sweep_items",
   "sweep_runs",
+  "fuel_findings",
+  "fuel_check_runs",
   "approval_batches",
   "advances",
   "proposals",
@@ -166,6 +173,8 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   sweep_fanout: "Pay sweep second checks",
   sweep_items: "Pay sweep findings",
   sweep_runs: "Pay sweep runs",
+  fuel_findings: "Fuel check findings",
+  fuel_check_runs: "Fuel check runs",
   approval_batches: "Approve-all batches",
   proposals: "Agent cards",
   turns: "Agent turns",

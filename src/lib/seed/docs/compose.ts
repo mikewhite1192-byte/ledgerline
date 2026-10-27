@@ -130,3 +130,21 @@ export async function composeReceipt(
   });
   return img;
 }
+
+// The same picture turned by a few degrees about its center, cropped back to its own size, the
+// corners filled with paper: a second photo of the same receipt. Deterministic.
+export async function turnRgba(img: Rgba, degrees: number): Promise<Rgba> {
+  const { data, info } = await sharp(img.data, {
+    raw: { width: img.width, height: img.height, channels: 4 },
+  })
+    .rotate(degrees, { background: { r: 236, g: 232, b: 224, alpha: 1 } })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const left = Math.floor((info.width - img.width) / 2);
+  const top = Math.floor((info.height - img.height) / 2);
+  const out = await sharp(data, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .extract({ left, top, width: img.width, height: img.height })
+    .raw()
+    .toBuffer();
+  return { data: out, width: img.width, height: img.height };
+}
