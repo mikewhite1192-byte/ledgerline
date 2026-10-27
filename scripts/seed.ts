@@ -128,7 +128,10 @@ async function main(): Promise<void> {
       // logins, so they cannot share a transaction. If the replace fails, the old subjects stay:
       // a paid advance or settlement refuses a second payout by its own status, and the booking
       // rows are still there, with any proposal they name, so approving a booking again replays
-      // its row instead of posting twice. Run the seed again before approving anything.
+      // its row instead of posting twice. If the booking clear refuses after the replace, the
+      // proposals kept for it stay beside the new subjects until a later run clears them, and a
+      // new proposal with the same dedupe key is refused meanwhile. Either way, run the seed again
+      // before approving anything.
       const cleared = await clearTenantLedger(admin, tenantId);
       console.log(`cleared ${cleared} payout ledger rows for ${slug}`);
       // The agent's conversations and proposals point at the ledger and the inputs. This keeps
