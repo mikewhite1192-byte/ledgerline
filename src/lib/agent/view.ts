@@ -47,6 +47,12 @@ export type ProposalView = {
   flagCategories: string[];
   operatorVerdict: string;
   auditorVerdict: string | null;
+  // The auditor's concerns (fixed categories) and when its verdict landed; the card sends that
+  // instant back with an override so the gate knows the person saw this verdict.
+  auditorConcerns: string[];
+  auditorCheckedAt: string | null;
+  // A person's override of a block: their words, a role label (never the sub or email), when.
+  auditorOverride: { reason: string; byLabel: string; at: string } | null;
 };
 
 // An outside message this turn read that failed screening. quote is shown to the person only, in

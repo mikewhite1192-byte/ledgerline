@@ -23,6 +23,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   report_advances_outstanding: { tier: "read", roles: ["operator"] },
   report_cash_needed: { tier: "read", roles: ["operator"] },
   report_margin_per_load: { tier: "read", roles: ["operator"] },
+  get_proposal: { tier: "read", roles: ["auditor"] },
 };
 
 const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_"));
@@ -66,7 +67,7 @@ describe("tool registry", () => {
 
   it("offers each role only its own tools, as copies", () => {
     const counts = Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]));
-    expect(counts).toEqual({ operator: 13, auditor: 8, triage: 2 });
+    expect(counts).toEqual({ operator: 13, auditor: 9, triage: 2 });
     const first = toolsFor("operator");
     first.pop();
     expect(toolsFor("operator")).toHaveLength(13);
@@ -80,7 +81,7 @@ describe("tool registry", () => {
 
     flags.reportsEnabled = true;
     expect(toolsFor("operator")).toHaveLength(18);
-    expect(toolsFor("auditor")).toHaveLength(8);
+    expect(toolsFor("auditor")).toHaveLength(9);
     expect(toolsFor("triage")).toHaveLength(2);
     for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
     expect(toolsFor("operator").map((t) => t.name)).toEqual(expect.arrayContaining(REPORT_TOOLS));

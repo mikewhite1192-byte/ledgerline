@@ -127,6 +127,7 @@ export default async function Home() {
         <AgentChat
           initialTurns={agentTurns}
           streamMode={flags.agentStreamMode}
+          auditorOn={flags.auditorEnabled}
           suggestions={SUGGESTIONS}
           intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
           disabledReason={

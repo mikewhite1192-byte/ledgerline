@@ -4,6 +4,15 @@ import type { TurnTrace } from "../../../trace/types";
 import { summarizeModelWeek, type ModelWeek } from "../../../trace/week";
 import type { TurnView } from "../../view";
 import { withAgentTenant } from "../tenant";
+import {
+  readAuditState,
+  releaseAuditLease,
+  takeAuditLease,
+  writeAuditVerdict,
+  type AuditLease,
+  type AuditState,
+  type VerdictWrite,
+} from "./audit";
 import { findProposalConflict, flagTurnProposals, persistProposal } from "./proposals";
 import { finishStep, finishTurn, openTurn, startStep, type OpenTurnInput } from "./turns";
 import type { OpenTurnRefusal, OpenedTurn, TurnStore } from "./types";
@@ -18,6 +27,7 @@ export type { OpenedTurn, OpenTurnRefusal, PersistResult, StepFinish, TurnStore 
 export { assembleSummary } from "./summary";
 export { PROPOSAL_TITLES, canonicalJson, dedupeKey, impactOf } from "./proposals";
 export { cardStatusOf } from "./views";
+export type { AuditLease, AuditState, VerdictWrite } from "./audit";
 
 export type StoreDeps = { db?: TenantDb; clock?: () => Date };
 
@@ -72,6 +82,34 @@ export async function readRecentAgentTurns(
   deps: StoreDeps = {},
 ): Promise<TurnView[]> {
   return withAgentTenant(deps.db ?? getDb(), session, (q) => readRecentTurnViews(q, session.sub));
+}
+
+// The auditor's door to its rows on a proposal (design 4.2 step 4). Each call is its own tenant
+// transaction with the membership check; each write is guarded in its WHERE clause.
+export interface AuditStore {
+  read(proposalId: string): Promise<AuditState | null>;
+  // The audit's trace id and this attempt's number when this caller now holds the lease, null
+  // when someone else does.
+  lease(proposalId: string, now: Date, leaseMs: number, traceId: string): Promise<AuditLease | null>;
+  release(proposalId: string, startedAt: Date): Promise<void>;
+  // Writes as the holder of the lease taken at startedAt. False when a verdict was already there,
+  // the proposal was decided, or that lease is no longer this caller's.
+  write(proposalId: string, verdict: VerdictWrite, now: Date, startedAt: Date): Promise<boolean>;
+}
+
+export function dbAuditStore(session: Session, deps: StoreDeps = {}): AuditStore {
+  const db = deps.db ?? getDb();
+  const tx = <T>(fn: (q: Queryable) => Promise<T>) => withAgentTenant(db, session, fn);
+  return {
+    read: (proposalId) => tx((q) => readAuditState(q, proposalId)),
+    lease: (proposalId, now, leaseMs, traceId) =>
+      tx((q) => takeAuditLease(q, proposalId, now, leaseMs, traceId)),
+    release: async (proposalId, startedAt) => {
+      await tx((q) => releaseAuditLease(q, proposalId, startedAt));
+    },
+    write: (proposalId, verdict, now, startedAt) =>
+      tx((q) => writeAuditVerdict(q, proposalId, verdict, now, startedAt)),
+  };
 }
 
 // How a turn was worked out (MODEL-TRACE), only for the person who started its conversation.

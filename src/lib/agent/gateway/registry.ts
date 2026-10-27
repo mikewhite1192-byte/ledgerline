@@ -11,6 +11,7 @@ import { getInboundMessage } from "./tools/read/get-inbound-message";
 import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
+import { getProposal } from "./tools/read/get-proposal";
 import { getPayItems } from "./tools/read/get-pay-items";
 import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstanding";
 import { reportArAging } from "./tools/read/report-ar-aging";
@@ -51,6 +52,7 @@ const TOOLS: readonly AnyToolDef[] = [
   reportCashNeeded,
   reportMarginPerLoad,
   getInboundMessage,
+  getProposal,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,

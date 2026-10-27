@@ -39,7 +39,9 @@ describe("flags", () => {
     }
     expect(flags.agentTurnLimits.wallClockMs).toBeLessThan(30_000);
     expect(flags.proposalMaxAgeDays).toBe(7);
-    expect(flags.auditorRequired).toBe(false);
+    expect(flags.auditorEnabled).toBe(false);
+    expect(flags.auditorRequired).toBe(true);
+    expect(Number.isNaN(Date.parse(flags.auditorStart))).toBe(false);
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
   });
 });
