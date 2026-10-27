@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { flags } from "@/config/flags";
 import { homeSuggestions } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
@@ -24,6 +25,7 @@ import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
+import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { AiProofForm } from "./ai-proof-form";
 
@@ -100,6 +102,16 @@ export default async function Home() {
     }
   }
 
+  // The last sweep's line, when the sweep is on. A failed read leaves the card out.
+  let lastSweep: SweepRunView | null = null;
+  if (carrier && flags.sweepEnabled) {
+    try {
+      lastSweep = (await readSweepHome(carrier.session)).runs[0] ?? null;
+    } catch (err) {
+      console.error("sweep home read failed:", err instanceof Error ? err.name : "unknown");
+    }
+  }
+
   if (!carrier) {
     return (
       <main className="flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
@@ -142,6 +154,7 @@ export default async function Home() {
           composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
         />
       )}
+      {lastSweep ? <LastSweep run={lastSweep} /> : null}
       <RecordCounts counts={carrier.counts} />
       {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
     </AppShell>
@@ -154,6 +167,28 @@ const SUGGESTIONS = homeSuggestions(flags.reportsEnabled);
 // Offered only while the detention tools are switched on, so the chip never asks for a tool the
 // agent does not have.
 const DETENTION_SUGGESTION = { id: "unbilled-detention", label: "Find detention we never billed last month" };
+
+// "Last sweep: 7 problems, 5 fixes drafted, 2 approved", one click from the run.
+function LastSweep({ run }: { run: SweepRunView }) {
+  const found = run.counts.found ?? 0;
+  const drafted = run.counts.fixes_drafted ?? 0;
+  const line =
+    run.status === "running"
+      ? "A sweep is running now."
+      : run.status === "failed"
+        ? "The last sweep stopped before it finished."
+        : `Last sweep: ${found} ${found === 1 ? "problem" : "problems"}, ${drafted} ${drafted === 1 ? "fix" : "fixes"} drafted, ${run.approved} approved.`;
+  return (
+    <section aria-label="Last sweep" className="mx-auto mt-12 w-full max-w-[720px]">
+      <Card className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 py-4 sm:px-5">
+        <p className="text-body text-foreground">{line}</p>
+        <Link href={`/sweep/${run.id}`} className="text-small text-link underline-offset-4 hover:underline">
+          Open the sweep
+        </Link>
+      </Card>
+    </section>
+  );
+}
 
 // What this carrier has on file, from the counts read above.
 function RecordCounts({ counts }: { counts: Carrier["counts"] }) {

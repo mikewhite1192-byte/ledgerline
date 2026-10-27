@@ -57,6 +57,7 @@ describe("row-level security coverage", () => {
     const names = (await tables()).map((t) => t.name);
     expect(names).toEqual(
       expect.arrayContaining([
+        "approval_batches",
         "conversations",
         "driver_notes",
         "gateway_decisions",
@@ -67,6 +68,8 @@ describe("row-level security coverage", () => {
         "qbo_connections",
         "qbo_entity_ids",
         "qbo_oauth_states",
+        "sweep_items",
+        "sweep_runs",
         "tenants",
         "turn_steps",
         "turns",

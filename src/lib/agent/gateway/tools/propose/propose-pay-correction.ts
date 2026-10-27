@@ -11,6 +11,8 @@ export const PAY_CORRECTION_REASON_CATEGORIES = [
   "wrong_driver",
   "duplicate_charge",
   "missing_reimbursement",
+  // A charge for something that did not happen (an insurance day with no load).
+  "charge_not_owed",
 ] as const;
 
 export const proposePayCorrection = defineTool({

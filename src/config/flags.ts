@@ -114,6 +114,27 @@ export type Flags = {
   // adds the charge to the load's open invoice. Off means neither tool is offered or runs and an
   // approval is refused before anything is written.
   detentionEnabled: boolean;
+  // The pay sweep: checks one open week for every driver, drafts a pay correction for each
+  // finding it can fix and lists the rest for a person. It only proposes; a person approves.
+  // Off means the Sweep page shows its reason text and the routes refuse before any work.
+  sweepEnabled: boolean;
+  // The nightly kicker (infra sweep stack). Off means the internal route refuses every call.
+  sweepScheduleEnabled: boolean;
+  sweepLimits: {
+    // Findings kept per run; the rest are left for the next run with a visible line.
+    maxItems: number;
+    // Model spend one run may count, in cents (explanations plus audits).
+    maxRunCents: number;
+    // The cap on one explanation call, in cents.
+    maxExplainCents: number;
+    // How long one request works before it answers "running" and the page asks again.
+    sliceMs: number;
+    // Audit tries per item while the auditor answers "in progress".
+    maxAuditAttempts: number;
+  };
+  // Approve all clean: one deliberate approval over the clean fixes a person saw. A batch whose
+  // total is over approverRole.adminAboveCents needs an admin, like a single proposal.
+  approveAllLimits: { maxItems: number };
 };
 
 export const flags: Flags = {
@@ -157,4 +178,8 @@ export const flags: Flags = {
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
   reportsEnabled: false,
   detentionEnabled: false,
+  sweepEnabled: false,
+  sweepScheduleEnabled: false,
+  sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
+  approveAllLimits: { maxItems: 25 },
 };

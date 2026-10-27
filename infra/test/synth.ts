@@ -6,29 +6,34 @@ import { App } from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
 import { moneySettingsFromEnv } from "../lib/hosting-stack";
 import { addStacks } from "../lib/stacks";
+import { sweepSettingsFromEnv } from "../lib/sweep-stack";
 
 // Synthesizes the real app (the same addStacks, cdk.json feature flags and money settings check
 // the deploy uses) into a temp folder the caller owns. No account by default: the templates must
 // not depend on one. `exported` stands for the deploying shell's money variables; by default none
-// are exported and MONEY_SETTINGS=none says so on purpose. A refusal throws before the temp
-// folder exists, and any later failure removes it.
+// are exported and MONEY_SETTINGS=none says so on purpose. `sweepExported` stands for the shell's
+// SWEEP_APP_URL and SWEEP_TENANT_IDS (none by default). A refusal throws before the temp folder
+// exists, and any later failure removes it.
 export function synthAll(
   account?: string,
   exported: Record<string, string | undefined> = { MONEY_SETTINGS: "none" },
+  sweepExported: Record<string, string | undefined> = {},
 ) {
   const money = moneySettingsFromEnv(exported);
+  const sweep = sweepSettingsFromEnv(sweepExported);
   const outdir = mkdtempSync(join(tmpdir(), "payday-stacks-test-"));
   const cleanup = () => rmSync(outdir, { recursive: true, force: true });
   try {
     const { context } = JSON.parse(readFileSync(fileURLToPath(new URL("../cdk.json", import.meta.url)), "utf8"));
     const app = new App({ outdir, context });
-    const stacks = addStacks(app, { account, region: "us-east-2" }, money);
+    const stacks = addStacks(app, { account, region: "us-east-2" }, money, sweep);
     return {
       app,
       stacks,
       data: Template.fromStack(stacks.data),
       auth: Template.fromStack(stacks.auth),
       hosting: Template.fromStack(stacks.hosting),
+      sweep: Template.fromStack(stacks.sweep),
       cleanup,
     };
   } catch (err) {

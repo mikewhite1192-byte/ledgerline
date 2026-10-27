@@ -171,8 +171,13 @@ async function clearSettled(
 const NAMED_BY_LEDGER = `SELECT 1 FROM money_actions m
    WHERE m.tenant_id = CAST($1 AS uuid) AND m.proposal_id = p.id`;
 
+// The sweep's records go right after the driver notes (an item names its proposal and its run; a
+// run names its conversation and its week), and its approval batches last (a proposal names its batch), each
+// unlinked from any proposal that is kept.
 const AGENT_CLEAR = [
   "DELETE FROM driver_notes WHERE tenant_id = CAST($1 AS uuid)",
+  `DELETE FROM sweep_items WHERE tenant_id = CAST($1 AS uuid)`,
+  `DELETE FROM sweep_runs WHERE tenant_id = CAST($1 AS uuid)`,
   `DELETE FROM turn_steps s
     WHERE s.tenant_id = CAST($1 AS uuid)
       AND NOT EXISTS (SELECT 1 FROM proposals p
@@ -191,6 +196,11 @@ const AGENT_CLEAR = [
                        WHERE t.tenant_id = CAST($1 AS uuid) AND t.conversation_id = c.id)
       AND NOT EXISTS (SELECT 1 FROM proposals p
                        WHERE p.tenant_id = CAST($1 AS uuid) AND p.conversation_id = c.id)`,
+  `UPDATE proposals SET batch_id = NULL
+    WHERE tenant_id = CAST($1 AS uuid) AND batch_id IS NOT NULL
+      AND batch_id IN (SELECT b.id FROM approval_batches b
+                        WHERE b.tenant_id = CAST($1 AS uuid) AND b.scope = 'proposals')`,
+  `DELETE FROM approval_batches WHERE tenant_id = CAST($1 AS uuid) AND scope = 'proposals'`,
 ] as const;
 
 export async function clearTenantAgent(admin: Db, tenantId: string): Promise<number> {

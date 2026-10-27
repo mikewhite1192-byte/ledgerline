@@ -167,7 +167,8 @@ export type PayItemRow = {
   subkind: string;
   amount_cents: number;
   item_date: string;
-  ref_table: "fuel_purchases" | "load_accessorials" | "loads" | "settlements" | null;
+  // "proposals": a pay correction a person approved (item_ref correction:<proposal id>).
+  ref_table: "fuel_purchases" | "load_accessorials" | "loads" | "settlements" | "proposals" | null;
   ref_id: string | null;
   item_ref: string;
   description: string;

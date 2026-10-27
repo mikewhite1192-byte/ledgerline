@@ -5,6 +5,7 @@ import { executeAdvanceProposal, precheckAdvanceProposal } from "../advances/app
 import { assertMembership } from "../tenant/context";
 import { overrideReasonOf } from "../agent/auditor/words";
 import { executeDetentionCharge } from "./executors/detention-charge";
+import { payCorrectionExecutor } from "./executors/pay-correction";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
 // purpose: approval is the only road from a proposal to the ledger, and the agent tree cannot
@@ -117,20 +118,22 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 
 // One executor per kind. advance_payout creates the advances row at approval and pays it through
 // the money executor (src/lib/advances/approve.ts), with a precheck that refuses before the
-// approval when the payout could not run; pay_correction and invoice_fix have none yet, so they
-// are refused as not_executable. detention_charge is read through its release switch on every
-// approval: with detentionEnabled off the kind has no executor, so a detention_charge can be
-// neither approved nor executed. On a resume (a row already approved or executing), gate refuses
-// it as not_executable before the executor runs. Otherwise that refusal is gate's last check
-// before the approve write, and every earlier outcome comes first: the membership check,
-// not_found, already_decided, expiring an aged proposal (which writes the row as expired), the
-// role refusal, the auditor refusals (not_auditable, auditor_required, override_required, stale)
-// and needs_confirm.
+// approval when the payout could not run. pay_correction writes one pay item for the next pay run
+// (src/lib/proposals/executors/pay-correction.ts), with a precheck that refuses a stale fix before
+// the approval. invoice_fix has none yet, so it is refused as not_executable. detention_charge is
+// read through its release switch on every approval: with detentionEnabled off the kind has no
+// executor, so a detention_charge can be neither approved nor executed. On a resume (a row already
+// approved or executing), gate refuses it as not_executable before the executor runs. Otherwise
+// that refusal is gate's last check before the approve write, and every earlier outcome comes
+// first: the membership check, not_found, already_decided, expiring an aged proposal (which writes
+// the row as expired), the role refusal, the auditor refusals (not_auditable, auditor_required,
+// override_required, stale) and needs_confirm.
 export const EXECUTORS: ExecutorRegistry = {
   advance_payout: Object.assign(
     (...args: Parameters<Executor>) => executeAdvanceProposal(...args),
     { precheck: precheckAdvanceProposal },
   ),
+  pay_correction: payCorrectionExecutor,
   get detention_charge() {
     return flags.detentionEnabled ? executeDetentionCharge : undefined;
   },

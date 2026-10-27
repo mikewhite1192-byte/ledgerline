@@ -94,7 +94,10 @@ describe("demo rows through a login that skips row-level security", () => {
     await ensureRows(master, carrierA, A, `sub-${A}`);
     const a = await rowsOf(A);
     expect(a.tenants).toMatchObject([{ id: A, slug: carrierA.slug }]);
-    expect(a.members).toMatchObject([{ cognito_sub: `sub-${A}`, email: carrierA.email }]);
+    expect(a.members).toMatchObject([
+      { cognito_sub: `service:sweep:${A}`, email: `sweep@${carrierA.slug}.invalid`, role: "staff" },
+      { cognito_sub: `sub-${A}`, email: carrierA.email, role: "admin" },
+    ]);
   });
 
   it("stands in for the Aurora master: with tenant B set it still reads tenant A", async () => {
@@ -115,7 +118,10 @@ describe("demo rows through a login that skips row-level security", () => {
     expect(await rowsOf(A)).toEqual(before);
     const b = await rowsOf(B);
     expect(b.tenants).toMatchObject([{ id: B, slug: carrierB.slug }]);
-    expect(b.members).toMatchObject([{ cognito_sub: `sub-${B}`, email: carrierB.email }]);
+    expect(b.members).toMatchObject([
+      { cognito_sub: `service:sweep:${B}`, email: `sweep@${carrierB.slug}.invalid`, role: "staff" },
+      { cognito_sub: `sub-${B}`, email: carrierB.email, role: "admin" },
+    ]);
   });
 
   it("reruns both carriers and changes nothing", async () => {

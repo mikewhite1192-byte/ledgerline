@@ -297,7 +297,7 @@ function keysAndReferences(rows: TenantRows): void {
   };
   for (const i of rows.pay_items) {
     if ((i.ref_table === null) !== (i.ref_id === null)) fail("a pay item has half a reference");
-    if (i.ref_table !== null && !byTable[i.ref_table].has(i.ref_id!)) {
+    if (i.ref_table !== null && !byTable[i.ref_table]?.has(i.ref_id!)) {
       fail("a pay item references a row the plan does not hold");
     }
     if (i.kind === "fuel" && i.ref_table !== "fuel_purchases") fail("a fuel item has no purchase");

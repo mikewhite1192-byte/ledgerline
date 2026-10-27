@@ -17,6 +17,7 @@ const SENTENCES: Readonly<Record<string, string>> = {
   wrong_driver: "The pay was put on the wrong driver.",
   duplicate_charge: "The same charge was taken twice.",
   missing_reimbursement: "A reimbursement the driver is owed is missing.",
+  charge_not_owed: "The driver was charged for a day with no load.",
   // propose_invoice_fix
   rate_mismatch: "The invoice does not match the load's agreed rate.",
   missing_accessorial: "An accessorial on the load is missing from the invoice.",
