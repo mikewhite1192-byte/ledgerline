@@ -19,6 +19,7 @@ const REFUSALS: ClipRefusal[] = [
   "unchanged",
   "conflict",
   "read_failed",
+  "read_spent",
 ];
 
 describe("clip messages", () => {

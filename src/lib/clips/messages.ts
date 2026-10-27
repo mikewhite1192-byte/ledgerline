@@ -21,6 +21,7 @@ const MESSAGES: Readonly<Record<string, string>> = {
   unchanged: "The blurred clip came back unchanged, so it was not saved.",
   conflict: "A different blurred clip is already saved for this upload.",
   read_failed: "The clip could not be read this time. Try again.",
+  read_spent: "The clip could not be read after three tries, so a person needs to watch it and check the times.",
   no_webcodecs: "This browser cannot blur video. Use a current Chrome, Edge or Safari.",
   decode: "Your browser could not play this file to blur it.",
   encode: "Your browser could not write the blurred clip.",

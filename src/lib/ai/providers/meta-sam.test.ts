@@ -241,7 +241,7 @@ describe("parseSegmentationFrames", () => {
 
 describe("parseSamVideo", () => {
   it("charges the frames the provider processed", () => {
-    const outcome = parseSamVideo(143)(videoAnswer(PLATE_LINES.join("\n")), 200);
+    const outcome = parseSamVideo(143, 50)(videoAnswer(PLATE_LINES.join("\n")), 200);
     expect(outcome).toMatchObject({
       kind: "answered",
       status: "ok",
@@ -252,7 +252,7 @@ describe("parseSamVideo", () => {
   });
 
   it("is unknown without a positive whole frame count, when not completed, or when the text does not parse", () => {
-    const parse = parseSamVideo(143);
+    const parse = parseSamVideo(143, 50);
     for (const json of [
       videoAnswer("", {}),
       videoAnswer("", { video_frames_processed: 0 }),
@@ -265,5 +265,25 @@ describe("parseSamVideo", () => {
     ]) {
       expect(parse(json, 200), JSON.stringify(json)).toEqual({ kind: "unknown", category: "unknown", httpStatus: 200 });
     }
+  });
+
+  it("is unknown when the frames processed run past the clip or the floor by more than the slack", () => {
+    const text = PLATE_LINES.join("\n");
+    // A 144-frame clip: up to 146 is believed, 147 is not.
+    expect(parseSamVideo(143, 50)(videoAnswer(text, { video_frames_processed: 146 }), 200)).toMatchObject({
+      kind: "answered",
+      metered: { unit: "video_frames", count: 146 },
+    });
+    for (const n of [147, 14_400, Number.MAX_SAFE_INTEGER]) {
+      expect(parseSamVideo(143, 50)(videoAnswer(text, { video_frames_processed: n }), 200), String(n)).toEqual({
+        kind: "unknown",
+        category: "unknown",
+        httpStatus: 200,
+      });
+    }
+    // A 10-frame clip is billed the 50-frame floor: 52 is believed, 53 is not.
+    const short = parseSamVideo(9, 50);
+    expect(short(videoAnswer("", { video_frames_processed: 52 }), 200)).toMatchObject({ kind: "answered" });
+    expect(short(videoAnswer("", { video_frames_processed: 53 }), 200)).toMatchObject({ kind: "unknown" });
   });
 });

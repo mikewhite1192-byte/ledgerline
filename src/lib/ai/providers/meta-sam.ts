@@ -251,12 +251,19 @@ export function parseSegmentationFrames(
   return { frames, width: size?.width ?? null, height: size?.height ?? null };
 }
 
+// How many frames past the clip's own count (or the per-request floor) a reported figure may be
+// and still be believed: a frame counted differently at either end, nothing more.
+export const SAM_VIDEO_FRAME_SLACK = 2;
+
 // A 200 video answer. The cost is the frames the provider says it processed, so an answer that
-// does not report them as a positive whole number is unknown, its reservation kept, like one
-// that is not complete or does not parse.
+// does not report them as a positive whole number, or reports more than the clip has frames (or
+// the floor) plus SAM_VIDEO_FRAME_SLACK, is unknown, its reservation kept, like one that is not
+// complete or does not parse.
 export function parseSamVideo(
   lastFrame: number,
+  minFrames: number,
 ): (json: unknown, httpStatus: number) => CallOutcome<SamVideoAnswer> {
+  const most = Math.max(minFrames, lastFrame + 1) + SAM_VIDEO_FRAME_SLACK;
   return (json, httpStatus) => {
     const body = asRecord(json);
     const processed = asRecord(body?.usage)?.video_frames_processed;
@@ -265,7 +272,8 @@ export function parseSamVideo(
       body.status !== "completed" ||
       typeof processed !== "number" ||
       !Number.isSafeInteger(processed) ||
-      processed < 1
+      processed < 1 ||
+      processed > most
     ) {
       return { kind: "unknown", category: "unknown", httpStatus };
     }

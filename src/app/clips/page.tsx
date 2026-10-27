@@ -105,7 +105,7 @@ export default async function ClipsPage() {
       <div className="mx-auto grid w-full max-w-[1080px] gap-6">
         <PageHeader
           title="Dock clips"
-          description="A short clip of a pickup or delivery, kept only after faces and plates are blurred, with the camera clock checked against the stored stop times."
+          description="A short clip of a pickup or delivery. Faces and plates are blurred in your browser before the clip is saved, and the camera clock is checked against the stored stop times."
         />
         {!flags.clipsEnabled ? (
           <Card>

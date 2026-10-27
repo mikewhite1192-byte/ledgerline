@@ -25,7 +25,8 @@ export type ClipRefusal =
   | "mismatch"
   | "unchanged"
   | "conflict"
-  | "read_failed";
+  | "read_failed"
+  | "read_spent";
 
 export type ClipFailure = { ok: false; category: ClipRefusal; retryable: boolean; clipId?: string };
 

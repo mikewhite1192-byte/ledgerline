@@ -32,6 +32,7 @@ import {
   takeReadLease,
   takeRedactLease,
   type Concept,
+  type ReadState,
   type RedactedClip,
 } from "./store";
 import { CLIP_STOPS, type ClipFailure, type ClipRefusal, type ClipStop, type ClipView } from "./types";
@@ -108,6 +109,15 @@ function logFailure(step: string, err: unknown): void {
   console.error("clip step failed:", step, what);
 }
 
+// A segmentation answer in another size than the clip. The same file gets the same answer, so it
+// is refused for good rather than counted as a failure worth paying to retry.
+class SegmentationSizeError extends Error {
+  constructor() {
+    super("segmentation size differs from the clip");
+    this.name = "SegmentationSizeError";
+  }
+}
+
 async function withPlan(session: Session, deps: ClipDeps, id: string): Promise<{ clip: ClipView; plan: RedactionPlan | null } | null> {
   return tx(session, deps, async (q) => {
     const clip = await clipView(q, id);
@@ -120,6 +130,11 @@ async function withPlan(session: Session, deps: ClipDeps, id: string): Promise<{
 
 export type UploadInput = { loadId: string; stop: string; filename: string; bytes: Uint8Array };
 export type UploadResult = { ok: true; clip: ClipView; plan: RedactionPlan } | ClipFailure;
+
+// Which of two failed concepts the answer names: a switch that is off, then an answer that can
+// never fit this clip, then the spend cap, then a failure worth trying again.
+type RedactRefusal = "failed" | "budget" | "unsupported" | "disabled";
+const RANK: Readonly<Record<RedactRefusal, number>> = { failed: 0, budget: 1, unsupported: 2, disabled: 3 };
 
 type Claim =
   | { kind: "run"; id: string; traceId: string; missing: Concept[] }
@@ -184,7 +199,7 @@ export async function uploadClip(session: Session, input: UploadInput, deps: Cli
   });
   if (claim.kind === "refused") return claim.failure;
 
-  let worst: ClipRefusal | null = null;
+  let worst: RedactRefusal | null = null;
   if (claim.kind === "run") {
     const size = { width: header.width, height: header.height, frameCount: header.frameCount };
     const settled = await Promise.allSettled(
@@ -202,7 +217,7 @@ export async function uploadClip(session: Session, input: UploadInput, deps: Cli
         );
         // Boxes in another size than the clip's are not boxes this clip can use.
         if ((result.width !== null && result.width !== size.width) || (result.height !== null && result.height !== size.height)) {
-          throw new Error("segmentation size differs from the clip");
+          throw new SegmentationSizeError();
         }
         // Kept the moment it lands, in its own transaction, so the other concept's failure
         // cannot lose it.
@@ -212,22 +227,30 @@ export async function uploadClip(session: Session, input: UploadInput, deps: Cli
     for (const s of settled) {
       if (s.status === "fulfilled") continue;
       logFailure("redaction", s.reason);
-      const category: ClipRefusal =
+      const category: RedactRefusal =
         s.reason instanceof AiError && s.reason.category === "disabled"
           ? "disabled"
-          : s.reason instanceof AiError && (s.reason.category === "cap" || s.reason.category === "too_expensive")
-            ? "budget"
-            : "failed";
-      if (worst === null || category === "disabled" || (category === "budget" && worst === "failed")) worst = category;
+          : s.reason instanceof SegmentationSizeError
+            ? "unsupported"
+            : s.reason instanceof AiError && (s.reason.category === "cap" || s.reason.category === "too_expensive")
+              ? "budget"
+              : "failed";
+      if (worst === null || RANK[category] > RANK[worst]) worst = category;
     }
-    await tx(session, deps, (q) => releaseRedactLease(q, claim.id));
+    try {
+      await tx(session, deps, (q) => releaseRedactLease(q, claim.id));
+    } catch (err) {
+      // The answers are already kept and the lease lapses on its own, so this answers with them.
+      logFailure("release", err);
+    }
   }
 
   const kept = await withPlan(session, deps, claim.id);
   if (!kept) return fail("not_found");
   if (!kept.plan) {
     const attempts = await tx(session, deps, (q) => redactAttempts(q, claim.id));
-    return fail(worst ?? "failed", worst !== "disabled" && attempts < MAX_ATTEMPTS, claim.id);
+    const final = worst ?? "failed";
+    return fail(final, (final === "failed" || final === "budget") && attempts < MAX_ATTEMPTS, claim.id);
   }
   return { ok: true, clip: kept.clip, plan: kept.plan };
 }
@@ -297,33 +320,45 @@ export async function storeRedacted(
 
 export type ReadResult = { ok: true; clip: ClipView } | ClipFailure;
 
+// What a read request answers from the clip's read state before any work: the kept answer
+// ("done"), a refusal, or null to go on.
+function readGate(state: ReadState | null): "done" | ClipFailure | null {
+  if (!state) return fail("not_found");
+  if (state.status === "redacting") return fail("not_ready", true);
+  if (state.status === "read" || state.status === "unreadable") return "done";
+  if (state.attempts >= MAX_ATTEMPTS) return fail("read_spent");
+  if (!state.leaseFree) return fail("busy", true);
+  return null;
+}
+
 export async function readClip(session: Session, id: string, deps: ClipDeps = {}): Promise<ReadResult> {
   if (!flags.clipsEnabled || !flags.aiEnabled) return fail("disabled");
   if (!isUuid(id)) return fail("not_found");
 
-  const claim = await tx(session, deps, async (q) => {
-    const state = await findReadState(q, id);
-    if (!state) return fail("not_found");
-    if (state.status === "redacting") return fail("not_ready", true);
-    if (state.status === "read" || state.status === "unreadable") return "done" as const;
-    const leased = await takeReadLease(q, id);
-    if (!leased) return state.attempts >= MAX_ATTEMPTS ? fail("failed") : fail("busy", true);
-    return { traceId: leased.traceId ?? randomUUID(), attempts: leased.attempts };
-  });
-  if (claim !== "done" && "ok" in claim) return claim;
+  const gate = readGate(await tx(session, deps, (q) => findReadState(q, id)));
+  if (gate !== null && gate !== "done") return gate;
 
-  if (claim !== "done") {
-    const release = () => tx(session, deps, (q) => releaseReadLease(q, id)).catch((err) => logFailure("release", err));
+  if (gate === null) {
+    // The file first, then the attempt. The file is the largest cell the pipeline reads back, so
+    // a read of it that fails costs nothing and counts nothing: only a model call uses up a try.
     let clip: RedactedClip | null = null;
     try {
       clip = await tx(session, deps, (q) => readRedactedBytes(q, id));
     } catch (err) {
       logFailure("file read", err);
     }
-    if (!clip) {
-      await release();
-      return fail("read_failed", claim.attempts < MAX_ATTEMPTS);
-    }
+    if (!clip) return fail("read_failed", true);
+
+    const claim = await tx(session, deps, async (q) => {
+      const leased = await takeReadLease(q, id);
+      if (leased) return { traceId: leased.traceId ?? randomUUID(), attempts: leased.attempts };
+      // Another request got there between the two reads: answer as it left the clip.
+      return readGate(await findReadState(q, id)) ?? fail("busy", true);
+    });
+    if (claim === "done") return answerView(session, id, deps);
+    if ("ok" in claim) return claim;
+
+    const release = () => tx(session, deps, (q) => releaseReadLease(q, id)).catch((err) => logFailure("release", err));
     const outcome = await readRedacted(session, clip, claim.traceId, deps);
     if (outcome.kind === "error") {
       if (outcome.budget) {
@@ -341,6 +376,10 @@ export async function readClip(session: Session, id: string, deps: ClipDeps = {}
       return finishRead(q, id, { status: "read", reading: { ...outcome.reading, agreement }, callId: outcome.callId });
     });
   }
+  return answerView(session, id, deps);
+}
+
+async function answerView(session: Session, id: string, deps: ClipDeps): Promise<ReadResult> {
   const clip = await tx(session, deps, (q) => clipView(q, id));
   return clip ? { ok: true, clip } : fail("not_found");
 }

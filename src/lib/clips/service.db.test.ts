@@ -49,9 +49,10 @@ const READING = {
 type Sent = { model: string; prompt: string | null; videoHash: string };
 
 // Answers each model by the body it was sent, and records which video each call carried.
-function fakeAi(options: { failPlate?: number; readingText?: string } = {}) {
+function fakeAi(options: { failPlate?: number; failRead?: number; readingText?: string; samLine?: string } = {}) {
   const sent: Sent[] = [];
   let plateFailures = options.failPlate ?? 0;
+  let readFailures = options.failRead ?? 0;
   const fetch = vi.fn<FetchFn>(async (_url, init) => {
     const body = JSON.parse(String(init?.body));
     const content = body.input[0].content as { type: string; text?: string; video_url?: string }[];
@@ -67,9 +68,13 @@ function fakeAi(options: { failPlate?: number; readingText?: string } = {}) {
       return Response.json({
         id: "resp_sam",
         status: "completed",
-        output: [{ type: "message", content: [{ type: "output_text", text: SAM_LINE }] }],
+        output: [{ type: "message", content: [{ type: "output_text", text: options.samLine ?? SAM_LINE }] }],
         usage: { video_frames_processed: 50 },
       });
+    }
+    if (readFailures > 0) {
+      readFailures -= 1;
+      return Response.json({ error: { message: "overloaded" } }, { status: 503 });
     }
     return Response.json({
       id: "resp_read",
@@ -108,6 +113,7 @@ const row = (id: string) =>
     const [r] = await q.query<Record<string, unknown>>(
       `SELECT status, CAST(face_call_id AS text) AS face_call_id, CAST(plate_call_id AS text) AS plate_call_id,
               CAST(redact_attempts AS integer) AS redact_attempts, redact_started_at IS NULL AS lease_free,
+              CAST(read_attempts AS integer) AS read_attempts, read_started_at IS NULL AS read_lease_free,
               raw_hash, redacted_hash, redacted_byte_length, CAST(row_to_json(c) AS text) AS whole
          FROM evidence_clips c WHERE id = CAST($1 AS uuid)`,
       [id],
@@ -363,6 +369,80 @@ describe("dock clip pipeline", () => {
       flags.clipLimits.perTenantPerDay = limit;
     }
     expect(ai.sent).toHaveLength(4);
+  });
+
+  it("refuses a segmentation answer in another size as unsupported, with no retry offered", async () => {
+    const ai = fakeAi({ samLine: SAM_LINE.replace(/w=64;h=64/, "w=128;h=128") });
+    expect(await upload(ai)).toMatchObject({ ok: false, category: "unsupported", retryable: false });
+    // Both answers were asked for once, and neither is kept.
+    expect(ai.sent).toHaveLength(2);
+    const [clip] = await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ id: string }>("SELECT CAST(id AS text) AS id FROM evidence_clips WHERE tenant_id = current_tenant_id()"),
+    );
+    expect(await row(clip.id)).toMatchObject({ redact_attempts: 1, face_call_id: null, plate_call_id: null, lease_free: true });
+    expect(logged.join("\n")).toContain("SegmentationSizeError");
+  });
+
+  it("answers with the kept plan when freeing the redaction lease fails", async () => {
+    const ai = fakeAi();
+    const noRelease: TenantDb = {
+      withTenant: (tenantId, fn) =>
+        app.withTenant(tenantId, (q) =>
+          fn({
+            query: (sql, params) => q.query(sql, params),
+            execute: (sql, params) =>
+              /SET redact_started_at = NULL WHERE/.test(sql) ? Promise.reject(new Error("connection reset")) : q.execute(sql, params),
+          } as Queryable),
+        ),
+    };
+    const up = await upload(ai, RAW, {}, noRelease);
+    expect(up).toMatchObject({ ok: true, clip: { planReady: true } });
+    expect(logged.join("\n")).toContain("clip step failed: release Error");
+    expect(logged.join("\n")).not.toContain("connection reset");
+  });
+
+  it("counts no try when the blurred file cannot be read back, so the clip stays readable", async () => {
+    const ai = fakeAi();
+    const up = await upload(ai);
+    if (!up.ok) throw new Error(`upload ${up.category}`);
+    await storeRedacted(A.session, up.clip.id, blurred(10), deps(ai));
+    // The file's cell does not come back (as an oversized Data API answer would not).
+    const noFile: TenantDb = {
+      withTenant: (tenantId, fn) =>
+        app.withTenant(tenantId, (q) =>
+          fn({
+            query: (sql, params) =>
+              sql.includes("encode(redacted_bytes") ? Promise.reject(new Error("response too large")) : q.query(sql, params),
+            execute: (sql, params) => q.execute(sql, params),
+          } as Queryable),
+        ),
+    };
+    for (let i = 0; i < 3; i += 1) {
+      expect(await readClip(A.session, up.clip.id, deps(ai, noFile))).toEqual({
+        ok: false,
+        category: "read_failed",
+        retryable: true,
+      });
+    }
+    expect(await row(up.clip.id)).toMatchObject({ status: "redacted", read_attempts: 0, read_lease_free: true });
+    expect(ai.sent).toHaveLength(2);
+    expect(logged.join("\n")).not.toContain("response too large");
+    expect(await readClip(A.session, up.clip.id, deps(ai))).toMatchObject({ ok: true, clip: { status: "read" } });
+    expect(ai.sent).toHaveLength(3);
+  });
+
+  it("stops reading after three failed model calls and says so", async () => {
+    const ai = fakeAi({ failRead: 3 });
+    const up = await upload(ai);
+    if (!up.ok) throw new Error(`upload ${up.category}`);
+    await storeRedacted(A.session, up.clip.id, blurred(11), deps(ai));
+    expect(await readClip(A.session, up.clip.id, deps(ai))).toEqual({ ok: false, category: "read_failed", retryable: true });
+    expect(await readClip(A.session, up.clip.id, deps(ai))).toEqual({ ok: false, category: "read_failed", retryable: true });
+    expect(await readClip(A.session, up.clip.id, deps(ai))).toEqual({ ok: false, category: "read_failed", retryable: false });
+    expect(await readClip(A.session, up.clip.id, deps(ai))).toEqual({ ok: false, category: "read_spent", retryable: false });
+    // Two segmentation calls and three reading calls, never a fourth.
+    expect(ai.sent).toHaveLength(5);
+    expect(await row(up.clip.id)).toMatchObject({ status: "redacted", read_attempts: 3, read_lease_free: true });
   });
 
   it("marks a reading refused by the spend cap as budget, and reads it later", async () => {

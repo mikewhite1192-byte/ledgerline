@@ -20,6 +20,7 @@ export const REFUSAL_STATUS: Readonly<Record<ClipRefusal, number>> = {
   conflict: 409,
   store_failed: 503,
   read_failed: 503,
+  read_spent: 409,
 };
 
 export function reply(body: unknown, status: number) {

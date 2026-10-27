@@ -892,7 +892,7 @@ export async function segmentVideo(
         // Every frame of the clip, never under the per-request floor.
         reserveNanocents: videoFramesCost(price, header.frameCount),
         reasoningEffort: null,
-        parse: parseSamVideo(header.frameCount - 1),
+        parse: parseSamVideo(header.frameCount - 1, price.minFrames),
       };
     },
   );
