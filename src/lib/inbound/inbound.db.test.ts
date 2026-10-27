@@ -7,7 +7,7 @@ import { untrustedContentHash } from "../data/content-hash";
 import { DbError } from "../db";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db, Param, TenantDb } from "../db/types";
+import type { Db, Param, Queryable, TenantDb } from "../db/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { handOffMessage, handOffText, receiveMessage, sortMessage, type InboundDeps } from "./pipeline";
 import { EXISTING_SQL, insertInbound, listInbound, readInbound, readInboundDetail } from "./store";
@@ -17,7 +17,8 @@ import type { ReceiveInput } from "./types";
 // and the agent faked: a paste goes from received to handed off; the sender matches its driver by
 // the whole address, and a driver the model names never lands on the row; a repeated paste or
 // email is one row; a hand-off claim that never named its conversation is taken again once, after
-// the hold; a turn an open wrote before it threw is closed; another carrier sees nothing and cannot
+// the hold; a turn an open wrote before it threw is closed; a link that answered with an error is
+// read back before anything is closed; another carrier sees nothing and cannot
 // write into this one; the app role deletes nothing and changes no fixed column; the checks hold.
 // Fixed instants only. Every tenant made here is removed after each test.
 
@@ -306,6 +307,112 @@ describe("the Inbox (database)", () => {
       { status: "running", ended_reason: null },
     ]);
     expect(await app.withTenant(f.tenantId, (q) => readInbound(q, message.id))).toMatchObject({ status: "handed_off" });
+  });
+
+  // The app's database, except that the first transaction naming a message's conversation answers
+  // with an error: after its commit ("commit") or before it, rolled back ("rollback"). With
+  // readBackFails, the next read of the message after that throws as well.
+  function linkAnswersError(how: "commit" | "rollback", readBackFails = false): TenantDb {
+    let failed = false;
+    let failRead = false;
+    return {
+      withTenant: async <T>(tenantId: string, fn: (q: Queryable) => Promise<T>): Promise<T> => {
+        let linkedHere = false;
+        const result = await app.withTenant(tenantId, (q) =>
+          fn({
+            query: <R>(sql: string, params?: Param[]) => {
+              if (failRead && sql.includes("FROM inbound_messages m LEFT JOIN untrusted_inputs")) {
+                failRead = false;
+                throw new DbError("unknown");
+              }
+              return q.query<R>(sql, params);
+            },
+            execute: async (sql: string, params?: Param[]) => {
+              const n = await q.execute(sql, params);
+              if (!failed && sql.startsWith("UPDATE inbound_messages SET conversation_id")) {
+                failed = true;
+                failRead = readBackFails;
+                if (how === "rollback") throw new DbError("unknown");
+                linkedHere = true;
+              }
+              return n;
+            },
+          }),
+        );
+        if (linkedHere) throw new DbError("unknown");
+        return result;
+      },
+    };
+  }
+
+  const turnsOf = (f: Fixture) =>
+    admin.withTenant(f.tenantId, (q) =>
+      q.query<{ conversation_id: string; status: string; ended_reason: string | null }>(
+        "SELECT CAST(conversation_id AS text) AS conversation_id, status, ended_reason FROM turns" +
+          " WHERE tenant_id = current_tenant_id() ORDER BY started_at, id",
+      ),
+    );
+
+  it("runs the turn when a link that committed answered with an error", async () => {
+    const f = A!;
+    const { message } = await received(f);
+    await sortMessage(f.session, message.id, deps());
+    let runs = 0;
+    const r = await handOffMessage(
+      f.session,
+      message.id,
+      deps({
+        db: linkAnswersError("commit"),
+        open: (s, input) => openAgentTurn(s, input, { db: app, clock: () => new Date(NOW) }),
+        run: async () => {
+          runs += 1;
+          return "done";
+        },
+      }),
+    );
+    expect(r).toMatchObject({ ok: true, status: "handed_off" });
+    expect(runs).toBe(1);
+    // One turn, never closed as failed, and the message names its conversation.
+    const turns = await turnsOf(f);
+    expect(turns).toEqual([{ conversation_id: r.ok ? r.conversationId : "", status: "running", ended_reason: null }]);
+    expect(await app.withTenant(f.tenantId, (q) => readInbound(q, message.id))).toMatchObject({
+      status: "handed_off",
+      conversationId: turns[0].conversation_id,
+    });
+  });
+
+  it("closes nothing when a failed link cannot be read back, and a press after the hold takes it once", async () => {
+    const f = A!;
+    const { message } = await received(f);
+    await sortMessage(f.session, message.id, deps());
+    const open = (s: typeof f.session, input: Parameters<typeof openAgentTurn>[1]) =>
+      openAgentTurn(s, input, { db: app, clock: () => new Date(NOW) });
+    let runs = 0;
+    const run = async () => {
+      runs += 1;
+      return "done" as const;
+    };
+    await expect(
+      handOffMessage(f.session, message.id, deps({ db: linkAnswersError("rollback", true), open, run })),
+    ).rejects.toBeInstanceOf(DbError);
+    expect(runs).toBe(0);
+    // The turn is left running and the claim held: the outcome was never known.
+    expect(await turnsOf(f)).toMatchObject([{ status: "running", ended_reason: null }]);
+    expect(await app.withTenant(f.tenantId, (q) => readInbound(q, message.id))).toMatchObject({ status: "handed_off", conversationId: null });
+
+    const press = (at: number) => handOffMessage(f.session, message.id, deps({ clock: () => at, open, run }));
+    // Within the hold the claim is still held.
+    expect(await press(NOW + 30_000)).toEqual({ ok: false, category: "busy", retryable: true });
+    // After it, two presses at once take it again once, and one turn runs.
+    const both = await Promise.all([press(NOW + 41_000), press(NOW + 41_000)]);
+    expect(both.filter((r) => r.ok)).toHaveLength(1);
+    expect(both.filter((r) => !r.ok).map((r) => !r.ok && r.category)).toEqual([expect.stringMatching(/^(busy|already_handed_off)$/)]);
+    expect(runs).toBe(1);
+    const won = both.find((r) => r.ok);
+    expect(await app.withTenant(f.tenantId, (q) => readInbound(q, message.id))).toMatchObject({
+      status: "handed_off",
+      conversationId: won?.ok ? won.conversationId : "",
+    });
   });
 
   it("holds a flagged message for a person and never sorts or hands it on", async () => {

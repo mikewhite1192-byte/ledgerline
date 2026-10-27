@@ -118,6 +118,8 @@ type Fake = {
   step?: StepRow | null;
   // Rows read on a second read of the step, after an update changed nothing.
   stepAfter?: StepRow | null;
+  // The second read of the step throws.
+  stepAfterFails?: boolean;
   // Rows affected per statement, by a word it contains; 1 when not named.
   affected?: Record<string, number>;
   // Statements that throw, by a word they contain. The attempt is still listed in writes.
@@ -157,6 +159,7 @@ function fakeDb(f: Fake = {}): FakeDb {
       if (sql.startsWith("SELECT timezone FROM tenants")) return [{ timezone: "America/Chicago" }] as T[];
       if (sql.includes("FROM inbound_messages m LEFT JOIN untrusted_inputs")) {
         stepReads += 1;
+        if (stepReads > 1 && f.stepAfterFails) throw new DbError("sql", "57P01");
         const row = stepReads > 1 && f.stepAfter !== undefined ? f.stepAfter : f.step === undefined ? stepRow() : f.step;
         return (row ? [row] : []) as T[];
       }
@@ -737,6 +740,66 @@ describe("handOffMessage", () => {
     expect(sqls[2]).toContain("conversation_id IS NULL");
     expect(sqls[3]).toMatch(/UPDATE turns\s+SET status = \$2/);
     expect(db.writes[3].params.slice(0, 3)).toEqual([TURN, "failed", "store"]);
+    // The message was read back first, and named no conversation.
+    expect(db.reads.filter((r) => r.sql.includes("FROM inbound_messages m LEFT JOIN untrusted_inputs"))).toHaveLength(2);
+  });
+
+  it("runs the turn when a link that answered with an error is read back as landed", async () => {
+    const db = fakeDb({
+      step: stepRow({ status: "triaged" }),
+      fail: ["SET conversation_id"],
+      stepAfter: stepRow({ status: "handed_off", conversation_id: "c-1" }),
+    });
+    const { d, calls } = deps(db);
+    expect(await handOffMessage(session, MSG, d)).toEqual({
+      ok: true,
+      inboundId: MSG,
+      status: "handed_off",
+      conversationId: "c-1",
+      turnId: TURN,
+      turnStatus: "done",
+    });
+    expect(calls.run).toEqual([handOffText(INPUT)]);
+    // Nothing is given back and no turn is closed: the claim and the link were this press's.
+    expect(sqlOf(db)).toHaveLength(2);
+    expect(sqlOf(db).some((sql) => /UPDATE turns/.test(sql) || sql.includes("SET status = 'triaged'"))).toBe(false);
+
+    // A message read back naming another conversation is not this press's link.
+    const other = fakeDb({
+      step: stepRow({ status: "triaged" }),
+      fail: ["SET conversation_id"],
+      stepAfter: stepRow({ status: "handed_off", conversation_id: "c-2" }),
+    });
+    const o = deps(other);
+    await expect(handOffMessage(session, MSG, o.d)).rejects.toThrow(DbError);
+    expect(o.calls.run).toHaveLength(0);
+    expect(sqlOf(other).some((sql) => /UPDATE turns\s+SET status = \$2/.test(sql))).toBe(true);
+  });
+
+  it("touches neither the claim nor the turn when a failed link cannot be read back", async () => {
+    const db = fakeDb({ step: stepRow({ status: "triaged" }), fail: ["SET conversation_id"], stepAfterFails: true });
+    const { d, calls } = deps(db);
+    // The link's own error is the one thrown.
+    await expect(handOffMessage(session, MSG, d)).rejects.toMatchObject({ name: "DbError", sqlState: "54000" });
+    expect(calls.run).toHaveLength(0);
+    expect(sqlOf(db)).toHaveLength(2);
+    expect(sqlOf(db).some((sql) => /UPDATE turns/.test(sql) || sql.includes("SET status = 'triaged'"))).toBe(false);
+    expect(logged).toContainEqual(["inbound message link not read back:", "sql"]);
+  });
+
+  it("answers a refused open with its refusal even when the claim cannot be given back", async () => {
+    for (const [how, category, retryable] of [
+      ["busy", "busy", true],
+      ["not_found", "not_found", false],
+      ["duplicate", "already_handed_off", false],
+    ] as const) {
+      logged = [];
+      const db = fakeDb({ step: stepRow({ status: "triaged" }), fail: ["SET status = 'triaged'"] });
+      const r = deps(db, how);
+      expect(await handOffMessage(session, MSG, r.d)).toEqual({ ok: false, category, retryable });
+      expect(r.calls.run).toHaveLength(0);
+      expect(logged).toContainEqual(["inbound message claim not given back:", "sql"]);
+    }
   });
 
   it("needs the Inbox, agent and model switches", async () => {

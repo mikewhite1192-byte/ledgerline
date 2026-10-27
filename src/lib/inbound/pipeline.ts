@@ -27,6 +27,7 @@ import {
   SET_BLOCKED_SQL,
   SET_FAILED_SQL,
   SET_SORTED_SQL,
+  type StepRow,
   UNCLAIM_HANDOFF_SQL,
 } from "./store";
 import type { InboundMessage, InboundStatus, ReceiveInput } from "./types";
@@ -426,7 +427,7 @@ export async function handOffMessage(session: Session, inboundId: string, deps: 
     throw err;
   }
   if ("refused" in opened) {
-    await inTenant(db, session, (q) => q.execute(UNCLAIM_HANDOFF_SQL, [id, iso()]));
+    await giveBack();
     if (opened.refused === "busy") return refused("busy", true);
     // A turn id already taken means a turn for this press exists: answer as for a message already
     // handed off, never as a missing message.
@@ -437,12 +438,27 @@ export async function handOffMessage(session: Session, inboundId: string, deps: 
   try {
     linked = await inTenant(db, session, (q) => q.execute(LINK_SQL, [id, opened.conversationId, iso()]));
   } catch (err) {
-    // The turn opened but the message may not name it. Give the claim back (the unclaim touches
-    // only a message with no conversation, so a link that did land stays) and close the turn that
-    // will not run.
-    await giveBack();
-    await closeFailedTurn(session, opened.turnId, store);
-    throw err;
+    // A link that answered with an error is unknown until the message is read back: it may have
+    // landed (a commit that reported a failure).
+    let after: StepRow | null;
+    try {
+      after = await inTenant(db, session, (q) => readStep(q, id));
+    } catch (readErr) {
+      // Still unknown: neither the claim nor the turn is touched. The press answers unavailable. If
+      // the link did not land, a press after the hold takes the message again; if it did, the
+      // message is handed off and its conversation's next turn closes this one as abandoned.
+      console.error("inbound message link not read back:", errorName(readErr));
+      throw err;
+    }
+    if (after?.conversation_id !== opened.conversationId) {
+      // The message does not name this turn. Give the claim back (the unclaim touches only a
+      // message with no conversation) and close the turn that will not run.
+      await giveBack();
+      await closeFailedTurn(session, opened.turnId, store);
+      throw err;
+    }
+    // The link landed: the message names this turn, so it runs.
+    linked = 1;
   }
   if (linked === 0) {
     // The claim is no longer this press's (another press took it again after the hold and named
