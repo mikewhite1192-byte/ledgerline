@@ -1,3 +1,5 @@
+import { dollars } from "../money/format";
+import type { InvoiceReviewReason, InvoiceReviewStatus } from "../rules-engine/invoice-review";
 import type { InvoiceResult } from "../rules-engine/types";
 
 // Fixed words for the invoice screens. Categories only reach a page; these turn them into text.
@@ -29,6 +31,7 @@ export const OUTCOME_LABELS: Readonly<Record<string, string>> = {
   amount_mismatch: "QuickBooks holds this number at a different amount. Check it there by hand.",
   applications_changed: "This payment's invoices changed while it was being posted. Nothing was sent. Refresh the page and post again.",
   history: "Only invoices made from the invoice queue post from here. This one came from earlier records.",
+  no_billing_address: "This customer has no billing address on file, so it was not posted.",
   // The reply was lost or could not be read, or the service was down: the work may have happened,
   // so these never say nothing changed.
   unknown: "The outcome is not known yet. Refresh the page to see where it stands before trying again.",
@@ -42,4 +45,115 @@ export function outcomeLabel(category: string | null | undefined): string {
   return typeof category === "string" && Object.hasOwn(OUTCOME_LABELS, category)
     ? OUTCOME_LABELS[category]
     : OUTCOME_FALLBACK;
+}
+
+// Why "Mark reviewed" or "Mark as sent" was refused. Anything not listed reads as the outcome
+// labels do, so a lost reply still says the outcome is not known.
+export const REVIEW_WRITE_LABELS: Readonly<Record<string, string>> = {
+  not_posted: "Post this invoice to accounting first, then mark it as sent.",
+  not_ready: "This invoice is not ready to send yet. Clear what the review shows first.",
+  validation: "That is not valid for this invoice. Nothing was saved.",
+  not_found: "This invoice could not be found. Refresh the page.",
+};
+
+export function reviewWriteLabel(category: string | null | undefined): string {
+  return typeof category === "string" && Object.hasOwn(REVIEW_WRITE_LABELS, category)
+    ? REVIEW_WRITE_LABELS[category]
+    : outcomeLabel(category);
+}
+
+// The six review statuses, as the invoice screens name them.
+export const REVIEW_STATUS_LABELS: Readonly<Record<InvoiceReviewStatus, string>> = {
+  sync_error: "Accounting sync error",
+  rate_mismatch: "Rate mismatch",
+  missing_documents: "Missing documents",
+  duplicate_warning: "Duplicate warning",
+  needs_review: "Needs review",
+  ready_to_send: "Ready to send",
+};
+
+// One short line per review reason, for a list row.
+export const REVIEW_REASON_LABELS: Readonly<Record<InvoiceReviewReason, string>> = {
+  posting_failed: "The post to accounting failed",
+  posting_unknown: "The post to accounting is unconfirmed",
+  engine_total_differs: "The load's total differs",
+  rate_confirmation_differs: "The rate confirmation differs",
+  posted_amount_differs: "Accounting holds another amount",
+  no_delivery_document: "No signed delivery document",
+  same_amount_recent: "Same amount billed recently",
+  not_reviewed: "Not reviewed yet",
+  not_posted: "Not posted to accounting yet",
+};
+
+// Why a post to accounting failed, in a few plain words. Anything not listed reads as refused.
+const POST_FAILURE_WORDS: Readonly<Record<string, string>> = {
+  validation: "the accounting system refused it as not valid",
+  duplicate: "the accounting system already has that number",
+  auth: "the connection's login was refused",
+  rate_limited: "too many requests at once",
+  unavailable: "the accounting system was down",
+  timeout: "no reply in time",
+  network: "the connection dropped",
+  amount_mismatch: "it holds this number at another amount",
+  outside_failed: "the accounting system rejected it",
+  not_connected: "accounting is not connected",
+  not_configured: "accounting is not set up for this",
+  disabled: "posting is off in this environment",
+};
+
+export type ReviewReasonDetail = {
+  amountCents: number;
+  engineTotalCents: number | null;
+  engineLinehaulCents: number | null;
+  ratedCents: number | null;
+  qboAmountCents: number | null;
+  failureCategory: string | null;
+  // The invoice numbers behind a duplicate warning, oldest first.
+  duplicateNumbers: readonly string[];
+};
+
+const money = (cents: number | null): string => (cents === null ? "an unknown amount" : dollars(cents));
+
+// The full sentence for one reason on an invoice's record page. Amounts come from the review's own
+// inputs, so the sentence and the status never disagree.
+export function reviewReasonSentence(reason: InvoiceReviewReason, d: ReviewReasonDetail): string {
+  switch (reason) {
+    case "posting_failed": {
+      const words =
+        d.failureCategory !== null && Object.hasOwn(POST_FAILURE_WORDS, d.failureCategory)
+          ? POST_FAILURE_WORDS[d.failureCategory]
+          : "it was refused";
+      return `The post to accounting failed: ${words}.`;
+    }
+    case "posting_unknown":
+      return "The post to accounting is unconfirmed. Check pending.";
+    case "engine_total_differs":
+      return `The engine's total for this load is ${money(d.engineTotalCents)}, the invoice says ${money(d.amountCents)}.`;
+    case "rate_confirmation_differs":
+      return `The rate confirmation says ${money(d.ratedCents)}; the load says ${money(d.engineLinehaulCents)}.`;
+    case "posted_amount_differs":
+      return `The accounting system holds this invoice at ${money(d.qboAmountCents)}.`;
+    case "no_delivery_document":
+      return "This customer requires a signed delivery document; none is on file for this load.";
+    case "same_amount_recent":
+      return `Another invoice for this customer, same amount, within two weeks: ${d.duplicateNumbers.join(", ")}.`;
+    case "not_reviewed":
+      return "Nobody has reviewed this yet.";
+    case "not_posted":
+      return "Ready here; not posted to accounting yet.";
+  }
+}
+
+// The accounting line on an invoice: where it stands in the accounting system and with the customer.
+export function accountingLine(v: {
+  posted: boolean;
+  emailStatus: string | null;
+  sentOn: string | null;
+  sentBy: string | null;
+}): string {
+  if (v.sentOn !== null) return v.sentBy ? `Sent ${v.sentOn} by ${v.sentBy}` : `Sent ${v.sentOn}`;
+  if (!v.posted) return "Not posted to accounting yet";
+  if (v.emailStatus === "need_to_send") return "Posted, unsent (in the accounting system's send queue)";
+  if (v.emailStatus === "email_sent") return "Posted; the accounting system shows it emailed";
+  return "Posted, unsent";
 }

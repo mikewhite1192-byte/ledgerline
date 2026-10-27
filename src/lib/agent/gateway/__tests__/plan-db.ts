@@ -28,6 +28,10 @@ const DELIVERED_CUSTOMERS = `id IN (SELECT customer_id FROM loads WHERE tenant_i
 export const LEDGER_BY_SUBJECT =
   /^SELECT CAST\(id AS text\) AS id, .+ FROM money_actions WHERE tenant_id = current_tenant_id\(\) AND subject_table = \$1 AND subject_id = CAST\(\$2 AS uuid\) ORDER BY created_at, attempt, id$/s;
 
+// The ledger's rows of one kind (money/read.ts readByKind), answered the same way.
+export const LEDGER_BY_KIND =
+  /^SELECT CAST\(id AS text\) AS id, .+ FROM money_actions WHERE tenant_id = current_tenant_id\(\) AND kind = \$1 ORDER BY created_at, attempt, id$/s;
+
 export const PLAN_ANCHOR = "2026-11-02";
 
 let cached: CarrierPlan | null = null;
@@ -50,6 +54,9 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
       return (tables.money_actions ?? [])
         .filter((r) => r.subject_table === params[0] && r.subject_id === params[1])
         .map((r) => ({ ...r }));
+    }
+    if (LEDGER_BY_KIND.test(sql)) {
+      return (tables.money_actions ?? []).filter((r) => r.kind === params[0]).map((r) => ({ ...r }));
     }
     const m = FROM.exec(sql);
     if (!m) return undefined;

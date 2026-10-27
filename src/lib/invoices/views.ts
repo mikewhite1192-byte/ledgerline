@@ -277,6 +277,9 @@ export type CustomerRecordView = {
   code: string;
   name: string;
   termsDays: number;
+  // The review's customer facts: the document rule, and only the domain of the billing address.
+  podRequired: boolean;
+  billingDomain: string | null;
   invoices: InvoiceListRow[];
   payments: { id: string; receivedOn: string; method: string; paymentRef: string; amountCents: number; creditCents: number }[];
   creditCents: number;
@@ -315,6 +318,8 @@ export async function readCustomerRecord(
     code: c.code,
     name: c.name,
     termsDays: c.terms_days,
+    podRequired: c.pod_required,
+    billingDomain: c.billing_email === null ? null : (c.billing_email.split("@")[1] ?? null),
     invoices,
     payments,
     creditCents: payments.reduce((s, p) => s + p.creditCents, 0),

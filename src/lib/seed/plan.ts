@@ -36,6 +36,7 @@ import { applyHistory } from "./history";
 import { HERO_LANES, LANES, laneMiles, reverseLane, type Lane } from "./lanes";
 import { CUSTOMERS, FIRST_NAMES, LAST_NAMES } from "./names";
 import { Rng } from "./prng";
+import { planInvoiceReview, type ReviewPlant } from "./review-plan";
 import { buildUntrustedInputs } from "./untrusted-inputs";
 
 // buildCarrierPlan(carrier, anchor): every row the seed writes for one demo carrier, built in
@@ -88,6 +89,7 @@ export type Planted = {
   // The four loads with unbilled detention, in plant order A to D.
   detentionLoadIds: string[];
   collections: CollectionsPlant[];
+  invoiceReview: ReviewPlant;
 };
 
 export type CarrierPlan = {
@@ -213,6 +215,9 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     state: c.state,
     detention_free_minutes: detentionTermsOf(i).freeMinutes,
     detention_hourly_cents: detentionTermsOf(i).hourlyCents,
+    // The review plan turns the document rule on for two customers.
+    pod_required: false,
+    billing_email: `ar@${prefix.toLowerCase()}-c${pad2(i + 1)}.example`,
   }));
 
   // ---- Drivers ----
@@ -938,6 +943,25 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     windowLoads: loadsOf(windowLoads, stateMiles, accessorials),
     openLoadIds: new Set(detentionLoads.map((x) => x.row.id)),
   });
+  const invoiceReview = planInvoiceReview({
+    seed,
+    anchor,
+    openWeek,
+    customers,
+    invoices: ar.invoices,
+    loads,
+    stateMiles,
+    accessorials,
+    drivers,
+    heroId: carrier.heroCode ? driver(carrier.heroCode).id : null,
+    takenLoadIds: new Set(detentionLoads.map((x) => x.row.id)),
+    takenInvoiceIds: new Set([
+      ar.wrongInvoice.appliedToInvoiceId,
+      ar.wrongInvoice.meantForInvoiceId,
+      ...ar.collections.map((c) => c.invoiceId),
+    ]),
+    applications: ar.applications,
+  });
 
   const rows: TenantRows = {
     customers,
@@ -990,6 +1014,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       fuelParkedId: parked.id,
       detentionLoadIds: detentionLoads.map((x) => x.row.id),
       collections: ar.collections,
+      invoiceReview,
     },
     rows,
   };

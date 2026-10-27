@@ -24,7 +24,7 @@
         "untrusted_inputs": 6,
         "screenings": 0
       },
-      "linehaulCents": 30154000,
+      "linehaulCents": 30165000,
       "hero": {
         "code": "BR-D07",
         "lines": [
@@ -106,7 +106,7 @@
         "openByBucket": {
           "current": {
             "invoices": 71,
-            "cents": 8031600
+            "cents": 8027600
           },
           "1_30": {
             "invoices": 46,
@@ -237,7 +237,63 @@
           "daysLate": 12,
           "balanceCents": 174000
         }
-      ]
+      ],
+      "invoiceReview": {
+        "podCustomers": [
+          "BR-C02",
+          "BR-C04"
+        ],
+        "plants": [
+          {
+            "plant": "missing_documents",
+            "invoiceNumber": "BR-INV-10180",
+            "customerCode": "BR-C02",
+            "amountCents": 170900
+          },
+          {
+            "plant": "duplicate_warning",
+            "invoiceNumber": "BR-INV-10280",
+            "customerCode": "BR-C07",
+            "amountCents": 106800
+          },
+          {
+            "plant": "duplicate_warning",
+            "invoiceNumber": "BR-INV-10323",
+            "customerCode": "BR-C07",
+            "amountCents": 106800
+          },
+          {
+            "plant": "rate_mismatch",
+            "invoiceNumber": "BR-INV-10331",
+            "customerCode": "BR-C11",
+            "amountCents": 112100
+          },
+          {
+            "plant": "ready_to_send",
+            "invoiceNumber": "BR-INV-10333",
+            "customerCode": "BR-C01",
+            "amountCents": 88500
+          },
+          {
+            "plant": "needs_review",
+            "invoiceNumber": "BR-INV-10328",
+            "customerCode": "BR-C05",
+            "amountCents": 225700
+          },
+          {
+            "plant": "needs_review",
+            "invoiceNumber": "BR-INV-10329",
+            "customerCode": "BR-C07",
+            "amountCents": 179600
+          },
+          {
+            "plant": "needs_review",
+            "invoiceNumber": "BR-INV-10321",
+            "customerCode": "BR-C08",
+            "amountCents": 138700
+          }
+        ]
+      }
     },
     "prairie-wind": {
       "counts": {
@@ -262,7 +318,7 @@
         "untrusted_inputs": 6,
         "screenings": 0
       },
-      "linehaulCents": 23362300,
+      "linehaulCents": 23376800,
       "hero": null,
       "settledNetCents": [
         {
@@ -283,7 +339,7 @@
         "openByBucket": {
           "current": {
             "invoices": 90,
-            "cents": 7880954
+            "cents": 7880454
           },
           "1_30": {
             "invoices": 15,
@@ -406,7 +462,63 @@
           "daysLate": 12,
           "balanceCents": 174000
         }
-      ]
+      ],
+      "invoiceReview": {
+        "podCustomers": [
+          "PW-C09",
+          "PW-C04"
+        ],
+        "plants": [
+          {
+            "plant": "missing_documents",
+            "invoiceNumber": "PW-INV-10288",
+            "customerCode": "PW-C09",
+            "amountCents": 88500
+          },
+          {
+            "plant": "duplicate_warning",
+            "invoiceNumber": "PW-INV-10290",
+            "customerCode": "PW-C01",
+            "amountCents": 58000
+          },
+          {
+            "plant": "duplicate_warning",
+            "invoiceNumber": "PW-INV-10322",
+            "customerCode": "PW-C01",
+            "amountCents": 58000
+          },
+          {
+            "plant": "rate_mismatch",
+            "invoiceNumber": "PW-INV-10320",
+            "customerCode": "PW-C06",
+            "amountCents": 83900
+          },
+          {
+            "plant": "ready_to_send",
+            "invoiceNumber": "PW-INV-10321",
+            "customerCode": "PW-C06",
+            "amountCents": 49200
+          },
+          {
+            "plant": "needs_review",
+            "invoiceNumber": "PW-INV-10313",
+            "customerCode": "PW-C03",
+            "amountCents": 166000
+          },
+          {
+            "plant": "needs_review",
+            "invoiceNumber": "PW-INV-10315",
+            "customerCode": "PW-C06",
+            "amountCents": 96400
+          },
+          {
+            "plant": "needs_review",
+            "invoiceNumber": "PW-INV-10303",
+            "customerCode": "PW-C12",
+            "amountCents": 171700
+          }
+        ]
+      }
     }
   }
 }

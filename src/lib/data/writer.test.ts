@@ -18,6 +18,8 @@ const customer = (i: number) => ({
   state: "MO",
   detention_free_minutes: 120,
   detention_hourly_cents: 5000,
+  pod_required: false,
+  billing_email: `ar@c${i}.example`,
 });
 
 const line = (meta: Record<string, number> | null, label = "Load X-1") => ({
@@ -64,7 +66,7 @@ describe("insertStatements", () => {
     const out = insertStatements("customers", Array.from({ length: 250 }, (_, i) => customer(i)));
     expect(out.map((s) => s.rows)).toEqual([100, 100, 50]);
     for (const s of out) {
-      expect(s.params.length).toBe(s.rows * 8);
+      expect(s.params.length).toBe(s.rows * 10);
       expect(s.params.length).toBeLessThanOrEqual(MAX_PARAMS_PER_INSERT);
       expect(statementChars(s)).toBeLessThan(MAX_STATEMENT_CHARS);
     }
@@ -75,11 +77,11 @@ describe("insertStatements", () => {
     const [s] = insertStatements("customers", [customer(1), customer(2)]);
     expect(s.sql).toBe(
       "INSERT INTO customers (tenant_id, id, code, name, terms_days, city, state, " +
-        "detention_free_minutes, detention_hourly_cents) VALUES " +
-        "(current_tenant_id(), CAST($1 AS uuid), $2, $3, $4, $5, $6, $7, $8), " +
-        "(current_tenant_id(), CAST($9 AS uuid), $10, $11, $12, $13, $14, $15, $16)",
+        "detention_free_minutes, detention_hourly_cents, pod_required, billing_email) VALUES " +
+        "(current_tenant_id(), CAST($1 AS uuid), $2, $3, $4, $5, $6, $7, $8, $9, $10), " +
+        "(current_tenant_id(), CAST($11 AS uuid), $12, $13, $14, $15, $16, $17, $18, $19, $20)",
     );
-    expect(s.params.slice(0, 8)).toEqual([
+    expect(s.params.slice(0, 10)).toEqual([
       customer(1).id,
       "C1",
       "Invented Customer 1",
@@ -88,6 +90,8 @@ describe("insertStatements", () => {
       "MO",
       120,
       5000,
+      false,
+      "ar@c1.example",
     ]);
   });
 
@@ -122,6 +126,9 @@ describe("insertStatements", () => {
       "not a safe integer",
     );
     expect(() => insertStatements("customers", [{ ...customer(1), code: 7 }])).toThrow("not text");
+    expect(() => insertStatements("customers", [{ ...customer(1), pod_required: "false" }])).toThrow(
+      "not a boolean",
+    );
   });
 
   it("makes no statement for no rows", () => {
@@ -131,14 +138,14 @@ describe("insertStatements", () => {
 
 describe("insertRows", () => {
   it("returns the rows inserted", async () => {
-    const { q, seen } = fakeQ((_, params) => params.length / 8);
+    const { q, seen } = fakeQ((_, params) => params.length / 10);
     const rows = Array.from({ length: 150 }, (_, i) => customer(i));
     await expect(insertRows(q, "customers", rows)).resolves.toBe(150);
     expect(seen).toHaveLength(2);
   });
 
   it("throws when the database reports fewer rows than it was given", async () => {
-    const { q } = fakeQ((_, params) => params.length / 8 - 1);
+    const { q } = fakeQ((_, params) => params.length / 10 - 1);
     await expect(insertRows(q, "customers", [customer(1), customer(2)])).rejects.toThrow(
       "customers: inserted 1 of 2 rows",
     );

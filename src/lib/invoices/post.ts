@@ -33,6 +33,7 @@ export type PostRefusal =
   | "disabled"
   | "not_connected"
   | "not_configured"
+  | "no_billing_address"
   | (string & {});
 
 export type PostResult =
@@ -78,6 +79,7 @@ export async function postInvoice(
     if (read.row.status === "void") return { ok: false, category: "validation" };
     if (!(await madeByQueue(q, read.row))) return { ok: false, category: "history" };
     if (read.row.qbo_id !== null) return { ok: false, category: "already_posted" };
+    if (!read.invoice.customer.billingEmail) return { ok: false, category: "no_billing_address" };
     // The approver rule the proposal gate applies, so the button is never a way around it.
     const [member] = await q.query<{ role: string }>(
       "SELECT role FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",

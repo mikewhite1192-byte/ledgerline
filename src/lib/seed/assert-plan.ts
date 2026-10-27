@@ -4,6 +4,7 @@ import {
   checkInputOf,
   customerOf,
   driverOf,
+  loadsOf,
   loadStopsOf,
   payConfigOf,
   receivablesInputOf,
@@ -18,8 +19,10 @@ import {
   cents,
   findPaymentOnWrongInvoice,
   findUnbilledDetention,
+  inReviewQueue,
   invoiceStatus,
   paymentProfile,
+  reviewInvoice,
   runAllChecks,
   settleDriver,
   sum,
@@ -35,6 +38,7 @@ import {
   type LocalDate,
   type Period,
 } from "../time/local-date";
+import { reviewFactsOf, reviewInputOf } from "../invoices/review-input";
 import { customerClassOf } from "./ar-plan";
 import type { CarrierPlan } from "./plan";
 
@@ -152,6 +156,7 @@ export function assertPlan(plan: CarrierPlan): void {
   loadsAndDays(rows, zone, lastDay, openWeek.start);
   receivables(plan, lastDay);
   addendumPlants(plan);
+  invoiceReviewPlants(plan);
 
   // Victims: ten distinct drivers, never the hero.
   const codes = Object.values(victims);
@@ -507,6 +512,58 @@ function addendumPlants(plan: CarrierPlan): void {
       planted.detentionLoadIds.some(onHero)
     ) {
       fail("a new plant landed on the hero");
+    }
+  }
+}
+
+// The invoice review plants: each planted invoice reads back as its planted status through the
+// same engine and inputs the pages use, every other invoice is out of the review queue, exactly
+// the two planted customers require a delivery document, and every customer has a billing
+// address on the reserved example domain. The seed writes no ledger rows or documents.
+function invoiceReviewPlants(plan: CarrierPlan): void {
+  const { rows, planted } = plan;
+  const r = planted.invoiceReview;
+  const facts = reviewFactsOf({
+    invoices: rows.invoices,
+    customers: rows.customers,
+    loads: loadsOf(rows.loads, rows.load_state_miles, rows.load_accessorials),
+    documents: [],
+    postings: new Map(),
+  });
+  const want = new Map<string, string>([
+    [r.missingDocumentsInvoiceId, "missing_documents"],
+    [r.duplicateInvoiceIds[0], "duplicate_warning"],
+    [r.duplicateInvoiceIds[1], "duplicate_warning"],
+    [r.rateMismatchInvoiceId, "rate_mismatch"],
+    [r.readyInvoiceId, "ready_to_send"],
+    ...r.needsReviewInvoiceIds.map((id): [string, string] => [id, "needs_review"]),
+  ]);
+  if (want.size !== 5 + r.needsReviewInvoiceIds.length) fail("two review plants share an invoice");
+  for (const inv of rows.invoices) {
+    const review = reviewInvoice(reviewInputOf(inv, facts));
+    const queued = inReviewQueue(inv.status, review);
+    const planted = want.get(inv.id);
+    if (planted === undefined) {
+      if (queued) fail(`invoice ${inv.invoice_number} is in the review queue without a plant`);
+      continue;
+    }
+    if (!queued || review.status !== planted) {
+      fail(`review plant ${inv.invoice_number} reads ${review.status}, not ${planted}`);
+    }
+    if (inv.sent_on !== null) fail("a review plant is recorded as sent");
+  }
+  const ready = rows.invoices.find((i) => i.id === r.readyInvoiceId)!;
+  const readyReview = reviewInvoice(reviewInputOf(ready, facts));
+  if (readyReview.reasons.join() !== "not_posted") fail("the ready plant has more to clear than posting");
+  const dup = reviewInvoice(reviewInputOf(rows.invoices.find((i) => i.id === r.duplicateInvoiceIds[1])!, facts));
+  if (dup.reasons.join() !== "same_amount_recent,not_reviewed" || dup.duplicateOf.join() !== r.duplicateInvoiceIds[0]) {
+    fail("the duplicate plant shows more than the duplicate");
+  }
+  const pod = rows.customers.filter((c) => c.pod_required).map((c) => c.id).sort();
+  if (pod.join() !== [...r.podCustomerIds].sort().join()) fail("the document rule is not exactly the two plants");
+  for (const c of rows.customers) {
+    if (c.billing_email === null || !/^[a-z0-9._-]+@[a-z0-9-]+\.example$/.test(c.billing_email)) {
+      fail(`customer ${c.code} has no example billing address`);
     }
   }
 }

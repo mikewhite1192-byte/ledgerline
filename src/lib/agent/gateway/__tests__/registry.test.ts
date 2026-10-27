@@ -16,6 +16,8 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   run_checks: { tier: "read", roles: ["operator", "auditor"] },
   get_inbound_message: { tier: "read", roles: ["operator", "triage"] },
   get_invoice_queue: { tier: "read", roles: ["operator"] },
+  get_invoice_review: { tier: "read", roles: ["operator", "auditor"] },
+  get_invoice_review_queue: { tier: "read", roles: ["operator", "auditor"] },
   get_ar_aging: { tier: "read", roles: ["operator"] },
   get_payments_in: { tier: "read", roles: ["operator"] },
   get_document: { tier: "read", roles: ["operator", "auditor"] },
@@ -43,11 +45,14 @@ const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_")
 // The tools behind the invoicing and customer payments switches, likewise.
 const INVOICE_TOOLS = ["get_invoice_queue"];
 const PAYMENT_TOOLS = ["get_ar_aging", "get_payments_in", "propose_payment_reapply"];
+// The invoice review tools need both the invoicing and the invoice review switches.
+const REVIEW_TOOLS = ["get_invoice_review", "get_invoice_review_queue"];
 
 afterEach(() => {
   flags.reportsEnabled = false;
   flags.detentionEnabled = false;
   flags.invoicesEnabled = false;
+  flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
 });
 
@@ -134,6 +139,29 @@ describe("tool registry", () => {
     expect(toolsFor("triage")).toHaveLength(2);
   });
 
+  it("offers the invoice review tools to the operator and the auditor only while both switches are on", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    const none = (role: AgentRole) => {
+      for (const n of REVIEW_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
+    };
+    none("operator");
+    none("auditor");
+    flags.invoiceReviewEnabled = true;
+    // Review without invoicing is still off.
+    none("operator");
+    none("auditor");
+    flags.invoicesEnabled = true;
+    expect(names("operator")).toEqual(expect.arrayContaining(REVIEW_TOOLS));
+    expect(names("auditor")).toEqual(expect.arrayContaining(REVIEW_TOOLS));
+    for (const n of REVIEW_TOOLS) expect(names("triage"), n).not.toContain(n);
+    flags.invoicesEnabled = false;
+    none("operator");
+    flags.invoicesEnabled = true;
+    flags.invoiceReviewEnabled = false;
+    none("operator");
+    none("auditor");
+  });
+
   it("offers and finds the report tools only while their switch is on, read on every call", () => {
     expect(flags.reportsEnabled).toBe(false);
     for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
@@ -155,11 +183,12 @@ describe("tool registry", () => {
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.invoicesEnabled = true;
+    flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 28,
-      auditor: 11,
+      operator: 30,
+      auditor: 13,
       triage: 2,
     });
     for (const role of AGENT_ROLES) {
@@ -225,11 +254,12 @@ describe("deferred loading for tool search", () => {
     expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...ALWAYS_LOADED].sort());
   });
 
-  it("defers the invoice queue, receivables and payment tools, which few questions need", () => {
+  it("defers the invoice queue, review, receivables and payment tools, which few questions need", () => {
     flags.invoicesEnabled = true;
+    flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
     const deferred = toolsFor("operator", { defer: true });
-    for (const name of [...INVOICE_TOOLS, ...PAYMENT_TOOLS]) {
+    for (const name of [...INVOICE_TOOLS, ...PAYMENT_TOOLS, ...REVIEW_TOOLS]) {
       expect(ALWAYS_LOADED, name).not.toContain(name);
       expect(deferred.find((t) => t.name === name)?.deferLoading, name).toBe(true);
     }

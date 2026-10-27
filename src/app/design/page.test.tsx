@@ -14,6 +14,7 @@ const SECTION_HEADINGS = [
   "Buttons",
   "Fields",
   "Badges",
+  "Invoice review",
   "Stat cards",
   "Data table",
   "Proposal card",
