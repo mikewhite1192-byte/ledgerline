@@ -83,7 +83,9 @@ export function formatInstant(iso: string, timeZone: string): string {
 
 // "America/New_York" reads "Eastern time": the zone's everyday name, the same in summer and winter.
 // A zone with no such name (UTC, or an id the runtime does not know) reads as the last part of its
-// id ("Etc/UTC" reads "UTC", "Mars/Olympus_Mons" reads "Olympus Mons time").
+// id ("Etc/UTC" reads "UTC", "Mars/Olympus_Mons" reads "Olympus Mons time"). An offset id is the
+// exception: "Etc/GMT+5" is five hours behind UTC (the id's sign is reversed), so it reads as the
+// offset the runtime gives, "UTC-05:00", never as its own id.
 export function zoneName(timeZone: string, at: Date): string {
   let generic = "";
   try {
@@ -98,5 +100,12 @@ export function zoneName(timeZone: string, at: Date): string {
   if (named) return `${named[1]} time`;
   const city = (timeZone.split("/").pop() ?? "").replace(/_/g, " ").trim();
   if (!city) return "Local time";
-  return /^(UTC|GMT|UCT|Zulu|Universal)$/i.test(city) ? "UTC" : `${city} time`;
+  if (/^(UTC|GMT|UCT|Zulu|Universal)$/i.test(city)) return "UTC";
+  if (/^(UTC|GMT)[+-]\d/i.test(city)) {
+    const offset = /^GMT([+-])(\d{1,2})(?::(\d{2}))?$/.exec(generic);
+    if (!offset) return "Local time";
+    const [, sign, hours, minutes = "00"] = offset;
+    return Number(hours) === 0 && Number(minutes) === 0 ? "UTC" : `UTC${sign}${hours.padStart(2, "0")}:${minutes}`;
+  }
+  return `${city} time`;
 }

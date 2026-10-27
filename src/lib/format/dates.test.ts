@@ -95,4 +95,16 @@ describe("zoneName", () => {
     expect(zoneName("Mars/Olympus_Mons", summer)).toBe("Olympus Mons time");
     expect(zoneName("", summer)).toBe("Local time");
   });
+
+  it("reads an offset id as its real offset, whose sign is the reverse of the id's", () => {
+    for (const at of [summer, winter]) {
+      expect(zoneName("Etc/GMT+5", at)).toBe("UTC-05:00");
+      expect(zoneName("Etc/GMT-3", at)).toBe("UTC+03:00");
+      expect(zoneName("Etc/GMT+12", at)).toBe("UTC-12:00");
+      expect(zoneName("Etc/GMT-14", at)).toBe("UTC+14:00");
+    }
+    expect(zoneName("Etc/GMT", summer)).toBe("UTC");
+    // An offset id the runtime does not know never shows a sign it cannot vouch for.
+    expect(zoneName("Mars/GMT+5", summer)).toBe("Local time");
+  });
 });

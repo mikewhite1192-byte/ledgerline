@@ -20,8 +20,9 @@ const STATUS_LABELS: Record<string, string> = {
   void: "Void",
   partially_paid: "Partly paid",
   past_due: "Past due",
-  // money actions (ledger)
-  reserved: "Being sent",
+  // money actions (ledger). A reserved row is approved but not sent yet: if its sender stopped
+  // there, it goes out on the next try, so it never says it is being sent.
+  reserved: "Waiting to send",
   sent: "Sent",
   confirmed: "Confirmed",
   // The outcome is not read back yet: it is checked again, and nothing is paid twice.
@@ -29,7 +30,8 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "Failed",
   // proposals
   proposed: "Waiting for approval",
-  executing: "Approving",
+  // Already approved and being carried out, between Approved and Done.
+  executing: "Processing",
   done: "Done",
   expired: "Expired",
   // portal runs
@@ -68,6 +70,12 @@ export function codeToWords(code: string): string {
 
 export function statusLabel(status: string): string {
   return Object.hasOwn(STATUS_LABELS, status) ? STATUS_LABELS[status] : codeToWords(status);
+}
+
+// A model call's status. Its row is reserved while the call is out, unlike a money action's, so
+// there it reads "Being sent"; every other status reads as statusLabel says.
+export function modelCallStatusLabel(status: string): string {
+  return status === "reserved" ? "Being sent" : statusLabel(status);
 }
 
 export function lineKindLabel(kind: string): string {

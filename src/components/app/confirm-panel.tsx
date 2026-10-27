@@ -33,8 +33,8 @@ export type ConfirmPanelProps = {
 
 // One shape for every approval and outside write a page asks for: the question, the count and
 // total, the list when more than one, what happens next, then Confirm and Keep reviewing. Focus
-// starts on Keep reviewing, the safe choice. It only asks: what runs on Confirm is the caller's,
-// unchanged.
+// starts on Keep reviewing, the safe choice, and comes back to it when a pending confirm ends. It
+// only asks: what runs on Confirm is the caller's, unchanged.
 export function ConfirmPanel({
   question,
   count,
@@ -53,13 +53,24 @@ export function ConfirmPanel({
   const titleId = useId();
   const priced = items.length > 0 && items.every((item) => item.cents !== undefined);
   const totalCents = items.reduce((sum, item) => sum + (item.cents ?? 0), 0);
+  const panelRef = useRef<HTMLDivElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const focusedOnce = useRef(false);
+  // A disabled button cannot take focus, so nothing here takes it while a confirm is pending. Keep
+  // reviewing takes focus the first time it can (when the panel opens, or when a pending it opened
+  // with ends), and again when a later pending ends if focus was lost (on the page body) or is still
+  // inside the panel. Focus a person moved elsewhere stays where they put it.
   useEffect(() => {
-    cancelRef.current?.focus();
-  }, []);
+    if (pending) return;
+    const active = document.activeElement;
+    const lost = !active || active === document.body || (panelRef.current?.contains(active) ?? false);
+    if (!focusedOnce.current || lost) cancelRef.current?.focus();
+    focusedOnce.current = true;
+  }, [pending]);
 
   return (
     <div
+      ref={panelRef}
       role="group"
       aria-labelledby={titleId}
       className={cn("grid gap-3 rounded-lg border border-border bg-secondary px-4 py-3 sm:px-5", className)}

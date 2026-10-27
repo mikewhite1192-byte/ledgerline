@@ -5,6 +5,7 @@ import {
   KNOWN_LINE_KINDS,
   KNOWN_STATUSES,
   lineKindLabel,
+  modelCallStatusLabel,
   recordLabel,
   statusLabel,
 } from "./labels";
@@ -31,9 +32,9 @@ describe("statusLabel", () => {
   });
 
   it("says the in-between states in plain words", () => {
-    expect(statusLabel("reserved")).toBe("Being sent");
+    expect(statusLabel("reserved")).toBe("Waiting to send");
     expect(statusLabel("unknown")).toBe("Not confirmed yet");
-    expect(statusLabel("executing")).toBe("Approving");
+    expect(statusLabel("executing")).toBe("Processing");
     expect(statusLabel("incomplete")).toBe("Stopped early");
     expect(statusLabel("cancelled")).toBe("Canceled");
     expect(statusLabel("proposed")).toBe("Waiting for approval");
@@ -44,6 +45,19 @@ describe("statusLabel", () => {
     expect(statusLabel("")).toBe("Not set");
     expect(statusLabel("__")).toBe("Not set");
     expect(statusLabel("toString")).toBe("Tostring");
+  });
+
+  it("never says a money action is being sent before it is, while a model call that is out says so", () => {
+    expect(statusLabel("reserved")).not.toMatch(/being sent/i);
+    expect(modelCallStatusLabel("reserved")).toBe("Being sent");
+    for (const s of ["ok", "incomplete", "failed", "unknown", "new_code"]) {
+      expect(modelCallStatusLabel(s)).toBe(statusLabel(s));
+    }
+  });
+
+  it("never calls an approved proposal that is running Approving", () => {
+    expect(statusLabel("approved")).toBe("Approved");
+    expect(statusLabel("executing")).not.toMatch(/approv/i);
   });
 });
 

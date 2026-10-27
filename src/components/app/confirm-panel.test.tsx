@@ -117,4 +117,48 @@ describe("ConfirmPanel", () => {
     const buttons = screen.getAllByRole("button") as HTMLButtonElement[];
     expect(buttons.every((b) => b.disabled)).toBe(true);
   });
+
+  it("gives Keep reviewing focus when a pending it opened with ends", () => {
+    const panel = (pending: boolean) => (
+      <ConfirmPanel question="Approve?" next="It is paid by test payout." pending={pending} onConfirm={() => {}} onCancel={() => {}} />
+    );
+    const { rerender } = render(panel(true));
+    const cancel = screen.getByRole("button", { name: "Keep reviewing" });
+    // A disabled button cannot hold focus.
+    expect(document.activeElement).not.toBe(cancel);
+    rerender(panel(false));
+    expect(document.activeElement).toBe(cancel);
+  });
+
+  it("brings focus back to Keep reviewing after a pending confirm, never pulling it from elsewhere", () => {
+    const panel = (pending: boolean) => (
+      <>
+        <input aria-label="Elsewhere" />
+        <ConfirmPanel question="Approve?" next="It is paid by test payout." pending={pending} onConfirm={() => {}} onCancel={() => {}} />
+      </>
+    );
+    const { rerender } = render(panel(false));
+    const cancel = screen.getByRole("button", { name: "Keep reviewing" });
+    expect(document.activeElement).toBe(cancel);
+
+    // Confirm is pressed and the confirm ends without closing the panel (it failed, say).
+    screen.getByRole("button", { name: "Confirm" }).focus();
+    rerender(panel(true));
+    rerender(panel(false));
+    expect(document.activeElement).toBe(cancel);
+
+    // Focus that was lost to the page comes back too.
+    cancel.blur();
+    expect(document.activeElement).toBe(document.body);
+    rerender(panel(true));
+    rerender(panel(false));
+    expect(document.activeElement).toBe(cancel);
+
+    // A person who moved on keeps their place.
+    const elsewhere = screen.getByRole("textbox", { name: "Elsewhere" });
+    rerender(panel(true));
+    elsewhere.focus();
+    rerender(panel(false));
+    expect(document.activeElement).toBe(elsewhere);
+  });
 });
