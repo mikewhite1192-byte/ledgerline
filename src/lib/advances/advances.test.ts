@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Param, Queryable, TenantDb } from "../db";
 import { ADVANCE_REFUSALS } from "../rules-engine/types";
+import { legTwoTimeoutMs } from "./approve";
 import { requestFromDesk, type DeskDeps } from "./desk";
 import { actionsFor, outsideTail, type LedgerEntry } from "./read";
 import {
@@ -27,8 +28,9 @@ import { advancesOn, payoutGate } from "./switches";
 import type { AdvanceView } from "./rows";
 
 // The advance flow's pure rules: typed dollars to cents, the desk's sentence, the reference, the
-// accounting amount, every sentence a person can see, the payout switches in order, the record
-// page's buttons, and the desk with its database and agent turn faked. No database, no network.
+// accounting amount, every sentence a person can see, the payout switches in order, the
+// QuickBooks leg's time limit, the record page's buttons, and the desk with its database and
+// agent turn faked. No database, no network.
 
 const saved = structuredClone(flags);
 
@@ -195,6 +197,18 @@ describe("the payout switches", () => {
     expect(payoutGate(1, "2026-11-02")).toBe("before_start");
     flags.advancePayouts = { armed: true, capCents: 50_000, startDate: "2026-10-27" };
     expect(payoutGate(1.5, "2026-11-02")).toBe("over_cap");
+  });
+});
+
+describe("the QuickBooks leg's time limit", () => {
+  it("is the request's time left less a second, in whole milliseconds, never over the money executor's limit", () => {
+    expect(legTwoTimeoutMs(15_499.5, undefined)).toBe(14_499);
+    expect(legTwoTimeoutMs(25_000, undefined)).toBe(20_000);
+    expect(legTwoTimeoutMs(21_000, undefined)).toBe(20_000);
+    expect(legTwoTimeoutMs(25_000, 2_000)).toBe(2_000);
+    expect(legTwoTimeoutMs(2_500, 2_000)).toBe(1_500);
+    // Too little left: the caller skips the post rather than send with no time.
+    expect(legTwoTimeoutMs(1_000, undefined)).toBe(0);
   });
 });
 

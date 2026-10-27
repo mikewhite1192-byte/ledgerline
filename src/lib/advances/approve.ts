@@ -3,12 +3,18 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { DbError, getDb, type Queryable, type TenantDb } from "../db";
 import { readAdvanceInput } from "../data/read";
-import { executeMoneyAction, type MoneyDeps, type MoneyHooks } from "../money/execute";
+import { DEFAULT_TIMEOUT_MS, executeMoneyAction, type MoneyDeps, type MoneyHooks } from "../money/execute";
 import { isCanonicalUuid } from "../money/keys";
 import { readBySubject, readTenantZone } from "../money/read";
 import { reconcileMoneyActions, type ReconcileHooks, type ReconcileSummary } from "../money/reconcile";
 import { MAX_ATTEMPT, MoneyError, type MoneyAction, type MoneyFailure } from "../money/types";
-import type { ApproveOptions, ExecuteDeps, ProposalResult, ProposalRow } from "../proposals/execute";
+import type {
+  ApproveOptions,
+  ExecuteDeps,
+  ProposalRefused,
+  ProposalResult,
+  ProposalRow,
+} from "../proposals/execute";
 import { advanceEligibility, type AdvanceDecision } from "../rules-engine";
 import { assertMembership } from "../tenant/context";
 import { localDateOf } from "../time/local-date";
@@ -19,14 +25,15 @@ import { advancesOn, payoutGate } from "./switches";
 
 // A person approves an advance proposal, and only then does the advance exist (design D2). The
 // proposal gate (src/lib/proposals/execute.ts) has already checked the role, the auditor and the
-// second confirm; this executor then, in one tenant transaction with the proposal and the driver
-// locked: asks the payout switches, re-runs the rules engine as of now (a proposal whose numbers
-// no longer hold is rejected, never paid), moves the proposal to approved and executing, and
-// writes the advances row as requested. The money executor then reserves the payout's ledger row
-// (the advance becomes approved in that same transaction), makes the one outside call and settles
-// it: paid, failed (a person may retry), or unknown (Check pending reads it back). When the payout
-// is confirmed with time left in the request, the QuickBooks post runs too (design D3); if not,
-// the record page's button posts it later.
+// second confirm, and asked precheckAdvanceProposal before approving, so a payout that could not
+// run is refused while the proposal still waits; this executor then, in one tenant transaction
+// with the proposal and the driver locked: asks the payout switches again, re-runs the rules
+// engine as of now (a proposal whose numbers no longer hold is rejected, never paid), moves the
+// proposal on to executing, and writes the advances row as requested. The money executor then
+// reserves the payout's ledger row (the advance becomes approved in that same transaction), makes
+// the one outside call and settles it: paid, failed (a person may retry), or unknown (Check
+// pending reads it back). When the payout is confirmed with time left in the request, the
+// QuickBooks post runs too (design D3); if not, the record page's button posts it later.
 //
 // Every state this leaves is one a later approval, retry or check adopts: a second approval finds
 // the advance by its proposal and the ledger row by its key, so nothing is paid twice.
@@ -149,6 +156,14 @@ async function payoutRows(q: Queryable, advanceId: string): Promise<MoneyAction[
   return (await readBySubject(q, "advances", advanceId)).filter((a) => a.kind === "advance_payout");
 }
 
+async function driverExists(q: Queryable, driverId: string): Promise<boolean> {
+  const rows = await q.query<{ id: string }>(
+    "SELECT id FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+    [driverId],
+  );
+  return rows.length === 1;
+}
+
 async function lockDriver(q: Queryable, driverId: string): Promise<boolean> {
   const rows = await q.query<{ id: string }>(
     "SELECT id FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) FOR UPDATE",
@@ -201,6 +216,35 @@ function validProposal(p: ProposalRow): boolean {
     p.amountCents > 0 &&
     p.args.amountCents === p.amountCents
   );
+}
+
+// The gate's early refusal for an advance (Precheck in src/lib/proposals/execute.ts), asked under
+// the gate's proposal lock before the proposal becomes approved: a refusal leaves it waiting, with
+// Approve still on its card. Reads only. It asks what the executor asks before the advances row
+// exists: the advances switch, the proposal's shape, the payout gate on the tenant's local date,
+// the driver, and whether the pay rules can be read and run. The driver is read, not locked: the
+// lock would end when the gate commits, before the executor's own transaction, which locks the
+// driver itself. What the pay rules decide is left to the executor: a proposal whose numbers no
+// longer hold must end failed with its reason, and only an approved proposal may become failed.
+// The executor asks all of this again after the approval, since a switch can change in between.
+export async function precheckAdvanceProposal(
+  q: Queryable,
+  p: ProposalRow,
+  now: Date,
+): Promise<ProposalRefused | null> {
+  if (!advancesOn()) return no("disabled");
+  if (!validProposal(p)) return no("not_executable");
+  const nowIso = now.toISOString();
+  const zone = await readTenantZone(q);
+  const refusal = payoutGate(p.amountCents, localDateOf(nowIso, zone));
+  if (refusal) return no(refusal);
+  if (!(await driverExists(q, p.subjectId))) return no("not_found");
+  try {
+    advanceEligibility(await readAdvanceInput(q, p.subjectId, nowIso, p.amountCents));
+  } catch {
+    return no("eligibility_unavailable", true);
+  }
+  return null;
 }
 
 // Runs inside one tenant transaction, after the proposal gate moved the proposal to approved (or
@@ -371,7 +415,12 @@ async function pay(
 
 // The QuickBooks leg after a confirmed payout, inside the same request when the switch is on and
 // time is left. Its outcome never changes the payout's: a post left undone shows as pending on
-// the advance's page, with a button.
+// the advance's page, with a button. Its outside call is limited to the request's time left less
+// a second, and never longer than the money executor's own limit, so it cannot outrun the request.
+export function legTwoTimeoutMs(remainingMs: number, configuredMs: number | undefined): number {
+  return Math.min(Math.floor(remainingMs) - 1_000, configuredMs ?? DEFAULT_TIMEOUT_MS);
+}
+
 async function legTwo(
   db: TenantDb,
   session: Session,
@@ -381,8 +430,15 @@ async function legTwo(
 ): Promise<void> {
   if (flags.accountingEnabled !== true) return;
   if (remainingMs <= flags.advancesLimits.legTwoMinRemainingMs) return;
+  const timeoutMs = legTwoTimeoutMs(remainingMs, deps.money?.timeoutMs);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return;
   try {
-    await postAdvanceExpense(session, advanceId, { ...deps, db, onlyFirst: true });
+    await postAdvanceExpense(session, advanceId, {
+      ...deps,
+      db,
+      onlyFirst: true,
+      money: { ...deps.money, timeoutMs },
+    });
   } catch (err) {
     console.error("advance post did not finish:", err instanceof Error ? err.name : "unknown");
   }
@@ -447,9 +503,9 @@ export async function retryAdvancePayout(
   return { ok: true, advanceId: picked.advance.id, status: "pending", moneyActionId: paid.actionId };
 }
 
-// Check pending: the reconcile pass over this tenant's open advance payouts and posts (the pass is
-// tenant-wide; the ledger reads back by request id). Never sends anything new; a payout found
-// paid gets the same follow-up write the approval would have made.
+// Check pending: the reconcile pass over this advance's own open payouts and posts (each read back
+// by its request id), so the check and its notice cover only this advance. Never sends anything
+// new; a payout found paid gets the same follow-up write the approval would have made.
 export async function checkAdvancePayouts(
   session: Session,
   advanceId: string,
@@ -460,7 +516,7 @@ export async function checkAdvancePayouts(
   // The button lives on one advance's page: it must be this carrier's flow advance.
   const found = await db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
-    return (await readFlowAdvance(q, advanceId)) !== null;
+    return readFlowAdvance(q, advanceId);
   });
   if (!found) return no("not_found");
   const summary = await reconcileMoneyActions(
@@ -473,6 +529,7 @@ export async function checkAdvancePayouts(
       },
       limit: 5,
       olderThanSeconds: 60,
+      subject: { table: "advances", id: found.id },
     },
     deps.money,
   );

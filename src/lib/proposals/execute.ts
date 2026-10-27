@@ -1,7 +1,7 @@
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
-import { executeAdvanceProposal } from "../advances/approve";
+import { executeAdvanceProposal, precheckAdvanceProposal } from "../advances/approve";
 import { assertMembership } from "../tenant/context";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
@@ -14,10 +14,11 @@ import { assertMembership } from "../tenant/context";
 // covers the amount (approverRole), the auditor's verdict is in when auditorRequired is on, and a
 // flagged proposal carries the person's second confirm. Then the proposal's kind picks its
 // executor from EXECUTORS. A kind with no executor is refused as not_executable before any write.
-// When every check passes, the gate moves the proposal to approved in that same locked
-// transaction, so a reject that lands after the gate finds it approved and is refused; only then
-// does the executor run. Each executor reserves its ledger row before any outside call (the money
-// executor) and moves the proposal on from there.
+// An executor with a precheck is asked it next, still under the lock: a refusal there returns
+// with the proposal still waiting and nothing written. When every check passes, the gate moves the
+// proposal to approved in that same locked transaction, so a reject that lands after the gate
+// finds it approved and is refused; only then does the executor run. Each executor reserves its
+// ledger row before any outside call (the money executor) and moves the proposal on from there.
 
 export const PROPOSAL_KINDS = ["advance_payout", "pay_correction", "invoice_fix"] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
@@ -56,12 +57,22 @@ export type ProposalResult =
   | { ok: true; proposalId: string; status: string; moneyActionId: string | null }
   | { ok: false; category: ProposalRefusal | (string & {}); retryable: boolean };
 
+export type ProposalRefused = Extract<ProposalResult, { ok: false }>;
+
 export type ExecuteDeps = {
   db?: TenantDb;
   clock?: () => Date;
   // Tests swap the registry; production uses EXECUTORS.
   executors?: ExecutorRegistry;
 };
+
+// An executor's optional early refusal. The gate asks it inside its own transaction, with the
+// proposal locked, after the gate's own checks pass and before it moves the proposal to approved.
+// A refusal (or a throw) rolls that transaction back, so the proposal stays proposed, undecided,
+// with its Approve button, and nothing is written. Reads only. It never replaces the executor's
+// own checks: the executor asks them again after the approval, because a switch can change in
+// between. It is not asked on a resume (the row is already approved).
+export type Precheck = (q: Queryable, proposal: ProposalRow, now: Date) => Promise<ProposalRefused | null>;
 
 // An executor's contract: it runs only on a row the gate already moved to approved (or one already
 // executing, on a resume), never on a proposed one, and it never sets approved itself. On a resume
@@ -70,20 +81,29 @@ export type ExecuteDeps = {
 // next approve takes the resume path below and runs the executor again. That resume path
 // deliberately skips the expiry, role, auditor and confirm checks: they all passed when the row
 // became approved, under the same lock, and the person's approval stands.
-export type Executor = (
-  db: TenantDb,
-  session: Session,
-  proposal: ProposalRow,
-  opts: ApproveOptions,
-  deps: ExecuteDeps,
-) => Promise<ProposalResult>;
+export type Executor = {
+  (
+    db: TenantDb,
+    session: Session,
+    proposal: ProposalRow,
+    opts: ApproveOptions,
+    deps: ExecuteDeps,
+  ): Promise<ProposalResult>;
+  precheck?: Precheck;
+};
 
 export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>;
 
 // One executor per kind. advance_payout creates the advances row at approval and pays it through
-// the money executor (src/lib/advances/approve.ts); pay_correction and invoice_fix have none yet,
-// so they are refused as not_executable.
-export const EXECUTORS: ExecutorRegistry = { advance_payout: executeAdvanceProposal };
+// the money executor (src/lib/advances/approve.ts), with a precheck that refuses before the
+// approval when the payout could not run; pay_correction and invoice_fix have none yet, so they
+// are refused as not_executable.
+export const EXECUTORS: ExecutorRegistry = {
+  advance_payout: Object.assign(
+    (...args: Parameters<Executor>) => executeAdvanceProposal(...args),
+    { precheck: precheckAdvanceProposal },
+  ),
+};
 
 const DAY_MS = 86_400_000;
 
@@ -141,6 +161,17 @@ function executorFor(registry: ExecutorRegistry, kind: string): Executor | null 
 
 const refused = (category: ProposalRefusal): ProposalResult => ({ ok: false, category, retryable: false });
 
+// A precheck's refusal, thrown out of the gate so its transaction rolls back (a read inside the
+// precheck may have failed and left that transaction unusable). Nothing was written before it.
+class Prechecked extends Error {
+  readonly result: ProposalRefused;
+  constructor(result: ProposalRefused) {
+    super("proposal: refused by its precheck");
+    this.name = "Prechecked";
+    this.result = result;
+  }
+}
+
 type Gate = { run: ProposalRow; executor: Executor } | { result: ProposalResult };
 
 async function gate(
@@ -189,6 +220,11 @@ async function gate(
   if (flags.auditorRequired && p.auditorVerdict === null) return { result: refused("auditor_required") };
   if (p.flaggedInputId !== null && !opts.confirmed) return { result: refused("needs_confirm") };
   if (!executor) return { result: refused("not_executable") };
+  // The executor's own early refusal, before anything is approved (see Precheck).
+  if (executor.precheck) {
+    const stop = await executor.precheck(q, p, now);
+    if (stop) throw new Prechecked(stop);
+  }
   // Lock the approval in while the row is still locked. Exactly one row must move; anything else
   // means it is no longer waiting, and nothing runs.
   const approved = await q.execute(
@@ -211,9 +247,15 @@ export async function executeProposal(
   const db = deps.db ?? getDb();
   const now = (deps.clock ?? (() => new Date()))();
   const registry = deps.executors ?? EXECUTORS;
-  const checked = await db.withTenant(session.tenantId, (q) =>
-    gate(q, session, proposalId, opts, now, registry),
-  );
+  let checked: Gate;
+  try {
+    checked = await db.withTenant(session.tenantId, (q) =>
+      gate(q, session, proposalId, opts, now, registry),
+    );
+  } catch (err) {
+    if (err instanceof Prechecked) return err.result;
+    throw err;
+  }
   if ("result" in checked) return checked.result;
   return checked.executor(db, session, checked.run, opts, deps);
 }

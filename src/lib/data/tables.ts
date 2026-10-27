@@ -247,6 +247,10 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["source", "text"],
       ["reason_category", "text"],
       ["paid_at", "timestamptz"],
+      ["proposal_id", "uuid"],
+      ["source_input_id", "uuid"],
+      ["decided_at", "timestamptz"],
+      ["decided_by_membership_id", "uuid"],
     ],
   },
   invoices: {

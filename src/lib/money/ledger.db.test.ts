@@ -451,4 +451,38 @@ describe("guarded writes and the pending read", () => {
       inA((q) => readPending(q, 0, 5, ["advance" as MoneyActionKind])),
     ).rejects.toBeInstanceOf(RangeError);
   });
+
+  it("reads only one subject's pending rows when a subject is named, and checks it whole first", async () => {
+    const leftUnknown = async (subjectId: string) => {
+      const { action } = await reserveA({ subjectId });
+      await inA((q) => markSent(q, action.id));
+      await inA((q) => settle(q, action.id, { to: "unknown", category: "timeout" }));
+      return action.id;
+    };
+    const mine = await addAdvance(admin, A);
+    const other = await addAdvance(admin, A);
+    const mineId = await leftUnknown(mine);
+    const otherId = await leftUnknown(other);
+    const ids = (rows: MoneyAction[]) => rows.map((a) => a.id);
+
+    expect(ids(await inA((q) => readPending(q, 0, 10))).sort()).toEqual([mineId, otherId].sort());
+    expect(ids(await inA((q) => readPending(q, 0, 10, ["advance_payout"], { table: "advances", id: mine })))).toEqual([
+      mineId,
+    ]);
+    expect(ids(await inA((q) => readPending(q, 0, 10, undefined, { table: "advances", id: other })))).toEqual([
+      otherId,
+    ]);
+    expect(await inA((q) => readPending(q, 0, 10, undefined, { table: "advances", id: randomUUID() }))).toEqual([]);
+    // Another carrier naming the same subject sees nothing.
+    expect(
+      await app.withTenant(B.tenantId, (q) => readPending(q, 0, 10, undefined, { table: "advances", id: mine })),
+    ).toEqual([]);
+    // The subject is checked whole before any SQL.
+    await expect(
+      inA((q) => readPending(q, 0, 10, undefined, { table: "advances", id: "not-a-uuid" })),
+    ).rejects.toBeInstanceOf(RangeError);
+    await expect(
+      inA((q) => readPending(q, 0, 10, undefined, { table: "loads" as "advances", id: mine })),
+    ).rejects.toBeInstanceOf(RangeError);
+  });
 });

@@ -7,14 +7,21 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param, Queryable } from "../db/types";
 import { executeMoneyAction } from "../money/execute";
 import { addAdvance, clearLedger, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
-import { executeProposal, type Executor, type ExecutorRegistry, type ProposalKind } from "./execute";
+import {
+  executeProposal,
+  type Executor,
+  type ExecutorRegistry,
+  type Precheck,
+  type ProposalKind,
+} from "./execute";
 import { rejectProposal } from "./reject";
 
 // Approving and rejecting an agent's proposal against the real database, as the app's role. The
 // gate refuses before any ledger write: a kind with no executor, an old proposal (which becomes
 // expired), a staff member over the admin line, a missing auditor verdict when one is required,
-// and a flagged proposal without the second confirm. When every check passes the gate locks the
-// approval in before the executor runs, so a reject that lands after it is refused, and an
+// a flagged proposal without the second confirm, and an executor's precheck (which leaves the
+// proposal waiting and undecided). When every check passes the gate locks the approval in before
+// the executor runs, so a reject that lands after it is refused, and an
 // executor that crashes leaves the approval for the next approve to resume. A registered executor
 // reserves exactly one ledger row that names the proposal, and the ledger row keeps the proposal
 // from being deleted. Only this file's tenant is made, and it is removed after.
@@ -284,6 +291,101 @@ describe("approving and rejecting a proposal", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ proposal_id: p.id, state: "confirmed" });
     expect(await proposalRow(p.id)).toMatchObject({ status: "done", money_action_id: rows[0].id });
+    await clearLedger(admin, A);
+  });
+
+  it("asks an executor's precheck after its own checks and before approving; a refusal leaves the proposal waiting", async () => {
+    flags.payoutsEnabled = true;
+    flags.paymentProvider = "mock";
+    const asked: string[] = [];
+    let answer: Awaited<ReturnType<Precheck>> = { ok: false, category: "payouts_off", retryable: false };
+    const precheck: Precheck = async (_q, row) => {
+      asked.push(row.status);
+      return answer;
+    };
+    const checked: Executor = Object.assign((...args: Parameters<Executor>) => testPayout(...args), { precheck });
+    const registry: ExecutorRegistry = { advance_payout: checked };
+
+    // The gate's own refusals come first: the precheck is never asked.
+    const big = await addProposal({ amountCents: flags.approverRole.adminAboveCents + 1 });
+    expect(await approve(big.id, false, registry)).toMatchObject({ ok: false, category: "role" });
+    const flagged = await addProposal({ flagged: true });
+    expect(await approve(flagged.id, false, registry)).toMatchObject({ ok: false, category: "needs_confirm" });
+    expect(asked).toEqual([]);
+
+    // A refusal comes back as is, with nothing written: still proposed, undecided, no ledger row.
+    const p = await addProposal();
+    handed.length = 0;
+    expect(await approve(p.id, false, registry)).toEqual({ ok: false, category: "payouts_off", retryable: false });
+    expect(asked).toEqual(["proposed"]);
+    expect(handed).toEqual([]);
+    expect(await proposalRow(p.id)).toMatchObject({ status: "proposed", decided_by: null, money_action_id: null });
+    expect(await ledgerRows()).toEqual([]);
+    // Still waiting, so a reject can still take it.
+    const other = await addProposal();
+    expect(await approve(other.id, false, registry)).toMatchObject({ ok: false, category: "payouts_off" });
+    expect(await rejectProposal(A.session, other.id, "not_needed", { db: app, clock })).toEqual({ ok: true });
+
+    // A precheck whose read failed inside the gate's transaction still answers cleanly, and the
+    // rolled-back transaction leaves nothing behind.
+    const broken: Precheck = async (q) => {
+      try {
+        await q.query("SELECT CAST('not a uuid' AS uuid)");
+      } catch {
+        return { ok: false, category: "eligibility_unavailable", retryable: true };
+      }
+      return null;
+    };
+    const brokenRegistry: ExecutorRegistry = {
+      advance_payout: Object.assign((...args: Parameters<Executor>) => testPayout(...args), { precheck: broken }),
+    };
+    expect(await approve(p.id, false, brokenRegistry)).toEqual({ ok: false, category: "eligibility_unavailable", retryable: true });
+    expect(await proposalRow(p.id)).toMatchObject({ status: "proposed", decided_by: null });
+
+    // A precheck that throws refuses too: the error surfaces and nothing is approved.
+    const throwing: ExecutorRegistry = {
+      advance_payout: Object.assign((...args: Parameters<Executor>) => testPayout(...args), {
+        precheck: async () => {
+          throw new Error("precheck crashed");
+        },
+      }),
+    };
+    await expect(approve(p.id, false, throwing)).rejects.toThrow("precheck crashed");
+    expect(await proposalRow(p.id)).toMatchObject({ status: "proposed", decided_by: null });
+    expect(handed).toEqual([]);
+
+    // Once it passes, the gate approves and the executor runs as before.
+    answer = null;
+    expect(await approve(p.id, false, registry)).toMatchObject({ ok: true, proposalId: p.id, status: "confirmed" });
+    expect(asked).toEqual(["proposed", "proposed", "proposed"]);
+    expect(handed).toEqual(["approved"]);
+    expect(await proposalRow(p.id)).toMatchObject({ status: "done", decided_by: A.session.sub });
+    expect(await ledgerRows()).toHaveLength(1);
+    await clearLedger(admin, A);
+  });
+
+  it("never asks the precheck on a resume: an approved proposal goes straight to its executor", async () => {
+    flags.payoutsEnabled = true;
+    flags.paymentProvider = "mock";
+    const p = await addProposal();
+    const crash: Executor = async () => {
+      throw new Error("executor crashed");
+    };
+    await expect(approve(p.id, false, { advance_payout: crash })).rejects.toThrow("executor crashed");
+    expect((await proposalRow(p.id)).status).toBe("approved");
+
+    const asked: string[] = [];
+    const refuseAll: Precheck = async (_q, row) => {
+      asked.push(row.status);
+      return { ok: false, category: "payouts_off", retryable: false };
+    };
+    const registry: ExecutorRegistry = {
+      advance_payout: Object.assign((...args: Parameters<Executor>) => testPayout(...args), { precheck: refuseAll }),
+    };
+    handed.length = 0;
+    expect(await approve(p.id, false, registry)).toMatchObject({ ok: true, status: "confirmed" });
+    expect(asked).toEqual([]);
+    expect(handed).toEqual(["approved"]);
     await clearLedger(admin, A);
   });
 

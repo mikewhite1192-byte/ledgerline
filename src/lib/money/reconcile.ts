@@ -11,6 +11,7 @@ import {
   type MoneyDeps,
 } from "./execute";
 import { isOutsideRecord, switchOn, type Settlement } from "./ledger";
+import type { PendingSubject } from "./read";
 import {
   KIND_SHAPES,
   MONEY_ACTION_KINDS,
@@ -45,6 +46,8 @@ export type ReconcileOptions = {
   olderThanSeconds?: number;
   // A kind without hooks is not read, never guessed at.
   hooks: Partial<Record<MoneyActionKind, ReconcileHooks>>;
+  // Only this subject's rows (a check pressed on one record's page); every subject when absent.
+  subject?: PendingSubject;
 };
 
 export type ReconcileSummary = {
@@ -175,7 +178,7 @@ export async function reconcileMoneyActions(
   const kinds = await servableKinds(db, tenantId, options.hooks, d);
   if (kinds.length === 0) return summary;
   const pending = await db.withTenant(tenantId, (q) =>
-    d.store.readPending(q, olderThanSeconds, limit, kinds),
+    d.store.readPending(q, olderThanSeconds, limit, kinds, options.subject),
   );
 
   for (const action of pending) {

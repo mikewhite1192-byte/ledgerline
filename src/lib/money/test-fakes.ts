@@ -206,9 +206,9 @@ export class FakeLedger {
       return true;
     },
     readAction: async (_q, id) => this.age(this.row(id)),
-    // Same filter and order as the real read: the given kinds only, never-checked rows first,
-    // then the least recently checked, then the oldest send, then the id.
-    readPending: async (_q, olderThanSeconds, limit = 5, kinds = MONEY_ACTION_KINDS) => {
+    // Same filter and order as the real read: the given kinds (and subject) only, never-checked
+    // rows first, then the least recently checked, then the oldest send, then the id.
+    readPending: async (_q, olderThanSeconds, limit = 5, kinds = MONEY_ACTION_KINDS, subject) => {
       if (kinds.length === 0) throw new RangeError("kinds must name at least one kind");
       this.pendingKinds.push([...kinds]);
       const order = (a: string | null, b: string | null) =>
@@ -217,6 +217,7 @@ export class FakeLedger {
         .filter(
           (r) =>
             kinds.includes(r.kind) &&
+            (subject === undefined || (r.subjectTable === subject.table && r.subjectId === subject.id)) &&
             r.checkCount < MAX_CHECKS &&
             (r.state === "unknown" ||
               (r.state === "sent" && this.sentAgeSeconds > olderThanSeconds)),

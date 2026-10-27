@@ -185,6 +185,10 @@ export type AdvanceRow = {
   source: "ui" | "email" | "seed";
   reason_category: string | null;
   paid_at: string | null;
+  proposal_id: string | null;
+  source_input_id: string | null;
+  decided_at: string | null;
+  decided_by_membership_id: string | null;
 };
 
 export type InvoiceRow = {

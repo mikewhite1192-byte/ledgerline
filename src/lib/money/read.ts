@@ -165,9 +165,14 @@ export function readBySubject(
   );
 }
 
+// One record whose ledger rows a pending read is limited to.
+export type PendingSubject = { table: SubjectTable; id: string };
+const SUBJECT_TABLES: readonly SubjectTable[] = ["advances", "settlements", "invoices", "customer_payments"];
+
 // What the reconcile pass works on: rows left unknown, and rows still sent after the window
 // (their sender died or its settle failed), of the given kinds only (the ones the caller can
-// serve). Rows at the check limit need a person and are left out. Rows never checked come first,
+// serve), and of one subject only when the caller names one (a button on one record's page).
+// Rows at the check limit need a person and are left out. Rows never checked come first,
 // then the least recently checked, so a row that keeps reading back nothing rotates behind newer
 // ones instead of holding its place; oldest send first within each. The ORDER BY names the table,
 // so it sorts the stored timestamps and id, not the millisecond text the SELECT list returns
@@ -177,6 +182,7 @@ export function readPending(
   olderThanSeconds: number,
   limit = 5,
   kinds: readonly MoneyActionKind[] = MONEY_ACTION_KINDS,
+  subject?: PendingSubject,
 ): Promise<MoneyAction[]> {
   if (!Number.isSafeInteger(olderThanSeconds) || olderThanSeconds < 0) {
     throw new RangeError("olderThanSeconds must be a whole number of seconds");
@@ -190,14 +196,24 @@ export function readPending(
   for (const k of kinds) {
     if (!(MONEY_ACTION_KINDS as readonly unknown[]).includes(k)) throw new RangeError("unknown kind");
   }
+  if (subject !== undefined) {
+    if (!(SUBJECT_TABLES as readonly unknown[]).includes(subject.table)) {
+      throw new RangeError("unknown subject table");
+    }
+    if (!isCanonicalUuid(subject.id)) throw new RangeError("subject id is not a lowercase UUID");
+  }
   const wanted = [...new Set(kinds)];
-  // One placeholder per kind; the kinds themselves travel as parameters.
+  // One placeholder per kind; the kinds themselves travel as parameters, and so does the subject.
   const slots = wanted.map((_, i) => `$${i + 3}`).join(", ");
+  const next = wanted.length + 3;
+  const ofSubject = subject
+    ? ` AND subject_table = $${next} AND subject_id = CAST($${next + 1} AS uuid)`
+    : "";
   return many(
     q,
     `check_count < ${MAX_CHECKS} AND (state = 'unknown' OR (state = 'sent'
-       AND sent_at < now() - CAST($1 AS integer) * interval '1 second')) AND kind IN (${slots})`,
-    [olderThanSeconds, limit, ...wanted],
+       AND sent_at < now() - CAST($1 AS integer) * interval '1 second')) AND kind IN (${slots})${ofSubject}`,
+    [olderThanSeconds, limit, ...wanted, ...(subject ? [subject.table, subject.id] : [])],
     " ORDER BY money_actions.last_checked_at NULLS FIRST, money_actions.sent_at, money_actions.id" +
       " LIMIT CAST($2 AS integer)",
   );

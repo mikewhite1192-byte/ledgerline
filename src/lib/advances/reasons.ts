@@ -70,14 +70,14 @@ export const FLOW_OUTCOMES = [
 export type FlowOutcome = (typeof FLOW_OUTCOMES)[number];
 
 const OUTCOME_SENTENCES: Readonly<Record<FlowOutcome, string>> = {
-  disabled: "Advances are switched off, so nothing was approved or paid.",
+  disabled: "Advances are switched off, so nothing was paid.",
   payouts_off: "Payouts are switched off, so nothing was paid.",
   not_armed: "Advance payouts are not armed yet, so nothing was paid.",
   over_cap: "The amount is over the advance payout cap, so nothing was paid.",
   before_start: "Advance payouts start on a later date, so nothing was paid.",
   stale_eligibility: "The numbers changed since this was proposed. Ask again.",
   capped_to_eligible: "Proposed the most the pay rules allow instead of the amount asked.",
-  eligibility_unavailable: "Eligibility could not be checked, so nothing was approved. Try again.",
+  eligibility_unavailable: "Eligibility could not be checked, so nothing was paid. Try again.",
   ref_collision: "This advance's reference is already taken. Nothing was paid; it needs a person.",
   attempts_exhausted: "This payout has been tried the most times allowed. It needs a person.",
   not_retryable: "Only a payout that definitely failed can be tried again.",

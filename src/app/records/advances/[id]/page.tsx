@@ -92,6 +92,11 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
             <p className="flex flex-wrap items-center gap-2 text-body text-foreground">
               {proposal.title} <StatusBadge status={proposal.status} />
             </p>
+            {proposal.status === "failed" && advance.status === "paid" ? (
+              <p className="text-body text-foreground-2">
+                The first payout attempt failed; a retry paid it, so the advance above is the record.
+              </p>
+            ) : null}
             <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
               <Item label="Proposed">{when(proposal.createdAt)}</Item>
               <Item label="Decided">{when(proposal.decidedAt)}</Item>

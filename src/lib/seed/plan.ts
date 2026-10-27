@@ -788,6 +788,10 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       source: "seed",
       reason_category: null,
       paid_at: new Date(Date.parse(at) + paidAfterMinutes * 60_000).toISOString(),
+      proposal_id: null,
+      source_input_id: null,
+      decided_at: null,
+      decided_by_membership_id: null,
       ref,
     };
     advanceDrafts.push(row);

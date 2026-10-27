@@ -8,17 +8,25 @@ import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
 import { addAdvance, clearLedger, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
-import { executeProposal } from "../proposals/execute";
-import { checkAdvancePayouts, retryAdvancePayout, type AdvanceDeps } from "./approve";
+import { executeProposal, type Executor, type ExecutorRegistry } from "../proposals/execute";
+import {
+  checkAdvancePayouts,
+  executeAdvanceProposal,
+  precheckAdvanceProposal,
+  retryAdvancePayout,
+  type AdvanceDeps,
+} from "./approve";
 import { postAdvanceExpense } from "./post-expense";
 import { readAdvanceRecord } from "./read";
 import { REQUEST_REF } from "./request";
 
 // The advance flow against a real database, as the app's own role, with the registered executor
 // (EXECUTORS) and the mock payment adapter. A person's approval creates the one advances row and
-// pays it once, however many times it is pressed; a failure after the gate leaves a state that a
-// retry, a re-approval or Check pending adopts; the pay rules are asked again at approval; a
-// flagged proposal needs the second confirm; another carrier sees nothing. Every tenant made here
+// pays it once, however many times it is pressed; a closed switch, a missing driver or unreadable
+// pay rules refuse before the approval and leave the proposal waiting; a failure after the gate
+// leaves a state that a retry, a re-approval or Check pending adopts; the pay rules are asked
+// again at approval; a flagged proposal needs the second confirm; Check pending reads one
+// advance only; another carrier sees nothing. Every tenant made here
 // is removed after each test.
 
 const saved = structuredClone(flags);
@@ -142,8 +150,8 @@ const approve = (id: string, confirmed = false, d: AdvanceDeps = deps(), session
 const proposalRow = async (id: string) =>
   (
     await admin.withTenant(A.tenantId, (q) =>
-      q.query<{ status: string; money_action_id: string | null; decision_note: string | null }>(
-        `SELECT status, money_action_id, decision_note FROM proposals
+      q.query<{ status: string; money_action_id: string | null; decision_note: string | null; decided_by: string | null }>(
+        `SELECT status, money_action_id, decision_note, decided_by FROM proposals
           WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
         [id],
       ),
@@ -342,27 +350,154 @@ describe("the advance flow", () => {
     expect(mock.sendCount).toBe(0);
   });
 
-  it("refuses every closed switch before any advance or ledger row, and pays once they open", async () => {
-    flags.advancesEnabled = false;
+  it("refuses every closed switch before approving, leaves the proposal waiting, and pays once they open", async () => {
     const id = await addProposal();
+    const stillWaiting = async () => {
+      expect(await proposalRow(id)).toMatchObject({ status: "proposed", decided_by: null, money_action_id: null });
+      expect(await flowAdvances()).toEqual([]);
+      expect(await ledger()).toEqual([]);
+    };
+    flags.advancesEnabled = false;
     expect(await approve(id)).toMatchObject({ ok: false, category: "disabled" });
+    await stillWaiting();
     flags.advancesEnabled = true;
     flags.advancePayouts = { ...flags.advancePayouts, armed: false };
     expect(await approve(id)).toMatchObject({ ok: false, category: "not_armed" });
+    await stillWaiting();
     flags.advancePayouts = { ...flags.advancePayouts, armed: true, capCents: 10_000 };
     expect(await approve(id)).toMatchObject({ ok: false, category: "over_cap" });
+    await stillWaiting();
     flags.advancePayouts = { ...flags.advancePayouts, capCents: 50_000, startDate: "2026-11-03" };
     expect(await approve(id)).toMatchObject({ ok: false, category: "before_start" });
+    await stillWaiting();
     flags.advancePayouts = { ...flags.advancePayouts, startDate: "2026-10-27" };
     flags.payoutsEnabled = false;
     expect(await approve(id)).toMatchObject({ ok: false, category: "payouts_off" });
-    expect(await flowAdvances()).toEqual([]);
-    expect(await ledger()).toEqual([]);
-    // The person's approval stands while the switches are closed; it pays once they open.
-    expect((await proposalRow(id)).status).toBe("approved");
+    await stillWaiting();
+    expect(mock.sendCount).toBe(0);
+    // Still waiting, so Approve works once the switches open.
     flags.payoutsEnabled = true;
     expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+    expect(await proposalRow(id)).toMatchObject({ status: "done", decided_by: A.session.sub });
+    expect(await flowAdvances()).toEqual([expect.objectContaining({ status: "paid" })]);
     expect(mock.sendCount).toBe(1);
+  });
+
+  it("refuses a missing driver and unreadable pay rules before approving, and leaves the proposal waiting", async () => {
+    const ghost = await addProposal({ driverId: randomUUID() });
+    expect(await approve(ghost)).toEqual({ ok: false, category: "not_found", retryable: false });
+    expect(await proposalRow(ghost)).toMatchObject({ status: "proposed", decided_by: null });
+
+    // No pay rule version covers today: the rules cannot run, so nothing is approved.
+    const setRulesFrom = (day: string) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE pay_configs SET effective_from = CAST($1 AS date) WHERE tenant_id = current_tenant_id()", [day]),
+      );
+    await setRulesFrom("2027-01-04");
+    const id = await addProposal();
+    expect(await approve(id)).toEqual({ ok: false, category: "eligibility_unavailable", retryable: true });
+    expect(await proposalRow(id)).toMatchObject({ status: "proposed", decided_by: null, money_action_id: null });
+    expect(await flowAdvances()).toEqual([]);
+    expect(await ledger()).toEqual([]);
+    await setRulesFrom("2026-01-01");
+    expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+    expect(mock.sendCount).toBe(1);
+  });
+
+  it("still re-checks the switches itself when one closes after the precheck, and resumes once it opens", async () => {
+    const id = await addProposal();
+    // Stands in for a switch turned off between the gate's precheck and the executor.
+    const racing: ExecutorRegistry = {
+      advance_payout: Object.assign((...args: Parameters<Executor>) => executeAdvanceProposal(...args), {
+        precheck: async (...args: Parameters<typeof precheckAdvanceProposal>) => {
+          const answer = await precheckAdvanceProposal(...args);
+          flags.payoutsEnabled = false;
+          return answer;
+        },
+      }),
+    };
+    expect(await approve(id, false, { ...deps(), executors: racing })).toEqual({
+      ok: false,
+      category: "payouts_off",
+      retryable: false,
+    });
+    // The known window: the approval stands with nothing paid, and no advance or ledger row.
+    expect(await proposalRow(id)).toMatchObject({ status: "approved", decided_by: A.session.sub, money_action_id: null });
+    expect(await flowAdvances()).toEqual([]);
+    expect(await ledger()).toEqual([]);
+    expect(mock.sendCount).toBe(0);
+    // Approving again resumes it: still refused while the switch is off, paid once it opens.
+    expect(await approve(id)).toMatchObject({ ok: false, category: "payouts_off" });
+    flags.payoutsEnabled = true;
+    expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+    expect(await ledger()).toHaveLength(1);
+    expect(mock.sendCount).toBe(1);
+  });
+
+  it("checks only the advance whose page asked: another advance's unknown payout is left alone", async () => {
+    const first = await addProposal();
+    const second = await addProposal({ driverId: A.otherDriverId });
+    mock.hangNext();
+    expect(await approve(first, false, deps({ timeoutMs: 50 }))).toMatchObject({ ok: true, status: "executing" });
+    mock.hangNext();
+    expect(await approve(second, false, deps({ timeoutMs: 50 }))).toMatchObject({ ok: true, status: "executing" });
+    const advances = await flowAdvances();
+    expect(advances).toHaveLength(2);
+    const byProposal = async (proposalId: string) =>
+      (
+        await admin.withTenant(A.tenantId, (q) =>
+          q.query<{ id: string }>(
+            "SELECT id FROM advances WHERE tenant_id = current_tenant_id() AND proposal_id = CAST($1 AS uuid)",
+            [proposalId],
+          ),
+        )
+      )[0].id;
+    const [firstAdvance, secondAdvance] = [await byProposal(first), await byProposal(second)];
+
+    const checked = await checkAdvancePayouts(A.session, firstAdvance, deps());
+    expect(checked).toMatchObject({ ok: true, summary: { checked: 1, confirmed: 1, failed: 0, stillUnknown: 0 } });
+    const status = async (advanceId: string) =>
+      (await flowAdvances()).find((a) => a.id === advanceId)?.status;
+    expect(await status(firstAdvance)).toBe("paid");
+    expect(await status(secondAdvance)).toBe("approved");
+    expect((await ledger()).map((r) => r.state).sort()).toEqual(["confirmed", "unknown"]);
+
+    expect(await checkAdvancePayouts(A.session, secondAdvance, deps())).toMatchObject({
+      ok: true,
+      summary: { checked: 1, confirmed: 1 },
+    });
+    expect(await status(secondAdvance)).toBe("paid");
+    expect(mock.sendCount).toBe(2);
+  });
+
+  it("limits the QuickBooks leg's outside call to the request's time left, less a second", async () => {
+    flags.accountingEnabled = true;
+    const limits: number[] = [];
+    const accounting = {
+      system: "qbo_sandbox",
+      ready: async () => ({ ok: true }),
+      ensureVendor: async () => ({ outsideId: "V-77" }),
+      createExpense: async (_q: unknown, e: { amountCents: number; feeCents: number }, ctx: { timeoutMs: number }) => {
+        limits.push(ctx.timeoutMs);
+        return { kind: "confirmed", system: "qbo_sandbox", type: "Purchase", id: `P-${limits.length}`, amountCents: e.amountCents + e.feeCents };
+      },
+    } as unknown as AccountingAdapter;
+    // A steady clock: the request started at 0 and 9,500.5 ms have passed when the payout is
+    // confirmed, so 15,499.5 ms are left and the post gets 14,499.
+    const steadyAt = (...marks: number[]) => {
+      let i = 0;
+      return () => marks[Math.min(i++, marks.length - 1)];
+    };
+    const id = await addProposal();
+    const d: AdvanceDeps = { ...deps({ accounting, timeoutMs: undefined }), steady: steadyAt(0, 9_500.5) };
+    expect(await approve(id, false, d)).toMatchObject({ ok: true, status: "done" });
+    expect(limits).toEqual([14_499]);
+
+    // With the whole budget left, the money executor's own 20 s limit is the cap.
+    const other = await addProposal({ driverId: A.otherDriverId });
+    const full: AdvanceDeps = { ...deps({ accounting, timeoutMs: undefined }), steady: steadyAt(0, 0) };
+    expect(await approve(other, false, full)).toMatchObject({ ok: true, status: "done" });
+    expect(limits).toEqual([14_499, 20_000]);
   });
 
   it("needs the second confirm for a flagged proposal, and names the voice note it came from", async () => {

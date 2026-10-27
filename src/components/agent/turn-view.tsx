@@ -28,7 +28,7 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   role: "An admin must approve an amount this size.",
   auditor_required: "This waits for the auditor's check before anyone can approve it.",
   needs_confirm: "Confirm the screening warning first.",
-  not_found: "That proposal is not here.",
+  not_found: "That proposal, or the record it names, is not here.",
 };
 const APPROVE_FALLBACK = "The approval did not go through. Nothing changed.";
 const REJECT_FAILED = "The rejection did not go through. Try again.";

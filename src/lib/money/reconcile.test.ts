@@ -268,6 +268,35 @@ describe("reconcileMoneyActions", () => {
     expect(t.ledger.row(t.id).checkCount).toBe(2);
   });
 
+  it("checks only the named subject's rows when a subject is given", async () => {
+    const t = await unknownPayout();
+    const mine = t.ledger.row(t.id).subjectId;
+    // Another advance's payout, left unknown the same way.
+    const other = "33333333-3333-4333-8333-333333333333";
+    const p = nextId();
+    t.ledger.rows.set(p, { ...t.ledger.row(t.id), id: p, requestId: requestIdOf(p), subjectId: other });
+
+    const s = await reconcileMoneyActions(
+      t.db,
+      SESSION,
+      { hooks: t.hooks, subject: { table: "advances", id: other } },
+      t.deps,
+    );
+    expect(s).toEqual({ checked: 1, confirmed: 1, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 });
+    expect(t.ledger.row(p).state).toBe("confirmed");
+    expect(t.ledger.row(t.id)).toMatchObject({ state: "unknown", checkCount: 0 });
+    expect(t.onConfirmed).toHaveBeenCalledTimes(1);
+
+    const next = await reconcileMoneyActions(
+      t.db,
+      SESSION,
+      { hooks: t.hooks, subject: { table: "advances", id: mine } },
+      t.deps,
+    );
+    expect(next).toMatchObject({ checked: 1, confirmed: 1 });
+    expect(t.ledger.row(t.id).state).toBe("confirmed");
+  });
+
   it("refuses a session without a membership before reading anything", async () => {
     const t = await unknownPayout();
     await expect(
