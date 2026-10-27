@@ -37,6 +37,9 @@ const SENTENCES: Readonly<Record<string, string>> = {
   // propose_payment_reapply
   payment_on_wrong_invoice:
     "The payment matches another open invoice for the same customer exactly, and overpays the one it is on.",
+  // the sweep's second opinion: an issue a driver's check raised that the rules engine did not
+  sub_agent_flag:
+    "A second check of this driver's week pointed at this record and the rules engine did not. Look at the record before paying.",
 };
 
 const GENERIC = "A rule check found this.";

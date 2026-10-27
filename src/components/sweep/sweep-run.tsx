@@ -17,12 +17,14 @@ import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
 import { batchFor, type HeldBatch } from "./batch-id";
+import { WeekChecks } from "./week-checks";
 
-// A sweep run's page (design 3.10): the run's counts, then Clean fixes (each card keeps its own
+// A sweep run's page (design 3.10): the run's counts, how the week was checked a second time when
+// the run did that (week-checks.tsx), then Clean fixes (each card keeps its own
 // Approve and Reject, plus one "Approve all clean" bar), Needs a look, Needs a person, and the
 // fixed, declined and expired ones folded away. While the run is running the page carries it on
-// one slice at a time. Every word is a fixed label; the only model text is an explanation that
-// passed the figures check.
+// one slice at a time. Every word is a fixed label; the only model text is an explanation or a
+// second check's note that passed the figures check.
 
 const ADVANCE_LIMIT = 60;
 const BUSY_WAIT_MS = 3_000;
@@ -377,6 +379,7 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
             : "The sweep took the first problems only. Run it again after these are handled."}
         </p>
       ) : null}
+      {page.fanout ? <WeekChecks tree={page.fanout} runId={runId} running={running} /> : null}
       {readFailed ? <ErrorState category="unreadable" title="Could not read the sweep" /> : null}
       {stalled ? (
         <p role="status" className="text-small text-foreground-2">

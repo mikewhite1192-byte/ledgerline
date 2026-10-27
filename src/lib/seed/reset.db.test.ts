@@ -405,6 +405,22 @@ describe("the demo reset", () => {
            CAST($5 AS uuid))`,
         [randomUUID(), sweep, settlement.period_id, settlement.driver_id, detention],
       );
+      // The run's second check and one driver's check, both naming the detention chain's turn
+      // (0024): the reset clears them before the run and the turn.
+      await q.execute(
+        `INSERT INTO sweep_fanout (run_id, tenant_id, status, plan_turn_id, counts, finished_at)
+         SELECT CAST($1 AS uuid), current_tenant_id(), 'done', p.turn_id, CAST('{}' AS jsonb), now()
+           FROM proposals p WHERE p.id = CAST($2 AS uuid)`,
+        [sweep, detention],
+      );
+      await q.execute(
+        `INSERT INTO sweep_fanout_checks (tenant_id, run_id, driver_id, priority, status, attempts, turn_id,
+           result, cost_cents, finished_at)
+         SELECT current_tenant_id(), CAST($1 AS uuid), CAST($2 AS uuid), 1, 'done', 1, p.turn_id,
+           CAST('{"issues": []}' AS jsonb), 2, now()
+           FROM proposals p WHERE p.id = CAST($3 AS uuid)`,
+        [sweep, settlement.driver_id, detention],
+      );
       const batch = randomUUID();
       await q.execute(
         `INSERT INTO approval_batches (id, tenant_id, scope, period_id, item_ids, total_cents, status, requested_by,
@@ -550,6 +566,8 @@ describe("the demo reset", () => {
         voice_notes: 1,
         driver_notes: 1,
         turn_steps: 3,
+        sweep_fanout_checks: 1,
+        sweep_fanout: 1,
         sweep_items: 1,
         sweep_runs: 1,
         approval_batches: 1,
@@ -578,6 +596,8 @@ describe("the demo reset", () => {
         voice_notes: 1,
         driver_notes: 1,
         turn_steps: 3,
+        sweep_fanout_checks: 1,
+        sweep_fanout: 1,
         sweep_items: 1,
         sweep_runs: 1,
         approval_batches: 1,

@@ -100,6 +100,7 @@ const page: SweepPage = {
   counts,
   proposals: Object.fromEntries(STATUSES.map((s, n) => [`p-${s}`, proposal(s, n)])),
   clean: { proposalIds: [], totalCents: 0 },
+  fanout: null,
 };
 
 // The cards in a folded section or a section, by their titles (a folded section's cards are in

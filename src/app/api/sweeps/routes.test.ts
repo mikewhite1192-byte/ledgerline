@@ -5,6 +5,7 @@ import { POST as internalSweep } from "../internal/sweep/route";
 import { POST as approveCleanRoute } from "./[id]/approve-clean/route";
 import { POST as advance } from "./[id]/advance/route";
 import { GET as readRun } from "./[id]/route";
+import { GET as readTrace } from "./[id]/trace/[turnId]/route";
 import { POST as start } from "./route";
 
 // The sweep routes' gates, with the sweep itself a stand-in: the cross-site check and the switch
@@ -27,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   internalKey: vi.fn(),
   readSweepPage: vi.fn(),
   approveClean: vi.fn(),
+  readSweepTurnTrace: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
@@ -34,6 +36,7 @@ vi.mock("@/lib/db", () => ({ getDb: () => ({}) }));
 vi.mock("@/lib/sweep/run", () => ({ startSweep: mocks.startSweep, advanceSweep: mocks.advanceSweep }));
 vi.mock("@/lib/sweep/service-session", () => ({ serviceSession: mocks.serviceSession }));
 vi.mock("@/lib/sweep/view", () => ({ readSweepPage: mocks.readSweepPage }));
+vi.mock("@/lib/agent/gateway/store", () => ({ readSweepTurnTrace: mocks.readSweepTurnTrace }));
 vi.mock("@/lib/sweep/internal-key", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/sweep/internal-key")>()),
   internalKey: mocks.internalKey,
@@ -229,5 +232,49 @@ describe("the person's sweep routes", () => {
     const res = await readRun(new Request(`https://app.example/api/sweeps/${RUN}`), params(RUN));
     expect(res.status).toBe(404);
     expect(mocks.readSweepPage).toHaveBeenCalledWith(SESSION, RUN);
+  });
+});
+
+describe("GET /api/sweeps/[id]/trace/[turnId]", () => {
+  const TURN = "0A0A0A0A-0A0A-4A0A-8A0A-0A0A0A0A0A0A";
+  const call = (id: string, turnId: string) =>
+    readTrace(new Request(`https://app.example/api/sweeps/${id}/trace/${turnId}`), {
+      params: Promise.resolve({ id, turnId }),
+    });
+
+  it("answers 409 disabled before reading a session while the sweep is off", async () => {
+    flags.sweepEnabled = false;
+    const res = await call(RUN, TURN);
+    expect(res.status).toBe(409);
+    expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(mocks.readSweepTurnTrace).not.toHaveBeenCalled();
+  });
+
+  it("answers 401 without a session and 400 for an id that is not one", async () => {
+    mocks.getSession.mockResolvedValueOnce(null);
+    expect((await call(RUN, TURN)).status).toBe(401);
+    expect((await call(RUN, "not-a-turn")).status).toBe(400);
+    expect((await call("not-a-run", TURN)).status).toBe(400);
+    expect(mocks.readSweepTurnTrace).not.toHaveBeenCalled();
+  });
+
+  it("reads the turn by the run, or 404 when the run does not name it", async () => {
+    mocks.readSweepTurnTrace.mockResolvedValueOnce(null);
+    const missing = await call(RUN, TURN);
+    expect(missing.status).toBe(404);
+    expect(mocks.readSweepTurnTrace).toHaveBeenCalledWith(SESSION, RUN, TURN.toLowerCase());
+
+    mocks.readSweepTurnTrace.mockResolvedValueOnce({ turnId: TURN.toLowerCase(), steps: [] });
+    const ok = await call(RUN, TURN);
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("cache-control")).toBe("no-store");
+    expect(await ok.json()).toEqual({ trace: { turnId: TURN.toLowerCase(), steps: [] } });
+  });
+
+  it("answers 503 with no error text when the read fails", async () => {
+    mocks.readSweepTurnTrace.mockRejectedValueOnce(new Error("row 42 secret"));
+    const res = await call(RUN, TURN);
+    expect(res.status).toBe(503);
+    expect(JSON.stringify(await res.json())).not.toContain("secret");
   });
 });
