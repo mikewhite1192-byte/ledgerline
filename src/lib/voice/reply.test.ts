@@ -107,3 +107,28 @@ describe("parseTranslated over every template", () => {
     expect(parseTranslated(JSON.stringify({ reply: es }), template)).toBeNull();
   });
 });
+
+describe("parseTranslated compares every amount, in order", () => {
+  const template = replyTemplate({ kind: "paid", amountCents: 30_000, feeCents: 500 });
+  const spanish = "Tu adelanto de $300.00 fue aprobado y enviado. Se aplica una comisión de $5.00, y ambos se descuentan de tu pago.";
+
+  it("keeps a faithful translation with the same amounts", () => {
+    expect(parseTranslated(JSON.stringify({ reply: spanish }), template)).toBe(spanish);
+  });
+
+  it("refuses an added spelled-out amount", () => {
+    const es = `${spanish} Más cien dólares de bono.`;
+    expect(parseTranslated(JSON.stringify({ reply: es }), template)).toBeNull();
+  });
+
+  it("refuses an added figure", () => {
+    const es = `${spanish} Más $300.00 de bono.`;
+    expect(parseTranslated(JSON.stringify({ reply: es }), template)).toBeNull();
+  });
+
+  it("refuses an amount added to a template that states none", () => {
+    const received = replyTemplate({ kind: "received" });
+    const es = "Recibimos tu nota de voz. La oficina la está revisando y te dará cien dólares.";
+    expect(parseTranslated(JSON.stringify({ reply: es }), received)).toBeNull();
+  });
+});

@@ -44,8 +44,9 @@ function tokens(text: string): Token[] {
   return out;
 }
 
-// "300", "300.50", "1,200", "1,200.75" and the Spanish "1.200" (a dot before exactly three digits
-// is a thousands mark). Cents only when there are exactly two digits after the point.
+// "300", "300.50", "1,200", "1,200.75", the Spanish "1.200" (a dot before exactly three digits
+// is a thousands mark) and "1.200,50" (dot thousands, then a comma before exactly two digits of
+// cents). Cents only when there are exactly two digits after the decimal mark.
 function numberCents(text: string): number | null {
   let whole: string;
   let fraction = "";
@@ -53,6 +54,8 @@ function numberCents(text: string): number | null {
     [whole, fraction = ""] = text.replace(/,/g, "").split(".");
   } else if (/^\d{1,3}(\.\d{3})+$/.test(text)) {
     whole = text.replace(/\./g, "");
+  } else if (/^\d{1,3}(\.\d{3})+,\d{2}$/.test(text)) {
+    [whole, fraction = ""] = text.replace(/\./g, "").split(",");
   } else if (/^\d+(\.\d{2})?$/.test(text)) {
     [whole, fraction = ""] = text.split(".");
   } else {
@@ -101,21 +104,26 @@ function wordsValue(run: readonly string[]): number | null {
 
 const isCurrency = (t: Token | undefined) => t !== undefined && t.kind === "word" && CURRENCY.has(t.text);
 
-export function extractAmountCents(text: string): number | null {
-  if (typeof text !== "string" || text.length === 0) return null;
+// Every amount the text states, in order, up to `limit`. Each token belongs to at most one amount.
+function scan(text: string, limit: number): number[] {
+  const found: number[] = [];
+  if (typeof text !== "string" || text.length === 0) return found;
   const list = tokens(text);
-  for (let i = 0; i < list.length; i += 1) {
+  let i = 0;
+  while (i < list.length && found.length < limit) {
     const t = list[i];
     // "$300" or "$ 300"
     if (t.kind === "dollar" && list[i + 1]?.kind === "number") {
       const cents = numberCents(list[i + 1].text);
-      if (cents !== null) return cents;
+      if (cents !== null) found.push(cents);
+      i += cents === null ? 1 : 2;
       continue;
     }
     // "300 dollars"
     if (t.kind === "number" && isCurrency(list[i + 1])) {
       const cents = numberCents(t.text);
-      if (cents !== null) return cents;
+      if (cents !== null) found.push(cents);
+      i += cents === null ? 1 : 2;
       continue;
     }
     // "three hundred dollars", "trescientos dolares", "treinta y cinco dolares"
@@ -128,9 +136,24 @@ export function extractAmountCents(text: string): number | null {
       }
       if (isCurrency(list[j])) {
         const dollars = wordsValue(run);
-        if (dollars !== null) return dollars * 100;
+        if (dollars !== null) {
+          found.push(dollars * 100);
+          i = j + 1;
+          continue;
+        }
       }
     }
+    i += 1;
   }
-  return null;
+  return found;
+}
+
+export function extractAmountCents(text: string): number | null {
+  return scan(text, 1)[0] ?? null;
+}
+
+// Every amount stated, in order, none sharing a word or number with another: "$300 and a $5 fee"
+// gives [30000, 500].
+export function extractAmountsCents(text: string): number[] {
+  return scan(text, Number.POSITIVE_INFINITY);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractAmountCents } from "./amount";
+import { extractAmountCents, extractAmountsCents } from "./amount";
 
 // The ask, read from the driver's own words without a model: digits with a dollar sign or a
 // currency word, and number words in English and Spanish. No amount is null, never a guess.
@@ -13,6 +13,13 @@ describe("extractAmountCents", () => {
     ["necesito 300 dolares", 30_000],
     ["$1,200.75 for repairs", 120_075],
     ["1.200 dólares", 120_000],
+    // Dot thousands, then a comma before exactly two digits of cents.
+    ["Necesito 1.200,50 dólares", 120_050],
+    ["$1.200,50", 120_050],
+    ["1.000.000,00 dólares", 100_000_000],
+    // The forms read before the comma-cents form keep their meaning.
+    ["1,200.50 dollars", 120_050],
+    ["1,200 dollars", 120_000],
     ["three hundred dollars", 30_000],
     ["two hundred fifty dollars for fuel", 25_000],
     ["a hundred bucks", 10_000],
@@ -46,6 +53,13 @@ describe("extractAmountCents", () => {
     "$1,000,000.50",
     "$1,000,000.01",
     "1000000.99 dollars",
+    "1.000.000,01 dólares",
+    // A comma is a decimal mark only after dot thousands and before exactly two digits.
+    "1,5 dólares",
+    "1,50 dólares",
+    "1.200,5 dólares",
+    "1.200,500 dólares",
+    "1.20,50 dólares",
   ])("%s states no amount", (text) => {
     expect(extractAmountCents(text)).toBeNull();
   });
@@ -53,5 +67,29 @@ describe("extractAmountCents", () => {
   it("refuses anything that is not text", () => {
     expect(extractAmountCents(undefined as unknown as string)).toBeNull();
     expect(extractAmountCents(300 as unknown as string)).toBeNull();
+  });
+});
+
+describe("extractAmountsCents", () => {
+  it.each<[string, number[]]>([
+    ["first $200, then later $500", [20_000, 50_000]],
+    ["Tu adelanto de $300.00 fue aprobado. Más cien dólares de bono.", [30_000, 10_000]],
+    // One amount per figure, even with a currency word after it.
+    ["$300 dollars", [30_000]],
+    ["three hundred dollars and $5", [30_000, 500]],
+    ["Why is my pay lower this week?", []],
+    ["", []],
+  ])("%s is %j", (text, cents) => {
+    expect(extractAmountsCents(text)).toEqual(cents);
+  });
+
+  it("starts with the amount extractAmountCents reads", () => {
+    for (const text of ["first $200, then later $500", "$1,000,000.50 then 300 dollars", "ten hundred thousand dollars"]) {
+      expect(extractAmountsCents(text)[0]).toBe(extractAmountCents(text));
+    }
+  });
+
+  it("refuses anything that is not text", () => {
+    expect(extractAmountsCents(undefined as unknown as string)).toEqual([]);
   });
 });

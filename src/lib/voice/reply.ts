@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AiFormat } from "../ai";
 import { decisionNoteSentence } from "../advances/reasons";
 import { dollars } from "../money/format";
+import { extractAmountsCents } from "./amount";
 
 // The reply a person can send back to the driver: a fixed English sentence per outcome, filled
 // with the engine's own numbers. For a Spanish note one Muse Spark call translates the filled
@@ -80,8 +81,9 @@ function numberRuns(text: string): string[] {
 }
 
 // The translation, or null when it is not JSON of the right shape, it lost or changed any of the
-// template's dollar figures, or it holds any number run the template does not: a number the
-// engine did not write never reaches a driver.
+// template's dollar figures, it holds any number run the template does not, or the amounts it
+// states (figures or words, such as "cien dólares") are not the template's, in the same order: a
+// number the engine did not write never reaches a driver.
 export function parseTranslated(answer: string, template: string): string | null {
   let raw: unknown;
   try {
@@ -99,5 +101,8 @@ export function parseTranslated(answer: string, template: string): string | null
   const wantRuns = numberRuns(template);
   const gotRuns = numberRuns(reply);
   if (wantRuns.length !== gotRuns.length || wantRuns.some((r, i) => r !== gotRuns[i])) return null;
+  const wantAmounts = extractAmountsCents(template);
+  const gotAmounts = extractAmountsCents(reply);
+  if (wantAmounts.length !== gotAmounts.length || wantAmounts.some((c, i) => c !== gotAmounts[i])) return null;
   return reply;
 }
