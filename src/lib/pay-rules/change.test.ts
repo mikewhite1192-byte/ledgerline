@@ -130,6 +130,18 @@ describe("versions after today", () => {
     expect(c.baseVersionId).toBe(FUTURE);
   });
 
+  it("edits only a version a person made; a seeded one that starts that week is locked", () => {
+    const seeded = rowsFor("blue-ridge");
+    seeded.pay_configs.push(versionFrom(seeded, FUTURE, "2026-11-02", { source: "seed" }));
+    expect(reason(check(seeded))).toBe("locked_version");
+
+    const inApp = rowsFor("blue-ridge");
+    inApp.pay_configs.push(versionFrom(inApp, FUTURE, "2026-11-02", { source: "ui" }));
+    const c = ok(check(inApp));
+    expect(c.applied).toBe("edited_version");
+    expect(c.baseVersionId).toBe(FUTURE);
+  });
+
   it("refuses a change that a later saved version would undo", () => {
     const rows = rowsFor("blue-ridge");
     rows.pay_configs.push(versionFrom(rows, FUTURE, "2026-11-09"));

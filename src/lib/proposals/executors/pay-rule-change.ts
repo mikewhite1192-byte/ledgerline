@@ -23,8 +23,8 @@ import type { Executor, ProposalResult } from "../execute";
 //
 // On a match it writes one version: a new row copied column by column from the version in force
 // (every column the table has now, read from the catalog, so a column a later migration adds rides
-// along) with the one rule replaced, or, when a version already starts that week and nothing was
-// paid under it, that version edited in place. Both writes are guarded on the old value. Then one
+// along) with the one rule replaced, or, when a person-made version already starts that week and
+// nothing was paid under it, that version edited in place. Both writes are guarded on the old value. Then one
 // pay_rule_changes row (one per proposal), a read-back through the engine's own parser, and the
 // proposal moves to done. A mismatch after a write throws, so the transaction rolls back.
 //

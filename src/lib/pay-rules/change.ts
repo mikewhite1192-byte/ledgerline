@@ -48,7 +48,8 @@ import {
 //     moves to the next week start, and the card says so), at most 366 days ahead;
 //   - no saved version starts after it (that later version would undo it when it starts);
 //   - it differs from the rule in force on that date;
-//   - no approved or paid pay names the version it would edit or falls on or after its date.
+//   - no approved or paid pay names the version it would edit or falls on or after its date;
+//   - a version it would edit was made by a person, never by the seed.
 
 export type RuleChangeArgs = { ruleKey: string; newValue: unknown; askedFrom: string };
 
@@ -129,6 +130,8 @@ export async function readRuleChangeRows(q: Queryable): Promise<RuleChangeRows> 
 }
 
 const FROZEN = new Set(["approved", "paid"]);
+// Versions a person made: in the app, or by approving an earlier change. Never the seed's.
+const PERSON_MADE: ReadonlySet<PayConfigRow["source"]> = new Set(["ui", "proposal"]);
 export const MAX_DAYS_AHEAD = 366;
 const MAX_SOURCE_SETTLEMENTS = 8;
 
@@ -227,8 +230,10 @@ export function ruleChangeOf(
   }
   const oldValue = valueOf(base, spec.key);
   if (oldValue === newValue) return no("no_change");
-  // 7. Edit the version that starts that week, or add one; never touch frozen pay.
+  // 7. Edit the version that starts that week, or add one; never touch frozen pay. Only a version
+  //    a person made is edited in place; a seeded one is locked.
   const applied = base.effective_from === effectiveFrom ? "edited_version" : "new_version";
+  if (applied === "edited_version" && !PERSON_MADE.has(base.source)) return no("locked_version");
   const startOf = new Map(rows.settlement_periods.map((p) => [p.id, p.period_start]));
   const frozenPay = rows.settlements.filter((s) => FROZEN.has(s.status));
   const locked =
