@@ -27,6 +27,7 @@ import { formatInstant } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
+import { isUuid } from "@/lib/uuid";
 import { AiProofForm } from "./ai-proof-form";
 
 type ModelLedger = { calls: CallRow[]; spend: Spend };
@@ -41,7 +42,15 @@ type Carrier = {
 
 // The signed-in carrier's shell. Every read runs inside withRequestTenant, so this page can only
 // ever see the carrier on the verified token. Signed out: withRequestTenant redirects to /sign-in.
-export default async function Home() {
+// ?document=<input id>, from a document's page: the question box starts with a request to check
+// that document. Only an id is taken from the address; the text around it is fixed.
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const asked = (await searchParams).document;
+  const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
   let carrier: Carrier | null = null;
   let problem: "forbidden" | "unreadable" | null = null;
   try {
@@ -141,6 +150,7 @@ export default async function Home() {
           streamMode={flags.agentStreamMode}
           auditorOn={flags.auditorEnabled}
           suggestions={flags.detentionEnabled ? [...SUGGESTIONS, DETENTION_SUGGESTION] : SUGGESTIONS}
+          initialDraft={documentInput ? `Check document ${documentInput}` : undefined}
           intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
           disabledReason={
             flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."

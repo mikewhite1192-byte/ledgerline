@@ -18,6 +18,8 @@ import { describe, expect, it } from "vitest";
 //   P2. Nothing reachable from any agent file, the gateway included, is a money write or a
 //       payment or accounting adapter: under money/ only read, types, keys and format, and under
 //       adapters/ only types and tms/*.
+//   P3. Nothing reachable from any agent file uploads, stores or reads a document with the model:
+//       under documents/ only types, schema, match and candidates.
 //
 // A module loaded by a name that is not a string literal, a loader named anywhere but as the
 // callee of a direct require("..."), or a local import that does not resolve, fails the walk:
@@ -46,6 +48,7 @@ const MODEL_CALLERS: ReadonlySet<string> = new Set([
 // Every area match ignores case: on a case-insensitive file system "../../Money/execute" resolves.
 const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/i;
 const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/i;
+const DOCUMENTS_OK = /^src\/lib\/documents\/(types|schema|match|candidates)\.[cm]?[jt]sx?$/i;
 // Every name that loads a module with no import line; eslint.config.mjs bans the same set. Regexes,
 // not strings: this file is agent code too, so it names no loader in quotes.
 const LOADER_NAME =
@@ -208,8 +211,9 @@ function boundaryViolations(root: string, agentFiles: string[], graph: Graph): s
   return out;
 }
 
-// P2: walk everything reachable from every agent file, the gateway included.
-function ledgerViolations(root: string, agentFiles: string[], graph: Graph): string[] {
+// Everything reachable from every agent file, the gateway included, each with the file it was
+// first reached from.
+function reachable(agentFiles: string[], graph: Graph): Map<string, string | null> {
   const parent = new Map<string, string | null>(agentFiles.map((f) => [f, null]));
   const queue = [...agentFiles];
   while (queue.length > 0) {
@@ -220,6 +224,18 @@ function ledgerViolations(root: string, agentFiles: string[], graph: Graph): str
       queue.push(edge.to);
     }
   }
+  return parent;
+}
+
+function chainTo(root: string, parent: Map<string, string | null>, file: string): string {
+  const chain = [relTo(root, file)];
+  for (let p = parent.get(file); p; p = parent.get(p)) chain.unshift(relTo(root, p));
+  return chain.join(" -> ");
+}
+
+// P2: walk everything reachable from every agent file, the gateway included.
+function ledgerViolations(root: string, agentFiles: string[], graph: Graph): string[] {
+  const parent = reachable(agentFiles, graph);
   const out: string[] = [];
   for (const file of parent.keys()) {
     const rel = relTo(root, file);
@@ -227,9 +243,20 @@ function ledgerViolations(root: string, agentFiles: string[], graph: Graph): str
     const money = /^src\/lib\/money(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !MONEY_OK.test(rel);
     const adapter = /(^|\/)adapters(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !ADAPTERS_OK.test(rel);
     if (!money && !adapter) continue;
-    const chain = [rel];
-    for (let p = parent.get(file); p; p = parent.get(p)) chain.unshift(relTo(root, p));
-    out.push(chain.join(" -> "));
+    out.push(chainTo(root, parent, file));
+  }
+  return out;
+}
+
+// P3: the same walk; under documents/ only the shapes, the schema and the record comparison.
+function documentViolations(root: string, agentFiles: string[], graph: Graph): string[] {
+  const parent = reachable(agentFiles, graph);
+  const out: string[] = [];
+  for (const file of parent.keys()) {
+    const rel = relTo(root, file);
+    if (/^src\/lib\/documents(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !DOCUMENTS_OK.test(rel)) {
+      out.push(chainTo(root, parent, file));
+    }
   }
   return out;
 }
@@ -241,6 +268,7 @@ function check(root: string, agentFiles: string[], host: Host) {
     problems: graph.problems,
     boundary: boundaryViolations(root, agentFiles, graph),
     ledger: ledgerViolations(root, agentFiles, graph),
+    documents: documentViolations(root, agentFiles, graph),
   };
 }
 
@@ -280,6 +308,11 @@ describe("agent import boundary, on the real tree", () => {
 
   it("P2: nothing an agent file reaches writes money or calls a payment or accounting adapter", () => {
     expect(result.ledger).toEqual([]);
+  });
+
+  it("P3: nothing an agent file reaches uploads, stores or reads a document with the model", () => {
+    expect(reached).toContain("src/lib/documents/match.ts");
+    expect(result.documents).toEqual([]);
   });
 });
 
@@ -447,5 +480,26 @@ describe("the walker itself, on fixture trees", () => {
     });
     expect(out.problems).toEqual([]);
     expect(out.ledger).toEqual(["src/lib/agent/operator/y.ts -> src/lib/money/execute.ts"]);
+  });
+
+  it("P3: allows the document shapes, schema and comparison, and catches the upload, store and read", () => {
+    const out = run({
+      "src/lib/agent/gateway/doc.ts":
+        'import "../../documents/types";\nimport "../../documents/match";\nimport "../../documents/candidates";',
+      "src/lib/agent/gateway/bad.ts": 'import { uploadDocument } from "@/lib/documents/service";',
+      "src/lib/agent/operator/x.ts": 'export * from "../../Documents/store";',
+      "src/lib/documents/types.ts": "",
+      "src/lib/documents/match.ts": 'import "./types";',
+      "src/lib/documents/candidates.ts": 'import "./match";',
+      "src/lib/documents/service.ts": 'import "./read";',
+      "src/lib/documents/read.ts": "",
+      "src/lib/Documents/store.ts": "",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.documents.sort()).toEqual([
+      "src/lib/agent/gateway/bad.ts -> src/lib/documents/service.ts",
+      "src/lib/agent/gateway/bad.ts -> src/lib/documents/service.ts -> src/lib/documents/read.ts",
+      "src/lib/agent/operator/x.ts -> src/lib/Documents/store.ts",
+    ]);
   });
 });

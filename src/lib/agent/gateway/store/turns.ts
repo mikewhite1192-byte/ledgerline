@@ -64,7 +64,14 @@ export async function openTurn(
   }
 
   const tenant = await readTenant(q);
-  const summary = await buildStateSummary(q, session, conversationId, input.now, input.summaryChars);
+  const summary = await buildStateSummary(
+    q,
+    session,
+    conversationId,
+    input.now,
+    input.summaryChars,
+    input.text,
+  );
   const next = await q.query<{ seq: number | string }>(
     "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM turns WHERE conversation_id = CAST($1 AS uuid)",
     [conversationId],

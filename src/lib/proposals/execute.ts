@@ -5,6 +5,7 @@ import { executeAdvanceProposal, precheckAdvanceProposal } from "../advances/app
 import { assertMembership } from "../tenant/context";
 import { overrideReasonOf } from "../agent/auditor/words";
 import { executeDetentionCharge } from "./executors/detention-charge";
+import { loadRateFill } from "./executors/load-rate-fill";
 import { payCorrectionExecutor } from "./executors/pay-correction";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
@@ -31,6 +32,7 @@ export const PROPOSAL_KINDS = [
   "advance_payout",
   "pay_correction",
   "invoice_fix",
+  "load_rate_fill",
   "detention_charge",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
@@ -118,7 +120,8 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 
 // One executor per kind. advance_payout creates the advances row at approval and pays it through
 // the money executor (src/lib/advances/approve.ts), with a precheck that refuses before the
-// approval when the payout could not run. pay_correction writes one pay item for the next pay run
+// approval when the payout could not run. load_rate_fill writes a load's missing rate and moves
+// no money. pay_correction writes one pay item for the next pay run
 // (src/lib/proposals/executors/pay-correction.ts), with a precheck that refuses a stale fix before
 // the approval. invoice_fix has none yet, so it is refused as not_executable. detention_charge is
 // read through its release switch on every approval: with detentionEnabled off the kind has no
@@ -134,6 +137,7 @@ export const EXECUTORS: ExecutorRegistry = {
     { precheck: precheckAdvanceProposal },
   ),
   pay_correction: payCorrectionExecutor,
+  load_rate_fill: loadRateFill,
   get detention_charge() {
     return flags.detentionEnabled ? executeDetentionCharge : undefined;
   },
