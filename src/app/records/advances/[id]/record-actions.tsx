@@ -16,7 +16,7 @@ const ROUTES: Readonly<Record<Action, string>> = {
 };
 
 type Summary = { checked: number; confirmed: number; failed: number; stillUnknown: number };
-type Body = { error?: unknown; status?: unknown; summary?: Summary; tooNew?: unknown };
+type Body = { error?: unknown; status?: unknown; summary?: Summary; tooNew?: unknown; stillWaiting?: unknown };
 
 function done(action: Action, body: Body): string {
   if (action === "check") {
@@ -25,6 +25,12 @@ function done(action: Action, body: Body): string {
       // A send still in flight is read back only after a minute; it is waiting, not nothing.
       if (typeof body.tooNew === "number" && body.tooNew > 0) {
         return "The payout or post was sent less than a minute ago, too soon to check. Check again in a minute.";
+      }
+      // Still sent or unknown, but not settled by this pass: waiting, so never "nothing".
+      if (typeof body.stillWaiting === "number" && body.stillWaiting > 0) {
+        const n = body.stillWaiting;
+        const what = n === 1 ? "1 payment is" : `${n} payments are`;
+        return `${what} still waiting on the payment provider. Nothing was changed. Check again later.`;
       }
       return "Nothing was waiting to be checked.";
     }

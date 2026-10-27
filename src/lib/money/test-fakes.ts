@@ -80,6 +80,10 @@ export class FakeLedger {
     return [...this.rows.values()][0];
   }
 
+  private ofSubject(r: MoneyAction, subject: { table: string; id: string }): boolean {
+    return r.subjectTable === subject.table && r.subjectId === subject.id;
+  }
+
   private age(r: MoneyAction): MoneyAction {
     return { ...r, sentSecondsAgo: r.sentAt === null ? null : this.sentAgeSeconds };
   }
@@ -156,8 +160,11 @@ export class FakeLedger {
       this.rows.set(id, { ...r, state: "sent", sentAt: "2026-11-02T15:00:01.000Z" });
       return true;
     },
-    settle: async (_q, id, s: Settlement) => {
+    settle: async (_q, id, s: Settlement, pastLimit) => {
       this.events.push(`settle:${s.to}${"via" in s ? `:${s.via}` : ""}`);
+      if (pastLimit !== undefined && !(s.to !== "unknown" && s.via === "read_back")) {
+        throw new RangeError("the check limit is lifted only for a read-back");
+      }
       const r = this.row(id);
       if (s.to === "unknown") {
         if (r.state !== "sent") return false;
@@ -168,7 +175,8 @@ export class FakeLedger {
         s.via === "response"
           ? r.state === "sent"
           : s.via === "read_back"
-            ? (r.state === "sent" || r.state === "unknown") && r.checkCount < MAX_CHECKS
+            ? (r.state === "sent" || r.state === "unknown") &&
+              (pastLimit === undefined ? r.checkCount < MAX_CHECKS : this.ofSubject(r, pastLimit))
             : r.state === "reserved";
       if (!from) return false;
       const outside = "outside" in s ? s.outside : undefined;
@@ -187,20 +195,21 @@ export class FakeLedger {
         outsideId: outside?.id ?? null,
         outsideRef: outside?.ref ?? null,
         outsideAmountCents: outside?.amountCents ?? null,
-        checkCount: read ? r.checkCount + 1 : r.checkCount,
+        checkCount: read ? Math.min(r.checkCount + 1, MAX_CHECKS) : r.checkCount,
         lastCheckedAt: read ? "2026-11-02T15:00:02.000Z" : r.lastCheckedAt,
       });
       return true;
     },
-    bumpCheck: async (_q, id, category) => {
+    bumpCheck: async (_q, id, category, pastLimit) => {
       this.events.push("bump");
       const r = this.row(id);
-      if ((r.state !== "sent" && r.state !== "unknown") || r.checkCount >= MAX_CHECKS) return false;
+      if (r.state !== "sent" && r.state !== "unknown") return false;
+      if (pastLimit === undefined ? r.checkCount >= MAX_CHECKS : !this.ofSubject(r, pastLimit)) return false;
       this.rows.set(id, {
         ...r,
         state: "unknown",
         failureCategory: category,
-        checkCount: r.checkCount + 1,
+        checkCount: Math.min(r.checkCount + 1, MAX_CHECKS),
         lastCheckedAt: "2026-11-02T15:00:03.000Z",
       });
       return true;
@@ -208,8 +217,11 @@ export class FakeLedger {
     readAction: async (_q, id) => this.age(this.row(id)),
     // Same filter and order as the real read: the given kinds (and subject) only, never-checked
     // rows first, then the least recently checked, then the oldest send, then the id.
-    readPending: async (_q, olderThanSeconds, limit = 5, kinds = MONEY_ACTION_KINDS, subject) => {
+    readPending: async (_q, olderThanSeconds, limit = 5, kinds = MONEY_ACTION_KINDS, subject, ignoreCheckLimit = false) => {
       if (kinds.length === 0) throw new RangeError("kinds must name at least one kind");
+      if (ignoreCheckLimit && subject === undefined) {
+        throw new RangeError("the check limit is lifted only for one named subject");
+      }
       this.pendingKinds.push([...kinds]);
       const order = (a: string | null, b: string | null) =>
         a === b ? 0 : a === null ? -1 : b === null ? 1 : a < b ? -1 : 1;
@@ -217,8 +229,8 @@ export class FakeLedger {
         .filter(
           (r) =>
             kinds.includes(r.kind) &&
-            (subject === undefined || (r.subjectTable === subject.table && r.subjectId === subject.id)) &&
-            r.checkCount < MAX_CHECKS &&
+            (subject === undefined || this.ofSubject(r, subject)) &&
+            (ignoreCheckLimit || r.checkCount < MAX_CHECKS) &&
             (r.state === "unknown" ||
               (r.state === "sent" && this.sentAgeSeconds > olderThanSeconds)),
         )

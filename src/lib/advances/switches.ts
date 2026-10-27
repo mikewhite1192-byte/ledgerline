@@ -1,5 +1,5 @@
 import { flags } from "../../config/flags";
-import type { LocalDate } from "../time/local-date";
+import { isLocalDate, type LocalDate } from "../time/local-date";
 
 // The advance flow's switches, read fresh on every call (never cached), so a switch turned off
 // stops the next request. The payout gate is asked before the ledger reserves a row, on approval
@@ -21,8 +21,7 @@ export function payoutGate(amountCents: number, today: LocalDate): PayoutRefusal
   if (!Number.isSafeInteger(p.capCents) || !Number.isSafeInteger(amountCents) || amountCents > p.capCents) {
     return "over_cap";
   }
-  if (typeof p.startDate !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(p.startDate) || today < p.startDate) {
-    return "before_start";
-  }
+  // A start date that is not a real calendar date (2026-00-01, 2026-02-30) is unknown, so closed.
+  if (!isLocalDate(p.startDate) || today < p.startDate) return "before_start";
   return null;
 }

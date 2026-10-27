@@ -72,5 +72,8 @@ export function proposalCardFrom(
     confirmQuestion,
     flagNote: p.flagged ? flagNoteFor(p.flagCategories) : undefined,
     ...(audit ? { audit: auditFor(p, audit) } : {}),
+    // Only an advance has an executor that resumes an approval left approved by a stop before its
+    // run finished; an executing one is already running (its advance's page checks it).
+    ...(p.kind === "advance_payout" && p.status === "approved" ? { canResume: true } : {}),
   };
 }

@@ -196,6 +196,11 @@ describe("the payout switches", () => {
     expect(payoutGate(1, "2026-11-02")).toBe("over_cap");
     flags.advancePayouts = { armed: true, capCents: 50_000, startDate: "soon" };
     expect(payoutGate(1, "2026-11-02")).toBe("before_start");
+    // The right shape but not a real calendar date: closed too, whatever today is.
+    for (const startDate of ["2026-00-01", "2026-13-01", "2026-02-30", "2026-10-00"]) {
+      flags.advancePayouts = { armed: true, capCents: 50_000, startDate };
+      expect(payoutGate(1, "2026-11-02"), startDate).toBe("before_start");
+    }
     flags.advancePayouts = { armed: true, capCents: 50_000, startDate: "2026-10-27" };
     expect(payoutGate(1.5, "2026-11-02")).toBe("over_cap");
   });

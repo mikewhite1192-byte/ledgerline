@@ -28,7 +28,9 @@ import {
 // amount_mismatch, for a person. Found failed or canceled: failed as outside_failed (no money
 // moved; a person may retry). Still pending, a status outside the contract, nothing found, an
 // error or a timeout: still unknown, one more check counted; at the check limit the row needs a
-// person and the pass skips it. Never sends anything new. Agent code cannot import this file
+// person and the pass skips it, except in a person's check on one record's page
+// (ignoreCheckLimit, accepted only with a subject), which still reads that record's rows back the
+// same read-only way. Never sends anything new. Agent code cannot import this file
 // (eslint.config.mjs).
 
 export type ReconcileHooks = {
@@ -48,6 +50,10 @@ export type ReconcileOptions = {
   hooks: Partial<Record<MoneyActionKind, ReconcileHooks>>;
   // Only this subject's rows (a check pressed on one record's page); every subject when absent.
   subject?: PendingSubject;
+  // A person's check on that one record: its rows are read back even at the check limit (still
+  // read-only toward the outside system). Refused without a subject, so an unscoped or scheduled
+  // pass always keeps the limit.
+  ignoreCheckLimit?: boolean;
 };
 
 export type ReconcileSummary = {
@@ -156,6 +162,14 @@ export async function reconcileMoneyActions(
   options: ReconcileOptions,
   deps: Partial<MoneyDeps> = {},
 ): Promise<ReconcileSummary> {
+  if (options.ignoreCheckLimit !== undefined && typeof options.ignoreCheckLimit !== "boolean") {
+    throw new RangeError("ignoreCheckLimit must be a boolean");
+  }
+  if (options.ignoreCheckLimit === true && options.subject === undefined) {
+    throw new RangeError("the check limit is lifted only for one named subject");
+  }
+  // The subject whose rows may be read back past the limit, or none.
+  const pastLimit = options.ignoreCheckLimit === true ? options.subject : undefined;
   const d = resolveDeps(deps);
   const limit = options.limit ?? 5;
   const olderThanSeconds = options.olderThanSeconds ?? 120;
@@ -178,7 +192,7 @@ export async function reconcileMoneyActions(
   const kinds = await servableKinds(db, tenantId, options.hooks, d);
   if (kinds.length === 0) return summary;
   const pending = await db.withTenant(tenantId, (q) =>
-    d.store.readPending(q, olderThanSeconds, limit, kinds, options.subject),
+    d.store.readPending(q, olderThanSeconds, limit, kinds, options.subject, pastLimit !== undefined),
   );
 
   for (const action of pending) {
@@ -200,9 +214,9 @@ export async function reconcileMoneyActions(
     try {
       const state = await db.withTenant(tenantId, async (q) => {
         if (!("to" in s)) {
-          return (await d.store.bumpCheck(q, action.id, s.category)) ? "unknown" : "moved";
+          return (await d.store.bumpCheck(q, action.id, s.category, pastLimit)) ? "unknown" : "moved";
         }
-        if (!(await d.store.settle(q, action.id, s))) return "moved";
+        if (!(await d.store.settle(q, action.id, s, pastLimit))) return "moved";
         const after = await d.store.readAction(q, action.id);
         if (after.state === "confirmed") await hooks.onConfirmed(q, after);
         if (after.state === "failed" && hooks.onFailed) await hooks.onFailed(q, after);
@@ -219,7 +233,7 @@ export async function reconcileMoneyActions(
       summary.errors += 1;
       d.log(`money: check of ${action.id} did not commit (${categoryOf(err)})`);
       try {
-        await db.withTenant(tenantId, (q) => d.store.bumpCheck(q, action.id, "unknown"));
+        await db.withTenant(tenantId, (q) => d.store.bumpCheck(q, action.id, "unknown", pastLimit));
       } catch {
         // The next pass finds the row as it was.
       }

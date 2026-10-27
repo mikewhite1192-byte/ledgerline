@@ -36,8 +36,30 @@ describe("the advance page's buttons", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("says a payment the pass could not settle is still waiting, never that nothing was waiting", async () => {
+    for (const [stillWaiting, text] of [
+      [1, "1 payment is still waiting on the payment provider. Nothing was changed. Check again later."],
+      [2, "2 payments are still waiting on the payment provider. Nothing was changed. Check again later."],
+    ] as const) {
+      answer(200, { ok: true, summary: summary(0), tooNew: 0, stillWaiting });
+      const view = render(<RecordActionButtons advanceId={ADVANCE} actions={{ ...NONE, check: true }} />);
+      fireEvent.click(screen.getByRole("button", { name: "Check pending" }));
+      expect((await screen.findByRole("status")).textContent).toBe(text);
+      view.unmount();
+    }
+  });
+
+  it("keeps the too-new notice when a send is too new and another is still waiting", async () => {
+    answer(200, { ok: true, summary: summary(0), tooNew: 1, stillWaiting: 1 });
+    render(<RecordActionButtons advanceId={ADVANCE} actions={{ ...NONE, check: true }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Check pending" }));
+    expect(
+      (await screen.findByRole("status")).textContent,
+    ).toBe("The payout or post was sent less than a minute ago, too soon to check. Check again in a minute.");
+  });
+
   it("says nothing was waiting only when nothing is", async () => {
-    answer(200, { ok: true, summary: summary(0), tooNew: 0 });
+    answer(200, { ok: true, summary: summary(0), tooNew: 0, stillWaiting: 0 });
     render(<RecordActionButtons advanceId={ADVANCE} actions={{ ...NONE, check: true }} />);
     fireEvent.click(screen.getByRole("button", { name: "Check pending" }));
     expect((await screen.findByRole("status")).textContent).toBe("Nothing was waiting to be checked.");

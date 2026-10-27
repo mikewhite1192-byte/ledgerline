@@ -8,11 +8,13 @@ import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, TenantDb } from "../db/types";
 import { dbLedgerStore, type LedgerStore } from "../money/execute";
+import { reconcileMoneyActions } from "../money/reconcile";
 import { addAdvance, clearLedger, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal, type Executor, type ExecutorRegistry } from "../proposals/execute";
 import {
   checkAdvancePayouts,
   executeAdvanceProposal,
+  payoutReconcileHooks,
   precheckAdvanceProposal,
   retryAdvancePayout,
   type AdvanceDeps,
@@ -350,6 +352,100 @@ describe("the advance flow", () => {
     expect((await proposalRow(id)).status).toBe("done");
   });
 
+  it("resumes an approval that stopped before its advance existed, running the executor once and paying once", async () => {
+    const id = await addProposal();
+    // The executor stops after the gate moved the proposal to approved, before any work.
+    const crashing: ExecutorRegistry = {
+      advance_payout: Object.assign(
+        async (): Promise<never> => {
+          throw new Error("stopped");
+        },
+        { precheck: precheckAdvanceProposal },
+      ),
+    };
+    await expect(approve(id, false, { ...deps(), executors: crashing })).rejects.toThrow("stopped");
+    expect(await proposalRow(id)).toMatchObject({ status: "approved", money_action_id: null });
+    expect(await flowAdvances()).toEqual([]);
+    expect(await ledger()).toEqual([]);
+
+    // Resume: the same approve call; the approval stands, so no check runs again.
+    let runs = 0;
+    const counting: ExecutorRegistry = {
+      advance_payout: Object.assign(
+        (...args: Parameters<Executor>) => {
+          runs += 1;
+          return executeAdvanceProposal(...args);
+        },
+        { precheck: precheckAdvanceProposal },
+      ),
+    };
+    expect(await approve(id, false, { ...deps(), executors: counting })).toMatchObject({ ok: true, status: "done" });
+    expect(runs).toBe(1);
+    expect(await flowAdvances()).toEqual([expect.objectContaining({ status: "paid", paid: true })]);
+    expect(await ledger()).toEqual([expect.objectContaining({ kind: "advance_payout", state: "confirmed", attempt: 1 })]);
+    expect(mock.sendCount).toBe(1);
+    // A second resume finds it decided and never reaches the executor.
+    expect(await approve(id, false, { ...deps(), executors: counting })).toMatchObject({
+      ok: false,
+      category: "already_decided",
+    });
+    expect(runs).toBe(1);
+    expect(await ledger()).toHaveLength(1);
+    expect(mock.sendCount).toBe(1);
+  });
+
+  it("lets Check pending read back a payout past the automatic check limit, which the automatic pass skips", async () => {
+    const id = await addProposal();
+    mock.confirmSilently();
+    expect(await approve(id)).toMatchObject({ ok: true, status: "executing" });
+    const [adv] = await flowAdvances();
+    const [row] = await ledger();
+    expect(row.state).toBe("unknown");
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute(
+        "UPDATE money_actions SET check_count = 50 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [row.id],
+      ),
+    );
+    // The automatic pass over the whole carrier stops at the limit.
+    const sweep = await reconcileMoneyActions(
+      app,
+      A.session,
+      { hooks: { advance_payout: payoutReconcileHooks }, olderThanSeconds: 0 },
+      deps().money,
+    );
+    expect(sweep).toMatchObject({ checked: 0 });
+    expect(await ledger()).toEqual([expect.objectContaining({ state: "unknown" })]);
+
+    // A person's check of this advance reads it back and adopts it, sending nothing new.
+    expect(await checkAdvancePayouts(A.session, adv.id, deps())).toEqual({
+      ok: true,
+      summary: expect.objectContaining({ checked: 1, confirmed: 1 }),
+      tooNew: 0,
+      stillWaiting: 0,
+    });
+    expect((await flowAdvances())[0]).toMatchObject({ status: "paid", paid: true });
+    expect(await ledger()).toEqual([expect.objectContaining({ state: "confirmed", attempt: 1 })]);
+    expect(mock.sendCount).toBe(1);
+  });
+
+  it("tells Check pending a payout is still waiting when the pass could not read it, and changes nothing", async () => {
+    const id = await addProposal();
+    mock.confirmSilently();
+    expect(await approve(id)).toMatchObject({ ok: true, status: "executing" });
+    const [adv] = await flowAdvances();
+    expect(await ledger()).toEqual([expect.objectContaining({ state: "unknown" })]);
+    const notReady: PaymentAdapter = { ...mock, system: "mock", ready: async () => ({ ok: false, category: "not_configured" }) };
+    expect(await checkAdvancePayouts(A.session, adv.id, deps({ payment: notReady }))).toEqual({
+      ok: true,
+      summary: expect.objectContaining({ checked: 0 }),
+      tooNew: 0,
+      stillWaiting: 1,
+    });
+    expect(await ledger()).toEqual([expect.objectContaining({ state: "unknown" })]);
+    expect((await flowAdvances())[0]).toMatchObject({ status: "approved", paid: false });
+  });
+
   it("stops before the ledger when the payment service is not ready, and a later approval adopts it", async () => {
     const id = await addProposal();
     const notReady: PaymentAdapter = { ...mock, system: "mock", ready: async () => ({ ok: false, category: "not_configured" }) };
@@ -678,6 +774,7 @@ describe("the advance flow", () => {
       ok: true,
       summary: expect.objectContaining({ checked: 0 }),
       tooNew: 1,
+      stillWaiting: 0,
     });
     expect(await ledger()).toEqual([expect.objectContaining({ state: "sent" })]);
 
@@ -690,6 +787,7 @@ describe("the advance flow", () => {
       ok: true,
       summary: expect.objectContaining({ checked: 1, confirmed: 1 }),
       tooNew: 0,
+      stillWaiting: 0,
     });
     expect((await flowAdvances())[0]).toMatchObject({ status: "paid", paid: true });
     expect(mock.sendCount).toBe(1);

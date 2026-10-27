@@ -176,6 +176,23 @@ describe("AgentChat with the auditor", () => {
     );
   });
 
+  it("resumes an approved advance that stopped, with one click and one approve request", async () => {
+    const approved: TurnView = {
+      ...unflagged,
+      proposals: [{ ...checked("pass").proposals[0], status: "approved" }],
+    };
+    const fetchFn = stubFetch({ ...approved, proposals: [{ ...approved.proposals[0], status: "done" }] });
+    render(<AgentChat initialTurns={[approved]} streamMode="poll" auditorOn />);
+    expect(screen.queryByRole("button", { name: "Reject" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(fetchFn.mock.calls.some(([url]) => url.endsWith("/approve"))).toBe(true));
+    const approves = fetchFn.mock.calls.filter(([url]) => url.endsWith("/approve"));
+    expect(approves).toHaveLength(1);
+    expect(approves[0][0]).toBe("/api/proposals/p-1/approve");
+    expect(JSON.parse(String(approves[0][1]?.body))).toEqual({ confirmed: false });
+    expect(fetchFn.mock.calls.some(([url]) => url.endsWith("/audit"))).toBe(false);
+  });
+
   it("asks nothing while the auditor is off, and says so on the card", () => {
     const fetchFn = stubFetch(unflagged);
     render(<AgentChat initialTurns={[unflagged]} streamMode="poll" />);

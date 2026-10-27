@@ -528,14 +528,17 @@ export async function retryAdvancePayout(
 const CHECK_AFTER_SECONDS = 60;
 
 export type CheckResult =
-  // tooNew: this advance's rows still sent too recently for the pass to read back, counted only
-  // when the pass checked nothing, so the notice says "check again in a minute", not "nothing".
-  | { ok: true; summary: ReconcileSummary; tooNew: number }
+  // tooNew: this advance's rows still sent too recently for the pass to read back. stillWaiting:
+  // its other rows still sent or unknown that the pass did not settle. Both are counted only when
+  // the pass checked nothing, so the notice says what is still waiting, never "nothing".
+  | { ok: true; summary: ReconcileSummary; tooNew: number; stillWaiting: number }
   | { ok: false; category: string; retryable: boolean };
 
 // Check pending: the reconcile pass over this advance's own open payouts and posts (each read back
 // by its request id), so the check and its notice cover only this advance. Never sends anything
-// new; a payout found paid gets the same follow-up write the approval would have made.
+// new; a payout found paid gets the same follow-up write the approval would have made. A person
+// asked, so the pass reads this advance's rows back even past the automatic check limit; the
+// read stays read-only and only a definite answer moves a row.
 export async function checkAdvancePayouts(
   session: Session,
   advanceId: string,
@@ -560,17 +563,20 @@ export async function checkAdvancePayouts(
       limit: 5,
       olderThanSeconds: CHECK_AFTER_SECONDS,
       subject: { table: "advances", id: found.id },
+      ignoreCheckLimit: true,
     },
     deps.money,
   );
   // By the database's clock, the one the pass's window uses. A row the pass read back is no
   // longer sent, so only rows it left for later are counted.
   let tooNew = 0;
+  let stillWaiting = 0;
   if (summary.checked === 0) {
     const rows = await db.withTenant(session.tenantId, (q) => readBySubject(q, "advances", found.id));
-    tooNew = rows.filter(
-      (a) => a.state === "sent" && a.sentSecondsAgo !== null && a.sentSecondsAgo <= CHECK_AFTER_SECONDS,
-    ).length;
+    for (const a of rows) {
+      if (a.state === "sent" && a.sentSecondsAgo !== null && a.sentSecondsAgo <= CHECK_AFTER_SECONDS) tooNew += 1;
+      else if (a.state === "sent" || a.state === "unknown") stillWaiting += 1;
+    }
   }
-  return { ok: true, summary, tooNew };
+  return { ok: true, summary, tooNew, stillWaiting };
 }
