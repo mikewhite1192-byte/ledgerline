@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isLocalDate } from "../lib/time/local-date";
-import { flags } from "./flags";
+import { flags, type Flags } from "./flags";
+import { applyLocalOverrides, LOCAL_OVERRIDABLE } from "./local-overrides";
 
 describe("flags", () => {
   it("ships every outside effect dark", () => {
@@ -85,5 +86,105 @@ describe("flags", () => {
   it("stops any one model job at $10 in an hour", () => {
     expect(flags.aiJobHourlyCapCents).toBe(1000);
     expect(Number.isSafeInteger(flags.aiJobHourlyCapCents)).toBe(true);
+  });
+});
+
+describe("local overrides for the demo-path test", () => {
+  const ARN = "arn:aws:rds:us-east-2:000000000000:cluster:example";
+  const ALL_ON = JSON.stringify(Object.fromEntries(LOCAL_OVERRIDABLE.map((k) => [k, true])));
+  let logged: string[];
+  const copy = (): Flags => structuredClone(flags);
+
+  beforeEach(() => {
+    logged = [];
+    const record = (...args: unknown[]) => {
+      logged.push(args.map(String).join(" "));
+    };
+    vi.spyOn(console, "log").mockImplementation(record);
+    vi.spyOn(console, "error").mockImplementation(record);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("leaves the shipped switches alone when nothing is set, as under test", () => {
+    const target = copy();
+    expect(applyLocalOverrides(target, { NODE_ENV: "development" })).toEqual([]);
+    expect(applyLocalOverrides(target, { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: "" })).toEqual([]);
+    expect(target).toEqual(flags);
+    expect(logged).toEqual([]);
+  });
+
+  it("in local mode, turns on the allowlisted switches and nothing else", () => {
+    const target = copy();
+    const keys = applyLocalOverrides(target, { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: ALL_ON });
+    expect(keys).toEqual([...LOCAL_OVERRIDABLE]);
+    expect(target.aiEnabled && target.agentEnabled && target.auditorEnabled).toBe(true);
+    expect(target.reportsEnabled && target.driverNotesEnabled).toBe(true);
+    expect(target.advancesEnabled && target.payoutsEnabled && target.advancePayouts.armed).toBe(true);
+    // Everything else, every cap and limit among it, is exactly as shipped.
+    expect({ ...target, advancePayouts: { ...target.advancePayouts, armed: false } }).toEqual({
+      ...flags,
+      aiEnabled: true,
+      agentEnabled: true,
+      auditorEnabled: true,
+      reportsEnabled: true,
+      driverNotesEnabled: true,
+      advancesEnabled: true,
+      payoutsEnabled: true,
+    });
+    expect(target.advancePayouts.capCents).toBe(flags.advancePayouts.capCents);
+    expect(target.advancePayouts.startDate).toBe(flags.advancePayouts.startDate);
+  });
+
+  it("is ignored in a production build", () => {
+    const target = copy();
+    expect(applyLocalOverrides(target, { NODE_ENV: "production", FLAGS_LOCAL_OVERRIDES: ALL_ON })).toEqual([]);
+    expect(target).toEqual(flags);
+    expect(logged).toEqual(["flags: FLAGS_LOCAL_OVERRIDES ignored outside local mode"]);
+  });
+
+  it("is ignored whenever an Aurora cluster is configured", () => {
+    for (const NODE_ENV of ["development", "test"]) {
+      const target = copy();
+      const env = { NODE_ENV, DB_CLUSTER_ARN: ARN, FLAGS_LOCAL_OVERRIDES: ALL_ON };
+      expect(applyLocalOverrides(target, env)).toEqual([]);
+      expect(target).toEqual(flags);
+    }
+  });
+
+  it("never overrides a cap, a limit, a date or a provider, and then changes nothing at all", () => {
+    for (const bad of [
+      { agentTurnLimits: { maxTurnCents: 100_000 } },
+      { "agentTurnLimits.maxTurnCents": 100_000 },
+      { "advancePayouts.capCents": 10_000_000 },
+      { advancePayouts: { armed: true, capCents: 10_000_000, startDate: "2020-01-01" } },
+      { "advancePayouts.startDate": "2020-01-01" },
+      { gatewayLimits: { payCorrectionMaxCents: 1, invoiceFixMaxCents: 1 } },
+      { approverRole: { adminAboveCents: 1 } },
+      { driverNoteLimits: { maxNoteCents: 1000, maxBatchCents: 1000, maxOutputTokens: 1 } },
+      { advancesLimits: { proposalsPerDay: 1000 } },
+      { paymentProvider: "stripe" },
+      { triageProvider: "baseten" },
+      { auditorStart: "2020-01-01T00:00:00Z" },
+      { accountingEnabled: true },
+      { driverNotesEmailEnabled: true },
+      { agentEnabled: true, "agentTurnLimits.maxToolSteps": 99 },
+    ]) {
+      const target = copy();
+      const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify(bad) };
+      expect(applyLocalOverrides(target, env), JSON.stringify(bad)).toEqual([]);
+      expect(target, JSON.stringify(bad)).toEqual(flags);
+    }
+  });
+
+  it("changes nothing for a value that is not JSON, not an object or not a boolean", () => {
+    for (const raw of ["{agentEnabled:true}", "[]", "true", "null", '{"agentEnabled":"true"}', '{"agentEnabled":1}']) {
+      const target = copy();
+      expect(applyLocalOverrides(target, { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: raw }), raw).toEqual([]);
+      expect(target, raw).toEqual(flags);
+    }
+    expect(logged).toHaveLength(6);
   });
 });

@@ -55,6 +55,9 @@ Demo logins are in the submission notes.
 All data is synthetic. No real money moves: payouts run in test mode and accounting posts to a
 QuickBooks sandbox company.
 
+To walk the demo path in a browser (a local Postgres running): `npx playwright install chromium`
+once, then `npm run e2e`. The models answer from a recording, so nothing leaves the machine.
+
 ## Advances: how a request becomes a payout
 
 1. A request arrives: a person fills in the request desk (`/advances/new`) or asks in the chat.

@@ -26,6 +26,10 @@ cdk.context.json
 *.sql.gz
 *.backup
 
+# end-to-end run output (traces, screenshots, reports)
+test-results/
+playwright-report/
+
 # framework output
 *.tsbuildinfo
 next-env.d.ts

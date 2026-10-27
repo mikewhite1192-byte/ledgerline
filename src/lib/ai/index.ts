@@ -4,6 +4,7 @@ import type { Session } from "../auth/claims";
 import { DbError, getDb, type TenantDb } from "../db";
 import { ForbiddenError } from "../tenant/context";
 import { isUuid } from "../uuid";
+import { hostFor } from "./host";
 import { apiKey, forgetKey, type SecretsClient } from "./keys";
 import {
   audioReserve,
@@ -300,6 +301,8 @@ async function send<T, U extends Price["unit"]>(
   // The dedupe key: the row's primary key, made here, before the reservation.
   const callId = randomUUID();
   const where = `ai: ${target} ${model} ${kind} ${c.purpose}`;
+  // The local replay host in local mode only; anywhere else a set override refuses here.
+  const url = hostFor(p.url);
   try {
     await reserve(db, session, {
       callId,
@@ -327,7 +330,7 @@ async function send<T, U extends Price["unit"]>(
   const started = ctx.clock();
   const raw = await post(
     ctx.fetchFn,
-    { url: p.url, key, body: p.body, timeoutMs: timeoutMs(), accept: p.accept },
+    { url, key, body: p.body, timeoutMs: timeoutMs(), accept: p.accept },
     p.parse,
   );
   const durationMs = Math.round(ctx.clock() - started);

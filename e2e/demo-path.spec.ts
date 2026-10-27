@@ -1,0 +1,190 @@
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import { APP_URL, E2E_CARRIER, E2E_LOGIN, FAKE_HOST } from "./env.local-mode";
+
+// The demo path, as a judge would walk it: sign in, ask the agent, open how it worked the answer
+// out, get a proposal card (never approved here), read the models page, sign out.
+//
+// Local (npm run e2e): next dev on a fresh seeded database, every merged switch on through the
+// local overrides, the models answered from the replay fixture by the fake host. After each model
+// step the fake host's misses are read first, so a request with no recorded answer fails red with
+// its fingerprint and what to re-record.
+// Deployed (npm run e2e:deployed): the site at E2E_BASE_URL with the demo login from the
+// environment. A step whose feature is not released there is marked skipped, never red.
+
+const DEPLOYED = process.env.E2E_TARGET === "deployed";
+const FIRST_QUESTION = "Who has a problem on this week's paystub?";
+// The hero driver of the seed (the same ids every seed at the anchor), asked for a modest amount
+// so the engine's limit allows it on any day of the demo week.
+const ADVANCE_QUESTION = "Propose a $100.00 advance for Monique Vasquez (BR-D07), requested today.";
+const TURN_TIMEOUT = 30_000;
+
+const VERDICTS = ["Checked by Muse Wonder: pass", "Muse Wonder has concerns", "Muse Wonder blocked this"];
+const AUDIT_LINES = [...VERDICTS, "Not checked", "Not checked: demo budget reached", "Auditor off"];
+
+type Features = { agent: boolean; auditor: boolean; reports: boolean };
+
+function login(): { email: string; password: string } | null {
+  if (!DEPLOYED) return E2E_LOGIN;
+  const email = process.env.E2E_DEMO_EMAIL?.trim();
+  const password = process.env.E2E_DEMO_PASSWORD;
+  return process.env.E2E_BASE_URL && email && password ? { email, password } : null;
+}
+
+async function features(baseURL: string): Promise<Features> {
+  const res = await fetch(new URL("/api/health", baseURL), { cache: "no-store" });
+  expect(res.status, "the health check answers").toBe(200);
+  const body = (await res.json()) as { features?: Partial<Features> };
+  // Unknown is not released: a missing flag reads false.
+  return {
+    agent: body.features?.agent === true,
+    auditor: body.features?.auditor === true,
+    reports: body.features?.reports === true,
+  };
+}
+
+// Local only: the fake host's requests with no recorded answer. Read before any assertion on what
+// the model said, so a stale fixture names the request to re-record instead of a vague timeout.
+async function expectNoReplayMisses(): Promise<void> {
+  if (DEPLOYED) return;
+  const res = await fetch(`${FAKE_HOST}/misses`, { cache: "no-store" });
+  const body = (await res.json()) as { served: number; misses: { fingerprint: string; label: string }[] };
+  const lines = body.misses.map((m) => `${m.fingerprint} ${m.label}`);
+  expect(lines, "model requests with no recorded answer (re-record with npm run e2e:record)").toEqual([]);
+  expect(body.served, "the replay host answered the model calls").toBeGreaterThan(0);
+}
+
+// The newest message in the conversation, once its turn has finished: the composer is no longer
+// asking, and the answer carries its "How this was worked out" disclosure (shown only after the
+// turn ends on the server).
+async function finishedAnswer(page: Page, question: string): Promise<Locator> {
+  const conversation = page.getByRole("list", { name: "Conversation" });
+  await expect(conversation.getByText(question, { exact: true })).toBeVisible();
+  const answer = conversation.locator(":scope > li").last();
+  await expect(answer.getByRole("button", { name: "How this was worked out for this answer" })).toBeVisible({
+    timeout: TURN_TIMEOUT,
+  });
+  await expect(page.getByRole("button", { name: /^Asking/ })).toHaveCount(0, { timeout: TURN_TIMEOUT });
+  return answer;
+}
+
+async function answerText(answer: Locator): Promise<string> {
+  const paragraphs = answer.locator(":scope > div > p.text-body");
+  return (await paragraphs.allInnerTexts()).join(" ").trim();
+}
+
+test.describe.configure({ mode: "serial" });
+
+test("the demo path: sign in, ask, trace, a proposal card, the models page, sign out", async ({ page, baseURL }) => {
+  const creds = login();
+  test.skip(
+    creds === null,
+    "skipped: the deployed run needs E2E_BASE_URL, E2E_DEMO_EMAIL and E2E_DEMO_PASSWORD in the environment",
+  );
+  if (!creds || !baseURL) throw new Error("no base URL");
+
+  const on = await features(baseURL);
+  if (!DEPLOYED) {
+    // The local overrides took: the agent and the auditor run here even though main ships them off.
+    expect(on, "every merged switch is on in local mode").toMatchObject({ agent: true, auditor: true });
+    await test.step("warm up the dev server (local only)", async () => {
+      // next dev compiles each page and route on its first request; doing it here keeps the
+      // timed steps below about the app, not the compiler. Any answer is fine (405, 401, redirect).
+      const id = "00000000-0000-4000-8000-000000000000";
+      for (const path of [
+        "/sign-in",
+        "/",
+        "/models",
+        "/api/agent/turn",
+        `/api/agent/turns/${id}`,
+        `/api/agent/turns/${id}/trace`,
+        `/api/proposals/${id}/audit`,
+        "/api/auth/sign-out",
+      ]) {
+        await fetch(`${APP_URL}${path}`, { redirect: "manual", signal: AbortSignal.timeout(150_000) });
+      }
+    });
+  }
+
+  await test.step("1. sign in and land on the carrier's home", async () => {
+    await page.goto("/sign-in");
+    await page.getByLabel("Email").fill(creds.email);
+    // A type=password field: the trace never records what is typed here.
+    await page.getByLabel("Password").fill(creds.password);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page).toHaveURL(new URL("/", baseURL).toString());
+    await expect(page.getByText(E2E_CARRIER.name).first()).toBeVisible();
+  });
+
+  let firstAnswer: Locator | null = null;
+
+  await test.step("2. ask the agent a suggested question", async (step) => {
+    step.skip(!on.agent, "skipped: not released (agent)");
+    const chip = page.getByRole("list", { name: "Suggested questions" }).getByRole("button", { name: FIRST_QUESTION });
+    if (DEPLOYED && (await chip.count()) === 0) {
+      // A deployed thread may already hold turns, and the suggestions show only on an empty one.
+      await page.getByLabel("Your question").fill(FIRST_QUESTION);
+      await page.getByRole("button", { name: "Send" }).click();
+    } else {
+      await chip.click();
+    }
+    const answer = await finishedAnswer(page, FIRST_QUESTION);
+    await expectNoReplayMisses();
+    expect(await answerText(answer), "the agent's answer has words").not.toBe("");
+    firstAnswer = answer;
+  });
+
+  await test.step("3. the trace names Muse Spark and what the call cost", async (step) => {
+    step.skip(!on.agent || firstAnswer === null, "skipped: not released (agent)");
+    if (!firstAnswer) return;
+    await firstAnswer.getByRole("button", { name: "How this was worked out for this answer" }).click();
+    const steps = firstAnswer.getByRole("list", { name: "Steps, in order" });
+    await expect(steps).toBeVisible();
+    const sparkWithCost = steps
+      .locator(":scope > li")
+      .filter({ hasText: "Muse Spark" })
+      .filter({ hasText: /\d+(\.\d)? cents|\$\d+\.\d{2}/ });
+    await expect(sparkWithCost.first()).toBeVisible();
+  });
+
+  await test.step("4. a proposal card for the hero driver's advance, with the auditor's line", async (step) => {
+    step.skip(!on.agent, "skipped: not released (agent)");
+    await page.getByLabel("Your question").fill(ADVANCE_QUESTION);
+    await page.getByRole("button", { name: "Send" }).click();
+    const answer = await finishedAnswer(page, ADVANCE_QUESTION);
+    const card = answer.getByRole("article").first();
+    await expect(card).toBeVisible();
+    // The auditor's line settles first (its check starts once the card shows), then the replay
+    // misses are read, then what the card says.
+    const auditLine = card.getByText(new RegExp(`^(${AUDIT_LINES.join("|")})$`));
+    await expect(auditLine.first()).toBeVisible({ timeout: TURN_TIMEOUT });
+    await expectNoReplayMisses();
+
+    await expect(card.getByRole("heading", { level: 3 })).not.toBeEmpty();
+    await expect(card).toContainText(/\$\d{1,3}(,\d{3})*\.\d{2}/);
+    await expect(card.getByText("Why", { exact: true })).toBeVisible();
+    await expect(card.locator("ul > li").first()).not.toBeEmpty();
+    await expect(card.getByRole("button", { name: "Reject" })).toBeVisible();
+    // A card the auditor blocked offers "Override and approve" instead of Approve.
+    await expect(card.getByRole("button", { name: /^(Approve|Override and approve)/ })).toBeVisible();
+    const shown = (await auditLine.first().innerText()).trim();
+    if (on.auditor) expect(VERDICTS, "the auditor gave a verdict").toContain(shown);
+    else expect(shown).toBe("Auditor off");
+    // Approve is not clicked in this version of the path.
+  });
+
+  await test.step("5. the models page shows the week and the demo budget", async () => {
+    await page.goto("/models");
+    await expect(page.getByRole("heading", { name: "This pay week" })).toBeVisible();
+    // The calls just made are in this week's count.
+    if (on.agent) await expect(page.getByText("Model calls", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^Demo budget used, across every carrier: /)).toBeVisible();
+  });
+
+  await test.step("6. sign out returns to the sign-in page", async () => {
+    // Sign out sits in the carrier menu in the top bar.
+    await page.locator("summary").filter({ hasText: "carrier menu" }).click();
+    await page.getByRole("button", { name: "Sign out" }).filter({ visible: true }).first().click();
+    await expect(page).toHaveURL(/\/sign-in$/);
+    await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  });
+});
