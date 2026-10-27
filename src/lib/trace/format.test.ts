@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TARGETS } from "@/lib/ai/targets";
 import {
   decisionSentence,
   effortWords,
@@ -9,6 +10,7 @@ import {
   formatLatency,
   formatSpend,
   modelName,
+  PRIMARY_HOSTS,
   traceLines,
   traceTotals,
 } from "./format";
@@ -80,6 +82,25 @@ describe("words for codes", () => {
     expect(modelName("spark_open", "meta-models/muse-spark-open-1026")).toBe("Muse Spark Open");
     expect(modelName("sam", "sam-3.1")).toBe("SAM 3.1");
     expect(modelName("llama", "llama-9")).toBe("Other model");
+  });
+
+  it("names the standby host only when a call came from a host other than its target's own", () => {
+    const open = "meta-models/muse-spark-open-1026";
+    const standby = "accounts/fireworks/models/muse-spark-open";
+    expect(modelName("spark_open", standby, "fireworks")).toBe("Muse Spark Open (via Fireworks)");
+    expect(modelName("spark_open", open, "baseten")).toBe("Muse Spark Open");
+    expect(modelName("spark", "muse-spark-1.3", "meta")).toBe("Muse Spark 1.3");
+    expect(modelName("wonder", "muse-wonder-1.0", "meta")).toBe("Muse Wonder");
+    expect(modelName("spark_open", standby)).toBe("Muse Spark Open");
+    expect(modelName("spark_open", open, "")).toBe("Muse Spark Open");
+    // A host code this page does not know is never shown as the code.
+    expect(modelName("spark_open", open, "elsewhere")).toBe("Muse Spark Open (via another host)");
+    expect(modelName("spark_open", open, "__proto__")).toBe("Muse Spark Open (via another host)");
+    expect(modelName("llama", "llama-9", "fireworks")).toBe("Other model");
+    // This page's copy of each target's usual host is the wrapper's, target for target.
+    expect(PRIMARY_HOSTS).toEqual(
+      Object.fromEntries(Object.entries(TARGETS).map(([target, { provider }]) => [target, provider])),
+    );
   });
 
   it("writes effort and latency in plain words", () => {
@@ -267,6 +288,35 @@ describe("traceLines", () => {
     expect(whole.at(-1)).toMatchObject({ who: "Other model", text: "Made a model call for this turn" });
   });
 
+  it("shows both rows when Baseten failed and the standby host answered the screening", () => {
+    const base = sampleTrace();
+    const failed = {
+      ...SAMPLE_CALLS.screen,
+      id: "c0000001-0000-4000-8000-0000000000dd",
+      status: "unknown",
+      failure: "unavailable",
+      costNanocents: 40_000_000,
+    };
+    const answered = {
+      ...SAMPLE_CALLS.screen,
+      model: "accounts/fireworks/models/muse-spark-open",
+      provider: "fireworks",
+    };
+    const trace: TurnTrace = {
+      ...base,
+      extraCalls: [
+        { ...failed, afterSeq: 2, screen: null },
+        { ...answered, afterSeq: 2, screen: { verdict: "clean", via: "model" } },
+      ],
+    };
+    const lines = traceLines(trace);
+    expect(lines.find((l) => l.key === `call:${failed.id}`)?.who).toBe("Muse Spark Open");
+    expect(lines.find((l) => l.key === `call:${answered.id}`)).toMatchObject({
+      who: "Muse Spark Open (via Fireworks)",
+      text: "Screened outside text before the agent read it: clean",
+    });
+  });
+
   it("says a proposal card was prepared only for a known success or a done step", () => {
     const base = sampleTrace();
     const line = (over: Partial<TraceStep>) =>
@@ -405,5 +455,22 @@ describe("prompt cache and tool search lines", () => {
     expect(traceLines(trace)[0].text).toBe("Planned the next step: asked for 1 tool, after 2 tool searches");
     trace.steps[0] = { ...trace.steps[0], toolSearches: 0 };
     expect(traceLines(trace)[0].text).toBe("Planned the next step: asked for 1 tool");
+  });
+
+  it("names the standby host and the cache saving on the same call line", () => {
+    const trace = sampleTrace();
+    const standby = {
+      ...SAMPLE_CALLS.screen,
+      model: "accounts/fireworks/models/muse-spark-open",
+      provider: "fireworks",
+      inputTokens: 10_000,
+      cachedTokens: 4_000,
+      savedNanocents: 4_000 * 110_000,
+    };
+    const lines = traceLines({ ...trace, extraCalls: [{ ...standby, afterSeq: 2, screen: { verdict: "clean", via: "model" } }] });
+    expect(lines.find((l) => l.key === `call:${standby.id}`)).toMatchObject({
+      who: "Muse Spark Open (via Fireworks)",
+      cache: "4,000 of 10,000 input tokens from cache, saved 0.4 cents at list price",
+    });
   });
 });

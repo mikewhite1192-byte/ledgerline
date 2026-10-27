@@ -270,6 +270,7 @@ describe("the trace and the model week", () => {
       call: {
         id: a.plan,
         target: "spark",
+        provider: "meta",
         model: "muse-spark-1.3",
         effort: "low",
         durationMs: 1_840,
@@ -299,6 +300,7 @@ describe("the trace and the model week", () => {
       expect.objectContaining({
         id: a.screen,
         target: "spark_open",
+        provider: "baseten",
         afterSeq: 2,
         screen: { verdict: "clean", via: "model" },
         // No token counts: no saving, never a zero one.

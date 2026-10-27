@@ -11,6 +11,8 @@ describe("flags", () => {
     expect(flags.paymentProvider).toBe("mock");
     expect(flags.triageProvider).toBe("meta");
     expect(flags.agentEnabled).toBe(false);
+    // Spark Open's standby host is dark until the owner turns it on in its own PR.
+    expect(flags.sparkOpenFallback).toBe("off");
   });
 
   it("keeps the agent gateway's limits small and the screener on its probed output mode", () => {

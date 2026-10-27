@@ -1,6 +1,6 @@
 // The saving is priced from the wrapper's one price table; prices.ts is a pure table that makes no model call.
 import { priceFor, savedByCache } from "../../../ai/prices";
-import type { AiTarget } from "../../../ai/types";
+import type { AiProvider, AiTarget } from "../../../ai/types";
 import { sortVersions } from "../../../data/config-version";
 import { readTable, readTenant } from "../../../data/read";
 import type { Queryable } from "../../../db";
@@ -30,6 +30,7 @@ type CallCols = {
   m_id: string | null;
   m_target: string | null;
   m_model: string | null;
+  m_provider: string | null;
   m_purpose: string | null;
   m_effort: string | null;
   m_status: string | null;
@@ -92,24 +93,34 @@ function wholeOrNull(v: unknown): number | null {
 const TOKEN_TARGETS: ReadonlySet<string> = new Set<AiTarget>(["spark", "wonder", "spark_open"]);
 
 // What the cached tokens saved at list price, in whole nanocents. Null when the price or the
-// count is not known, or the counts do not fit together: unknown is not zero.
-function savedOf(target: string, model: string, input: number | null, cached: number | null): number | null {
+// count is not known, or the counts do not fit together: unknown is not zero. The price is the
+// row's own host's (priceFor answers null for a host it has no table for).
+function savedOf(
+  target: string,
+  provider: string,
+  model: string,
+  input: number | null,
+  cached: number | null,
+): number | null {
   if (input === null || cached === null || input < 0 || cached < 0 || cached > input) return null;
   if (!TOKEN_TARGETS.has(target)) return null;
-  const price = priceFor(target as AiTarget, model);
+  const price = priceFor(target as AiTarget, provider as AiProvider, model);
   if (!price || price.unit !== "tokens") return null;
   const saved = savedByCache(price, cached);
   return Number.isSafeInteger(saved) ? saved : null;
 }
 
 function callOf(r: CallCols): TraceCall | null {
-  if (!r.m_id || !r.m_target || !r.m_model || !r.m_purpose || !r.m_status) return null;
+  if (!r.m_id || !r.m_target || !r.m_model || !r.m_provider || !r.m_purpose || !r.m_status) {
+    return null;
+  }
   const inputTokens = wholeOrNull(r.m_input);
   const cachedTokens = wholeOrNull(r.m_cached);
   return {
     id: r.m_id,
     target: r.m_target,
     model: r.m_model,
+    provider: r.m_provider,
     purpose: r.m_purpose,
     effort: r.m_effort,
     status: r.m_status,
@@ -120,7 +131,7 @@ function callOf(r: CallCols): TraceCall | null {
     costNanocents: r.m_cost === null ? null : (wholeOrNull(r.m_cost) ?? -1),
     inputTokens,
     cachedTokens,
-    savedNanocents: savedOf(r.m_target, r.m_model, inputTokens, cachedTokens),
+    savedNanocents: savedOf(r.m_target, r.m_provider, r.m_model, inputTokens, cachedTokens),
   };
 }
 
@@ -176,9 +187,9 @@ function stepOf(r: StepRow): TraceStep {
 }
 
 const CALL_SELECT = (a: string) =>
-  `${a}.id AS m_id, ${a}.target AS m_target, ${a}.model AS m_model, ${a}.purpose AS m_purpose,
-   ${a}.reasoning_effort AS m_effort, ${a}.status AS m_status, ${a}.failure AS m_failure,
-   ${a}.duration_ms AS m_duration_ms, ${a}.cost_nanocents AS m_cost,
+  `${a}.id AS m_id, ${a}.target AS m_target, ${a}.model AS m_model, ${a}.provider AS m_provider,
+   ${a}.purpose AS m_purpose, ${a}.reasoning_effort AS m_effort, ${a}.status AS m_status,
+   ${a}.failure AS m_failure, ${a}.duration_ms AS m_duration_ms, ${a}.cost_nanocents AS m_cost,
    ${a}.input_tokens AS m_input, ${a}.cached_tokens AS m_cached`;
 
 export async function readTurnTrace(q: Queryable, sub: string, turnId: string): Promise<TurnTrace | null> {
@@ -281,6 +292,7 @@ export async function readTurnTrace(q: Queryable, sub: string, turnId: string): 
 
 type GroupRow = {
   target: string;
+  provider: string;
   model: string;
   status: string;
   calls: number | string;
@@ -312,7 +324,7 @@ export async function readModelWeek(q: Queryable, now: Date): Promise<WeekRaw> {
      AND ${col} < timezone(CAST($1 AS text), CAST($3 AS timestamp))`;
 
   const groups = await q.query<GroupRow>(
-    `SELECT target, model, status, CAST(count(*) AS integer) AS calls,
+    `SELECT target, provider, model, status, CAST(count(*) AS integer) AS calls,
             CAST(COALESCE(SUM(cost_nanocents), 0) AS bigint) AS cost,
             CAST(COALESCE(SUM(CASE WHEN cost_nanocents IS NULL THEN reserved_nanocents ELSE 0 END), 0)
                  AS bigint) AS held,
@@ -323,8 +335,8 @@ export async function readModelWeek(q: Queryable, now: Date): Promise<WeekRaw> {
                  AS bigint) AS cached_tokens
        FROM model_calls
       WHERE tenant_id = current_tenant_id() AND ${inWeek("created_at")}
-      GROUP BY target, model, status
-      ORDER BY target, model, status`,
+      GROUP BY target, provider, model, status
+      ORDER BY target, model, status, provider`,
     range,
   );
   const latencies = await q.query<{ target: string; p50: number | string | null }>(
@@ -375,9 +387,15 @@ export async function readModelWeek(q: Queryable, now: Date): Promise<WeekRaw> {
         unsettled: n(g.unsettled),
         inputTokens,
         cachedTokens,
-        // One price per group (target and model), so the group's saving is its summed cached
+        // One price per group (target, host and model), so the group's saving is its summed cached
         // tokens at that price, computed the same way as one call's.
-        savedNanocents: savedOf(g.target, g.model, wholeOrNull(g.input_tokens), wholeOrNull(g.cached_tokens)),
+        savedNanocents: savedOf(
+          g.target,
+          g.provider,
+          g.model,
+          wholeOrNull(g.input_tokens),
+          wholeOrNull(g.cached_tokens),
+        ),
       };
     }),
     latencies: latencies.map((l) => ({ target: l.target, p50Ms: l.p50 === null ? null : n(l.p50) })),

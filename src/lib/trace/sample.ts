@@ -12,6 +12,7 @@ const call = (id: string, over: Partial<TraceCall>): TraceCall => ({
   id,
   target: "spark",
   model: "muse-spark-1.3",
+  provider: "meta",
   purpose: "agent_operator_turn",
   effort: "low",
   status: "ok",
@@ -32,6 +33,7 @@ export const SAMPLE_CALLS = {
   screen: call("c0000001-0000-4000-8000-000000000005", {
     target: "spark_open",
     model: "meta-models/muse-spark-open-1026",
+    provider: "baseten",
     purpose: "screen_untrusted_input",
     effort: null,
     durationMs: 400,

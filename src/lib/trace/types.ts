@@ -14,6 +14,8 @@ export type TraceCall = {
   id: string;
   target: string;
   model: string;
+  // The host that served it: "meta", "baseten" or "fireworks" (the standby host).
+  provider: string;
   purpose: string;
   effort: string | null;
   status: string;
