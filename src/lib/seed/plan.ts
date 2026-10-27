@@ -35,6 +35,7 @@ import { applyHistory } from "./history";
 import { HERO_LANES, LANES, laneMiles, reverseLane, type Lane } from "./lanes";
 import { CUSTOMERS, FIRST_NAMES, LAST_NAMES } from "./names";
 import { Rng } from "./prng";
+import { buildUntrustedInputs } from "./untrusted-inputs";
 
 // buildCarrierPlan(carrier, anchor): every row the seed writes for one demo carrier, built in
 // memory from nothing but the carrier constants and the anchor date (never the clock), so the
@@ -919,8 +920,12 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     invoices: ar.invoices,
     customer_payments: ar.payments,
     payment_applications: ar.applications,
+    untrusted_inputs: [],
+    screenings: [],
   };
   applyHistory({ slug, zone, rows, newId });
+  // Outside text for the agent's screener, from its own id stream so no other row changes.
+  rows.untrusted_inputs = buildUntrustedInputs({ carrier, anchor, rows });
 
   const plan: CarrierPlan = {
     carrier,

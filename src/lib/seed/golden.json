@@ -19,7 +19,9 @@
         "advances": 19,
         "invoices": 335,
         "customer_payments": 167,
-        "payment_applications": 200
+        "payment_applications": 200,
+        "untrusted_inputs": 6,
+        "screenings": 0
       },
       "linehaulCents": 30154000,
       "hero": {
@@ -254,7 +256,9 @@
         "advances": 18,
         "invoices": 324,
         "customer_payments": 161,
-        "payment_applications": 203
+        "payment_applications": 203,
+        "untrusted_inputs": 6,
+        "screenings": 0
       },
       "linehaulCents": 23362300,
       "hero": null,

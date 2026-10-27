@@ -35,11 +35,13 @@ import {
 import { addDays } from "../time/local-date";
 import { customerClassOf } from "./ar-plan";
 import { DETENTION_TOTAL_CENTS, HERO_OPEN_WEEK, seededAdvanceDecision } from "./assert-plan";
+import { instantAt } from "./calendar";
 import { DEMO_CARRIERS, type DemoCarrier } from "./carriers";
 import golden from "./golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "./plan";
 import { clearTenantLedger, findDemoTenant, replaceTenantData } from "./run";
 import { countRows } from "./summary";
+import { CASE_A_ASK_CENTS, UNTRUSTED_SEED_KEYS } from "./untrusted-inputs";
 
 // The seed against a real database: plans written as payday_app, read back equal, the engine run
 // on what came back, and the tenant walls held, including for a login that bypasses row-level
@@ -202,9 +204,9 @@ describe("seeding the demo carriers", () => {
   it("rolls the whole replace back when a write fails partway", async () => {
     const before = await rowsOf(app, A);
     const broken: CarrierPlan = { ...planA, rows: { ...planA.rows } };
-    // The last table: every delete and every other insert has run when this one fails.
-    broken.rows.payment_applications = planA.rows.payment_applications.map((a, i) =>
-      i === 0 ? { ...a, payment_id: randomUUID() } : a,
+    // The last table with rows: every delete and every other insert has run when this one fails.
+    broken.rows.untrusted_inputs = planA.rows.untrusted_inputs.map((u, i) =>
+      i === 0 ? { ...u, driver_id: randomUUID() } : u,
     );
     await expect(replaceTenantData(app, A, broken)).rejects.toMatchObject({ sqlState: "23503" });
     expect(await rowsOf(app, A)).toEqual(before);
@@ -387,6 +389,35 @@ describe("seeding the demo carriers", () => {
         prior: planA.rows.advances.filter((a) => a.driver_id === hero.id),
       }),
     );
+  });
+
+  it("plants six outside texts per carrier, with case A asking the hero for more than the engine allows", async () => {
+    for (const [id, plan] of [
+      [A, planA],
+      [B, planB],
+    ] as const) {
+      const rows = await app.withTenant(id, (q) =>
+        q.query<{ seed_key: string; source: string; driver_id: string | null }>(
+          "SELECT seed_key, source, driver_id FROM untrusted_inputs",
+        ),
+      );
+      expect(rows.map((r) => r.seed_key).sort()).toEqual(
+        UNTRUSTED_SEED_KEYS.map((k) => `${plan.carrier.slug}-${k}`).sort(),
+      );
+      expect(rows.filter((r) => r.source === "seed_injection")).toHaveLength(2);
+      const caseA = rows.find((r) => r.seed_key === `${plan.carrier.slug}-inj-email-a`)!;
+      expect(caseA.driver_id).toBe(
+        plan.rows.untrusted_inputs.find((u) => u.seed_key === caseA.seed_key)!.driver_id,
+      );
+    }
+    const hero = heroOf(planA);
+    expect(planA.rows.untrusted_inputs[0].driver_id).toBe(hero.id);
+    const at = instantAt(addDays(ANCHOR, -2), 12, 0, BR.timezone);
+    const input = await app.withTenant(A, (q) => readAdvanceInput(q, hero.id, at, CASE_A_ASK_CENTS));
+    const decision = advanceEligibility(input);
+    expect(decision.eligible).toBe(false);
+    expect(decision.maxCents).toBeGreaterThan(0);
+    expect(decision.maxCents).toBeLessThan(CASE_A_ASK_CENTS);
   });
 
   it("stays on one tenant under a login that bypasses row-level security", async () => {

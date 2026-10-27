@@ -18,6 +18,17 @@ export type Flags = {
   accountingEnabled: boolean;
   // Inbound email through SES. Off means the paste box is the only intake.
   inboundEmailEnabled: boolean;
+  // How the untrusted-input screener reads Muse Spark Open's answer: three fixed lines ("text")
+  // or one report_screen tool call ("tool"). Either way an answer that does not parse is flagged.
+  // Screening itself has no off switch.
+  screenOutputMode: "tool" | "text";
+  // The agent gateway's amount limits for proposals the rules engine does not size itself.
+  gatewayLimits: {
+    // Largest pay correction, either direction, a proposal may carry.
+    payCorrectionMaxCents: number;
+    // Largest change to an invoice total a proposal may carry.
+    invoiceFixMaxCents: number;
+  };
 };
 
 export const flags: Flags = {
@@ -28,4 +39,6 @@ export const flags: Flags = {
   paymentProvider: "mock",
   accountingEnabled: false,
   inboundEmailEnabled: false,
+  screenOutputMode: "text",
+  gatewayLimits: { payCorrectionMaxCents: 50_000, invoiceFixMaxCents: 250_000 },
 };
