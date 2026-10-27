@@ -21,8 +21,9 @@ function isOverridable(key: string): key is Overridable {
 }
 
 // The demo-path test runs the app with its switches on, without editing flags.ts. In local mode
-// only (no Aurora cluster, not a production build), FLAGS_LOCAL_OVERRIDES may hold a JSON object
-// such as {"agentEnabled":true,"advancePayouts.armed":true}. All or nothing: a value that is not
+// only (no Aurora cluster, NODE_ENV exactly development or test; see local-mode.ts),
+// FLAGS_LOCAL_OVERRIDES may hold a JSON object such as
+// {"agentEnabled":true,"advancePayouts.armed":true}. All or nothing: a value that is not
 // JSON, not an object, names any other key or holds anything but a boolean changes nothing, with
 // one log line. Outside local mode the variable is ignored, with one log line. Returns the keys
 // it set, in the order given.

@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { AUDIT_LINES, checkAuditLine } from "./audit-line";
 import { APP_URL, E2E_CARRIER, E2E_LOGIN, FAKE_HOST } from "./env.local-mode";
 import { secretStep } from "./secret-step";
 
@@ -10,7 +11,8 @@ import { secretStep } from "./secret-step";
 // step the fake host's misses are read first, so a request with no recorded answer fails red with
 // its fingerprint and what to re-record.
 // Deployed (npm run e2e:deployed): the site at E2E_BASE_URL with the demo login from the
-// environment. A step whose feature is not released there is marked skipped, never red.
+// environment. A step whose feature is not released there is marked skipped, never red, and so
+// is the proposal step once the shared demo budget is spent (the auditor then gives no verdict).
 
 const DEPLOYED = process.env.E2E_TARGET === "deployed";
 const FIRST_QUESTION = "Who has a problem on this week's paystub?";
@@ -19,9 +21,6 @@ const FIRST_QUESTION = "Who has a problem on this week's paystub?";
 const ADVANCE_QUESTION = "Propose a $100.00 advance for Monique Vasquez (BR-D07), requested today.";
 // Local answers replay as recorded on the fixture's recordedOn: cosmetic, no assertion reads them.
 const TURN_TIMEOUT = 30_000;
-
-const VERDICTS = ["Checked by Muse Wonder: pass", "Muse Wonder has concerns", "Muse Wonder blocked this"];
-const AUDIT_LINES = [...VERDICTS, "Not checked", "Not checked: demo budget reached", "Auditor off"];
 
 type Features = { agent: boolean; auditor: boolean; reports: boolean };
 
@@ -176,8 +175,12 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     // A card the auditor blocked offers "Override and approve" instead of Approve.
     await expect(card.getByRole("button", { name: /^(Approve|Override and approve)/ })).toBeVisible();
     const shown = (await auditLine.first().innerText()).trim();
-    if (on.auditor) expect(VERDICTS, "the auditor gave a verdict").toContain(shown);
-    else expect(shown).toBe("Auditor off");
+    const audit = checkAuditLine(shown, { auditorOn: on.auditor, deployed: DEPLOYED });
+    const want = on.auditor ? "a verdict from the auditor" : "Auditor off";
+    expect(audit, `the auditor's line reads "${shown}", wanted ${want}`).not.toBe("wrong");
+    // Deployed only: the shared demo budget is spent, so the auditor made no call and gave no
+    // verdict. The card was checked above; the step is marked skipped, never passed.
+    step.skip(audit === "budget_skip", "skipped: no auditor verdict (demo budget reached)");
     // Approve is not clicked in this version of the path.
   });
 

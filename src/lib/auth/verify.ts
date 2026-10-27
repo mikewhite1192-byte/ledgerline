@@ -21,8 +21,9 @@ let verifier: ReturnType<typeof createVerifier> | undefined;
 
 // The demo-path test's own key set, in local mode only: AUTH_LOCAL_JWKS names a file the local
 // sign-in host wrote, and the verifier trusts those keys instead of fetching the pool's. With an
-// Aurora cluster configured or in a production build the variable is ignored (one log line), so
-// the verifier only ever trusts the real pool's keys there. An unreadable file trusts nothing.
+// Aurora cluster configured, or NODE_ENV anything but development or test (a production build
+// among them), the variable is ignored (one log line), so the verifier only ever trusts the real
+// pool's keys there. An unreadable file trusts nothing.
 export function localJwks(env: LocalModeEnv = process.env): Jwks | null {
   const path = env.AUTH_LOCAL_JWKS;
   if (path === undefined || path === "") return null;

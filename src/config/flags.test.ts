@@ -177,6 +177,25 @@ describe("local overrides for the demo-path test", () => {
     expect(logged).toEqual(["flags: FLAGS_LOCAL_OVERRIDES ignored outside local mode"]);
   });
 
+  it("is ignored when NODE_ENV is unset or not exactly development or test, even off Aurora", () => {
+    const envs: Record<string, string>[] = [
+      { FLAGS_LOCAL_OVERRIDES: ALL_ON },
+      { DB_CLUSTER_ARN: "", FLAGS_LOCAL_OVERRIDES: ALL_ON },
+      ...["", "staging", "preview", "Development", "production"].map((NODE_ENV) => ({
+        NODE_ENV,
+        DB_CLUSTER_ARN: "",
+        FLAGS_LOCAL_OVERRIDES: ALL_ON,
+      })),
+    ];
+    for (const env of envs) {
+      logged = [];
+      const target = copy();
+      expect(applyLocalOverrides(target, env), JSON.stringify(env.NODE_ENV)).toEqual([]);
+      expect(target).toEqual(flags);
+      expect(logged).toEqual(["flags: FLAGS_LOCAL_OVERRIDES ignored outside local mode"]);
+    }
+  });
+
   it("is ignored whenever an Aurora cluster is configured", () => {
     for (const NODE_ENV of ["development", "test"]) {
       const target = copy();

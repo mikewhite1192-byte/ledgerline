@@ -6,7 +6,7 @@ import { AiError } from "./types";
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 // The provider URL a call is sent to. Unset AI_HOST_OVERRIDE: the URL as given. Set, in local
-// mode only (no Aurora cluster, not a production build): the same path and query on the local
+// mode only (no Aurora cluster, NODE_ENV development or test): the same path and query on the local
 // replay host the demo-path test starts, so no call leaves the machine. The ledger still names
 // the real provider and model; only the origin changes.
 // Set where local hooks are not allowed, or set to anything but a loopback origin: every call is
