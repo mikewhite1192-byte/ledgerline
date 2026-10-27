@@ -265,12 +265,15 @@ function rateConfirmation(read: DocumentRead, c: Candidates): MatchResult {
   const f = read.fields;
   const load = c.load!;
   const b: Builder = { read, fields: [], notes: [] };
+  // A load made without a rate still carries the column's default surcharge of 0 (0004), which
+  // says nothing about the real one: with no linehaul, a 0 surcharge is no record value.
+  const recordFsc = load.linehaul_cents === null && load.fuel_surcharge_cents === 0 ? null : load.fuel_surcharge_cents;
   const statuses = {
     loadNumber: check(b, "load_number", "load_number", f.loadNumber, load.load_number, sameText),
     miles: check(b, "loaded_miles", "loaded_miles", f.loadedMiles, load.loaded_miles),
     customer: check(b, "customer_name", "customer_name", f.customerName, c.customer?.name ?? null, sameText),
     linehaul: check(b, "linehaul_cents", "linehaul_cents", f.linehaulCents, load.linehaul_cents),
-    fsc: check(b, "fuel_surcharge_cents", "fuel_surcharge_cents", f.fuelSurchargeCents, load.fuel_surcharge_cents),
+    fsc: check(b, "fuel_surcharge_cents", "fuel_surcharge_cents", f.fuelSurchargeCents, recordFsc),
   };
   b.fields.push({
     name: "rate_per_mile_cents",

@@ -16,6 +16,9 @@ export type DocumentMime = (typeof DOCUMENT_MIMES)[number];
 
 export type ReadStatus = "pending" | "read" | "unreadable" | "budget";
 
+// Model reads one document may start: the upload's own, then Read again twice (0013 checks it).
+export const READ_ATTEMPTS_MAX = 3;
+
 export type FieldConfidence = "low" | "medium" | "high";
 
 export type StopClaim = {
@@ -134,6 +137,9 @@ export type DocumentView = {
   readCallId: string | null;
   traceId: string;
   createdAt: string;
-  // A pending read older than two minutes: the request that started it is gone.
+  // A pending read older than two minutes: the request that started it is gone, or its last
+  // try could not finish.
   stalled: boolean;
+  // Model reads started so far, 1 to READ_ATTEMPTS_MAX.
+  readAttempts: number;
 };

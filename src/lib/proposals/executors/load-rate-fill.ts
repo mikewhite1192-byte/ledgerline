@@ -7,12 +7,18 @@ import type { Executor, ProposalResult } from "../execute";
 // row, no outside call. One tenant transaction holds the proposal lock, the load write and the
 // status change, so a crash leaves either all of it or none of it.
 //
+// The write also holds the load to what the proposal was checked against: a status that can take
+// a rate (the limit's list) and loaded miles that times the rate per mile make the linehaul. A
+// load cancelled or re-miled since then is not written.
+//
 // On a resume (the proposal approved or executing), the load write finds no empty rate: if the
 // load now carries exactly these values the fill already happened and the proposal is done; any
-// other values mean the load changed since, and the proposal fails with 'changed_since'. Args that
-// are not whole cents in range fail closed with 'invalid_args'.
+// other values, or a load that no longer passes the checks above, mean the load changed since, and
+// the proposal fails with 'changed_since'. Args that are not whole cents in range fail closed with
+// 'invalid_args'.
 
 const MAX_CENTS = 999_999_999;
+const MAX_RATE_PER_MILE_CENTS = 99_999;
 
 const isCents = (v: unknown, min: number): v is number =>
   typeof v === "number" && Number.isSafeInteger(v) && v >= min && v <= MAX_CENTS;
@@ -43,7 +49,7 @@ async function finish(q: Queryable, id: string, status: string, nowIso: string):
 
 export const loadRateFill: Executor = async (db, session, proposal, _opts, deps) => {
   const nowIso = (deps.clock ?? (() => new Date()))().toISOString();
-  const { loadId, linehaulCents, fuelSurchargeCents } = proposal.args;
+  const { loadId, linehaulCents, fuelSurchargeCents, ratePerMileCents } = proposal.args;
   return db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
     const locked = await q.query<{ status: string }>(
@@ -60,14 +66,20 @@ export const loadRateFill: Executor = async (db, session, proposal, _opts, deps)
       proposal.subjectTable !== "loads" ||
       loadId !== proposal.subjectId ||
       !isCents(linehaulCents, 1) ||
-      !isCents(fuelSurchargeCents, 0)
+      !isCents(fuelSurchargeCents, 0) ||
+      !isCents(ratePerMileCents, 1) ||
+      ratePerMileCents > MAX_RATE_PER_MILE_CENTS
     ) {
       return fail(q, proposal.id, status, nowIso, "invalid_args");
     }
+    // The status list is RATE_FILL_STATUSES (documents/match), written out: the Data API takes no
+    // array parameter. A test holds the two together.
     const written = await q.execute(
       `UPDATE loads SET linehaul_cents = $2, fuel_surcharge_cents = $3
-        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND linehaul_cents IS NULL`,
-      [proposal.subjectId, linehaulCents, fuelSurchargeCents],
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND linehaul_cents IS NULL
+          AND status IN ('planned', 'in_transit', 'delivered')
+          AND CAST(loaded_miles AS bigint) * $4 = $2`,
+      [proposal.subjectId, linehaulCents, fuelSurchargeCents, ratePerMileCents],
     );
     if (written === 1) return finish(q, proposal.id, status, nowIso);
     const now = await q.query<{ linehaul_cents: number | string | null; fuel_surcharge_cents: number | string }>(

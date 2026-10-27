@@ -14,6 +14,7 @@ export const REFUSAL_STATUS: Readonly<Record<string, number>> = {
   limit: 429,
   already_read: 409,
   in_progress: 409,
+  attempt_limit: 429,
 };
 
 // A thrown error as a reply: a non-member gets forbidden, anything else unavailable. Only the

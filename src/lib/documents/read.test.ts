@@ -112,23 +112,38 @@ describe("readDocument", () => {
     expect(out).toEqual({ ok: false, status: "budget", category, callId: null });
   });
 
-  it("calls any other model failure unreadable, by category only", async () => {
-    const out = await readDocument(INPUT, SESSION, {
-      complete: async () => {
-        throw new AiError("timeout");
-      },
-    });
-    expect(out).toEqual({ ok: false, status: "unreadable", category: "model_error", callId: null });
-  });
+  it.each(["timeout", "unavailable", "network", "unknown", "rate_limited"] as const)(
+    "leaves a %s outcome to a later try, never final",
+    async (category) => {
+      const out = await readDocument(INPUT, SESSION, {
+        complete: async () => {
+          throw new AiError(category, category === "unavailable" ? 503 : undefined);
+        },
+      });
+      expect(out).toEqual({ ok: false, status: "retry", category: "model_error", callId: null });
+    },
+  );
 
-  it("calls a thrown non-model error unreadable and logs only its name", async () => {
+  it.each(["bad_request", "auth", "too_long", "not_configured", "disabled"] as const)(
+    "calls a definite %s failure unreadable, by category only",
+    async (category) => {
+      const out = await readDocument(INPUT, SESSION, {
+        complete: async () => {
+          throw new AiError(category);
+        },
+      });
+      expect(out).toEqual({ ok: false, status: "unreadable", category: "model_error", callId: null });
+    },
+  );
+
+  it("leaves a thrown non-model error to a later try and logs only its name", async () => {
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     const out = await readDocument(INPUT, SESSION, {
       complete: async () => {
         throw new TypeError("secret upstream text");
       },
     });
-    expect(out).toEqual({ ok: false, status: "unreadable", category: "error", callId: null });
+    expect(out).toEqual({ ok: false, status: "retry", category: "error", callId: null });
     expect(JSON.stringify(log.mock.calls)).not.toContain("secret upstream text");
   });
 

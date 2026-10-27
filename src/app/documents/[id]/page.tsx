@@ -23,7 +23,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { getDocument } from "@/lib/documents/service";
-import type { DocumentView, FieldCheck, MatchFound } from "@/lib/documents/types";
+import { READ_ATTEMPTS_MAX, type DocumentView, type FieldCheck, type MatchFound } from "@/lib/documents/types";
 import { formatInstant } from "@/lib/format/dates";
 import { isUuid } from "@/lib/uuid";
 import { NoCarrier, problemOf, readCarrier, SignOut } from "../carrier";
@@ -141,20 +141,33 @@ function ReadResult({ view }: { view: DocumentView }) {
     );
   }
   if (view.readStatus === "pending") {
-    return view.stalled ? (
+    if (!view.stalled) {
+      return (
+        <InlineAlert tone="info" title="Still reading">
+          Muse Spark is reading this document, or its last try could not finish. Reload the page in a minute or
+          two to see where it stands.
+        </InlineAlert>
+      );
+    }
+    return view.readAttempts >= READ_ATTEMPTS_MAX ? (
       <Card>
         <CardHeader>
           <CardTitle>Read did not finish</CardTitle>
-          <CardDescription>The read that started with the upload stopped before it saved anything.</CardDescription>
+          <CardDescription>
+            This document was tried {READ_ATTEMPTS_MAX} times. Upload a clearer copy.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    ) : (
+      <Card>
+        <CardHeader>
+          <CardTitle>Read did not finish</CardTitle>
+          <CardDescription>The last read stopped before it saved anything.</CardDescription>
         </CardHeader>
         <CardBody>
           <ReadAgainButton documentId={view.id} />
         </CardBody>
       </Card>
-    ) : (
-      <InlineAlert tone="info" title="Muse Spark is reading this document">
-        Reload the page in a moment to see what it read.
-      </InlineAlert>
     );
   }
   if (!view.read) {

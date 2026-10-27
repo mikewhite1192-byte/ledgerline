@@ -22,7 +22,13 @@ import {
   type DocumentMetaRow,
   type ReadPatch,
 } from "./store";
-import { DOCUMENT_MIMES, type DocumentMime, type DocumentView, type MatchResult } from "./types";
+import {
+  DOCUMENT_MIMES,
+  READ_ATTEMPTS_MAX,
+  type DocumentMime,
+  type DocumentView,
+  type MatchResult,
+} from "./types";
 
 // What the document routes call. Each step opens its own short tenant transaction with the
 // membership check; the model read runs between them, never inside one (it can take 25 seconds).
@@ -31,9 +37,10 @@ import { DOCUMENT_MIMES, type DocumentMime, type DocumentView, type MatchResult 
 // existing row for a file already held (no second read, no second charge), refuse past the daily
 // count, and insert the row as pending. Then one Muse Spark read. Then in a second transaction,
 // with the row locked and still pending, store the transcription as an outside input, match the
-// reading against the records, and finish the row. A crash between the two leaves the row
-// pending; after two minutes the page offers Read again, which takes the row with a lease (so
-// two clicks start one read) and does the same work.
+// reading against the records, and finish the row. A crash between the two, or a read whose
+// outcome is not known (a timeout, a 5xx), leaves the row pending; after two minutes the page
+// offers Read again, which takes the row with a lease (so two clicks start one read) and does the
+// same work. A row gets READ_ATTEMPTS_MAX reads in all, the upload's included.
 
 export const STALLED_MS = 2 * 60 * 1000;
 
@@ -49,7 +56,7 @@ export type UploadOutcome =
 
 export type ReadAgainOutcome =
   | { ok: true; view: DocumentView }
-  | { ok: false; error: "disabled" | "not_found" | "already_read" | "in_progress" };
+  | { ok: false; error: "disabled" | "not_found" | "already_read" | "in_progress" | "attempt_limit" };
 
 export type CheckedFile = { ok: true; mime: DocumentMime; pageCount: number } | { ok: false; error: UploadRefusal };
 
@@ -106,6 +113,7 @@ export function viewOf(row: DocumentMetaRow, now: Date): DocumentView {
     createdAt: row.created_at,
     stalled:
       row.read_status === "pending" && new Date(row.updated_at).getTime() < now.getTime() - STALLED_MS,
+    readAttempts: Number(row.read_attempts),
   };
 }
 
@@ -119,7 +127,11 @@ function tx<T>(db: TenantDb, session: Session, fn: (q: Queryable) => Promise<T>)
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const base64Of = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
 
-async function patchFor(q: Queryable, outcome: ReadOutcome, nowIso: string): Promise<ReadPatch> {
+async function patchFor(
+  q: Queryable,
+  outcome: Exclude<ReadOutcome, { status: "retry" }>,
+  nowIso: string,
+): Promise<ReadPatch> {
   if (!outcome.ok) {
     return {
       readStatus: outcome.status,
@@ -164,7 +176,8 @@ async function readAndFinish(
   const view = await tx(db, session, async (q) => {
     const row = await readDocumentMeta(q, doc.id, { lock: true });
     if (!row) throw new Error("document vanished");
-    if (row.read_status === "pending") {
+    // A read whose outcome is not known leaves the row pending, so Read again can take it later.
+    if (row.read_status === "pending" && (outcome.ok || outcome.status !== "retry")) {
       const patch = await patchFor(q, outcome, now.toISOString());
       await finishRead(q, doc.id, patch, now.toISOString());
     }
@@ -234,12 +247,13 @@ export async function readAgain(
   const db = deps.db ?? getDb();
   const now = (deps.now ?? (() => new Date()))();
   type Claim =
-    | { error: "not_found" | "already_read" | "in_progress" }
+    | { error: "not_found" | "already_read" | "in_progress" | "attempt_limit" }
     | { row: DocumentMetaRow; file: { mime: DocumentMime; base64: string } };
   const claimed = await tx(db, session, async (q): Promise<Claim> => {
     const row = await readDocumentMeta(q, id, { lock: true });
     if (!row) return { error: "not_found" };
     if (row.read_status !== "pending") return { error: "already_read" };
+    if (Number(row.read_attempts) >= READ_ATTEMPTS_MAX) return { error: "attempt_limit" };
     const cutoff = new Date(now.getTime() - STALLED_MS).toISOString();
     if ((await claimStalledRead(q, id, cutoff, now.toISOString())) !== 1) return { error: "in_progress" };
     const file = await readDocumentBytes(q, id);

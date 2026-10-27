@@ -211,4 +211,11 @@ describe("POST /api/documents/:id/read", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "in_progress" });
   });
+
+  it("maps a document out of reads to 429 with its category", async () => {
+    mocks.readAgain.mockResolvedValue({ ok: false, error: "attempt_limit" });
+    const res = await post("same-origin");
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({ error: "attempt_limit" });
+  });
 });

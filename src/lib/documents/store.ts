@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Queryable } from "../db";
 import { untrustedContentHash } from "../data/content-hash";
-import type { DocumentKind, DocumentMime, ReadStatus } from "./types";
+import { READ_ATTEMPTS_MAX, type DocumentKind, type DocumentMime, type ReadStatus } from "./types";
 
 // The documents table, inside a tenant transaction the caller opened (row-level security scopes
 // every statement, and each one also names the tenant). Bytes travel as base64 both ways; no
@@ -14,6 +14,7 @@ export type DocumentMetaRow = {
   byte_length: number;
   page_count: number;
   read_status: ReadStatus;
+  read_attempts: number;
   document_kind: DocumentKind | null;
   reading: string | null;
   match: string;
@@ -24,12 +25,18 @@ export type DocumentMetaRow = {
   updated_at: string;
 };
 
-const META_COLUMNS =
-  "id, filename, mime, byte_length, page_count, read_status, document_kind," +
-  " CAST(reading AS text) AS reading, CAST(match AS text) AS match, untrusted_input_id," +
+const columns = (reading: string) =>
+  "id, filename, mime, byte_length, page_count, read_status, read_attempts, document_kind," +
+  ` ${reading} AS reading, CAST(match AS text) AS match, untrusted_input_id,` +
   " read_call_id, trace_id," +
   ` to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,` +
   ` to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at`;
+
+const META_COLUMNS = columns("CAST(reading AS text)");
+
+// The list leaves out the transcription (up to 80 lines of 160 characters a row): 50 full
+// readings could near the Data API's 1 MiB answer limit. An empty list keeps the strict shape.
+export const LIST_COLUMNS = columns("CAST(jsonb_set(reading, '{text_lines}', '[]'::jsonb) AS text)");
 
 export type NewDocument = {
   id: string;
@@ -113,13 +120,14 @@ export async function readDocumentBytes(
 export async function listDocumentRows(q: Queryable, limit = 50): Promise<DocumentMetaRow[]> {
   const n = Math.max(1, Math.min(50, Math.trunc(limit)));
   return q.query<DocumentMetaRow>(
-    `SELECT ${META_COLUMNS} FROM documents WHERE tenant_id = current_tenant_id()
+    `SELECT ${LIST_COLUMNS} FROM documents WHERE tenant_id = current_tenant_id()
       ORDER BY created_at DESC, id DESC LIMIT ${n}`,
   );
 }
 
-// Read again takes the pending row only when its last attempt is older than the cutoff, and
-// marks the new attempt, so two clicks start one read. 1 when taken.
+// Read again takes the pending row only when its last attempt is older than the cutoff and it
+// has attempts left, and marks the new attempt (time and count), so two clicks start one read
+// and a read that keeps failing stops at READ_ATTEMPTS_MAX. 1 when taken.
 export async function claimStalledRead(
   q: Queryable,
   id: string,
@@ -127,10 +135,10 @@ export async function claimStalledRead(
   nowIso: string,
 ): Promise<number> {
   return q.execute(
-    `UPDATE documents SET updated_at = CAST($3 AS timestamptz)
+    `UPDATE documents SET updated_at = CAST($3 AS timestamptz), read_attempts = read_attempts + 1
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
-        AND read_status = 'pending' AND updated_at < CAST($2 AS timestamptz)`,
-    [id, cutoffIso, nowIso],
+        AND read_status = 'pending' AND updated_at < CAST($2 AS timestamptz) AND read_attempts < $4`,
+    [id, cutoffIso, nowIso, READ_ATTEMPTS_MAX],
   );
 }
 

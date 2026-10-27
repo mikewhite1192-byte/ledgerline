@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { blueRidgePlan, planDb } from "../agent/gateway/__tests__/plan-db";
-import { TENANT } from "../agent/gateway/__tests__/fake-db";
+import { TENANT, type Row } from "../agent/gateway/__tests__/fake-db";
 import type { LoadRow } from "../data/rows";
 import { loadCandidates } from "./candidates";
 import { isoFromMmddyyyy, matchDocument, mmddyyyyOf, norm, stampOf } from "./match";
@@ -45,8 +45,13 @@ function readOf(kind: DocumentKind, fields: Partial<ReadFields>, low: Confidence
   return { kind, fields: { ...EMPTY, ...fields }, textLines: [], confidence };
 }
 
-async function matchOf(read: DocumentRead): Promise<MatchResult> {
+async function matchOf(read: DocumentRead, loadOver?: { id: string; over: Partial<LoadRow> }): Promise<MatchResult> {
   const db = planDb(plan);
+  if (loadOver) {
+    db.tables.loads = plan.rows.loads.map((l) =>
+      l.id === loadOver.id ? ({ ...l, ...loadOver.over } as unknown as Row) : (l as unknown as Row),
+    );
+  }
   return db.withTenant(TENANT, async (q) => matchDocument(read, await loadCandidates(q, read)));
 }
 
@@ -119,6 +124,27 @@ describe("rate confirmations", () => {
     expect(field(m, "load_number").status).toBe("same");
     expect(field(m, "loaded_miles").status).toBe("same");
     expect(field(m, "linehaul_cents").status).toBe("no_record_value");
+  });
+
+  it("reads a no-rate load's default 0 surcharge as no record value, so a printed surcharge can fill it", async () => {
+    const read = rateConFor(noRate, { fuelSurchargeCents: 18_360 });
+    const m = foundOf(await matchOf(read, { id: noRate.id, over: { fuel_surcharge_cents: 0 } }));
+    expect(field(m, "fuel_surcharge_cents")).toMatchObject({ claim: 18_360, record: null, status: "no_record_value" });
+    expect(m.supports).toBe("load_rate_fill");
+  });
+
+  it("still compares a no-rate load's surcharge when it is not 0", async () => {
+    const read = rateConFor(noRate, { fuelSurchargeCents: 18_360 });
+    const m = foundOf(await matchOf(read, { id: noRate.id, over: { fuel_surcharge_cents: 18_361 } }));
+    expect(field(m, "fuel_surcharge_cents")).toMatchObject({ record: 18_361, status: "differs" });
+    expect(m.supports).toBeNull();
+  });
+
+  it("keeps a 0 surcharge as the record's value on a load that has a rate", async () => {
+    const rated = plan.rows.loads.find((l) => l.linehaul_cents !== null && l.status === "delivered")!;
+    const read = rateConFor(rated, { ratePerMileCents: null, linehaulCents: rated.linehaul_cents, fuelSurchargeCents: 500 });
+    const m = foundOf(await matchOf(read, { id: rated.id, over: { fuel_surcharge_cents: 0 } }));
+    expect(field(m, "fuel_surcharge_cents")).toMatchObject({ claim: 500, record: 0, status: "differs" });
   });
 
   it("supports nothing when the arithmetic is off by one cent", async () => {

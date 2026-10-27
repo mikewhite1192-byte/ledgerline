@@ -21,7 +21,7 @@ const MESSAGES: Record<string, string> = {
   unauthenticated: "Your session ended. Sign in again.",
   forbidden: "This login cannot upload documents for this carrier.",
   bad_request: "Choose one file, then upload it.",
-  unavailable: "Could not save the document. Try again in a moment.",
+  unavailable: "Could not save the document.",
   network: "Could not reach LedgerLine. Check the connection and try again.",
 };
 

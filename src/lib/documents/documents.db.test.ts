@@ -5,11 +5,14 @@ import { AiError, type AiResult } from "../ai";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
+import { callTool } from "../agent/gateway";
+import type { GatewayContext } from "../agent/gateway/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal } from "../proposals/execute";
 import type { ReadComplete } from "./read";
-import { getDocument, listDocuments, readDocumentFile, uploadDocument, type UploadFile } from "./service";
-import { CONFIDENCE_FIELDS } from "./types";
+import { getDocument, listDocuments, readAgain, readDocumentFile, uploadDocument, type UploadFile } from "./service";
+import { listDocumentRows } from "./store";
+import { CONFIDENCE_FIELDS, READ_ATTEMPTS_MAX } from "./types";
 
 // Documents against the real database, as the app's role, with a fake model call (no network, no
 // model). A document stays inside its carrier, bytes included; the same file twice is one row read
@@ -90,10 +93,10 @@ const loadRate = async () =>
 // A waiting load_rate_fill proposal with the conversation, turn and gateway decision a real one
 // hangs from, written by the admin login so created_at and the auditor's pass can be set (only a
 // pass goes through without the second confirm).
-async function addRateProposal(linehaulCents: number): Promise<string> {
+async function addRateProposal(linehaulCents: number, extra: Record<string, unknown> = {}): Promise<string> {
   const [conversation, turn, decision, id, trace] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
   const created = new Date(NOW - HOUR).toISOString();
-  const args = { loadId, linehaulCents, fuelSurchargeCents: FUEL, ratePerMileCents: 245 };
+  const args = { loadId, linehaulCents, fuelSurchargeCents: FUEL, ratePerMileCents: 245, ...extra };
   await admin.withTenant(A.tenantId, async (q) => {
     await q.execute(
       `INSERT INTO conversations (id, tenant_id, created_by) VALUES (CAST($1 AS uuid), current_tenant_id(), $2)`,
@@ -125,7 +128,8 @@ async function addRateProposal(linehaulCents: number): Promise<string> {
         loadId,
         JSON.stringify(args),
         decision,
-        `load_rate_fill:${loadId}:${String(linehaulCents).padStart(64, "0")}`,
+        // Unique per call: two tests may propose the same cents for this load.
+        `load_rate_fill:${loadId}:${randomUUID().replace(/-/g, "").padStart(64, "0")}`,
         trace,
         created,
       ],
@@ -269,6 +273,123 @@ describe("documents in the database", () => {
     expect(out.view).toMatchObject({ readStatus: "budget", kind: null, read: null, inputId: null });
     const back = await readDocumentFile(A.session, out.view.id, { db: app });
     expect(Array.from(back?.bytes ?? [])).toEqual(Array.from(file.bytes));
+  });
+
+  it("leaves a read whose outcome is not known pending, and Read again finishes it after two minutes", async () => {
+    const timeout = vi.fn<ReadComplete>(async () => {
+      throw new AiError("timeout");
+    });
+    const file = png("slow.png");
+    const out = await uploadDocument(A.session, file, { db: app, now: clock, read: { complete: timeout } });
+    if (!out.ok) throw new Error("upload refused");
+    expect(out.view).toMatchObject({ readStatus: "pending", readAttempts: 1, stalled: false, read: null, inputId: null });
+    const id = out.view.id;
+    // The same file again is the same pending row, with no second read.
+    const dup = await uploadDocument(A.session, file, { db: app, now: clock, read: { complete: timeout } });
+    expect(dup).toMatchObject({ ok: true, duplicate: true, view: { id, readStatus: "pending" } });
+    expect(timeout).toHaveBeenCalledTimes(1);
+    // Too soon after the last try: refused, nothing read.
+    const soon = () => new Date(NOW + 60_000);
+    expect(await readAgain(A.session, id, { db: app, now: soon, read: { complete: timeout } })).toEqual({
+      ok: false,
+      error: "in_progress",
+    });
+    expect(timeout).toHaveBeenCalledTimes(1);
+    const good = fakeModel(rateReading());
+    const later = () => new Date(NOW + 3 * 60_000);
+    const again = await readAgain(A.session, id, { db: app, now: later, read: { complete: good } });
+    expect(again).toMatchObject({ ok: true, view: { readStatus: "read", readAttempts: 2, kind: "rate_confirmation" } });
+    expect(good).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops Read again after three reads in all, and the database holds the cap", async () => {
+    const timeout = vi.fn<ReadComplete>(async () => {
+      throw new AiError("unavailable", 503);
+    });
+    const at = (minutes: number) => () => new Date(NOW + minutes * 60_000);
+    const out = await uploadDocument(A.session, png("never.png"), { db: app, now: clock, read: { complete: timeout } });
+    if (!out.ok) throw new Error("upload refused");
+    const id = out.view.id;
+    expect(await readAgain(A.session, id, { db: app, now: at(3), read: { complete: timeout } })).toMatchObject({
+      ok: true,
+      view: { readStatus: "pending", readAttempts: 2 },
+    });
+    expect(await readAgain(A.session, id, { db: app, now: at(6), read: { complete: timeout } })).toMatchObject({
+      ok: true,
+      view: { readStatus: "pending", readAttempts: READ_ATTEMPTS_MAX },
+    });
+    expect(await readAgain(A.session, id, { db: app, now: at(9), read: { complete: timeout } })).toEqual({
+      ok: false,
+      error: "attempt_limit",
+    });
+    expect(timeout).toHaveBeenCalledTimes(READ_ATTEMPTS_MAX);
+    expect(await getDocument(A.session, id, { db: app, now: at(9) })).toMatchObject({
+      readStatus: "pending",
+      stalled: true,
+      readAttempts: READ_ATTEMPTS_MAX,
+    });
+    const past = app.withTenant(A.tenantId, (q) =>
+      q.execute("UPDATE documents SET read_attempts = 4 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [id]),
+    );
+    expect(await sqlStateOf(past)).toBe("23514");
+  });
+
+  it("lists documents without their transcription, while one document keeps it", async () => {
+    const raw = await app.withTenant(A.tenantId, (q) => listDocumentRows(q, 50));
+    const read = raw.filter((r) => r.reading !== null);
+    expect(read.length).toBeGreaterThan(0);
+    for (const r of read) expect((JSON.parse(r.reading!) as { text_lines: unknown }).text_lines).toEqual([]);
+    const views = await listDocuments(A.session, { db: app, now: clock });
+    const shown = views.filter((v) => v.read !== null);
+    expect(shown.length).toBe(read.length);
+    for (const v of shown) expect(v.read!.textLines).toEqual([]);
+    const one = await getDocument(A.session, shown[0].id, { db: app, now: clock });
+    expect(one?.read?.textLines).toEqual(["SAMPLE RATE CONFIRMATION", `LOAD ${LOAD_NUMBER}`]);
+  });
+
+  it("gives the auditor the load's number and the gateway's rate check for a rate fill", async () => {
+    const up = await uploadDocument(A.session, png("audit.png"), { db: app, now: clock, read: { complete: fakeModel(rateReading()) } });
+    if (!up.ok || !up.view.inputId) throw new Error("upload not read");
+    const inputId = up.view.inputId;
+    const check = async (linehaulCents: number) => {
+      const id = await addRateProposal(linehaulCents, { requestRef: inputId });
+      const [{ turn_id: turnId }] = await admin.withTenant(A.tenantId, (q) =>
+        q.query<{ turn_id: string }>(
+          "SELECT turn_id FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+          [id],
+        ),
+      );
+      const ctx: GatewayContext = {
+        session: A.session,
+        role: "auditor",
+        model: "wonder",
+        turnId,
+        traceId: randomUUID(),
+        now: new Date(NOW),
+        deadlineAt: NOW + 60_000,
+        timeZone: "America/New_York",
+      };
+      const out = await callTool(
+        ctx,
+        { id: "c", name: "get_proposal", argumentsJson: JSON.stringify({ proposalId: id }) },
+        { db: app, clock: () => NOW },
+      );
+      // One live proposal per load: this one steps aside for the next.
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE proposals SET status = 'expired', decided_by = 'test', decided_at = CAST($2 AS timestamptz)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [id, new Date(NOW).toISOString()],
+        ),
+      );
+      if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
+      return out.result as { proposal: { subject: unknown }; engine: Record<string, unknown> };
+    };
+    const good = await check(245 * MILES);
+    expect(good.proposal.subject).toEqual({ table: "loads", id: loadId, label: LOAD_NUMBER });
+    expect(good.engine).toMatchObject({ ok: true, check: "load_rate_fill", supported: true });
+    const off = await check(245 * MILES + 1);
+    expect(off.engine).toMatchObject({ ok: true, check: "load_rate_fill", supported: false, refusal: "engine_refused" });
   });
 
   it("fills the load's rate once on approval; a later fill with other values fails and changes nothing", async () => {

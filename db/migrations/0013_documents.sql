@@ -28,6 +28,9 @@ CREATE TABLE documents (
   page_count         integer NOT NULL DEFAULT 1 CHECK (page_count BETWEEN 1 AND 3),
   read_status        text NOT NULL DEFAULT 'pending'
                        CHECK (read_status IN ('pending', 'read', 'unreadable', 'budget')),
+  -- Model reads started for this row: the upload's is the first, each Read again adds one, and
+  -- three is the most, so a read that keeps failing cannot keep spending.
+  read_attempts      smallint NOT NULL DEFAULT 1 CHECK (read_attempts BETWEEN 1 AND 3),
   document_kind      text CHECK (document_kind IN ('lumper_receipt', 'toll_receipt', 'fuel_receipt',
                        'rate_confirmation', 'bill_of_lading', 'other')),
   reading            jsonb CHECK (reading IS NULL OR jsonb_typeof(reading) = 'object'),
@@ -52,8 +55,8 @@ CREATE POLICY tenant_isolation ON documents
   USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
 
 GRANT SELECT, INSERT ON documents TO payday_app;
-GRANT UPDATE (read_status, document_kind, reading, match, untrusted_input_id, read_call_id,
-              updated_at) ON documents TO payday_app;
+GRANT UPDATE (read_status, read_attempts, document_kind, reading, match, untrusted_input_id,
+              read_call_id, updated_at) ON documents TO payday_app;
 
 -- The fourth proposal kind: fill a load's missing rate from its rate confirmation. No money
 -- moves; the executor writes the load's rate once, only while it is still empty.

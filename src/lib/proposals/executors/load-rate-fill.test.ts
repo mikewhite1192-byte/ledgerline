@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "../../auth/claims";
 import type { Param, Queryable, TenantDb } from "../../db";
+import { RATE_FILL_STATUSES } from "../../documents/match";
 import type { ProposalRow } from "../execute";
 import { loadRateFill } from "./load-rate-fill";
 
@@ -11,7 +12,10 @@ const SESSION: Session = { sub: "sub-ops", email: "ops@example.test", tenantId: 
 const LOAD = "44444444-4444-4444-8444-444444444444";
 const NOW = new Date(Date.UTC(2026, 9, 24, 15, 0, 0));
 
-type Load = { linehaul_cents: number | null; fuel_surcharge_cents: number };
+// status and loaded_miles default to the ones the proposal was checked against (612 miles at
+// 245 cents a mile is the 149,940 linehaul).
+type Load = { linehaul_cents: number | null; fuel_surcharge_cents: number; status?: string; loaded_miles?: number };
+const SQL_STATUSES = `status IN (${RATE_FILL_STATUSES.map((s) => `'${s}'`).join(", ")})`;
 
 class ScriptDb implements TenantDb {
   status: string;
@@ -46,9 +50,15 @@ class ScriptDb implements TenantDb {
     if (sql.startsWith("UPDATE loads")) {
       expect(sql).toContain("linehaul_cents IS NULL");
       expect(sql).toContain("tenant_id = current_tenant_id()");
+      expect(sql).toContain(SQL_STATUSES);
+      expect(sql).toContain("CAST(loaded_miles AS bigint) * $4 = $2");
       if (!this.load || this.load.linehaul_cents !== null) return 0;
+      const status = this.load.status ?? "delivered";
+      const miles = this.load.loaded_miles ?? 612;
+      if (!(RATE_FILL_STATUSES as readonly string[]).includes(status)) return 0;
+      if (miles * (params[3] as number) !== params[1]) return 0;
       this.loadWrites += 1;
-      this.load = { linehaul_cents: params[1] as number, fuel_surcharge_cents: params[2] as number };
+      this.load = { ...this.load, linehaul_cents: params[1] as number, fuel_surcharge_cents: params[2] as number };
       return 1;
     }
     if (sql.trimStart().startsWith("UPDATE proposals")) {
@@ -115,6 +125,31 @@ describe("loadRateFill", () => {
     expect(db.moves).toEqual([["approved", "failed", "changed_since"]]);
   });
 
+  it("fails with changed_since when the load was cancelled or invoiced after the proposal, writing nothing", async () => {
+    for (const status of ["cancelled", "invoiced"]) {
+      const db = new ScriptDb("approved", { linehaul_cents: null, fuel_surcharge_cents: 0, status });
+      expect(await run(db)).toEqual({ ok: false, category: "changed_since", retryable: false });
+      expect(db.loadWrites).toBe(0);
+      expect(db.load?.linehaul_cents).toBeNull();
+      expect(db.moves).toEqual([["approved", "failed", "changed_since"]]);
+    }
+  });
+
+  it("fails with changed_since when the load's loaded miles changed after the proposal, writing nothing", async () => {
+    const db = new ScriptDb("approved", { linehaul_cents: null, fuel_surcharge_cents: 0, loaded_miles: 613 });
+    expect(await run(db)).toEqual({ ok: false, category: "changed_since", retryable: false });
+    expect(db.loadWrites).toBe(0);
+    expect(db.moves).toEqual([["approved", "failed", "changed_since"]]);
+  });
+
+  it("fills a load in each status the proposal limit accepts", async () => {
+    for (const status of RATE_FILL_STATUSES) {
+      const db = new ScriptDb("approved", { linehaul_cents: null, fuel_surcharge_cents: 0, status });
+      expect(await run(db)).toMatchObject({ ok: true, status: "done" });
+      expect(db.loadWrites).toBe(1);
+    }
+  });
+
   it("fails with changed_since when the load is gone", async () => {
     const db = new ScriptDb("approved", null);
     expect(await run(db)).toEqual({ ok: false, category: "changed_since", retryable: false });
@@ -126,6 +161,9 @@ describe("loadRateFill", () => {
       proposal({}, { linehaulCents: 0 }),
       proposal({}, { fuelSurchargeCents: -1 }),
       proposal({}, { fuelSurchargeCents: "100" }),
+      proposal({}, { ratePerMileCents: 0 }),
+      proposal({}, { ratePerMileCents: 100_000 }),
+      proposal({}, { ratePerMileCents: undefined }),
       proposal({}, { loadId: "66666666-6666-4666-8666-666666666666" }),
       proposal({ subjectTable: "drivers" }),
     ]) {

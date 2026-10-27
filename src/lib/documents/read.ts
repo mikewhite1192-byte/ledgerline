@@ -7,8 +7,10 @@ import type { DocumentMime, DocumentRead } from "./types";
 
 // One Muse Spark 1.3 read of one uploaded file, under the strict document schema. The model only
 // fills fields; what it returns is a claim. Every failure is a category: budget (the demo's cap,
-// a call too expensive, the provider's billing) or unreadable (anything else, including a cut
-// answer or one off the schema). The raw error never leaves this file; the log gets its name.
+// a call too expensive, the provider's billing), retry (an outcome that is not known or may pass
+// on its own: a timeout, a 5xx, a network error, a busy provider, an unexpected error), so the
+// row stays pending for Read again, or unreadable (a definite failure, including a cut answer or
+// one off the schema). The raw error never leaves this file; the log gets its name.
 
 export const READ_MAX_OUTPUT_TOKENS = 1_200;
 export const READ_TIMEOUT_MS = 25_000;
@@ -25,7 +27,8 @@ export type ReadFailureCategory =
 
 export type ReadOutcome =
   | { ok: true; read: DocumentRead; callId: string; costNanocents: number }
-  | { ok: false; status: "unreadable" | "budget"; category: ReadFailureCategory; callId: string | null };
+  | { ok: false; status: "unreadable" | "budget"; category: ReadFailureCategory; callId: string | null }
+  | { ok: false; status: "retry"; category: "model_error" | "error"; callId: null };
 
 // The model call, as this module needs it. The default is complete() with the given AiDeps.
 export type ReadComplete = (target: "spark", request: AiRequest, session: Session) => Promise<AiResult>;
@@ -40,6 +43,8 @@ export type ReadInput = {
 };
 
 const BUDGET: readonly string[] = ["cap", "too_expensive", "billing"];
+// Not known (the provider may have answered) or likely to pass later: never a final state.
+const RETRY: readonly string[] = ["timeout", "unavailable", "network", "unknown", "rate_limited"];
 
 function attachmentOf(bytes: Uint8Array, mime: DocumentMime): AiAttachment {
   if (mime === "application/pdf") return { kind: "pdf", bytes, filename: "document.pdf" };
@@ -93,10 +98,11 @@ export async function readDocument(
           callId: null,
         };
       }
+      if (RETRY.includes(err.category)) return { ok: false, status: "retry", category: "model_error", callId: null };
       return { ok: false, status: "unreadable", category: "model_error", callId: null };
     }
     console.error(`documents: read ${input.documentId} failed error=${(err as Error)?.name ?? "unknown"}`);
-    return { ok: false, status: "unreadable", category: "error", callId: null };
+    return { ok: false, status: "retry", category: "error", callId: null };
   }
   if (result.status !== "ok") {
     console.error(`documents: read ${input.documentId} failed category=incomplete`);

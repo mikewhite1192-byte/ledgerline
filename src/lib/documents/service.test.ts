@@ -127,6 +127,7 @@ describe("viewOf", () => {
     byte_length: 12,
     page_count: 1,
     read_status: "pending",
+    read_attempts: 1,
     document_kind: null,
     reading: null,
     match: "{}",
