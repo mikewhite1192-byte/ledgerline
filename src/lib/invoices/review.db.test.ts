@@ -5,7 +5,7 @@ import type { AccountingAdapter, InvoiceEmailStatus, ReadBack, SendOutcome } fro
 import type { Session } from "../auth/claims";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db, Param } from "../db/types";
+import type { Db, Param, Queryable, TenantDb } from "../db/types";
 import { EXECUTORS, executeProposal } from "../proposals/execute";
 import { INVOICE_REVIEW_STATUSES, type InvoiceReviewStatus } from "../rules-engine";
 import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
@@ -16,6 +16,7 @@ import { addDays, localDateOf, type LocalDate } from "../time/local-date";
 import { invoicePostExecutor, type InvoiceMoneyDeps } from "./execute";
 import { postInvoice, reconcileInvoice } from "./post";
 import { proposeInvoices } from "./propose";
+import { invoiceRecordActions, readInvoiceRecordPage } from "./record-page";
 import { markReviewed, markSent } from "./review";
 import { readInvoiceReview, readMemberRoles, readReviewQueue } from "./review-read";
 
@@ -103,6 +104,25 @@ const memberId = async (t: Carrier) =>
 
 // The review as the app role reads it, inside the tenant's own transaction.
 const reviewOf = (t: Carrier, id: string) => app.withTenant(t.id, (q) => readInvoiceReview(q, id));
+
+// The app's database, keeping every parameter list each statement is sent.
+const recording = (seen: Param[][]): TenantDb => ({
+  withTenant: <T>(tenantId: string, fn: (q: Queryable) => Promise<T>) =>
+    app.withTenant(tenantId, (q) =>
+      fn({
+        query: <R>(sql: string, params: Param[] = []) => {
+          seen.push(params);
+          return q.query<R>(sql, params);
+        },
+        execute: (sql: string, params: Param[] = []) => {
+          seen.push(params);
+          return q.execute(sql, params);
+        },
+      }),
+    ),
+});
+// A boolean parameter's shape over the Data API is unproven, so the send never sends one.
+const booleansIn = (seen: Param[][]) => seen.flat().filter((p) => typeof p === "boolean");
 const queueOf = (t: Carrier, status?: InvoiceReviewStatus) => app.withTenant(t.id, (q) => readReviewQueue(q, status));
 
 // Set a customer's billing address for the length of fn, then put the stored one back.
@@ -534,7 +554,10 @@ describe("invoice review against a seeded database", () => {
     });
 
     it("records the send once: a repeat changes nothing, and it leaves the queue", async () => {
-      expect(await markSent(app, BR.session, id, BR.today, clock())).toEqual({ ok: true, changed: true });
+      const seen: Param[][] = [];
+      expect(await markSent(recording(seen), BR.session, id, BR.today, clock())).toEqual({ ok: true, changed: true });
+      expect(seen.length).toBeGreaterThan(0);
+      expect(booleansIn(seen)).toEqual([]);
       expect(await markSent(app, BR.session, id, BR.today, clock())).toEqual({ ok: true, changed: false });
       const row = await stored(BR, id);
       expect(row).toMatchObject({ sent_on: BR.today, sent_by_membership_id: await memberId(BR) });
@@ -576,7 +599,10 @@ describe("invoice review against a seeded database", () => {
         ok: false,
         category: "history",
       });
-      expect(await markSent(app, BR.session, ready, BR.today, clock())).toEqual({ ok: true, changed: true });
+      const seen: Param[][] = [];
+      expect(await markSent(recording(seen), BR.session, ready, BR.today, clock())).toEqual({ ok: true, changed: true });
+      expect(seen.length).toBeGreaterThan(0);
+      expect(booleansIn(seen)).toEqual([]);
       expect(await markSent(app, BR.session, ready, BR.today, clock())).toEqual({ ok: true, changed: false });
       expect(await stored(BR, ready)).toMatchObject({
         qbo_id: null,
@@ -714,5 +740,80 @@ describe("invoice review against a seeded database", () => {
       markReviewed(app, { ...PW.session, tenantId: BR.id }, brInvoice, null, clock()),
     ).rejects.toThrow();
     expect(await stored(BR, brInvoice)).toMatchObject({ reviewed_at: null, review_note: null, sent_on: null });
+  });
+
+  // "Post to QuickBooks" on the record page asks the rule the post and the recorded send ask: the
+  // review's answer with the review on, the same rule for that one invoice with it off.
+  describe("the invoice record page", () => {
+    let made: string;
+    beforeAll(async () => {
+      made = await queueInvoice(BR);
+    });
+
+    const offered = async (t: Carrier, id: string) => {
+      const page = await app.withTenant(t.id, (q) => readInvoiceRecordPage(q, id, t.today));
+      if (!page) throw new Error("the record page read found no invoice");
+      return { reviewRead: page.review !== null, queueMade: page.queueMade, post: invoiceRecordActions(page).post };
+    };
+    const reviewOff = async <T>(fn: () => Promise<T>): Promise<T> => {
+      flags.invoiceReviewEnabled = false;
+      try {
+        return await fn();
+      } finally {
+        flags.invoiceReviewEnabled = true;
+      }
+    };
+
+    it("offers no post for an unposted invoice from earlier records, with the review on or off", async () => {
+      // A seeded load invoice dated on or after the start, so only its origin keeps the post away.
+      const history = BR.plan.rows.invoices.find(
+        (i) =>
+          i.source === "load" &&
+          i.qbo_id === null &&
+          i.status !== "void" &&
+          i.issued_on >= flags.invoicesStart &&
+          i.id !== BR.plan.planted.invoiceReview.readyInvoiceId,
+      );
+      if (!history) throw new Error("the seed has no unposted load invoice from the start date on");
+      expect(await offered(BR, history.id)).toEqual({ reviewRead: true, queueMade: false, post: false });
+      expect(await reviewOff(() => offered(BR, history.id))).toEqual({
+        reviewRead: false,
+        queueMade: false,
+        post: false,
+      });
+    });
+
+    it("offers the post for an unposted invoice the queue made, with the review on or off", async () => {
+      expect(await offered(BR, made)).toEqual({ reviewRead: true, queueMade: true, post: true });
+      expect(await reviewOff(() => offered(BR, made))).toEqual({ reviewRead: false, queueMade: true, post: true });
+    });
+
+    it("keeps a queue-made invoice queue-made when the start date moves past it: no send before a post", async () => {
+      expect(await markReviewed(app, BR.session, made, null, clock())).toEqual({ ok: true, changed: true });
+      const issued = (await stored(BR, made)).issued_on as LocalDate;
+      const start = flags.invoicesStart;
+      flags.invoicesStart = addDays(issued, 1);
+      try {
+        const view = await reviewOf(BR, made);
+        expect(view).toMatchObject({ posted: false, madeByQueue: true });
+        expect(view?.review).toMatchObject({ status: "ready_to_send", reasons: ["not_posted"] });
+        expect(await markSent(app, BR.session, made, BR.today, clock())).toEqual({
+          ok: false,
+          category: "not_posted",
+        });
+        // The post keeps its own start-date check, and the page offers no post it would refuse.
+        expect(await offered(BR, made)).toEqual({ reviewRead: true, queueMade: true, post: false });
+        const books = testBooks();
+        expect(await withAccounting(() => postInvoice(app, BR.session, made, moneyDeps(books)))).toEqual({
+          ok: false,
+          category: "history",
+        });
+        expect(books.seen.creates).toEqual([]);
+        expect(await stored(BR, made)).toMatchObject({ qbo_id: null, sent_on: null, sent_by_membership_id: null });
+        expect(await ledgerFor(BR, made)).toEqual([]);
+      } finally {
+        flags.invoicesStart = start;
+      }
+    });
   });
 });

@@ -43,7 +43,15 @@ export type PostResult =
 
 type Plan = { ok: true; invoice: PostableInvoice; attempt: number } | { ok: false; category: PostRefusal };
 
-// Only an invoice the invoice queue made posts from here; anything else is history (made-by-queue.ts).
+// The invoices start date is a release switch for posting: nothing dated before it goes out from
+// here, even an invoice the queue made (the made-by-queue rule itself has no date). The record
+// page asks the same question, so it never offers a post this refuses.
+export function datedBeforeInvoicesStart(issuedOn: string): boolean {
+  return issuedOn < flags.invoicesStart;
+}
+
+// Only an invoice the invoice queue made posts from here; anything else is history
+// (made-by-queue.ts), and so is anything dated before the invoices start.
 export async function postInvoice(
   db: TenantDb,
   session: Session,
@@ -57,6 +65,7 @@ export async function postInvoice(
     const read = await readPostableInvoice(q, invoiceId);
     if (!read.ok) return read;
     if (read.row.status === "void") return { ok: false, category: "validation" };
+    if (datedBeforeInvoicesStart(read.row.issued_on)) return { ok: false, category: "history" };
     if (!(await madeByQueue(q, read.row))) return { ok: false, category: "history" };
     if (read.row.qbo_id !== null) return { ok: false, category: "already_posted" };
     if (!read.invoice.customer.billingEmail) return { ok: false, category: "no_billing_address" };

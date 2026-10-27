@@ -1,20 +1,20 @@
-import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
 
 // Which invoices LedgerLine posts to accounting: only one the invoice queue made, as only a
-// payment recorded on the form posts. That is a load invoice issued on or after invoicesStart that
-// an approved invoice_post card wrote (the card moves to executing in the transaction that writes
-// the invoice, then to done or failed). The queue offers only delivered loads with no invoice, so
-// no card ever names a load whose invoice came from anywhere else. A seeded or imported invoice,
-// or an opening balance carried in from before the app, is history: it never goes out from here,
-// and a person records its send by hand. The post button, the review and the recorded send all
-// ask this one rule.
+// payment recorded on the form posts. That is a load invoice that an approved invoice_post card
+// wrote (the card moves to executing in the transaction that writes the invoice, then to done or
+// failed). The card is the evidence, so the rule has no date: moving the invoices start date
+// never turns a queue-made invoice into history. The queue offers only delivered loads with no
+// invoice, so no card ever names a load whose invoice came from anywhere else. A seeded or
+// imported invoice, or an opening balance carried in from before the app, is history: it never
+// goes out from here, and a person records its send by hand. The post button, the review and the
+// recorded send all ask this one rule.
 
-export type QueueMadeFacts = { source: string; load_id: string | null; issued_on: string };
+export type QueueMadeFacts = { source: string; load_id: string | null };
 
-// Everything but the card: a load invoice issued on or after the start date.
+// Everything but the card: a load invoice.
 function couldBeQueueMade<T extends QueueMadeFacts>(row: T): row is T & { load_id: string } {
-  return row.source === "load" && row.load_id !== null && row.issued_on >= flags.invoicesStart;
+  return row.source === "load" && row.load_id !== null;
 }
 
 // The loads an approved engine invoice_post card wrote an invoice for: every one in the tenant

@@ -236,15 +236,22 @@ describe("review input from rows", () => {
     expect(none.engineLinehaulCents).toBeNull();
   });
 
-  it("reads an invoice as made by the queue only with its load's card, from the start date on", () => {
+  it("reads an invoice as made by the queue only with its load's card, whatever its date", () => {
     const made = (inv: InvoiceRow, cards: string[]) => reviewInputOf(inv, facts({ cards })).invoice.madeByQueue;
     const start = invoice({ issued_on: flags.invoicesStart });
     expect(made(start, [LOAD])).toBe(true);
-    // No card for its load, another load's card, an opening balance, or issued before the start.
+    // No card for its load, another load's card, or an opening balance.
     expect(made(start, [])).toBe(false);
     expect(made(start, [id(9)])).toBe(false);
     expect(made(invoice({ source: "opening", load_id: null, issued_on: flags.invoicesStart }), [LOAD])).toBe(false);
-    expect(made(invoice({ issued_on: addDays(flags.invoicesStart, -1) }), [LOAD])).toBe(false);
+    // The card is the evidence: a start date moved past the invoice never makes it history, so it
+    // still needs a post before it is recorded as sent.
+    const early = invoice({ issued_on: addDays(flags.invoicesStart, -1), reviewed_at: "2026-10-21T15:00:00.000Z" });
+    expect(made(early, [LOAD])).toBe(true);
+    expect(reviewInvoice(reviewInputOf(early, facts({ invoices: [early], cards: [LOAD] })))).toMatchObject({
+      status: "ready_to_send",
+      reasons: ["not_posted"],
+    });
   });
 
   it("notes an unposted ready invoice as not posted only when the queue made it", () => {

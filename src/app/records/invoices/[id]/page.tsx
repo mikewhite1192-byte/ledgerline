@@ -1,4 +1,3 @@
-import { flags } from "@/config/flags";
 import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
@@ -11,35 +10,17 @@ import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
 import { PostButton } from "@/components/invoices/post-button";
 import { ReviewCard } from "@/components/invoices/review-card";
-import type { Queryable } from "@/lib/db";
-import { readInvoiceReview, readMemberRoles, type InvoiceReviewView } from "@/lib/invoices/review-read";
-import { readInvoiceRecord, type InvoiceRecordView } from "@/lib/invoices/views";
-import type { LocalDate } from "@/lib/time/local-date";
+import { invoiceRecordActions, readInvoiceRecordPage } from "@/lib/invoices/record-page";
 import { readRecordPage } from "../../read-record";
 
 export const dynamic = "force-dynamic";
 
-type Page = {
-  record: InvoiceRecordView;
-  review: { view: InvoiceReviewView; roles: Map<string, string> } | null;
-};
-
-// The record, and its review while the review switch is on (off, the review is never read).
-async function readPage(q: Queryable, id: string, today: LocalDate): Promise<Page | null> {
-  const record = await readInvoiceRecord(q, id, today);
-  if (!record) return null;
-  if (!(flags.invoicesEnabled && flags.invoiceReviewEnabled)) return { record, review: null };
-  const view = await readInvoiceReview(q, id);
-  if (!view) return null;
-  const roles = await readMemberRoles(q, [view.reviewedByMembershipId, view.sentByMembershipId]);
-  return { record, review: { view, roles } };
-}
-
 // One invoice: who owes it, what it is for, what came in against it, and every attempt to post
-// it to QuickBooks. "Post to QuickBooks" shows until a post is confirmed.
+// it to QuickBooks. "Post to QuickBooks" shows until a post is confirmed, for an invoice the
+// invoice queue made (record-page.ts).
 export default async function InvoiceRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const page = await readRecordPage(id, readPage);
+  const page = await readRecordPage(id, readInvoiceRecordPage);
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   if (page.kind === "missing") {
     return (
@@ -50,16 +31,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
   }
   const inv = page.record.record;
   const review = page.record.review;
-  // While the Review card is on a post that needs a retry or a check, its buttons are the ones.
-  const cardActs = review !== null && review.view.review.status === "sync_error";
-  const confirmed = inv.posted || inv.ledger.some((r) => r.state === "confirmed");
-  const canPost = flags.invoicesEnabled && !confirmed && inv.status !== "void" && !cardActs;
-  // A post nobody confirmed yet (unknown, or sent with no answer) is read back from here.
-  const canCheck =
-    flags.invoicesEnabled &&
-    !confirmed &&
-    !cardActs &&
-    inv.ledger.some((r) => r.state === "unknown" || r.state === "sent");
+  const actions = invoiceRecordActions(page.record);
   return (
     <SignedInPage tenant={page.shell} current="/invoices" title={`Invoice ${inv.invoiceNumber}`}>
       <PageHeader
@@ -93,8 +65,8 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
           />
         </CardBody>
       </Card>
-      {canPost ? <PostButton url={`/api/invoices/${encodeURIComponent(inv.id)}/post`} /> : null}
-      {canCheck ? <CheckButton url={`/api/invoices/${encodeURIComponent(inv.id)}/reconcile`} /> : null}
+      {actions.post ? <PostButton url={`/api/invoices/${encodeURIComponent(inv.id)}/post`} /> : null}
+      {actions.check ? <CheckButton url={`/api/invoices/${encodeURIComponent(inv.id)}/reconcile`} /> : null}
       {inv.lines ? (
         <DataTable
           caption="Lines, from the rules engine"

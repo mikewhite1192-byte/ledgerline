@@ -105,12 +105,17 @@ export async function markSent(
     if (!tenant) return refuse("not_found");
     const today = localDateOf(now.toISOString(), tenant.timezone);
     if (sentOn < view.issuedOn || sentOn > today) return refuse("validation");
-    // Under the lock, a queue-made invoice ($4) still needs its accounting id; history does not.
+    // Under the lock, a queue-made invoice still needs its accounting id; history does not. The
+    // choice is made here, between two statements, so no boolean parameter is ever sent.
     const changed = await q.execute(
-      `UPDATE invoices SET sent_on = CAST($2 AS date), sent_by_membership_id = CAST($3 AS uuid)
-        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
-          AND sent_on IS NULL AND (NOT CAST($4 AS boolean) OR qbo_id IS NOT NULL)`,
-      [invoiceId, sentOn, member, view.madeByQueue],
+      view.madeByQueue
+        ? `UPDATE invoices SET sent_on = CAST($2 AS date), sent_by_membership_id = CAST($3 AS uuid)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+              AND sent_on IS NULL AND qbo_id IS NOT NULL`
+        : `UPDATE invoices SET sent_on = CAST($2 AS date), sent_by_membership_id = CAST($3 AS uuid)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+              AND sent_on IS NULL`,
+      [invoiceId, sentOn, member],
     );
     return { ok: true, changed: changed === 1 };
   });
