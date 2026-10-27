@@ -82,8 +82,13 @@ export function toMessages(turns: LocalTurn[], notices: Readonly<Record<string, 
     }
     if (t.error) parts.push({ kind: "error", category: t.error });
     else if (t.text) parts.push({ kind: "text", text: t.text });
+    // How it was worked out: once the turn has finished and the server holds its steps. A turn
+    // that never reached the server has none, so it gets no disclosure.
+    const traced = t.status !== "running" && t.steps.length > 0;
+    if (traced) parts.push({ kind: "trace", turnId: t.id });
     for (const p of t.proposals) {
       parts.push({ kind: "proposal", proposal: proposalCardFrom(p) });
+      if (traced) parts.push({ kind: "trace", turnId: t.id, proposalId: p.id });
       const notice = notices[p.id];
       if (notice) parts.push({ kind: "text", text: notice });
     }

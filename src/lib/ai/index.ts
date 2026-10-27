@@ -8,7 +8,6 @@ import {
   audioReserve,
   capNanocents,
   centsToDisplay,
-  CREDIT_CENTS,
   estimateReserve,
   mediaReserveTokens,
   meteredCost,
@@ -123,6 +122,10 @@ const MAX_KEYWORDS = 20;
 // Muse Image refuses an aspect ratio past 16:1.
 const MAX_ASPECT = 16;
 
+// The highest maxCostCents one call may ask for, in cents ($150). A bound on a single call only,
+// separate from the spend caps and their ceiling in prices.ts.
+const MAX_CALL_COST_CENTS = 15_000;
+
 const DEFAULT_TIMEOUT_MS = 25_000;
 const SLOW_TIMEOUT_MS = 60_000;
 
@@ -152,7 +155,7 @@ function common(options: AiCallOptions, defaultTimeoutMs: number): Common {
   if (
     typeof c.purpose !== "string" ||
     !PURPOSE.test(c.purpose) ||
-    !inRange(c.maxCostCents, 1, CREDIT_CENTS) ||
+    !inRange(c.maxCostCents, 1, MAX_CALL_COST_CENTS) ||
     !inRange(c.timeoutMs, 1, SLOW_TIMEOUT_MS) ||
     (c.traceId !== null && !isUuid(c.traceId))
   ) {

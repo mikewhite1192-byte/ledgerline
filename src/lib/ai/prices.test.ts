@@ -4,7 +4,7 @@ import {
   audioReserve,
   capNanocents,
   centsToDisplay,
-  CREDIT_CENTS,
+  CAP_CEILING_CENTS,
   dollarsToDisplay,
   estimateReserve,
   IMAGE_NANOCENTS,
@@ -176,17 +176,17 @@ describe("prices", () => {
     );
   });
 
-  it("reads the cap as whole cents up to the credit, and refuses anything else", () => {
+  it("reads the cap as whole cents up to the ceiling, and refuses anything else", () => {
     expect(capNanocents("12000")).toBe(12_000 * NANOCENTS_PER_CENT);
     expect(capNanocents("1")).toBe(NANOCENTS_PER_CENT);
-    expect(capNanocents(String(CREDIT_CENTS))).toBe(15_000 * NANOCENTS_PER_CENT);
+    expect(capNanocents(String(CAP_CEILING_CENTS))).toBe(40_000 * NANOCENTS_PER_CENT);
     for (const bad of [
       undefined,
       "",
       "0",
       "00",
       "-1",
-      "15001",
+      "40001",
       "120.00",
       "1e4",
       " 12000",
@@ -197,7 +197,7 @@ describe("prices", () => {
       expect(capNanocents(bad), String(bad)).toBeNull();
     }
     // The largest cap stays a safe integer.
-    expect(Number.isSafeInteger(capNanocents("15000"))).toBe(true);
+    expect(Number.isSafeInteger(capNanocents("40000"))).toBe(true);
   });
 
   it("reads the Wonder cap as whole cents up to the overall cap, and refuses anything else", () => {
@@ -210,6 +210,8 @@ describe("prices", () => {
     }
     // No overall cap means no Wonder cap either.
     expect(wonderCapNanocents("3000", null)).toBeNull();
+    // Production's pair: Wonder's $150 inside the $400 ceiling.
+    expect(wonderCapNanocents("15000", capNanocents("40000"))).toBe(15_000 * NANOCENTS_PER_CENT);
   });
 
   it("rounds displays up, never down", () => {

@@ -17,8 +17,11 @@ export const QBO_TOKEN_KEY_SECRET_NAME = "payday-copilot/qbo-token-key";
 export const STRIPE_SECRET_KEY_SECRET_NAME = "payday-copilot/stripe-test-key";
 // The QuickBooks API minor version the adapter asks for (Intuit retired those below 75).
 export const QBO_MINOR_VERSION = "75";
-// The model credit, in cents. A spend cap above it is refused at synth and by the app.
-export const AI_CREDIT_CENTS = 15_000;
+// The highest a spend cap may be set, in cents ($400). The $150 Meta credit is spent first and the
+// card on file covers the rest, up to the cap. The caps are the only real stop (Meta's spend limit
+// only notifies), so a cap above this is refused at synth and by the app (CAP_CEILING_CENTS in
+// src/lib/ai/prices.ts, kept equal).
+export const AI_CAP_CEILING_CENTS = 40_000;
 
 // The Data API calls the SSR code makes. Nothing else on the cluster, and never the admin secret.
 export const DATA_API_ACTIONS = [
@@ -186,8 +189,8 @@ export class HostingStack extends Stack {
 
     const { account, partition, region } = Stack.of(this);
     const cap = props.aiSpendCapCents;
-    if (!Number.isInteger(cap) || cap < 1 || cap > AI_CREDIT_CENTS) {
-      throw new Error(`aiSpendCapCents must be a whole number from 1 to ${AI_CREDIT_CENTS}`);
+    if (!Number.isInteger(cap) || cap < 1 || cap > AI_CAP_CEILING_CENTS) {
+      throw new Error(`aiSpendCapCents must be a whole number from 1 to ${AI_CAP_CEILING_CENTS}`);
     }
     const wonderCap = props.aiWonderCapCents;
     if (!Number.isInteger(wonderCap) || wonderCap < 1 || wonderCap > cap) {

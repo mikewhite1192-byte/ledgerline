@@ -6,7 +6,7 @@ import { Match, Template } from "aws-cdk-lib/assertions";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { App } from "aws-cdk-lib";
 import {
-  AI_CREDIT_CENTS,
+  AI_CAP_CEILING_CENTS,
   BASETEN_API_KEY_SECRET_NAME,
   BRANCH_ENV_NAMES,
   DATA_API_ACTIONS,
@@ -209,8 +209,8 @@ describe("HostingStack", () => {
     expect(value.COGNITO_CLIENT_ID).toEqual(auth.resolve(auth.client.userPoolClientId));
     // The spend caps, the model ids and the key secret names are plain values in this stack.
     expect(value).toMatchObject({
-      AI_SPEND_CAP_CENTS: "12000",
-      AI_WONDER_CAP_CENTS: "3000",
+      AI_SPEND_CAP_CENTS: "40000",
+      AI_WONDER_CAP_CENTS: "15000",
       META_MODEL_SPARK: "muse-spark-1.3",
       META_MODEL_WONDER: "muse-wonder-1.0",
       META_MODEL_VOICE: "muse-voice-transcribe-1.0",
@@ -385,11 +385,32 @@ describe("HostingStack", () => {
     };
   }
 
-  it("refuses a spend cap that is not a whole number of cents up to the credit", () => {
+  it("accepts a spend cap at the ceiling, with a Wonder cap up to it", () => {
+    expect(AI_CAP_CEILING_CENTS).toBe(40_000);
+    const outdir = mkdtempSync(join(tmpdir(), "payday-hosting-ceiling-test-"));
+    try {
+      for (const aiWonderCapCents of [15_000, 40_000]) {
+        const app = new App({ outdir: join(outdir, String(aiWonderCapCents)) });
+        expect(
+          () =>
+            new HostingStack(
+              app,
+              "Hosting",
+              hostingProps({ aiSpendCapCents: 40_000, aiWonderCapCents }),
+            ),
+          String(aiWonderCapCents),
+        ).not.toThrow();
+      }
+    } finally {
+      rmSync(outdir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a spend cap that is not a whole number of cents up to the ceiling", () => {
     // An App makes its output folder when it is built, so each one gets a folder this test owns.
     const outdir = mkdtempSync(join(tmpdir(), "payday-hosting-cap-test-"));
     try {
-      for (const aiSpendCapCents of [0, -1, 12.5, AI_CREDIT_CENTS + 1, Number.NaN]) {
+      for (const aiSpendCapCents of [0, -1, 12.5, AI_CAP_CEILING_CENTS + 1, Number.NaN]) {
         const app = new App({ outdir: join(outdir, String(aiSpendCapCents)) });
         expect(
           () =>

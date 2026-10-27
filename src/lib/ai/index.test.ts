@@ -340,7 +340,7 @@ describe("every call, refusals before any reservation", () => {
   it("refuses a cap that is unset or bad, a key that is missing, and a bad tenant", async () => {
     const cases: [string, string | undefined, Session?][] = [
       ["AI_SPEND_CAP_CENTS", ""],
-      ["AI_SPEND_CAP_CENTS", "15001"],
+      ["AI_SPEND_CAP_CENTS", "40001"],
       ["AI_SPEND_CAP_CENTS", "120.50"],
       ["META_API_KEY", ""],
       ["META_API_KEY", "short"],
@@ -424,6 +424,8 @@ describe("every call, refusals before any reservation", () => {
       // max is a Meta setting only.
       [{ ...REQUEST, reasoningEffort: "max" }, "spark_open"],
       [{ ...REQUEST, maxCostCents: 0 }, "spark"],
+      // One call's own limit stays at $150 whatever the spend cap.
+      [{ ...REQUEST, maxCostCents: 15_001 }, "spark"],
       [{ ...REQUEST, timeoutMs: 60_001 }, "spark"],
       [{ ...REQUEST, traceId: "not-a-uuid" }, "spark"],
       [
