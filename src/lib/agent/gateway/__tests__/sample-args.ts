@@ -27,6 +27,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     run_checks: {},
     get_inbound_message: { inputId: input.id },
     get_document: { inputId: doc.id },
+    get_voice_note: { inputId: input.id },
     propose_advance: {
       driverId: hero.id,
       amountCents: 10_000,

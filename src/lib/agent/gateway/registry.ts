@@ -16,6 +16,7 @@ import { getLoads } from "./tools/read/get-loads";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
 import { getPayItems } from "./tools/read/get-pay-items";
+import { getVoiceNote } from "./tools/read/get-voice-note";
 import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstanding";
 import { reportArAging } from "./tools/read/report-ar-aging";
 import { reportCashNeeded } from "./tools/read/report-cash-needed";
@@ -57,6 +58,7 @@ const TOOLS: readonly AnyToolDef[] = [
   reportCashNeeded,
   reportMarginPerLoad,
   getInboundMessage,
+  getVoiceNote,
   getProposal,
   getDocument,
   findUnbilledDetentionTool,
