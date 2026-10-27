@@ -33,15 +33,16 @@ const MIGRATIONS = readdirSync(DIR)
   .sort()
   .map((f) => ({ version: f.slice(0, 4), sql: withoutComments(readFileSync(path.join(DIR, f), "utf8")) }));
 
-// Each "ADD CONSTRAINT <name> CHECK (<lead> IN (...)<tail>)", in number order. A re-creation this
-// parser cannot read fails the test, never is skipped.
-function listings(name: string, lead: string): Listing[] {
+// Each "ADD CONSTRAINT <name> CHECK (<lead> IN (...)<tail>)", in number order. `readable` matches a
+// re-creation this parser can read (its list in group 1) and `every` matches each re-creation of
+// the same name, so one the parser cannot read fails the test, never is skipped. Both are literal
+// patterns written at each call.
+function listings(readable: RegExp, every: RegExp): Listing[] {
   const out: Listing[] = [];
-  const re = new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\s+CHECK\\s*\\(\\s*${lead}\\s+IN\\s*\\(([^)]*)\\)`, "gi");
   for (const { version, sql } of MIGRATIONS) {
-    const read = [...sql.matchAll(re)].map((m) => ({ version, values: quoted(m[1]) }));
-    const named = (sql.match(new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\b`, "gi")) ?? []).length;
-    expect(named, `${version}: every ${name} re-creation is readable`).toBe(read.length);
+    const read = [...sql.matchAll(readable)].map((m) => ({ version, values: quoted(m[1]) }));
+    const named = (sql.match(every) ?? []).length;
+    expect(named, `${version}: every ${every.source} re-creation is readable`).toBe(read.length);
     out.push(...read);
   }
   return out;
@@ -53,30 +54,45 @@ const SUBJECT_TABLES = [...new Set(MONEY_ACTION_KINDS.map((k) => KIND_SHAPES[k].
 
 describe("the money ledger checks in the migration texts", () => {
   it("lists every money kind in each kind check re-creation", () => {
-    const found = listings("money_actions_kind_check", "kind");
+    const found = listings(
+      /ADD\s+CONSTRAINT\s+money_actions_kind_check\s+CHECK\s*\(\s*kind\s+IN\s*\(([^)]*)\)/gi,
+      /ADD\s+CONSTRAINT\s+money_actions_kind_check\b/gi,
+    );
     expect(found.map((l) => l.version)).toContain("0048");
     for (const l of found) expect(sorted(l.values), l.version).toEqual(sorted(MONEY_ACTION_KINDS));
   });
 
   it("lists every subject table in each subject check re-creation", () => {
-    const found = listings("money_actions_subject_table_check", "subject_table");
+    const found = listings(
+      /ADD\s+CONSTRAINT\s+money_actions_subject_table_check\s+CHECK\s*\(\s*subject_table\s+IN\s*\(([^)]*)\)/gi,
+      /ADD\s+CONSTRAINT\s+money_actions_subject_table_check\b/gi,
+    );
     expect(found.length).toBeGreaterThan(0);
     for (const l of found) expect(sorted(l.values), l.version).toEqual(sorted(SUBJECT_TABLES));
   });
 
   it("lists every outside system in each re-creation from the money-code block on", () => {
-    const found = listings("money_actions_outside_system_check", "outside_system");
+    const found = listings(
+      /ADD\s+CONSTRAINT\s+money_actions_outside_system_check\s+CHECK\s*\(\s*outside_system\s+IN\s*\(([^)]*)\)/gi,
+      /ADD\s+CONSTRAINT\s+money_actions_outside_system_check\b/gi,
+    );
     const union = found.filter((l) => l.version >= "0047");
     expect(union.length).toBeGreaterThan(0);
     for (const l of union) expect(sorted(l.values), l.version).toEqual(sorted(OUTSIDE_SYSTEMS));
   });
 
   it("pairs channel, subject and counterparty exactly as the code's kind shapes do", () => {
-    const channel = listings("money_actions_channel_pairing", "\\(\\s*channel\\s*=\\s*'payment'\\s*\\)\\s*=\\s*\\(\\s*kind");
-    const invoice = listings("money_actions_invoice_subject_pairing", "\\(\\s*kind");
+    const channel = listings(
+      /ADD\s+CONSTRAINT\s+money_actions_channel_pairing\s+CHECK\s*\(\s*\(\s*channel\s*=\s*'payment'\s*\)\s*=\s*\(\s*kind\s+IN\s*\(([^)]*)\)/gi,
+      /ADD\s+CONSTRAINT\s+money_actions_channel_pairing\b/gi,
+    );
+    const invoice = listings(
+      /ADD\s+CONSTRAINT\s+money_actions_invoice_subject_pairing\s+CHECK\s*\(\s*\(\s*kind\s+IN\s*\(([^)]*)\)/gi,
+      /ADD\s+CONSTRAINT\s+money_actions_invoice_subject_pairing\b/gi,
+    );
     const counterparty = listings(
-      "money_actions_counterparty_pairing",
-      "\\(\\s*counterparty_table\\s*=\\s*'customers'\\s*\\)\\s*=\\s*\\(\\s*kind",
+      /ADD\s+CONSTRAINT\s+money_actions_counterparty_pairing\s+CHECK\s*\(\s*\(\s*counterparty_table\s*=\s*'customers'\s*\)\s*=\s*\(\s*kind\s+IN\s*\(([^)]*)\)/gi,
+      /ADD\s+CONSTRAINT\s+money_actions_counterparty_pairing\b/gi,
     );
     for (const found of [channel, invoice, counterparty]) expect(found.length).toBeGreaterThan(0);
     for (const l of channel) {
@@ -97,15 +113,13 @@ describe("the money ledger checks in the migration texts", () => {
 
   it("drops each unnamed 0006 pairing only where it adds the named one back", () => {
     const pairs = [
-      ["money_actions_check2", "money_actions_channel_pairing"],
-      ["money_actions_check5", "money_actions_invoice_subject_pairing"],
-      ["money_actions_check7", "money_actions_counterparty_pairing"],
+      [/DROP\s+CONSTRAINT\s+(IF\s+EXISTS\s+)?money_actions_check2\b/i, /ADD\s+CONSTRAINT\s+money_actions_channel_pairing\b/i],
+      [/DROP\s+CONSTRAINT\s+(IF\s+EXISTS\s+)?money_actions_check5\b/i, /ADD\s+CONSTRAINT\s+money_actions_invoice_subject_pairing\b/i],
+      [/DROP\s+CONSTRAINT\s+(IF\s+EXISTS\s+)?money_actions_check7\b/i, /ADD\s+CONSTRAINT\s+money_actions_counterparty_pairing\b/i],
     ] as const;
     for (const { version, sql } of MIGRATIONS) {
-      for (const [unnamed, named] of pairs) {
-        if (new RegExp(`DROP\\s+CONSTRAINT\\s+(IF\\s+EXISTS\\s+)?${unnamed}\\b`, "i").test(sql)) {
-          expect(new RegExp(`ADD\\s+CONSTRAINT\\s+${named}\\b`, "i").test(sql), `${version}: ${named}`).toBe(true);
-        }
+      for (const [dropped, added] of pairs) {
+        if (dropped.test(sql)) expect(added.test(sql), `${version}: ${added.source}`).toBe(true);
       }
     }
   });
