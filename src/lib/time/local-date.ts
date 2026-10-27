@@ -140,3 +140,43 @@ export function localDateOf(instant: Instant, zone: string): LocalDate {
   for (const part of formatterFor(zone).formatToParts(t)) out[part.type] = part.value;
   return assertLocalDate(`${out.year}-${out.month}-${out.day}`, "local date");
 }
+
+const clockFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function clockFormatterFor(zone: string): Intl.DateTimeFormat {
+  let f = clockFormatters.get(zone);
+  if (!f) {
+    // Throws RangeError for a zone the runtime does not know.
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hourCycle: "h23",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    clockFormatters.set(zone, f);
+  }
+  return f;
+}
+
+export type LocalTime = { hour: number; minute: number; second: number };
+
+// The wall-clock time an instant shows in an IANA zone, on a 24-hour clock.
+export function localTimeOf(instant: Instant, zone: string): LocalTime {
+  if (typeof zone !== "string" || zone.length === 0) throw new RangeError("zone is required");
+  const t = new Date(parseInstant(instant));
+  const out: Record<string, string> = {};
+  for (const part of clockFormatterFor(zone).formatToParts(t)) out[part.type] = part.value;
+  const time = { hour: Number(out.hour), minute: Number(out.minute), second: Number(out.second) };
+  if (
+    !Number.isInteger(time.hour) ||
+    time.hour > 23 ||
+    !Number.isInteger(time.minute) ||
+    time.minute > 59 ||
+    !Number.isInteger(time.second) ||
+    time.second > 59
+  ) {
+    throw new RangeError("local time out of range");
+  }
+  return time;
+}

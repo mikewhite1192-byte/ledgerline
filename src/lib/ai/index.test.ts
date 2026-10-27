@@ -3,11 +3,16 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { DbError, type Param, type Queryable, type TenantDb } from "../db";
 import { ForbiddenError } from "../tenant/context";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   AiError,
   complete,
+  computerStep,
   generateImage,
   segment,
+  segmentVideo,
+  spendRoom,
   transcribe,
   type AiDeps,
   type AiRequest,
@@ -15,14 +20,18 @@ import {
 } from "./index";
 import {
   audioReserve,
+  COMPUTER_TOOL_RESERVE_TOKENS,
   estimateReserve,
   NANOCENTS_PER_CENT,
   priceFor,
+  SCREENSHOT_RESERVE_TOKENS,
   type TokenPrice,
+  videoReserveTokens,
   VOICE_NANOCENTS_PER_SECOND,
 } from "./prices";
 import { forgetKey } from "./keys";
 import type { FetchFn } from "./providers/http";
+import { dataUrlLength } from "./providers/media";
 import { JPEG_BYTES, makeWav, PDF_BYTES, PNG_BYTES, QUIET_JOB } from "./test-fixtures";
 
 const KEY = "test-key-abcdefghijklmnop";
@@ -2242,5 +2251,526 @@ describe("the local replay host override", () => {
       );
       expect(ledger.steps, target).toEqual([]);
     }
+  });
+});
+
+// A real two-frame clip (64x64, 2 fps, H.264), made by scripts/make-dock-clip.ts.
+const CLIP = new Uint8Array(readFileSync(join(__dirname, "../clips/fixtures/tiny.mp4")));
+const CLIP_FRAMES = 2;
+const SAM_VIDEO_TEXT =
+  "<0f>0<|box;x1=10;y1=12;x2=30;y2=40;w=64;h=64;c=0.9|><|mask;x=0;y=0;c=0.9;data=28,20,!ab|>\n";
+const samVideoAnswer = (processed: unknown = 50) =>
+  Response.json({
+    id: "resp_video1",
+    status: "completed",
+    output: [{ type: "message", content: [{ type: "output_text", text: SAM_VIDEO_TEXT }] }],
+    usage: { video_frames_processed: processed },
+  });
+const videoRequest = (overrides: object = {}) => ({
+  purpose: "clip_redact_face",
+  video: { mime: "video/mp4" as const, bytes: CLIP, frameCount: CLIP_FRAMES },
+  prompt: "face",
+  ...overrides,
+});
+const videoMessage = (frameCount = CLIP_FRAMES): AiRequest => ({
+  purpose: "clip_read",
+  maxCostCents: 10,
+  messages: [
+    {
+      role: "user",
+      content: "Read the clock.",
+      attachments: [{ kind: "video", mime: "video/mp4", bytes: CLIP, frameCount }],
+    },
+  ],
+});
+
+describe("video", () => {
+  it("tracks a concept through a clip: reserves the 50-frame floor, charges what was billed", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => samVideoAnswer(50));
+    const result = await segmentVideo(videoRequest({ traceId: TRACE }), SESSION, {
+      fetch: fetchFn,
+      db: ledger.db,
+    });
+    const sent = JSON.parse(String(fetchFn.mock.calls[0][1].body));
+    expect(sent.model).toBe("sam-3.1");
+    expect(sent.store).toBe(false);
+    // Two frames still reserve and bill the 50-frame minimum.
+    expect(ledger.rows.get(result.callId)).toMatchObject({
+      target: "sam",
+      kind: "segment",
+      reserved: 50 * 20_000_000,
+      cost: 50 * 20_000_000,
+      units: 50,
+      trace: TRACE,
+    });
+    expect(result.framesProcessed).toBe(50);
+    expect(result.width).toBe(64);
+    expect([...result.frames.keys()]).toEqual([0]);
+    expect(result.frames.get(0)?.[0].box).toEqual({ x1: 10, y1: 12, x2: 30, y2: 40 });
+    expect(logged.join("\n")).not.toContain(Buffer.from(CLIP).toString("base64").slice(0, 40));
+  });
+
+  it("stops both video calls at the switch, the Contributor check and the spend cap, with nothing sent", async () => {
+    const calls = [
+      (deps: AiDeps) => segmentVideo(videoRequest(), SESSION, deps),
+      (deps: AiDeps) => complete("spark", videoMessage(), SESSION, deps),
+    ];
+    for (const call of calls) {
+      flags.aiEnabled = false;
+      let ledger = fakeLedger();
+      let fetchFn = fakeFetch(ledger.steps);
+      expect((await refusal(call({ fetch: fetchFn, db: ledger.db }))).category).toBe("disabled");
+      expect(ledger.steps).toEqual([]);
+      flags.aiEnabled = true;
+
+      vi.stubEnv("META_CONTRIBUTOR_MODE", "yes");
+      ledger = fakeLedger();
+      fetchFn = fakeFetch(ledger.steps);
+      expect((await refusal(call({ fetch: fetchFn, db: ledger.db }))).category).toBe("not_configured");
+      expect(ledger.steps).toEqual([]);
+      baseEnv();
+
+      // A tenth of a cent left under the overall cap: either reserve is over it.
+      const start = { spent: 12_000 * NANOCENTS_PER_CENT - 1_000_000, calls: 7 };
+      ledger = fakeLedger(start);
+      fetchFn = fakeFetch(ledger.steps);
+      expect((await refusal(call({ fetch: fetchFn, db: ledger.db }))).category).toBe("cap");
+      expect(ledger.steps).toEqual(["tx tenant", "membership", "lock counter"]);
+      expect(ledger.counter).toMatchObject({ ...start, reserved: 0 });
+      expect(fetchFn).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refuses a clip whose declared frame count, type or phrase is wrong before any reserve", async () => {
+    const cases = [
+      videoRequest({ video: { mime: "video/mp4", bytes: CLIP, frameCount: 1 } }),
+      videoRequest({ video: { mime: "video/quicktime", bytes: CLIP, frameCount: CLIP_FRAMES } }),
+      videoRequest({ video: { mime: "video/mp4", bytes: PNG_BYTES, frameCount: CLIP_FRAMES } }),
+      videoRequest({ video: { mime: "video/mp4", bytes: new Uint8Array(700_001), frameCount: 2 } }),
+      videoRequest({ prompt: "box;x1=1" }),
+      videoRequest({ prompt: "face 2" }),
+      videoRequest({ propagation: "sideways" }),
+      videoRequest({ maskEncoding: "rle" }),
+      videoRequest({ includeConfidence: "yes" }),
+    ];
+    for (const request of cases) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps, () => samVideoAnswer());
+      const err = await refusal(segmentVideo(request as never, SESSION, { fetch: fetchFn, db: ledger.db }));
+      expect(err.category, JSON.stringify(request).slice(0, 160)).toBe("bad_request");
+      expect(ledger.steps).toEqual([]);
+    }
+  });
+
+  it("refuses a clip whose reserve is over the caller's cost limit, with nothing sent", async () => {
+    // The synthetic dock clip: 144 frames reserve 2.88 cents, over a 2-cent limit.
+    const demo = new Uint8Array(readFileSync(join(__dirname, "../../../public/demo/dock-clip-br-l10216.mp4")));
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => samVideoAnswer());
+    const request = videoRequest({ maxCostCents: 2, video: { mime: "video/mp4", bytes: demo, frameCount: 144 } });
+    const err = await refusal(segmentVideo(request, SESSION, { fetch: fetchFn, db: ledger.db }));
+    expect(err.category).toBe("too_expensive");
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(ledger.counter.reserved).toBe(0);
+  });
+
+  it("keeps the reservation when a tracking answer cannot be read", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => samVideoAnswer("50"));
+    expect((await refusal(segmentVideo(videoRequest(), SESSION, { fetch: fetchFn, db: ledger.db }))).category).toBe(
+      "unknown",
+    );
+    const [row] = [...ledger.rows.values()];
+    expect(row.status).toBe("unknown");
+    expect(ledger.counter).toMatchObject({ spent: 0, reserved: 50 * 20_000_000, calls: 1 });
+  });
+
+  it("sends a clip to Muse Spark inline and reserves its seconds and frames, not its base64", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps);
+    const request = videoMessage();
+    const result = await complete("spark", request, SESSION, { fetch: fetchFn, db: ledger.db });
+    const body = String(fetchFn.mock.calls[0][1].body);
+    const sent = JSON.parse(body);
+    const part = sent.input[0].content.find((c: { type: string }) => c.type === "input_video");
+    expect(part.video_url).toBe(`data:video/mp4;base64,${Buffer.from(CLIP).toString("base64")}`);
+    const dataChars = part.video_url.length;
+    const reserved = estimateReserve(
+      priceFor("spark", "meta", "muse-spark-1.3") as TokenPrice,
+      new TextEncoder().encode(body).length - dataChars,
+      1024,
+      videoReserveTokens(CLIP_FRAMES, 1000),
+    );
+    expect(ledger.rows.get(result.callId)).toMatchObject({ reserved });
+  });
+
+  it("refuses a clip sent to another model, two clips, a wrong frame count or no cost limit", async () => {
+    const two: AiRequest = {
+      ...videoMessage(),
+      messages: [
+        {
+          role: "user",
+          content: "Read both.",
+          attachments: [
+            { kind: "video", mime: "video/mp4", bytes: CLIP, frameCount: CLIP_FRAMES },
+            { kind: "video", mime: "video/mp4", bytes: CLIP, frameCount: CLIP_FRAMES },
+          ],
+        },
+      ],
+    };
+    const noLimit: AiRequest = { ...videoMessage(), maxCostCents: undefined };
+    const cases: [AiTextTarget, AiRequest][] = [
+      ["wonder", videoMessage()],
+      ["spark_open", videoMessage()],
+      ["spark", two],
+      ["spark", videoMessage(3)],
+      ["spark", noLimit],
+    ];
+    for (const [target, request] of cases) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      const err = await refusal(complete(target, request, SESSION, { fetch: fetchFn, db: ledger.db }));
+      expect(err.category, target).toBe("bad_request");
+      expect(ledger.steps).toEqual([]);
+    }
+  });
+});
+
+describe("spendRoom, the read-only check before a call", () => {
+  // The counter as the reserve reads it, from a Queryable that refuses any write and records
+  // every statement.
+  function counterOnly(
+    start: Partial<Record<"spent" | "reserved" | "wonderSpent" | "wonderReserved", number>> = {},
+  ) {
+    const sql: string[] = [];
+    const c = { spent: 0, reserved: 0, wonderSpent: 0, wonderReserved: 0, ...start };
+    const q: Queryable = {
+      async query<T>(text: string): Promise<T[]> {
+        sql.push(text);
+        if (!text.includes("FROM ops.ai_spend")) throw new Error("unexpected query");
+        return [
+          {
+            spent_nanocents: c.spent,
+            reserved_nanocents: c.reserved,
+            calls: 3,
+            wonder_spent_nanocents: c.wonderSpent,
+            wonder_reserved_nanocents: c.wonderReserved,
+          },
+        ] as T[];
+      },
+      async execute(): Promise<number> {
+        throw new Error("spendRoom never writes");
+      },
+    };
+    return { q, sql };
+  }
+
+  // What complete() reserved for a request, from a run against the fake ledger.
+  async function reservedBy(target: AiTextTarget, request: AiRequest): Promise<number> {
+    const ledger = fakeLedger();
+    const result = await complete(target, request, SESSION, {
+      fetch: fakeFetch(ledger.steps),
+      db: ledger.db,
+    });
+    return ledger.rows.get(result.callId)!.reserved;
+  }
+
+  it("agrees with the reserve at the overall cap's edge, for a clip reading and a text call", async () => {
+    const cap = 12_000 * NANOCENTS_PER_CENT;
+    for (const request of [videoMessage(), REQUEST]) {
+      const reserve = await reservedBy("spark", request);
+      expect(reserve).toBeGreaterThan(0);
+      // Exactly the reserve left: the check finds room and the call goes through.
+      const edge = { spent: cap - reserve - 5, reserved: 5 };
+      const atEdge = counterOnly(edge);
+      expect(await spendRoom("spark", request, atEdge.q)).toBe("room");
+      let ledger = fakeLedger(edge);
+      await complete("spark", request, SESSION, { fetch: fakeFetch(ledger.steps), db: ledger.db });
+      expect(ledger.counter.spent).toBeGreaterThan(edge.spent);
+      // One nanocent less: the check says cap, and so does the reserve, with nothing sent.
+      const over = { spent: cap - reserve - 4, reserved: 5 };
+      expect(await spendRoom("spark", request, counterOnly(over).q)).toBe("cap");
+      ledger = fakeLedger(over);
+      const fetchFn = fakeFetch(ledger.steps);
+      expect(
+        (await refusal(complete("spark", request, SESSION, { fetch: fetchFn, db: ledger.db })))
+          .category,
+      ).toBe("cap");
+      expect(fetchFn).not.toHaveBeenCalled();
+      // One read of the counter, without the reserve's lock.
+      expect(atEdge.sql).toHaveLength(1);
+      expect(atEdge.sql[0]).not.toContain("FOR UPDATE");
+    }
+  });
+
+  it("holds Wonder to its own cap as the reserve does, and leaves Spark to the overall cap", async () => {
+    const wonderCap = 3_000 * NANOCENTS_PER_CENT;
+    const reserve = await reservedBy("wonder", REQUEST);
+    const edge = { spent: wonderCap - reserve, wonderSpent: wonderCap - reserve };
+    expect(await spendRoom("wonder", REQUEST, counterOnly(edge).q)).toBe("room");
+    const over = { spent: wonderCap - reserve + 1, wonderSpent: wonderCap - reserve + 1 };
+    expect(await spendRoom("wonder", REQUEST, counterOnly(over).q)).toBe("cap");
+    const ledger = fakeLedger(over);
+    const fetchFn = fakeFetch(ledger.steps);
+    expect(
+      (await refusal(complete("wonder", REQUEST, SESSION, { fetch: fetchFn, db: ledger.db }))).category,
+    ).toBe("cap");
+    expect(fetchFn).not.toHaveBeenCalled();
+    // Spark has no cap of its own: the same spend leaves it room under the overall cap.
+    expect(await spendRoom("spark", REQUEST, counterOnly(over).q)).toBe("room");
+  });
+
+  it("says too_expensive when the reserve is over the call's own cost limit, before reading the counter", async () => {
+    // 8,192 output tokens at Spark's output price reserve 3.48 cents, over a 1-cent limit.
+    const request: AiRequest = { ...REQUEST, maxCostCents: 1, maxOutputTokens: 8192 };
+    const check = counterOnly();
+    expect(await spendRoom("spark", request, check.q)).toBe("too_expensive");
+    expect(check.sql).toEqual([]);
+    const ledger = fakeLedger();
+    expect(
+      (
+        await refusal(
+          complete("spark", request, SESSION, { fetch: fakeFetch(ledger.steps), db: ledger.db }),
+        )
+      ).category,
+    ).toBe("too_expensive");
+  });
+
+  it("says too_expensive when the reserve is over the job's hourly allowance, as the call does", async () => {
+    // 8,192 output tokens reserve 3.48 cents on Spark: over a 3-cent allowance, under 4.
+    const saved = flags.aiJobHourlyCapCents;
+    const request: AiRequest = { ...REQUEST, maxOutputTokens: 8192 };
+    try {
+      flags.aiJobHourlyCapCents = 3;
+      const check = counterOnly();
+      expect(await spendRoom("spark", request, check.q)).toBe("too_expensive");
+      expect(check.sql).toEqual([]);
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      expect(
+        (await refusal(complete("spark", request, SESSION, { fetch: fetchFn, db: ledger.db }))).category,
+      ).toBe("too_expensive");
+      expect(fetchFn).not.toHaveBeenCalled();
+
+      flags.aiJobHourlyCapCents = 4;
+      expect(await spendRoom("spark", request, counterOnly().q)).toBe("room");
+    } finally {
+      flags.aiJobHourlyCapCents = saved;
+    }
+  });
+
+  it("leaves the answer to the call when the job's hourly allowance is not set, as the call refuses it", async () => {
+    const saved = flags.aiJobHourlyCapCents;
+    try {
+      for (const bad of [0, -1, 1.5, Number.NaN]) {
+        flags.aiJobHourlyCapCents = bad;
+        const check = counterOnly();
+        expect(await spendRoom("spark", REQUEST, check.q), String(bad)).toBeNull();
+        expect(check.sql, String(bad)).toEqual([]);
+        const ledger = fakeLedger();
+        expect(
+          (await refusal(complete("spark", REQUEST, SESSION, { fetch: fakeFetch(ledger.steps), db: ledger.db })))
+            .category,
+          String(bad),
+        ).toBe("not_configured");
+      }
+    } finally {
+      flags.aiJobHourlyCapCents = saved;
+    }
+  });
+
+  it("leaves the answer to the call when it would be refused for another reason first", async () => {
+    const cases: [string, () => void][] = [
+      ["switch off", () => (flags.aiEnabled = false)],
+      ["no cap", () => vi.stubEnv("AI_SPEND_CAP_CENTS", undefined)],
+      ["cap over the ceiling", () => vi.stubEnv("AI_SPEND_CAP_CENTS", "40001")],
+      ["no model id", () => vi.stubEnv("META_MODEL_SPARK", "")],
+      ["unpriced model id", () => vi.stubEnv("META_MODEL_SPARK", "muse-spark-9")],
+      ["bad Contributor mode", () => vi.stubEnv("META_CONTRIBUTOR_MODE", "yes")],
+    ];
+    for (const [name, set] of cases) {
+      baseEnv();
+      flags.aiEnabled = true;
+      set();
+      const check = counterOnly();
+      expect(await spendRoom("spark", REQUEST, check.q), name).toBeNull();
+      expect(check.sql, name).toEqual([]);
+    }
+    baseEnv();
+    flags.aiEnabled = true;
+    // A malformed request, a video with the wrong frame count, a target that is not a text model.
+    for (const [target, request] of [
+      ["spark", { ...REQUEST, messages: [] }],
+      ["spark", videoMessage(3)],
+      ["spark", { ...REQUEST, maxCostCents: 0 }],
+      ["voice", REQUEST],
+    ] as [AiTextTarget, AiRequest][]) {
+      const check = counterOnly();
+      expect(await spendRoom(target, request, check.q)).toBeNull();
+      expect(check.sql).toEqual([]);
+    }
+    // Wonder without its own cap.
+    vi.stubEnv("AI_WONDER_CAP_CENTS", undefined);
+    expect(await spendRoom("wonder", REQUEST, counterOnly().q)).toBeNull();
+  });
+
+  it("throws when the counter cannot be read, as the reserve does", async () => {
+    const q: Queryable = {
+      async query<T>(): Promise<T[]> {
+        return [];
+      },
+      async execute(): Promise<number> {
+        throw new Error("spendRoom never writes");
+      },
+    };
+    await expect(spendRoom("spark", REQUEST, q)).rejects.toBeInstanceOf(DbError);
+  });
+});
+
+describe("computerStep, one browser step", () => {
+  const SHOT = { mime: "image/png" as const, bytes: PNG_BYTES };
+  const CHECK = { id: "sc_1", code: "malicious_instructions", message: "The page asks for something else." };
+  const pairOf = (i: number) => ({
+    call: { type: "computer_call", call_id: `call_${i}`, actions: [{ type: "wait" }] },
+    output: { callId: `call_${i}`, screenshot: SHOT, acknowledged: [] as Record<string, unknown>[] },
+  });
+  const STEP = (history: ReturnType<typeof pairOf>[] = []) => ({
+    purpose: "portal_runner_step",
+    instructions: "Read the page only.",
+    task: "Find load FFE-100001.",
+    screenshot: SHOT,
+    history,
+    traceId: TRACE,
+  });
+  const computerAnswer = (checks: unknown[] = []) =>
+    Response.json({
+      id: "resp_cu1",
+      status: "completed",
+      output: [
+        {
+          type: "computer_call",
+          id: "cu_1",
+          call_id: "call_new",
+          actions: [{ type: "click", x: 5, y: 6, button: "left" }],
+          pending_safety_checks: checks,
+          status: "completed",
+        },
+      ],
+      usage: USAGE,
+    });
+  // What the wrapper reserves for a step with n screenshots.
+  const reserveFor = (body: string, n: number, price = priceFor("spark", "meta", "muse-spark-1.3")) =>
+    estimateReserve(
+      price as TokenPrice,
+      new TextEncoder().encode(body).length - n * dataUrlLength("image/png", PNG_BYTES.length),
+      1024,
+      n * SCREENSHOT_RESERVE_TOKENS + COMPUTER_TOOL_RESERVE_TOKENS,
+    );
+  const SHIPPED_MODEL = flags.portalRunnerModel;
+
+  afterEach(() => {
+    flags.portalRunnerModel = SHIPPED_MODEL;
+  });
+
+  it("ships on Muse Spark: sends the computer tool, reserves each screen and the tool, and returns the call", async () => {
+    expect(flags.portalRunnerModel).toBe("spark");
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer([CHECK]));
+    const result = await computerStep("spark", STEP(), SESSION, { fetch: fetchFn, db: ledger.db });
+    const body = String(fetchFn.mock.calls[0][1].body);
+    const sent = JSON.parse(body);
+    expect(sent.model).toBe("muse-spark-1.3");
+    expect(sent.tools).toEqual([{ type: "computer" }]);
+    expect(sent.store).toBe(false);
+    const row = ledger.rows.get(result.callId)!;
+    expect(row).toMatchObject({ target: "spark", trace: TRACE, status: "ok", cost: COST });
+    expect(row.reserved).toBe(reserveFor(body, 1));
+    expect(result.call).toMatchObject({ callId: "call_new", pendingSafetyChecks: [CHECK], checks: [CHECK] });
+    expect(result.costNanocents).toBe(COST);
+    expect(result.toolSearches).toBe(0);
+    // Nothing lands on the Wonder counter.
+    expect(ledger.counter.wonderSpent).toBe(0);
+  });
+
+  it("drives Muse Wonder only when the switch names it, on the Wonder counter", async () => {
+    flags.portalRunnerModel = "wonder";
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const result = await computerStep("wonder", STEP(), SESSION, { fetch: fetchFn, db: ledger.db });
+    const body = String(fetchFn.mock.calls[0][1].body);
+    expect(JSON.parse(body).model).toBe("muse-wonder-1.0");
+    const row = ledger.rows.get(result.callId)!;
+    expect(row).toMatchObject({ target: "wonder", cost: WONDER_COST });
+    expect(row.reserved).toBe(reserveFor(body, 1, priceFor("wonder", "meta", "muse-wonder-1.0")));
+    // The Wonder counter carries the reservation and then the cost.
+    expect(ledger.counter.wonderSpent).toBe(WONDER_COST);
+  });
+
+  it("reserves fifteen screens for a step with fourteen calls behind it", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const history = Array.from({ length: 14 }, (_, i) => pairOf(i));
+    const result = await computerStep("spark", STEP(history), SESSION, { fetch: fetchFn, db: ledger.db });
+    const body = String(fetchFn.mock.calls[0][1].body);
+    expect(JSON.parse(body).input).toHaveLength(1 + 28);
+    expect(ledger.rows.get(result.callId)!.reserved).toBe(reserveFor(body, 15));
+  });
+
+  it("returns a null call when the model answers in text", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => Response.json(metaAnswer()));
+    const result = await computerStep("spark", STEP(), SESSION, { fetch: fetchFn, db: ledger.db });
+    expect(result.call).toBeNull();
+    expect(result.text).toBe("Hello, money desk.");
+  });
+
+  it.each([
+    ["30 calls of history", () => STEP(Array.from({ length: 30 }, (_, i) => pairOf(i)))],
+    ["a screenshot that is not a PNG or JPEG", () => ({ ...STEP(), screenshot: { mime: "image/png" as const, bytes: PDF_BYTES } })],
+    ["an empty task", () => ({ ...STEP(), task: " " })],
+    ["an answer for another call", () => ({ ...STEP([{ ...pairOf(1), output: { ...pairOf(1).output, callId: "call_9" } }]) })],
+    [
+      "an acknowledged check without an id",
+      () => ({ ...STEP([{ ...pairOf(1), output: { ...pairOf(1).output, acknowledged: [{ code: "x" }] } }]) }),
+    ],
+  ])("refuses %s before any reservation", async (_name, request) => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const err = await refusal(
+      computerStep("spark", request() as Parameters<typeof computerStep>[1], SESSION, { fetch: fetchFn, db: ledger.db }),
+    );
+    expect(err.category).toBe("bad_request");
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(ledger.rows.size).toBe(0);
+  });
+
+  it("refuses every target but the one the switch names, both ways, before any reservation", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const deps = { fetch: fetchFn, db: ledger.db };
+    flags.portalRunnerModel = "spark";
+    expect((await refusal(computerStep("wonder", STEP(), SESSION, deps))).category).toBe("bad_request");
+    flags.portalRunnerModel = "wonder";
+    expect((await refusal(computerStep("spark", STEP(), SESSION, deps))).category).toBe("bad_request");
+    // A target that is neither, and a switch holding neither, refuse too.
+    expect((await refusal(computerStep("spark_open" as "spark", STEP(), SESSION, deps))).category).toBe("bad_request");
+    flags.portalRunnerModel = "spark_open" as "spark";
+    expect((await refusal(computerStep("spark_open" as "spark", STEP(), SESSION, deps))).category).toBe("bad_request");
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(ledger.rows.size).toBe(0);
+  });
+
+  it("refuses a step whose reservation passes its cost cap, before the call", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () => computerAnswer());
+    const err = await refusal(
+      computerStep("spark", { ...STEP(Array.from({ length: 14 }, (_, i) => pairOf(i))), maxCostCents: 1 }, SESSION, {
+        fetch: fetchFn,
+        db: ledger.db,
+      }),
+    );
+    expect(err.category).toBe("too_expensive");
+    expect(fetchFn).not.toHaveBeenCalled();
   });
 });

@@ -31,6 +31,12 @@ const STATUS_LABELS: Record<string, string> = {
   executing: "In progress",
   done: "Done",
   expired: "Expired",
+  // portal runs
+  queued: "Queued",
+  running: "Running",
+  waiting_approval: "Waiting for a person",
+  declined: "Declined",
+  stopped: "Stopped",
   // model calls
   ok: "Answered",
   incomplete: "Cut short",
