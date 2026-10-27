@@ -1,15 +1,28 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
+import { createFuelCardSimAdapter, loadId } from "../adapters/payment/fuel-card-sim";
 import { createMockPaymentAdapter, type MockPaymentAdapter } from "../adapters/payment/mock";
 import type { AccountingAdapter, PaymentAdapter } from "../adapters/types";
 import { DAILY_CAP_SQL } from "../agent/gateway/daily-cap";
+import { readTurnView } from "../agent/gateway/store/views";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, TenantDb } from "../db/types";
 import { dbLedgerStore, type LedgerStore } from "../money/execute";
 import { reconcileMoneyActions } from "../money/reconcile";
-import { addAdvance, clearLedger, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
+import {
+  addAdvance,
+  addCard,
+  clearLedger,
+  closeCard,
+  dropTenant,
+  makeTenant,
+  removeCards,
+  setCardBehavior,
+  sqlStateOf,
+  type Fixture,
+} from "../money/test-db";
 import { executeProposal, type Executor, type ExecutorRegistry } from "../proposals/execute";
 import {
   checkAdvancePayouts,
@@ -20,7 +33,7 @@ import {
   type AdvanceDeps,
 } from "./approve";
 import { postAdvanceExpense } from "./post-expense";
-import { readAdvanceRecord } from "./read";
+import { cardLineFor, readAdvanceList, readAdvanceRecord } from "./read";
 import { REQUEST_REF } from "./request";
 
 // The advance flow against a real database, as the app's own role, with the registered executor
@@ -224,6 +237,45 @@ function countingAccounting(): { adapter: AccountingAdapter; created: () => numb
   } as unknown as AccountingAdapter;
   return { adapter, created: () => created };
 }
+
+// The fuel-card side of one advance: the card its latest attempt recorded, the driver's active
+// card, and each payout row's outside reference and check count.
+const advanceCard = async (advanceId: string) =>
+  (
+    await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ card_id: string | null }>(
+        "SELECT CAST(card_id AS text) AS card_id FROM advances WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [advanceId],
+      ),
+    )
+  )[0].card_id;
+
+const activeCard = async (driverId: string) =>
+  (
+    await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ id: string; last4: string }>(
+        `SELECT CAST(id AS text) AS id, last4 FROM driver_cards
+          WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid) AND status = 'active'`,
+        [driverId],
+      ),
+    )
+  )[0];
+
+const payouts = () =>
+  admin.withTenant(A.tenantId, (q) =>
+    q.query<{
+      state: string;
+      attempt: number;
+      request_id: string;
+      outside_system: string | null;
+      outside_id: string | null;
+      failure_category: string | null;
+      check_count: number;
+    }>(
+      `SELECT state, attempt, request_id, outside_system, outside_id, failure_category, check_count
+         FROM money_actions WHERE tenant_id = current_tenant_id() AND kind = 'advance_payout' ORDER BY attempt`,
+    ),
+  );
 
 function openSwitches() {
   flags.advancesEnabled = true;
@@ -943,5 +995,260 @@ describe("the advance flow", () => {
         ),
       ),
     ).toBe("23503");
+  });
+  describe("on the fuel-card rail (simulated provider, test mode)", () => {
+    const sim = () => createFuelCardSimAdapter({ log: () => {} });
+
+    it("loads the advance onto the driver's active card, records the card, and the record shows its last four", async () => {
+      const id = await addProposal();
+      expect(await approve(id, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "done" });
+      const [adv] = await flowAdvances();
+      expect(adv).toMatchObject({ status: "paid", paid: true });
+      const card = await activeCard(A.driverId);
+      expect(await advanceCard(adv.id)).toBe(card.id);
+      const [row] = await payouts();
+      expect(row).toMatchObject({ state: "confirmed", attempt: 1, outside_system: "fuel_card_sim" });
+      expect(row.outside_id).toBe(loadId(row.request_id));
+      const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(record?.card).toEqual({ last4: card.last4, status: "active", recorded: true });
+      expect(record?.ledger).toEqual([expect.objectContaining({ outsideSystem: "fuel_card_sim", state: "confirmed" })]);
+    });
+
+    it("marks the driver's active card as not recorded when the advance recorded none, and names none once no card is on file", async () => {
+      const id = await addAdvance(admin, A);
+      expect(await advanceCard(id)).toBeNull();
+      const card = await activeCard(A.driverId);
+      const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, id, clock()));
+      expect(record?.card).toEqual({ last4: card.last4, status: "active", recorded: false });
+      await removeCards(admin, A, A.driverId);
+      const none = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, id, clock()));
+      expect(none?.card).toBeNull();
+    });
+
+    it("lists a paid advance's own card even once closed, no card for a paid one that recorded none, and the card on file for an unpaid one", async () => {
+      const id = await addProposal();
+      expect(await approve(id, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "done" });
+      const [paid] = await flowAdvances();
+      const paidTo = await activeCard(A.driverId);
+      await closeCard(admin, A, A.driverId);
+      await addCard(admin, A, A.driverId);
+      const onFile = await activeCard(A.driverId);
+      // Seeded history: paid, but no card recorded.
+      const cardless = await addAdvance(admin, A);
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE advances SET status = 'paid', paid_at = CAST('2026-11-02T16:00:00Z' AS timestamptz)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [cardless],
+        ),
+      );
+      const unpaid = await addAdvance(admin, A);
+      // Never paid: a rejected one that recorded the active card, and a cancelled one with none.
+      const rejected = await addAdvance(admin, A);
+      const cancelled = await addAdvance(admin, A);
+      await admin.withTenant(A.tenantId, async (q) => {
+        await q.execute(
+          `UPDATE advances SET status = 'rejected', card_id = CAST($2 AS uuid)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [rejected, onFile.id],
+        );
+        await q.execute(
+          "UPDATE advances SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+          [cancelled],
+        );
+      });
+
+      const rows = await app.withTenant(A.tenantId, (q) => readAdvanceList(q, null));
+      const lineOf = (advanceId: string) => rows.find((r) => r.id === advanceId)?.cardLine;
+      expect(lineOf(paid.id)).toEqual({ label: "Paid to", card: { last4: paidTo.last4, status: "closed" } });
+      expect(lineOf(cardless)).toBeNull();
+      expect(lineOf(unpaid)).toEqual({ label: "Card on file", card: { last4: onFile.last4, status: "active" } });
+      expect(lineOf(rejected)).toBeNull();
+      expect(lineOf(cancelled)).toBeNull();
+      expect(rows.map((r) => r.id).sort()).toEqual([paid.id, cardless, unpaid, rejected, cancelled].sort());
+      // The record page names no card for either one.
+      for (const never of [rejected, cancelled]) {
+        const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, never, clock()));
+        expect(record?.advance.id).toBe(never);
+        expect(record?.card).toBeNull();
+        expect(cardLineFor(record?.advance.status ?? "", record?.card ?? null)).toBeNull();
+      }
+    });
+
+    it("names a proposal's card by its state: a done payout's recorded card once replaced, the card on file once approved, none once rejected", async () => {
+      const turnOf = async (proposalId: string) =>
+        (
+          await admin.withTenant(A.tenantId, (q) =>
+            q.query<{ turn_id: string }>(
+              "SELECT CAST(turn_id AS text) AS turn_id FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+              [proposalId],
+            ),
+          )
+        )[0].turn_id;
+      const destinationOf = async (proposalId: string) => {
+        const turnId = await turnOf(proposalId);
+        const view = await app.withTenant(A.tenantId, (q) => readTurnView(q, A.session.sub, turnId));
+        const found = view?.proposals.find((p) => p.id === proposalId);
+        expect(found).toBeDefined();
+        return found?.destination;
+      };
+      const decide = (proposalId: string, status: "approved" | "rejected") =>
+        admin.withTenant(A.tenantId, (q) =>
+          q.execute(
+            `UPDATE proposals SET status = $2, decided_by = $3,
+                    decided_at = CAST('2026-11-02T16:00:00Z' AS timestamptz)
+              WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'proposed'`,
+            [proposalId, status, A.session.sub],
+          ),
+        );
+
+      // Done, then the card it paid is replaced: the proposal still names the card it paid.
+      const done = await addProposal();
+      expect(await approve(done, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "done" });
+      const paidTo = await activeCard(A.driverId);
+      expect(await destinationOf(done)).toEqual({ label: `fuel card ···· ${paidTo.last4}`, last4: paidTo.last4, testMode: true });
+      await closeCard(admin, A, A.driverId);
+      await addCard(admin, A, A.driverId);
+      const onFile = await activeCard(A.driverId);
+      expect(await destinationOf(done)).toEqual({ label: `fuel card ···· ${paidTo.last4}`, last4: paidTo.last4, testMode: true });
+
+      // Rejected: no destination at all.
+      const rejected = await addProposal();
+      expect(await decide(rejected, "rejected")).toBe(1);
+      expect(await destinationOf(rejected)).toBeNull();
+
+      // Approved and not yet paid: the card on file now.
+      const approved = await addProposal();
+      expect(await destinationOf(approved)).toEqual({ label: `fuel card ···· ${onFile.last4}`, last4: onFile.last4, testMode: true });
+      expect(await decide(approved, "approved")).toBe(1);
+      expect(await destinationOf(approved)).toEqual({ label: `fuel card ···· ${onFile.last4}`, last4: onFile.last4, testMode: true });
+    });
+
+    it("refuses a driver with no card on file before approving, and leaves the proposal waiting", async () => {
+      await removeCards(admin, A, A.driverId);
+      const id = await addProposal();
+      expect(await approve(id, false, deps({ payment: sim() }))).toEqual({ ok: false, category: "no_card", retryable: false });
+      expect(await proposalRow(id)).toMatchObject({ status: "proposed", decided_by: null, money_action_id: null });
+      expect(await flowAdvances()).toEqual([]);
+      expect(await ledger()).toEqual([]);
+      await addCard(admin, A, A.driverId);
+      expect(await approve(id, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "done" });
+    });
+
+    it("leaves a declined load failed and the advance approved; Retry pays the new active card as attempt 2", async () => {
+      await setCardBehavior(admin, A, A.driverId, "declined");
+      const declined = await activeCard(A.driverId);
+      const id = await addProposal();
+      expect(await approve(id, false, deps({ payment: sim() }))).toEqual({ ok: false, category: "payout_failed", retryable: true });
+      const [adv] = await flowAdvances();
+      expect(adv.status).toBe("approved");
+      expect(await payouts()).toEqual([
+        expect.objectContaining({ state: "failed", attempt: 1, failure_category: "declined", outside_id: null }),
+      ]);
+      expect((await proposalRow(id)).status).toBe("failed");
+      expect(await advanceCard(adv.id)).toBe(declined.id);
+      const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(record?.actions).toEqual({ retry: true, check: false, post: false });
+
+      // With the declined card closed and none active, Retry refuses before the ledger.
+      await closeCard(admin, A, A.driverId);
+      expect(await retryAdvancePayout(A.session, adv.id, deps({ payment: sim() }))).toMatchObject({
+        ok: false,
+        category: "no_card",
+      });
+      expect(await payouts()).toHaveLength(1);
+      // The unpaid advance no longer names its closed card: none is on file, then the new one is.
+      const closedOut = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(closedOut?.card).toBeNull();
+      const fresh = await addCard(admin, A, A.driverId, "ok");
+      const freshCard = await activeCard(A.driverId);
+      const onFile = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(onFile?.card).toEqual({ last4: freshCard.last4, status: "active", recorded: false });
+      expect(await retryAdvancePayout(A.session, adv.id, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "paid" });
+      expect(await payouts()).toEqual([
+        expect.objectContaining({ state: "failed", attempt: 1, failure_category: "declined" }),
+        expect.objectContaining({ state: "confirmed", attempt: 2, outside_system: "fuel_card_sim" }),
+      ]);
+      expect(await advanceCard(adv.id)).toBe(fresh);
+      const after = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(after?.card).toEqual({ last4: freshCard.last4, status: "active", recorded: true });
+    });
+
+    it("keeps a slow load unknown, then Check pending reads it back as paid and the QuickBooks post follows", async () => {
+      await setCardBehavior(admin, A, A.driverId, "slow");
+      const id = await addProposal();
+      expect(await approve(id, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "executing" });
+      const [adv] = await flowAdvances();
+      expect(adv.status).toBe("approved");
+      expect(await payouts()).toEqual([expect.objectContaining({ state: "unknown", failure_category: "timeout" })]);
+      expect(await retryAdvancePayout(A.session, adv.id, deps({ payment: sim() }))).toMatchObject({
+        ok: false,
+        category: "payout_pending",
+      });
+
+      expect(await checkAdvancePayouts(A.session, adv.id, deps({ payment: sim() }))).toMatchObject({
+        ok: true,
+        summary: { checked: 1, confirmed: 1 },
+      });
+      expect((await flowAdvances())[0]).toMatchObject({ status: "paid", paid: true });
+      const [row] = await payouts();
+      expect(row).toMatchObject({ state: "confirmed", outside_system: "fuel_card_sim", check_count: 1 });
+      expect(row.outside_id).toBe(loadId(row.request_id));
+      expect((await proposalRow(id)).status).toBe("done");
+
+      flags.accountingEnabled = true;
+      const qbo = countingAccounting();
+      expect(await postAdvanceExpense(A.session, adv.id, deps({ payment: sim(), accounting: qbo.adapter }))).toMatchObject({
+        ok: true,
+        status: "posted",
+      });
+      expect(qbo.created()).toBe(1);
+    });
+
+    it("keeps an offline load unknown after a check, with one check counted", async () => {
+      await setCardBehavior(admin, A, A.driverId, "offline");
+      const id = await addProposal();
+      expect(await approve(id, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "executing" });
+      const [adv] = await flowAdvances();
+      expect(await checkAdvancePayouts(A.session, adv.id, deps({ payment: sim() }))).toMatchObject({
+        ok: true,
+        summary: { checked: 1, stillUnknown: 1, confirmed: 0 },
+      });
+      expect(await payouts()).toEqual([
+        expect.objectContaining({ state: "unknown", failure_category: "unavailable", check_count: 1 }),
+      ]);
+      expect((await flowAdvances())[0].status).toBe("approved");
+    });
+
+    it("makes one load and one ledger row when two approvals race", async () => {
+      const id = await addProposal();
+      const shared = sim();
+      const results = await Promise.all([
+        approve(id, false, deps({ payment: shared })),
+        approve(id, false, deps({ payment: shared })),
+      ]);
+      expect(results.filter((r) => r.ok)).not.toHaveLength(0);
+      const rows = await payouts();
+      expect(rows).toEqual([expect.objectContaining({ state: "confirmed", attempt: 1 })]);
+      expect(new Set(rows.map((r) => r.outside_id)).size).toBe(1);
+      expect((await flowAdvances())[0].status).toBe("paid");
+    });
+
+    it("skips a payout in a reconcile pass that has no destination hook, never guessing the card", async () => {
+      await setCardBehavior(admin, A, A.driverId, "slow");
+      const id = await addProposal();
+      expect(await approve(id, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "executing" });
+      const { destination: _destination, ...noCard } = payoutReconcileHooks;
+      void _destination;
+      const summary = await reconcileMoneyActions(
+        app,
+        A.session,
+        { hooks: { advance_payout: noCard }, olderThanSeconds: 0 },
+        { payment: sim(), log: () => {} },
+      );
+      expect(summary).toEqual({ checked: 0, confirmed: 0, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 });
+      expect(await payouts()).toEqual([expect.objectContaining({ state: "unknown", check_count: 0 })]);
+      expect((await flowAdvances())[0].status).toBe("approved");
+    });
   });
 });

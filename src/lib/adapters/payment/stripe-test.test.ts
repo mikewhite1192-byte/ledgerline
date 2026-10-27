@@ -17,7 +17,13 @@ const GROUP = `ll_${REQUEST}`;
 
 const saved = { ...flags };
 const ctx: SendContext = { requestId: REQUEST, timeoutMs: 1_000, tenantZone: "America/Chicago" };
-const payout = { actionId: ACTION, driverId: DRIVER, amountCents: 12_345, memoCode: "PAY-settlements-1" };
+const payout = {
+  actionId: ACTION,
+  driverId: DRIVER,
+  amountCents: 12_345,
+  memoCode: "PAY-settlements-1",
+  rail: "bank" as const,
+};
 const env = (over: Record<string, string | undefined> = {}) =>
   ({ STRIPE_SECRET_KEY: TEST_KEY, STRIPE_TEST_DESTINATION_ACCOUNT: DESTINATION, ...over }) as unknown as NodeJS.ProcessEnv;
 const transfer = (over: Record<string, unknown> = {}) => ({
@@ -82,6 +88,29 @@ describe("Stripe test payouts: keys and switches", () => {
       category: "validation",
     });
     expect(await adapter.sendPayout({ ...payout, amountCents: 0 }, ctx)).toEqual({ kind: "failed", category: "validation" });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("refuses the fuel-card rail and any destination: it serves the bank rail only", async () => {
+    const { adapter, sent } = make([]);
+    const card = {
+      rail: "fuel_card" as const,
+      provider: "fuel_card_sim" as const,
+      token: `fcs_card_${"a".repeat(24)}`,
+      last4: "4417",
+      simBehavior: "ok" as const,
+    };
+    expect(await adapter.sendPayout({ ...payout, rail: "fuel_card" }, ctx)).toEqual({
+      kind: "failed",
+      category: "validation",
+    });
+    expect(await adapter.sendPayout({ ...payout, destination: card }, ctx)).toEqual({
+      kind: "failed",
+      category: "validation",
+    });
+    await expect(
+      adapter.readBack({ requestId: REQUEST, payout: { ...payout, rail: "fuel_card" } }, ctx),
+    ).rejects.toMatchObject({ category: "validation" });
     expect(sent).toHaveLength(0);
   });
 });

@@ -4,6 +4,7 @@ import type {
   AdvanceRow,
   CustomerRow,
   DeductionScheduleRow,
+  DriverCardRow,
   DriverDayRow,
   DriverRow,
   FuelPurchaseRow,
@@ -140,6 +141,42 @@ const DETENTION_PLANTS: readonly [number, "pickup" | "delivery", number][] = [
 const MINUTE_MS = 60_000;
 const minutesBefore = (at: string, minutes: number) =>
   new Date(Date.parse(at) - minutes * MINUTE_MS).toISOString();
+
+// One active fuel card per driver, from its own id stream (`<seed>:cards`) so no other row's id or
+// number moves. Last four digits are drawn until unique within the carrier. Every card answers
+// "ok" except two planted ones on the two highest driver codes that are not the hero: the higher
+// is declined, the next is slow. Never "offline" in the seed.
+export function buildDriverCards(seed: string, drivers: readonly DriverRow[], heroCode: string | null): DriverCardRow[] {
+  const cards = new Rng(`${seed}:cards`);
+  const planted = drivers
+    .map((d) => d.code)
+    .filter((code) => code !== heroCode)
+    .sort((a, b) => compareText(b, a));
+  const behaviorOf = (code: string): DriverCardRow["sim_behavior"] =>
+    code === planted[0] ? "declined" : code === planted[1] ? "slow" : "ok";
+  const usedLast4 = new Set<string>();
+  return drivers.map((d) => {
+    const id = cards.uuid();
+    const token = `fcs_card_${cards.uuid().replace(/-/g, "").slice(0, 24)}`;
+    let last4 = "";
+    do {
+      last4 = String(cards.int(0, 9999)).padStart(4, "0");
+    } while (usedLast4.has(last4));
+    usedLast4.add(last4);
+    return {
+      id,
+      driver_id: d.id,
+      rail: "fuel_card",
+      provider: "fuel_card_sim",
+      provider_token: token,
+      last4,
+      status: "active",
+      sim_behavior: behaviorOf(d.code),
+      source: "seed",
+      closed_at: null,
+    };
+  });
+}
 
 export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): CarrierPlan {
   if (!isLocalDate(anchor)) throw new Error("anchor is not a YYYY-MM-DD date");
@@ -905,6 +942,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   const rows: TenantRows = {
     customers,
     drivers,
+    driver_cards: buildDriverCards(seed, drivers, carrier.heroCode ?? null),
     loads,
     load_state_miles: stateMiles,
     load_accessorials: accessorials,

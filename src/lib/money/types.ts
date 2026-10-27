@@ -32,12 +32,37 @@ export const MONEY_FAILURES = [
   "amount_mismatch",
   // A read-back found the record failed or canceled: no money moved.
   "outside_failed",
+  // The card provider declined the load: definite, no money moved (0017).
+  "declined",
   "unknown",
 ] as const;
 export type MoneyFailure = (typeof MONEY_FAILURES)[number];
 
-export const OUTSIDE_SYSTEMS = ["mock", "stripe_test", "qbo_sandbox"] as const;
+// The same list as money_actions_outside_system_check (0017).
+export const OUTSIDE_SYSTEMS = ["mock", "stripe_test", "qbo_sandbox", "fuel_card_sim"] as const;
 export type OutsideSystem = (typeof OUTSIDE_SYSTEMS)[number];
+
+// Where a payout lands. Fixed per kind in code, never chosen per row: an advance loads the
+// driver's fuel card, a weekly settlement goes to the driver's bank. No rail column exists on
+// money_actions, because the kind already says it; outside_system says which provider answered.
+export const PAYOUT_RAILS = ["fuel_card", "bank"] as const;
+export type PayoutRail = (typeof PAYOUT_RAILS)[number];
+
+export const RAIL_OF_KIND: Readonly<Record<"advance_payout" | "settlement_payout", PayoutRail>> = {
+  advance_payout: "fuel_card",
+  settlement_payout: "bank",
+};
+
+// The rail a kind pays on, or null for a kind that moves no money (an accounting post).
+export function railOf(kind: unknown): PayoutRail | null {
+  if (kind === "advance_payout" || kind === "settlement_payout") return RAIL_OF_KIND[kind];
+  return null;
+}
+
+// What the simulated fuel-card provider answers for a card (driver_cards.sim_behavior, 0017).
+// offline is for tests only; the seed never plants it.
+export const SIM_BEHAVIORS = ["ok", "declined", "slow", "offline"] as const;
+export type SimBehavior = (typeof SIM_BEHAVIORS)[number];
 
 export type MoneyChannel = "payment" | "accounting";
 export type SubjectTable = "advances" | "settlements" | "invoices" | "customer_payments";

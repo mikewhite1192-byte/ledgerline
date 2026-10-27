@@ -70,6 +70,11 @@ export type ProposalView = {
   auditorCheckedAt: string | null;
   // A person's override of a block: their words, a role label (never the sub or email), when.
   auditorOverride: { reason: string; byLabel: string; at: string } | null;
+  // Where an advance lands, read at render, never stored: "fuel card ···· 4417" (last4 set) or
+  // "no fuel card on file" (last4 null, only while proposed or approved). A done proposal names the
+  // card its advance recorded. Null for a kind that pays no card, a done proposal with no recorded
+  // card, and a rejected, expired, executing or failed proposal.
+  destination: { label: string; last4: string | null; testMode: true } | null;
   // Set on a detention_charge only, when its stored args read back whole.
   detention?: DetentionView | null;
 };
