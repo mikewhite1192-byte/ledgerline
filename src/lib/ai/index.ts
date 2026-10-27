@@ -34,11 +34,14 @@ import {
   type AiAttachment,
   type AiCallOptions,
   type AiLanguage,
+  type AiMessage,
   type AiReasoningEffort,
+  type AiReplayItem,
   type AiRequest,
   type AiResult,
   type AiTarget,
   type AiTextTarget,
+  type AiTool,
   type CallOutcome,
   type ImageRequest,
   type ImageResult,
@@ -100,6 +103,16 @@ const PURPOSE = /^[a-z][a-z0-9_]{2,39}$/;
 const TOOL_NAME = /^(?=.{1,64}$)[a-zA-Z0-9_-]+(\.[a-zA-Z0-9_-]+)?$/;
 const CALL_ID = /^.{1,64}$/s;
 const FORMAT_NAME = /^[a-zA-Z0-9_-]{1,64}$/;
+// Our own bound on a prompt cache key; the API states none.
+const CACHE_KEY = /^[A-Za-z0-9_.:-]{1,64}$/;
+// The API's own name for its search tool: no function may take it.
+const TOOL_SEARCH_NAME = "tool_search";
+const REPLAY_TYPES: readonly string[] = ["reasoning", "tool_search_call", "tool_search_output"];
+// A hosted tool search reads the request again inside the same answer: measured on 2026-10-27,
+// an answer that searched once billed about twice the input tokens of the same request without
+// a search, more than the reserve's input guess. So a request with search on reserves its input
+// twice, and the reserve stays a worst case.
+const SEARCH_INPUT_FACTOR = 2;
 // A plain file name: no path, no quotes, no control characters.
 const FILE_NAME = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,99}$/;
 // A noun phrase only, so SAM's box and point prompt tokens cannot be written into it.
@@ -401,11 +414,52 @@ function validateText(target: AiTextTarget, request: AiRequest): TextOptions {
     attachments.every(validAttachment) &&
     // Structured output and attachments are not checked on Baseten yet.
     (meta || (format === undefined && attachments.length === 0)) &&
-    replay.every((item) => item?.type === "reasoning") &&
+    replay.every((item) => typeof item?.type === "string" && REPLAY_TYPES.includes(item.type)) &&
     // Replayed reasoning belongs to an assistant turn, and only Meta returns it.
-    (replay.length === 0 || (meta && messages.some((m) => m.role === "assistant")));
+    (replay.length === 0 || (meta && messages.some((m) => m.role === "assistant"))) &&
+    validSearchAndCache(meta, request, tools, messages, replay);
   if (!ok) bad();
   return options;
+}
+
+// Tool search, deferred tools, the prompt cache and input-placed system messages: Meta only, and
+// each in the one shape the API accepts, so a request it would refuse with a 400 is refused here
+// before anything is reserved.
+function validSearchAndCache(
+  meta: boolean,
+  request: AiRequest,
+  tools: AiTool[],
+  messages: AiMessage[],
+  replay: AiReplayItem[],
+): boolean {
+  const { toolSearch, cache } = request;
+  if (toolSearch !== undefined && typeof toolSearch !== "boolean") return false;
+  if (!tools.every((t) => t.deferLoading === undefined || typeof t.deferLoading === "boolean")) {
+    return false;
+  }
+  const deferred = tools.some((t) => t.deferLoading === true);
+  // The API's two rules: search needs a deferred tool, and a deferred tool needs search.
+  if (toolSearch === true && (!meta || !deferred)) return false;
+  if (deferred && toolSearch !== true) return false;
+  if (tools.some((t) => t.name === TOOL_SEARCH_NAME)) return false;
+  if (cache !== undefined) {
+    if (!meta || typeof cache !== "object" || cache === null) return false;
+    if (typeof cache.key !== "string" || !CACHE_KEY.test(cache.key)) return false;
+    if (cache.retention !== undefined && cache.retention !== "in_memory" && cache.retention !== "24h") {
+      return false;
+    }
+  }
+  const placementsOk = messages.every((m) =>
+    m.role === "system"
+      ? m.placement === undefined ||
+        m.placement === "instructions" ||
+        // Chat Completions has no equivalent of a system item placed in input.
+        (m.placement === "input" && meta)
+      : !("placement" in m),
+  );
+  if (!placementsOk) return false;
+  // Tool search items come back only from a request that offered the search tool.
+  return toolSearch === true || replay.every((item) => item.type === "reasoning");
 }
 
 export async function complete(
@@ -450,7 +504,7 @@ export async function complete(
         body,
         reserveNanocents: estimateReserve(
           price,
-          textBytes,
+          request.toolSearch === true ? textBytes * SEARCH_INPUT_FACTOR : textBytes,
           options.maxOutputTokens,
           mediaReserveTokens(images, pages),
         ),
@@ -470,6 +524,7 @@ export async function complete(
     costNanocents,
     upstreamId: answer.upstreamId,
     replay: answer.value.replay,
+    toolSearches: answer.value.toolSearches,
   };
 }
 

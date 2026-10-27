@@ -16,6 +16,15 @@ export const META_RESPONSES_URL = "https://api.meta.ai/v1/responses";
 
 export type MetaOptions = { maxOutputTokens: number; reasoningEffort: AiReasoningEffort };
 
+// Whether a hosted tool search's call and output items are sent back with the next request of
+// the same loop, like the reasoning items. The parser keeps them either way; this decides
+// whether the body carries them. Measured against the live API before it was set: see the
+// probe notes in the pull request.
+export const ECHO_TOOL_SEARCH_ITEMS = true;
+
+const isToolSearchItem = (item: AiReplayItem) =>
+  item.type === "tool_search_call" || item.type === "tool_search_output";
+
 const text = (type: "input_text" | "output_text", value: string) => ({ type, text: value });
 
 // An image as a base64 data URL; a PDF as inline file data, never a file id, so nothing of a
@@ -32,18 +41,26 @@ function attachmentPart(a: AiAttachment) {
 }
 
 export function metaBody(model: string, request: AiRequest, options: MetaOptions) {
+  // System messages join into instructions unless placed in input, where they keep their
+  // position (a system-role input item stands as an instruction all the same).
   const instructions = request.messages
-    .filter((m) => m.role === "system")
+    .filter((m) => m.role === "system" && m.placement !== "input")
     .map((m) => m.content)
     .join("\n\n");
-  // Replayed reasoning goes just before the assistant turn it produced, the order the model
+  // Replayed items go just before the assistant turn they produced, the order the model
   // returned them in.
   const lastAssistant = request.messages.findLastIndex((m) => m.role === "assistant");
+  const replay = (request.replay ?? []).filter(
+    (item) => ECHO_TOOL_SEARCH_ITEMS || !isToolSearchItem(item),
+  );
   const input: unknown[] = [];
   request.messages.forEach((m, i) => {
-    if (i === lastAssistant) input.push(...(request.replay ?? []));
+    if (i === lastAssistant) input.push(...replay);
     switch (m.role) {
       case "system":
+        if (m.placement === "input") {
+          input.push({ type: "message", role: "system", content: [text("input_text", m.content)] });
+        }
         return;
       case "user": {
         const attachments = m.attachments ?? [];
@@ -80,18 +97,25 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
   });
   const tools = request.tools ?? [];
   const format = request.format;
+  const cache = request.cache;
   return {
     model,
     ...(instructions ? { instructions } : {}),
     input,
     ...(tools.length > 0
       ? {
-          tools: tools.map((t) => ({
-            type: "function",
-            name: t.name,
-            description: t.description,
-            parameters: t.parameters,
-          })),
+          tools: [
+            // Hosted search (https://dev.meta.ai/docs/tool-search): the model searches the
+            // deferred tools inside the same response and the API loads the schema it picks.
+            ...(request.toolSearch ? [{ type: "tool_search" }] : []),
+            ...tools.map((t) => ({
+              type: "function",
+              name: t.name,
+              description: t.description,
+              parameters: t.parameters,
+              ...(t.deferLoading ? { defer_loading: true } : {}),
+            })),
+          ],
           // The only value Meta accepts.
           tool_choice: "auto",
         }
@@ -115,6 +139,14 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
     reasoning: { effort: options.reasoningEffort },
     store: false,
     include: ["reasoning.encrypted_content"],
+    // Automatic prefix caching (https://dev.meta.ai/docs/prompt-caching). in_memory is the
+    // default retention, so only 24h is sent.
+    ...(cache
+      ? {
+          prompt_cache_key: cache.key,
+          ...(cache.retention === "24h" ? { prompt_cache_retention: "24h" } : {}),
+        }
+      : {}),
   };
 }
 
@@ -136,6 +168,7 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
   const parts: string[] = [];
   const toolCalls: AiToolCall[] = [];
   const replay: AiReplayItem[] = [];
+  let toolSearches = 0;
   for (const raw of asArray(body.output)) {
     const item = asRecord(raw);
     if (item?.type === "message") {
@@ -156,6 +189,13 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
         summary: Array.isArray(item.summary) ? item.summary : [],
         encrypted_content: item.encrypted_content,
       });
+    } else if (item?.type === "tool_search_call" || item?.type === "tool_search_output") {
+      // A hosted search and the tools it loaded, kept whole for the next request of the loop
+      // except the id (nothing is stored upstream). Counted, never read, never logged.
+      const type = item.type;
+      if (type === "tool_search_call") toolSearches += 1;
+      const rest = Object.fromEntries(Object.entries(item).filter(([key]) => key !== "id"));
+      replay.push({ ...rest, type });
     }
   }
   return {
@@ -164,6 +204,6 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
     httpStatus,
     upstreamId: upstreamIdFrom(body.id),
     metered: { unit: "tokens", usage },
-    value: { text: parts.join(""), toolCalls, replay },
+    value: { text: parts.join(""), toolCalls, replay, toolSearches },
   };
 }

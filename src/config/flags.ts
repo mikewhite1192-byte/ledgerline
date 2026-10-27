@@ -57,6 +57,13 @@ export type Flags = {
   auditorRequired: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
+  // Operator turns on Muse Spark send the tools no question needs at first as a name and a
+  // description only, with the API's search tool to load one. Off sends every tool in full.
+  agentToolSearch: boolean;
+  // Operator turns on Muse Spark send a shared prompt cache key and keep the turn's state summary
+  // out of the cached prefix. Off sends today's request. "24h" is a retention hint with its own
+  // price: read the pricing page before choosing it.
+  agentPromptCache: { enabled: boolean; retention: "in_memory" | "24h" };
 };
 
 export const flags: Flags = {
@@ -83,4 +90,6 @@ export const flags: Flags = {
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
   approverRole: { adminAboveCents: 200_000 },
+  agentToolSearch: false,
+  agentPromptCache: { enabled: false, retention: "in_memory" },
 };

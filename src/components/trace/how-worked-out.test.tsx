@@ -67,6 +67,16 @@ describe("HowWorkedOut", () => {
     expect(link.getAttribute("href")).toMatch(/^\/records\/pay_items\//);
   });
 
+  it("shows the prompt cache line under a model call that has its counts", async () => {
+    const trace = sampleTrace();
+    const call = trace.steps[0].call!;
+    trace.steps[0] = { ...trace.steps[0], call: { ...call, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: 1_912 * 110_000 } };
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace })} />);
+    fireEvent.click(screen.getByRole("button", { name: ANSWER }));
+    expect(await screen.findByText("1,912 of 2,480 input tokens from cache, saved 0.2 cents")).toBeTruthy();
+    expect(screen.queryAllByText(/input tokens from cache/)).toHaveLength(1);
+  });
+
   it("shows only the card's steps and the auditor's verdict under a card", async () => {
     render(
       <HowWorkedOut turnId={SAMPLE_TURN_ID} proposalId={SAMPLE_PROPOSAL_ID} load={async () => ({ trace: sampleTrace() })} />,

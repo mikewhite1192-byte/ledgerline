@@ -54,6 +54,7 @@ function screenModel(text: string): CompleteFn {
       costNanocents: 1,
       upstreamId: null,
       replay: [],
+      toolSearches: 0,
     }) satisfies AiResult;
 }
 

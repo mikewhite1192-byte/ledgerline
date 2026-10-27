@@ -43,4 +43,9 @@ describe("flags", () => {
     expect(Number.isNaN(Date.parse(flags.auditorStart))).toBe(false);
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
   });
+
+  it("ships tool search and the prompt cache off, with the default retention", () => {
+    expect(flags.agentToolSearch).toBe(false);
+    expect(flags.agentPromptCache).toEqual({ enabled: false, retention: "in_memory" });
+  });
 });

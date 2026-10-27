@@ -14,6 +14,9 @@ const group = (over: Partial<WeekRaw["groups"][number]>): WeekRaw["groups"][numb
   costNanocents: 0,
   heldNanocents: 0,
   unsettled: 0,
+  inputTokens: 0,
+  cachedTokens: 0,
+  savedNanocents: 0,
   ...over,
 });
 
@@ -108,5 +111,34 @@ describe("summarizeModelWeek", () => {
     expect(() => summarizeModelWeek({ ...empty, groups: [group({ costNanocents: Number.NaN })] })).toThrow(RangeError);
     expect(() => summarizeModelWeek({ ...empty, groups: [group({ calls: 1.5 })] })).toThrow(RangeError);
     expect(() => summarizeModelWeek({ ...empty, escalations: Number.NaN })).toThrow(RangeError);
+  });
+
+  it("sums cached and input tokens per model, floors the share, and keeps an unknown saving unknown", () => {
+    const week = summarizeModelWeek({
+      ...empty,
+      groups: [
+        group({ calls: 3, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: 1_912 * 110_000 }),
+        group({ status: "incomplete", calls: 1, inputTokens: 1_000, cachedTokens: 0, savedNanocents: 0 }),
+        group({ target: "wonder", model: "muse-wonder-1.0", calls: 1, inputTokens: 500, cachedTokens: 100, savedNanocents: 100 * 380_000 }),
+        group({ target: "sam", model: "sam-3.1", calls: 1, inputTokens: 0, cachedTokens: 0, savedNanocents: null }),
+      ],
+    });
+    const spark = week.models.find((m) => m.target === "spark")!;
+    expect(spark).toMatchObject({ inputTokens: 3_480, cachedTokens: 1_912, savedNanocents: 1_912 * 110_000, cachedShare: 54 });
+    expect(week.models.find((m) => m.target === "wonder")).toMatchObject({ cachedShare: 20, savedNanocents: 38_000_000 });
+    // A model with no token counts has no share, and a null saving with nothing cached adds 0.
+    expect(week.models.find((m) => m.target === "sam")).toMatchObject({ cachedShare: null, savedNanocents: 0 });
+    expect(week).toMatchObject({ inputTokens: 3_980, cachedTokens: 2_012, savedNanocents: 1_912 * 110_000 + 38_000_000, cachedShare: 50 });
+    expect(summarizeModelWeek(empty)).toMatchObject({ inputTokens: 0, cachedTokens: 0, savedNanocents: 0, cachedShare: null });
+
+    const unknown = summarizeModelWeek({ ...empty, groups: [group({ inputTokens: 100, cachedTokens: 50, savedNanocents: null })] });
+    expect(unknown.models[0].savedNanocents).toBeNull();
+    expect(unknown.savedNanocents).toBeNull();
+  });
+
+  it("refuses token sums that are not whole numbers or do not fit together", () => {
+    expect(() => summarizeModelWeek({ ...empty, groups: [group({ inputTokens: Number.NaN })] })).toThrow(RangeError);
+    expect(() => summarizeModelWeek({ ...empty, groups: [group({ inputTokens: 10, cachedTokens: 11 })] })).toThrow(RangeError);
+    expect(() => summarizeModelWeek({ ...empty, groups: [group({ inputTokens: 10, cachedTokens: 5, savedNanocents: 1.5 })] })).toThrow(RangeError);
   });
 });

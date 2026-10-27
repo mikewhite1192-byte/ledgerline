@@ -18,7 +18,7 @@ const answered: CallOutcome = {
   httpStatus: 200,
   upstreamId: "resp_1",
   metered: { unit: "tokens", usage: { input: 1, cached: 0, output: 1, reasoning: 0 } },
-  value: { text: "hi", toolCalls: [], replay: [] },
+  value: { text: "hi", toolCalls: [], replay: [], toolSearches: 0 },
 };
 
 function respond(status: number, headers?: Record<string, string>) {
