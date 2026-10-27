@@ -462,6 +462,101 @@ describe("dock clip pipeline", () => {
     expect(await row(up.clip.id)).toMatchObject({ status: "redacted", read_attempts: 3, read_lease_free: true });
   });
 
+  it("reads the clip back when the reading's write fails: a kept answer stands, anything else is refused with no second write", async () => {
+    const ai = fakeAi();
+    const up = await upload(ai);
+    if (!up.ok) throw new Error(`upload ${up.category}`);
+    await storeRedacted(A.session, up.clip.id, blurred(13), deps(ai));
+    const FINISH = "read_call_id = CAST($4 AS uuid)";
+    const isWrite = (sql: string) => /^\s*(UPDATE|INSERT|DELETE)\b/.test(sql);
+    const isReadState = (sql: string) => /^\s*SELECT\b/.test(sql) && sql.includes("AS lease_free");
+    const expireLease = () =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute(`UPDATE evidence_clips SET read_started_at = now() - interval '10 minutes' WHERE id = CAST($1 AS uuid)`, [
+          up.clip.id,
+        ]),
+      );
+    // Every write the reading makes, in order, so one after the failed write would show.
+    const writes: string[] = [];
+    let finishFailed = false;
+    let readBackFails = false;
+    // The reading's write fails; with readBackFails set, so does the state read after it.
+    const failing: TenantDb = {
+      withTenant: (tenantId, fn) =>
+        app.withTenant(tenantId, (q) =>
+          fn({
+            query: (sql, params) => {
+              if (isWrite(sql)) writes.push(sql);
+              if (finishFailed && readBackFails && isReadState(sql)) return Promise.reject(new Error("read back lost"));
+              return q.query(sql, params);
+            },
+            execute: (sql, params) => {
+              writes.push(sql);
+              if (sql.includes(FINISH)) {
+                finishFailed = true;
+                return Promise.reject(new Error("write lost"));
+              }
+              return q.execute(sql, params);
+            },
+          } as Queryable),
+        ),
+    };
+
+    // The write did not land: refused, with the try counted and the lease kept.
+    expect(await readClip(A.session, up.clip.id, deps(ai, failing))).toEqual({ ok: false, category: "read_failed", retryable: true });
+    expect(ai.sent).toHaveLength(3);
+    expect(await row(up.clip.id)).toMatchObject({ status: "redacted", read_attempts: 1, read_lease_free: false });
+    expect(writes.filter((w) => w.includes(FINISH))).toHaveLength(1);
+    expect(writes.at(-1)).toContain(FINISH);
+    // Inside the kept lease a retry makes no model call.
+    expect(await readClip(A.session, up.clip.id, deps(ai))).toEqual({ ok: false, category: "busy", retryable: true });
+    expect(ai.sent).toHaveLength(3);
+
+    // The state cannot be read back either: unknown, so refused the same way, with nothing written.
+    await expireLease();
+    writes.length = 0;
+    finishFailed = false;
+    readBackFails = true;
+    expect(await readClip(A.session, up.clip.id, deps(ai, failing))).toEqual({ ok: false, category: "read_failed", retryable: true });
+    expect(ai.sent).toHaveLength(4);
+    expect(await row(up.clip.id)).toMatchObject({ status: "redacted", read_attempts: 2, read_lease_free: false });
+    expect(writes.filter((w) => w.includes(FINISH))).toHaveLength(1);
+    expect(writes.at(-1)).toContain(FINISH);
+
+    // The write lands but its reply is lost: read back, the kept reading is the answer.
+    await expireLease();
+    let landed = false;
+    const lostReply: TenantDb = {
+      withTenant: async (tenantId, fn) => {
+        const result = await app.withTenant(tenantId, (q) =>
+          fn({
+            query: (sql, params) => q.query(sql, params),
+            execute: async (sql, params) => {
+              const n = await q.execute(sql, params);
+              if (sql.includes(FINISH)) landed = n === 1;
+              return n;
+            },
+          } as Queryable),
+        );
+        if (landed) {
+          landed = false;
+          throw new Error("connection reset");
+        }
+        return result;
+      },
+    };
+    expect(await readClip(A.session, up.clip.id, deps(ai, lostReply))).toMatchObject({
+      ok: true,
+      clip: { status: "read", reading: { bolNumber: { value: "BOL-100" } } },
+    });
+    expect(ai.sent).toHaveLength(5);
+    expect(await row(up.clip.id)).toMatchObject({ status: "read", read_attempts: 3, read_lease_free: true });
+    expect(await readClip(A.session, up.clip.id, deps(ai))).toMatchObject({ ok: true, clip: { status: "read" } });
+    expect(ai.sent).toHaveLength(5);
+    const log = logged.join("\n");
+    for (const raw of ["write lost", "read back lost", "connection reset"]) expect(log).not.toContain(raw);
+  });
+
   it("waits on the spend cap with no try used and no model call, and reads once there is room", async () => {
     const ai = fakeAi();
     const up = await upload(ai);

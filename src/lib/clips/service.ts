@@ -399,13 +399,31 @@ export async function readClip(session: Session, id: string, deps: ClipDeps = {}
       await release();
       return fail(outcome.disabled ? "disabled" : "read_failed", !outcome.disabled && claim.attempts < MAX_ATTEMPTS);
     }
-    await tx(session, deps, async (q) => {
-      if (outcome.kind === "unreadable") return finishRead(q, id, { status: "unreadable", callId: outcome.callId });
-      const times = await stopTimesFor(q, id);
-      if (!times) throw new Error("stop times not found");
-      const agreement = agreementOf(outcome.reading, times);
-      return finishRead(q, id, { status: "read", reading: { ...outcome.reading, agreement }, callId: outcome.callId });
-    });
+    let finished = false;
+    try {
+      await tx(session, deps, async (q) => {
+        if (outcome.kind === "unreadable") return finishRead(q, id, { status: "unreadable", callId: outcome.callId });
+        const times = await stopTimesFor(q, id);
+        // No joined load or carrier row (a stop with no times comes back as a row of nulls).
+        if (!times) throw new Error("stop times not found");
+        const agreement = agreementOf(outcome.reading, times);
+        return finishRead(q, id, { status: "read", reading: { ...outcome.reading, agreement }, callId: outcome.callId });
+      });
+      finished = true;
+    } catch (err) {
+      logFailure("finish", err);
+    }
+    if (!finished) {
+      // The write may have landed with its reply lost: read the state back. A kept answer stands.
+      // Anything else, or a read-back that fails too, is unknown and refused with no second write:
+      // the lease and the counted try stay, so a retry waits out the lease and stays within
+      // MAX_ATTEMPTS.
+      const after = await tx(session, deps, (q) => findReadState(q, id)).catch((err) => {
+        logFailure("finish read-back", err);
+        return null;
+      });
+      if (!after || readGate(after) !== "done") return fail("read_failed", claim.attempts < MAX_ATTEMPTS);
+    }
   }
   return answerView(session, id, deps);
 }

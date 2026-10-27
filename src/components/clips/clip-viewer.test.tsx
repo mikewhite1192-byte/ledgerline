@@ -48,12 +48,18 @@ const PLAN: RedactionPlan = {
   coverage: { faceFrames: 72, plateFrames: 25, boxes: 0 },
 };
 
+// The redacted file as the file route serves it: bytes with a video/mp4 content type. A body built
+// from this test browser's own Blob is not one the runtime's Response can read (one Node version
+// throws, another reads it as the text "[object Blob]"), so the body is the bytes themselves.
+const FILE_BYTES = Uint8Array.of(0, 0, 0, 8);
+const fileResponse = () => new Response(FILE_BYTES, { headers: { "content-type": "video/mp4" } });
+
 let fetchMock: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   fetchMock = vi.fn(async (url: string) =>
     url.endsWith("/file")
-      ? new Response(new Blob([Uint8Array.of(0, 0, 0, 8)], { type: "video/mp4" }))
+      ? fileResponse()
       : Response.json({ ok: true, clip: CLIP, plan: PLAN }),
   );
   vi.stubGlobal("fetch", fetchMock);
@@ -86,6 +92,11 @@ describe("ClipViewer", () => {
     expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([`/api/clips/${ID}`, `/api/clips/${ID}/file`]);
     const video = container.querySelector("video")!;
     expect(video.getAttribute("src")).toBe("blob:clip-1");
+    // The object URL is made from the served file itself: its exact bytes and its video type.
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    const played = vi.mocked(URL.createObjectURL).mock.calls[0][0] as Blob;
+    expect(played.type).toBe("video/mp4");
+    expect(new Uint8Array(await played.arrayBuffer())).toEqual(FILE_BYTES);
     expect(screen.getByText("Door sign: RECEIVING DOOR 7")).toBeTruthy();
     expect(screen.getByText(/faces in 72 frames, plates in 25/)).toBeTruthy();
 
@@ -105,7 +116,7 @@ describe("ClipViewer", () => {
     const waiting: ClipView = { ...CLIP, status: "budget", reading: null, readAt: null };
     fetchMock.mockImplementation(async (url: string) =>
       url.endsWith("/file")
-        ? new Response(new Blob([Uint8Array.of(0, 0, 0, 8)], { type: "video/mp4" }))
+        ? fileResponse()
         : url.endsWith("/read")
           ? Response.json({ error: "budget", retryable: true }, { status: 409 })
           : Response.json({ ok: true, clip: waiting, plan: PLAN }),
