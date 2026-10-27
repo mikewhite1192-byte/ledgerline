@@ -5,6 +5,8 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
 import { appNav, NAV_HREFS, type NavKey } from "./app-nav";
+import * as registry from "./nav/items";
+import { MENU_GROUPS } from "./nav/menu-item";
 import { NavList } from "./nav-list";
 
 const SWITCHES = [
@@ -85,6 +87,41 @@ describe("appNav", () => {
   it("marks no item current on a page with no item", () => {
     setAll(true);
     expect(appNav("none").some((i) => i.current)).toBe(false);
+  });
+});
+
+// Each item is its own file plus one line in the index, so two features never edit the same lines.
+// Where an item shows comes from its own fields; the full-order test above proves the index's
+// alphabetical lines do not decide it.
+describe("the menu registry", () => {
+  const itemsDir = path.join(process.cwd(), "src", "components", "app", "nav", "items");
+  const items = Object.values(registry);
+
+  it("lists every item file in the index once, one line each, sorted by file name", () => {
+    const files = readdirSync(itemsDir)
+      .filter((f) => f.endsWith(".tsx"))
+      .map((f) => f.replace(/\.tsx$/, ""))
+      .sort();
+    const lines = readFileSync(path.join(itemsDir, "index.ts"), "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== "" && !line.startsWith("//"));
+    const listed = lines.map((line) => /^export \{ \w+ \} from "\.\/([a-z0-9-]+)";$/.exec(line)?.[1] ?? `bad line: ${line}`);
+    expect(listed).toEqual(files);
+    expect(items).toHaveLength(files.length);
+  });
+
+  it("never gives two items the same address or the same place in a group", () => {
+    const hrefs = items.map((i) => i.href);
+    expect(new Set(hrefs).size).toBe(hrefs.length);
+    const places = items.map((i) => `${i.group}:${i.order}`);
+    expect(new Set(places).size).toBe(places.length);
+  });
+
+  it("puts every item in a known group at a whole-number place", () => {
+    for (const item of items) {
+      expect(MENU_GROUPS, item.href).toContain(item.group);
+      expect(Number.isInteger(item.order) && item.order > 0, item.href).toBe(true);
+    }
   });
 });
 
