@@ -26,6 +26,7 @@ import {
   type ReceiptLine,
   type ReceiptStatus,
   type ReceivablesInput,
+  type SettlementInput,
   type SettlementPeriodRecord,
   type SourceRef,
   type VendorBillRecord,
@@ -210,35 +211,45 @@ export function billsDue(bills: readonly VendorBillRecord[], payDay: LocalDate):
 }
 
 // The open week's pay run: the stored draft and approved nets when the week has any, else the
-// engine's own preview over every driver active in the week. A preview that cannot be computed is
-// unknown, never zero.
+// engine's own preview over every driver active in the week. A stored run counts only when it is
+// whole: every driver active in the week has a row for the week (any status; a paid row has
+// already left the bank), or the engine finds nothing to pay them, as the run skips such a driver.
+// A run that stopped partway (the per-run cap, a driver whose records failed) or a driver who
+// started after it is unknown, never the part that was stored. So is a week whose drivers could
+// not be read, and a preview that cannot be computed: unknown, never zero.
 function payRunTotal(
   input: CashFridayInput,
   period: SettlementPeriodRecord,
 ): { source: "stored" | "preview"; cents: Cents; sources: SourceRef[] } | null {
+  const week = input.previews;
+  if (week === null) return null;
+  if (week.some((p) => p.period.start !== period.periodStart || p.period.end !== period.periodEnd)) return null;
+  const netOf = (preview: SettlementInput): Cents | null => {
+    try {
+      return settleDriver(preview).netCents;
+    } catch {
+      return null;
+    }
+  };
   const stored = input.settlements.filter(
     (s) => s.periodId === period.id && (s.status === "draft" || s.status === "approved"),
   );
   if (stored.length > 0) {
+    const rowed = new Set(input.settlements.filter((s) => s.periodId === period.id).map((s) => s.driverId));
+    if (week.some((p) => !rowed.has(p.driver.id) && netOf(p) !== 0)) return null;
     return {
       source: "stored",
       cents: sum(stored.map((s) => s.netCents)),
       sources: stored.map((s) => ({ table: "settlements", id: s.id })),
     };
   }
-  if (input.previews === null) return null;
   const nets: Cents[] = [];
-  const sources: SourceRef[] = [];
-  for (const preview of input.previews) {
-    if (preview.period.start !== period.periodStart || preview.period.end !== period.periodEnd) return null;
-    try {
-      nets.push(settleDriver(preview).netCents);
-    } catch {
-      return null;
-    }
-    sources.push({ table: "drivers", id: preview.driver.id });
+  for (const preview of week) {
+    const net = netOf(preview);
+    if (net === null) return null;
+    nets.push(net);
   }
-  return { source: "preview", cents: sum(nets), sources };
+  return { source: "preview", cents: sum(nets), sources: week.map((p) => ({ table: "drivers", id: p.driver.id })) };
 }
 
 // Option 1: factor the largest load invoices not expected by pay day and issued recently; up to the

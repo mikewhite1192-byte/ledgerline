@@ -8,6 +8,7 @@ import {
   payDayFor,
   typicalDaysLate,
 } from "./cash-friday";
+import { sum } from "./money";
 import { settleDriver } from "./settlement";
 import { advance, BLUE_RIDGE, c, driver, load } from "./test-records";
 import {
@@ -160,6 +161,29 @@ const BILLS: VendorBillRecord[] = [
   bill({ id: "b7", amountCents: c(70_000), dueOn: "2026-11-02", status: "paid", paidOn: "2026-11-02" }),
 ];
 
+// The engine's own input for one driver in the open week: one load delivered on Oct 28.
+const WEEK = { start: PERIOD.periodStart, end: PERIOD.periodEnd };
+
+function preview(id: string, linehaul: number): SettlementInput {
+  return {
+    config: BLUE_RIDGE,
+    driver: driver({ id }),
+    period: WEEK,
+    loads: [
+      load({ id: `${id}-l1`, driverId: id, pickupOn: "2026-10-27", deliveredOn: "2026-10-28", linehaulCents: c(linehaul) }),
+    ],
+    days: [],
+    items: [],
+    schedules: [],
+    advances: [],
+    escrowBalanceCents: c(0),
+  };
+}
+
+// Every driver active in the golden week, each with a row for it: drv-1 a draft, drv-2 approved,
+// drv-3 already paid. Their own nets differ from the stored ones, so a total shows which it read.
+const GOLDEN_PREVIEWS = [preview("drv-1", 140_000), preview("drv-2", 125_000), preview("drv-3", 90_000)];
+
 function golden(over: Partial<CashFridayInput> = {}): CashFridayInput {
   return {
     settings: SETTINGS,
@@ -172,7 +196,7 @@ function golden(over: Partial<CashFridayInput> = {}): CashFridayInput {
       // A row already paid (before the balance date) is not part of the run.
       settlement({ id: "s-early", driverId: "drv-3", status: "paid", netCents: c(999_000), paidOn: "2026-10-30" }),
     ],
-    previews: null,
+    previews: GOLDEN_PREVIEWS,
     advances: [
       cashAdvance({ id: "a1", status: "paid", amountCents: c(30_000), paidOn: "2026-11-02" }),
       cashAdvance({ id: "a2", status: "paid", amountCents: c(40_000), paidOn: "2026-10-30" }),
@@ -475,24 +499,6 @@ describe("computeCashFriday refusals", () => {
 });
 
 describe("computeCashFriday pay run preview", () => {
-  const WEEK = { start: PERIOD.periodStart, end: PERIOD.periodEnd };
-
-  function preview(id: string, linehaul: number): SettlementInput {
-    return {
-      config: BLUE_RIDGE,
-      driver: driver({ id }),
-      period: WEEK,
-      loads: [
-        load({ id: `${id}-l1`, driverId: id, pickupOn: "2026-10-27", deliveredOn: "2026-10-28", linehaulCents: c(linehaul) }),
-      ],
-      days: [],
-      items: [],
-      schedules: [],
-      advances: [],
-      escrowBalanceCents: c(0),
-    };
-  }
-
   const settlements = golden().settlements.filter((s) => s.periodId !== PERIOD.id);
   const previews = [preview("drv-a", 110_000), preview("drv-b", 95_000)];
 
@@ -523,7 +529,9 @@ describe("computeCashFriday pay run preview", () => {
   });
 
   it("prefers the stored run once the week has one", () => {
-    const result = position(golden({ previews }));
+    const own = sum(GOLDEN_PREVIEWS.slice(0, 2).map((p) => settleDriver(p).netCents));
+    expect(own).not.toBe(270_000);
+    const result = position(golden());
     expect(result.payRunSource).toBe("stored");
     expect(result.figures.payRunCents).toBe(270_000);
   });
@@ -561,6 +569,47 @@ describe("computeCashFriday pay run preview", () => {
     const result = position(golden({ settlements, previews: [] }));
     expect(result.payRunSource).toBe("preview");
     expect(result.figures.payRunCents).toBe(0);
+  });
+});
+
+describe("computeCashFriday stored run", () => {
+  const unknown = { ok: false, refusal: "pay_run_unknown" };
+
+  it("reads a run stopped partway as unknown, never the part it stored", () => {
+    // drv-4 is active in the week with pay coming and has no row: the run stopped before it.
+    const late = preview("drv-4", 80_000);
+    expect(settleDriver(late).netCents).toBeGreaterThan(0);
+    expect(computeCashFriday(golden({ previews: [...GOLDEN_PREVIEWS, late] }), AS_OF)).toEqual(unknown);
+  });
+
+  it("reads a stored run as unknown when the week's drivers could not be read", () => {
+    expect(computeCashFriday(golden({ previews: null }), AS_OF)).toEqual(unknown);
+  });
+
+  it("counts a driver already paid for the week as part of the run, and reads it as missing without that row", () => {
+    expect(settleDriver(GOLDEN_PREVIEWS[2]).netCents).toBeGreaterThan(0);
+    expect(position(golden()).figures.payRunCents).toBe(270_000);
+    const settlements = golden().settlements.filter((s) => s.id !== "s-early");
+    expect(computeCashFriday(golden({ settlements }), AS_OF)).toEqual(unknown);
+  });
+
+  it("keeps the stored run when a driver it has no row for has nothing to pay, as the run skips them", () => {
+    const idle = { ...preview("drv-5", 0), loads: [] };
+    expect(settleDriver(idle)).toMatchObject({ netCents: 0, lines: [] });
+    const result = position(golden({ previews: [...GOLDEN_PREVIEWS, idle] }));
+    expect(result.payRunSource).toBe("stored");
+    expect(result.figures.payRunCents).toBe(270_000);
+  });
+
+  it("reads a stored run as unknown when a driver it has no row for cannot be settled", () => {
+    const broken = preview("drv-4", 80_000);
+    broken.loads[0] = { ...broken.loads[0], linehaulCents: 1.5 as never };
+    expect(computeCashFriday(golden({ previews: [...GOLDEN_PREVIEWS, broken] }), AS_OF)).toEqual(unknown);
+  });
+
+  it("reads a stored run as unknown when a driver's input is for another week", () => {
+    const other = { ...GOLDEN_PREVIEWS[0], period: { start: "2026-10-19", end: "2026-10-25" } };
+    expect(computeCashFriday(golden({ previews: [other, ...GOLDEN_PREVIEWS.slice(1)] }), AS_OF)).toEqual(unknown);
   });
 });
 

@@ -13,6 +13,7 @@ import { DEMO_CARRIERS } from "../seed/carriers";
 import { cashPositionOf, PLANTED_GAP_CENTS } from "../seed/cash-plan";
 import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
+import { runPayPeriod } from "../settlements/run";
 import { runCashCheck, type CheckDeps } from "./check";
 import type { Explained } from "./explain";
 import { readCashHome, readCashView, readVendorBill } from "./view";
@@ -380,5 +381,40 @@ describe("Cash Friday on the real database", () => {
     await admin.withTenant(B, (q) => q.execute("DELETE FROM cash_settings WHERE tenant_id = current_tenant_id()"));
     expect(await runCashCheck(STAFF_B, NOW, deps())).toEqual({ ok: false, category: "balance_missing" });
     expect([await countOf(B, "cash_checks"), await countOf(B, "proposals")]).toEqual([checks, proposals]);
+  });
+
+  it("reads a pay run stopped at its cap as unknown and writes nothing, then the whole run as stored", async () => {
+    const period = planA.rows.settlement_periods.find((p) => p.status === "open");
+    if (!period) throw new Error("no open week");
+    const cap = flags.settlementLimits.driversPerRun;
+    flags.settlementsEnabled = true;
+    try {
+      flags.settlementLimits.driversPerRun = 1;
+      expect(await runPayPeriod(app, ADMIN_A, period.id, NOW)).toMatchObject({
+        ok: true,
+        counts: { drafts: 1, truncated: true },
+      });
+      const [checks, proposals] = [await countOf(A, "cash_checks"), await countOf(A, "proposals")];
+      expect(await runCashCheck(ADMIN_A, NOW, deps())).toEqual({ ok: false, category: "pay_run_unknown" });
+      expect([await countOf(A, "cash_checks"), await countOf(A, "proposals")]).toEqual([checks, proposals]);
+
+      flags.settlementLimits.driversPerRun = cap;
+      expect(await runPayPeriod(app, ADMIN_A, period.id, NOW)).toMatchObject({ ok: true, counts: { truncated: false } });
+      const r = await press(ADMIN_A);
+      const [stored] = await admin.withTenant(A, (q) =>
+        q.query<{ source: string; figures: string; owed: string }>(
+          `SELECT c.pay_run_source AS source, CAST(c.figures AS text) AS figures,
+                  (SELECT CAST(sum(s.net_cents) AS text) FROM settlements s
+                    WHERE s.tenant_id = c.tenant_id AND s.period_id = CAST($2 AS uuid)
+                      AND s.status IN ('draft', 'approved')) AS owed
+             FROM cash_checks c WHERE c.tenant_id = current_tenant_id() AND c.id = CAST($1 AS uuid)`,
+          [r.checkId, period.id],
+        ),
+      );
+      expect(stored.source).toBe("stored");
+      expect((JSON.parse(stored.figures) as { payRunCents: number }).payRunCents).toBe(Number(stored.owed));
+    } finally {
+      flags.settlementLimits.driversPerRun = cap;
+    }
   });
 });
