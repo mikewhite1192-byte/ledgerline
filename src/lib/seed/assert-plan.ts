@@ -24,6 +24,7 @@ import {
   settleDriver,
   sum,
   type AdvanceDecision,
+  type Cents,
   type LoadRecord,
   type PayConfig,
 } from "../rules-engine";
@@ -96,6 +97,8 @@ export type SeededAdvanceArgs = {
   at: string;
   amountCents: number;
   prior: readonly AdvanceRow[];
+  // The load the advance is for, with the driver's pay on it, when it names one.
+  load?: { id: string; payCents: Cents } | null;
 };
 
 export function seededAdvanceDecision(a: SeededAdvanceArgs): AdvanceDecision {
@@ -113,6 +116,7 @@ export function seededAdvanceDecision(a: SeededAdvanceArgs): AdvanceDecision {
     ),
     paidPeriods: a.periods.slice(0, week),
     advances: a.prior.map(advanceOf),
+    load: a.load ?? null,
   });
 }
 
@@ -149,6 +153,7 @@ export function assertPlan(plan: CarrierPlan): void {
 
   keysAndReferences(rows);
   driverCards(rows, carrier.heroCode);
+  parityPlants(plan);
   loadsAndDays(rows, zone, lastDay, openWeek.start);
   receivables(plan, lastDay);
   addendumPlants(plan);
@@ -202,7 +207,11 @@ export function assertPlan(plan: CarrierPlan): void {
 
   // Advances: the planted ones stay owed in full; every other one is its driver's only advance
   // and is one the engine grants on the earnings of the day it was asked for.
-  const plantedAdvances = new Set([...planted.duplicateAdvanceIds, ...planted.overLimitAdvanceIds]);
+  const plantedAdvances = new Set([
+    ...planted.duplicateAdvanceIds,
+    ...planted.overLimitAdvanceIds,
+    ...planted.parity.loadPairAdvanceIds,
+  ]);
   for (const id of plantedAdvances) {
     const a = rows.advances.find((x) => x.id === id);
     if (!a || a.recovered_cents !== 0) fail("a planted advance was recovered");
@@ -236,29 +245,101 @@ export function assertPlan(plan: CarrierPlan): void {
   }
 }
 
-// Fuel cards: one active card per driver, every card naming a driver in the plan, tokens and last
-// four unique, the hero's card plain "ok", and exactly one planted declined and one slow card.
+// Fuel cards: one default active card per driver, a default never closed, every card naming a
+// driver in the plan, tokens and last four unique, a generic card always carrying a portal name,
+// the hero holding exactly one card and it plain "ok", and exactly one planted declined and one
+// slow card.
 function driverCards(rows: TenantRows, heroCode: string | null): void {
   const cards = rows.driver_cards;
   const driverIds = new Set(rows.drivers.map((d) => d.id));
   refs(cards, (c) => c.driver_id, driverIds, "a fuel card");
   unique(cards, (c) => c.provider_token, "card token");
   unique(cards, (c) => c.last4, "card last four");
-  const active = cards.filter((c) => c.status === "active");
-  unique(active, (c) => c.driver_id, "active card per driver");
-  if (active.length !== rows.drivers.length) fail("a driver has no active fuel card");
+  const defaults = cards.filter((c) => c.is_default);
+  if (defaults.some((c) => c.status !== "active")) fail("a default card is not active");
+  unique(defaults, (c) => c.driver_id, "default card per driver");
+  if (defaults.length !== rows.drivers.length) fail("a driver has no default fuel card");
   for (const c of cards) {
     if (!/^fcs_card_[0-9a-f]{24}$/.test(c.provider_token) || !/^[0-9]{4}$/.test(c.last4)) {
       fail("a fuel card is malformed");
     }
     if (c.sim_behavior === "offline") fail("the seed plants an offline card");
+    if (c.holder_kind === "generic" && (c.portal_name === null || !/^[A-Z0-9 -]{2,40}$/.test(c.portal_name))) {
+      fail("a generic card has no portal name");
+    }
+    if ((c.status === "closed") !== (c.closed_at !== null)) fail("a card's closed time is off");
   }
   const count = (b: string) => cards.filter((c) => c.sim_behavior === b).length;
   if (count("declined") !== 1 || count("slow") !== 1) fail("the planted fuel cards are not one declined and one slow");
   if (heroCode) {
     const hero = rows.drivers.find((d) => d.code === heroCode);
-    const card = hero ? active.find((c) => c.driver_id === hero.id) : undefined;
-    if (!card || card.sim_behavior !== "ok") fail("the hero's fuel card is not ok");
+    const own = hero ? cards.filter((c) => c.driver_id === hero.id) : [];
+    if (own.length !== 1 || !own[0].is_default || own[0].sim_behavior !== "ok") {
+      fail("the hero does not hold exactly one plain card");
+    }
+  }
+}
+
+// Advance parity (0027): exactly one driver disarmed (not the hero, no advance), every driver on
+// the arming log once and as they stand, one dispatch-system id per driver, every advance's load
+// the same driver's, the planted pair on one load and under its cap, the take-back whole.
+function parityPlants(plan: CarrierPlan): void {
+  const { rows, planted, carrier } = plan;
+  const p = planted.parity;
+  const disarmed = rows.drivers.filter((d) => !d.money_armed);
+  if (disarmed.length !== 1 || disarmed[0].id !== p.disarmedDriverId) fail("not exactly one disarmed driver");
+  if (disarmed[0].code === carrier.heroCode) fail("the hero is disarmed");
+  if (disarmed[0].money_armed_at !== null) fail("the disarmed driver has an armed time");
+  if (rows.advances.some((a) => a.driver_id === p.disarmedDriverId)) fail("the disarmed driver has an advance");
+  if (rows.drivers.some((d) => d.money_armed && d.money_armed_at === null)) fail("an armed driver has no armed time");
+  const events = rows.driver_arm_events;
+  unique(events, (e) => e.driver_id, "arm event per driver");
+  if (events.length !== rows.drivers.length) fail("a driver is missing from the arming log");
+  for (const e of events) {
+    const d = rows.drivers.find((x) => x.id === e.driver_id);
+    if (!d || d.money_armed !== e.armed || e.source !== "seed" || e.membership_id !== null) {
+      fail("an arming log row does not match its driver");
+    }
+  }
+  const tms = rows.driver_identities;
+  unique(tms, (x) => x.driver_id, "dispatch id per driver");
+  unique(tms, (x) => x.external_id, "dispatch id");
+  if (tms.length !== rows.drivers.length) fail("a driver has no dispatch id");
+  // TMS-<carrier prefix>-<five digits>, compared as a fixed head and a fixed-shape tail.
+  const head = `TMS-${carrier.prefix}-`;
+  if (tms.some((x) => !x.external_id.startsWith(head) || !/^[0-9]{5}$/.test(x.external_id.slice(head.length)))) {
+    fail("a dispatch id is malformed");
+  }
+  for (const a of rows.advances) {
+    if (a.load_id === null) continue;
+    const load = rows.loads.find((l) => l.id === a.load_id);
+    if (!load || load.driver_id !== a.driver_id) fail("an advance names another driver's load");
+  }
+  const pair = p.loadPairAdvanceIds.map((id) => rows.advances.find((a) => a.id === id));
+  if (pair.some((a) => !a || a.load_id !== p.loadPairLoadId || a.driver_id !== pair[0]!.driver_id)) {
+    fail("the load pair does not share one load");
+  }
+  if (pair[0]!.amount_cents === pair[1]!.amount_cents) fail("the load pair repeats an amount");
+  const back = rows.advances.find((a) => a.id === p.takenBackAdvanceId);
+  if (
+    !back ||
+    back.status !== "paid" ||
+    back.taken_back_cents !== back.amount_cents ||
+    back.takeback_reason !== "wrong_driver" ||
+    back.taken_back_at === null ||
+    back.taken_back_by_membership_id !== null
+  ) {
+    fail("the planted take-back is not whole");
+  }
+  const takenBack = rows.advances.filter((a) => a.taken_back_cents > 0 || a.taken_back_at !== null);
+  if (takenBack.length !== 1) fail("more than the planted advance was taken back");
+  if (carrier.heroCode) {
+    const generic = rows.driver_cards.filter((c) => c.holder_kind === "generic");
+    if (generic.length !== 1 || generic[0].id !== p.genericCardId) fail("not exactly one generic card");
+    const closed = rows.driver_cards.find((c) => c.id === p.closedCardId);
+    if (!closed || closed.status !== "closed" || closed.is_default) fail("the planted closed card is off");
+    const extra = rows.driver_cards.find((c) => c.id === p.extraCardId);
+    if (!extra || extra.status !== "active" || extra.is_default) fail("the planted extra card is off");
   }
 }
 

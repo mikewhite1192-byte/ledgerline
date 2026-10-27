@@ -46,6 +46,8 @@ export type ProposalCardProps = {
   // Where the money would land, one small line under the amount, e.g. "To fuel card ···· 4417".
   // testMode adds " · Test mode" to it.
   destination?: { label: string; testMode: boolean };
+  // One more small line under the amount, e.g. "Load L-1042: $120.00 of $300.00 cap left after this."
+  detail?: string;
   // The second question before a money action, e.g. "Pay $200.00 to Dana Whitfield?"
   confirmQuestion?: string;
   // A warning shown above the buttons, e.g. why this proposal needs a second look.
@@ -142,6 +144,7 @@ export function ProposalCard({
   sources = [],
   status,
   destination,
+  detail,
   confirmQuestion,
   flagNote,
   audit,
@@ -203,6 +206,7 @@ export function ProposalCard({
             </span>
           </p>
         ) : null}
+        {detail ? <p className="mt-1 text-small text-muted-foreground">{detail}</p> : null}
       </div>
 
       <div className="px-4 pt-3 pb-4 sm:px-5">

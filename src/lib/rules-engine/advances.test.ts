@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { advanceEligibility } from "./advances";
+import { advanceEligibility, floorToDollars } from "./advances";
 import { earnedUnpaid } from "./load-pay";
+import { checkAdvance, outstandingCents } from "./recovery";
 import { advance, BLUE_RIDGE, c, driver, load, PRAIRIE_WIND } from "./test-records";
 import { ConfigError, InputError, type AdvanceInput, type AdvanceRefusal } from "./types";
 
@@ -31,6 +32,10 @@ describe("advanceEligibility", () => {
       earnedUnpaidCents: 75_000,
       openCents: 0,
       limitCents: 50_000,
+      loadCapCents: null,
+      loadHeadroomCents: null,
+      openOnLoadCents: 0,
+      suggestedCents: 20_000,
       sources: [
         { table: "drivers", id: "drv-1" },
         { table: "loads", id: "l1" },
@@ -333,5 +338,115 @@ describe("advanceEligibility", () => {
     ],
   ])("refuses %s", (_name, over, error) => {
     expect(() => advanceEligibility(request(over))).toThrow(error);
+  });
+});
+
+describe("arming, the per-load cap and the suggestion", () => {
+  // The load named is l1: $750 of pay for the driver, so Blue Ridge's 40% cap is $300.
+  const L1 = { id: "l1", payCents: c(75_000) };
+  const onL1 = (id: string, amount: number, at: string) =>
+    advance({ id, loadId: "l1", amountCents: c(amount), requestedAt: at, requestedOn: at.slice(0, 10) });
+
+  it("refuses a driver nobody has armed first, and offers nothing", () => {
+    const decision = advanceEligibility(
+      request({ driver: driver({ moneyArmed: false, activeTo: "2026-10-01" }), load: L1 }),
+    );
+    expect(decision.reasons).toEqual(["driver_not_armed", "driver_inactive"]);
+    expect([decision.eligible, decision.maxCents, decision.suggestedCents]).toEqual([false, 0, 0]);
+    const armed = advanceEligibility(request({ load: L1 }));
+    expect(armed).toMatchObject({ eligible: true, maxCents: 30_000, suggestedCents: 20_000 });
+  });
+
+  it("adds advances on one load against its cap and refuses the next with the exact room left", () => {
+    const prior = [onL1("a1", 10_000, "2026-10-28T13:00:00Z"), onL1("a2", 12_500, "2026-10-28T20:00:00Z")];
+    const fits = advanceEligibility(request({ load: L1, advances: prior, amountCents: c(7_500) }));
+    expect(fits).toMatchObject({
+      eligible: true,
+      loadCapCents: 30_000,
+      openOnLoadCents: 22_500,
+      loadHeadroomCents: 7_500,
+      maxCents: 7_500,
+      suggestedCents: 7_500,
+    });
+    const third = advanceEligibility(request({ load: L1, advances: prior, amountCents: c(10_000) }));
+    expect(third.reasons).toEqual(["over_load_cap"]);
+    expect([third.maxCents, third.loadHeadroomCents, third.suggestedCents]).toEqual([7_500, 7_500, 7_500]);
+    expect(third.sources).toContainEqual({ table: "advances", id: "a2" });
+  });
+
+  it("counts only the advances on the load named, and none when no load is named", () => {
+    const other = advance({ id: "a1", loadId: "l9", amountCents: c(25_000) });
+    const decision = advanceEligibility(request({ load: L1, advances: [other], amountCents: c(5_000) }));
+    expect(decision).toMatchObject({ eligible: true, openCents: 25_000, openOnLoadCents: 0, loadHeadroomCents: 30_000 });
+    const unnamed = advanceEligibility(request({ advances: [onL1("a2", 25_000, "2026-10-27T12:00:00Z")], amountCents: c(5_000) }));
+    expect(unnamed).toMatchObject({ eligible: true, loadCapCents: null, loadHeadroomCents: null, openOnLoadCents: 0 });
+  });
+
+  it("floors the room on a load at zero and then offers nothing", () => {
+    const over = [onL1("a1", 35_000, "2026-10-27T12:00:00Z")];
+    const decision = advanceEligibility(
+      request({ driver: driver({ advanceLimitCents: c(100_000) }), load: L1, advances: over, amountCents: c(5_000) }),
+    );
+    expect(decision.reasons).toEqual(["exceeds_earned_share", "over_load_cap"]);
+    expect([decision.loadHeadroomCents, decision.maxCents, decision.suggestedCents]).toEqual([0, 0, 0]);
+  });
+
+  it("counts the fee against the cap", () => {
+    // Prairie Wind: $750 of pay, 50% cap = $375, $5 fee: the most on the load is $370.
+    const pw = { config: PRAIRIE_WIND, load: L1 };
+    const over = advanceEligibility(request({ ...pw, amountCents: c(37_001) }));
+    expect(over.reasons).toEqual(["over_load_cap"]);
+    expect([over.loadCapCents, over.maxCents]).toEqual([37_500, 37_000]);
+    expect(advanceEligibility(request({ ...pw, amountCents: c(37_000) })).eligible).toBe(true);
+  });
+
+  it("never raises the per-load cap when the tenant sets none", () => {
+    const uncapped = { ...BLUE_RIDGE, advancePerLoadBpsOfPay: null };
+    const decision = advanceEligibility(
+      request({ config: uncapped, load: L1, advances: [onL1("a1", 30_000, "2026-10-27T12:00:00Z")], amountCents: c(5_000) }),
+    );
+    expect(decision.reasons).not.toContain("over_load_cap");
+    expect([decision.loadCapCents, decision.loadHeadroomCents, decision.openOnLoadCents]).toEqual([null, null, 30_000]);
+  });
+
+  it("suggests whole dollars, never more than allowed, and nothing under the minimum", () => {
+    expect(advanceEligibility(request({ amountCents: c(12_345) })).suggestedCents).toBe(12_300);
+    expect(advanceEligibility(request({ amountCents: c(40_000) })).suggestedCents).toBe(37_500);
+    expect(advanceEligibility(request({ load: L1, amountCents: c(40_099) })).suggestedCents).toBe(30_000);
+    expect(advanceEligibility(request({ amountCents: c(4_999) })).suggestedCents).toBe(0);
+    expect([floorToDollars(c(0)), floorToDollars(c(99)), floorToDollars(c(100)), floorToDollars(c(12_399))]).toEqual([
+      0, 0, 100, 12_300,
+    ]);
+  });
+
+  it.each<[string, Partial<AdvanceInput>]>([
+    ["a load with no id", { load: { id: "", payCents: c(75_000) } }],
+    ["a load whose pay is not whole cents", { load: { id: "l1", payCents: 100.5 as never } }],
+    ["an armed flag that is not a boolean", { driver: driver({ moneyArmed: "yes" as never }) }],
+  ])("refuses %s", (_name, over) => {
+    expect(() => advanceEligibility(request(over))).toThrow(InputError);
+  });
+});
+
+describe("what is still owed on an advance", () => {
+  it("subtracts what was taken back, never going below zero", () => {
+    expect(outstandingCents(advance({ id: "a1", amountCents: c(20_000), feeCents: c(500), takenBackCents: c(20_000) }))).toBe(500);
+    expect(
+      outstandingCents(
+        advance({ id: "a1", amountCents: c(20_000), feeCents: c(500), recoveredCents: c(10_000), takenBackCents: c(20_000) }),
+      ),
+    ).toBe(0);
+    expect(outstandingCents(advance({ id: "a1", status: "requested", takenBackCents: c(0) }))).toBe(0);
+  });
+
+  it("refuses a take-back larger than what was advanced, or a load id that is not one", () => {
+    expect(() => checkAdvance(advance({ id: "a1", amountCents: c(20_000), feeCents: c(500), takenBackCents: c(20_501) }))).toThrow(
+      InputError,
+    );
+    expect(checkAdvance(advance({ id: "a1", amountCents: c(20_000), feeCents: c(500), takenBackCents: c(20_500) })).takenBackCents).toBe(
+      20_500,
+    );
+    expect(() => checkAdvance(advance({ id: "a1", takenBackCents: c(-1) }))).toThrow(InputError);
+    expect(() => checkAdvance(advance({ id: "a1", loadId: "" }))).toThrow(InputError);
   });
 });

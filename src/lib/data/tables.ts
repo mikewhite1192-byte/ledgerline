@@ -1,10 +1,11 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
-// and 0005, the outside text and its screenings from 0008, and the fuel cards on file from 0017, in
-// an order where every table comes after the tables it references (insert in this order, delete in
-// reverse). Each column says how it travels: the Data API sends strings as text, so uuid, date,
-// timestamptz and jsonb columns need a CAST on the way in, and reads turn timestamptz into one ISO
-// form and jsonb into text so both drivers return the same values. tenant_id and created_at are
-// never listed: tenant_id is always current_tenant_id() and created_at is the database's own.
+// and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, and
+// the driver identity map and arming log from 0027, in an order where every table comes after the
+// tables it references (insert in this order, delete in reverse). Each column says how it
+// travels: the Data API sends strings as text, so uuid, date, timestamptz and jsonb columns need
+// a CAST on the way in, and reads turn timestamptz into one ISO form and jsonb into text so both
+// drivers return the same values. tenant_id and created_at are never listed: tenant_id is always
+// current_tenant_id() and created_at is the database's own.
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
 
@@ -17,6 +18,8 @@ export const TENANT_TABLES = [
   "customers",
   "drivers",
   "driver_cards",
+  "driver_identities",
+  "driver_arm_events",
   "loads",
   "load_state_miles",
   "load_accessorials",
@@ -71,6 +74,8 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["active_from", "date"],
       ["active_to", "date"],
       ["preferred_language", "text"],
+      ["money_armed", "bool"],
+      ["money_armed_at", "timestamptz"],
     ],
   },
   driver_cards: {
@@ -86,6 +91,30 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["sim_behavior", "text"],
       ["source", "text"],
       ["closed_at", "timestamptz"],
+      ["is_default", "bool"],
+      ["holder_kind", "text"],
+      ["portal_name", "text"],
+    ],
+  },
+  driver_identities: {
+    table: "driver_identities",
+    columns: [
+      ["id", "uuid"],
+      ["driver_id", "uuid"],
+      ["system", "text"],
+      ["external_id", "text"],
+      ["source", "text"],
+    ],
+  },
+  driver_arm_events: {
+    table: "driver_arm_events",
+    columns: [
+      ["id", "uuid"],
+      ["driver_id", "uuid"],
+      ["armed", "bool"],
+      ["note", "text"],
+      ["membership_id", "uuid"],
+      ["source", "text"],
     ],
   },
   loads: {
@@ -180,6 +209,7 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["advance_limit_default_cents", "int"],
       ["advance_max_bps_of_earned", "int"],
       ["advance_min_cents", "int"],
+      ["advance_per_load_bps_of_pay", "int"],
     ],
   },
   deduction_schedules: {
@@ -268,6 +298,11 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["source_input_id", "uuid"],
       ["decided_at", "timestamptz"],
       ["decided_by_membership_id", "uuid"],
+      ["load_id", "uuid"],
+      ["taken_back_cents", "int"],
+      ["taken_back_at", "timestamptz"],
+      ["taken_back_by_membership_id", "uuid"],
+      ["takeback_reason", "text"],
     ],
   },
   invoices: {

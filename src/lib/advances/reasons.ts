@@ -11,6 +11,9 @@ export type RefusalNumbers = {
   limitCents: number;
   shareBps: number;
   earnedUnpaidCents: number;
+  // The load an advance is for, when it names one: its number, the cap on advances against it,
+  // what is still open on it, and the most one more advance can be once its fee is counted.
+  load?: { number: string; capCents: number; openCents: number; mostCents: number } | null;
 };
 
 const percent = (bps: number) => {
@@ -20,6 +23,8 @@ const percent = (bps: number) => {
 };
 
 const REFUSAL_SENTENCES: Readonly<Record<AdvanceRefusal, (n: RefusalNumbers) => string>> = {
+  driver_not_armed: () =>
+    "This driver is not armed to receive money. An admin can arm them on the driver page.",
   driver_inactive: () => "The driver is not active.",
   below_minimum: (n) => `Below the carrier's minimum advance of ${dollars(n.minCents)}.`,
   no_unpaid_earnings: () => "No earned pay is unpaid yet this period.",
@@ -28,6 +33,10 @@ const REFUSAL_SENTENCES: Readonly<Record<AdvanceRefusal, (n: RefusalNumbers) => 
   exceeds_earned_share: (n) =>
     `More than ${percent(n.shareBps)} of earned, unpaid pay (${dollars(n.earnedUnpaidCents)}).`,
   possible_duplicate: () => "An advance for the same amount was requested within 24 hours.",
+  over_load_cap: (n) =>
+    n.load
+      ? `Advances on load ${n.load.number} are capped at ${dollars(n.load.capCents)}; ${dollars(n.load.openCents)} is still open, so ${dollars(n.load.mostCents)} is the most for this load.`
+      : "This would take advances on this load past the load's cap.",
 };
 
 export function isRefusal(code: unknown): code is AdvanceRefusal {
@@ -49,6 +58,9 @@ export const FLOW_OUTCOMES = [
   "capped_to_eligible",
   "eligibility_unavailable",
   "no_card",
+  "driver_not_armed",
+  "card_not_drivers",
+  "load_not_drivers",
   "ref_collision",
   "attempts_exhausted",
   "not_retryable",
@@ -59,6 +71,9 @@ export const FLOW_OUTCOMES = [
   "post_pending",
   "post_failed",
   "accounting_off",
+  "already_taken_back",
+  "over_bound",
+  "not_takeable",
   "role",
   "not_found",
   "busy",
@@ -80,6 +95,10 @@ const OUTCOME_SENTENCES: Readonly<Record<FlowOutcome, string>> = {
   capped_to_eligible: "Proposed the most the pay rules allow instead of the amount asked.",
   eligibility_unavailable: "Eligibility could not be checked, so nothing was paid. Try again.",
   no_card: "This driver has no fuel card on file, so nothing was paid.",
+  driver_not_armed:
+    "This driver is not armed to receive money. An admin can arm them on the driver page.",
+  card_not_drivers: "That card is not one of this driver's active cards, so nothing was paid.",
+  load_not_drivers: "That load is not one of this driver's loads, so nothing was paid.",
   ref_collision: "This advance's reference is already taken. Nothing was paid; it needs a person.",
   attempts_exhausted: "This payout has been tried the most times allowed. It needs a person.",
   not_retryable: "Only a payout that definitely failed can be tried again.",
@@ -90,6 +109,10 @@ const OUTCOME_SENTENCES: Readonly<Record<FlowOutcome, string>> = {
   post_pending: "The QuickBooks post's outcome is not known yet. Use Check pending.",
   post_failed: "The QuickBooks post did not go through. Nothing was booked; Post again when ready.",
   accounting_off: "Posting to QuickBooks is switched off.",
+  already_taken_back: "This advance was already taken back, for a different amount.",
+  over_bound: "That is more than is still owed on this advance, or more than one take-back may record.",
+  not_takeable:
+    "This advance cannot be taken back while its payout is in flight or after it was rejected or canceled.",
   role: "An advance this large needs an admin to approve it.",
   not_found: "No such advance.",
   busy: "Another request is working on this advance. Try again in a moment.",
@@ -119,6 +142,9 @@ const CARD_OUTCOMES = [
   "stale_eligibility",
   "eligibility_unavailable",
   "no_card",
+  "driver_not_armed",
+  "card_not_drivers",
+  "load_not_drivers",
   "ref_collision",
   "payout_failed",
   "payout_pending",
@@ -141,4 +167,30 @@ export function decisionNoteSentence(note: string | null): string | null {
   }
   if (note === "expired") return "No one decided in time, so it expired.";
   return `Decision: ${codeToWords(note).toLowerCase()}.`;
+}
+
+// Take back: the shared sentences, except the size rule, which here is about taking back.
+export function takeBackSentence(code: string): string {
+  if (code === "role") return "Taking back an advance this large needs an admin.";
+  if (code === "bad_request") return "Enter an amount above zero and pick a reason.";
+  if (code === "not_found") return "No such advance.";
+  return outcomeSentence(code);
+}
+
+// The driver's money panel (arming, ids, cards): its own closed list.
+const PANEL_SENTENCES: Readonly<Record<string, string>> = {
+  role: "Only an admin can arm a driver or change their cards.",
+  card_not_drivers: "That card is not one of this driver's active cards.",
+  identity_taken: "That id already belongs to another driver.",
+  not_found: "No such driver or card.",
+  bad_request: "Check what was entered and try again.",
+  disabled: "Advances are switched off.",
+  unauthenticated: OUTCOME_SENTENCES.unauthenticated,
+  forbidden: OUTCOME_SENTENCES.forbidden,
+};
+
+export function panelSentence(code: string): string {
+  return Object.hasOwn(PANEL_SENTENCES, code)
+    ? PANEL_SENTENCES[code]
+    : "That did not finish. Nothing was changed; try again.";
 }

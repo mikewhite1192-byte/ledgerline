@@ -471,10 +471,12 @@ describe("seeding the demo carriers", () => {
     return { sub, email: "", tenantId };
   };
   // A driver's pending request for a seeded advance (the plan writes them all paid).
+  // Back to requested, any take-back cleared with it (only a paid advance has one, 0027).
   const requested = (tenantId: string, advanceId: string) =>
     app.withTenant(tenantId, (q) =>
       q.execute(
-        `UPDATE advances SET status = 'requested', paid_at = NULL
+        `UPDATE advances SET status = 'requested', paid_at = NULL, taken_back_cents = 0, taken_back_at = NULL,
+                takeback_reason = NULL, taken_back_by_membership_id = NULL
          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
         [advanceId],
       ),

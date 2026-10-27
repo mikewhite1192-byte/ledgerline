@@ -2,6 +2,7 @@ import { flags } from "../../../config/flags";
 import type { Queryable } from "../../db";
 import { detentionChargeOf, readDetentionChargeRows } from "../../data/detention-charge";
 import { loadsOf } from "../../data/records";
+import { readActiveCardById } from "../../advances/cards";
 import {
   readAdvanceInput,
   readReceivablesInput,
@@ -21,13 +22,13 @@ import { loadCandidates } from "../../documents/candidates";
 import { matchDocument, RATE_FILL_STATUSES } from "../../documents/match";
 import { isWithin, localDateOf } from "../../time/local-date";
 import { readDocumentForInput } from "./store/document-reads";
-import type { GatewayContext, GatewayRef, LimitResult } from "./types";
+import type { GatewayContext, GatewayRef, LimitResult, ReasonCategory } from "./types";
 
 // Amount limits for the propose tools. The rules engine sizes every number; the gateway only
 // compares. A proposal above its limit never exists. Any read or engine error is
 // limit_unavailable: unknown is not zero.
 
-const OVER_LIMIT_REASONS = new Set(["over_driver_limit", "exceeds_earned_share"]);
+const OVER_LIMIT_REASONS = new Set(["over_driver_limit", "exceeds_earned_share", "over_load_cap"]);
 
 function unavailable(requestedCents: number | null): LimitResult {
   console.warn("gateway: a limit could not be computed");
@@ -54,7 +55,15 @@ function refused(
 
 // ---- Advances ----
 
-export type AdvanceLimitArgs = { driverId: string; amountCents: number; requestedOn: string };
+// loadId: the load the advance is for (its per-load cap applies); cardId: a card other than the
+// driver's default, which must be one of the driver's active cards.
+export type AdvanceLimitArgs = {
+  driverId: string;
+  amountCents: number;
+  requestedOn: string;
+  loadId?: string;
+  cardId?: string;
+};
 
 // The largest amount this trace already asked for this driver and was refused as over the limit.
 // A later, smaller ask in the same trace is then capped to what the engine allows.
@@ -71,13 +80,19 @@ export async function advanceLimit(
 ): Promise<LimitResult> {
   let decision: AdvanceDecision;
   let requestedOn: string;
+  let loadFound: boolean;
+  let cardFound: boolean;
   try {
-    const input = await readAdvanceInput(q, args.driverId, ctx.now.toISOString(), args.amountCents);
+    const input = await readAdvanceInput(q, args.driverId, ctx.now.toISOString(), args.amountCents, args.loadId);
     requestedOn = input.requestedOn;
+    loadFound = input.load !== null && input.load !== undefined;
     decision = advanceEligibility(input);
+    cardFound = args.cardId === undefined || (await readActiveCardById(q, args.driverId, args.cardId)) !== null;
   } catch {
     return unavailable(args.amountCents);
   }
+  // A load that is not this driver's: nothing to size the advance against, never a guess.
+  if (args.loadId !== undefined && !loadFound) return refused("engine_refused", 0, args.amountCents);
   // The ask can be dated today or earlier (an email from two days ago), never later; the engine
   // always sizes the advance as of now, when it would be paid.
   if (args.requestedOn > requestedOn) return refused("engine_refused", decision.maxCents, args.amountCents);
@@ -96,11 +111,17 @@ export async function advanceLimit(
     return unavailable(args.amountCents);
   }
   const capped = asked !== null && asked > args.amountCents;
+  // A named card that is not one of the driver's active cards stays on the card as an exception,
+  // so it is never clean; the executor refuses to pay it.
+  const exceptions: ReasonCategory[] = [
+    ...(capped ? (["capped_to_eligible"] as const) : []),
+    ...(cardFound ? [] : (["card_not_drivers"] as const)),
+  ];
   return {
     ok: true,
     limitCents: decision.maxCents,
     requestedCents: cents(args.amountCents),
-    exceptions: capped ? ["capped_to_eligible"] : [],
+    exceptions,
     reasons: [...decision.reasons],
     sources: decision.sources,
   };

@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { configFor, configForDay, sortVersions } from "../data/config-version";
 import {
+  advanceOf,
+  checkInputOf,
   customerOf,
+  driverOf,
   loadsOf,
   loadStopsOf,
   payConfigOf,
@@ -12,15 +15,19 @@ import type { AdvanceRow, DriverDayRow, DriverRow } from "../data/rows";
 import {
   agingBucket,
   detentionStops,
+  driverPayOnLoad,
+  findAdvanceOverLoadCap,
   findUnbilledDetention,
   lastFullMonthBefore,
+  mulBps,
+  outstandingCents,
   paymentProfile,
   settleDriver,
 } from "../rules-engine";
 import { addDays, daysBetween } from "../time/local-date";
 import { customerClassOf } from "./ar-plan";
 import { instantAt } from "./calendar";
-import { DETENTION_TOTAL_CENTS, HERO_OPEN_WEEK, seededAdvanceDecision } from "./assert-plan";
+import { assertPlan, DETENTION_TOTAL_CENTS, HERO_OPEN_WEEK, seededAdvanceDecision } from "./assert-plan";
 import { DEMO_CARRIERS } from "./carriers";
 import { buildCarrierPlan, buildDriverCards, type CarrierPlan } from "./plan";
 
@@ -209,18 +216,22 @@ describe("buildCarrierPlan", () => {
 });
 
 describe("fuel cards", () => {
-  it("gives every driver one active card, unique tokens and last four, and plants one declined and one slow", () => {
+  it("gives every driver one default active card, unique tokens and last four, and plants one declined and one slow", () => {
     for (const plan of plans) {
       const { drivers, driver_cards: cards } = plan.rows;
-      expect(cards).toHaveLength(drivers.length);
-      expect(new Set(cards.map((c) => c.driver_id))).toEqual(new Set(drivers.map((d) => d.id)));
-      expect(cards.every((c) => c.status === "active" && c.source === "seed" && c.closed_at === null)).toBe(true);
+      const defaults = cards.filter((c) => c.is_default);
+      expect(defaults).toHaveLength(drivers.length);
+      expect(new Set(defaults.map((c) => c.driver_id))).toEqual(new Set(drivers.map((d) => d.id)));
+      expect(defaults.every((c) => c.status === "active" && c.closed_at === null && c.holder_kind === "named")).toBe(true);
+      expect(cards.every((c) => c.source === "seed")).toBe(true);
       expect(new Set(cards.map((c) => c.provider_token)).size).toBe(cards.length);
       expect(new Set(cards.map((c) => c.last4)).size).toBe(cards.length);
       expect(cards.every((c) => /^fcs_card_[0-9a-f]{24}$/.test(c.provider_token) && /^[0-9]{4}$/.test(c.last4))).toBe(true);
       expect(cards.filter((c) => c.sim_behavior === "declined")).toHaveLength(1);
       expect(cards.filter((c) => c.sim_behavior === "slow")).toHaveLength(1);
       expect(cards.some((c) => c.sim_behavior === "offline")).toBe(false);
+      // Three more cards only where there is a hero: 28 at Blue Ridge, 25 at Prairie Wind.
+      expect(cards).toHaveLength(drivers.length + (plan.carrier.heroCode ? 3 : 0));
     }
   });
 
@@ -244,6 +255,155 @@ describe("fuel cards", () => {
   it("draws cards from their own stream, so the same seed gives the same cards", () => {
     const again = DEMO_CARRIERS.map((c) => buildCarrierPlan(c, ANCHOR));
     expect(again.map((p) => p.rows.driver_cards)).toEqual(plans.map((p) => p.rows.driver_cards));
+  });
+});
+
+describe("advance parity", () => {
+  const codeOf = (plan: CarrierPlan, id: string) => plan.rows.drivers.find((d) => d.id === id)!.code;
+
+  it("arms every driver from the morning they started except one planted driver, never the hero", () => {
+    for (const plan of plans) {
+      const { drivers, advances, driver_arm_events: events } = plan.rows;
+      const disarmed = drivers.filter((d) => !d.money_armed);
+      expect(disarmed.map((d) => d.id)).toEqual([plan.planted.parity.disarmedDriverId]);
+      expect(disarmed[0].code).not.toBe(plan.carrier.heroCode);
+      expect(disarmed[0].money_armed_at).toBeNull();
+      expect(advances.some((a) => a.driver_id === disarmed[0].id)).toBe(false);
+      for (const d of drivers.filter((x) => x.money_armed)) {
+        expect(d.money_armed_at).toBe(instantAt(d.active_from, 8, 0, plan.carrier.timezone));
+      }
+      expect(events).toHaveLength(drivers.length);
+      for (const e of events) {
+        const d = drivers.find((x) => x.id === e.driver_id)!;
+        expect([e.armed, e.source, e.membership_id, e.note]).toEqual([d.money_armed, "seed", null, null]);
+      }
+    }
+  });
+
+  it("gives each driver one dispatch-system id, unique within the carrier", () => {
+    for (const plan of plans) {
+      const ids = plan.rows.driver_identities;
+      expect(ids).toHaveLength(plan.rows.drivers.length);
+      expect(new Set(ids.map((x) => x.driver_id)).size).toBe(ids.length);
+      expect(new Set(ids.map((x) => x.external_id)).size).toBe(ids.length);
+      const shape = new RegExp(`^TMS-${plan.carrier.prefix}-[0-9]{5}$`);
+      expect(ids.every((x) => x.system === "tms" && x.source === "seed" && shape.test(x.external_id))).toBe(true);
+    }
+  });
+
+  it("refuses a plan whose dispatch id is not the carrier's TMS-<prefix>-<five digits>", () => {
+    const plan = plans[0];
+    const prefix = plan.carrier.prefix;
+    for (const bad of [`TMS-${prefix}-1234`, `TMS-${prefix}-123456`, `TMS-${prefix}X-12345`, `tms-${prefix}-12345`, `TMS-${prefix}-1234a`]) {
+      const copy = structuredClone(plan);
+      copy.rows.driver_identities[0].external_id = bad;
+      expect(() => assertPlan(copy)).toThrow("seed plan: a dispatch id is malformed");
+    }
+  });
+
+  it("adds a second named card, a generic pool card and a closed card at Blue Ridge, never on the hero", () => {
+    const plan = plans.find((p) => p.carrier.heroCode === "BR-D07")!;
+    const { parity } = plan.planted;
+    const cards = plan.rows.driver_cards;
+    const hero = plan.rows.drivers.find((d) => d.code === "BR-D07")!;
+    expect(cards.filter((c) => c.driver_id === hero.id)).toHaveLength(1);
+    const extra = cards.find((c) => c.id === parity.extraCardId)!;
+    expect([codeOf(plan, extra.driver_id), extra.status, extra.is_default, extra.holder_kind]).toEqual([
+      "BR-D08",
+      "active",
+      false,
+      "named",
+    ]);
+    expect(cards.filter((c) => c.driver_id === extra.driver_id && c.status === "active")).toHaveLength(2);
+    const generic = cards.find((c) => c.id === parity.genericCardId)!;
+    expect(generic.holder_kind).toBe("generic");
+    expect(generic.portal_name).toMatch(/^POOL CARD [1-9]$/);
+    expect([generic.status, generic.is_default]).toEqual(["active", false]);
+    const closed = cards.find((c) => c.id === parity.closedCardId)!;
+    expect([closed.status, closed.is_default]).toEqual(["closed", false]);
+    expect(closed.closed_at).toBe(instantAt(addDays(ANCHOR, -60), 10, 0, plan.carrier.timezone));
+    const owners = [extra, generic, closed].map((c) => c.driver_id);
+    expect(new Set(owners).size).toBe(3);
+    expect(owners).not.toContain(parity.disarmedDriverId);
+    const planted = cards.filter((c) => c.sim_behavior !== "ok").map((c) => c.driver_id);
+    expect(owners.some((id) => planted.includes(id))).toBe(false);
+  });
+
+  it("adds no extra cards where there is no hero", () => {
+    const plan = plans.find((p) => p.carrier.heroCode === null)!;
+    const { parity } = plan.planted;
+    expect([parity.extraCardId, parity.genericCardId, parity.closedCardId]).toEqual([null, null, null]);
+    expect(plan.rows.driver_cards.every((c) => c.is_default && c.holder_kind === "named")).toBe(true);
+  });
+
+  it("plants two paid advances on one open-week load, different amounts, both granted and under the load's cap", () => {
+    for (const plan of plans) {
+      const { rows, planted, periods } = plan;
+      const [a, b] = planted.parity.loadPairAdvanceIds.map((id) => rows.advances.find((x) => x.id === id)!);
+      expect(a.driver_id).toBe(b.driver_id);
+      expect([a.load_id, b.load_id]).toEqual([planted.parity.loadPairLoadId, planted.parity.loadPairLoadId]);
+      expect(a.amount_cents).not.toBe(b.amount_cents);
+      expect([a.status, b.status, a.recovered_cents, b.recovered_cents]).toEqual(["paid", "paid", 0, 0]);
+      expect(a.requested_on >= periods[3].start && b.requested_on <= periods[3].end).toBe(true);
+      expect(Date.parse(b.requested_at) - Date.parse(a.requested_at)).toBeGreaterThan(24 * 3600_000);
+      expect(rows.advances.filter((x) => x.driver_id === a.driver_id)).toHaveLength(2);
+      const driver = rows.drivers.find((d) => d.id === a.driver_id)!;
+      const loads = loadsOf(rows.loads, rows.load_state_miles, rows.load_accessorials);
+      const load = loads.find((l) => l.id === a.load_id)!;
+      const config = payConfigOf(configForDay(rows.pay_configs, a.requested_on));
+      const payCents = driverPayOnLoad(config, driverOf(driver), load);
+      const cap = mulBps(payCents, config.advancePerLoadBpsOfPay!);
+      expect(a.amount_cents + a.fee_cents + b.amount_cents + b.fee_cents).toBeLessThanOrEqual(cap);
+      const ask = (x: AdvanceRow, prior: AdvanceRow[]) =>
+        seededAdvanceDecision({
+          config,
+          driver,
+          loads,
+          periods,
+          zone: plan.carrier.timezone,
+          at: x.requested_at,
+          amountCents: x.amount_cents,
+          prior,
+          load: { id: load.id, payCents },
+        });
+      expect(ask(a, []).eligible).toBe(true);
+      const second = ask(b, [a]);
+      expect(second.eligible).toBe(true);
+      expect(second.openOnLoadCents).toBe(a.amount_cents + a.fee_cents);
+    }
+  });
+
+  it("names the driver's own recent load on an advance only while the load's cap holds", () => {
+    for (const plan of plans) {
+      const { rows } = plan;
+      const linked = rows.advances.filter((a) => a.load_id !== null);
+      expect(linked.length).toBeGreaterThan(2);
+      for (const a of linked) {
+        const load = rows.loads.find((l) => l.id === a.load_id)!;
+        expect(load.driver_id).toBe(a.driver_id);
+        expect(load.delivered_on! <= a.requested_on).toBe(true);
+        expect(daysBetween(load.delivered_on!, a.requested_on)).toBeLessThanOrEqual(14);
+      }
+      expect(findAdvanceOverLoadCap(checkInputOf(rows))).toEqual([]);
+    }
+  });
+
+  it("takes back one advance in the oldest settled week in full, so that week recovers only its fee", () => {
+    for (const plan of plans) {
+      const { rows, periods } = plan;
+      const back = rows.advances.find((a) => a.id === plan.planted.parity.takenBackAdvanceId)!;
+      expect(back.requested_on >= periods[0].start && back.requested_on <= periods[0].end).toBe(true);
+      expect([back.status, back.taken_back_cents, back.takeback_reason]).toEqual([
+        "paid",
+        back.amount_cents,
+        "wrong_driver",
+      ]);
+      expect(Date.parse(back.taken_back_at!) - Date.parse(back.paid_at!)).toBe(3 * 3600_000);
+      expect(back.taken_back_by_membership_id).toBeNull();
+      expect(back.recovered_cents).toBe(back.fee_cents);
+      expect(outstandingCents(advanceOf(back))).toBe(0);
+      expect(rows.advances.filter((a) => a.taken_back_at !== null)).toHaveLength(1);
+    }
   });
 });
 

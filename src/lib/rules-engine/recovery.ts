@@ -42,14 +42,23 @@ export function checkAdvance(advance: AdvanceRecord, driverId?: string): Advance
   if (assertCents(advance.recoveredCents, `${where} recoveredCents`) > owed) {
     throw new InputError(`${where} recovered more than it lent`);
   }
+  if (assertCents(advance.takenBackCents, `${where} takenBackCents`) > owed) {
+    throw new InputError(`${where} took back more than it lent`);
+  }
+  if (advance.loadId !== null) assertId(advance.loadId, `${where} loadId`);
   return advance;
 }
 
-// Amount plus fee less what has been taken back, for an advance the driver owes on: approved
-// (about to be paid) or paid. Requested, rejected and cancelled advances owe nothing.
+// Amount plus fee less what settlements recovered and what a person took back, never below 0,
+// for an advance the driver owes on: approved (about to be paid) or paid. Requested, rejected and
+// cancelled advances owe nothing.
 export function outstandingCents(advance: AdvanceRecord): Cents {
   if (advance.status !== "approved" && advance.status !== "paid") return cents(0);
-  return sub(sum([advance.amountCents, advance.feeCents]), advance.recoveredCents);
+  const owed = sub(
+    sum([advance.amountCents, advance.feeCents]),
+    sum([advance.recoveredCents, advance.takenBackCents]),
+  );
+  return cents(Math.max(0, owed));
 }
 
 export function byOldest(a: AdvanceRecord, b: AdvanceRecord): number {

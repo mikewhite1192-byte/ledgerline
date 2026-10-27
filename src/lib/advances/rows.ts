@@ -24,6 +24,12 @@ export type AdvanceView = {
   decidedAt: string | null;
   decidedByMembershipId: string | null;
   paidAt: string | null;
+  // The load it is for, and a take-back (0027): zero, nulls when nothing was taken back.
+  loadId: string | null;
+  takenBackCents: number;
+  takenBackAt: string | null;
+  takenBackByMembershipId: string | null;
+  takebackReason: string | null;
 };
 
 export type FlowAdvance = AdvanceView & { proposalId: string };
@@ -44,6 +50,11 @@ type Row = {
   decided_at: string | null;
   decided_by_membership_id: string | null;
   paid_at: string | null;
+  load_id: string | null;
+  taken_back_cents: number | string;
+  taken_back_at: string | null;
+  taken_back_by_membership_id: string | null;
+  takeback_reason: string | null;
 };
 
 export const iso = (column: string) =>
@@ -65,6 +76,11 @@ export const FLOW_COLUMNS = [
   iso("decided_at"),
   "decided_by_membership_id",
   iso("paid_at"),
+  "load_id",
+  "taken_back_cents",
+  iso("taken_back_at"),
+  "taken_back_by_membership_id",
+  "takeback_reason",
 ].join(", ");
 
 function whole(value: number | string): number {
@@ -90,6 +106,11 @@ export function advanceViewOf(r: Row): AdvanceView {
     decidedAt: r.decided_at,
     decidedByMembershipId: r.decided_by_membership_id,
     paidAt: r.paid_at,
+    loadId: r.load_id,
+    takenBackCents: whole(r.taken_back_cents),
+    takenBackAt: r.taken_back_at,
+    takenBackByMembershipId: r.taken_back_by_membership_id,
+    takebackReason: r.takeback_reason,
   };
 }
 
@@ -109,10 +130,12 @@ async function one(q: Queryable, where: string, id: string, lock: boolean): Prom
 }
 
 // Any of this tenant's advances by id, seeded or from the flow; null for another tenant's id.
-export async function readAdvanceView(q: Queryable, id: string): Promise<AdvanceView | null> {
+// lock takes the row for the rest of the transaction (a take-back).
+export async function readAdvanceView(q: Queryable, id: string, lock = false): Promise<AdvanceView | null> {
   if (!isCanonicalUuid(id)) return null;
   const rows = await q.query<Row>(
-    `SELECT ${FLOW_COLUMNS} FROM advances WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+    `SELECT ${FLOW_COLUMNS} FROM advances WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+      ${lock ? "FOR UPDATE" : ""}`,
     [id],
   );
   if (rows.length > 1) throw new RangeError("more than one advance matched");

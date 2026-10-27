@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ProposalView } from "@/lib/agent/view";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
-import { FLAG_QUESTION, auditFor, detentionLines, hoursMinutes, proposalCardFrom } from "./proposal-card-from";
+import {
+  FLAG_QUESTION,
+  advanceLoadDetail,
+  auditFor,
+  detentionLines,
+  hoursMinutes,
+  proposalCardFrom,
+} from "./proposal-card-from";
 
 const DRIVER = "11111111-1111-4111-8111-111111111111";
 
@@ -51,6 +58,18 @@ describe("proposalCardFrom", () => {
     const card = proposalCardFrom(noCard);
     expect(card.destination).toEqual({ label: "No fuel card on file", testMode: false });
     expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07?");
+  });
+
+  it("names an advance's load and, under a cap, what was left after it", () => {
+    expect(advanceLoadDetail(null)).toBeUndefined();
+    expect(advanceLoadDetail(undefined)).toBeUndefined();
+    expect(advanceLoadDetail({ number: "BR-L10001", capCents: null, leftAfterCents: null })).toBe("For load BR-L10001.");
+    const load = { number: "BR-L10001", capCents: 60_000, leftAfterCents: 14_500 };
+    expect(advanceLoadDetail(load)).toBe("Load BR-L10001: $145.00 of $600.00 cap left after this.");
+    expect(proposalCardFrom({ ...view, load }).detail).toBe("Load BR-L10001: $145.00 of $600.00 cap left after this.");
+    expect(proposalCardFrom(view).detail).toBeUndefined();
+    // Only an advance carries a load line.
+    expect(proposalCardFrom({ ...view, kind: "pay_correction", destination: null, load }).detail).toBeUndefined();
   });
 
   it("shows no destination for a kind that pays no card", () => {

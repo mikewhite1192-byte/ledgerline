@@ -5,6 +5,7 @@ import {
   findFuelOnWrongDriver,
   findInsuranceDaysNotDriven,
   findMissingReimbursements,
+  findAdvanceOverLoadCap,
   findOverAdvanceLimit,
   runAllChecks,
 } from "./checks";
@@ -496,5 +497,78 @@ describe("over the advance limit", () => {
   it("refuses an advance for a driver the input does not have", () => {
     const input = planted({ advances: [advance({ id: "a9", driverId: "drv-x" })] });
     expect(() => findOverAdvanceLimit(input)).toThrow(InputError);
+  });
+});
+
+describe("advances over the per-load cap", () => {
+  // The owner-operator earns $750 on T-L1 (75% of $1,000); Blue Ridge caps the advances on one
+  // load at 40% of that: $300.
+  const onL1 = (input: CheckInput, ids: string[]): CheckInput => ({
+    ...input,
+    advances: input.advances.map((a) => (ids.includes(a.id) ? { ...a, loadId: "l1" } : a)),
+  });
+
+  it("finds nothing while what is owed on the load is at or under the cap", () => {
+    expect(findAdvanceOverLoadCap(onL1(clean(), ["a1", "a2"]))).toEqual([]);
+    const atCap = planted({
+      advances: [advance({ id: "a8", amountCents: c(5_000), requestedAt: "2026-10-26T12:00:00Z", requestedOn: "2026-10-26" })],
+    });
+    expect(findAdvanceOverLoadCap(onL1(atCap, ["a1", "a2", "a8"]))).toEqual([]);
+  });
+
+  it("names the load first, then its advances oldest first, with how far over", () => {
+    const over = planted({
+      advances: [advance({ id: "a8", amountCents: c(10_000), requestedAt: "2026-10-26T12:00:00Z", requestedOn: "2026-10-26" })],
+    });
+    expect(findAdvanceOverLoadCap(onL1(over, ["a2", "a1", "a8"]))).toEqual([
+      {
+        check: "advance_over_load_cap",
+        category: "over_load_cap",
+        driverId: OWNER,
+        amountCents: 5_000,
+        sources: [
+          { table: "loads", id: "l1" },
+          { table: "advances", id: "a8" },
+          { table: "advances", id: "a1" },
+          { table: "advances", id: "a2" },
+        ],
+      },
+    ]);
+    expect(runAllChecks(onL1(over, ["a2", "a1", "a8"])).map((f) => f.check)).toEqual(["advance_over_load_cap"]);
+  });
+
+  it("counts the fee, and only what is still owed after recovery and a take-back", () => {
+    const base = onL1(clean(), ["a1", "a2"]);
+    const withFee = { ...base, advances: base.advances.map((a) => (a.id === "a1" ? { ...a, feeCents: c(5_001) } : a)) };
+    expect(findAdvanceOverLoadCap(withFee).map((f) => f.amountCents)).toEqual([1]);
+    const recovered = {
+      ...withFee,
+      advances: withFee.advances.map((a) => (a.id === "a1" ? { ...a, recoveredCents: c(1) } : a)),
+    };
+    expect(findAdvanceOverLoadCap(recovered)).toEqual([]);
+    const takenBack = {
+      ...withFee,
+      advances: withFee.advances.map((a) => (a.id === "a1" ? { ...a, takenBackCents: c(20_000) } : a)),
+    };
+    expect(findAdvanceOverLoadCap(takenBack)).toEqual([]);
+  });
+
+  it("ignores requested, rejected and cancelled advances on the load", () => {
+    expect(findAdvanceOverLoadCap(onL1(clean(), ["a1", "a2", "a5", "a6", "a7"]))).toEqual([]);
+  });
+
+  it("finds nothing when the tenant sets no per-load cap", () => {
+    const over = planted({
+      advances: [advance({ id: "a8", amountCents: c(90_000), requestedAt: "2026-10-26T12:00:00Z", requestedOn: "2026-10-26" })],
+    });
+    const uncapped = { ...onL1(over, ["a8"]), config: { ...BLUE_RIDGE, advancePerLoadBpsOfPay: null } };
+    expect(findAdvanceOverLoadCap(uncapped)).toEqual([]);
+  });
+
+  it("refuses an advance naming a load the input does not hold", () => {
+    const input = planted({
+      advances: [advance({ id: "a8", loadId: "l-missing", amountCents: c(6_000), requestedAt: "2026-10-26T12:00:00Z" })],
+    });
+    expect(() => findAdvanceOverLoadCap(input)).toThrow(InputError);
   });
 });

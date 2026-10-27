@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 const ADVANCE = "22222222-2222-4222-8222-222222222222";
-const NONE = { retry: false, check: false, post: false };
+const NONE = { retry: false, check: false, post: false, takeBack: false };
 
 function answer(status: number, body: unknown) {
   const fetch = vi.fn(async () => new Response(JSON.stringify(body), { status }));

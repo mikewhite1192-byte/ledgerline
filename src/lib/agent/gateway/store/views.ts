@@ -64,6 +64,7 @@ type ProposalRow = {
   override_role: string | null;
   card_last4: string | null;
   args: string | null;
+  exceptions: string | null;
 };
 type FlagRow = { input_id: string; body_text: string; categories: string | null };
 
@@ -152,6 +153,32 @@ function detentionOf(r: ProposalRow): DetentionView | null {
   };
 }
 
+// An advance's load line from its stored args: the load's number, its cap and what was left
+// under it after this advance at proposal time. Null when it names no load or does not read back
+// whole; capCents and leftAfterCents are null together when the carrier has no per-load cap.
+const LOAD_NUMBER = /^[A-Za-z0-9._-]{1,40}$/;
+const wholeOrNull = (v: unknown): v is number | null => v === null || (Number.isSafeInteger(v) && (v as number) >= 0);
+
+export function advanceLoadOf(args: string | null): NonNullable<ProposalView["load"]> | null {
+  if (typeof args !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  const load = raw && typeof raw === "object" ? (raw as Record<string, unknown>).load : null;
+  if (!load || typeof load !== "object") return null;
+  const { number, capCents, leftAfterCents } = load as Record<string, unknown>;
+  if (typeof number !== "string" || !LOAD_NUMBER.test(number)) return null;
+  if (!wholeOrNull(capCents) || !wholeOrNull(leftAfterCents)) return null;
+  if ((capCents === null) !== (leftAfterCents === null)) return null;
+  return { number, capCents, leftAfterCents };
+}
+
+// An exception the gateway attached that the card states, after the reasons.
+const SHOWN_EXCEPTIONS: ReadonlySet<string> = new Set(["capped_to_eligible", "card_not_drivers"]);
+
 function proposalView(r: ProposalRow): ProposalView {
   const reasons = parseArray(r.reasons).flatMap((x) => {
     const category = x && typeof x === "object" ? (x as Record<string, unknown>).category : null;
@@ -159,6 +186,11 @@ function proposalView(r: ProposalRow): ProposalView {
       ? [{ category, text: reasonSentence(category), source: null }]
       : [];
   });
+  for (const e of parseArray(r.exceptions)) {
+    if (typeof e === "string" && SHOWN_EXCEPTIONS.has(e) && !reasons.some((x) => x.category === e)) {
+      reasons.push({ category: e, text: reasonSentence(e), source: null });
+    }
+  }
   return {
     id: r.id,
     kind: r.kind,
@@ -180,6 +212,7 @@ function proposalView(r: ProposalRow): ProposalView {
     auditorOverride: overrideOf(r),
     destination: destinationOf(r),
     ...(r.kind === "detention_charge" ? { detention: detentionOf(r) } : {}),
+    ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args) } : {}),
   };
 }
 
@@ -188,8 +221,8 @@ const ISO = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"H
 const LAST4 = /^[0-9]{4}$/;
 
 // Where an advance lands, read at render like the subject label. A proposal still waiting or
-// approved names the driver's active fuel card by its last four, or a plain "no fuel card on
-// file". A done proposal names the card its advance recorded, closed or not, and nothing without
+// approved names the card it would pay by its last four: the active card the proposal names, else
+// the driver's default card; or a plain "no fuel card on file". A done proposal names the card its advance recorded, closed or not, and nothing without
 // one. A rejected, expired, executing or failed proposal names no destination. Other kinds move no
 // money to a card.
 function destinationOf(r: ProposalRow): ProposalView["destination"] {
@@ -229,6 +262,8 @@ const PROPOSAL_SQL = `
              WHEN p.status IN ('proposed', 'approved') THEN
                (SELECT c.last4 FROM driver_cards c
                  WHERE c.tenant_id = p.tenant_id AND c.driver_id = p.subject_id AND c.status = 'active'
+                   AND CASE WHEN p.args ->> 'cardId' IS NULL THEN c.is_default
+                            ELSE CAST(c.id AS text) = p.args ->> 'cardId' END
                  LIMIT 1)
              WHEN p.status = 'done' THEN
                (SELECT c.last4 FROM advances a
@@ -237,7 +272,8 @@ const PROPOSAL_SQL = `
                  WHERE a.tenant_id = p.tenant_id AND a.proposal_id = p.id AND a.driver_id = p.subject_id)
            END
          END AS card_last4,
-         CASE WHEN p.kind = 'detention_charge' THEN CAST(p.args AS text) END AS args
+         CASE WHEN p.kind IN ('detention_charge', 'advance_payout') THEN CAST(p.args AS text) END AS args,
+         CAST(p.exceptions AS text) AS exceptions
     FROM proposals p`;
 
 async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
