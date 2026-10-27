@@ -15,6 +15,7 @@ describe("flags", () => {
     expect(flags.reportsEnabled).toBe(false);
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
+    expect(flags.detentionEnabled).toBe(false);
   });
 
   it("keeps the agent gateway's limits small and the screener on its probed output mode", () => {
@@ -22,6 +23,7 @@ describe("flags", () => {
     expect(flags.gatewayLimits).toEqual({
       payCorrectionMaxCents: 50_000,
       invoiceFixMaxCents: 250_000,
+      detentionChargeMaxCents: 100_000,
     });
     for (const v of Object.values(flags.gatewayLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);

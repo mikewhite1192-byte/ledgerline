@@ -4,6 +4,7 @@ import { reportOfTool } from "../../reports/types";
 import { enumValuesOf } from "./redact";
 import { classifyMessage } from "./tools/triage/classify-message";
 import { explainPaystub } from "./tools/read/explain-paystub";
+import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention";
 import { getAdvances } from "./tools/read/get-advances";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDriver } from "./tools/read/get-driver";
@@ -21,6 +22,7 @@ import { reportDriverPaySummary } from "./tools/read/report-driver-pay-summary";
 import { reportMarginPerLoad } from "./tools/read/report-margin-per-load";
 import { runChecks } from "./tools/read/run-checks";
 import { proposeAdvance } from "./tools/propose/propose-advance";
+import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
@@ -54,9 +56,11 @@ const TOOLS: readonly AnyToolDef[] = [
   reportMarginPerLoad,
   getInboundMessage,
   getProposal,
+  findUnbilledDetentionTool,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,
+  proposeDetentionCharge,
   classifyMessage,
 ];
 
@@ -86,24 +90,37 @@ export function toolNamed(name: string): AnyToolDef | null {
   return Object.hasOwn(TOOL_REGISTRY, name) && switchedOn(name) ? TOOL_REGISTRY[name] : null;
 }
 
-// What each role is offered: JSON schemas made once from the same zod schemas the gateway parses.
-const OFFERED: Readonly<Record<AgentRole, readonly AiTool[]>> = Object.freeze(
+// What each role may be offered: JSON schemas made once from the same zod schemas the gateway
+// parses, each kept beside its tool so a release switch is read on every offer.
+type Offer = { tool: AnyToolDef; schema: AiTool };
+const OFFERS: Readonly<Record<AgentRole, readonly Offer[]>> = Object.freeze(
   Object.fromEntries(
     AGENT_ROLES.map((role) => [
       role,
       Object.freeze(
         Object.values(TOOL_REGISTRY)
           .filter((t) => t.roles.includes(role))
-          .map((t) => Object.freeze(aiToolOf(t))),
+          .map((t) => Object.freeze({ tool: t, schema: Object.freeze(aiToolOf(t)) })),
       ),
     ]),
-  ) as Record<AgentRole, readonly AiTool[]>,
+  ) as Record<AgentRole, readonly Offer[]>,
 );
+
+// Whether a tool's release switch is on. A tool without one is always on; a switch that throws
+// counts as off.
+export function isToolEnabled(tool: AnyToolDef): boolean {
+  if (!tool.enabled) return true;
+  try {
+    return tool.enabled() === true;
+  } catch {
+    return false;
+  }
+}
 
 // Every always-loaded name must be a real tool the operator is offered, or deferral would hide a
 // tool nobody can load. Checked once, when the registry loads.
 for (const name of ALWAYS_LOADED) {
-  if (!OFFERED.operator.some((t) => t.name === name)) {
+  if (!OFFERS.operator.some((o) => o.tool.name === name)) {
     throw new Error("an always-loaded tool is not offered to the operator");
   }
 }
@@ -112,13 +129,15 @@ for (const name of ALWAYS_LOADED) {
 // each tool ALWAYS_LOADED does not name is marked deferLoading (sent as a name and a description
 // until the model searches for it); the names, schemas and order are the same either way.
 export function toolsFor(role: AgentRole, options: { defer?: boolean } = {}): AiTool[] {
-  if (!Object.hasOwn(OFFERED, role)) return [];
-  const offered = OFFERED[role].filter((t) => switchedOn(t.name));
+  if (!Object.hasOwn(OFFERS, role)) return [];
+  const offered = OFFERS[role]
+    .filter((o) => switchedOn(o.tool.name) && isToolEnabled(o.tool))
+    .map((o) => o.schema);
   if (!options.defer) return offered;
   return offered.map((t) => (ALWAYS_LOADED.includes(t.name) ? t : { ...t, deferLoading: true }));
 }
 
 // Every enum value any tool schema declares: the only free strings the decision log keeps.
 export const REDACT_ENUMS: ReadonlySet<string> = enumValuesOf(
-  Object.values(OFFERED).flatMap((list) => list.map((t) => t.parameters)),
+  Object.values(OFFERS).flatMap((list) => list.map((o) => o.schema.parameters)),
 );

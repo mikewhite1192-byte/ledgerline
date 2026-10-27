@@ -1,4 +1,5 @@
 import type { Queryable } from "../../../db";
+import { chargeArgsSchema } from "../../../data/detention-charge";
 import { argStrings, parseReportArgs } from "../../../reports/args";
 import { isReportName } from "../../../reports/types";
 import { cardLabel } from "../../../advances/cards";
@@ -6,6 +7,7 @@ import { reasonSentence } from "../../reasons";
 import {
   turnErrorFor,
   type CardStatus,
+  type DetentionView,
   type FlagView,
   type ProposalView,
   type RefView,
@@ -61,6 +63,7 @@ type ProposalRow = {
   auditor_override_at: string | null;
   override_role: string | null;
   card_last4: string | null;
+  args: string | null;
 };
 type FlagRow = { input_id: string; body_text: string; categories: string | null };
 
@@ -122,6 +125,33 @@ function overrideOf(r: ProposalRow): ProposalView["auditorOverride"] {
   };
 }
 
+// A detention charge's figures from its stored args, every field checked; null when they do not
+// read back whole (the card then shows the title and amount only).
+function detentionOf(r: ProposalRow): DetentionView | null {
+  if (r.kind !== "detention_charge" || typeof r.args !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(r.args);
+  } catch {
+    return null;
+  }
+  const parsed = chargeArgsSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const a = parsed.data;
+  return {
+    freeMinutes: a.freeMinutes,
+    hourlyCents: a.hourlyCents,
+    invoiceAmountBeforeCents: a.invoiceAmountBeforeCents,
+    stops: a.stops.map((s) => ({
+      stop: s.stop,
+      dwellMinutes: s.dwellMinutes,
+      overMinutes: s.overMinutes,
+      quarters: s.quarters,
+      cents: s.cents,
+    })),
+  };
+}
+
 function proposalView(r: ProposalRow): ProposalView {
   const reasons = parseArray(r.reasons).flatMap((x) => {
     const category = x && typeof x === "object" ? (x as Record<string, unknown>).category : null;
@@ -149,6 +179,7 @@ function proposalView(r: ProposalRow): ProposalView {
     auditorCheckedAt: r.auditor_checked_at,
     auditorOverride: overrideOf(r),
     destination: destinationOf(r),
+    ...(r.kind === "detention_charge" ? { detention: detentionOf(r) } : {}),
   };
 }
 
@@ -169,6 +200,8 @@ const PROPOSAL_SQL = `
          CASE p.subject_table
            WHEN 'drivers' THEN (SELECT d.code FROM drivers d WHERE d.id = p.subject_id)
            WHEN 'invoices' THEN (SELECT i.invoice_number FROM invoices i WHERE i.id = p.subject_id)
+           WHEN 'loads' THEN (SELECT l.load_number FROM loads l
+                               WHERE l.tenant_id = p.tenant_id AND l.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.title,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources, p.status,
@@ -186,7 +219,8 @@ const PROPOSAL_SQL = `
            (SELECT c.last4 FROM driver_cards c
              WHERE c.tenant_id = p.tenant_id AND c.driver_id = p.subject_id AND c.status = 'active'
              LIMIT 1)
-         END AS card_last4
+         END AS card_last4,
+         CASE WHEN p.kind = 'detention_charge' THEN CAST(p.args AS text) END AS args
     FROM proposals p`;
 
 async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {

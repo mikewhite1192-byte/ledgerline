@@ -30,9 +30,24 @@ export type RefView = { table: string; id: string };
 
 export type ReasonView = { category: string; text: string; source: RefView | null };
 
+// A detention charge's engine figures, read from the proposal's stored args: the customer's
+// terms, the invoice total before the charge and each stop that earns detention.
+export type DetentionView = {
+  freeMinutes: number;
+  hourlyCents: number;
+  invoiceAmountBeforeCents: number;
+  stops: {
+    stop: "pickup" | "delivery";
+    dwellMinutes: number;
+    overMinutes: number;
+    quarters: number;
+    cents: number;
+  }[];
+};
+
 export type ProposalView = {
   id: string;
-  kind: "advance_payout" | "pay_correction" | "invoice_fix";
+  kind: "advance_payout" | "pay_correction" | "invoice_fix" | "detention_charge";
   subjectTable: string;
   subjectId: string;
   // The subject's code (a driver's or an invoice's number), read at render, never stored.
@@ -56,6 +71,8 @@ export type ProposalView = {
   // Where an advance would land, read at render, never stored: "fuel card ···· 4417" (last4 set) or
   // "no fuel card on file" (last4 null). Null for a kind that pays no card.
   destination: { label: string; last4: string | null; testMode: true } | null;
+  // Set on a detention_charge only, when its stored args read back whole.
+  detention?: DetentionView | null;
 };
 
 // An outside message this turn read that failed screening. quote is shown to the person only, in
