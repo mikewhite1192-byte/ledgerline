@@ -1,5 +1,6 @@
 import type { AdvanceListRow, AdvanceRecord, DriverAdvance, DriverOption } from "@/lib/advances/read";
 import type { DriverIdentity } from "@/lib/advances/identity";
+import { reasonSentence } from "@/lib/agent/reasons";
 import type { ProposalView, TurnView } from "@/lib/agent/view";
 import type { CallRow, Spend } from "@/lib/ai/spend";
 import type { DaySpend, SpendAlert } from "@/lib/ai/watch";
@@ -7,6 +8,8 @@ import type { ClipView } from "@/lib/clips/types";
 import type { BreakView, RunView as CardRunView } from "@/lib/data/card-recon";
 import type { DocumentView } from "@/lib/documents/types";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
+import { fuelSentence, type SentenceInput } from "@/lib/fuel/help";
+import type { FuelPage, FuelRowView, FuelRunView } from "@/lib/fuel/view";
 import type {
   CustomerRecordView,
   InvoiceListRow,
@@ -1239,6 +1242,127 @@ export const REVIEW_QUEUE: ReviewQueue = {
     queueRow(6, "ready_to_send", "not_posted"),
     queueRow(7, "ready_to_send", null, { posted: true, emailStatus: "need_to_send" }),
   ],
+};
+
+// The fuel checks page: every problem, every row status (a sent row with its card, a carried-out
+// card that reads Corrected, a dismissed and a cleared row), and a duplicate whose two photos were
+// compared. Each sentence comes from the page's own template, so its words are the ones a person reads.
+const fuelSaid = (over: Partial<SentenceInput>): string =>
+  fuelSentence({
+    check: "fuel_off_route",
+    driver: "Rosa Delgado",
+    purchasedOn: "2026-10-29",
+    state: "TN",
+    gallonsMilli: 95_000,
+    tankGallons: 200,
+    amountCents: 36_575,
+    paidWith: "company_card",
+    loadNumber: "BR-L10247",
+    loadStates: ["GA"],
+    minutesApart: null,
+    ...over,
+  });
+
+const fuelRow = (n: number, over: Partial<FuelRowView>): FuelRowView => ({
+  id: id(300 + n),
+  check: "fuel_off_route",
+  status: "open",
+  driverName: "Rosa Delgado",
+  truckUnit: "BR-T107",
+  purchasedOn: "2026-10-29",
+  amountCents: 36_575,
+  gallonsMilli: 95_000,
+  tankGallons: 200,
+  excessCents: null,
+  suggestedCents: -36_575,
+  noSuggestion: null,
+  dismissCategory: null,
+  purchaseRef: `br-fuel-${310 + n}`,
+  otherPurchaseRef: null,
+  loadId: LOAD_ID,
+  loadNumber: "BR-L10247",
+  payItemRef: null,
+  compare: { verdict: null, confidence: null, category: null },
+  photoIds: [],
+  sentence: fuelSaid({}),
+  proposal: null,
+  ...over,
+});
+
+const fuelCard = (n: number, status: ProposalView["status"]): ProposalView =>
+  proposal({
+    id: id(320 + n),
+    kind: "pay_correction",
+    subjectLabel: "BR-D12",
+    amountCents: -12_000,
+    direction: "in",
+    title: "Pay correction for Marcus Hale",
+    reasons: [{ category: "no_load_or_day", text: reasonSentence("no_load_or_day"), source: { table: "loads", id: LOAD_ID } }],
+    status,
+    destination: null,
+  });
+
+export const FUEL_RUN: FuelRunView = {
+  status: "done",
+  checked: 464,
+  found: 8,
+  startedAt: "2026-11-02T16:00:00.000Z",
+  finishedAt: "2026-11-02T16:00:04.000Z",
+};
+
+const FUEL_ROWS: FuelRowView[] = [
+  fuelRow(1, {}),
+  fuelRow(2, {
+    check: "fuel_over_tank",
+    driverName: "Marcus Hale",
+    gallonsMilli: 286_400,
+    tankGallons: 250,
+    amountCents: 110_232,
+    excessCents: 14_014,
+    suggestedCents: null,
+    noSuggestion: "over_tank",
+    loadId: null,
+    loadNumber: null,
+    sentence: fuelSaid({ check: "fuel_over_tank", driver: "Marcus Hale", gallonsMilli: 286_400, tankGallons: 250, state: "VA" }),
+  }),
+  fuelRow(3, {
+    check: "fuel_while_parked",
+    loadId: null,
+    loadNumber: null,
+    suggestedCents: -24_100,
+    amountCents: 24_100,
+    sentence: fuelSaid({ check: "fuel_while_parked", state: "NC", loadNumber: null, loadStates: [] }),
+  }),
+  fuelRow(4, {
+    check: "fuel_duplicate",
+    driverName: "Marcus Hale",
+    gallonsMilli: 84_200,
+    amountCents: 31_996,
+    suggestedCents: -31_996,
+    otherPurchaseRef: "br-fuel-465-again",
+    payItemRef: "BR-PAY-1022",
+    photoIds: [id(330), id(331)],
+    compare: { verdict: "same", confidence: "high", category: null },
+    sentence: fuelSaid({ check: "fuel_duplicate", driver: "Marcus Hale", gallonsMilli: 84_200, amountCents: 31_996, state: "MD", minutesApart: 12 }),
+  }),
+  fuelRow(5, {
+    check: "fuel_duplicate",
+    suggestedCents: null,
+    noSuggestion: "card_double_charge",
+    otherPurchaseRef: "br-fuel-316-again",
+    compare: { verdict: "unknown", confidence: null, category: "no_photos" },
+    sentence: fuelSaid({ check: "fuel_duplicate", minutesApart: 1 }),
+  }),
+  fuelRow(6, { check: "fuel_while_parked", status: "proposed", driverName: "Marcus Hale", proposal: fuelCard(1, "proposed") }),
+  fuelRow(7, { check: "fuel_while_parked", status: "proposed", driverName: "Marcus Hale", proposal: fuelCard(2, "done") }),
+  fuelRow(8, { status: "dismissed", dismissCategory: "pump_error" }),
+  fuelRow(9, { status: "cleared" }),
+];
+
+export const FUEL_PAGE: FuelPage = {
+  lastRun: FUEL_RUN,
+  needYou: FUEL_ROWS.filter((r) => r.status === "open").length,
+  rows: FUEL_ROWS,
 };
 
 // ---- The card check: one check, every kind of difference, and a match card ----

@@ -200,6 +200,8 @@ export type DriverRecord = {
   // The driver carries their own insurance: no daily insurance charge, whatever the tenant's rule.
   ownInsurance: boolean;
   truckUnit: string | null;
+  // Whole gallons the truck's tanks hold; a fill-up above it is a fuel check finding.
+  tankGallons: number;
   activeFrom: LocalDate;
   activeTo: LocalDate | null;
   // Armed to receive money, separate from the card. A person arms a driver; nothing else does.
@@ -535,7 +537,8 @@ export type InvoiceResult =
       sources: SourceRef[];
     };
 
-// ---- The checks: seven over pay (checks.ts), one over receivables (receivables.ts) ----
+// ---- The checks: seven over pay (checks.ts), one over receivables (receivables.ts), four over
+// fuel (fuel.ts) ----
 
 export const CHECK_NAMES = [
   "duplicate_advance",
@@ -546,6 +549,10 @@ export const CHECK_NAMES = [
   "over_advance_limit",
   "advance_over_load_cap",
   "payment_on_wrong_invoice",
+  "fuel_off_route",
+  "fuel_over_tank",
+  "fuel_while_parked",
+  "fuel_duplicate",
 ] as const;
 export type CheckName = (typeof CHECK_NAMES)[number];
 
@@ -561,6 +568,10 @@ export const FINDING_CATEGORIES = [
   "over_load_cap",
   "payment_on_wrong_invoice",
   "invoice_overapplied",
+  "state_not_on_route",
+  "gallons_over_tank",
+  "no_load_or_day",
+  "same_fill_twice",
 ] as const;
 export type FindingCategory = (typeof FINDING_CATEGORIES)[number];
 

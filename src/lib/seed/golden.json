@@ -12,14 +12,14 @@
         "load_state_miles": 1088,
         "load_accessorials": 90,
         "driver_days": 456,
-        "fuel_purchases": 464,
+        "fuel_purchases": 466,
         "card_transactions": 168,
         "pay_configs": 2,
         "deduction_schedules": 18,
         "settlement_periods": 4,
         "settlements": 75,
         "settlement_lines": 528,
-        "pay_items": 245,
+        "pay_items": 247,
         "advances": 21,
         "invoices": 335,
         "customer_payments": 167,
@@ -178,6 +178,14 @@
           "state": "NC",
           "gallonsMilli": 118000,
           "amountCents": 43896
+        },
+        {
+          "rule": "duplicate",
+          "purchaseRef": "blue-ridge-fuel-466",
+          "driverCode": "BR-D13",
+          "state": "MD",
+          "gallonsMilli": 84200,
+          "amountCents": 31996
         }
       ],
       "detention": {
@@ -340,14 +348,14 @@
         "load_state_miles": 687,
         "load_accessorials": 103,
         "driver_days": 336,
-        "fuel_purchases": 364,
+        "fuel_purchases": 366,
         "card_transactions": 141,
         "pay_configs": 1,
         "deduction_schedules": 18,
         "settlement_periods": 4,
         "settlements": 75,
         "settlement_lines": 553,
-        "pay_items": 210,
+        "pay_items": 212,
         "advances": 20,
         "invoices": 324,
         "customer_payments": 161,
@@ -437,6 +445,14 @@
           "state": "OK",
           "gallonsMilli": 118000,
           "amountCents": 43896
+        },
+        {
+          "rule": "duplicate",
+          "purchaseRef": "prairie-wind-fuel-366",
+          "driverCode": "PW-D10",
+          "state": "KS",
+          "gallonsMilli": 84200,
+          "amountCents": 31996
         }
       ],
       "detention": {

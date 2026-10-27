@@ -1,3 +1,4 @@
+import { flags } from "../../config/flags";
 import { configFor, configForDay } from "../data/config-version";
 import {
   advanceOf,
@@ -17,6 +18,10 @@ import {
   AGING_BUCKETS,
   agingBucket,
   cents,
+  findFuelDuplicate,
+  findFuelOffRoute,
+  findFuelOverTank,
+  findFuelWhileParked,
   findPaymentOnWrongInvoice,
   findUnbilledDetention,
   inReviewQueue,
@@ -28,6 +33,7 @@ import {
   sum,
   type AdvanceDecision,
   type Cents,
+  type FuelFinding,
   type LoadRecord,
   type PayConfig,
 } from "../rules-engine";
@@ -59,37 +65,20 @@ export const AGING_MIN_CENTS = 500000;
 // The unbilled detention planted in each tenant's four weeks: $1,350.00.
 export const DETENTION_TOTAL_CENTS = 135000;
 
-// The three fuel anomalies (addendum B2), by the rule each one breaks. Each returns the ids of
-// the purchases that break it.
+// The four fuel anomalies (addendum B2 and FUEL-ANOMALY), found by the engine's own fuel rules.
+// Each returns the ids of the purchases at fault (the newer of a duplicate pair).
 export function fuelAnomalyIds(rows: TenantRows): Record<
-  "offRoute" | "overTank" | "parked",
+  "offRoute" | "overTank" | "parked" | "duplicate",
   string[]
 > {
-  const loads = new Map(rows.loads.map((l) => [l.id, l]));
-  const tanks = new Map(rows.drivers.map((d) => [d.id, d.tank_gallons]));
-  const offRoute = rows.fuel_purchases.filter((f) => {
-    const load = f.load_id === null ? undefined : loads.get(f.load_id);
-    if (!load || f.purchased_on < load.pickup_on) return false;
-    if (load.delivered_on !== null && f.purchased_on > load.delivered_on) return false;
-    const states = rows.load_state_miles.filter((m) => m.load_id === load.id).map((m) => m.state);
-    return !states.includes(f.state);
-  });
-  const overTank = rows.fuel_purchases.filter(
-    (f) => f.gallons_milli > tanks.get(f.driver_id)! * 1000,
-  );
-  const parked = rows.fuel_purchases.filter(
-    (f) =>
-      f.paid_with === "company_card" &&
-      !rows.loads.some(
-        (l) =>
-          l.driver_id === f.driver_id &&
-          l.pickup_on <= f.purchased_on &&
-          f.purchased_on <= (l.delivered_on ?? f.purchased_on),
-      ) &&
-      !rows.driver_days.some((d) => d.driver_id === f.driver_id && d.day === f.purchased_on),
-  );
-  const ids = (list: readonly { id: string }[]) => list.map((x) => x.id);
-  return { offRoute: ids(offRoute), overTank: ids(overTank), parked: ids(parked) };
+  const input = checkInputOf(rows);
+  const ids = (list: readonly FuelFinding[]) => list.map((f) => f.fuelPurchaseId);
+  return {
+    offRoute: ids(findFuelOffRoute(input)),
+    overTank: ids(findFuelOverTank(input)),
+    parked: ids(findFuelWhileParked(input)),
+    duplicate: ids(findFuelDuplicate(input, flags.fuelAnomalyLimits.duplicateWindowMinutes)),
+  };
 }
 
 // The engine's answer when a seeded advance was asked for. Only loads delivered on or before
@@ -166,7 +155,7 @@ export function assertPlan(plan: CarrierPlan): void {
   invoiceReviewPlants(plan);
   cardStatementPlants(plan);
 
-  // Victims: ten distinct drivers, never the hero.
+  // Victims: eleven distinct drivers, never the hero.
   const codes = Object.values(victims);
   if (new Set(codes).size !== codes.length) fail("two problems share a victim");
   if (carrier.heroCode && codes.includes(carrier.heroCode)) fail("the hero is a victim");
@@ -534,7 +523,7 @@ function receivables(plan: CarrierPlan, lastDay: LocalDate): void {
   if (inOpenWeek.length < 5) fail("too few payments arrived in the open week");
 }
 
-// The addendum B plants: the three fuel anomalies each found by exactly its rule, the unbilled
+// The addendum B plants: the four fuel anomalies each found by exactly its rule, the unbilled
 // detention exactly the four planted loads and $1,350.00 over the four weeks, the payment styles
 // read back from the history, and the collections invoices open at their ages.
 function addendumPlants(plan: CarrierPlan): void {
@@ -543,13 +532,25 @@ function addendumPlants(plan: CarrierPlan): void {
   if (
     fuel.offRoute.join() !== planted.fuelOffRouteId ||
     fuel.overTank.join() !== planted.fuelOverTankId ||
-    fuel.parked.join() !== planted.fuelParkedId
+    fuel.parked.join() !== planted.fuelParkedId ||
+    fuel.duplicate.join() !== planted.fuelDuplicateIds[1]
   ) {
     fail("the fuel rules do not find exactly the planted purchases");
   }
   const tank = rows.fuel_purchases.find((f) => f.id === planted.fuelOverTankId)!;
   if (!rows.pay_items.some((i) => i.ref_table === "fuel_purchases" && i.ref_id === tank.id)) {
     fail("the fill over the tank was not deducted");
+  }
+  // The duplicate: both fill-ups paid back to the driver, and the wrong-driver purchase breaks
+  // none of the four fuel rules.
+  const paidBack = planted.fuelDuplicatePaybackIds.map((id) => rows.pay_items.find((i) => i.id === id));
+  if (
+    paidBack.some((i, k) => i?.kind !== "reimbursement" || i.ref_id !== planted.fuelDuplicateIds[k])
+  ) {
+    fail("the duplicate fill-ups were not each paid back");
+  }
+  if (Object.values(fuel).some((list) => list.includes(planted.wrongDriverPurchaseId))) {
+    fail("the wrong-driver purchase breaks a fuel rule");
   }
 
   const unbilled = findUnbilledDetention(
@@ -589,7 +590,12 @@ function addendumPlants(plan: CarrierPlan): void {
   // Nothing new is planted on the hero.
   const hero = carrier.heroCode ? rows.drivers.find((d) => d.code === carrier.heroCode)! : null;
   if (hero) {
-    const fuelIds = [planted.fuelOffRouteId, planted.fuelOverTankId, planted.fuelParkedId];
+    const fuelIds = [
+      planted.fuelOffRouteId,
+      planted.fuelOverTankId,
+      planted.fuelParkedId,
+      ...planted.fuelDuplicateIds,
+    ];
     const onHero = (loadId: string) =>
       rows.loads.find((l) => l.id === loadId)?.driver_id === hero.id;
     if (
