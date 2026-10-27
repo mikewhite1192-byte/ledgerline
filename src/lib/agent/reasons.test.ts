@@ -24,6 +24,8 @@ describe("reason sentences", () => {
       ...INVOICE_FIX_REASON_CATEGORIES,
       ...ENGINE_ADVANCE_REASONS,
       "capped_to_eligible",
+      "engine_total",
+      "payment_on_wrong_invoice",
       "missing_rate",
     ];
     for (const c of all) expect(REASON_SENTENCE_CATEGORIES).toContain(c);

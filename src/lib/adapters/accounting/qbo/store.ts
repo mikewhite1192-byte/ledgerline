@@ -22,8 +22,12 @@ export type Connection = {
   refreshExpired: boolean;
   accounts: AccountMap;
   items: ItemMap;
+  // The tenant's document key (0015), or null when it has none that reads right; a document
+  // that needs it then refuses before anything is sent.
+  docKey: string | null;
 };
 
+const DOC_KEY = /^T[0-9A-F]{4}$/;
 const OUTSIDE_ID = /^[0-9]{1,20}$/;
 
 export async function currentTenantId(q: Queryable): Promise<string> {
@@ -69,6 +73,7 @@ type Row = {
   refresh_expired: unknown;
   account_map: unknown;
   item_map: unknown;
+  doc_key: unknown;
 };
 
 const base64 = (v: unknown): Buffer => {
@@ -92,7 +97,8 @@ export async function loadConnection(
             (access_expires_at < now() + interval '60 seconds') AS expiring,
             (refresh_expires_at <= now()) AS refresh_expired,
             CAST(account_map AS text) AS account_map,
-            CAST(item_map AS text) AS item_map
+            CAST(item_map AS text) AS item_map,
+            (SELECT t.doc_key FROM tenants t WHERE t.id = current_tenant_id()) AS doc_key
        FROM qbo_connections
       WHERE tenant_id = current_tenant_id()${opts.lock ? "\n      FOR UPDATE" : ""}`,
   );
@@ -111,6 +117,7 @@ export async function loadConnection(
     refreshExpired: r.refresh_expired === true,
     accounts: mapFrom(r.account_map, ACCOUNT_ROLES),
     items: mapFrom(r.item_map, ITEM_NAMES),
+    docKey: typeof r.doc_key === "string" && DOC_KEY.test(r.doc_key) ? r.doc_key : null,
   };
 }
 
@@ -209,6 +216,18 @@ export async function readEntityId(
   const id = rows[0].outside_id;
   if (typeof id !== "string" || !OUTSIDE_ID.test(id)) throw new MoneyError("unknown");
   return id;
+}
+
+// Whether a QuickBooks customer id is one this tenant made or adopted for one of its customers.
+// A document whose customer is not is never ours, whatever its number says.
+export async function isTenantCustomer(q: Queryable, outsideId: string): Promise<boolean> {
+  const rows = await q.query<{ ok: unknown }>(
+    `SELECT 1 AS ok FROM qbo_entity_ids
+      WHERE tenant_id = current_tenant_id() AND local_table = 'customers' AND outside_id = $1
+      LIMIT 1`,
+    [outsideId],
+  );
+  return rows.length > 0;
 }
 
 // Keeps the first id stored for a local row; returns the one that is stored.

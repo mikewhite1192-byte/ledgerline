@@ -134,6 +134,9 @@ export type MoneyDraft = {
   // The subject statuses this action may start from, compared whole. Required for every subject
   // table that has a status; must be absent for customer_payments.
   subjectStatuses?: readonly string[];
+  // The approval batch that reserved this row (the pay run). Refused until the batch column
+  // lands with the pay run's migration; absent or null on every action today.
+  batchId?: string | null;
 };
 
 // One money_actions row, camelCase. Timestamps are ISO instants in UTC.

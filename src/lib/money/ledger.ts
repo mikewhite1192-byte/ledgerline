@@ -68,6 +68,8 @@ export function validateDraft(draft: MoneyDraft): CleanDraft {
   const attempt = draft.attempt ?? 1;
   if (!isAttempt(attempt)) invalid();
   if (!(PROPOSERS as readonly unknown[]).includes(draft.proposedBy)) invalid();
+  // No batch column yet: a batch id would be dropped on the floor, so it is refused instead.
+  if (draft.batchId !== undefined && draft.batchId !== null) invalid();
   const table = KIND_SHAPES[kind].subjectTable;
   const allowed: readonly string[] = SUBJECT_STATUSES[table];
   let statuses: readonly string[] | null = null;

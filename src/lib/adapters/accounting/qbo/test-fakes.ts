@@ -108,6 +108,7 @@ type Row = {
   refresh_expired: boolean;
   account_map: string;
   item_map: string;
+  doc_key: string | null;
 };
 
 // The tenant's QuickBooks rows, answering only the statements store.ts sends.
@@ -117,26 +118,45 @@ export class FakeQboDb implements Queryable {
   locks = 0;
   refreshed: Param[][] = [];
   statements: string[] = [];
+  // The tenant this database answers for (current_tenant_id()); its tokens are sealed to it.
+  readonly tenantId: string;
+  // QuickBooks customer ids this tenant made or adopted, beside any stored in entityIds.
+  customers: Set<string>;
 
-  constructor(opts: { realmId?: string; expiring?: boolean; refreshExpired?: boolean; connected?: boolean } = {}) {
+  constructor(
+    opts: {
+      realmId?: string;
+      expiring?: boolean;
+      refreshExpired?: boolean;
+      connected?: boolean;
+      tenantId?: string;
+      // The tenant's document key (0015); null for a tenant without one.
+      docKey?: string | null;
+      customers?: string[];
+    } = {},
+  ) {
     const realm = opts.realmId ?? REALM;
+    const tenant = opts.tenantId ?? TENANT;
+    this.tenantId = tenant;
+    this.customers = new Set(opts.customers ?? ["58"]);
     this.row =
       opts.connected === false
         ? null
         : {
             realm_id: realm,
-            access_enc: sealToken(KEY, ACCESS, TENANT, realm, "access").toString("base64"),
-            refresh_enc: sealToken(KEY, REFRESH, TENANT, realm, "refresh").toString("base64"),
+            access_enc: sealToken(KEY, ACCESS, tenant, realm, "access").toString("base64"),
+            refresh_enc: sealToken(KEY, REFRESH, tenant, realm, "refresh").toString("base64"),
             expiring: opts.expiring ?? false,
             refresh_expired: opts.refreshExpired ?? false,
             account_map: JSON.stringify(ACCOUNTS),
             item_map: JSON.stringify(ITEMS),
+            doc_key: opts.docKey === undefined ? "T5B0E" : opts.docKey,
           };
   }
 
   async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
     this.statements.push(sql);
-    if (sql.includes("CAST(current_tenant_id() AS text) AS id")) return [{ id: TENANT }] as T[];
+    if (sql.includes("CAST(current_tenant_id() AS text) AS id")) return [{ id: this.tenantId }] as T[];
     if (sql.includes("FROM qbo_connections") && sql.includes("encode(access_token_enc")) {
       if (sql.includes("FOR UPDATE")) this.locks += 1;
       return (this.row ? [{ ...this.row }] : []) as T[];
@@ -144,6 +164,11 @@ export class FakeQboDb implements Queryable {
     if (sql.includes("SELECT outside_id FROM qbo_entity_ids")) {
       const v = this.entityIds.get(`${params[0]}:${params[1]}`);
       return (v ? [{ outside_id: v }] : []) as T[];
+    }
+    if (sql.includes("SELECT 1 AS ok FROM qbo_entity_ids") && sql.includes("local_table = 'customers'")) {
+      const id = String(params[0]);
+      const stored = [...this.entityIds].some(([k, v]) => k.startsWith("customers:") && v === id);
+      return (this.customers.has(id) || stored ? [{ ok: 1 }] : []) as T[];
     }
     throw new Error("unexpected query");
   }

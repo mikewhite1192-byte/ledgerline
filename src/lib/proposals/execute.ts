@@ -1,7 +1,10 @@
 import { flags } from "../../config/flags";
+import { PROPOSAL_KINDS, type ProposalKind } from "../agent/gateway/types";
 import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { executeAdvanceProposal, precheckAdvanceProposal } from "../advances/approve";
+import { executeInvoicePost } from "../invoices/execute";
+import { executePaymentReapply } from "../invoices/reapply";
 import { assertMembership } from "../tenant/context";
 import { overrideReasonOf } from "../agent/auditor/words";
 import { executeDetentionCharge } from "./executors/detention-charge";
@@ -27,19 +30,13 @@ import { loadRateFill } from "./executors/load-rate-fill";
 // approved and is refused; only then does the executor run. Each executor reserves its ledger row
 // before any outside call (the money executor) and moves the proposal on from there.
 
-export const PROPOSAL_KINDS = [
-  "advance_payout",
-  "pay_correction",
-  "invoice_fix",
-  "load_rate_fill",
-  "detention_charge",
-] as const;
-export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
+export { PROPOSAL_KINDS, type ProposalKind };
 
 export type ProposalRow = {
   id: string;
-  conversationId: string;
-  turnId: string;
+  // Null on a proposal the rules engine made outside a chat turn (origin 'engine', 0015).
+  conversationId: string | null;
+  turnId: string | null;
   kind: ProposalKind;
   subjectTable: string;
   subjectId: string;
@@ -51,7 +48,7 @@ export type ProposalRow = {
   auditorVerdict: string | null;
   auditorAgrees: boolean | null;
   moneyActionId: string | null;
-  traceId: string;
+  traceId: string | null;
 };
 
 // confirmed: the person's second confirm, on a flagged proposal (owner decision 2) or on any
@@ -120,9 +117,11 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 // One executor per kind. advance_payout creates the advances row at approval and pays it through
 // the money executor (src/lib/advances/approve.ts), with a precheck that refuses before the
 // approval when the payout could not run. load_rate_fill writes a load's missing rate and moves
-// no money. pay_correction and invoice_fix have none yet, so they are refused as not_executable.
-// detention_charge is read through its release switch on every approval: with detentionEnabled
-// off the kind has no executor, so a detention_charge can be neither approved nor executed. On a resume (a row already approved or executing), gate refuses
+// no money; invoice_post writes the approved invoice and payment_reapply moves one payment
+// application. pay_correction and invoice_fix have none yet, so they are refused as
+// not_executable. detention_charge is read through its release switch on every approval: with
+// detentionEnabled off the kind has no executor, so a detention_charge can be neither approved nor
+// executed. On a resume (a row already approved or executing), gate refuses
 // it as not_executable before the executor runs. Otherwise that refusal is gate's last check
 // before the approve write, and every earlier outcome comes first: the membership check,
 // not_found, already_decided, expiring an aged proposal (which writes the row as expired), the
@@ -134,6 +133,8 @@ export const EXECUTORS: ExecutorRegistry = {
     { precheck: precheckAdvanceProposal },
   ),
   load_rate_fill: loadRateFill,
+  invoice_post: executeInvoicePost,
+  payment_reapply: executePaymentReapply,
   get detention_charge() {
     return flags.detentionEnabled ? executeDetentionCharge : undefined;
   },
@@ -150,8 +151,8 @@ function auditorStartIso(): string | null {
 
 type Row = {
   id: string;
-  conversation_id: string;
-  turn_id: string;
+  conversation_id: string | null;
+  turn_id: string | null;
   kind: ProposalKind;
   subject_table: string;
   subject_id: string;
@@ -163,7 +164,7 @@ type Row = {
   auditor_verdict: string | null;
   auditor_agrees: boolean | null;
   money_action_id: string | null;
-  trace_id: string;
+  trace_id: string | null;
   too_old: boolean;
   before_auditor: boolean;
   auditor_checked_at: string | null;
