@@ -96,9 +96,10 @@ describe("flags", () => {
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 
-  it("keeps the sweep off, its schedule off and its caps small", () => {
+  it("keeps the sweep off, its schedule off, its fixes unable to run and its caps small", () => {
     expect(flags.sweepEnabled).toBe(false);
     expect(flags.sweepScheduleEnabled).toBe(false);
+    expect(flags.payCorrectionsEnabled).toBe(false);
     expect(flags.sweepLimits).toEqual({
       maxItems: 40,
       maxRunCents: 150,

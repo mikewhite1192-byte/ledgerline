@@ -3,7 +3,7 @@ import { checkInputOf, receivablesInputOf } from "../data/records";
 import { findPaymentOnWrongInvoice, runAllChecks, type Finding } from "../rules-engine";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
-import { findingKey, fixPlanFor, receivablesPlanFor, settlementPlanFor, type PlanLeg } from "./plan";
+import { findingInWeek, findingKey, fixPlanFor, receivablesPlanFor, settlementPlanFor, type PlanLeg } from "./plan";
 
 // The sweep's plan for the seeded week, to the cent: the engine's findings in, the legs out.
 
@@ -101,6 +101,53 @@ describe("fixPlanFor on the seeded open week", () => {
       const legs = fixPlanFor({ ...f, amountCents } as Finding, input, openWeek);
       expect(legs.map((l) => l.kind)).toEqual(["needs_person"]);
     }
+  });
+});
+
+describe("findingInWeek", () => {
+  const findings = runAllChecks(input);
+  const byCheck = new Map(findings.map((f) => [f.check, f]));
+  const lastWeek = plan.periods[2];
+  const at = (f: Finding) => f.sources[0]!.id;
+  const loadOf = (f: Finding) => f.sources.find((s) => s.table === "loads")!.id;
+
+  it("keeps every seeded plant in its own open week and none in the week before", () => {
+    expect(findings.length).toBeGreaterThan(0);
+    for (const f of findings) {
+      expect([f.check, findingInWeek(f, input, openWeek)]).toEqual([f.check, true]);
+      const standing = f.check === "over_advance_limit";
+      expect([f.check, findingInWeek(f, input, lastWeek)]).toEqual([f.check, standing]);
+    }
+  });
+
+  it("leaves out a finding whose record at fault is dated before the week", () => {
+    const before = "2026-10-12";
+    const dup = byCheck.get("duplicate_advance")!;
+    const fuel = byCheck.get("fuel_on_wrong_driver")!;
+    const day = byCheck.get("insurance_day_not_driven")!;
+    const reimb = byCheck.get("missing_reimbursement")!;
+    const rate = byCheck.get("delivered_without_rate")!;
+    const older = {
+      ...input,
+      advances: input.advances.map((a) => (a.id === at(dup) ? { ...a, requestedOn: before } : a)),
+      items: input.items.map((i) => (i.id === at(fuel) ? { ...i, itemDate: before } : i)),
+      days: input.days.map((d) => (d.id === at(day) ? { ...d, day: before } : d)),
+      loads: input.loads.map((l) =>
+        l.id === loadOf(reimb) || l.id === at(rate) ? { ...l, deliveredOn: before } : l,
+      ),
+    };
+    for (const f of [dup, fuel, day, reimb, rate]) {
+      expect([f.check, findingInWeek(f, older, openWeek)]).toEqual([f.check, false]);
+    }
+  });
+
+  it("leaves out a finding whose day cannot be read", () => {
+    const rate = byCheck.get("delivered_without_rate")!;
+    const undated = { ...input, loads: input.loads.map((l) => (l.id === at(rate) ? { ...l, deliveredOn: null } : l)) };
+    expect(findingInWeek(rate, undated, openWeek)).toBe(false);
+    const dup = byCheck.get("duplicate_advance")!;
+    expect(findingInWeek({ ...dup, sources: [{ table: "advances", id: "gone" }] }, input, openWeek)).toBe(false);
+    expect(findingInWeek({ ...dup, sources: [] }, input, openWeek)).toBe(false);
   });
 });
 

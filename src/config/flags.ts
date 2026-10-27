@@ -156,6 +156,10 @@ export type Flags = {
   sweepEnabled: boolean;
   // The nightly kicker (infra sweep stack). Off means the internal route refuses every call.
   sweepScheduleEnabled: boolean;
+  // A person's approval of a pay correction (drafted by the sweep or in chat) writes its pay item
+  // for the next pay run. Off means the kind has no executor: an approval or a resume is refused
+  // as not_executable before anything is written, and the proposal stays as it was.
+  payCorrectionsEnabled: boolean;
   sweepLimits: {
     // Findings kept per run; the rest are left for the next run with a visible line.
     maxItems: number;
@@ -222,6 +226,7 @@ export const flags: Flags = {
   detentionEnabled: false,
   sweepEnabled: false,
   sweepScheduleEnabled: false,
+  payCorrectionsEnabled: false,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
   approveAllLimits: { maxItems: 25 },
 };

@@ -128,6 +128,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   flags.sweepEnabled = true;
+  flags.payCorrectionsEnabled = true;
   audits.n = 0;
   audits.concernsAt = 0;
   vi.spyOn(console, "info").mockImplementation(() => {});

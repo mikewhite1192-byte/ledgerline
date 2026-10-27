@@ -15,8 +15,9 @@ import { buildCarrierPlan } from "../../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../../seed/run";
 import { fixPlanFor, type FixLeg } from "../../sweep/plan";
 import { advanceSweep, startSweep, type SweepDeps } from "../../sweep/run";
-import { executeProposal } from "../execute";
-import { CORRECTION_SUBKIND, correctionItemRef } from "./pay-correction";
+import type { Queryable, TenantDb } from "../../db/types";
+import { executeProposal, type Executor, type ProposalRow } from "../execute";
+import { CORRECTION_SUBKIND, correctionItemRef, payCorrectionExecutor, precheckPayCorrection } from "./pay-correction";
 
 // The pay correction executor against the real database, as the app's role. The proposals come
 // from a real sweep of the seeded open week (only the explanation and the auditor are stand-ins,
@@ -136,6 +137,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   flags.sweepEnabled = true;
+  flags.payCorrectionsEnabled = true;
   vi.spyOn(console, "info").mockImplementation(() => {});
   await admin.withTenant(T, (q) => q.execute("DELETE FROM pay_items WHERE subkind = $1", [CORRECTION_SUBKIND]));
   await clearTenantAgent(admin, T);
@@ -330,5 +332,68 @@ describe("approving a sweep's pay correction", () => {
         q.execute("UPDATE settlement_periods SET status = 'open' WHERE id = CAST($1 AS uuid)", [period.id]),
       );
     }
+  });
+
+  it("refuses as not_executable with its switch off, on an approval and on a resume, writing nothing", async () => {
+    const by = await sweep();
+    const [owed] = by.get(legOf("duplicate_advance").driverId)!;
+    const [resumed] = by.get(legOf("missing_reimbursement").driverId)!;
+    await admin.withTenant(T, (q) =>
+      q.execute(
+        `UPDATE proposals SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz)
+          WHERE id = CAST($1 AS uuid)`,
+        [resumed.id, SESSION.sub, NOW.toISOString()],
+      ),
+    );
+    flags.payCorrectionsEnabled = false;
+    const off = { ok: false, category: "not_executable", retryable: false };
+
+    expect(await approve(owed.id)).toEqual(off);
+    expect(await proposal(owed.id)).toMatchObject({ status: "proposed", decided_by: null });
+    expect(await approve(resumed.id)).toEqual(off);
+    expect(await proposal(resumed.id)).toMatchObject({ status: "approved" });
+    expect(await corrections()).toEqual([]);
+
+    // Reached directly, the executor and its precheck refuse before any read or write.
+    const untouchable: Queryable = {
+      query: () => Promise.reject(new Error("read with the switch off")),
+      execute: () => Promise.reject(new Error("write with the switch off")),
+    };
+    const noDb: TenantDb = { withTenant: () => Promise.reject(new Error("opened with the switch off")) };
+    const row = { id: resumed.id, kind: "pay_correction" } as ProposalRow;
+    expect(await precheckPayCorrection(untouchable, row, NOW)).toEqual(off);
+    expect(await payCorrectionExecutor(noDb, SESSION, row, { confirmed: false }, { db: noDb, clock })).toEqual(off);
+
+    // Switched on again, the waiting one approves as usual.
+    flags.payCorrectionsEnabled = true;
+    expect(await approve(owed.id)).toMatchObject({ ok: true, status: "done" });
+    expect(await corrections(owed.id)).toHaveLength(1);
+  });
+
+  it("resumes an approval whose execution never finished, writing exactly one pay item", async () => {
+    const by = await sweep();
+    const [owed] = by.get(legOf("insurance_day_not_driven").driverId)!;
+    // The first approval commits, then its execution stops (as if the answer was lost): the row
+    // stays approved and nothing is written.
+    const stops: Executor = async () => {
+      throw new Error("stopped after the approval");
+    };
+    await expect(
+      executeProposal(SESSION, owed.id, { confirmed: false }, { db: app, clock, executors: { pay_correction: stops } }),
+    ).rejects.toThrow("stopped after the approval");
+    expect(await proposal(owed.id)).toMatchObject({ status: "approved" });
+    expect(await corrections()).toEqual([]);
+
+    // The resume re-checks the switch.
+    flags.payCorrectionsEnabled = false;
+    expect(await approve(owed.id)).toEqual({ ok: false, category: "not_executable", retryable: false });
+    expect(await corrections()).toEqual([]);
+
+    // With it on, the resume finishes the correction once; a repeat is already decided.
+    flags.payCorrectionsEnabled = true;
+    expect(await approve(owed.id)).toMatchObject({ ok: true, status: "done" });
+    expect(await corrections(owed.id)).toMatchObject([{ kind: "reimbursement", amount_cents: "1100" }]);
+    expect(await approve(owed.id)).toMatchObject({ ok: false, category: "already_decided" });
+    expect(await corrections()).toHaveLength(1);
   });
 });

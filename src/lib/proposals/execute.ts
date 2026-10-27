@@ -123,9 +123,10 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 // approval when the payout could not run. load_rate_fill writes a load's missing rate and moves
 // no money. pay_correction writes one pay item for the next pay run
 // (src/lib/proposals/executors/pay-correction.ts), with a precheck that refuses a stale fix before
-// the approval. invoice_fix has none yet, so it is refused as not_executable. detention_charge is
-// read through its release switch on every approval: with detentionEnabled off the kind has no
-// executor, so a detention_charge can be neither approved nor executed. On a resume (a row already
+// the approval. invoice_fix has none yet, so it is refused as not_executable. detention_charge and
+// pay_correction are read through their release switches on every approval: with
+// detentionEnabled or payCorrectionsEnabled off the kind has no executor, so it can be neither
+// approved nor executed (and each executor checks its switch again itself). On a resume (a row already
 // approved or executing), gate refuses it as not_executable before the executor runs. Otherwise
 // that refusal is gate's last check before the approve write, and every earlier outcome comes
 // first: the membership check, not_found, already_decided, expiring an aged proposal (which writes
@@ -136,7 +137,9 @@ export const EXECUTORS: ExecutorRegistry = {
     (...args: Parameters<Executor>) => executeAdvanceProposal(...args),
     { precheck: precheckAdvanceProposal },
   ),
-  pay_correction: payCorrectionExecutor,
+  get pay_correction() {
+    return flags.payCorrectionsEnabled ? payCorrectionExecutor : undefined;
+  },
   load_rate_fill: loadRateFill,
   get detention_charge() {
     return flags.detentionEnabled ? executeDetentionCharge : undefined;

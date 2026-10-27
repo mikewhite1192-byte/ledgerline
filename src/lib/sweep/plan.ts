@@ -1,6 +1,6 @@
 import { formatCents } from "../format/money";
 import type { CheckInput, Finding, ReceivablesInput, SourceRef } from "../rules-engine";
-import { isWithin, type Period } from "../time/local-date";
+import { isLocalDate, isWithin, type LocalDate, type Period } from "../time/local-date";
 
 // What the sweep does with each engine finding (design 3.4). Pure: the same finding and rows
 // always give the same legs, the same args and the same source order, so the gateway's proposal
@@ -80,6 +80,40 @@ const person = (text: string, sourceRefs: SourceRef[], driverId?: string): Perso
 
 const refOf = (finding: Finding, table: string): SourceRef | undefined =>
   finding.sources.find((s) => s.table === table);
+
+// The day of the record at fault: the newer advance's request day, the fuel charge's item day, the
+// insurance day, or the delivery day of the load behind a missing reimbursement or a missing rate.
+// Null when the record or its day cannot be read.
+function dayOfFinding(finding: Finding, input: CheckInput): LocalDate | null {
+  const at = finding.sources[0];
+  if (!at) return null;
+  switch (finding.check) {
+    case "duplicate_advance":
+      return input.advances.find((a) => a.id === at.id)?.requestedOn ?? null;
+    case "fuel_on_wrong_driver":
+      return input.items.find((i) => i.id === at.id)?.itemDate ?? null;
+    case "insurance_day_not_driven":
+      return input.days.find((d) => d.id === at.id)?.day ?? null;
+    case "missing_reimbursement":
+      return input.loads.find((l) => l.id === refOf(finding, "loads")?.id)?.deliveredOn ?? null;
+    case "delivered_without_rate":
+      return input.loads.find((l) => l.id === at.id)?.deliveredOn ?? null;
+    default:
+      return null;
+  }
+}
+
+// One run checks one week (design 3.2), but the engine reads every record the carrier has. A
+// finding is this run's only when the record at fault falls inside the week, so an earlier week's
+// problem (one a person may already have handled by hand) never takes one of the run's places or
+// drafts a correction. The over-limit finding has no day of its own: it is what the driver owes
+// now, so it belongs to the open week. A finding whose day cannot be read is left out: unknown is
+// not inside the week.
+export function findingInWeek(finding: Finding, input: CheckInput, period: Period): boolean {
+  if (finding.check === "over_advance_limit") return true;
+  const day = dayOfFinding(finding, input);
+  return isLocalDate(day) && isWithin(day, period);
+}
 
 // A whole positive amount, or null: a fix is never planned on an amount the engine did not give.
 function amountOf(finding: Finding): number | null {

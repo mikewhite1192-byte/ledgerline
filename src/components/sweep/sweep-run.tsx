@@ -45,12 +45,44 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   stale: "The records changed since this was drafted, so it was not applied. Reject it if it still waits, then run the sweep again.",
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That fix is not here.",
+  not_executable: "Pay corrections are switched off, so this fix was not applied. Nothing changed.",
 };
 // The card statuses listed under Needs a look: still waiting, or approved and not finished.
 const LOOK_STATUSES: ReadonlySet<string> = new Set(["proposed", "approved", "executing", "unknown"]);
 
+// A definite refusal (a 4xx answer) says nothing changed. A lost answer (no response, or a 5xx
+// after the work may have started) is unknown: it never says nothing changed.
 const APPROVE_FALLBACK = "The approval did not go through. Nothing changed.";
 const REJECT_FAILED = "The rejection did not go through. Try again.";
+const APPROVE_UNKNOWN =
+  "The answer did not come back, so this may or may not have been approved. Check the card's status before trying again.";
+const REJECT_UNKNOWN =
+  "The answer did not come back, so this may or may not have been rejected. Check the card's status before trying again.";
+const BATCH_UNKNOWN =
+  "The answer did not come back, so some fixes may have been approved. Check each card's status before trying again; a repeat of the same list never approves twice.";
+// The proposal statuses an approval can end on without finishing: approved, but not done.
+const NOT_FINISHED: ReadonlySet<string> = new Set(["approved", "executing", "unknown"]);
+
+const lostAnswer = (res: Response) => res.status >= 500;
+
+// One line of an approve-all answer that did not finish: the gate's reason in the same words a
+// single approval uses; a fix left approved but not finished, or one with no reason, is unknown.
+function batchNotice(category: string | null): string {
+  if (category !== null && APPROVE_NOTICE[category]) return APPROVE_NOTICE[category];
+  if (category === null || NOT_FINISHED.has(category)) return APPROVE_UNKNOWN;
+  return APPROVE_FALLBACK;
+}
+
+// The refused lines of an approve-all answer, keeping only well-formed ones.
+function refusedLines(value: unknown): { proposalId: string; category: string | null }[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((r: unknown) => {
+    if (!r || typeof r !== "object") return [];
+    const { proposalId, category } = r as Record<string, unknown>;
+    if (typeof proposalId !== "string") return [];
+    return [{ proposalId, category: typeof category === "string" ? category : null }];
+  });
+}
 
 function notDrafted(item: SweepItemView): string {
   if (item.status === "refused") return `Not drafted: ${codeToWords(item.refusalCategory ?? "unknown").toLowerCase()}.`;
@@ -161,12 +193,14 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) {
+      if (lostAnswer(res)) {
+        setNotices((n) => ({ ...n, [p.id]: APPROVE_UNKNOWN }));
+      } else if (!res.ok) {
         const { error } = await errorOf(res);
         setNotices((n) => ({ ...n, [p.id]: APPROVE_NOTICE[error] ?? APPROVE_FALLBACK }));
       }
     } catch {
-      setNotices((n) => ({ ...n, [p.id]: APPROVE_FALLBACK }));
+      setNotices((n) => ({ ...n, [p.id]: APPROVE_UNKNOWN }));
     }
     await refresh();
     if (alive.current) setBusy(null);
@@ -181,9 +215,10 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ category: "other" }),
       });
-      if (!res.ok) setNotices((n) => ({ ...n, [id]: REJECT_FAILED }));
+      if (lostAnswer(res)) setNotices((n) => ({ ...n, [id]: REJECT_UNKNOWN }));
+      else if (!res.ok) setNotices((n) => ({ ...n, [id]: REJECT_FAILED }));
     } catch {
-      setNotices((n) => ({ ...n, [id]: REJECT_FAILED }));
+      setNotices((n) => ({ ...n, [id]: REJECT_UNKNOWN }));
     }
     await refresh();
     if (alive.current) setBusy(null);
@@ -206,13 +241,22 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
         body: JSON.stringify({ batchId: held.id, proposalIds: ids, totalCents: page.clean.totalCents }),
       });
       if (res.ok) {
-        const r = (await res.json()) as { done: number; refused: unknown[] };
+        const r = (await res.json()) as { done: number; refused: unknown };
+        const lines = refusedLines(r.refused);
         next = null;
+        if (lines.length > 0) {
+          setNotices((n) => ({ ...n, ...Object.fromEntries(lines.map((l) => [l.proposalId, batchNotice(l.category)])) }));
+        }
         setAllNotice(
-          r.refused.length > 0
-            ? `Approved ${r.done}. ${r.refused.length} did not go through; each card says why.`
+          lines.length > 0
+            ? `Approved ${r.done}. ${lines.length} did not go through; each card says why.`
             : `Approved ${r.done} ${r.done === 1 ? "fix" : "fixes"}. Each lands on the driver's next pay run.`,
         );
+      } else if (lostAnswer(res)) {
+        // The server stopped part way: some fixes may be approved. Keep the same batch id, so
+        // trying the same list again replays rather than repeats.
+        setAllNotice(BATCH_UNKNOWN);
+        next = held;
       } else {
         const { error, body } = await errorOf(res);
         if (error === "changed") {
@@ -231,7 +275,7 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
       }
     } catch {
       // Unknown outcome: keep the same batch id, so trying again replays rather than repeats.
-      setAllNotice("The answer did not come back. Try again; a repeat never approves twice.");
+      setAllNotice(BATCH_UNKNOWN);
       next = held;
     }
     setBatch(next);

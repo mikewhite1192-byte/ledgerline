@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { flags } from "../../config/flags";
 import type { AuditResult } from "../agent/auditor/run";
 import { callTool as gatewayCallTool } from "../agent/gateway";
+import { dbTurnStore } from "../agent/gateway/store";
 import type { GatewayContext, GatewayOutcome, ToolCall } from "../agent/gateway/types";
 import type { Explained } from "../agent/sweep/explain";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
@@ -405,6 +406,39 @@ describe("a sweep of the open week", () => {
     expect(explain).toHaveBeenCalledTimes(5);
   });
 
+  it("leaves a finding from an earlier week out of the run, so it takes no place and drafts no fix", async () => {
+    // The planted duplicate advances, moved two weeks back: the engine still finds them, since it
+    // reads every advance the carrier has, but they are not this week's.
+    const dup = runAllChecks(input).find((f) => f.check === "duplicate_advance")!;
+    const ids = dup.sources.filter((s) => s.table === "advances").map((s) => s.id);
+    expect(ids.length).toBe(2);
+    const shift = (days: number) =>
+      admin.withTenant(T, (q) =>
+        q.execute(
+          `UPDATE advances SET requested_at = requested_at + make_interval(days => $2),
+                  requested_on = requested_on + CAST($2 AS integer)
+            WHERE id IN (CAST($1 AS uuid), CAST($3 AS uuid))`,
+          [ids[0], days, ids[1]],
+        ),
+      );
+    await shift(-14);
+    try {
+      const runId = await start();
+      await runToEnd(runId);
+      const all = await items(runId);
+      expect(all.some((i) => i.check_name === "duplicate_advance")).toBe(false);
+      expect(all.filter((i) => i.kind === "fix").map((i) => i.status)).toEqual(Array(4).fill("drafted"));
+      const ps = await proposals();
+      const dupLeg = `${dup.driverId}:${dup.amountCents}`;
+      expect(ps.length).toBe(4);
+      expect(ps.map((p) => `${p.subject_id}:${(p.direction === "in" ? -1 : 1) * Number(p.amount_cents)}`).sort()).toEqual(
+        legKeys.filter((k) => k !== dupLeg),
+      );
+    } finally {
+      await shift(14);
+    }
+  });
+
   it("says an earlier fix that expired undecided expired, and drafts no second one", async () => {
     await runToEnd(await start());
     const first = await proposals();
@@ -533,6 +567,67 @@ describe("a sweep of the open week", () => {
     );
     expect(await proposals()).toEqual([]);
     expect(explain).not.toHaveBeenCalled();
+  });
+
+  it("ends an item that stops on an error as a passing refusal, goes on, and stops at the attempt limit", async () => {
+    const vanished: SweepDeps["openTurn"] = async () => {
+      throw new Error("connection reset");
+    };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (let i = 1; i <= MAX_DRAFT_ATTEMPTS; i++) {
+        const runId = await start();
+        expect(await runToEnd(runId, deps({ openTurn: vanished }))).toMatchObject({ status: "done" });
+        expect(await fixRows(runId)).toEqual(
+          Array(5).fill({ status: "refused", refusal_category: "tool_failed", draft_attempts: i }),
+        );
+      }
+      // Only the error's name reaches the log, never its text.
+      expect(logged.mock.calls.flat().join(" ")).not.toContain("connection reset");
+    } finally {
+      logged.mockRestore();
+    }
+    const last = await start();
+    await runToEnd(last);
+    expect(await fixRows(last)).toEqual(
+      Array(5).fill({ status: "refused", refusal_category: "tool_failed", draft_attempts: MAX_DRAFT_ATTEMPTS }),
+    );
+    expect(await proposals()).toEqual([]);
+  });
+
+  it("never drafts a fix twice when its save landed but the answer was lost", async () => {
+    // The save commits, then the answer never comes back: whether a proposal exists is unknown.
+    const lost: SweepDeps["store"] = (s) => {
+      const real = dbTurnStore(s, { db: app, clock });
+      return {
+        finishTurn: (id, f) => real.finishTurn(id, f),
+        persistProposal: async (input) => {
+          await real.persistProposal(input);
+          throw new Error("answer lost");
+        },
+      };
+    };
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const first = await start();
+    try {
+      await runToEnd(first, deps({ store: lost }));
+    } finally {
+      logged.mockRestore();
+    }
+    expect(await fixRows(first)).toEqual(
+      Array(5).fill({ status: "refused", refusal_category: "tool_failed", draft_attempts: 1 }),
+    );
+    expect((await items(first)).filter((i) => i.kind === "fix").every((i) => i.proposal_id === null)).toBe(true);
+    const saved = await proposals();
+    expect(saved.length).toBe(5);
+
+    // The retry asks the gateway again and gets the saved proposal back, never a second one.
+    const second = await start();
+    await runToEnd(second);
+    expect((await fixRows(second)).map((r) => [r.status, r.refusal_category])).toEqual(Array(5).fill(["drafted", null]));
+    expect(await proposals()).toEqual(saved);
+    const linked = (await items(second)).filter((i) => i.kind === "fix").map((i) => i.proposal_id).sort();
+    expect(linked).toEqual(saved.map((p) => p.id).sort());
   });
 
   it("refuses everything while the switch is off", async () => {

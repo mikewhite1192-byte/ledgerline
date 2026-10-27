@@ -38,6 +38,9 @@ import type {
 //      week, subkind "correction" (the paystub line reads "Reimbursement (correction)");
 //   e. executing -> done.
 // Money never moves here: the next pay run picks the item up like any other.
+//
+// The switch: payCorrectionsEnabled off refuses as not_executable before anything is read or
+// written, here and in the precheck, even when a caller reaches this executor directly.
 
 export const CORRECTION_SUBKIND = "correction";
 
@@ -222,6 +225,7 @@ async function apply(q: Queryable, session: Session, proposalId: string, now: Da
 // proposal still proposed and locked. Reads only. A correction whose facts no longer hold is
 // refused as stale and stays waiting, never approved and then failed.
 export const precheckPayCorrection: Precheck = async (q, proposal: ProposalRow) => {
+  if (!flags.payCorrectionsEnabled) return refused("not_executable");
   if (proposal.kind !== "pay_correction") return refused("not_executable");
   const a = argsFrom(proposal.args);
   const facts = argsMatchRow(a, proposal.subjectId, proposal.amountCents, proposal.direction)
@@ -239,6 +243,7 @@ async function runPayCorrection(
   _opts: ApproveOptions,
   deps: ExecuteDeps,
 ): Promise<ProposalResult> {
+  if (!flags.payCorrectionsEnabled) return refused("not_executable");
   const now = (deps.clock ?? (() => new Date()))();
   return db.withTenant(session.tenantId, (q) => apply(q, session, proposal.id, now));
 }

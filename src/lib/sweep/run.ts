@@ -16,6 +16,7 @@ import { assertMembership } from "../tenant/context";
 import { localDateOf } from "../time/local-date";
 import { isUuid } from "../uuid";
 import {
+  findingInWeek,
   findingKey,
   fixPlanFor,
   receivablesPlanFor,
@@ -412,7 +413,11 @@ async function findPhase(ctx: Ctx, run: Run): Promise<boolean> {
         legs.map((leg) => ({ key: findingKey(f, leg.leg), check: f.check, category: f.category, leg, sources: f.sources, order })),
       );
     };
-    for (const f of runAllChecks(input)) add(f, fixPlanFor(f, input, window));
+    // The engine reads every record the carrier has; only a finding whose record at fault falls in
+    // this week is this run's, so an earlier week's problem never takes a place or drafts a fix.
+    for (const f of runAllChecks(input)) {
+      if (findingInWeek(f, input, window)) add(f, fixPlanFor(f, input, window));
+    }
     const receivables = await readReceivablesInput(q, period.period_end);
     for (const f of findPaymentOnWrongInvoice(receivables)) add(f, receivablesPlanFor(f, receivables));
     for (const e of await settlementExceptions(q, period.id)) {
@@ -592,9 +597,11 @@ type Item = {
 
 type Step = "done" | "none" | "cap";
 
+type DraftItem = Item & { period_id: string; period_start: string; period_end: string; conversation_id: string | null };
+
 async function draftNext(ctx: Ctx): Promise<Step> {
   const next = await leased(ctx, (q) =>
-    q.query<Item & { period_id: string; period_start: string; period_end: string; conversation_id: string | null }>(
+    q.query<DraftItem>(
       `SELECT i.id, i.check_name, i.category, i.driver_id, d.code AS driver_code, i.expected_cents,
               CAST(i.plan AS text) AS plan, i.explanation, i.status, i.period_id,
               CAST(sp.period_start AS text) AS period_start, CAST(sp.period_end AS text) AS period_end,
@@ -611,14 +618,57 @@ async function draftNext(ctx: Ctx): Promise<Step> {
   );
   const item = next[0];
   if (!item) return "none";
+  const code = item.driver_code ?? "a driver";
+  const opened: { turn: TurnRef | null } = { turn: null };
+  try {
+    return await draftItem(ctx, item, code, opened);
+  } catch (err) {
+    if (err instanceof LeaseLost) throw err;
+    // Any other stop (a database error, a lost answer) ends this item, not the run: it is refused
+    // for a passing reason, so its draft_attempts count it and MAX_DRAFT_ATTEMPTS ends the tries,
+    // and the run goes on to the next item. Whether a proposal was saved before the stop is
+    // unknown, so none is linked here: a later run's retry asks the gateway again, and the
+    // proposal's own dedupe key (kind, driver, args) hands back the one already saved, if any, so a
+    // fix is never drafted twice. Only the error's name is logged.
+    console.error(`sweep item ${item.id} draft stopped: ${err instanceof Error ? err.name : "unknown"}`);
+    if (opened.turn?.running) {
+      await finishItemTurn(ctx, item, code, "failed", "sweep_refused", "This fix could not be drafted.").catch(
+        () => undefined,
+      );
+    }
+    await writeStatus(ctx, item.id, { status: "refused", refusal: "tool_failed" });
+    return "done";
+  }
+}
+
+async function finishItemTurn(
+  ctx: Ctx,
+  item: Item,
+  code: string,
+  status: "done" | "failed",
+  endedReason: string,
+  text: string,
+): Promise<void> {
+  await ctx.deps.store(ctx.service).finishTurn(item.id, {
+    status,
+    endedReason,
+    text,
+    summary: `Sweep: ${codeToWords(item.check_name)} for ${code}`.slice(0, 120),
+    stepCount: 1,
+    modelCallCount: 0,
+    costNanocents: 0,
+  });
+}
+
+async function draftItem(ctx: Ctx, item: DraftItem, code: string, opened: { turn: TurnRef | null }): Promise<Step> {
   const leg = JSON.parse(item.plan) as FixLeg;
   const expected = Number(item.expected_cents);
-  const code = item.driver_code ?? "a driver";
   const now = ctx.clock();
 
   // a. The item's turn: every proposal has one. The turn id is the item id, so a resumed item
   //    finds its own turn again.
   const turn = await itemTurn(ctx, item, code, item.conversation_id, `${item.period_start} to ${item.period_end}`);
+  opened.turn = turn;
   if (!turn) {
     await writeStatus(ctx, item.id, { status: "refused", refusal: "turn_unavailable" });
     return "done";
@@ -650,15 +700,8 @@ async function draftNext(ctx: Ctx): Promise<Step> {
   const store = ctx.deps.store(ctx.service);
   const finish = async (status: "done" | "failed", endedReason: string, text: string) => {
     if (!turn.running) return;
-    await store.finishTurn(item.id, {
-      status,
-      endedReason,
-      text,
-      summary: `Sweep: ${codeToWords(item.check_name)} for ${code}`.slice(0, 120),
-      stepCount: 1,
-      modelCallCount: 0,
-      costNanocents: 0,
-    });
+    await finishItemTurn(ctx, item, code, status, endedReason, text);
+    turn.running = false;
   };
   if (outcome.decision !== "allowed" || !outcome.draft) {
     const refusal = outcome.decision === "allowed" ? "no_draft" : categoryOf(outcome.reason, "refused");
