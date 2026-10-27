@@ -2,7 +2,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { TurnView } from "@/lib/agent/view";
+import { ChatThread } from "@/components/app/chat-thread";
+import { FOUND_TEXT, STOPPED_TEXT, type TurnView } from "@/lib/agent/view";
 import { REPORT_COLUMNS, REPORT_TITLES, type ReportResult } from "@/lib/reports/types";
 import { AgentChat, toMessages } from "./turn-view";
 
@@ -114,6 +115,66 @@ function agingResult(rows: number): ReportResult {
     rowsTotal: rows,
   };
 }
+
+// How a turn reads in the thread: the agent thinks between tool calls, and a turn the loop
+// stopped early can still hold a complete card.
+describe("toMessages as the thread shows it", () => {
+  const model = (id: string, seq: number, state: "running" | "done" | "failed" = "done") => ({
+    id,
+    seq,
+    kind: "model" as const,
+    label: "Thinking it through",
+    state,
+  });
+  const tool = (id: string, seq: number) => ({
+    id,
+    seq,
+    kind: "tool" as const,
+    label: "Checking advance eligibility",
+    state: "done" as const,
+  });
+
+  it("shows a repeated step once, in its first place, while the announcer still reads the newest", () => {
+    const thinking = {
+      ...turn,
+      status: "running" as const,
+      text: "",
+      flags: [],
+      proposals: [],
+      steps: [model("m-1", 1), tool("s-1", 2), model("m-2", 3), tool("s-2", 4), model("m-3", 5, "running")],
+    };
+    render(<ChatThread messages={toMessages([thinking], {})} composer={{}} />);
+    const steps = screen.getByRole("list", { name: "What the agent did" });
+    const items = [...steps.querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(2);
+    expect(items[0]).toContain("Thinking it through");
+    expect(items[0]).toContain(", working");
+    expect(items[1]).toContain(", done");
+    expect(screen.getByTestId("step-announcer").textContent).toBe("Thinking it through, working");
+  });
+
+  it("says what it found when a stopped turn still built a card", () => {
+    const stopped = {
+      ...turn,
+      status: "partial" as const,
+      endedReason: "steps",
+      flags: [],
+      text: `${STOPPED_TEXT}\n\nBR-D07 can take up to $200.00.`,
+    };
+    const [, a] = toMessages([stopped], {});
+    const texts = a.parts.flatMap((p) => (p.kind === "text" ? [p.text] : []));
+    expect(texts).toEqual([`${FOUND_TEXT}\n\nBR-D07 can take up to $200.00.`]);
+    render(<ChatThread messages={toMessages([stopped], {})} composer={{}} />);
+    expect(screen.getByText(FOUND_TEXT)).toBeTruthy();
+    expect(screen.queryByText(/I stopped/)).toBeNull();
+  });
+
+  it("still says it stopped when the stopped turn has nothing to show", () => {
+    const stopped = { ...turn, status: "partial" as const, endedReason: "steps", flags: [], proposals: [], text: STOPPED_TEXT };
+    const [, a] = toMessages([stopped], {});
+    expect(a.parts.flatMap((p) => (p.kind === "text" ? [p.text] : []))).toEqual([STOPPED_TEXT]);
+  });
+});
 
 describe("toMessages with a report", () => {
   it("shows the table loading under the answer, with no download yet", () => {
