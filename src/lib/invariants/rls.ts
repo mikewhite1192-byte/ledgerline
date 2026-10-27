@@ -30,7 +30,9 @@ export const PROBE_TENANT_SLUGS = ["blue-ridge", "prairie-wind"] as const;
 // The only tables outside public: global rows that hold no tenant's data.
 export const GLOBAL_TABLES = ["ops.ai_spend"];
 // Security-definer functions a migration added on purpose, each with its reason in the migration.
-export const ALLOWED_DEFINERS: string[] = [];
+// public.demo_reset_clear (0025): the demo reset's one delete path; it checks the demo carrier and
+// the refusals itself under the tenant row lock, and only the app login may call it.
+export const ALLOWED_DEFINERS: string[] = ["public.demo_reset_clear"];
 
 const SYSTEM_SCHEMAS = `n.nspname NOT IN ('pg_catalog', 'information_schema')
    AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp%'`;
