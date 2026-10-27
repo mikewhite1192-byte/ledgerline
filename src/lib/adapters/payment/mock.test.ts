@@ -14,6 +14,7 @@ const payout = (actionId = ACTION, amountCents = 25_000) => ({
   driverId: DRIVER,
   amountCents,
   memoCode: `advances:${OTHER}`,
+  rail: "bank" as const,
 });
 const ctx = (actionId = ACTION) => ({
   requestId: requestIdOf(actionId),
@@ -128,12 +129,13 @@ describe("mock payment adapter", () => {
 });
 
 describe("adapter selection", () => {
-  it("uses the mock for payouts by default; Stripe test and the sandbox refuse with no settings", async () => {
-    expect(paymentAdapter().system).toBe("mock");
-    expect(paymentAdapter()).toBe(paymentAdapter());
+  it("uses the mock for bank payouts by default; Stripe test and the sandbox refuse with no settings", async () => {
+    expect(paymentAdapter("bank").system).toBe("mock");
+    expect(paymentAdapter("bank")).toBe(paymentAdapter("bank"));
     flags.paymentProvider = "stripe_test";
-    const stripe = paymentAdapter();
+    const stripe = paymentAdapter("bank");
     expect(stripe.system).toBe("stripe_test");
+    expect(paymentAdapter("bank")).toBe(stripe);
     expect(await stripe.ready()).toEqual({ ok: false, category: "not_configured" });
     expect(await stripe.sendPayout(payout(), ctx())).toEqual({
       kind: "failed",

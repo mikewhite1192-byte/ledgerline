@@ -47,9 +47,18 @@ export type AdvanceListRow = {
   source: string;
   fromFlow: boolean;
   payoutState: string | null;
+  // The card line under Payout, labelled as the record page labels it (see listCardLineFor);
+  // null shows no line.
+  cardLine: ListCardLine | null;
 };
 
 const LIST_LIMIT = 200;
+const LAST4 = /^[0-9]{4}$/;
+
+// Four digits or nothing: a value of any other shape is never shown.
+function last4Of(value: unknown): string | null {
+  return typeof value === "string" && LAST4.test(value) ? value : null;
+}
 
 function whole(value: unknown): number {
   const n = Number(value);
@@ -75,6 +84,11 @@ export async function readAdvanceList(
     source: string;
     from_flow: boolean;
     payout_state: string | null;
+    recorded_id: string | null;
+    recorded_last4: string | null;
+    recorded_status: string | null;
+    active_last4: string | null;
+    active_status: string | null;
   }>(
     `SELECT a.id, a.driver_id, d.code AS driver_code, d.first_name, d.last_name, a.request_ref,
             to_char(a.requested_on, 'YYYY-MM-DD') AS requested_on, a.amount_cents, a.fee_cents,
@@ -82,9 +96,17 @@ export async function readAdvanceList(
             (SELECT m.state FROM money_actions m
               WHERE m.tenant_id = current_tenant_id() AND m.subject_table = 'advances'
                 AND m.subject_id = a.id AND m.kind = 'advance_payout'
-              ORDER BY m.created_at DESC, m.attempt DESC LIMIT 1) AS payout_state
+              ORDER BY m.created_at DESC, m.attempt DESC LIMIT 1) AS payout_state,
+            CAST(rc.id AS text) AS recorded_id, rc.last4 AS recorded_last4, rc.status AS recorded_status,
+            ac.last4 AS active_last4, ac.status AS active_status
        FROM advances a
        JOIN drivers d ON d.tenant_id = a.tenant_id AND d.id = a.driver_id
+       -- The card the advance recorded, only when it is the advance's own driver's (as on the
+       -- record page), and the driver's active card (at most one: driver_cards_one_active).
+       LEFT JOIN driver_cards rc ON rc.tenant_id = current_tenant_id() AND rc.id = a.card_id
+                                AND rc.driver_id = a.driver_id
+       LEFT JOIN driver_cards ac ON ac.tenant_id = current_tenant_id() AND ac.driver_id = a.driver_id
+                                AND ac.status = 'active'
       WHERE a.tenant_id = current_tenant_id() AND d.tenant_id = current_tenant_id()
         AND (CAST($1 AS text) IS NULL OR a.status = CAST($1 AS text))
       ORDER BY a.requested_at DESC, a.id
@@ -104,6 +126,11 @@ export async function readAdvanceList(
     source: r.source,
     fromFlow: r.from_flow === true,
     payoutState: r.payout_state,
+    cardLine: listCardLineFor(
+      r.status,
+      r.recorded_id === null ? null : { last4: r.recorded_last4 ?? "", status: r.recorded_status ?? "" },
+      r.active_last4 === null ? null : { last4: r.active_last4, status: r.active_status ?? "" },
+    ),
   }));
 }
 
@@ -135,6 +162,8 @@ export type LedgerEntry = {
   attempt: number;
   amountCents: number;
   failureCategory: string | null;
+  // Which provider answered (fuel_card_sim, stripe_test, mock, qbo_sandbox); null until one did.
+  outsideSystem: string | null;
   // The outside record's id, last four characters only.
   outsideTail: string | null;
   createdAt: string;
@@ -154,6 +183,7 @@ function entryOf(a: MoneyAction): LedgerEntry {
     attempt: a.attempt,
     amountCents: a.amountCents,
     failureCategory: a.failureCategory,
+    outsideSystem: a.outsideSystem,
     outsideTail: outsideTail(a.outsideId),
     createdAt: a.createdAt,
     settledAt: a.settledAt,
@@ -189,9 +219,20 @@ export type InputSummary = { id: string; kind: string; receivedAt: string };
 
 export type RecordActions = { retry: boolean; check: boolean; post: boolean };
 
+// The fuel card an advance pays: last four and whether it is still the active card.
+export type CardSummary = { last4: string; status: "active" | "closed" };
+
+// recorded: true only for the card the advance's latest payout attempt recorded. The driver's
+// active card, shown in its place, is only the card on file, never where it was paid.
+export type RecordCard = CardSummary & { recorded: boolean };
+
 export type AdvanceRecord = {
   advance: AdvanceView;
   driver: { id: string; code: string; name: string };
+  // The card this advance's latest payout attempt recorded (for an unpaid advance, only while it
+  // is still active), else the driver's active card, else null (no fuel card on file, or a
+  // rejected or cancelled advance).
+  card: RecordCard | null;
   proposal: ProposalSummary | null;
   ledger: LedgerEntry[];
   input: InputSummary | null;
@@ -225,6 +266,96 @@ export function actionsFor(advance: AdvanceView, ledger: readonly LedgerEntry[])
     check: ledger.some((e) => e.state === "unknown" || e.state === "sent"),
     post: advance.status === "paid" && flags.accountingEnabled === true && retryable(lastPost),
   };
+}
+
+function cardSummaryOf(row: { last4: string; status: string } | undefined): CardSummary | null {
+  const last4 = last4Of(row?.last4);
+  if (!row || !last4 || (row.status !== "active" && row.status !== "closed")) return null;
+  return { last4, status: row.status };
+}
+
+// The advance statuses a card line is about: one that can still be paid (requested, approved)
+// or one that was (paid). A rejected or cancelled advance is never paid, and any other status is
+// not known, so neither names a card.
+const CARD_STATUSES: readonly string[] = ["requested", "approved", "paid"];
+
+function namesCard(status: string): boolean {
+  return CARD_STATUSES.includes(status);
+}
+
+// The card the record page names, from the card the advance recorded and the driver's active
+// card. A paid advance names the card it recorded, closed or not. An unpaid advance names its
+// recorded card only while that card is still active, since a retry pays the active card;
+// otherwise the driver's active card is shown as not recorded, or nothing when there is none. A
+// rejected or cancelled advance names none.
+export function recordCardFor(
+  status: string,
+  recorded: CardSummary | null,
+  active: CardSummary | null,
+): RecordCard | null {
+  if (!namesCard(status)) return null;
+  if (recorded !== null && (status === "paid" || recorded.status === "active")) return { ...recorded, recorded: true };
+  return active === null ? null : { ...active, recorded: false };
+}
+
+// The recorded card must be the advance's own driver's. A recorded card of any other shape is
+// never shown and never replaced by the active card.
+async function readRecordCard(
+  q: Queryable,
+  advanceId: string,
+  driverId: string,
+  status: string,
+): Promise<RecordCard | null> {
+  const recorded = await q.query<{ last4: string; status: string }>(
+    `SELECT c.last4, c.status
+       FROM advances a
+       JOIN driver_cards c ON c.tenant_id = a.tenant_id AND c.id = a.card_id AND c.driver_id = a.driver_id
+      WHERE a.tenant_id = current_tenant_id() AND a.id = CAST($1 AS uuid)`,
+    [advanceId],
+  );
+  const recordedCard = recorded.length === 1 ? cardSummaryOf(recorded[0]) : null;
+  if (recorded.length === 1 && recordedCard === null) return null;
+  const active = await q.query<{ last4: string; status: string }>(
+    `SELECT last4, status FROM driver_cards
+      WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid) AND status = 'active'`,
+    [driverId],
+  );
+  return recordCardFor(status, recordedCard, active.length === 1 ? cardSummaryOf(active[0]) : null);
+}
+
+export type CardLine = { label: "Paid to" | "Pays to" | "Card on file"; card: CardSummary | null };
+
+// The record page's card line. "Paid to" and "Pays to" name only the card the advance recorded;
+// the driver's active card, shown in its place, reads "Card on file". A paid advance with no card
+// at all shows no line (null), since where it was paid is not known, and a rejected or cancelled
+// advance shows none, since it is never paid.
+export function cardLineFor(status: string, card: RecordCard | null): CardLine | null {
+  if (!namesCard(status)) return null;
+  const paid = status === "paid";
+  if (card === null) return paid ? null : { label: "Pays to", card: null };
+  const summary: CardSummary = { last4: card.last4, status: card.status };
+  if (card.recorded !== true) return { label: "Card on file", card: summary };
+  return { label: paid ? "Paid to" : "Pays to", card: summary };
+}
+
+// The advance list's card line: a card, labelled as the record page labels it. A paid advance
+// names only the card it recorded ("Paid to", closed or not), and nothing without one, since the
+// driver's card now is not where it was paid. An unpaid advance names its recorded card while it
+// is still active ("Pays to"), else the driver's active card ("Card on file"). A recorded card of
+// any other shape names nothing, and a rejected or cancelled advance names none. No card named,
+// no line.
+export type ListCardLine = { label: CardLine["label"]; card: CardSummary };
+
+export function listCardLineFor(
+  status: string,
+  recorded: { last4: string; status: string } | null,
+  active: { last4: string; status: string } | null,
+): ListCardLine | null {
+  const recordedCard = recorded === null ? null : cardSummaryOf(recorded);
+  if (recorded !== null && recordedCard === null) return null;
+  const activeCard = status === "paid" || active === null ? null : cardSummaryOf(active);
+  const line = cardLineFor(status, recordCardFor(status, recordedCard, activeCard));
+  return line !== null && line.card !== null ? { label: line.label, card: line.card } : null;
 }
 
 // One advance with everything its page shows; null for a missing or another carrier's id (the
@@ -288,6 +419,7 @@ export async function readAdvanceRecord(
   }
 
   const ledger = (await readBySubject(q, "advances", advance.id)).map(entryOf);
+  const card = await readRecordCard(q, advance.id, advance.driverId, advance.status);
 
   // Last: the engine as of now, no model. A failure shows as "could not be checked".
   let eligibility: EligibilityNow | null = null;
@@ -313,6 +445,7 @@ export async function readAdvanceRecord(
   return {
     advance,
     driver: { id: d.id, code: d.code, name: `${d.first_name} ${d.last_name}` },
+    card,
     proposal,
     ledger,
     input,

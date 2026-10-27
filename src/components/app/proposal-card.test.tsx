@@ -212,6 +212,33 @@ describe("ProposalCard", () => {
     render(<ProposalCard {...card} status="rejected" />);
     expect(screen.getByText("Rejected. Nothing changed.")).toBeTruthy();
   });
+
+  it("shows where the money lands under the amount, with Test mode, and asks the card question", () => {
+    render(
+      <ProposalCard
+        {...card}
+        destination={{ label: "To fuel card ···· 4417", testMode: true }}
+        confirmQuestion="Pay $200.00 to Sample Driver's fuel card ···· 4417? Test mode."
+      />,
+    );
+    const line = screen.getByText("To fuel card ···· 4417 · Test mode");
+    // One small line that may wrap at phone width: nothing in it refuses to break.
+    expect(line.closest("p")?.className).not.toContain("nowrap");
+    expect(line.closest("p")?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    fireEvent.click(button("Approve $200.00")!);
+    expect(screen.getByText("Pay $200.00 to Sample Driver's fuel card ···· 4417? Test mode.")).toBeTruthy();
+  });
+
+  it("says no card is on file without Test mode, and shows no line when there is no destination", () => {
+    const { unmount } = render(
+      <ProposalCard {...card} destination={{ label: "No fuel card on file", testMode: false }} />,
+    );
+    expect(screen.getByText("No fuel card on file")).toBeTruthy();
+    expect(screen.queryByText(/Test mode/)).toBeNull();
+    unmount();
+    render(<ProposalCard {...card} />);
+    expect(screen.queryByText(/fuel card/i)).toBeNull();
+  });
 });
 
 describe("ProposalCard with the auditor's check", () => {

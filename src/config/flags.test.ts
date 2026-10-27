@@ -99,4 +99,9 @@ describe("flags", () => {
     // 44-byte header), so the duration check is the one that binds.
     expect(flags.voiceLimits.maxDurationMs).toBeLessThanOrEqual(Math.floor((flags.voiceLimits.maxWavBytes - 44) / 32));
   });
+
+  it("stops any one model job at $10 in an hour", () => {
+    expect(flags.aiJobHourlyCapCents).toBe(1000);
+    expect(Number.isSafeInteger(flags.aiJobHourlyCapCents)).toBe(true);
+  });
 });

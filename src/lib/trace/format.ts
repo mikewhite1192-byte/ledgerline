@@ -187,6 +187,7 @@ const FAILURE_WORDS: Readonly<Record<string, string>> = {
   disabled: "the models are switched off",
   not_configured: "the model is not set up",
   cap: "the demo budget was reached",
+  job_cap: "the job used more than its hourly allowance and was stopped",
   too_expensive: "the call would have cost more than one call may",
   rate_limited: "the model was busy",
   unavailable: "the model was not available",

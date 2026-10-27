@@ -96,3 +96,14 @@ pressed again from the note's page.
 The note's page shows who did what: each model call with its latency and cost. Voice intake ships
 off behind its own switch, with a per-carrier daily limit and caps on clip size and length.
 `scripts/voice/make-samples.sh` (macOS only) makes the synthetic sample clips in `public/samples/`.
+
+## Payout rails
+
+Two rails, one doorway: advances load to the driver's fuel card; weekly settlements go to the
+driver's bank. Both run through the same executor: a person approves, one ledger row is reserved
+with an idempotency key, the provider is called once, the outcome is read back if unclear, and the
+same QuickBooks entry is posted. Today the fuel-card rail is a simulated provider in test mode
+(deterministic, in process, no key, no network), and the bank rail is Stripe in test mode. Each
+rail is one adapter behind `PaymentAdapter`; the ones a carrier would plug in next are WEX/EFS,
+Comdata and AtoB for fuel cards, and TriumphPay for factoring payouts. A production key is refused
+at startup. This section is the only place in the repo that names a fuel card or factoring provider.
