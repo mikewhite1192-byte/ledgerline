@@ -60,6 +60,14 @@ GRANT UPDATE (read_status, read_attempts, document_kind, reading, match, untrust
 
 -- The fourth proposal kind: fill a load's missing rate from its rate confirmation. No money
 -- moves; the executor writes the load's rate once, only while it is still empty.
+--
+-- The check lists every proposal kind known on any branch, not only this one's. Production
+-- applies migrations in merge order and a fresh database in number order, so a check that named
+-- only its own kinds would drop another migration's kinds whenever it ran last. 0015 and 0022
+-- re-create this check with the same full list, so any order gives the same result. A later
+-- migration that adds a kind re-lists them all. A kind with no code yet is harmless here:
+-- nothing makes one until its own branch lands.
 ALTER TABLE proposals DROP CONSTRAINT proposals_kind_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_kind_check
-  CHECK (kind IN ('advance_payout', 'pay_correction', 'invoice_fix', 'load_rate_fill'));
+  CHECK (kind IN ('advance_payout', 'pay_correction', 'invoice_fix', 'load_rate_fill', 'invoice_post',
+                  'payment_reapply', 'settlement_approve', 'detention_charge'));
