@@ -10,6 +10,7 @@ import { complete } from "./index";
 import { NANOCENTS_PER_CENT } from "./prices";
 import type { FetchFn } from "./providers/http";
 import { CONTRIBUTOR_IDS } from "./targets";
+import { QUIET_JOB } from "./test-fixtures";
 
 // Contributor mode never reaches Muse Wonder (design 4.2 tests): the auditor's one call, made
 // through the real wrapper with Contributor mode on, still asks for muse-wonder-1.0, and no
@@ -49,6 +50,7 @@ function ledger(seen: { reserved: number } = { reserved: 0 }): TenantDb {
   const q: Queryable = {
     async query<T>(sql: string): Promise<T[]> {
       if (sql.includes("FROM memberships")) return [{ ok: 1 }] as T[];
+      if (sql.includes("FROM spend_alerts")) return [QUIET_JOB] as T[];
       if (sql.includes("FROM ops.ai_spend")) {
         return [
           {

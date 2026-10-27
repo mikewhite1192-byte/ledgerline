@@ -379,6 +379,14 @@ describe("runTurn", () => {
     expect(h.steps[0]).toMatchObject({ kind: "model", state: "failed", detail: { category: "cap" } });
   });
 
+  it("turns a job stopped by the hourly allowance into its own state, never the raw error", async () => {
+    const h = harness([new AiError("job_cap")], () => allowed("x", {}));
+    const out = await h.run();
+    expect(out).toMatchObject({ status: "failed", endedReason: "job_cap", text: LOOP_TEXT.jobCap });
+    expect(h.finished()).toMatchObject({ status: "failed", endedReason: "job_cap" });
+    expect(h.steps[0]).toMatchObject({ kind: "model", state: "failed", detail: { category: "job_cap" } });
+  });
+
   it("stops at the model call cap with what it found", async () => {
     const forever = () => result({ toolCalls: [call(`c${Math.random()}`, "get_pay_items")] });
     const h = harness([forever(), forever(), forever(), forever()], () => allowed("get_pay_items", {}));

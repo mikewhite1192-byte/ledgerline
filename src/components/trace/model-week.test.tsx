@@ -40,7 +40,7 @@ describe("ModelWeekView", () => {
       screenings: [{ verdict: "clean", via: "model", count: 4 }],
       escalations: 1,
     });
-    render(<ModelWeekView week={week} budget={{ spentNanocents: 123_400_000_001, capNanocents: 15_000 * 1_000_000_000 }} />);
+    render(<ModelWeekView week={week} />);
     expect(screen.queryByText("No model calls this week")).toBeNull();
     const spark = screen.getByRole("heading", { name: "Muse Spark" }).closest("div.min-w-0") as HTMLElement;
     expect(within(spark).getByText("13")).toBeTruthy();
@@ -50,14 +50,9 @@ describe("ModelWeekView", () => {
     expect(within(spark).getByText("Muse Spark 1.3")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "SAM 3.1" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Muse Image" })).toBeNull();
-    expect(screen.getByText("Demo budget used, across every carrier: $1.24 of $150.00.", { exact: false })).toBeTruthy();
+    expect(screen.queryByText(/Demo budget used/)).toBeNull();
     expect(screen.getByText("Gateway")).toBeTruthy();
     expect(screen.getByText("Screening")).toBeTruthy();
-  });
-
-  it("says when no cap is set instead of showing a number", () => {
-    render(<ModelWeekView week={summarizeModelWeek(empty)} budget={{ spentNanocents: 0, capNanocents: null }} />);
-    expect(screen.getByText(/with no cap set, so every call is refused/)).toBeTruthy();
   });
 
   it("shows each model's share of input tokens from the cache and the week's saving, rounded down", () => {

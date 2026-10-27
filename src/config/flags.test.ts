@@ -93,4 +93,9 @@ describe("flags", () => {
     }
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
+
+  it("stops any one model job at $10 in an hour", () => {
+    expect(flags.aiJobHourlyCapCents).toBe(1000);
+    expect(Number.isSafeInteger(flags.aiJobHourlyCapCents)).toBe(true);
+  });
 });
