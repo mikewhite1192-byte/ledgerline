@@ -71,6 +71,20 @@ export type Flags = {
   auditorRequired: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
+  // Document upload and the one Muse Spark read of each file. Off means the routes answer 404,
+  // the pages say reading is off, and no model call is made (the reader re-checks it).
+  documentsEnabled: boolean;
+  // The crop step before a photo is read. Off: the photo goes to the model as uploaded. The crop
+  // itself is a later item; on does nothing new until it lands.
+  documentCrop: boolean;
+  // Upload limits: bytes per file, PDF pages, the per-read cost bound in cents (the wrapper's own
+  // spend cap still applies) and uploads per carrier in any rolling 24 hours.
+  documentLimits: {
+    maxBytes: number;
+    maxPdfPages: number;
+    readMaxCostCents: number;
+    perTenantPerDay: number;
+  };
   // The advance flow: approving an advance proposal, Retry, Check pending, Post to QuickBooks and
   // the request desk. Off means each refuses with disabled before any write. The agent can still
   // propose an advance (that writes only our own tables).
@@ -116,6 +130,22 @@ export type Flags = {
   // The five report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
+  // Driver voice notes: upload, transcribe (Muse Voice Transcribe), screen, translate (Muse
+  // Spark), sort (the triage model) and hand to the agent. Off means every voice route refuses
+  // with disabled before reading the upload or calling a model.
+  voiceIntakeEnabled: boolean;
+  voiceLimits: {
+    // The 16 kHz mono WAV sent for transcription: about 62 seconds.
+    maxWavBytes: number;
+    // The original recording kept for playback; one row must read back under the Data API's
+    // 1 MiB answer limit (base64 of 700,000 bytes is 933,336 characters).
+    maxOriginalBytes: number;
+    // Longer audio is refused before the transcription call: the 60 seconds the page promises,
+    // inside what the WAV cap holds, so the words, the recorder and the server agree.
+    maxDurationMs: number;
+    // Voice notes one carrier can upload in one of its local days.
+    voiceNotesPerDay: number;
+  };
   // Unbilled detention: the agent's find and propose tools are offered and a person's approval
   // adds the charge to the load's open invoice. Off means neither tool is offered or runs and an
   // approval is refused before anything is written.
@@ -152,6 +182,9 @@ export const flags: Flags = {
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
   approverRole: { adminAboveCents: 200_000 },
+  documentsEnabled: false,
+  documentCrop: false,
+  documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
   advancesEnabled: false,
   advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-27" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
@@ -163,5 +196,7 @@ export const flags: Flags = {
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
   reportsEnabled: false,
+  voiceIntakeEnabled: false,
+  voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
   detentionEnabled: false,
 };

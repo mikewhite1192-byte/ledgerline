@@ -128,7 +128,12 @@ export type RunExtras = {
   limit: Extract<LimitResult, { ok: true }> | null;
 };
 
-export type ProposalKind = "advance_payout" | "pay_correction" | "invoice_fix" | "detention_charge";
+export type ProposalKind =
+  | "advance_payout"
+  | "pay_correction"
+  | "invoice_fix"
+  | "load_rate_fill"
+  | "detention_charge";
 
 // What a propose tool hands the loop. The loop persists it (AGENT-CORE); a person approves it.
 export type ProposalDraft = {

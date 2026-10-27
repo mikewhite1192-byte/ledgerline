@@ -161,6 +161,9 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "qbo_entity_ids",
     "qbo_oauth_states",
     "spend_alerts",
+    "voice_notes",
+    "voice_note_audio",
+    "documents",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -258,6 +261,27 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
         await q.execute(
           `INSERT INTO spend_alerts (tenant_id, purpose, window_start, window_end, spent_nanocents, limit_nanocents)
            VALUES (current_tenant_id(), 'invariants_test', now() - interval '1 hour', now(), 2, 1)`,
+        );
+        // A driver's voice note, just transcribed, with its recording (0012).
+        const voiceNote = randomUUID();
+        await q.execute(
+          `INSERT INTO voice_notes (id, tenant_id, driver_id, trace_id, created_by, status, duration_ms)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'invariants-test',
+             'transcribed', 1000)`,
+          [voiceNote, c.driver, randomUUID()],
+        );
+        await q.execute(
+          `INSERT INTO voice_note_audio (tenant_id, voice_note_id, audio, audio_mime, audio_bytes)
+           VALUES (current_tenant_id(), CAST($1 AS uuid), decode($2, 'hex'), 'audio/wav', 4)`,
+          [voiceNote, "52494646"],
+        );
+        // An uploaded receipt not read yet (0013).
+        await q.execute(
+          `INSERT INTO documents (id, tenant_id, uploaded_by, filename, mime, byte_length, bytes, content_hash,
+             trace_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'invariants-test', 'receipt.png', 'image/png', 4,
+             decode($2, 'hex'), $3, CAST($4 AS uuid))`,
+          [randomUUID(), "89504e47", randomBytes(32).toString("hex"), randomUUID()],
         );
       });
       ids.proposals.push(proposal);
