@@ -376,6 +376,72 @@ describe("carrier memory in the database", () => {
     expect(await countOf(A)).toBe(0);
   });
 
+  it("takes a note of exactly 300 emoji from the add, the edit and the table, and refuses 301 in all of them", async () => {
+    flags.carrierMemoryEnabled = true;
+    expect(flags.carrierMemoryLimits.maxNoteChars).toBe(300);
+    const emoji = (n: number, ch = "\u{1f600}") => ch.repeat(n);
+    const invalid = { ok: false, refusal: "invalid" };
+    const stored = async (id: string) => {
+      const [row] = await app.withTenant(A, (q) =>
+        q.query<{ text: string; chars: number | string }>(
+          "SELECT text, char_length(text) AS chars FROM carrier_notes WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+          [id],
+        ),
+      );
+      return { text: row.text, chars: Number(row.chars) };
+    };
+
+    // The schema counts each emoji once.
+    expect(noteTextSchema.safeParse(emoji(300)).success).toBe(true);
+    expect(noteTextSchema.safeParse(emoji(301)).success).toBe(false);
+
+    // The add writes 300 and the table holds them as 300 characters; 301 writes nothing.
+    const id = await added(A, "carrier", null, emoji(300), 1);
+    expect(await stored(id)).toEqual({ text: emoji(300), chars: 300 });
+    expect(
+      await app.withTenant(A, (q) =>
+        createNote(q, session(A), { subjectKind: "carrier", subjectId: null, text: emoji(301, "\u{1f69a}") }, at(2)),
+      ),
+    ).toEqual(invalid);
+    expect(await countOf(A)).toBe(1);
+
+    // The edit takes 300 other emoji and refuses 301, leaving the words as they were.
+    expect(await app.withTenant(A, (q) => updateNoteText(q, session(A), id, emoji(300, "\u{1f69a}"), at(3)))).toEqual({
+      ok: true,
+      id,
+    });
+    expect(await stored(id)).toEqual({ text: emoji(300, "\u{1f69a}"), chars: 300 });
+    expect(await app.withTenant(A, (q) => updateNoteText(q, session(A), id, emoji(301), at(4)))).toEqual(invalid);
+    expect(await stored(id)).toEqual({ text: emoji(300, "\u{1f69a}"), chars: 300 });
+
+    // The table refuses 301 on its own, written or changed.
+    expect(
+      await sqlStateOf(
+        app.withTenant(A, (q) =>
+          q.execute(
+            `INSERT INTO carrier_notes (tenant_id, subject_kind, text, status, source_kind, created_by_kind, created_by_sub)
+             VALUES (current_tenant_id(), 'carrier', $1, 'active', 'person', 'person', 'sub-x')`,
+            [emoji(301)],
+          ),
+        ),
+      ),
+    ).toBe("23514");
+    expect(
+      await sqlStateOf(
+        app.withTenant(A, (q) =>
+          q.execute("UPDATE carrier_notes SET text = $2 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+            id,
+            emoji(301),
+          ]),
+        ),
+      ),
+    ).toBe("23514");
+    expect(await stored(id)).toEqual({ text: emoji(300, "\u{1f69a}"), chars: 300 });
+
+    expect(await app.withTenant(A, (q) => deleteNote(q, session(A), id))).toEqual({ ok: true, id });
+    expect(await countOf(A)).toBe(0);
+  });
+
   it("keeps the same words about the same subject once, suggested or kept", async () => {
     flags.carrierMemoryEnabled = true;
     const [first, second] = CUSTOMERS[A];

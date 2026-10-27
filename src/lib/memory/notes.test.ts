@@ -65,7 +65,7 @@ const silent: Queryable = {
   },
 };
 
-// A database that answers the create's reads and records every statement.
+// A database that answers the create's reads and the edit's update, and records every statement.
 function recording(answers: { subject?: boolean; count?: number; inserted?: boolean }) {
   const seen: { sql: string; params: Param[] }[] = [];
   const q: Queryable = {
@@ -77,6 +77,7 @@ function recording(answers: { subject?: boolean; count?: number; inserted?: bool
       if (sql.includes("pg_advisory_xact_lock")) return [{ ok: 1 }] as T[];
       if (sql.includes("count(*)")) return [{ n: String(answers.count ?? 0) }] as T[];
       if (sql.startsWith("INSERT INTO carrier_notes")) return (answers.inserted === false ? [] : [{ id: NOTE }]) as T[];
+      if (sql.startsWith("UPDATE carrier_notes SET text")) return [{ id: NOTE }] as T[];
       throw new Error(`unexpected query: ${sql}`);
     },
     async execute() {
@@ -275,6 +276,38 @@ describe("the store's writes", () => {
     flags.carrierMemoryLimits = { ...LIMITS, maxNoteChars: 10 };
     const input = { subjectKind: "carrier", subjectId: null, text: "Eleven char" };
     expect(await createNote(silent, SESSION, input, NOW)).toEqual({ ok: false, refusal: "invalid" });
+  });
+
+  it("count a note's length in characters, an emoji as one, in the add and the edit", async () => {
+    flags.carrierMemoryEnabled = true;
+    const emoji = (n: number) => "\u{1f600}".repeat(n);
+    const carrier = (text: string) => ({ subjectKind: "carrier", subjectId: null, text });
+    const invalid = { ok: false, refusal: "invalid" };
+    const written = { ok: true, id: NOTE };
+
+    // At the switch's default, exactly 300 emoji are taken by the schema, the add and the edit,
+    // and written as they are; 301 are refused by all three before any read.
+    expect(flags.carrierMemoryLimits.maxNoteChars).toBe(300);
+    expect(noteTextSchema.safeParse(emoji(300)).success).toBe(true);
+    expect(noteTextSchema.safeParse(emoji(301)).success).toBe(false);
+    const add = recording({});
+    expect(await createNote(add.q, SESSION, carrier(emoji(300)), NOW)).toEqual(written);
+    expect(add.seen.find((s) => s.sql.startsWith("INSERT"))?.params[2]).toBe(emoji(300));
+    const edit = recording({});
+    expect(await updateNoteText(edit.q, SESSION, NOTE, emoji(300), NOW)).toEqual(written);
+    expect(edit.seen.find((s) => s.sql.startsWith("UPDATE"))?.params[1]).toBe(emoji(300));
+    expect(await createNote(recording({}).q, SESSION, carrier(`${"x".repeat(299)}\u{1f600}`), NOW)).toEqual(written);
+    expect(await createNote(silent, SESSION, carrier(emoji(301)), NOW)).toEqual(invalid);
+    expect(await updateNoteText(silent, SESSION, NOTE, emoji(301), NOW)).toEqual(invalid);
+
+    // Under a lower limit of the switch's own, the add and the edit count the same way, though the
+    // schema alone would take more.
+    flags.carrierMemoryLimits = { ...LIMITS, maxNoteChars: 10 };
+    expect(await createNote(recording({}).q, SESSION, carrier(emoji(10)), NOW)).toEqual(written);
+    expect(await updateNoteText(recording({}).q, SESSION, NOTE, emoji(10), NOW)).toEqual(written);
+    expect(noteTextSchema.safeParse(emoji(11)).success).toBe(true);
+    expect(await createNote(silent, SESSION, carrier(emoji(11)), NOW)).toEqual(invalid);
+    expect(await updateNoteText(silent, SESSION, NOTE, emoji(11), NOW)).toEqual(invalid);
   });
 
   it("refuse a subject that is not this carrier's", async () => {

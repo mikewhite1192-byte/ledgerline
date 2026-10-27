@@ -27,8 +27,12 @@ const WEB_ADDRESS = /https?:\/\/|(?:^|[^A-Za-z0-9_])www\./i;
 // Control characters (C0, DEL and C1) left after whitespace is folded; the table refuses them too.
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
+// A note's length in characters, counted as Unicode code points (an emoji is one character, not
+// two UTF-16 units): the way the schema's max and the table's char_length count them.
+const noteChars = (text: string): number => Array.from(text).length;
+
 // A note's text: whitespace folded to single spaces (so a note is always one line), trimmed,
-// 1 to 300 characters, no web address, no control character.
+// 1 to 300 characters (code points), no web address, no control character.
 export const noteTextSchema = z
   .string()
   .transform((s) => s.replace(/\s+/g, " ").trim())
@@ -179,7 +183,7 @@ const NO_SUBJECT = "00000000-0000-0000-0000-000000000000";
 export async function createNote(q: Queryable, session: Session, input: NewNote, now: Date): Promise<NoteWrite> {
   if (!flags.carrierMemoryEnabled) return { ok: false, refusal: "off" };
   const text = noteTextSchema.safeParse(input.text);
-  if (!text.success || text.data.length > flags.carrierMemoryLimits.maxNoteChars) return { ok: false, refusal: "invalid" };
+  if (!text.success || noteChars(text.data) > flags.carrierMemoryLimits.maxNoteChars) return { ok: false, refusal: "invalid" };
   if (!isKind(input.subjectKind)) return { ok: false, refusal: "invalid" };
   const kind = input.subjectKind;
   if (kind === "carrier" ? input.subjectId !== null : !isUuid(input.subjectId)) return { ok: false, refusal: "invalid" };
@@ -225,7 +229,7 @@ export async function updateNoteText(
   if (!flags.carrierMemoryEnabled) return { ok: false, refusal: "off" };
   if (!isUuid(id)) return { ok: false, refusal: "invalid" };
   const text = noteTextSchema.safeParse(rawText);
-  if (!text.success || text.data.length > flags.carrierMemoryLimits.maxNoteChars) return { ok: false, refusal: "invalid" };
+  if (!text.success || noteChars(text.data) > flags.carrierMemoryLimits.maxNoteChars) return { ok: false, refusal: "invalid" };
   const rows = await q.query<{ id: string }>(
     `UPDATE carrier_notes SET text = $2, updated_at = CAST($3 AS timestamptz), updated_by_sub = $4
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'active'
