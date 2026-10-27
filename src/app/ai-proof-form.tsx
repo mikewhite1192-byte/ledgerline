@@ -1,6 +1,8 @@
 "use client";
 
 import { useActionState } from "react";
+import { Button } from "@/components/ui/button";
+import { InlineAlert } from "@/components/ui/inline-alert";
 import { proofCallAction, type ProofCategory, type ProofState } from "./ai-proof-action";
 
 // A fixed message per category; nothing from the provider is shown but the reply itself.
@@ -26,16 +28,18 @@ const MESSAGES: Record<ProofCategory, string> = {
 export function AiProofForm() {
   const [state, action, pending] = useActionState<ProofState>(proofCallAction, null);
   return (
-    <form action={action} style={{ marginTop: 12 }}>
-      <button type="submit" disabled={pending} style={{ padding: "8px 10px", font: "inherit" }}>
-        {pending ? "Calling the model" : "Test the model connection"}
-      </button>
+    <form action={action} className="grid justify-items-start gap-3">
+      <Button type="submit" variant="outline" pending={pending} pendingLabel="Calling the model">
+        Test the model connection
+      </Button>
       {state?.ok ? (
-        <p style={{ marginTop: 12 }}>Reply: {state.text || "(empty)"}</p>
+        <InlineAlert tone="success" title="Reply" className="w-full">
+          {state.text || "(empty)"}
+        </InlineAlert>
       ) : state ? (
-        <p role="alert" style={{ marginTop: 12 }}>
+        <InlineAlert tone="destructive" className="w-full">
           {MESSAGES[state.category]}
-        </p>
+        </InlineAlert>
       ) : null}
     </form>
   );
