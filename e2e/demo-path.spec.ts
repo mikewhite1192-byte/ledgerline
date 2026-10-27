@@ -20,16 +20,16 @@ const DEPLOYED = process.env.E2E_TARGET === "deployed";
 const REPLAYED = !DEPLOYED && process.env.E2E_RECORD !== "1";
 const FIRST_QUESTION = "Who has a problem on this week's paystub?";
 // What the recorded first answer says (e2e/fixtures/model-replay.json): each driver with a
-// problem, the amount carried forward for each, and the exception each shows. A re-record that
-// words the answer differently updates this list.
+// problem and the amount carried forward for each. Live answers name the drivers with or without
+// their codes, so the list holds the names alone. A re-record that words the answer differently
+// updates this list.
 const FIRST_ANSWER_SAYS = [
-  "Kevin Yarborough (BR-D04)",
+  "Kevin Yarborough",
   "$682.75",
-  "Ellen Kowalski (BR-D09)",
+  "Ellen Kowalski",
   "$483.71",
-  "Wesley Delgado (BR-D20)",
+  "Wesley Delgado",
   "$146.61",
-  "1 exception",
 ];
 // The hero driver of the seed (the same ids every seed at the anchor), asked for a modest amount
 // so the engine's limit allows it on any day of the demo week. The ask names a fixed date, never
