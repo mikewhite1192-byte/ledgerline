@@ -91,11 +91,18 @@ export interface PaymentAdapter {
   ): Promise<ReadBack>;
 }
 
-export type InvoiceLine = { description: string; amountCents: number };
+// kind is the rules engine's invoice line kind; it picks the accounting item for the line.
+export type InvoiceLine = {
+  kind: "linehaul" | "fuel_surcharge" | "detention" | "layover" | "stop" | "lumper";
+  description: string;
+  amountCents: number;
+};
 export type PayLine = { kind: string; description: string; amountCents: number };
 
 // Every method takes the tenant's Queryable first (its connection row and id map live there).
-// Built in the next PR; this PR ships only the interface and a not-configured stand-in.
+// Run each call in its own short tenant transaction and let it return: a token refresh made
+// during the call commits with it. Outside refusals come back as outcomes, not throws, from the
+// create methods; ensureCustomer, ensureVendor and readBack throw a MoneyError instead.
 export interface AccountingAdapter {
   readonly system: "qbo_sandbox";
   ready(q: Queryable): Promise<Ready>;
@@ -167,9 +174,20 @@ export interface AccountingAdapter {
     },
     ctx: SendContext,
   ): Promise<SendOutcome>;
+  // For a Payment, applications is required: the invoices and amounts it was asked to apply, so a
+  // payment QuickBooks applied short of that never reads back as succeeded.
   readBack(
     q: Queryable,
-    ref: { type: string; requestId: string; outsideId?: string | null; outsideRef?: string | null },
+    ref: {
+      type: string;
+      requestId: string;
+      outsideId?: string | null;
+      outsideRef?: string | null;
+      // The customer or vendor the document was sent for, from the stored action. When given, a
+      // document found by number that belongs to another party is never read back as ours.
+      partyOutsideId?: string | null;
+      applications?: { invoiceOutsideId: string; amountCents: number }[];
+    },
     ctx: SendContext,
   ): Promise<ReadBack>;
 }
