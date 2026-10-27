@@ -55,6 +55,14 @@ function destinationFor(p: ProposalView): ProposalCardProps["destination"] {
     : { label: "No fuel card on file", testMode: false };
 }
 
+// An advance's load line: the load and, under a per-load cap, what was left after this advance
+// when it was proposed. The numbers are the engine's at proposal time, stored on the proposal.
+export function advanceLoadDetail(load: ProposalView["load"]): string | undefined {
+  if (!load) return undefined;
+  if (load.capCents === null || load.leftAfterCents === null) return `For load ${load.number}.`;
+  return `Load ${load.number}: ${formatCents(load.leftAfterCents)} of ${formatCents(load.capCents)} cap left after this.`;
+}
+
 // Hours and minutes, as the card says a stop's time: 420 is "7 h 00 min".
 export function hoursMinutes(minutes: number): string {
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
@@ -108,6 +116,7 @@ export function proposalCardFrom(
     sources: p.sources,
     status: p.status,
     destination: destinationFor(p),
+    ...(p.kind === "advance_payout" && p.load ? { detail: advanceLoadDetail(p.load) } : {}),
     confirmQuestion,
     flagNote: p.flagged ? flagNoteFor(p.flagCategories) : undefined,
     ...(audit ? { audit: auditFor(p, audit) } : {}),

@@ -1,6 +1,7 @@
 import type { Param, Queryable } from "../db";
 import {
   cents,
+  driverPayOnLoad,
   type AdvanceInput,
   type CheckInput,
   type CustomerRecord,
@@ -243,21 +244,33 @@ export async function readAdvanceInput(
   driverId: string,
   requestedAt: Instant,
   amountCents: number,
+  loadId?: string | null,
 ): Promise<AdvanceInput> {
   const tenant = await readTenant(q);
   if (!tenant) throw new Error("no tenant is set");
   const rows = await readDriverRows(q, driverId);
   const paid = await readWhere(q, "settlement_periods", "status = $1", ["paid"]);
   const requestedOn = localDateOf(requestedAt, tenant.timezone);
+  const config = payConfigOf(configForDay(rows.pay_configs, requestedOn));
+  const driver = driverOf(rows.drivers[0]);
+  const loads = loadsOf(rows.loads, rows.load_state_miles, rows.load_accessorials);
+  // The load the advance is for, with the driver's pay on it. One that is not this driver's
+  // (another driver's, or no load at all) reads as null, and the caller refuses load_not_drivers.
+  let load: AdvanceInput["load"] = null;
+  if (loadId !== undefined && loadId !== null) {
+    const own = loads.find((l) => l.id === assertUuid(loadId, "loadId"));
+    load = own ? { id: own.id, payCents: driverPayOnLoad(config, driver, own) } : null;
+  }
   return {
-    config: payConfigOf(configForDay(rows.pay_configs, requestedOn)),
-    driver: driverOf(rows.drivers[0]),
+    config,
+    driver,
     amountCents: cents(amountCents),
     requestedAt,
     requestedOn,
-    loads: loadsOf(rows.loads, rows.load_state_miles, rows.load_accessorials),
+    loads,
     paidPeriods: paid.map((p) => ({ start: p.period_start, end: p.period_end })),
     advances: rows.advances.map(advanceOf),
+    load,
   };
 }
 

@@ -216,11 +216,13 @@ export interface AccountingAdapter {
 // Reads only, over the seeded tables. Safe for agent tools.
 export interface TmsAdapter {
   settlementInput(q: Queryable, driverId: string, periodId: string): Promise<SettlementInput>;
+  // With a loadId, the load the advance is for (null in the input when it is not this driver's).
   advanceInput(
     q: Queryable,
     driverId: string,
     amountCents: number,
     requestedAt: Instant,
+    loadId?: string | null,
   ): Promise<AdvanceInput>;
   checkInput(q: Queryable): Promise<CheckInput>;
   receivablesInput(q: Queryable, asOf: LocalDate): Promise<ReceivablesInput>;

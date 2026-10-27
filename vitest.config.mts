@@ -12,6 +12,7 @@ export default defineConfig({
       "src/**/*.test.tsx",
       "infra/**/*.test.ts",
       "scripts/**/*.test.ts",
+      "e2e/**/*.test.ts",
     ],
     exclude: ["**/*.db.test.ts", "**/node_modules/**", "**/cdk.out/**"],
   },

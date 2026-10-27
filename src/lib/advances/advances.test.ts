@@ -11,6 +11,7 @@ import {
   listCardLineFor,
   outsideTail,
   recordCardFor,
+  takeBackOffered,
   type CardSummary,
   type LedgerEntry,
   type RecordCard,
@@ -20,7 +21,9 @@ import {
   FLOW_OUTCOMES,
   decisionNoteSentence,
   outcomeSentence,
+  panelSentence,
   refusalSentence,
+  takeBackSentence,
 } from "./reasons";
 import {
   DESK_MAX_CENTS,
@@ -145,8 +148,11 @@ describe("the sentences a person sees", () => {
     expect(Object.keys(ADVANCE_APPROVE_NOTICE).sort()).toEqual(
       [
         "before_start",
+        "card_not_drivers",
         "disabled",
+        "driver_not_armed",
         "eligibility_unavailable",
+        "load_not_drivers",
         "no_card",
         "not_armed",
         "over_cap",
@@ -165,6 +171,29 @@ describe("the sentences a person sees", () => {
     expect(ADVANCE_APPROVE_NOTICE.no_card).toBe(outcomeSentence("no_card"));
   });
 
+  it("names the load, its cap and what is left when a load's cap refuses", () => {
+    expect(
+      refusalSentence("over_load_cap", {
+        ...numbers,
+        load: { number: "L-1042", capCents: 60_000, openCents: 45_000, mostCents: 14_500 },
+      }),
+    ).toBe("Advances on load L-1042 are capped at $600.00; $450.00 is still open, so $145.00 is the most for this load.");
+    expect(refusalSentence("over_load_cap", numbers)).toBe("This would take advances on this load past the load's cap.");
+    expect(refusalSentence("driver_not_armed", numbers)).toContain("An admin can arm them");
+  });
+
+  it("has its own sentences for Take back and the driver's money panel, from a closed list", () => {
+    expect(takeBackSentence("role")).toBe("Taking back an advance this large needs an admin.");
+    expect(takeBackSentence("over_bound")).toBe(outcomeSentence("over_bound"));
+    expect(takeBackSentence("not_takeable")).toBe(outcomeSentence("not_takeable"));
+    expect(takeBackSentence("Error: socket hang up")).toBe(outcomeSentence("unavailable"));
+    expect(panelSentence("role")).toBe("Only an admin can arm a driver or change their cards.");
+    expect(panelSentence("identity_taken")).toBe("That id already belongs to another driver.");
+    expect(panelSentence("card_not_drivers")).toContain("not one of this driver's active cards");
+    expect(panelSentence("constructor")).toBe(panelSentence("unavailable"));
+    expect(panelSentence("Error: socket hang up at 10.0.0.1")).toBe(panelSentence("unavailable"));
+  });
+
   it("reads a decision note from its codes only", () => {
     expect(decisionNoteSentence(null)).toBeNull();
     expect(decisionNoteSentence("")).toBeNull();
@@ -172,6 +201,9 @@ describe("the sentences a person sees", () => {
       "The numbers changed before approval (exceeds earned share, the amount allowed changed), so nothing was paid.",
     );
     expect(decisionNoteSentence("expired")).toBe("No one decided in time, so it expired.");
+    expect(decisionNoteSentence("advance_cancelled")).toBe(
+      "The advance was taken back before any money moved, so nothing was paid.",
+    );
     expect(decisionNoteSentence("wrong_amount")).toBe("Decision: wrong amount.");
   });
 });
@@ -251,6 +283,11 @@ describe("the record page's buttons", () => {
     decidedAt: "2026-11-02T16:00:00.000Z",
     decidedByMembershipId: "m",
     paidAt: null,
+    loadId: null,
+    takenBackCents: 0,
+    takenBackAt: null,
+    takenBackByMembershipId: null,
+    takebackReason: null,
     ...over,
   });
   const entry = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({
@@ -273,9 +310,9 @@ describe("the record page's buttons", () => {
   });
 
   it("offers nothing for seeded history or while advances are off", () => {
-    expect(actionsFor(advance({ proposalId: null }), [entry()])).toEqual({ retry: false, check: false, post: false });
+    expect(actionsFor(advance({ proposalId: null }), [entry()])).toEqual({ retry: false, check: false, post: false, takeBack: false });
     flags.advancesEnabled = false;
-    expect(actionsFor(advance(), [entry()])).toEqual({ retry: false, check: false, post: false });
+    expect(actionsFor(advance(), [entry()])).toEqual({ retry: false, check: false, post: false, takeBack: false });
   });
 
   it("offers Retry only after a definite failure, under the attempt ceiling", () => {
@@ -302,6 +339,30 @@ describe("the record page's buttons", () => {
     );
     flags.accountingEnabled = false;
     expect(actionsFor(paid, [confirmed]).post).toBe(false);
+  });
+
+  it("offers Take back only with its switch on, once, and never while a payout is in flight", () => {
+    const paid = advance({ status: "paid", paidAt: "2026-11-02T16:01:00.000Z" });
+    const confirmed = entry({ state: "confirmed", failureCategory: null });
+    expect(takeBackOffered(paid, [confirmed])).toBe(false);
+    flags.advanceTakeback = { ...flags.advanceTakeback, enabled: true };
+    expect(takeBackOffered(paid, [confirmed])).toBe(true);
+    expect(actionsFor(paid, [confirmed]).takeBack).toBe(true);
+    expect(takeBackOffered({ ...paid, takenBackAt: "2026-11-03T10:00:00.000Z", takebackReason: "duplicate" }, [confirmed])).toBe(
+      false,
+    );
+    // Unpaid: cancelled only when nothing could still be paid.
+    expect(takeBackOffered(advance(), [])).toBe(true);
+    expect(takeBackOffered(advance(), [entry()])).toBe(true);
+    expect(takeBackOffered(advance(), [entry({ state: "unknown", failureCategory: null })])).toBe(false);
+    expect(takeBackOffered(advance(), [entry({ state: "sent", failureCategory: null })])).toBe(false);
+    expect(takeBackOffered(advance(), [entry(), entry({ id: "l2", attempt: 2, state: "reserved", failureCategory: null })])).toBe(
+      false,
+    );
+    expect(takeBackOffered(advance({ status: "rejected" }), [])).toBe(false);
+    expect(takeBackOffered(advance({ status: "cancelled" }), [])).toBe(false);
+    flags.advancesEnabled = false;
+    expect(takeBackOffered(paid, [confirmed])).toBe(false);
   });
 
   it("shows an outside id by its last four characters only", () => {

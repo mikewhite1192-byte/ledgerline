@@ -246,6 +246,18 @@ export async function clearTenantAgent(admin: Db, tenantId: string): Promise<num
   });
 }
 
+// The arming log (0027) is append-only for the app role, which has no DELETE on it, so the admin
+// login clears the tenant's log before the replace, naming the tenant in the statement because
+// that login skips row-level security. The replace then writes the plan's log again. A row written
+// between this clear and the replace goes with its driver when the replace deletes the drivers
+// (the foreign key cascades). Returns the rows deleted.
+export async function clearTenantArmLog(admin: Db, tenantId: string): Promise<number> {
+  if (!isUuid(tenantId)) throw new Error("not a tenant id; nothing was cleared");
+  return admin.withTenant(tenantId, (q) =>
+    q.execute("DELETE FROM driver_arm_events WHERE tenant_id = CAST($1 AS uuid)", [tenantId]),
+  );
+}
+
 // Inside the tenant transaction: the current tenant is the carrier the plan was built for.
 export async function verifyTenant(q: Queryable, carrier: DemoCarrier): Promise<void> {
   const tenant = await readTenant(q);
@@ -264,17 +276,22 @@ export async function replaceTenantData(
   tenantId: string,
   plan: CarrierPlan,
 ): Promise<SeedReport> {
-  return app.withTenant(tenantId, async (q) => {
-    await verifyTenant(q, plan.carrier);
-    const deleted = await deleteTenantRows(q);
-    const inserted = await insertTenantRows(q, plan.rows);
-    const counts = await countTenantRows(q);
-    const expected = countRows(plan.rows);
-    for (const table of TENANT_TABLES) {
-      if (inserted[table] !== expected[table] || counts[table] !== expected[table]) {
-        throw new Error(`${table}: the rows read back differ from the plan`);
-      }
+  return app.withTenant(tenantId, (q) => replaceInTransaction(q, plan));
+}
+
+// The replace itself, inside a tenant transaction the caller opened (the demo reset runs it after
+// its clear, in the same transaction). Any difference throws, and the caller's transaction rolls
+// back.
+export async function replaceInTransaction(q: Queryable, plan: CarrierPlan): Promise<SeedReport> {
+  await verifyTenant(q, plan.carrier);
+  const deleted = await deleteTenantRows(q);
+  const inserted = await insertTenantRows(q, plan.rows);
+  const counts = await countTenantRows(q);
+  const expected = countRows(plan.rows);
+  for (const table of TENANT_TABLES) {
+    if (inserted[table] !== expected[table] || counts[table] !== expected[table]) {
+      throw new Error(`${table}: the rows read back differ from the plan`);
     }
-    return { deleted, inserted };
-  });
+  }
+  return { deleted, inserted };
 }

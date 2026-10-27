@@ -143,6 +143,9 @@ export type PayConfig = {
   advanceLimitDefaultCents: Cents;
   advanceMaxBpsOfEarned: number;
   advanceMinCents: Cents;
+  // Advances on one load capped at this share of the driver's pay for that load, 0 to 10000.
+  // null means no per-load cap.
+  advancePerLoadBpsOfPay: number | null;
 };
 
 // ---- Operations (migration 0004) ----
@@ -198,6 +201,8 @@ export type DriverRecord = {
   truckUnit: string | null;
   activeFrom: LocalDate;
   activeTo: LocalDate | null;
+  // Armed to receive money, separate from the card. A person arms a driver; nothing else does.
+  moneyArmed: boolean;
 };
 
 // One row per state a load crossed, whole miles. For every load the miles sum to
@@ -325,11 +330,16 @@ export type AdvanceRecord = {
   amountCents: Cents;
   feeCents: Cents;
   status: AdvanceStatus;
-  // Taken back so far; what is left of amount + fee is outstanding.
+  // Recovered from settlements so far.
   recoveredCents: Cents;
   source: AdvanceSource;
   reasonCategory: string | null;
   paidAt: Instant | null;
+  // The load the advance is for, when one was named.
+  loadId: string | null;
+  // Taken back by a person: no longer owed and never recovered. What is left of amount + fee
+  // after recovered and taken back is outstanding.
+  takenBackCents: Cents;
 };
 
 export type SettlementPeriodRecord = {
@@ -458,12 +468,14 @@ export type SettlementResult = {
 // ---- Advances ----
 
 export const ADVANCE_REFUSALS = [
+  "driver_not_armed",
   "driver_inactive",
   "below_minimum",
   "no_unpaid_earnings",
   "over_driver_limit",
   "exceeds_earned_share",
   "possible_duplicate",
+  "over_load_cap",
 ] as const;
 export type AdvanceRefusal = (typeof ADVANCE_REFUSALS)[number];
 
@@ -479,6 +491,9 @@ export type AdvanceInput = {
   paidPeriods: Period[];
   // The driver's advances, any status.
   advances: AdvanceRecord[];
+  // The load the advance is for and the driver's pay on it (load pay plus their accessorial
+  // share), read by the caller. Absent or null: no per-load cap applies.
+  load?: { id: string; payCents: Cents } | null;
 };
 
 export type AdvanceDecision = {
@@ -491,6 +506,15 @@ export type AdvanceDecision = {
   earnedUnpaidCents: Cents;
   openCents: Cents;
   limitCents: Cents;
+  // The per-load cap and what is left under it; null when no load was named or the tenant has
+  // no per-load cap.
+  loadCapCents: Cents | null;
+  loadHeadroomCents: Cents | null;
+  // Outstanding on the driver's other advances for the same load (0 without a load).
+  openOnLoadCents: Cents;
+  // The amount to offer: the request or the most allowed, whichever is less, in whole dollars;
+  // 0 when that is under the minimum or nothing is allowed.
+  suggestedCents: Cents;
   sources: SourceRef[];
 };
 
@@ -510,7 +534,7 @@ export type InvoiceResult =
       sources: SourceRef[];
     };
 
-// ---- The checks: six over pay (checks.ts), one over receivables (receivables.ts) ----
+// ---- The checks: seven over pay (checks.ts), one over receivables (receivables.ts) ----
 
 export const CHECK_NAMES = [
   "duplicate_advance",
@@ -519,6 +543,7 @@ export const CHECK_NAMES = [
   "missing_reimbursement",
   "delivered_without_rate",
   "over_advance_limit",
+  "advance_over_load_cap",
   "payment_on_wrong_invoice",
 ] as const;
 export type CheckName = (typeof CHECK_NAMES)[number];
@@ -532,6 +557,7 @@ export const FINDING_CATEGORIES = [
   "no_reimbursement",
   "rate_missing",
   "over_limit",
+  "over_load_cap",
   "payment_on_wrong_invoice",
   "invoice_overapplied",
 ] as const;
@@ -547,7 +573,7 @@ export type Finding = {
   sources: SourceRef[];
 };
 
-// Everything one tenant holds that the six checks read.
+// Everything one tenant holds that the seven pay checks read.
 export type CheckInput = {
   config: PayConfig;
   drivers: DriverRecord[];

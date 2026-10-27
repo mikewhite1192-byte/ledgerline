@@ -19,6 +19,7 @@ import {
   Tag,
   TextCursorInput,
   Type,
+  WalletCards,
 } from "lucide-react";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
@@ -41,7 +42,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { contrastRatio } from "@/lib/design/contrast";
 import { isHex, parseTokens, type TokenSet } from "@/lib/design/tokens";
 import { recordLabel, sourceLabel } from "@/lib/format/labels";
-import { ChatDemo, ProposalGallery, SheetDemo, ToastDemo, ToastsAtRest } from "./demos";
+import { ChatDemo, MoneyPanelDemo, ProposalGallery, SheetDemo, ToastDemo, ToastsAtRest } from "./demos";
 import { FUEL_CARD_LAST4, LOADS, PAYSTUB, SAMPLE_TENANT, SHORT_WEEK_PAYSTUB, SOURCE_ROWS } from "./sample-data";
 import { anchorFor, loadColumns } from "./shared";
 
@@ -72,6 +73,7 @@ const SECTIONS = [
   { id: "data-table", label: "Data table", icon: <TableIcon aria-hidden /> },
   { id: "proposal-card", label: "Proposal card", icon: <ClipboardCheck aria-hidden /> },
   { id: "fuel-card", label: "Fuel card", icon: <CreditCard aria-hidden /> },
+  { id: "money-panel", label: "Money panel", icon: <WalletCards aria-hidden /> },
   { id: "chat-thread", label: "Chat thread", icon: <MessagesSquare aria-hidden /> },
   { id: "paystub", label: "Paystub", icon: <Receipt aria-hidden /> },
   { id: "states", label: "States", icon: <CircleDashed aria-hidden /> },
@@ -416,6 +418,13 @@ export default function DesignPage() {
               </div>
             </div>
           )}
+        </ModePair>
+
+        <ModePair
+          id="money-panel"
+          note="A driver's page: armed to receive money or not, the ids the dispatch system knows them by, and every card on file with the default marked. Arming and cards are an admin's."
+        >
+          {() => <MoneyPanelDemo />}
         </ModePair>
 
         <ModePair id="chat-thread" wide note="The home. Steps stream in plain English; the newest one is read aloud.">

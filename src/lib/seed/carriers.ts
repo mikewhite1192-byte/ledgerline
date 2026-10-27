@@ -2,8 +2,9 @@ import type { PayConfigKnobs } from "../data/rows";
 
 // The two invented demo carriers. slug, name and timezone must equal the tenant rows that
 // scripts/create-demo-users.ts creates (a unit test compares the two files): the seed refuses a
-// tenant whose row differs, so a wrong database fails before anything is written. Driver email
-// addresses use the reserved .example domains: no real mailbox.
+// tenant whose row differs, so a wrong database fails before anything is written. The demo reset's
+// gate in db/migrations/0025_demo_reset.sql repeats all three (src/lib/seed/reset.test.ts compares
+// it with this list). Driver email addresses use the reserved .example domains: no real mailbox.
 
 export type DemoCarrier = {
   slug: "blue-ridge" | "prairie-wind";
@@ -37,6 +38,7 @@ const BLUE_RIDGE_OPENING: PayConfigKnobs = {
   advance_limit_default_cents: 50000,
   advance_max_bps_of_earned: 5000,
   advance_min_cents: 5000,
+  advance_per_load_bps_of_pay: 4000,
 };
 
 // Detention terms by the customer's place in its carrier's list (not drawn at random, so the
@@ -90,6 +92,7 @@ export const DEMO_CARRIERS: readonly DemoCarrier[] = [
         advance_limit_default_cents: 75000,
         advance_max_bps_of_earned: 6000,
         advance_min_cents: 5000,
+        advance_per_load_bps_of_pay: 5000,
         from_week: 0,
         note: "Opening pay policy",
       },

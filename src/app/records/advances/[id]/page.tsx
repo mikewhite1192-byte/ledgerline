@@ -12,12 +12,14 @@ import { AdvanceFrame, problemOf, ReadFailed, type ReadProblem } from "@/app/adv
 import { cardLineFor, readAdvanceRecord, readShell, type AdvanceRecord, type Shell } from "@/lib/advances/read";
 import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
+import { takebackReasonWords } from "@/lib/advances/takeback-words";
 import { advancesOn } from "@/lib/advances/switches";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { codeToWords, recordLabel } from "@/lib/format/labels";
 import { isUuid } from "@/lib/uuid";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { RecordActionButtons } from "./record-actions";
+import { TakeBack } from "./take-back";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +52,8 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
       </AdvanceFrame>
     );
   }
-  const { advance, driver, card, proposal, ledger, input, eligibility, actions } = record;
+  const { advance, driver, card, proposal, ledger, input, eligibility, actions, load, headroom, siblingsOnLoad, takeback } =
+    record;
   const when = (iso: string | null) => (iso ? formatInstant(iso, shell.timezone) : "Not yet");
   const cardLine = cardLineFor(advance.status, card);
   return (
@@ -65,6 +68,12 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         description={`${advance.requestRef} · driver ${driver.code} · requested ${formatLocalDate(advance.requestedOn)}`}
       />
       <RecordActionButtons advanceId={advance.id} actions={actions} />
+      <TakeBack
+        advanceId={advance.id}
+        offered={actions.takeBack}
+        paid={advance.status === "paid"}
+        stillOwedCents={Math.max(0, advance.amountCents + advance.feeCents - advance.recoveredCents)}
+      />
 
       <Card>
         <CardHeader>
@@ -72,6 +81,11 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         </CardHeader>
         <CardBody>
           <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            <Item label="Driver">
+              <Link href={`/records/drivers/${driver.id}`} className="text-link underline-offset-4 hover:underline">
+                {driver.name}
+              </Link>
+            </Item>
             <Item label="Amount"><Money cents={advance.amountCents} /></Item>
             <Item label="Fee, charged back later"><Money cents={advance.feeCents} /></Item>
             <Item label="Recovered from pay"><Money cents={advance.recoveredCents} /></Item>
@@ -79,6 +93,24 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
             <Item label="Requested">{when(advance.requestedAt)}</Item>
             <Item label="Approved">{when(advance.decidedAt)}</Item>
             <Item label="Paid">{when(advance.paidAt)}</Item>
+            {load ? <Item label="For load">{load.number}</Item> : null}
+            {headroom ? (
+              <Item label="Headroom on this load">
+                <Money cents={headroom.headroomCents} /> of <Money cents={headroom.capCents} /> cap,{" "}
+                <Money cents={headroom.openOnLoadCents} /> open
+              </Item>
+            ) : null}
+            {takeback ? (
+              <Item label="Taken back">
+                {takeback.cents > 0 ? (
+                  <>
+                    <Money cents={takeback.cents} /> on {when(takeback.at)}: {takebackReasonWords(takeback.reason).toLowerCase()}
+                  </>
+                ) : (
+                  <>Cancelled before payout on {when(takeback.at)}: {takebackReasonWords(takeback.reason).toLowerCase()}</>
+                )}
+              </Item>
+            ) : null}
             {cardLine ? (
               <Item label={cardLine.label}>
                 {cardLine.card ? (
@@ -91,6 +123,30 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
           </dl>
         </CardBody>
       </Card>
+
+      {load && siblingsOnLoad.length > 0 ? (
+        <Card>
+          <CardHeader>
+            <div className="grid gap-0.5">
+              <CardTitle>Other advances on this load</CardTitle>
+              <CardDescription>Every other advance this driver has against load {load.number}, newest first.</CardDescription>
+            </div>
+          </CardHeader>
+          <CardBody>
+            <ul className="grid gap-2">
+              {siblingsOnLoad.map((o) => (
+                <li key={o.id} className="flex flex-wrap items-center gap-2 text-body text-foreground">
+                  <Link href={`/records/advances/${o.id}`} className="text-link underline-offset-4 hover:underline">
+                    {o.requestRef}
+                  </Link>
+                  <Money cents={o.amountCents} />
+                  <StatusBadge status={o.status} />
+                </li>
+              ))}
+            </ul>
+          </CardBody>
+        </Card>
+      ) : null}
 
       {proposal ? (
         <Card>

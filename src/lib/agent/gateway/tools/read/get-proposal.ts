@@ -233,9 +233,20 @@ const UNAVAILABLE: Engine = { ok: false, reason: "unavailable" };
 
 const refList = (list: readonly Ref[], n: number) => list.slice(0, n).map((r) => ({ table: r.table, id: r.id }));
 
-async function advanceEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow, amount: number): Promise<Engine> {
+async function advanceEngine(
+  q: Queryable,
+  ctx: GatewayContext,
+  p: ProposalRow,
+  amount: number,
+  args: Record<string, unknown>,
+): Promise<Engine> {
   if (p.subject_table !== "drivers") return UNAVAILABLE;
-  const d = advanceEligibility(await readAdvanceInput(q, p.subject_id, ctx.now.toISOString(), amount));
+  // The load the proposal names, so its per-load cap is asked as the executor will ask it.
+  const loadId = args.loadId === undefined || args.loadId === null ? null : args.loadId;
+  if (loadId !== null && !isUuid(loadId)) return UNAVAILABLE;
+  const input = await readAdvanceInput(q, p.subject_id, ctx.now.toISOString(), amount, loadId);
+  if (loadId !== null && !input.load) return UNAVAILABLE;
+  const d = advanceEligibility(input);
   return {
     ok: true,
     check: "advance_eligibility",
@@ -247,6 +258,8 @@ async function advanceEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow, 
     limitCents: d.limitCents,
     earnedUnpaidCents: d.earnedUnpaidCents,
     openCents: d.openCents,
+    loadCapCents: d.loadCapCents,
+    loadHeadroomCents: d.loadHeadroomCents,
     refusals: [...d.reasons],
     sources: refList(d.sources, MAX_ENGINE_SOURCES),
   };
@@ -497,7 +510,7 @@ async function engineFor(
 ): Promise<Engine> {
   try {
     const amount = Number(p.amount_cents);
-    if (p.kind === "advance_payout") return await advanceEngine(q, ctx, p, amount);
+    if (p.kind === "advance_payout") return await advanceEngine(q, ctx, p, amount, args);
     if (p.kind === "pay_correction") return await payCorrectionEngine(q, args);
     if (p.kind === "invoice_fix") return await invoiceEngine(q, p, args);
     if (p.kind === "load_rate_fill") return await rateFillEngine(q, ctx, p, args);

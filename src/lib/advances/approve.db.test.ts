@@ -19,6 +19,7 @@ import {
   dropTenant,
   makeTenant,
   removeCards,
+  setArmed,
   setCardBehavior,
   sqlStateOf,
   type Fixture,
@@ -32,9 +33,13 @@ import {
   retryAdvancePayout,
   type AdvanceDeps,
 } from "./approve";
+import { armDriver } from "./arming";
+import { addCard as addDriverCard, closeCard as closeDriverCard } from "./identity";
 import { postAdvanceExpense } from "./post-expense";
-import { cardLineFor, readAdvanceList, readAdvanceRecord } from "./read";
+import { cardLineFor, readAdvanceList, readAdvanceRecord, readDeskLoads, readDeskSuggestion, type DeskSuggestion } from "./read";
+import { decisionNoteSentence } from "./reasons";
 import { REQUEST_REF } from "./request";
+import { takeBackAdvance } from "./takeback";
 
 // The advance flow against a real database, as the app's own role, with the registered executor
 // (EXECUTORS) and the mock payment adapter. A person's approval creates the one advances row and
@@ -102,6 +107,9 @@ type Opts = {
   requestRef?: string;
   createdAt?: string;
   tenant?: Fixture;
+  // 0027: the load the advance is for, and the card it pays when not the default.
+  loadId?: string;
+  cardId?: string;
 };
 
 // A waiting advance proposal shaped like the gateway's: the driver is the subject, the args
@@ -144,7 +152,13 @@ async function addProposal(o: Opts = {}): Promise<string> {
         turn,
         driverId,
         amountCents,
-        JSON.stringify({ driverId, amountCents, ...(o.requestRef ? { requestRef: o.requestRef } : {}) }),
+        JSON.stringify({
+          driverId,
+          amountCents,
+          ...(o.requestRef ? { requestRef: o.requestRef } : {}),
+          ...(o.loadId ? { loadId: o.loadId } : {}),
+          ...(o.cardId ? { cardId: o.cardId } : {}),
+        }),
         o.flagged ? transcriptId : null,
         decision,
         `advance_payout:${driverId}:${randomBytes(32).toString("hex")}`,
@@ -373,7 +387,7 @@ describe("the advance flow", () => {
     // Approving again is refused (the proposal is decided); the advance's page retries it.
     expect(await approve(id)).toMatchObject({ ok: false, category: "already_decided" });
     const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
-    expect(record?.actions).toEqual({ retry: true, check: false, post: false });
+    expect(record?.actions).toEqual({ retry: true, check: false, post: false, takeBack: false });
 
     expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: true, status: "paid" });
     expect(await ledger()).toEqual([
@@ -1148,7 +1162,7 @@ describe("the advance flow", () => {
       expect((await proposalRow(id)).status).toBe("failed");
       expect(await advanceCard(adv.id)).toBe(declined.id);
       const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
-      expect(record?.actions).toEqual({ retry: true, check: false, post: false });
+      expect(record?.actions).toEqual({ retry: true, check: false, post: false, takeBack: false });
 
       // With the declined card closed and none active, Retry refuses before the ledger.
       await closeCard(admin, A, A.driverId);
@@ -1249,6 +1263,344 @@ describe("the advance flow", () => {
       expect(summary).toEqual({ checked: 0, confirmed: 0, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 });
       expect(await payouts()).toEqual([expect.objectContaining({ state: "unknown", check_count: 0 })]);
       expect((await flowAdvances())[0].status).toBe("approved");
+    });
+  });
+
+  describe("with 0027: arming, a named card, a load and a take-back", () => {
+    const sim = () => createFuelCardSimAdapter({ log: () => {} });
+    // Read at call time: the databases open in beforeAll.
+    const services = () => ({ db: app, clock });
+
+    // The fixture's member made an admin (the fixture makes staff).
+    const makeAdmin = () =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE memberships SET role = 'admin' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+          A.memberId,
+        ]),
+      );
+    // addPayRules' loads: L-1 is the driver's, L-2 the other driver's.
+    const loadOf = async (number: string) =>
+      (
+        await admin.withTenant(A.tenantId, (q) =>
+          q.query<{ id: string }>(
+            "SELECT CAST(id AS text) AS id FROM loads WHERE tenant_id = current_tenant_id() AND load_number = $1",
+            [number],
+          ),
+        )
+      )[0].id;
+    const setLoadCap = (bps: number | null) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE pay_configs SET advance_per_load_bps_of_pay = $1 WHERE tenant_id = current_tenant_id()", [bps]),
+      );
+    const advanceRow = async (id: string) =>
+      (
+        await admin.withTenant(A.tenantId, (q) =>
+          q.query<{
+            status: string;
+            load_id: string | null;
+            taken_back_cents: string;
+            taken_back_by: string | null;
+            takeback_reason: string | null;
+          }>(
+            `SELECT status, CAST(load_id AS text) AS load_id, CAST(taken_back_cents AS text) AS taken_back_cents,
+                    CAST(taken_back_by_membership_id AS text) AS taken_back_by, takeback_reason
+               FROM advances WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+            [id],
+          ),
+        )
+      )[0];
+    // A refused proposal stays waiting, and a driver has one live proposal at a time: this one is
+    // expired so the next can be made.
+    const expire = (id: string) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE proposals SET status = 'expired', decided_by = 'test-expiry',
+                  decided_at = CAST('2026-11-02T16:00:00Z' AS timestamptz)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [id],
+        ),
+      );
+    const suggestion = async (driverId: string, loadId: string | null, as: Fixture = A) =>
+      app.withTenant(as.tenantId, (q) => readDeskSuggestion(q, driverId, loadId, clock()));
+
+    it("refuses a driver who is not armed before approving, and pays once an admin arms them", async () => {
+      await setArmed(admin, A, A.driverId, false);
+      const id = await addProposal();
+      expect(await approve(id)).toMatchObject({ ok: false, category: "driver_not_armed" });
+      expect(await proposalRow(id)).toMatchObject({ status: "proposed", decided_by: null, money_action_id: null });
+      expect(await flowAdvances()).toEqual([]);
+      expect(await ledger()).toEqual([]);
+      // Only an admin arms a driver (D-034).
+      expect(await armDriver(A.session, A.driverId, { armed: true }, services())).toEqual({
+        ok: false,
+        category: "role",
+        retryable: false,
+      });
+      await makeAdmin();
+      expect(await armDriver(A.session, A.driverId, { armed: true }, services())).toMatchObject({ ok: true, changed: true });
+      expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+      expect(mock.sendCount).toBe(1);
+    });
+
+    it("asks again at a retry: a driver disarmed after a failed payout is paid only once armed again", async () => {
+      await makeAdmin();
+      const id = await addProposal();
+      mock.failNext("rate_limited");
+      expect(await approve(id)).toMatchObject({ ok: false, category: "payout_failed" });
+      const [adv] = await flowAdvances();
+      await armDriver(A.session, A.driverId, { armed: false }, services());
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "driver_not_armed" });
+      expect(await ledger()).toEqual([expect.objectContaining({ state: "failed", attempt: 1 })]);
+      await armDriver(A.session, A.driverId, { armed: true }, services());
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: true, status: "paid" });
+      expect(mock.sendCount).toBe(2);
+    });
+
+    it("pays the card the proposal names, never the default in its place, and refuses one that is not the driver's", async () => {
+      await makeAdmin();
+      const added = await addDriverCard(
+        A.session,
+        A.driverId,
+        { last4: "7788", holderKind: "generic", portalName: "pool card 3", makeDefault: false },
+        services(),
+      );
+      expect(added).toMatchObject({ ok: true, changed: true });
+      const generic = (added as { id: string }).id;
+      const theirs = (await activeCard(A.otherDriverId)).id;
+      const wrong = await addProposal({ cardId: theirs });
+      expect(await approve(wrong, false, deps({ payment: sim() }))).toMatchObject({ ok: false, category: "card_not_drivers" });
+      expect(await proposalRow(wrong)).toMatchObject({ status: "proposed", money_action_id: null });
+      await expire(wrong);
+
+      const id = await addProposal({ cardId: generic, amountCents: 20_000 });
+      expect(await approve(id, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "done" });
+      const [adv] = await flowAdvances();
+      expect(await advanceCard(adv.id)).toBe(generic);
+      const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(record?.card).toEqual({ last4: "7788", status: "active", recorded: true });
+
+      // Once that card is closed, a proposal naming it is refused rather than paid to the default.
+      expect(await closeDriverCard(A.session, A.driverId, generic, services())).toMatchObject({ ok: true, changed: true });
+      const closed = await addProposal({ cardId: generic, amountCents: 10_000 });
+      expect(await approve(closed, false, deps({ payment: sim() }))).toMatchObject({ ok: false, category: "card_not_drivers" });
+      expect(await payouts()).toHaveLength(1);
+    });
+
+    it("records the load an advance is for, and never pays past what is left under the load's cap", async () => {
+      // A quarter of the load's $1,200.00 pay: a $300.00 cap.
+      await setLoadCap(2_500);
+      const [mine, theirs] = [await loadOf("L-1"), await loadOf("L-2")];
+      const notHis = await addProposal({ loadId: theirs, amountCents: 10_000 });
+      expect(await approve(notHis)).toMatchObject({ ok: false, category: "load_not_drivers" });
+      expect(await proposalRow(notHis)).toMatchObject({ status: "proposed" });
+      await expire(notHis);
+
+      const first = await addProposal({ loadId: mine, amountCents: 15_000 });
+      expect(await approve(first)).toMatchObject({ ok: true, status: "done" });
+      const [adv] = await flowAdvances();
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "paid", load_id: mine });
+
+      // $155.00 is open on the load, so $145.00 is left: $160.00 and its $5.00 fee do not fit.
+      const second = await addProposal({ loadId: mine, amountCents: 16_000 });
+      expect(await approve(second)).toEqual({ ok: false, category: "stale_eligibility", retryable: false });
+      expect(await proposalRow(second)).toMatchObject({ status: "failed", decision_note: "stale_eligibility: over_load_cap" });
+      expect(await flowAdvances()).toHaveLength(1);
+      expect(mock.sendCount).toBe(1);
+    });
+
+    it("gives the desk the driver's loads of the last 45 days in the carrier's zone, and the engine's suggestion", async () => {
+      const mine = await loadOf("L-1");
+      const loads = (at: string, as: Fixture = A) => app.withTenant(as.tenantId, (q) => readDeskLoads(q, A.driverId, new Date(at)));
+      expect(await loads("2026-11-02T16:00:00Z")).toEqual([{ id: mine, number: "L-1", deliveredOn: "2026-10-30" }]);
+      // 03:00 UTC on the 30th is still the 29th in Chicago: not delivered there yet.
+      expect(await loads("2026-10-30T03:00:00Z")).toEqual([]);
+      // 45 days: the 13th of December still shows it, the 14th does not.
+      expect(await loads("2026-12-13T16:00:00Z")).toHaveLength(1);
+      expect(await loads("2026-12-14T16:00:00Z")).toEqual([]);
+      expect(await loads("2026-11-02T16:00:00Z", B)).toEqual([]);
+
+      expect(await suggestion(A.driverId, null)).toEqual({
+        armed: true,
+        maxCents: 60_000,
+        suggestedCents: 60_000,
+        feeCents: 500,
+        load: null,
+      });
+      await setLoadCap(2_500);
+      expect(await suggestion(A.driverId, mine)).toEqual({
+        armed: true,
+        maxCents: 29_500,
+        suggestedCents: 29_500,
+        feeCents: 500,
+        load: { capCents: 30_000, openOnLoadCents: 0, headroomCents: 30_000 },
+      });
+      expect(await suggestion(A.driverId, await loadOf("L-2"))).toBe("load_not_drivers");
+      expect(await suggestion(A.driverId, null, B)).toBe("not_found");
+      await setArmed(admin, A, A.driverId, false);
+      expect(await suggestion(A.driverId, null)).toMatchObject({ armed: false, maxCents: 0, suggestedCents: 0 });
+
+      // A newer load whose number the desk's sentence would refuse (lower case, a dot) is never
+      // offered, so the form cannot pick a load the request then turns away.
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO loads (id, tenant_id, load_number, customer_id, driver_id, status, origin_city,
+             origin_state, dest_city, dest_state, pickup_on, delivered_on, delivered_at, loaded_miles,
+             linehaul_cents)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'l-9.b', CAST($2 AS uuid), CAST($3 AS uuid),
+             'delivered', 'Springfield', 'IL', 'Dallas', 'TX', CAST('2026-10-30' AS date),
+             CAST('2026-10-31' AS date), CAST('2026-10-31T20:00:00Z' AS timestamptz), 0, 0)`,
+          [randomUUID(), A.customerId, A.driverId],
+        ),
+      );
+      expect(await loads("2026-11-02T16:00:00Z")).toEqual([{ id: mine, number: "L-1", deliveredOn: "2026-10-30" }]);
+    });
+
+    it("records a take-back on a paid advance once, lowers what is owed, and sends nothing to the card", async () => {
+      flags.advanceTakeback = { enabled: true, maxCents: 100_000 };
+      const id = await addProposal();
+      expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+      const [adv] = await flowAdvances();
+      const before = (await suggestion(A.driverId, null)) as DeskSuggestion;
+      const take = (amountCents: number) => takeBackAdvance(A.session, adv.id, { amountCents, reason: "duplicate" }, services());
+
+      // $250.00 plus the $5.00 fee is owed.
+      expect(await take(25_501)).toEqual({ ok: false, category: "over_bound", retryable: false });
+      expect(await take(20_000)).toEqual({ ok: true, changed: true, status: "paid", takenBackCents: 20_000 });
+      expect(await take(20_000)).toEqual({ ok: true, changed: false, status: "paid", takenBackCents: 20_000 });
+      expect(await take(5_000)).toEqual({ ok: false, category: "already_taken_back", retryable: false });
+
+      expect(await advanceRow(adv.id)).toEqual({
+        status: "paid",
+        load_id: null,
+        taken_back_cents: "20000",
+        taken_back_by: A.memberId,
+        takeback_reason: "duplicate",
+      });
+      const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(record?.takeback).toEqual({ cents: 20_000, at: new Date(NOW).toISOString(), reason: "duplicate" });
+      expect(record?.actions.takeBack).toBe(false);
+      const after = (await suggestion(A.driverId, null)) as DeskSuggestion;
+      expect(after.maxCents - before.maxCents).toBe(20_000);
+      expect(await ledger()).toEqual([expect.objectContaining({ kind: "advance_payout", state: "confirmed", attempt: 1 })]);
+      expect(mock.sendCount).toBe(1);
+    });
+
+    it("refuses in the database a recovery and a take-back that together pass what was lent, by one cent", async () => {
+      const id = await addProposal();
+      expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+      const [adv] = await flowAdvances();
+      const [{ lent }] = await admin.withTenant(A.tenantId, (q) =>
+        q.query<{ lent: string }>(
+          `SELECT CAST(amount_cents + fee_cents AS text) AS lent FROM advances
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [adv.id],
+        ),
+      );
+      // $250.00 plus the $5.00 fee.
+      expect(Number(lent)).toBe(25_500);
+      const takenBack = 20_000;
+      // Each amount alone stays within what was lent, so only the combined bound can refuse it.
+      const set = (recoveredCents: number) =>
+        admin.withTenant(A.tenantId, (q) =>
+          q.execute(
+            `UPDATE advances
+                SET recovered_cents = $2, taken_back_cents = $3,
+                    taken_back_at = CAST('2026-11-02T16:00:00Z' AS timestamptz),
+                    taken_back_by_membership_id = CAST($4 AS uuid), takeback_reason = 'duplicate'
+              WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+            [adv.id, recoveredCents, takenBack, A.memberId],
+          ),
+        );
+      expect(await sqlStateOf(set(Number(lent) - takenBack + 1))).toBe("23514");
+      expect(await advanceRow(adv.id)).toMatchObject({ taken_back_cents: "0", taken_back_by: null });
+      expect(await sqlStateOf(set(Number(lent) - takenBack))).toBe("no error");
+      expect(await advanceRow(adv.id)).toMatchObject({ taken_back_cents: "20000", taken_back_by: A.memberId });
+    });
+
+    it("cancels an advance nothing was paid on, and refuses one whose payout may have moved money", async () => {
+      flags.advanceTakeback = { enabled: true, maxCents: 100_000 };
+      const unpaid = await addAdvance(admin, A, 25_000, "approved");
+      const cancel = (advanceId: string) =>
+        takeBackAdvance(A.session, advanceId, { amountCents: 0, reason: "wrong_driver" }, services());
+      expect(await cancel(unpaid)).toEqual({ ok: true, changed: true, status: "cancelled", takenBackCents: 0 });
+      expect(await cancel(unpaid)).toEqual({ ok: true, changed: false, status: "cancelled", takenBackCents: 0 });
+      expect(await advanceRow(unpaid)).toMatchObject({ status: "cancelled", taken_back_cents: "0", taken_back_by: A.memberId });
+
+      const id = await addProposal();
+      mock.hangNext();
+      expect(await approve(id, false, deps({ timeoutMs: 50 }))).toMatchObject({ ok: true, status: "executing" });
+      const [adv] = await flowAdvances();
+      expect(await cancel(adv.id)).toEqual({ ok: false, category: "not_takeable", retryable: false });
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "approved", taken_back_by: null });
+    });
+
+    it("ends the approval when a take-back cancels a flow advance its payout never reached, and nothing is paid after", async () => {
+      flags.advanceTakeback = { enabled: true, maxCents: 100_000 };
+      const id = await addProposal();
+      const notReady: PaymentAdapter = { ...mock, system: "mock", ready: async () => ({ ok: false, category: "not_configured" }) };
+      expect(await approve(id, false, deps({ payment: notReady }))).toEqual({ ok: false, category: "unavailable", retryable: true });
+      const [adv] = await flowAdvances();
+      expect(adv.status).toBe("requested");
+      expect(await proposalRow(id)).toMatchObject({ status: "executing", money_action_id: null });
+      expect(await ledger()).toEqual([]);
+
+      expect(await takeBackAdvance(A.session, adv.id, { amountCents: 0, reason: "wrong_driver" }, services())).toEqual({
+        ok: true,
+        changed: true,
+        status: "cancelled",
+        takenBackCents: 0,
+      });
+      expect(await proposalRow(id)).toMatchObject({ status: "failed", decision_note: "advance_cancelled", money_action_id: null });
+
+      // Resume and retry both refuse it cleanly; nothing is reserved or sent.
+      expect(await approve(id)).toMatchObject({ ok: false, category: "already_decided" });
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toEqual({
+        ok: false,
+        category: "not_retryable",
+        retryable: false,
+      });
+      expect(await flowAdvances()).toEqual([expect.objectContaining({ id: adv.id, status: "cancelled", paid: false })]);
+      expect(await ledger()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+
+      // The record and the agent's card both show it ended, unpaid, with nothing left to press.
+      const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, adv.id, clock()));
+      expect(record?.proposal).toMatchObject({ status: "failed", decisionNote: "advance_cancelled" });
+      expect(decisionNoteSentence(record?.proposal?.decisionNote ?? null)).toBe(
+        "The advance was taken back before any money moved, so nothing was paid.",
+      );
+      expect(record?.actions).toEqual({ retry: false, check: false, post: false, takeBack: false });
+      const turnId = (
+        await admin.withTenant(A.tenantId, (q) =>
+          q.query<{ turn_id: string }>(
+            "SELECT CAST(turn_id AS text) AS turn_id FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+            [id],
+          ),
+        )
+      )[0].turn_id;
+      const view = await app.withTenant(A.tenantId, (q) => readTurnView(q, A.session.sub, turnId));
+      expect(view?.proposals.find((p) => p.id === id)?.status).toBe("failed");
+    });
+
+    it("asks its own switch, the admin line, the reason and the carrier before recording anything", async () => {
+      const id = await addProposal();
+      expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+      const [adv] = await flowAdvances();
+      const take = (session = A.session, reason = "duplicate") =>
+        takeBackAdvance(session, adv.id, { amountCents: 20_000, reason }, services());
+
+      expect(await take()).toEqual({ ok: false, category: "disabled", retryable: false });
+      flags.advanceTakeback = { enabled: true, maxCents: 100_000 };
+      flags.advancesEnabled = false;
+      expect(await take()).toEqual({ ok: false, category: "disabled", retryable: false });
+      flags.advancesEnabled = true;
+      expect(await take(A.session, "because")).toEqual({ ok: false, category: "bad_request", retryable: false });
+      expect(await take(B.session)).toEqual({ ok: false, category: "not_found", retryable: false });
+      flags.approverRole = { adminAboveCents: 10_000 };
+      expect(await take()).toEqual({ ok: false, category: "role", retryable: false });
+      expect(await advanceRow(adv.id)).toMatchObject({ taken_back_cents: "0", taken_back_by: null });
+      await makeAdmin();
+      expect(await take()).toMatchObject({ ok: true, changed: true });
     });
   });
 });

@@ -2200,6 +2200,60 @@ describe("Muse Spark Open's standby host", () => {
   });
 });
 
+describe("the local replay host override", () => {
+  const LOCAL = "http://127.0.0.1:4010";
+
+  it("in local mode, sends to the loopback host and keeps the real provider and model in the ledger", async () => {
+    vi.stubEnv("AI_HOST_OVERRIDE", LOCAL);
+    const urls: string[] = [];
+    for (const target of ["spark", "wonder", "spark_open"] as const) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps, (url) => {
+        urls.push(url);
+        return Response.json(url.endsWith("/chat/completions") ? basetenAnswer() : metaAnswer());
+      });
+      await complete(target, REQUEST, SESSION, { fetch: fetchFn, db: ledger.db });
+      const [row] = [...ledger.rows.values()];
+      expect(row.provider, target).toBe(target === "spark_open" ? "baseten" : "meta");
+      const modelVar = target === "spark_open" ? "BASETEN_MODEL_ID" : MODEL_VARS[target];
+      expect(row.model, target).toBe(BASE_ENV[modelVar]);
+      expect(row.status, target).toBe("ok");
+    }
+    expect(urls).toEqual([
+      `${LOCAL}/v1/responses`,
+      `${LOCAL}/v1/responses`,
+      `${LOCAL}/v1/chat/completions`,
+    ]);
+  });
+
+  it("with an Aurora cluster configured, refuses every target before any reservation or fetch", async () => {
+    vi.stubEnv("AI_HOST_OVERRIDE", LOCAL);
+    vi.stubEnv("DB_CLUSTER_ARN", "arn:aws:rds:us-east-2:000000000000:cluster:example");
+    for (const [target, call] of Object.entries(CALLS)) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      expect((await refusal(call({ fetch: fetchFn, db: ledger.db }))).category, target).toBe(
+        "not_configured",
+      );
+      expect(ledger.steps, target).toEqual([]);
+      expect(fetchFn, target).not.toHaveBeenCalled();
+    }
+  });
+
+  it("in a production build, refuses every target before any reservation or fetch", async () => {
+    vi.stubEnv("AI_HOST_OVERRIDE", LOCAL);
+    vi.stubEnv("NODE_ENV", "production");
+    for (const [target, call] of Object.entries(CALLS)) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      expect((await refusal(call({ fetch: fetchFn, db: ledger.db }))).category, target).toBe(
+        "not_configured",
+      );
+      expect(ledger.steps, target).toEqual([]);
+    }
+  });
+});
+
 // A real two-frame clip (64x64, 2 fps, H.264), made by scripts/make-dock-clip.ts.
 const CLIP = new Uint8Array(readFileSync(join(__dirname, "../clips/fixtures/tiny.mp4")));
 const CLIP_FRAMES = 2;

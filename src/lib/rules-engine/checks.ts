@@ -1,7 +1,7 @@
 import { advanceLimitOf, assertPayConfig, checkDriver, insuranceApplies } from "./config";
 import { checkDay, checkItem } from "./deductions";
-import { byLoadNumber, checkLoad, isDelivered } from "./load-pay";
-import { assertCents, cents, sub, sum } from "./money";
+import { byLoadNumber, checkLoad, driverPayOnLoad, isDelivered } from "./load-pay";
+import { assertCents, cents, mulBps, sub, sum } from "./money";
 import { byOldest, checkAdvance, DUPLICATE_WINDOW_MS, outstandingCents } from "./recovery";
 import {
   assertDate,
@@ -20,7 +20,7 @@ import {
   type SourceRef,
 } from "./types";
 
-// The six money problems the agent looks for, each a pure function over one tenant's records.
+// The seven money problems the agent looks for, each a pure function over one tenant's records.
 // Findings carry categories, ids and amounts, never prose from the data, and sources[0] is the
 // record at fault. Output order is fixed, whatever order the records arrive in.
 
@@ -228,6 +228,49 @@ export function findOverAdvanceLimit(input: CheckInput): Finding[] {
   return out;
 }
 
+// Outstanding advances for one load over the tenant's per-load cap (the driver's pay on that load
+// x advancePerLoadBpsOfPay). The amount is how far over; sources[0] is the load, then the
+// advances on it, oldest first. No per-load cap configured, no findings. An advance naming a load
+// the input does not hold is a broken read.
+export function findAdvanceOverLoadCap(input: CheckInput): Finding[] {
+  const config = assertPayConfig(input.config);
+  const bps = config.advancePerLoadBpsOfPay;
+  if (bps === null) return [];
+  const drivers = driversById(input);
+  const loads = new Map(input.loads.map((l) => [checkLoad(l).id, l]));
+  const groups = new Map<string, { driver: DriverRecord; load: LoadRecord; open: AdvanceRecord[] }>();
+  for (const a of input.advances.map((x) => checkAdvance(x))) {
+    const driver = driverOf(drivers, a.driverId);
+    if (a.loadId === null || outstandingCents(a) === 0) continue;
+    const load = loads.get(a.loadId);
+    if (!load) throw new InputError(`load ${a.loadId} is not in the check input`);
+    const key = `${a.driverId}:${a.loadId}`;
+    const group = groups.get(key) ?? { driver, load, open: [] };
+    group.open.push(a);
+    groups.set(key, group);
+  }
+  const out: Finding[] = [];
+  const ordered = [...groups.values()].sort(
+    (a, b) =>
+      compareText(a.driver.code, b.driver.code) ||
+      compareText(a.driver.id, b.driver.id) ||
+      byLoadNumber(a.load, b.load),
+  );
+  for (const { driver, load, open } of ordered) {
+    const owed = sum(open.map(outstandingCents));
+    const cap = mulBps(driverPayOnLoad(config, driver, load), bps);
+    if (owed <= cap) continue;
+    out.push({
+      check: "advance_over_load_cap",
+      category: "over_load_cap",
+      driverId: driver.id,
+      amountCents: cents(sub(owed, cap)),
+      sources: [loadRef(load), ...open.sort(byOldest).map(advanceRef)],
+    });
+  }
+  return out;
+}
+
 export function runAllChecks(input: CheckInput): Finding[] {
   return [
     ...findDuplicateAdvances(input),
@@ -236,5 +279,6 @@ export function runAllChecks(input: CheckInput): Finding[] {
     ...findMissingReimbursements(input),
     ...findDeliveredWithoutRate(input),
     ...findOverAdvanceLimit(input),
+    ...findAdvanceOverLoadCap(input),
   ];
 }

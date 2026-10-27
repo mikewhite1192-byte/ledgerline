@@ -5,7 +5,9 @@
       "counts": {
         "customers": 12,
         "drivers": 25,
-        "driver_cards": 25,
+        "driver_cards": 28,
+        "driver_identities": 25,
+        "driver_arm_events": 25,
         "loads": 330,
         "load_state_miles": 1088,
         "load_accessorials": 90,
@@ -17,7 +19,7 @@
         "settlements": 75,
         "settlement_lines": 528,
         "pay_items": 245,
-        "advances": 19,
+        "advances": 21,
         "invoices": 335,
         "customer_payments": 167,
         "payment_applications": 200,
@@ -101,7 +103,7 @@
           "netCents": 2312227
         }
       ],
-      "advancesOutstandingCents": 289881,
+      "advancesOutstandingCents": 292381,
       "receivables": {
         "openByBucket": {
           "current": {
@@ -244,6 +246,8 @@
         "customers": 12,
         "drivers": 25,
         "driver_cards": 25,
+        "driver_identities": 25,
+        "driver_arm_events": 25,
         "loads": 315,
         "load_state_miles": 687,
         "load_accessorials": 103,
@@ -255,7 +259,7 @@
         "settlements": 75,
         "settlement_lines": 553,
         "pay_items": 210,
-        "advances": 18,
+        "advances": 20,
         "invoices": 324,
         "customer_payments": 161,
         "payment_applications": 203,
@@ -278,7 +282,7 @@
           "netCents": 2569512
         }
       ],
-      "advancesOutstandingCents": 316299,
+      "advancesOutstandingCents": 337299,
       "receivables": {
         "openByBucket": {
           "current": {

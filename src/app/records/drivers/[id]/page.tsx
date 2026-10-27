@@ -7,20 +7,33 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody } from "@/components/ui/card";
+import { readDriverIdentity } from "@/lib/advances/identity";
+import { readMember } from "@/lib/advances/member";
+import { advancesOn } from "@/lib/advances/switches";
 import { formatPeriod } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
 import { readDriverRecord } from "@/lib/settlements/views";
 import { readRecordPage } from "../../read-record";
+import { DriverMoney } from "./money-panel";
 
 export const dynamic = "force-dynamic";
 
 const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } as const;
 
 // One driver: who they are and how they are paid, their recent paystubs and advances. Every
-// paystub line cites its driver, so this is where those links land.
+// paystub line cites its driver, so this is where those links land. While advances are on, the
+// money panel too (armed, the ids other systems know them by, the cards on file), and each
+// advance links to its record.
 export default async function DriverRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const page = await readRecordPage(id, (q, driverId) => readDriverRecord(q, driverId));
+  const page = await readRecordPage(id, async (q, driverId, today, session) => {
+    const record = await readDriverRecord(q, driverId);
+    if (record === null) return null;
+    if (!advancesOn()) return { record, advanceLinks: false, money: null };
+    const identity = await readDriverIdentity(q, driverId);
+    const member = await readMember(q, session);
+    return { record, advanceLinks: true, money: identity ? { identity, canAdmin: member.role === "admin" } : null };
+  });
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   if (page.kind === "missing") {
     return (
@@ -29,7 +42,7 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
       </SignedInPage>
     );
   }
-  const d = page.record;
+  const { record: d, advanceLinks, money } = page.record;
   return (
     <SignedInPage tenant={page.shell} current="none" title={d.name}>
       <PageHeader
@@ -37,6 +50,7 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
         description={d.code}
         actions={d.ownInsurance ? <Badge tone="info">Carries own insurance</Badge> : undefined}
       />
+      {money ? <DriverMoney identity={money.identity} canAdmin={money.canAdmin} timezone={page.shell.timezone} /> : null}
       <Card>
         <CardBody>
           <Facts
@@ -85,7 +99,18 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
         rowKey={(a) => a.id}
         empty={{ title: "No advances" }}
         columns={[
-          { key: "on", header: "Requested", cell: (a) => <Day value={a.requestedOn} /> },
+          {
+            key: "on",
+            header: "Requested",
+            cell: (a) =>
+              advanceLinks ? (
+                <RecordLink table="advances" id={a.id}>
+                  <Day value={a.requestedOn} />
+                </RecordLink>
+              ) : (
+                <Day value={a.requestedOn} />
+              ),
+          },
           { key: "status", header: "Status", cell: (a) => <StatusBadge status={a.status} /> },
           { key: "amount", header: "Amount", align: "right", cell: (a) => <Money cents={a.amountCents} tone="plain" /> },
           { key: "recovered", header: "Recovered", align: "right", cell: (a) => <Money cents={a.recoveredCents} tone="plain" /> },
