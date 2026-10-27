@@ -16,6 +16,8 @@
     "test:db:fresh": "tsx scripts/test-db-fresh.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "demo:users": "tsx scripts/create-demo-users.ts",
+    "seed": "tsx scripts/seed.ts",
+    "policy:pdf": "tsx scripts/render-policy-pdf.ts",
     "ai:models": "tsx scripts/ai-models.ts",
     "cdk": "cd infra && cdk"
   },
@@ -33,6 +35,7 @@
     "@aws-sdk/client-sts": "3.1157.0",
     "@eslint/eslintrc": "^3",
     "@types/node": "^22",
+    "@types/pdfkit": "0.17.6",
     "@types/pg": "8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
@@ -41,6 +44,7 @@
     "constructs": "^10.8.1",
     "eslint": "^9",
     "eslint-config-next": "15.5.28",
+    "pdfkit": "0.20.2",
     "tsx": "^4.23.15",
     "typescript": "^5",
     "vitest": "^4.1.12"

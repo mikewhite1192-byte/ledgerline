@@ -1,0 +1,48 @@
+{
+  "source": "harrow-flats-pay-policy.md",
+  "carrier": {
+    "name": "Harrow Flats Trucking",
+    "city": "Pueblo",
+    "state": "CO",
+    "timezone": "America/Denver",
+    "fictitious": true
+  },
+  "effectiveFrom": { "value": "2026-11-02", "section": "1.1" },
+  "config": {
+    "weekStartDow": { "value": 1, "section": "2.1" },
+    "percentBase": { "value": "linehaul_fsc", "section": "3.2" },
+    "emptyMilesPaidBps": { "value": 5000, "section": "3.3" },
+    "accessorialDriverShareBps": { "value": 7500, "section": "4.1" },
+    "insuranceAppliesTo": { "value": "owner_operator", "section": "5.1" },
+    "insurancePerDayCents": { "value": 1050, "section": "5.1" },
+    "escrowTargetCents": { "value": 250000, "section": "6.1" },
+    "escrowPerSettlementCents": { "value": 12500, "section": "6.1" },
+    "netPayFloorCents": { "value": 35000, "section": "6.2" },
+    "advanceFeeCents": { "value": 300, "section": "9.1" },
+    "advanceLimitDefaultCents": { "value": 60000, "section": "9.2" },
+    "advanceMaxBpsOfEarned": { "value": 5000, "section": "9.2" },
+    "advanceMinCents": { "value": 7500, "section": "9.2" },
+    "advanceRecoveryCapCents": { "value": 30000, "section": "9.3" }
+  },
+  "customerDefaults": {
+    "detentionFreeMinutes": { "value": 120, "section": "8.1" },
+    "detentionHourlyCents": { "value": 6000, "section": "8.1" }
+  },
+  "flags": [
+    {
+      "field": "netPayFloorCents",
+      "kind": "conflicting_values",
+      "sections": ["6.2", "9.4"],
+      "values": [35000, 30000]
+    }
+  ],
+  "informational": [
+    { "what": "company long-haul drivers, per loaded mile", "cents": 62, "section": "3.1" },
+    { "what": "company local drivers, per load", "cents": 20000, "section": "3.1" },
+    {
+      "what": "owner-operators, share of linehaul and fuel surcharge",
+      "bps": 7400,
+      "section": "3.2"
+    }
+  ]
+}

@@ -11,7 +11,13 @@ import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { AiProofForm } from "./ai-proof-form";
 
 type ModelLedger = { calls: CallRow[]; spend: Spend };
-type Carrier = { name: string; timezone: string; email: string; ledger: ModelLedger | null };
+type Carrier = {
+  name: string;
+  timezone: string;
+  email: string;
+  counts: { drivers: number; loads: number; periods: number };
+  ledger: ModelLedger | null;
+};
 
 // The signed-in carrier's shell. Every read runs inside withRequestTenant, so this page can only
 // ever see the carrier on the verified token. Signed out: withRequestTenant redirects to /sign-in.
@@ -28,6 +34,14 @@ export default async function Home() {
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
+      // Each count names its tenant, as every read does.
+      const [counts] = await q.query<{ drivers: number; loads: number; periods: number }>(
+        `SELECT (SELECT count(*) FROM drivers WHERE tenant_id = current_tenant_id()) AS drivers,
+                (SELECT count(*) FROM loads WHERE tenant_id = current_tenant_id()) AS loads,
+                (SELECT count(*) FROM settlement_periods WHERE tenant_id = current_tenant_id())
+                  AS periods`,
+      );
+      if (!counts) throw new DbError("unknown");
       // The model check's read-back, from the database on every render: this carrier's newest
       // calls (row-level security applies) and the global spend counter.
       const ledger = flags.aiProofRoute
@@ -37,6 +51,7 @@ export default async function Home() {
         name: tenants[0].name,
         timezone: tenants[0].timezone,
         email: members[0].email,
+        counts,
         ledger,
       };
     });
@@ -55,6 +70,10 @@ export default async function Home() {
           <h2 style={{ marginTop: 24 }}>{carrier.name}</h2>
           <p style={{ marginTop: 8 }}>Time zone: {carrier.timezone}</p>
           <p style={{ marginTop: 8 }}>Signed in as {carrier.email}</p>
+          <p style={{ marginTop: 8 }}>
+            {carrier.counts.drivers} drivers, {carrier.counts.loads} loads,{" "}
+            {carrier.counts.periods} pay periods
+          </p>
           <p style={{ marginTop: 24 }}>
             Drivers, loads and this week&apos;s pay run arrive with the next items.
           </p>

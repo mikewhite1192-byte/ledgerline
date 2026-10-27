@@ -115,7 +115,7 @@ export type TableName = (typeof TABLES)[number];
 // Every computed line and finding cites the rows it came from.
 export type SourceRef = { table: TableName; id: string };
 
-// ---- Per-tenant pay configuration (`pay_configs`, one row per tenant) ----
+// ---- Per-tenant pay configuration (`pay_configs`, one row per version of the rules) ----
 
 export const PERCENT_BASES = ["linehaul", "linehaul_fsc", "linehaul_fsc_accessorials"] as const;
 export type PercentBase = (typeof PERCENT_BASES)[number];
@@ -145,7 +145,7 @@ export type PayConfig = {
   advanceMinCents: Cents;
 };
 
-// ---- Operations (migration 0003) ----
+// ---- Operations (migration 0004) ----
 
 export const WORKER_TYPES = ["company", "owner_operator"] as const;
 export type WorkerType = (typeof WORKER_TYPES)[number];
@@ -173,6 +173,9 @@ export type CustomerRecord = {
   termsDays: number;
   city: string;
   state: string;
+  // Detention terms: minutes free at each stop, then this rate per hour, billed by the quarter.
+  detentionFreeMinutes: number;
+  detentionHourlyCents: Cents;
 };
 
 export type DriverRecord = {
@@ -255,7 +258,7 @@ export type FuelPurchaseRecord = {
   purchaseRef: string;
 };
 
-// ---- Pay (migration 0004) ----
+// ---- Pay (migration 0005) ----
 
 export const PAY_ITEM_KINDS = [
   "fuel",
@@ -505,7 +508,7 @@ export type InvoiceResult =
       sources: SourceRef[];
     };
 
-// ---- The six checks ----
+// ---- The checks: six over pay (checks.ts), one over receivables (receivables.ts) ----
 
 export const CHECK_NAMES = [
   "duplicate_advance",
@@ -514,6 +517,7 @@ export const CHECK_NAMES = [
   "missing_reimbursement",
   "delivered_without_rate",
   "over_advance_limit",
+  "payment_on_wrong_invoice",
 ] as const;
 export type CheckName = (typeof CHECK_NAMES)[number];
 
@@ -526,11 +530,13 @@ export const FINDING_CATEGORIES = [
   "no_reimbursement",
   "rate_missing",
   "over_limit",
+  "payment_on_wrong_invoice",
+  "invoice_overapplied",
 ] as const;
 export type FindingCategory = (typeof FINDING_CATEGORIES)[number];
 
 // Categories and ids only, never prose from the data. sources[0] is the record at fault (the
-// newer advance, the fuel item, the day row, the accessorial, the load, the driver).
+// newer advance, the fuel item, the day row, the accessorial, the load, the driver, the payment).
 export type Finding = {
   check: CheckName;
   category: FindingCategory;
@@ -548,4 +554,120 @@ export type CheckInput = {
   fuelPurchases: FuelPurchaseRecord[];
   items: PayItemRecord[];
   advances: AdvanceRecord[];
+};
+
+// ---- Receivables (section 4.8): customer payments, applications, aging ----
+
+export const PAYMENT_METHODS = ["check", "ach", "wire"] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+export const PAYMENT_SOURCES = ["ui", "email", "seed"] as const;
+export type PaymentSource = (typeof PAYMENT_SOURCES)[number];
+
+// A check, ACH or wire that arrived from a customer. Recorded only: nothing here collects money.
+export type CustomerPaymentRecord = {
+  id: string;
+  customerId: string;
+  // The tenant-local date it arrived.
+  receivedOn: LocalDate;
+  amountCents: Cents;
+  method: PaymentMethod;
+  paymentRef: string;
+  source: PaymentSource;
+  memo: string | null;
+  qboId: string | null;
+};
+
+// Part or all of one payment put against one invoice. A payment's unapplied rest is credit.
+export type PaymentApplicationRecord = {
+  id: string;
+  paymentId: string;
+  invoiceId: string;
+  amountCents: Cents;
+};
+
+// Days past the due date: 0 or fewer is current.
+export const AGING_BUCKETS = ["current", "1_30", "31_60", "61_90", "over_90"] as const;
+export type AgingBucket = (typeof AGING_BUCKETS)[number];
+
+export type ReceivablesInput = {
+  invoices: InvoiceRecord[];
+  payments: CustomerPaymentRecord[];
+  applications: PaymentApplicationRecord[];
+  // The tenant-local date the aging is as of.
+  asOf: LocalDate;
+};
+
+// What the applications say about one invoice. Derived, never stored.
+export type InvoiceStatusResult = {
+  status: Exclude<InvoiceStatus, "void">;
+  balanceCents: Cents;
+  // Applied past the amount; above zero only on an overapplied invoice.
+  overappliedCents: Cents;
+};
+
+export type AgingTotals = Record<AgingBucket, Cents>;
+
+export type ReceivablesAging = {
+  // Customers with an open balance, in customer id order.
+  byCustomer: { customerId: string; buckets: AgingTotals }[];
+  totals: AgingTotals;
+};
+
+// ---- Detention (addendum B3): stop times from the bill of lading, the customer's terms ----
+
+export const STOPS = ["pickup", "delivery"] as const;
+export type Stop = (typeof STOPS)[number];
+
+// A load's arrival and departure at each stop. A stop's two times are both set or both null;
+// null means not known yet, never zero time at the stop.
+export type LoadStopsRecord = {
+  id: string;
+  loadNumber: string;
+  customerId: string | null;
+  deliveredOn: LocalDate | null;
+  pickupArrivedAt: Instant | null;
+  pickupDepartedAt: Instant | null;
+  deliveryArrivedAt: Instant | null;
+  deliveryDepartedAt: Instant | null;
+};
+
+export type StopDetention = {
+  stop: Stop;
+  // Whole minutes from arrival to departure.
+  dwellMinutes: number;
+  overMinutes: number;
+  // Started quarter hours past the free time; each one is billed.
+  quarters: number;
+  cents: Cents;
+};
+
+// A delivered load whose stop times earn detention and that carries no detention charge.
+export type UnbilledDetention = {
+  loadId: string;
+  loadNumber: string;
+  customerId: string;
+  deliveredOn: LocalDate;
+  // Only the stops that earn something.
+  stops: StopDetention[];
+  amountCents: Cents;
+  sources: SourceRef[];
+};
+
+// ---- Collections (addendum B4): how a customer pays, derived from its own history ----
+
+export const PAYMENT_LABELS = ["reliable", "mixed", "repeat_late"] as const;
+export type PaymentLabel = (typeof PAYMENT_LABELS)[number];
+
+export type PaymentProfile = {
+  customerId: string;
+  // Invoices issued in the 180 days before asOf, void ones left out.
+  invoices: number;
+  paidCount: number;
+  // Over paid invoices: days from due to paid, negative is early; null with none paid.
+  medianDaysLate: number | null;
+  // Share of paid invoices paid after the due date, in basis points.
+  lateShareBps: number;
+  paidOver30Late: number;
+  openPast30: number;
+  label: PaymentLabel;
 };

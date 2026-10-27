@@ -1,0 +1,217 @@
+import { sortVersions } from "../data/config-version";
+import { customerOf, loadStopsOf, receivablesInputOf, settlementInputOf } from "../data/records";
+import type { TenantRows } from "../data/rows";
+import { TENANT_TABLES, type TenantTable } from "../data/tables";
+import {
+  ageReceivables,
+  AGING_BUCKETS,
+  agingBucket,
+  findUnbilledDetention,
+  invoiceStatus,
+  lastFullMonthBefore,
+  settleDriver,
+  sum,
+  type AgingBucket,
+} from "../rules-engine";
+import { daysBetween, isWithin, type Period } from "../time/local-date";
+import type { CustomerClass } from "./ar-plan";
+import { fuelAnomalyIds } from "./assert-plan";
+import type { CarrierPlan } from "./plan";
+
+// The numbers that describe one seeded carrier, small enough to read in a review. golden.json is
+// this summary for both carriers at anchor 2026-11-02; golden.test.ts rebuilds the plans and
+// compares, and seed.db.test.ts compares the counts read back from the database.
+
+export type HeroLine = { seq: number; kind: string; label: string; amountCents: number };
+
+export type CarrierSummary = {
+  counts: Record<TenantTable, number>;
+  linehaulCents: number;
+  hero: {
+    code: string;
+    lines: HeroLine[];
+    grossCents: number;
+    deductionsCents: number;
+    netCents: number;
+  } | null;
+  // Net pay over all drivers, per settled week, oldest first.
+  settledNetCents: { periodStart: string; netCents: number }[];
+  advancesOutstandingCents: number;
+  receivables: {
+    openByBucket: Record<AgingBucket, { invoices: number; cents: number }>;
+    paymentsInOpenWeek: number;
+    overappliedInvoices: number;
+  };
+  // The pay rules versions, oldest first, and the settled weeks each one ran.
+  payConfigVersions: {
+    effectiveFrom: string;
+    note: string | null;
+    source: string;
+    insurancePerDayCents: number;
+    settledPeriods: string[];
+  }[];
+  fuelAnomalies: {
+    rule: string;
+    purchaseRef: string;
+    driverCode: string;
+    state: string;
+    gallonsMilli: number;
+    amountCents: number;
+  }[];
+  // Unbilled detention over the last full month before the anchor (the demo's dollar line).
+  detention: {
+    window: Period;
+    loads: { loadNumber: string; stop: string; overMinutes: number; cents: number }[];
+    totalCents: number;
+  };
+  collections: {
+    customerCode: string;
+    class: CustomerClass;
+    invoiceNumber: string;
+    daysLate: number;
+    balanceCents: number;
+  }[];
+};
+
+export function countRows(rows: TenantRows): Record<TenantTable, number> {
+  return Object.fromEntries(TENANT_TABLES.map((t) => [t, rows[t].length])) as Record<
+    TenantTable,
+    number
+  >;
+}
+
+export function summarizePlan(plan: CarrierPlan): CarrierSummary {
+  const { rows, anchor, carrier } = plan;
+  const openWeek: Period = plan.periods[3];
+
+  let hero: CarrierSummary["hero"] = null;
+  if (carrier.heroCode) {
+    const driver = rows.drivers.find((d) => d.code === carrier.heroCode);
+    if (!driver) throw new Error("the hero is missing");
+    const r = settleDriver(settlementInputOf(rows, driver.id, openWeek));
+    hero = {
+      code: driver.code,
+      lines: r.lines.map((l) => ({
+        seq: l.seq,
+        kind: l.kind,
+        label: l.label,
+        amountCents: l.amountCents,
+      })),
+      grossCents: r.grossCents,
+      deductionsCents: r.deductionsCents,
+      netCents: r.netCents,
+    };
+  }
+
+  const settledNetCents = rows.settlement_periods
+    .filter((p) => p.status === "paid")
+    .sort((a, b) => (a.period_start < b.period_start ? -1 : 1))
+    .map((p) => ({
+      periodStart: p.period_start,
+      netCents: rows.settlements
+        .filter((s) => s.period_id === p.id)
+        .reduce((n, s) => n + s.net_cents, 0),
+    }));
+
+  const advancesOutstandingCents = rows.advances
+    .filter((a) => a.status === "approved" || a.status === "paid")
+    .reduce((n, a) => n + a.amount_cents + a.fee_cents - a.recovered_cents, 0);
+
+  const input = receivablesInputOf(rows, anchor);
+  const aging = ageReceivables(input);
+  const applied = new Map<string, number>();
+  for (const a of rows.payment_applications) {
+    applied.set(a.invoice_id, (applied.get(a.invoice_id) ?? 0) + a.amount_cents);
+  }
+  const openByBucket = Object.fromEntries(
+    AGING_BUCKETS.map((b) => [b, { invoices: 0, cents: aging.totals[b] as number }]),
+  ) as CarrierSummary["receivables"]["openByBucket"];
+  let overappliedInvoices = 0;
+  for (const i of rows.invoices) {
+    if (i.status === "void") continue;
+    const s = invoiceStatus(i.amount_cents, applied.get(i.id) ?? 0);
+    if (s.overappliedCents > 0) overappliedInvoices++;
+    if (s.balanceCents > 0) openByBucket[agingBucket(i.due_on, anchor)].invoices++;
+  }
+
+  const periodOf = new Map(rows.settlement_periods.map((p) => [p.id, p.period_start]));
+  const payConfigVersions = sortVersions(rows.pay_configs).map((v) => ({
+    effectiveFrom: v.effective_from,
+    note: v.note,
+    source: v.source,
+    insurancePerDayCents: v.insurance_per_day_cents,
+    settledPeriods: [
+      ...new Set(
+        rows.settlements
+          .filter((s) => s.pay_config_id === v.id)
+          .map((s) => periodOf.get(s.period_id)!),
+      ),
+    ].sort(),
+  }));
+
+  const codeOf = new Map(rows.drivers.map((d) => [d.id, d.code]));
+  const anomalies = fuelAnomalyIds(rows);
+  const fuelAnomalies = (["offRoute", "overTank", "parked"] as const).flatMap((rule) =>
+    anomalies[rule].map((id) => {
+      const f = rows.fuel_purchases.find((x) => x.id === id)!;
+      return {
+        rule,
+        purchaseRef: f.purchase_ref,
+        driverCode: codeOf.get(f.driver_id)!,
+        state: f.state,
+        gallonsMilli: f.gallons_milli,
+        amountCents: f.amount_cents,
+      };
+    }),
+  );
+
+  const window = lastFullMonthBefore(anchor);
+  const unbilled = findUnbilledDetention(
+    rows.loads.map(loadStopsOf),
+    rows.customers.map(customerOf),
+    rows.load_accessorials.map((a) => ({ loadId: a.load_id, kind: a.kind })),
+    window,
+  );
+  const detention = {
+    window,
+    loads: unbilled.flatMap((u) =>
+      u.stops.map((s) => ({
+        loadNumber: u.loadNumber,
+        stop: s.stop,
+        overMinutes: s.overMinutes,
+        cents: s.cents,
+      })),
+    ),
+    totalCents: sum(unbilled.map((u) => u.amountCents)),
+  };
+
+  const customerCode = new Map(rows.customers.map((c) => [c.id, c.code]));
+  const collections = plan.planted.collections.map((k) => {
+    const i = rows.invoices.find((x) => x.id === k.invoiceId)!;
+    return {
+      customerCode: customerCode.get(k.customerId)!,
+      class: k.customerClass,
+      invoiceNumber: i.invoice_number,
+      daysLate: daysBetween(i.due_on, anchor),
+      balanceCents: invoiceStatus(i.amount_cents, applied.get(i.id) ?? 0).balanceCents,
+    };
+  });
+
+  return {
+    counts: countRows(rows),
+    linehaulCents: rows.loads.reduce((n, l) => n + (l.linehaul_cents ?? 0), 0),
+    hero,
+    settledNetCents,
+    advancesOutstandingCents,
+    receivables: {
+      openByBucket,
+      paymentsInOpenWeek: rows.customer_payments.filter((p) => isWithin(p.received_on, openWeek))
+        .length,
+      overappliedInvoices,
+    },
+    payConfigVersions,
+    fuelAnomalies,
+    detention,
+    collections,
+  };
+}
