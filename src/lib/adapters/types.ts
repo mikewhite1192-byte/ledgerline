@@ -183,6 +183,9 @@ export interface AccountingAdapter {
       requestId: string;
       outsideId?: string | null;
       outsideRef?: string | null;
+      // The customer or vendor the document was sent for, from the stored action. When given, a
+      // document found by number that belongs to another party is never read back as ours.
+      partyOutsideId?: string | null;
       applications?: { invoiceOutsideId: string; amountCents: number }[];
     },
     ctx: SendContext,

@@ -218,7 +218,7 @@ describe("QuickBooks bodies", () => {
 describe("QuickBooks replies", () => {
   it("reads a record whole, or not at all", () => {
     expect(recordOf("Invoice", { Id: "901", DocNumber: "BR-INV-1", TotalAmt: 0.1, CustomerRef: { value: "58" } })).toEqual(
-      { id: "901", ref: "BR-INV-1", amountCents: 10, partyId: "58", voided: false, applied: null, unappliedCents: null },
+      { id: "901", ref: "BR-INV-1", amountCents: 10, partyId: "58", voided: false, ourNote: false, applied: null, unappliedCents: null },
     );
     expect(recordOf("Payment", { Id: "5", PaymentRefNum: "CHK-1", TotalAmt: 1.005 })).toMatchObject({
       ref: "CHK-1",

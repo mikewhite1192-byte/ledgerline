@@ -83,7 +83,9 @@ function checkLineCents(c: unknown): number {
 }
 
 const amount = (cents: number) => decimalField(centsToDecimalString(cents));
-const note = (actionId: string) => `LedgerLine action ${actionId}`;
+// The private note every document this adapter makes carries.
+const NOTE_PREFIX = "LedgerLine action ";
+const note = (actionId: string) => `${NOTE_PREFIX}${actionId}`;
 
 function checkAction(actionId: unknown): string {
   return isCanonicalUuid(actionId) ? actionId : fail();
@@ -360,6 +362,8 @@ export type Found = {
   // QuickBooks keeps a voided document: it reads back with a zero total and a private note that
   // starts "Voided" (measured 2026-10-27).
   voided: boolean;
+  // Whether the private note starts the way ours do. Logged only, never a reason to adopt.
+  ourNote: boolean;
   // Payment only, null for other types: the applied lines, null when one is out of shape.
   applied: AppliedLine[] | null;
   // Payment only, null for other types: the cents left unapplied, null when unreadable.
@@ -420,6 +424,7 @@ export function recordOf(type: EntityType, raw: unknown): Found | null {
     amountCents: cents(r.TotalAmt),
     partyId: party,
     voided: typeof r.PrivateNote === "string" && r.PrivateNote.startsWith("Voided"),
+    ourNote: typeof r.PrivateNote === "string" && r.PrivateNote.startsWith(NOTE_PREFIX),
     applied: payment ? appliedLines(r.Line) : null,
     unappliedCents: payment ? cents(r.UnappliedAmt) : null,
   };

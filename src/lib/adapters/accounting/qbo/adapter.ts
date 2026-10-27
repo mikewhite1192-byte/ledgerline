@@ -282,7 +282,7 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     }
     const why = mismatchOf(type, row, built, { amount: true });
     if (why) return notOurs(type, why);
-    client.log(`qbo: ${type} adopted by number`);
+    client.log(`qbo: ${type} adopted by number id=${row.id}${row.ourNote ? "" : " hand-made"}`);
     return confirmed(type, row, built.docNumber);
   }
 
@@ -357,7 +357,8 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     // the row stays unknown. Nothing here ever posts; a replay is the caller's: the same create
     // with the same context. A voided document reads back canceled (no money moved); a payment
     // QuickBooks applied short of what was asked throws amount_mismatch, so the row stays
-    // unknown for a person and is never confirmed.
+    // unknown for a person and is never confirmed. A single document with our number that
+    // belongs to another party is not ours: not found, and a replay's own look refuses it too.
     async readBack(q, ref, ctx): Promise<ReadBack> {
       checkContext(ctx);
       if (!(DOC_TYPES as readonly unknown[]).includes(ref?.type) || ref.requestId !== ctx.requestId) {
@@ -366,6 +367,10 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
       const type = ref.type as DocType;
       // A payment is judged by how it was applied, so its read-back must say what was asked.
       const asked = type === "Payment" ? checkApplications(ref.applications) : null;
+      const party =
+        ref.partyOutsideId === undefined || ref.partyOutsideId === null
+          ? null
+          : checkOutsideId(ref.partyOutsideId);
       const opened = await client.connection(q, ctx.timeoutMs, { write: false });
       let found: Found | null = null;
       if (ref.outsideId) {
@@ -389,6 +394,10 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
           // Two or more documents carry our number: nobody can tell which is ours.
           client.log(`qbo: ${type} read-back duplicate`);
           throw new MoneyError("duplicate");
+        }
+        if (party !== null && rows[0].partyId !== party) {
+          client.log(`qbo: ${type} number held by another party`);
+          return { found: false };
         }
         found = rows[0];
       } else {

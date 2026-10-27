@@ -351,11 +351,22 @@ describe("QuickBooks adapter: a document number already held", () => {
   });
 
   it("adopts a single match under a new requestid instead of making a second document", async () => {
-    const { adapter, sent, lines, db } = make([held("Invoice", invoiceReply().Invoice)]);
+    const ours = { ...invoiceReply().Invoice, PrivateNote: `LedgerLine action ${ACTION}` };
+    const { adapter, sent, lines, db } = make([held("Invoice", ours)]);
     const out = await adapter.createInvoice(db, invoice({ actionId: OTHER_ACTION }), ctx(OTHER_ACTION));
     expect(out).toMatchObject({ kind: "confirmed", id: "901", amountCents: 281_005 });
     expect(posts(sent)).toBe(0);
-    expect(lines.join("\n")).toContain("adopted by number");
+    expect(lines).toContain("qbo: Invoice adopted by number id=901");
+    expect(lines.join("\n")).not.toContain("hand-made");
+  });
+
+  it("tags an adopted document without our private note as hand-made in the log", async () => {
+    for (const row of [invoiceReply().Invoice, { ...invoiceReply().Invoice, PrivateNote: "Entered by hand" }]) {
+      const { adapter, sent, lines, db } = make([held("Invoice", row)]);
+      expect(await adapter.createInvoice(db, invoice(), ctx())).toMatchObject({ kind: "confirmed", id: "901" });
+      expect(posts(sent)).toBe(0);
+      expect(lines).toContain("qbo: Invoice adopted by number id=901 hand-made");
+    }
   });
 
   it("never posts when two documents carry the number", async () => {
@@ -572,6 +583,50 @@ describe("QuickBooks adapter: read-back", () => {
     expect(
       await none.adapter.readBack(none.db, ref({ outsideId: null, outsideRef: "BR-INV-1001" }), ctx()),
     ).toEqual({ found: false });
+  });
+
+  it("never reads a document found by number as ours when it belongs to another party", async () => {
+    const byNumber = (partyOutsideId?: string | null) =>
+      ref({ outsideId: null, outsideRef: "BR-INV-1001", partyOutsideId });
+    // Another customer's document, or one with no readable party: not ours, nothing posted.
+    for (const row of [invoiceReply(2810.05, "77").Invoice, { ...invoiceReply().Invoice, CustomerRef: undefined }]) {
+      const other = make([held("Invoice", row)]);
+      expect(await other.adapter.readBack(other.db, byNumber("58"), ctx()), JSON.stringify(row)).toEqual({
+        found: false,
+      });
+      expect(other.sent.map((r) => r.method)).toEqual(["GET"]);
+      expect(other.lines).toContain("qbo: Invoice number held by another party");
+    }
+    // The same customer: found as before.
+    const same = make([held("Invoice", invoiceReply().Invoice)]);
+    expect(await same.adapter.readBack(same.db, byNumber("58"), ctx())).toMatchObject({
+      found: true,
+      id: "901",
+      status: "succeeded",
+    });
+    expect(same.lines.join("\n")).not.toContain("another party");
+    // No party given: unchanged, the single match is read back.
+    for (const party of [undefined, null]) {
+      const open = make([held("Invoice", invoiceReply(2810.05, "77").Invoice)]);
+      expect(await open.adapter.readBack(open.db, byNumber(party), ctx())).toMatchObject({
+        found: true,
+        id: "901",
+      });
+    }
+  });
+
+  it("refuses a malformed party before sending anything", async () => {
+    const { adapter, sent, db } = make([]);
+    for (const partyOutsideId of ["", "58 ", "5a", 58]) {
+      await expect(
+        adapter.readBack(
+          db,
+          ref({ outsideId: null, outsideRef: "BR-INV-1001", partyOutsideId }) as never,
+          ctx(),
+        ),
+      ).rejects.toMatchObject({ category: "validation" });
+    }
+    expect(sent).toHaveLength(0);
   });
 
   it("throws on two documents with one number, and on an unreadable answer", async () => {
