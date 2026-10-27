@@ -3,6 +3,8 @@ import {
   cents,
   driverPayOnLoad,
   type AdvanceInput,
+  type CashFridayInput,
+  type CashFridayLimits,
   type CheckInput,
   type CustomerRecord,
   type LoadRecord,
@@ -19,6 +21,7 @@ import {
 import { isUuid } from "../uuid";
 import { configFor, configForDay, sortVersions } from "./config-version";
 import {
+  cashFridayInputOf,
   checkInputOf,
   customerOf,
   driverOf,
@@ -286,6 +289,37 @@ export async function readReceivablesInput(
       payment_applications: await readTable(q, "payment_applications"),
     },
     asOf,
+  );
+}
+
+// Everything Cash Friday reads, whole, for the current tenant (design 4.2). SELECT only; the zone
+// is the tenant's own, used to turn paid instants into dates.
+export async function readCashFridayInput(
+  q: Queryable,
+  zone: string,
+  limits: CashFridayLimits,
+): Promise<CashFridayInput> {
+  return cashFridayInputOf(
+    {
+      pay_configs: await readTable(q, "pay_configs"),
+      settlement_periods: await readTable(q, "settlement_periods"),
+      settlements: await readTable(q, "settlements"),
+      drivers: await readTable(q, "drivers"),
+      loads: await readTable(q, "loads"),
+      load_state_miles: await readTable(q, "load_state_miles"),
+      load_accessorials: await readTable(q, "load_accessorials"),
+      driver_days: await readTable(q, "driver_days"),
+      pay_items: await readTable(q, "pay_items"),
+      deduction_schedules: await readTable(q, "deduction_schedules"),
+      advances: await readTable(q, "advances"),
+      invoices: await readTable(q, "invoices"),
+      customer_payments: await readTable(q, "customer_payments"),
+      payment_applications: await readTable(q, "payment_applications"),
+      vendor_bills: await readTable(q, "vendor_bills"),
+      cash_settings: await readTable(q, "cash_settings"),
+    },
+    zone,
+    limits,
   );
 }
 

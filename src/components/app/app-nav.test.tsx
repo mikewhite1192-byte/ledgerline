@@ -12,6 +12,7 @@ const saved = {
   customerPayments: flags.customerPaymentsEnabled,
   voiceIntake: flags.voiceIntakeEnabled,
   clips: flags.clipsEnabled,
+  cashFriday: flags.cashFridayEnabled,
 };
 afterEach(() => {
   flags.driverNotesEnabled = saved.driverNotes;
@@ -23,6 +24,7 @@ afterEach(() => {
   flags.customerPaymentsEnabled = saved.customerPayments;
   flags.voiceIntakeEnabled = saved.voiceIntake;
   flags.clipsEnabled = saved.clips;
+  flags.cashFridayEnabled = saved.cashFriday;
 });
 
 const shape = (current: NavKey) => appNav(current).map((i) => [i.href, i.label, i.current ?? false]);
@@ -103,6 +105,7 @@ describe("appNav", () => {
     flags.voiceIntakeEnabled = true;
     flags.clipsEnabled = true;
     flags.portalRunnerEnabled = true;
+    flags.cashFridayEnabled = true;
     expect(shape("/invoices")).toEqual([
       ["/", "Home", false],
       ["/sweep", "Sweep", false],
@@ -111,10 +114,18 @@ describe("appNav", () => {
       ["/driver-notes", "Driver notes", false],
       ["/invoices", "Invoices", true],
       ["/customer-payments/new", "Payments", false],
+      ["/cash", "Cash", false],
       ["/voice-notes", "Voice notes", false],
       ["/clips", "Dock clips", false],
       ["/models", "Meta models", false],
       ["/portal-runs", "Portal runs", false],
     ]);
+  });
+
+  it("lists Cash only while Cash Friday is switched on", () => {
+    flags.cashFridayEnabled = false;
+    expect(shape("/").map(([href]) => href)).not.toContain("/cash");
+    flags.cashFridayEnabled = true;
+    expect(appNav("/cash").find((i) => i.current)).toMatchObject({ href: "/cash", label: "Cash" });
   });
 });

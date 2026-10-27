@@ -303,6 +303,47 @@ export type ScreeningRow = {
   expires_at: string | null;
 };
 
+export type VendorBillRow = {
+  id: string;
+  bill_ref: string;
+  vendor_name: string;
+  category: "fuel_supplier" | "insurance" | "maintenance" | "tolls" | "software" | "lease" | "other";
+  amount_cents: number;
+  due_on: string;
+  urgency: "fixed" | "flexible";
+  status: "open" | "deferred" | "paid";
+  deferred_to: string | null;
+  paid_on: string | null;
+  proposal_id: string | null;
+};
+
+export type CashSettingsRow = {
+  id: string;
+  bank_balance_cents: number;
+  balance_as_of: string;
+  pay_day_dow: number;
+  factoring_advance_bps: number;
+  factoring_fee_bps: number;
+};
+
+// One Cash Friday check as stored: figures, lines and options are the engine's own output (cents,
+// dates, ids), explanation the verified paragraph or null with explain_category saying why.
+export type CashCheckRow = {
+  id: string;
+  period_id: string;
+  as_of: string;
+  pay_day: string;
+  figures: Record<string, unknown>;
+  lines: unknown[];
+  options: unknown[];
+  gap_cents: number;
+  pay_run_source: "stored" | "preview";
+  explanation: string | null;
+  explain_call_id: string | null;
+  explain_category: string | null;
+  created_by: string;
+};
+
 export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
@@ -326,6 +367,9 @@ export type TenantRows = {
   payment_applications: PaymentApplicationRow[];
   untrusted_inputs: UntrustedInputRow[];
   screenings: ScreeningRow[];
+  vendor_bills: VendorBillRow[];
+  cash_settings: CashSettingsRow[];
+  cash_checks: CashCheckRow[];
 };
 
 // Compile-time proof that TenantRows has exactly one key per table.

@@ -19,6 +19,8 @@ import {
   wonderCapNanocents,
 } from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
+import { dayWords, dollars } from "@/lib/cash/explain";
+import { readCashHome, type CashHome } from "@/lib/cash/view";
 import { DbError } from "@/lib/db";
 import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
 import type { TurnView } from "@/lib/agent/view";
@@ -121,6 +123,17 @@ export default async function Home({
     }
   }
 
+  // Friday's pay run, when Cash Friday is on: the latest check's verdict, or that there is none.
+  // A failed read leaves the card out (undefined), never "not checked".
+  let cashHome: CashHome | null | undefined;
+  if (carrier && flags.cashFridayEnabled) {
+    try {
+      cashHome = await readCashHome(carrier.session);
+    } catch (err) {
+      console.error("cash home read failed:", err instanceof Error ? err.name : "unknown");
+    }
+  }
+
   if (!carrier) {
     return (
       <main className="flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
@@ -164,6 +177,7 @@ export default async function Home({
           composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
         />
       )}
+      {cashHome !== undefined ? <FridayPay home={cashHome} /> : null}
       {lastSweep ? <LastSweep run={lastSweep} /> : null}
       <RecordCounts counts={carrier.counts} />
       {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
@@ -172,11 +186,31 @@ export default async function Home({
 }
 
 // Shown before the agent can answer; they light up when it can.
-const SUGGESTIONS = homeSuggestions(flags.reportsEnabled);
+const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, flags.cashFridayEnabled);
 
 // Offered only while the detention tools are switched on, so the chip never asks for a tool the
 // agent does not have.
 const DETENTION_SUGGESTION = { id: "unbilled-detention", label: "Find detention we never billed last month" };
+
+// "Friday's pay run: Short by $6,800.00", one click from the Cash page.
+function FridayPay({ home }: { home: CashHome | null }) {
+  const short = home !== null && home.gapCents < 0;
+  return (
+    <section aria-label="Friday's pay run" className="mx-auto mt-12 w-full max-w-[720px]">
+      <StatCard
+        label="Friday's pay run"
+        value={home === null ? "Not checked yet" : short ? `Short by ${dollars(home.gapCents)}` : "Covered"}
+        hint={
+          home === null
+            ? "Check it on the Cash page"
+            : `For ${dayWords(home.payDay)}. See the figures and ways to cover it`
+        }
+        href="/cash"
+        tone={short ? "destructive" : "neutral"}
+      />
+    </section>
+  );
+}
 
 // "Last sweep: 7 problems, 5 fixes drafted, 2 approved", one click from the run.
 function LastSweep({ run }: { run: SweepRunView }) {

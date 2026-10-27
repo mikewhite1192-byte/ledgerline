@@ -1,4 +1,4 @@
-import { AudioLines, Cpu, FileText, Globe, HandCoins, House, NotebookPen, ScanSearch, Video, Wallet } from "lucide-react";
+import { AudioLines, Banknote, Cpu, FileText, Globe, HandCoins, House, NotebookPen, ScanSearch, Video, Wallet } from "lucide-react";
 import { flags } from "@/config/flags";
 import type { NavItem } from "./nav-list";
 
@@ -18,6 +18,7 @@ const ITEMS = [
     icon: <Wallet aria-hidden />,
     shown: () => flags.customerPaymentsEnabled === true,
   },
+  { href: "/cash", label: "Cash", icon: <Banknote aria-hidden />, shown: () => flags.cashFridayEnabled === true },
   { href: "/voice-notes", label: "Voice notes", icon: <AudioLines aria-hidden />, shown: () => flags.voiceIntakeEnabled === true },
   { href: "/clips", label: "Dock clips", icon: <Video aria-hidden />, shown: () => flags.clipsEnabled === true },
   { href: "/models", label: "Meta models", icon: <Cpu aria-hidden />, shown: () => true },

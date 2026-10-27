@@ -1,0 +1,696 @@
+import { describe, expect, it } from "vitest";
+import { addDays } from "../time/local-date";
+import {
+  billDeferOption,
+  billsDue,
+  computeCashFriday,
+  expectedReceipts,
+  payDayFor,
+  typicalDaysLate,
+} from "./cash-friday";
+import { settleDriver } from "./settlement";
+import { advance, BLUE_RIDGE, c, driver, load } from "./test-records";
+import {
+  InputError,
+  type AdvanceRecord,
+  type CashFridayInput,
+  type CashPosition,
+  type CustomerPaymentRecord,
+  type InvoiceRecord,
+  type PaidOn,
+  type PaymentApplicationRecord,
+  type PaymentProfile,
+  type SettlementInput,
+  type SettlementRecord,
+  type VendorBillRecord,
+} from "./types";
+
+// The golden week: the open period is Monday Oct 26 to Sunday Nov 1, so pay day (Friday) is Nov 6,
+// and the check runs on Monday Nov 2. The bank balance is as of Nov 1.
+const AS_OF = "2026-11-02";
+const PERIOD = { id: "per-open", periodStart: "2026-10-26", periodEnd: "2026-11-01", status: "open" as const };
+const CLOSED = { id: "per-closed", periodStart: "2026-10-19", periodEnd: "2026-10-25", status: "paid" as const };
+const LIMITS = { graceDays: 14, factoringMaxAgeDays: 45, maxFactorInvoices: 3, maxChaseCustomers: 2 };
+const SETTINGS = {
+  id: "cash-1",
+  bankBalanceCents: c(200_000),
+  balanceAsOf: "2026-11-01",
+  payDayDow: 5,
+  factoringAdvanceBps: 9000,
+  factoringFeeBps: 300,
+};
+
+function invoice(over: Partial<InvoiceRecord> & { id: string; customerId: string }): InvoiceRecord {
+  return {
+    source: "load",
+    loadId: `load-${over.id}`,
+    invoiceNumber: `INV-${over.id}`,
+    amountCents: c(10_000),
+    issuedOn: "2026-10-01",
+    dueOn: "2026-10-31",
+    status: "open",
+    paidOn: null,
+    qboId: null,
+    ...over,
+  };
+}
+
+function payment(id: string, customerId: string, receivedOn: string, amount: number): CustomerPaymentRecord {
+  return {
+    id,
+    customerId,
+    receivedOn,
+    amountCents: c(amount),
+    method: "ach",
+    paymentRef: `REF-${id}`,
+    source: "seed",
+    memo: null,
+    qboId: null,
+  };
+}
+
+function applied(id: string, paymentId: string, invoiceId: string, amount: number): PaymentApplicationRecord {
+  return { id, paymentId, invoiceId, amountCents: c(amount) };
+}
+
+// A paid invoice of the customer's history: issued 30 days before due, paid `late` days after due.
+function history(customerId: string, n: number, dueOn: string, late: number) {
+  const id = `${customerId}-h${n}`;
+  const paidOn = addDays(dueOn, late);
+  return {
+    invoice: invoice({ id, customerId, amountCents: c(10_000), issuedOn: addDays(dueOn, -30), dueOn, status: "paid" }),
+    payment: payment(`${id}-p`, customerId, paidOn, 10_000),
+    application: applied(`${id}-a`, `${id}-p`, id, 10_000),
+  };
+}
+
+function settlement(over: Partial<SettlementRecord & PaidOn> & { id: string }): SettlementRecord & PaidOn {
+  return {
+    periodId: PERIOD.id,
+    driverId: "drv-1",
+    status: "draft",
+    grossCents: c(0),
+    deductionsCents: c(0),
+    netCents: c(0),
+    carryForwardCents: c(0),
+    exceptionCount: 0,
+    paidAt: null,
+    paidOn: null,
+    ...over,
+  };
+}
+
+function cashAdvance(over: Partial<AdvanceRecord & PaidOn> & { id: string }): AdvanceRecord & PaidOn {
+  return { ...advance(over), paidOn: over.paidOn ?? null };
+}
+
+function bill(over: Partial<VendorBillRecord> & { id: string }): VendorBillRecord {
+  return {
+    billRef: `BILL-${over.id.toUpperCase()}`,
+    vendorName: "Sample Vendor",
+    category: "maintenance",
+    amountCents: c(10_000),
+    dueOn: "2026-11-04",
+    urgency: "fixed",
+    status: "open",
+    deferredTo: null,
+    paidOn: null,
+    ...over,
+  };
+}
+
+// Customers: R reliable (always on the due date), M mixed (one of four late, median -1.5 days),
+// N new (nothing paid yet), L repeat late (both paid 20 days late).
+const HISTORY = [
+  ...[1, 2, 3, 4, 5].map((n) => history("cust-r", n, `2026-09-0${n}`, 0)),
+  ...[-3, -2, -1, 4].map((late, i) => history("cust-m", i + 1, `2026-09-1${i}`, late)),
+  ...[1, 2].map((n) => history("cust-l", n, `2026-08-0${n}`, 20)),
+];
+
+const OPEN_INVOICES: InvoiceRecord[] = [
+  invoice({ id: "R1", customerId: "cust-r", amountCents: c(100_000), issuedOn: "2026-10-06", dueOn: "2026-11-05" }),
+  invoice({ id: "R2", customerId: "cust-r", amountCents: c(50_000), issuedOn: "2026-10-21", dueOn: "2026-11-20" }),
+  invoice({ id: "R3", customerId: "cust-r", amountCents: c(70_000), issuedOn: "2026-09-01", dueOn: "2026-11-25" }),
+  invoice({
+    id: "R4",
+    customerId: "cust-r",
+    source: "opening",
+    loadId: null,
+    amountCents: c(20_000),
+    issuedOn: "2026-10-30",
+    dueOn: "2026-12-01",
+  }),
+  invoice({ id: "M1", customerId: "cust-m", amountCents: c(100_000), issuedOn: "2026-10-08", dueOn: "2026-11-07" }),
+  invoice({ id: "M2", customerId: "cust-m", amountCents: c(60_005), issuedOn: "2026-10-31", dueOn: "2026-11-30" }),
+  invoice({ id: "N1", customerId: "cust-n", amountCents: c(30_000), issuedOn: "2026-09-30", dueOn: "2026-10-30" }),
+  invoice({ id: "L1", customerId: "cust-l", amountCents: c(40_000), issuedOn: "2026-08-02", dueOn: "2026-09-01" }),
+  invoice({ id: "L2", customerId: "cust-l", amountCents: c(25_000), issuedOn: "2026-10-11", dueOn: "2026-11-10" }),
+  invoice({ id: "V1", customerId: "cust-r", amountCents: c(90_000), status: "void", dueOn: "2026-11-03" }),
+];
+
+const BILLS: VendorBillRecord[] = [
+  bill({ id: "b1", amountCents: c(40_000), dueOn: "2026-11-04", urgency: "fixed" }),
+  bill({ id: "b2", amountCents: c(25_000), dueOn: "2026-11-05", urgency: "flexible" }),
+  bill({ id: "b3", amountCents: c(30_000), dueOn: "2026-11-06", urgency: "flexible" }),
+  bill({ id: "b4", amountCents: c(90_000), dueOn: "2026-11-07", urgency: "flexible" }),
+  bill({ id: "b5", amountCents: c(10_000), dueOn: "2026-10-30", status: "deferred", deferredTo: "2026-11-06" }),
+  bill({ id: "b6", amountCents: c(60_000), dueOn: "2026-11-03", status: "deferred", deferredTo: "2026-11-13" }),
+  bill({ id: "b7", amountCents: c(70_000), dueOn: "2026-11-02", status: "paid", paidOn: "2026-11-02" }),
+];
+
+function golden(over: Partial<CashFridayInput> = {}): CashFridayInput {
+  return {
+    settings: SETTINGS,
+    periods: [CLOSED, PERIOD],
+    settlements: [
+      // Paid for last week on Nov 2: inside the window, so it has left the bank.
+      settlement({ id: "s-paid", periodId: CLOSED.id, status: "paid", netCents: c(5_000), paidOn: "2026-11-02" }),
+      settlement({ id: "s-draft", status: "draft", netCents: c(150_000) }),
+      settlement({ id: "s-approved", driverId: "drv-2", status: "approved", netCents: c(120_000) }),
+      // A row already paid (before the balance date) is not part of the run.
+      settlement({ id: "s-early", driverId: "drv-3", status: "paid", netCents: c(999_000), paidOn: "2026-10-30" }),
+    ],
+    previews: null,
+    advances: [
+      cashAdvance({ id: "a1", status: "paid", amountCents: c(30_000), paidOn: "2026-11-02" }),
+      cashAdvance({ id: "a2", status: "paid", amountCents: c(40_000), paidOn: "2026-10-30" }),
+      cashAdvance({ id: "a3", status: "requested", amountCents: c(20_000), paidAt: null }),
+      cashAdvance({ id: "a4", status: "approved", amountCents: c(15_000), paidAt: null }),
+      cashAdvance({ id: "a5", status: "rejected", amountCents: c(50_000), paidAt: null }),
+    ],
+    invoices: [...HISTORY.map((h) => h.invoice), ...OPEN_INVOICES],
+    payments: [
+      ...HISTORY.map((h) => h.payment),
+      // Received on Nov 2: inside the window. Part of it pays M1.
+      payment("pay-m1", "cust-m", "2026-11-02", 19_999),
+      // Received on the balance date: already in the balance.
+      payment("pay-old", "cust-r", "2026-11-01", 70_000),
+    ],
+    applications: [...HISTORY.map((h) => h.application), applied("app-m1", "pay-m1", "M1", 19_999)],
+    bills: BILLS,
+    limits: LIMITS,
+    ...over,
+  };
+}
+
+function position(input: CashFridayInput, asOf = AS_OF): CashPosition {
+  const result = computeCashFriday(input, asOf);
+  if (!result.ok) throw new Error(`refused: ${result.refusal}`);
+  return result;
+}
+
+describe("computeCashFriday on the golden week", () => {
+  const result = position(golden());
+
+  it("finds pay day and the open week", () => {
+    expect(result.payDay).toBe("2026-11-06");
+    expect(result.periodId).toBe(PERIOD.id);
+    expect(result.period).toEqual({ start: "2026-10-26", end: "2026-11-01" });
+    expect(result.payRunSource).toBe("stored");
+  });
+
+  it("computes every figure to the cent", () => {
+    expect(result.figures).toEqual({
+      bankBalanceCents: 200_000,
+      balanceAsOf: "2026-11-01",
+      paymentsSinceCents: 19_999,
+      advancesPaidSinceCents: 30_000,
+      settlementsPaidSinceCents: 5_000,
+      cashOnHandCents: 184_999,
+      expectedReceiptsCents: 175_001,
+      payRunCents: 270_000,
+      fuelLoadsCents: 35_000,
+      vendorBillsDueCents: 105_000,
+      gapCents: -50_000,
+    });
+    const f = result.figures;
+    expect(f.cashOnHandCents + f.expectedReceiptsCents - f.payRunCents - f.fuelLoadsCents - f.vendorBillsDueCents).toBe(
+      f.gapCents,
+    );
+  });
+
+  it("lists every open invoice: counted, then after pay day, then stalled", () => {
+    expect(result.lines.map((l) => [l.invoiceId, l.status, l.expectedOn, l.expectedCents])).toEqual([
+      ["R1", "counted", "2026-11-05", 100_000],
+      ["M1", "counted", "2026-11-06", 60_001],
+      ["N1", "counted", "2026-11-06", 15_000],
+      ["R2", "after_pay_day", "2026-11-20", 0],
+      ["R3", "after_pay_day", "2026-11-25", 0],
+      ["M2", "after_pay_day", "2026-11-29", 0],
+      ["L2", "after_pay_day", "2026-11-30", 0],
+      ["R4", "after_pay_day", "2026-12-01", 0],
+      ["L1", "stalled", "2026-11-02", 0],
+    ]);
+  });
+
+  it("counts a partly paid invoice at its balance, at the customer's on-time share, rounded half up", () => {
+    const m1 = result.lines.find((l) => l.invoiceId === "M1");
+    expect(m1).toMatchObject({ balanceCents: 80_001, typicalDaysLate: -1, onTimeBps: 7500, label: "mixed" });
+    // 80,001 x 0.75 = 60,000.75, which rounds to 60,001.
+    expect(m1?.expectedCents).toBe(60_001);
+  });
+
+  it("counts a customer with nothing paid at half, expected a week late", () => {
+    expect(result.lines.find((l) => l.invoiceId === "N1")).toMatchObject({
+      typicalDaysLate: 7,
+      onTimeBps: 5000,
+      label: "mixed",
+      expectedCents: 15_000,
+    });
+  });
+
+  it("drafts the three kinds of option in order", () => {
+    expect(result.options.map((o) => [o.kind, o.subjectTable, o.subjectId])).toEqual([
+      ["factoring_request", "settlement_periods", PERIOD.id],
+      ["bill_defer", "vendor_bills", "b3"],
+      ["collections_chase", "customers", "cust-l"],
+      ["collections_chase", "customers", "cust-n"],
+    ]);
+  });
+
+  it("factors the largest recent invoice of a customer who is not a repeat late payer", () => {
+    const factoring = result.options[0];
+    expect(factoring).toMatchObject({
+      kind: "factoring_request",
+      direction: "in",
+      advanceBps: 9000,
+      feeBps: 300,
+      amountCents: 52_205,
+      balanceCents: 60_005,
+      advanceCents: 54_005,
+      feeCents: 1_800,
+      reserveCents: 6_000,
+      coversShort: true,
+    });
+    if (factoring.kind !== "factoring_request") throw new Error("not factoring");
+    expect(factoring.invoices).toEqual([
+      {
+        invoiceId: "M2",
+        invoiceNumber: "INV-M2",
+        customerId: "cust-m",
+        balanceCents: 60_005,
+        advanceCents: 54_005,
+        feeCents: 1_800,
+        netCents: 52_205,
+        reserveCents: 6_000,
+      },
+    ]);
+    expect(factoring.advanceCents - factoring.feeCents).toBe(factoring.amountCents);
+    expect(factoring.advanceCents + factoring.reserveCents).toBe(factoring.balanceCents);
+  });
+
+  it("delays the largest flexible bill due by pay day to a week after pay day", () => {
+    expect(result.options[1]).toEqual({
+      kind: "bill_defer",
+      subjectTable: "vendor_bills",
+      subjectId: "b3",
+      direction: "none",
+      amountCents: 30_000,
+      billRef: "BILL-B3",
+      dueOn: "2026-11-06",
+      deferredTo: "2026-11-13",
+      coversShort: false,
+      sources: [{ table: "vendor_bills", id: "b3" }],
+    });
+  });
+
+  it("chases the customers with the largest past-due balances", () => {
+    expect(result.options.slice(2)).toEqual([
+      {
+        kind: "collections_chase",
+        subjectTable: "customers",
+        subjectId: "cust-l",
+        direction: "in",
+        amountCents: 40_000,
+        label: "repeat_late",
+        overdueInvoices: 1,
+        invoices: [{ invoiceId: "L1", invoiceNumber: "INV-L1", balanceCents: 40_000, dueOn: "2026-09-01", daysLate: 62 }],
+        sources: [
+          { table: "customers", id: "cust-l" },
+          { table: "invoices", id: "L1" },
+        ],
+      },
+      {
+        kind: "collections_chase",
+        subjectTable: "customers",
+        subjectId: "cust-n",
+        direction: "in",
+        amountCents: 30_000,
+        label: "mixed",
+        overdueInvoices: 1,
+        invoices: [{ invoiceId: "N1", invoiceNumber: "INV-N1", balanceCents: 30_000, dueOn: "2026-10-30", daysLate: 3 }],
+        sources: [
+          { table: "customers", id: "cust-n" },
+          { table: "invoices", id: "N1" },
+        ],
+      },
+    ]);
+  });
+
+  it("cites the week, the pay run, the fuel loads and the bills due", () => {
+    expect(result.sources).toEqual([
+      { table: "settlement_periods", id: PERIOD.id },
+      { table: "settlements", id: "s-draft" },
+      { table: "settlements", id: "s-approved" },
+      { table: "advances", id: "a3" },
+      { table: "advances", id: "a4" },
+      { table: "vendor_bills", id: "b1" },
+      { table: "vendor_bills", id: "b2" },
+      { table: "vendor_bills", id: "b3" },
+      { table: "vendor_bills", id: "b5" },
+    ]);
+  });
+
+  it("gives the same answer for the same records", () => {
+    expect(position(golden())).toEqual(result);
+  });
+});
+
+describe("computeCashFriday when the bank covers the run", () => {
+  it("drafts no option", () => {
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(300_000) } }));
+    expect(result.figures.gapCents).toBe(50_000);
+    expect(result.options).toEqual([]);
+  });
+
+  it("drafts no option when the gap is exactly zero", () => {
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(250_000) } }));
+    expect(result.figures.gapCents).toBe(0);
+    expect(result.options).toEqual([]);
+  });
+});
+
+describe("computeCashFriday option limits", () => {
+  it("takes more invoices when one does not cover a larger short, and says it still falls short", () => {
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(100_000) } }));
+    expect(result.figures.gapCents).toBe(-150_000);
+    const factoring = result.options[0];
+    if (factoring.kind !== "factoring_request") throw new Error("not factoring");
+    // M2 nets 52,205; R2 (50,000) advances 45,000 less a 1,500 fee: 43,500; L2 (25,000, a repeat
+    // late payer's, expected after pay day) advances 22,500 less a 750 fee: 21,750. R3 is too old.
+    expect(factoring.invoices.map((i) => [i.invoiceId, i.netCents])).toEqual([
+      ["M2", 52_205],
+      ["R2", 43_500],
+      ["L2", 21_750],
+    ]);
+    expect(factoring.amountCents).toBe(117_455);
+    expect(factoring.coversShort).toBe(false);
+  });
+
+  it("never factors an invoice the engine already counts by pay day", () => {
+    const result = position(golden({ settings: { ...SETTINGS, bankBalanceCents: c(100_000) } }));
+    const factoring = result.options[0];
+    if (factoring.kind !== "factoring_request") throw new Error("not factoring");
+    const counted = new Set(result.lines.filter((l) => l.status === "counted").map((l) => l.invoiceId));
+    expect(factoring.invoices.some((i) => counted.has(i.invoiceId))).toBe(false);
+  });
+
+  it("stops at the invoice limit", () => {
+    const result = position(
+      golden({
+        settings: { ...SETTINGS, bankBalanceCents: c(100_000) },
+        limits: { ...LIMITS, maxFactorInvoices: 1 },
+      }),
+    );
+    const factoring = result.options[0];
+    if (factoring.kind !== "factoring_request") throw new Error("not factoring");
+    expect(factoring.invoices.map((i) => i.invoiceId)).toEqual(["M2"]);
+  });
+
+  it("chases only as many customers as the limit allows", () => {
+    const result = position(golden({ limits: { ...LIMITS, maxChaseCustomers: 1 } }));
+    expect(result.options.filter((o) => o.kind === "collections_chase").map((o) => o.subjectId)).toEqual(["cust-l"]);
+  });
+
+  it("drafts no factoring card when no invoice qualifies", () => {
+    const result = position(golden({ limits: { ...LIMITS, factoringMaxAgeDays: 0 } }));
+    expect(result.options.map((o) => o.kind)).toEqual(["bill_defer", "collections_chase", "collections_chase"]);
+  });
+
+  it("refuses a limit that is not a whole number", () => {
+    expect(() => computeCashFriday(golden({ limits: { ...LIMITS, graceDays: 1.5 } }), AS_OF)).toThrow(InputError);
+  });
+});
+
+describe("computeCashFriday refusals", () => {
+  it("refuses without a bank balance", () => {
+    expect(computeCashFriday(golden({ settings: null }), AS_OF)).toEqual({ ok: false, refusal: "balance_missing" });
+  });
+
+  it("refuses a balance dated after today", () => {
+    const settings = { ...SETTINGS, balanceAsOf: "2026-11-03" };
+    expect(computeCashFriday(golden({ settings }), AS_OF)).toEqual({ ok: false, refusal: "balance_in_future" });
+  });
+
+  it("refuses with no open week, and with two", () => {
+    expect(computeCashFriday(golden({ periods: [CLOSED] }), AS_OF)).toEqual({ ok: false, refusal: "no_open_period" });
+    const second = { ...CLOSED, id: "per-2", status: "open" as const };
+    expect(computeCashFriday(golden({ periods: [second, PERIOD] }), AS_OF)).toEqual({
+      ok: false,
+      refusal: "more_than_one_open_period",
+    });
+  });
+
+  it("refuses when the week has no stored run and no preview could be built", () => {
+    const settlements = golden().settlements.filter((s) => s.periodId !== PERIOD.id);
+    expect(computeCashFriday(golden({ settlements, previews: null }), AS_OF)).toEqual({
+      ok: false,
+      refusal: "pay_run_unknown",
+    });
+  });
+});
+
+describe("computeCashFriday pay run preview", () => {
+  const WEEK = { start: PERIOD.periodStart, end: PERIOD.periodEnd };
+
+  function preview(id: string, linehaul: number): SettlementInput {
+    return {
+      config: BLUE_RIDGE,
+      driver: driver({ id }),
+      period: WEEK,
+      loads: [
+        load({ id: `${id}-l1`, driverId: id, pickupOn: "2026-10-27", deliveredOn: "2026-10-28", linehaulCents: c(linehaul) }),
+      ],
+      days: [],
+      items: [],
+      schedules: [],
+      advances: [],
+      escrowBalanceCents: c(0),
+    };
+  }
+
+  const settlements = golden().settlements.filter((s) => s.periodId !== PERIOD.id);
+  const previews = [preview("drv-a", 110_000), preview("drv-b", 95_000)];
+
+  it("sums the engine's own settlement of every driver in the week", () => {
+    const nets = previews.map((p) => settleDriver(p).netCents);
+    expect(nets.every((n) => n > 0)).toBe(true);
+    const result = position(golden({ settlements, previews }));
+    expect(result.payRunSource).toBe("preview");
+    expect(result.figures.payRunCents).toBe(nets[0] + nets[1]);
+    expect(result.sources).toEqual(
+      expect.arrayContaining([
+        { table: "drivers", id: "drv-a" },
+        { table: "drivers", id: "drv-b" },
+      ]),
+    );
+  });
+
+  it("gives the same run as stored rows carrying the same nets", () => {
+    const nets = previews.map((p) => settleDriver(p).netCents);
+    const stored = [
+      settlement({ id: "s-a", driverId: "drv-a", netCents: nets[0] }),
+      settlement({ id: "s-b", driverId: "drv-b", netCents: nets[1] }),
+    ];
+    const fromPreview = position(golden({ settlements, previews }));
+    const fromStored = position(golden({ settlements: [...settlements, ...stored], previews }));
+    expect(fromStored.payRunSource).toBe("stored");
+    expect(fromStored.figures).toEqual(fromPreview.figures);
+  });
+
+  it("prefers the stored run once the week has one", () => {
+    const result = position(golden({ previews }));
+    expect(result.payRunSource).toBe("stored");
+    expect(result.figures.payRunCents).toBe(270_000);
+  });
+
+  it("refuses a preview built for another week", () => {
+    const other = { ...preview("drv-a", 110_000), period: { start: "2026-10-19", end: "2026-10-25" } };
+    expect(computeCashFriday(golden({ settlements, previews: [other] }), AS_OF)).toEqual({
+      ok: false,
+      refusal: "pay_run_unknown",
+    });
+  });
+
+  it("refuses a preview the engine cannot settle, never counting it as zero", () => {
+    const broken = preview("drv-a", 110_000);
+    broken.loads[0] = { ...broken.loads[0], linehaulCents: 1.5 as never };
+    expect(computeCashFriday(golden({ settlements, previews: [broken] }), AS_OF)).toEqual({
+      ok: false,
+      refusal: "pay_run_unknown",
+    });
+  });
+
+  it("stops recovering an advance a person took back, as the pay math does", () => {
+    // 0027: what was taken back no longer counts as owed, so the week's settlement recovers less.
+    const owed = advance({ id: "adv-x", driverId: "drv-a", amountCents: c(10_000) });
+    const kept = { ...preview("drv-a", 110_000), advances: [owed] };
+    const takenBack = { ...kept, advances: [{ ...owed, takenBackCents: c(10_000) }] };
+    const keptRun = position(golden({ settlements, previews: [kept] })).figures.payRunCents;
+    const takenBackRun = position(golden({ settlements, previews: [takenBack] })).figures.payRunCents;
+    expect(keptRun).toBe(settleDriver(kept).netCents);
+    expect(takenBackRun).toBe(settleDriver(takenBack).netCents);
+    expect(takenBackRun).toBe(keptRun + 10_000);
+  });
+
+  it("counts an empty week's run as zero only when there is no driver to pay", () => {
+    const result = position(golden({ settlements, previews: [] }));
+    expect(result.payRunSource).toBe("preview");
+    expect(result.figures.payRunCents).toBe(0);
+  });
+});
+
+describe("cash on hand window", () => {
+  it("leaves out what moved on or before the balance date and after today", () => {
+    const result = position(
+      golden({
+        payments: [...golden().payments, payment("pay-late", "cust-r", "2026-11-03", 1_000)],
+        advances: [...golden().advances, cashAdvance({ id: "a6", status: "paid", amountCents: c(7_000), paidOn: "2026-11-01" })],
+      }),
+    );
+    expect(result.figures.paymentsSinceCents).toBe(19_999);
+    expect(result.figures.advancesPaidSinceCents).toBe(30_000);
+  });
+
+  it("keeps a taken-back advance in what went out, and drops one cancelled before payout", () => {
+    // A take-back records the decision and moves no money (0027), so the card load still left
+    // the bank; one taken back before payout is cancelled and no longer waits to go out.
+    const base = position(golden()).figures;
+    const result = position(
+      golden({
+        advances: [
+          ...golden().advances,
+          cashAdvance({ id: "a7", status: "paid", amountCents: c(9_000), takenBackCents: c(9_000), paidOn: "2026-11-02" }),
+          cashAdvance({ id: "a8", status: "cancelled", amountCents: c(5_000), paidAt: null }),
+        ],
+      }),
+    );
+    expect(result.figures.advancesPaidSinceCents).toBe(base.advancesPaidSinceCents + 9_000);
+    expect(result.figures.fuelLoadsCents).toBe(base.fuelLoadsCents);
+  });
+});
+
+describe("payDayFor", () => {
+  it("finds the first such weekday after the week ends", () => {
+    // Monday to Sunday weeks (Blue Ridge): Friday after Sunday Nov 1.
+    expect(payDayFor({ start: "2026-10-26", end: "2026-11-01" }, 5)).toBe("2026-11-06");
+    // Sunday to Saturday weeks (Prairie Wind): Friday after Saturday Oct 31.
+    expect(payDayFor({ start: "2026-10-25", end: "2026-10-31" }, 5)).toBe("2026-11-06");
+    // Pay on Saturday after a week ending Saturday: the next Saturday, never the same day.
+    expect(payDayFor({ start: "2026-10-25", end: "2026-10-31" }, 6)).toBe("2026-11-07");
+    // Monday after a week ending Sunday.
+    expect(payDayFor({ start: "2026-10-26", end: "2026-11-01" }, 1)).toBe("2026-11-02");
+  });
+
+  it("keeps the scheduled pay day through that day, then moves to the next one on or after asOf", () => {
+    const week = { start: "2026-10-26", end: "2026-11-01" };
+    expect(payDayFor(week, 5, "2026-11-02")).toBe("2026-11-06");
+    expect(payDayFor(week, 5, "2026-11-06")).toBe("2026-11-06");
+    // Saturday Nov 7, the week still open: the next Friday.
+    expect(payDayFor(week, 5, "2026-11-07")).toBe("2026-11-13");
+    // A Friday past the scheduled one is itself the pay day.
+    expect(payDayFor(week, 5, "2026-11-13")).toBe("2026-11-13");
+  });
+
+  it("plans for the next pay day when the open week's has passed", () => {
+    const result = position(golden(), "2026-11-07");
+    expect(result.payDay).toBe("2026-11-13");
+  });
+
+  it("refuses a weekday outside 0 to 6", () => {
+    expect(() => payDayFor({ start: "2026-10-26", end: "2026-11-01" }, 7)).toThrow(InputError);
+    expect(() => payDayFor({ start: "2026-10-26", end: "2026-11-01" }, 2.5)).toThrow(InputError);
+  });
+});
+
+describe("typicalDaysLate", () => {
+  function profile(medianDaysLate: number | null, label: PaymentProfile["label"]): PaymentProfile {
+    return {
+      customerId: "cust",
+      invoices: 1,
+      paidCount: medianDaysLate === null ? 0 : 1,
+      medianDaysLate,
+      lateShareBps: 0,
+      paidOver30Late: 0,
+      openPast30: 0,
+      label,
+    };
+  }
+
+  it("rounds the median half up, never to negative zero", () => {
+    expect(typicalDaysLate(profile(2.5, "mixed"))).toBe(3);
+    expect(typicalDaysLate(profile(-1.5, "mixed"))).toBe(-1);
+    expect(Object.is(typicalDaysLate(profile(-0.5, "mixed")), 0)).toBe(true);
+  });
+
+  it("uses the label's default with nothing paid", () => {
+    expect(typicalDaysLate(profile(null, "reliable"))).toBe(0);
+    expect(typicalDaysLate(profile(null, "mixed"))).toBe(7);
+    expect(typicalDaysLate(profile(null, "repeat_late"))).toBe(35);
+  });
+});
+
+describe("expectedReceipts for a customer who pays early", () => {
+  // Pays 30 days before the due date as a rule, so 30 + 14 grace days would call anything due
+  // within the next 16 days late. Not yet due is never stalled: counted, expected today.
+  const early: PaymentProfile = {
+    customerId: "cust-e",
+    invoices: 4,
+    paidCount: 4,
+    medianDaysLate: -30,
+    lateShareBps: 0,
+    paidOver30Late: 0,
+    openPast30: 0,
+    label: "reliable",
+  };
+  const open = (id: string, dueOn: string) => ({
+    invoice: invoice({ id, customerId: "cust-e", amountCents: c(10_000), issuedOn: "2026-10-01", dueOn }),
+    balanceCents: c(10_000),
+  });
+
+  it("counts an invoice not yet due and stalls it only once it is past due", () => {
+    const lines = expectedReceipts(
+      [open("E1", "2026-11-10"), open("E2", "2026-11-01")],
+      new Map([["cust-e", early]]),
+      AS_OF,
+      "2026-11-06",
+      14,
+    );
+    expect(lines.map((l) => [l.invoiceId, l.status, l.expectedOn, l.expectedCents])).toEqual([
+      ["E1", "counted", "2026-11-02", 10_000],
+      ["E2", "stalled", "2026-11-02", 0],
+    ]);
+  });
+});
+
+describe("billsDue and billDeferOption", () => {
+  it("counts open bills due by pay day and deferred ones on their new date", () => {
+    expect(billsDue(BILLS, "2026-11-06").map((b) => b.id)).toEqual(["b1", "b2", "b3", "b5"]);
+  });
+
+  it("breaks a tie on amount by bill reference", () => {
+    const tied = [
+      bill({ id: "x2", billRef: "BILL-B", amountCents: c(5_000), urgency: "flexible" }),
+      bill({ id: "x1", billRef: "BILL-A", amountCents: c(5_000), urgency: "flexible" }),
+    ];
+    expect(billDeferOption(tied, "2026-11-06", 4_000)).toMatchObject({
+      subjectId: "x1",
+      deferredTo: "2026-11-13",
+      coversShort: true,
+    });
+  });
+
+  it("has nothing to delay when every bill due is fixed", () => {
+    expect(billDeferOption([bill({ id: "f1" })], "2026-11-06", 1)).toBeNull();
+  });
+});

@@ -78,11 +78,21 @@ export const REPORT_PROMPT = [
   "  (the total or the largest rows) in one or two lines and say the full table is below.",
 ].join("\n");
 
+// Added to the prompt only while get_cash_friday is offered (flags.cashFridayEnabled), so a turn
+// with the switch off sends exactly today's prompt.
+export const CASH_PROMPT = [
+  "- \"Can we make Friday's pay run?\": call get_cash_friday. Say covered or short and by how much,",
+  "  then the moves it found; a person presses Check Friday's cash and approves each card on the",
+  "  Cash page.",
+].join("\n");
+
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
-// is on (it is one of the rules), then the report section while the report tools are offered.
-// With search off it is the prompt above, plus the report section when reports are on.
+// is on (it is one of the rules), the Cash Friday line while its tool is offered, then the report
+// section while the report tools are offered. With search off and both switches off it is the
+// prompt above.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
-  const prompt = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
+  const base = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
+  const prompt = toolNames.includes("get_cash_friday") ? `${base}\n${CASH_PROMPT}` : base;
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
   return reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
 }

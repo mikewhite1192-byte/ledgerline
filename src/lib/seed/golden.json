@@ -24,7 +24,10 @@
         "customer_payments": 167,
         "payment_applications": 200,
         "untrusted_inputs": 6,
-        "screenings": 0
+        "screenings": 0,
+        "vendor_bills": 6,
+        "cash_settings": 1,
+        "cash_checks": 0
       },
       "linehaulCents": 30154000,
       "hero": {
@@ -239,7 +242,22 @@
           "daysLate": 12,
           "balanceCents": 174000
         }
-      ]
+      ],
+      "cashFriday": {
+        "payDay": "2026-11-06",
+        "bankBalanceCents": 1446863,
+        "cashOnHandCents": 1446863,
+        "expectedReceiptsCents": 8815736,
+        "payRunCents": 2713852,
+        "payRunSource": "preview",
+        "fuelLoadsCents": 0,
+        "vendorBillsDueCents": 8228747,
+        "gapCents": -680000,
+        "factoringInvoices": 3,
+        "factoringNetCents": 184701,
+        "deferBillRef": "BR-NTB-2229",
+        "chaseCustomers": 2
+      }
     },
     "prairie-wind": {
       "counts": {
@@ -264,7 +282,10 @@
         "customer_payments": 161,
         "payment_applications": 203,
         "untrusted_inputs": 6,
-        "screenings": 0
+        "screenings": 0,
+        "vendor_bills": 6,
+        "cash_settings": 1,
+        "cash_checks": 0
       },
       "linehaulCents": 23362300,
       "hero": null,
@@ -410,7 +431,22 @@
           "daysLate": 12,
           "balanceCents": 174000
         }
-      ]
+      ],
+      "cashFriday": {
+        "payDay": "2026-11-06",
+        "bankBalanceCents": 3670635,
+        "cashOnHandCents": 3670635,
+        "expectedReceiptsCents": 6990453,
+        "payRunCents": 2230939,
+        "payRunSource": "preview",
+        "fuelLoadsCents": 0,
+        "vendorBillsDueCents": 8216149,
+        "gapCents": 214000,
+        "factoringInvoices": 0,
+        "factoringNetCents": 0,
+        "deferBillRef": null,
+        "chaseCustomers": 0
+      }
     }
   }
 }

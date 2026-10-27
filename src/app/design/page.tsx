@@ -28,6 +28,7 @@ import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
 import { Paystub } from "@/components/app/paystub";
+import { CashVerdict } from "@/components/cash/cash-verdict";
 import { StatCard } from "@/components/app/stat-card";
 import { FuelCardChip } from "@/components/app/fuel-card";
 import { EmptyState, ERROR_CATEGORIES, ErrorState, LoadingState } from "@/components/app/states";
@@ -373,6 +374,12 @@ export default function DesignPage() {
               <StatCard label="Past 60 days" value={<Money cents={624_000} />} hint="3 invoices, oldest 74 days" tone="warning" href="#data-table" />
               <StatCard label="Advances out" value={<Money cents={115_000} />} hint="4 drivers" href="#proposal-card" />
               <StatCard label="Need a look" value="2" hint="Exceptions before Friday" tone="destructive" href="#paystub" />
+              <CashVerdict gapCents={-680_000} day="Friday, Nov 6">
+                Checked Nov 2, 2026, 9:14 AM. After you approve a card, check again.
+              </CashVerdict>
+              <CashVerdict gapCents={214_000} day="Friday, Nov 6">
+                Checked Nov 2, 2026, 9:14 AM.
+              </CashVerdict>
             </div>
           )}
         </ModePair>

@@ -282,7 +282,7 @@ describe("the demo reset", () => {
   // row names; a driver note being drafted; an uploaded document and a voice note with its
   // recording, each naming a seeded inbound message; a dock clip being redacted; a finished portal
   // run with its session (the two name each other), a step, an approved check and what it found;
-  // and a model charge.
+  // a vendor bill an approved card moved and a stored cash check; and a model charge.
   const dress = async (tenantId: string, plan: CarrierPlan, outsideTag: string) => {
     const session = await member(tenantId, "dress");
     const [driver, other] = plan.rows.drivers;
@@ -390,6 +390,35 @@ describe("the demo reset", () => {
       { kind: "advance_payout", table: "drivers", id: other.id, amountCents: 5_000 },
       await seededInput(tenantId),
     );
+
+    // Cash Friday (0029): a flexible bill an approved bill_defer card moved (the bill names the
+    // proposal) and a stored check naming a seeded pay week. The function's proposal delete clears
+    // the bill's link, then the replace deletes the check before the weeks and rewrites the bill.
+    const bill = plan.rows.vendor_bills.find((b) => b.status === "open" && b.urgency === "flexible");
+    if (!bill) throw new Error("the plan has no flexible open bill");
+    const deferral = await agentChain(
+      tenantId,
+      session,
+      { kind: "bill_defer", table: "vendor_bills", id: bill.id, amountCents: bill.amount_cents },
+      null,
+    );
+    await app.withTenant(tenantId, async (q) => {
+      expect(
+        await q.execute(
+          `UPDATE vendor_bills
+              SET status = 'deferred', deferred_to = due_on + 7, proposal_id = CAST($2 AS uuid)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [bill.id, deferral],
+        ),
+      ).toBe(1);
+      await q.execute(
+        `INSERT INTO cash_checks (id, tenant_id, period_id, as_of, pay_day, figures, gap_cents, pay_run_source,
+           explain_category, created_by)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), DATE '2026-11-02', DATE '2026-11-06',
+           CAST('{"gapCents":-680000}' AS jsonb), -680000, 'preview', 'disabled', $3)`,
+        [randomUUID(), plan.rows.settlements[0].period_id, session.sub],
+      );
+    });
 
     const settlement = plan.rows.settlements[0];
     await app.withTenant(tenantId, (q) =>
@@ -546,7 +575,7 @@ describe("the demo reset", () => {
       };
       expect(before.keptA.memberships.n).toBe(1);
       expect(before.keptA.model_calls.n).toBe(1);
-      expect(before.keptA.gateway_decisions.n).toBe(3);
+      expect(before.keptA.gateway_decisions.n).toBe(4);
       expect(before.keptA.portal_accounts.n).toBe(1);
       expect(before.c.proposals.n).toBe(1);
 
@@ -565,18 +594,20 @@ describe("the demo reset", () => {
         voice_note_audio: 1,
         voice_notes: 1,
         driver_notes: 1,
-        turn_steps: 3,
+        turn_steps: 4,
         sweep_items: 1,
         sweep_runs: 1,
         approval_batches: 1,
-        proposals: 3,
-        turns: 3,
-        conversations: 3,
+        proposals: 4,
+        turns: 4,
+        conversations: 4,
       });
       expect(preview.current.advances).toBe(planA.rows.advances.length + 1);
       expect(preview.current.load_accessorials).toBe(planA.rows.load_accessorials.length + 1);
       expect(preview.current.driver_arm_events).toBe(planA.rows.driver_arm_events.length + 1);
       expect(preview.current.driver_identities).toBe(planA.rows.driver_identities.length + 1);
+      expect(preview.current.cash_checks).toBe(1);
+      expect(planA.rows.cash_checks).toEqual([]);
 
       const report = await resetDemoTenant(app, A, planA);
       expect(report.slug).toBe("blue-ridge");
@@ -595,14 +626,14 @@ describe("the demo reset", () => {
         voice_note_audio: 1,
         voice_notes: 1,
         driver_notes: 1,
-        turn_steps: 3,
+        turn_steps: 4,
         sweep_items: 1,
         sweep_runs: 1,
         approval_batches: 1,
         advances: 1,
-        proposals: 3,
-        turns: 3,
-        conversations: 3,
+        proposals: 4,
+        turns: 4,
+        conversations: 4,
       });
       expect(report.heroNetCents).toBe(HERO_OPEN_WEEK.netCents);
       expect(report.replaced.inserted).toEqual(countRows(planA.rows));

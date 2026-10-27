@@ -219,6 +219,23 @@ export type Flags = {
     // Audit tries per item while the auditor answers "in progress".
     maxAuditAttempts: number;
   };
+  // Cash Friday: the Cash page answers whether the bank covers Friday's pay run, fuel card loads
+  // and bills due, and drafts up to three ways to close a short for a person to approve. Off
+  // means the page is not found, the check route and the agent's read tool refuse, and the three
+  // option kinds have no executor, so an approval is refused before anything is written.
+  cashFridayEnabled: boolean;
+  cashFridayLimits: {
+    // The cap on one explanation call, in cents, and the longest paragraph kept.
+    maxExplainCents: number;
+    maxExplainChars: number;
+    // Invoices one factoring option may name, and late payers the chase options may name.
+    maxFactorInvoices: number;
+    maxChaseCustomers: number;
+    // Days past a customer's usual lateness before an invoice is no longer expected by pay day.
+    graceDays: number;
+    // Only invoices issued within this many days can be factored.
+    factoringMaxAgeDays: number;
+  };
   // Approve all clean: one deliberate approval over the clean fixes a person saw. A batch whose
   // total is over approverRole.adminAboveCents needs an admin, like a single proposal.
   approveAllLimits: { maxItems: number };
@@ -313,6 +330,15 @@ export const flags: Flags = {
   payCorrectionsEnabled: false,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
   approveAllLimits: { maxItems: 25 },
+  cashFridayEnabled: false,
+  cashFridayLimits: {
+    maxExplainCents: 8,
+    maxExplainChars: 600,
+    maxFactorInvoices: 3,
+    maxChaseCustomers: 2,
+    graceDays: 14,
+    factoringMaxAgeDays: 45,
+  },
   portalRunnerEnabled: false,
   portalRunnerModel: "spark",
   portalRunLimits: {

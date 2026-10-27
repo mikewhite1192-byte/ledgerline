@@ -1,11 +1,13 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
 // and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, and
-// the driver identity map and arming log from 0027, in an order where every table comes after the
-// tables it references (insert in this order, delete in reverse). Each column says how it
-// travels: the Data API sends strings as text, so uuid, date, timestamptz and jsonb columns need
-// a CAST on the way in, and reads turn timestamptz into one ISO form and jsonb into text so both
-// drivers return the same values. tenant_id and created_at are never listed: tenant_id is always
-// current_tenant_id() and created_at is the database's own.
+// the driver identity map and arming log from 0027, and Cash Friday's bills, bank position and
+// checks from 0029 (the seed leaves cash_checks empty; the replace, and so the demo reset, clears
+// it before the weeks a check names), in an order where every table comes after the tables it
+// references (insert in this order, delete in reverse). Each column says how it travels: the Data
+// API sends strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the way
+// in, and reads turn timestamptz into one ISO form and jsonb into text so both drivers return the
+// same values. tenant_id and created_at are never listed: tenant_id is always current_tenant_id()
+// and created_at is the database's own.
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
 
@@ -37,6 +39,9 @@ export const TENANT_TABLES = [
   "payment_applications",
   "untrusted_inputs",
   "screenings",
+  "vendor_bills",
+  "cash_settings",
+  "cash_checks",
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
@@ -379,6 +384,51 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["model_call_id", "uuid"],
       ["latency_ms", "int"],
       ["expires_at", "timestamptz"],
+    ],
+  },
+  vendor_bills: {
+    table: "vendor_bills",
+    columns: [
+      ["id", "uuid"],
+      ["bill_ref", "text"],
+      ["vendor_name", "text"],
+      ["category", "text"],
+      ["amount_cents", "int"],
+      ["due_on", "date"],
+      ["urgency", "text"],
+      ["status", "text"],
+      ["deferred_to", "date"],
+      ["paid_on", "date"],
+      ["proposal_id", "uuid"],
+    ],
+  },
+  cash_settings: {
+    table: "cash_settings",
+    columns: [
+      ["id", "uuid"],
+      ["bank_balance_cents", "int"],
+      ["balance_as_of", "date"],
+      ["pay_day_dow", "int"],
+      ["factoring_advance_bps", "int"],
+      ["factoring_fee_bps", "int"],
+    ],
+  },
+  cash_checks: {
+    table: "cash_checks",
+    columns: [
+      ["id", "uuid"],
+      ["period_id", "uuid"],
+      ["as_of", "date"],
+      ["pay_day", "date"],
+      ["figures", "jsonb"],
+      ["lines", "jsonb"],
+      ["options", "jsonb"],
+      ["gap_cents", "int"],
+      ["pay_run_source", "text"],
+      ["explanation", "text"],
+      ["explain_call_id", "uuid"],
+      ["explain_category", "text"],
+      ["created_by", "text"],
     ],
   },
 };

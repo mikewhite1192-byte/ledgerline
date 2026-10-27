@@ -37,6 +37,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_detention_charge: { tier: "propose", roles: ["operator"] },
   get_driver_identity: { tier: "read", roles: ["operator", "auditor"] },
   get_advance_headroom: { tier: "read", roles: ["operator", "auditor"] },
+  get_cash_friday: { tier: "read", roles: ["operator"] },
 };
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
@@ -51,6 +52,7 @@ afterEach(() => {
   flags.detentionEnabled = false;
   flags.invoicesEnabled = false;
   flags.customerPaymentsEnabled = false;
+  flags.cashFridayEnabled = false;
 });
 
 describe("tool registry", () => {
@@ -134,6 +136,20 @@ describe("tool registry", () => {
     flags.customerPaymentsEnabled = true;
     expect(toolsFor("auditor")).toHaveLength(12);
     expect(toolsFor("triage")).toHaveLength(2);
+  });
+
+  it("offers get_cash_friday to the operator only while the Cash Friday switch is on, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    expect(flags.cashFridayEnabled).toBe(false);
+    for (const role of AGENT_ROLES) expect(names(role)).not.toContain("get_cash_friday");
+    expect(toolsFor("operator")).toHaveLength(19);
+    flags.cashFridayEnabled = true;
+    expect(names("operator")).toContain("get_cash_friday");
+    expect(toolsFor("operator")).toHaveLength(20);
+    expect(names("auditor")).not.toContain("get_cash_friday");
+    expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_cash_friday")?.deferLoading).toBe(true);
+    flags.cashFridayEnabled = false;
+    expect(toolsFor("operator")).toHaveLength(19);
   });
 
   it("offers and finds the report tools only while their switch is on, read on every call", () => {

@@ -8,6 +8,7 @@ import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention"
 import { getAdvanceHeadroom } from "./tools/read/get-advance-headroom";
 import { getAdvances } from "./tools/read/get-advances";
 import { getArAging } from "./tools/read/get-ar-aging";
+import { getCashFriday } from "./tools/read/get-cash-friday";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
@@ -82,6 +83,7 @@ const TOOLS: readonly AnyToolDef[] = [
   proposeDetentionCharge,
   getPortalEvidence,
   classifyMessage,
+  getCashFriday,
 ];
 
 function build(): Readonly<Record<string, AnyToolDef>> {
