@@ -40,6 +40,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_detention_charge: { tier: "propose", roles: ["operator"] },
   get_driver_identity: { tier: "read", roles: ["operator", "auditor"] },
   get_advance_headroom: { tier: "read", roles: ["operator", "auditor"] },
+  get_collections: { tier: "read", roles: ["operator"] },
 };
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
@@ -50,6 +51,8 @@ const INVOICE_TOOLS = ["get_invoice_queue"];
 const PAYMENT_TOOLS = ["get_ar_aging", "get_payments_in", "propose_payment_reapply"];
 // The invoice review tools need both the invoicing and the invoice review switches.
 const REVIEW_TOOLS = ["get_invoice_review", "get_invoice_review_queue"];
+// The collections read, behind its own switch.
+const COLLECTIONS_TOOLS = ["get_collections"];
 
 afterEach(() => {
   flags.reportsEnabled = false;
@@ -57,6 +60,7 @@ afterEach(() => {
   flags.invoicesEnabled = false;
   flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
+  flags.collectionsEnabled = false;
 });
 
 describe("tool registry", () => {
@@ -165,6 +169,22 @@ describe("tool registry", () => {
     none("auditor");
   });
 
+  it("offers the collections read to the operator only while its switch is on, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    expect(flags.collectionsEnabled).toBe(false);
+    for (const role of AGENT_ROLES) for (const n of COLLECTIONS_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
+    flags.collectionsEnabled = true;
+    expect(names("operator")).toEqual(expect.arrayContaining(COLLECTIONS_TOOLS));
+    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("triage")).toHaveLength(2);
+    // Deferred like the other receivables reads: few questions need it.
+    expect(ALWAYS_LOADED).not.toContain("get_collections");
+    expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_collections")?.deferLoading).toBe(true);
+    flags.collectionsEnabled = false;
+    expect(toolsFor("operator")).toHaveLength(20);
+  });
+
   it("offers and finds the report tools only while their switch is on, read on every call", () => {
     expect(flags.reportsEnabled).toBe(false);
     for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
@@ -188,9 +208,10 @@ describe("tool registry", () => {
     flags.invoicesEnabled = true;
     flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
+    flags.collectionsEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 33,
+      operator: 34,
       auditor: 15,
       triage: 2,
     });

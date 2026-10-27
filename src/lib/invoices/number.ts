@@ -51,7 +51,12 @@ export function invoiceNumberPattern(prefix: string): string {
 
 // A lock per tenant and purpose, held to the end of the caller's transaction. Wrapped in count(*)
 // so the statement returns a plain number (the lock function itself returns void).
-export type TenantLockPurpose = "invoice_number" | "invoice_propose" | "customer_payment" | "sweep_day_cents";
+export type TenantLockPurpose =
+  | "invoice_number"
+  | "invoice_propose"
+  | "customer_payment"
+  | "sweep_day_cents"
+  | "collections_draft";
 
 export async function tenantLock(q: Queryable, purpose: TenantLockPurpose): Promise<void> {
   await q.query(

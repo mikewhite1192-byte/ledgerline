@@ -3,7 +3,8 @@ import { formatLocalDate } from "@/lib/format/dates";
 
 // The home screen's suggested questions: four, each one a tool can answer. With the reports on,
 // the advance-limit question gives its place to margin per load; "past 60 days" and "Friday's
-// pay run" are then answered by the aging and cash needed reports.
+// pay run" are then answered by the aging and cash needed reports. With collections on, that
+// place goes to the payment reminder question instead.
 const BASE: readonly Suggestion[] = [
   { id: "paystub-problems", label: "Who has a problem on this week's paystub?" },
   { id: "past-60", label: "Who owes us money past 60 days?" },
@@ -13,8 +14,16 @@ const BASE: readonly Suggestion[] = [
 
 const MARGIN: Suggestion = { id: "margin-per-load", label: "What was our margin per load this month?" };
 
-export function homeSuggestions(reportsOn: boolean): Suggestion[] {
-  return BASE.map((s) => (reportsOn && s.id === "advance-limit" ? MARGIN : { ...s }));
+// With collections on, the fourth question asks who needs a payment reminder (get_collections
+// answers it), in place of the advance limit or margin per load.
+const REMINDER: Suggestion = { id: "payment-reminder", label: "Who needs a payment reminder?" };
+
+export function homeSuggestions(reportsOn: boolean, collectionsOn = false): Suggestion[] {
+  return BASE.map((s) => {
+    if (s.id !== "advance-limit") return { ...s };
+    if (collectionsOn) return { ...REMINDER };
+    return reportsOn ? { ...MARGIN } : { ...s };
+  });
 }
 
 // "Ask about this paystub" on a paystub's page lands on the home screen with that paystub's

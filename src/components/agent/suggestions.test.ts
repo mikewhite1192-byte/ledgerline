@@ -9,6 +9,16 @@ describe("homeSuggestions", () => {
     expect(on.map((s) => s.id)).toEqual(["paystub-problems", "past-60", "pay-run-cost", "margin-per-load"]);
     expect(on[3].label).toBe("What was our margin per load this month?");
   });
+
+  it("asks who needs a payment reminder in the fourth place only while collections is on", () => {
+    for (const reportsOn of [false, true]) {
+      const on = homeSuggestions(reportsOn, true);
+      expect(on.map((s) => s.id)).toEqual(["paystub-problems", "past-60", "pay-run-cost", "payment-reminder"]);
+      expect(on[3].label).toBe("Who needs a payment reminder?");
+    }
+    expect(homeSuggestions(false, false)).toEqual(homeSuggestions(false));
+    expect(homeSuggestions(true, false)).toEqual(homeSuggestions(true));
+  });
 });
 
 describe("withPaystubSuggestion", () => {

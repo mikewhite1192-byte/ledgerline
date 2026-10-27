@@ -215,6 +215,7 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "money_actions",
     "model_calls",
     "driver_notes",
+    "collection_drafts",
     "screenings",
     "qbo_connections",
     "qbo_entity_ids",
@@ -308,6 +309,13 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid), 'en',
              'drafting', CAST($5 AS uuid))`,
           [note, c.settlement.id, c.settlement.driver, c.settlement.period, randomUUID()],
+        );
+        // A reminder reserved for a late invoice (0041), as the drafting path writes it.
+        await q.execute(
+          `INSERT INTO collection_drafts (id, tenant_id, invoice_id, customer_id, stage, tone, status, figures, trace_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), '30', 'friendly',
+             'drafting', CAST('{}' AS jsonb), CAST($4 AS uuid))`,
+          [randomUUID(), c.invoice.id, c.invoice.customer, randomUUID()],
         );
         await q.execute(
           `INSERT INTO screenings (id, tenant_id, input_id, content_hash, verdict, via, latency_ms)

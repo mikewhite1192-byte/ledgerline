@@ -58,6 +58,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     get_invoice_review_queue: { status: "needs_review" },
     get_ar_aging: { asOf: open.period_end, minBucket: "1_30" },
     get_payments_in: { from: paid.period_start, to: open.period_end },
+    get_collections: { customerId: plan.planted.collections[0].customerId },
     propose_payment_reapply: {
       paymentId: wrong.paymentId,
       applicationId: wrong.applicationId,

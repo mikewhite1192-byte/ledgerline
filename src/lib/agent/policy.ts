@@ -78,11 +78,20 @@ export const REPORT_PROMPT = [
   "  (the total or the largest rows) in one or two lines and say the full table is below.",
 ].join("\n");
 
+// Added to the prompt only while get_collections is offered (flags.collectionsEnabled), so a turn
+// with collections off sends exactly today's prompt.
+export const COLLECTIONS_RULE = [
+  "- For who needs a payment reminder, call get_collections. Reminders are drafted, approved and",
+  "  sent only on the Collections page; never write one in chat or say one was sent.",
+].join("\n");
+
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
-// is on (it is one of the rules), then the report section while the report tools are offered.
-// With search off it is the prompt above, plus the report section when reports are on.
+// is on (it is one of the rules), the collections rule while get_collections is offered, then the
+// report section while the report tools are offered. With search and collections off it is the
+// prompt above, plus the report section when reports are on.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
-  const prompt = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
+  const searched = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
+  const prompt = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
   return reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
 }
