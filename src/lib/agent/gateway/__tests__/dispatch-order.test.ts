@@ -10,7 +10,7 @@ import { callTool, capResult, MAX_RESULT_CHARS } from "../index";
 import { UNTRUSTED_WARNING } from "../tools/read/get-inbound-message";
 import type { CompleteFn, GatewayContext } from "../types";
 import { context, fixedClock, NOW, OTHER_ID, type FakeDb, type Handler } from "./fake-db";
-import { blueRidgePlan, planDb } from "./plan-db";
+import { blueRidgePlan, planDb, proposalRowFor, withProposal } from "./plan-db";
 import { sampleArgs } from "./sample-args";
 
 // The dispatch order, step by step, on the real tools over a synthetic seed plan: each refusal
@@ -414,8 +414,9 @@ describe("callTool dispatch order", () => {
 
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
     for (const [name, args] of Object.entries(ARGS)) {
-      const db = planDb(plan, screenStore);
-      const role = name === "classify_message" ? "triage" : "operator";
+      const auditor = name === "get_proposal";
+      const db = planDb(plan, auditor ? withProposal(proposalRowFor(plan, "advance_payout"), screenStore) : screenStore);
+      const role = name === "classify_message" ? "triage" : auditor ? "auditor" : "operator";
       const out = await callTool({ ...ctx, role }, call(name, args), {
         db,
         clock: fixedClock,

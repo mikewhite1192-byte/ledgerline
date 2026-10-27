@@ -90,7 +90,8 @@ type Opts = {
 };
 
 // A waiting advance proposal shaped like the gateway's: the driver is the subject, the args
-// carry the driver and the amount. Written by the admin login so created_at can be set.
+// carry the driver and the amount. The auditor's pass is stored with it, so one click approves
+// it unless it is flagged. Written by the admin login so created_at and the verdict can be set.
 async function addProposal(o: Opts = {}): Promise<string> {
   const f = o.tenant ?? A;
   const amountCents = o.amountCents ?? 25_000;
@@ -117,10 +118,11 @@ async function addProposal(o: Opts = {}): Promise<string> {
     await q.execute(
       `INSERT INTO proposals (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
          amount_cents, direction, title, args, operator_verdict, flagged_input_id, gateway_decision_id,
-         dedupe_key, trace_id, created_at, updated_at)
+         dedupe_key, trace_id, created_at, updated_at, auditor_verdict, auditor_agrees, auditor_checked_at)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'advance_payout',
          'drivers', CAST($4 AS uuid), $5, 'out', 'Advance', CAST($6 AS jsonb), 'eligible', CAST($7 AS uuid),
-         CAST($8 AS uuid), $9, $10, CAST($11 AS timestamptz), CAST($11 AS timestamptz))`,
+         CAST($8 AS uuid), $9, $10, CAST($11 AS timestamptz), CAST($11 AS timestamptz), 'pass', TRUE,
+         CAST($11 AS timestamptz))`,
       [
         id,
         conversation,

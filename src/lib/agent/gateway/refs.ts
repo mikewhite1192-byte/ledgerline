@@ -1,14 +1,14 @@
 import type { Queryable } from "../../db";
 import { assertIdentifier } from "../../data/tables";
 import { isUuid } from "../../uuid";
-import { GATEWAY_TABLES, type GatewayRef } from "./types";
+import { REF_TABLES, type GatewayRef } from "./types";
 
 // Every id a tool's args name must be a row of the caller's own tenant. Table names come from the
 // allowlist, never from the args; the id travels as a parameter. Row-level security already hides
 // other tenants' rows, and each statement names the tenant as well, so a login that bypasses
 // row-level security still sees one tenant only.
 
-const ALLOWED = new Set<string>(GATEWAY_TABLES);
+const ALLOWED = new Set<string>(REF_TABLES);
 
 export const MAX_REFS = 16;
 

@@ -1,0 +1,112 @@
+import { describe, expect, it } from "vitest";
+import type { WeekRaw } from "./types";
+import { summarizeModelWeek } from "./week";
+
+const WEEK = { start: "2026-10-26", end: "2026-11-01", zone: "America/Chicago" };
+
+const empty: WeekRaw = { week: WEEK, groups: [], latencies: [], decisions: [], screenings: [], escalations: 0 };
+
+const group = (over: Partial<WeekRaw["groups"][number]>): WeekRaw["groups"][number] => ({
+  target: "spark",
+  model: "muse-spark-1.3",
+  status: "ok",
+  calls: 1,
+  costNanocents: 0,
+  heldNanocents: 0,
+  unsettled: 0,
+  ...over,
+});
+
+describe("summarizeModelWeek", () => {
+  it("shows the three core models with zeros for an empty week, and nothing else", () => {
+    const w = summarizeModelWeek(empty);
+    expect(w.models.map((m) => m.name)).toEqual(["Muse Spark", "Muse Wonder", "Muse Spark Open"]);
+    expect(w.models.every((m) => m.calls === 0 && m.costNanocents === 0 && m.p50Ms === null)).toBe(true);
+    expect(w.calls).toBe(0);
+    expect(w.costNanocents).toBe(0);
+    expect(w.decisions.total).toBe(0);
+    expect(w.screenings.total).toBe(0);
+    expect(w.week).toEqual(WEEK);
+  });
+
+  it("sums calls and whole nanocents per model by status, and keeps the medians", () => {
+    const w = summarizeModelWeek({
+      ...empty,
+      groups: [
+        group({ status: "ok", calls: 7, costNanocents: 4_900_000_001 }),
+        group({ status: "incomplete", calls: 1, costNanocents: 700_000_000 }),
+        group({ status: "failed", calls: 2, costNanocents: 0 }),
+        group({ status: "reserved", calls: 1, heldNanocents: 900_000_000, unsettled: 1 }),
+        group({ model: "muse-spark-1.3-contributor", calls: 1, costNanocents: 1 }),
+        group({ target: "wonder", model: "muse-wonder-1.0", calls: 2, costNanocents: 11_600_000_000 }),
+        group({ target: "voice", model: "muse-voice", calls: 3, costNanocents: 30 }),
+      ],
+      latencies: [
+        { target: "spark", p50Ms: 1_840 },
+        { target: "wonder", p50Ms: 4_100 },
+      ],
+    });
+    const spark = w.models[0];
+    expect(spark).toMatchObject({
+      calls: 12,
+      ok: 8,
+      incomplete: 1,
+      failed: 2,
+      pending: 1,
+      costNanocents: 5_600_000_002,
+      heldNanocents: 900_000_000,
+      unsettled: 1,
+      p50Ms: 1_840,
+      versions: ["Muse Spark 1.3"],
+    });
+    expect(w.models.map((m) => m.target)).toEqual(["spark", "wonder", "spark_open", "voice"]);
+    expect(w.calls).toBe(17);
+    expect(w.costNanocents).toBe(5_600_000_002 + 11_600_000_000 + 30);
+    expect(Number.isSafeInteger(w.costNanocents)).toBe(true);
+  });
+
+  it("puts a model it does not know under Other model, with no merged median", () => {
+    const w = summarizeModelWeek({
+      ...empty,
+      groups: [
+        group({ target: "llama", model: "llama-9", calls: 2 }),
+        group({ target: "qwen", model: "qwen-3", calls: 1 }),
+      ],
+      latencies: [
+        { target: "llama", p50Ms: 500 },
+        { target: "qwen", p50Ms: 900 },
+      ],
+    });
+    const other = w.models.at(-1);
+    expect(other).toMatchObject({ target: "other", name: "Other model", calls: 3, p50Ms: null, versions: ["Other model"] });
+  });
+
+  it("counts gateway decisions and screenings in their buckets", () => {
+    const w = summarizeModelWeek({
+      ...empty,
+      decisions: [
+        { decision: "allowed", count: 9 },
+        { decision: "blocked", count: 2 },
+        { decision: "invalid_args", count: 1 },
+        { decision: "denied", count: 1 },
+        { decision: "failed", count: 1 },
+      ],
+      screenings: [
+        { verdict: "clean", via: "model", count: 4 },
+        { verdict: "clean", via: "cache", count: 2 },
+        { verdict: "flagged", via: "pattern", count: 1 },
+        { verdict: "flagged", via: "error", count: 1 },
+      ],
+      escalations: 3,
+    });
+    expect(w.decisions).toEqual({ allowed: 9, blocked: 2, refused: 2, failed: 1, total: 14 });
+    expect(w.screenings).toEqual({ clean: 6, flagged: 2, byModel: 4, byCache: 2, byPattern: 1, errored: 1, total: 8 });
+    expect(w.escalations).toBe(3);
+  });
+
+  it("refuses a figure that is not a whole number instead of reading it as zero", () => {
+    expect(() => summarizeModelWeek({ ...empty, groups: [group({ costNanocents: Number.NaN })] })).toThrow(RangeError);
+    expect(() => summarizeModelWeek({ ...empty, groups: [group({ calls: 1.5 })] })).toThrow(RangeError);
+    expect(() => summarizeModelWeek({ ...empty, escalations: Number.NaN })).toThrow(RangeError);
+  });
+});
