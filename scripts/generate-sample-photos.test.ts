@@ -5,6 +5,7 @@ import sharp from "sharp";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../src/config/flags";
 import type { FetchFn } from "../src/lib/ai/providers/http";
+import { QUIET_JOB } from "../src/lib/ai/test-fixtures";
 import type { Session } from "../src/lib/auth/claims";
 import type { Param, Queryable, TenantDb } from "../src/lib/db";
 import {
@@ -66,6 +67,7 @@ function fakeLedger(): TenantDb {
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
       if (sql.includes("FROM memberships")) return [{ ok: 1 }] as T[];
+      if (sql.includes("FROM spend_alerts")) return [QUIET_JOB] as T[];
       if (sql.includes("FROM ops.ai_spend")) {
         return [
           {

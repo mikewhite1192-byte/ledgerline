@@ -1,5 +1,14 @@
 // Synthetic media for the wrapper's tests: built in memory, never read from or written to disk.
 
+// What the spend watch's window query returns for a job with no open alert and nothing spent in
+// its hour (src/lib/ai/watch.ts), for the fake ledgers in unit tests.
+export const QUIET_JOB = {
+  open_alerts: 0,
+  window_start: "2026-10-27T05:00:00.000000Z",
+  window_end: "2026-10-27T06:00:00.000000Z",
+  spent_nanocents: 0,
+};
+
 // A PCM WAV: silence unless samples are given. The header fields can be overridden to build the
 // files the reader must refuse.
 export function makeWav(

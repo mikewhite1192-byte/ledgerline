@@ -10,6 +10,7 @@ const MESSAGES: Record<ProofCategory, string> = {
   disabled: "Model calls are switched off.",
   not_configured: "The model connection is not configured.",
   cap: "The spend cap is reached. No call was made.",
+  job_cap: "This job used more than its hourly allowance and is stopped until an admin clears it on the Meta models page. No call was made.",
   too_expensive: "That call could cost more than its limit. No call was made.",
   rate_limited: "The model is busy. Try again in a minute.",
   unavailable: "The model service is unavailable. Try again later.",
