@@ -12,6 +12,8 @@ describe("flags", () => {
     expect(flags.paymentProvider).toBe("mock");
     expect(flags.triageProvider).toBe("meta");
     expect(flags.agentEnabled).toBe(false);
+    expect(flags.documentsEnabled).toBe(false);
+    expect(flags.documentCrop).toBe(false);
     expect(flags.reportsEnabled).toBe(false);
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
@@ -48,6 +50,18 @@ describe("flags", () => {
     expect(flags.auditorRequired).toBe(true);
     expect(Number.isNaN(Date.parse(flags.auditorStart))).toBe(false);
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
+  });
+
+  it("keeps document uploads small, few and cheap to read", () => {
+    expect(flags.documentLimits).toEqual({
+      maxBytes: 700_000,
+      maxPdfPages: 3,
+      readMaxCostCents: 8,
+      perTenantPerDay: 20,
+    });
+    for (const v of Object.values(flags.documentLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
   });
 
   it("ships the advance flow dark, disarmed, capped and dated", () => {

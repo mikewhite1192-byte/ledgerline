@@ -7,6 +7,7 @@ import { explainPaystub } from "./tools/read/explain-paystub";
 import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention";
 import { getAdvances } from "./tools/read/get-advances";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
+import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
 import { getInboundMessage } from "./tools/read/get-inbound-message";
 import { getInvoices } from "./tools/read/get-invoices";
@@ -25,6 +26,7 @@ import { runChecks } from "./tools/read/run-checks";
 import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
+import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
@@ -58,10 +60,12 @@ const TOOLS: readonly AnyToolDef[] = [
   getInboundMessage,
   getVoiceNote,
   getProposal,
+  getDocument,
   findUnbilledDetentionTool,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,
+  proposeLoadRate,
   proposeDetentionCharge,
   classifyMessage,
 ];
