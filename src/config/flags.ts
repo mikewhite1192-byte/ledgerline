@@ -120,6 +120,10 @@ export type Flags = {
   // adds the charge to the load's open invoice. Off means neither tool is offered or runs and an
   // approval is refused before anything is written.
   detentionEnabled: boolean;
+  // The demo reset page (/settings/demo): a demo carrier's admin puts the carrier back to its
+  // seeded week in one transaction. Off means the page answers 404 and the action refuses before
+  // any read or write. It writes only our own database, never an outside system.
+  demoResetEnabled: boolean;
 };
 
 export const flags: Flags = {
@@ -164,4 +168,5 @@ export const flags: Flags = {
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
   reportsEnabled: false,
   detentionEnabled: false,
+  demoResetEnabled: false,
 };

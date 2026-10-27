@@ -17,6 +17,7 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "demo:users": "tsx scripts/create-demo-users.ts",
     "seed": "tsx scripts/seed.ts",
+    "demo:reset": "tsx scripts/demo-reset.ts",
     "policy:pdf": "tsx scripts/render-policy-pdf.ts",
     "docs:render": "tsx scripts/render-sample-docs.ts",
     "docs:photos": "tsx scripts/generate-sample-photos.ts",

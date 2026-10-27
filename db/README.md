@@ -29,7 +29,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON <table> TO payday_app;
 `current_tenant_id()` reads the transaction-local `app.tenant_id` that every app transaction sets
 first. Unset means no rows and no writes. `src/lib/db/rls-coverage.db.test.ts` fails CI for any
 table in `public` without forced row-level security and exactly that one policy, for a view or a
-security-definer function, and for an app role that owns, inherits or bypasses anything.
+security-definer function other than `demo_reset_clear()` (below, with each of its bounds
+checked), and for an app role that owns, inherits or bypasses anything.
 
 A reference from one tenant table to another is a composite foreign key on `(tenant_id, x_id)`
 against the parent's `UNIQUE (tenant_id, id)`, so a row can never point at another tenant's row
@@ -158,6 +159,34 @@ No new table. An advance born from a person's approval of an advance proposal ca
 - The grants stay as 0005 set them, `DELETE` included, because a demo reseed replaces advances
   as the app role. The reseed's agent clear deletes flow advances (`proposal_id IS NOT NULL`)
   through the admin login before it deletes proposals.
+
+## The one security-definer function (`demo_reset_clear()`, 0025)
+
+Every other function runs as its caller. This one runs as its owner, the migrating admin, on
+purpose: the demo reset button runs in the app as `payday_app`, which has no `DELETE` on the
+ledger or the agent's records, and the admin login ignores row-level security. It is the only way
+an app request can put a demo carrier back to its seeded week, so its bounds are written into the
+function and checked by tests:
+
+- `SET search_path = public, pg_temp` and schema-qualified names; `payday_app` cannot create
+  objects in `public`, so nothing can shadow a table or a function it calls.
+- `EXECUTE` for `payday_app` only (revoked from `PUBLIC`); it takes no arguments.
+- The tenant is the transaction's own `current_tenant_id()`, read once, and every statement names
+  it (`tenant_id = v_tenant`), since the owner is not held by the policies. No tenant set raises
+  LR001.
+- Only the two demo slugs (`blue-ridge`, `prairie-wind`); any other carrier raises LR002.
+- It locks the tenant's row (`FOR UPDATE`), so no new row naming that tenant can be inserted
+  until the reset's transaction ends, then refuses (LR003, counts only, nothing deleted) while a
+  ledger row is reserved, sent or unknown, a row failed as `amount_mismatch`, or a ledger row
+  names a flagged proposal.
+- It deletes only the settled ledger rows, driver notes, the agent's records and the advances an
+  approval created, and returns how many per table. The seeded tables are rewritten after it, in
+  the same transaction, as `payday_app` under row-level security (`src/lib/seed/reset.ts`).
+
+`src/lib/db/rls-coverage.db.test.ts` checks the search path, the owner and the grants;
+`src/lib/seed/reset-coverage.db.test.ts` checks what it deletes, and fails CI for a table with no
+reset decision (rewritten, cleared or kept, each with why); `src/lib/seed/reset.db.test.ts`
+resets one carrier and proves the other carriers and the shared tables did not change.
 
 ## Local, from a fresh database
 

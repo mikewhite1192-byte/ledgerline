@@ -16,6 +16,8 @@ describe("flags", () => {
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
     expect(flags.detentionEnabled).toBe(false);
+    // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
+    expect(flags.demoResetEnabled).toBe(false);
   });
 
   it("keeps the agent gateway's limits small and the screener on its probed output mode", () => {

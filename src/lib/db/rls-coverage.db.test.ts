@@ -174,16 +174,54 @@ describe("row-level security coverage", () => {
     expect(seen.n).toBe(3);
   });
 
-  it("has no view or definer function that would read as its owner", async () => {
+  it("has no view, and no definer function but the demo reset's, which is locked down", async () => {
     const [found] = await admin.withoutTenant((q) =>
-      q.query<{ views: number; definers: number }>(
-        `SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                  WHERE ${SYSTEM_SCHEMAS} AND c.relkind IN ('v', 'm')) AS views,
-                (SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-                  WHERE ${SYSTEM_SCHEMAS} AND p.prosecdef) AS definers`,
+      q.query<{ views: number }>(
+        `SELECT count(*) AS views FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE ${SYSTEM_SCHEMAS} AND c.relkind IN ('v', 'm')`,
       ),
     );
-    expect(found).toEqual({ views: 0, definers: 0 });
+    expect(found).toEqual({ views: 0 });
+    // demo_reset_clear() (0025) is the one function that runs as its owner, and the owner ignores
+    // row-level security, so each bound is checked: a fixed search_path, the same owner as the
+    // tables (never the app), EXECUTE for the owner and payday_app only (none for PUBLIC), and
+    // no arguments a caller could steer.
+    const definers = await admin.withoutTenant((q) =>
+      q.query<{
+        schema: string;
+        name: string;
+        args: string;
+        config: string[] | null;
+        owner: string;
+        tables_owner: string;
+        app_can_execute: boolean;
+        grantees: string[];
+      }>(
+        `SELECT n.nspname AS schema, p.proname AS name,
+                pg_get_function_identity_arguments(p.oid) AS args,
+                p.proconfig AS config,
+                pg_get_userbyid(p.proowner) AS owner,
+                (SELECT pg_get_userbyid(t.relowner) FROM pg_class t
+                  WHERE t.oid = CAST('public.tenants' AS regclass)) AS tables_owner,
+                has_function_privilege('payday_app', p.oid, 'EXECUTE') AS app_can_execute,
+                ARRAY(SELECT CAST(CASE WHEN a.grantee = 0 THEN 'PUBLIC'
+                                       ELSE pg_get_userbyid(a.grantee) END AS text)
+                        FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                       WHERE a.privilege_type = 'EXECUTE') AS grantees
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE ${SYSTEM_SCHEMAS} AND p.prosecdef
+          ORDER BY 1, 2`,
+      ),
+    );
+    expect(definers.map((d) => `${d.schema}.${d.name}(${d.args})`)).toEqual([
+      "public.demo_reset_clear()",
+    ]);
+    const [reset] = definers;
+    expect(reset.config).toEqual(["search_path=public, pg_temp"]);
+    expect(reset.owner).toBe(reset.tables_owner);
+    expect(reset.owner).not.toBe("payday_app");
+    expect(reset.app_can_execute).toBe(true);
+    expect([...reset.grantees].sort()).toEqual([reset.owner, "payday_app"].sort());
   });
 
   it("keeps the app role plain: no superuser, no bypass, no inherited roles, no migrations table", async () => {
