@@ -130,6 +130,21 @@ export type Flags = {
   // The five report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
+  // Dock clips: off means no upload is taken and no model sees a clip (both segmentation calls
+  // and the reading). aiEnabled must also be on for a model call to run.
+  clipsEnabled: boolean;
+  clipLimits: {
+    // The uploaded file and the redacted file, each.
+    bytes: number;
+    durationMs: number;
+    frames: number;
+    // Each of the two segmentation calls (faces, plates); 600 frames cost 12 cents.
+    redactMaxCostCents: number;
+    // The one reading call.
+    readMaxCostCents: number;
+    // New clips per carrier per UTC day (a repeat of the same file is not a new clip).
+    perTenantPerDay: number;
+  };
   // Driver voice notes: upload, transcribe (Muse Voice Transcribe), screen, translate (Muse
   // Spark), sort (the triage model) and hand to the agent. Off means every voice route refuses
   // with disabled before reading the upload or calling a model.
@@ -175,6 +190,27 @@ export type Flags = {
   // Approve all clean: one deliberate approval over the clean fixes a person saw. A batch whose
   // total is over approverRole.adminAboveCents needs an admin, like a single proposal.
   approveAllLimits: { maxItems: number };
+  // The portal runner: the agent opens the fictional broker portal in a browser and reads a
+  // load's delivery stamps and POD. Off gates the portal pages, the run routes, the gateway tool
+  // and the worker, which re-checks it when it claims a run. aiEnabled must also be on.
+  portalRunnerEnabled: boolean;
+  // The model that drives the browser, and the only one a computer step may call. Muse Spark is
+  // the default: Muse Wonder answered 400 "Unsupported tool type: 'computer'" when the runner was
+  // built. Moving to Muse Wonder once it takes the tool is the owner's call, in its own one-line
+  // change.
+  portalRunnerModel: "wonder" | "spark";
+  // Hard caps on one portal run. Reaching any of them ends the run with no evidence.
+  portalRunLimits: {
+    maxSteps: number;
+    maxWallMs: number;
+    maxRunCents: number;
+    maxCallCents: number;
+    maxActionsPerStep: number;
+    screenshotMaxBytes: number;
+    podMaxBytes: number;
+    // A safety check a person has not decided within this many minutes ends the run.
+    approvalWaitMinutes: number;
+  };
 };
 
 export const flags: Flags = {
@@ -221,6 +257,15 @@ export const flags: Flags = {
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
   reportsEnabled: false,
+  clipsEnabled: false,
+  clipLimits: {
+    bytes: 700_000,
+    durationMs: 20_000,
+    frames: 600,
+    redactMaxCostCents: 13,
+    readMaxCostCents: 10,
+    perTenantPerDay: 20,
+  },
   voiceIntakeEnabled: false,
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
   detentionEnabled: false,
@@ -229,4 +274,18 @@ export const flags: Flags = {
   payCorrectionsEnabled: false,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
   approveAllLimits: { maxItems: 25 },
+  portalRunnerEnabled: false,
+  portalRunnerModel: "spark",
+  portalRunLimits: {
+    maxSteps: 15,
+    maxWallMs: 240_000,
+    maxRunCents: 150,
+    maxCallCents: 25,
+    maxActionsPerStep: 8,
+    screenshotMaxBytes: 400_000,
+    // Also the held_pod_pdf CHECK in migration 0021 (300000 bytes): raise both together, or a
+    // paused run cannot hold its POD and its resume ends pod_not_kept.
+    podMaxBytes: 300_000,
+    approvalWaitMinutes: 30,
+  },
 };

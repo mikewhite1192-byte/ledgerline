@@ -181,6 +181,9 @@ const AGENT_CLEAR = [
   // proposal or ledger row names a document, so none is kept.
   "DELETE FROM documents WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM voice_notes WHERE tenant_id = CAST($1 AS uuid)",
+  // Dock clips first too: each names a load the replace deletes. The app role has no DELETE on
+  // them (a redacted clip is evidence), so only this reseed path removes them.
+  "DELETE FROM evidence_clips WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM driver_notes WHERE tenant_id = CAST($1 AS uuid)",
   `DELETE FROM sweep_items WHERE tenant_id = CAST($1 AS uuid)`,
   `DELETE FROM sweep_runs WHERE tenant_id = CAST($1 AS uuid)`,

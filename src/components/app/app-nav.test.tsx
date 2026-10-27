@@ -5,11 +5,13 @@ import { appNav } from "./app-nav";
 const saved = {
   driverNotes: flags.driverNotesEnabled,
   sweep: flags.sweepEnabled,
+  portalRunner: flags.portalRunnerEnabled,
   documents: flags.documentsEnabled,
 };
 afterEach(() => {
   flags.driverNotesEnabled = saved.driverNotes;
   flags.sweepEnabled = saved.sweep;
+  flags.portalRunnerEnabled = saved.portalRunner;
   flags.documentsEnabled = saved.documents;
 });
 
@@ -20,6 +22,7 @@ describe("appNav", () => {
     flags.driverNotesEnabled = false;
     flags.sweepEnabled = false;
     flags.documentsEnabled = false;
+    flags.portalRunnerEnabled = false;
     expect(shape("/models")).toEqual([
       ["/", "Home", false],
       ["/models", "Meta models", true],
@@ -35,6 +38,7 @@ describe("appNav", () => {
   it("lists the sweep only while its switch is on", () => {
     flags.driverNotesEnabled = false;
     flags.documentsEnabled = false;
+    flags.portalRunnerEnabled = false;
     flags.sweepEnabled = false;
     expect(shape("/").map(([href]) => href)).not.toContain("/sweep");
     flags.sweepEnabled = true;
@@ -45,9 +49,22 @@ describe("appNav", () => {
     ]);
   });
 
+  it("links to portal runs only while the portal runner is switched on", () => {
+    flags.driverNotesEnabled = false;
+    flags.sweepEnabled = false;
+    flags.documentsEnabled = false;
+    flags.portalRunnerEnabled = false;
+    expect(appNav("/").map((i) => i.href)).toEqual(["/", "/models"]);
+    flags.portalRunnerEnabled = true;
+    const items = appNav("/portal-runs");
+    expect(items.map((i) => i.href)).toEqual(["/", "/models", "/portal-runs"]);
+    expect(items.find((i) => i.current)?.href).toBe("/portal-runs");
+  });
+
   it("lists documents only while their switch is on", () => {
     flags.driverNotesEnabled = false;
     flags.sweepEnabled = false;
+    flags.portalRunnerEnabled = false;
     flags.documentsEnabled = false;
     expect(shape("/").map(([href]) => href)).toEqual(["/", "/models"]);
     flags.documentsEnabled = true;
@@ -60,6 +77,7 @@ describe("appNav", () => {
 
   it("lists the sweep above documents when both are on", () => {
     flags.driverNotesEnabled = false;
+    flags.portalRunnerEnabled = false;
     flags.sweepEnabled = true;
     flags.documentsEnabled = true;
     expect(shape("/").map(([href]) => href)).toEqual(["/", "/sweep", "/documents", "/models"]);

@@ -2,12 +2,15 @@ import type { AiImageMime, CallOutcome, SegmentMatch } from "../types";
 import { asArray, asRecord, upstreamIdFrom } from "./http";
 import { dataUrl } from "./media";
 
-// SAM 3.1 still-image segmentation through the Responses endpoint
-// (https://dev.meta.ai/docs/media-segmentation, https://dev.meta.ai/docs/sam/segmenting,
-// https://dev.meta.ai/docs/sam/reading-segmentation). Billed per image, matched or not.
+// SAM 3.1 segmentation of a still and tracking through a video, both through the Responses
+// endpoint (https://dev.meta.ai/docs/media-segmentation, https://dev.meta.ai/docs/sam/segmenting,
+// https://dev.meta.ai/docs/sam/reading-segmentation). A still is billed per image, matched or not;
+// a video per frame processed, at least 50 a request.
 export { META_RESPONSES_URL as META_SAM_URL } from "./meta";
 
 export type SamOptions = { maskEncoding: "lossless" | "one_bit"; includeConfidence: boolean };
+
+export type SamVideoOptions = SamOptions & { propagation: "both" | "forward" | "backward" };
 
 export type SamAnswer = {
   imageWidth: number | null;
@@ -152,14 +155,8 @@ export function parseSegmentation(text: string): SamAnswer | null {
   return { imageWidth: size?.width ?? null, imageHeight: size?.height ?? null, matches };
 }
 
-// A 200 answer. The image is charged whether or not anything matched, so the cost is known as
-// soon as the answer is complete; an answer that is not complete or not readable is unknown, its
-// reservation (equal to the price) kept.
-export function parseSam(json: unknown, httpStatus: number): CallOutcome<SamAnswer> {
-  const body = asRecord(json);
-  if (!body || body.status !== "completed") {
-    return { kind: "unknown", category: "unknown", httpStatus };
-  }
+// The answer's text: every output_text part of every message, in order.
+function outputText(body: Record<string, unknown>): string {
   const parts: string[] = [];
   for (const raw of asArray(body.output)) {
     const item = asRecord(raw);
@@ -169,7 +166,18 @@ export function parseSam(json: unknown, httpStatus: number): CallOutcome<SamAnsw
       if (p?.type === "output_text" && typeof p.text === "string") parts.push(p.text);
     }
   }
-  const answer = parseSegmentation(parts.join(""));
+  return parts.join("");
+}
+
+// A 200 answer. The image is charged whether or not anything matched, so the cost is known as
+// soon as the answer is complete; an answer that is not complete or not readable is unknown, its
+// reservation (equal to the price) kept.
+export function parseSam(json: unknown, httpStatus: number): CallOutcome<SamAnswer> {
+  const body = asRecord(json);
+  if (!body || body.status !== "completed") {
+    return { kind: "unknown", category: "unknown", httpStatus };
+  }
+  const answer = parseSegmentation(outputText(body));
   if (!answer) return { kind: "unknown", category: "unknown", httpStatus };
   return {
     kind: "answered",
@@ -178,5 +186,110 @@ export function parseSam(json: unknown, httpStatus: number): CallOutcome<SamAnsw
     upstreamId: upstreamIdFrom(body.id),
     metered: { unit: "images", count: 1 },
     value: answer,
+  };
+}
+
+export function samVideoBody(
+  model: string,
+  video: { bytes: Uint8Array },
+  prompt: string,
+  options: SamVideoOptions,
+) {
+  return {
+    model,
+    input: [
+      {
+        type: "message",
+        role: "user",
+        content: [
+          { type: "input_text", text: prompt },
+          { type: "input_video", video_url: dataUrl("video/mp4", video.bytes) },
+        ],
+      },
+    ],
+    metadata: {
+      mask_encoding: options.maskEncoding,
+      ...(options.includeConfidence ? { include_confidence: "true" } : {}),
+      propagation_direction: options.propagation,
+    },
+    store: false,
+  };
+}
+
+export type SamVideoAnswer = {
+  frames: Map<number, SegmentMatch[]>;
+  width: number | null;
+  height: number | null;
+  framesProcessed: number;
+};
+
+// A video answer is one line per frame: a frame marker `<Nf>`, then that frame's records, each
+// a record number, a box token and its mask token. Every record in every frame has the one size.
+// Null when the text does not follow that grammar, a frame repeats, or a frame number is past
+// lastFrame.
+export function parseSegmentationFrames(
+  text: string,
+  lastFrame: number,
+): Omit<SamVideoAnswer, "framesProcessed"> | null {
+  const parts = text.split(/<(\d{1,6})f>/);
+  if (parts[0].trim() !== "") return null;
+  const frames = new Map<number, SegmentMatch[]>();
+  const seen = new Set<number>();
+  let size: { width: number; height: number } | null = null;
+  for (let i = 1; i < parts.length; i += 2) {
+    const index = Number(parts[i]);
+    if (index > lastFrame || seen.has(index)) return null;
+    seen.add(index);
+    const answer = parseSegmentation(parts[i + 1]);
+    if (!answer) return null;
+    if (answer.matches.length === 0) continue;
+    const here = { width: answer.imageWidth ?? 0, height: answer.imageHeight ?? 0 };
+    if (size && (size.width !== here.width || size.height !== here.height)) return null;
+    size = here;
+    frames.set(index, answer.matches);
+  }
+  return { frames, width: size?.width ?? null, height: size?.height ?? null };
+}
+
+// How far from the clip's own count (or the per-request floor) a reported figure may be, either
+// way, and still be believed: a frame counted differently at either end, nothing more.
+export const SAM_VIDEO_FRAME_SLACK = 2;
+
+// A 200 video answer. The cost is the frames the provider says it processed, so an answer that
+// does not report them as a positive whole number, or reports more than the clip has frames (or
+// the floor) plus SAM_VIDEO_FRAME_SLACK, is unknown, its reservation kept, like one that is not
+// complete or does not parse. So is one that reports fewer than that count less the slack: a frame
+// it never looked at has no matches in the answer, and must not be kept as a frame with nothing
+// to blur. Tracking in both directions (the only setting the clips use) covers every frame.
+export function parseSamVideo(
+  lastFrame: number,
+  minFrames: number,
+): (json: unknown, httpStatus: number) => CallOutcome<SamVideoAnswer> {
+  const expected = Math.max(minFrames, lastFrame + 1);
+  const most = expected + SAM_VIDEO_FRAME_SLACK;
+  const least = Math.max(1, expected - SAM_VIDEO_FRAME_SLACK);
+  return (json, httpStatus) => {
+    const body = asRecord(json);
+    const processed = asRecord(body?.usage)?.video_frames_processed;
+    if (
+      !body ||
+      body.status !== "completed" ||
+      typeof processed !== "number" ||
+      !Number.isSafeInteger(processed) ||
+      processed < least ||
+      processed > most
+    ) {
+      return { kind: "unknown", category: "unknown", httpStatus };
+    }
+    const answer = parseSegmentationFrames(outputText(body), lastFrame);
+    if (!answer) return { kind: "unknown", category: "unknown", httpStatus };
+    return {
+      kind: "answered",
+      status: "ok",
+      httpStatus,
+      upstreamId: upstreamIdFrom(body.id),
+      metered: { unit: "video_frames", count: processed },
+      value: { ...answer, framesProcessed: processed },
+    };
   };
 }

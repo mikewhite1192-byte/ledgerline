@@ -16,6 +16,7 @@ import { getLoads } from "./tools/read/get-loads";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
 import { getPayItems } from "./tools/read/get-pay-items";
+import { getPortalEvidence } from "./tools/read/get-portal-evidence";
 import { getVoiceNote } from "./tools/read/get-voice-note";
 import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstanding";
 import { reportArAging } from "./tools/read/report-ar-aging";
@@ -67,6 +68,7 @@ const TOOLS: readonly AnyToolDef[] = [
   proposeInvoiceFix,
   proposeLoadRate,
   proposeDetentionCharge,
+  getPortalEvidence,
   classifyMessage,
 ];
 
