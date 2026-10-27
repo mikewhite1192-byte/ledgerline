@@ -19,6 +19,7 @@ const THINK_TAG = /<\/?think\b/i;
 // removed. Anything else that looks like a think tag (a block that never closes, one inside
 // another, a tag in the middle or after the answer, a tag in another case) is not a shape this
 // parser knows, so the whole answer is null: unreadable, never guessed at.
+// Strict on purpose, even for "<think" in prose; revisit when a live call shows reasoning's shape.
 export function withoutLeadingThink(content: string): string | null {
   const start = content.length - content.trimStart().length;
   if (!content.startsWith(THINK_OPEN, start)) return THINK_TAG.test(content) ? null : content;

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { DbError, getDb, type TenantDb } from "../db";
+import { ForbiddenError } from "../tenant/context";
 import { isUuid } from "../uuid";
 import { apiKey, forgetKey, type SecretsClient } from "./keys";
 import {
@@ -261,11 +262,13 @@ async function prepare<T, U extends Price["unit"]>(
 
 // One attempt: reserve, one HTTP call, settle, one log line. A failure the host reported comes
 // back as "failed" with the error to throw; a refusal at the reserve (cap, membership, the
-// database) and a failed settle throw from here.
+// database) and a failed settle throw from here. reserved() runs once the reservation is written,
+// before anything is sent.
 async function send<T, U extends Price["unit"]>(
   ctx: CallContext<T, U>,
   prepared: Prepared<T, U>,
   timeoutMs: () => number,
+  reserved: () => void = () => {},
 ): Promise<Sent<T>> {
   const { target, session, c, trace } = ctx;
   const { provider, model, price, p, key } = prepared;
@@ -287,6 +290,7 @@ async function send<T, U extends Price["unit"]>(
     capNanocents: ctx.cap,
     wonderCapNanocents: ctx.wonderCap,
   });
+  reserved();
 
   const started = ctx.clock();
   const raw = await post(
@@ -434,20 +438,47 @@ async function runCall<T, U extends Price["unit"]>(
   }
   const second = await prepare(ctx, standby, backup, "fallback ");
   if (!second) throw firstError;
+  // A primary that was never sent has no row to name.
+  const firstRef = first.kind === "not_sent" ? "primary not sent" : `call=${firstId}`;
   const left = Math.floor(deadline - clock());
   if (left < MIN_STANDBY_MS) {
-    console.error(`ai: ${target} fallback skipped (${left} ms left) call=${firstId}${trace}`);
+    console.error(`ai: ${target} fallback skipped (${left} ms left) ${firstRef}${trace}`);
     throw firstError;
   }
   const after = first.kind === "not_sent" ? "not_configured" : first.category;
   const http = first.kind === "not_sent" ? "none" : (first.httpStatus ?? "none");
-  console.error(
-    `ai: ${target} falling back to ${standby} after ${after} http=${http} call=${firstId}${trace}`,
-  );
-  // Never more than what is left of the caller's time, measured again after the reservation.
-  const sent = await send(ctx, second, () => Math.max(1, Math.floor(deadline - clock())));
+  // The fallback line is written only once the second reservation holds, so no line says the
+  // standby was tried when the cap (or anything else at the reserve) refused it; that refusal
+  // gets its own line, its category only.
+  let reservedSecond = false;
+  let sent: Sent<T>;
+  try {
+    // Never more than what is left of the caller's time, measured again after the reservation.
+    sent = await send(
+      ctx,
+      second,
+      () => Math.max(1, Math.floor(deadline - clock())),
+      () => {
+        reservedSecond = true;
+        console.error(
+          `ai: ${target} falling back to ${standby} after ${after} http=${http} call=${firstId}${trace}`,
+        );
+      },
+    );
+  } catch (err) {
+    if (!reservedSecond) {
+      console.error(`ai: ${target} fallback refused (${refusalCategory(err)}) ${firstRef}${trace}`);
+    }
+    throw err;
+  }
   if (sent.kind === "failed") throw sent.error;
   return { callId: sent.callId, answer: sent.answer, costNanocents: sent.costNanocents };
+}
+
+// A refusal at the reserve, for a log line: its category, never the error's own text.
+function refusalCategory(err: unknown): string {
+  if (err instanceof AiError || err instanceof DbError) return err.category;
+  return err instanceof ForbiddenError ? "membership" : "error";
 }
 
 // --- complete: Muse Spark, Muse Wonder, Muse Spark Open ---

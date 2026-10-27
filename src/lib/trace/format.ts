@@ -49,8 +49,9 @@ export function targetJob(target: string): string {
 const SPARK_VERSION = /^muse-spark-([0-9]{1,2}\.[0-9]{1,2})(?:-contributor)?$/;
 
 // Who serves each target when nothing has gone wrong (the wrapper's TARGETS, kept here so the
-// screens never load the wrapper), and the words for the hosts a call can come from instead.
-const PRIMARY_HOSTS: Readonly<Record<string, string>> = {
+// screens never load the wrapper; format.test.ts holds the two equal), and the words for the
+// hosts a call can come from instead.
+export const PRIMARY_HOSTS: Readonly<Record<string, string>> = {
   spark: "meta",
   wonder: "meta",
   spark_open: "baseten",

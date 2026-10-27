@@ -1584,6 +1584,20 @@ describe("Muse Spark Open's standby host", () => {
     });
     await complete("spark_open", { ...REQUEST, timeoutMs: 8_000 }, SESSION, own.deps);
     expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([8_000, 4_750]);
+
+    // A primary that was never sent has no row, and the line says so instead of naming one.
+    vi.stubEnv("BASETEN_API_KEY", undefined);
+    const unsent = setup(status(503));
+    const late = await refusal(
+      complete("spark_open", { ...REQUEST, timeoutMs: 900 }, SESSION, unsent.deps),
+    );
+    expect(late.category).toBe("not_configured");
+    expect(unsent.fetchFn).not.toHaveBeenCalled();
+    expect(unsent.ledger.rows.size).toBe(0);
+    expect(logged).toEqual([
+      "ai: spark_open not configured (no baseten key)",
+      "ai: spark_open fallback skipped (900 ms left) primary not sent",
+    ]);
   });
 
   it("lets Baseten's error stand, with one line and nothing thrown from configuration, when Fireworks is not set up", async () => {
@@ -1615,7 +1629,7 @@ describe("Muse Spark Open's standby host", () => {
     }
   });
 
-  it("refuses the second reservation at the cap, the first row kept and nothing sent to Fireworks", async () => {
+  it("refuses the second reservation at the cap, the first row kept and nothing sent to Fireworks, and never logs that it fell back", async () => {
     const cap = 12_000 * NANOCENTS_PER_CENT;
     // Room for one reservation (about 0.45 cents) but not two.
     const ledger = fakeLedger({ spent: cap - 600_000_000 });
@@ -1630,7 +1644,39 @@ describe("Muse Spark Open's standby host", () => {
     const rows = [...ledger.rows.values()];
     expect(rows.map((r) => [r.provider, r.status])).toEqual([["baseten", "unknown"]]);
     expect(ledger.counter).toMatchObject({ spent: cap - 600_000_000, reserved: rows[0].reserved });
-    expect(logged[1]).toMatch(/^ai: spark_open falling back to fireworks after unavailable/);
+    const firstId = [...ledger.rows.keys()][0];
+    expect(logged).toEqual([
+      expect.stringContaining(`unknown unavailable http=503 ms=0 reservation kept call=${firstId}`),
+      `ai: spark_open fallback refused (cap) call=${firstId}`,
+    ]);
+
+    // With no Baseten key nothing was sent first, and the refusal line says so.
+    vi.stubEnv("BASETEN_API_KEY", undefined);
+    const full = fakeLedger({ spent: cap });
+    const unsentFetch = fakeFetch(full.steps, hosts(status(503)));
+    logged = [];
+    const unsent = await refusal(
+      complete("spark_open", REQUEST, SESSION, { fetch: unsentFetch, db: full.db, clock }),
+    );
+    expect(unsent.category).toBe("cap");
+    expect(unsentFetch).not.toHaveBeenCalled();
+    expect(full.rows.size).toBe(0);
+    expect(logged).toEqual([
+      "ai: spark_open not configured (no baseten key)",
+      "ai: spark_open fallback refused (cap) primary not sent",
+    ]);
+
+    // Any other refusal at the second reservation is named by its category, never its text.
+    const outsider = setup(status(503));
+    outsider.ledger.breaks.membership = true;
+    await expect(complete("spark_open", REQUEST, SESSION, outsider.deps)).rejects.toBeInstanceOf(
+      ForbiddenError,
+    );
+    expect(outsider.fetchFn).not.toHaveBeenCalled();
+    expect(logged).toEqual([
+      "ai: spark_open not configured (no baseten key)",
+      "ai: spark_open fallback refused (membership) primary not sent",
+    ]);
   });
 
   it("never tries Fireworks when the first settle fails", async () => {

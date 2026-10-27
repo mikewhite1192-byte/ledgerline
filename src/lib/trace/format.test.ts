@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { TARGETS } from "@/lib/ai/targets";
 import {
   decisionSentence,
   effortWords,
@@ -6,6 +7,7 @@ import {
   formatLatency,
   formatSpend,
   modelName,
+  PRIMARY_HOSTS,
   traceLines,
   traceTotals,
 } from "./format";
@@ -92,6 +94,10 @@ describe("words for codes", () => {
     expect(modelName("spark_open", open, "elsewhere")).toBe("Muse Spark Open (via another host)");
     expect(modelName("spark_open", open, "__proto__")).toBe("Muse Spark Open (via another host)");
     expect(modelName("llama", "llama-9", "fireworks")).toBe("Other model");
+    // This page's copy of each target's usual host is the wrapper's, target for target.
+    expect(PRIMARY_HOSTS).toEqual(
+      Object.fromEntries(Object.entries(TARGETS).map(([target, { provider }]) => [target, provider])),
+    );
   });
 
   it("writes effort and latency in plain words", () => {
