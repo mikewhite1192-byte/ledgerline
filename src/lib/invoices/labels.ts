@@ -72,6 +72,20 @@ export const REVIEW_STATUS_LABELS: Readonly<Record<InvoiceReviewStatus, string>>
   ready_to_send: "Ready to send",
 };
 
+// The Review tab's empty table. A status filter narrows the rows but never the counts, so with one
+// on, an empty table says only that nothing has that status, unless the whole queue is empty.
+export function reviewEmptyState(
+  filter: InvoiceReviewStatus | undefined,
+  queued: number,
+): { title: string; body: string } {
+  const clear = "Every live invoice is ready and recorded as sent.";
+  if (filter === undefined) return { title: "Nothing to review", body: clear };
+  return {
+    title: "None with this status",
+    body: queued > 0 ? "No invoice in the review queue has this status. Choose All to see the rest." : clear,
+  };
+}
+
 // One short line per review reason, for a list row.
 export const REVIEW_REASON_LABELS: Readonly<Record<InvoiceReviewReason, string>> = {
   posting_failed: "The post to accounting failed",
@@ -79,7 +93,7 @@ export const REVIEW_REASON_LABELS: Readonly<Record<InvoiceReviewReason, string>>
   engine_total_differs: "The load's total differs",
   rate_confirmation_differs: "The rate confirmation differs",
   posted_amount_differs: "Accounting holds another amount",
-  no_delivery_document: "No signed delivery document",
+  no_delivery_document: "Signed delivery document not confirmed",
   same_amount_recent: "Same amount billed recently",
   not_reviewed: "Not reviewed yet",
   not_posted: "Not posted to accounting yet",
@@ -110,6 +124,9 @@ export type ReviewReasonDetail = {
   failureCategory: string | null;
   // The invoice numbers behind a duplicate warning, oldest first.
   duplicateNumbers: readonly string[];
+  // Whether the review read the load's uploaded documents (DOCUMENTS_AVAILABLE in documents.ts).
+  // Until it does, a missing delivery document is unconfirmed, never "none on file".
+  documentsRead: boolean;
 };
 
 const money = (cents: number | null): string => (cents === null ? "an unknown amount" : dollars(cents));
@@ -134,7 +151,9 @@ export function reviewReasonSentence(reason: InvoiceReviewReason, d: ReviewReaso
     case "posted_amount_differs":
       return `The accounting system holds this invoice at ${money(d.qboAmountCents)}.`;
     case "no_delivery_document":
-      return "This customer requires a signed delivery document; none is on file for this load.";
+      return d.documentsRead
+        ? "This customer requires a signed delivery document; none is on file for this load."
+        : "This customer requires a signed delivery document. Uploaded documents are not checked here yet, so none is confirmed for this load.";
     case "same_amount_recent":
       return `Another invoice for this customer, same amount, within two weeks: ${d.duplicateNumbers.join(", ")}.`;
     case "not_reviewed":

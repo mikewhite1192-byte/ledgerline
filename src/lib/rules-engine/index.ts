@@ -52,6 +52,7 @@ export { settleDriver } from "./settlement";
 export { advanceEligibility, floorToDollars } from "./advances";
 export { invoiceAmount } from "./invoices";
 export {
+  differingRateConfirmations,
   DOCUMENT_KINDS,
   DUPLICATE_WINDOW_DAYS,
   INVOICE_REVIEW_REASONS,

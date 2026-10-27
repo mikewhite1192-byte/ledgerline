@@ -153,6 +153,21 @@ function checkInput(input: InvoiceReviewInput): void {
   }
 }
 
+// The rate confirmations on the invoice's load whose rated amount differs from the load's linehaul,
+// compared whole. The status and the sentence that explains it both read this one list, so the
+// amount a sentence quotes is always one that differs.
+export function differingRateConfirmations(input: InvoiceReviewInput): DocumentFact[] {
+  const linehaul = input.engineLinehaulCents;
+  if (linehaul === null) return [];
+  return input.documents.filter(
+    (d) =>
+      d.kind === "rate_confirmation" &&
+      d.loadId === input.invoice.loadId &&
+      d.ratedCents !== null &&
+      d.ratedCents !== linehaul,
+  );
+}
+
 export function reviewInvoice(input: InvoiceReviewInput): InvoiceReview {
   checkInput(input);
   const inv = input.invoice;
@@ -180,15 +195,7 @@ export function reviewInvoice(input: InvoiceReviewInput): InvoiceReview {
     reasons.push("engine_total_differs");
     if (load) addSource(load);
   }
-  const rateDocs = input.documents.filter(
-    (d) =>
-      d.kind === "rate_confirmation" &&
-      d.loadId === inv.loadId &&
-      d.ratedCents !== null &&
-      input.engineLinehaulCents !== null &&
-      d.ratedCents !== input.engineLinehaulCents,
-  );
-  if (rateDocs.length > 0) {
+  if (differingRateConfirmations(input).length > 0) {
     reasons.push("rate_confirmation_differs");
     if (load) addSource(load);
   }

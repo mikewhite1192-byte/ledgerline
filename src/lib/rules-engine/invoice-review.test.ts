@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  differingRateConfirmations,
   DUPLICATE_WINDOW_DAYS,
   INVOICE_REVIEW_REASONS,
   INVOICE_REVIEW_STATUSES,
@@ -124,6 +125,19 @@ describe("reviewInvoice: one case per rule", () => {
     expect(reviewInvoice(input({ documents: [agree, none, other] })).status).toBe("ready_to_send");
     expect(reviewInvoice(input({ documents: [{ ...agree, ratedCents: c(1) }], engineLinehaulCents: null })).status)
       .toBe("ready_to_send");
+  });
+
+  it("lists only the rate confirmations that differ, the same ones the status reads", () => {
+    const agree: DocumentFact = { documentId: "d6", kind: "rate_confirmation", loadId: "load-a", ratedCents: c(110_000) };
+    const differs: DocumentFact = { ...agree, documentId: "d7", ratedCents: c(112_500) };
+    const none: DocumentFact = { ...agree, documentId: "d8", ratedCents: null };
+    const other: DocumentFact = { ...agree, documentId: "d9", loadId: "load-b", ratedCents: c(1) };
+    // The agreeing one comes first, so a sentence that took the first rated one would quote the load's own rate.
+    const both = input({ documents: [agree, none, other, differs] });
+    expect(differingRateConfirmations(both)).toEqual([differs]);
+    expect(reviewInvoice(both).reasons).toEqual(["rate_confirmation_differs"]);
+    expect(differingRateConfirmations(input({ documents: [agree, none, other] }))).toEqual([]);
+    expect(differingRateConfirmations(input({ documents: [differs], engineLinehaulCents: null }))).toEqual([]);
   });
 
   it("an amount the accounting system holds differently is a rate mismatch", () => {

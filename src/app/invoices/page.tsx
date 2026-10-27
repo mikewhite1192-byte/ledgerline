@@ -14,7 +14,7 @@ import { RefreshButton } from "@/components/invoices/refresh-button";
 import { readEngineProposalViews } from "@/lib/agent/gateway/store";
 import { cn } from "@/lib/cn";
 import { DbError } from "@/lib/db";
-import { accountingLine, QUEUE_REASON_LABELS, REVIEW_STATUS_LABELS } from "@/lib/invoices/labels";
+import { accountingLine, QUEUE_REASON_LABELS, REVIEW_STATUS_LABELS, reviewEmptyState } from "@/lib/invoices/labels";
 import { readReviewQueue, type ReviewQueue } from "@/lib/invoices/review-read";
 import { readInvoiceList, readQueueView, type InvoiceListRow, type QueueItemRow } from "@/lib/invoices/views";
 import { formatLocalDate } from "@/lib/format/dates";
@@ -256,10 +256,7 @@ function Review({ queue, filter }: { queue: ReviewQueue; filter: InvoiceReviewSt
         }
         rows={queue.rows}
         rowKey={(r) => r.id}
-        empty={{
-          title: filter === undefined ? "Nothing to review" : "None with this status",
-          body: "Every live invoice is ready and recorded as sent.",
-        }}
+        empty={reviewEmptyState(filter, total)}
         columns={[
           {
             key: "number",

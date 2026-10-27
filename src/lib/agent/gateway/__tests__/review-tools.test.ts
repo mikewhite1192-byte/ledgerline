@@ -105,7 +105,8 @@ describe("get_invoice_review", () => {
       reasons: [
         {
           reason: "no_delivery_document",
-          sentence: "This customer requires a signed delivery document; none is on file for this load.",
+          sentence:
+            "This customer requires a signed delivery document. Uploaded documents are not checked here yet, so none is confirmed for this load.",
         },
         { reason: "not_reviewed", sentence: "Nobody has reviewed this yet." },
       ],

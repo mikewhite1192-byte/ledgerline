@@ -6,6 +6,7 @@ import { isCanonicalUuid } from "../money/keys";
 import { readByKind, readBySubject } from "../money/read";
 import {
   compareText,
+  differingRateConfirmations,
   inReviewQueue,
   INVOICE_REVIEW_STATUSES,
   reviewInvoice,
@@ -13,7 +14,7 @@ import {
   type InvoiceReviewReason,
   type InvoiceReviewStatus,
 } from "../rules-engine";
-import { readDocumentFacts } from "./documents";
+import { DOCUMENTS_AVAILABLE, readDocumentFacts } from "./documents";
 import { readQueueCardLoads, readQueueCardLoadsFor } from "./made-by-queue";
 import {
   REVIEW_REASON_LABELS,
@@ -84,8 +85,8 @@ function viewOf(inv: InvoiceRow, facts: ReviewFacts, numbers: ReadonlyMap<string
   const input = reviewInputOf(inv, facts);
   const review = reviewInvoice(input);
   const posting = input.posting;
-  const ratedCents =
-    input.documents.find((d) => d.kind === "rate_confirmation" && d.ratedCents !== null)?.ratedCents ?? null;
+  // The amount the rate confirmation sentence quotes: one that differs, as the status found.
+  const ratedCents = differingRateConfirmations(input)[0]?.ratedCents ?? null;
   const duplicates = review.duplicateOf.map((id) => ({ id, invoiceNumber: numbers.get(id) ?? "" }));
   const detail = {
     amountCents: input.invoice.amountCents,
@@ -95,6 +96,7 @@ function viewOf(inv: InvoiceRow, facts: ReviewFacts, numbers: ReadonlyMap<string
     qboAmountCents: input.invoice.qboAmountCents,
     failureCategory: posting?.failureCategory ?? null,
     duplicateNumbers: duplicates.map((d) => d.invoiceNumber),
+    documentsRead: DOCUMENTS_AVAILABLE,
   };
   return {
     invoiceId: inv.id,

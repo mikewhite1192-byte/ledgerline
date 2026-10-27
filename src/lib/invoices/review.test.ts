@@ -16,6 +16,7 @@ import {
   OUTCOME_LABELS,
   REVIEW_REASON_LABELS,
   REVIEW_STATUS_LABELS,
+  reviewEmptyState,
   reviewReasonSentence,
   reviewWriteLabel,
   type ReviewReasonDetail,
@@ -37,6 +38,7 @@ const detail = (over: Partial<ReviewReasonDetail> = {}): ReviewReasonDetail => (
   qboAmountCents: 151_000,
   failureCategory: null,
   duplicateNumbers: ["X-INV-1", "X-INV-2"],
+  documentsRead: false,
   ...over,
 });
 
@@ -120,6 +122,26 @@ describe("review labels", () => {
     expect(reviewReasonSentence("posted_amount_differs", detail({ qboAmountCents: null }))).toBe(
       "The accounting system holds this invoice at an unknown amount.",
     );
+  });
+
+  it("never says a delivery document is not on file while uploaded documents are not read", () => {
+    expect(reviewReasonSentence("no_delivery_document", detail())).toBe(
+      "This customer requires a signed delivery document. Uploaded documents are not checked here yet, so none is confirmed for this load.",
+    );
+    expect(reviewReasonSentence("no_delivery_document", detail({ documentsRead: true }))).toBe(
+      "This customer requires a signed delivery document; none is on file for this load.",
+    );
+    expect(REVIEW_REASON_LABELS.no_delivery_document).toBe("Signed delivery document not confirmed");
+  });
+
+  it("says the whole queue is clear only when no status filter hides the rest", () => {
+    const clear = "Every live invoice is ready and recorded as sent.";
+    expect(reviewEmptyState(undefined, 0)).toEqual({ title: "Nothing to review", body: clear });
+    expect(reviewEmptyState("sync_error", 7)).toEqual({
+      title: "None with this status",
+      body: "No invoice in the review queue has this status. Choose All to see the rest.",
+    });
+    expect(reviewEmptyState("sync_error", 0)).toEqual({ title: "None with this status", body: clear });
   });
 
   it("says why a post failed in plain words, and never echoes an unknown category", () => {

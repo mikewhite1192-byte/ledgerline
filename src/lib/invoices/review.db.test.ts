@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
+import { checkEmail } from "../adapters/accounting/qbo/entities";
 import type { AccountingAdapter, InvoiceEmailStatus, ReadBack, SendOutcome } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import { createPgDb } from "../db/pg";
@@ -317,7 +318,7 @@ describe("invoice review against a seeded database", () => {
     if (left && Number(left[0].n) !== 0) throw new Error(`cleanup left ${left[0].n} rows behind`);
   });
 
-  it("has the review columns and their checks once 0028 has run after 0015", async () => {
+  it("has the review columns and their checks, every one validated, once 0028 and its validation have run after 0015", async () => {
     const cols = await admin.withoutTenant((q) =>
       q.query<{ table_name: string; column_name: string; data_type: string }>(
         `SELECT table_name, column_name, data_type FROM information_schema.columns
@@ -339,16 +340,31 @@ describe("invoice review against a seeded database", () => {
       "invoices.sent_by_membership_id:uuid",
       "invoices.sent_on:date",
     ]);
+    // 0028 adds each check and foreign key NOT VALID; 0028_invoice_review_validate validates them all.
     const checks = await admin.withoutTenant((q) =>
-      q.query<{ conname: string }>(
-        `SELECT conname FROM pg_constraint
-          WHERE conrelid = 'invoices'::regclass AND conname IN ('invoices_reviewed_pair',
-            'invoices_review_note_needs_review', 'invoices_sent_pair', 'invoices_sent_after_issue',
-            'invoices_qbo_pair', 'invoices_reviewed_by_fk', 'invoices_sent_by_fk')
+      q.query<{ conname: string; convalidated: boolean }>(
+        `SELECT conname, convalidated FROM pg_constraint
+          WHERE (conrelid = 'invoices'::regclass AND conname IN ('invoices_review_note_check',
+              'invoices_qbo_email_status_check', 'invoices_qbo_amount_cents_check', 'invoices_reviewed_pair',
+              'invoices_review_note_needs_review', 'invoices_sent_pair', 'invoices_sent_after_issue',
+              'invoices_qbo_pair', 'invoices_reviewed_by_fk', 'invoices_sent_by_fk'))
+             OR (conrelid = 'customers'::regclass AND conname = 'customers_billing_email_check')
           ORDER BY conname`,
       ),
     );
-    expect(checks).toHaveLength(7);
+    expect(checks.map((c) => `${c.conname}:${c.convalidated}`)).toEqual([
+      "customers_billing_email_check:true",
+      "invoices_qbo_amount_cents_check:true",
+      "invoices_qbo_email_status_check:true",
+      "invoices_qbo_pair:true",
+      "invoices_review_note_check:true",
+      "invoices_review_note_needs_review:true",
+      "invoices_reviewed_by_fk:true",
+      "invoices_reviewed_pair:true",
+      "invoices_sent_after_issue:true",
+      "invoices_sent_by_fk:true",
+      "invoices_sent_pair:true",
+    ]);
     // A real address shape is refused by the table itself, not only by the adapter.
     const customer = BR.plan.rows.customers[0];
     await expect(
@@ -363,6 +379,48 @@ describe("invoice review against a seeded database", () => {
       adminWrite(BR, "UPDATE invoices SET qbo_id = 'QI-X' WHERE tenant_id = $1 AND id = $2", [BR.id, inv]),
     ).rejects.toThrow();
     expect((await stored(BR, inv)).qbo_id).toBeNull();
+  });
+
+  it("stores exactly the billing addresses the accounting adapter accepts, length limits included", async () => {
+    const customer = BR.plan.rows.customers[0].id;
+    const local64 = "a".repeat(64);
+    const label63 = "b".repeat(63);
+    const cases = [
+      "ar@br-c01.example",
+      `${local64}@${label63}.example`,
+      `${local64}a@br-c01.example`,
+      `ar@${label63}b.example`,
+      "ar@example.com",
+      "AR@BR-C01.EXAMPLE",
+      "@br-c01.example",
+      "ar@.example",
+    ];
+    const accepted: string[] = [];
+    await withBillingEmail(BR, customer, null, async () => {
+      for (const email of cases) {
+        const adapter = (() => {
+          try {
+            return checkEmail(email) === email;
+          } catch {
+            return false;
+          }
+        })();
+        const err = await adminWrite(
+          BR,
+          "UPDATE customers SET billing_email = $3 WHERE tenant_id = $1 AND id = CAST($2 AS uuid)",
+          [BR.id, customer, email],
+        ).then(
+          () => null,
+          (e: unknown) => e as { sqlState?: string },
+        );
+        // A refusal is the table's check (23514), never some other error.
+        if (err !== null) expect(err.sqlState, email).toBe("23514");
+        expect(err === null, email).toBe(adapter);
+        if (adapter) accepted.push(email);
+      }
+    });
+    // Both limits are exercised from each side: the longest of each part passes, one more fails.
+    expect(accepted).toEqual(["ar@br-c01.example", `${local64}@${label63}.example`]);
   });
 
   it("reads every seeded plant back as planted, for both carriers", async () => {
