@@ -3,6 +3,7 @@ import { flags } from "../../config/flags";
 import { AiError, type AiRequest, type AiResult } from "../ai";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { FetchFn } from "../ai/providers/http";
+import { QUIET_JOB } from "../ai/test-fixtures";
 import type { Session } from "../auth/claims";
 import type { Param, Queryable, TenantDb } from "../db";
 import { readDocument, READ_MAX_OUTPUT_TOKENS, type ReadComplete } from "./read";
@@ -200,6 +201,8 @@ function ledger(seen: { reserved: number }): TenantDb {
           { spent_nanocents: 0, reserved_nanocents: 0, calls: 0, wonder_spent_nanocents: 0, wonder_reserved_nanocents: 0 },
         ] as T[];
       }
+      // The spend watch reads model_calls too, so it is answered first.
+      if (sql.includes("FROM spend_alerts")) return [QUIET_JOB] as T[];
       if (sql.includes("FROM model_calls")) return [{ reserved_nanocents: reserved, target: "spark" }] as T[];
       throw new Error("unexpected query");
     },
