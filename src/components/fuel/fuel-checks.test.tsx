@@ -138,6 +138,17 @@ describe("FuelChecks", () => {
     expect(await screen.findByText("A check is already running. Wait a moment, then look again.")).toBeTruthy();
   });
 
+  it("lets a person check while the last run still reads running: the server answers busy, or gives up a stale run", async () => {
+    // Started long ago and never finished: its request died, and only a new check clears it.
+    show(page(ROWS, { status: "running", checked: 0, found: 0, startedAt: "2026-11-02T16:00:00.000Z", finishedAt: null }));
+    expect(screen.getByText("Checking fill-ups...")).toBeTruthy();
+    const button = screen.getByRole("button", { name: "Check this week's fuel" }) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+    expect(urls()).toEqual(["/api/fuel/runs"]);
+  });
+
   it("says the outcome is not known when the answer is lost", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("network"));
     show(page(ROWS));
@@ -174,6 +185,11 @@ describe("FuelChecks", () => {
     fireEvent.click(screen.getByRole("button", { name: /^See details: Same receipt turned in twice/ }));
     const photos = screen.getAllByRole("img");
     expect(photos.map((p) => p.getAttribute("src"))).toEqual(["/api/documents/doc-a/file", "/api/documents/doc-b/file"]);
+    // Each photo's box is held at the receipt's 3:4 before it loads, so the actions below never move.
+    for (const p of photos) {
+      expect(p.getAttribute("alt")).toMatch(/^Receipt photo [12]$/);
+      expect(p.className.split(" ")).toEqual(expect.arrayContaining(["aspect-[3/4]", "w-full", "object-contain"]));
+    }
     expect(screen.getByText("The two photos show the same receipt (high confidence).")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Propose a pay correction/ })).toBeNull();
     expect(

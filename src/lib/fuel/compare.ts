@@ -1,5 +1,14 @@
 import { flags } from "../../config/flags";
-import { AiError, complete, type AiAttachment, type AiDeps, type AiFormat, type AiRequest, type AiResult } from "../ai";
+import {
+  AiError,
+  complete,
+  type AiAttachment,
+  type AiDeps,
+  type AiErrorCategory,
+  type AiFormat,
+  type AiRequest,
+  type AiResult,
+} from "../ai";
 import type { Session } from "../auth/claims";
 import type { Queryable } from "../db";
 import { mmddyyyyOf, norm } from "../documents/match";
@@ -63,10 +72,28 @@ export type CompareOutcome =
 export type CompareComplete = (target: "spark", request: AiRequest, session: Session) => Promise<AiResult>;
 export type CompareDeps = { complete?: CompareComplete; ai?: AiDeps };
 
-// Turned down before any request went out: nothing was spent.
-const BUDGET: readonly string[] = ["cap", "job_cap", "too_expensive", "billing", "disabled", "not_configured", "auth"];
-// The provider may have answered, or may answer later: not known, never final.
-const TIMEOUT: readonly string[] = ["timeout", "unavailable", "network", "unknown", "rate_limited"];
+// What each wrapper error means for a compare. Every category is placed here, so a new one does not
+// compile until it is. budget: turned down for the spend, the switch, the key or the bill. timeout:
+// the provider may have answered, or may answer later; not known, never final. A later run may ask
+// again after either. unreadable is final, so it is only a request that could never be used: one
+// the provider calls malformed, or photos too large to send. A category not in this list at run
+// time is a timeout, never final.
+const ON_ERROR: Readonly<Record<AiErrorCategory, "budget" | "timeout" | "unreadable">> = {
+  cap: "budget",
+  job_cap: "budget",
+  too_expensive: "budget",
+  billing: "budget",
+  disabled: "budget",
+  not_configured: "budget",
+  auth: "budget",
+  timeout: "timeout",
+  unavailable: "timeout",
+  network: "timeout",
+  unknown: "timeout",
+  rate_limited: "timeout",
+  bad_request: "unreadable",
+  too_long: "unreadable",
+};
 // Refused before sending (rate_limited and auth come back from the provider, so they count as reached).
 const NOT_SENT: readonly string[] = ["cap", "job_cap", "too_expensive", "disabled", "not_configured"];
 
@@ -169,11 +196,10 @@ export async function compareReceipts(
     const category = err instanceof AiError ? err.category : "error";
     console.error(`fuel: compare for ${input.findingId} failed category=${category}`);
     const costNanocents = NOT_SENT.includes(category) ? 0 : null;
-    if (BUDGET.includes(category)) return { verdict: "unknown", category: "budget", callId: null, costNanocents };
-    if (TIMEOUT.includes(category) || !(err instanceof AiError)) {
-      return { verdict: "unknown", category: "timeout", callId: null, costNanocents: null };
-    }
-    return { verdict: "unknown", category: "unreadable", callId: null, costNanocents };
+    const kind = err instanceof AiError && Object.hasOwn(ON_ERROR, err.category) ? ON_ERROR[err.category] : "timeout";
+    if (kind === "budget") return { verdict: "unknown", category: "budget", callId: null, costNanocents };
+    if (kind === "unreadable") return { verdict: "unknown", category: "unreadable", callId: null, costNanocents };
+    return { verdict: "unknown", category: "timeout", callId: null, costNanocents: null };
   }
   // Cut short: charged and its call kept, but not a final answer, so a later run may ask again.
   if (result.status !== "ok") {

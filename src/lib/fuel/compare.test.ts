@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
-import { AiError, type AiResult } from "../ai";
+import { AiError, type AiErrorCategory, type AiResult } from "../ai";
 import type { FetchFn } from "../ai/providers/http";
 import { QUIET_JOB } from "../ai/test-fixtures";
 import type { Session } from "../auth/claims";
@@ -169,6 +169,37 @@ describe("compareReceipts", () => {
       throw new Error("socket closed");
     });
     expect(await compareReceipts(INPUT, SESSION, { complete: thrown })).toMatchObject({ category: "timeout", costNanocents: null });
+  });
+
+  it("makes only a request that could never be used final; any other error may be asked again", async () => {
+    // Every wrapper category, so a new one does not compile until this says what it means.
+    const MEANS: Record<AiErrorCategory, "budget" | "timeout" | "unreadable"> = {
+      cap: "budget",
+      job_cap: "budget",
+      too_expensive: "budget",
+      billing: "budget",
+      disabled: "budget",
+      not_configured: "budget",
+      auth: "budget",
+      timeout: "timeout",
+      unavailable: "timeout",
+      network: "timeout",
+      unknown: "timeout",
+      rate_limited: "timeout",
+      bad_request: "unreadable",
+      too_long: "unreadable",
+    };
+    const failing = (category: string) =>
+      compareReceipts(INPUT, SESSION, {
+        complete: vi.fn(async () => {
+          throw new AiError(category as AiErrorCategory);
+        }),
+      });
+    for (const [category, means] of Object.entries(MEANS)) {
+      expect(await failing(category)).toMatchObject({ verdict: "unknown", category: means, callId: null });
+    }
+    // A category this file does not know (one the wrapper adds later) is not known, so never final.
+    expect(await failing("overloaded")).toEqual({ verdict: "unknown", category: "timeout", callId: null, costNanocents: null });
   });
 
   it("logs the category only, never the error text", async () => {

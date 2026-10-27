@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,18 +9,24 @@ import type { FetchFn } from "../src/lib/ai/providers/http";
 import { QUIET_JOB } from "../src/lib/ai/test-fixtures";
 import type { Session } from "../src/lib/auth/claims";
 import type { Param, Queryable, TenantDb } from "../src/lib/db";
+import { composeReceipt, turnRgba } from "../src/lib/seed/docs/compose";
+import { receiptLines } from "../src/lib/seed/docs/documents";
+import type { Rgba } from "../src/lib/seed/docs/font";
 import {
   MANIFEST,
+  PHOTO_HEIGHT,
   PHOTO_SAMPLE_SENTENCE,
+  PHOTO_WIDTH,
   parseManifest,
   type Manifest,
   type PhotoDoc,
 } from "../src/lib/seed/docs/manifest";
 import { LINES_INTRO, PLACEMENT, imagePrompt } from "../src/lib/seed/docs/prompts";
-import { imageDescription } from "../src/lib/seed/docs/stamp";
+import { encodeWebp, imageDescription, stampRgba, toRgba } from "../src/lib/seed/docs/stamp";
 import type { ReceiptRead } from "../src/lib/seed/docs/verify";
 import {
   DEFAULT_CAP_CENTS,
+  RETAKE_DEGREES,
   loadPhotoArgs,
   parseCap,
   parsePhotoArgs,
@@ -39,6 +46,9 @@ const SESSION: Session = {
   tenantId: "11111111-1111-4111-8111-111111111111",
 };
 const DOC_ID = "br-fuel-374";
+// The same paper receipt turned in twice: the photo, and its retake.
+const FIRST_ID = "br-fuel-465";
+const RETAKE_ID = "br-fuel-465-again";
 const GOOD_READ: ReceiptRead = {
   sample_word: true,
   vendor: "Roadside Fuel Stop",
@@ -49,6 +59,15 @@ const GOOD_READ: ReceiptRead = {
   gallons_milli: 71600,
   price_cents: 400,
   other_amounts: [],
+};
+// What the model reads off the photo of that receipt when it matches the manifest.
+const FIRST_READ: ReceiptRead = {
+  ...GOOD_READ,
+  date_mmddyyyy: "10/28/2026",
+  total_cents: 31996,
+  truck_unit: "BR-T113",
+  gallons_milli: 84200,
+  price_cents: 380,
 };
 const ENV: Record<string, string | undefined> = {
   NODE_ENV: "test",
@@ -176,6 +195,19 @@ function entry(m: Manifest, id = DOC_ID): PhotoDoc {
   return m.entries.find((e) => e.id === id) as PhotoDoc;
 }
 
+// Only the photo and its retake, so every call made is one of theirs.
+function pairManifest(): Manifest {
+  const m = freshManifest();
+  m.entries = m.entries.filter((e) => e.id === FIRST_ID || e.id === RETAKE_ID);
+  return m;
+}
+
+// The sha256 of the retake file a photo's pixels make: turned, stamped and described.
+async function turnedSha(plain: Rgba): Promise<string> {
+  const bytes = await encodeWebp(stampRgba(await turnRgba(plain, RETAKE_DEGREES)), PHOTO_SAMPLE_SENTENCE);
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 beforeEach(async () => {
   vi.unstubAllEnvs();
   for (const [name, value] of Object.entries(ENV)) vi.stubEnv(name, value);
@@ -211,7 +243,12 @@ describe("the sample photo run", () => {
     expect(flags.aiEnabled).toBe(false);
     expect(out).toEqual({ docs: [], spentNanocents: 0, stopped: null });
     expect(existsSync(io.publicDir) || existsSync(io.manifestPath)).toBe(false);
-    expect(printed.filter((l) => /prompt=\d+ chars/.test(l))).toHaveLength(8);
+    // A retake makes no call of its own, so it has no prompt and is left out of the estimate.
+    expect(printed.filter((l) => /prompt=\d+ chars/.test(l))).toHaveLength(7);
+    expect(printed).toContain(`  ${RETAKE_ID} fuel_receipt retake of ${FIRST_ID}, no call`);
+    expect(printed.find((l) => l.startsWith("estimate:"))).toBe(
+      "estimate: about 15 cents (1 cent per image, under 1 cent per read), at most 60 cents (run cap 60)",
+    );
   });
 
   it("keeps a generated photo whose read matches, stamped and described", async () => {
@@ -274,7 +311,8 @@ describe("the sample photo run", () => {
       ]),
     );
     expect(out.docs.find((d) => d.id === DOC_ID)?.attempts).toBe(1);
-    expect(counts.read).toBe(1 + 7 * 3);
+    // The retake is made from its photo's pixels: no image or read of its own.
+    expect(counts.read).toBe(1 + 6 * 3);
     for (const d of out.docs) {
       const doc = entry(written(), d.id);
       const file = readFileSync(join(io.publicDir, doc.file));
@@ -391,6 +429,38 @@ describe("the sample photo run", () => {
     expect(shas[0]).toBe(shas[1]);
   }, 30_000);
 
+  it("makes a retake from its generated photo's own pixels, turned, with no call of its own", async () => {
+    const { fetch, counts } = provider({ read: () => FIRST_READ });
+    const m = pairManifest();
+    const out = await runPhotos(m, { mode: "go", only: null, capCents: 60 }, io, calls(fetch));
+    expect(out.stopped).toBeNull();
+    expect(out.docs).toEqual([
+      expect.objectContaining({ id: FIRST_ID, origin: "generated", attempts: 1, reason: null }),
+      expect.objectContaining({ id: RETAKE_ID, origin: "generated", attempts: 0, reason: null }),
+    ]);
+    // The background, then one image and one read for the photo; none for the retake.
+    expect(counts).toEqual({ image: 2, read: 1 });
+    const [photo, retake] = out.docs;
+    expect(retake.sha256).not.toBe(photo.sha256);
+    expect(retake.sha256).toBe(await turnedSha(await toRgba(png, { width: PHOTO_WIDTH, height: PHOTO_HEIGHT })));
+    const file = readFileSync(join(io.publicDir, entry(m, RETAKE_ID).file));
+    expect(createHash("sha256").update(file).digest("hex")).toBe(retake.sha256);
+    expect(entry(m, RETAKE_ID).origin).toBe("generated");
+    expect(await imageDescription(file)).toBe(PHOTO_SAMPLE_SENTENCE);
+  }, 30_000);
+
+  it("composes a retake from its photo's pixels, turned, never from its own lines", async () => {
+    const m = pairManifest();
+    // Were the retake drawn from its own lines, this truck would show on it.
+    entry(m, RETAKE_ID).expect.truckUnit = "BR-T999";
+    const out = await runPhotos(m, { mode: "compose", only: null, capCents: 60 }, io);
+    expect(out.docs.map((d) => [d.id, d.origin, d.attempts, d.reason])).toEqual([
+      [FIRST_ID, "composed", 0, "asked"],
+      [RETAKE_ID, "composed", 0, "asked"],
+    ]);
+    expect(out.docs[1].sha256).toBe(await turnedSha(await composeReceipt(receiptLines(entry(m, FIRST_ID)), null)));
+  }, 30_000);
+
   it("reads the cap and the photo list strictly", () => {
     expect(parseCap(undefined)).toBe(DEFAULT_CAP_CENTS);
     expect(parseCap("25")).toBe(25);
@@ -399,6 +469,9 @@ describe("the sample photo run", () => {
     expect(photosToRun(MANIFEST, DOC_ID).map((d) => d.id)).toEqual([DOC_ID]);
     expect(() => photosToRun(MANIFEST, "br-l10259-ratecon")).toThrow();
     expect(() => photosToRun(MANIFEST, "nope")).toThrow();
+    // A retake and its photo are made together, so neither runs alone.
+    expect(() => photosToRun(MANIFEST, FIRST_ID)).toThrow("made together");
+    expect(() => photosToRun(MANIFEST, RETAKE_ID)).toThrow("made together");
     expect(parsePhotoArgs([], {})).toEqual({ mode: "dry", only: null, cap: undefined });
     expect(parsePhotoArgs(["--go", "--only", DOC_ID, "--cap", "9"], { SEED_DOCS_CAP_CENTS: "7" })).toEqual(
       { mode: "go", only: DOC_ID, cap: "9" },

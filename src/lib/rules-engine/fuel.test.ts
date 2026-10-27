@@ -114,6 +114,12 @@ describe("fuel bought off the route", () => {
     const loads = [load({ id: "l1", status: "cancelled", pickupOn: "2026-10-27", deliveredOn: "2026-10-28" })];
     expect(findFuelOffRoute(input({ loads, fuelPurchases: [offRoute] }))).toEqual([]);
   });
+
+  it("skips a fill-up whose load has no state miles: its route is not known, so nothing is off it", () => {
+    const loads = [load({ id: "l1", pickupOn: "2026-10-27", deliveredOn: "2026-10-28", stateMiles: [] })];
+    expect(findFuelOffRoute(input({ loads, fuelPurchases: [offRoute] }))).toEqual([]);
+    expect(runFuelChecks(input({ loads, fuelPurchases: [offRoute] }), LIMITS).filter((f) => f.check === "fuel_off_route")).toEqual([]);
+  });
 });
 
 describe("more fuel than the tank holds", () => {

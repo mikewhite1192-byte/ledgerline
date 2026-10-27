@@ -34,9 +34,11 @@ import { ForbiddenError } from "../../src/lib/tenant/context";
 // and no database. go: per photo, up to three attempts of generate, then a vision read checked
 // against the manifest by whole value; a kept image gets the SAMPLE stamp and EXIF, a photo
 // that fails three reads (or meets the run cap, or whose kept file does not fit its byte cap) is
-// composed instead. Every model call goes through the wrapper, which checks the switch, reserves
-// the cost and writes the ledger. Nothing printed holds a key, a prompt, an image or model text:
-// file names, counts, field names, bytes, sha256 and cents only.
+// composed instead. A retake (retakeOf) is never generated or read: in both modes it is made in
+// the same step as its photo, from that photo's pixels turned, so the two show one paper receipt
+// and neither runs alone under --only. Every model call goes through the wrapper, which checks the
+// switch, reserves the cost and writes the ledger. Nothing printed holds a key, a prompt, an image
+// or model text: file names, counts, field names, bytes, sha256 and cents only.
 
 export const IMAGE_MAX_CENTS = 2;
 export const VERIFY_MAX_CENTS = 3;
@@ -72,7 +74,7 @@ export type DocOutcome = {
   attempts: number;
   bytes: number;
   sha256: string;
-  // Why it was composed, in a word or two; null when generated.
+  // Why it was composed, in a word or two; null when generated. A retake carries its photo's.
   reason: string | null;
 };
 
@@ -136,6 +138,10 @@ export function photosToRun(manifest: Manifest, only: string | null): PhotoDoc[]
   if (only === null) return photos;
   const one = photos.find((d) => d.id === only);
   if (!one) throw new Error(`no photo ${only} in the manifest`);
+  // A retake is made from its photo's pixels in the same step, so neither of the two runs alone.
+  if (one.retakeOf !== undefined || photos.some((d) => d.retakeOf === one.id)) {
+    throw new Error(`${only} and its retake are made together: run without --only`);
+  }
   return [one];
 }
 
@@ -191,13 +197,26 @@ class Spend {
   }
 }
 
-// A retake of another entry's receipt is the same lines, turned this many degrees.
+// A retake of another entry's receipt is that photo's own pixels, turned this many degrees.
 export const RETAKE_DEGREES = 3;
 
-async function composed(doc: PhotoDoc, background: Buffer | null): Promise<Buffer> {
-  const img = await composeReceipt(receiptLines(doc), background);
-  const shot = doc.retakeOf ? await turnRgba(img, RETAKE_DEGREES) : img;
-  return encodeWebp(stampRgba(shot), PHOTO_SAMPLE_SENTENCE);
+// A photo's kept file and, when it has a retake, the retake's: the same pixels turned. Both
+// stamped and described. The retake is turned before the photo is stamped, since the stamp is
+// written over the pixels. Throws a TooLargeError when either does not fit maxBytes.
+type Shots = { photo: Buffer; retake: Buffer | null };
+async function shots(plain: Rgba, withRetake: boolean, maxBytes?: number): Promise<Shots> {
+  const retake = withRetake
+    ? await encodeWebp(stampRgba(await turnRgba(plain, RETAKE_DEGREES)), PHOTO_SAMPLE_SENTENCE, maxBytes)
+    : null;
+  return { photo: await encodeWebp(stampRgba(plain), PHOTO_SAMPLE_SENTENCE, maxBytes), retake };
+}
+
+async function composed(doc: PhotoDoc, withRetake: boolean, background: Buffer | null): Promise<Shots> {
+  return shots(await composeReceipt(receiptLines(doc), background), withRetake);
+}
+
+function retakesOf(docs: readonly PhotoDoc[], doc: PhotoDoc): PhotoDoc[] {
+  return docs.filter((d) => d.retakeOf === doc.id);
 }
 
 function record(
@@ -219,6 +238,26 @@ function record(
   // cabAngle says, so a reader takes origin "composed" as flat.
   writeManifest(manifest, io);
   return { id: doc.id, origin, attempts, bytes: doc.bytes, sha256: doc.sha256, reason };
+}
+
+// The photo's outcome, then each retake's: the same picture turned, so the same origin and
+// reason, with no attempts of its own.
+function recordShots(
+  manifest: Manifest,
+  io: PhotoIo,
+  doc: PhotoDoc,
+  retakes: readonly PhotoDoc[],
+  made: Shots,
+  origin: "generated" | "composed",
+  attempts: number,
+  reason: string | null,
+): DocOutcome[] {
+  const out = [record(manifest, io, doc, made.photo, origin, attempts, reason)];
+  for (const r of retakes) {
+    if (!made.retake) throw new Error(`${r.id}: its retake was not made`);
+    out.push(record(manifest, io, r, made.retake, origin, 0, reason));
+  }
+  return out;
 }
 
 // Up to three attempts of generate and read. Returns the kept pixels, or null and why not.
@@ -389,13 +428,18 @@ export async function runPhotos(
   if (options.mode === "dry") {
     io.log(`dry run: ${docs.length} photo(s), nothing is called; add --go to run`);
     for (const d of docs) {
+      if (d.retakeOf !== undefined) {
+        io.log(`  ${d.id} ${d.kind} retake of ${d.retakeOf}, no call`);
+        continue;
+      }
       io.log(
         `  ${d.id} ${d.kind}${d.cabAngle ? " cab angle" : ""} prompt=${imagePrompt(d).length} chars`,
       );
     }
     const background = readBackground(manifest, io) ? 0 : 1;
-    const typical = background + docs.length * 2;
-    const worst = background * IMAGE_MAX_CENTS + docs.length * MAX_ATTEMPTS * (IMAGE_MAX_CENTS + VERIFY_MAX_CENTS);
+    const called = docs.filter((d) => d.retakeOf === undefined).length;
+    const typical = background + called * 2;
+    const worst = background * IMAGE_MAX_CENTS + called * MAX_ATTEMPTS * (IMAGE_MAX_CENTS + VERIFY_MAX_CENTS);
     io.log(
       `estimate: about ${typical} cents (1 cent per image, under 1 cent per read), ` +
         `at most ${Math.min(worst, options.capCents)} cents (run cap ${options.capCents})`,
@@ -407,9 +451,14 @@ export async function runPhotos(
     const background = readBackground(manifest, io);
     const out: DocOutcome[] = [];
     for (const d of docs) {
-      const outcome = record(manifest, io, d, await composed(d, background), "composed", 0, "asked");
-      summary(io, outcome, 0, 0);
-      out.push(outcome);
+      // Made with its photo, below.
+      if (d.retakeOf !== undefined) continue;
+      const retakes = retakesOf(docs, d);
+      const made = await composed(d, retakes.length > 0, background);
+      for (const outcome of recordShots(manifest, io, d, retakes, made, "composed", 0, "asked")) {
+        summary(io, outcome, 0, 0);
+        out.push(outcome);
+      }
     }
     return { docs: out, spentNanocents: 0, stopped: null };
   }
@@ -427,24 +476,30 @@ export async function runPhotos(
     await ensureBackground(manifest, calls, spend, io);
     const background = readBackground(manifest, io);
     for (const d of docs) {
+      // Made with its photo, below: never generated or read on its own.
+      if (d.retakeOf !== undefined) continue;
+      const retakes = retakesOf(docs, d);
       const start = spend.nanocents;
       const tried = await attempt(d, calls, spend, io);
       let reason = tried.reason;
-      let kept: Buffer | null = null;
+      let kept: Shots | null = null;
       if (tried.kept) {
         try {
-          kept = await encodeWebp(stampRgba(tried.kept), PHOTO_SAMPLE_SENTENCE, calls.maxBytes);
+          kept = await shots(tried.kept, retakes.length > 0, calls.maxBytes);
         } catch (err) {
-          // A photo too detailed for its byte cap is composed instead, so the run still finishes.
+          // A photo (or its retake) too detailed for its byte cap is composed instead, both of
+          // them, so the run still finishes and the two still show one receipt.
           if (!(err instanceof TooLargeError)) throw err;
           reason = "too large";
         }
       }
-      const bytes = kept ?? (await composed(d, background));
+      const made = kept ?? (await composed(d, retakes.length > 0, background));
       const origin = kept ? "generated" : "composed";
-      const outcome = record(manifest, io, d, bytes, origin, tried.attempts, reason);
-      summary(io, outcome, start, spend.nanocents);
-      out.push(outcome);
+      const outcomes = recordShots(manifest, io, d, retakes, made, origin, tried.attempts, reason);
+      outcomes.forEach((outcome, i) => {
+        summary(io, outcome, i === 0 ? start : spend.nanocents, spend.nanocents);
+        out.push(outcome);
+      });
     }
   } catch (err) {
     if (!(err instanceof FatalCallError)) throw err;

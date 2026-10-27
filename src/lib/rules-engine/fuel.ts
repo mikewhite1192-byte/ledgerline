@@ -240,7 +240,8 @@ function chargeBackUnlessDeducted(p: FuelPurchaseRecord, deducted: PayItemRecord
 }
 
 // A fill-up on a load, on a day that load was on the road, in a state the load never crossed.
-// A purchase whose load is not in the input is skipped, never guessed.
+// A purchase whose load is not in the input, or whose load has no state miles (its route is not
+// known), is skipped, never guessed: an unknown route is not a route that missed the state.
 export function findFuelOffRoute(input: CheckInput): FuelFinding[] {
   const r = readInput(input);
   const out: FuelFinding[] = [];
@@ -248,7 +249,7 @@ export function findFuelOffRoute(input: CheckInput): FuelFinding[] {
     if (p.loadId === null) continue;
     const load = r.loads.get(p.loadId);
     if (!load || !onTheRoad(load, p.purchasedOn)) continue;
-    if (load.stateMiles.some((m) => m.state === p.state)) continue;
+    if (load.stateMiles.length === 0 || load.stateMiles.some((m) => m.state === p.state)) continue;
     const driver = r.drivers.get(p.driverId)!;
     const deducted = deductionOf(r, p);
     out.push({

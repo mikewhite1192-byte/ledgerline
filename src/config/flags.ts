@@ -316,8 +316,9 @@ export type Flags = {
   // receipt compare is called, and the agent's run_checks leaves fuel findings out.
   fuelAnomalyEnabled: boolean;
   fuelAnomalyLimits: {
-    // Tenant-local date: fill-ups before it are never listed, so switching on never surfaces
-    // history.
+    // Tenant-local date: fill-ups before it are never listed. The release PR that turns
+    // fuelAnomalyEnabled on also sets this to its go-live date; left as it is, the first run lists
+    // every fill-up from this date up to go-live.
     from: string;
     // Two fill-ups with the same gallons, amount and state this close together are one fill-up
     // turned in twice.

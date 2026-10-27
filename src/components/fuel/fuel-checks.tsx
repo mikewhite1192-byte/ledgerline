@@ -220,7 +220,6 @@ export function FuelChecks({ page, auditorOn, timezone }: { page: FuelPage; audi
   }
 
   const line = lastRunLine(page);
-  const running = page.lastRun?.status === "running";
 
   return (
     <div className="grid gap-6">
@@ -234,7 +233,9 @@ export function FuelChecks({ page, auditorOn, timezone }: { page: FuelPage; audi
           ) : null}
         </div>
         <div className="grid gap-2">
-          <Button disabled={running} pending={busy === "run"} pendingLabel={W.running} onClick={() => void check()}>
+          {/* Never held off by a run that still reads running: the server answers busy while one is
+              live and gives up a stale one, so a click is how a stale run is cleared. */}
+          <Button pending={busy === "run"} pendingLabel={W.running} onClick={() => void check()}>
             {W.run}
           </Button>
           {runMessage ? (
@@ -301,7 +302,7 @@ export function FuelChecks({ page, auditorOn, timezone }: { page: FuelPage; audi
                         src={`/api/documents/${encodeURIComponent(id)}/file`}
                         alt={`Receipt photo ${i + 1}`}
                         loading="lazy"
-                        className="h-auto w-full rounded-md border border-border"
+                        className="aspect-[3/4] w-full rounded-md border border-border bg-muted object-contain"
                       />
                     </a>
                   ))}
