@@ -46,6 +46,9 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That fix is not here.",
 };
+// The card statuses listed under Needs a look: still waiting, or approved and not finished.
+const LOOK_STATUSES: ReadonlySet<string> = new Set(["proposed", "approved", "executing", "unknown"]);
+
 const APPROVE_FALLBACK = "The approval did not go through. Nothing changed.";
 const REJECT_FAILED = "The rejection did not go through. Try again.";
 
@@ -249,19 +252,22 @@ export function SweepRun({ initial, auditorOn }: { initial: SweepPage; auditorOn
   const clean = fixes.filter((i) => i.clean && proposalOf(i)?.status === "proposed").filter(once);
   const earlier = (i: SweepItemView) =>
     i.status === "fixed_earlier" || i.status === "declined_earlier" || i.status === "expired_earlier";
+  // A fix approved or running, or one whose outcome is not known, is not a no: it stays here under
+  // its own status, never under Declined.
   const look = fixes
-    .filter((i) => !i.clean && !earlier(i) && (proposalOf(i)?.status ?? "proposed") === "proposed")
+    .filter((i) => !i.clean && !earlier(i) && LOOK_STATUSES.has(proposalOf(i)?.status ?? "proposed"))
     .filter(once);
   const fixed = fixes.filter((i) => i.status === "fixed_earlier" || proposalOf(i)?.status === "done").filter(once);
   // Expired with nobody deciding is not a person's no, so it is never listed as declined.
   const expired = fixes
     .filter((i) => i.status === "expired_earlier" || proposalOf(i)?.status === "expired")
     .filter(once);
+  // Declined is a person's no (rejected) or a run that failed, nothing else.
   const declined = fixes
     .filter((i) => {
       const s = proposalOf(i)?.status;
       if (i.status === "expired_earlier" || s === "expired") return false;
-      return i.status === "declined_earlier" || (s !== undefined && s !== "proposed" && s !== "done");
+      return i.status === "declined_earlier" || s === "rejected" || s === "failed";
     })
     .filter(once);
   const people = page.items.filter((i) => i.kind === "needs_person");

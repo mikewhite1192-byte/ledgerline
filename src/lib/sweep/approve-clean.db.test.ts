@@ -7,6 +7,7 @@ import type { Session } from "../auth/claims";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
+import { executeProposal, type ExecuteDeps } from "../proposals/execute";
 import { CORRECTION_SUBKIND } from "../proposals/executors/pay-correction";
 import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
@@ -170,6 +171,44 @@ describe("approve all clean", () => {
       ok: false,
       category: "batch_taken",
     });
+  });
+
+  it("finishes a batch left reserved by a request that stopped part way, and runs no fix twice", async () => {
+    const { runId, ids, total } = await sweep();
+    const batchId = randomUUID();
+    // The request stops on the third fix, after the first two ran.
+    let calls = 0;
+    const stopping = async (s: Session, id: string, d: ExecuteDeps) => {
+      calls += 1;
+      if (calls === 3) throw new Error("stopped");
+      return executeProposal(s, id, { confirmed: false }, d);
+    };
+    await expect(
+      approveClean(SESSION, runId, { batchId, proposalIds: ids, totalCents: total }, { db: app, clock, execute: stopping }),
+    ).rejects.toThrow("stopped");
+    expect(await batch(batchId)).toMatchObject({ status: "reserved", result: null });
+    expect((await statuses()).filter((st) => st === "done")).toHaveLength(2);
+    expect(await correctionCount()).toBe(2);
+
+    // The same batch id again carries on with its own list: the two already done are counted, not
+    // run again, and the other three run once each.
+    expect(await approveAll(runId, { batchId, proposalIds: ids, totalCents: total })).toEqual({
+      ok: true,
+      batchId,
+      done: 5,
+      refused: [],
+      replay: false,
+    });
+    expect(await statuses()).toEqual(Array(5).fill("done"));
+    expect(await correctionCount()).toBe(5);
+    expect(await batch(batchId)).toMatchObject({ status: "done", total_cents: String(total) });
+    // A third try replays the stored answer.
+    expect(await approveAll(runId, { batchId, proposalIds: ids, totalCents: total })).toMatchObject({
+      ok: true,
+      done: 5,
+      replay: true,
+    });
+    expect(await correctionCount()).toBe(5);
   });
 
   it("refuses the whole batch on a different total, answering what is clean now", async () => {

@@ -299,6 +299,86 @@ describe("a sweep of the open week", () => {
     expect((await proposals()).map((p) => p.id)).toEqual(first.map((p) => p.id));
   });
 
+  it("drafts an item held back by another open proposal once that one is decided, and never drafts a fix twice", async () => {
+    await runToEnd(await start());
+    const first = await proposals();
+    const firstIds = first.map((p) => p.id);
+    // The runs and items go, and each waiting proposal becomes a different one for its driver.
+    await admin.withTenant(T, async (q) => {
+      await q.execute("DELETE FROM sweep_items WHERE tenant_id = current_tenant_id()");
+      await q.execute("DELETE FROM sweep_runs WHERE tenant_id = current_tenant_id()");
+      await q.execute(
+        `UPDATE proposals SET dedupe_key = 'pay_correction:' || CAST(subject_id AS text) || ':'
+                                           || md5(CAST(id AS text)) || md5('other') WHERE kind = 'pay_correction'`,
+      );
+    });
+    const fixesOf = (runId: string) =>
+      admin.withTenant(T, (q) =>
+        q.query<{ finding_key: string; status: string; proposal_id: string | null }>(
+          `SELECT finding_key, status, CAST(proposal_id AS text) AS proposal_id FROM sweep_items
+            WHERE seen_run_id = CAST($1 AS uuid) AND kind = 'fix' ORDER BY finding_key`,
+          [runId],
+        ),
+      );
+
+    const held = await start();
+    await runToEnd(held);
+    const blocked = await fixesOf(held);
+    expect(blocked.map((i) => i.status)).toEqual(Array(5).fill("blocked_live"));
+    expect(blocked.map((i) => i.proposal_id).sort()).toEqual([...firstIds].sort());
+    // While every blocker still waits, a later run holds every item back and drafts nothing.
+    const waiting = await start();
+    await runToEnd(waiting);
+    expect(await fixesOf(waiting)).toEqual(blocked);
+    expect((await proposals()).map((p) => p.id)).toEqual(firstIds);
+
+    // A person rejects one blocker, a fix for another record. Another blocker was this same fix
+    // (same driver and record), and it ran. The other three still wait.
+    const [other, same] = first;
+    await admin.withTenant(T, async (q) => {
+      await q.execute(
+        `UPDATE proposals SET sources = '[]', status = 'rejected', decided_by = $2,
+                              decided_at = CAST($3 AS timestamptz) WHERE id = CAST($1 AS uuid)`,
+        [other.id, SESSION.sub, NOW.toISOString()],
+      );
+      for (const status of ["approved", "executing", "done"]) {
+        await q.execute(
+          `UPDATE proposals SET status = $2, decided_by = $3, decided_at = CAST($4 AS timestamptz)
+            WHERE id = CAST($1 AS uuid)`,
+          [same.id, status, SESSION.sub, NOW.toISOString()],
+        );
+      }
+    });
+    explain.mockClear();
+    const after = await start();
+    await runToEnd(after);
+    const now = await fixesOf(after);
+    expect(now.map((i) => i.finding_key)).toEqual(blocked.map((i) => i.finding_key));
+    const ps = await proposals();
+    expect(ps).toHaveLength(6);
+    const drafted = ps.find((p) => !firstIds.includes(p.id));
+    expect(drafted).toMatchObject({ subject_id: other.subject_id, status: "proposed" });
+    now.forEach((i, n) => {
+      const blocker = blocked[n].proposal_id;
+      if (blocker === other.id) expect(i).toMatchObject({ status: "drafted", proposal_id: drafted?.id });
+      else if (blocker === same.id) expect(i).toMatchObject({ status: "fixed_earlier", proposal_id: same.id });
+      else expect(i).toMatchObject({ status: "blocked_live", proposal_id: blocker });
+    });
+    expect(explain).toHaveBeenCalledTimes(1);
+    expect((await readSweepPage(SESSION, after, { db: app }))?.counts).toMatchObject({
+      fixes_drafted: 1,
+      fixed_earlier: 1,
+      blocked_live: 3,
+    });
+
+    // The same week swept again: one draft in all, nothing drafted twice.
+    const again = await start();
+    await runToEnd(again);
+    expect(await fixesOf(again)).toEqual(now);
+    expect((await proposals()).map((p) => p.id)).toEqual(ps.map((p) => p.id));
+    expect(explain).toHaveBeenCalledTimes(1);
+  });
+
   it("gives the item places to findings not yet settled, so a week with more findings than places finishes", async () => {
     flags.sweepLimits = { ...flags.sweepLimits, maxItems: 3 };
     const runs: string[] = [];

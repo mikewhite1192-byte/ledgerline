@@ -35,7 +35,9 @@ import { serviceSession } from "./service-session";
 //   draft  one item per step: open the item's turn, ask the gateway for the proposal (it checks
 //          the limits), save it, check the saved numbers are the engine's, explain it. An item
 //          refused for a passing reason (TRANSIENT_REFUSALS) is tried again by a later run, at
-//          most MAX_DRAFT_ATTEMPTS times in all; a lasting refusal is never tried again;
+//          most MAX_DRAFT_ATTEMPTS times in all; a lasting refusal is never tried again. An item
+//          held back by another open proposal for the driver is tried again by a later run once
+//          that proposal is no longer open;
 //   audit  ONE auditor run per slice, first thing (an audit can outlast the draft lease, so this
 //          phase's lease is 45 s);
 //   done   counts, and the run is closed.
@@ -450,18 +452,25 @@ async function findPhase(ctx: Ctx, run: Run): Promise<boolean> {
 }
 
 // This week's findings that no run drafts again: every status but found and over_cap (the draft
-// phase takes those), less a refusal for a passing reason with tries left (writeItem puts it back
-// to found).
+// phase takes those), less a refusal for a passing reason with tries left and an item blocked by
+// a proposal that is no longer open (writeItem puts both back).
 async function settledKeys(q: Queryable, periodId: string): Promise<Set<string>> {
   const rows = await q.query<{ finding_key: string }>(
     `SELECT finding_key FROM sweep_items
       WHERE period_id = CAST($1 AS uuid) AND status NOT IN ('found', 'over_cap')
         AND NOT (kind = 'fix' AND status = 'refused' AND refusal_category = ANY(CAST($2 AS text[]))
-                 AND draft_attempts < $3)`,
+                 AND draft_attempts < $3)
+        AND NOT (kind = 'fix' AND status = 'blocked_live' AND ${BLOCKER_GONE_SQL})`,
     [periodId, `{${TRANSIENT_REFUSALS.join(",")}}`, MAX_DRAFT_ATTEMPTS],
   );
   return new Set(rows.map((r) => r.finding_key));
 }
+
+// A blocked_live item's blocking proposal (its proposal_id) is no longer waiting or running: a
+// person decided it, it ran, failed or expired. No open proposal covers the driver now. A missing
+// proposal is not "gone": the item stays blocked.
+const BLOCKER_GONE_SQL = `EXISTS (SELECT 1 FROM proposals bp WHERE bp.id = sweep_items.proposal_id
+  AND bp.status NOT IN ('proposed', 'approved', 'executing'))`;
 
 // The stored settlement exceptions the checks do not cover (SETTLEMENTS' pay-run proposals).
 // Until that item merges no such proposal exists and this reads nothing.
@@ -529,8 +538,9 @@ async function writeItem(q: Queryable, ctx: Ctx, run: Run, p: Planned, now: stri
              CAST($14 AS jsonb), $15, $16, CAST($17 AS uuid), CAST($18 AS timestamptz), CAST($18 AS timestamptz))
      ON CONFLICT (tenant_id, period_id, finding_key)
        DO UPDATE SET seen_run_id = EXCLUDED.seen_run_id, updated_at = EXCLUDED.updated_at,
-         status = CASE WHEN ${RETRY_SQL} THEN 'found' ELSE sweep_items.status END,
-         refusal_category = CASE WHEN ${RETRY_SQL} THEN NULL ELSE sweep_items.refusal_category END`,
+         status = CASE WHEN ${RETRY_SQL} THEN EXCLUDED.status ELSE sweep_items.status END,
+         refusal_category = CASE WHEN ${RETRY_SQL} THEN NULL ELSE sweep_items.refusal_category END,
+         proposal_id = CASE WHEN ${RETRY_SQL} THEN EXCLUDED.proposal_id ELSE sweep_items.proposal_id END`,
     [
       randomUUID(),
       ctx.runId,
@@ -556,11 +566,15 @@ async function writeItem(q: Queryable, ctx: Ctx, run: Run, p: Planned, now: stri
   );
 }
 
-// A new run that finds an item refused for a passing reason, with tries left, puts it back to
-// found so this run drafts it again. Every SET expression reads the row as it was.
+// A new run that finds an item refused for a passing reason with tries left, or blocked by a
+// proposal that is no longer open, puts it back so this run drafts it again. It takes the status
+// and proposal this run's earlierFix gave: found, or the earlier fix's own outcome when the same
+// fix already ran, was turned down or expired (the blocker may have been that fix), so a fix is
+// never drafted twice. Every SET expression reads the row as it was.
 const RETRY_SQL = `(sweep_items.seen_run_id <> EXCLUDED.seen_run_id AND sweep_items.kind = 'fix'
-  AND sweep_items.status = 'refused' AND sweep_items.refusal_category = ANY(CAST($19 AS text[]))
-  AND sweep_items.draft_attempts < $20)`;
+  AND ((sweep_items.status = 'refused' AND sweep_items.refusal_category = ANY(CAST($19 AS text[]))
+        AND sweep_items.draft_attempts < $20)
+    OR (sweep_items.status = 'blocked_live' AND ${BLOCKER_GONE_SQL})))`;
 
 // ---- Draft ----
 
