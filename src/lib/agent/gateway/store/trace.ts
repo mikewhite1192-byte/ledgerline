@@ -27,6 +27,7 @@ type CallCols = {
   m_id: string | null;
   m_target: string | null;
   m_model: string | null;
+  m_provider: string | null;
   m_purpose: string | null;
   m_effort: string | null;
   m_status: string | null;
@@ -83,11 +84,14 @@ function wholeOrNull(v: unknown): number | null {
 }
 
 function callOf(r: CallCols): TraceCall | null {
-  if (!r.m_id || !r.m_target || !r.m_model || !r.m_purpose || !r.m_status) return null;
+  if (!r.m_id || !r.m_target || !r.m_model || !r.m_provider || !r.m_purpose || !r.m_status) {
+    return null;
+  }
   return {
     id: r.m_id,
     target: r.m_target,
     model: r.m_model,
+    provider: r.m_provider,
     purpose: r.m_purpose,
     effort: r.m_effort,
     status: r.m_status,
@@ -150,9 +154,9 @@ function stepOf(r: StepRow): TraceStep {
 }
 
 const CALL_SELECT = (a: string) =>
-  `${a}.id AS m_id, ${a}.target AS m_target, ${a}.model AS m_model, ${a}.purpose AS m_purpose,
-   ${a}.reasoning_effort AS m_effort, ${a}.status AS m_status, ${a}.failure AS m_failure,
-   ${a}.duration_ms AS m_duration_ms, ${a}.cost_nanocents AS m_cost`;
+  `${a}.id AS m_id, ${a}.target AS m_target, ${a}.model AS m_model, ${a}.provider AS m_provider,
+   ${a}.purpose AS m_purpose, ${a}.reasoning_effort AS m_effort, ${a}.status AS m_status,
+   ${a}.failure AS m_failure, ${a}.duration_ms AS m_duration_ms, ${a}.cost_nanocents AS m_cost`;
 
 export async function readTurnTrace(q: Queryable, sub: string, turnId: string): Promise<TurnTrace | null> {
   const turns = await q.query<{ id: string; status: string; trace_id: string }>(
