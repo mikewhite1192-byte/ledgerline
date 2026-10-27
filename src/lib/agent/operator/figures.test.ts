@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centsIn, maskFigures, WITHHELD } from "./figures";
+import { centsIn, maskFigures, typedCentsIn, WITHHELD } from "./figures";
 
 describe("figures", () => {
   it("collects every value under a key ending in cents, as absolute values", () => {
@@ -17,6 +17,16 @@ describe("figures", () => {
   it("reads one decimal place as tens of cents", () => {
     expect(maskFigures("$1.5", new Set([150])).masked).toBe(0);
     expect(maskFigures("$1.5", new Set([105])).masked).toBe(1);
+  });
+
+  it("reads the person's typed figures as cents, the same way the mask reads them", () => {
+    const typed = typedCentsIn("Can Sam get $500, or $1,250.5, or 75 cents?");
+    expect([...typed].sort((a, b) => a - b)).toEqual([75, 50_000, 125_050]);
+    expect(maskFigures("Yes, $500.00 and $1,250.50 and 75 cents, not $501.", typed)).toEqual({
+      text: `Yes, $500.00 and $1,250.50 and 75 cents, not ${WITHHELD}.`,
+      masked: 1,
+    });
+    expect([...typedCentsIn("BR-D07 drove 2,400 miles")]).toEqual([]);
   });
 
   it("leaves text with no money alone", () => {

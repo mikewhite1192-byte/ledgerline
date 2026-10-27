@@ -17,7 +17,7 @@ import {
 import type { StepView } from "../view";
 import { TurnBudget, type CapReason, type TurnLimits } from "./budget";
 import { idsIn, validateRefs } from "./citations";
-import { centsIn, maskFigures } from "./figures";
+import { centsIn, maskFigures, typedCentsIn } from "./figures";
 import type { TurnEmitter } from "./stream";
 
 // The operator loop (design 2.2): short Muse Spark turns over a compact state summary, every
@@ -93,6 +93,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     { role: "user", content: input.text },
   ];
   const allowedCents = new Set<number>(turn.summaryCents.map((n) => Math.abs(n)));
+  // The person's own figures in what they typed this turn ("Can Sam get $500?") may be said back.
+  typedCentsIn(input.text, allowedCents);
   const trusted = new Set<string>();
   const invalid = new Map<string, number>();
   let stepCount = 0;
@@ -204,7 +206,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   };
 
   // The card for an allowed propose_* outcome. What the model is told back replaces the tool's
-  // result: created, the same card again, or refused because one is already waiting.
+  // result: created, the same card again, or refused because one is already waiting or the same
+  // proposal was already decided. Only created and a live duplicate say proposed.
   const persist = async (
     outcome: Extract<GatewayOutcome, { decision: "allowed" }>,
   ): Promise<Record<string, unknown>> => {
@@ -229,12 +232,20 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         gatewayDecisionId: outcome.decisionId,
         flaggedInputId,
       });
-      await finish(step, saved.kind === "live_exists" ? "failed" : "done", {
-        proposalId: saved.kind === "live_exists" ? null : saved.proposalId,
-        detail: { result: saved.kind, droppedRefs: draft.sources.length - sources.length },
+      const carded = saved.kind === "created" || saved.kind === "duplicate";
+      await finish(step, carded ? "done" : "failed", {
+        proposalId: carded ? saved.proposalId : null,
+        detail: {
+          result: saved.kind,
+          droppedRefs: draft.sources.length - sources.length,
+          ...(saved.kind === "already_decided" ? { status: saved.status } : {}),
+        },
       });
       if (saved.kind === "live_exists") {
         return { proposed: false, reason: "live_proposal_exists", proposalId: saved.proposalId };
+      }
+      if (saved.kind === "already_decided") {
+        return { proposed: false, reason: "already_decided", proposalId: saved.proposalId };
       }
       return {
         ...outcome.result,
@@ -309,7 +320,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         return modelFailed(called.error, called.reducedCap);
       }
       const { result } = called;
-      // Figures the tools did not return are withheld before the text is kept anywhere.
+      // Figures the tools did not return, and the person did not type, are withheld before the
+      // text is kept anywhere.
       const shown = maskFigures(result.text.trim(), allowedCents);
       await finish(step, "done", {
         modelCallId: result.callId,

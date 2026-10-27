@@ -16,6 +16,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
 
 const CATEGORY = /^[a-z_]{2,40}$/;
 const LIVE = "('proposed', 'approved', 'executing')";
+const LIVE_STATUSES: readonly string[] = ["proposed", "approved", "executing"];
 
 // JSON with object keys sorted at every level, so equal args hash equally.
 export function canonicalJson(value: unknown): string {
@@ -92,8 +93,17 @@ async function setFlag(q: Queryable, id: string, inputId: string, nowIso: string
   );
 }
 
-// Inside a tenant transaction. A duplicate returns the existing card (and flags it if this turn
-// read a flagged input); another live proposal for the subject is refused, never queued.
+// The same proposal already on record that a person has decided (rejected, expired, done or
+// failed): there is no card to return, and the turn must not claim one.
+function decided(existing: Existing): PersistResult | null {
+  return LIVE_STATUSES.includes(existing.status)
+    ? null
+    : { kind: "already_decided", proposalId: existing.id, status: existing.status };
+}
+
+// Inside a tenant transaction. A duplicate that is still live returns the existing card (and flags
+// it if this turn read a flagged input); one already decided is reported as such; another live
+// proposal for the subject is refused, never queued.
 export async function persistProposal(
   q: Queryable,
   input: PersistInput,
@@ -106,6 +116,8 @@ export async function persistProposal(
 
   const existing = await findByDedupe(q, key);
   if (existing) {
+    const done = decided(existing);
+    if (done) return done;
     if (flag && !existing.flagged_input_id) await setFlag(q, existing.id, flag, nowIso);
     return {
       kind: "duplicate",
@@ -165,7 +177,13 @@ export async function findProposalConflict(
   const { draft } = input;
   const existing = await findByDedupe(q, dedupeKey(draft.kind, draft.subjectId, draft.args));
   if (existing) {
-    return { kind: "duplicate", proposalId: existing.id, flagged: existing.flagged_input_id !== null };
+    return (
+      decided(existing) ?? {
+        kind: "duplicate",
+        proposalId: existing.id,
+        flagged: existing.flagged_input_id !== null,
+      }
+    );
   }
   const live = await findLive(q, draft.kind, draft.subjectId);
   return live ? { kind: "live_exists", proposalId: live } : null;

@@ -1,6 +1,7 @@
 // The agent never computes money in its own text: every figure must come from a tool result in
-// integer cents (or the state summary). A dollar or cents figure in the final answer that matches
-// none of them is replaced with a fixed note, and the count goes on the turn's step detail.
+// integer cents (or the state summary), or be one the signed-in person typed in this turn's own
+// message. A dollar or cents figure in the final answer that matches none of them is replaced with
+// a fixed note, and the count goes on the turn's step detail.
 
 export const WITHHELD = "[amount not from a record]";
 
@@ -28,6 +29,23 @@ function digits(s: string): number {
   return Number(s.replace(/,/g, ""));
 }
 
+function dollarsToCents(whole: string, frac: string | undefined): number {
+  const fraction = frac === undefined ? 0 : frac.length === 1 ? digits(frac) * 10 : digits(frac);
+  return digits(whole) * 100 + fraction;
+}
+
+// Every dollar or cents figure in a piece of text, as cents, read exactly as maskFigures reads
+// them. Only for the signed-in person's own typed message for this turn: never a tool result,
+// untrusted text or model text, which keep the rule above.
+export function typedCentsIn(text: string, into: Set<number> = new Set()): Set<number> {
+  const add = (cents: number) => {
+    if (Number.isSafeInteger(cents)) into.add(cents);
+  };
+  for (const m of text.matchAll(DOLLARS)) add(dollarsToCents(m[1], m[2]));
+  for (const m of text.matchAll(CENTS)) add(digits(m[1]));
+  return into;
+}
+
 export function maskFigures(text: string, allowed: ReadonlySet<number>): { text: string; masked: number } {
   let masked = 0;
   const check = (cents: number, original: string) => {
@@ -36,10 +54,7 @@ export function maskFigures(text: string, allowed: ReadonlySet<number>): { text:
     return WITHHELD;
   };
   const out = text
-    .replace(DOLLARS, (m, whole: string, frac: string | undefined) => {
-      const fraction = frac === undefined ? 0 : frac.length === 1 ? digits(frac) * 10 : digits(frac);
-      return check(digits(whole) * 100 + fraction, m);
-    })
+    .replace(DOLLARS, (m, whole: string, frac: string | undefined) => check(dollarsToCents(whole, frac), m))
     .replace(CENTS, (m, n: string) => check(digits(n), m));
   return { text: out, masked };
 }

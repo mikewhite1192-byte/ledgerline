@@ -50,7 +50,9 @@ type FlagRow = { input_id: string; body_text: string; categories: string | null 
 const TURN_COLUMNS =
   "t.id, t.conversation_id, t.seq, t.user_text, t.status, t.ended_reason, t.assistant_text";
 
-// What the card shows, from the proposal and its ledger row.
+// What the card shows, from the proposal and its ledger row. approved with no ledger row stays
+// approved, not unknown: the ledger reserves its row before any outside call, so no row means no
+// money moved.
 export function cardStatusOf(status: string, moneyState: string | null): CardStatus {
   if (status === "executing") {
     if (moneyState === "confirmed") return "done";

@@ -41,10 +41,13 @@ export type PersistInput = {
 };
 
 // created: a new card. duplicate: the same proposal already exists (same kind, subject and
-// args). live_exists: another proposal for this subject is still waiting or running.
+// args) and is still waiting or running. already_decided: the same proposal exists but was
+// already rejected, expired, done or failed, so there is no card to show (status is that row's
+// status category). live_exists: another proposal for this subject is still waiting or running.
 export type PersistResult =
   | { kind: "created"; proposalId: string; flagged: boolean }
   | { kind: "duplicate"; proposalId: string; flagged: boolean }
+  | { kind: "already_decided"; proposalId: string; status: string }
   | { kind: "live_exists"; proposalId: string };
 
 export type TurnFinish = {

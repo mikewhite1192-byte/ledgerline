@@ -50,7 +50,7 @@ export const ESCALATE_AFTER_INVALID = 2;
 
 // The text the loop writes itself. Fixed, never a raw error.
 export const LOOP_TEXT = {
-  stopped: "I stopped at the step limit. Here is what I found so far.",
+  stopped: "I stopped before finishing this answer. Here is what I found so far.",
   schema: "I could not form a valid proposal for that. Nothing was created.",
   budget: "Demo budget reached. The agent pauses until the budget is raised; your data is unchanged.",
   failed: "I could not finish that. Nothing was changed.",

@@ -9,9 +9,10 @@ import { dbTurnStore, openAgentTurn, readAgentTurn, readRecentAgentTurns } from 
 
 // The agent's own tables against a real database, as the app's role: each carrier sees only its
 // own turns and proposals, a person sees only their own conversations, one proposal per subject
-// waits at a time, the same proposal again returns the first, and the app role can add and move
-// rows forward but never delete them or rewrite what was proposed. Only this file's two tenants
-// are made, and they are removed after (their rows go by cascade).
+// waits at a time, the same proposal again returns the first while it is live and is reported as
+// already decided once a person rejected it, and the app role can add and move rows forward but
+// never delete them or rewrite what was proposed. Only this file's two tenants are made, and they
+// are removed after (their rows go by cascade).
 
 const A = randomUUID();
 const B = randomUUID();
@@ -216,6 +217,66 @@ describe("the agent's store", () => {
         ),
       ),
     ).toBe("23505");
+  });
+
+  it("reports the same proposal asked again after a person rejected it as already decided, with no card", async () => {
+    const at = T0 + 400_000;
+    const driver = randomUUID();
+    await admin.withTenant(A, (q) =>
+      q.execute(
+        `INSERT INTO drivers (id, tenant_id, code, first_name, last_name, email, worker_type, pay_basis,
+           per_mile_cents, active_from)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'AG-2', 'Pat', 'Lee', $2, 'company', 'per_mile', 60,
+           CAST('2026-01-05' AS date))`,
+        [driver, `pat-${A.slice(0, 8)}@example.test`],
+      ),
+    );
+    const draft = {
+      ...draftFor(A, 12_000),
+      subjectId: driver,
+      args: { driverId: driver, amountCents: 12_000, reasonCategories: ["driver_asked"] },
+      sources: [{ table: "drivers", id: driver }],
+    } as unknown as ProposalDraft;
+    const store = dbTurnStore(session(A), { db: app, clock: clockAt(at) });
+    const inputFor = (turn: Awaited<ReturnType<typeof open>>, flaggedInputId: string | null = null) => ({
+      turnId: turn.turnId,
+      conversationId: turn.conversationId,
+      traceId: turn.traceId,
+      draft,
+      gatewayDecisionId: DECISION[A],
+      flaggedInputId,
+    });
+    const firstTurn = await open(A, null, at);
+    const first = await store.persistProposal(inputFor(firstTurn));
+    expect(first).toMatchObject({ kind: "created", flagged: false });
+
+    // A person rejects it: the reject route's own write, as the app role.
+    const rejected = await app.withTenant(A, (q) =>
+      q.execute(
+        `UPDATE proposals SET status = 'rejected', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                decision_note = 'not_needed', updated_at = CAST($3 AS timestamptz)
+          WHERE id = CAST($1 AS uuid) AND status = 'proposed'`,
+        [first.proposalId, `sub-${A}`, new Date(at).toISOString()],
+      ),
+    );
+    expect(rejected).toBe(1);
+
+    // Asked again in a new turn, even one that read a flagged message: no new card, no duplicate.
+    const again = await open(A, null, at + 1_000);
+    expect(await store.persistProposal(inputFor(again))).toEqual({
+      kind: "already_decided",
+      proposalId: first.proposalId,
+      status: "rejected",
+    });
+    expect(await store.persistProposal(inputFor(again, INPUT))).toEqual({
+      kind: "already_decided",
+      proposalId: first.proposalId,
+      status: "rejected",
+    });
+    expect((await readAgentTurn(session(A), again.turnId, { db: app }))?.proposals).toEqual([]);
+    const original = await readAgentTurn(session(A), firstTurn.turnId, { db: app });
+    expect(original?.proposals).toHaveLength(1);
+    expect(original?.proposals[0]).toMatchObject({ id: first.proposalId, status: "rejected", flagged: false });
   });
 
   it("flags a proposal once and never unflags it", async () => {

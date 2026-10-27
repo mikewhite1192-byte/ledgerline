@@ -11,8 +11,9 @@ export type StepState = "running" | "done" | "failed";
 
 export type StepView = { id: string; seq: number; kind: StepKind; label: string; state: StepState };
 
-// The proposal statuses a card can show. approved with no ledger row yet, or a ledger row whose
-// outcome is not known, shows as unknown.
+// The proposal statuses a card can show. approved with no ledger row yet shows as approved: no row
+// means nothing was reserved, and the ledger reserves before any outside call, so no money moved.
+// An executing proposal whose ledger outcome is not known shows as unknown.
 export type CardStatus =
   | "proposed"
   | "approved"

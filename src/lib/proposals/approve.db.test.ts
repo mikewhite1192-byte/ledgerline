@@ -13,9 +13,11 @@ import { rejectProposal } from "./reject";
 // Approving and rejecting an agent's proposal against the real database, as the app's role. The
 // gate refuses before any ledger write: a kind with no executor, an old proposal (which becomes
 // expired), a staff member over the admin line, a missing auditor verdict when one is required,
-// and a flagged proposal without the second confirm. A registered executor reserves exactly one
-// ledger row that names the proposal, and the ledger row keeps the proposal from being deleted.
-// Only this file's tenant is made, and it is removed after.
+// and a flagged proposal without the second confirm. When every check passes the gate locks the
+// approval in before the executor runs, so a reject that lands after it is refused, and an
+// executor that crashes leaves the approval for the next approve to resume. A registered executor
+// reserves exactly one ledger row that names the proposal, and the ledger row keeps the proposal
+// from being deleted. Only this file's tenant is made, and it is removed after.
 
 const saved = { ...flags, approverRole: { ...flags.approverRole } };
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -83,8 +85,8 @@ async function addProposal(o: Opts = {}): Promise<{ id: string; advanceId: strin
 const proposalRow = async (id: string) =>
   (
     await admin.withTenant(A.tenantId, (q) =>
-      q.query<{ status: string; money_action_id: string | null; decision_note: string | null }>(
-        "SELECT status, money_action_id, decision_note FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+      q.query<{ status: string; money_action_id: string | null; decision_note: string | null; decided_by: string | null }>(
+        "SELECT status, money_action_id, decision_note, decided_by FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
         [id],
       ),
     )
@@ -102,20 +104,12 @@ async function one(q: Queryable, sql: string, params: Param[]): Promise<void> {
   if (n !== 1) throw new Error(`expected one row, changed ${n}`);
 }
 
-// A test executor shaped like the advances one: approve the proposal, then let the ledger reserve
-// its row (moving the proposal to executing and the advance to approved in the same transaction)
-// and pay through the mock adapter.
-const testPayout: Executor = async (db, session, p, _opts, deps) => {
-  const nowIso = (deps.clock ?? (() => new Date()))().toISOString();
-  await db.withTenant(session.tenantId, (q) =>
-    one(
-      q,
-      `UPDATE proposals SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
-              updated_at = CAST($3 AS timestamptz)
-        WHERE id = CAST($1 AS uuid) AND status = 'proposed'`,
-      [p.id, session.sub, nowIso],
-    ),
-  );
+// A test executor shaped like the advances one. The gate has already approved the proposal; the
+// ledger reserves its row (moving the proposal to executing and the advance to approved in the same
+// transaction) and pays through the mock adapter. Every row it was handed is recorded.
+const handed: string[] = [];
+const testPayout: Executor = async (db, session, p) => {
+  handed.push(p.status);
   const run = await executeMoneyAction(
     db,
     session,
@@ -221,8 +215,11 @@ describe("approving and rejecting a proposal", () => {
     flags.payoutsEnabled = true;
     flags.paymentProvider = "mock";
     const p = await addProposal({ flagged: true });
+    handed.length = 0;
     const result = await approve(p.id, true, withPayout);
     expect(result).toMatchObject({ ok: true, proposalId: p.id, status: "confirmed" });
+    // The executor is handed the row the gate approved, never a waiting one.
+    expect(handed).toEqual(["approved"]);
     const rows = await ledgerRows();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ proposal_id: p.id, state: "confirmed" });
@@ -240,6 +237,54 @@ describe("approving and rejecting a proposal", () => {
     ).toBe("23503");
     await clearLedger(admin, A);
     expect((await proposalRow(p.id)).money_action_id).toBeNull();
+  });
+
+  it("locks the approval in before the executor runs: a reject that lands after the gate is refused", async () => {
+    const p = await addProposal();
+    const seen: { handed: string; reject: unknown; stored: string }[] = [];
+    // Stands in for a parallel reject that arrives between the gate's commit and the executor.
+    const probe: Executor = async (_db, session, row) => {
+      const reject = await rejectProposal(session, row.id, "not_needed", { db: app, clock });
+      seen.push({ handed: row.status, reject, stored: (await proposalRow(row.id)).status });
+      return { ok: true, proposalId: row.id, status: row.status, moneyActionId: null };
+    };
+    expect(await approve(p.id, false, { advance_payout: probe })).toMatchObject({ ok: true, status: "approved" });
+    expect(seen).toEqual([
+      { handed: "approved", reject: { ok: false, category: "already_decided" }, stored: "approved" },
+    ]);
+    expect(await proposalRow(p.id)).toMatchObject({
+      status: "approved",
+      decided_by: A.session.sub,
+      decision_note: null,
+      money_action_id: null,
+    });
+    expect(await ledgerRows()).toEqual([]);
+  });
+
+  it("leaves a proposal whose executor crashed approved with no ledger row, and a second approve resumes it", async () => {
+    flags.payoutsEnabled = true;
+    flags.paymentProvider = "mock";
+    const p = await addProposal();
+    const crash: Executor = async () => {
+      throw new Error("executor crashed");
+    };
+    await expect(approve(p.id, false, { advance_payout: crash })).rejects.toThrow("executor crashed");
+    expect(await proposalRow(p.id)).toMatchObject({ status: "approved", money_action_id: null });
+    expect(await ledgerRows()).toEqual([]);
+    // A reject cannot take back an approval that already passed the gate.
+    expect(await rejectProposal(A.session, p.id, "other", { db: app, clock })).toEqual({
+      ok: false,
+      category: "already_decided",
+    });
+
+    handed.length = 0;
+    expect(await approve(p.id, false, withPayout)).toMatchObject({ ok: true, proposalId: p.id, status: "confirmed" });
+    expect(handed).toEqual(["approved"]);
+    const rows = await ledgerRows();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ proposal_id: p.id, state: "confirmed" });
+    expect(await proposalRow(p.id)).toMatchObject({ status: "done", money_action_id: rows[0].id });
+    await clearLedger(admin, A);
   });
 
   it("rejects with a category only and never touches the ledger", async () => {

@@ -12,8 +12,10 @@ import { assertMembership } from "../tenant/context";
 // proposalMaxAgeDays (an old one becomes expired, here, with no scheduled job), the member's role
 // covers the amount (approverRole), the auditor's verdict is in when auditorRequired is on, and a
 // flagged proposal carries the person's second confirm. Then the proposal's kind picks its
-// executor from EXECUTORS. A kind with no executor is refused as not_executable before any write
-// to the ledger. Each executor reserves its ledger row before any outside call (the money
+// executor from EXECUTORS. A kind with no executor is refused as not_executable before any write.
+// When every check passes, the gate moves the proposal to approved in that same locked
+// transaction, so a reject that lands after the gate finds it approved and is refused; only then
+// does the executor run. Each executor reserves its ledger row before any outside call (the money
 // executor) and moves the proposal on from there.
 
 export const PROPOSAL_KINDS = ["advance_payout", "pay_correction", "invoice_fix"] as const;
@@ -60,6 +62,13 @@ export type ExecuteDeps = {
   executors?: ExecutorRegistry;
 };
 
+// An executor's contract: it runs only on a row the gate already moved to approved (or one already
+// executing, on a resume), never on a proposed one, and it never sets approved itself. On a resume
+// it must re-read its own ledger row (the ledger's reserve replays the same request by its
+// idempotency key) before doing any work. A crash inside an executor leaves the proposal approved with a null money_action_id; the
+// next approve takes the resume path below and runs the executor again. That resume path
+// deliberately skips the expiry, role, auditor and confirm checks: they all passed when the row
+// became approved, under the same lock, and the person's approval stands.
 export type Executor = (
   db: TenantDb,
   session: Session,
@@ -156,7 +165,8 @@ async function gate(
   if (rows.length !== 1) return { result: refused("not_found") };
   const p = rowOf(rows[0]);
   const executor = executorFor(registry, p.kind);
-  // A resume: the gate passed when it was approved; the executor reads its ledger row back.
+  // A resume: every check passed when the row became approved, so none is run again here (see the
+  // Executor contract); the executor reads its ledger row back.
   if (p.status === "approved" || p.status === "executing") {
     return executor ? { run: p, executor } : { result: refused("not_executable") };
   }
@@ -177,7 +187,17 @@ async function gate(
   if (flags.auditorRequired && p.auditorVerdict === null) return { result: refused("auditor_required") };
   if (p.flaggedInputId !== null && !opts.confirmed) return { result: refused("needs_confirm") };
   if (!executor) return { result: refused("not_executable") };
-  return { run: p, executor };
+  // Lock the approval in while the row is still locked. Exactly one row must move; anything else
+  // means it is no longer waiting, and nothing runs.
+  const approved = await q.execute(
+    `UPDATE proposals
+        SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+            updated_at = CAST($3 AS timestamptz)
+      WHERE id = CAST($1 AS uuid) AND status = 'proposed'`,
+    [p.id, session.sub, now.toISOString()],
+  );
+  if (approved !== 1) return { result: refused("already_decided") };
+  return { run: { ...p, status: "approved" }, executor };
 }
 
 export async function executeProposal(
