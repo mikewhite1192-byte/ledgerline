@@ -449,4 +449,18 @@ describe("what is still owed on an advance", () => {
     expect(() => checkAdvance(advance({ id: "a1", takenBackCents: c(-1) }))).toThrow(InputError);
     expect(() => checkAdvance(advance({ id: "a1", loadId: "" }))).toThrow(InputError);
   });
+
+  it("refuses an advance whose recovery and take-back together pass what was lent", () => {
+    const lent = { id: "a1", amountCents: c(20_000), feeCents: c(500) };
+    // $205.00 owed: $100.00 recovered from pay leaves $105.00 that can be taken back, not a cent more.
+    expect(() => checkAdvance(advance({ ...lent, recoveredCents: c(10_000), takenBackCents: c(10_501) }))).toThrow(
+      "advance a1 recovered and took back more than it lent",
+    );
+    expect(() => checkAdvance(advance({ ...lent, recoveredCents: c(20_500), takenBackCents: c(20_000) }))).toThrow(
+      InputError,
+    );
+    const whole = checkAdvance(advance({ ...lent, recoveredCents: c(10_000), takenBackCents: c(10_500) }));
+    expect(outstandingCents(whole)).toBe(0);
+    expect(outstandingCents(checkAdvance(advance({ ...lent, recoveredCents: c(10_000), takenBackCents: c(10_000) })))).toBe(500);
+  });
 });

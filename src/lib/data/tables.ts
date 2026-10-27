@@ -40,6 +40,12 @@ export const TENANT_TABLES = [
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
+// The seeded tables the app role may add to but never delete from: the arming log is append-only
+// (0027). The replace leaves them out of its deletes; the seed clears them through the admin login
+// before the replace (clearTenantArmLog), and a row written after that clear goes with its driver
+// (the foreign key cascades).
+export const APP_KEEPS_TABLES: ReadonlySet<TenantTable> = new Set<TenantTable>(["driver_arm_events"]);
+
 export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
   customers: {
     table: "customers",

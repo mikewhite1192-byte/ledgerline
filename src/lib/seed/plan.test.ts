@@ -14,6 +14,7 @@ import {
 import type { AdvanceRow, DriverDayRow, DriverRow } from "../data/rows";
 import {
   agingBucket,
+  checkAdvance,
   detentionStops,
   driverPayOnLoad,
   findAdvanceOverLoadCap,
@@ -388,11 +389,11 @@ describe("advance parity", () => {
     }
   });
 
-  it("takes back one advance in the oldest settled week in full, after history, so its settlement keeps what it recovered", () => {
+  it("takes back one open-week advance in full, one no settlement recovered from, so recovery and take-back never overlap", () => {
     for (const plan of plans) {
       const { rows, periods } = plan;
       const back = rows.advances.find((a) => a.id === plan.planted.parity.takenBackAdvanceId)!;
-      expect(back.requested_on >= periods[0].start && back.requested_on <= periods[0].end).toBe(true);
+      expect(back.requested_on >= periods[3].start && back.requested_on <= periods[3].end).toBe(true);
       expect([back.status, back.taken_back_cents, back.takeback_reason]).toEqual([
         "paid",
         back.amount_cents,
@@ -400,13 +401,14 @@ describe("advance parity", () => {
       ]);
       expect(Date.parse(back.taken_back_at!) - Date.parse(back.paid_at!)).toBe(3 * 3600_000);
       expect(back.taken_back_by_membership_id).toBeNull();
-      // History ran before the take-back: the recovery lines that cite it stand, and match it.
-      const recovered = rows.settlement_lines
-        .filter((l) => l.kind === "advance_recovery" && l.sources.some((x) => x.table === "advances" && x.id === back.id))
-        .reduce((n, l) => n - l.amount_cents, 0);
-      expect(recovered).toBeGreaterThan(back.fee_cents);
-      expect(back.recovered_cents).toBe(recovered);
-      expect(outstandingCents(advanceOf(back))).toBe(0);
+      // No settled week recovered from it: no recovery line cites it, and only its fee is still owed.
+      const cited = rows.settlement_lines.filter(
+        (l) => l.kind === "advance_recovery" && l.sources.some((x) => x.table === "advances" && x.id === back.id),
+      );
+      expect(cited).toEqual([]);
+      expect(back.recovered_cents).toBe(0);
+      expect(() => checkAdvance(advanceOf(back))).not.toThrow();
+      expect(outstandingCents(advanceOf(back))).toBe(back.fee_cents);
       expect(rows.advances.filter((a) => a.taken_back_at !== null)).toHaveLength(1);
     }
   });

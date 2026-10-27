@@ -192,25 +192,28 @@ export function linkAdvanceLoads(
   }
 }
 
-// The advance to take back: one paid advance in the oldest settled week that has one. Drawn here,
-// before history, so its draw keeps its place on the parity stream; plantTakeBack records it.
+// The advance to take back: one paid advance asked for in the open week (periods[3]). History
+// settles only the paid weeks, and a settlement recovers only advances asked for by its last day,
+// so nothing has been recovered on it and the whole amount can come back without the recovery
+// and the take-back ever passing what was lent. Drawn here, before history, so its one draw keeps
+// its place on the parity stream; plantTakeBack records it.
 export function chooseTakeBack(parity: Rng, candidates: readonly AdvanceDraft[], periods: readonly Period[]): string {
-  for (const p of periods.slice(0, 3)) {
-    const inWeek = candidates
-      .filter((x) => x.status === "paid" && x.paid_at !== null && isWithin(x.requested_on, p))
-      .sort((x, y) => compareText(x.requested_at, y.requested_at) || compareText(x.id, y.id));
-    if (inWeek.length === 0) continue;
-    return parity.pick(inWeek).id;
-  }
-  throw new Error("no settled advance to take back");
+  const open = periods[3];
+  const inWeek = candidates
+    .filter((x) => x.status === "paid" && x.paid_at !== null && isWithin(x.requested_on, open))
+    .sort((x, y) => compareText(x.requested_at, y.requested_at) || compareText(x.id, y.id));
+  if (inWeek.length === 0) throw new Error("no open-week advance to take back");
+  return parity.pick(inWeek).id;
 }
 
 // The chosen advance, taken back in full three hours after it was paid because it went to the
-// wrong driver. Set after history has run: the seed's recoveries are not re-run, so its settlement
-// keeps what it recovered and every settled week keeps its net.
+// wrong driver. Set after history has run, which never recovered it, so every settled week keeps
+// its net; the open week then recovers only its fee. An advance any settlement recovered from is
+// refused, so the recovery and the take-back never count the same money twice.
 export function plantTakeBack(advances: readonly AdvanceRow[], id: string): AdvanceRow {
   const x = advances.find((a) => a.id === id);
   if (!x || x.status !== "paid" || x.paid_at === null) throw new Error("the advance to take back is not paid");
+  if (x.recovered_cents !== 0) throw new Error("the advance to take back was already recovered from pay");
   x.taken_back_cents = x.amount_cents;
   x.taken_back_at = new Date(Date.parse(x.paid_at) + 3 * 60 * 60_000).toISOString();
   x.takeback_reason = "wrong_driver";

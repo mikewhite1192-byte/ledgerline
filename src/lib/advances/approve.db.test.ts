@@ -1438,6 +1438,21 @@ describe("the advance flow", () => {
       expect(await suggestion(A.driverId, null, B)).toBe("not_found");
       await setArmed(admin, A, A.driverId, false);
       expect(await suggestion(A.driverId, null)).toMatchObject({ armed: false, maxCents: 0, suggestedCents: 0 });
+
+      // A newer load whose number the desk's sentence would refuse (lower case, a dot) is never
+      // offered, so the form cannot pick a load the request then turns away.
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO loads (id, tenant_id, load_number, customer_id, driver_id, status, origin_city,
+             origin_state, dest_city, dest_state, pickup_on, delivered_on, delivered_at, loaded_miles,
+             linehaul_cents)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'l-9.b', CAST($2 AS uuid), CAST($3 AS uuid),
+             'delivered', 'Springfield', 'IL', 'Dallas', 'TX', CAST('2026-10-30' AS date),
+             CAST('2026-10-31' AS date), CAST('2026-10-31T20:00:00Z' AS timestamptz), 0, 0)`,
+          [randomUUID(), A.customerId, A.driverId],
+        ),
+      );
+      expect(await loads("2026-11-02T16:00:00Z")).toEqual([{ id: mine, number: "L-1", deliveredOn: "2026-10-30" }]);
     });
 
     it("records a take-back on a paid advance once, lowers what is owed, and sends nothing to the card", async () => {

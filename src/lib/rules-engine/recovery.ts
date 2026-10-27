@@ -39,11 +39,18 @@ export function checkAdvance(advance: AdvanceRecord, driverId?: string): Advance
     assertCents(advance.amountCents, `${where} amountCents`),
     assertCents(advance.feeCents, `${where} feeCents`),
   ]);
-  if (assertCents(advance.recoveredCents, `${where} recoveredCents`) > owed) {
+  const recovered = assertCents(advance.recoveredCents, `${where} recoveredCents`);
+  if (recovered > owed) {
     throw new InputError(`${where} recovered more than it lent`);
   }
-  if (assertCents(advance.takenBackCents, `${where} takenBackCents`) > owed) {
+  const takenBack = assertCents(advance.takenBackCents, `${where} takenBackCents`);
+  if (takenBack > owed) {
     throw new InputError(`${where} took back more than it lent`);
+  }
+  // Together too: what settlements recovered and what a person took back never pass what was lent
+  // (the take-back service bounds itself by what was still owed), so neither is counted twice.
+  if (sum([recovered, takenBack]) > owed) {
+    throw new InputError(`${where} recovered and took back more than it lent`);
   }
   if (advance.loadId !== null) assertId(advance.loadId, `${where} loadId`);
   return advance;

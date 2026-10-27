@@ -135,7 +135,7 @@ describe("0027's driver tables", () => {
     ).toBe("23503");
   });
 
-  it("never lets the app rewrite the arm log, and holds its member and note rules", async () => {
+  it("never lets the app rewrite or remove the arm log, and holds its member and note rules", async () => {
     await makeAdmin(A);
     await armDriver(A.session, A.driverId, { armed: false }, deps());
     expect(
@@ -145,6 +145,13 @@ describe("0027's driver tables", () => {
         ),
       ),
     ).toBe("42501");
+    // Nor remove it: only the admin login clears the log (the seed's clearTenantArmLog).
+    expect(
+      await sqlStateOf(
+        app.withTenant(A.tenantId, (q) => q.execute("DELETE FROM driver_arm_events WHERE tenant_id = current_tenant_id()")),
+      ),
+    ).toBe("42501");
+    expect(await armEvents(A)).toHaveLength(1);
     const insert = (membershipId: string | null, source: string, note: string | null = null) =>
       sqlStateOf(
         app.withTenant(A.tenantId, (q) =>

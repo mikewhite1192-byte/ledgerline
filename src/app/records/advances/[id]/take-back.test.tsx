@@ -57,6 +57,27 @@ describe("Take back on the advance page", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it("drops a field's error, and its invalid mark, as soon as that field is edited", () => {
+    const fetch = answer(200, {});
+    render(<TakeBack advanceId={ADVANCE} offered paid stillOwedCents={20_500} />);
+    fireEvent.click(screen.getByRole("button", { name: "Take back" }));
+    fireEvent.change(screen.getByLabelText("Amount taken back"), { target: { value: "205.01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record take-back" }));
+    const amount = screen.getByLabelText("Amount taken back");
+    const reason = screen.getByLabelText("Reason");
+    expect(amount.getAttribute("aria-invalid")).toBe("true");
+    expect(reason.getAttribute("aria-invalid")).toBe("true");
+    fireEvent.change(amount, { target: { value: "205.00" } });
+    expect(screen.queryByText("Dollars and cents, above zero and up to $205.00.")).toBeNull();
+    expect(amount.getAttribute("aria-invalid")).toBeNull();
+    // The other field keeps its own error until it is edited.
+    expect(screen.getByText("Pick a reason.")).toBeTruthy();
+    fireEvent.change(reason, { target: { value: "duplicate" } });
+    expect(screen.queryByText("Pick a reason.")).toBeNull();
+    expect(reason.getAttribute("aria-invalid")).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it("cancels an advance not yet paid with no amount field, sending zero", async () => {
     const fetch = answer(200, { ok: true, changed: true, status: "cancelled" });
     render(<TakeBack advanceId={ADVANCE} offered paid={false} stillOwedCents={30_000} />);

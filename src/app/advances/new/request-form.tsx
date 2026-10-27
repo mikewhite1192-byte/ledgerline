@@ -50,12 +50,19 @@ export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; di
   const [suggestion, setSuggestion] = useState<string | null>(null);
   // Each pick asks again; only the newest answer is shown.
   const asked = useRef(0);
+  // The last amount a suggestion wrote into the field, or "" when none did.
+  const autofilled = useRef("");
 
-  // The pay rules' suggestion for the picked driver and load, computed on the server. The amount
-  // field takes it only while it is empty, so a typed amount is never overwritten.
+  // The pay rules' suggestion for the picked driver and load, computed on the server. A new pick
+  // first takes back the last suggestion's amount while the field still holds exactly it, so one
+  // driver's or load's number never stays in the field for another. The answer fills the field
+  // only while it is empty, so a typed amount is never overwritten.
   async function suggest(nextDriver: string, nextLoad: string) {
     const ask = ++asked.current;
     setSuggestion(null);
+    const stale = autofilled.current;
+    autofilled.current = "";
+    if (stale) setAmount((current) => (current === stale ? "" : current));
     if (!nextDriver) {
       setLoads([]);
       return;
@@ -75,7 +82,10 @@ export function RequestForm({ drivers, disabled }: { drivers: DriverOption[]; di
       if (!nextLoad) setLoads(Array.isArray(body.loads) ? body.loads : []);
       setSuggestion(suggestionLine(body.suggestion));
       const filled = body.suggestion.armed ? suggestionInput(body.suggestion.suggestedCents) : "";
-      if (filled) setAmount((current) => (current.trim() === "" ? filled : current));
+      if (filled) {
+        autofilled.current = filled;
+        setAmount((current) => (current.trim() === "" ? filled : current));
+      }
     } catch {
       if (ask === asked.current) setSuggestion(SUGGEST_FAILED);
     }

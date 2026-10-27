@@ -324,6 +324,7 @@ function parityPlants(plan: CarrierPlan): void {
   if (
     !back ||
     back.status !== "paid" ||
+    back.recovered_cents !== 0 ||
     back.taken_back_cents !== back.amount_cents ||
     back.takeback_reason !== "wrong_driver" ||
     back.taken_back_at === null ||

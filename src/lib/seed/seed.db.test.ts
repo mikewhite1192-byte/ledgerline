@@ -42,6 +42,7 @@ import golden from "./golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "./plan";
 import {
   clearTenantAgent,
+  clearTenantArmLog,
   clearTenantBookings,
   clearTenantLedger,
   findDemoTenant,
@@ -169,8 +170,16 @@ describe("seeding the demo carriers", () => {
 
   it("replaces on a second run and ends with the same rows", async () => {
     const before = await rowsOf(app, A);
+    // The app role has no DELETE on the arming log, so the admin login clears it first, as
+    // npm run seed does, and only this tenant's.
+    const appDelete = app.withTenant(A, (q) =>
+      q.execute("DELETE FROM driver_arm_events WHERE tenant_id = current_tenant_id()"),
+    );
+    expect(await sqlStateOf(appDelete)).toBe("42501");
+    expect(await clearTenantArmLog(admin, A)).toBe(planA.rows.driver_arm_events.length);
+    expect(await countsOf(app, B)).toEqual(countRows(planB.rows));
     const report = await replaceTenantData(app, A, planA);
-    expect(report.deleted).toEqual(countRows(planA.rows));
+    expect(report.deleted).toEqual({ ...countRows(planA.rows), driver_arm_events: 0 });
     expect(report.inserted).toEqual(countRows(planA.rows));
     expect(await rowsOf(app, A)).toEqual(before);
     expect(await countsOf(app, B)).toEqual(countRows(planB.rows));
@@ -447,9 +456,11 @@ describe("seeding the demo carriers", () => {
     expect(Number(all.n)).toBeGreaterThanOrEqual(both);
 
     const rowsB = await rowsOf(app, B);
+    // No admin clear first: the replace leaves the arming log alone, and its rows go with their
+    // drivers (the foreign key cascades), so the log read back below is the plan's.
     const report = await replaceTenantData(bypass, A, planA);
     const expected: Record<TenantTable, number> = countRows(planA.rows);
-    expect(report.deleted).toEqual(expected);
+    expect(report.deleted).toEqual({ ...expected, driver_arm_events: 0 });
     expect(report.inserted).toEqual(expected);
     expect(await rowsOf(app, B)).toEqual(rowsB);
     expect(await countsOf(app, B)).toEqual(countRows(planB.rows));

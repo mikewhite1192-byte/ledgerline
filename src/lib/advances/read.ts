@@ -7,6 +7,7 @@ import { readBySubject } from "../money/read";
 import { SUBJECT_STATUSES, type MoneyAction } from "../money/types";
 import { advanceEligibility, type AdvanceRefusal, type SourceRef } from "../rules-engine";
 import { ForbiddenError } from "../tenant/context";
+import { DESK_LOAD_NUMBER } from "./request";
 import { readAdvanceView, type AdvanceView } from "./rows";
 
 // What the advance pages read, inside the request's tenant transaction. Every statement names its
@@ -199,7 +200,9 @@ export async function readDriverCode(q: Queryable, driverId: string): Promise<st
 }
 
 // The desk's "For load" choices: the driver's loads delivered in the 45 days up to the carrier's
-// today, newest first. now is passed in, so the window never reads the wall clock here.
+// today, newest first. now is passed in, so the window never reads the wall clock here. A load
+// whose number the desk's sentence refuses (DESK_LOAD_NUMBER) is left out, so the form never
+// offers a load the request then turns away.
 export const DESK_LOAD_DAYS = 45;
 export type DeskLoad = { id: string; number: string; deliveredOn: string };
 
@@ -217,7 +220,9 @@ export async function readDeskLoads(q: Queryable, driverId: string, now: Date): 
       LIMIT 50`,
     [driverId, now.toISOString(), DESK_LOAD_DAYS],
   );
-  return rows.map((r) => ({ id: r.id, number: r.load_number, deliveredOn: r.delivered_on }));
+  return rows
+    .filter((r) => DESK_LOAD_NUMBER.test(r.load_number))
+    .map((r) => ({ id: r.id, number: r.load_number, deliveredOn: r.delivered_on }));
 }
 
 // The desk's suggestion once a driver (and maybe a load) is picked: the engine at the most it

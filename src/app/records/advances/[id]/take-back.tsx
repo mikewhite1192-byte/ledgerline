@@ -100,7 +100,10 @@ export function TakeBack({
                   inputMode="decimal"
                   autoComplete="off"
                   value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  onChange={(e) => {
+                    setAmount(e.target.value);
+                    setErrors((prev) => ({ ...prev, amount: undefined }));
+                  }}
                   disabled={pending}
                 />
               )}
@@ -111,7 +114,10 @@ export function TakeBack({
               <select
                 {...control}
                 value={reason}
-                onChange={(e) => setReason(e.target.value as TakebackReason | "")}
+                onChange={(e) => {
+                  setReason(e.target.value as TakebackReason | "");
+                  setErrors((prev) => ({ ...prev, reason: undefined }));
+                }}
                 disabled={pending}
                 className={cn(controlClass, "h-9")}
               >

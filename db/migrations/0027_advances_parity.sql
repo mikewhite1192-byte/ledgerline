@@ -32,9 +32,10 @@ ALTER TABLE driver_arm_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE driver_arm_events FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON driver_arm_events
   USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
--- DELETE only because the seed's replace mode clears tenant tables as the app role; never UPDATE,
--- so a recorded change cannot be rewritten.
-GRANT SELECT, INSERT, DELETE ON driver_arm_events TO payday_app;
+-- Append-only for the app: no UPDATE and no DELETE, so a recorded change can be neither rewritten
+-- nor removed. The seed clears a tenant's log through the admin login (clearTenantArmLog), and a
+-- row goes with its driver through the cascade above.
+GRANT SELECT, INSERT ON driver_arm_events TO payday_app;
 
 -- The identity map: the id another system knows this driver by. Fuel cards stay in driver_cards.
 CREATE TABLE driver_identities (
