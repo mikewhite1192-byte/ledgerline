@@ -33,7 +33,10 @@ import { parkSettlement, readStoredLines, readStoredSettlement, recheckSettlemen
 // (b) The payout through the money executor (ledger key settlement_payout:<id>:<attempt>). Its
 // confirmation books the paystub as paid and ends the card done. payoutsEnabled off: nothing is
 // reserved, the executor logs what it would send, the settlement stays approved and the card ends
-// done 'not_paid' ("Retry payout" sends it once the switch is on).
+// done 'not_paid' ("Retry payout" sends it once the switch is on). A payment adapter that is not
+// ready (not connected, not configured) also refuses before anything is reserved, but the driver
+// was not paid, so the card ends failed with that category, as the batch drain ends it; the
+// settlement stays approved and "Retry payout" sends it once the adapter is ready.
 //
 // (c) The bill and its payment, only when enough of the request budget is left; otherwise the
 // record page's "Post to QuickBooks" sends them later. Their outcome never changes the card.
@@ -249,9 +252,6 @@ async function payAndFinish(
     } catch (err) {
       if (!(err instanceof MoneyError)) throw err;
       if (err.category === "disabled") return finish(db, session, proposalId, step.settlementId, "done", "not_paid", clock());
-      if (err.category === "not_connected" || err.category === "not_configured") {
-        return finish(db, session, proposalId, step.settlementId, "done", err.category, clock());
-      }
       // Nobody knows whether anything was sent: the card stays executing for the reconcile pass.
       if (err.category === "unknown") throw err;
       return finish(db, session, proposalId, step.settlementId, "failed", err.category, clock());

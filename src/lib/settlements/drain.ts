@@ -161,8 +161,10 @@ export async function drainBatch(
         const before = latest(rows, subject.settlementId, LEG_KINDS[i - 1]);
         if (before === null || before.state === "failed") {
           // Nothing can send this leg now; refuse it (and so each leg after it) so the batch can
-          // finish.
-          if (row.state === "reserved") await refuse(db, tenantId, row, "not_configured", clock);
+          // finish. Stored as validation (refused by a check before any call; nothing was set up
+          // wrong), which the record page words as "not sent because the leg before it failed"
+          // (legFailureLabel in labels.ts).
+          if (row.state === "reserved") await refuse(db, tenantId, row, "validation", clock);
           continue;
         }
         // The leg before is still in flight or unknown: this paystub waits for it.

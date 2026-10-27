@@ -8,7 +8,7 @@ import { checkBatch, legsToReserve, parseBatchRequest } from "./batch";
 import { settlementIsClean } from "./clean";
 import { batchStatusOf, countLegs } from "./drain";
 import { linesHash } from "./hash";
-import { exceptionLabel, parkLabel, PARK_LABELS, settlementOutcome } from "./labels";
+import { exceptionLabel, LEG_NOT_SENT, legFailureLabel, parkLabel, PARK_LABELS, settlementOutcome } from "./labels";
 import { latestOf, planLeg } from "./legs";
 import { paidWritesOf } from "./paid";
 import {
@@ -402,6 +402,35 @@ describe("the pay run's words", () => {
     expect(exceptionLabel("toString")).toBe("Needs a look");
     expect(settlementOutcome("no_payout")).toContain("net pay is $0");
     expect(settlementOutcome("hasOwnProperty")).toBe("That did not go through. Nothing changed.");
+  });
+
+  it("says a bill leg the drain refused after the leg before it failed was not sent for that reason", () => {
+    const batch = ID.a;
+    const payoutFailed = action({ kind: "settlement_payout", state: "failed", failureCategory: "validation", settledVia: "response", batchId: batch });
+    const refused = (kind: "settlement_bill" | "settlement_bill_payment", over: Partial<MoneyAction> = {}) =>
+      action({ kind, state: "failed", failureCategory: "validation", settledVia: "refused", batchId: batch, ...over });
+    const bill = refused("settlement_bill");
+    const billPayment = refused("settlement_bill_payment");
+    const rows = [payoutFailed, bill, billPayment];
+    expect(legFailureLabel(bill, rows)).toBe(LEG_NOT_SENT);
+    expect(legFailureLabel(billPayment, rows)).toBe(LEG_NOT_SENT);
+    // The payout keeps its own category's words.
+    expect(legFailureLabel(payoutFailed, rows)).toBeNull();
+
+    // The leg before it was confirmed: refused for another reason (the connection answered validation).
+    const payoutPaid = action({ kind: "settlement_payout", state: "confirmed", batchId: batch });
+    expect(legFailureLabel(bill, [payoutPaid, bill])).toBeNull();
+    // A failed payout in another batch, or none at all, says nothing about this one.
+    expect(legFailureLabel(bill, [{ ...payoutFailed, batchId: ID.b }, bill])).toBeNull();
+    expect(legFailureLabel(bill, [bill])).toBeNull();
+    // Only the drain's refusal: not a send that failed, another category, a row from no batch, or a row not settled.
+    expect(legFailureLabel(refused("settlement_bill", { settledVia: "response" }), rows)).toBeNull();
+    expect(legFailureLabel(refused("settlement_bill", { failureCategory: "not_configured" }), rows)).toBeNull();
+    expect(legFailureLabel(refused("settlement_bill", { batchId: null }), [{ ...payoutFailed, batchId: null }])).toBeNull();
+    expect(legFailureLabel(refused("settlement_bill", { state: "reserved" }), rows)).toBeNull();
+    // The latest attempt of the leg before it decides.
+    const retried = action({ kind: "settlement_payout", state: "confirmed", attempt: 2, batchId: batch });
+    expect(legFailureLabel(bill, [payoutFailed, retried, bill])).toBeNull();
   });
 
   it("says what a run, a post and a retry did, from counts and states only", () => {

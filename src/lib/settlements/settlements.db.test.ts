@@ -19,10 +19,14 @@ import { settlementApproveExecutor } from "./approve";
 import { confirmBatch, type BatchRequest } from "./batch";
 import { readCleanSet } from "./clean";
 import { drainBatch } from "./drain";
+import { LEG_NOT_SENT, legFailureLabel } from "./labels";
 import type { SettlementMoneyDeps } from "./legs";
+import { readSettlementRows } from "./list";
 import { paidWritesOf } from "./paid";
+import { retryPayout } from "./post";
 import { runPayPeriod } from "./run";
 import { readStoredLines, readStoredSettlement } from "./stored";
+import { readSettlementRecord } from "./views";
 
 // The weekly pay run, the pre-pay recheck and its parking, the single approve and the batch
 // approve with its drain, against a real database seeded with both demo carriers, as the app's
@@ -571,6 +575,38 @@ describe("settlements against a seeded database", () => {
     expect(await cardById(BR, card.id)).toMatchObject({ status: "done", decision_note: "no_payout" });
   }, 60_000);
 
+  it("ends a single approve failed when the payout rail is not connected, and the payout can be retried", async () => {
+    const s = await settlementOf(BR, "BR-D08");
+    expect(Number(s.net_cents)).toBeGreaterThan(0);
+    const card = await openCard(BR, "BR-D08");
+    const unplugged: SettlementMoneyDeps = {
+      ...money,
+      payment: { ...payment, ready: async () => ({ ok: false, category: "not_connected" }) },
+    };
+    const notConnected: ExecutorRegistry = { ...EXECUTORS, settlement_approve: settlementApproveExecutor(unplugged) };
+    const createdBefore = payment.createdCount;
+    await withSwitches(true, () => executeProposal(BR.session, card.id, { confirmed: true }, { db: app, clock, executors: notConnected }));
+
+    // Refused before anything was reserved: the driver was not paid, so the card failed, and the
+    // paystub stays approved for "Retry payout".
+    expect(await cardById(BR, card.id)).toMatchObject({ status: "failed", decision_note: "not_connected" });
+    expect((await settlementOf(BR, "BR-D08")).status).toBe("approved");
+    expect(await ledgerOf(BR, s.id)).toEqual([]);
+    expect(payment.createdCount).toBe(createdBefore);
+    // The list and the record page read the same card.
+    const listed = await app.withTenant(BR.id, (q) => readSettlementRows(q, openPeriodOf(BR).id));
+    expect(listed.rows.find((r) => r.id === s.id)).toMatchObject({ status: "approved", proposalId: card.id, proposalStatus: "failed" });
+    const record = await app.withTenant(BR.id, (q) => readSettlementRecord(q, s.id));
+    expect(record?.proposal).toMatchObject({ id: card.id, status: "failed", note: "not_connected" });
+    expect(record?.latest.settlement_payout).toBeNull();
+
+    const retried = await withSwitches(true, () => retryPayout(app, BR.session, s.id, money, clock));
+    expect(retried).toMatchObject({ ok: true, state: "confirmed" });
+    expect(payment.createdCount - createdBefore).toBe(1);
+    expect((await settlementOf(BR, "BR-D08")).status).toBe("paid");
+    expect((await ledgerOf(BR, s.id)).map((r) => [r.kind, r.state, r.attempt])).toEqual([["settlement_payout", "confirmed", 1]]);
+  }, 60_000);
+
   it("leaves insurance off the paystub of a driver who carries their own", async () => {
     const before = await settlementOf(PW, "PW-D17");
     const beforeLines = await app.withTenant(PW.id, (q) => readStoredLines(q, before.id));
@@ -721,6 +757,24 @@ describe("settlements against a seeded database", () => {
         ["settlement_bill", "failed"],
         ["settlement_bill_payment", "failed"],
         ["settlement_payout", "failed"],
+      ]);
+      // The bill legs were refused, not tried, and the record page says why in words.
+      const refused = await adminRows<{ kind: string; failure_category: string; settled_via: string }>(
+        PW,
+        `SELECT kind, failure_category, settled_via FROM money_actions
+          WHERE tenant_id = $1 AND subject_id = CAST($2 AS uuid) AND kind <> 'settlement_payout' ORDER BY kind`,
+        [PW.id, d09.id],
+      );
+      expect(refused).toEqual([
+        { kind: "settlement_bill", failure_category: "validation", settled_via: "refused" },
+        { kind: "settlement_bill_payment", failure_category: "validation", settled_via: "refused" },
+      ]);
+      const view = await app.withTenant(PW.id, (q) => readSettlementRecord(q, d09.id));
+      const legs = view?.legs ?? [];
+      expect(legs.map((l) => [l.kind, legFailureLabel(l, legs)]).sort()).toEqual([
+        ["settlement_bill", LEG_NOT_SENT],
+        ["settlement_bill_payment", LEG_NOT_SENT],
+        ["settlement_payout", null],
       ]);
       expect((await settlementOf(PW, "PW-D09")).status).toBe("approved");
       const d09Card = req.proposalIds[1];

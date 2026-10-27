@@ -75,3 +75,35 @@ export const LEG_LABELS = {
   settlement_bill: "Bill in QuickBooks",
   settlement_bill_payment: "Bill payment in QuickBooks",
 } as const;
+
+export const LEG_NOT_SENT = "Not sent because the leg before it failed";
+
+type LegFacts = {
+  kind: string;
+  attempt: number;
+  state: string;
+  failureCategory: string | null;
+  settledVia: string | null;
+  batchId: string | null;
+};
+
+const LEG_BEFORE: Readonly<Record<string, string>> = {
+  settlement_bill: "settlement_payout",
+  settlement_bill_payment: "settlement_bill",
+};
+
+// The settlement words for why one paystub's money leg did not go, or null when the category's own
+// words fit. The batch drain refuses a bill leg whose leg before it in the same batch failed, as
+// validation settled as refused (drain.ts). The drain refuses a leg for any other reason only once
+// the leg before it is confirmed, and a settled row never changes, so that whole pattern is the
+// drain's refusal. The only other path to it is "Post to QuickBooks" replaying a batch row the
+// drain had not refused yet while the accounting connection answers validation.
+export function legFailureLabel(row: LegFacts, rows: readonly LegFacts[]): string | null {
+  const kindBefore = Object.hasOwn(LEG_BEFORE, row.kind) ? LEG_BEFORE[row.kind] : null;
+  if (kindBefore === null || row.batchId === null) return null;
+  if (row.state !== "failed" || row.settledVia !== "refused" || row.failureCategory !== "validation") return null;
+  const before = rows
+    .filter((r) => r.kind === kindBefore && r.batchId === row.batchId)
+    .reduce<LegFacts | null>((top, r) => (top === null || r.attempt > top.attempt ? r : top), null);
+  return before?.state === "failed" ? LEG_NOT_SENT : null;
+}

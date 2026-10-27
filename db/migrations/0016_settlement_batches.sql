@@ -59,7 +59,8 @@ CREATE INDEX money_actions_tenant_batch ON money_actions (tenant_id, batch_id)
 ALTER TABLE proposals DROP CONSTRAINT proposals_kind_check;
 ALTER TABLE proposals ADD CONSTRAINT proposals_kind_check CHECK (kind IN (
   'advance_payout', 'pay_correction', 'invoice_fix', 'load_rate_fill',
-  'invoice_post', 'payment_reapply', 'settlement_approve', 'detention_charge'));
+  'invoice_post', 'payment_reapply', 'settlement_approve', 'detention_charge',
+  'factoring_request', 'bill_defer', 'collections_chase'));
 
 -- The guard from 0006, whole, with one more column in "what was approved never changes":
 -- batch_id.

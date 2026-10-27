@@ -18,7 +18,7 @@ import type { Queryable } from "@/lib/db";
 import { formatInstant } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
-import { LEG_LABELS, settlementOutcome } from "@/lib/settlements/labels";
+import { LEG_LABELS, legFailureLabel, settlementOutcome } from "@/lib/settlements/labels";
 import { readSettlementRecord, type SettlementRecordView } from "@/lib/settlements/views";
 import { readRecordPage } from "../../read-record";
 
@@ -139,7 +139,11 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
           { key: "attempt", header: "Attempt", cell: (r) => `#${r.attempt}` },
           { key: "state", header: "State", cell: (r) => <StatusBadge status={r.state} /> },
           { key: "amount", header: "Amount", align: "right", cell: (r) => <Money cents={r.amountCents} tone="plain" /> },
-          { key: "why", header: "Why", cell: (r) => (r.failureCategory ? codeToWords(r.failureCategory) : "") },
+          {
+            key: "why",
+            header: "Why",
+            cell: (r) => (r.failureCategory ? (legFailureLabel(r, view.legs) ?? codeToWords(r.failureCategory)) : ""),
+          },
           { key: "at", header: "Reserved", cell: (r) => formatInstant(r.createdAt, tz) },
         ]}
       />

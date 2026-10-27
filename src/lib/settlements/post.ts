@@ -46,9 +46,10 @@ export type RetryResult =
 // The approver line applies to these buttons the way it applies to the approve.
 async function roleAllows(q: Queryable, session: Session, netCents: number): Promise<boolean> {
   if (netCents <= flags.approverRole.adminAboveCents) return true;
-  const [member] = await q.query<{ role: string }>("SELECT role FROM memberships WHERE cognito_sub = $1", [
-    session.sub,
-  ]);
+  const [member] = await q.query<{ role: string }>(
+    "SELECT role FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
+    [session.sub],
+  );
   return member?.role === "admin";
 }
 

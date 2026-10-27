@@ -54,6 +54,8 @@ export type LegRow = {
   attempt: number;
   state: MoneyActionState;
   failureCategory: string | null;
+  settledVia: string | null;
+  batchId: string | null;
   amountCents: number;
   createdAt: string;
 };
@@ -107,6 +109,8 @@ export async function readSettlementRecord(q: Queryable, id: string): Promise<Se
       attempt: a.attempt,
       state: a.state,
       failureCategory: a.failureCategory,
+      settledVia: a.settledVia,
+      batchId: a.batchId,
       amountCents: a.amountCents,
       createdAt: a.createdAt,
     }));
