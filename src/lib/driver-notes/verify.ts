@@ -76,14 +76,14 @@ export function parseReply(text: string): NoteReply | null {
 
 // Control characters (a line break is allowed), bidirectional overrides and zero-width marks
 // could hide text from the person approving the note.
-const HIDDEN = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/;
-const LINK = /https?:|www\.|:\/\//i;
+export const HIDDEN = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/;
+export const LINK = /https?:|www\.|:\/\//i;
 const SENTENCE = /[A-Za-zÁÉÍÓÚÑÜáéíóúñü][\s\S]*[.!?]/;
 // The figure scan below reads ASCII digits only, so a digit of any other script (Arabic-Indic,
 // fullwidth and the like) would pass unread: a body with one is refused before the scan.
 const DECIMAL_DIGIT = /\p{Nd}/u;
 
-function hasOtherDigit(body: string): boolean {
+export function hasOtherDigit(body: string): boolean {
   return DECIMAL_DIGIT.test(body.replace(/[0-9]/g, ""));
 }
 
@@ -114,11 +114,22 @@ function dollarsToCents(digits: string): number | null {
   return Number.isSafeInteger(cents) ? cents : null;
 }
 
-type Scan = { cents: number[]; numbers: string[]; unreadable: boolean };
+// One figure found in a text, where it sits and how it reads: money in cents (marked as money, or
+// a bare figure with exactly two decimals), any other number normalized, or a shape that cannot be
+// read with certainty. `digits` is the figure as written with its grouping commas taken out.
+export type FigureMatch = { start: number; end: number } & (
+  | { kind: "cents"; cents: number; digits: string }
+  | { kind: "number"; number: string; digits: string }
+  | { kind: "unreadable" }
+);
 
-function scanFigures(text: string): Scan {
-  const out: Scan = { cents: [], numbers: [], unreadable: false };
+// Every figure in the text, in order. The profit brief reads the same figures this file does, so
+// a number one check reads is never missed by the other.
+export function moneyFigures(text: string): FigureMatch[] {
+  const out: FigureMatch[] = [];
   for (const m of text.matchAll(FIGURE)) {
+    const start = m.index ?? 0;
+    const at = { start, end: start + m[0].length };
     const raw = m[2];
     const before = (m[1] ?? "").trim().toUpperCase();
     const after = (m[3] ?? "").trim().toLowerCase();
@@ -126,33 +137,38 @@ function scanFigures(text: string): Scan {
     if (US_GROUPED.test(raw)) digits = raw.replace(/,/g, "");
     else if (PLAIN.test(raw)) digits = raw;
     else {
-      out.unreadable = true;
+      out.push({ ...at, kind: "unreadable" });
       continue;
     }
     if (digits.replace(".", "").length > MAX_DIGITS) {
-      out.unreadable = true;
+      out.push({ ...at, kind: "unreadable" });
       continue;
     }
     const isCents = after.startsWith("cent");
     const isDollars = before !== "" || (after !== "" && !isCents);
     if (isCents) {
-      if (digits.includes(".")) {
-        out.unreadable = true;
-        continue;
-      }
-      out.cents.push(Number(digits));
-    } else if (isDollars) {
-      const cents = dollarsToCents(digits);
-      if (cents === null) out.unreadable = true;
-      else out.cents.push(cents);
-    } else if (/\.\d{2}$/.test(digits)) {
+      if (digits.includes(".")) out.push({ ...at, kind: "unreadable" });
+      else out.push({ ...at, kind: "cents", cents: Number(digits), digits });
+    } else if (isDollars || /\.\d{2}$/.test(digits)) {
       // A bare figure with two decimals is an amount written without its dollar sign.
       const cents = dollarsToCents(digits);
-      if (cents === null) out.unreadable = true;
-      else out.cents.push(cents);
+      if (cents === null) out.push({ ...at, kind: "unreadable" });
+      else out.push({ ...at, kind: "cents", cents, digits });
     } else {
-      out.numbers.push(normalizeNumber(digits));
+      out.push({ ...at, kind: "number", number: normalizeNumber(digits), digits });
     }
+  }
+  return out;
+}
+
+type Scan = { cents: number[]; numbers: string[]; unreadable: boolean };
+
+function scanFigures(text: string): Scan {
+  const out: Scan = { cents: [], numbers: [], unreadable: false };
+  for (const f of moneyFigures(text)) {
+    if (f.kind === "unreadable") out.unreadable = true;
+    else if (f.kind === "cents") out.cents.push(f.cents);
+    else out.numbers.push(f.number);
   }
   return out;
 }

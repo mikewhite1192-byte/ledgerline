@@ -400,6 +400,17 @@ describe("the demo reset", () => {
         [randomUUID(), settlement.id, settlement.driver_id, settlement.period_id, randomUUID()],
       ),
     );
+    // A profit brief the owner had written (0042): a seeded table with none planted, so the replace
+    // removes it.
+    await app.withTenant(tenantId, (q) =>
+      q.execute(
+        `INSERT INTO briefs (id, tenant_id, kind, period_start, period_end, as_of, status, figures, model, trace_id,
+           created_by)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'profit_week', DATE '2026-10-05', DATE '2026-10-11',
+           DATE '2026-10-14', 'drafting', CAST('[]' AS jsonb), 'spark', CAST($2 AS uuid), 'reset-test')`,
+        [randomUUID(), randomUUID()],
+      ),
+    );
 
     // A finished pay sweep whose finding drafted the detention proposal, in the detention chain's
     // conversation, and an approve-all batch over that proposal (0018): each names a row that goes.
@@ -595,6 +606,7 @@ describe("the demo reset", () => {
       expect(preview.current.load_accessorials).toBe(planA.rows.load_accessorials.length + 1);
       expect(preview.current.driver_arm_events).toBe(planA.rows.driver_arm_events.length + 1);
       expect(preview.current.driver_identities).toBe(planA.rows.driver_identities.length + 1);
+      expect(preview.current.briefs).toBe(planA.rows.briefs.length + 1);
 
       const report = await resetDemoTenant(app, A, planA);
       expect(report.slug).toBe("blue-ridge");

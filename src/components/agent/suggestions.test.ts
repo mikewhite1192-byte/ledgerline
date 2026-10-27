@@ -9,6 +9,15 @@ describe("homeSuggestions", () => {
     expect(on.map((s) => s.id)).toEqual(["paystub-problems", "past-60", "pay-run-cost", "margin-per-load"]);
     expect(on[3].label).toBe("What was our margin per load this month?");
   });
+
+  it("asks how last week went in that place while the profit brief is on, reports on or off", () => {
+    for (const reportsOn of [false, true]) {
+      const out = homeSuggestions(reportsOn, true);
+      expect(out.map((s) => s.id)).toEqual(["paystub-problems", "past-60", "pay-run-cost", "profit-brief"]);
+      expect(out[3].label).toBe("How did we do last week?");
+    }
+    expect(homeSuggestions(false, false)).toEqual(homeSuggestions(false));
+  });
 });
 
 describe("withPaystubSuggestion", () => {

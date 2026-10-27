@@ -255,3 +255,55 @@ export function paymentProfile(
     label,
   };
 }
+
+export type DaysToPay = {
+  customerId: string;
+  // Invoices paid in the 180 days before asOf, void ones left out.
+  paidCount: number;
+  // Whole days from issue to paid, rounded half up (away from zero); null with none paid.
+  meanDays: number | null;
+  medianDays: number | null;
+};
+
+// a / b rounded half away from zero, on integers: roundHalfUp for the size, the sign put back.
+function roundSigned(numerator: number, denominator: number): number {
+  const size = roundHalfUp(Math.abs(numerator), denominator);
+  return numerator < 0 ? -size : size;
+}
+
+// How long one customer takes to pay (profit brief), from its own invoices paid in the 180 days
+// before asOf (0 to 180 days back, both tenant-local dates), void ones left out. Paid follows the
+// same rule as paymentProfile: the applications cover the amount, and the paid date is the latest
+// date of the payments applied. A payment received after asOf is not counted, so the answer as
+// of a past day does not move when a later payment arrives. Days run from the issue date.
+export function daysToPay(customerId: string, input: ReceivablesInput, asOf: string): DaysToPay {
+  assertId(customerId, "customerId");
+  const on = assertDate(asOf, "asOf");
+  const payments = new Map(input.payments.map((p) => [checkPayment(p).id, p]));
+  const applications = input.applications.map(checkApplication);
+  const days: number[] = [];
+  for (const invoice of input.invoices.map(checkInvoice)) {
+    if (invoice.customerId !== customerId || invoice.status === "void") continue;
+    let paidOn = "";
+    let applied = 0;
+    for (const a of applications) {
+      if (a.invoiceId !== invoice.id) continue;
+      const payment = payments.get(a.paymentId);
+      if (!payment) throw new InputError(`application ${a.id} names no known payment`);
+      if (payment.receivedOn > on) continue;
+      applied = sum([applied, a.amountCents]);
+      if (payment.receivedOn > paidOn) paidOn = payment.receivedOn;
+    }
+    if (applied === 0 || invoiceStatus(invoice.amountCents, applied).status !== "paid") continue;
+    const age = daysBetween(paidOn, on);
+    if (age < 0 || age > 180) continue;
+    days.push(daysBetween(invoice.issuedOn, paidOn));
+  }
+  const paidCount = days.length;
+  if (paidCount === 0) return { customerId, paidCount, meanDays: null, medianDays: null };
+  const sorted = [...days].sort((a, b) => a - b);
+  const mid = Math.floor(paidCount / 2);
+  const medianDays =
+    paidCount % 2 === 1 ? sorted[mid] : roundSigned(sum([sorted[mid - 1], sorted[mid]]), 2);
+  return { customerId, paidCount, meanDays: roundSigned(sum(days), paidCount), medianDays };
+}

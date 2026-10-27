@@ -6,6 +6,7 @@ import {
   KNOWN_STATUSES,
   lineKindLabel,
   modelCallStatusLabel,
+  paymentHabitLabel,
   recordLabel,
   statusLabel,
 } from "./labels";
@@ -122,5 +123,14 @@ describe("recordLabel", () => {
       expect(recordLabel({ table: "loads", id: long }, none)).toBe("Load ending 7c41e2");
       expect(recordLabel({ table: "loads", id: "L-10421" }, none)).toBe("Load L-10421");
     }
+  });
+});
+
+describe("paymentHabitLabel", () => {
+  it("says every way a customer pays in plain words", () => {
+    expect(paymentHabitLabel("reliable")).toBe("Reliable");
+    expect(paymentHabitLabel("mixed")).toBe("Mixed");
+    expect(paymentHabitLabel("repeat_late")).toBe("Often late");
+    expect(paymentHabitLabel("brand_new")).toBe("Brand new");
   });
 });

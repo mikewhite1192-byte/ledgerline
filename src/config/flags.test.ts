@@ -227,6 +227,15 @@ describe("flags", () => {
     // The batch cap fits approval_batches.total_cents.
     expect(flags.batchLimits.maxTotalCents).toBeLessThan(1_000_000_000);
   });
+
+  it("ships the profit brief dark, at most 6 cents a brief, and never switched on by local mode", () => {
+    expect(flags.profitBriefEnabled).toBe(false);
+    expect(flags.profitBriefLimits).toEqual({ maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 });
+    for (const v of Object.values(flags.profitBriefLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("profitBriefEnabled");
+  });
 });
 
 describe("local overrides for the demo-path test", () => {

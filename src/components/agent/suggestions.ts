@@ -3,7 +3,8 @@ import { formatLocalDate } from "@/lib/format/dates";
 
 // The home screen's suggested questions: four, each one a tool can answer. With the reports on,
 // the advance-limit question gives its place to margin per load; "past 60 days" and "Friday's
-// pay run" are then answered by the aging and cash needed reports.
+// pay run" are then answered by the aging and cash needed reports. With the profit brief on, that
+// last place asks how last week went instead (get_profit_brief answers it).
 const BASE: readonly Suggestion[] = [
   { id: "paystub-problems", label: "Who has a problem on this week's paystub?" },
   { id: "past-60", label: "Who owes us money past 60 days?" },
@@ -13,8 +14,14 @@ const BASE: readonly Suggestion[] = [
 
 const MARGIN: Suggestion = { id: "margin-per-load", label: "What was our margin per load this month?" };
 
-export function homeSuggestions(reportsOn: boolean): Suggestion[] {
-  return BASE.map((s) => (reportsOn && s.id === "advance-limit" ? MARGIN : { ...s }));
+const PROFIT: Suggestion = { id: "profit-brief", label: "How did we do last week?" };
+
+export function homeSuggestions(reportsOn: boolean, profitOn = false): Suggestion[] {
+  return BASE.map((s) => {
+    if (s.id !== "advance-limit") return { ...s };
+    if (profitOn) return { ...PROFIT };
+    return reportsOn ? { ...MARGIN } : { ...s };
+  });
 }
 
 // "Ask about this paystub" on a paystub's page lands on the home screen with that paystub's

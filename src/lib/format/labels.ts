@@ -125,3 +125,14 @@ export function recordLabel(ref: { table: string; id: string }, reference?: stri
   if (named) return NAMED_BY_REFERENCE.has(ref.table) ? named : `${kind} ${named}`;
   return ref.id.length > 12 ? `${kind} ending ${ref.id.slice(-6)}` : `${kind} ${ref.id}`;
 }
+
+// How a customer pays (rules-engine paymentProfile): "repeat_late" reads "Often late".
+const PAYMENT_HABIT_LABELS: Record<string, string> = {
+  reliable: "Reliable",
+  mixed: "Mixed",
+  repeat_late: "Often late",
+};
+
+export function paymentHabitLabel(habit: string): string {
+  return Object.hasOwn(PAYMENT_HABIT_LABELS, habit) ? PAYMENT_HABIT_LABELS[habit] : codeToWords(habit);
+}
