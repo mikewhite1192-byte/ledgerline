@@ -10,7 +10,8 @@ const ISO = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"H
 export type AuditState = {
   id: string;
   status: string;
-  turnId: string;
+  // Null on an engine proposal (origin 'engine'): no turn made it, so the evidence call has none.
+  turnId: string | null;
   createdAt: string;
   verdict: string | null;
   concerns: string[];
@@ -23,7 +24,7 @@ export type AuditState = {
 type StateRow = {
   id: string;
   status: string;
-  turn_id: string;
+  turn_id: string | null;
   created_at: string;
   auditor_verdict: string | null;
   auditor_concerns: string | null;

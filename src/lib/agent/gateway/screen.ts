@@ -48,7 +48,7 @@ export type ScreenOutcome = {
   reason: ReasonCategory;
 };
 
-type InputRow = { id: string; kind: "email" | "transcript" | "document"; body_text: string };
+type InputRow = { id: string; kind: "email" | "transcript" | "document" | "portal"; body_text: string };
 
 type CachedRow = {
   verdict: "clean" | "flagged";

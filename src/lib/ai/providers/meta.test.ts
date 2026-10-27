@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AiMessage, AiReplayItem, AiRequest } from "../types";
-import { metaBody, parseMeta } from "./meta";
+import { metaBody, metaComputerBody, parseMeta } from "./meta";
 
 const OPTIONS = { maxOutputTokens: 1024, reasoningEffort: "low" as const };
 const USAGE = {
@@ -568,5 +568,120 @@ describe("parseMeta with a hosted tool search", () => {
     });
     if (outcome.kind !== "answered") throw new Error("expected an answer");
     for (const item of outcome.value.replay) expect(item).not.toHaveProperty("id");
+  });
+});
+
+describe("metaComputerBody", () => {
+  const png = { mime: "image/png" as const, bytes: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) };
+  const pngUrl = `data:image/png;base64,${Buffer.from(png.bytes).toString("base64")}`;
+  const call = {
+    type: "computer_call",
+    id: "cu_1",
+    call_id: "call_1",
+    actions: [{ type: "click", x: 10, y: 20, button: "left" }],
+    pending_safety_checks: [{ id: "sc_1", code: "malicious_instructions", message: "Check the page." }],
+    status: "completed",
+  };
+
+  it("opens with the task and first screen, then each call verbatim and its answer", () => {
+    const body = metaComputerBody(
+      "muse-wonder-1.0",
+      {
+        purpose: "portal_runner_step",
+        instructions: "Read the page only.",
+        task: "Find load FFE-100001.",
+        screenshot: png,
+        history: [
+          {
+            call,
+            output: { callId: "call_1", screenshot: png, acknowledged: [call.pending_safety_checks[0]] },
+          },
+        ],
+      },
+      { maxOutputTokens: 1024, reasoningEffort: "medium" },
+    );
+    expect(body).toEqual({
+      model: "muse-wonder-1.0",
+      instructions: "Read the page only.",
+      input: [
+        {
+          type: "message",
+          role: "user",
+          content: [
+            { type: "input_text", text: "Find load FFE-100001." },
+            { type: "input_image", image_url: pngUrl },
+          ],
+        },
+        call,
+        {
+          type: "computer_call_output",
+          call_id: "call_1",
+          acknowledged_safety_checks: [call.pending_safety_checks[0]],
+          output: { type: "computer_screenshot", image_url: pngUrl },
+        },
+      ],
+      tools: [{ type: "computer" }],
+      max_output_tokens: 1024,
+      reasoning: { effort: "medium" },
+      store: false,
+      include: ["reasoning.encrypted_content"],
+    });
+  });
+});
+
+describe("parseMeta computer calls", () => {
+  const answer = (output: unknown[]) => ({ id: "resp_c1", status: "completed", output, usage: USAGE });
+  const item = (extra: Record<string, unknown> = {}) => ({
+    type: "computer_call",
+    id: "cu_1",
+    call_id: "call_1",
+    actions: [{ type: "type", text: "MC-123456" }, { type: "keypress", keys: ["ENTER"] }],
+    pending_safety_checks: [],
+    status: "completed",
+    ...extra,
+  });
+
+  it("carries the call raw, its actions untyped and its checks as received", () => {
+    const check = { id: "sc_9", code: "malicious_instructions", message: "The page asks for something else." };
+    const raw = item({ pending_safety_checks: [check] });
+    const out = parseMeta(answer([raw]), 200);
+    expect(out.kind).toBe("answered");
+    if (out.kind !== "answered" || out.metered.unit !== "tokens") throw new Error("expected tokens");
+    expect(out.value.computerCall).toEqual({
+      callId: "call_1",
+      actions: raw.actions,
+      pendingSafetyChecks: [check],
+      checks: [check],
+      status: "completed",
+      raw,
+    });
+  });
+
+  it("keeps a check whose code or message is odd, with the code as unknown and the message cut", () => {
+    const check = { id: "sc_1", code: "Not A Code!", message: "x".repeat(900) };
+    const out = parseMeta(answer([item({ pending_safety_checks: [check] })]), 200);
+    if (out.kind !== "answered") throw new Error("expected answered");
+    expect(out.value.computerCall?.pendingSafetyChecks).toEqual([{ id: "sc_1", code: "unknown", message: "x".repeat(500) }]);
+    expect(out.value.computerCall?.checks).toEqual([check]);
+  });
+
+  it("leaves computerCall out of a plain text answer", () => {
+    const out = parseMeta(
+      answer([{ type: "message", content: [{ type: "output_text", text: "{}" }] }]),
+      200,
+    );
+    if (out.kind !== "answered") throw new Error("expected answered");
+    expect(out.value).not.toHaveProperty("computerCall");
+  });
+
+  it.each([
+    ["two calls in one answer", [item(), item({ call_id: "call_2" })]],
+    ["a call without a call id", [item({ call_id: undefined })]],
+    ["actions that are not a list", [item({ actions: { type: "click" } })]],
+    ["an action that is not an object", [item({ actions: ["click"] })]],
+    ["checks that are not a list", [item({ pending_safety_checks: "sc_1" })]],
+    ["a check without an id", [item({ pending_safety_checks: [{ code: "x", message: "y" }] })]],
+  ])("settles %s as unknown, so nothing runs", (_name, output) => {
+    expect(parseMeta(answer(output), 200)).toEqual({ kind: "unknown", category: "unknown", httpStatus: 200 });
   });
 });

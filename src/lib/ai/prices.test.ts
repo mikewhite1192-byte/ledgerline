@@ -15,7 +15,13 @@ import {
   PDF_PAGE_RESERVE_TOKENS,
   priceFor,
   SAM_NANOCENTS,
+  SAM_VIDEO_FRAME_NANOCENTS,
+  SAM_VIDEO_MIN_FRAMES,
   savedByCache,
+  VIDEO_FRAME_RESERVE_TOKENS,
+  VIDEO_SECOND_RESERVE_TOKENS,
+  videoFramesCost,
+  videoReserveTokens,
   VOICE_NANOCENTS_PER_SECOND,
   wonderCapNanocents,
   type Price,
@@ -83,7 +89,30 @@ describe("prices", () => {
     expect(priceFor("image", "meta", "muse-image-1.0")).toEqual({ unit: "images", perImage: 1e9 });
     // $2.50 per 1,000 images.
     expect(SAM_NANOCENTS * 1_000).toBe(250 * NANOCENTS_PER_CENT);
-    expect(priceFor("sam", "meta", "sam-3.1")).toEqual({ unit: "images", perImage: 250_000_000 });
+    // $0.20 per 1,000 video frames, at least 50 frames a request.
+    expect(SAM_VIDEO_FRAME_NANOCENTS * 1_000).toBe(20 * NANOCENTS_PER_CENT);
+    expect(SAM_VIDEO_MIN_FRAMES).toBe(50);
+    expect(priceFor("sam", "meta", "sam-3.1")).toEqual({
+      unit: "segmentation",
+      perImage: 250_000_000,
+      perFrame: 20_000_000,
+      minFrames: 50,
+    });
+  });
+
+  it("bills a SAM video at least 50 frames, and a still per image", () => {
+    const sam = priceFor("sam", "meta", "sam-3.1");
+    if (sam?.unit !== "segmentation") throw new Error("no segmentation price");
+    // A 10-frame clip is billed 50; the 144-frame demo clip is billed 144 (2.88 cents).
+    expect(videoFramesCost(sam, 10)).toBe(50 * 20_000_000);
+    expect(videoFramesCost(sam, 144)).toBe(144 * 20_000_000);
+    expect(meteredCost(sam, { unit: "video_frames", count: 10 })).toBe(1_000_000_000);
+    expect(meteredCost(sam, { unit: "video_frames", count: 144 })).toBe(2_880_000_000);
+    expect(meteredCost(sam, { unit: "images", count: 2 })).toBe(500_000_000);
+    // The longest clip the table allows (600 frames) stays under the 13-cent redaction cap.
+    expect(videoFramesCost(sam, 600)).toBeLessThanOrEqual(13 * NANOCENTS_PER_CENT);
+    // A token meter never prices a segmentation call.
+    expect(meteredCost(sam, { unit: "audio_seconds", seconds: 1 })).toBeNull();
   });
 
   it("refuses models it has no price for, unlisted Contributor ids and prototype keys included", () => {
@@ -137,11 +166,27 @@ describe("prices", () => {
     expect(MEDIA_RESERVE_TOKENS).toBe(1_600);
     expect(PDF_PAGE_RESERVE_TOKENS).toBe(4_000);
     expect(mediaReserveTokens(2, 3)).toBe(2 * 1_600 + 3 * 4_000);
+    expect(mediaReserveTokens(2, 3, null)).toBe(2 * 1_600 + 3 * 4_000);
     const price = tokens(priceFor("spark", "meta", "muse-spark-1.3"));
     // 400 bytes of text, two images and a three-page PDF, 256 output tokens.
     expect(estimateReserve(price, 400, 256, mediaReserveTokens(2, 3))).toBe(
       (200 + 15_200) * 125_000 + 256 * 425_000,
     );
+  });
+
+  it("reserves a video by its whole seconds and its frames, 1.5 times the measured rate", () => {
+    expect(VIDEO_SECOND_RESERVE_TOKENS).toBe(380);
+    expect(VIDEO_FRAME_RESERVE_TOKENS).toBe(48);
+    // The demo clip: 18 s and 144 frames measured about 4,550 video tokens.
+    expect(videoReserveTokens(144, 18_000)).toBe(18 * 380 + 144 * 48);
+    expect(videoReserveTokens(144, 18_000)).toBeGreaterThan(4_550 * 1.5);
+    // 2.1 s rounds up to 3 s.
+    expect(videoReserveTokens(10, 2_100)).toBe(3 * 380 + 10 * 48);
+    expect(mediaReserveTokens(0, 0, { frames: 144, durationMs: 18_000 })).toBe(18 * 380 + 144 * 48);
+    // The longest clip read (20 s, 600 frames) with 2,048 output tokens stays under the 10-cent
+    // reading cap.
+    const price = tokens(priceFor("spark", "meta", "muse-spark-1.3"));
+    expect(estimateReserve(price, 4_000, 2_048, videoReserveTokens(600, 20_000))).toBeLessThan(10 * NANOCENTS_PER_CENT);
   });
 
   it("reserves every second of audio, rounded up, and one more", () => {

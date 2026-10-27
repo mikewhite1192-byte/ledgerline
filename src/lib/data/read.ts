@@ -3,6 +3,8 @@ import {
   cents,
   type AdvanceInput,
   type CheckInput,
+  type CustomerRecord,
+  type LoadRecord,
   type ReceivablesInput,
   type SettlementInput,
 } from "../rules-engine";
@@ -17,6 +19,7 @@ import { isUuid } from "../uuid";
 import { configFor, configForDay, sortVersions } from "./config-version";
 import {
   checkInputOf,
+  customerOf,
   driverOf,
   loadsOf,
   payConfigOf,
@@ -282,6 +285,30 @@ export async function readReportInput<K extends TenantTable>(
   const out: Partial<Record<TenantTable, unknown>> = {};
   for (const table of tables) out[table] = await readTable(q, table);
   return out as Pick<TenantRows, K>;
+}
+
+// The invoice queue's rows: delivered loads from `start` on (a tenant-local date) with no invoice
+// yet, with their state miles and accessorials, and the tenant's customers. The split by the rules
+// engine is src/lib/invoices/queue.ts.
+// Exported so a test's fake database can match these statements whole.
+export const QUEUE_LOADS =
+  "status = 'delivered' AND delivered_on >= CAST($1 AS date) AND NOT EXISTS (" +
+  "SELECT 1 FROM invoices i WHERE i.tenant_id = current_tenant_id() AND i.load_id = loads.id)";
+export const QUEUE_CHILDREN =
+  "load_id IN (SELECT l.id FROM loads l WHERE l.tenant_id = current_tenant_id()" +
+  " AND l.status = 'delivered' AND l.delivered_on >= CAST($1 AS date) AND NOT EXISTS (" +
+  "SELECT 1 FROM invoices i WHERE i.tenant_id = current_tenant_id() AND i.load_id = l.id))";
+
+export async function readInvoiceQueue(
+  q: Queryable,
+  start: LocalDate,
+): Promise<{ loads: LoadRecord[]; customers: CustomerRecord[] }> {
+  const from = assertLocalDate(start, "queue start");
+  const loads = await readWhere(q, "loads", QUEUE_LOADS, [from]);
+  const miles = await readWhere(q, "load_state_miles", QUEUE_CHILDREN, [from]);
+  const accessorials = await readWhere(q, "load_accessorials", QUEUE_CHILDREN, [from]);
+  const customers = await readTable(q, "customers");
+  return { loads: loadsOf(loads, miles, accessorials), customers: customers.map(customerOf) };
 }
 
 // A paged read that reached its page bound. The whole read fails: a partial set is never returned.

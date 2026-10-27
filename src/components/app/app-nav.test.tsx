@@ -1,18 +1,24 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
-import { appNav } from "./app-nav";
+import { appNav, type NavKey } from "./app-nav";
 
-const saved = { driverNotes: flags.driverNotesEnabled, documents: flags.documentsEnabled };
+const saved = {
+  driverNotes: flags.driverNotesEnabled,
+  portalRunner: flags.portalRunnerEnabled,
+  documents: flags.documentsEnabled,
+};
 afterEach(() => {
   flags.driverNotesEnabled = saved.driverNotes;
+  flags.portalRunnerEnabled = saved.portalRunner;
   flags.documentsEnabled = saved.documents;
 });
 
-const shape = (current: string) => appNav(current).map((i) => [i.href, i.label, i.current ?? false]);
+const shape = (current: NavKey) => appNav(current).map((i) => [i.href, i.label, i.current ?? false]);
 
 describe("appNav", () => {
   it("lists driver notes only while their switch is on, and marks the current page", () => {
     flags.driverNotesEnabled = false;
+    flags.portalRunnerEnabled = false;
     expect(shape("/models")).toEqual([
       ["/", "Home", false],
       ["/models", "Meta models", true],
@@ -23,6 +29,16 @@ describe("appNav", () => {
       ["/driver-notes", "Driver notes", true],
       ["/models", "Meta models", false],
     ]);
+  });
+
+  it("links to portal runs only while the portal runner is switched on", () => {
+    flags.driverNotesEnabled = false;
+    flags.portalRunnerEnabled = false;
+    expect(appNav("/").map((i) => i.href)).toEqual(["/", "/models"]);
+    flags.portalRunnerEnabled = true;
+    const items = appNav("/portal-runs");
+    expect(items.map((i) => i.href)).toEqual(["/", "/models", "/portal-runs"]);
+    expect(items.find((i) => i.current)?.href).toBe("/portal-runs");
   });
 
   it("lists documents only while their switch is on", () => {

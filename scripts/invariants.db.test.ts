@@ -223,6 +223,12 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "voice_notes",
     "voice_note_audio",
     "documents",
+    "portal_runs",
+    "portal_sessions",
+    "portal_run_steps",
+    "portal_run_checks",
+    "portal_evidence",
+    "evidence_clips",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -341,6 +347,47 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), 'invariants-test', 'receipt.png', 'image/png', 4,
              decode($2, 'hex'), $3, CAST($4 AS uuid))`,
           [randomUUID(), "89504e47", randomBytes(32).toString("hex"), randomUUID()],
+        );
+        // A portal run queued for one of the carrier's loads, with its sign-in code, a first step
+        // not run yet, a check waiting for a person, and the evidence it read back (0021).
+        const [load] = await q.query<{ id: string }>("SELECT CAST(id AS text) AS id FROM loads ORDER BY id LIMIT 1");
+        const [run, step] = [randomUUID(), randomUUID()];
+        await q.execute(
+          `INSERT INTO portal_runs (id, tenant_id, load_id, reference, requested_by, trace_id, model, status)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'FFE-000001', 'invariants-test', $3,
+             'spark', 'queued')`,
+          [run, load.id, trace],
+        );
+        await q.execute(
+          `INSERT INTO portal_sessions (id, tenant_id, run_id, code_hash, expires_at, created_by)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, now() + interval '10 minutes',
+             'invariants-test')`,
+          [randomUUID(), run, randomBytes(32).toString("hex")],
+        );
+        await q.execute(
+          `INSERT INTO portal_run_steps (id, tenant_id, run_id, seq, executed)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 0, false)`,
+          [step, run],
+        );
+        await q.execute(
+          `INSERT INTO portal_run_checks (id, tenant_id, run_id, step_id, check_id, code, message, status)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'check-1',
+             'pending_check', 'Waiting for a person', 'pending')`,
+          [randomUUID(), run, step],
+        );
+        await q.execute(
+          `INSERT INTO portal_evidence (id, tenant_id, run_id, load_id, answer, screen_verdict, readback_match)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST('{}' AS jsonb),
+             'clean', 'matches')`,
+          [randomUUID(), run, load.id],
+        );
+        // A dock clip uploaded for the same load, not redacted yet (0023).
+        await q.execute(
+          `INSERT INTO evidence_clips (id, tenant_id, load_id, stop, uploaded_by, filename, raw_hash,
+             raw_byte_length, width, height, frames_per_second, frame_count, duration_ms, status)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'delivery', 'invariants-test',
+             'dock.mp4', $3, 4, 640, 360, 10, 100, 10000, 'redacting')`,
+          [randomUUID(), load.id, randomBytes(32).toString("hex")],
         );
       });
       ids.proposals.push(proposal);

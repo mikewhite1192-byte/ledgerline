@@ -17,7 +17,19 @@ describe("flags", () => {
     expect(flags.reportsEnabled).toBe(false);
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
+    expect(flags.clipsEnabled).toBe(false);
     expect(flags.detentionEnabled).toBe(false);
+  });
+
+  it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
+    expect(flags.clipLimits).toEqual({
+      bytes: 700_000,
+      durationMs: 20_000,
+      frames: 600,
+      redactMaxCostCents: 13,
+      readMaxCostCents: 10,
+      perTenantPerDay: 20,
+    });
   });
 
   it("keeps the agent gateway's limits small and the screener on its probed output mode", () => {
@@ -94,6 +106,37 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
+  });
+
+  it("ships invoicing and customer payments dark, with small caps and a start date", () => {
+    expect(flags.invoicesEnabled).toBe(false);
+    expect(flags.customerPaymentsEnabled).toBe(false);
+    expect(flags.invoicesStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(flags.invoicesStart).toBe("2026-10-05");
+    expect(flags.invoiceLimits).toEqual({ proposalsPerRun: 50, maxPostAttempts: 3 });
+    expect(flags.customerPaymentLimits).toEqual({ perDay: 50, maxCents: 5_000_000 });
+    for (const v of [...Object.values(flags.invoiceLimits), ...Object.values(flags.customerPaymentLimits)]) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+  });
+
+  it("ships the portal runner dark, on Muse Spark, with every run capped", () => {
+    expect(flags.portalRunnerEnabled).toBe(false);
+    expect(flags.portalRunnerModel).toBe("spark");
+    expect(flags.portalRunLimits).toEqual({
+      maxSteps: 15,
+      maxWallMs: 240_000,
+      maxRunCents: 150,
+      maxCallCents: 25,
+      maxActionsPerStep: 8,
+      screenshotMaxBytes: 400_000,
+      podMaxBytes: 300_000,
+      approvalWaitMinutes: 30,
+    });
+    for (const v of Object.values(flags.portalRunLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.portalRunLimits.maxCallCents).toBeLessThanOrEqual(flags.portalRunLimits.maxRunCents);
   });
 
   it("ships voice intake dark, with its upload sizes and daily count capped", () => {

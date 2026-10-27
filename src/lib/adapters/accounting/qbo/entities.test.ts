@@ -9,6 +9,7 @@ import {
   customerDisplayName,
   invoiceBody,
   isVoided,
+  keyedDocNumber,
   paymentBody,
   purchaseBody,
   queryRows,
@@ -95,7 +96,8 @@ describe("QuickBooks bodies", () => {
       dueOn: "2026-12-02",
     };
     const line = (over: object) => ({ kind: "linehaul" as const, description: "Linehaul", amountCents: 100, ...over });
-    expect(invoiceBody({ ...base, lines: [line({})] }, ITEMS).totalCents).toBe(100);
+    expect(invoiceBody({ ...base, lines: [line({})] }, ITEMS, KEY).totalCents).toBe(100);
+    expect(invoiceBody({ ...base, lines: [line({})] }, ITEMS, KEY).docNumber).toBe("T5B0E-BR-INV-1");
     for (const lines of [
       [],
       [line({ amountCents: -100 })],
@@ -104,16 +106,35 @@ describe("QuickBooks bodies", () => {
       [line({ kind: "tip" })],
       [line({ description: " " })],
     ]) {
-      expect(refused(() => invoiceBody({ ...base, lines } as never, ITEMS)), JSON.stringify(lines)).toBe(
+      expect(refused(() => invoiceBody({ ...base, lines } as never, ITEMS, KEY)), JSON.stringify(lines)).toBe(
         "validation",
       );
     }
-    expect(refused(() => invoiceBody({ ...base, actionId: "not-a-uuid", lines: [line({})] }, ITEMS))).toBe(
+    expect(refused(() => invoiceBody({ ...base, actionId: "not-a-uuid", lines: [line({})] }, ITEMS, KEY))).toBe(
       "validation",
     );
-    expect(refused(() => invoiceBody({ ...base, issuedOn: "2026-02-30", lines: [line({})] }, ITEMS))).toBe(
+    expect(refused(() => invoiceBody({ ...base, issuedOn: "2026-02-30", lines: [line({})] }, ITEMS, KEY))).toBe(
       "validation",
     );
+    expect(refused(() => invoiceBody({ ...base, lines: [line({})] }, ITEMS, "T5B0"))).toBe("validation");
+  });
+
+  it("keys an invoice number or payment reference with the tenant, refusing a result past 21", () => {
+    // Two tenants whose slugs share initials number from the same BR-INV-10001.
+    expect(keyedDocNumber(KEY, "BR-INV-10001")).toBe("T5B0E-BR-INV-10001");
+    expect(keyedDocNumber("T7C2A", "BR-INV-10001")).not.toBe(keyedDocNumber(KEY, "BR-INV-10001"));
+    // The longest number the app makes (a 4-letter prefix and a 6-digit sequence) and the longest
+    // reference the form takes (15) fit exactly.
+    expect(keyedDocNumber(KEY, "ABCD-INV-999999")).toHaveLength(21);
+    expect(keyedDocNumber(KEY, "C".repeat(15))).toHaveLength(21);
+    expect(refused(() => keyedDocNumber(KEY, "ABCD-INV-1000000"))).toBe("validation");
+    expect(refused(() => keyedDocNumber(KEY, "C".repeat(16)))).toBe("validation");
+    for (const key of ["t5b0e", "T5B0", "T5B0E6", "", null]) {
+      expect(refused(() => keyedDocNumber(key, "BR-INV-1")), String(key)).toBe("validation");
+    }
+    for (const ref of ["", "BR INV", "BR_INV", null, 7]) {
+      expect(refused(() => keyedDocNumber(KEY, ref)), String(ref)).toBe("validation");
+    }
   });
 
   it("writes a settlement bill whose total is the net pay, on the mapped accounts", () => {
@@ -226,12 +247,13 @@ describe("QuickBooks bodies", () => {
           applications,
         },
         ACCOUNTS,
+        KEY,
       );
     const out = pay([{ invoiceOutsideId: "901", amountCents: 6_000 }]);
-    expect(out.docNumber).toBe("CHK-4471");
+    expect(out.docNumber).toBe("T5B0E-CHK-4471");
     expect(JSON.parse(bodyJson(out.body))).toMatchObject({
       TotalAmt: 100,
-      PaymentRefNum: "CHK-4471",
+      PaymentRefNum: "T5B0E-CHK-4471",
       DepositToAccountRef: { value: ACCOUNTS.ledgerline_clearing },
       Line: [{ Amount: 60, LinkedTxn: [{ TxnId: "901", TxnType: "Invoice" }] }],
     });
