@@ -21,17 +21,17 @@ const AUDIT_RETRY_MS = 90_000;
 // Why an approval did not go through, before the executor's own outcomes. Fixed sentences only. A
 // lost or unreadable reply ("unknown", "unavailable") takes the shared not-known sentence.
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
-  not_executable: "This kind of proposal cannot run yet. Nothing changed.",
-  already_decided: "This proposal was already decided.",
-  expired: "This proposal expired. Refresh the queue for a fresh one.",
+  not_executable: "This type of card cannot be approved yet. Nothing changed.",
+  already_decided: "This card was already decided.",
+  expired: "This card expired. Refresh the queue for a fresh one.",
   role: "An admin must approve an amount this size.",
-  auditor_required: "This waits for the auditor's check before anyone can approve it.",
-  not_auditable: "This card was made before the auditor started. Refresh the queue for a fresh one.",
-  override_required: "Muse Wonder blocked this. Write why you approve it anyway, then confirm.",
-  stale: "The auditor's verdict changed. Reload the card.",
+  auditor_required: "This waits for the second check before anyone can approve it.",
+  not_auditable: "This card was made before the second check started. Refresh the queue for a fresh one.",
+  override_required: "The second check did not pass this. Write why you approve it anyway, then confirm.",
+  stale: "The second check's result changed. Reload the card.",
   bad_request: "The reason must be 10 to 240 characters. Nothing changed.",
   needs_confirm: "Confirm the warning on the card first.",
-  not_found: "That proposal is not here.",
+  not_found: "That card is not here.",
 };
 
 const notice = (category: string | null) =>

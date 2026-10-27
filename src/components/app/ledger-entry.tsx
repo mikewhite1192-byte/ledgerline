@@ -2,7 +2,7 @@ import { Money } from "@/components/app/money";
 import { StatusBadge } from "@/components/app/status-badge";
 import { codeToWords } from "@/lib/format/labels";
 
-// One ledger row on a record page: what was attempted, where it stands, and when. The id anchor
+// One payment record row on a record page: what was attempted, where it stands, and when. The id anchor
 // (#ledger-<action id>) is what a paystub's payout line links to. The outside record shows by its
 // last four characters only, and a failure by its category in words, never upstream text.
 
@@ -62,9 +62,9 @@ export function LedgerEntryRow({
         <Money cents={entry.amountCents} className="ml-auto" />
       </p>
       <p className="text-small text-muted-foreground">
-        Reserved {when(entry.createdAt)}
+        Started {when(entry.createdAt)}
         {entry.settledAt ? `, settled ${when(entry.settledAt)}` : ""}
-        {entry.outsideTail ? `, outside id ending ${entry.outsideTail}` : ""}
+        {entry.outsideTail ? `, reference ending ${entry.outsideTail}` : ""}
         {entry.failureCategory ? `, ${failureWords(entry.failureCategory)}` : ""}
       </p>
     </li>

@@ -14,7 +14,7 @@ import { sourceWords } from "@/lib/advances/request";
 import { takebackReasonWords } from "@/lib/advances/takeback-words";
 import { advancesOn } from "@/lib/advances/switches";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
-import { codeToWords, recordLabel } from "@/lib/format/labels";
+import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { isUuid } from "@/lib/uuid";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { RecordActionButtons } from "./record-actions";
@@ -56,6 +56,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
     record;
   const when = (iso: string | null) => (iso ? formatInstant(iso, shell.timezone) : "Not yet");
   const cardLine = cardLineFor(advance.status, card);
+  const sourceName = recordNamer(eligibility?.sources ?? []);
   return (
     <AdvanceFrame shell={shell} title={`Advance ${advance.requestRef}`}>
       <PageHeader
@@ -89,7 +90,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
             <Item label="Amount"><Money cents={advance.amountCents} /></Item>
             <Item label="Fee, charged back later"><Money cents={advance.feeCents} /></Item>
             <Item label="Recovered from pay"><Money cents={advance.recoveredCents} /></Item>
-            <Item label="Source">{sourceWords(advance.source)}{input ? `, ${codeToWords(input.kind).toLowerCase()} received ${when(input.receivedAt)}` : ""}</Item>
+            <Item label="Requested through">{sourceWords(advance.source)}{input ? `, ${codeToWords(input.kind).toLowerCase()} received ${when(input.receivedAt)}` : ""}</Item>
             <Item label="Requested">{when(advance.requestedAt)}</Item>
             <Item label="Approved">{when(advance.decidedAt)}</Item>
             <Item label="Paid">{when(advance.paidAt)}</Item>
@@ -152,8 +153,8 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         <Card>
           <CardHeader>
             <div className="grid gap-0.5">
-              <CardTitle>The proposal</CardTitle>
-              <CardDescription>What the agent proposed and what a person decided.</CardDescription>
+              <CardTitle>The request</CardTitle>
+              <CardDescription>What the assistant suggested and what a person decided.</CardDescription>
             </div>
           </CardHeader>
           <CardBody className="grid gap-3">
@@ -196,7 +197,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
                 <Item label="Open advances"><Money cents={eligibility.openCents} /></Item>
                 <Item label="Driver's limit"><Money cents={eligibility.limitCents} /></Item>
                 <Item label="Fee"><Money cents={eligibility.feeCents} /></Item>
-                <Item label="Verdict">{eligibility.eligible ? "Eligible" : "Not eligible"}</Item>
+                <Item label="Result">{eligibility.eligible ? "Eligible" : "Not eligible"}</Item>
               </dl>
               {eligibility.reasons.length > 0 ? (
                 <ul className="grid list-disc gap-1 pl-5 text-body text-foreground-2">
@@ -213,10 +214,10 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
                       {i > 0 ? ", " : ""}
                       {s.table === "advances" ? (
                         <Link href={`/records/advances/${s.id}`} className="text-link underline-offset-4 hover:underline">
-                          {recordLabel(s)}
+                          {sourceName(s)}
                         </Link>
                       ) : (
-                        recordLabel(s)
+                        sourceName(s)
                       )}
                     </span>
                   ))}
@@ -231,7 +232,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         <CardHeader>
           <div className="grid gap-0.5">
             <CardTitle>Payout and QuickBooks</CardTitle>
-            <CardDescription>Every attempt, reserved before it was sent. Test mode only.</CardDescription>
+            <CardDescription>Every attempt, recorded before it was sent. Test mode only.</CardDescription>
           </div>
         </CardHeader>
         <CardBody>

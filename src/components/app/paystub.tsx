@@ -2,8 +2,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { cn } from "@/lib/cn";
-import { formatPeriod } from "@/lib/format/dates";
-import { recordLabel } from "@/lib/format/labels";
+import { formatLocalDate, formatPeriod } from "@/lib/format/dates";
+import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { hrefOrNull, recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
 import { Money } from "./money";
 import { StatusBadge } from "./status-badge";
@@ -37,19 +37,62 @@ export type PaystubProps = {
 const EARNINGS = new Set(["load_pay", "accessorial_pay", "reimbursement"]);
 const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } as const;
 
+// The rules engine writes some line labels with a raw code or a stored date in them: "Reimbursement
+// (lumper)", "Deduction (eld_fee)", "Advance recovery (2026-10-28)", "Accessorials, load BR-L10247".
+// The engine stays as it is; the label reads in plain words here, where a person sees it. A label of
+// any other shape shows as the engine wrote it.
+const SUBKIND_WORDS: Record<string, string> = {
+  lumper: "lumper fee",
+  toll: "tolls",
+  scale: "scale ticket",
+  fuel: "fuel",
+  correction: "pay correction",
+  eld_fee: "ELD fee",
+  cell_phone: "cell phone",
+  plate_fee: "plate fee",
+  cargo_claim: "cargo claim",
+  shortfall: "shortfall",
+};
+const WITH_SUBKIND = /^(Reimbursement|Deduction|Fuel, company card|Shortfall carried from last week) \(([a-z0-9_]+)\)$/;
+const RECOVERY = /^Advance recovery \((\d{4}-\d{2}-\d{2})\)$/;
+const EXTRA_PAY = /^Accessorials, load (.+)$/;
+
+export function lineDescription(label: string): string {
+  const recovery = RECOVERY.exec(label);
+  if (recovery) {
+    try {
+      return `Advance repaid (requested ${formatLocalDate(recovery[1])})`;
+    } catch {
+      return "Advance repaid";
+    }
+  }
+  const extra = EXTRA_PAY.exec(label);
+  if (extra) return `Extra pay, load ${extra[1]}`;
+  const coded = WITH_SUBKIND.exec(label);
+  if (coded) {
+    const [, head, code] = coded;
+    const words = Object.hasOwn(SUBKIND_WORDS, code) ? SUBKIND_WORDS[code] : codeToWords(code).toLowerCase();
+    // "Fuel, company card (fuel)" and "Shortfall carried from last week (shortfall)" say it twice.
+    return head.toLowerCase().includes(words) ? head : `${head}: ${words}`;
+  }
+  return label;
+}
+
 function LineLabel({ line, hrefFor }: { line: PaystubLine; hrefFor: HrefFor }) {
   const [first, ...rest] = line.sources;
-  if (!first) return <span className="text-foreground">{line.label}</span>;
+  const label = lineDescription(line.label);
+  const name = recordNamer(rest);
+  if (!first) return <span className="text-foreground">{label}</span>;
   // A record the link rules do not know shows as its name, without a link.
   const href = hrefOrNull(hrefFor, first);
   return (
     <>
       {href ? (
         <Link href={href} className="text-foreground underline decoration-border underline-offset-4 hover:decoration-current">
-          {line.label}
+          {label}
         </Link>
       ) : (
-        <span className="text-foreground">{line.label}</span>
+        <span className="text-foreground">{label}</span>
       )}
       {rest.length > 0 ? (
         <details className="group mt-0.5 text-small">
@@ -63,10 +106,10 @@ function LineLabel({ line, hrefFor }: { line: PaystubLine; hrefFor: HrefFor }) {
                 <li key={`${s.table}:${s.id}`}>
                   {restHref ? (
                     <Link href={restHref} className="text-link underline-offset-4 hover:underline">
-                      {recordLabel(s)}
+                      {name(s)}
                     </Link>
                   ) : (
-                    <span className="text-foreground-2">{recordLabel(s)}</span>
+                    <span className="text-foreground-2">{name(s)}</span>
                   )}
                 </li>
               );
@@ -143,24 +186,27 @@ export function Paystub({
 
       {exceptions.length > 0 ? (
         <div className="mt-4 grid gap-2">
-          {exceptions.map((x, i) => (
-            <InlineAlert key={`${x.category}:${i}`} tone="warning" title={x.label}>
-              <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-small">
-                {x.sources.map((s) => {
-                  const href = hrefOrNull(hrefFor, s);
-                  return href ? (
-                    <Link key={`${s.table}:${s.id}`} href={href} className="text-foreground underline underline-offset-4">
-                      {recordLabel(s)}
-                    </Link>
-                  ) : (
-                    <span key={`${s.table}:${s.id}`} className="text-foreground">
-                      {recordLabel(s)}
-                    </span>
-                  );
-                })}
-              </span>
-            </InlineAlert>
-          ))}
+          {exceptions.map((x, i) => {
+            const name = recordNamer(x.sources);
+            return (
+              <InlineAlert key={`${x.category}:${i}`} tone="warning" title={x.label}>
+                <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-small">
+                  {x.sources.map((s) => {
+                    const href = hrefOrNull(hrefFor, s);
+                    return href ? (
+                      <Link key={`${s.table}:${s.id}`} href={href} className="text-foreground underline underline-offset-4">
+                        {name(s)}
+                      </Link>
+                    ) : (
+                      <span key={`${s.table}:${s.id}`} className="text-foreground">
+                        {name(s)}
+                      </span>
+                    );
+                  })}
+                </span>
+              </InlineAlert>
+            );
+          })}
         </div>
       ) : null}
 

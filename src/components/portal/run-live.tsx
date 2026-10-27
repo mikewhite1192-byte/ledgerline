@@ -11,6 +11,7 @@ import { modelCallStatusLabel } from "@/lib/format/labels";
 import { endedWords } from "@/lib/portal/words";
 import { formatCallCost, formatLatency, formatSpend, targetName } from "@/lib/trace/format";
 import type { CheckView, EvidenceView, RunView, StepView } from "@/lib/portal/views";
+import { zoneOf } from "@/lib/portal/zones";
 
 // One run, live: polls every 2 seconds while the run is queued, running or waiting for a person,
 // and stops once it ends. Approve and decline are one click per check; there is no approve all.
@@ -23,6 +24,30 @@ const READBACK: Record<EvidenceView["readback"], string> = {
   differs: "differs",
   partial: "partly matches",
 };
+
+// A step reads what was done ("Click"); where the pointer landed ("Click at 640, 410") is kept
+// for the Details disclosure under it.
+const PLACE = / (?:at|to) -?\d+, -?\d+$/;
+
+export function withoutPlace(sentence: string): string {
+  return sentence.replace(PLACE, "");
+}
+
+export function placesOf(sentences: string[]): string[] {
+  return sentences.filter((t) => PLACE.test(t));
+}
+
+// A dock time in the dock's own zone ("Oct 20, 2026, 9:05 AM CDT"). The portal's own stamp
+// ("2026-10-20 09:05 CT") is the runner's evidence format, not a person's.
+function dockTime(shown: string | null, at: string | null, label: EvidenceView["zoneLabel"]): string {
+  if (shown === null || at === null) return "Not on the portal";
+  if (label === null) return "Time not known";
+  try {
+    return formatInstant(at, zoneOf(label));
+  } catch {
+    return "Time not known";
+  }
+}
 
 function shot(runId: string, seq: number) {
   return `/api/portal-runs/${runId}/steps/${seq}/screenshot`;
@@ -128,12 +153,12 @@ function EvidenceCard({ view }: { view: RunView }) {
     <Card>
       <CardHeader>
         <CardTitle>Evidence</CardTitle>
-        <CardDescription>Times as the broker&apos;s portal shows them. Minutes at the dock are worked out by code, not the model.</CardDescription>
+        <CardDescription>Times from the broker&apos;s portal, in the dock&apos;s time zone. Minutes at the dock are worked out by code, not the model.</CardDescription>
       </CardHeader>
       <CardBody className="grid gap-3">
         <dl className="grid gap-2 sm:grid-cols-2">
-          <div><dt className="text-small text-muted-foreground">Delivery check-in</dt><dd className="text-body font-medium">{e.checkedIn ?? "Not on the portal"}</dd></div>
-          <div><dt className="text-small text-muted-foreground">Delivery check-out</dt><dd className="text-body font-medium">{e.checkedOut ?? "Not on the portal"}</dd></div>
+          <div><dt className="text-small text-muted-foreground">Delivery check-in</dt><dd className="text-body font-medium">{dockTime(e.checkedIn, e.checkedInAt, e.zoneLabel)}</dd></div>
+          <div><dt className="text-small text-muted-foreground">Delivery check-out</dt><dd className="text-body font-medium">{dockTime(e.checkedOut, e.checkedOutAt, e.zoneLabel)}</dd></div>
           <div><dt className="text-small text-muted-foreground">Minutes at the dock</dt><dd className="text-body font-medium">{e.minutesAtDock ?? "Unknown"}</dd></div>
           <div><dt className="text-small text-muted-foreground">Signed POD</dt><dd className="text-body font-medium">
             {e.pod === "present" ? (
@@ -228,9 +253,19 @@ export function PortalRunLive({ initial, timeZone }: { initial: RunView; timeZon
                   {s.sentences.length > 0 ? (
                     <ul className="list-disc pl-5 text-small text-foreground-2">
                       {s.sentences.map((t, j) => (
-                        <li key={j}>{t}</li>
+                        <li key={j}>{withoutPlace(t)}</li>
                       ))}
                     </ul>
+                  ) : null}
+                  {placesOf(s.sentences).length > 0 ? (
+                    <details className="text-caption text-muted-foreground">
+                      <summary className="cursor-pointer text-link">Details</summary>
+                      <ul className="list-disc pl-5">
+                        {placesOf(s.sentences).map((t, j) => (
+                          <li key={j}>{t}</li>
+                        ))}
+                      </ul>
+                    </details>
                   ) : null}
                   <p className="text-caption text-muted-foreground">
                     {formatSpend(s.costNanocents)}

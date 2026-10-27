@@ -81,12 +81,21 @@ export function formatInstant(iso: string, timeZone: string): string {
   return `${get("month")} ${get("day")}, ${get("year")}, ${get("hour")}:${get("minute")} ${get("dayPeriod")} ${get("timeZoneName")}`;
 }
 
+// Arizona keeps standard time all year, so from March to November it is an hour behind Mountain
+// time (Denver). The runtime calls it "Mountain Standard Time", which would read "Mountain time"
+// like Denver, so it has its own name. US/Arizona is the same zone under its older id.
+const OWN_ZONE_NAMES: Readonly<Record<string, string>> = {
+  "America/Phoenix": "Arizona time",
+  "US/Arizona": "Arizona time",
+};
+
 // "America/New_York" reads "Eastern time": the zone's everyday name, the same in summer and winter.
 // A zone with no such name (UTC, or an id the runtime does not know) reads as the last part of its
 // id ("Etc/UTC" reads "UTC", "Mars/Olympus_Mons" reads "Olympus Mons time"). An offset id is the
 // exception: "Etc/GMT+5" is five hours behind UTC (the id's sign is reversed), so it reads as the
 // offset the runtime gives, "UTC-05:00", never as its own id.
 export function zoneName(timeZone: string, at: Date): string {
+  if (Object.hasOwn(OWN_ZONE_NAMES, timeZone)) return OWN_ZONE_NAMES[timeZone];
   let generic = "";
   try {
     generic =

@@ -4,6 +4,7 @@ import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { flags } from "@/config/flags";
@@ -128,7 +129,12 @@ export default async function VoiceNotePage({ params }: { params: Promise<{ id: 
             </Row>
             <Row label="Sorted as">
               {categoryLabel(note.category)}
-              {note.urgency ? <span className="text-foreground-2">, {note.urgency} urgency</span> : null}
+              {/* Only an urgent note is marked; the triage's other levels add nothing a person acts on. */}
+              {note.urgency === "high" ? (
+                <Badge tone="warning" className="ml-2">
+                  Urgent
+                </Badge>
+              ) : null}
             </Row>
             <Row label="Amount heard">{note.amountCents === null ? "None stated" : <Money cents={note.amountCents} />}</Row>
             {note.transcript !== null ? <Row label="Transcript">{note.transcript}</Row> : null}
@@ -142,19 +148,19 @@ export default async function VoiceNotePage({ params }: { params: Promise<{ id: 
         <Card>
           <CardHeader>
             <CardTitle>The agent</CardTitle>
-            <CardDescription>The agent reads the note through its safety checks and proposes. A person approves every payout on the card.</CardDescription>
+            <CardDescription>The agent reads the note through its safety checks and drafts a request. A person approves every payout on the card.</CardDescription>
           </CardHeader>
           <CardBody className="grid gap-3">
             {note.proposal ? (
               <dl className="grid gap-3">
-                <Row label="Proposal">
+                <Row label="Request">
                   <span className="inline-flex flex-wrap items-center gap-2">
                     <Money cents={note.proposal.amountCents} /> <StatusBadge status={note.proposal.status} />
                   </span>
                 </Row>
               </dl>
             ) : (
-              <p className="text-body text-foreground-2">No proposal from this note yet. The agent may have asked a question instead.</p>
+              <p className="text-body text-foreground-2">No request from this note yet. The agent may have asked a question instead.</p>
             )}
             <p>
               <Link href="/" className="text-small text-link underline-offset-4 hover:underline">
@@ -181,7 +187,7 @@ export default async function VoiceNotePage({ params }: { params: Promise<{ id: 
       <Card>
         <CardHeader>
           <CardTitle>Who did what</CardTitle>
-          <CardDescription>Every model call for this note. The amounts come from the rules engine, never a model.</CardDescription>
+          <CardDescription>Every model call for this note. The amounts come from your pay rules, never a model.</CardDescription>
         </CardHeader>
         <CardBody>
           {note.trace.length === 0 ? (

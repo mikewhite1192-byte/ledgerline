@@ -13,9 +13,9 @@ const whole = (v: unknown): number => (Number.isSafeInteger(v) ? (v as number) :
 
 const LEG_STATE: Readonly<Record<string, string>> = {
   confirmed: "done",
-  sent: "sent, waiting on the read-back",
+  sent: "sent, not confirmed yet",
   reserved: "waiting to send",
-  unknown: "sent, waiting on the read-back",
+  unknown: "sent, not confirmed yet",
   failed: "failed",
   not_started: "not started",
   attempts_used: "tried the most times allowed",
