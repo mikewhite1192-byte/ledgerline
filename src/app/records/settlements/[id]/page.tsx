@@ -145,7 +145,7 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
             header: "Why",
             cell: (r) => (r.failureCategory ? (legFailureLabel(r, view.legs) ?? codeToWords(r.failureCategory)) : ""),
           },
-          { key: "at", header: "Reserved", cell: (r) => formatInstant(r.createdAt, tz) },
+          { key: "at", header: "Started", cell: (r) => formatInstant(r.createdAt, tz) },
         ]}
       />
     </SignedInPage>

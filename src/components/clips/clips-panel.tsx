@@ -24,8 +24,8 @@ export function ClipsPanel({ clips, loads }: { clips: ClipView[]; loads: LoadOpt
           <div className="grid gap-1">
             <CardTitle>Add a dock clip</CardTitle>
             <CardDescription>
-              Faces and license plates are found by SAM 3.1 and blurred in this browser before the clip is kept. Muse
-              Spark then reads the camera clock and the paperwork from the blurred clip.
+              Faces and license plates are found by the video model and blurred in this browser before the clip is
+              kept. The document model then reads the camera clock and the paperwork from the blurred clip.
             </CardDescription>
           </div>
         </CardHeader>

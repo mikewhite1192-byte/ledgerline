@@ -18,9 +18,14 @@ export const ADVANCE_REASON_CATEGORIES = [
 export const proposeAdvance = defineTool({
   name: "propose_advance",
   description:
-    "Propose a pay advance for a person to approve. Nothing is paid by this call. The rules " +
-    "engine sizes the limit: an amount above what the driver can draw is refused with the " +
-    "limit, and you may propose again at or below it. amountCents is integer cents; " +
+    "Propose a pay advance for a person to approve. Nothing is paid by this call. It checks the " +
+    "driver itself (one of this carrier's, armed to receive money, and the advance headroom the " +
+    "rules engine sizes), so call it directly with driverId and amountCents; do not read " +
+    "identity, arming or headroom first. A refusal returns only a reason category, and the limit " +
+    "when there is one; after engine_refused, get_advance_headroom with the same amountCents and " +
+    "loadId gives the engine's reasons (it does not check requestedOn). An amount above what the " +
+    "driver can draw is refused with the limit, and you may propose again at or below it. " +
+    "amountCents is integer cents; " +
     "requestedOn is the date the driver asked (YYYY-MM-DD, not after today); requestRef is the " +
     "outside message the ask came in, when there is one. loadId is the load the advance is for, " +
     "when the driver named one: the carrier's per-load cap then applies. cardId names one of the " +

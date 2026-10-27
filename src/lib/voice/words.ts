@@ -9,7 +9,7 @@ import type { VoiceStatus } from "./pipeline";
 
 export const VOICE_STATUS_WORDS: Readonly<Record<VoiceStatus, { label: string; tone: BadgeTone }>> = {
   transcribed: { label: "Transcribed", tone: "neutral" },
-  blocked: { label: "Held by the screen", tone: "warning" },
+  blocked: { label: "Held for a person to read", tone: "warning" },
   ready: { label: "Ready for the agent", tone: "info" },
   handed_off: { label: "With the agent", tone: "info" },
   replied: { label: "Reply drafted", tone: "success" },

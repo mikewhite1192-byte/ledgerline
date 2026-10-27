@@ -63,7 +63,7 @@ describe("WeekChecks", () => {
     render(<WeekChecks tree={tree} runId={RUN} running={false} />);
     const section = screen.getByRole("region", { name: "How the week was checked" });
     expect(section.textContent).toContain(
-      "1 of 2 drivers checked a second time. The second check also found 2 of the engine's 3 problems. It noticed 1 more the engine did not; it is under Needs a person.",
+      "1 of 2 drivers checked a second time. The second check also found 2 of the 3 problems your pay rules found. It noticed 1 more your pay rules did not; it is under Needs a person.",
     );
     expect(section.textContent).toContain("Muse Wonder: Both checks agree on most of the week.");
     expect(within(screen.getByRole("list", { name: "Where the two checks differ" })).getByText(/Only the second check saw this day/)).toBeTruthy();

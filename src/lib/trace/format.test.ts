@@ -133,7 +133,7 @@ describe("words for codes", () => {
     expect(decisionSentence({ ...d, reason: "made_up_reason" })).toBe("blocked, a rule check stopped it");
     expect(decisionSentence({ ...d, decision: "invalid_args" })).toBe("refused, the request was not in the right form");
     expect(decisionSentence({ ...d, decision: "allowed", reason: "capped_to_eligible" })).toBe(
-      "allowed, cut to the most the pay rules allow",
+      "passed the safety check, cut to the most the pay rules allow",
     );
     expect(decisionSentence({ ...d, decision: "teleported" })).toBe("outcome not known");
   });
@@ -158,7 +158,7 @@ describe("traceLines", () => {
       meta: ["low effort", "1.8 s", "0.7 cents"],
       text: "Planned the next step: asked for 1 tool",
     });
-    expect(lines[1]).toMatchObject({ who: "Gateway", text: "Reading pay items: allowed", badge: null });
+    expect(lines[1]).toMatchObject({ who: "Safety check", text: "Reading pay items: passed the safety check", badge: null });
     expect(lines[1].refs).toHaveLength(2);
     expect(lines[2]).toMatchObject({
       who: "Muse Spark Open",
@@ -169,7 +169,7 @@ describe("traceLines", () => {
       text: "Checking advance eligibility: blocked, the amount is over the eligible limit ($412.00)",
       badge: { tone: "warning", label: "Blocked" },
     });
-    expect(lines[7].text).toBe("Saved the proposal card for a person to approve");
+    expect(lines[7].text).toBe("Saved the card for a person to approve");
     expect(lines[8].text).toBe("Wrote the answer");
   });
 
@@ -188,10 +188,10 @@ describe("traceLines", () => {
     expect(lines[5]).toMatchObject({ who: "Muse Spark 1.3", text: "Judged it: eligible for part of the ask" });
     expect(lines[6].text).toBe("Cut to the most the pay rules allow after a larger ask was refused.");
     expect(lines[7]).toMatchObject({
-      who: "Auditor (Muse Wonder)",
+      who: "Second check (Muse Wonder)",
       meta: ["high effort", "4.1 s", "5.8 cents"],
-      text: "Checked the proposal and found no problem",
-      badge: { tone: "success", label: "Pass" },
+      text: "Gave the card a second check: passed",
+      badge: { tone: "success", label: "Passed" },
     });
   });
 
@@ -236,7 +236,7 @@ describe("traceLines", () => {
     expect(lines[1]).toMatchObject({
       who: "Muse Wonder",
       meta: ["high effort", "4.1 s", "5.8 cents"],
-      text: "Took over after Muse Spark failed the proposal format twice",
+      text: "Took over after Muse Spark could not form the card twice",
       badge: { tone: "info", label: "Escalated" },
     });
     expect(textOf(trace)).not.toContain("schema_failed_twice");
@@ -264,7 +264,7 @@ describe("traceLines", () => {
     const [model, esc] = traceLines(trace);
     expect(model).toMatchObject({ who: "Muse Spark", meta: [], text: "Did not finish thinking it through: the demo budget was reached" });
     expect(esc.text).toBe(
-      "Took over after Muse Spark failed the proposal format twice, but did not finish: the model was not available",
+      "Took over after Muse Spark could not form the card twice, but did not finish: the model was not available",
     );
   });
 
@@ -283,7 +283,7 @@ describe("traceLines", () => {
     expect(card.find((l) => l.key === `call:${SAMPLE_CALLS.screen.id}`)?.text).toBe(
       "Screened outside text before the agent read it: flagged, so it was shown as data and not followed",
     );
-    expect(card.at(-1)).toMatchObject({ text: "Checked the proposal and blocked it", badge: { tone: "destructive", label: "Blocked" } });
+    expect(card.at(-1)).toMatchObject({ text: "Gave the card a second check: did not pass", badge: { tone: "destructive", label: "Did not pass" } });
     const whole = traceLines(trace);
     expect(whole.at(-1)).toMatchObject({ who: "Other model", text: "Made a model call for this turn" });
   });
@@ -321,10 +321,10 @@ describe("traceLines", () => {
     const base = sampleTrace();
     const line = (over: Partial<TraceStep>) =>
       traceLines({ ...base, steps: [{ ...base.steps[6], ...over }], extraCalls: [], proposals: [] })[0];
-    const failed = { text: "Could not save the proposal card", badge: { tone: "destructive", label: "Failed" } };
+    const failed = { text: "Could not save the card", badge: { tone: "destructive", label: "Failed" } };
 
     expect(line({ state: "failed", result: "already_decided", proposalId: null })).toMatchObject({
-      text: "That proposal was already decided, so no new card was made",
+      text: "That card was already decided, so no new card was made",
       badge: null,
     });
     expect(line({ state: "failed", result: "store_failed", proposalId: null })).toMatchObject(failed);
@@ -332,12 +332,12 @@ describe("traceLines", () => {
     expect(line({ state: "failed", result: "something_new", proposalId: null })).toMatchObject(failed);
     expect(line({ state: "cancelled", result: null, proposalId: null })).toMatchObject(failed);
     expect(line({ state: "running", result: null, proposalId: null })).toMatchObject({
-      text: "Preparing a proposal card",
+      text: "Preparing a card",
       badge: null,
     });
-    expect(line({ state: "done", result: "something_new" })).toMatchObject({ text: "Prepared a proposal card", badge: null });
+    expect(line({ state: "done", result: "something_new" })).toMatchObject({ text: "Prepared a card", badge: null });
     expect(line({ state: "done", result: "duplicate" }).text).toBe(
-      "Found the same proposal already on file, so no second card was made",
+      "Found the same card already saved, so no second card was made",
     );
   });
 });
