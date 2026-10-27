@@ -109,8 +109,8 @@ export default async function AdvancesPage({
         empty={{
           title: `${status ? `${statusLabel(status)} advances` : "Advances"}${notArmed ? " for drivers not armed" : ""} appear here`,
           body: canRequest
-            ? "When a driver asks for one, it shows up here with the pay rules check. Use Request an advance to start one."
-            : "When a driver asks for one, it shows up here with the pay rules check. Requests start once the agent is switched on.",
+            ? "A new request shows up on Home first, with the pay rules check. Once a person approves it, the advance appears here. Use Request an advance to start one."
+            : "A new request shows up on Home first, with the pay rules check. Once a person approves it, the advance appears here. Requests start once the agent is switched on.",
         }}
         columns={[
           {

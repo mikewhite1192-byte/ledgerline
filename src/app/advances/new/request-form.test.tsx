@@ -77,7 +77,7 @@ describe("the advance request form's suggested amount", () => {
 describe("sending an advance request", () => {
   it("names what the button does, then says where the answer is before it moves to Home", async () => {
     const fetch = vi.fn(async (url: string, init: RequestInit) => {
-      if (url === "/api/advances/request") return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      if (url === "/api/advances/request") return new Response(JSON.stringify({ ok: true, status: "done" }), { status: 200 });
       const { driverId } = JSON.parse(String(init.body)) as { driverId: string };
       const s = SUGGESTED[driverId];
       const suggestion = { armed: s.armed, maxCents: s.cents, suggestedCents: s.cents, feeCents: 0, load: null };
@@ -116,6 +116,33 @@ describe("sending an advance request", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check this request" }));
 
     await screen.findByText("The agent is answering another question. Try again in a moment.");
+    expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole("status", { name: "Notifications" }).textContent).not.toContain("Request checked");
+  });
+
+  // The route answers 200 once the turn ends, even when the turn failed or stopped early; only a
+  // finished turn is a done check, and a reply without a readable status is not one either.
+  it.each([
+    ["failed", JSON.stringify({ ok: true, status: "failed" })],
+    ["stopped early", JSON.stringify({ ok: true, status: "partial" })],
+    ["unreadable", "not json"],
+  ])("stays on the form and says where to look when the turn is %s, and shows no toast", async (_case, reply) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url === "/api/advances/request"
+          ? new Response(reply, { status: 200 })
+          : new Response(JSON.stringify({ loads: [], suggestion: { armed: true, maxCents: 30_000, suggestedCents: 30_000, feeCents: 0, load: null } }), { status: 200 }),
+      ),
+    );
+    renderForm();
+    const amount = screen.getByLabelText("Amount") as HTMLInputElement;
+    fireEvent.change(screen.getByLabelText("Driver"), { target: { value: A } });
+    await waitFor(() => expect(amount.value).toBe("300.00"));
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "fuel" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check this request" }));
+
+    await screen.findByText("The agent did not finish checking this request. Open Home to see what it found before trying again.");
     expect(push).not.toHaveBeenCalled();
     expect(screen.getByRole("status", { name: "Notifications" }).textContent).not.toContain("Request checked");
   });

@@ -1231,12 +1231,14 @@ describe("no internal word on the advance request form", () => {
     }
   });
 
-  it("every refusal sentence, a lost answer, and the toast after the answer", async () => {
+  it("every refusal sentence, a lost answer, an unfinished check, and the toast after the answer", async () => {
     const { RequestForm } = await import("@/app/advances/new/request-form");
+    const done = new Response(JSON.stringify({ ok: true, status: "done" }), { status: 200 });
     const answers: (Response | "lost")[] = [
       ...REFUSALS.map((error) => new Response(JSON.stringify({ error }), { status: 409 })),
       "lost",
-      new Response(JSON.stringify({ ok: true }), { status: 200 }),
+      new Response(JSON.stringify({ ok: true, status: "failed" }), { status: 200 }),
+      done,
     ];
     for (const answer of answers) {
       vi.stubGlobal("fetch", async (url: string) => {
@@ -1255,8 +1257,8 @@ describe("no internal word on the advance request form", () => {
       await act(async () => {
         fireEvent.click(screen.getByRole("button", { name: "Check this request" }));
       });
-      // Each answer shows its words: the toast after a good answer, a sentence on the form otherwise.
-      if (answer !== "lost" && answer.ok) expect(container.textContent).toContain("The answer appears on Home.");
+      // Each answer shows its words: the toast after a finished check, a sentence on the form otherwise.
+      if (answer === done) expect(container.textContent).toContain("The answer appears on Home.");
       else expect(screen.getByRole("alert").textContent?.length).toBeGreaterThan(0);
       expect(scan(container)).toEqual([]);
       unmount();
