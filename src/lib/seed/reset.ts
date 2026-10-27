@@ -16,10 +16,12 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      seed's fourth refusal (a ledger row naming a flow advance, FLOW_ADVANCE_ROWS in run.ts) is
 //      not needed here on purpose: the function deletes every settled money_actions row before
 //      the flow advances, in one transaction, so no ledger row can outlive the advance it names;
-//   3. demo_reset_clear() (migration 0025, re-created by 0033 and 0036), the one
-//      security-definer function, which checks the same things again under the tenant row lock
-//      and deletes the settled ledger rows, the agent's records and the fictional broker portal's loads (the app role has no DELETE on
-//      them); the portal's loads come back only with npm run seed, since the app cannot write them;
+//   3. demo_reset_clear() (migration 0025, re-created by 0033, then by 0034 to empty the fuel
+//      checks too, then by 0036 to empty the pay rule changes), the one security-definer
+//      function, which checks the same things again under the tenant row lock and deletes the
+//      settled ledger rows, the agent's records and the fictional broker portal's loads (the app
+//      role has no DELETE on them); the portal's loads come back only with npm run seed, since
+//      the app cannot write them;
 //   4. the seed's replace of the 22 seeded tables, as the app role, under row-level security (the
 //      arming log, which the app role may add to but never delete from, goes with its drivers
 //      through the foreign key's cascade, and the plan's log is written again);
@@ -58,6 +60,10 @@ export const DEMO_RESET_CLEARED = {
     "the pay sweep's findings; each names a run that goes, a pay week the replace deletes and " +
     "its drafted proposal",
   sweep_runs: "the pay sweep's runs; each names a pay week the replace deletes and a conversation that goes",
+  fuel_findings:
+    "the fuel checks' findings (0031); each names a fill-up, a driver, a load and a pay line the " +
+    "replace deletes, and the card it drafted",
+  fuel_check_runs: "the fuel checks' runs; each is named by the findings that go",
   approval_batches:
     "approve-all batches; each lists items that go, is named by the proposals it approved and names a " +
     "pay week the replace deletes",
@@ -120,6 +126,8 @@ export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "sweep_fanout",
   "sweep_items",
   "sweep_runs",
+  "fuel_findings",
+  "fuel_check_runs",
   "approval_batches",
   "pay_rule_changes",
   "advances",
@@ -169,9 +177,11 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   sweep_fanout: "Pay sweep second checks",
   sweep_items: "Pay sweep findings",
   sweep_runs: "Pay sweep runs",
+  fuel_findings: "Fuel check findings",
+  fuel_check_runs: "Fuel check runs",
   approval_batches: "Approve-all batches",
   pay_rule_changes: "Pay rule changes",
-  proposals: "Agent proposals",
+  proposals: "Agent cards",
   turns: "Agent turns",
   conversations: "Agent conversations",
 };
@@ -181,16 +191,17 @@ export const RESET_SQLSTATE = { noTenant: "LR001", notDemo: "LR002", refused: "L
 
 export type Refusal = { kind: "open" | "mismatch" | "flagged"; count: number };
 
-// Counts only, never a row's contents; the script prints these and the page shows them.
+// Counts only, never a row's contents; the script prints these and the page shows them, so they
+// use the page's words: a payment record, a card, waiting to send, not confirmed yet.
 export function refusalText(r: Refusal): string {
   switch (r.kind) {
     case "open":
-      return `${r.count} ledger row(s) still reserved, sent or unknown; settle them before a reset`;
+      return `${r.count} payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset`;
     case "mismatch":
-      return `${r.count} ledger row(s) failed as amount_mismatch; a person must review them before a reset`;
+      return `${r.count} payment record(s) failed because the amount did not match; a person must review them before a reset`;
     case "flagged":
       return (
-        `${r.count} proposal(s) a ledger row names carry a flag from an outside message; ` +
+        `${r.count} card(s) behind a payment record carry a flag from an outside message; ` +
         "a person must review them before a reset"
       );
   }

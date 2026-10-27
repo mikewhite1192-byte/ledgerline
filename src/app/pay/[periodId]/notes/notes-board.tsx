@@ -4,6 +4,7 @@ import { Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { lineDescription } from "@/components/app/paystub";
 import { StatusBadge } from "@/components/app/status-badge";
 import { useToast } from "@/components/app/toast";
 import { Badge } from "@/components/ui/badge";
@@ -230,7 +231,7 @@ function NoteCardView({ card, onDecided }: { card: BoardCard; onDecided: () => v
                     href={`/driver-notes/${card.settlementId}/view#line-${l.seq}`}
                     className="text-link underline-offset-4 hover:underline"
                   >
-                    {l.label}
+                    {lineDescription(l.label)}
                   </Link>
                 </li>
               ))}

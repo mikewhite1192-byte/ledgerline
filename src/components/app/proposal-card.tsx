@@ -11,11 +11,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { OVERRIDE_REASON, overrideReasonOf } from "@/lib/agent/auditor/words";
 import { cn } from "@/lib/cn";
-import { recordLabel } from "@/lib/format/labels";
+import { recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
 import { Money } from "./money";
 import { StatusBadge } from "./status-badge";
+import { Term } from "./term";
 
 export type ProposalStatus =
   | "proposed"
@@ -112,21 +113,23 @@ const STATUS_NOTE: Record<Exclude<ProposalStatus, "proposed">, string> = {
   rejected: "Rejected. Nothing changed.",
   failed: "Failed. Check the record before trying again.",
   expired: "Expired before anyone approved it. Nothing changed.",
-  unknown: "Sent, waiting on the read-back.",
+  unknown: "Sent. Waiting for it to be confirmed; it is checked again on its own, and nothing is paid twice.",
 };
 
 const RESUME_NOTE = "Approved, but it stopped before it finished. Resume picks it up where it stopped.";
 
+// The second check's line, in a clerk's words. The model that ran it is named on the trace
+// ("How this was worked out"), not here.
 const AUDIT_BADGE: Record<Exclude<ProposalAudit["state"], "checking">, { tone: BadgeTone; label: string }> = {
-  pass: { tone: "success", label: "Checked by Muse Wonder: pass" },
-  concerns: { tone: "warning", label: "Muse Wonder has concerns" },
-  block: { tone: "destructive", label: "Muse Wonder blocked this" },
-  unknown: { tone: "neutral", label: "Not checked" },
-  budget: { tone: "neutral", label: "Not checked: demo budget reached" },
-  off: { tone: "neutral", label: "Auditor off" },
+  pass: { tone: "success", label: "Second check passed" },
+  concerns: { tone: "warning", label: "Second check has concerns" },
+  block: { tone: "destructive", label: "Second check did not pass" },
+  unknown: { tone: "neutral", label: "Second check could not run" },
+  budget: { tone: "neutral", label: "Second check skipped: demo budget reached" },
+  off: { tone: "neutral", label: "Second check is off" },
 };
 
-const BUDGET_TEXT = "The auditor could not check this proposal. Your data is unchanged.";
+const BUDGET_TEXT = "The second check could not run on this request. Your data is unchanged.";
 
 function AuditLine({
   audit,
@@ -162,7 +165,7 @@ function AuditLine({
   if (audit.state === "checking") {
     return (
       <div role="status" className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
-        <span className="text-small text-foreground-2">Muse Wonder is checking...</span>
+        <span className="text-small text-foreground-2">Running the second check...</span>
         <Skeleton className="w-48 max-w-full" />
       </div>
     );
@@ -172,7 +175,9 @@ function AuditLine({
   return (
     <div className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={badge.tone}>{badge.label}</Badge>
+        <Badge tone={badge.tone}>
+          <Term id="second-check">{badge.label}</Term>
+        </Badge>
       </div>
       {text && audit.state !== "pass" ? <p className="text-small text-foreground">{text}</p> : null}
       {audit.override ? (
@@ -223,6 +228,8 @@ export function ProposalCard({
   const opened = useRef(false);
   const cancelled = useRef(false);
   const amount = formatCents(Math.abs(impact.cents));
+  // One name per record across the reasons and "Also read", so two loads never both read "Load".
+  const sourceName = recordNamer([...reasons.flatMap((r) => (r.source ? [r.source] : [])), ...sources]);
   // With nothing paid or received, the buttons and the question leave the amount out.
   const noAmount = impact.cents === 0 || impact.direction === "none";
   const shown = impact.direction === "out" ? -Math.abs(impact.cents) : Math.abs(impact.cents);
@@ -276,11 +283,11 @@ export function ProposalCard({
                 <span className="text-foreground">{r.text}</span>
                 {r.source && href ? (
                   <Link href={href} className="ml-auto text-small text-link underline-offset-4 hover:underline">
-                    {r.label ?? recordLabel(r.source)}
+                    {r.label ?? sourceName(r.source)}
                   </Link>
                 ) : r.source ? (
                   // A record the link rules do not know shows as its name, without a link.
-                  <span className="ml-auto text-small text-foreground-2">{r.label ?? recordLabel(r.source)}</span>
+                  <span className="ml-auto text-small text-foreground-2">{r.label ?? sourceName(r.source)}</span>
                 ) : null}
               </li>
             );
@@ -293,10 +300,10 @@ export function ProposalCard({
               const href = hrefOrNull(hrefFor, s);
               return href ? (
                 <Link key={`${s.table}:${s.id}`} href={href} className="text-link underline-offset-4 hover:underline">
-                  {s.label ?? recordLabel(s)}
+                  {s.label ?? sourceName(s)}
                 </Link>
               ) : (
-                <span key={`${s.table}:${s.id}`}>{s.label ?? recordLabel(s)}</span>
+                <span key={`${s.table}:${s.id}`}>{s.label ?? sourceName(s)}</span>
               );
             })}
           </p>
@@ -322,7 +329,7 @@ export function ProposalCard({
           >
             <p className="text-body font-semibold text-foreground">
               {overriding
-                ? "Approve over Muse Wonder's block?"
+                ? "Approve even though the second check did not pass?"
                 : (confirmQuestion ?? wording?.question ?? (noAmount ? "Approve this?" : `Approve ${amount}?`))}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">

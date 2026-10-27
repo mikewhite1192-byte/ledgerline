@@ -34,23 +34,45 @@ describe("the demo reset's lists", () => {
   });
 });
 
-describe("the function's demo-carrier gate", () => {
-  // Every migration that creates or re-creates the function (0025, then 0033 with the sweep's
-  // second checks and 0036 with the pay rule changes), so whichever ran last keeps the same gate.
-  const dir = new URL("../../../db/migrations/", import.meta.url);
-  const defining = readdirSync(dir)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .filter((f) => /FUNCTION demo_reset_clear\(\)\s+RETURNS/.test(readFileSync(new URL(f, dir), "utf8")));
+// Every migration that creates or re-creates demo_reset_clear(): the last one is the live function,
+// and each must keep the gate whole.
+const MIGRATIONS = new URL("../../../db/migrations/", import.meta.url);
+// Any spelling: either case, any whitespace, with or without OR REPLACE, a public. prefix or quotes.
+const DEFINES = /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:"?public"?\s*\.\s*)?"?demo_reset_clear"?\s*\(/i;
+const DEFINITIONS = readdirSync(MIGRATIONS)
+  .filter((f) => f.endsWith(".sql"))
+  .sort()
+  .filter((f) => DEFINES.test(readFileSync(new URL(f, MIGRATIONS), "utf8")));
 
-  it("is defined by 0025 and re-created whole by 0033, then 0036 last", () => {
-    expect(defining[0]).toBe("0025_demo_reset.sql");
-    expect(defining).toContain("0033_demo_reset_fanout.sql");
-    expect(defining.at(-1)).toBe("0036_demo_reset_pay_rule_changes.sql");
+describe("the function's demo-carrier gate", () => {
+  it("is defined by 0025 first and re-created whole by any later migration", () => {
+    expect(DEFINITIONS[0]).toBe("0025_demo_reset.sql");
   });
 
-  it.each(defining)("%s lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", (file) => {
-    const sql = readFileSync(new URL(file, dir), "utf8");
+  // 0033 with the sweep's second checks, 0034 with the fuel checks, then 0036 with the pay rule
+  // changes last, so a fresh database ends on the full union.
+  it("is re-created whole by 0033 and 0034, then 0036 last", () => {
+    expect(DEFINITIONS).toContain("0033_demo_reset_fanout.sql");
+    expect(DEFINITIONS).toContain("0034_fuel_reset.sql");
+    expect(DEFINITIONS.at(-1)).toBe("0036_demo_reset_pay_rule_changes.sql");
+  });
+
+  it("finds a definition in any spelling, and never a call or a longer name", () => {
+    for (const sql of [
+      "CREATE FUNCTION demo_reset_clear()",
+      "create or replace function public.demo_reset_clear()",
+      "CREATE  OR\n  REPLACE FUNCTION\tdemo_reset_clear ()",
+      'CREATE OR REPLACE FUNCTION "public"."demo_reset_clear"()',
+    ]) {
+      expect(DEFINES.test(sql)).toBe(true);
+    }
+    for (const sql of ["SELECT * FROM demo_reset_clear()", "CREATE FUNCTION demo_reset_clear_all()"]) {
+      expect(DEFINES.test(sql)).toBe(false);
+    }
+  });
+
+  it.each(DEFINITIONS)("%s lists exactly the seed carriers, each by slug, name and timezone together, and raises LR002 otherwise", (file) => {
+    const sql = readFileSync(new URL(file, MIGRATIONS), "utf8");
     const gate =
       /IF NOT FOUND OR \(\(v_slug, v_name, v_timezone\) IN \(([^;]*?)\)\) IS NOT TRUE THEN\s+RAISE EXCEPTION 'demo reset: not a demo tenant' USING ERRCODE = 'LR002';/.exec(
         sql,
@@ -70,21 +92,21 @@ describe("the function's demo-carrier gate", () => {
 describe("a refusal", () => {
   it("names counts only, and says nothing was cleared", () => {
     expect(refusalText({ kind: "open", count: 2 })).toBe(
-      "2 ledger row(s) still reserved, sent or unknown; settle them before a reset",
+      "2 payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset",
     );
     expect(refusalText({ kind: "mismatch", count: 1 })).toBe(
-      "1 ledger row(s) failed as amount_mismatch; a person must review them before a reset",
+      "1 payment record(s) failed because the amount did not match; a person must review them before a reset",
     );
     expect(refusalText({ kind: "flagged", count: 3 })).toBe(
-      "3 proposal(s) a ledger row names carry a flag from an outside message; a person must review them before a reset",
+      "3 card(s) behind a payment record carry a flag from an outside message; a person must review them before a reset",
     );
     const err = new DemoResetRefused([
       { kind: "open", count: 1 },
       { kind: "mismatch", count: 1 },
     ]);
     expect(err.message).toBe(
-      "1 ledger row(s) still reserved, sent or unknown; settle them before a reset; " +
-        "1 ledger row(s) failed as amount_mismatch; a person must review them before a reset " +
+      "1 payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset; " +
+        "1 payment record(s) failed because the amount did not match; a person must review them before a reset " +
         "(nothing was cleared)",
     );
   });

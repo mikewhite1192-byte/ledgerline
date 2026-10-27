@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { AUDIT_LINES, checkAuditLine } from "./audit-line";
+import { AUDIT_LINES, AUDITOR_OFF, checkAuditLine } from "./audit-line";
 import { APP_URL, E2E_CARRIER, E2E_LOGIN, FAKE_HOST } from "./env.local-mode";
 import { secretStep } from "./secret-step";
 
@@ -20,16 +20,16 @@ const DEPLOYED = process.env.E2E_TARGET === "deployed";
 const REPLAYED = !DEPLOYED && process.env.E2E_RECORD !== "1";
 const FIRST_QUESTION = "Who has a problem on this week's paystub?";
 // What the recorded first answer says (e2e/fixtures/model-replay.json): each driver with a
-// problem, the amount carried forward for each, and the exception each shows. A re-record that
-// words the answer differently updates this list.
+// problem and the amount carried forward for each. Live answers name the drivers with or without
+// their codes, so the list holds the names alone. A re-record that words the answer differently
+// updates this list.
 const FIRST_ANSWER_SAYS = [
-  "Kevin Yarborough (BR-D04)",
+  "Kevin Yarborough",
   "$682.75",
-  "Ellen Kowalski (BR-D09)",
+  "Ellen Kowalski",
   "$483.71",
-  "Wesley Delgado (BR-D20)",
+  "Wesley Delgado",
   "$146.61",
-  "1 exception",
 ];
 // The hero driver of the seed (the same ids every seed at the anchor), asked for a modest amount
 // so the engine's limit allows it on any day of the demo week. The ask names a fixed date, never
@@ -199,7 +199,7 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     await expect(card.getByRole("button", { name: /^(Approve|Override and approve)/ })).toBeVisible();
     const shown = (await auditLine.first().innerText()).trim();
     const audit = checkAuditLine(shown, { auditorOn: on.auditor, deployed: DEPLOYED });
-    const want = on.auditor ? "a verdict from the auditor" : "Auditor off";
+    const want = on.auditor ? "a second check result" : `"${AUDITOR_OFF}"`;
     expect(audit, `the auditor's line reads "${shown}", wanted ${want}`).not.toBe("wrong");
     // Deployed only: the shared demo budget is spent, so the auditor made no call and gave no
     // verdict. The card was checked above; the step is marked skipped, never passed.
@@ -212,7 +212,12 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     await expect(page.getByRole("heading", { name: "This pay week" })).toBeVisible();
     // The calls just made are in this week's count.
     if (on.agent) await expect(page.getByText("Model calls", { exact: true })).toBeVisible();
-    await expect(page.getByText(/^Demo budget used, across every carrier: /)).toBeVisible();
+    // The whole line, in dollars: with a budget set ("$0.42 of $2.00.") or without one.
+    const spent = page.getByText(/^Spent so far this demo: /);
+    await expect(spent).toBeVisible();
+    await expect(spent).toHaveText(
+      /^Spent so far this demo: \$\d{1,3}(,\d{3})*\.\d{2}( of \$\d{1,3}(,\d{3})*\.\d{2}|, with no budget set, so every call is refused)\.$/,
+    );
   });
 
   await test.step("6. sign out returns to the sign-in page", async () => {

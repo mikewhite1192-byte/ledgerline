@@ -40,7 +40,7 @@ export default async function SweepRunPage({ params }: { params: Promise<{ id: s
       signOut={<SignOut />}
     >
       {page ? (
-        <SweepRun initial={page} auditorOn={flags.auditorEnabled} />
+        <SweepRun initial={page} auditorOn={flags.auditorEnabled} timezone={carrier.timezone} />
       ) : (
         <div className="mx-auto grid w-full max-w-[880px] gap-6 px-4 py-6 md:px-6 md:py-8">
           <PageHeader title="Pay sweep" />

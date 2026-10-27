@@ -21,7 +21,14 @@ export const dynamic = "force-dynamic";
 // in English and sorted; a person hands it to the agent from its page. Dark while the voice switch
 // is off.
 const DESCRIPTION =
-  "A driver's voice note, in English or Spanish, transcribed and screened before any model reads it. The agent proposes; a person approves every payout.";
+  "A driver's voice note, in English or Spanish, transcribed and screened before any model reads it. The agent drafts a request; a person approves every payout.";
+
+// The synthetic sample clips in public/samples, by what each one says.
+const SAMPLE_NOTES = [
+  { file: "voice-en-advance.wav", label: "an advance request in English" },
+  { file: "voice-es-advance.wav", label: "an advance request in Spanish" },
+  { file: "voice-es-pay-question.wav", label: "a pay question in Spanish" },
+];
 
 export default async function VoiceNotesPage() {
   if (!voiceOn()) return <VoiceOffPage title="Voice notes" description={DESCRIPTION} />;
@@ -68,7 +75,20 @@ export default async function VoiceNotesPage() {
         rowKey={(r) => r.id}
         empty={{
           title: "No voice notes yet",
-          body: "Add one above. The sample clips are in /samples, like voice-es-advance.wav.",
+          body: (
+            <>
+              Add one above, or try one of the sample notes: save it, then pick it above.{" "}
+              {SAMPLE_NOTES.map((s, i) => (
+                <span key={s.file}>
+                  {i > 0 ? ", " : ""}
+                  <a href={`/samples/${s.file}`} download className="text-link underline-offset-4 hover:underline">
+                    {s.label}
+                  </a>
+                </span>
+              ))}
+              .
+            </>
+          ),
         }}
         columns={[
           {

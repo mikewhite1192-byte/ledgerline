@@ -2,7 +2,11 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SourceRef } from "@/lib/records/href";
-import { Paystub, type PaystubProps } from "./paystub";
+import { DEMO_ANCHOR } from "@/lib/seed/anchor";
+import { DEMO_CARRIERS } from "@/lib/seed/carriers";
+import golden from "@/lib/seed/golden.json";
+import { buildCarrierPlan } from "@/lib/seed/plan";
+import { lineDescription, Paystub, type PaystubProps } from "./paystub";
 
 afterEach(cleanup);
 
@@ -134,5 +138,69 @@ describe("Paystub", () => {
     cleanup();
     render(<Paystub {...props} />);
     expect(screen.queryByText(/Paid under rules/)).toBeNull();
+  });
+});
+
+describe("lineDescription", () => {
+  it("reads the golden paystub's labels in plain words", () => {
+    const labels = golden.carriers["blue-ridge"].hero.lines.map((l) => l.label);
+    expect(labels.map(lineDescription)).toEqual([
+      "Load BR-L10247",
+      "Load BR-L10269",
+      "Load BR-L10307",
+      "Reimbursement: tolls",
+      "Reimbursement: tolls",
+      "Reimbursement: fuel",
+      "Insurance, 5 days",
+      "Escrow",
+      "Advance repaid (requested Oct 28, 2026)",
+    ]);
+  });
+
+  it("names each kind of reimbursement and deduction the way a driver says it", () => {
+    expect(lineDescription("Reimbursement (lumper)")).toBe("Reimbursement: lumper fee");
+    expect(lineDescription("Reimbursement (scale)")).toBe("Reimbursement: scale ticket");
+    expect(lineDescription("Reimbursement (correction)")).toBe("Reimbursement: pay correction");
+    expect(lineDescription("Deduction (eld_fee)")).toBe("Deduction: ELD fee");
+    expect(lineDescription("Deduction (cell_phone)")).toBe("Deduction: cell phone");
+    expect(lineDescription("Deduction (cargo_claim)")).toBe("Deduction: cargo claim");
+    expect(lineDescription("Fuel, company card (fuel)")).toBe("Fuel, company card");
+    expect(lineDescription("Shortfall carried from last week (shortfall)")).toBe("Shortfall carried from last week");
+    expect(lineDescription("Accessorials, load BR-L10247")).toBe("Extra pay, load BR-L10247");
+    // A code it does not know still reads as words, never as the code.
+    expect(lineDescription("Deduction (new_code)")).toBe("Deduction: new code");
+  });
+
+  it("leaves every other label as the engine wrote it", () => {
+    for (const label of ["Load BR-L10247 (rate missing)", "Truck lease", "Scheduled deduction", "Escrow", ""]) {
+      expect(lineDescription(label)).toBe(label);
+    }
+    // A date that is not a real day is never shown.
+    expect(lineDescription("Advance recovery (2026-02-30)")).toBe("Advance repaid");
+  });
+
+  it("leaves no raw code, stored date or internal word on any seeded paystub line", () => {
+    for (const carrier of DEMO_CARRIERS) {
+      for (const line of buildCarrierPlan(carrier, DEMO_ANCHOR).rows.settlement_lines) {
+        const shown = lineDescription(line.label);
+        expect(shown).not.toMatch(/\([a-z0-9_]+\)|\d{4}-\d{2}-\d{2}|accessorial/i);
+      }
+    }
+  });
+
+  it("shows the plain label on the paystub itself", () => {
+    render(
+      <Paystub
+        {...props}
+        lines={[
+          { seq: 1, kind: "reimbursement", label: "Reimbursement (lumper)", amountCents: 7_500, sources: [] },
+          { seq: 2, kind: "advance_recovery", label: "Advance recovery (2026-10-28)", amountCents: -5_000, sources: [{ table: "advances", id: "A-1" }] },
+        ]}
+        hrefFor={hrefFor}
+      />,
+    );
+    expect(screen.getByText("Reimbursement: lumper fee")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Advance repaid (requested Oct 28, 2026)" })).toBeTruthy();
+    expect(screen.queryByText(/2026-10-28|\(lumper\)/)).toBeNull();
   });
 });

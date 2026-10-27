@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isLocalDate } from "../lib/time/local-date";
 import { flags, type Flags } from "./flags";
@@ -23,6 +25,34 @@ describe("flags", () => {
     // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
     expect(flags.demoResetEnabled).toBe(false);
     expect(flags.rulesByTalkingEnabled).toBe(false);
+    expect(flags.fuelAnomalyEnabled).toBe(false);
+  });
+
+  it("starts fuel checks on a fixed date and keeps the receipt compare and corrections small", () => {
+    expect(flags.fuelAnomalyLimits).toEqual({
+      from: "2026-10-27",
+      duplicateWindowMinutes: 60,
+      chargebackMaxCents: 50_000,
+      compareMaxCostCents: 5,
+      compareMaxOutputTokens: 200,
+      comparesPerRun: 10,
+      comparesPerTenantPerDay: 20,
+    });
+    expect(isLocalDate(flags.fuelAnomalyLimits.from)).toBe(true);
+    // A suggested correction the page offers is one the gateway would also accept.
+    expect(flags.fuelAnomalyLimits.chargebackMaxCents).toBeLessThanOrEqual(
+      flags.gatewayLimits.payCorrectionMaxCents,
+    );
+  });
+
+  it("tells the release PR beside the fuel start date to move it to go-live with the switch", () => {
+    // The start date is production posture, and the switch alone does not keep older fill-ups off
+    // the first run: the note beside the date is the release PR's instruction.
+    const src = readFileSync(join(__dirname, "flags.ts"), "utf8");
+    const at = src.indexOf("fuelAnomalyLimits: {");
+    const note = src.slice(at, src.indexOf("from: string;", at)).replace(/\s*\/\/\s*/g, " ");
+    expect(note).toContain("The release PR that turns fuelAnomalyEnabled on also sets this to its go-live date");
+    expect(note).not.toMatch(/switching on never/);
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {

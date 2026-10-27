@@ -45,6 +45,11 @@ const SENTENCES: Readonly<Record<string, string>> = {
   // a pay rule change refused: escrow per week while a driver's escrow schedule runs
   escrow_on_driver_schedules:
     "Each driver's escrow schedule sets what is held back each week, so changing the carrier's escrow per week would not change anyone's pay. Nothing was changed.",
+  // the fuel checks (engine proposals)
+  state_not_on_route: "The company card bought fuel in a state this load did not drive through.",
+  gallons_over_tank: "The fill-up was more fuel than the truck's tank holds.",
+  no_load_or_day: "The company card bought fuel on a day with no load and no dispatch day.",
+  same_fill_twice: "The same fill-up was turned in and paid back twice.",
   // the sweep's second opinion: an issue a driver's check raised that the rules engine did not
   sub_agent_flag:
     "A second check of this driver's week pointed at this record and the rules engine did not. Look at the record before paying.",

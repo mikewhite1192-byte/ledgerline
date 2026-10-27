@@ -124,7 +124,7 @@ describe("the auditor on the card", () => {
     });
     expect(auditFor({ ...view, auditorVerdict: "block", auditorConcerns: ["amount_wrong"] }, on)).toEqual({
       state: "block",
-      text: "The amount does not match the rules engine's number.",
+      text: "The amount does not match the number from your pay rules.",
     });
     expect(auditFor({ ...view, auditorVerdict: "unknown", auditorConcerns: ["insufficient_evidence"] }, on)).toMatchObject({
       state: "unknown",
@@ -156,12 +156,12 @@ describe("the auditor on the card", () => {
 
   it("asks the audit question on concerns and unknown, none extra on pass or block", () => {
     const concerns = proposalCardFrom({ ...view, auditorVerdict: "concerns", auditorConcerns: ["source_missing"] }, on);
-    expect(concerns.confirmQuestion).toBe("Muse Wonder has a concern (source missing). Approve anyway?");
+    expect(concerns.confirmQuestion).toBe("The second check has a concern (source missing). Approve anyway?");
     expect(proposalCardFrom({ ...view, auditorVerdict: "unknown" }, on).confirmQuestion).toBe(
-      "Not checked by the auditor. Approve anyway?",
+      "The second check could not run. Approve anyway?",
     );
     // No verdict yet reads as not checked.
-    expect(proposalCardFrom(view, on).confirmQuestion).toBe("Not checked by the auditor. Approve anyway?");
+    expect(proposalCardFrom(view, on).confirmQuestion).toBe("The second check could not run. Approve anyway?");
     const pay = "Pay $200.00 to BR-D07's fuel card ···· 4417? Test mode.";
     expect(proposalCardFrom({ ...view, auditorVerdict: "pass" }, on).confirmQuestion).toBe(pay);
     expect(proposalCardFrom({ ...view, auditorVerdict: "block" }, on).confirmQuestion).toBe(pay);

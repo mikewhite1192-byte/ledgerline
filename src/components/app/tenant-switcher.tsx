@@ -3,6 +3,7 @@
 import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import { zoneName } from "@/lib/format/dates";
 import { ThemeToggle } from "./theme-toggle";
 
 export type TenantInfo = { name: string; email: string; timezone: string };
@@ -61,7 +62,8 @@ export function TenantPanel({
         <p className="[overflow-wrap:anywhere]">
           Signed in as <span className="font-medium">{tenant.email}</span>
         </p>
-        <p className="text-foreground-2">Time zone: {tenant.timezone}</p>
+        {/* The zone's everyday name ("Central time"), never its id. The name does not change with the date. */}
+        <p className="text-foreground-2">Time zone: {zoneName(tenant.timezone, new Date())}</p>
       </div>
       <div className="border-t border-border pt-3">
         <ThemeToggle />

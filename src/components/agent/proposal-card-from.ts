@@ -39,15 +39,16 @@ export function flagNoteFor(categories: readonly string[]): string {
   return `Read with care: the message behind this was flagged for ${flagWords(categories)}.`;
 }
 
-// What the page knows about the auditor: whether it is switched on, and whether this page is
-// waiting on its check for the proposal right now.
-export type AuditContext = { on: boolean; checking: boolean };
+// What the page knows about the auditor: whether it is switched on, whether this page is
+// waiting on its check for the proposal right now, and the carrier's time zone for the time of an
+// override (UTC only when the page does not know it).
+export type AuditContext = { on: boolean; checking: boolean; timezone?: string };
 
-function overrideOf(p: ProposalView): ProposalAudit["override"] {
+function overrideOf(p: ProposalView, timezone: string): ProposalAudit["override"] {
   if (!p.auditorOverride) return undefined;
   let at = p.auditorOverride.at;
   try {
-    at = formatInstant(p.auditorOverride.at, "UTC");
+    at = formatInstant(p.auditorOverride.at, timezone);
   } catch {
     // shown as stored
   }
@@ -61,7 +62,7 @@ export function auditFor(p: ProposalView, ctx: AuditContext): ProposalAudit {
   if (v === "pass") return { state: "pass" };
   if (v === "concerns") return { state: "concerns", text: sentences(p.auditorConcerns) };
   if (v === "block") {
-    const override = overrideOf(p);
+    const override = overrideOf(p, ctx.timezone ?? "UTC");
     return { state: "block", text: sentences(p.auditorConcerns), ...(override ? { override } : {}) };
   }
   if (v === "unknown" && p.auditorConcerns.includes("budget")) return { state: "budget" };

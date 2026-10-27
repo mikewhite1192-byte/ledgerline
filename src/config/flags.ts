@@ -315,6 +315,30 @@ export type Flags = {
   // the tools are not offered. invoicesEnabled must also be on. A post to accounting is always
   // left unsent there (a constant on the adapter, not a switch); LedgerLine never sends one.
   invoiceReviewEnabled: boolean;
+  // Fuel checks: every fill-up held against the truck's tank, the load's route and the driver's
+  // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
+  // and proposes; a person approves a pay correction on its card. Off means the Fuel checks page
+  // is not found, its link is hidden, the routes and the service refuse before any work, no
+  // receipt compare is called, and the agent's run_checks leaves fuel findings out.
+  fuelAnomalyEnabled: boolean;
+  fuelAnomalyLimits: {
+    // Tenant-local date: fill-ups before it are never listed. The release PR that turns
+    // fuelAnomalyEnabled on also sets this to its go-live date; left as it is, the first run lists
+    // every fill-up from this date up to go-live.
+    from: string;
+    // Two fill-ups with the same gallons, amount and state this close together are one fill-up
+    // turned in twice.
+    duplicateWindowMinutes: number;
+    // The largest correction the page will suggest, in cents (the same as the gateway's pay
+    // correction limit); above it the row says to handle it by hand.
+    chargebackMaxCents: number;
+    // The cap on one receipt compare call, in cents, and its output tokens.
+    compareMaxCostCents: number;
+    compareMaxOutputTokens: number;
+    // Receipt compares one run may make, and one carrier may make in a day.
+    comparesPerRun: number;
+    comparesPerTenantPerDay: number;
+  };
 };
 
 export const flags: Flags = {
@@ -422,6 +446,16 @@ export const flags: Flags = {
   batchApproveEnabled: false,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
   invoiceReviewEnabled: false,
+  fuelAnomalyEnabled: false,
+  fuelAnomalyLimits: {
+    from: "2026-10-27",
+    duplicateWindowMinutes: 60,
+    chargebackMaxCents: 50_000,
+    compareMaxCostCents: 5,
+    compareMaxOutputTokens: 200,
+    comparesPerRun: 10,
+    comparesPerTenantPerDay: 20,
+  },
 };
 
 applyLocalOverrides(flags);

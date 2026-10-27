@@ -83,6 +83,7 @@ export function driverOf(r: DriverRow): DriverRecord {
     escrowBalanceCents: c(r.escrow_balance_cents),
     ownInsurance: r.own_insurance,
     truckUnit: r.truck_unit,
+    tankGallons: r.tank_gallons,
     activeFrom: r.active_from,
     activeTo: r.active_to,
     moneyArmed: r.money_armed,
