@@ -112,21 +112,62 @@ async function clearSettled(
   });
 }
 
-// The agent's records go next, after the ledger and before the replace: a settled money action
-// names its proposal, and a proposal names the untrusted input the replace deletes. The app role
-// has no DELETE on these tables (they are the record of what the agent did), so the admin login
-// removes them, naming the tenant in every statement. Children first, in one transaction. A
-// proposal a ledger row still references (one the ledger clear kept) makes the delete fail and
-// the transaction roll back, so nothing is half cleared. Returns the rows deleted.
+// The agent's records go after the payout rows and before the replace, and once more after the
+// booking rows. A money action names the proposal it carried out (a foreign key with no delete
+// action), and a proposal names the untrusted input the replace deletes. The app role has no
+// DELETE on these tables (they are the record of what the agent did), so the admin login removes
+// them, naming the tenant in every statement. Children first, in one transaction.
+//
+// A proposal a ledger row still names is kept, with its turn, that turn's steps and its
+// conversation. Before the replace those are the proposals behind settled booking rows, which
+// stay until the replace lands (see clearTenantBookings); the second call, after the booking
+// clear, removes them. A kept proposal flagged by an outside message would make the replace fail
+// (it deletes every untrusted input of the tenant), so the clear refuses up front, deleting
+// nothing, while one exists: a person must review it. A ledger row that comes to name a proposal
+// after the check still makes the delete fail and the transaction roll back, so nothing is half
+// cleared. Returns the rows deleted.
+const NAMED_BY_LEDGER = `SELECT 1 FROM money_actions m
+   WHERE m.tenant_id = CAST($1 AS uuid) AND m.proposal_id = p.id`;
+
 const AGENT_CLEAR = [
-  "DELETE FROM turn_steps WHERE tenant_id = CAST($1 AS uuid)",
-  "DELETE FROM proposals WHERE tenant_id = CAST($1 AS uuid)",
-  "DELETE FROM turns WHERE tenant_id = CAST($1 AS uuid)",
-  "DELETE FROM conversations WHERE tenant_id = CAST($1 AS uuid)",
+  `DELETE FROM turn_steps s
+    WHERE s.tenant_id = CAST($1 AS uuid)
+      AND NOT EXISTS (SELECT 1 FROM proposals p
+                       WHERE p.tenant_id = CAST($1 AS uuid) AND p.turn_id = s.turn_id
+                         AND EXISTS (${NAMED_BY_LEDGER}))`,
+  `DELETE FROM proposals p
+    WHERE p.tenant_id = CAST($1 AS uuid) AND NOT EXISTS (${NAMED_BY_LEDGER})`,
+  `DELETE FROM turns t
+    WHERE t.tenant_id = CAST($1 AS uuid)
+      AND NOT EXISTS (SELECT 1 FROM proposals p
+                       WHERE p.tenant_id = CAST($1 AS uuid) AND p.turn_id = t.id)`,
+  `DELETE FROM conversations c
+    WHERE c.tenant_id = CAST($1 AS uuid)
+      AND NOT EXISTS (SELECT 1 FROM turns t
+                       WHERE t.tenant_id = CAST($1 AS uuid) AND t.conversation_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM proposals p
+                       WHERE p.tenant_id = CAST($1 AS uuid) AND p.conversation_id = c.id)`,
 ] as const;
 
 export async function clearTenantAgent(admin: Db, tenantId: string): Promise<number> {
+  if (!isUuid(tenantId)) throw new Error("not a tenant id; nothing was cleared");
   return admin.withTenant(tenantId, async (q) => {
+    const rows = await q.query<{ flagged: unknown }>(
+      `SELECT count(*) AS flagged FROM proposals p
+        WHERE p.tenant_id = CAST($1 AS uuid) AND p.flagged_input_id IS NOT NULL
+          AND EXISTS (${NAMED_BY_LEDGER})`,
+      [tenantId],
+    );
+    const flagged = rows.length === 1 ? Number(rows[0].flagged) : NaN;
+    if (!Number.isSafeInteger(flagged) || flagged < 0) {
+      throw new Error("could not count the tenant's proposals; nothing was cleared");
+    }
+    if (flagged > 0) {
+      throw new Error(
+        `${flagged} proposal(s) a ledger row still names carry a flag from an outside message ` +
+          "the replace deletes; a person must review them before a reseed (nothing was cleared)",
+      );
+    }
     let deleted = 0;
     for (const sql of AGENT_CLEAR) deleted += await q.execute(sql, [tenantId]);
     return deleted;

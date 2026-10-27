@@ -777,13 +777,29 @@ describe("seeding the demo carriers", () => {
       expect(await agentRows()).toBe(4);
 
       // Out of order, each step fails whole: the replace cannot delete a message a proposal names,
-      // and the agent clear cannot delete a proposal a ledger row names.
+      // a proposal a ledger row names cannot be deleted, and the agent clear refuses while a
+      // proposal it would keep carries a flag (the replace would then fail on it).
       expect(await sqlStateOf(replaceTenantData(app, B, planB))).toBe("23503");
-      expect(await sqlStateOf(clearTenantAgent(admin, B))).toBe("23503");
+      expect(
+        await sqlStateOf(
+          admin.withTenant(B, (q) =>
+            q.execute("DELETE FROM proposals WHERE tenant_id = CAST($1 AS uuid)", [B]),
+          ),
+        ),
+      ).toBe("23503");
+      const refused = await clearTenantAgent(admin, B).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect((refused as Error).message).toBe(
+        "1 proposal(s) a ledger row still names carry a flag from an outside message the " +
+          "replace deletes; a person must review them before a reseed (nothing was cleared)",
+      );
       expect(await agentRows()).toBe(4);
       expect(await ledgerRows(B)).toBe(1);
 
-      // What npm run seed does: the ledger, then the agent's rows, then the replace.
+      // What npm run seed does up to the replace: the payout rows, then the agent's rows (none
+      // kept, since no booking row names a proposal), then the replace.
       expect(await clearTenantLedger(admin, B)).toBe(1);
       expect(await clearTenantAgent(admin, B)).toBe(4);
       await replaceTenantData(app, B, planB);
@@ -879,7 +895,8 @@ describe("seeding the demo carriers", () => {
         ),
       ).toBe(true);
 
-      // What npm run seed does: payout rows, the replace, then the booking rows.
+      // The ledger's part of what npm run seed does (no agent rows here): payout rows, the
+      // replace, then the booking rows.
       expect(await clearTenantLedger(admin, B)).toBe(0);
       await replaceTenantData(app, B, planB);
       expect(await clearTenantBookings(admin, B)).toBe(2);
@@ -890,6 +907,309 @@ describe("seeding the demo carriers", () => {
       expect(again).toMatchObject({ created: true, sent: true });
       expect(again.action.id).not.toBe(first.action.id);
       expect(posts).toBe(2);
+    } finally {
+      Object.assign(flags, saved);
+    }
+  });
+
+  // One agent chain as the app role writes it: a conversation, a turn, the gateway's decision, a
+  // step and a proposal, left approved as the approval gate leaves it, and flagged by an outside
+  // message when one is given. Returns the proposal id.
+  const agentChain = async (
+    tenantId: string,
+    session: Session,
+    subject: { kind: string; table: string; id: string; amountCents: number },
+    flaggedInputId: string | null,
+  ): Promise<string> => {
+    const [conversation, turn, decision, proposal] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    const trace = `trace-${turn.slice(0, 8)}`;
+    await app.withTenant(tenantId, async (q) => {
+      await q.execute(
+        "INSERT INTO conversations (id, tenant_id, created_by) VALUES (CAST($1 AS uuid), current_tenant_id(), $2)",
+        [conversation, session.sub],
+      );
+      await q.execute(
+        `INSERT INTO turns (id, tenant_id, conversation_id, seq, user_text, status, trace_id, finished_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 1, 'What should we fix?', 'done', $3, now())`,
+        [turn, conversation, trace],
+      );
+      await q.execute(
+        `INSERT INTO gateway_decisions (id, tenant_id, turn_id, trace_id, role, model, tool, tier, decision,
+           reason, latency_ms)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'operator', 'spark',
+           'propose_fix', 'propose', 'allowed', 'ok', 1)`,
+        [decision, turn, trace],
+      );
+      await q.execute(
+        `INSERT INTO turn_steps (id, tenant_id, turn_id, seq, kind, label, state, gateway_decision_id, finished_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 1, 'proposal', 'Proposing a fix',
+           'done', CAST($3 AS uuid), now())`,
+        [randomUUID(), turn, decision],
+      );
+      await q.execute(
+        `INSERT INTO proposals (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+           amount_cents, direction, title, args, operator_verdict, flagged_input_id, gateway_decision_id,
+           dedupe_key, status, decided_by, decided_at, trace_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), $4, $5,
+           CAST($6 AS uuid), $7, 'none', 'Fix it', CAST('{}' AS jsonb), 'eligible', CAST($8 AS uuid),
+           CAST($9 AS uuid), $10, 'approved', $11, now(), $12)`,
+        [
+          proposal,
+          conversation,
+          turn,
+          subject.kind,
+          subject.table,
+          subject.id,
+          subject.amountCents,
+          flaggedInputId,
+          decision,
+          `${subject.kind}:${subject.id}:${"0".repeat(64)}`,
+          session.sub,
+          trace,
+        ],
+      );
+    });
+    return proposal;
+  };
+  const agentRowsOf = async (tenantId: string) => {
+    const [row] = await admin.withoutTenant((q) =>
+      q.query<{ n: number }>(
+        `SELECT (SELECT count(*) FROM conversations WHERE tenant_id = CAST($1 AS uuid))
+              + (SELECT count(*) FROM turns WHERE tenant_id = CAST($1 AS uuid))
+              + (SELECT count(*) FROM turn_steps WHERE tenant_id = CAST($1 AS uuid))
+              + (SELECT count(*) FROM proposals WHERE tenant_id = CAST($1 AS uuid)) AS n`,
+        [tenantId],
+      ),
+    );
+    return Number(row.n);
+  };
+  const seededInput = async (tenantId: string) => {
+    const [input] = await admin.withTenant(tenantId, (q) =>
+      q.query<{ id: string }>(
+        "SELECT CAST(id AS text) AS id FROM untrusted_inputs WHERE tenant_id = current_tenant_id() ORDER BY id LIMIT 1",
+      ),
+    );
+    expect(input).toBeDefined();
+    return input.id;
+  };
+  // A stand-in for the accounting system, as in the test above, and a booking of one seeded
+  // customer payment that names the agent's proposal. Reserving it links the proposal to the
+  // ledger row and moves it to executing, and the confirm moves it to done, as an executor would.
+  type SeededPayment = (typeof planB.rows.customer_payments)[number];
+  const bookingFor = (session: Session, payment: SeededPayment, proposalId: string) => {
+    const ready: AccountingAdapter["ready"] = async () => ({ ok: true });
+    const accounting = { system: "qbo_sandbox", ready } as AccountingAdapter;
+    const counter = { posts: 0 };
+    const hooks: MoneyHooks = {
+      onReserved: async (q, action) => {
+        expect(
+          await q.execute(
+            `UPDATE proposals
+                SET status = 'executing', money_action_id = CAST($2 AS uuid), updated_at = now()
+              WHERE id = CAST($1 AS uuid) AND status = 'approved'`,
+            [proposalId, action.id],
+          ),
+        ).toBe(1);
+      },
+      onConfirmed: async (q) => {
+        expect(
+          await q.execute(
+            `UPDATE proposals SET status = 'done', updated_at = now()
+              WHERE id = CAST($1 AS uuid) AND status = 'executing'`,
+            [proposalId],
+          ),
+        ).toBe(1);
+      },
+      send: async (action): Promise<SendOutcome> => {
+        counter.posts += 1;
+        return {
+          kind: "confirmed",
+          system: "qbo_sandbox",
+          type: "Payment",
+          id: String(2000 + counter.posts),
+          amountCents: action.amountCents,
+        };
+      },
+    };
+    const book = () =>
+      executeMoneyAction(
+        app,
+        session,
+        {
+          kind: "customer_payment",
+          subjectId: payment.id,
+          counterpartyId: payment.customer_id,
+          amountCents: payment.amount_cents,
+          proposedBy: "agent",
+          proposalId,
+        },
+        hooks,
+        { accounting, log: () => {} },
+      );
+    return { book, counter };
+  };
+  const proposalState = async (tenantId: string, proposalId: string) => {
+    const rows = await admin.withoutTenant((q) =>
+      q.query<{ status: string; money_action_id: string | null }>(
+        `SELECT status, CAST(money_action_id AS text) AS money_action_id FROM proposals
+          WHERE tenant_id = CAST($1 AS uuid) AND id = CAST($2 AS uuid)`,
+        [tenantId, proposalId],
+      ),
+    );
+    return rows[0] ?? null;
+  };
+
+  // Runs on prairie-wind after the test above, which left one confirmed booking row there.
+  it("runs the whole reseed order on a carrier with agent rows and booking rows: a booking keeps the proposal it names through a failed replace, so it replays instead of posting twice, and both go once a replace lands", async () => {
+    const saved = { ...flags };
+    flags.payoutsEnabled = true;
+    flags.paymentProvider = "mock";
+    flags.accountingEnabled = true;
+    try {
+      const session = await member(B, "reseed");
+      const rowsA = await ledgerRows(A);
+      expect(await ledgerRows(B)).toBe(1);
+      expect(await agentRowsOf(B)).toBe(0);
+      const input = await seededInput(B);
+      const payments = planB.rows.customer_payments;
+      const advance = planB.rows.advances[1];
+
+      // Three chains: one flagged by a seeded outside message and named by nothing, one a
+      // settled payout names, and one a confirmed booking names.
+      await agentChain(
+        B,
+        session,
+        {
+          kind: "invoice_fix",
+          table: "customer_payments",
+          id: payments[1].id,
+          amountCents: payments[1].amount_cents,
+        },
+        input,
+      );
+      const paid = await agentChain(
+        B,
+        session,
+        {
+          kind: "advance_payout",
+          table: "advances",
+          id: advance.id,
+          amountCents: advance.amount_cents,
+        },
+        null,
+      );
+      const kept = await agentChain(
+        B,
+        session,
+        {
+          kind: "invoice_fix",
+          table: "customer_payments",
+          id: payments[2].id,
+          amountCents: payments[2].amount_cents,
+        },
+        null,
+      );
+      expect(await requested(B, advance.id)).toBe(1);
+      await app.withTenant(B, async (q) => {
+        const { action } = await reserve(q, await approvalFrom(q, session), {
+          kind: "advance_payout",
+          subjectId: advance.id,
+          counterpartyId: advance.driver_id,
+          amountCents: advance.amount_cents,
+          proposedBy: "agent",
+          proposalId: paid,
+          subjectStatuses: ["requested"],
+        });
+        expect(await markSent(q, action.id)).toBe(true);
+        expect(await settle(q, action.id, { to: "failed", via: "response", category: "outside_failed" })).toBe(true);
+      });
+      const { book, counter } = bookingFor(session, payments[2], kept);
+      const first = await book();
+      expect(first).toMatchObject({ created: true, sent: true });
+      expect(first.action).toMatchObject({ state: "confirmed", proposalId: kept });
+      expect(counter.posts).toBe(1);
+      expect(await proposalState(B, kept)).toEqual({ status: "done", money_action_id: first.action.id });
+      expect(await agentRowsOf(B)).toBe(12);
+      expect(await ledgerRows(B)).toBe(3);
+
+      // The payout rows, then the agent's rows: everything but the chain the booking names.
+      expect(await clearTenantLedger(admin, B)).toBe(1);
+      expect(await clearTenantAgent(admin, B)).toBe(8);
+      expect(await agentRowsOf(B)).toBe(4);
+      expect(await proposalState(B, kept)).toEqual({ status: "done", money_action_id: first.action.id });
+      expect(await ledgerRows(B)).toBe(2);
+
+      // The replace fails (the other carrier's plan): the booking row and its proposal stay, and
+      // the booking approved again replays the kept row with no second post.
+      const failed = await replaceTenantData(app, B, planA).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(failed).toBeInstanceOf(Error);
+      const replay = await book();
+      expect(replay).toMatchObject({ created: false, sent: false });
+      expect(replay.action.id).toBe(first.action.id);
+      expect(counter.posts).toBe(1);
+      expect(await agentRowsOf(B)).toBe(4);
+
+      // The replace lands, no kept proposal names a message it deletes; then the booking rows
+      // (the ledger link on the kept proposal goes to null), then the agent's rows they kept.
+      await replaceTenantData(app, B, planB);
+      expect(await clearTenantBookings(admin, B)).toBe(2);
+      expect(await proposalState(B, kept)).toEqual({ status: "done", money_action_id: null });
+      expect(await clearTenantAgent(admin, B)).toBe(4);
+      expect(await agentRowsOf(B)).toBe(0);
+      expect(await ledgerRows(B)).toBe(0);
+      expect(await ledgerRows(A)).toBe(rowsA);
+      expect(await countsOf(app, B)).toEqual(golden.carriers[planB.carrier.slug].counts);
+    } finally {
+      Object.assign(flags, saved);
+    }
+  });
+
+  it("refuses the agent clear, deleting nothing, while a booking row names a flagged proposal, since the replace would fail on that flag", async () => {
+    const saved = { ...flags };
+    flags.accountingEnabled = true;
+    try {
+      const session = await member(B, "flagged");
+      expect(await ledgerRows(B)).toBe(0);
+      expect(await agentRowsOf(B)).toBe(0);
+      const payment = planB.rows.customer_payments[3];
+      const flagged = await agentChain(
+        B,
+        session,
+        {
+          kind: "invoice_fix",
+          table: "customer_payments",
+          id: payment.id,
+          amountCents: payment.amount_cents,
+        },
+        await seededInput(B),
+      );
+      const { book } = bookingFor(session, payment, flagged);
+      expect((await book()).action.state).toBe("confirmed");
+
+      expect(await clearTenantLedger(admin, B)).toBe(0);
+      const refused = await clearTenantAgent(admin, B).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect((refused as Error).message).toBe(
+        "1 proposal(s) a ledger row still names carry a flag from an outside message the " +
+          "replace deletes; a person must review them before a reseed (nothing was cleared)",
+      );
+      expect(await agentRowsOf(B)).toBe(4);
+      expect(await ledgerRows(B)).toBe(1);
+      // Which is why: the replace would fail on that flag, changing nothing.
+      expect(await sqlStateOf(replaceTenantData(app, B, planB))).toBe("23503");
+
+      // Once a person has reviewed it and drops the booking row, the clears and the replace run.
+      expect(await clearTenantBookings(admin, B)).toBe(1);
+      expect(await clearTenantAgent(admin, B)).toBe(4);
+      await replaceTenantData(app, B, planB);
+      expect(await agentRowsOf(B)).toBe(0);
+      expect(await ledgerRows(B)).toBe(0);
+      expect(await countsOf(app, B)).toEqual(golden.carriers[planB.carrier.slug].counts);
     } finally {
       Object.assign(flags, saved);
     }

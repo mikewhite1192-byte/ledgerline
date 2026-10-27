@@ -129,10 +129,15 @@ waiting for a person. Each table has the one tenant policy (ENABLE and FORCE) an
 - Dedupe: `UNIQUE (tenant_id, dedupe_key)` with the key `kind:subject_id:sha256(args)`, and at
   most one `proposed`, `approved` or `executing` proposal per `(tenant_id, kind, subject_id)`.
 
-A demo reseed clears in this order, each step through the admin login: the settled ledger rows,
-then the agent's rows (steps, proposals, turns, conversations), then the replace. Done the other
-way round, the ledger's reference blocks the agent clear, and a proposal's flag blocks the
-replace (which deletes the untrusted inputs); either refusal changes nothing.
+A demo reseed clears in this order, each clear through the admin login: the settled payout rows,
+then the agent's rows (steps, proposals, turns, conversations), then the replace, then the
+settled booking rows, then the agent's rows once more. The agent clear keeps every proposal a
+ledger row still names, with its turn, that turn's steps and its conversation: before the replace
+those are the proposals behind booking rows, which stay until the replace lands, and the second
+agent clear removes them once the booking rows are gone. A kept proposal that carries a flag
+would block the replace (which deletes the untrusted inputs), so the agent clear refuses while
+one exists, with the count only, and deletes nothing; a person reviews it first. Run before the
+agent clear, the replace is refused by a proposal's flag and changes nothing.
 
 ## Local, from a fresh database
 
