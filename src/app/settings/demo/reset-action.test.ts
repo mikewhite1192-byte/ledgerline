@@ -156,7 +156,7 @@ describe("resetDemoAction", () => {
       [new DbError("sql", RESET_SQLSTATE.notDemo), "not_demo"],
       [new DbError("unknown"), "unknown"],
       [new DbError("unavailable"), "unreadable"],
-      [new DbError("sql", "23505"), "unreadable"],
+      [new DbError("sql", "23505"), "failed"],
     ];
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
@@ -168,6 +168,32 @@ describe("resetDemoAction", () => {
       quiet.mockRestore();
     }
     expect(mocks.revalidatePath).toHaveBeenCalledTimes(cases.length);
+  });
+
+  it("calls only an outage or a timeout unreadable; any other database error is a failed reset", async () => {
+    membership("admin");
+    const cases: [DbError, string, string][] = [
+      [new DbError("resuming"), "unreadable", "demo reset: database resuming"],
+      [new DbError("unavailable", "08006"), "unreadable", "demo reset: database unavailable 08006"],
+      [new DbError("timeout", "57014"), "unreadable", "demo reset: database timeout 57014"],
+      [new DbError("sql", "23505"), "failed", "demo reset: database sql 23505"],
+      [new DbError("sql", "23503"), "failed", "demo reset: database sql 23503"],
+      [new DbError("rls_denied", "42501"), "failed", "demo reset: database rls_denied 42501"],
+      [new DbError("not_configured"), "failed", "demo reset: database not_configured"],
+      [new DbError("unknown", "40001"), "unknown", "demo reset: database unknown 40001"],
+    ];
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const [err, category, line] of cases) {
+        logged.mockClear();
+        mocks.resetDemoInTransaction.mockRejectedValueOnce(err);
+        expect(await resetDemoAction(null, confirmed())).toEqual({ ok: false, category });
+        // One line, the category and the SQLSTATE only.
+        expect(logged.mock.calls).toEqual([[line]]);
+      }
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it("passes a signed-out redirect through untouched", async () => {

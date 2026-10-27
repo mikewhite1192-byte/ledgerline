@@ -12,7 +12,10 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //
 //   1. the tenant is the plan's demo carrier (slug, name and time zone);
 //   2. the refusals, read first so a person sees the counts: a ledger row still reserved, sent or
-//      unknown, a row failed as amount_mismatch, or a flagged proposal a ledger row names;
+//      unknown, a row failed as amount_mismatch, or a flagged proposal a ledger row names. The
+//      seed's fourth refusal (a ledger row naming a flow advance, FLOW_ADVANCE_ROWS in run.ts) is
+//      not needed here on purpose: the function deletes every settled money_actions row before
+//      the flow advances, in one transaction, so no ledger row can outlive the advance it names;
 //   3. demo_reset_clear() (migration 0025), the one security-definer function, which checks the
 //      same things again under the tenant row lock and deletes the settled ledger rows and the
 //      agent's records (the app role has no DELETE on them);

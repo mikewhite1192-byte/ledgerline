@@ -26,6 +26,10 @@
 --     unknown (its outcome is not known yet), a row failed as amount_mismatch (money may have
 --     moved for another amount), or a proposal flagged by an outside message that a ledger row
 --     names. A person settles or reviews those first. The refusal carries counts only.
+--   * The seed's fourth refusal (a ledger row naming an advance an approval created,
+--     FLOW_ADVANCE_ROWS in src/lib/seed/run.ts) is left out on purpose: once the refusals pass,
+--     every money_actions row of the carrier is settled, and this function deletes them all before
+--     the advances, in one transaction, so no ledger row can be left naming a deleted advance.
 --
 -- It deletes, for that tenant only: the settled ledger rows (confirmed or failed, never
 -- amount_mismatch), the driver notes, the agent's turn steps, the advances an approval created
