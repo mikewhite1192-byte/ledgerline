@@ -1,8 +1,11 @@
 # Blocking gates for LedgerLine. Set up on day zero, before the first feature.
 #
-# Make every job REQUIRED on the mainline (Settings > Branches > branch protection), or they run
-# but do not block. Third-party actions are pinned to a commit SHA (a mutable tag is a
-# supply-chain door).
+# The mainline requires four checks (Settings > Branches > branch protection): "build + lint +
+# tests + house style", "secret scan (new commits)", "semgrep (SAST + secrets rules)" and "demo
+# path (local)". Never rename or remove them: a required name that stops reporting blocks every
+# merge. The first is a gate job over four parallel parts; a new part goes into its needs AND its
+# expected list. Third-party actions are pinned to a commit SHA (a mutable tag is a supply-chain
+# door).
 #
 # Judgment lives in the pre-push review list and the AI reviewer; these are only the checks a
 # pipeline can make objective.
@@ -14,34 +17,33 @@ on:
     branches: ["main"]
   push:
     branches: ["main"]
+  # Nightly full semgrep scan of main, so a rule newly added to the registry packs is caught even
+  # in files no pull request touches. Every other job skips this trigger at the job level, which
+  # bills nothing. 07:17 UTC is the middle of the night in New York, off the top of the hour.
+  schedule:
+    - cron: "17 7 * * *"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # The nightly run has its own group, so it never cancels or waits on a post-merge run of main.
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && 'nightly' || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  checks:
-    name: build + lint + tests + house style
+  # Part 1 of the gate: typecheck, lint and the house-style check on added lines.
+  static:
+    name: typecheck + lint + house style
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    # Throwaway Postgres for the DB tests below. Trust auth on a container that lives for one
-    # job, so no password appears anywhere.
-    services:
-      postgres:
-        image: postgres:16@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97 # 16.15, resolved from Docker Hub 2026-10-26
-        env:
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s --health-timeout 5s --health-retries 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
+      # Restores the npm download cache (~/.npm), keyed on package-lock.json.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
@@ -53,35 +55,8 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Build
-        run: npm run build
-
       - name: Lint
         run: npm run lint
-
-      - name: Unit tests (no database, no network)
-        run: npm test
-
-      # DB tests run against a plain Postgres 16 built FRESH from db/migrations, so a broken or
-      # missing migration fails here instead of in production. The migrations go through the
-      # same runner and statement splitter that apply them to Aurora, not psql.
-      - name: Build the test DB from db/migrations
-        env:
-          DATABASE_URL: postgresql://postgres@localhost:5432/postgres
-        run: npm run db:migrate -- --target local
-
-      - name: DB tests
-        env:
-          DATABASE_URL: postgresql://postgres@localhost:5432/postgres
-        run: npm run test:db
-
-      # The five money invariants (ledger, keys, approvals, model calls, row security) on a
-      # throwaway database built from every migration and seeded for both invented carriers.
-      # Read-only; the database is dropped after. Fails on any FAIL or UNKNOWN line.
-      - name: Money invariants on a fresh seeded database
-        env:
-          DATABASE_URL: postgresql://postgres@localhost:5432/postgres
-        run: npm run invariants:ci
 
       # House rule: no em dashes in NEW lines (existing files are grandfathered). On a push the
       # change under review is the whole push, not just its last commit. Context values reach the
@@ -122,12 +97,146 @@ jobs:
           fi
           echo "OK: no em dashes added."
 
+  # Part 2 of the gate. No database service in this job, so a unit test cannot reach one.
+  unit:
+    name: unit tests
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit tests (no database, no network)
+        run: npm test
+
+  # Part 3 of the gate.
+  db:
+    name: db tests
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Throwaway Postgres for the DB tests below. Trust auth on a container that lives for one
+    # job, so no password appears anywhere.
+    services:
+      postgres:
+        image: postgres:16@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97 # 16.15, resolved from Docker Hub 2026-10-26
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # DB tests run against a plain Postgres 16 built FRESH from db/migrations, so a broken or
+      # missing migration fails here instead of in production. The migrations go through the
+      # same runner and statement splitter that apply them to Aurora, not psql.
+      - name: Build the test DB from db/migrations
+        env:
+          DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+        run: npm run db:migrate -- --target local
+
+      - name: DB tests
+        env:
+          DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+        run: npm run test:db
+
+      # The five money invariants (ledger, keys, approvals, model calls, row security) on a
+      # throwaway database built from every migration and seeded for both invented carriers.
+      # Read-only; the database is dropped after. Fails on any FAIL or UNKNOWN line.
+      - name: Money invariants on a fresh seeded database
+        env:
+          DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+        run: npm run invariants:ci
+
+  # Part 4 of the gate. The Next build cache holds compiler and lint output only (no database,
+  # no secrets: this job has neither). An exact key hit means no source changed; otherwise the
+  # newest cache for the same lockfile is restored and Next rebuilds what changed.
+  build:
+    name: build
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Restore the Next build cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: .next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-${{ hashFiles('src/**', 'public/**', 'next.config.ts', 'postcss.config.mjs', 'tsconfig.json') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('package-lock.json') }}-
+
+      - name: Build
+        run: npm run build
+
+  # The required check, under its original name: passes only when every part above succeeded.
+  # It runs even when a part failed, was canceled or was skipped, and then fails, so a part that
+  # never ran can never read as a pass.
+  checks:
+    name: build + lint + tests + house style
+    needs: [static, unit, db, build]
+    if: ${{ always() && github.event_name != 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every part passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          # The parts this gate expects, by job id, sorted. A part added to needs but not here (or
+          # the reverse) fails the gate instead of going unchecked.
+          EXPECTED='["build","db","static","unit"]'
+          printf '%s\n' "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          if printf '%s\n' "$NEEDS" \
+            | jq -e --argjson want "$EXPECTED" '(keys == $want) and all(.[]; .result == "success")' >/dev/null; then
+            echo "OK: every part passed."
+          else
+            echo "::error::a part of the checks did not succeed (failed, canceled or skipped), or the list of parts changed."
+            exit 1
+          fi
+
   # The demo path in a browser: next dev on a fresh seeded database, signed in through the local
-  # fake user pool, the models answered from the recorded replay (no key, no outside call). Not a
-  # required check until it has passed on main. About 6 billed minutes a run, 5 with a browser
-  # cache hit.
+  # fake user pool, the models answered from the recorded replay (no key, no outside call). A
+  # required check. It runs next dev, not the production build, so it cannot reuse the build
+  # job's output; it shares the npm cache. About 2 billed minutes a run, up to 9 when the apt
+  # mirror behind the browser's system packages is slow (measured Oct 27).
   demo-path:
     name: demo path (local)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     services:
@@ -183,6 +292,7 @@ jobs:
   # runs directly: the action lists only the first 30 PR commits and skips a merge's second parent.
   secrets:
     name: secret scan (new commits)
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -240,6 +350,10 @@ jobs:
           "$RUNNER_TEMP/gitleaks/gitleaks" git --redact --no-banner --exit-code 1 \
             --log-opts="--diff-merges=remerge $RANGE" .
 
+  # Same rule packs, same excludes, any finding fails, in every mode. A pull request scans only
+  # the files it changes, in semgrep's baseline mode against the base as merged (parent 1 of the
+  # merge ref), so only findings the change brings in are reported; a change with no files to
+  # scan passes. A push to main and the nightly run scan every file.
   semgrep:
     name: semgrep (SAST + secrets rules)
     runs-on: ubuntu-latest
@@ -248,14 +362,39 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          fetch-depth: 0
           persist-credentials: false
       # A suppression must name the rule and say why: `nosemgrep: <rule.id> -- <reason>`.
-      - run: >
-          semgrep scan
-          --config p/default
-          --config p/secrets
-          --config p/typescript
-          --config p/react
-          --error
-          --exclude node_modules
-          --exclude '*.local.*'
+      - name: Scan
+        shell: sh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -eu
+          # The baseline mode needs git. Checkout marks the repository safe only in its own
+          # temporary config, and git refuses a repository another user owns, so it is marked
+          # safe again here, for this step's commands only, through the environment (no git
+          # config file is written).
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$GITHUB_WORKSPACE"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            if ! git rev-parse -q --verify "HEAD^2" >/dev/null; then
+              echo "::error::HEAD has no second parent, so the pull request's base is unknown."
+              exit 1
+            fi
+            BASE=$(git rev-parse --verify "HEAD^1^{commit}")
+            echo "Pull request: scanning only the files changed since $BASE:"
+            git diff --name-only "$BASE" HEAD
+            set -- --baseline-commit "$BASE"
+          else
+            echo "Full scan ($EVENT_NAME): every file."
+            set --
+          fi
+          semgrep scan \
+            --config p/default \
+            --config p/secrets \
+            --config p/typescript \
+            --config p/react \
+            --error \
+            --exclude node_modules \
+            --exclude '*.local.*' \
+            "$@"
