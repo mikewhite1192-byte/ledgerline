@@ -230,7 +230,8 @@ export type AdvanceRecord = {
   advance: AdvanceView;
   driver: { id: string; code: string; name: string };
   // The card this advance's latest payout attempt recorded (for an unpaid advance, only while it
-  // is still active), else the driver's active card, else null (no fuel card on file).
+  // is still active), else the driver's active card, else null (no fuel card on file, or a
+  // rejected or cancelled advance).
   card: RecordCard | null;
   proposal: ProposalSummary | null;
   ledger: LedgerEntry[];
@@ -273,15 +274,26 @@ function cardSummaryOf(row: { last4: string; status: string } | undefined): Card
   return { last4, status: row.status };
 }
 
+// The advance statuses a card line is about: one that can still be paid (requested, approved)
+// or one that was (paid). A rejected or cancelled advance is never paid, and any other status is
+// not known, so neither names a card.
+const CARD_STATUSES: readonly string[] = ["requested", "approved", "paid"];
+
+function namesCard(status: string): boolean {
+  return CARD_STATUSES.includes(status);
+}
+
 // The card the record page names, from the card the advance recorded and the driver's active
 // card. A paid advance names the card it recorded, closed or not. An unpaid advance names its
 // recorded card only while that card is still active, since a retry pays the active card;
-// otherwise the driver's active card is shown as not recorded, or nothing when there is none.
+// otherwise the driver's active card is shown as not recorded, or nothing when there is none. A
+// rejected or cancelled advance names none.
 export function recordCardFor(
   status: string,
   recorded: CardSummary | null,
   active: CardSummary | null,
 ): RecordCard | null {
+  if (!namesCard(status)) return null;
   if (recorded !== null && (status === "paid" || recorded.status === "active")) return { ...recorded, recorded: true };
   return active === null ? null : { ...active, recorded: false };
 }
@@ -315,8 +327,10 @@ export type CardLine = { label: "Paid to" | "Pays to" | "Card on file"; card: Ca
 
 // The record page's card line. "Paid to" and "Pays to" name only the card the advance recorded;
 // the driver's active card, shown in its place, reads "Card on file". A paid advance with no card
-// at all shows no line (null), since where it was paid is not known.
+// at all shows no line (null), since where it was paid is not known, and a rejected or cancelled
+// advance shows none, since it is never paid.
 export function cardLineFor(status: string, card: RecordCard | null): CardLine | null {
+  if (!namesCard(status)) return null;
   const paid = status === "paid";
   if (card === null) return paid ? null : { label: "Pays to", card: null };
   const summary: CardSummary = { last4: card.last4, status: card.status };
@@ -328,7 +342,8 @@ export function cardLineFor(status: string, card: RecordCard | null): CardLine |
 // names only the card it recorded ("Paid to", closed or not), and nothing without one, since the
 // driver's card now is not where it was paid. An unpaid advance names its recorded card while it
 // is still active ("Pays to"), else the driver's active card ("Card on file"). A recorded card of
-// any other shape names nothing. No card named, no line.
+// any other shape names nothing, and a rejected or cancelled advance names none. No card named,
+// no line.
 export type ListCardLine = { label: CardLine["label"]; card: CardSummary };
 
 export function listCardLineFor(

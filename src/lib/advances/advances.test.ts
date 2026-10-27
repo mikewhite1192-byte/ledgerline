@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Param, Queryable, TenantDb } from "../db";
+import { SUBJECT_STATUSES } from "../money/types";
 import { ADVANCE_REFUSALS } from "../rules-engine/types";
 import { legTwoTimeoutMs } from "./approve";
 import { requestFromDesk, type DeskDeps } from "./desk";
@@ -409,6 +410,41 @@ describe("the advance list's card line", () => {
     expect(listCardLineFor("paid", { last4: "12a4", status: "closed" }, active)).toBeNull();
     expect(listCardLineFor("approved", { last4: "4417", status: "lost" }, active)).toBeNull();
     expect(listCardLineFor("requested", null, { last4: "", status: "active" })).toBeNull();
+  });
+});
+
+describe("a card line for an advance that is never paid", () => {
+  const closed: CardSummary = { last4: "4417", status: "closed" };
+  const active: CardSummary = { last4: "9020", status: "active" };
+
+  for (const status of ["rejected", "cancelled"]) {
+    it(`names no card for a ${status} advance, recorded or on file`, () => {
+      expect(recordCardFor(status, active, active)).toBeNull();
+      expect(recordCardFor(status, closed, active)).toBeNull();
+      expect(recordCardFor(status, null, active)).toBeNull();
+      expect(cardLineFor(status, { ...active, recorded: true })).toBeNull();
+      expect(cardLineFor(status, { ...active, recorded: false })).toBeNull();
+      expect(cardLineFor(status, null)).toBeNull();
+      expect(listCardLineFor(status, active, active)).toBeNull();
+      expect(listCardLineFor(status, closed, active)).toBeNull();
+      expect(listCardLineFor(status, null, active)).toBeNull();
+    });
+  }
+
+  it("names no card for a status it does not know", () => {
+    expect(recordCardFor("refunded", active, active)).toBeNull();
+    expect(cardLineFor("refunded", { ...active, recorded: true })).toBeNull();
+    expect(cardLineFor("refunded", null)).toBeNull();
+    expect(listCardLineFor("refunded", null, active)).toBeNull();
+  });
+
+  it("names a card only for an advance that can still be paid or was paid, across every advance status", () => {
+    const naming = SUBJECT_STATUSES.advances.filter((status) => listCardLineFor(status, active, active) !== null);
+    expect(naming).toEqual(["requested", "approved", "paid"]);
+    const recordNaming = SUBJECT_STATUSES.advances.filter(
+      (status) => cardLineFor(status, recordCardFor(status, active, active)) !== null,
+    );
+    expect(recordNaming).toEqual(["requested", "approved", "paid"]);
   });
 });
 

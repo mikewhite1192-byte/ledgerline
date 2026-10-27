@@ -5,6 +5,7 @@ import { createFuelCardSimAdapter, loadId } from "../adapters/payment/fuel-card-
 import { createMockPaymentAdapter, type MockPaymentAdapter } from "../adapters/payment/mock";
 import type { AccountingAdapter, PaymentAdapter } from "../adapters/types";
 import { DAILY_CAP_SQL } from "../agent/gateway/daily-cap";
+import { readTurnView } from "../agent/gateway/store/views";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, TenantDb } from "../db/types";
@@ -32,7 +33,7 @@ import {
   type AdvanceDeps,
 } from "./approve";
 import { postAdvanceExpense } from "./post-expense";
-import { readAdvanceList, readAdvanceRecord } from "./read";
+import { cardLineFor, readAdvanceList, readAdvanceRecord } from "./read";
 import { REQUEST_REF } from "./request";
 
 // The advance flow against a real database, as the app's own role, with the registered executor
@@ -1042,13 +1043,85 @@ describe("the advance flow", () => {
         ),
       );
       const unpaid = await addAdvance(admin, A);
+      // Never paid: a rejected one that recorded the active card, and a cancelled one with none.
+      const rejected = await addAdvance(admin, A);
+      const cancelled = await addAdvance(admin, A);
+      await admin.withTenant(A.tenantId, async (q) => {
+        await q.execute(
+          `UPDATE advances SET status = 'rejected', card_id = CAST($2 AS uuid)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [rejected, onFile.id],
+        );
+        await q.execute(
+          "UPDATE advances SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+          [cancelled],
+        );
+      });
 
       const rows = await app.withTenant(A.tenantId, (q) => readAdvanceList(q, null));
       const lineOf = (advanceId: string) => rows.find((r) => r.id === advanceId)?.cardLine;
       expect(lineOf(paid.id)).toEqual({ label: "Paid to", card: { last4: paidTo.last4, status: "closed" } });
       expect(lineOf(cardless)).toBeNull();
       expect(lineOf(unpaid)).toEqual({ label: "Card on file", card: { last4: onFile.last4, status: "active" } });
-      expect(rows.map((r) => r.id).sort()).toEqual([paid.id, cardless, unpaid].sort());
+      expect(lineOf(rejected)).toBeNull();
+      expect(lineOf(cancelled)).toBeNull();
+      expect(rows.map((r) => r.id).sort()).toEqual([paid.id, cardless, unpaid, rejected, cancelled].sort());
+      // The record page names no card for either one.
+      for (const never of [rejected, cancelled]) {
+        const record = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, never, clock()));
+        expect(record?.advance.id).toBe(never);
+        expect(record?.card).toBeNull();
+        expect(cardLineFor(record?.advance.status ?? "", record?.card ?? null)).toBeNull();
+      }
+    });
+
+    it("names a proposal's card by its state: a done payout's recorded card once replaced, the card on file once approved, none once rejected", async () => {
+      const turnOf = async (proposalId: string) =>
+        (
+          await admin.withTenant(A.tenantId, (q) =>
+            q.query<{ turn_id: string }>(
+              "SELECT CAST(turn_id AS text) AS turn_id FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+              [proposalId],
+            ),
+          )
+        )[0].turn_id;
+      const destinationOf = async (proposalId: string) => {
+        const turnId = await turnOf(proposalId);
+        const view = await app.withTenant(A.tenantId, (q) => readTurnView(q, A.session.sub, turnId));
+        const found = view?.proposals.find((p) => p.id === proposalId);
+        expect(found).toBeDefined();
+        return found?.destination;
+      };
+      const decide = (proposalId: string, status: "approved" | "rejected") =>
+        admin.withTenant(A.tenantId, (q) =>
+          q.execute(
+            `UPDATE proposals SET status = $2, decided_by = $3,
+                    decided_at = CAST('2026-11-02T16:00:00Z' AS timestamptz)
+              WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'proposed'`,
+            [proposalId, status, A.session.sub],
+          ),
+        );
+
+      // Done, then the card it paid is replaced: the proposal still names the card it paid.
+      const done = await addProposal();
+      expect(await approve(done, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "done" });
+      const paidTo = await activeCard(A.driverId);
+      expect(await destinationOf(done)).toEqual({ label: `fuel card ···· ${paidTo.last4}`, last4: paidTo.last4, testMode: true });
+      await closeCard(admin, A, A.driverId);
+      await addCard(admin, A, A.driverId);
+      const onFile = await activeCard(A.driverId);
+      expect(await destinationOf(done)).toEqual({ label: `fuel card ···· ${paidTo.last4}`, last4: paidTo.last4, testMode: true });
+
+      // Rejected: no destination at all.
+      const rejected = await addProposal();
+      expect(await decide(rejected, "rejected")).toBe(1);
+      expect(await destinationOf(rejected)).toBeNull();
+
+      // Approved and not yet paid: the card on file now.
+      const approved = await addProposal();
+      expect(await destinationOf(approved)).toEqual({ label: `fuel card ···· ${onFile.last4}`, last4: onFile.last4, testMode: true });
+      expect(await decide(approved, "approved")).toBe(1);
+      expect(await destinationOf(approved)).toEqual({ label: `fuel card ···· ${onFile.last4}`, last4: onFile.last4, testMode: true });
     });
 
     it("refuses a driver with no card on file before approving, and leaves the proposal waiting", async () => {

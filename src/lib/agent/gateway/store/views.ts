@@ -187,11 +187,16 @@ const ISO = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"H
 
 const LAST4 = /^[0-9]{4}$/;
 
-// Where an advance would land, read at render like the subject label: the driver's active fuel
-// card by its last four, or a plain "no fuel card on file". Other kinds move no money to a card.
+// Where an advance lands, read at render like the subject label. A proposal still waiting or
+// approved names the driver's active fuel card by its last four, or a plain "no fuel card on
+// file". A done proposal names the card its advance recorded, closed or not, and nothing without
+// one. A rejected, expired, executing or failed proposal names no destination. Other kinds move no
+// money to a card.
 function destinationOf(r: ProposalRow): ProposalView["destination"] {
   if (r.kind !== "advance_payout") return null;
   const last4 = typeof r.card_last4 === "string" && LAST4.test(r.card_last4) ? r.card_last4 : null;
+  if (r.status === "done") return last4 ? { label: cardLabel(last4), last4, testMode: true } : null;
+  if (r.status !== "proposed" && r.status !== "approved") return null;
   return { label: last4 ? cardLabel(last4) : "no fuel card on file", last4, testMode: true };
 }
 
@@ -216,9 +221,17 @@ const PROPOSAL_SQL = `
          (SELECT m.role FROM memberships m
            WHERE m.tenant_id = p.tenant_id AND m.cognito_sub = p.auditor_override_by) AS override_role,
          CASE WHEN p.kind = 'advance_payout' AND p.subject_table = 'drivers' THEN
-           (SELECT c.last4 FROM driver_cards c
-             WHERE c.tenant_id = p.tenant_id AND c.driver_id = p.subject_id AND c.status = 'active'
-             LIMIT 1)
+           CASE
+             WHEN p.status IN ('proposed', 'approved') THEN
+               (SELECT c.last4 FROM driver_cards c
+                 WHERE c.tenant_id = p.tenant_id AND c.driver_id = p.subject_id AND c.status = 'active'
+                 LIMIT 1)
+             WHEN p.status = 'done' THEN
+               (SELECT c.last4 FROM advances a
+                  JOIN driver_cards c ON c.tenant_id = a.tenant_id AND c.id = a.card_id
+                                     AND c.driver_id = a.driver_id
+                 WHERE a.tenant_id = p.tenant_id AND a.proposal_id = p.id AND a.driver_id = p.subject_id)
+           END
          END AS card_last4,
          CASE WHEN p.kind = 'detention_charge' THEN CAST(p.args AS text) END AS args
     FROM proposals p`;
