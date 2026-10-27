@@ -20,6 +20,8 @@ export type Part =
   | { kind: "proposal"; proposal: Omit<ProposalCardProps, "hrefFor"> }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- a thread mixes tables of any row shape
   | { kind: "table"; table: DataTableProps<any> }
+  // A file the person can download (a report's CSV); href is a same-site path.
+  | { kind: "link"; href: string; label: string }
   | { kind: "error"; category: string }
   // "How this was worked out" for the turn, or for one proposal card when proposalId is set.
   | { kind: "trace"; turnId: string; proposalId?: string; load?: TraceLoader };
@@ -148,6 +150,14 @@ export function ChatThread({
                         return <ProposalCard key={`proposal:${p.proposal.id}`} {...p.proposal} hrefFor={hrefFor} />;
                       case "table":
                         return <DataTable key={i} {...p.table} />;
+                      case "link":
+                        return (
+                          <p key={i} className="text-small">
+                            <a href={p.href} download className="text-link underline-offset-4 hover:underline">
+                              {p.label}
+                            </a>
+                          </p>
+                        );
                       case "error":
                         return (
                           <div key={i} className="rounded-lg border border-border bg-card">

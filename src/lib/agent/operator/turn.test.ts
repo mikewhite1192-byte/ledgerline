@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { flags } from "../../../config/flags";
 import { callTool } from "../gateway";
 import { FakeDb } from "../gateway/__tests__/fake-db";
 import type { StepView } from "../view";
@@ -502,5 +503,60 @@ describe("runTurn", () => {
     await h.run();
     expect(h.requests[0].request.maxCostCents).toBe(10);
     expect(h.requests[1].request.maxCostCents).toBe(5);
+  });
+
+  it("records a report's name and typed args on its step, never its rows, and adds the report lines to the prompt", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [call("r1", "report_ar_aging", { asOf: "2026-11-02" }), call("r2", "report_cash_needed")] }),
+        result({ text: "Customers owe $1.00 in total; the table is below." }),
+      ],
+      (c) =>
+        c.name === "report_ar_aging"
+          ? allowed(c.name, {
+              report: "ar_aging",
+              args: { asOf: "2026-11-02" },
+              rows: [{ customer: { table: "customers", id: DRIVER, label: "Acme" }, totalCents: 100 }],
+              totals: { totalCents: 100 },
+            })
+          : // A result that names another report is not recorded as this one.
+            allowed(c.name, { report: "ar_aging", args: { asOf: "2026-11-02" }, rows: [] }),
+      { text: "Who owes us money?" },
+    );
+    h.deps.tools = [...TOOLS, { name: "report_ar_aging", description: "report", parameters: {} }];
+    flags.reportsEnabled = true;
+    onTestFinished(() => {
+      flags.reportsEnabled = false;
+    });
+    const out = await h.run();
+    expect(out.status).toBe("done");
+    const [aging, cash] = h.steps.filter((s) => s.kind === "tool");
+    expect(aging.label).toBe("Building the receivables aging report");
+    expect(aging.detail).toEqual({
+      tool: "report_ar_aging",
+      decision: "allowed",
+      reason: "ok",
+      report: { name: "ar_aging", args: { asOf: "2026-11-02" } },
+    });
+    expect(JSON.stringify(aging.detail)).not.toContain("Acme");
+    expect(cash.detail).toEqual({ tool: "report_cash_needed", decision: "allowed", reason: "ok" });
+    expect(h.requests[0].request.messages[0].content).toContain("report_ar_aging");
+  });
+
+  it("leaves the report lines out of the prompt while no report tool is offered", async () => {
+    const h = harness([result({ text: "ok" })], () => allowed("x", {}));
+    await h.run();
+    expect(h.requests[0].request.messages[0].content).not.toContain("report_");
+  });
+
+  it("labels a report call made while the switch is off as an unknown tool", async () => {
+    const h = harness(
+      [result({ toolCalls: [call("r1", "report_ar_aging")] }), result({ text: "I cannot build that report." })],
+      (c) => ({ decision: "unknown_tool", decisionId: "d-x", tool: c.name, reason: "unknown_tool", result: { error: "unknown_tool" }, latencyMs: 1 }) as Outcome,
+    );
+    await h.run();
+    const step = h.steps.find((s) => s.kind === "tool")!;
+    expect(step.label).toBe("Checking a tool");
+    expect(step.detail).not.toHaveProperty("report");
   });
 });

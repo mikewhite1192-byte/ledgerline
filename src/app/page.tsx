@@ -1,4 +1,5 @@
 import { flags } from "@/config/flags";
+import { homeSuggestions } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
@@ -147,12 +148,7 @@ export default async function Home() {
 }
 
 // Shown before the agent can answer; they light up when it can.
-const SUGGESTIONS = [
-  { id: "paystub-problems", label: "Who has a problem on this week's paystub?" },
-  { id: "past-60", label: "Who owes us money past 60 days?" },
-  { id: "pay-run-cost", label: "What will Friday's pay run cost?" },
-  { id: "advance-limit", label: "Who is over their advance limit?" },
-];
+const SUGGESTIONS = homeSuggestions(flags.reportsEnabled);
 
 // What this carrier has on file, from the counts read above.
 function RecordCounts({ counts }: { counts: Carrier["counts"] }) {

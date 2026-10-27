@@ -1,0 +1,68 @@
+import type { z } from "zod";
+import { flags } from "../../../../../config/flags";
+import { REPORT_ARGS, type ReportRequest } from "../../../../reports/args";
+import { computeReport } from "../../../../reports/run";
+import { REPORT_ROW_CAP, reportToolName, type ReportName, type ReportResult } from "../../../../reports/types";
+import { defineTool, type AnyToolDef, type GatewayRef } from "../../types";
+import { OPERATOR } from "../shared";
+
+// The five report tools share one shape: the model picks the report and fills its typed args;
+// the code reads the records and the rules engine computes every number. The result carries at
+// most 50 rows (the download has them all), and fewer when 50 would not fit the gateway's
+// character cap, so the gateway never cuts it and rowsTotal stays the report's own row count.
+
+// The gateway's MAX_RESULT_CHARS (a test holds them equal; the gateway index imports this file).
+export const REPORT_RESULT_CHARS = 8_000;
+
+// Thrown when the report switch is off, so a call that got past the registry still fails closed.
+export class ReportsOffError extends Error {
+  constructor() {
+    super("reports are switched off");
+    this.name = "ReportsOffError";
+  }
+}
+
+type ReportArgsShape = Record<string, string | undefined>;
+
+function refsOf(a: ReportArgsShape): GatewayRef[] {
+  const out: GatewayRef[] = [];
+  if (a.driverId) out.push({ table: "drivers", id: a.driverId });
+  if (a.customerId) out.push({ table: "customers", id: a.customerId });
+  return out;
+}
+
+// The most leading rows (up to 50) whose result fits the cap, with the totals over every row.
+export function fitResult(result: ReportResult): Record<string, unknown> {
+  const shape = (n: number) => ({
+    ...result,
+    rows: result.rows.slice(0, n),
+    truncated: result.truncated || n < result.rows.length,
+    rowsShown: n,
+  });
+  let lo = 0;
+  let hi = Math.min(result.rows.length, REPORT_ROW_CAP);
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (JSON.stringify(shape(mid)).length <= REPORT_RESULT_CHARS) lo = mid;
+    else hi = mid - 1;
+  }
+  return shape(lo);
+}
+
+export function reportTool(name: ReportName, text: { description: string; label: string }): AnyToolDef {
+  return defineTool({
+    name: reportToolName(name),
+    description: text.description,
+    tier: "read",
+    roles: OPERATOR,
+    label: text.label,
+    // Each report's own strict schema; its fields are all optional or required strings.
+    args: REPORT_ARGS[name] as z.ZodType<ReportArgsShape>,
+    refs: refsOf,
+    run: async (q, ctx, a) => {
+      if (!flags.reportsEnabled) throw new ReportsOffError();
+      const request = { name, args: a } as ReportRequest;
+      return { result: fitResult(await computeReport(q, request, { now: ctx.now, timeZone: ctx.timeZone })) };
+    },
+  });
+}

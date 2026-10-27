@@ -45,5 +45,14 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       sourceRefs: [{ table: "invoices", id: invoice.id }],
     },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
+    report_ar_aging: { asOf: "2026-11-02" },
+    report_driver_pay_summary: { periodStart: paid.period_start, driverId: hero.id },
+    report_advances_outstanding: {},
+    report_cash_needed: { periodStart: open.period_start },
+    report_margin_per_load: {
+      periodStart: paid.period_start,
+      periodEnd: open.period_end,
+      customerId: invoice.customer_id,
+    },
   };
 }

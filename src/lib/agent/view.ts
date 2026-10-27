@@ -3,6 +3,8 @@
 // Ids, enums, cents, fixed labels and fixed sentences only, plus the person's own question, the
 // agent's final answer and, for a flagged input, the quoted text the person is warned about.
 
+import type { ReportName } from "../reports/types";
+
 export const TURN_STATUSES = ["running", "done", "partial", "failed"] as const;
 export type TurnStatus = (typeof TURN_STATUSES)[number];
 
@@ -51,6 +53,10 @@ export type ProposalView = {
 // a marked block; it never reaches a model through the summary.
 export type FlagView = { inputId: string; categories: string[]; quote: string };
 
+// A report a tool call built this turn: its name and typed args (dates and ids). The turn store
+// keeps no tool result, so the chat fetches the table from the report route with these args.
+export type ReportView = { stepId: string; name: ReportName; args: Record<string, string> };
+
 // The error the chat shows instead of an answer: the fixed state, never upstream text.
 export type TurnError = "budget" | "timeout" | "unknown";
 
@@ -65,6 +71,7 @@ export type TurnView = {
   steps: StepView[];
   proposals: ProposalView[];
   flags: FlagView[];
+  reports: ReportView[];
   error: TurnError | null;
 };
 

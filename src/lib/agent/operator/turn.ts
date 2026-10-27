@@ -1,7 +1,7 @@
 import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import { AiError, complete, type AiMessage, type AiReplayItem, type AiResult, type AiTool } from "../../ai";
-import { callTool, toolsFor, TOOL_REGISTRY } from "../gateway";
+import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY } from "../gateway";
 import { dbTurnStore, type OpenedTurn, type StepFinish, type TurnStore } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
 import {
@@ -10,7 +10,7 @@ import {
   ESCALATION_CALL,
   LOOP_TEXT,
   OPERATOR_CALL,
-  OPERATOR_PROMPT,
+  operatorPrompt,
   TURN_SUMMARY_CHARS,
   invalidArgsNote,
 } from "../policy";
@@ -67,11 +67,10 @@ const ESCALATION_LABEL = "Asking Muse Wonder to form the proposal";
 const PROPOSAL_LABEL = "Preparing a proposal card";
 const UNKNOWN_TOOL_LABEL = "Checking a tool";
 
-// The fixed label the registry holds for a tool; never the name the model typed.
+// The fixed label the registry holds for a tool that is switched on; never the name the model
+// typed, and never a switched-off tool's label for a call the gateway will refuse.
 function labelFor(name: string): string {
-  return Object.prototype.hasOwnProperty.call(TOOL_REGISTRY, name)
-    ? TOOL_REGISTRY[name].label
-    : UNKNOWN_TOOL_LABEL;
+  return toolNamed(name)?.label ?? UNKNOWN_TOOL_LABEL;
 }
 
 function toolNameFor(name: string): string {
@@ -88,7 +87,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   const { session, turn } = input;
   const budget = new TurnBudget(deps.limits, input.startedAt, deps.clock);
   const messages: AiMessage[] = [
-    { role: "system", content: OPERATOR_PROMPT },
+    { role: "system", content: operatorPrompt(deps.tools.map((t) => t.name)) },
     { role: "system", content: turn.summary },
     { role: "user", content: input.text },
   ];
@@ -177,6 +176,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       };
     }
     budget.addToolStep();
+    const report = outcome.decision === "allowed" ? reportRefOf(outcome.tool, outcome.result) : null;
     if (outcome.decision === "allowed") {
       toolsDone += 1;
       centsIn(outcome.result, allowedCents);
@@ -197,6 +197,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         ...(outcome.decision === "allowed" && outcome.flaggedInputId
           ? { flaggedInputId: outcome.flaggedInputId }
           : {}),
+        // A report's name and typed args (dates and ids), so the chat can show its table again.
+        ...(report ? { report } : {}),
       },
     });
     if (outcome.decision === "allowed" && outcome.draft) {

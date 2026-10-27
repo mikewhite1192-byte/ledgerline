@@ -51,6 +51,9 @@ export type Flags = {
   auditorRequired: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
+  // The five report tools in the chat and the report download route. Off: the agent is not
+  // offered them, a call to one is refused as an unknown tool, and the route answers 404.
+  reportsEnabled: boolean;
 };
 
 export const flags: Flags = {
@@ -75,4 +78,5 @@ export const flags: Flags = {
   proposalMaxAgeDays: 7,
   auditorRequired: false,
   approverRole: { adminAboveCents: 200_000 },
+  reportsEnabled: false,
 };

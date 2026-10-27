@@ -11,6 +11,7 @@ describe("flags", () => {
     expect(flags.paymentProvider).toBe("mock");
     expect(flags.triageProvider).toBe("meta");
     expect(flags.agentEnabled).toBe(false);
+    expect(flags.reportsEnabled).toBe(false);
   });
 
   it("keeps the agent gateway's limits small and the screener on its probed output mode", () => {

@@ -5,8 +5,10 @@ import { ChatThread, type ChatMessage, type Part } from "@/components/app/chat-t
 import type { Suggestion } from "@/components/app/prompt-chips";
 import { decodeEvents } from "@/lib/agent/operator/stream";
 import { flagWords } from "@/lib/agent/reasons";
-import type { StepView, TurnView } from "@/lib/agent/view";
+import type { ReportView, StepView, TurnView } from "@/lib/agent/view";
+import { reportPath } from "@/lib/reports/types";
 import { proposalCardFrom } from "./proposal-card-from";
+import { reportResultOf, reportTable, type ReportLoad } from "./report-table";
 
 // The live chat. A question posts one turn; its steps stream in over server-sent events, and if
 // no event arrives within 3 seconds (or the stream mode is poll) the view reads the turn back
@@ -51,8 +53,14 @@ function placeholder(turnId: string, conversationId: string | null, text: string
     steps: [],
     proposals: [],
     flags: [],
+    reports: [],
     error: null,
   };
+}
+
+// Which report table a state entry belongs to: one per turn and tool step.
+function reportKey(turnId: string, report: ReportView): string {
+  return `${turnId}:${report.stepId}`;
 }
 
 function noticeOf(map: Readonly<Record<string, string>>, category: unknown, fallback: string): string {
@@ -61,7 +69,11 @@ function noticeOf(map: Readonly<Record<string, string>>, category: unknown, fall
     : fallback;
 }
 
-export function toMessages(turns: LocalTurn[], notices: Readonly<Record<string, string>>): ChatMessage[] {
+export function toMessages(
+  turns: LocalTurn[],
+  notices: Readonly<Record<string, string>>,
+  reports: Readonly<Record<string, ReportLoad>> = {},
+): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const t of turns) {
     out.push({ id: `${t.id}:q`, role: "user", parts: [{ kind: "text", text: t.userText }] });
@@ -82,8 +94,16 @@ export function toMessages(turns: LocalTurn[], notices: Readonly<Record<string, 
     }
     if (t.error) parts.push({ kind: "error", category: t.error });
     else if (t.text) parts.push({ kind: "text", text: t.text });
+    for (const r of t.reports ?? []) {
+      const load = reports[reportKey(t.id, r)] ?? { state: "loading" };
+      parts.push({ kind: "table", table: reportTable(r.name, load) });
+      if (load.state === "ready" && load.result.rows.length > 0) {
+        parts.push({ kind: "link", href: reportPath(r.name, r.args, "csv"), label: "Download CSV" });
+      }
+    }
     // How it was worked out: once the turn has finished and the server holds its steps. A turn
-    // that never reached the server has none, so it gets no disclosure.
+    // that never reached the server has none, so it gets no disclosure. It sits under the whole
+    // answer, its report tables included, since it explains the steps that built them too.
     const traced = t.status !== "running" && t.steps.length > 0;
     if (traced) parts.push({ kind: "trace", turnId: t.id });
     for (const p of t.proposals) {
@@ -103,6 +123,18 @@ async function readTurn(turnId: string): Promise<TurnView | null> {
   if (!res.ok) return null;
   const body = (await res.json()) as { turn?: TurnView };
   return body.turn ?? null;
+}
+
+// One report's table from the report route, recomputed with the args the tool used.
+async function readReport(report: ReportView): Promise<ReportLoad> {
+  try {
+    const res = await fetch(reportPath(report.name, report.args, "json"), { cache: "no-store" });
+    if (!res.ok) return { state: "error", category: res.status === 403 ? "forbidden" : "unreadable" };
+    const result = reportResultOf(report.name, await res.json());
+    return result ? { state: "ready", result } : { state: "error", category: "unreadable" };
+  } catch {
+    return { state: "error", category: "unreadable" };
+  }
 }
 
 async function errorOf(res: Response): Promise<unknown> {
@@ -134,8 +166,10 @@ export function AgentChat({
   const [pending, setPending] = useState(false);
   const [busyProposal, setBusyProposal] = useState<string | null>(null);
   const [notices, setNotices] = useState<Record<string, string>>({});
+  const [reports, setReports] = useState<Record<string, ReportLoad>>({});
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const alive = useRef(true);
+  const asked = useRef(new Set<string>());
 
   useEffect(() => {
     alive.current = true;
@@ -154,6 +188,20 @@ export function AgentChat({
     }, ms);
     timers.current.add(t);
   }, []);
+
+  // Each report a turn built is fetched once; until it arrives its table shows loading rows.
+  useEffect(() => {
+    for (const t of turns) {
+      for (const r of t.reports ?? []) {
+        const key = reportKey(t.id, r);
+        if (asked.current.has(key)) continue;
+        asked.current.add(key);
+        void readReport(r).then((load) => {
+          if (alive.current) setReports((all) => ({ ...all, [key]: load }));
+        });
+      }
+    }
+  }, [turns]);
 
   const patch = useCallback((turnId: string, next: (t: LocalTurn) => LocalTurn) => {
     setTurns((all) => all.map((t) => (t.id === turnId ? next(t) : t)));
@@ -311,7 +359,7 @@ export function AgentChat({
   const owner = new Map<string, { turnId: string; flagged: boolean }>();
   for (const t of turns) for (const p of t.proposals) owner.set(p.id, { turnId: t.id, flagged: p.flagged });
 
-  const messages = toMessages(turns, notices).map((m) => ({
+  const messages = toMessages(turns, notices, reports).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
       if (p.kind !== "proposal") return p;
