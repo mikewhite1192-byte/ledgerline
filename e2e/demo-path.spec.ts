@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { APP_URL, E2E_CARRIER, E2E_LOGIN, FAKE_HOST } from "./env.local-mode";
+import { secretStep } from "./secret-step";
 
 // The demo path, as a judge would walk it: sign in, ask the agent, open how it worked the answer
 // out, get a proposal card (never approved here), read the models page, sign out.
@@ -109,10 +110,17 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
   await test.step("1. sign in and land on the carrier's home", async () => {
     await page.goto("/sign-in");
     await page.getByLabel("Email").fill(creds.email);
-    // The deployed project keeps no trace or screenshot, pass or fail (playwright.config.ts).
-    await page.getByLabel("Password").fill(creds.password);
-    await page.getByRole("button", { name: "Sign in" }).click();
-    await expect(page).toHaveURL(new URL("/", baseURL).toString());
+    // The deployed project keeps no trace or screenshot, pass or fail (playwright.config.ts). From
+    // the password fill until the home page shows, a deployed failure leaves the page and says
+    // only a fixed message, so the password reaches neither the report nor the error context.
+    const leave = () => page.goto("about:blank");
+    await secretStep({ deployed: DEPLOYED, message: "password fill failed", leave }, () =>
+      page.getByLabel("Password").fill(creds.password),
+    );
+    await secretStep({ deployed: DEPLOYED, message: "sign in did not reach the carrier's home", leave }, async () => {
+      await page.getByRole("button", { name: "Sign in" }).click();
+      await expect(page).toHaveURL(new URL("/", baseURL).toString());
+    });
     await expect(page.getByText(E2E_CARRIER.name).first()).toBeVisible();
   });
 
