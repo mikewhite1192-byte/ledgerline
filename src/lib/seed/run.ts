@@ -42,20 +42,46 @@ export async function findDemoTenant(admin: Db, carrier: DemoCarrier): Promise<s
 // kind:subject:attempt) would replay their old outcome, or block the subject for good, against
 // the new rows. The app role has no DELETE on money_actions, so the admin login removes them. That
 // login ignores row-level security, so each statement names the tenant itself, as a bound
-// parameter. Two kinds of row make the clear refuse and delete nothing, in the same transaction
+// parameter. Two kinds of row make a clear refuse and delete nothing, in the same transaction
 // as the delete: a row still reserved, sent or unknown, which may have reached the outside system
 // (the reconcile pass needs its keys to read the outcome back); and a row failed as
 // amount_mismatch, whatever its state, which is the permanent block reserve() keeps on that
 // subject because money may have moved for another amount, so only a person may lift it. The
 // refusal names the counts only. Otherwise it removes settled rows (confirmed or failed), and the
 // delete itself skips amount_mismatch rows too, so one that appears after the count stays.
-// Returns the rows deleted.
+//
+// The clear runs in two halves around the replace, because the admin and the app logins cannot
+// share a transaction and the replace can fail after the clear committed:
+//   clearTenantLedger, before the replace: refuses on any open or amount_mismatch row of either
+//     channel, and removes settled PAYMENT rows only. A payout's subject (an advance or a
+//     settlement) still refuses a second payout by its own status if the replace then fails.
+//   clearTenantBookings, after the replace committed: removes settled ACCOUNTING rows. A booking
+//     has no subject status to fall back on (a customer payment has none, and the old rows stay
+//     until the replace lands), so its ledger row is the only thing that stops a second post.
+//     If the replace fails, those rows stay and a new approval replays them instead of posting
+//     again; if this clear fails, the same holds until the seed runs again.
+// Each returns the rows deleted.
 export async function clearTenantLedger(admin: Db, tenantId: string): Promise<number> {
+  return clearSettled(admin, tenantId, "payment");
+}
+
+export async function clearTenantBookings(admin: Db, tenantId: string): Promise<number> {
+  return clearSettled(admin, tenantId, "accounting");
+}
+
+async function clearSettled(
+  admin: Db,
+  tenantId: string,
+  channel: "payment" | "accounting",
+): Promise<number> {
+  if (!isUuid(tenantId)) throw new Error("not a tenant id; nothing was cleared");
   return admin.withTenant(tenantId, async (q) => {
+    // Before the replace both channels must be settled; after it only the bookings are left.
+    const scope = channel === "payment" ? "" : " AND channel = 'accounting'";
     const rows = await q.query<{ open: unknown; mismatch: unknown }>(
       `SELECT count(*) FILTER (WHERE state IN ('reserved', 'sent', 'unknown')) AS open,
               count(*) FILTER (WHERE failure_category = 'amount_mismatch') AS mismatch
-         FROM money_actions WHERE tenant_id = CAST($1 AS uuid)`,
+         FROM money_actions WHERE tenant_id = CAST($1 AS uuid)${scope}`,
       [tenantId],
     );
     const open = rows.length === 1 ? Number(rows[0].open) : NaN;
@@ -79,9 +105,9 @@ export async function clearTenantLedger(admin: Db, tenantId: string): Promise<nu
     if (blocked.length > 0) throw new Error(`${blocked.join("; ")} (nothing was cleared)`);
     return q.execute(
       `DELETE FROM money_actions
-        WHERE tenant_id = CAST($1 AS uuid) AND state IN ('confirmed', 'failed')
+        WHERE tenant_id = CAST($1 AS uuid) AND channel = $2 AND state IN ('confirmed', 'failed')
           AND failure_category IS DISTINCT FROM 'amount_mismatch'`,
-      [tenantId],
+      [tenantId, channel],
     );
   });
 }

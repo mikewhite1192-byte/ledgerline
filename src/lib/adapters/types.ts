@@ -91,11 +91,18 @@ export interface PaymentAdapter {
   ): Promise<ReadBack>;
 }
 
-export type InvoiceLine = { description: string; amountCents: number };
+// kind is the rules engine's invoice line kind; it picks the accounting item for the line.
+export type InvoiceLine = {
+  kind: "linehaul" | "fuel_surcharge" | "detention" | "layover" | "stop" | "lumper";
+  description: string;
+  amountCents: number;
+};
 export type PayLine = { kind: string; description: string; amountCents: number };
 
 // Every method takes the tenant's Queryable first (its connection row and id map live there).
-// Built in the next PR; this PR ships only the interface and a not-configured stand-in.
+// Run each call in its own short tenant transaction and let it return: a token refresh made
+// during the call commits with it. Outside refusals come back as outcomes, not throws, from the
+// create methods; ensureCustomer, ensureVendor and readBack throw a MoneyError instead.
 export interface AccountingAdapter {
   readonly system: "qbo_sandbox";
   ready(q: Queryable): Promise<Ready>;

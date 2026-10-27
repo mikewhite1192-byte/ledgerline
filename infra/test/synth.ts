@@ -4,15 +4,17 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { App } from "aws-cdk-lib";
 import { Template } from "aws-cdk-lib/assertions";
+import type { MoneySettings } from "../lib/hosting-stack";
 import { addStacks } from "../lib/stacks";
 
 // Synthesizes the real app (the same addStacks and cdk.json feature flags the deploy uses) into
 // a temp folder the caller owns. No account by default: the templates must not depend on one.
-export function synthAll(account?: string) {
+// No money settings by default, as on a deploy from a shell that does not export them.
+export function synthAll(account?: string, money?: MoneySettings) {
   const outdir = mkdtempSync(join(tmpdir(), "payday-stacks-test-"));
   const { context } = JSON.parse(readFileSync(fileURLToPath(new URL("../cdk.json", import.meta.url)), "utf8"));
   const app = new App({ outdir, context });
-  const stacks = addStacks(app, { account, region: "us-east-2" });
+  const stacks = addStacks(app, { account, region: "us-east-2" }, money);
   return {
     app,
     stacks,

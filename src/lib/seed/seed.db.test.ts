@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import { createMockPaymentAdapter } from "../adapters/payment/mock";
+import type { AccountingAdapter, SendOutcome } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import { configForDay } from "../data/config-version";
 import {
@@ -39,7 +40,13 @@ import { instantAt } from "./calendar";
 import { DEMO_CARRIERS, type DemoCarrier } from "./carriers";
 import golden from "./golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "./plan";
-import { clearTenantAgent, clearTenantLedger, findDemoTenant, replaceTenantData } from "./run";
+import {
+  clearTenantAgent,
+  clearTenantBookings,
+  clearTenantLedger,
+  findDemoTenant,
+  replaceTenantData,
+} from "./run";
 import { countRows } from "./summary";
 import { CASE_A_ASK_CENTS, UNTRUSTED_SEED_KEYS } from "./untrusted-inputs";
 
@@ -782,6 +789,107 @@ describe("seeding the demo carriers", () => {
       await replaceTenantData(app, B, planB);
       expect(await agentRows()).toBe(0);
       expect(await countsOf(app, B)).toEqual(golden.carriers[planB.carrier.slug].counts);
+    } finally {
+      Object.assign(flags, saved);
+    }
+  });
+
+  // Runs on prairie-wind, which the test above left with no ledger rows.
+  it("keeps booking rows through a failed replace, so a booking approved again replays instead of posting twice, and clears them once a replace lands", async () => {
+    const saved = { ...flags };
+    flags.accountingEnabled = true;
+    try {
+      expect(await ledgerRows(B)).toBe(0);
+      // A stand-in for the accounting system: ready, and every post counted. The executor reaches
+      // the outside only through hooks.send for a booking.
+      const ready: AccountingAdapter["ready"] = async () => ({ ok: true });
+      const accounting = { system: "qbo_sandbox", ready } as AccountingAdapter;
+      let posts = 0;
+      const [paymentB] = planB.rows.customer_payments;
+      const hooks: MoneyHooks = {
+        onReserved: async () => {},
+        send: async (action): Promise<SendOutcome> => {
+          posts += 1;
+          return {
+            kind: "confirmed",
+            system: "qbo_sandbox",
+            type: "Payment",
+            id: String(1000 + posts),
+            amountCents: action.amountCents,
+          };
+        },
+      };
+      const book = (session: Session) =>
+        executeMoneyAction(
+          app,
+          session,
+          {
+            kind: "customer_payment",
+            subjectId: paymentB.id,
+            counterpartyId: paymentB.customer_id,
+            amountCents: paymentB.amount_cents,
+            proposedBy: "person",
+          },
+          hooks,
+          { accounting, log: () => {} },
+        );
+      const session = await member(B, "bookings");
+      const first = await book(session);
+      expect(first).toMatchObject({ created: true, sent: true });
+      expect(first.action.state).toBe("confirmed");
+      expect(posts).toBe(1);
+
+      // Before the replace: no payout rows to clear, and the booking row stays.
+      expect(await clearTenantLedger(admin, B)).toBe(0);
+      expect(await ledgerRows(B)).toBe(1);
+      // The replace fails (the other carrier's plan), so the old customer payment stays, and a
+      // second approval replays the kept row: no second post.
+      const failed = await replaceTenantData(app, B, planA).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(failed).toBeInstanceOf(Error);
+      const replay = await book(session);
+      expect(replay).toMatchObject({ created: false, sent: false });
+      expect(replay.action.id).toBe(first.action.id);
+      expect(posts).toBe(1);
+
+      // An open booking refuses the after-replace clear too, deleting nothing.
+      const open = await app.withTenant(B, async (q) =>
+        reserve(q, await approvalFrom(q, session), {
+          kind: "customer_payment",
+          subjectId: planB.rows.customer_payments[1].id,
+          counterpartyId: planB.rows.customer_payments[1].customer_id,
+          amountCents: planB.rows.customer_payments[1].amount_cents,
+          proposedBy: "person",
+        }),
+      );
+      const refused = await clearTenantBookings(admin, B).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect((refused as Error).message).toBe(
+        "1 ledger row(s) still reserved, sent or unknown; settle them before a reseed " +
+          "(nothing was cleared)",
+      );
+      expect(await ledgerRows(B)).toBe(2);
+      expect(
+        await app.withTenant(B, (q) =>
+          settle(q, open.action.id, { to: "failed", via: "refused", category: "disabled" }),
+        ),
+      ).toBe(true);
+
+      // What npm run seed does: payout rows, the replace, then the booking rows.
+      expect(await clearTenantLedger(admin, B)).toBe(0);
+      await replaceTenantData(app, B, planB);
+      expect(await clearTenantBookings(admin, B)).toBe(2);
+      expect(await ledgerRows(B)).toBe(0);
+      // The other carrier's rows (an amount_mismatch among them) are untouched.
+      expect(await ledgerRows(A)).toBeGreaterThan(0);
+      const again = await book(session);
+      expect(again).toMatchObject({ created: true, sent: true });
+      expect(again.action.id).not.toBe(first.action.id);
+      expect(posts).toBe(2);
     } finally {
       Object.assign(flags, saved);
     }

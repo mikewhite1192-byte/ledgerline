@@ -1,6 +1,7 @@
 import { flags } from "../../config/flags";
-import { MoneyError } from "../money/types";
+import { createQboAdapter } from "./accounting/qbo/adapter";
 import { createMockPaymentAdapter, type MockPaymentAdapter } from "./payment/mock";
+import { createStripeTestAdapter } from "./payment/stripe-test";
 import { dbTmsAdapter } from "./tms/db";
 import type { AccountingAdapter, PaymentAdapter, TmsAdapter } from "./types";
 
@@ -10,45 +11,18 @@ export type * from "./types";
 // into the money executor instead of calling these.
 
 let mock: MockPaymentAdapter | undefined;
+let stripe: PaymentAdapter | undefined;
+let qbo: AccountingAdapter | undefined;
 
-// Stripe test mode and the QuickBooks sandbox arrive in the next change. Until then each answers
-// not_configured on every call, so nothing outside is ever reached through them.
-const stripeNotConfigured: PaymentAdapter = {
-  system: "stripe_test",
-  ready: async () => ({ ok: false, category: "not_configured" }),
-  sendPayout: async () => ({ kind: "failed", category: "not_configured" }),
-  readBack: async () => {
-    throw new MoneyError("not_configured");
-  },
-};
-
-function refuse(): never {
-  throw new MoneyError("not_configured");
-}
-
-const accountingNotConfigured: AccountingAdapter = {
-  system: "qbo_sandbox",
-  ready: async () => ({
-    ok: false,
-    category: flags.accountingEnabled === true ? "not_configured" : "disabled",
-  }),
-  ensureCustomer: async () => refuse(),
-  ensureVendor: async () => refuse(),
-  createInvoice: async () => ({ kind: "failed", category: "not_configured" }),
-  createBill: async () => ({ kind: "failed", category: "not_configured" }),
-  payBill: async () => ({ kind: "failed", category: "not_configured" }),
-  createExpense: async () => ({ kind: "failed", category: "not_configured" }),
-  recordCustomerPayment: async () => ({ kind: "failed", category: "not_configured" }),
-  readBack: async () => refuse(),
-};
-
+// Each adapter checks its own switch, settings and secrets on every call, so choosing one here
+// sends nothing: with payoutsEnabled or accountingEnabled off, every write refuses "disabled".
 export function paymentAdapter(): PaymentAdapter {
-  if (flags.paymentProvider === "mock") return (mock ??= createMockPaymentAdapter());
-  return stripeNotConfigured;
+  if (flags.paymentProvider === "stripe_test") return (stripe ??= createStripeTestAdapter());
+  return (mock ??= createMockPaymentAdapter());
 }
 
 export function accountingAdapter(): AccountingAdapter {
-  return accountingNotConfigured;
+  return (qbo ??= createQboAdapter());
 }
 
 export function tmsAdapter(): TmsAdapter {
