@@ -17,6 +17,9 @@ import type {
 } from "@/lib/invoices/views";
 import { REVIEW_REASON_LABELS, REVIEW_STATUS_LABELS, reviewReasonSentence } from "@/lib/invoices/labels";
 import type { InvoiceReviewView, ReviewQueue } from "@/lib/invoices/review-read";
+import type { MoneyCodeDetail, MoneyCodeRow } from "@/lib/money-codes/read";
+import type { RequestChoices } from "@/lib/money-codes/request";
+import type { MoneyAction } from "@/lib/money/types";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
 import type { RunSummary, RunView } from "@/lib/portal/views";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "@/lib/rules-engine";
@@ -1238,3 +1241,127 @@ export const REVIEW_QUEUE: ReviewQueue = {
     queueRow(7, "ready_to_send", null, { posted: true, emailStatus: "need_to_send" }),
   ],
 };
+
+// Money codes: one of each state a person can see, the detail of an issued lumper code (its two
+// paystub lines and the invoice line), the request form's choices and a request waiting for
+// approval. The live code expires far in the future so the page shows Show code, not "expired".
+const codeRow = (n: number, over: Partial<MoneyCodeRow>): MoneyCodeRow => ({
+  id: id(300 + n),
+  driverId: DRIVER_ID,
+  driverName: "Rosa Delgado",
+  driverCode: "BR-D07",
+  loadId: LOAD_ID,
+  loadNumber: "BR-L10247",
+  purpose: "lumper",
+  amountCents: 15_000,
+  sourceKind: "document",
+  documentId: id(320),
+  voiceNoteId: null,
+  receiptTotalCents: 15_000,
+  proposalId: id(321),
+  moneyActionId: id(322),
+  status: "issued",
+  codeLast4: "4821",
+  accessorialId: id(323),
+  chargeItemId: id(324),
+  reimbursementItemId: id(325),
+  issuedAt: "2026-10-28T15:10:00.000Z",
+  expiresAt: "2099-10-30T15:10:00.000Z",
+  createdAt: "2026-10-28T15:00:00.000Z",
+  ...over,
+});
+
+export const MONEY_CODES: MoneyCodeRow[] = [
+  codeRow(1, {}),
+  codeRow(2, { purpose: "repair", amountCents: 42_099, status: "failed", codeLast4: null, accessorialId: null, chargeItemId: null, reimbursementItemId: null, issuedAt: null, expiresAt: null }),
+  codeRow(3, { purpose: "other", amountCents: 9_998, status: "unknown", codeLast4: null, accessorialId: null, chargeItemId: null, reimbursementItemId: null, issuedAt: null, expiresAt: null, sourceKind: "form", documentId: null, receiptTotalCents: null }),
+  codeRow(4, { status: "issuing", codeLast4: null, accessorialId: null, chargeItemId: null, reimbursementItemId: null, issuedAt: null, expiresAt: null }),
+  codeRow(5, { status: "issued", expiresAt: "2026-10-30T15:10:00.000Z" }),
+];
+
+const codeAction = (over: Partial<MoneyAction>): MoneyAction => ({
+  id: id(322),
+  tenantId: ID,
+  kind: "money_code_issue",
+  channel: "payment",
+  subjectTable: "money_codes",
+  subjectId: id(301),
+  attempt: 1,
+  idempotencyKey: "money_code_issue:test:1",
+  requestId: id(326),
+  amountCents: 15_000,
+  counterpartyTable: "drivers",
+  counterpartyId: DRIVER_ID,
+  state: "confirmed",
+  failureCategory: null,
+  settledVia: "response",
+  outsideSystem: "fuel_card_sim",
+  outsideType: "money_code",
+  outsideId: "mc_sim_7c41e2a9b3",
+  outsideRef: null,
+  outsideAmountCents: 15_000,
+  proposedBy: "agent",
+  proposalId: id(321),
+  traceId: null,
+  approverMembershipId: MEMBER_ID,
+  batchId: null,
+  checkCount: 0,
+  createdAt: "2026-10-28T15:09:00.000Z",
+  sentAt: "2026-10-28T15:09:01.000Z",
+  settledAt: "2026-10-28T15:10:00.000Z",
+  lastCheckedAt: null,
+  sentSecondsAgo: 60,
+  ...over,
+});
+
+export const MONEY_CODE_DETAIL: MoneyCodeDetail = {
+  code: MONEY_CODES[0],
+  charge: { id: id(324), label: "Charge", amountCents: -15_000, itemDate: "2026-10-28" },
+  reimbursement: { id: id(325), label: "Reimbursement", amountCents: 15_000, itemDate: "2026-10-28" },
+  accessorial: { id: id(323), amountCents: 15_000, description: "Lumper" },
+  receipt: { id: id(320), filename: "lumper-receipt.webp", isImage: true },
+  settlementId: id(327),
+  actions: [codeAction({})],
+};
+
+export const MONEY_CODE_UNKNOWN: MoneyCodeDetail = {
+  code: MONEY_CODES[2],
+  charge: null,
+  reimbursement: null,
+  accessorial: null,
+  receipt: null,
+  settlementId: null,
+  actions: [codeAction({ id: id(328), subjectId: id(303), amountCents: 9_998, state: "unknown", failureCategory: "timeout", settledVia: null, outsideId: null, outsideAmountCents: null, settledAt: null })],
+};
+
+export const MONEY_CODE_FAILED: MoneyCodeDetail = {
+  code: MONEY_CODES[1],
+  charge: null,
+  reimbursement: null,
+  accessorial: null,
+  receipt: { id: id(329), filename: "repair-invoice.pdf", isImage: false },
+  settlementId: null,
+  actions: [codeAction({ id: id(330), subjectId: id(302), amountCents: 42_099, state: "failed", failureCategory: "declined", settledVia: "response", outsideId: null, outsideAmountCents: null })],
+};
+
+export const CODE_CHOICES: RequestChoices = {
+  loads: [
+    { id: LOAD_ID, loadNumber: "BR-L10247", driverCode: "BR-D07", driverName: "Rosa Delgado", status: "in_transit" },
+    { id: id(331), loadNumber: "BR-L10251", driverCode: "BR-D12", driverName: "Marcus Hale", status: "delivered" },
+  ],
+  receipts: [{ id: id(320), filename: "lumper-receipt.webp", kind: "lumper_receipt" }],
+};
+
+export const CODE_PROPOSALS: ProposalView[] = [
+  proposal({
+    id: id(332),
+    kind: "money_code",
+    subjectTable: "loads",
+    subjectId: LOAD_ID,
+    subjectLabel: "BR-L10247",
+    amountCents: 15_000,
+    direction: "out",
+    title: "Lumper code for Rosa Delgado on BR-L10247",
+    destination: null,
+  }),
+];

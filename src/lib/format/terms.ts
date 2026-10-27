@@ -34,6 +34,9 @@ export const TERMS = {
   "credit-on-account": "Money a customer paid that is not yet matched to an invoice.",
   "second-check": "A separate model re-read this against your records before anyone approves.",
   "test-payout": "A simulated payment; no real money moves in this demo.",
+  "money-code":
+    "A one-time code the driver gives a lumper or a repair shop to pay at the dock; it is charged to the driver's week and paid back from the receipt.",
+  "card-provider": "The company that issues the fuel cards and money codes; in this demo it is simulated, so no real money moves.",
 } as const;
 
 export type TermId = keyof typeof TERMS;

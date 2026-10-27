@@ -71,6 +71,9 @@ export type LimitResult =
       reason: "amount_over_limit" | "engine_refused" | "limit_unavailable" | "budget";
       limitCents: Cents | null;
       requestedCents: Cents | null;
+      // The engine's first refusal word, when the limit names one (a money code's): fixed text
+      // from the engine's own list, never model output, so the agent can ask for what is missing.
+      category?: string;
     };
 
 export type GatewayContext = {
@@ -132,7 +135,7 @@ export type RunExtras = {
 
 // The one list of proposal kinds. src/lib/proposals/execute.ts imports it from here (the ledger
 // side may import the agent tree; the reverse is what the import-boundary test forbids). The
-// database CHECK carries this list plus kinds that later items add (0013, 0015, 0022).
+// database CHECK carries this list plus kinds that later items add (0013, 0015, 0022, 0048).
 export const PROPOSAL_KINDS = [
   "advance_payout",
   "pay_correction",
@@ -142,6 +145,7 @@ export const PROPOSAL_KINDS = [
   "payment_reapply",
   "detention_charge",
   "settlement_approve",
+  "money_code",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 

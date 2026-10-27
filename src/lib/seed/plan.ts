@@ -105,6 +105,11 @@ export type Planted = {
   invoiceReview: ReviewPlant;
   // Arming, the extra cards, the load pair and the take-back (parity-plan.ts).
   parity: ParityPlanted;
+  // MONEY-CODE's sample lumper receipt names this load: the first load on the road, by number, that
+  // is not the hero's and has no lumper line, so a code for it passes the pay rules and adds a
+  // lumper line to its invoice without moving the hero's week. Null on a carrier with no hero, or
+  // at an anchor with no such load (the demo anchor has one; golden.json pins it).
+  moneyCodeLoadId: string | null;
 };
 
 export type CarrierPlan = {
@@ -115,6 +120,21 @@ export type CarrierPlan = {
   planted: Planted;
   rows: TenantRows;
 };
+
+// The total on MONEY-CODE's sample lumper receipt (public/samples/docs, manifest.json).
+export const MONEY_CODE_RECEIPT_CENTS = 15_000;
+
+// The load MONEY-CODE's sample receipt names (Planted.moneyCodeLoadId). Reads the finished rows
+// only and draws no number, so no other row changes.
+function moneyCodeLoadOf(rows: TenantRows, heroCode: string | null): string | null {
+  if (!heroCode) return null;
+  const hero = rows.drivers.find((d) => d.code === heroCode);
+  const withLumper = new Set(rows.load_accessorials.filter((a) => a.kind === "lumper").map((a) => a.load_id));
+  const load = rows.loads
+    .filter((l) => l.status === "in_transit" && l.driver_id !== null && l.driver_id !== hero?.id && !withLumper.has(l.id))
+    .sort((a, b) => compareText(a.load_number, b.load_number))[0];
+  return load?.id ?? null;
+}
 
 // The four weeks ending on or before anchor - 1, oldest first.
 export function planPeriods(anchor: LocalDate, weekStartDow: number): Period[] {
@@ -1062,6 +1082,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     settlements: [],
     settlement_lines: [],
     pay_items: payItems,
+    money_codes: [],
     advances,
     invoices: ar.invoices,
     customer_payments: ar.payments,
@@ -1104,6 +1125,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
         genericCardId: cardPlan.generic,
         closedCardId: cardPlan.closed,
       },
+      moneyCodeLoadId: moneyCodeLoadOf(rows, carrier.heroCode),
     },
     rows,
   };

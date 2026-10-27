@@ -5,7 +5,7 @@ import sharp from "sharp";
 import { describe, expect, it } from "vitest";
 import type { LocalDate } from "../../time/local-date";
 import { carrierBySlug } from "../carriers";
-import { buildCarrierPlan, type CarrierPlan } from "../plan";
+import { buildCarrierPlan, MONEY_CODE_RECEIPT_CENTS, type CarrierPlan } from "../plan";
 import { localStamp, localStampText, mmddyyyy } from "./documents";
 import {
   BACKGROUND_SAMPLE_SENTENCE,
@@ -77,7 +77,7 @@ describe("the sample documents manifest", () => {
     const files = [...SAMPLE_DOCS.map((d) => d.file), MANIFEST.background?.file].filter(Boolean);
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(files).size).toBe(files.length);
-    expect(SAMPLE_DOCS.filter(isPhoto)).toHaveLength(6);
+    expect(SAMPLE_DOCS.filter(isPhoto)).toHaveLength(7);
     expect(SAMPLE_DOCS.filter(isPdf)).toHaveLength(6);
   });
 
@@ -125,6 +125,22 @@ describe("the sample documents manifest", () => {
         expect(e.paidByDriver).toBe(true);
         expect(row.paid_by_driver).toBe(true);
         expect(e.date).toBe(load.delivered_on);
+        expect(e.loadNumber).toBe(load.load_number);
+        expect(e.truckUnit).toBe(truckOf(plan, load.driver_id));
+        expect([e.gallonsMilli, e.priceCents]).toEqual([null, null]);
+      } else if (doc.ref.table === "loads") {
+        // MONEY-CODE's receipt: a lumper paid at pickup on a load still on the road, with no
+        // lumper line yet, so a code for exactly its total passes and adds the line.
+        expect(doc.kind).toBe("lumper_receipt");
+        const load = loadOf(plan, doc.ref.id);
+        expect(load.id).toBe(plan.planted.moneyCodeLoadId);
+        expect(load.status).toBe("in_transit");
+        expect(plan.rows.load_accessorials.filter((a) => a.load_id === load.id && a.kind === "lumper")).toEqual([]);
+        expect(doc.ref.humanRef).toBe(load.load_number);
+        expect(doc.ref.loadNumber).toBe(load.load_number);
+        expect(e.amountCents).toBe(MONEY_CODE_RECEIPT_CENTS);
+        expect(e.paidByDriver).toBe(true);
+        expect(e.date).toBe(load.pickup_on);
         expect(e.loadNumber).toBe(load.load_number);
         expect(e.truckUnit).toBe(truckOf(plan, load.driver_id));
         expect([e.gallonsMilli, e.priceCents]).toEqual([null, null]);

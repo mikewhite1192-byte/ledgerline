@@ -16,7 +16,7 @@ import {
 import { daysBetween, isWithin, type Period } from "../time/local-date";
 import type { CustomerClass } from "./ar-plan";
 import { fuelAnomalyIds } from "./assert-plan";
-import type { CarrierPlan } from "./plan";
+import { MONEY_CODE_RECEIPT_CENTS, type CarrierPlan } from "./plan";
 
 // The numbers that describe one seeded carrier, small enough to read in a review. golden.json is
 // this summary for both carriers at anchor 2026-11-02; golden.test.ts rebuilds the plans and
@@ -77,6 +77,8 @@ export type CarrierSummary = {
     podCustomers: string[];
     plants: { plant: string; invoiceNumber: string; customerCode: string; amountCents: number }[];
   };
+  // The load MONEY-CODE's sample lumper receipt names, and its total; null with no hero.
+  moneyCode: { loadNumber: string; receiptCents: number } | null;
 };
 
 export function countRows(rows: TenantRows): Record<TenantTable, number> {
@@ -242,5 +244,12 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
     detention,
     collections,
     invoiceReview,
+    moneyCode:
+      plan.planted.moneyCodeLoadId === null
+        ? null
+        : {
+            loadNumber: rows.loads.find((l) => l.id === plan.planted.moneyCodeLoadId)!.load_number,
+            receiptCents: MONEY_CODE_RECEIPT_CENTS,
+          },
   };
 }

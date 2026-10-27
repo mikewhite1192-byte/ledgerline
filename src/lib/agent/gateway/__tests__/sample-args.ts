@@ -16,6 +16,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   // The first planted unbilled detention: 41,250 cents in October.
   const detentionLoad = plan.planted.detentionLoadIds[0];
   const delivered = rows.loads.find((l) => l.status === "delivered") ?? rows.loads[0];
+  // A load on the road and its own driver: the only kind of load a money code is for.
+  const onRoad = rows.loads.find((l) => l.status === "in_transit")!;
   const refs = [{ table: "drivers", id: hero.id }];
   return {
     get_driver: { driverId: hero.id },
@@ -80,6 +82,13 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       sourceRefs: [{ table: "loads", id: detentionLoad }],
     },
     get_portal_evidence: { loadId: delivered.id },
+    get_money_codes: { driverId: hero.id },
+    propose_money_code: {
+      driverId: onRoad.driver_id,
+      loadId: onRoad.id,
+      amountCents: 15_000,
+      purpose: "lumper",
+    },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     report_ar_aging: { asOf: "2026-11-02" },
     report_driver_pay_summary: { periodStart: paid.period_start, driverId: hero.id },

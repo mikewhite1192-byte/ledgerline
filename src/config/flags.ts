@@ -309,6 +309,21 @@ export type Flags = {
   // the tools are not offered. invoicesEnabled must also be on. A post to accounting is always
   // left unsent there (a constant on the adapter, not a switch); LedgerLine never sends one.
   invoiceReviewEnabled: boolean;
+  // Money codes (Test mode): a one-time code from the simulated fuel-card provider that a driver
+  // gives a lumper or a repair shop, charged to the driver's week and reimbursed by the receipt.
+  // enabled: the Money codes page, its menu item, the agent's two tools and approving a code; off,
+  // the page shows the feature as off, the routes answer 404, the tools are not offered and the
+  // kind has no executor. armed, capCents (inclusive: the most one code may be), perDriverPerDay
+  // and startDate (YYYY-MM-DD, tenant-local; it gates issuing, never proposing) are asked again on
+  // every approval, before the ledger reserves a row and by the issuer itself at the call, on top
+  // of payoutsEnabled.
+  moneyCodes: {
+    enabled: boolean;
+    armed: boolean;
+    capCents: number;
+    perDriverPerDay: number;
+    startDate: string;
+  };
 };
 
 export const flags: Flags = {
@@ -414,6 +429,7 @@ export const flags: Flags = {
   batchApproveEnabled: false,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
   invoiceReviewEnabled: false,
+  moneyCodes: { enabled: false, armed: false, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
 };
 
 applyLocalOverrides(flags);

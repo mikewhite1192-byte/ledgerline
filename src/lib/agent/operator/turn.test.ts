@@ -7,7 +7,15 @@ import { ALWAYS_LOADED } from "../gateway/loading";
 import { toolsFor } from "../gateway/registry";
 import { planDb, blueRidgePlan } from "../gateway/__tests__/plan-db";
 import { sampleArgs } from "../gateway/__tests__/sample-args";
-import { LOOP_TEXT, OPERATOR_PROMPT, REPORT_PROMPT, TOOL_SEARCH_RULE, operatorCacheKey } from "../policy";
+import {
+  LOOP_TEXT,
+  MONEY_CODE_PROMPT,
+  OPERATOR_PROMPT,
+  REPORT_PROMPT,
+  TOOL_SEARCH_RULE,
+  operatorCacheKey,
+  operatorPrompt,
+} from "../policy";
 import { AiError, runTurn, turnRequest, type TurnDeps } from "./turn";
 import { WITHHELD } from "./figures";
 
@@ -636,6 +644,20 @@ describe("runTurn with tool search and the prompt cache", () => {
       expect(JSON.stringify(request.tools)).toBe(JSON.stringify(tools));
       for (const t of request.tools ?? []) expect(t).not.toHaveProperty("deferLoading");
     }
+  });
+
+  it("adds the money code lines only while propose_money_code is offered", () => {
+    flags.moneyCodes.enabled = true;
+    onTestFinished(() => {
+      flags.moneyCodes.enabled = false;
+    });
+    const on = toolsFor("operator").map((t) => t.name);
+    expect(on).toContain("propose_money_code");
+    expect(operatorPrompt(on, false)).toBe(`${OPERATOR_PROMPT}\n${MONEY_CODE_PROMPT}`);
+    flags.moneyCodes.enabled = false;
+    const off = toolsFor("operator").map((t) => t.name);
+    expect(off).not.toContain("propose_money_code");
+    expect(operatorPrompt(off, false)).toBe(OPERATOR_PROMPT);
   });
 
   it("asks Muse Spark to search the deferred tools, keys the cache and puts the summary in input", async () => {

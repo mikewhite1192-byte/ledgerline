@@ -34,15 +34,31 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   not_found: "That card is not here.",
 };
 
-const notice = (category: string | null) =>
-  category && Object.hasOwn(APPROVE_NOTICE, category) ? APPROVE_NOTICE[category] : outcomeLabel(category);
+// A page's own sentences (a money code's categories) are read before the shared ones.
+const NO_NOTICES: Readonly<Record<string, string>> = {};
+
+const notice = (category: string | null, own: Readonly<Record<string, string>>) => {
+  if (category && Object.hasOwn(own, category)) return own[category];
+  return category && Object.hasOwn(APPROVE_NOTICE, category) ? APPROVE_NOTICE[category] : outcomeLabel(category);
+};
 
 // The engine's invoice cards, through the same gate as an agent's card. With the auditor on, each
 // waiting card nobody has checked is sent to it once per mount. Approve runs the approve route (the
 // gate, then the invoice_post executor) and sends the second confirm whenever the card asked its
 // question: a flag, or any verdict but a pass. An override over a block carries the verdict instant
-// the card showed. Reject records the decision. Either way the page reads itself back.
-export function InvoiceCards({ cards, auditorOn = false }: { cards: InvoiceCard[]; auditorOn?: boolean }) {
+// the card showed. Reject records the decision. Either way the page reads itself back. Another
+// page's engine cards (the Money codes page) pass their own list name and sentences.
+export function InvoiceCards({
+  cards,
+  auditorOn = false,
+  label = "Invoices to approve",
+  notices = NO_NOTICES,
+}: {
+  cards: InvoiceCard[];
+  auditorOn?: boolean;
+  label?: string;
+  notices?: Readonly<Record<string, string>>;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -119,7 +135,7 @@ export function InvoiceCards({ cards, auditorOn = false }: { cards: InvoiceCard[
       ? { confirmed, overrideReason, auditedAt: c.checkedAt ?? undefined }
       : { confirmed };
     const reply = await postJson(`/api/proposals/${encodeURIComponent(id)}/approve`, body);
-    if (!reply.ok) setNotes((n) => ({ ...n, [id]: notice(reply.error) }));
+    if (!reply.ok) setNotes((n) => ({ ...n, [id]: notice(reply.error, notices) }));
     setBusy(null);
     router.refresh();
   }
@@ -129,13 +145,13 @@ export function InvoiceCards({ cards, auditorOn = false }: { cards: InvoiceCard[
     setBusy(id);
     setNotes((n) => ({ ...n, [id]: "" }));
     const reply = await postJson(`/api/proposals/${encodeURIComponent(id)}/reject`, { category: "other" });
-    if (!reply.ok) setNotes((n) => ({ ...n, [id]: notice(reply.error) }));
+    if (!reply.ok) setNotes((n) => ({ ...n, [id]: notice(reply.error, notices) }));
     setBusy(null);
     router.refresh();
   }
 
   return (
-    <ul className="grid gap-4" aria-label="Invoices to approve">
+    <ul className="grid gap-4" aria-label={label}>
       {cards.map((c) => {
         const id = c.card.id;
         // The page drew an unchecked card as not checked; while this mount waits on the auditor

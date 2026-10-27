@@ -121,11 +121,13 @@ export function proposalCardFrom(
     confirmQuestion,
     flagNote: p.flagged ? flagNoteFor(p.flagCategories) : undefined,
     ...(audit ? { audit: auditFor(p, audit) } : {}),
-    // An advance and a pay correction have executors that resume an approval left approved by a
-    // stop before its run finished (the correction's pay item is keyed by the proposal, so a
-    // resume never writes a second). An executing one is already running (an advance's page
-    // checks it; a correction never stays executing, since its run is one transaction).
-    ...((p.kind === "advance_payout" || p.kind === "pay_correction") && p.status === "approved"
+    // An advance, a pay correction and a money code have executors that resume an approval left
+    // approved by a stop before its run finished (the correction's pay item is keyed by the
+    // proposal, and a money code is one row per proposal, so a resume never writes a second). An
+    // executing one is already running (an advance's page and a code's page check it; a
+    // correction never stays executing, since its run is one transaction).
+    ...((p.kind === "advance_payout" || p.kind === "pay_correction" || p.kind === "money_code") &&
+    p.status === "approved"
       ? { canResume: true }
       : {}),
   };

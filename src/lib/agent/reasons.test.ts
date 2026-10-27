@@ -16,6 +16,16 @@ const ENGINE_ADVANCE_REASONS = [
   "possible_duplicate",
 ];
 
+// The rules engine's money code reasons, as rules-engine/money-codes.ts names them (written out
+// for the same reason; that module's test checks MONEY_CODE_REASONS against this list).
+const MONEY_CODE_REASON_LIST = [
+  "load_in_transit",
+  "load_delivered_recently",
+  "receipt_total_matches",
+  "voice_amount",
+  "driver_armed",
+];
+
 // Every reason a paystub can be parked, as settlements/reconcile.ts names them (written out for
 // the same reason; settlements/reconcile.test.ts checks the module against these sentences).
 const PARK_REASON_LIST = [
@@ -45,6 +55,7 @@ describe("reason sentences", () => {
       "insurance_exempt",
       "net_below_zero",
       ...PARK_REASON_LIST,
+      ...MONEY_CODE_REASON_LIST,
     ];
     for (const c of all) expect(REASON_SENTENCE_CATEGORIES).toContain(c);
   });

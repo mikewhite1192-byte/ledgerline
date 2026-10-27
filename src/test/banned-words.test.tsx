@@ -297,6 +297,15 @@ vi.mock("@/lib/invoices/review-read", async (importOriginal) => ({
   readInvoiceReview: async () => get("invoiceReview"),
   readMemberRoles: async () => new Map([[fx.MEMBER_ID, "staff"]]),
 }));
+vi.mock("@/lib/money-codes/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/money-codes/read")>()),
+  listMoneyCodes: async () => get("moneyCodes"),
+  readMoneyCode: async () => get("moneyCode"),
+}));
+vi.mock("@/lib/money-codes/request", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/money-codes/request")>()),
+  readRequestChoices: async () => get("codeChoices"),
+}));
 vi.mock("@/lib/voice/read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/voice/read")>()),
   readVoiceList: async () => get("voiceList"),
@@ -348,18 +357,25 @@ function defaults(): Record<string, unknown> {
     paystubAsk: null,
     reviewQueue: fx.REVIEW_QUEUE,
     invoiceReview: fx.INVOICE_REVIEW,
+    moneyCodes: fx.MONEY_CODES,
+    moneyCode: fx.MONEY_CODE_DETAIL,
+    codeChoices: fx.CODE_CHOICES,
   };
 }
 
-// Every switch on, so each page shows its working state, not the off page.
+// Every switch on, so each page shows its working state, not the off page. Money codes is a switch
+// with settings, so only its own enabled is turned on.
 const SWITCHES = Object.keys(flags).filter((k) => typeof (flags as Record<string, unknown>)[k] === "boolean");
 const saved = Object.fromEntries(SWITCHES.map((k) => [k, (flags as Record<string, unknown>)[k]]));
+const savedCodes = { ...flags.moneyCodes };
 beforeAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = true;
+  flags.moneyCodes = { ...savedCodes, enabled: true };
   vi.stubGlobal("fetch", () => new Promise(() => {}));
 });
 afterAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = saved[k];
+  flags.moneyCodes = { ...savedCodes };
   vi.unstubAllGlobals();
 });
 beforeEach(() => {
@@ -584,6 +600,50 @@ const PAGES: PageCase[] = [
   {
     file: "models/page.tsx",
     variants: [{ name: "models", load: async () => (await import("@/app/models/page")).default() }],
+  },
+  {
+    file: "money-codes/page.tsx",
+    variants: [
+      { name: "codes", load: async () => (await import("@/app/money-codes/page")).default() },
+      {
+        name: "with a request waiting",
+        setup: () => (state.fx.invoiceProposals = fx.CODE_PROPOSALS),
+        load: async () => (await import("@/app/money-codes/page")).default(),
+      },
+      { name: "empty", setup: () => (state.fx.moneyCodes = []), load: async () => (await import("@/app/money-codes/page")).default() },
+    ],
+  },
+  {
+    file: "money-codes/[id]/page.tsx",
+    variants: [
+      { name: "issued", load: async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }) },
+      {
+        name: "expired",
+        setup: () => (state.fx.moneyCode = { ...fx.MONEY_CODE_DETAIL, code: fx.MONEY_CODES[4] }),
+        load: async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }),
+      },
+      {
+        name: "not confirmed",
+        setup: () => (state.fx.moneyCode = fx.MONEY_CODE_UNKNOWN),
+        load: async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }),
+      },
+      {
+        name: "declined",
+        setup: () => (state.fx.moneyCode = fx.MONEY_CODE_FAILED),
+        load: async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }),
+      },
+    ],
+  },
+  {
+    file: "money-codes/new/page.tsx",
+    variants: [
+      { name: "form", load: async () => (await import("@/app/money-codes/new/page")).default() },
+      {
+        name: "nothing to pick",
+        setup: () => (state.fx.codeChoices = { loads: [], receipts: [] }),
+        load: async () => (await import("@/app/money-codes/new/page")).default(),
+      },
+    ],
   },
   {
     file: "portal-runs/page.tsx",

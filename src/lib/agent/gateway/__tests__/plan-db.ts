@@ -1,6 +1,12 @@
 import type { Param } from "../../../db";
 import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
-import { QUEUE_CHILDREN, QUEUE_LOADS } from "../../../data/read";
+import {
+  MONEY_CODE_DRIVER_SQL,
+  MONEY_CODE_LOAD_SQL,
+  MONEY_CODES_SQL,
+  QUEUE_CHILDREN,
+  QUEUE_LOADS,
+} from "../../../data/read";
 import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
@@ -33,6 +39,10 @@ export const LEDGER_BY_SUBJECT =
 // The ledger's rows of one kind (money/read.ts readByKind), answered the same way.
 export const LEDGER_BY_KIND =
   /^SELECT CAST\(id AS text\) AS id, .+ FROM money_actions WHERE tenant_id = current_tenant_id\(\) AND kind = \$1 ORDER BY created_at, attempt, id$/s;
+
+// The money-code list the pages and get_money_codes read (money-codes/read.ts). The plan holds no
+// codes, so this answers from a money_codes list a test adds, or none.
+export const MONEY_CODE_LIST = /^\s*SELECT CAST\(c\.id AS text\) AS id, .+ FROM money_codes c\s+JOIN drivers /s;
 
 export const PLAN_ANCHOR = "2026-11-02";
 
@@ -87,6 +97,28 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
         })
         .sort((x, y) => (x.code === y.code ? (x.id < y.id ? -1 : 1) : x.code < y.code ? -1 : 1));
     }
+    // The money-code check's reads (data/read.ts readMoneyCodeInput): the driver's switch, the
+    // load, and the recent codes (none in a plan unless a test adds them).
+    if (sql === MONEY_CODE_DRIVER_SQL) {
+      return plan.rows.drivers.filter((d) => d.id === params[0]).map((d) => ({ money_armed: d.money_armed }));
+    }
+    if (sql === MONEY_CODE_LOAD_SQL) {
+      return plan.rows.loads
+        .filter((l) => l.id === params[0])
+        .map((l) => ({
+          id: l.id,
+          driver_id: l.driver_id,
+          status: l.status,
+          load_number: l.load_number,
+          delivered_on: l.delivered_on,
+        }));
+    }
+    if (sql === MONEY_CODES_SQL) {
+      return (tables.money_codes ?? [])
+        .filter((r) => r.driver_id === params[0] || r.load_id === params[1])
+        .map((r) => ({ ...r }));
+    }
+    if (MONEY_CODE_LIST.test(sql)) return [];
     if (LEDGER_BY_KIND.test(sql)) {
       return (tables.money_actions ?? []).filter((r) => r.kind === params[0]).map((r) => ({ ...r }));
     }

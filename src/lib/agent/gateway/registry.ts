@@ -19,6 +19,7 @@ import { getInvoiceReviewQueue } from "./tools/read/get-invoice-review-queue";
 import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
+import { getMoneyCodes } from "./tools/read/get-money-codes";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
 import { getSettlements } from "./tools/read/get-settlements";
@@ -36,6 +37,7 @@ import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
+import { proposeMoneyCode } from "./tools/propose/propose-money-code";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
@@ -86,6 +88,9 @@ const TOOLS: readonly AnyToolDef[] = [
   proposePaymentReapply,
   proposeLoadRate,
   proposeDetentionCharge,
+  // Offered only while flags.moneyCodes.enabled is on (each tool's enabled switch).
+  getMoneyCodes,
+  proposeMoneyCode,
   getPortalEvidence,
   classifyMessage,
 ];

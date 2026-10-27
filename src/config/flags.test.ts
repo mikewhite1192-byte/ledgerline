@@ -22,6 +22,15 @@ describe("flags", () => {
     expect(flags.detentionEnabled).toBe(false);
     // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
     expect(flags.demoResetEnabled).toBe(false);
+    // Money codes issue through the simulated provider only, dark and unarmed until the owner's go.
+    expect(flags.moneyCodes).toEqual({
+      enabled: false,
+      armed: false,
+      capCents: 50_000,
+      perDriverPerDay: 2,
+      startDate: "2026-10-28",
+    });
+    expect(isLocalDate(flags.moneyCodes.startDate)).toBe(true);
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {

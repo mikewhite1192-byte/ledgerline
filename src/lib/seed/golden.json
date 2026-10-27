@@ -19,6 +19,7 @@
         "settlements": 75,
         "settlement_lines": 528,
         "pay_items": 245,
+        "money_codes": 0,
         "advances": 21,
         "invoices": 335,
         "customer_payments": 167,
@@ -295,6 +296,10 @@
             "amountCents": 138700
           }
         ]
+      },
+      "moneyCode": {
+        "loadNumber": "BR-L10327",
+        "receiptCents": 15000
       }
     },
     "prairie-wind": {
@@ -315,6 +320,7 @@
         "settlements": 75,
         "settlement_lines": 553,
         "pay_items": 210,
+        "money_codes": 0,
         "advances": 20,
         "invoices": 324,
         "customer_payments": 161,
@@ -522,7 +528,8 @@
             "amountCents": 171700
           }
         ]
-      }
+      },
+      "moneyCode": null
     }
   }
 }

@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { flags } from "../../../../../config/flags";
 import type { Queryable } from "../../../../db";
 import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionChargeRows } from "../../../../data/detention-charge";
 import { loadsOf } from "../../../../data/records";
 import {
   readAdvanceInput,
   readCheckInput,
+  readMoneyCodeInput,
   readReceivablesInput,
   readRowsWhereId,
 } from "../../../../data/read";
@@ -15,9 +17,14 @@ import { lineSummary, sameLines, type LineSummary } from "../../../../invoices/q
 import { settlementEvidence } from "../../../../settlements/evidence";
 import {
   advanceEligibility,
+  checkMoneyCode,
   findPaymentOnWrongInvoice,
   invoiceAmount,
+  MONEY_CODE_PURPOSES,
+  MONEY_CODE_SOURCES,
   runAllChecks,
+  type MoneyCodePurpose,
+  type MoneyCodeSource,
 } from "../../../../rules-engine";
 import { localDateOf } from "../../../../time/local-date";
 import { isUuid } from "../../../../uuid";
@@ -500,6 +507,64 @@ async function paymentReapplyEngine(
   };
 }
 
+// A money code: the rules engine as of now on the stored evidence (the load, the driver's arming,
+// the receipt's reading or the voice note's amounts, the codes already asked for), and whether it
+// allows exactly the proposed amount. Only categories and cents reach the pack.
+const optionalId = (v: unknown): string | null | undefined =>
+  v === undefined || v === null ? null : isUuid(v) ? v : undefined;
+
+async function moneyCodeEngine(
+  q: Queryable,
+  ctx: GatewayContext,
+  p: ProposalRow,
+  raw: Record<string, unknown>,
+): Promise<Engine> {
+  const { driverId, loadId, purpose, source } = raw;
+  const documentId = optionalId(raw.documentId);
+  const voiceNoteId = optionalId(raw.voiceNoteId);
+  if (
+    p.subject_table !== "loads" ||
+    loadId !== p.subject_id ||
+    !isUuid(driverId) ||
+    !isUuid(loadId) ||
+    !(MONEY_CODE_PURPOSES as readonly unknown[]).includes(purpose) ||
+    !(MONEY_CODE_SOURCES as readonly unknown[]).includes(source) ||
+    documentId === undefined ||
+    voiceNoteId === undefined
+  ) {
+    return UNAVAILABLE;
+  }
+  const amount = Number(p.amount_cents);
+  const { capCents, perDriverPerDay } = flags.moneyCodes;
+  const input = await readMoneyCodeInput(
+    q,
+    {
+      driverId,
+      loadId,
+      purpose: purpose as MoneyCodePurpose,
+      amountCents: amount,
+      source: source as MoneyCodeSource,
+      documentId,
+      voiceNoteId,
+      capCents,
+      perDriverPerDay,
+    },
+    ctx.now.toISOString(),
+  );
+  const decision = checkMoneyCode(input);
+  const base = { ok: true, check: "money_code", proposedCents: amount };
+  if (!decision.ok) return { ...base, engine: { ok: false, reason: decision.category, refusals: decision.refusals } };
+  return {
+    ...base,
+    engine: {
+      ok: true,
+      amountCents: decision.amountCents,
+      matchesProposal: decision.amountCents === amount,
+      reasons: decision.reasons,
+    },
+  };
+}
+
 // The engine's own number for the proposal. A read or engine error is unavailable, never zero.
 async function engineFor(
   q: Queryable,
@@ -520,6 +585,8 @@ async function engineFor(
     if (p.kind === "detention_charge") return await detentionEngine(q, p);
     // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
     if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
+    // The stored evidence ids are read as stored; the engine runs again as of now.
+    if (p.kind === "money_code") return await moneyCodeEngine(q, ctx, p, raw);
     return UNAVAILABLE;
   } catch {
     console.warn("gateway: the auditor's engine check could not be computed");

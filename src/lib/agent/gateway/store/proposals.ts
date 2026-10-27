@@ -17,6 +17,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   payment_reapply: "Move payment to the right invoice",
   detention_charge: "Bill unbilled detention",
   settlement_approve: "Approve weekly pay",
+  money_code: "Issue a money code",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;

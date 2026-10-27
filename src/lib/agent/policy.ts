@@ -82,13 +82,28 @@ export const REPORT_PROMPT = [
   "  (the total or the largest rows) in one or two lines and say the full table is below.",
 ].join("\n");
 
+// Added to the prompt only while propose_money_code is offered (flags.moneyCodes.enabled), so a
+// turn with the switch off sends exactly today's prompt.
+export const MONEY_CODE_PROMPT = [
+  "",
+  "Money codes:",
+  "- A driver at a dock may need a one-time money code for a lumper or a repair. Read the receipt",
+  "  (get_document) or the voice note (get_voice_note) first, then call propose_money_code with",
+  "  exactly the total it shows, in integer cents, on the driver's load that is on the road or",
+  "  delivered in the last three days. Pass that input's id as inputId.",
+  "- A person approves the card before any code is issued; the charge and the reimbursement land",
+  "  on the driver's paystub and net to zero. Never read or repeat a code: only the page shows it.",
+].join("\n");
+
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
-// is on (it is one of the rules), then the report section while the report tools are offered.
-// With search off it is the prompt above, plus the report section when reports are on.
+// is on (it is one of the rules), then the report section while the report tools are offered,
+// then the money code section while propose_money_code is offered. With search off and both
+// switches off it is the prompt above.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
-  const prompt = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
-  const reports = toolNames.some((n) => reportOfTool(n) !== null);
-  return reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
+  let prompt = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
+  if (toolNames.some((n) => reportOfTool(n) !== null)) prompt = `${prompt}\n${REPORT_PROMPT}`;
+  if (toolNames.includes("propose_money_code")) prompt = `${prompt}\n${MONEY_CODE_PROMPT}`;
+  return prompt;
 }
 
 export const STATE_HEADER = "Current state (from the database, for this turn only):";

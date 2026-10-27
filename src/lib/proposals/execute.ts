@@ -4,6 +4,7 @@ import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { executeAdvanceProposal, precheckAdvanceProposal } from "../advances/approve";
 import { executeInvoicePost } from "../invoices/execute";
+import { moneyCodeExecutor } from "../money-codes/execute";
 import { executePaymentReapply } from "../invoices/reapply";
 import { executeSettlementApprove } from "../settlements/approve";
 import { assertMembership } from "../tenant/context";
@@ -132,7 +133,10 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 // the row as expired), the role refusal, the auditor refusals (not_auditable, auditor_required,
 // override_required, stale) and needs_confirm.
 // settlement_approve pays one driver's week (src/lib/settlements/approve.ts); its own switch is
-// read inside the executor, which writes nothing while it is off.
+// read inside the executor, which writes nothing while it is off. money_code issues one code
+// (src/lib/money-codes/execute.ts), with a precheck that refuses before the approval when the
+// code could not be issued now; it is read through moneyCodes.enabled the same way, and the
+// executor asks the whole issue gate again itself.
 export const EXECUTORS: ExecutorRegistry = {
   advance_payout: Object.assign(
     (...args: Parameters<Executor>) => executeAdvanceProposal(...args),
@@ -148,6 +152,9 @@ export const EXECUTORS: ExecutorRegistry = {
     return flags.detentionEnabled ? executeDetentionCharge : undefined;
   },
   settlement_approve: executeSettlementApprove,
+  get money_code() {
+    return flags.moneyCodes.enabled ? moneyCodeExecutor : undefined;
+  },
 };
 
 const DAY_MS = 86_400_000;

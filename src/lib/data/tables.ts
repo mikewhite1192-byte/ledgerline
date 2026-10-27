@@ -1,7 +1,8 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
 // and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, and
-// the driver identity map and arming log from 0027, in an order where every table comes after the
-// tables it references (insert in this order, delete in reverse). Each column says how it
+// the driver identity map and arming log from 0027, the money codes from 0048 (planned empty; it
+// names pay items and load charges, so it goes before them on a delete), in an order where every
+// table comes after the tables it references (insert in this order, delete in reverse). Each column says how it
 // travels: the Data API sends strings as text, so uuid, date, timestamptz and jsonb columns need
 // a CAST on the way in, and reads turn timestamptz into one ISO form and jsonb into text so both
 // drivers return the same values. tenant_id and created_at are never listed: tenant_id is always
@@ -31,6 +32,7 @@ export const TENANT_TABLES = [
   "settlements",
   "settlement_lines",
   "pay_items",
+  "money_codes",
   "advances",
   "invoices",
   "customer_payments",
@@ -292,6 +294,31 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["item_ref", "text"],
       ["description", "text"],
       ["settlement_id", "uuid"],
+    ],
+  },
+  money_codes: {
+    table: "money_codes",
+    columns: [
+      ["id", "uuid"],
+      ["driver_id", "uuid"],
+      ["load_id", "uuid"],
+      ["purpose", "text"],
+      ["amount_cents", "int"],
+      ["source_kind", "text"],
+      ["document_id", "uuid"],
+      ["voice_note_id", "uuid"],
+      ["receipt_total_cents", "int"],
+      ["proposal_id", "uuid"],
+      ["money_action_id", "uuid"],
+      ["membership_id", "uuid"],
+      ["status", "text"],
+      ["provider_ref", "text"],
+      ["code_last4", "text"],
+      ["accessorial_id", "uuid"],
+      ["charge_item_id", "uuid"],
+      ["reimbursement_item_id", "uuid"],
+      ["issued_at", "timestamptz"],
+      ["expires_at", "timestamptz"],
     ],
   },
   advances: {
