@@ -309,6 +309,21 @@ export type Flags = {
   // the tools are not offered. invoicesEnabled must also be on. A post to accounting is always
   // left unsent there (a constant on the adapter, not a switch); LedgerLine never sends one.
   invoiceReviewEnabled: boolean;
+  // Carrier memory: short notes the office keeps about customers, drivers and its own ways, which
+  // the agent reads as context on each question (never for an amount; the notes' figures are
+  // never allowed in an answer). Off: the Memory page shows that it is off, the menu has no
+  // item, the note actions refuse before any read or write, the agent's summary has no notes
+  // section and a turn's trace lists none. No model call of its own, so no spend cap.
+  carrierMemoryEnabled: boolean;
+  carrierMemoryLimits: {
+    // Notes one question may carry, and their characters in the agent's summary.
+    maxNotesPerTurn: number;
+    maxPromptChars: number;
+    // One note's length (the table's own check holds 300 too).
+    maxNoteChars: number;
+    // Notes one carrier may keep; the page refuses one more with "Remove a note first".
+    maxNotesPerCarrier: number;
+  };
 };
 
 export const flags: Flags = {
@@ -414,6 +429,8 @@ export const flags: Flags = {
   batchApproveEnabled: false,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
   invoiceReviewEnabled: false,
+  carrierMemoryEnabled: false,
+  carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
 };
 
 applyLocalOverrides(flags);

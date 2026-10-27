@@ -39,6 +39,7 @@ const SWITCHES = [
   "clipsEnabled",
   "invoicesEnabled",
   "customerPaymentsEnabled",
+  "carrierMemoryEnabled",
 ] as const;
 const saved = Object.fromEntries(SWITCHES.map((s) => [s, flags[s]])) as Record<(typeof SWITCHES)[number], boolean>;
 
@@ -173,6 +174,12 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
     load: async () => (await import("./customer-payments/new/page")).default({ searchParams: searchParams() }),
     off: "Payments are off for this carrier",
     title: "Record a payment",
+  },
+  {
+    route: "/memory",
+    load: async () => (await import("./memory/page")).default(),
+    off: "Memory is off for this carrier",
+    title: "Memory",
   },
 ];
 

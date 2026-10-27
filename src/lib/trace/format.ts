@@ -1,6 +1,7 @@
 import { formatCents } from "@/lib/format/money";
 import { reasonSentence } from "@/lib/agent/reasons";
-import type { TraceCall, TraceDecision, TraceExtraCall, TraceProposal, TraceStep, TurnTrace } from "./types";
+import { NOTE_REF_TABLE } from "@/lib/memory/links";
+import type { TraceCall, TraceDecision, TraceExtraCall, TraceNote, TraceProposal, TraceStep, TurnTrace } from "./types";
 
 // Fixed words for every code a trace carries. Nothing here does math on money: model spend is
 // whole nanocents, cut to tenths of a cent (or whole cents) and always rounded up, so a display
@@ -278,7 +279,8 @@ const PURPOSE_WORDS: Readonly<Record<string, string>> = {
 export type TraceTone = "neutral" | "info" | "success" | "warning" | "destructive";
 
 // One row of the disclosure: who did it, its effort, time and cost, and what happened. cache is
-// the prompt cache line for a row that names a model call, set only when the call has counts.
+// the prompt cache line for a row that names a model call, set only when the call has counts. A
+// ref's label, when set, is the words its link shows (a carrier note's short label).
 export type TraceLine = {
   key: string;
   who: string;
@@ -286,8 +288,26 @@ export type TraceLine = {
   cache?: string;
   text: string;
   badge: { tone: TraceTone; label: string } | null;
-  refs: { table: string; id: string }[];
+  refs: { table: string; id: string; label?: string }[];
 };
+
+// The carrier notes the turn's summary held (carrierMemoryEnabled), each linking to its row on the
+// Memory page. A note removed since is counted, never named.
+function notesLine(notes: readonly TraceNote[]): TraceLine | null {
+  if (notes.length === 0) return null;
+  const present = notes.filter((n): n is { id: string; label: string } => n.label !== null);
+  const removed = notes.length - present.length;
+  let text = `Remembered ${countWords(notes.length, "note", "notes")} from the office`;
+  if (removed > 0) text += `; ${countWords(removed, "has", "have")} since been removed`;
+  return {
+    key: "memory",
+    who: "Memory",
+    meta: [],
+    text,
+    badge: null,
+    refs: present.map((n) => ({ table: NOTE_REF_TABLE, id: n.id, label: n.label })),
+  };
+}
 
 function callMeta(call: TraceCall): string[] {
   const out: string[] = [];
@@ -590,6 +610,9 @@ export function traceLines(trace: TurnTrace, proposalId?: string): TraceLine[] {
       out.push(withCache(extraLine(c), c));
     }
   };
+  // The notes were read before the first step, so they show first, on the whole turn's view only.
+  const notes = proposal ? null : notesLine(trace.notesUsed ?? []);
+  if (notes) out.push(notes);
   pushExtras(0);
   for (const s of trace.steps) {
     if (!subset || subset.seqs.has(s.seq)) out.push(stepLine(s, s.call ?? paired.get(s.seq) ?? null));

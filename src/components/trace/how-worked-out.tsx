@@ -10,6 +10,7 @@ import { traceLines, traceTotals, type TraceLine } from "@/lib/trace/format";
 import type { TurnTrace } from "@/lib/trace/types";
 import { cn } from "@/lib/cn";
 import { recordLabel } from "@/lib/format/labels";
+import { NOTE_REF_TABLE, noteHref } from "@/lib/memory/links";
 import { hrefOrNull, recordHref, type HrefFor } from "@/lib/records/href";
 
 // "How this was worked out": under an answer (the whole turn) or a proposal card (that card's
@@ -70,10 +71,11 @@ function Line({ line, hrefFor }: { line: TraceLine; hrefFor: HrefFor }) {
       <p className="text-body text-foreground-2">{line.text}</p>
       {line.cache ? <p className="text-small text-muted-foreground tabular-nums">{line.cache}</p> : null}
       {line.refs.length > 0 ? (
-        <ul className="flex flex-wrap gap-x-3 gap-y-1" aria-label="Records it read">
+        <ul className="flex flex-wrap gap-x-3 gap-y-1" aria-label={line.key === "memory" ? "Notes it read" : "Records it read"}>
           {line.refs.map((ref) => {
-            const href = hrefOrNull(hrefFor, ref);
-            const label = recordLabel(ref);
+            // A carrier note links to its row on the Memory page, never to a record page.
+            const href = ref.table === NOTE_REF_TABLE ? noteHref(ref.id) : hrefOrNull(hrefFor, ref);
+            const label = ref.label ?? recordLabel(ref);
             return (
               <li key={`${ref.table}:${ref.id}`} className="text-small">
                 {href ? (

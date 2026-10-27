@@ -1,7 +1,9 @@
+import { flags } from "../../../../config/flags";
 import type { Session } from "../../../auth/claims";
 import { readPayConfigFor, readTenant } from "../../../data/read";
 import { payConfigOf } from "../../../data/records";
 import type { Queryable } from "../../../db";
+import { notesSection, type NoteRow } from "../../../memory/notes";
 import { dollars } from "../../../money/format";
 import { localDateOf, periodContaining } from "../../../time/local-date";
 import { STATE_HEADER } from "../../policy";
@@ -9,7 +11,11 @@ import { STATE_HEADER } from "../../policy";
 // The compact state summary (design 2.3, tip 5): Muse Spark never sees the chat history, only
 // this one system message rebuilt from the database on every turn. Sections in a fixed order,
 // each with its own cap, then the whole cut from the bottom to the turn's cap. Untrusted text
-// never enters it: no message bodies, subjects or senders, only ids, codes, enums and cents.
+// never enters it: no message bodies, subjects or senders, only ids, codes, enums and cents. The
+// one exception is the carrier notes section (carrierMemoryEnabled), which holds only notes a
+// person of this carrier wrote or kept, one line each, in quotes, under a label that says they
+// are context and never a source for any amount; their figures are never added to cents, so an
+// amount stated only in a note is masked in the answer.
 
 export type SummarySection = { title: string; lines: string[]; maxChars: number };
 
@@ -100,9 +106,11 @@ export function voiceNoteLines(row: VoiceRow | undefined, money: (n: number) => 
   return lines;
 }
 
-// Inside a tenant transaction (the store opens it). Returns the text, its size, and every cents
-// figure it states. text: the person's message, which adds the voice note section when it is the
-// voice note page's hand-off sentence.
+// Inside a tenant transaction (the store opens it). Returns the text, its size, every cents
+// figure it states and the ids of the notes it holds. text: the person's message, which adds the
+// voice note section when it is the voice note page's hand-off sentence. notes: the carrier notes
+// read for this turn (the store reads them in their own transaction, so a failed read cannot end
+// this one); they add a section only while carrierMemoryEnabled is on, checked here again.
 export async function buildStateSummary(
   q: Queryable,
   _session: Session,
@@ -110,7 +118,8 @@ export async function buildStateSummary(
   now: Date,
   cap: number,
   text = "",
-): Promise<{ text: string; chars: number; cents: number[] }> {
+  notes: readonly NoteRow[] = [],
+): Promise<{ text: string; chars: number; cents: number[]; notesUsed: string[] }> {
   const cents: number[] = [];
   const money = (n: number) => {
     cents.push(n);
@@ -142,6 +151,10 @@ export async function buildStateSummary(
   }
   sections.push({ title: "Carrier", lines: header, maxChars: 300 });
   sections.push({ title: "Pay rules", lines: rules, maxChars: 600 });
+
+  // Context only: nothing here goes through money(), so no note figure joins cents.
+  const memory = flags.carrierMemoryEnabled && notes.length > 0 ? notesSection(notes, flags.carrierMemoryLimits) : null;
+  if (memory) sections.push(memory.section);
 
   const subject = await q.query<SubjectRow>(
     "SELECT subject_table, subject_id FROM conversations WHERE id = CAST($1 AS uuid)",
@@ -211,5 +224,7 @@ export async function buildStateSummary(
   });
 
   const summary = assembleSummary(sections, cap);
-  return { text: summary, chars: summary.length, cents };
+  // A note counts as used only when its whole line is in the text the model gets.
+  const notesUsed = memory ? memory.used.filter((_, i) => summary.includes(memory.section.lines[i + 1])) : [];
+  return { text: summary, chars: summary.length, cents, notesUsed };
 }

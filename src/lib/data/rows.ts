@@ -326,6 +326,25 @@ export type ScreeningRow = {
   expires_at: string | null;
 };
 
+// A carrier note (0040): a short line of context the office keeps about a customer, a driver or
+// the carrier as a whole. subject_id is null for the whole carrier. Only an active note reaches
+// the agent. created_at and updated_at are the database's own, so they are not listed.
+export type CarrierNoteRow = {
+  id: string;
+  subject_kind: "customer" | "driver" | "carrier";
+  subject_id: string | null;
+  text: string;
+  status: "suggested" | "active";
+  source_kind: "chat" | "record" | "person" | "seed";
+  source_turn_id: string | null;
+  source_table: string | null;
+  source_id: string | null;
+  created_by_kind: "person" | "agent" | "seed";
+  created_by_sub: string | null;
+  created_by_model_call_id: string | null;
+  updated_by_sub: string | null;
+};
+
 export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
@@ -349,6 +368,7 @@ export type TenantRows = {
   payment_applications: PaymentApplicationRow[];
   untrusted_inputs: UntrustedInputRow[];
   screenings: ScreeningRow[];
+  carrier_notes: CarrierNoteRow[];
 };
 
 // Compile-time proof that TenantRows has exactly one key per table.
