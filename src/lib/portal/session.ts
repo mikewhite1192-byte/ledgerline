@@ -12,6 +12,9 @@ export const CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 export const CODE_LENGTH = 8;
 export const CODE_TTL_MS = 20 * 60_000;
 export const SESSION_TTL_MS = 60 * 60_000;
+// At this many misses inside one minute, the tenant's sign-in form refuses every entry, even a
+// right one, until the minute that began with the first miss is over.
+export const SIGN_IN_FAILURE_LIMIT = 10;
 const CODE_SHAPE = /^[2-9A-HJ-NP-Z]{8}$/;
 const CARRIER_NUMBER = /^MC-[0-9]{6}$/;
 
@@ -60,10 +63,22 @@ export async function mintSession(
   return { sessionId, code, expiresAt };
 }
 
+// A miss counts toward the limit: the first in a new minute starts that minute's count at one.
+const COUNT_MISS =
+  "UPDATE portal_accounts SET" +
+  " failed_sign_ins = CASE WHEN failed_window_start > CAST($1 AS timestamptz) - interval '1 minute'" +
+  " THEN failed_sign_ins + 1 ELSE 1 END," +
+  " failed_window_start = CASE WHEN failed_window_start > CAST($1 AS timestamptz) - interval '1 minute'" +
+  " THEN failed_window_start ELSE CAST($1 AS timestamptz) END" +
+  " WHERE tenant_id = current_tenant_id()";
+
 // Signs in with a carrier number and a code, inside the tenant's transaction. The carrier number
 // must be this tenant's, whole; the code must be unexpired and never used. The UPDATE's own
 // condition makes the code single use even when two sign-ins race. Returns the session id, or
-// null for any miss (the page shows one message for all of them).
+// null for any miss (the page shows one message for all of them). Each miss is counted on the
+// tenant's account row, locked first so concurrent tries count one after another; at the limit
+// every entry is refused until the minute is over. A malformed entry never reaches the database,
+// so it is refused without being counted.
 export async function signIn(
   q: Queryable,
   input: { carrierNumber: string; code: string; now: Date },
@@ -71,18 +86,35 @@ export async function signIn(
   const carrier = normalizeCarrierNumber(input.carrierNumber);
   const code = normalizeCode(input.code);
   if (!carrier || !code) return null;
-  const accounts = await q.query<{ carrier_number: string }>(
-    "SELECT carrier_number FROM portal_accounts WHERE tenant_id = current_tenant_id()",
-  );
-  if (accounts.length !== 1 || accounts[0].carrier_number !== carrier) return null;
   const now = input.now.toISOString();
+  const accounts = await q.query<{ carrier_number: unknown; failed_sign_ins: unknown; window_open: unknown }>(
+    "SELECT carrier_number, failed_sign_ins," +
+      " (failed_window_start IS NOT NULL" +
+      " AND failed_window_start > CAST($1 AS timestamptz) - interval '1 minute') AS window_open" +
+      " FROM portal_accounts WHERE tenant_id = current_tenant_id() FOR UPDATE",
+    [now],
+  );
+  if (accounts.length !== 1) return null;
+  const account = accounts[0];
+  // Unknown is not zero: a count or a window that did not read back as expected refuses.
+  if (typeof account.failed_sign_ins !== "number" || typeof account.window_open !== "boolean") return null;
+  if (account.window_open && account.failed_sign_ins >= SIGN_IN_FAILURE_LIMIT) return null;
+  const sessionId = account.carrier_number === carrier ? await spendCode(q, code, input.now) : null;
+  if (sessionId) return sessionId;
+  await q.execute(COUNT_MISS, [now]);
+  return null;
+}
+
+// Spends a live code: its session id, or null when no live code matches or another sign-in won.
+async function spendCode(q: Queryable, code: string, at: Date): Promise<string | null> {
+  const now = at.toISOString();
   const rows = await q.query<{ id: string }>(
     "SELECT id FROM portal_sessions WHERE tenant_id = current_tenant_id() AND code_hash = $1" +
       " AND signed_in_at IS NULL AND expires_at > CAST($2 AS timestamptz)",
     [hashCode(code), now],
   );
   if (rows.length !== 1) return null;
-  const until = new Date(input.now.getTime() + SESSION_TTL_MS).toISOString();
+  const until = new Date(at.getTime() + SESSION_TTL_MS).toISOString();
   const n = await q.execute(
     "UPDATE portal_sessions SET signed_in_at = CAST($2 AS timestamptz)," +
       " session_expires_at = CAST($3 AS timestamptz)" +

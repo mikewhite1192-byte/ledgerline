@@ -222,12 +222,14 @@ export function dbRunStore(tenantId: string, db: TenantDb = getDb()): RunStore {
           return { kind: seen.length === 1 ? "not_queued" : "missing" };
         }
         const run = runOf(rows[0]);
-        // The run acts for the person who asked for it, so that person must still be a member.
+        // The run acts for the person who asked for it, so that person must still be a member of
+        // this tenant. The tenant is named in the query too, so a login that skips row security
+        // still cannot count a membership in another tenant.
         const member = await q.query<{ ok: number }>(
-          "SELECT 1 AS ok FROM memberships WHERE cognito_sub = $1",
-          [run.requestedBy],
+          "SELECT 1 AS ok FROM memberships WHERE cognito_sub = $1 AND tenant_id = CAST($2 AS uuid)",
+          [run.requestedBy, tenantId],
         );
-        return { kind: "claimed", run, member: member.length === 1 };
+        return { kind: "claimed", run, member: member.length >= 1 };
       }),
 
     context: (run) =>

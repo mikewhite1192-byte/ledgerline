@@ -62,9 +62,11 @@ beforeEach(() => {
   vi.stubEnv("PORTAL_BASE_URL", "");
 });
 
+const SHIPPED_MODEL = flags.portalRunnerModel;
+
 afterEach(() => {
   flags.portalRunnerEnabled = false;
-  flags.portalRunnerModel = "wonder";
+  flags.portalRunnerModel = SHIPPED_MODEL;
   vi.unstubAllEnvs();
 });
 
@@ -104,14 +106,14 @@ describe("createRunIn", () => {
   });
 
   it("queues a new run on the model the switch names, and adopts the winner of a race", async () => {
-    flags.portalRunnerModel = "spark";
+    flags.portalRunnerModel = "wonder";
     const { q, calls } = fakeQ();
     const out = await createRunIn(q, SESSION, input(), NOW);
     expect(out.kind).toBe("queued");
     const insert = calls.find((c) => c.sql.startsWith("INSERT"))!;
     expect(insert.sql).toContain("ON CONFLICT DO NOTHING");
     expect(insert.params.slice(2, 5)).toEqual(["FFE-100001", "sub-1", null]);
-    expect(insert.params[6]).toBe("spark");
+    expect(insert.params[6]).toBe("wonder");
 
     const winner = { id: "88888888-8888-4888-8888-888888888888", status: "queued" };
     expect(await createRunIn(fakeQ({ inserted: false, live: [winner] }).q, SESSION, input(), NOW)).toEqual({ kind: "live", runId: winner.id, status: "queued" });

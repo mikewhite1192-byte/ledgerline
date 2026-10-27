@@ -11,10 +11,10 @@ import type { PortalPlan } from "../seed/portal";
 import { clearTenantPortal, seedTenantPortal } from "../seed/portal-db";
 import { decideCheck } from "./decide";
 import { findPortalLoads, portalLoadByReference, portalPod } from "./read";
-import type { CapturedPod, PortalDriver } from "./runner/driver";
+import type { CapturedPod, PortalCredentials, PortalDriver } from "./runner/driver";
 import { runPortalRun, type RunDeps, type StepFn } from "./runner/run";
 import { dbRunStore } from "./runner/store";
-import { cookieValue, signIn } from "./session";
+import { cookieValue, mintSession, SIGN_IN_FAILURE_LIMIT, signIn } from "./session";
 import { createRunIn } from "./start";
 import { withPortalTenant } from "./tenant";
 import { evidencePod, latestEvidence, listRuns, runView, stepScreenshot } from "./views";
@@ -153,13 +153,24 @@ async function createTenant(id: string, prefix: string): Promise<void> {
 }
 
 // A browser that runs nothing real: every screenshot is the largest allowed, and the click on
-// the detail page captures the POD the portal serves.
-function fakeDriver(pod: Uint8Array) {
-  const state = { url: "about:blank", pod: null as CapturedPod | null, ran: 0, opened: [] as string[] };
+// the detail page captures the POD the portal serves. Signing in hands what the driver would type
+// to the test, which signs in for real and says whether the portal let it in.
+function fakeDriver(pod: Uint8Array, portalSignIn: (typed: PortalCredentials) => Promise<boolean> = async () => false) {
+  const state = {
+    url: "about:blank",
+    pod: null as CapturedPod | null,
+    ran: 0,
+    opened: [] as string[],
+    signIns: [] as { url: string; typed: PortalCredentials }[],
+  };
   const driver: PortalDriver = {
     async open(url) {
       state.opened.push(url);
       state.url = url;
+    },
+    async signIn(url, typed) {
+      state.signIns.push({ url, typed });
+      state.url = (await portalSignIn(typed)) ? `${ORIGIN}/portal/loads` : `${url}&e=1`;
     },
     async run(action) {
       state.ran += 1;
@@ -291,15 +302,41 @@ describe("the portal tables", () => {
     expect(started.kind).toBe("queued");
     flowRunId = (started as { runId: string }).runId;
 
-    // First pass: sign-in typed, then a call that carries a safety check pauses before acting.
+    // First pass: the driver signs in with the code the runner minted for this run, which works
+    // only in its own tenant; then a search, then a call with a safety check pauses before acting.
     const first = scripted([
-      callResult(1, [{ type: "type", text: "CODE" }, { type: "keypress", keys: ["Enter"] }]),
+      callResult(1, [{ type: "type", text: REF_TIMES }, { type: "keypress", keys: ["Enter"] }]),
       callResult(2, [{ type: "click", x: 100, y: 200, button: "left" }], [CHECK]),
     ]);
-    const d1 = fakeDriver(podA);
+    const d1 = fakeDriver(podA, async (typed) => {
+      expect(await asApp(B, (q) => signIn(q, { ...typed, now: tick() }))).toBeNull();
+      sessionA = (await asApp(A, (q) => signIn(q, { ...typed, now: tick() }))) ?? "";
+      return sessionA !== "";
+    });
     expect(await runPortalRun({ tenantId: A, runId: flowRunId }, deps(d1.driver, first.step))).toEqual({ kind: "paused" });
     expect(d1.state.ran).toBe(2);
-    expect(d1.state.opened).toEqual([`${ORIGIN}/portal?t=${A}`]);
+    expect(d1.state.opened).toEqual([]);
+    expect(d1.state.signIns.map((s) => [s.url, s.typed.carrierNumber])).toEqual([[`${ORIGIN}/portal?t=${A}`, CARRIER_A]]);
+    expect(sessionA).toMatch(/^[0-9a-f-]{36}$/);
+    const code = d1.state.signIns[0].typed.code;
+    // Single use.
+    expect(await asApp(A, (q) => signIn(q, { carrierNumber: CARRIER_A, code, now: tick() }))).toBeNull();
+    // The code reached no model request and no stored step.
+    for (const r of first.requests) {
+      expect(JSON.stringify({ task: r.task, instructions: r.instructions, history: r.history.map((h) => h.call) })).not.toContain(
+        code,
+      );
+    }
+    const storedSteps = await asApp(A, (q) =>
+      q.query<{ call_item: string | null; action_summary: string; url_after: string | null }>(
+        "SELECT CAST(call_item AS text) AS call_item, CAST(action_summary AS text) AS action_summary, url_after" +
+          " FROM portal_run_steps WHERE run_id = CAST($1 AS uuid)",
+        [flowRunId],
+      ),
+    );
+    // The opening screen, the search, and the paused click.
+    expect(storedSteps).toHaveLength(3);
+    expect(JSON.stringify(storedSteps)).not.toContain(code);
 
     const paused = await asApp(A, (q) =>
       q.query<{ status: string; claim_token: string | null; step_count: number }>(
@@ -317,15 +354,6 @@ describe("the portal tables", () => {
     expect(checks.map((c) => [c.check_id, c.status])).toEqual([[CHECK.id, "pending"]]);
     // Stamped by the runner's clock, so the approval wait never depends on the database's.
     expect(new Date(checks[0].created_at).getTime()).toBeGreaterThan(T0);
-
-    // The page signs the session in with the code the runner minted for this run.
-    const code = /Access code: ([A-Z0-9]{8})/.exec(first.requests[0].task)?.[1];
-    expect(code).toBeDefined();
-    expect(await asApp(B, (q) => signIn(q, { carrierNumber: CARRIER_A, code: code!, now: tick() }))).toBeNull();
-    sessionA = (await asApp(A, (q) => signIn(q, { carrierNumber: CARRIER_A, code: code!, now: tick() })))!;
-    expect(sessionA).toMatch(/^[0-9a-f-]{36}$/);
-    // Single use.
-    expect(await asApp(A, (q) => signIn(q, { carrierNumber: CARRIER_A, code: code!, now: tick() }))).toBeNull();
 
     expect(
       await asApp(A, (q) => decideCheck(q, memberA, { runId: flowRunId, checkId: checks[0].id, decision: "approve" }, tick())),
@@ -471,6 +499,51 @@ describe("the portal tables", () => {
     await expect(store.progress(runId, token, progress)).rejects.toThrow();
   });
 
+  it("claims a run only for a member of the run's own tenant, even on a login that skips row security", async () => {
+    // A run in tenant B asked for by someone who is a member only in tenant A.
+    const runId = randomUUID();
+    await admin.withTenant(B, (q) =>
+      q.execute(
+        "INSERT INTO portal_runs (id, tenant_id, load_id, reference, requested_by, trace_id, model, status)" +
+          " VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, 'spark', 'queued')",
+        [runId, setup[B].pendingLoad, REF_PENDING, SUB_A, randomUUID()],
+      ),
+    );
+    const claimed = await dbRunStore(B, admin).claim(runId, randomUUID(), tick());
+    expect(claimed).toMatchObject({ kind: "claimed", member: false });
+  });
+
+  it("refuses every sign-in after ten misses in a minute, for that tenant only", async () => {
+    // Past any minute an earlier test's miss opened.
+    clock += 120_000;
+    const minted = await asApp(B, (q) => mintSession(q, { runId: null, createdBy: "limit-test", now: tick() }));
+    const wrong = minted.code === "ZZZZZZZZ" ? "YYYYYYYY" : "ZZZZZZZZ";
+    const countOf = (tenantId: string) =>
+      asApp(tenantId, (q) => q.query<{ failed_sign_ins: number }>("SELECT failed_sign_ins FROM portal_accounts"));
+    const aBefore = await countOf(A);
+    for (let i = 0; i < SIGN_IN_FAILURE_LIMIT; i++) {
+      expect(await asApp(B, (q) => signIn(q, { carrierNumber: CARRIER_B, code: wrong, now: tick() }))).toBeNull();
+    }
+    expect(await countOf(B)).toEqual([{ failed_sign_ins: SIGN_IN_FAILURE_LIMIT }]);
+    // Locked: even the right code is refused, and it stays unused.
+    expect(await asApp(B, (q) => signIn(q, { carrierNumber: CARRIER_B, code: minted.code, now: tick() }))).toBeNull();
+    const unused = await asApp(B, (q) =>
+      q.query<{ signed_in_at: Date | null }>("SELECT signed_in_at FROM portal_sessions WHERE id = CAST($1 AS uuid)", [
+        minted.sessionId,
+      ]),
+    );
+    expect(unused).toEqual([{ signed_in_at: null }]);
+    // The other tenant counted nothing.
+    expect(await countOf(A)).toEqual(aBefore);
+    // Once the minute is over, the right code signs in, and the next miss starts a new count.
+    clock += 61_000;
+    expect(await asApp(B, (q) => signIn(q, { carrierNumber: CARRIER_B, code: minted.code, now: tick() }))).toBe(
+      minted.sessionId,
+    );
+    expect(await asApp(B, (q) => signIn(q, { carrierNumber: CARRIER_B, code: wrong, now: tick() }))).toBeNull();
+    expect(await countOf(B)).toEqual([{ failed_sign_ins: 1 }]);
+  });
+
   it("keeps every portal table inside its tenant and the app login inside its grants", async () => {
     for (const table of PORTAL_TABLES) {
       const own = await asApp(A, (q) => q.query<{ n: number }>(`SELECT CAST(count(*) AS integer) AS n FROM ${table}`));
@@ -510,6 +583,9 @@ describe("the portal tables", () => {
     expect(await sqlStateOf(asApp(A, (q) => q.execute("UPDATE portal_loads SET notes = 'x'")))).toBe("42501");
     expect(await sqlStateOf(asApp(A, (q) => q.execute("UPDATE portal_runs SET reference = 'FFE-999999'")))).toBe("42501");
     expect(await sqlStateOf(asApp(A, (q) => q.execute("UPDATE portal_run_checks SET code = 'other'")))).toBe("42501");
+    expect(await sqlStateOf(asApp(A, (q) => q.execute("UPDATE portal_accounts SET carrier_number = 'MC-000001'")))).toBe(
+      "42501",
+    );
 
     // The portal cookie names a tenant; a session from another tenant opens nothing.
     expect(await withPortalTenant(cookieValue(B, sessionA), tick(), async () => "open", app)).toBeNull();

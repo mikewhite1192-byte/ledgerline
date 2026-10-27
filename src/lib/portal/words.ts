@@ -24,6 +24,7 @@ const ENDED: Record<string, string> = {
   model_error: "The model call failed",
   runner_error: "The runner failed",
   session_error: "The portal session could not be made",
+  sign_in_failed: "The runner could not sign in to the portal",
   no_portal_account: "This carrier has no portal account",
   no_portal_load: "The portal has no record of this load",
   forbidden: "The person who started the run is no longer a member",

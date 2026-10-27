@@ -11,6 +11,7 @@ import {
   parseCookie,
   portalCookieOptions,
   sessionAlive,
+  SIGN_IN_FAILURE_LIMIT,
   signIn,
 } from "./session";
 
@@ -24,13 +25,16 @@ function fakeQ(answers: { accounts?: unknown[]; sessions?: unknown[]; updated?: 
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []) {
       calls.push({ sql, params });
-      if (sql.includes("FROM portal_accounts")) return (answers.accounts ?? [{ carrier_number: "MC-123456" }]) as T[];
+      if (sql.includes("FROM portal_accounts")) {
+        return (answers.accounts ?? [{ carrier_number: "MC-123456", failed_sign_ins: 0, window_open: false }]) as T[];
+      }
       if (sql.includes("session_expires_at >")) return (answers.alive ?? []) as T[];
       if (sql.includes("FROM portal_sessions")) return (answers.sessions ?? [{ id: SESSION_ID }]) as T[];
       throw new Error("unexpected query");
     },
     async execute(sql: string, params: Param[] = []) {
       calls.push({ sql, params });
+      if (sql.startsWith("UPDATE portal_accounts")) return 1;
       return sql.startsWith("UPDATE") ? (answers.updated ?? 1) : 1;
     },
   };
@@ -73,17 +77,51 @@ describe("signIn", () => {
     const update = calls.find((c) => c.sql.startsWith("UPDATE"))!;
     expect(update.sql).toContain("signed_in_at IS NULL");
     expect(update.params).toEqual([SESSION_ID, NOW.toISOString(), "2026-10-27T16:00:00.000Z"]);
+    // The account row is read locked, and a sign-in that worked counts nothing.
+    expect(calls[0].sql).toContain("FOR UPDATE");
+    expect(calls.some((c) => c.sql.startsWith("UPDATE portal_accounts"))).toBe(false);
   });
 
-  it("refuses another carrier's number, compared whole", async () => {
-    const { q, calls } = fakeQ({ accounts: [{ carrier_number: "MC-1234567" }] });
+  it("refuses another carrier's number, compared whole, and counts the miss", async () => {
+    const { q, calls } = fakeQ({ accounts: [{ carrier_number: "MC-1234567", failed_sign_ins: 0, window_open: false }] });
     expect(await signIn(q, { carrierNumber: "MC-123456", code: "ABCD2345", now: NOW })).toBeNull();
     expect(calls.some((c) => c.sql.includes("FROM portal_sessions"))).toBe(false);
+    const counted = calls.filter((c) => c.sql.startsWith("UPDATE portal_accounts"));
+    expect(counted).toHaveLength(1);
+    expect(counted[0].params).toEqual([NOW.toISOString()]);
   });
 
-  it("refuses an unknown, used or expired code, and the loser of a race", async () => {
-    expect(await signIn(fakeQ({ sessions: [] }).q, { carrierNumber: "MC-123456", code: "ABCD2345", now: NOW })).toBeNull();
-    expect(await signIn(fakeQ({ updated: 0 }).q, { carrierNumber: "MC-123456", code: "ABCD2345", now: NOW })).toBeNull();
+  it("refuses an unknown, used or expired code, and the loser of a race, counting each miss", async () => {
+    for (const answers of [{ sessions: [] }, { updated: 0 }]) {
+      const { q, calls } = fakeQ(answers);
+      expect(await signIn(q, { carrierNumber: "MC-123456", code: "ABCD2345", now: NOW })).toBeNull();
+      expect(calls.filter((c) => c.sql.startsWith("UPDATE portal_accounts"))).toHaveLength(1);
+    }
+  });
+
+  it("refuses even a right code at the limit inside the minute, without looking at codes", async () => {
+    const locked = { carrier_number: "MC-123456", failed_sign_ins: SIGN_IN_FAILURE_LIMIT, window_open: true };
+    const { q, calls } = fakeQ({ accounts: [locked] });
+    expect(await signIn(q, { carrierNumber: "MC-123456", code: "ABCD2345", now: NOW })).toBeNull();
+    expect(calls).toHaveLength(1);
+    // One short of the limit, or the same count once the minute is over, still signs in.
+    const under = fakeQ({ accounts: [{ ...locked, failed_sign_ins: SIGN_IN_FAILURE_LIMIT - 1 }] });
+    expect(await signIn(under.q, { carrierNumber: "MC-123456", code: "ABCD2345", now: NOW })).toBe(SESSION_ID);
+    const later = fakeQ({ accounts: [{ ...locked, window_open: false }] });
+    expect(await signIn(later.q, { carrierNumber: "MC-123456", code: "ABCD2345", now: NOW })).toBe(SESSION_ID);
+  });
+
+  it("fails closed when the count or the window does not read back as expected", async () => {
+    for (const odd of [
+      { carrier_number: "MC-123456", failed_sign_ins: "0", window_open: false },
+      { carrier_number: "MC-123456", failed_sign_ins: 0, window_open: null },
+      { carrier_number: "MC-123456" },
+    ]) {
+      const { q, calls } = fakeQ({ accounts: [odd] });
+      expect(await signIn(q, { carrierNumber: "MC-123456", code: "ABCD2345", now: NOW })).toBeNull();
+      expect(calls).toHaveLength(1);
+    }
+    expect(await signIn(fakeQ({ accounts: [] }).q, { carrierNumber: "MC-123456", code: "ABCD2345", now: NOW })).toBeNull();
   });
 
   it("never queries for a malformed entry", async () => {

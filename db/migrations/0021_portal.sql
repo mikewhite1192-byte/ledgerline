@@ -9,11 +9,15 @@
 -- the routes need: no DELETE anywhere (the seed's admin login clears these tables first).
 
 -- The carrier's account on the portal: the carrier number typed at sign-in. One per tenant.
+-- failed_sign_ins counts the misses in the minute that began at failed_window_start; at the limit
+-- the sign-in form refuses every entry, even a right one, until that minute is over.
 CREATE TABLE portal_accounts (
-  tenant_id      uuid PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
-  carrier_number text NOT NULL UNIQUE CHECK (carrier_number ~ '^MC-[0-9]{6}$'),
-  carrier_name   text NOT NULL CHECK (length(carrier_name) BETWEEN 1 AND 120),
-  created_at     timestamptz NOT NULL DEFAULT now()
+  tenant_id           uuid PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+  carrier_number      text NOT NULL UNIQUE CHECK (carrier_number ~ '^MC-[0-9]{6}$'),
+  carrier_name        text NOT NULL CHECK (length(carrier_name) BETWEEN 1 AND 120),
+  failed_sign_ins     integer NOT NULL DEFAULT 0 CHECK (failed_sign_ins >= 0),
+  failed_window_start timestamptz,
+  created_at          timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE portal_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE portal_accounts FORCE ROW LEVEL SECURITY;
@@ -254,6 +258,7 @@ GRANT SELECT ON portal_accounts, portal_loads TO payday_app;
 GRANT SELECT, INSERT ON portal_sessions, portal_runs, portal_run_steps, portal_run_checks,
   portal_evidence TO payday_app;
 GRANT UPDATE (signed_in_at, session_expires_at) ON portal_sessions TO payday_app;
+GRANT UPDATE (failed_sign_ins, failed_window_start) ON portal_accounts TO payday_app;
 GRANT UPDATE (status, ended_reason, step_count, model_call_count, cost_nanocents, last_url,
   session_id, claim_token, claimed_at, resume_step, started_at, finished_at, result)
   ON portal_runs TO payday_app;

@@ -23,6 +23,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ ref
         "content-type": "application/pdf",
         "content-disposition": `attachment; filename="pod-${reference}.pdf"`,
         "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
       },
     });
   } catch (err) {

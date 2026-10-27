@@ -5,6 +5,7 @@ import type { ComputerAction, ComputerCall, ComputerRequest, ComputerResult, Com
 import { PNG_BYTES } from "../../ai/test-fixtures";
 import type { PortalRecord } from "./answer";
 import type { CapturedPod, PortalCookie, PortalDriver } from "./driver";
+import { taskText } from "./prompt";
 import { runPortalRun, type RunDeps, type StepFn } from "./run";
 import {
   LostClaimError,
@@ -56,7 +57,7 @@ function runRow(extra: Partial<RunRow> = {}): RunRow {
     requestedBy: "sub-1",
     turnId: null,
     traceId: "trace-1",
-    model: "wonder",
+    model: "spark",
     stepCount: 0,
     modelCallCount: 0,
     costNanocents: 0,
@@ -152,10 +153,15 @@ function fakeStore(options: {
 }
 
 // A browser that runs nothing real. Each action may carry an effect: a new URL or a captured POD.
-function fakeDriver(effects: Record<number, { url?: string; pod?: boolean; fail?: boolean }> = {}) {
+// Signing in lands on the loads page unless the portal is set to refuse it.
+function fakeDriver(
+  effects: Record<number, { url?: string; pod?: boolean; fail?: boolean }> = {},
+  portal: { refuseSignIn?: boolean } = {},
+) {
   const state = {
     ran: [] as ComputerAction[],
     opened: [] as { url: string; cookie: PortalCookie | null }[],
+    signIns: [] as { url: string; carrierNumber: string; code: string }[],
     url: "about:blank",
     pod: null as CapturedPod | null,
     closed: false,
@@ -165,6 +171,10 @@ function fakeDriver(effects: Record<number, { url?: string; pod?: boolean; fail?
     async open(url, cookie) {
       state.opened.push({ url, cookie });
       state.url = url;
+    },
+    async signIn(url, credentials) {
+      state.signIns.push({ url, ...credentials });
+      state.url = portal.refuseSignIn ? `${ORIGIN}/portal?t=${TENANT}&e=1` : `${ORIGIN}/portal/loads`;
     },
     async run(action) {
       const effect = effects[state.ran.length] ?? {};
@@ -270,26 +280,38 @@ describe("runPortalRun, a run start to finish", () => {
     const s = fakeStore();
     const d = fakeDriver({ 1: { url: DETAIL }, 2: { pod: true } });
     const m = scripted([
-      callResult([{ type: "type", text: "ABCD2345" }, { type: "keypress", keys: ["Enter"] }]),
+      callResult([{ type: "type", text: REF }, { type: "keypress", keys: ["Enter"] }]),
       callResult([click()]),
       answerResult(),
     ]);
     const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, m.step));
 
     expect(out).toEqual({ kind: "ended", status: "done", reason: "ok" });
-    expect(d.state.opened).toEqual([{ url: `${ORIGIN}/portal?t=${TENANT}`, cookie: null }]);
+    // The driver typed the code itself, before the first screenshot; nothing else opened a page.
+    expect(d.state.signIns).toEqual([{ url: `${ORIGIN}/portal?t=${TENANT}`, carrierNumber: "MC-123456", code: "ABCD2345" }]);
+    expect(d.state.opened).toEqual([]);
+    expect(s.inserted[0].urlAfter).toBe(`${ORIGIN}/portal/loads`);
     expect(d.state.ran.map((a) => a.type)).toEqual(["type", "keypress", "click"]);
     expect(d.state.closed).toBe(true);
-    expect(m.targets).toEqual(["wonder", "wonder", "wonder"]);
+    expect(m.targets).toEqual(["spark", "spark", "spark"]);
     // Each call sees one more pair; nothing is ever acknowledged without a person.
     expect(m.requests.map((r) => r.history.length)).toEqual([0, 1, 2]);
     for (const r of m.requests) {
       for (const p of r.history) expect(p.output.acknowledged).toEqual([]);
     }
-    expect(m.requests[0].task).toContain("Access code: ABCD2345");
+    // The code is in no request to the model and in no stored step, whatever the field.
+    expect(m.requests[0].task).not.toContain("Access code");
+    for (const r of m.requests) {
+      expect(JSON.stringify({ task: r.task, instructions: r.instructions, history: r.history.map((h) => h.call) })).not.toContain(
+        "ABCD2345",
+      );
+    }
+    for (const step of s.inserted) {
+      expect(JSON.stringify({ summary: step.summary, call: step.call, urlAfter: step.urlAfter })).not.toContain("ABCD2345");
+    }
     expect(m.requests[0].maxCostCents).toBe(LIMITS.maxCallCents);
     // The typed text never reaches the trace: only its length.
-    expect(s.inserted[1].summary).toEqual([{ type: "type", chars: 8 }, { type: "keypress", keys: ["Enter"] }]);
+    expect(s.inserted[1].summary).toEqual([{ type: "type", chars: REF.length }, { type: "keypress", keys: ["Enter"] }]);
     expect(s.log).toEqual([
       "claim",
       "mint",
@@ -450,7 +472,11 @@ describe("runPortalRun, safety checks", () => {
     expect(d.state.ran.map((a) => a.type)).toEqual(["click", "wait"]);
     expect(s.completed).toEqual([{ seq: 2, urlAfter: DETAIL, stoppedEarly: false }]);
     const sent = m.requests[0];
-    expect(sent.task).toContain("Access code: (already used");
+    // A resumed run signs in by its cookie, never by a code, and sends the same task text.
+    expect(d.state.signIns).toEqual([]);
+    expect(sent.task).toBe(
+      taskText({ loadNumber: "L-2001", reference: REF, portalUrl: `${ORIGIN}/portal` }),
+    );
     expect(sent.history.map((h) => h.output.callId)).toEqual(["call_s1", "call_s2"]);
     expect(sent.history[0].output.acknowledged).toEqual([]);
     // The raw check objects of that step, exactly as received, and nothing else.
@@ -624,6 +650,19 @@ describe("runPortalRun, guards and caps", () => {
       }),
     );
     expect(out).toEqual({ kind: "ended", status: "failed", reason: "browser_error" });
+  });
+
+  it("ends without a model call or a screenshot when the portal refuses the sign-in", async () => {
+    const s = fakeStore();
+    const d = fakeDriver({}, { refuseSignIn: true });
+    const m = scripted([]);
+    const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, m.step));
+    expect(out).toEqual({ kind: "ended", status: "failed", reason: "sign_in_failed" });
+    expect(d.state.signIns).toHaveLength(1);
+    expect(d.state.shots).toBe(0);
+    expect(s.inserted).toEqual([]);
+    expect(m.step).not.toHaveBeenCalled();
+    expect(d.state.closed).toBe(true);
   });
 
   it("writes nothing more once its claim is lost", async () => {

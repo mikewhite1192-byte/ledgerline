@@ -7,7 +7,9 @@ import { cookieValue, portalCookieOptions, signIn } from "@/lib/portal/session";
 import { isUuid } from "@/lib/uuid";
 
 // POST: the portal's sign-in form. Every miss sends the browser back to the form with one
-// message. Relative redirects, so nothing depends on how the host reports its own URL.
+// message. Relative redirects, so nothing depends on how the host reports its own URL. signIn
+// counts the misses and refuses every entry after ten in a minute for the tenant; an error here
+// refuses too.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 

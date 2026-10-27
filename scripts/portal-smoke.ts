@@ -5,6 +5,7 @@ import { flags } from "../src/config/flags";
 import { createPgDb } from "../src/lib/db/pg";
 import type { Db } from "../src/lib/db/types";
 import { chromiumPath } from "../src/lib/portal/config";
+import { blockOffOriginSockets, openPlaywrightDriver } from "../src/lib/portal/runner/playwright-driver";
 import { mintSession } from "../src/lib/portal/session";
 import type { PortalPlan } from "../src/lib/seed/portal";
 import { clearTenantPortal, seedTenantPortal } from "../src/lib/seed/portal-db";
@@ -12,8 +13,9 @@ import { localDatabaseUrl } from "./lib/local-db";
 
 // npm run portal:smoke, on this machine only, never in CI. Starts the dev server against a
 // throwaway tenant in the local database, opens the portal headless, signs in with a minted code
-// and downloads the signed POD. Prints three lines and removes everything it made, failure paths
-// included. The portal answers only while portalRunnerEnabled is on, so this is run with the flag
+// and downloads the signed POD; then has the runner's own browser sign itself in with a second
+// code, and checks the socket rule closes a WebSocket to another origin while one to the portal
+// goes through. Prints five lines and removes everything it made, failure paths included. The portal answers only while portalRunnerEnabled is on, so this is run with the flag
 // turned on locally and never committed that way. PORTAL_CHROMIUM_PATH picks a local Chrome
 // when the browser playwright-core expects is not installed.
 
@@ -162,6 +164,9 @@ async function main(): Promise<void> {
     const minted = await admin.withTenant(tenantId, (q) =>
       mintSession(q, { runId: null, createdBy: "portal-smoke", now: new Date() }),
     );
+    const forRunner = await admin.withTenant(tenantId, (q) =>
+      mintSession(q, { runId: null, createdBy: "portal-smoke", now: new Date() }),
+    );
 
     server = spawn("npx", ["next", "dev", "--port", String(PORT)], {
       detached: true,
@@ -200,6 +205,41 @@ async function main(): Promise<void> {
     const hash = createHash("sha256").update(bytes).digest("hex");
     if (hash !== expectedHash) fail("the downloaded POD does not match the seeded hash");
     console.log(`pod      ok  ${bytes.length} bytes, a PDF whose sha256 matches the seeded POD`);
+
+    const driver = await openPlaywrightDriver({ origin: ORIGIN, podMaxBytes: flags.portalRunLimits.podMaxBytes, recordDir: null });
+    try {
+      await driver.signIn(`${ORIGIN}/portal?t=${tenantId}`, { carrierNumber: plan.carrierNumber, code: forRunner.code });
+      if (new URL(driver.url()).pathname !== "/portal/loads") fail("the runner's browser did not get past the sign-in form");
+    } finally {
+      await driver.close();
+    }
+    console.log("driver   ok  the runner's browser typed its own code and reached /portal/loads");
+
+    const guarded = await browser.newContext();
+    await blockOffOriginSockets(guarded, ORIGIN);
+    const probe = await guarded.newPage();
+    await probe.goto(`${ORIGIN}/portal?t=${tenantId}`);
+    // Whether a socket opened, or how it closed: the rule closes with 1008 and its reason.
+    const socket = (url: string) =>
+      probe.evaluate(
+        (u) =>
+          new Promise<string>((resolve) => {
+            const ws = new WebSocket(u);
+            ws.onopen = () => {
+              ws.close();
+              resolve("open");
+            };
+            ws.onclose = (e) => resolve(`closed ${e.code} ${e.reason}`);
+            setTimeout(() => resolve("timeout"), 5_000);
+          }),
+        url,
+      );
+    const offOrigin = await socket("ws://127.0.0.1:9/x");
+    if (offOrigin !== "closed 1008 off origin") fail(`an off-origin socket was not closed by the rule (${offOrigin})`);
+    const onOrigin = await socket(`ws://localhost:${PORT}/_next/webpack-hmr`);
+    if (onOrigin.includes("off origin")) fail("the rule closed a socket to the portal's own origin");
+    await guarded.close();
+    console.log(`sockets  ok  off-origin: ${offOrigin}; portal origin: ${onOrigin}`);
   } catch (err) {
     if (log.length) console.error(log.slice(-15).join("\n"));
     throw err;

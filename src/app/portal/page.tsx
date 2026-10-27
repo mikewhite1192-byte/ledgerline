@@ -30,7 +30,7 @@ export default async function PortalSignIn({ searchParams }: { searchParams: Pro
         </label>
         <label className="block">
           <span className="font-bold">Access code</span>
-          <input name="code" autoComplete="off" className={field} required />
+          <input name="code" type="password" autoComplete="off" className={field} required />
         </label>
         <button type="submit" className="border-2 border-[#2f4f3a] bg-[#2f4f3a] px-8 py-3 text-xl font-bold text-white">
           Sign in

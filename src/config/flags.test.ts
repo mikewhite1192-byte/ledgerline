@@ -82,9 +82,9 @@ describe("flags", () => {
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 
-  it("ships the portal runner dark, on Muse Wonder, with every run capped", () => {
+  it("ships the portal runner dark, on Muse Spark, with every run capped", () => {
     expect(flags.portalRunnerEnabled).toBe(false);
-    expect(flags.portalRunnerModel).toBe("wonder");
+    expect(flags.portalRunnerModel).toBe("spark");
     expect(flags.portalRunLimits).toEqual({
       maxSteps: 15,
       maxWallMs: 240_000,

@@ -733,7 +733,7 @@ export async function complete(
   };
 }
 
-// --- computerStep: one step of a computer-use loop, Muse Wonder (Muse Spark locally) ---
+// --- computerStep: one step of a computer-use loop, on the model flags.portalRunnerModel names ---
 
 // The docs' limit for a stateless replay: at most 29 calls and their answers in one request.
 const MAX_COMPUTER_PAIRS = 29;
@@ -785,8 +785,9 @@ export async function computerStep(
   session: Session,
   deps: AiDeps = {},
 ): Promise<ComputerResult> {
-  // Muse Spark only when the switch says so; Muse Wonder otherwise.
-  if (target !== "wonder" && !(target === "spark" && flags.portalRunnerModel === "spark")) bad();
+  // Only the model the switch names, read on every call: any other target is refused before any
+  // reservation, whichever of the two it is.
+  if ((target !== "wonder" && target !== "spark") || target !== flags.portalRunnerModel) bad();
   const { callId, answer, costNanocents } = await runCall(
     target,
     "tokens",

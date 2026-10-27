@@ -174,6 +174,10 @@ export function metaComputerBody(model: string, request: ComputerRequest, option
       ],
     },
   ];
+  // Only each computer_call goes back, not the reasoning items that came with it: they are not
+  // stored, and the encrypted reasoning the request asks for is not replayed. The model works from
+  // the task and the screens alone, which the local multi-step run showed is enough. A run is
+  // bounded by its step, time and cost limits whatever the model does with less context.
   for (const pair of request.history) {
     input.push(pair.call, {
       type: "computer_call_output",

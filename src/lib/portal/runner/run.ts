@@ -64,6 +64,15 @@ const STEP_OUTPUT_TOKENS = 1024;
 const RETRY_OUTPUT_TOKENS = 2048;
 const STEP_TIMEOUT_MS = 60_000;
 
+// The worker has no signed-in request: it acts as the person who started the run, by their subject
+// and tenant, the only two fields the wrapper and the screener read. It has no email to give.
+const WORKER_EMAIL = "";
+const workerSession = (requestedBy: string, tenantId: string): Session => ({
+  sub: requestedBy,
+  email: WORKER_EMAIL,
+  tenantId,
+});
+
 class BrowserError extends Error {
   constructor() {
     super("browser error");
@@ -134,7 +143,7 @@ export async function runPortalRun(
   if (claimed.kind !== "claimed") return { kind: "skipped" };
   const run: RunRow = claimed.run;
   const startedMs = deps.now().getTime();
-  const session: Session = { sub: run.requestedBy, email: "", tenantId: payload.tenantId };
+  const session = workerSession(run.requestedBy, payload.tenantId);
   const state = {
     cost: run.costNanocents,
     calls: run.modelCallCount,
@@ -159,7 +168,8 @@ export async function runPortalRun(
     const context = await store.context(run);
     if (!context) return await end("failed", "no_portal_account");
 
-    // 1. Context: a new run mints its access code; a resumed one needs its session alive.
+    // 1. Context: a new run mints its access code, which only the driver ever types; a resumed one
+    // needs its session alive.
     let code: string | null = null;
     let sessionId = run.sessionId;
     const resuming = sessionId !== null;
@@ -175,8 +185,6 @@ export async function runPortalRun(
       loadNumber: context.loadNumber,
       reference: run.reference,
       portalUrl: `${deps.origin}/portal`,
-      carrierNumber: context.carrierNumber,
-      code,
     });
 
     // What a resumed run picks up: its stored steps, the approved checks, the paused step.
@@ -219,7 +227,20 @@ export async function runPortalRun(
     const urls = new Map<number, string | null>();
     let nextSeq: number;
     if (!resuming) {
-      await browser(() => opened.open(`${deps.origin}/portal?t=${encodeURIComponent(payload.tenantId)}`, null));
+      // The driver signs in itself, before the first screenshot, so the code never reaches the
+      // model, a screenshot or a stored step. Anything but the loads page after it is a failure.
+      if (!code) return await end("failed", "session_error");
+      const signInCode = code;
+      await browser(() =>
+        opened.signIn(`${deps.origin}/portal?t=${encodeURIComponent(payload.tenantId)}`, {
+          carrierNumber: context.carrierNumber,
+          code: signInCode,
+        }),
+      );
+      const landed = opened.url();
+      if (!sameOrigin(landed, deps.origin) || pathOf(landed) !== "/portal/loads") {
+        return await end("failed", "sign_in_failed");
+      }
       const shot = await shoot();
       if (!shot) return await end("failed", "screenshot_too_large");
       first = shot;

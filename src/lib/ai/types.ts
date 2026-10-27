@@ -111,7 +111,7 @@ export type AiResult = {
   toolSearches: number;
 };
 
-// --- Computer use (Muse Wonder driving a browser, https://dev.meta.ai/docs/computer-use) ---
+// --- Computer use (a Meta model driving a browser, https://dev.meta.ai/docs/computer-use) ---
 
 // The five mouse buttons the docs name for a click.
 export type ComputerButton = "left" | "right" | "wheel" | "back" | "forward";

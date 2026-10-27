@@ -118,9 +118,10 @@ export type Flags = {
   // load's delivery stamps and POD. Off gates the portal pages, the run routes, the gateway tool
   // and the worker, which re-checks it when it claims a run. aiEnabled must also be on.
   portalRunnerEnabled: boolean;
-  // The model that drives the browser. Muse Wonder is the default. Muse Spark is allowed here
-  // because Muse Wonder refused the computer tool when the runner was built; switching is the
-  // owner's call, in its own one-line change.
+  // The model that drives the browser, and the only one a computer step may call. Muse Spark is
+  // the default: Muse Wonder answered 400 "Unsupported tool type: 'computer'" when the runner was
+  // built. Moving to Muse Wonder once it takes the tool is the owner's call, in its own one-line
+  // change.
   portalRunnerModel: "wonder" | "spark";
   // Hard caps on one portal run. Reaching any of them ends the run with no evidence.
   portalRunLimits: {
@@ -178,7 +179,7 @@ export const flags: Flags = {
   reportsEnabled: false,
   detentionEnabled: false,
   portalRunnerEnabled: false,
-  portalRunnerModel: "wonder",
+  portalRunnerModel: "spark",
   portalRunLimits: {
     maxSteps: 15,
     maxWallMs: 240_000,

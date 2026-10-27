@@ -1,3 +1,4 @@
+import type { BrowserContext } from "playwright-core";
 import type { ComputerAction } from "../../ai";
 import { chromiumPath } from "../config";
 import { chordOf, VIEWPORT, WAIT_MS } from "./actions";
@@ -5,6 +6,7 @@ import {
   acceptablePod,
   POD_PATH,
   sameOrigin,
+  socketOnOrigin,
   type CapturedPod,
   type DriverFactory,
   type PortalDriver,
@@ -52,6 +54,16 @@ const DOWNLOADED_SCRIPT = (kb: number) => `(() => {
   (document.body || document.documentElement).appendChild(note);
 })();`;
 
+// HTTP routing never sees a WebSocket, so sockets get their own rule: one to any other origin is
+// routed to a handler that never calls connectToServer, so it reaches no server, and is closed.
+// Registered before any page opens.
+export async function blockOffOriginSockets(context: BrowserContext, origin: string): Promise<void> {
+  await context.routeWebSocket(
+    (url) => !socketOnOrigin(url.href, origin),
+    (ws) => ws.close({ code: 1008, reason: "off origin" }),
+  );
+}
+
 export const openPlaywrightDriver: DriverFactory = async ({ origin, podMaxBytes, recordDir }) => {
   const { chromium } = await import("playwright-core");
   const executablePath = chromiumPath() ?? undefined;
@@ -95,6 +107,7 @@ export const openPlaywrightDriver: DriverFactory = async ({ origin, podMaxBytes,
         if (podInFlight === reading) podInFlight = null;
       }
     });
+    await blockOffOriginSockets(context, origin);
     const page = await context.newPage();
 
     const pointAt = (x: number, y: number) =>
@@ -114,6 +127,20 @@ export const openPlaywrightDriver: DriverFactory = async ({ origin, podMaxBytes,
           ]);
         }
         await page.goto(url, { waitUntil: "load" });
+      },
+      async signIn(url, credentials) {
+        if (!sameOrigin(url, origin)) throw new Error("the sign-in URL is not on the portal origin");
+        await page.goto(url, { waitUntil: "load" });
+        const form = page.locator('form[action="/portal/sign-in"]');
+        await form.locator('input[name="carrierNumber"]').fill(credentials.carrierNumber);
+        await form.locator('input[name="code"]').fill(credentials.code);
+        // The portal answers a sign-in with the loads page, or the sign-in page again on a miss.
+        await Promise.all([
+          page.waitForURL((u) => u.pathname === "/portal/loads" || u.searchParams.get("e") === "1", {
+            waitUntil: "load",
+          }),
+          form.locator('button[type="submit"]').click(),
+        ]);
       },
       async run(action: ComputerAction) {
         switch (action.type) {

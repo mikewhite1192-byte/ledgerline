@@ -8,7 +8,7 @@ describe("words for people", () => {
       "ok", "not_found", "declined", "approval_expired", "session_expired", "step_budget", "wall_time", "run_cents",
       "call_cents", "spend_cap", "incomplete", "invalid_action", "too_many_checks", "no_evidence", "screen_error",
       "screenshot_too_large", "not_resumable", "browser_error", "db_error", "model_error", "runner_error",
-      "session_error", "no_portal_account", "no_portal_load", "forbidden", "disabled",
+      "session_error", "sign_in_failed", "no_portal_account", "no_portal_load", "forbidden", "disabled",
     ]) {
       expect(endedWords(reason), reason).toMatch(/^[A-Z][^_]*$/);
     }
