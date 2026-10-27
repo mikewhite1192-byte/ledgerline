@@ -19,7 +19,8 @@ export const REMINDER_STATUS_WORDS: Record<string, string> = {
   rejected: "Rejected",
 };
 
-const REFUSAL_WORDS: Record<string, string> = {
+// One sentence per reason a reminder was not kept. Exported so the plain-words test reads every one.
+export const REFUSAL_WORDS: Record<string, string> = {
   number_mismatch: "it had a number that is not on the invoice.",
   line_mismatch: "it had a number that is not on the invoice.",
   subject: "its subject line did not name the invoice.",

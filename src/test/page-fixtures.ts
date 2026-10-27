@@ -4,6 +4,7 @@ import type { ProposalView, TurnView } from "@/lib/agent/view";
 import type { CallRow, Spend } from "@/lib/ai/spend";
 import type { DaySpend, SpendAlert } from "@/lib/ai/watch";
 import type { ClipView } from "@/lib/clips/types";
+import type { CollectionsView, LateInvoice, ReminderCard } from "@/lib/collections/view";
 import type { DocumentView } from "@/lib/documents/types";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
 import type {
@@ -1236,5 +1237,69 @@ export const REVIEW_QUEUE: ReviewQueue = {
     queueRow(5, "needs_review", "not_reviewed"),
     queueRow(6, "ready_to_send", "not_posted"),
     queueRow(7, "ready_to_send", null, { posted: true, emailStatus: "need_to_send" }),
+  ],
+};
+
+// The collections page: late invoices with no reminder yet (more than the list names, so "and N
+// more" shows) and a reminder in every state, approved both ways. A refused reminder has no draft.
+const lateInvoice = (n: number, over: Partial<LateInvoice> = {}): LateInvoice => ({
+  invoiceId: id(200 + n),
+  customerId: CUSTOMER_ID,
+  customerName: "Tanglewood Grocery Supply",
+  invoiceNumber: `BR-INV-102${String(n).padStart(2, "0")}`,
+  daysLate: 31 + n,
+  balanceCents: 182_500,
+  dueOn: "2026-09-25",
+  stage: "30",
+  tone: "friendly",
+  ...over,
+});
+
+export const reminderCard = (n: number, over: Partial<ReminderCard> = {}): ReminderCard => ({
+  id: id(250 + n),
+  invoiceId: id(230 + n),
+  customerId: CUSTOMER_ID,
+  customerName: "Tanglewood Grocery Supply",
+  invoiceNumber: `BR-INV-103${String(n).padStart(2, "0")}`,
+  stage: "60",
+  tone: "direct",
+  status: "drafted",
+  daysLate: 64,
+  balanceCents: 245_000,
+  dueOn: "2026-08-24",
+  subject: `Invoice BR-INV-103${String(n).padStart(2, "0")} is 64 days past due`,
+  body: "Hello,\n\nInvoice BR-INV-10301 for $2,450.00 was due on Aug 24, 2026 and is now 64 days past due. Please send payment or reply with a date we can expect it.\n\nThank you,\nBlue Ridge Freight",
+  refusalCategory: null,
+  channel: null,
+  sentAt: null,
+  ...over,
+});
+
+export const COLLECTIONS_VIEW: CollectionsView = {
+  asOf: "2026-10-27",
+  timezone: TENANT.timezone,
+  pastDueCount: 12,
+  pastDueCents: 2_604_000,
+  waiting: 3,
+  approvedLastWeek: 2,
+  toDraft: [
+    lateInvoice(1),
+    lateInvoice(2, { customerName: "Harbor Point Lumber", tone: "direct" }),
+    lateInvoice(3, { stage: "60", daysLate: 61, tone: "firm" }),
+    lateInvoice(4, { stage: "90", daysLate: 95 }),
+    lateInvoice(5),
+    lateInvoice(6),
+  ],
+  cards: [
+    reminderCard(1),
+    reminderCard(2, { tone: "friendly", stage: "30", daysLate: 33 }),
+    reminderCard(3, { tone: "firm", stage: "90", daysLate: 97 }),
+    reminderCard(4, { status: "drafting", subject: null, body: null }),
+    reminderCard(5, { status: "over_cap", subject: null, body: null }),
+    reminderCard(6, { status: "refused", subject: null, body: null, refusalCategory: "number_mismatch" }),
+    reminderCard(7, { status: "approved", channel: "logged" }),
+    reminderCard(8, { status: "approved", channel: "email", sentAt: "2026-10-27T15:05:00.000Z" }),
+    reminderCard(9, { status: "approved", channel: "email" }),
+    reminderCard(10, { status: "rejected" }),
   ],
 };
