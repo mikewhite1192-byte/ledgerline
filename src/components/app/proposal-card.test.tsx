@@ -49,6 +49,21 @@ describe("ProposalCard", () => {
     expect(onApprove).toHaveBeenCalledWith("p-1");
   });
 
+  it("puts focus back on Approve after Cancel, so keyboard users keep their place", () => {
+    const { unmount } = render(<ProposalCard {...card} />);
+    fireEvent.click(button("Approve $200.00")!);
+    expect(document.activeElement).toBe(button("Cancel"));
+    fireEvent.click(button("Cancel")!);
+    expect(document.activeElement).toBe(button("Approve $200.00"));
+    unmount();
+
+    // A card that opens with the confirm row showing does the same.
+    render(<ProposalCard {...card} initialConfirming />);
+    expect(document.activeElement).toBe(document.body);
+    fireEvent.click(button("Cancel")!);
+    expect(document.activeElement).toBe(button("Approve $200.00"));
+  });
+
   it("disables every button while a decision is in flight", () => {
     const { unmount } = render(<ProposalCard {...card} pending />);
     expect((button("Approve $200.00") as HTMLButtonElement).disabled).toBe(true);

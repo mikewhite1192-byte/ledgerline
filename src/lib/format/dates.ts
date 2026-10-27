@@ -11,13 +11,15 @@ function daysInMonth(year: number, month: number): number {
   return [4, 6, 9, 11].includes(month) ? 30 : 31;
 }
 
+function isRealDay(year: number, month: number, day: number): boolean {
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month);
+}
+
 function parseLocalDate(value: string): Day {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
   if (!m) throw new RangeError("a date must be YYYY-MM-DD");
   const [year, month, day] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) {
-    throw new RangeError("a date must be a real calendar day");
-  }
+  if (!isRealDay(year, month, day)) throw new RangeError("a date must be a real calendar day");
   return { year, month, day };
 }
 
@@ -37,12 +39,31 @@ export function formatPeriod(start: string, end: string): string {
   return a.year === b.year ? `${head} to ${tail}` : `${head}, ${a.year} to ${tail}`;
 }
 
-const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/;
+const INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+
+// Date.parse rolls an impossible value forward (Feb 30 becomes Mar 2, hour 24 the next day), so
+// every part is checked against its own range first.
+function isRealInstant(iso: string): boolean {
+  const m = INSTANT.exec(iso);
+  if (!m) return false;
+  const [year, month, day, hour, minute] = [1, 2, 3, 4, 5].map((i) => Number(m[i]));
+  const second = m[6] === undefined ? 0 : Number(m[6]);
+  const [offsetHour, offsetMinute] = m[7] === undefined ? [0, 0] : [Number(m[7]), Number(m[8])];
+  return (
+    isRealDay(year, month, day) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59 &&
+    offsetHour <= 23 &&
+    offsetMinute <= 59 &&
+    !Number.isNaN(Date.parse(iso))
+  );
+}
 
 // "2026-10-28T20:12:00Z" in America/Chicago is "Oct 28, 2026, 3:12 PM CDT". The input must carry
 // its zone (Z or an offset); the output always names the zone it is shown in.
 export function formatInstant(iso: string, timeZone: string): string {
-  if (!INSTANT.test(iso) || Number.isNaN(Date.parse(iso))) {
+  if (!isRealInstant(iso)) {
     throw new RangeError("an instant must be an ISO timestamp with a zone");
   }
   const parts = new Intl.DateTimeFormat("en-US", {

@@ -81,7 +81,9 @@ export function ProposalCard({
 }: ProposalCardProps) {
   const [confirming, setConfirming] = useState(initialConfirming);
   const cancelRef = useRef<HTMLButtonElement>(null);
+  const approveRef = useRef<HTMLButtonElement>(null);
   const opened = useRef(false);
+  const cancelled = useRef(false);
   const amount = formatCents(Math.abs(impact.cents));
   // With nothing paid or received, the buttons and the question leave the amount out.
   const noAmount = impact.cents === 0 || impact.direction === "none";
@@ -90,6 +92,11 @@ export function ProposalCard({
   useEffect(() => {
     // Focus moves to Cancel (the safe choice) when the person opens the confirm row.
     if (confirming && opened.current) cancelRef.current?.focus();
+    // Cancel closes the row it sits in, so focus goes back to Approve instead of the page.
+    if (!confirming && cancelled.current) {
+      cancelled.current = false;
+      approveRef.current?.focus();
+    }
   }, [confirming]);
 
   return (
@@ -157,7 +164,15 @@ export function ProposalCard({
               {confirmQuestion ?? (noAmount ? "Approve this?" : `Approve ${amount}?`)}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
-              <Button ref={cancelRef} variant="outline" disabled={pending} onClick={() => setConfirming(false)}>
+              <Button
+                ref={cancelRef}
+                variant="outline"
+                disabled={pending}
+                onClick={() => {
+                  cancelled.current = true;
+                  setConfirming(false);
+                }}
+              >
                 Cancel
               </Button>
               <Button pending={pending} pendingLabel="Approving" onClick={() => onApprove?.(id)}>
@@ -171,6 +186,7 @@ export function ProposalCard({
               Reject
             </Button>
             <Button
+              ref={approveRef}
               disabled={pending}
               onClick={() => {
                 opened.current = true;

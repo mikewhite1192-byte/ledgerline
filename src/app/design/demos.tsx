@@ -4,7 +4,7 @@
 // button handlers are functions, which cannot cross from the server page.
 import { CircleHelp, FileText, House, Truck, Users, Wallet } from "lucide-react";
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ChatThread, type ChatMessage } from "@/components/app/chat-thread";
 import { MobileNav } from "@/components/app/mobile-nav";
 import { NavList } from "@/components/app/nav-list";
@@ -27,6 +27,15 @@ export function ProposalGallery({ prefix }: { prefix: string }) {
   const toast = useToast();
   const hrefFor = anchorFor(prefix);
   const [pending, setPending] = useState(false);
+  // The sample approval settles after a short wait. Leaving the page first cancels it, so its toast
+  // never shows up on another page.
+  const approveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (approveTimer.current !== null) clearTimeout(approveTimer.current);
+    },
+    [],
+  );
   const shown: { key: string; card: typeof ADVANCE_PROPOSAL; status: ProposalStatus; note: string }[] = [
     { key: "approved", card: PAYMENT_PROPOSAL, status: "approved", note: "Approved" },
     { key: "executing", card: PAYMENT_PROPOSAL, status: "executing", note: "In progress" },
@@ -46,7 +55,8 @@ export function ProposalGallery({ prefix }: { prefix: string }) {
           pending={pending}
           onApprove={() => {
             setPending(true);
-            setTimeout(() => {
+            approveTimer.current = setTimeout(() => {
+              approveTimer.current = null;
               setPending(false);
               toast({ title: "Approved", body: `${formatCents(20_000)} advance to ${DRIVER.name} is queued.`, tone: "success" });
             }, 900);

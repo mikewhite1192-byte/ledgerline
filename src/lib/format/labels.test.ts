@@ -1,6 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import * as engine from "@/lib/rules-engine";
 import {
   codeToWords,
   KNOWN_LINE_KINDS,
@@ -54,23 +53,25 @@ describe("codeToWords", () => {
   });
 });
 
-// Once the rules engine is on main, every status and line kind it defines must have a label.
-// Read as text so this file does not depend on the engine being merged yet.
-const enginePath = fileURLToPath(new URL("../rules-engine/types.ts", import.meta.url));
-describe.runIf(existsSync(enginePath))("the rules engine's vocabularies", () => {
+// Every status vocabulary and pay line kind the rules engine exports must have a label. The lists
+// are imported, so one that is renamed or moved fails the build instead of skipping this test.
+describe("the rules engine's vocabularies", () => {
   it("are all covered", () => {
-    const source = readFileSync(enginePath, "utf8");
-    const arrays = [...source.matchAll(/export const (\w+) = \[([^\]]*)\] as const/g)];
-    const pick = (name: RegExp) =>
-      arrays
-        .filter((m) => name.test(m[1]))
-        .flatMap((m) => [...m[2].matchAll(/"([^"]+)"/g)].map((v) => v[1]));
-    const statuses = pick(/_STATUSES$/);
-    const kinds = pick(/^LINE_KINDS$/);
-    expect(statuses.length).toBeGreaterThan(0);
-    expect(kinds).toHaveLength(10);
+    // Any other status list the engine exports, including one added later, is checked too.
+    const exported = Object.entries(engine)
+      .filter(([name, value]) => name.endsWith("_STATUSES") && Array.isArray(value))
+      .flatMap(([, value]) => value as readonly string[]);
+    const statuses = [
+      ...engine.LOAD_STATUSES,
+      ...engine.ADVANCE_STATUSES,
+      ...engine.PERIOD_STATUSES,
+      ...engine.SETTLEMENT_STATUSES,
+      ...engine.INVOICE_STATUSES,
+      ...exported,
+    ];
+    expect(engine.LINE_KINDS).toHaveLength(10);
     for (const s of statuses) expect(KNOWN_STATUSES).toContain(s);
-    for (const k of kinds) expect(KNOWN_LINE_KINDS).toContain(k);
+    for (const k of engine.LINE_KINDS) expect(KNOWN_LINE_KINDS).toContain(k);
   });
 });
 

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ChatThread, type ChatMessage } from "./chat-thread";
+import { ChatThread, type ChatMessage, type Part } from "./chat-thread";
 
 afterEach(cleanup);
 
@@ -91,5 +91,24 @@ describe("ChatThread", () => {
     const card = screen.getByRole("article", { name: "Move a payment" });
     expect(within(card).getByText("Users U-1").closest("a")).toBeNull();
     expect(within(card).queryAllByRole("link")).toHaveLength(0);
+  });
+
+  it("keeps an open confirm row with its own proposal when another part arrives before it", () => {
+    const proposal = (id: string, title: string): Part => ({
+      kind: "proposal",
+      proposal: { id, title, impact: { cents: 20_000, direction: "out" }, reasons: [], status: "proposed" },
+    });
+    const agent = (parts: Part[]): ChatMessage[] => [{ id: "a3", role: "agent", parts }];
+    const first = proposal("p-a", "Pay advance A");
+    const { rerender } = render(<ChatThread messages={agent([first])} composer={{}} />);
+    const cardA = screen.getByRole("article", { name: "Pay advance A" });
+    fireEvent.click(within(cardA).getByRole("button", { name: "Approve $200.00" }));
+    expect(within(cardA).getByRole("group", { name: "Confirm approval" })).toBeTruthy();
+
+    rerender(<ChatThread messages={agent([proposal("p-b", "Pay advance B"), first])} composer={{}} />);
+    const newcomer = screen.getByRole("article", { name: "Pay advance B" });
+    expect(within(newcomer).queryByRole("group", { name: "Confirm approval" })).toBeNull();
+    const opened = screen.getByRole("article", { name: "Pay advance A" });
+    expect(within(opened).getByRole("group", { name: "Confirm approval" })).toBeTruthy();
   });
 });

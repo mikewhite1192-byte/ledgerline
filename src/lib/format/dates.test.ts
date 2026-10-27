@@ -51,4 +51,23 @@ describe("formatInstant", () => {
     expect(() => formatInstant("2026-10-28T20:12:00", "America/Chicago")).toThrow(RangeError);
     expect(() => formatInstant("2026-10-28T20:12:00Z", "Mars/Olympus")).toThrow(RangeError);
   });
+
+  it("refuses an impossible day or clock time instead of rolling it forward", () => {
+    for (const bad of [
+      "2026-02-30T10:00:00Z",
+      "2026-02-29T10:00:00Z",
+      "2026-13-01T10:00:00Z",
+      "2026-10-28T24:00:00Z",
+      "2026-10-28T24:00Z",
+      "2026-10-28T23:60:00Z",
+      "2026-10-28T23:59:60Z",
+      "2026-10-28T10:00:00+24:00",
+      "2026-10-28T10:00:00-05:60",
+    ]) {
+      expect(() => formatInstant(bad, "America/Chicago"), bad).toThrow(
+        new RangeError("an instant must be an ISO timestamp with a zone"),
+      );
+    }
+    expect(formatInstant("2028-02-29T23:59:59Z", "UTC")).toBe("Feb 29, 2028, 11:59 PM UTC");
+  });
 });

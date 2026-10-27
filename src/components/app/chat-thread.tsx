@@ -135,7 +135,8 @@ export function ChatThread({
                       case "steps":
                         return <Steps key={i} steps={p.steps} />;
                       case "proposal":
-                        return <ProposalCard key={i} {...p.proposal} hrefFor={hrefFor} />;
+                        // Keyed by the proposal, not its place, so an open confirm row stays with it.
+                        return <ProposalCard key={`proposal:${p.proposal.id}`} {...p.proposal} hrefFor={hrefFor} />;
                       case "table":
                         return <DataTable key={i} {...p.table} />;
                       case "error":
