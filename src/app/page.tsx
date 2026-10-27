@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { flags } from "@/config/flags";
-import { homeSuggestions, ruleChangeSuggestion } from "@/components/agent/suggestions";
+import { homeSuggestions, ruleChangeSuggestion, withPaystubSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
@@ -27,6 +27,7 @@ import { formatInstant } from "@/lib/format/dates";
 import { readNextWeekStart } from "@/lib/pay-rules/read";
 import { COMPOSER_HELP, exampleSentence } from "@/lib/pay-rules/words";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
+import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import type { LocalDate } from "@/lib/time/local-date";
@@ -40,6 +41,7 @@ type Carrier = {
   email: string;
   counts: { drivers: number; loads: number; periods: number };
   ledger: ModelLedger | null;
+  paystub: { driverName: string; periodEnd: string } | null;
   session: Session;
   admin: boolean;
   // The first date a pay rule change may start, while pay rule changes are switched on.
@@ -52,6 +54,8 @@ type Carrier = {
 // that document. Only an id is taken from the address; the text around it is fixed.
 // ?rule=1, from the Pay rules page: with pay rule changes switched on, the box starts with the
 // example sentence and the help under it.
+// ?paystub=<settlement id>: "Ask about this paystub" links here with the paystub's id; anything
+// else is ignored.
 export default async function Home({
   searchParams,
 }: {
@@ -61,6 +65,9 @@ export default async function Home({
   const asked = params.document;
   const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
   const ruleAsked = params.rule === "1";
+  const askedPaystub = params.paystub;
+  const paystubId =
+    typeof askedPaystub === "string" && isUuid(askedPaystub) ? askedPaystub.toLowerCase() : null;
   let carrier: Carrier | null = null;
   let problem: "forbidden" | "unreadable" | null = null;
   try {
@@ -86,12 +93,14 @@ export default async function Home({
       const ledger = flags.aiProofRoute
         ? { calls: await readRecentCalls(q, 5), spend: await readSpend(q) }
         : null;
+      const paystub = paystubId ? await readPaystubAsk(q, paystubId) : null;
       return {
         name: tenants[0].name,
         timezone: tenants[0].timezone,
         email: members[0].email,
         counts,
         ledger,
+        paystub,
         session,
         admin: members[0].role === "admin",
         nextStart: flags.rulesByTalkingEnabled ? await readNextWeekStart(q, new Date()) : null,
@@ -149,6 +158,13 @@ export default async function Home({
     );
   }
 
+  const base = [
+    ...SUGGESTIONS,
+    ...(flags.detentionEnabled ? [DETENTION_SUGGESTION] : []),
+    ...(carrier.nextStart ? [ruleChangeSuggestion(carrier.nextStart)] : []),
+  ];
+  const suggestions = withPaystubSuggestion(base, carrier.paystub);
+
   return (
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
@@ -162,11 +178,7 @@ export default async function Home({
           initialTurns={agentTurns}
           streamMode={flags.agentStreamMode}
           auditorOn={flags.auditorEnabled}
-          suggestions={[
-            ...SUGGESTIONS,
-            ...(flags.detentionEnabled ? [DETENTION_SUGGESTION] : []),
-            ...(carrier.nextStart ? [ruleChangeSuggestion(carrier.nextStart)] : []),
-          ]}
+          suggestions={suggestions}
           initialDraft={
             documentInput
               ? `Check document ${documentInput}`

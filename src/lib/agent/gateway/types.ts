@@ -146,6 +146,7 @@ export const PROPOSAL_KINDS = [
   "invoice_post",
   "payment_reapply",
   "detention_charge",
+  "settlement_approve",
   "pay_rule_change",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];

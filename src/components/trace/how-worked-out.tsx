@@ -23,9 +23,15 @@ export type TraceLoader = (turnId: string) => Promise<TraceLoad>;
 // The default loader: the trace route. A 404 is a turn this person cannot see; anything else that
 // is not a trace is an error, never an empty trace.
 export async function fetchTrace(turnId: string): Promise<TraceLoad> {
+  return fetchTraceAt(`/api/agent/turns/${encodeURIComponent(turnId)}/trace`);
+}
+
+// A trace from any route that answers { trace } (a sweep run's route reads the run's own turns),
+// with the same answers as the default loader.
+export async function fetchTraceAt(path: string): Promise<TraceLoad> {
   let res: Response;
   try {
-    res = await fetch(`/api/agent/turns/${encodeURIComponent(turnId)}/trace`, { cache: "no-store" });
+    res = await fetch(path, { cache: "no-store" });
   } catch {
     return { error: "unreadable" };
   }

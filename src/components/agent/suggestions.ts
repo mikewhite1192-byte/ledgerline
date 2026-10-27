@@ -1,4 +1,5 @@
 import type { Suggestion } from "@/components/app/prompt-chips";
+import { formatLocalDate } from "@/lib/format/dates";
 import { CHIP_LABEL, COMPOSER_HELP, exampleSentence } from "@/lib/pay-rules/words";
 import type { LocalDate } from "@/lib/time/local-date";
 
@@ -22,4 +23,18 @@ export function homeSuggestions(reportsOn: boolean): Suggestion[] {
 // dated the first week a change can start, for the person to edit, and shows how to say one.
 export function ruleChangeSuggestion(nextStart: LocalDate): Suggestion {
   return { id: "change-pay-rule", label: CHIP_LABEL, fill: exampleSentence(nextStart), help: COMPOSER_HELP };
+}
+
+// "Ask about this paystub" on a paystub's page lands on the home screen with that paystub's
+// question first, ahead of three of the usual four. The name and the week come from the database.
+export function withPaystubSuggestion(
+  base: readonly Suggestion[],
+  paystub: { driverName: string; periodEnd: string } | null,
+): Suggestion[] {
+  if (paystub === null) return base.map((s) => ({ ...s }));
+  const first: Suggestion = {
+    id: "explain-paystub",
+    label: `Explain ${paystub.driverName}'s paystub for the week ending ${formatLocalDate(paystub.periodEnd)}.`,
+  };
+  return [first, ...base.slice(0, 3).map((s) => ({ ...s }))];
 }

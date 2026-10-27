@@ -193,7 +193,7 @@ const CALL_SELECT = (a: string) =>
    ${a}.input_tokens AS m_input, ${a}.cached_tokens AS m_cached`;
 
 export async function readTurnTrace(q: Queryable, sub: string, turnId: string): Promise<TurnTrace | null> {
-  const turns = await q.query<{ id: string; status: string; trace_id: string }>(
+  const turns = await q.query<TurnRow>(
     `SELECT t.id, t.status, t.trace_id
        FROM turns t
        JOIN conversations c ON c.id = t.conversation_id AND c.tenant_id = t.tenant_id
@@ -201,8 +201,32 @@ export async function readTurnTrace(q: Queryable, sub: string, turnId: string): 
     [turnId, sub],
   );
   if (turns.length !== 1) return null;
-  const turn = turns[0];
+  return traceOfTurn(q, turns[0]);
+}
 
+// One turn of a sweep run's second opinion (the ordering, a driver's check or the comparison):
+// the run's own rows name it, so it is read by the run rather than by who opened the turn (the
+// sweep's service member). Row security keeps it to the carrier; a turn the run does not name is
+// not found.
+export async function readTurnTraceInRun(q: Queryable, runId: string, turnId: string): Promise<TurnTrace | null> {
+  const turns = await q.query<TurnRow>(
+    `SELECT t.id, t.status, t.trace_id
+       FROM turns t
+      WHERE t.id = CAST($1 AS uuid) AND t.tenant_id = current_tenant_id()
+        AND (EXISTS (SELECT 1 FROM sweep_fanout f
+                      WHERE f.run_id = CAST($2 AS uuid) AND f.tenant_id = t.tenant_id
+                        AND (f.plan_turn_id = t.id OR f.reconcile_turn_id = t.id))
+          OR EXISTS (SELECT 1 FROM sweep_fanout_checks c
+                      WHERE c.run_id = CAST($2 AS uuid) AND c.tenant_id = t.tenant_id AND c.turn_id = t.id))`,
+    [turnId, runId],
+  );
+  if (turns.length !== 1) return null;
+  return traceOfTurn(q, turns[0]);
+}
+
+type TurnRow = { id: string; status: string; trace_id: string };
+
+async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
   const steps = await q.query<StepRow>(
     `SELECT s.seq, s.kind, s.label, s.state, s.proposal_id,
             s.detail->>'category' AS category, s.detail->>'result' AS result,

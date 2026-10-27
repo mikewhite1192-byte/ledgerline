@@ -72,6 +72,8 @@ describe("row-level security coverage", () => {
         "qbo_entity_ids",
         "qbo_oauth_states",
         "spend_alerts",
+        "sweep_fanout",
+        "sweep_fanout_checks",
         "sweep_items",
         "sweep_runs",
         "tenants",

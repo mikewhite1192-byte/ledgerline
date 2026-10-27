@@ -16,6 +16,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   invoice_post: "Post invoice",
   payment_reapply: "Move payment to the right invoice",
   detention_charge: "Bill unbilled detention",
+  settlement_approve: "Approve weekly pay",
   pay_rule_change: "Change a pay rule",
 };
 

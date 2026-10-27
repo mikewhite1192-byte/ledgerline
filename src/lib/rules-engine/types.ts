@@ -196,6 +196,8 @@ export type DriverRecord = {
   // null means the tenant's advanceLimitDefaultCents.
   advanceLimitCents: Cents | null;
   escrowBalanceCents: Cents;
+  // The driver carries their own insurance: no daily insurance charge, whatever the tenant's rule.
+  ownInsurance: boolean;
   truckUnit: string | null;
   activeFrom: LocalDate;
   activeTo: LocalDate | null;

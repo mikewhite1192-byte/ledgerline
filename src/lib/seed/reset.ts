@@ -16,9 +16,9 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      seed's fourth refusal (a ledger row naming a flow advance, FLOW_ADVANCE_ROWS in run.ts) is
 //      not needed here on purpose: the function deletes every settled money_actions row before
 //      the flow advances, in one transaction, so no ledger row can outlive the advance it names;
-//   3. demo_reset_clear() (migration 0025), the one security-definer function, which checks the
-//      same things again under the tenant row lock and deletes the settled ledger rows, the
-//      agent's records and the fictional broker portal's loads (the app role has no DELETE on
+//   3. demo_reset_clear() (migration 0025, re-created by 0033 and 0036), the one
+//      security-definer function, which checks the same things again under the tenant row lock
+//      and deletes the settled ledger rows, the agent's records and the fictional broker portal's loads (the app role has no DELETE on
 //      them); the portal's loads come back only with npm run seed, since the app cannot write them;
 //   4. the seed's replace of the 22 seeded tables, as the app role, under row-level security (the
 //      arming log, which the app role may add to but never delete from, goes with its drivers
@@ -50,6 +50,10 @@ export const DEMO_RESET_CLEARED = {
   voice_notes: "each names a driver, an inbound message and a conversation that go",
   driver_notes: "each names a settlement, a driver and a pay period the replace deletes",
   turn_steps: "the agent's steps of the turns that go",
+  sweep_fanout_checks:
+    "the sweep's second check of each driver (0024); each names a run that goes, a driver the " +
+    "replace deletes and a turn that goes",
+  sweep_fanout: "the sweep's second check of each run (0024); each names a run and turns that go",
   sweep_items:
     "the pay sweep's findings; each names a run that goes, a pay week the replace deletes and " +
     "its drafted proposal",
@@ -112,6 +116,8 @@ export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "voice_notes",
   "driver_notes",
   "turn_steps",
+  "sweep_fanout_checks",
+  "sweep_fanout",
   "sweep_items",
   "sweep_runs",
   "approval_batches",
@@ -159,6 +165,8 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   voice_notes: "Voice notes",
   driver_notes: "Driver notes",
   turn_steps: "Agent steps",
+  sweep_fanout_checks: "Pay sweep second checks by driver",
+  sweep_fanout: "Pay sweep second checks",
   sweep_items: "Pay sweep findings",
   sweep_runs: "Pay sweep runs",
   approval_batches: "Approve-all batches",

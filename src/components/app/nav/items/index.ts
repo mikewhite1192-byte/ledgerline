@@ -13,5 +13,6 @@ export { invoices } from "./invoices";
 export { models } from "./models";
 export { payRules } from "./pay-rules";
 export { portalRuns } from "./portal-runs";
+export { settlements } from "./settlements";
 export { sweep } from "./sweep";
 export { voiceNotes } from "./voice-notes";

@@ -13,6 +13,7 @@ import { TENANT_TABLES, type TenantTable } from "../../../../data/tables";
 import { matchWrongInvoiceFinding } from "../../../../invoices/match";
 import { paymentPostedOutside } from "../../../../invoices/posted-outside";
 import { lineSummary, sameLines, type LineSummary } from "../../../../invoices/queue";
+import { settlementEvidence } from "../../../../settlements/evidence";
 import {
   advanceEligibility,
   findPaymentOnWrongInvoice,
@@ -565,6 +566,8 @@ async function engineFor(
     if (p.kind === "invoice_post") return await invoicePostEngine(q, p, raw);
     if (p.kind === "payment_reapply") return await paymentReapplyEngine(q, ctx, p, args);
     if (p.kind === "detention_charge") return await detentionEngine(q, p);
+    // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
+    if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
     if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
     return UNAVAILABLE;
   } catch {

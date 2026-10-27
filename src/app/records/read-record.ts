@@ -1,3 +1,4 @@
+import type { Session } from "@/lib/auth/claims";
 import type { Queryable } from "@/lib/db";
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -15,14 +16,14 @@ export type RecordRead<T> =
 // carrier's row: every read names the tenant). A failed read is a problem, never an empty page.
 export async function readRecordPage<T>(
   rawId: string,
-  read: (q: Queryable, id: string, today: LocalDate) => Promise<T | null>,
+  read: (q: Queryable, id: string, today: LocalDate, session: Session) => Promise<T | null>,
 ): Promise<RecordRead<T>> {
   try {
     return await withRequestTenant(async (q, session): Promise<RecordRead<T>> => {
       const shell = await readShell(q, session);
       if (!isUuid(rawId)) return { kind: "missing", shell };
       const today = carrierToday(shell.timezone, new Date());
-      const record = await read(q, rawId.toLowerCase(), today);
+      const record = await read(q, rawId.toLowerCase(), today, session);
       return record === null ? { kind: "missing", shell } : { kind: "ok", shell, today, record };
     });
   } catch (err) {

@@ -89,8 +89,8 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // 0013, 0015 and 0022 each re-create the check, so whichever ran last decides it. Every one of
-    // them lists these kinds, kinds without code included.
+    // 0013, 0015, 0022, 0030 and 0032 each re-create the check, so whichever ran last decides it.
+    // Every one of them lists these kinds, kinds without code included.
     const union = [
       "advance_payout",
       "pay_correction",
@@ -101,8 +101,8 @@ describe("proposal kinds and origins on a fresh database", () => {
       "settlement_approve",
       "detention_charge",
     ];
-    // 0013 and 0015 list these three more; 0022 does not. 0030 lists all of them and
-    // pay_rule_change, so whichever of them ran last decides which of these the check keeps.
+    // 0013 and 0015 list these three more, and 0030 and 0032 these four; 0022 lists none of them,
+    // so the check keeps them only when a migration that lists them ran after 0022.
     const widest = [...union, "factoring_request", "bill_defer", "collections_chase", "pay_rule_change"];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);
