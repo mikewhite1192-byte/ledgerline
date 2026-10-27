@@ -320,6 +320,46 @@ describe("the sample photo run", () => {
     expect(existsSync(join(io.publicDir, "samples", "docs", `${DOC_ID}.webp`))).toBe(false);
   }, 30_000);
 
+  it("refuses a go run against Aurora before the switch is turned on or any call is made", async () => {
+    // Set for this test only; afterEach puts the env back (vi.unstubAllEnvs), on a failure too.
+    vi.stubEnv("DB_CLUSTER_ARN", "arn:aws:rds:us-east-2:000000000000:cluster:x");
+    const { fetch } = provider({});
+    const db = fakeLedger();
+    const withTenant = vi.spyOn(db, "withTenant");
+    // Every write to the switch is recorded; the plain property is put back whatever happens.
+    const writes: boolean[] = [];
+    let value = flags.aiEnabled;
+    Object.defineProperty(flags, "aiEnabled", {
+      configurable: true,
+      enumerable: true,
+      get: () => value,
+      set: (v: boolean) => {
+        writes.push(v);
+        value = v;
+      },
+    });
+    try {
+      await expect(
+        runPhotos(freshManifest(), { mode: "go", only: DOC_ID, capCents: 60 }, io, {
+          session: SESSION,
+          ai: { fetch, db },
+        }),
+      ).rejects.toThrow("DB_CLUSTER_ARN is set: run this locally only");
+    } finally {
+      Object.defineProperty(flags, "aiEnabled", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value,
+      });
+    }
+    expect(writes).toEqual([]);
+    expect(flags.aiEnabled).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(withTenant).not.toHaveBeenCalled();
+    expect(existsSync(io.publicDir) || existsSync(io.manifestPath)).toBe(false);
+  });
+
   it("never prints the key, a prompt or what the model read", async () => {
     const { fetch } = provider({ read: (n) => (n === 0 ? { ...GOOD_READ, vendor: "Wrong Vendor Name" } : GOOD_READ) });
     await runPhotos(freshManifest(), { mode: "dry", only: null, capCents: 60 }, io);

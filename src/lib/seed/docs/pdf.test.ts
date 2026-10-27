@@ -11,6 +11,36 @@ import { pdfPageCount, pdfSubject, renderPdf } from "./pdf";
 const PDFS = SAMPLE_DOCS.filter(isPdf);
 const PUBLIC = join(process.cwd(), "public");
 
+// The strings each page's content stream draws, read from the rendered bytes (textRuns reads the
+// content model, which leaves the header and footer out). Uncompressed, pdfkit writes built-in
+// font text as hex strings of character codes in TJ arrays, with kerning numbers between the
+// pieces of one string; ASCII text keeps its ASCII codes. Anything else here throws.
+function drawnRuns(bytes: Buffer): string[][] {
+  const text = bytes.toString("latin1");
+  const objects = new Map<string, string>();
+  for (const m of text.matchAll(/\n(\d+) 0 obj\n([\s\S]*?)\nendobj/g)) objects.set(m[1], m[2]);
+  return [...objects.values()]
+    .filter((body) => /\/Type\s*\/Page(?!s)/.test(body))
+    .map((page) => {
+      const ref = /\/Contents\s+(\d+)\s+0\s+R/.exec(page);
+      const body = ref ? objects.get(ref[1]) : undefined;
+      const head = body ? /^<<([\s\S]*?)>>\nstream\r?\n/.exec(body) : null;
+      if (!body || !head) throw new Error("a page without a content stream");
+      if (head[1].includes("/Filter")) throw new Error("a compressed content stream");
+      const start = head[0].length;
+      const end = start + Number(/\/Length\s+(\d+)/.exec(head[1])?.[1]);
+      if (!/^\r?\n?endstream$/.test(body.slice(end))) throw new Error("a stream length that does not fit");
+      return [...body.slice(start, end).matchAll(/\[([^\]]*)\]\s*TJ/g)].map((tj) => {
+        let run = "";
+        for (const piece of tj[1].matchAll(/<([0-9A-Fa-f]*)>|(-?[\d.]+)|(\S+)/g)) {
+          if (piece[3] !== undefined) throw new Error("a TJ piece this reader does not decode");
+          if (piece[1] !== undefined) run += Buffer.from(piece[1], "hex").toString("latin1");
+        }
+        return run;
+      });
+    });
+}
+
 describe("the sample PDFs", () => {
   it.each(PDFS.map((d) => [d.id, d] as const))(
     "%s renders to the committed bytes",
@@ -19,10 +49,17 @@ describe("the sample PDFs", () => {
       expect(bytes.equals(readFileSync(join(PUBLIC, doc.file)))).toBe(true);
       expect(pdfPageCount(bytes)).toBe(1);
       expect(pdfSubject(bytes)).toBe(PDF_FOOTER);
-      // The SAMPLE header and the footer are drawn on the page, not only in the metadata.
       const text = bytes.toString("latin1");
       expect(text).toContain("/Subject");
       expect(text).toContain("/Helvetica-Bold");
+      // The SAMPLE header and the footer are drawn on the page, not only in the metadata: each
+      // is one whole string in the page's content stream.
+      const pages = drawnRuns(bytes);
+      expect(pages).toHaveLength(1);
+      for (const runs of pages) {
+        expect(runs.filter((r) => r === "SAMPLE")).toHaveLength(1);
+        expect(runs.filter((r) => r === PDF_FOOTER)).toHaveLength(1);
+      }
     },
   );
 

@@ -411,6 +411,9 @@ export async function runPhotos(
   }
 
   if (!calls) throw new Error("a go run needs a session");
+  // The entry script refuses this too; checked here as well so no other caller can reach the
+  // calls or the database against Aurora. Before the switch is turned on and before any call.
+  if (process.env.DB_CLUSTER_ARN) throw new Error("DB_CLUSTER_ARN is set: run this locally only");
   const spend = new Spend(options.capCents);
   const out: DocOutcome[] = [];
   // The switch is turned on in this process only, for this run, and always turned back off.
