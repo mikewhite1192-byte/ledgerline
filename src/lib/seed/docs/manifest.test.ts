@@ -77,7 +77,7 @@ describe("the sample documents manifest", () => {
     const files = [...SAMPLE_DOCS.map((d) => d.file), MANIFEST.background?.file].filter(Boolean);
     expect(new Set(ids).size).toBe(ids.length);
     expect(new Set(files).size).toBe(files.length);
-    expect(SAMPLE_DOCS.filter(isPhoto)).toHaveLength(7);
+    expect(SAMPLE_DOCS.filter(isPhoto)).toHaveLength(9);
     expect(SAMPLE_DOCS.filter(isPdf)).toHaveLength(6);
   });
 
@@ -94,6 +94,44 @@ describe("the sample documents manifest", () => {
     const badFile = JSON.parse(JSON.stringify(good));
     badFile.entries[0].file = "../secret.webp";
     expect(() => parseManifest(badFile)).toThrow();
+  });
+
+  it("refuses a retake of no photo of its row", () => {
+    const good = JSON.parse(JSON.stringify(MANIFEST));
+    const retake = good.entries.findIndex((e: { retakeOf?: string }) => e.retakeOf);
+    expect(retake).toBeGreaterThan(-1);
+    const toNothing = JSON.parse(JSON.stringify(good));
+    toNothing.entries[retake].retakeOf = "no-such-photo";
+    expect(() => parseManifest(toNothing)).toThrow();
+    const otherRow = JSON.parse(JSON.stringify(good));
+    otherRow.entries[retake].retakeOf = "br-fuel-418";
+    expect(() => parseManifest(otherRow)).toThrow();
+    const toItself = JSON.parse(JSON.stringify(good));
+    toItself.entries[retake].retakeOf = toItself.entries[retake].id;
+    expect(() => parseManifest(toItself)).toThrow();
+  });
+
+  it("keeps the same receipt turned in twice as two different photos of one row", () => {
+    const retakes = SAMPLE_DOCS.filter(isPhoto).filter((d) => d.retakeOf);
+    expect(retakes.map((d) => d.id)).toEqual(["br-fuel-465-again"]);
+    for (const again of retakes) {
+      const first = SAMPLE_DOCS.find((d) => d.id === again.retakeOf);
+      if (!first || !isPhoto(first)) throw new Error("the retake names no photo");
+      expect(again.ref).toEqual(first.ref);
+      expect(again.expect).toEqual(first.expect);
+      expect(again.shows).toEqual(first.shows);
+      expect(again.sha256).not.toBe(first.sha256);
+      const plan = planOf(again);
+      expect(again.ref.id).toBe(plan.planted.fuelDuplicateIds[0]);
+      // The newer fill-up, the one turned in again, prints the very same values.
+      const [older, newer] = plan.planted.fuelDuplicateIds.map((id) => one(plan.rows.fuel_purchases, id));
+      expect([newer.amount_cents, newer.gallons_milli, newer.state, newer.purchased_on]).toEqual([
+        older.amount_cents,
+        older.gallons_milli,
+        older.state,
+        older.purchased_on,
+      ]);
+    }
   });
 
   it("finds a document by its row", () => {
@@ -163,7 +201,11 @@ describe("the sample documents manifest", () => {
         expect(doc.ref.table).toBe("fuel_purchases");
         expect(doc.kind).toBe("fuel_receipt");
         const row = one(plan.rows.fuel_purchases, doc.ref.id);
-        expect([plan.planted.wrongDriverPurchaseId, plan.planted.fuelOffRouteId]).toContain(row.id);
+        expect([
+          plan.planted.wrongDriverPurchaseId,
+          plan.planted.fuelOffRouteId,
+          plan.planted.fuelDuplicateIds[0],
+        ]).toContain(row.id);
         expect(doc.ref.humanRef).toBe(row.purchase_ref);
         expect(doc.ref.loadNumber).toBe(row.load_id ? loadOf(plan, row.load_id).load_number : null);
         expect(e.amountCents).toBe(row.amount_cents);

@@ -11,7 +11,7 @@ import { loadPhotoArgs, parseCap, runPhotos, type PhotoCalls } from "./lib/sampl
 
 // npm run docs:photos [-- --go | --compose] [--only <id>] [--cap <cents>]
 //
-// Makes the seven receipt photos in public/samples/docs/ and rewrites their manifest entries.
+// Makes the receipt photos in public/samples/docs/ and rewrites their manifest entries.
 // Without --go it is a dry run: the list, prompt lengths and the estimate, no call. --go calls
 // Muse Image and Muse Spark through the app's wrapper, against the LOCAL database's ledger only
 // (the demo tenants seeded there), with the switch turned on in this process alone; the run

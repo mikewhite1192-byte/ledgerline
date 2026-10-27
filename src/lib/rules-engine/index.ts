@@ -6,6 +6,7 @@ export {
   assertCount,
   BPS,
   cents,
+  floorDiv,
   MAX_STORED_CENTS,
   mul,
   mulBps,
@@ -117,3 +118,16 @@ export type {
   MoneyCodeStatus,
   MoneyCodeVoice,
 } from "./money-codes";
+export {
+  FUEL_CATEGORY_OF,
+  FUEL_CHECK_NAMES,
+  findFuelDuplicate,
+  findFuelOffRoute,
+  findFuelOverTank,
+  findFuelWhileParked,
+  NO_SUGGESTION_REASONS,
+  overTankExcessCents,
+  runFuelChecks,
+  suggestedCorrection,
+} from "./fuel";
+export type { FuelCategory, FuelCheckName, FuelFinding, FuelLimits, NoSuggestionReason } from "./fuel";

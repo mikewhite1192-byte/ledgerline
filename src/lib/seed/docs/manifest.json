@@ -232,6 +232,77 @@
       }
     },
     {
+      "id": "br-fuel-465",
+      "kind": "fuel_receipt",
+      "file": "samples/docs/br-fuel-465.webp",
+      "mime": "image/webp",
+      "bytes": 32624,
+      "sha256": "61fc9e8544520310958bf562a14a1e2bea0eb262f070f0b0d279fdae3d512468",
+      "width": 1008,
+      "height": 1344,
+      "cabAngle": false,
+      "origin": "composed",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "fuel_purchases",
+        "id": "bd87f82a-826d-403f-a44a-72345c3b5faa",
+        "humanRef": "blue-ridge-fuel-465",
+        "loadNumber": "BR-L10292"
+      },
+      "expect": {
+        "vendor": "Roadside Fuel Stop",
+        "date": "2026-10-28",
+        "amountCents": 31996,
+        "loadNumber": null,
+        "truckUnit": "BR-T113",
+        "gallonsMilli": 84200,
+        "priceCents": 380,
+        "purchasedAt": "2026-10-28T13:03:00.000Z",
+        "localTime": "9:03 AM",
+        "state": "MD",
+        "paidWith": "driver_own"
+      },
+      "shows": {
+        "city": "Waldorf"
+      }
+    },
+    {
+      "id": "br-fuel-465-again",
+      "kind": "fuel_receipt",
+      "file": "samples/docs/br-fuel-465-again.webp",
+      "mime": "image/webp",
+      "bytes": 40070,
+      "sha256": "6f1bf05e91e5141cec379a414f87bde233826b813a73db7ce01fa5bdb1da0ad0",
+      "width": 1008,
+      "height": 1344,
+      "cabAngle": false,
+      "origin": "composed",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "fuel_purchases",
+        "id": "bd87f82a-826d-403f-a44a-72345c3b5faa",
+        "humanRef": "blue-ridge-fuel-465",
+        "loadNumber": "BR-L10292"
+      },
+      "expect": {
+        "vendor": "Roadside Fuel Stop",
+        "date": "2026-10-28",
+        "amountCents": 31996,
+        "loadNumber": null,
+        "truckUnit": "BR-T113",
+        "gallonsMilli": 84200,
+        "priceCents": 380,
+        "purchasedAt": "2026-10-28T13:03:00.000Z",
+        "localTime": "9:03 AM",
+        "state": "MD",
+        "paidWith": "driver_own"
+      },
+      "shows": {
+        "city": "Waldorf"
+      },
+      "retakeOf": "br-fuel-465"
+    },
+    {
       "id": "br-l10259-ratecon",
       "kind": "rate_confirmation",
       "file": "samples/docs/br-l10259-ratecon.pdf",

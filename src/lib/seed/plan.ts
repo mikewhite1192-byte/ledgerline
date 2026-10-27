@@ -69,7 +69,7 @@ const ROLE_MIX: readonly (readonly [Role, number])[] = [
   ["oo_owned", 6],
 ];
 
-// The drivers (codes) who carry the planted problems: the six pay problems, then the three fuel
+// The drivers (codes) who carry the planted problems: the six pay problems, then the four fuel
 // anomalies. Never the hero, all distinct.
 export type Victims = {
   duplicateAdvance: string;
@@ -82,9 +82,10 @@ export type Victims = {
   fuelOffRoute: string;
   fuelOverTank: string;
   fuelParked: string;
+  fuelDuplicate: string;
 };
 
-type FuelVictim = "fuelOffRoute" | "fuelOverTank" | "fuelParked";
+type FuelVictim = "fuelOffRoute" | "fuelOverTank" | "fuelParked" | "fuelDuplicate";
 
 // The ids of the planted rows, for the tests and for the checks that must find them.
 export type Planted = {
@@ -99,6 +100,9 @@ export type Planted = {
   fuelOffRouteId: string;
   fuelOverTankId: string;
   fuelParkedId: string;
+  // The same receipt turned in twice: [older, newer] fill-ups and their two paybacks.
+  fuelDuplicateIds: [string, string];
+  fuelDuplicatePaybackIds: [string, string];
   // The four loads with unbilled detention, in plant order A to D.
   detentionLoadIds: string[];
   collections: CollectionsPlant[];
@@ -667,7 +671,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   const parkedState =
     before.length > 0 ? before[before.length - 1].row.dest_state : lanes.regional[0].from.state;
   const parked = addFuel(v10, null, parkedOn, [22, 40], parkedState, 118000, 372);
-  const fuelVictims: Pick<Victims, FuelVictim> = {
+  const fuelVictims: Pick<Victims, Exclude<FuelVictim, "fuelDuplicate">> = {
     fuelOffRoute: v8.code,
     fuelOverTank: v9.code,
     fuelParked: v10.code,
@@ -785,6 +789,66 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     x.row.customer_id = customers[customerIndex].id;
     plantDwell.set(x.row.id, { stop, minutes });
   });
+
+  // Planted (FUEL-ANOMALY): the same receipt turned in twice. Victim 11, a per-mile company
+  // driver with no other problem (never the hero, never a detention driver), paid for one fill-up
+  // on an open-week load and was paid back for it twice. Chosen and keyed on its own stream after
+  // every other plant, so no other row, id or ref moves; the two fill-ups and the two paybacks
+  // are numbered after the last ones. Third day of the open week or later, on a state the load
+  // drove through, six minutes apart on one day.
+  const dup = new Rng(`${seed}:dup`);
+  const dupFrom = addDays(openWeek.start, 2);
+  const detentionDrivers = new Set(detentionLoads.map((x) => x.driverCode));
+  const dupDays = (x: LoadDraft) =>
+    daysOf(x).filter((day) => day >= dupFrom && day <= openWeek.end);
+  const dupFits = (d: DriverRow) =>
+    roleOf.get(d.code) === "company_mile" &&
+    !taken.has(d.code) &&
+    openLoads(d).some((x) => dupDays(x).length > 0);
+  // A driver with no plant at all first; a detention driver (a settled-week billing plant, never
+  // their pay) only when no other fits.
+  const clear = drivers.filter((d) => dupFits(d) && !detentionDrivers.has(d.code));
+  const dupPool = clear.length > 0 ? clear : drivers.filter(dupFits);
+  if (dupPool.length === 0) throw new Error("no driver fits the duplicate receipt");
+  const v11 = dup.pick(dupPool);
+  taken.add(v11.code);
+  const dupLoad = dup.pick(openLoads(v11).filter((x) => dupDays(x).length > 0));
+  const dupDay = dup.pick(dupDays(dupLoad));
+  const dupState = dup.pick(stateMiles.filter((m) => m.load_id === dupLoad.row.id)).state;
+  const [dupHour, dupMinute] = [dup.int(6, 20), dup.int(0, 50)];
+  const dupFill = (minute: number, n: number): FuelPurchaseRow => {
+    const at = instantAt(dupDay, dupHour, minute, zone);
+    return {
+      id: dup.uuid(),
+      driver_id: v11.id,
+      load_id: dupLoad.row.id,
+      purchased_at: at,
+      purchased_on: localDateOf(at, zone),
+      state: dupState,
+      gallons_milli: 84200,
+      amount_cents: roundHalfUp(84200 * 380, 1000),
+      paid_with: "driver_own",
+      purchase_ref: `${slug}-fuel-${fuelPurchases.length + n}`,
+    };
+  };
+  const dupOlder = dupFill(dupMinute, 1);
+  const dupNewer = dupFill(dupMinute + 6, 2);
+  const dupPayback = (f: FuelPurchaseRow, n: number): PayItemRow => ({
+    id: dup.uuid(),
+    driver_id: v11.id,
+    kind: "reimbursement",
+    subkind: "fuel",
+    amount_cents: f.amount_cents,
+    item_date: f.purchased_on,
+    ref_table: "fuel_purchases",
+    ref_id: f.id,
+    description: "Fuel, paid by driver",
+    settlement_id: null,
+    item_ref: `${slug}-item-${payItems.length + n}`,
+  });
+  const dupPaybacks = [dupPayback(dupOlder, 1), dupPayback(dupNewer, 2)];
+  fuelPurchases.push(dupOlder, dupNewer);
+  payItems.push(...dupPaybacks);
 
   // ---- Stop times, from the bill of lading: every delivered load's arrival and departure ----
   // The truck leaves delivery when the bill is signed (delivered_at). Ordinary waits stay under
@@ -946,7 +1010,12 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   // Parity plants (0027), from the parity stream: two advances on one load for a driver with none,
   // the load each other advance is for, and the open-week advance to take back in full (one no
   // settlement has recovered from; recorded after history, below).
-  const allVictims = new Set<string>([...Object.values(victims), ...Object.values(fuelVictims)]);
+  // Every planted driver, the duplicate-receipt one (victim 11) included.
+  const allVictims = new Set<string>([
+    ...Object.values(victims),
+    ...Object.values(fuelVictims),
+    v11.code,
+  ]);
   const withAdvance = new Set(advanceDrafts.map((a) => a.driver_id));
   const pair = plantLoadPair({
     parity,
@@ -1100,7 +1169,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     carrier,
     anchor,
     periods,
-    victims: { ...victims, ...fuelVictims },
+    victims: { ...victims, ...fuelVictims, fuelDuplicate: v11.code },
     planted: {
       duplicateAdvanceIds: [dupA.id, dupB.id],
       wrongDriverFuelItemId: wrongFuelItem.id,
@@ -1113,6 +1182,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       fuelOffRouteId: offRoute.id,
       fuelOverTankId: overTank.id,
       fuelParkedId: parked.id,
+      fuelDuplicateIds: [dupOlder.id, dupNewer.id],
+      fuelDuplicatePaybackIds: [dupPaybacks[0].id, dupPaybacks[1].id],
       detentionLoadIds: detentionLoads.map((x) => x.row.id),
       collections: ar.collections,
       invoiceReview,
