@@ -48,6 +48,38 @@ const invoiceReply = (total = 2810.05, customer = "58") => ({
   Invoice: { Id: "901", DocNumber: "BR-INV-1001", TotalAmt: total, CustomerRef: { value: customer } },
 });
 
+// The look by document number before every post: nothing holds it yet.
+const NONE: Answer = { status: 200, body: { QueryResponse: {} } };
+const held = (type: string, ...rows: unknown[]): Answer => ({
+  status: 200,
+  body: { QueryResponse: { [type]: rows } },
+});
+
+const OTHER_ACTION = "3c1d2e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+
+const payment = (over: Record<string, unknown> = {}) => ({
+  actionId: ACTION,
+  customerOutsideId: "58",
+  paymentRef: "PAY-2001",
+  receivedOn: "2026-11-20",
+  amountCents: 10_000,
+  applications: [{ invoiceOutsideId: "901", amountCents: 6_000 }],
+  ...over,
+});
+
+// A payment as QuickBooks returns it: each line linking one invoice, the rest unapplied.
+const paymentRecord = (lines: [string, number][], unapplied: number, total = 100) => ({
+  Id: "950",
+  PaymentRefNum: "PAY-2001",
+  TotalAmt: total,
+  UnappliedAmt: unapplied,
+  CustomerRef: { value: "58" },
+  Line: lines.map(([invoice, amount]) => ({
+    Amount: amount,
+    LinkedTxn: [{ TxnId: invoice, TxnType: "Invoice" }],
+  })),
+});
+
 function make(answers: Answer[], db = new FakeQboDb(), env = qboEnv()) {
   const { fetch, sent } = scriptedFetch(answers);
   const lines: string[] = [];
@@ -118,8 +150,8 @@ describe("QuickBooks adapter: switch and settings", () => {
 });
 
 describe("QuickBooks adapter: creates", () => {
-  it("posts once with the ledger's requestid, the minor version and exact decimals", async () => {
-    const { adapter, sent, db } = make([{ status: 200, body: invoiceReply() }]);
+  it("looks for its number, then posts once with the ledger's requestid, the minor version and exact decimals", async () => {
+    const { adapter, sent, db } = make([NONE, { status: 200, body: invoiceReply() }]);
     const out = await adapter.createInvoice(db, invoice(), ctx());
     expect(out).toEqual({
       kind: "confirmed",
@@ -129,8 +161,12 @@ describe("QuickBooks adapter: creates", () => {
       ref: "BR-INV-1001",
       amountCents: 281_005,
     });
-    expect(sent).toHaveLength(1);
-    const [req] = sent;
+    expect(sent).toHaveLength(2);
+    expect(sent[0].method).toBe("GET");
+    expect(sent[0].url.searchParams.get("query")).toBe(
+      "SELECT * FROM Invoice WHERE DocNumber = 'BR-INV-1001'",
+    );
+    const req = sent[1];
     expect(req.method).toBe("POST");
     expect(req.url.origin).toBe("https://sandbox-quickbooks.api.intuit.com");
     expect(req.url.pathname).toBe(`/v3/company/${REALM}/invoice`);
@@ -175,15 +211,16 @@ describe("QuickBooks adapter: creates", () => {
       [{ throws: "TypeError" }, { kind: "unknown", category: "network" }],
     ];
     for (const [answer, expected] of cases) {
-      const { adapter, sent, lines, db } = make([answer]);
+      const { adapter, sent, lines, db } = make([NONE, answer]);
       expect(await adapter.createInvoice(db, invoice(), ctx()), JSON.stringify(answer)).toEqual(expected);
-      expect(sent).toHaveLength(1);
+      expect(sent).toHaveLength(2);
       expect(lines.join("\n")).not.toMatch(/upstream|Bearer|access-|refresh-/);
     }
   });
 
   it("refreshes once on a 401, stores both rotated tokens and resends with the same requestid", async () => {
     const { adapter, sent, db } = make([
+      NONE,
       { status: 401, body: fault("3200", "AuthenticationFault") },
       { status: 200, body: tokenReply() },
       { status: 200, body: invoiceReply() },
@@ -191,13 +228,14 @@ describe("QuickBooks adapter: creates", () => {
     const out = await adapter.createInvoice(db, invoice(), ctx());
     expect(out).toMatchObject({ kind: "confirmed", id: "901" });
     expect(sent.map((s) => `${s.method} ${s.url.host}${s.url.pathname}`)).toEqual([
+      `GET sandbox-quickbooks.api.intuit.com/v3/company/${REALM}/query`,
       `POST sandbox-quickbooks.api.intuit.com/v3/company/${REALM}/invoice`,
       "POST oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       `POST sandbox-quickbooks.api.intuit.com/v3/company/${REALM}/invoice`,
     ]);
-    expect(sent[2].url.searchParams.get("requestid")).toBe(sent[0].url.searchParams.get("requestid"));
-    expect(sent[2].headers.Authorization).toBe(`Bearer ${NEW_ACCESS}`);
-    expect(new URLSearchParams(sent[1].body ?? "").get("refresh_token")).toBe(REFRESH);
+    expect(sent[3].url.searchParams.get("requestid")).toBe(sent[1].url.searchParams.get("requestid"));
+    expect(sent[3].headers.Authorization).toBe(`Bearer ${NEW_ACCESS}`);
+    expect(new URLSearchParams(sent[2].body ?? "").get("refresh_token")).toBe(REFRESH);
     // Under FOR UPDATE, and the rotated refresh token is the one stored.
     expect(db.locks).toBe(1);
     expect(db.refreshed).toHaveLength(1);
@@ -208,6 +246,7 @@ describe("QuickBooks adapter: creates", () => {
 
   it("answers auth after a second 401, with one refresh only", async () => {
     const { adapter, sent, db } = make([
+      NONE,
       { status: 401, body: {} },
       { status: 200, body: tokenReply() },
       { status: 401, body: {} },
@@ -217,7 +256,7 @@ describe("QuickBooks adapter: creates", () => {
       category: "auth",
       httpStatus: 401,
     });
-    expect(sent).toHaveLength(3);
+    expect(sent).toHaveLength(4);
   });
 
   it("refreshes an expiring access token before the call", async () => {
@@ -225,6 +264,7 @@ describe("QuickBooks adapter: creates", () => {
     const { adapter, sent } = make(
       [
         { status: 200, body: tokenReply() },
+        NONE,
         { status: 200, body: invoiceReply() },
       ],
       db,
@@ -232,6 +272,7 @@ describe("QuickBooks adapter: creates", () => {
     expect(await adapter.createInvoice(db, invoice(), ctx())).toMatchObject({ kind: "confirmed" });
     expect(sent[0].url.host).toBe("oauth.platform.intuit.com");
     expect(sent[1].headers.Authorization).toBe(`Bearer ${NEW_ACCESS}`);
+    expect(sent[2].headers.Authorization).toBe(`Bearer ${NEW_ACCESS}`);
     expect(db.refreshed).toHaveLength(1);
   });
 
@@ -244,25 +285,33 @@ describe("QuickBooks adapter: creates", () => {
 
   it("adopts our own document on a 6140, and refuses another party's", async () => {
     const ours = make([
+      NONE,
       { status: 400, body: fault("6140") },
-      { status: 200, body: { QueryResponse: { Invoice: [invoiceReply().Invoice] } } },
+      held("Invoice", invoiceReply().Invoice),
     ]);
     expect(await ours.adapter.createInvoice(ours.db, invoice(), ctx())).toMatchObject({
       kind: "confirmed",
       id: "901",
       amountCents: 281_005,
     });
-    expect(ours.sent[1].url.searchParams.get("query")).toBe(
+    expect(ours.sent[2].url.searchParams.get("query")).toBe(
       "SELECT * FROM Invoice WHERE DocNumber = 'BR-INV-1001'",
     );
     const theirs = make([
+      NONE,
       { status: 400, body: fault("6140") },
-      { status: 200, body: { QueryResponse: { Invoice: [invoiceReply(2810.05, "77").Invoice] } } },
+      held("Invoice", invoiceReply(2810.05, "77").Invoice),
     ]);
     expect(await theirs.adapter.createInvoice(theirs.db, invoice(), ctx())).toEqual({
       kind: "failed",
       category: "validation",
     });
+    const nothing = make([NONE, { status: 400, body: fault("6140") }, NONE]);
+    expect(await nothing.adapter.createInvoice(nothing.db, invoice(), ctx())).toEqual({
+      kind: "failed",
+      category: "validation",
+    });
+    expect(nothing.sent.filter((r) => r.method === "POST")).toHaveLength(1);
   });
 
   it("refuses a document number over Intuit's limit before sending", async () => {
@@ -271,6 +320,141 @@ describe("QuickBooks adapter: creates", () => {
       await adapter.createInvoice(db, invoice({ invoiceNumber: "X".repeat(22) }), ctx()),
     ).toEqual({ kind: "failed", category: "validation" });
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe("QuickBooks adapter: a document number already held", () => {
+  const posts = (sent: { method: string }[]) => sent.filter((r) => r.method === "POST").length;
+
+  it("replays the same requestid: adopts what the look finds, or posts with the same requestid", async () => {
+    // The first send went through and its answer was lost: the look finds it and nothing posts.
+    const found = make([held("Invoice", invoiceReply().Invoice)]);
+    expect(await found.adapter.createInvoice(found.db, invoice(), ctx())).toEqual({
+      kind: "confirmed",
+      system: "qbo_sandbox",
+      type: "Invoice",
+      id: "901",
+      ref: "BR-INV-1001",
+      amountCents: 281_005,
+    });
+    expect(posts(found.sent)).toBe(0);
+    // Intuit had not listed it yet: the post carries the same requestid, so Intuit answers with
+    // the first record instead of making a second.
+    const first = make([NONE, { status: 200, body: invoiceReply() }]);
+    const again = make([NONE, { status: 200, body: invoiceReply() }]);
+    const a = await first.adapter.createInvoice(first.db, invoice(), ctx());
+    const b = await again.adapter.createInvoice(again.db, invoice(), ctx());
+    expect(b).toEqual(a);
+    expect(again.sent[1].url.searchParams.get("requestid")).toBe(
+      first.sent[1].url.searchParams.get("requestid"),
+    );
+  });
+
+  it("adopts a single match under a new requestid instead of making a second document", async () => {
+    const { adapter, sent, lines, db } = make([held("Invoice", invoiceReply().Invoice)]);
+    const out = await adapter.createInvoice(db, invoice({ actionId: OTHER_ACTION }), ctx(OTHER_ACTION));
+    expect(out).toMatchObject({ kind: "confirmed", id: "901", amountCents: 281_005 });
+    expect(posts(sent)).toBe(0);
+    expect(lines.join("\n")).toContain("adopted by number");
+  });
+
+  it("never posts when two documents carry the number", async () => {
+    const { adapter, sent, lines, db } = make([
+      held("Invoice", invoiceReply().Invoice, { ...invoiceReply().Invoice, Id: "902" }),
+    ]);
+    expect(await adapter.createInvoice(db, invoice(), ctx())).toEqual({ kind: "unknown", category: "unknown" });
+    expect(posts(sent)).toBe(0);
+    expect(lines.join("\n")).toContain("duplicate");
+  });
+
+  it("never posts or confirms on a match with another amount, a void or another party", async () => {
+    const cases: [unknown, unknown, string | null][] = [
+      [invoiceReply(2810.04).Invoice, { kind: "failed", category: "amount_mismatch" }, "amount_mismatch"],
+      [
+        { ...invoiceReply(0).Invoice, PrivateNote: "Voided - LedgerLine action" },
+        { kind: "failed", category: "amount_mismatch" },
+        "voided",
+      ],
+      [invoiceReply(2810.05, "77").Invoice, { kind: "failed", category: "validation" }, null],
+      [{ ...invoiceReply().Invoice, TotalAmt: "x" }, { kind: "unknown", category: "unknown" }, null],
+    ];
+    for (const [row, expected, logged] of cases) {
+      const { adapter, sent, lines, db } = make([held("Invoice", row)]);
+      expect(await adapter.createInvoice(db, invoice(), ctx()), JSON.stringify(row)).toEqual(expected);
+      expect(posts(sent)).toBe(0);
+      if (logged) expect(lines.join("\n")).toContain(logged);
+    }
+  });
+
+  it("sends nothing when the look itself fails", async () => {
+    const { adapter, sent, db } = make([{ status: 503, body: {} }]);
+    expect(await adapter.createInvoice(db, invoice(), ctx())).toEqual({ kind: "failed", category: "unavailable" });
+    expect(posts(sent)).toBe(0);
+  });
+
+  it("looks a customer payment up by its reference number", async () => {
+    const { adapter, sent, db } = make([held("Payment", paymentRecord([["901", 60]], 40))]);
+    expect(await adapter.recordCustomerPayment(db, payment(), ctx())).toMatchObject({
+      kind: "confirmed",
+      type: "Payment",
+      id: "950",
+    });
+    expect(sent[0].url.searchParams.get("query")).toBe(
+      "SELECT * FROM Payment WHERE PaymentRefNum = 'PAY-2001'",
+    );
+  });
+});
+
+describe("QuickBooks adapter: customer payments as applied", () => {
+  it("confirms a payment applied exactly as asked", async () => {
+    const { adapter, sent, db } = make([NONE, { status: 200, body: { Payment: paymentRecord([["901", 60]], 40) } }]);
+    expect(await adapter.recordCustomerPayment(db, payment(), ctx())).toEqual({
+      kind: "confirmed",
+      system: "qbo_sandbox",
+      type: "Payment",
+      id: "950",
+      ref: "PAY-2001",
+      amountCents: 10_000,
+    });
+    expect(JSON.parse(sent[1].body ?? "").Line).toEqual([
+      { Amount: 60, LinkedTxn: [{ TxnId: "901", TxnType: "Invoice" }] },
+    ]);
+  });
+
+  it("never confirms a payment QuickBooks cut to the invoice's open balance", async () => {
+    // Asked 60.00 on the invoice; QuickBooks applied 45.00 and left 55.00 unapplied, total as sent.
+    const { adapter, lines, db } = make([NONE, { status: 200, body: { Payment: paymentRecord([["901", 45]], 55) } }]);
+    expect(await adapter.recordCustomerPayment(db, payment(), ctx())).toEqual({
+      kind: "failed",
+      category: "amount_mismatch",
+    });
+    expect(lines.join("\n")).toContain("applied_short");
+  });
+
+  it("never confirms a payment whose unapplied rest or lines cannot be read", async () => {
+    const noRest = { ...paymentRecord([["901", 60]], 40) } as Record<string, unknown>;
+    delete noRest.UnappliedAmt;
+    const twoLinks = {
+      ...paymentRecord([], 40),
+      Line: [{ Amount: 60, LinkedTxn: [{ TxnId: "901", TxnType: "Invoice" }, { TxnId: "902", TxnType: "Invoice" }] }],
+    };
+    const otherInvoice = paymentRecord([["903", 60]], 40);
+    for (const record of [noRest, twoLinks, otherInvoice]) {
+      const { adapter, db } = make([NONE, { status: 200, body: { Payment: record } }]);
+      expect(await adapter.recordCustomerPayment(db, payment(), ctx()), JSON.stringify(record)).toEqual({
+        kind: "failed",
+        category: "amount_mismatch",
+      });
+    }
+  });
+
+  it("never adopts a held payment that was cut", async () => {
+    const { adapter, sent, db } = make([held("Payment", paymentRecord([["901", 45]], 55))]);
+    expect(await adapter.recordCustomerPayment(db, payment(), ctx())).toEqual({
+      kind: "failed",
+      category: "amount_mismatch",
+    });
+    expect(sent.filter((r) => r.method === "POST")).toHaveLength(0);
   });
 });
 
@@ -394,12 +578,65 @@ describe("QuickBooks adapter: read-back", () => {
     const two = make([
       { status: 200, body: { QueryResponse: { Invoice: [invoiceReply().Invoice, { ...invoiceReply().Invoice, Id: "902" }] } } },
     ]);
-    await expect(
-      two.adapter.readBack(two.db, ref({ outsideId: null, outsideRef: "BR-INV-1001" }), ctx()),
-    ).rejects.toBeInstanceOf(MoneyError);
+    const err = await two.adapter
+      .readBack(two.db, ref({ outsideId: null, outsideRef: "BR-INV-1001" }), ctx())
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MoneyError);
+    expect(err).toMatchObject({ category: "duplicate" });
+    // Reading back never makes anything.
+    expect(two.sent.map((r) => r.method)).toEqual(["GET"]);
+    expect(two.lines.join("\n")).toContain("duplicate");
     const down = make([{ status: 503, body: {} }]);
     await expect(down.adapter.readBack(down.db, ref(), ctx())).rejects.toMatchObject({
       category: "unavailable",
     });
+  });
+
+  it("reads a voided document back as canceled, by id and by number", async () => {
+    const voided = { ...invoiceReply(0).Invoice, PrivateNote: "Voided - LedgerLine action" };
+    const byId = make([{ status: 200, body: { Invoice: voided } }]);
+    expect(await byId.adapter.readBack(byId.db, ref(), ctx())).toMatchObject({
+      found: true,
+      id: "901",
+      amountCents: 0,
+      status: "canceled",
+    });
+    expect(byId.lines.join("\n")).toContain("voided");
+    const byNumber = make([held("Invoice", voided)]);
+    expect(
+      await byNumber.adapter.readBack(byNumber.db, ref({ outsideId: null, outsideRef: "BR-INV-1001" }), ctx()),
+    ).toMatchObject({ found: true, status: "canceled" });
+    // A zero total without the note: still never a success.
+    const zeroed = make([{ status: 200, body: invoiceReply(0) }]);
+    expect(await zeroed.adapter.readBack(zeroed.db, ref(), ctx())).toMatchObject({ status: "canceled" });
+    // The note alone, total kept: canceled too.
+    const noted = make([{ status: 200, body: { Invoice: { ...invoiceReply().Invoice, PrivateNote: "Voided" } } }]);
+    expect(await noted.adapter.readBack(noted.db, ref(), ctx())).toMatchObject({ status: "canceled" });
+  });
+
+  it("reads a payment back as succeeded only when applied as asked", async () => {
+    const asked = [{ invoiceOutsideId: "901", amountCents: 6_000 }];
+    const payRef = (over: Record<string, unknown> = {}) =>
+      ref({ type: "Payment", outsideId: "950", applications: asked, ...over });
+    const good = make([{ status: 200, body: { Payment: paymentRecord([["901", 60]], 40) } }]);
+    expect(await good.adapter.readBack(good.db, payRef(), ctx())).toMatchObject({
+      found: true,
+      id: "950",
+      amountCents: 10_000,
+      status: "succeeded",
+    });
+    const cut = make([{ status: 200, body: { Payment: paymentRecord([["901", 45]], 55) } }]);
+    await expect(cut.adapter.readBack(cut.db, payRef(), ctx())).rejects.toMatchObject({
+      category: "amount_mismatch",
+    });
+    expect(cut.lines.join("\n")).toContain("applied_short");
+  });
+
+  it("refuses to read a payment back without what it was asked to apply, sending nothing", async () => {
+    const { adapter, sent, db } = make([]);
+    await expect(
+      adapter.readBack(db, ref({ type: "Payment", outsideId: "950" }), ctx()),
+    ).rejects.toMatchObject({ category: "validation" });
+    expect(sent).toHaveLength(0);
   });
 });

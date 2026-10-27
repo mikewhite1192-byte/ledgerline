@@ -1,9 +1,10 @@
 import { MoneyError } from "../../../money/types";
 
-// Which of the company's accounts and items each kind of post uses, found by name at connect (no
-// ids in code) and created when missing. The names carry "LedgerLine" so they never collide with
-// the company's own accounts. Accounts Receivable and Accounts Payable are the company's own,
-// found by type. The resolved maps hold ids only; a reconnect resolves them again.
+// Which of the company's accounts and items each kind of post uses, found at connect by name (and
+// an account by its type too; no ids in code) and created when missing. The names carry
+// "LedgerLine" so they never collide with the company's own accounts. Accounts Receivable and
+// Accounts Payable are the company's own, found by type. The resolved maps hold ids only; a
+// reconnect resolves them again.
 
 export const ACCOUNT_ROLES = [
   "freight_income",
@@ -54,11 +55,12 @@ export const ACCOUNT_SPECS: Record<AccountRole, AccountSpec> = {
     accountType: "Other Current Liability",
     accountSubType: "OtherCurrentLiabilities",
   },
-  // Fuel, insurance, lease and other deductions recovered from drivers.
+  // Fuel, insurance, lease and other deductions recovered from drivers. QuickBooks files this
+  // subtype under "Other Income" and refuses it under "Income" (code 2170, measured 2026-10-27).
   driver_chargebacks: {
     find: "name",
     name: "LedgerLine Driver Chargebacks",
-    accountType: "Income",
+    accountType: "Other Income",
     accountSubType: "OtherMiscellaneousIncome",
   },
   // Payouts are drawn from it and customer payments deposited to it, so no bank account of the
@@ -144,13 +146,19 @@ export function quoteQueryValue(value: string): string {
   return `'${value.replace(/'/g, "\\'")}'`;
 }
 
+// The active record of a name; an account must also be of its role's type, so one of the same
+// name under another type is never adopted.
+export function findWhere(name: string, accountType?: string): string {
+  const type = accountType === undefined ? "" : ` AND AccountType = ${quoteQueryValue(accountType)}`;
+  return `Name = ${quoteQueryValue(name)}${type} AND Active = true`;
+}
+
 async function oneOrCreate(
   port: MappingPort,
   entity: "Account" | "Item",
-  name: string,
+  where: string,
   body: Record<string, unknown>,
 ): Promise<string> {
-  const where = `Name = ${quoteQueryValue(name)} AND Active = true`;
   const one = async (): Promise<string | null> => {
     const found = await port.findIds(entity, where);
     // More than one: a person renames one in the company; nothing is guessed.
@@ -163,7 +171,10 @@ async function oneOrCreate(
     return await port.create(entity, body);
   } catch (err) {
     if (!(err instanceof MoneyError) || err.category !== "duplicate") throw err;
-    // Made meanwhile, or an inactive record holds the name: one more look, active only.
+    // Made meanwhile, or the name is held by a record this query does not match (an account of
+    // another type, say): one more look, then refuse. Never an inactive record: QuickBooks
+    // renames a record made inactive (an account gets " (deleted)" added, measured 2026-10-27), so
+    // a query by the original name finds nothing.
     const made = await one();
     if (!made) throw new MoneyError("not_configured");
     return made;
@@ -184,7 +195,7 @@ export async function resolveMapping(
       if (found.length !== 1) throw new MoneyError("not_configured");
       accounts[role] = found[0];
     } else {
-      accounts[role] = await oneOrCreate(port, "Account", spec.name, {
+      accounts[role] = await oneOrCreate(port, "Account", findWhere(spec.name, spec.accountType), {
         Name: spec.name,
         AccountType: spec.accountType,
         AccountSubType: spec.accountSubType,
@@ -193,7 +204,7 @@ export async function resolveMapping(
   }
   const items = {} as ItemMap;
   for (const name of ITEM_NAMES) {
-    items[name] = await oneOrCreate(port, "Item", name, {
+    items[name] = await oneOrCreate(port, "Item", findWhere(name), {
       Name: name,
       Type: "Service",
       IncomeAccountRef: { value: accounts.freight_income },

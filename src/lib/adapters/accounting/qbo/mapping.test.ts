@@ -4,13 +4,15 @@ import {
   ACCOUNT_ROLES,
   ACCOUNT_SPECS,
   accountForPayLine,
+  findWhere,
   ITEM_NAMES,
   quoteQueryValue,
   resolveMapping,
   type MappingPort,
 } from "./mapping";
 
-// A company in memory: names to ids, with the query and create calls recorded.
+// A company in memory: names to ids, with the query and create calls recorded. An account is
+// found by its name and type, an item by its name, as resolveMapping queries them.
 function company(existing: Record<string, string[]> = {}, opts: { duplicateOn?: string; raceId?: string } = {}) {
   const found = new Map(Object.entries(existing));
   const queries: string[] = [];
@@ -23,8 +25,10 @@ function company(existing: Record<string, string[]> = {}, opts: { duplicateOn?: 
     },
     async create(entity, body) {
       created.push(body);
-      const where =
-        `Name = ${quoteQueryValue(String(body.Name))} AND Active = true`;
+      const where = findWhere(
+        String(body.Name),
+        entity === "Account" ? String(body.AccountType) : undefined,
+      );
       if (opts.duplicateOn === body.Name) {
         if (opts.raceId) found.set(`${entity}: ${where}`, [opts.raceId]);
         throw new MoneyError("duplicate");
@@ -81,17 +85,43 @@ describe("QuickBooks account and item mapping", () => {
         company({ ...arAp, "Account: AccountType = 'Accounts Receivable' AND Active = true": ["8", "18"] }).port,
       ),
     ).rejects.toMatchObject({ category: "not_configured" });
-    const name = `Account: Name = '${ACCOUNT_SPECS.driver_pay.find === "name" ? ACCOUNT_SPECS.driver_pay.name : ""}' AND Active = true`;
+    const spec = ACCOUNT_SPECS.driver_pay;
+    const name = `Account: Name = '${spec.find === "name" ? spec.name : ""}' AND AccountType = 'Expense' AND Active = true`;
     await expect(resolveMapping(company({ ...arAp, [name]: ["3", "4"] }).port)).rejects.toMatchObject({
       category: "not_configured",
     });
   });
 
-  it("looks once more after a duplicate name: adopts a record made meanwhile, refuses an inactive one", async () => {
+  it("looks once more after a duplicate name: adopts a record made meanwhile, refuses a name held where the query does not match", async () => {
     const raced = company(arAp, { duplicateOn: "Stop", raceId: "777" });
     expect((await resolveMapping(raced.port)).items.Stop).toBe("777");
-    const inactive = company(arAp, { duplicateOn: "Stop" });
-    await expect(resolveMapping(inactive.port)).rejects.toMatchObject({ category: "not_configured" });
+    const held = company(arAp, { duplicateOn: "Stop" });
+    await expect(resolveMapping(held.port)).rejects.toMatchObject({ category: "not_configured" });
+  });
+
+  it("files driver chargebacks under Other Income and finds every named account by its type too", async () => {
+    const c = company(arAp);
+    const out = await resolveMapping(c.port);
+    const spec = ACCOUNT_SPECS.driver_chargebacks;
+    expect(spec).toMatchObject({ accountType: "Other Income", accountSubType: "OtherMiscellaneousIncome" });
+    const name = spec.find === "name" ? spec.name : "";
+    expect(c.created).toContainEqual({
+      Name: name,
+      AccountType: "Other Income",
+      AccountSubType: "OtherMiscellaneousIncome",
+    });
+    expect(c.queries).toContain(
+      `Account: Name = ${quoteQueryValue(name)} AND AccountType = 'Other Income' AND Active = true`,
+    );
+    // Items have no account type: found by name alone.
+    expect(c.queries).toContain("Item: Name = 'Freight' AND Active = true");
+    // A same-name account of another type is not ours: the create is refused and nothing is guessed.
+    const other = company(
+      { ...arAp, [`Account: Name = ${quoteQueryValue(name)} AND AccountType = 'Income' AND Active = true`]: ["44"] },
+      { duplicateOn: name },
+    );
+    await expect(resolveMapping(other.port)).rejects.toMatchObject({ category: "not_configured" });
+    expect(out.accounts.driver_chargebacks).toMatch(/^\d+$/);
   });
 
   it("maps every settlement line kind to an account and refuses an unknown one", () => {

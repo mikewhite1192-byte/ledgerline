@@ -38,6 +38,12 @@ describe("money start-up guard", () => {
   it("refuses a production QuickBooks environment, naming the variable and not the value", () => {
     const err = refusal({ QBO_ENVIRONMENT: "production" });
     expect(err?.variable).toBe("QBO_ENVIRONMENT");
+    expect(err?.name).toBe("MoneyEnvRefused");
+    // The server keeps running and answers 500, so the line says that, never that it stopped.
+    expect(err?.message).toBe(
+      "money guard: money settings refused (QBO_ENVIRONMENT must be sandbox); every request will answer 500 until fixed",
+    );
+    expect(err?.message).not.toContain("refused to start");
     expect(err?.message).not.toContain("production");
   });
 

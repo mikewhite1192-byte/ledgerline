@@ -174,9 +174,17 @@ export interface AccountingAdapter {
     },
     ctx: SendContext,
   ): Promise<SendOutcome>;
+  // For a Payment, applications is required: the invoices and amounts it was asked to apply, so a
+  // payment QuickBooks applied short of that never reads back as succeeded.
   readBack(
     q: Queryable,
-    ref: { type: string; requestId: string; outsideId?: string | null; outsideRef?: string | null },
+    ref: {
+      type: string;
+      requestId: string;
+      outsideId?: string | null;
+      outsideRef?: string | null;
+      applications?: { invoiceOutsideId: string; amountCents: number }[];
+    },
     ctx: SendContext,
   ): Promise<ReadBack>;
 }

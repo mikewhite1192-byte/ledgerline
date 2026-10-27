@@ -7,8 +7,10 @@ import { MoneyError, type MoneyFailure } from "../../../money/types";
 import type { AccountingAdapter, ReadBack, Ready, SendContext, SendOutcome } from "../../types";
 import { createQboClient, type Opened, type QboDeps, type Reply } from "./client";
 import {
+  appliedAsAsked,
   billBody,
   billPaymentBody,
+  checkApplications,
   checkDocNumber,
   checkOutsideId,
   customerBody,
@@ -16,6 +18,7 @@ import {
   DOC_TYPES,
   entityOf,
   invoiceBody,
+  isVoided,
   PATH_OF,
   paymentBody,
   purchaseBody,
@@ -23,6 +26,7 @@ import {
   REF_FIELD,
   vendorBody,
   vendorDisplayName,
+  type Application,
   type DocType,
   type EntityType,
   type Found,
@@ -31,9 +35,12 @@ import { quoteQueryValue } from "./mapping";
 import { readEntityId, storeEntityId, tenantCode, type EntityTable } from "./store";
 
 // The QuickBooks Online sandbox behind the accounting interface. Each create posts once with the
-// ledger row's request id as Intuit's requestid, so a resend replays the first answer instead of
-// making a second record. A reply that is not a clear yes or no is unknown until read back. The
-// switch, the settings, the allowed company and the connection are checked again on every call.
+// ledger row's request id as Intuit's requestid, so a resend of the same row replays the first
+// answer. Intuit does not refuse a second document with the same number under a new requestid
+// (measured 2026-10-27), so every create first looks for its document number and adopts only a
+// single match that is ours; anything ambiguous never posts. A reply that is not a clear yes or no
+// is unknown until read back. The switch, the settings, the allowed company and the connection are
+// checked again on every call.
 
 const READY_TIMEOUT_MS = 10_000;
 const REQUEST_ID = /^[0-9a-f]{32}$/;
@@ -42,7 +49,17 @@ const DUPLICATE_NAME = "6240";
 const DUPLICATE_DOC_NUMBER = "6140";
 const OBJECT_NOT_FOUND = "610";
 
-type Built = { body: Record<string, unknown>; totalCents: number; docNumber: string };
+type Built = {
+  body: Record<string, unknown>;
+  totalCents: number;
+  docNumber: string;
+  // Payment only: the invoices it applies to, checked.
+  applications?: Application[];
+};
+
+// Why a record QuickBooks holds is not the one we asked for. Logged, never stored; the ledger
+// gets an outcome it already knows.
+type Mismatch = "voided" | "amount_mismatch" | "applied_short";
 
 function categoryOf(err: unknown): MoneyFailure {
   if (err instanceof MoneyError) return err.category;
@@ -135,7 +152,10 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
         id = entityOf(type, reply.body)?.id ?? null;
         if (!id) throw new MoneyError("unknown");
       } else if (reply.kind === "refused" && reply.codes.includes(DUPLICATE_NAME)) {
-        // Made meanwhile (or inactive): look once more.
+        // Made meanwhile, or the name is held where this query does not look (QuickBooks keeps
+        // display names unique across customers, vendors and employees): look once more. Never an
+        // inactive record: QuickBooks renames a customer or vendor made inactive, so a query by
+        // the original name finds nothing (measured 2026-10-27).
         id = one(await query(q, opened, type, where, ctx.timeoutMs));
         if (!id) throw new MoneyError("not_configured");
       } else {
@@ -145,7 +165,8 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     return { outsideId: await storeEntityId(q, table, localId, id) };
   }
 
-  // A document create: build (every value checked), post once, read the answer whole.
+  // A document create: build (every value checked), look for our number, post once only when
+  // nothing holds it, read the answer whole.
   async function create(
     q: Queryable,
     type: DocType,
@@ -155,15 +176,22 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
   ): Promise<SendOutcome> {
     let built: Built;
     let opened: Opened;
+    let held: Found[];
     try {
       if (flags.accountingEnabled !== true) return { kind: "failed", category: "disabled" };
       checkContext(ctx, actionId);
       opened = await client.connection(q, ctx.timeoutMs, { write: true });
       built = build(opened);
+      // The adapter cannot tell a row's first send from a resend (both carry the row's stored
+      // request id), so it looks every time; for a resend the look finds the document the replay
+      // would answer with.
+      held = await byNumber(q, opened, type, built.docNumber, ctx.timeoutMs);
     } catch (err) {
       // Nothing was sent.
       return { kind: "failed", category: categoryOf(err) };
     }
+    const adopted = ofHeld(type, held, built);
+    if (adopted) return adopted;
     let reply: Reply;
     try {
       reply = await client.request(
@@ -179,15 +207,28 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     if (reply.kind === "ok") {
       const found = entityOf(type, reply.body);
       if (!found || found.amountCents === null) return { kind: "unknown", category: "unknown" };
+      // The amount is the executor's to compare; a voided record or a cut payment never confirms.
+      const why = mismatchOf(type, found, built, { amount: false });
+      if (why) return notOurs(type, why);
       return confirmed(type, found, built.docNumber);
     }
     if (reply.kind === "refused" && reply.codes.includes(DUPLICATE_DOC_NUMBER)) {
-      return adoptByDocNumber(q, opened, type, built, ctx);
+      return afterDuplicateNumber(q, opened, type, built, ctx);
     }
     if (reply.kind === "refused") {
       return { kind: "failed", category: reply.category, httpStatus: reply.status };
     }
     return { kind: "unknown", category: reply.category, httpStatus: reply.status };
+  }
+
+  function byNumber(
+    q: Queryable,
+    opened: Opened,
+    type: DocType,
+    docNumber: string,
+    timeoutMs: number,
+  ): Promise<Found[]> {
+    return query(q, opened, type, `${REF_FIELD[type]} = ${quoteQueryValue(docNumber)}`, timeoutMs);
   }
 
   function confirmed(type: DocType, found: Found, ref: string): SendOutcome {
@@ -201,9 +242,54 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     };
   }
 
-  // A 6140: a document with this number exists. Ours from an earlier send (same party) is
-  // adopted, and the executor compares its amount; anyone else's refuses the create.
-  async function adoptByDocNumber(
+  // A record that is not the one we asked for: never confirmed. The executor records any
+  // failure outside its definite list as unknown, so a person or a read-back settles it.
+  function notOurs(type: DocType, why: Mismatch): SendOutcome {
+    client.log(`qbo: ${type} ${why}`);
+    return { kind: "failed", category: "amount_mismatch" };
+  }
+
+  function mismatchOf(
+    type: DocType,
+    found: Found,
+    built: Built,
+    opts: { amount: boolean },
+  ): Mismatch | null {
+    if (isVoided(found)) return "voided";
+    if (opts.amount && found.amountCents !== built.totalCents) return "amount_mismatch";
+    if (type === "Payment" && !(built.applications && appliedAsAsked(found, built.applications))) {
+      return "applied_short";
+    }
+    return null;
+  }
+
+  // What the documents already holding our number mean. null: none, so the post may go. One that
+  // is ours (same party, same amount, not voided, a payment applied as asked) is adopted, so a
+  // retry under a new request id never makes a second one. Two or more: nobody can tell which is
+  // ours, unknown. Another party's: refused, nothing of ours was made. Ours but different:
+  // never confirmed.
+  function ofHeld(type: DocType, rows: Found[], built: Built): SendOutcome | null {
+    if (rows.length === 0) return null;
+    if (rows.length > 1) {
+      client.log(`qbo: ${type} duplicate`);
+      return { kind: "unknown", category: "unknown" };
+    }
+    const [row] = rows;
+    if (row.amountCents === null) return { kind: "unknown", category: "unknown" };
+    if (row.partyId !== partyOf(built.body)) {
+      client.log(`qbo: ${type} number held by another party`);
+      return { kind: "failed", category: "validation" };
+    }
+    const why = mismatchOf(type, row, built, { amount: true });
+    if (why) return notOurs(type, why);
+    client.log(`qbo: ${type} adopted by number`);
+    return confirmed(type, row, built.docNumber);
+  }
+
+  // A 6140: Intuit refused the post because a document has this number (still possible for check
+  // numbers), so this post made nothing. The same judgment as the look before the post; a number
+  // held by nothing we can find refuses.
+  async function afterDuplicateNumber(
     q: Queryable,
     opened: Opened,
     type: DocType,
@@ -211,18 +297,8 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     ctx: SendContext,
   ): Promise<SendOutcome> {
     try {
-      const rows = await query(
-        q,
-        opened,
-        type,
-        `${REF_FIELD[type]} = ${quoteQueryValue(built.docNumber)}`,
-        ctx.timeoutMs,
-      );
-      const party = partyOf(built.body);
-      if (rows.length === 1 && rows[0].amountCents !== null && rows[0].partyId === party) {
-        return confirmed(type, rows[0], built.docNumber);
-      }
-      return { kind: "failed", category: "validation" };
+      const rows = await byNumber(q, opened, type, built.docNumber, ctx.timeoutMs);
+      return ofHeld(type, rows, built) ?? { kind: "failed", category: "validation" };
     } catch (err) {
       const category = categoryOf(err);
       return category === "unavailable" || category === "timeout" || category === "network"
@@ -278,13 +354,18 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
     },
 
     // By id when known, else by our document number, exact. Not found is not "never happened":
-    // the row stays unknown. A replay is the caller's: the same create with the same context.
+    // the row stays unknown. Nothing here ever posts; a replay is the caller's: the same create
+    // with the same context. A voided document reads back canceled (no money moved); a payment
+    // QuickBooks applied short of what was asked throws amount_mismatch, so the row stays
+    // unknown for a person and is never confirmed.
     async readBack(q, ref, ctx): Promise<ReadBack> {
       checkContext(ctx);
       if (!(DOC_TYPES as readonly unknown[]).includes(ref?.type) || ref.requestId !== ctx.requestId) {
         throw new MoneyError("validation");
       }
       const type = ref.type as DocType;
+      // A payment is judged by how it was applied, so its read-back must say what was asked.
+      const asked = type === "Payment" ? checkApplications(ref.applications) : null;
       const opened = await client.connection(q, ctx.timeoutMs, { write: false });
       let found: Found | null = null;
       if (ref.outsideId) {
@@ -302,21 +383,25 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
         found = entityOf(type, reply.body);
         if (!found || found.id !== id) throw new MoneyError("unknown");
       } else if (ref.outsideRef) {
-        const docNumber = checkDocNumber(ref.outsideRef);
-        const rows = await query(
-          q,
-          opened,
-          type,
-          `${REF_FIELD[type]} = ${quoteQueryValue(docNumber)}`,
-          ctx.timeoutMs,
-        );
+        const rows = await byNumber(q, opened, type, checkDocNumber(ref.outsideRef), ctx.timeoutMs);
         if (rows.length === 0) return { found: false };
-        if (rows.length > 1) throw new MoneyError("duplicate");
+        if (rows.length > 1) {
+          // Two or more documents carry our number: nobody can tell which is ours.
+          client.log(`qbo: ${type} read-back duplicate`);
+          throw new MoneyError("duplicate");
+        }
         found = rows[0];
       } else {
         return { found: false };
       }
       if (found.amountCents === null) throw new MoneyError("unknown");
+      const voided = isVoided(found);
+      if (voided) {
+        client.log(`qbo: ${type} voided`);
+      } else if (asked && !appliedAsAsked(found, asked)) {
+        client.log(`qbo: ${type} applied_short`);
+        throw new MoneyError("amount_mismatch");
+      }
       return {
         found: true,
         system: "qbo_sandbox",
@@ -324,7 +409,7 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
         id: found.id,
         ...(found.ref ? { ref: found.ref } : {}),
         amountCents: found.amountCents,
-        status: "succeeded",
+        status: voided ? "canceled" : "succeeded",
       };
     },
   };

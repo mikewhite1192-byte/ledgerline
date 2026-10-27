@@ -295,6 +295,20 @@ export function purchaseBody(
   };
 }
 
+export type Application = { invoiceOutsideId: string; amountCents: number };
+
+// The invoices a customer payment applies to, each checked; one invoice at most once.
+export function checkApplications(apps: unknown): Application[] {
+  if (!Array.isArray(apps) || apps.length > 100) fail();
+  const seen = new Set<string>();
+  return apps.map((a) => {
+    const invoice = checkOutsideId(a?.invoiceOutsideId);
+    if (seen.has(invoice)) fail();
+    seen.add(invoice);
+    return { invoiceOutsideId: invoice, amountCents: checkAmount(a.amountCents) };
+  });
+}
+
 export function paymentBody(
   p: {
     actionId: string;
@@ -302,28 +316,20 @@ export function paymentBody(
     paymentRef: string;
     receivedOn: LocalDate;
     amountCents: number;
-    applications: { invoiceOutsideId: string; amountCents: number }[];
+    applications: Application[];
   },
   accounts: AccountMap,
-): { body: Record<string, unknown>; totalCents: number; docNumber: string } {
+): { body: Record<string, unknown>; totalCents: number; docNumber: string; applications: Application[] } {
   const cents = checkAmount(p.amountCents);
-  if (!Array.isArray(p.applications) || p.applications.length > 100) fail();
-  let applied = 0;
-  const seen = new Set<string>();
-  const Line = p.applications.map((a) => {
-    const invoice = checkOutsideId(a?.invoiceOutsideId);
-    if (seen.has(invoice)) fail();
-    seen.add(invoice);
-    const c = checkAmount(a.amountCents);
-    applied += c;
-    return { Amount: amount(c), LinkedTxn: [{ TxnId: invoice, TxnType: "Invoice" }] };
-  });
+  const applications = checkApplications(p.applications);
+  const applied = applications.reduce((sum, a) => sum + a.amountCents, 0);
   // Any excess stays unapplied credit in the company; more applied than received is refused.
   if (applied > cents) fail();
   const ref = checkDocNumber(p.paymentRef);
   return {
     docNumber: ref,
     totalCents: cents,
+    applications,
     body: {
       CustomerRef: { value: checkOutsideId(p.customerOutsideId) },
       TotalAmt: amount(cents),
@@ -331,12 +337,18 @@ export function paymentBody(
       TxnDate: checkDate(p.receivedOn),
       DepositToAccountRef: { value: checkOutsideId(accounts.ledgerline_clearing) },
       PrivateNote: note(checkAction(p.actionId)),
-      Line,
+      Line: applications.map((a) => ({
+        Amount: amount(a.amountCents),
+        LinkedTxn: [{ TxnId: a.invoiceOutsideId, TxnType: "Invoice" }],
+      })),
     },
   };
 }
 
 // ---- Replies ----
+
+// One applied line of a customer payment: the invoice and the cents QuickBooks applied to it.
+export type AppliedLine = { invoiceId: string; cents: number };
 
 export type Found = {
   id: string;
@@ -345,6 +357,13 @@ export type Found = {
   amountCents: number | null;
   // The customer or vendor it belongs to, for an adoption check.
   partyId: string | null;
+  // QuickBooks keeps a voided document: it reads back with a zero total and a private note that
+  // starts "Voided" (measured 2026-10-27).
+  voided: boolean;
+  // Payment only, null for other types: the applied lines, null when one is out of shape.
+  applied: AppliedLine[] | null;
+  // Payment only, null for other types: the cents left unapplied, null when unreadable.
+  unappliedCents: number | null;
 };
 
 function cents(v: unknown): number | null {
@@ -362,6 +381,27 @@ function refValue(v: unknown): string | null {
   return typeof value === "string" && OUTSIDE_ID.test(value) ? value : null;
 }
 
+// A payment's lines as applied: each line links exactly one invoice. No list is no lines (an
+// empty list is left out of a reply); anything else out of shape makes the whole list unreadable.
+function appliedLines(lines: unknown): AppliedLine[] | null {
+  if (lines === undefined) return [];
+  if (!Array.isArray(lines)) return null;
+  const out: AppliedLine[] = [];
+  for (const raw of lines) {
+    if (typeof raw !== "object" || raw === null) return null;
+    const line = raw as Record<string, unknown>;
+    const links = line.LinkedTxn;
+    if (!Array.isArray(links) || links.length !== 1) return null;
+    const link = links[0] as Record<string, unknown> | null;
+    if (typeof link !== "object" || link === null || link.TxnType !== "Invoice") return null;
+    if (typeof link.TxnId !== "string" || !OUTSIDE_ID.test(link.TxnId)) return null;
+    const c = cents(line.Amount);
+    if (c === null) return null;
+    out.push({ invoiceId: link.TxnId, cents: c });
+  }
+  return out;
+}
+
 // One record of the given type from an entity reply ({ "Invoice": {...} }) or a query row.
 export function recordOf(type: EntityType, raw: unknown): Found | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -373,7 +413,43 @@ export function recordOf(type: EntityType, raw: unknown): Found | null {
   const ref = refField && typeof r[refField] === "string" ? (r[refField] as string) : null;
   const party =
     refValue(r.CustomerRef) ?? refValue(r.VendorRef) ?? refValue(r.EntityRef) ?? null;
-  return { id: r.Id, ref, amountCents: cents(r.TotalAmt), partyId: party };
+  const payment = type === "Payment";
+  return {
+    id: r.Id,
+    ref,
+    amountCents: cents(r.TotalAmt),
+    partyId: party,
+    voided: typeof r.PrivateNote === "string" && r.PrivateNote.startsWith("Voided"),
+    applied: payment ? appliedLines(r.Line) : null,
+    unappliedCents: payment ? cents(r.UnappliedAmt) : null,
+  };
+}
+
+// A document that no longer carries its amount: voided, or zeroed. Every document this adapter
+// builds totals above zero (lines are never zero, invoice lines never negative, a bill nets above
+// zero), so neither is ever the record that was approved.
+export function isVoided(f: Found): boolean {
+  return f.voided || f.amountCents === 0;
+}
+
+// Whether a customer payment landed as asked: each invoice we named got exactly the cents we
+// asked, there is no other line, and the unapplied rest is exactly what we left unapplied.
+// QuickBooks does not refuse an application over an invoice's open balance: it lowers the line
+// to the balance and reports the rest as unapplied, with the total as sent (measured 2026-10-27),
+// so the total alone cannot show the cut.
+export function appliedAsAsked(f: Found, asked: readonly Application[]): boolean {
+  if (f.amountCents === null || f.applied === null || f.unappliedCents === null) return false;
+  if (f.applied.length !== asked.length) return false;
+  const want = new Map(asked.map((a) => [a.invoiceOutsideId, a.amountCents]));
+  if (want.size !== asked.length) return false;
+  const seen = new Set<string>();
+  let applied = 0;
+  for (const line of f.applied) {
+    if (seen.has(line.invoiceId) || want.get(line.invoiceId) !== line.cents) return false;
+    seen.add(line.invoiceId);
+    applied += line.cents;
+  }
+  return f.unappliedCents === f.amountCents - applied;
 }
 
 export function entityOf(type: EntityType, body: Record<string, unknown>): Found | null {

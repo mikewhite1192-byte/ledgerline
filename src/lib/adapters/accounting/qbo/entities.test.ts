@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { MoneyError } from "../../../money/types";
 import {
+  appliedAsAsked,
   billBody,
   billDocNumber,
   billPaymentBody,
   customerDisplayName,
   invoiceBody,
+  isVoided,
   paymentBody,
   purchaseBody,
   queryRows,
@@ -216,7 +218,7 @@ describe("QuickBooks bodies", () => {
 describe("QuickBooks replies", () => {
   it("reads a record whole, or not at all", () => {
     expect(recordOf("Invoice", { Id: "901", DocNumber: "BR-INV-1", TotalAmt: 0.1, CustomerRef: { value: "58" } })).toEqual(
-      { id: "901", ref: "BR-INV-1", amountCents: 10, partyId: "58" },
+      { id: "901", ref: "BR-INV-1", amountCents: 10, partyId: "58", voided: false, applied: null, unappliedCents: null },
     );
     expect(recordOf("Payment", { Id: "5", PaymentRefNum: "CHK-1", TotalAmt: 1.005 })).toMatchObject({
       ref: "CHK-1",
@@ -231,5 +233,43 @@ describe("QuickBooks replies", () => {
     expect(queryRows("Customer", { QueryResponse: { Customer: [{ Id: "1" }] } })).toHaveLength(1);
     expect(queryRows("Customer", { QueryResponse: { Customer: [{ Id: "1" }, { Id: "x" }] } })).toBeNull();
     expect(queryRows("Customer", {})).toBeNull();
+  });
+
+  it("reads a voided document as voided: the note, or a zero total", () => {
+    const voided = recordOf("Invoice", { Id: "901", TotalAmt: 0, PrivateNote: "Voided - LedgerLine action x" });
+    expect(voided).toMatchObject({ voided: true, amountCents: 0 });
+    expect(isVoided(voided as never)).toBe(true);
+    expect(isVoided(recordOf("Invoice", { Id: "901", TotalAmt: 0 }) as never)).toBe(true);
+    expect(isVoided(recordOf("Invoice", { Id: "901", TotalAmt: 5, PrivateNote: "Voided" }) as never)).toBe(true);
+    // Only a note that starts with the word counts.
+    expect(isVoided(recordOf("Invoice", { Id: "901", TotalAmt: 5, PrivateNote: "Not Voided" }) as never)).toBe(false);
+  });
+
+  it("judges a customer payment by its applied lines and its unapplied rest", () => {
+    const asked = [
+      { invoiceOutsideId: "901", amountCents: 6_000 },
+      { invoiceOutsideId: "902", amountCents: 1_000 },
+    ];
+    const pay = (lines: unknown, unapplied: unknown, total = 100) =>
+      recordOf("Payment", { Id: "950", TotalAmt: total, UnappliedAmt: unapplied, Line: lines }) as never;
+    const line = (invoice: string, amount: unknown) => ({ Amount: amount, LinkedTxn: [{ TxnId: invoice, TxnType: "Invoice" }] });
+    expect(appliedAsAsked(pay([line("901", 60), line("902", 10)], 30), asked)).toBe(true);
+    // Cut to the open balance, the rest moved to unapplied, total as sent.
+    expect(appliedAsAsked(pay([line("901", 45), line("902", 10)], 45), asked)).toBe(false);
+    // A line dropped, an extra line, another invoice, one invoice twice.
+    expect(appliedAsAsked(pay([line("901", 60)], 40), asked)).toBe(false);
+    expect(appliedAsAsked(pay([line("901", 60), line("902", 10), line("903", 1)], 29), asked)).toBe(false);
+    expect(appliedAsAsked(pay([line("901", 60), line("904", 10)], 30), asked)).toBe(false);
+    expect(appliedAsAsked(pay([line("901", 60), line("901", 10)], 30), asked)).toBe(false);
+    // The unapplied rest must be exactly what was left unapplied, and readable.
+    expect(appliedAsAsked(pay([line("901", 60), line("902", 10)], 31), asked)).toBe(false);
+    expect(appliedAsAsked(pay([line("901", 60), line("902", 10)], undefined), asked)).toBe(false);
+    // A line linking a non-invoice, or two documents, makes the lines unreadable.
+    expect(
+      appliedAsAsked(pay([{ Amount: 60, LinkedTxn: [{ TxnId: "901", TxnType: "CreditMemo" }] }, line("902", 10)], 30), asked),
+    ).toBe(false);
+    expect(recordOf("Payment", { Id: "950", TotalAmt: 1, UnappliedAmt: 1, Line: "x" })).toMatchObject({ applied: null });
+    // Fully unapplied: no lines at all, and none asked.
+    expect(appliedAsAsked(pay(undefined, 100), [])).toBe(true);
   });
 });
