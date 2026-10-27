@@ -553,6 +553,82 @@ describe("every call, refusals before any reservation", () => {
     }
   });
 
+  it("refuses a malformed tool search or prompt cache request as bad_request, before reserving", async () => {
+    const tool = { name: "get_driver", description: "Read one driver", parameters: {} };
+    const deferred = { ...tool, name: "propose_advance", deferLoading: true };
+    const assistant = { role: "assistant" as const, content: "Hi." };
+    const searchItem = { type: "tool_search_call" as const, call_id: null, execution: "server" };
+    const key = "ledgerline-operator-0123456789abcdef";
+    const bad: [AiRequest, AiTextTarget][] = [
+      // A deferred tool without search, and search without a deferred tool.
+      [{ ...REQUEST, tools: [tool, deferred] }, "spark"],
+      [{ ...REQUEST, toolSearch: true, tools: [tool] }, "spark"],
+      [{ ...REQUEST, toolSearch: true }, "spark"],
+      // Search is Meta's hosted tool only.
+      [{ ...REQUEST, toolSearch: true, tools: [tool, deferred] }, "spark_open"],
+      // Not booleans.
+      [{ ...REQUEST, toolSearch: "yes" as never, tools: [tool, deferred] }, "spark"],
+      [{ ...REQUEST, toolSearch: true, tools: [tool, { ...deferred, deferLoading: 1 as never }] }, "spark"],
+      // A function named like the hosted tool.
+      [{ ...REQUEST, tools: [{ ...tool, name: "tool_search" }] }, "spark"],
+      [{ ...REQUEST, toolSearch: true, tools: [deferred, { ...tool, name: "tool_search" }] }, "spark"],
+      // Bad cache keys and retention, and a cache on Baseten.
+      [{ ...REQUEST, cache: { key: "" } }, "spark"],
+      [{ ...REQUEST, cache: { key: "has space" } }, "spark"],
+      [{ ...REQUEST, cache: { key: "k".repeat(65) } }, "spark"],
+      [{ ...REQUEST, cache: { key: 7 as never } }, "spark"],
+      [{ ...REQUEST, cache: { key, retention: "forever" as never } }, "spark"],
+      [{ ...REQUEST, cache: { key } }, "spark_open"],
+      // Placement: input on Baseten, an unknown value, and on a turn that is not a system message.
+      [
+        { ...REQUEST, messages: [{ role: "system", content: "x", placement: "input" }, { role: "user", content: "y" }] },
+        "spark_open",
+      ],
+      [
+        {
+          ...REQUEST,
+          messages: [{ role: "system", content: "x", placement: "middle" as never }, { role: "user", content: "y" }],
+        },
+        "spark",
+      ],
+      [{ ...REQUEST, messages: [{ role: "user", content: "y", placement: "input" } as never] }, "spark"],
+      // Search items replayed when search is off.
+      [{ ...REQUEST, messages: [...REQUEST.messages, assistant], replay: [searchItem] }, "spark"],
+      // An assistant turn's own items: search items only, only with search on, and only on an
+      // assistant turn.
+      [{ ...REQUEST, messages: [...REQUEST.messages, { ...assistant, replay: [searchItem] }] }, "spark"],
+      [
+        {
+          ...REQUEST,
+          toolSearch: true,
+          tools: [tool, deferred],
+          messages: [...REQUEST.messages, { ...assistant, replay: [{ type: "reasoning", encrypted_content: "r" }] }],
+        },
+        "spark",
+      ],
+      [
+        { ...REQUEST, toolSearch: true, tools: [tool, deferred], messages: [...REQUEST.messages, { ...assistant, replay: "x" as never }] },
+        "spark",
+      ],
+      [
+        {
+          ...REQUEST,
+          toolSearch: true,
+          tools: [tool, deferred],
+          messages: [{ role: "user", content: "y", replay: [searchItem] } as never, assistant],
+        },
+        "spark",
+      ],
+    ];
+    for (const [request, target] of bad) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      const err = await refusal(complete(target, request, SESSION, { fetch: fetchFn, db: ledger.db }));
+      expect(err.category, `${target} ${JSON.stringify(request).slice(0, 200)}`).toBe("bad_request");
+      expect(ledger.steps).toEqual([]);
+    }
+  });
+
   it("refuses a malformed transcription, image or segmentation request as bad_request", async () => {
     const wav = makeWav({ seconds: 2 });
     const deps = () => {
@@ -744,6 +820,7 @@ describe("complete, one call", () => {
       costNanocents: COST,
       upstreamId: "resp_test1",
       replay: [],
+      toolSearches: 0,
     });
     expect(logged).toHaveLength(1);
     expect(logged[0]).toMatch(
@@ -754,6 +831,66 @@ describe("complete, one call", () => {
     );
     expect(logged.join("\n")).not.toContain(PROMPT);
     expect(logged.join("\n")).not.toContain(KEY);
+  });
+
+  it("sends a search and cache request as asked, reserves its input twice, and counts the search", async () => {
+    const ledger = fakeLedger();
+    const searched = () =>
+      Response.json({
+        ...metaAnswer(),
+        output: [
+          { type: "tool_search_call", id: "ts_1", arguments: { paths: [""] }, call_id: null, execution: "server", status: "completed" },
+          { type: "tool_search_output", id: "tso_1", call_id: null, execution: "server", status: "completed", tools: [] },
+          { type: "function_call", call_id: "call_1", name: "propose_advance", arguments: "{}" },
+        ],
+      });
+    const fetchFn = fakeFetch(ledger.steps, searched);
+    const request: AiRequest = {
+      ...REQUEST,
+      toolSearch: true,
+      cache: { key: "ledgerline-operator-0123456789abcdef" },
+      tools: [
+        { name: "get_driver", description: "Read one driver", parameters: { type: "object" } },
+        { name: "propose_advance", description: "Propose an advance", parameters: { type: "object" }, deferLoading: true },
+      ],
+    };
+    const result = await complete("spark", request, SESSION, { fetch: fetchFn, db: ledger.db });
+    const [, init] = fetchFn.mock.calls[0];
+    const sent = JSON.parse(String(init.body));
+    expect(sent.tools[0]).toEqual({ type: "tool_search" });
+    expect(sent.tools[2]).toMatchObject({ name: "propose_advance", defer_loading: true });
+    expect(sent.prompt_cache_key).toBe("ledgerline-operator-0123456789abcdef");
+    expect(sent).not.toHaveProperty("prompt_cache_retention");
+    const bytes = new TextEncoder().encode(String(init.body)).length;
+    expect(ledger.rows.get(result.callId)?.reserved).toBe(
+      estimateReserve(priceFor("spark", "meta", "muse-spark-1.3") as TokenPrice, bytes * 2, 1024),
+    );
+    expect(result.toolSearches).toBe(1);
+    expect(result.toolCalls).toEqual([{ id: "call_1", name: "propose_advance", argumentsJson: "{}" }]);
+    expect(result.replay.map((r) => r.type)).toEqual(["tool_search_call", "tool_search_output"]);
+
+    // The next call carries that answer's search items pinned to its assistant turn.
+    const next = await complete(
+      "spark",
+      {
+        ...request,
+        messages: [
+          ...REQUEST.messages,
+          { role: "assistant", content: "", toolCalls: result.toolCalls, replay: result.replay },
+          { role: "tool", toolCallId: "call_1", content: "{}" },
+        ],
+      },
+      SESSION,
+      { fetch: fetchFn, db: ledger.db },
+    );
+    const resent = JSON.parse(String(fetchFn.mock.calls[1][1].body));
+    expect(resent.input.map((i: { type: string }) => i.type).slice(-4)).toEqual([
+      "tool_search_call",
+      "tool_search_output",
+      "function_call",
+      "function_call_output",
+    ]);
+    expect(next.callId).not.toBe(result.callId);
   });
 
   it("reserves a token figure per image and per PDF page, not the base64 length", async () => {

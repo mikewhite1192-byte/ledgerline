@@ -4,12 +4,13 @@ import { EmptyState } from "@/components/app/states";
 import { StatCard } from "@/components/app/stat-card";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { countWords, formatLatency, formatSpend } from "@/lib/trace/format";
+import { countWords, formatCachedShare, formatLatency, formatSaved, formatSpend } from "@/lib/trace/format";
 import type { ModelTotals, ModelWeek } from "@/lib/trace/week";
 import { formatPeriod } from "@/lib/format/dates";
 
-// The Meta models page's body: one card per model with what it does here, its calls, spend and
-// typical time this week, then the gateway's and the screener's totals. Plain data in, no reads.
+// The Meta models page's body: one card per model with what it does here, its calls, spend,
+// prompt cache share and typical time this week, then the gateway's and the screener's totals.
+// Plain data in, no reads.
 
 export type DemoBudget = { spentNanocents: number; capNanocents: number | null };
 
@@ -24,8 +25,26 @@ function Row({ label, value }: { label: string; value: string }) {
 
 const count = (n: number) => n.toLocaleString("en-US");
 
+// "71% of input tokens, saved 84.3 cents at list price", or null for a model with no token counts this week.
+function cacheRow(m: { cachedShare: number | null; cachedTokens: number; savedNanocents: number | null }): string | null {
+  const share = formatCachedShare(m.cachedShare, m.cachedTokens);
+  if (share === null) return null;
+  return m.cachedTokens === 0 ? "none" : `${share} of input tokens, saved ${formatSaved(m.savedNanocents)} at list price`;
+}
+
+// The page's prompt cache sentence, or null when no call this week was metered in tokens.
+export function weekCacheLine(week: ModelWeek): string | null {
+  const share = formatCachedShare(week.cachedShare, week.cachedTokens);
+  if (share === null) return null;
+  if (week.cachedTokens === 0) return "Prompt cache: no input tokens were read from the cache this week.";
+  const saving =
+    week.savedNanocents === null ? "; the saving is not known" : `, saving ${formatSaved(week.savedNanocents)} at list price`;
+  return `Prompt cache: ${share} of input tokens were cached this week${saving}.`;
+}
+
 function ModelCard({ m }: { m: ModelTotals }) {
   const p50 = formatLatency(m.p50Ms);
+  const cache = cacheRow(m);
   return (
     <Card className="min-w-0">
       <CardHeader>
@@ -51,6 +70,7 @@ function ModelCard({ m }: { m: ModelTotals }) {
                 value={formatSpend(m.heldNanocents)}
               />
             ) : null}
+            {cache ? <Row label="From the prompt cache" value={cache} /> : null}
             <Row label="Typical time (half finish within)" value={p50 ?? "not measured"} />
             {m.versions.length > 0 ? <Row label="Ran as" value={m.versions.join(", ")} /> : null}
           </dl>
@@ -62,6 +82,7 @@ function ModelCard({ m }: { m: ModelTotals }) {
 
 export function ModelWeekView({ week, budget }: { week: ModelWeek; budget?: DemoBudget | null }) {
   const period = formatPeriod(week.week.start, week.week.end);
+  const cacheLine = weekCacheLine(week);
   const quiet = week.calls === 0 && week.decisions.total === 0 && week.screenings.total === 0;
   return (
     <div className="grid gap-6">
@@ -117,6 +138,8 @@ export function ModelWeekView({ week, budget }: { week: ModelWeek; budget?: Demo
           {budget.capNanocents === null ? ", with no cap set, so every call is refused." : ` of ${formatSpend(budget.capNanocents)}.`}
         </p>
       ) : null}
+
+      {cacheLine ? <p className="text-small text-foreground-2">{cacheLine}</p> : null}
 
       <section aria-labelledby="models-heading" className="grid gap-3">
         <h2 id="models-heading" className="text-h3 text-foreground">

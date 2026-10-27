@@ -135,6 +135,12 @@ export function actualCost(price: TokenPrice, usage: AiUsage): number {
   );
 }
 
+// What the cached share of one call's input saved at list price, in nanocents: the cached tokens
+// at the full input price less what they were billed. Whole numbers in, a whole number out.
+export function savedByCache(price: TokenPrice, cached: number): number {
+  return cached * (price.input - price.cached);
+}
+
 // The cost of any answer, from what the provider reported. Null when what was reported is not
 // what this price is metered by, which settles the call as unknown with its reservation kept.
 export function meteredCost(price: Price, metered: Metered): number | null {

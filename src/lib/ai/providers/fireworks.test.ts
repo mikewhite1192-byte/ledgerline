@@ -71,7 +71,7 @@ describe("parseFireworks", () => {
       httpStatus: 200,
       upstreamId: "fw-cmpl-9",
       metered: { unit: "tokens", usage: { input: 20, cached: 4, output: 30, reasoning: 10 } },
-      value: { text: "triage: load", toolCalls: [], replay: [] },
+      value: { text: "triage: load", toolCalls: [], replay: [], toolSearches: 0 },
     });
   });
 

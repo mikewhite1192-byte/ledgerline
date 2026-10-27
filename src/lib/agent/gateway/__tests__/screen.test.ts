@@ -79,6 +79,7 @@ function answer(text: string, over: Partial<AiResult> = {}): AiResult {
     costNanocents: 177_500_000,
     upstreamId: null,
     replay: [],
+    toolSearches: 0,
     ...over,
   };
 }

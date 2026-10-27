@@ -3,7 +3,8 @@ import type { WeekRaw } from "./types";
 
 // The Meta models page's numbers: the week's grouped rows summed per model. Pure; the gateway's
 // store reads the rows (store/trace.ts). Counts and nanocents stay whole numbers; a figure that
-// is not one makes the whole week unknown rather than a smaller, wrong total.
+// is not one makes the whole week unknown rather than a smaller, wrong total. A saving that is
+// not known makes that model's saving (and the week's) null, never zero.
 
 export type ModelTotals = {
   target: string;
@@ -19,6 +20,11 @@ export type ModelTotals = {
   heldNanocents: number;
   unsettled: number;
   p50Ms: number | null;
+  inputTokens: number;
+  cachedTokens: number;
+  savedNanocents: number | null;
+  // Whole percent of input tokens read from the cache, rounded down; null with no input tokens.
+  cachedShare: number | null;
 };
 
 export type ModelWeek = {
@@ -28,6 +34,10 @@ export type ModelWeek = {
   costNanocents: number;
   heldNanocents: number;
   unsettled: number;
+  inputTokens: number;
+  cachedTokens: number;
+  savedNanocents: number | null;
+  cachedShare: number | null;
   decisions: { allowed: number; blocked: number; refused: number; failed: number; total: number };
   screenings: { clean: number; flagged: number; byModel: number; byCache: number; byPattern: number; errored: number; total: number };
   escalations: number;
@@ -55,7 +65,22 @@ function empty(target: string): ModelTotals {
     heldNanocents: 0,
     unsettled: 0,
     p50Ms: null,
+    inputTokens: 0,
+    cachedTokens: 0,
+    savedNanocents: 0,
+    cachedShare: null,
   };
+}
+
+// Whole percent, rounded down, so a share never looks bigger than it is.
+function shareOf(cached: number, input: number): number | null {
+  if (input === 0) return null;
+  return Math.floor((cached * 100) / input);
+}
+
+// A sum of savings where any unknown part makes the sum unknown.
+function addSaved(a: number | null, b: number | null): number | null {
+  return a === null || b === null ? null : a + b;
 }
 
 export function summarizeModelWeek(raw: WeekRaw): ModelWeek {
@@ -76,6 +101,20 @@ export function summarizeModelWeek(raw: WeekRaw): ModelWeek {
     m.costNanocents += whole(g.costNanocents, "a cost");
     m.heldNanocents += whole(g.heldNanocents, "a held amount");
     m.unsettled += whole(g.unsettled, "an unsettled count");
+    const input = whole(g.inputTokens, "an input token count");
+    const cached = whole(g.cachedTokens, "a cached token count");
+    if (cached > input) {
+      // Counts that do not fit together are left out of the token sums and make the saving
+      // unknown, as the per-call saving does, rather than blanking the whole page.
+      m.savedNanocents = null;
+    } else {
+      m.inputTokens += input;
+      m.cachedTokens += cached;
+      // A group with no cached tokens saved nothing, whatever its price; otherwise its saving must
+      // be known.
+      const saved = g.savedNanocents === null ? null : whole(g.savedNanocents, "a saving");
+      m.savedNanocents = addSaved(m.savedNanocents, cached === 0 ? 0 : saved);
+    }
     const version = key === "other" ? OTHER_MODEL : modelName(g.target, g.model);
     if (calls > 0 && !m.versions.includes(version)) m.versions.push(version);
   }
@@ -93,7 +132,12 @@ export function summarizeModelWeek(raw: WeekRaw): ModelWeek {
     if (!m) return [];
     return (CORE_TARGETS as readonly string[]).includes(t) || m.calls > 0 ? [m] : [];
   });
-  for (const m of models) m.versions.sort();
+  for (const m of models) {
+    m.versions.sort();
+    m.cachedShare = shareOf(m.cachedTokens, m.inputTokens);
+  }
+  const inputTokens = models.reduce((a, m) => a + m.inputTokens, 0);
+  const cachedTokens = models.reduce((a, m) => a + m.cachedTokens, 0);
 
   const decisions = { allowed: 0, blocked: 0, refused: 0, failed: 0, total: 0 };
   for (const d of raw.decisions) {
@@ -122,6 +166,10 @@ export function summarizeModelWeek(raw: WeekRaw): ModelWeek {
     costNanocents: models.reduce((a, m) => a + m.costNanocents, 0),
     heldNanocents: models.reduce((a, m) => a + m.heldNanocents, 0),
     unsettled: models.reduce((a, m) => a + m.unsettled, 0),
+    inputTokens,
+    cachedTokens,
+    savedNanocents: models.reduce<number | null>((a, m) => addSaved(a, m.savedNanocents), 0),
+    cachedShare: shareOf(cachedTokens, inputTokens),
     decisions,
     screenings,
     escalations: whole(raw.escalations, "an escalation count"),

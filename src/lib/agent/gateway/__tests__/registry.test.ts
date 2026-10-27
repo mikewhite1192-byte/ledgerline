@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
+import { ALWAYS_LOADED } from "../loading";
 import { REDACT_ENUMS, STRICT_TOOL_SCHEMAS, TOOL_NAME, TOOL_REGISTRY, toolNamed, toolsFor } from "../registry";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, TIERS, type AgentRole } from "../types";
 
@@ -34,6 +35,7 @@ const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_")
 
 afterEach(() => {
   flags.reportsEnabled = false;
+  flags.detentionEnabled = false;
 });
 
 describe("tool registry", () => {
@@ -145,5 +147,57 @@ describe("tool registry", () => {
     expect(REDACT_ENUMS.has("owed_to_driver")).toBe(true);
     expect(REDACT_ENUMS.has("drivers")).toBe(true);
     expect(REDACT_ENUMS.has("Please pay me")).toBe(false);
+  });
+});
+
+describe("deferred loading for tool search", () => {
+  it("defers every operator tool except the six always loaded, with the same names and schemas", () => {
+    const plain = toolsFor("operator");
+    const deferred = toolsFor("operator", { defer: true });
+    expect(deferred.map((t) => t.name)).toEqual(plain.map((t) => t.name));
+    deferred.forEach((t, i) => {
+      expect(t.description).toBe(plain[i].description);
+      expect(JSON.stringify(t.parameters)).toBe(JSON.stringify(plain[i].parameters));
+    });
+    expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...ALWAYS_LOADED].sort());
+    expect(deferred.filter((t) => t.deferLoading === true).map((t) => t.name).sort()).toEqual(
+      plain.map((t) => t.name).filter((n) => !ALWAYS_LOADED.includes(n)).sort(),
+    );
+    // A tool its switch keeps off is left out deferred too, not sent as a name to search for.
+    for (const n of DETENTION_TOOLS) expect(deferred.map((t) => t.name), n).not.toContain(n);
+    // Without defer, no tool carries the key at all, so today's request is unchanged.
+    for (const t of plain) expect(t).not.toHaveProperty("deferLoading");
+    for (const t of toolsFor("operator", { defer: false })) expect(t).not.toHaveProperty("deferLoading");
+  });
+
+  it("defers a tool added later, the report and detention tools included, unless the list names it", () => {
+    flags.reportsEnabled = true;
+    flags.detentionEnabled = true;
+    const plain = toolsFor("operator");
+    const deferred = toolsFor("operator", { defer: true });
+    expect(deferred.map((t) => t.name)).toEqual(plain.map((t) => t.name));
+    for (const name of [...REPORT_TOOLS, ...DETENTION_TOOLS]) {
+      expect(ALWAYS_LOADED, name).not.toContain(name);
+      expect(deferred.find((t) => t.name === name)?.deferLoading, name).toBe(true);
+      // Off, each such tool is sent in full, with no deferLoading key.
+      expect(plain.find((t) => t.name === name), name).not.toHaveProperty("deferLoading");
+    }
+    expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...ALWAYS_LOADED].sort());
+  });
+
+  it("names only registered tools offered to the operator as always loaded, and nothing else", () => {
+    expect(ALWAYS_LOADED).toEqual(["get_driver", "get_loads", "get_pay_items", "get_advances", "explain_paystub", "run_checks"]);
+    expect(Object.isFrozen(ALWAYS_LOADED)).toBe(true);
+    for (const name of ALWAYS_LOADED) {
+      expect(toolNamed(name)?.roles, name).toContain("operator");
+    }
+  });
+
+  it("reserves the hosted search's name, so no tool can take it", () => {
+    expect(RESERVED_TOOL_NAMES).toContain("tool_search");
+    expect(toolNamed("tool_search")).toBeNull();
+    for (const role of AGENT_ROLES) {
+      expect(toolsFor(role, { defer: true }).some((t) => t.name === "tool_search")).toBe(false);
+    }
   });
 });

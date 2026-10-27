@@ -50,6 +50,11 @@ describe("flags", () => {
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
   });
 
+  it("ships tool search and the prompt cache off, with the default retention", () => {
+    expect(flags.agentToolSearch).toBe(false);
+    expect(flags.agentPromptCache).toEqual({ enabled: false, retention: "in_memory" });
+  });
+
   it("keeps driver notes dark, with no email address allowed and small caps", () => {
     expect(flags.driverNotesEnabled).toBe(false);
     expect(flags.driverNotesEmailEnabled).toBe(false);
