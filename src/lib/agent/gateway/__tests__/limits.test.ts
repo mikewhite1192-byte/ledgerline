@@ -278,6 +278,7 @@ describe("payment reapply limit", () => {
       proposal_id: null,
       trace_id: null,
       approver_membership_id: OTHER_ID,
+      batch_id: null,
       check_count: 0,
       created_at: "2026-10-30T15:00:00.000Z",
       sent_at: state === "reserved" ? null : "2026-10-30T15:00:01.000Z",

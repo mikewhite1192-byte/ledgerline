@@ -10,6 +10,7 @@ import {
 } from "../data/records";
 import type { PayItemRow, SettlementLineRow, SettlementRow, TenantRows } from "../data/rows";
 import { settleDriver, sum } from "../rules-engine";
+import { paidWritesOf } from "../settlements/paid";
 import { addDays, type LocalDate } from "../time/local-date";
 import { instantAt } from "./calendar";
 
@@ -17,7 +18,9 @@ import { instantAt } from "./calendar";
 // (settleDriver, the same call the pay run makes), and the result is written back the way the
 // pay run will write it: a paid settlement with its lines, the escrow delta on the driver, each
 // recovery on its advance, every pay item the lines cite stamped with the settlement, and a
-// shortfall carried into the next week as a carried_shortfall item. So the open week starts from
+// shortfall carried into the next week as a carried_shortfall item. Those writes come from
+// paidWritesOf, the same function the live booking (bookPaidSettlement) uses, and are checked
+// against the engine's own escrow delta and recoveries. So the open week starts from
 // balances the engine itself produced (design D5). Each period runs under the pay rules version
 // in force at its start (rows.pay_configs), and its settlements name that version.
 
@@ -73,8 +76,31 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
         advances: (advances.get(d.id) ?? []).map(advanceOf),
         escrowBalanceCents: driverOf(d).escrowBalanceCents,
       });
+      const settlementId = newId();
+      const writes = paidWritesOf({
+        settlementId,
+        lines: result.lines,
+        carryForwardCents: result.carryForwardCents,
+        openingCents: d.escrow_balance_cents,
+        periodEnd: p.period_end,
+      });
+      if (writes.escrowDeltaCents !== result.escrowDeltaCents) {
+        throw new Error("the escrow line and the engine's escrow delta disagree");
+      }
+      if (
+        writes.recoveries.length !== result.recoveries.length ||
+        writes.recoveries.some(
+          (r, i) =>
+            r.advanceId !== result.recoveries[i].advanceId || r.cents !== result.recoveries[i].cents,
+        )
+      ) {
+        throw new Error("the recovery lines and the engine's recoveries disagree");
+      }
+      if (writes.carried && writes.carried.itemDate !== nextStart) {
+        throw new Error("pay periods are not back to back");
+      }
       const settlement: SettlementRow = {
-        id: newId(),
+        id: settlementId,
         period_id: p.id,
         driver_id: d.id,
         pay_config_id: version.id,
@@ -85,6 +111,12 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
         carry_forward_cents: result.carryForwardCents,
         exception_count: result.exceptions.length,
         paid_at: instantAt(addDays(p.period_end, 2), 10, 0, zone),
+        escrow_opening_cents: writes.escrow.openingCents,
+        escrow_charges_cents: writes.escrow.chargesCents,
+        escrow_withheld_cents: writes.escrow.withheldCents,
+        escrow_closing_cents: writes.escrow.closingCents,
+        parked_reason: null,
+        parked_at: null,
       };
       rows.settlements.push(settlement);
       for (const line of result.lines) {
@@ -99,31 +131,30 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
           meta: line.meta ? { ...line.meta } : null,
         };
         rows.settlement_lines.push(row);
-        for (const s of line.sources) {
-          if (s.table !== "pay_items") continue;
-          const item = itemsById.get(s.id) ?? carried.find((x) => x.id === s.id);
-          if (!item) throw new Error("a settlement line cites an unknown pay item");
-          item.settlement_id = settlement.id;
-        }
       }
-      d.escrow_balance_cents = sum([d.escrow_balance_cents, result.escrowDeltaCents]);
-      for (const r of result.recoveries) {
+      for (const id of writes.stampItemIds) {
+        const item = itemsById.get(id) ?? carried.find((x) => x.id === id);
+        if (!item) throw new Error("a settlement line cites an unknown pay item");
+        item.settlement_id = settlement.id;
+      }
+      d.escrow_balance_cents = writes.escrow.closingCents;
+      for (const r of writes.recoveries) {
         const advance = rows.advances.find((a) => a.id === r.advanceId);
         if (!advance) throw new Error("a recovery names an unknown advance");
         advance.recovered_cents = sum([advance.recovered_cents, r.cents]);
       }
-      if (result.carryForwardCents > 0) {
+      if (writes.carried) {
         carried.push({
           id: newId(),
           driver_id: d.id,
-          kind: "carried_shortfall",
-          subkind: "shortfall",
-          amount_cents: result.carryForwardCents,
-          item_date: nextStart,
-          ref_table: "settlements",
-          ref_id: settlement.id,
+          kind: writes.carried.kind,
+          subkind: writes.carried.subkind,
+          amount_cents: writes.carried.amountCents,
+          item_date: writes.carried.itemDate,
+          ref_table: writes.carried.refTable,
+          ref_id: writes.carried.refId,
           item_ref: `${slug}-carry-${++carryN}`,
-          description: "Shortfall carried from the week before",
+          description: writes.carried.description,
           settlement_id: null,
         });
       }

@@ -34,6 +34,8 @@ export type DriverRow = {
   active_to: string | null;
   // The language the driver's pay note is written in (migration 0019).
   preferred_language: "en" | "es";
+  // The driver carries their own insurance, so no daily insurance charge applies (0016).
+  own_insurance: boolean;
 };
 
 // The driver's fuel card on file (0017): the provider's own token and the last four digits only.
@@ -161,6 +163,15 @@ export type SettlementRow = {
   carry_forward_cents: number;
   exception_count: number;
   paid_at: string | null;
+  // What the paid settlement did to escrow (0016): closing = opening - charges + withheld. A draft
+  // keeps zeros until it is booked.
+  escrow_opening_cents: number;
+  escrow_charges_cents: number;
+  escrow_withheld_cents: number;
+  escrow_closing_cents: number;
+  // A draft whose lines no longer matched their sources at approval (0016); both null otherwise.
+  parked_reason: string | null;
+  parked_at: string | null;
 };
 
 export type SettlementLineRow = {

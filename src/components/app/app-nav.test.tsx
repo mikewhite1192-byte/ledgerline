@@ -12,6 +12,7 @@ const saved = {
   customerPayments: flags.customerPaymentsEnabled,
   voiceIntake: flags.voiceIntakeEnabled,
   clips: flags.clipsEnabled,
+  settlements: flags.settlementsEnabled,
 };
 afterEach(() => {
   flags.driverNotesEnabled = saved.driverNotes;
@@ -23,6 +24,7 @@ afterEach(() => {
   flags.customerPaymentsEnabled = saved.customerPayments;
   flags.voiceIntakeEnabled = saved.voiceIntake;
   flags.clipsEnabled = saved.clips;
+  flags.settlementsEnabled = saved.settlements;
 });
 
 const shape = (current: NavKey) => appNav(current).map((i) => [i.href, i.label, i.current ?? false]);
@@ -98,6 +100,7 @@ describe("appNav", () => {
     flags.documentsEnabled = true;
     flags.advancesEnabled = true;
     flags.driverNotesEnabled = true;
+    flags.settlementsEnabled = true;
     flags.invoicesEnabled = true;
     flags.customerPaymentsEnabled = true;
     flags.voiceIntakeEnabled = true;
@@ -109,12 +112,28 @@ describe("appNav", () => {
       ["/documents", "Documents", false],
       ["/advances", "Advances", false],
       ["/driver-notes", "Driver notes", false],
+      ["/settlements", "Settlements", false],
       ["/invoices", "Invoices", true],
       ["/customer-payments/new", "Payments", false],
       ["/voice-notes", "Voice notes", false],
       ["/clips", "Dock clips", false],
       ["/models", "Meta models", false],
       ["/portal-runs", "Portal runs", false],
+    ]);
+  });
+
+  it("lists settlements only while their switch is on", () => {
+    flags.driverNotesEnabled = false;
+    flags.sweepEnabled = false;
+    flags.documentsEnabled = false;
+    flags.portalRunnerEnabled = false;
+    flags.settlementsEnabled = false;
+    expect(shape("/").map(([href]) => href)).not.toContain("/settlements");
+    flags.settlementsEnabled = true;
+    expect(shape("/settlements")).toEqual([
+      ["/", "Home", false],
+      ["/settlements", "Settlements", true],
+      ["/models", "Meta models", false],
     ]);
   });
 });

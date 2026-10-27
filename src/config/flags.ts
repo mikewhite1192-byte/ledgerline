@@ -231,6 +231,31 @@ export type Flags = {
     // A safety check a person has not decided within this many minutes ends the run.
     approvalWaitMinutes: number;
   };
+  // The weekly pay run: "Run the week" drafts each driver's paystub and a card a person approves;
+  // an approval pays the driver and books the bill. Paying still needs payoutsEnabled and booking
+  // still needs accountingEnabled; each write re-checks its own switch.
+  settlementsEnabled: boolean;
+  // Pay periods that start on or after this tenant-local date can be run; older ones never are.
+  settlementsStart: string;
+  settlementLimits: {
+    // Drivers one run drafts; past it the run stops and says so.
+    driversPerRun: number;
+    // Tries at paying one settlement; a retry follows only a definite failure.
+    maxPayoutAttempts: number;
+    // A single approval books the bill only when at least this much of the request is left.
+    legTwoMinRemainingMs: number;
+  };
+  // "Approve all clean": one approval over the clean paystubs of a week, then a drain that sends
+  // each reserved leg. The legs still need payoutsEnabled and accountingEnabled.
+  batchApproveEnabled: boolean;
+  batchLimits: {
+    // Paystubs in one batch.
+    maxItems: number;
+    // The batch total, in cents.
+    maxTotalCents: number;
+    // How long one drain request may send before it stops and says what is left.
+    drainBudgetMs: number;
+  };
 };
 
 export const flags: Flags = {
@@ -313,4 +338,9 @@ export const flags: Flags = {
     podMaxBytes: 300_000,
     approvalWaitMinutes: 30,
   },
+  settlementsEnabled: false,
+  settlementsStart: "2026-10-05",
+  settlementLimits: { driversPerRun: 200, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
+  batchApproveEnabled: false,
+  batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
 };

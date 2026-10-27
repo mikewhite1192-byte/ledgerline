@@ -44,6 +44,7 @@ export const ACTION_COLUMNS = [
   "CAST(proposal_id AS text) AS proposal_id",
   "CAST(trace_id AS text) AS trace_id",
   "CAST(approver_membership_id AS text) AS approver_membership_id",
+  "CAST(batch_id AS text) AS batch_id",
   "check_count",
   ts("created_at"),
   ts("sent_at"),
@@ -119,6 +120,7 @@ export function actionOf(r: ActionRow): MoneyAction {
     proposalId: uuidOrNull(r.proposal_id),
     traceId: uuidOrNull(r.trace_id),
     approverMembershipId: uuid(r.approver_membership_id),
+    batchId: uuidOrNull(r.batch_id),
     checkCount: int(r.check_count),
     createdAt: text(r.created_at),
     sentAt: textOrNull(r.sent_at),
@@ -176,6 +178,12 @@ export function assertPendingSubject(subject: PendingSubject): void {
     throw new RangeError("unknown subject table");
   }
   if (!isCanonicalUuid(subject.id)) throw new RangeError("subject id is not a lowercase UUID");
+}
+
+// Every row one approval batch reserved, oldest first (the batch drain and its page).
+export function readByBatch(q: Queryable, batchId: string): Promise<MoneyAction[]> {
+  if (!isCanonicalUuid(batchId)) throw new RangeError("batch id is not a lowercase UUID");
+  return many(q, "batch_id = CAST($1 AS uuid)", [batchId], " ORDER BY created_at, id");
 }
 
 // What the reconcile pass works on: rows left unknown, and rows still sent after the window

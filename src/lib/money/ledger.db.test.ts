@@ -118,6 +118,7 @@ describe("reserve", () => {
       counterpartyId: A.driverId,
       state: "reserved",
       approverMembershipId: A.memberId,
+      batchId: null,
       checkCount: 0,
       sentAt: null,
       sentSecondsAgo: null,

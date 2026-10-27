@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { flags } from "@/config/flags";
-import { homeSuggestions } from "@/components/agent/suggestions";
+import { homeSuggestions, withPaystubSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
@@ -37,6 +37,7 @@ type Carrier = {
   email: string;
   counts: { drivers: number; loads: number; periods: number };
   ledger: ModelLedger | null;
+  paystub: { driverName: string; periodEnd: string } | null;
   session: Session;
 };
 
@@ -44,13 +45,19 @@ type Carrier = {
 // ever see the carrier on the verified token. Signed out: withRequestTenant redirects to /sign-in.
 // ?document=<input id>, from a document's page: the question box starts with a request to check
 // that document. Only an id is taken from the address; the text around it is fixed.
+// ?paystub=<settlement id>: "Ask about this paystub" links here with the paystub's id; anything
+// else is ignored.
 export default async function Home({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const asked = (await searchParams).document;
+  const params = await searchParams;
+  const asked = params.document;
   const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
+  const askedPaystub = params.paystub;
+  const paystubId =
+    typeof askedPaystub === "string" && isUuid(askedPaystub) ? askedPaystub.toLowerCase() : null;
   let carrier: Carrier | null = null;
   let problem: "forbidden" | "unreadable" | null = null;
   try {
@@ -76,12 +83,23 @@ export default async function Home({
       const ledger = flags.aiProofRoute
         ? { calls: await readRecentCalls(q, 5), spend: await readSpend(q) }
         : null;
+      const [paystub] = paystubId
+        ? await q.query<{ name: string; end_date: string }>(
+            `SELECT d.name, CAST(p.period_end AS text) AS end_date
+               FROM settlements s
+               JOIN drivers d ON d.tenant_id = s.tenant_id AND d.id = s.driver_id
+               JOIN settlement_periods p ON p.tenant_id = s.tenant_id AND p.id = s.period_id
+              WHERE s.tenant_id = current_tenant_id() AND s.id = CAST($1 AS uuid)`,
+            [paystubId],
+          )
+        : [];
       return {
         name: tenants[0].name,
         timezone: tenants[0].timezone,
         email: members[0].email,
         counts,
         ledger,
+        paystub: paystub ? { driverName: paystub.name, periodEnd: paystub.end_date } : null,
         session,
       };
     });
@@ -137,6 +155,9 @@ export default async function Home({
     );
   }
 
+  const base = flags.detentionEnabled ? [...SUGGESTIONS, DETENTION_SUGGESTION] : SUGGESTIONS;
+  const suggestions = withPaystubSuggestion(base, carrier.paystub);
+
   return (
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
@@ -149,7 +170,7 @@ export default async function Home({
           initialTurns={agentTurns}
           streamMode={flags.agentStreamMode}
           auditorOn={flags.auditorEnabled}
-          suggestions={flags.detentionEnabled ? [...SUGGESTIONS, DETENTION_SUGGESTION] : SUGGESTIONS}
+          suggestions={suggestions}
           initialDraft={documentInput ? `Check document ${documentInput}` : undefined}
           intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
           disabledReason={

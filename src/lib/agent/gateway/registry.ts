@@ -17,6 +17,7 @@ import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
+import { getSettlements } from "./tools/read/get-settlements";
 import { getPayItems } from "./tools/read/get-pay-items";
 import { getPaymentsIn } from "./tools/read/get-payments-in";
 import { getPortalEvidence } from "./tools/read/get-portal-evidence";
@@ -56,6 +57,7 @@ const TOOLS: readonly AnyToolDef[] = [
   getCustomerPayments,
   getLedger,
   explainPaystub,
+  getSettlements,
   runChecks,
   reportArAging,
   reportDriverPaySummary,

@@ -259,6 +259,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       // Every fourth driver by position reads Spanish, so each carrier has Spanish pay notes.
       // Decided by index, not the random stream, so no other seeded value moves.
       preferred_language: i % 4 === 3 ? "es" : "en",
+      own_insurance: false,
     };
   });
   const byCode = new Map(drivers.map((d) => [d.code, d]));

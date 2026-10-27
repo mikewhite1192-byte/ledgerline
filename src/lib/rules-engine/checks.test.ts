@@ -426,6 +426,13 @@ describe("insurance days not driven", () => {
     expect(found.map((f) => f.sources[0].id)).toEqual(["d9"]);
   });
 
+  it("never flags a day for a driver who carries their own insurance", () => {
+    const base = clean();
+    const exempt = { ...base, drivers: base.drivers.map((d) => ({ ...d, ownInsurance: true })) };
+    expect(findInsuranceDaysNotDriven(planted({ days: [day("d9", "2026-10-26")] }, exempt))).toEqual([]);
+    expect(findInsuranceDaysNotDriven({ ...exempt, config: PRAIRIE_WIND })).toEqual([]);
+  });
+
   it("checks every driver where the tenant insures every driver", () => {
     const found = findInsuranceDaysNotDriven({ ...clean(), config: PRAIRIE_WIND });
     expect(found).toEqual([
