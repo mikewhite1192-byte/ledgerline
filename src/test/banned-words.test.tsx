@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { proposalCardFrom } from "@/components/agent/proposal-card-from";
 import { reportTable, type ReportLoad } from "@/components/agent/report-table";
 import { toMessages } from "@/components/agent/turn-view";
 import { ChatThread } from "@/components/app/chat-thread";
@@ -18,6 +19,7 @@ import { ApproveAll } from "@/components/settlements/approve-all";
 import { ContinueBatch } from "@/components/settlements/continue-batch";
 import { doneNote } from "@/components/settlements/action-button";
 import { FuelChecks } from "@/components/fuel/fuel-checks";
+import { RuleChangeCards, type RuleChangeCard } from "@/components/pay-rules/rule-change-cards";
 import { HowWorkedOut } from "@/components/trace/how-worked-out";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { flags } from "@/config/flags";
@@ -38,6 +40,8 @@ import {
   runLine,
 } from "@/lib/fuel/help";
 import { SUBJECT_STATUSES } from "@/lib/money/types";
+import { RULE_KEYS, RULES, formatValue, labelFor } from "@/lib/pay-rules/rules";
+import * as payWords from "@/lib/pay-rules/words";
 import { INVOICE_REVIEW_STATUSES } from "@/lib/rules-engine";
 import { FUEL_CHECK_NAMES, NO_SUGGESTION_REASONS } from "@/lib/rules-engine/fuel";
 import { REPORT_COLUMNS, REPORT_NAMES, REPORT_TITLES, type ReportName, type ReportResult, type ReportRow } from "@/lib/reports/types";
@@ -251,6 +255,7 @@ vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
   readEngineProposalViews: async () => get("invoiceProposals"),
   readAgentModelWeek: async () => get("week"),
   readRecentAgentTurns: async () => get("turns"),
+  readWaitingRuleChangeViews: async () => get("ruleChanges"),
 }));
 vi.mock("@/lib/ai/spend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/ai/spend")>()),
@@ -270,6 +275,16 @@ vi.mock("@/lib/sweep/view", async (importOriginal) => ({
 vi.mock("@/lib/fuel/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/fuel/view")>()),
   readFuelPage: async () => get("fuelPage"),
+}));
+vi.mock("@/lib/pay-rules/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/pay-rules/read")>()),
+  // An Error fixture stands for rules that could not be read whole.
+  readPayRulesPage: async () => {
+    const page = get<unknown>("payRulesPage");
+    if (page instanceof Error) throw page;
+    return page;
+  },
+  readNextWeekStart: async () => get("nextStart"),
 }));
 vi.mock("@/lib/portal/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/portal/views")>()),
@@ -365,6 +380,9 @@ function defaults(): Record<string, unknown> {
     paystubAsk: null,
     reviewQueue: fx.REVIEW_QUEUE,
     invoiceReview: fx.INVOICE_REVIEW,
+    payRulesPage: fx.PAY_RULES_PAGE,
+    nextStart: fx.NEXT_START,
+    ruleChanges: fx.RULE_CHANGES,
   };
 }
 
@@ -497,6 +515,11 @@ const PAGES: PageCase[] = [
         name: "asked about a paystub",
         setup: () => (state.fx.paystubAsk = fx.PAYSTUB_ASK),
         load: async () => (await import("@/app/page")).default(sp({ paystub: ID })),
+      },
+      {
+        name: "asked to change a pay rule",
+        load: async () => (await import("@/app/page")).default(sp({ rule: "1" })),
+        shows: payWords.composerHelp(fx.NEXT_START),
       },
     ],
   },
@@ -756,6 +779,34 @@ const PAGES: PageCase[] = [
     variants: [{ name: "preview", load: async () => (await import("@/app/settings/demo/page")).default() }],
   },
   {
+    file: "settings/pay-rules/page.tsx",
+    variants: [
+      {
+        name: "rules and changes waiting",
+        load: async () => (await import("@/app/settings/pay-rules/page")).default(),
+        shows: payWords.NOTHING_CHANGES,
+      },
+      {
+        name: "nothing waiting",
+        setup: () => (state.fx.ruleChanges = []),
+        load: async () => (await import("@/app/settings/pay-rules/page")).default(),
+        shows: payWords.WAITING_EMPTY_TITLE,
+      },
+      {
+        name: "staff, a change over the admin amount",
+        setup: () => (state.fx.payRulesPage = { ...fx.PAY_RULES_PAGE, role: "staff" }),
+        load: async () => (await import("@/app/settings/pay-rules/page")).default(),
+        shows: payWords.adminOnlyLabel(flags.approverRole.adminAboveCents),
+      },
+      {
+        name: "rules could not be read",
+        setup: () => (state.fx.payRulesPage = new Error("unreadable")),
+        load: async () => (await import("@/app/settings/pay-rules/page")).default(),
+        shows: payWords.LOAD_FAILED_TITLE,
+      },
+    ],
+  },
+  {
     file: "sign-in/page.tsx",
     variants: [
       { name: "form", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({}) }) },
@@ -880,6 +931,7 @@ const PAGES: PageCase[] = [
   loading("models/loading.tsx", () => import("@/app/models/loading")),
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
   loading("records/loading.tsx", () => import("@/app/records/loading")),
+  loading("settings/pay-rules/loading.tsx", () => import("@/app/settings/pay-rules/loading")),
   loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
   loading("sweep/fuel/loading.tsx", () => import("@/app/sweep/fuel/loading")),
 ];
@@ -1023,7 +1075,8 @@ describe("no internal word on a card", () => {
 
 describe("no internal word on a paystub", () => {
   it("the sample paystubs", () => {
-    for (const stub of [PAYSTUB, SHORT_WEEK_PAYSTUB]) {
+    const underRules = [{ ...PAYSTUB, payRules: { from: "2026-10-19", href: payWords.PAY_RULES_PATH } }, { ...PAYSTUB, payRules: { from: "2026-10-19" } }];
+    for (const stub of [PAYSTUB, SHORT_WEEK_PAYSTUB, ...underRules]) {
       const { container, unmount } = render(<Paystub {...stub} />);
       expect(scan(container)).toEqual([]);
       unmount();
@@ -1328,6 +1381,123 @@ describe("no internal word on a fuel check's detail and notes", () => {
         ))}
       </ul>,
     );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("no internal word on a pay rule change", () => {
+  const ADMIN = { admin: true, adminAboveCents: flags.approverRole.adminAboveCents };
+  const STAFF = { admin: false, adminAboveCents: flags.approverRole.adminAboveCents };
+  const cardOf = (v: (typeof fx.RULE_CHANGES)[number], on = true): RuleChangeCard => ({
+    card: proposalCardFrom(v, on ? { on: true, checking: false } : undefined, ADMIN),
+    verdict: v.auditorVerdict,
+    flagged: v.flagged,
+  });
+  const click = async (name: string | RegExp) => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name }));
+    });
+  };
+  // Every POST answers with this refusal category; with none, it succeeds.
+  const answer = (error: string | null) =>
+    vi.stubGlobal("fetch", async () =>
+      error === null ? new Response(JSON.stringify({ ok: true }), { status: 200 }) : new Response(JSON.stringify({ error }), { status: 409 }),
+    );
+
+  it("every card in the chat, waiting and decided, for an admin and for staff, with the second check on and off", () => {
+    const cards = [...fx.RULE_CHANGES, ...fx.RULE_CHANGES_DECIDED];
+    const notices = Object.fromEntries(cards.map((c, n) => [c.id, Object.values(payWords.SAVE_NOTICES)[n % Object.keys(payWords.SAVE_NOTICES).length]]));
+    const turn: TurnView = { ...fx.TURNS[0], proposals: cards };
+    for (const viewer of [ADMIN, STAFF]) {
+      for (const on of [true, false]) {
+        const checking = Object.fromEntries(cards.filter((c) => c.auditorVerdict === null).map((c) => [c.id, true]));
+        const messages = toMessages([turn], notices, {}, undefined, { on, checking, timezone: fx.TENANT.timezone }, viewer);
+        const { container, unmount } = render(<ChatThread messages={messages} composer={{}} />);
+        expect(container.textContent).toContain(payWords.NOTHING_CHANGES);
+        expect(scan(container)).toEqual([]);
+        unmount();
+      }
+    }
+  });
+
+  it("every card on the Pay rules page, while the second check runs", async () => {
+    await act(async () => {
+      render(<RuleChangeCards cards={fx.RULE_CHANGES.map((v) => cardOf(v))} auditorOn />);
+    });
+    expect(document.body.textContent).toContain(payWords.AUDIT_LINES.checking);
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("every note under a card after Save and Not now", async () => {
+    render(<RuleChangeCards cards={[cardOf(fx.RULE_CHANGES[0])]} />);
+    const hits: Hit[] = [];
+    const seen = new Set<string>();
+    const read = () => {
+      for (const s of screen.queryAllByRole("status")) if (s.textContent) seen.add(s.textContent);
+      hits.push(...scan(document.body));
+    };
+    try {
+      for (const error of [...Object.keys(payWords.SAVE_NOTICES), "refused", "unavailable", null]) {
+        answer(error);
+        if (!screen.queryByRole("button", { name: "Confirm" })) await click(payWords.SAVE_LABEL);
+        await click("Confirm");
+        read();
+      }
+      await click("Cancel");
+      for (const error of ["refused", "unknown"]) {
+        answer(error);
+        await click(payWords.NOT_NOW_LABEL);
+        read();
+      }
+    } finally {
+      vi.stubGlobal("fetch", () => new Promise(() => {}));
+    }
+    // Each refusal left its own note (the empty ones say nothing more), so every path above was read.
+    expect(seen.size).toBeGreaterThanOrEqual(10);
+    expect(hits).toEqual([]);
+  });
+
+  it("every fixed line, rule label, hover help and value, and every line the figures write", () => {
+    const fixed = Object.values(payWords).flatMap((w) => (typeof w === "string" ? [w] : typeof w === "object" && w !== null ? Object.values(w) : []));
+    const impact = fx.RULE_CHANGES[0].ruleChange!.impact;
+    const words = [
+      ...fixed,
+      ...RULE_KEYS.flatMap((key) => {
+        const spec = RULES[key];
+        const values = spec.values ?? [spec.min, spec.max, ...(spec.nullable ? [null] : [])];
+        return [
+          labelFor(key, "owner_operator"),
+          labelFor(key, "all"),
+          spec.help,
+          ...values.map((v) => formatValue(spec, v)),
+          payWords.ruleTitle({ ruleKey: key, oldValue: values[0], newValue: values[values.length - 1], appliesTo: "owner_operator" }),
+        ];
+      }),
+      ...[true, false].map((snapped) => payWords.startsLine({ effectiveFrom: "2026-11-09", askedFrom: "2026-11-04", snapped })),
+      ...(["settled_week", "no_settled_week", "advances_only"] as const).flatMap((basis) =>
+        [0, 1, 4].flatMap((driversChanged) =>
+          [true, false].flatMap((ownerOperatorsOnly) =>
+            [-2_400, 0, 4_100].map((netDeltaCents) => payWords.impactLine({ ...impact, basis, driversChanged, ownerOperatorsOnly, netDeltaCents })),
+          ),
+        ),
+      ),
+      ...[-1, 0, 1].map((n) => payWords.impactLabel(n)),
+      payWords.adminOnlyLabel(flags.approverRole.adminAboveCents),
+      payWords.adminOnlyLabel(250_050),
+      payWords.savedLine("2026-11-09"),
+      payWords.paidUnderLine("2026-10-19"),
+      payWords.composerHelp(fx.NEXT_START),
+      payWords.exampleSentence(fx.NEXT_START),
+      payWords.shortPeriod("2026-10-26", "2026-11-01"),
+    ];
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(words.length).toBeGreaterThan(60);
     expect(scan(container)).toEqual([]);
   });
 });

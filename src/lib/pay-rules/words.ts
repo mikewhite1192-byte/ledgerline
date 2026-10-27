@@ -13,7 +13,7 @@ import { labelFor, RULES, shortValue, unitSuffix, type RuleKey, type RuleValue }
 // on as written and asks nothing else.
 export const REFUSAL_LINES: Readonly<Record<RuleChangeRefusal, string>> = {
   unknown_rule:
-    "Which rule do you mean? I can change: insurance per day, who pays insurance, escrow target, escrow per week, the net pay floor, advance fee, advance limit, advance cap, the share of pay an advance may take, the smallest advance, empty miles paid, the drivers' share of accessorials, and what the percentage is paid on.",
+    "Which rule do you mean? I can change: insurance per day, who pays insurance, escrow target, escrow per week, the net pay floor, advance fee, advance limit, advance cap, the share of pay an advance may take, the smallest advance, empty miles paid, the drivers' share of extra charges, and what the percentage is paid on.",
   bad_value: "What should it change to? I did not see that amount in your message.",
   value_not_in_message: "What should it change to? I did not see that amount in your message.",
   value_out_of_range: "That amount is outside what this rule allows. What should it change to?",

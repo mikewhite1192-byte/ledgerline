@@ -1,13 +1,16 @@
 -- The demo reset (0025) clears the agent's records for a demo carrier and rewrites the seeded
 -- tables, pay_configs among them. A pay rule change (0030) names a proposal the reset deletes and
 -- a version the replace rewrites, so the reset clears these rows too (DEMO_RESET_CLEARED in
--- src/lib/seed/reset.ts). The function is re-created whole, copied from 0033 (0025 plus the
--- sweep's second checks) with one more DELETE (after the sweep runs, before the advances and the
--- proposals) and one more returned row, every bound unchanged: the fixed search_path, the demo
--- carrier gate, the tenant row lock, the refusals, a tenant filter on every statement and EXECUTE
--- for payday_app only. A later number than every migration on main that re-creates it, so on a
--- fresh database this one runs last; any later migration that re-creates it starts from the
--- newest definition and keeps every DELETE in it (src/lib/seed/reset-coverage.db.test.ts fails
+-- src/lib/seed/reset.ts).
+--
+-- demo_reset_clear() re-created whole from its latest definition (0034: 0025, plus the sweep's
+-- second checks from 0033, plus the fuel checks), unchanged except for one more DELETE (after the
+-- fuel check runs, before the advances and the proposals), its variable and its returned row.
+-- Every delete 0034 has stays. Same owner, same security definer and search path, same refusals
+-- (LR001, LR002, LR003), the same two demo carriers, a tenant filter on every statement, the same
+-- revoke and grant. A later number than every migration on main that re-creates it, so on a fresh
+-- database this one runs last; any later migration that re-creates it starts from the newest
+-- definition and keeps every DELETE in it (src/lib/seed/reset-coverage.db.test.ts fails
 -- otherwise).
 CREATE OR REPLACE FUNCTION demo_reset_clear()
   RETURNS TABLE (table_name text, deleted bigint)
@@ -41,6 +44,8 @@ DECLARE
   v_fanout        bigint;
   v_sweep_items   bigint;
   v_sweep_runs    bigint;
+  v_fuel_findings bigint;
+  v_fuel_runs     bigint;
   v_rule_changes  bigint;
   v_batches       bigint;
   v_advances      bigint;
@@ -136,6 +141,14 @@ BEGIN
   DELETE FROM public.sweep_runs sr WHERE sr.tenant_id = v_tenant;
   GET DIAGNOSTICS v_sweep_runs = ROW_COUNT;
 
+  -- A fuel finding names a fill-up, a driver, a load and a pay line the replace deletes, and the
+  -- card it drafted, so it goes before the proposals; its runs go after it (0031).
+  DELETE FROM public.fuel_findings ff WHERE ff.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_fuel_findings = ROW_COUNT;
+
+  DELETE FROM public.fuel_check_runs fr WHERE fr.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_fuel_runs = ROW_COUNT;
+
   -- A pay rule change names the proposal it came from and the version it wrote (0030); the
   -- replace rewrites the versions, so the changes go with the agent's records.
   DELETE FROM public.pay_rule_changes rc WHERE rc.tenant_id = v_tenant;
@@ -176,6 +189,8 @@ BEGIN
     (CAST('sweep_fanout' AS text), v_fanout),
     (CAST('sweep_items' AS text), v_sweep_items),
     (CAST('sweep_runs' AS text), v_sweep_runs),
+    (CAST('fuel_findings' AS text), v_fuel_findings),
+    (CAST('fuel_check_runs' AS text), v_fuel_runs),
     (CAST('pay_rule_changes' AS text), v_rule_changes),
     (CAST('approval_batches' AS text), v_batches),
     (CAST('advances' AS text), v_advances),

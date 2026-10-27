@@ -68,6 +68,8 @@ describe("whether the sentence holds the value", () => {
     expect(valueInText(pb, "linehaul", "percentage on linehaul plus fuel surcharge from Nov 9")).toBe(false);
     expect(valueInText(pb, "linehaul", "percentage on linehaul only from Nov 9")).toBe(true);
     expect(valueInText(pb, "linehaul_fsc_accessorials", "pay on linehaul, fuel and accessorials")).toBe(true);
+    expect(valueInText(pb, "linehaul_fsc_accessorials", "pay on linehaul, fuel surcharge and extra charges")).toBe(true);
+    expect(valueInText(pb, "linehaul_fsc", "pay on linehaul, fuel surcharge and extra charges")).toBe(false);
   });
 
   it("reads a share in basis points", () => {

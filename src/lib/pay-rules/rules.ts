@@ -163,10 +163,10 @@ export const RULES: Readonly<Record<RuleKey, RuleSpec>> = {
   accessorial_driver_share_bps: spec({
     key: "accessorial_driver_share_bps",
     column: "accessorial_driver_share_bps",
-    label: "Drivers' share of accessorials",
+    label: "Drivers' share of extra charges",
     ...BPS,
     affects: "settlement",
-    help: "Accessorials are extra charges on a load, like detention, layover or an extra stop. This is the share paid to the driver, as a percentage (basis points: 100 is 1%).",
+    help: "Extra charges are charges on a load beyond the haul itself, like detention, layover or an extra stop. This is the share paid to the driver, as a percentage (basis points: 100 is 1%).",
   }),
   percent_base: spec({
     key: "percent_base",
@@ -177,7 +177,7 @@ export const RULES: Readonly<Record<RuleKey, RuleSpec>> = {
     max: 0,
     values: PERCENT_BASES,
     affects: "settlement",
-    help: "For drivers paid a percentage: 35% of linehaul pays 35% of the load's linehaul, the base rate for the miles, before fuel surcharge and accessorials.",
+    help: "For drivers paid a percentage: 35% of linehaul pays 35% of the load's linehaul, the base rate for the miles, before fuel surcharge and extra charges.",
   }),
 };
 
@@ -206,7 +206,7 @@ const ENUM_WORDS: Readonly<Record<string, string>> = {
   all: "all drivers",
   linehaul: "linehaul",
   linehaul_fsc: "linehaul and fuel surcharge",
-  linehaul_fsc_accessorials: "linehaul, fuel surcharge and accessorials",
+  linehaul_fsc_accessorials: "linehaul, fuel surcharge and extra charges",
 };
 
 // Basis points as a percentage: 3500 is "35%", 3550 "35.5%", 1 "0.01%".

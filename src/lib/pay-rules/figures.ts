@@ -78,7 +78,8 @@ const ALIASES: Readonly<Record<string, readonly RegExp[]>> = {
 
 function namesBase(text: string, value: string): boolean {
   const fuel = /\bfuel\b|\bsurcharge\b|\bfsc\b/i.test(text);
-  const acc = /\baccessorials?\b/i.test(text);
+  // The screen says "extra charges"; a person who knows the trade word may say "accessorials".
+  const acc = /\baccessorials?\b|\bextra charges?\b/i.test(text);
   if (value === "linehaul_fsc_accessorials") return acc && /\blinehaul\b/i.test(text);
   if (value === "linehaul_fsc") return fuel && !acc;
   if (value === "linehaul") return /\blinehaul\b/i.test(text) && !fuel && !acc;
