@@ -4,6 +4,7 @@ import {
   appliedAsAsked,
   billBody,
   billDocNumber,
+  billKeyOf,
   billPaymentBody,
   customerDisplayName,
   invoiceBody,
@@ -12,13 +13,17 @@ import {
   purchaseBody,
   queryRows,
   recordOf,
+  tenantCodeOf,
   vendorBody,
   vendorDisplayName,
 } from "./entities";
-import { ACCOUNTS, ITEMS } from "./test-fakes";
+import { ACCOUNTS, ITEMS, TENANT } from "./test-fakes";
 import { bodyJson, decimalField, faultCodes } from "./wire";
 
 const ACTION = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
+// TENANT's code and bill key.
+const CODE = "T5B0E6F1A2C3D";
+const KEY = "T5B0E";
 
 const refused = (fn: () => unknown) => {
   try {
@@ -52,15 +57,30 @@ describe("QuickBooks wire format", () => {
 });
 
 describe("QuickBooks bodies", () => {
+  it("takes the tenant code and bill key from the tenant id, refusing a malformed id", () => {
+    expect(tenantCodeOf(TENANT)).toBe(CODE);
+    expect(billKeyOf(TENANT)).toBe(KEY);
+    // Two tenants differ by id alone, whatever their slugs.
+    const other = "5b0e6f1a-2c3e-4e5f-8a9b-0c1d2e3f4a5b";
+    expect(tenantCodeOf(other)).toBe("T5B0E6F1A2C3E");
+    expect(tenantCodeOf(other)).not.toBe(tenantCodeOf(TENANT));
+    for (const bad of [TENANT.toUpperCase(), TENANT.replace(/-/g, ""), "blue-ridge", "", null, undefined, 5]) {
+      expect(refused(() => tenantCodeOf(bad)), String(bad)).toBe("validation");
+      expect(refused(() => billKeyOf(bad)), String(bad)).toBe("validation");
+    }
+  });
+
   it("names customers and vendors with the tenant code first", () => {
-    expect(customerDisplayName("BR", { code: "CUST-1", name: "  Test Shipper " })).toBe("BR Test Shipper (CUST-1)");
-    expect(vendorDisplayName("BR", { code: "DRV-7", firstName: "Sam", lastName: "Rivera" })).toBe(
-      "BR Rivera, Sam (DRV-7)",
+    expect(customerDisplayName(CODE, { code: "CUST-1", name: "  Test Shipper " })).toBe(
+      "T5B0E6F1A2C3D Test Shipper (CUST-1)",
     );
-    expect(refused(() => customerDisplayName("BR", { code: "cust 1", name: "x" }))).toBe("validation");
-    expect(refused(() => customerDisplayName("BR", { code: "CUST-1", name: "a\nb" }))).toBe("validation");
-    expect(vendorBody("BR Rivera, Sam (DRV-7)", "company")).toEqual({
-      DisplayName: "BR Rivera, Sam (DRV-7)",
+    expect(vendorDisplayName(CODE, { code: "DRV-7", firstName: "Sam", lastName: "Rivera" })).toBe(
+      "T5B0E6F1A2C3D Rivera, Sam (DRV-7)",
+    );
+    expect(refused(() => customerDisplayName(CODE, { code: "cust 1", name: "x" }))).toBe("validation");
+    expect(refused(() => customerDisplayName(CODE, { code: "CUST-1", name: "a\nb" }))).toBe("validation");
+    expect(vendorBody("T5B0E6F1A2C3D Rivera, Sam (DRV-7)", "company")).toEqual({
+      DisplayName: "T5B0E6F1A2C3D Rivera, Sam (DRV-7)",
       Vendor1099: false,
     });
     expect(refused(() => vendorBody("x", "contractor"))).toBe("validation");
@@ -112,8 +132,9 @@ describe("QuickBooks bodies", () => {
         ],
       },
       ACCOUNTS,
+      KEY,
     );
-    expect(out.docNumber).toBe("STL-261107-DRV-7");
+    expect(out.docNumber).toBe("T5B0E-261107-DRV-7");
     expect(out.totalCents).toBe(137_500);
     const json = JSON.parse(bodyJson(out.body)) as { Line: { Amount: number; AccountBasedExpenseLineDetail: unknown }[] };
     expect(json.Line.map((l) => [l.Amount, l.AccountBasedExpenseLineDetail])).toEqual([
@@ -124,8 +145,8 @@ describe("QuickBooks bodies", () => {
     ]);
   });
 
-  it("refuses a bill with a wrong-signed line, an unknown kind, a non-positive net or a long number", () => {
-    const bill = (lines: { kind: string; amountCents: number }[], driverCode = "DRV-7") => () =>
+  it("refuses a bill with a wrong-signed line, an unknown kind, a non-positive net, a bad key or a long number", () => {
+    const bill = (lines: { kind: string; amountCents: number }[], driverCode = "DRV-7", key = KEY) => () =>
       billBody(
         {
           actionId: ACTION,
@@ -135,6 +156,7 @@ describe("QuickBooks bodies", () => {
           lines: lines.map((l) => ({ ...l, description: "x" })),
         },
         ACCOUNTS,
+        key,
       );
     expect(refused(bill([{ kind: "load_pay", amountCents: -1 }]))).toBe("validation");
     expect(refused(bill([{ kind: "fuel", amountCents: 1 }]))).toBe("validation");
@@ -144,7 +166,18 @@ describe("QuickBooks bodies", () => {
     );
     expect(refused(bill([]))).toBe("validation");
     expect(refused(bill([{ kind: "load_pay", amountCents: 100 }], "DRIVER-LONGER"))).toBe("validation");
-    expect(billDocNumber("DRV-77", "2026-11-07")).toBe("STL-261107-DRV-77");
+    for (const key of ["t5b0e", "T5B0", "T5B0E6", "S5B0E", "", "STL"]) {
+      expect(refused(bill([{ kind: "load_pay", amountCents: 100 }], "DRV-7", key)), key).toBe("validation");
+    }
+    expect(billDocNumber(KEY, "BR-D07", "2026-11-07")).toBe("T5B0E-261107-BR-D07");
+    // Intuit's 21 characters: an 8-character driver code fits exactly; a 9-character one is
+    // refused, never cut.
+    expect(billDocNumber(KEY, "DRV-1234", "2026-11-07")).toBe("T5B0E-261107-DRV-1234");
+    expect(billDocNumber(KEY, "DRV-1234", "2026-11-07")).toHaveLength(21);
+    expect(refused(() => billDocNumber(KEY, "DRV-12345", "2026-11-07"))).toBe("validation");
+    expect(refused(bill([{ kind: "load_pay", amountCents: 100 }], "DRV-12345"))).toBe("validation");
+    // Two tenants with one driver code and one period end get two numbers.
+    expect(billDocNumber("T7C2A", "BR-D07", "2026-11-07")).not.toBe(billDocNumber(KEY, "BR-D07", "2026-11-07"));
   });
 
   it("links a bill payment to its bill and draws it from the clearing account", () => {

@@ -78,6 +78,8 @@ function company() {
 }
 
 const stateOf = (url: string) => new URL(url).searchParams.get("state") ?? "";
+// A tenant's code as QuickBooks names show it: T and the first 12 hex digits of its id.
+const codeOf = (tenantId: string) => `T${tenantId.replace(/-/g, "").slice(0, 12).toUpperCase()}`;
 
 async function clearQbo(f: Fixture) {
   await admin.withTenant(f.tenantId, async (q) => {
@@ -92,7 +94,9 @@ beforeAll(async () => {
   app = createPgDb({ connectionString: appUrl() });
   const tag = randomUUID().slice(0, 8);
   A = await makeTenant(admin, `qbo-a-${tag}`);
-  B = await makeTenant(admin, `qbo-b-${tag}`);
+  // B's slug has A's initials, and both have a customer CUST-1 named Test Shipper: the case where
+  // a code taken from the slug gave two tenants one QuickBooks customer.
+  B = await makeTenant(admin, `qbo-alt-${tag}`);
   secondAdminSub = `sub-second-${A.tenantId}`;
   await admin.withTenant(A.tenantId, async (q) => {
     await q.execute("UPDATE memberships SET role = 'admin' WHERE tenant_id = current_tenant_id()");
@@ -372,6 +376,27 @@ describe("QuickBooks adapter on the real store", () => {
     const again = await inA((q) => adapter.ensureCustomer(q, customer, ctx));
     expect(again).toEqual(first);
     expect(c.sent.filter((s) => s.method === "POST")).toHaveLength(1);
-    expect(JSON.parse(c.sent[1].body ?? "").DisplayName).toMatch(/^QA[0-9A-F] Test Shipper \(CUST-1\)$/);
+    expect(JSON.parse(c.sent[1].body ?? "").DisplayName).toBe(`${codeOf(A.tenantId)} Test Shipper (CUST-1)`);
+  });
+
+  it("names each tenant's customer by its own tenant id in a company two tenants share", async () => {
+    flags.accountingEnabled = true;
+    await inA((q) => saveConnection(q, KEY, { ...mapping, membershipId: A.memberId }));
+    await inB((q) => saveConnection(q, KEY, { ...mapping, membershipId: B.memberId }));
+    const c = company();
+    const adapter = createQboAdapter({ env: qboEnv(), fetch: c.fetch, log: () => {} });
+    const ctx = { requestId: "0".repeat(32), timeoutMs: 1_000, tenantZone: "America/Chicago" };
+    const same = { code: "CUST-1", name: "Test Shipper" };
+    await inA((q) => adapter.ensureCustomer(q, { id: A.customerId, ...same }, ctx));
+    await inB((q) => adapter.ensureCustomer(q, { id: B.customerId, ...same }, ctx));
+    const looks = c.sent
+      .map((s) => s.url.searchParams.get("query") ?? "")
+      .filter((query) => query.startsWith("SELECT * FROM Customer"));
+    expect(looks).toEqual([
+      `SELECT * FROM Customer WHERE DisplayName = '${codeOf(A.tenantId)} Test Shipper (CUST-1)'`,
+      `SELECT * FROM Customer WHERE DisplayName = '${codeOf(B.tenantId)} Test Shipper (CUST-1)'`,
+    ]);
+    expect(codeOf(A.tenantId)).not.toBe(codeOf(B.tenantId));
+    expect(c.sent.filter((s) => s.method === "POST")).toHaveLength(2);
   });
 });

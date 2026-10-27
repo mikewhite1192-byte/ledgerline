@@ -141,7 +141,6 @@ export class FakeQboDb implements Queryable {
       if (sql.includes("FOR UPDATE")) this.locks += 1;
       return (this.row ? [{ ...this.row }] : []) as T[];
     }
-    if (sql.startsWith("SELECT slug FROM tenants")) return [{ slug: "blue-ridge" }] as T[];
     if (sql.includes("SELECT outside_id FROM qbo_entity_ids")) {
       const v = this.entityIds.get(`${params[0]}:${params[1]}`);
       return (v ? [{ outside_id: v }] : []) as T[];

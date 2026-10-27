@@ -2,6 +2,7 @@ import type { Queryable } from "../../../db";
 import { isCanonicalUuid } from "../../../money/keys";
 import { MoneyError } from "../../../money/types";
 import { openToken, sealToken } from "./crypto";
+import { tenantCodeOf } from "./entities";
 import { ACCOUNT_ROLES, ITEM_NAMES, type AccountMap, type ItemMap } from "./mapping";
 import type { Tokens } from "./oauth";
 
@@ -32,23 +33,12 @@ export async function currentTenantId(q: Queryable): Promise<string> {
   return id;
 }
 
-// The tenant's short code for names and documents in a company two tenants may share (D2): the
-// first letter of each word of its slug, so "blue-ridge" is BR.
+// The current tenant's code for customer and vendor names in a company several tenants may share
+// (D2): T and the first 12 hex digits of its id, uppercase (tenantCodeOf), never its slug. A
+// missing or malformed tenant id, or a code of any other shape, is refused.
 export async function tenantCode(q: Queryable): Promise<string> {
-  const rows = await q.query<{ slug: unknown }>(
-    "SELECT slug FROM tenants WHERE id = current_tenant_id()",
-  );
-  const slug = rows.length === 1 ? rows[0].slug : null;
-  if (typeof slug !== "string" || !/^[a-z0-9-]{3,40}$/.test(slug)) {
-    throw new MoneyError("validation");
-  }
-  const code = slug
-    .split("-")
-    .filter((w) => w.length > 0)
-    .map((w) => w[0].toUpperCase())
-    .join("")
-    .slice(0, 4);
-  if (code.length < 1) throw new MoneyError("validation");
+  const code = tenantCodeOf(await currentTenantId(q));
+  if (!/^T[0-9A-F]{12}$/.test(code)) throw new MoneyError("validation");
   return code;
 }
 

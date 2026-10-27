@@ -9,6 +9,7 @@ import { createQboClient, type Opened, type QboDeps, type Reply } from "./client
 import {
   appliedAsAsked,
   billBody,
+  billKeyOf,
   billPaymentBody,
   checkApplications,
   checkDocNumber,
@@ -337,8 +338,12 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
       return create(q, "Invoice", inv?.actionId, ctx, (o) => invoiceBody(inv, o.conn.items));
     },
 
+    // The bill number carries the tenant's key, from the tenant id the connection was loaded
+    // under (current_tenant_id(), the source of tenantCode).
     createBill(q, bill, ctx) {
-      return create(q, "Bill", bill?.actionId, ctx, (o) => billBody(bill, o.conn.accounts));
+      return create(q, "Bill", bill?.actionId, ctx, (o) =>
+        billBody(bill, o.conn.accounts, billKeyOf(o.conn.tenantId)),
+      );
     },
 
     payBill(q, p, ctx) {

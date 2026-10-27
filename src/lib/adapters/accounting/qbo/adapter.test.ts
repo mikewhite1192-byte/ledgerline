@@ -314,6 +314,35 @@ describe("QuickBooks adapter: creates", () => {
     expect(nothing.sent.filter((r) => r.method === "POST")).toHaveLength(1);
   });
 
+  it("numbers a settlement bill with the tenant's key, then the period end and driver code", async () => {
+    const bill = {
+      actionId: ACTION,
+      vendorOutsideId: "70",
+      driverCode: "BR-D07",
+      periodEnd: "2026-11-07",
+      lines: [{ kind: "load_pay" as const, description: "Loads", amountCents: 180_000 }],
+    };
+    const reply = { Bill: { Id: "345", DocNumber: "T5B0E-261107-BR-D07", TotalAmt: 1800, VendorRef: { value: "70" } } };
+    const { adapter, sent, db } = make([NONE, { status: 200, body: reply }]);
+    expect(await adapter.createBill(db, bill, ctx())).toMatchObject({
+      kind: "confirmed",
+      type: "Bill",
+      id: "345",
+      ref: "T5B0E-261107-BR-D07",
+    });
+    expect(sent[0].url.searchParams.get("query")).toBe(
+      "SELECT * FROM Bill WHERE DocNumber = 'T5B0E-261107-BR-D07'",
+    );
+    expect(JSON.parse(sent[1].body ?? "")).toMatchObject({ DocNumber: "T5B0E-261107-BR-D07" });
+    // A driver code that would take the number past 21 characters is refused before sending.
+    const long = make([]);
+    expect(await long.adapter.createBill(long.db, { ...bill, driverCode: "DRV-12345" }, ctx())).toEqual({
+      kind: "failed",
+      category: "validation",
+    });
+    expect(long.sent).toHaveLength(0);
+  });
+
   it("refuses a document number over Intuit's limit before sending", async () => {
     const { adapter, sent, db } = make([]);
     expect(
@@ -386,13 +415,18 @@ describe("QuickBooks adapter: a document number already held", () => {
         { kind: "failed", category: "amount_mismatch" },
         "voided",
       ],
-      [invoiceReply(2810.05, "77").Invoice, { kind: "failed", category: "validation" }, null],
+      [
+        invoiceReply(2810.05, "77").Invoice,
+        { kind: "failed", category: "validation" },
+        "number held by another party",
+      ],
       [{ ...invoiceReply().Invoice, TotalAmt: "x" }, { kind: "unknown", category: "unknown" }, null],
     ];
     for (const [row, expected, logged] of cases) {
       const { adapter, sent, lines, db } = make([held("Invoice", row)]);
       expect(await adapter.createInvoice(db, invoice(), ctx()), JSON.stringify(row)).toEqual(expected);
       expect(posts(sent)).toBe(0);
+      expect(lines.join("\n")).not.toContain("adopted");
       if (logged) expect(lines.join("\n")).toContain(logged);
     }
   });
@@ -488,7 +522,7 @@ describe("QuickBooks adapter: customers and vendors", () => {
     );
     expect(await adapter.ensureCustomer(db, customer, ctx())).toEqual({ outsideId: "58" });
     expect(sent[0].url.searchParams.get("query")).toBe(
-      "SELECT * FROM Customer WHERE DisplayName = 'BR Test O\\'Shipper (CUST-1)'",
+      "SELECT * FROM Customer WHERE DisplayName = 'T5B0E6F1A2C3D Test O\\'Shipper (CUST-1)'",
     );
     expect(db.entityIds.get(`customers:${CUSTOMER}`)).toBe("58");
   });
@@ -502,7 +536,9 @@ describe("QuickBooks adapter: customers and vendors", () => {
     const requestId = created.sent[1].url.searchParams.get("requestid");
     expect(requestId).toMatch(/^[0-9a-f]{32}$/);
     expect(requestId).not.toBe(ctx().requestId);
-    expect(JSON.parse(created.sent[1].body ?? "")).toEqual({ DisplayName: "BR Test O'Shipper (CUST-1)" });
+    expect(JSON.parse(created.sent[1].body ?? "")).toEqual({
+      DisplayName: "T5B0E6F1A2C3D Test O'Shipper (CUST-1)",
+    });
 
     const again = make([
       { status: 200, body: { QueryResponse: {} } },
@@ -537,7 +573,7 @@ describe("QuickBooks adapter: customers and vendors", () => {
     };
     expect(await adapter.ensureVendor(db, driver, ctx())).toEqual({ outsideId: "70" });
     expect(JSON.parse(sent[1].body ?? "")).toEqual({
-      DisplayName: "BR Rivera, Sam (DRV-7)",
+      DisplayName: "T5B0E6F1A2C3D Rivera, Sam (DRV-7)",
       Vendor1099: true,
     });
     expect(db.entityIds.get(`drivers:${CUSTOMER}`)).toBe("70");

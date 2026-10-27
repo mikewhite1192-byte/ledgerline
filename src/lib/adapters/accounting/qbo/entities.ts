@@ -91,6 +91,23 @@ function checkAction(actionId: unknown): string {
   return isCanonicalUuid(actionId) ? actionId : fail();
 }
 
+// ---- The tenant's codes (D2: several tenants may post into one company) ----
+
+// T and the first 12 hex digits of the tenant's id, uppercase, so tenant 5b0e6f1a-2c3d-... is
+// T5B0E6F1A2C3D. Taken from the id, never the slug: two slugs can share initials, and a customer
+// or vendor is found and adopted by its display name, so two tenants with one code and one
+// party name would share that party. The first 12 hex digits of a v4 id are random.
+export function tenantCodeOf(tenantId: unknown): string {
+  if (!isCanonicalUuid(tenantId)) fail();
+  return `T${tenantId.replace(/-/g, "").slice(0, 12).toUpperCase()}`;
+}
+
+// The tenant's key in a settlement bill number: the first 5 characters of its code (T and the
+// first 4 hex digits of its id), so a bill reads with its vendor's name.
+export function billKeyOf(tenantId: unknown): string {
+  return tenantCodeOf(tenantId).slice(0, 5);
+}
+
 // ---- Names (D2: the tenant's code first, so two tenants in one company never collide) ----
 
 export function customerDisplayName(tenantCode: string, c: { code: string; name: string }): string {
@@ -160,11 +177,20 @@ export function invoiceBody(
   };
 }
 
-// STL-YYMMDD-<driver code>: the period end compacted so a 6-character driver code fits Intuit's
-// 21 characters; a longer result is refused, never cut.
-export function billDocNumber(driverCode: string, periodEnd: LocalDate): string {
+const BILL_KEY = /^T[0-9A-F]{4}$/;
+
+// <tenant key>-YYMMDD-<driver code>, so T5B0E-261107-BR-D07 is the week ending 2026-11-07 for
+// driver BR-D07 of the tenant whose id starts 5b0e. The key keeps two tenants in one company
+// with the same driver code and period end apart. Were two tenants' keys ever equal (1 in 65,536
+// for a pair), the second bill is refused as held by another party, never adopted, because its
+// vendor differs. A driver code of up to 8 characters fits Intuit's 21; a longer result is
+// refused, never cut.
+export function billDocNumber(tenantKey: string, driverCode: string, periodEnd: LocalDate): string {
+  if (typeof tenantKey !== "string" || !BILL_KEY.test(tenantKey)) fail();
   const d = checkDate(periodEnd);
-  return checkDocNumber(`STL-${d.slice(2, 4)}${d.slice(5, 7)}${d.slice(8, 10)}-${checkCode(driverCode)}`);
+  return checkDocNumber(
+    `${tenantKey}-${d.slice(2, 4)}${d.slice(5, 7)}${d.slice(8, 10)}-${checkCode(driverCode)}`,
+  );
 }
 
 const EARNINGS = new Set(["load_pay", "accessorial_pay", "reimbursement"]);
@@ -178,6 +204,7 @@ export function billBody(
     lines: PayLine[];
   },
   accounts: AccountMap,
+  tenantKey: string,
 ): { body: Record<string, unknown>; totalCents: number; docNumber: string } {
   if (!Array.isArray(bill.lines) || bill.lines.length > 200) fail();
   let total = 0;
@@ -199,7 +226,7 @@ export function billBody(
       };
     });
   if (Line.length < 1 || total <= 0 || total >= AMOUNT_LIMIT_CENTS) fail();
-  const docNumber = billDocNumber(bill.driverCode, bill.periodEnd);
+  const docNumber = billDocNumber(tenantKey, bill.driverCode, bill.periodEnd);
   return {
     docNumber,
     totalCents: total,
