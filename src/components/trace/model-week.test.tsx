@@ -71,7 +71,7 @@ describe("ModelWeekView", () => {
     render(<ModelWeekView week={week} />);
     const spark = screen.getByRole("heading", { name: "Muse Spark" }).closest("div.min-w-0") as HTMLElement;
     expect(within(spark).getByText("From the prompt cache")).toBeTruthy();
-    expect(within(spark).getByText("71% of input tokens, saved 0.7 cents")).toBeTruthy();
+    expect(within(spark).getByText("71% of input tokens, saved 0.7 cents at list price")).toBeTruthy();
     const wonder = screen.getByRole("heading", { name: "Muse Wonder" }).closest("div.min-w-0") as HTMLElement;
     expect(within(wonder).getByText("none")).toBeTruthy();
     // 7,150 of 10,900 is 65.6%, shown as 65%; 0.7865 cents saved, shown as 0.7 cents.

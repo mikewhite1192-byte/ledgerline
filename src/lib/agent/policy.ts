@@ -24,7 +24,9 @@ export const OPERATOR_PROMPT = [
 ].join("\n");
 
 // The rule added to the operator prompt when tool search is on (flags.agentToolSearch), so a turn
-// with it off sends exactly the prompt above.
+// with it off sends exactly the prompt above. The design had this line in the prompt always; it
+// rides the flag instead so the off request stays byte for byte today's, which means an A/B of
+// the flag compares the prompt and the tools together, not the tools alone.
 export const TOOL_SEARCH_RULE = [
   "- Some tools show only a name and description until you search for them; use tool_search to",
   "  load one before calling it. Never say a thing cannot be done without searching first.",

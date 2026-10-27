@@ -108,7 +108,7 @@ const CACHE_KEY = /^[A-Za-z0-9_.:-]{1,64}$/;
 // The API's own name for its search tool: no function may take it.
 const TOOL_SEARCH_NAME = "tool_search";
 const REPLAY_TYPES: readonly string[] = ["reasoning", "tool_search_call", "tool_search_output"];
-// A hosted tool search reads the request again inside the same answer: measured on 2026-10-27,
+// A hosted tool search reads the request again inside the same answer: measured on 2026-10-27 UTC,
 // an answer that searched once billed about twice the input tokens of the same request without
 // a search, more than the reserve's input guess. So a request with search on reserves its input
 // twice, and the reserve stays a worst case.
@@ -275,6 +275,8 @@ async function runCall<T, U extends Price["unit"]>(
     p.parse,
   );
   const durationMs = Math.round(performance.now() - started);
+  // The cost is the reported usage at our price table. Meta's docs state no separate price for a
+  // hosted tool search; if it is billed on top of its tokens, this figure understates that call.
   const costNanocents = raw.kind === "answered" ? meteredCost(price, raw.metered) : null;
   // An answer metered some other way than the price is not a known cost.
   const outcome: CallOutcome<T> =
@@ -379,6 +381,8 @@ function validateText(target: AiTextTarget, request: AiRequest): TextOptions {
         (m.role === "user"
           ? m.attachments === undefined || Array.isArray(m.attachments)
           : !("attachments" in m)) &&
+        // Only an assistant turn carries replayed items.
+        (m.role === "assistant" || !("replay" in m)) &&
         (m.role === "system" ||
           m.role === "user" ||
           (m.role === "assistant" &&
@@ -458,6 +462,17 @@ function validSearchAndCache(
       : !("placement" in m),
   );
   if (!placementsOk) return false;
+  // An assistant turn's own items are its tool search items only, and come back only from a
+  // request that offered the search tool.
+  const pinnedOk = messages.every(
+    (m) =>
+      m.role !== "assistant" ||
+      m.replay === undefined ||
+      (toolSearch === true &&
+        Array.isArray(m.replay) &&
+        m.replay.every((item) => item?.type === "tool_search_call" || item?.type === "tool_search_output")),
+  );
+  if (!pinnedOk) return false;
   // Tool search items come back only from a request that offered the search tool.
   return toolSearch === true || replay.every((item) => item.type === "reasoning");
 }

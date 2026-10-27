@@ -353,7 +353,7 @@ describe("prompt cache and tool search lines", () => {
   it("states the cached share of one call and what it saved, rounded down", () => {
     // 1,912 cached Muse Spark tokens saved 1,912 x 110,000 nanocents = 0.21 cents.
     expect(formatCached({ ...plan, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: 1_912 * 110_000 })).toBe(
-      "1,912 of 2,480 input tokens from cache, saved 0.2 cents",
+      "1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price",
     );
     expect(formatCached({ ...plan, inputTokens: 2_480, cachedTokens: 0, savedNanocents: 0 })).toBe("no input tokens from cache");
     expect(formatCached({ ...plan, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: null })).toBe(
@@ -395,7 +395,7 @@ describe("prompt cache and tool search lines", () => {
     const lines = traceLines(trace);
     expect(lines[0]).toMatchObject({
       text: "Planned the next step: asked for 1 tool, after one tool search",
-      cache: "1,912 of 2,480 input tokens from cache, saved 0.2 cents",
+      cache: "1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price",
     });
     // A gateway row shows no model call, so it has no cache line; calls with no counts have none.
     expect(lines[1]).not.toHaveProperty("cache");

@@ -32,8 +32,10 @@ export type AiMessage =
   | { role: "system"; content: string; placement?: "instructions" | "input" }
   // A user turn, with any images or PDFs it carries.
   | { role: "user"; content: string; attachments?: AiAttachment[] }
-  // An assistant turn: its text and the tool calls it made, if any.
-  | { role: "assistant"; content: string; toolCalls?: AiToolCall[] }
+  // An assistant turn: its text and the tool calls it made, if any. replay (Meta, with toolSearch
+  // on) holds the hosted tool search items that answer produced, sent back just before it on every
+  // later call so a tool it loaded stays loaded; only tool_search_call and tool_search_output.
+  | { role: "assistant"; content: string; toolCalls?: AiToolCall[]; replay?: AiReplayItem[] }
   // The result of one tool call, matched to it by id.
   | { role: "tool"; content: string; toolCallId: string };
 
@@ -81,6 +83,8 @@ export type AiRequest = AiCallOptions & {
   maxOutputTokens?: number;
   // Meta targets only. Default "low".
   reasoningEffort?: AiReasoningEffort;
+  // The last answer's items, in the order returned, sent just before the last assistant turn
+  // (where they stand in for that turn's own replay).
   replay?: AiReplayItem[];
   // Meta targets only: offer the hosted tool_search tool. Requires at least one deferLoading
   // tool, and every deferLoading tool requires it.

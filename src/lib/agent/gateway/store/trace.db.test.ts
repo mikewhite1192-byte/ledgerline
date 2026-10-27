@@ -319,7 +319,7 @@ describe("the trace and the model week", () => {
       "LedgerLine: Saved the proposal card for a person to approve",
     ]);
     expect(traceLines(trace).map((l) => l.cache ?? null)).toEqual([
-      "1,912 of 2,480 input tokens from cache, saved 0.2 cents",
+      "1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price",
       null,
       null,
       "no input tokens from cache",

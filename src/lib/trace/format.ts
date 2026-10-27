@@ -153,7 +153,7 @@ export function formatCached(call: TraceCall): string | null {
   if (!isCount(input) || !isCount(cached) || cached > input) return null;
   if (cached === 0) return "no input tokens from cache";
   const part = `${cached.toLocaleString("en-US")} of ${input.toLocaleString("en-US")} input tokens from cache`;
-  return call.savedNanocents === null ? `${part}, saving not known` : `${part}, saved ${formatSaved(call.savedNanocents)}`;
+  return call.savedNanocents === null ? `${part}, saving not known` : `${part}, saved ${formatSaved(call.savedNanocents)} at list price`;
 }
 
 // The share of input tokens served from the cache, as the models page shows it.

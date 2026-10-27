@@ -25,11 +25,11 @@ function Row({ label, value }: { label: string; value: string }) {
 
 const count = (n: number) => n.toLocaleString("en-US");
 
-// "71% of input tokens, saved 84.3 cents", or null for a model with no token counts this week.
+// "71% of input tokens, saved 84.3 cents at list price", or null for a model with no token counts this week.
 function cacheRow(m: { cachedShare: number | null; cachedTokens: number; savedNanocents: number | null }): string | null {
   const share = formatCachedShare(m.cachedShare, m.cachedTokens);
   if (share === null) return null;
-  return m.cachedTokens === 0 ? "none" : `${share} of input tokens, saved ${formatSaved(m.savedNanocents)}`;
+  return m.cachedTokens === 0 ? "none" : `${share} of input tokens, saved ${formatSaved(m.savedNanocents)} at list price`;
 }
 
 // The page's prompt cache sentence, or null when no call this week was metered in tokens.

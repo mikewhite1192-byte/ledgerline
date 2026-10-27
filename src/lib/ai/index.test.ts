@@ -586,6 +586,31 @@ describe("every call, refusals before any reservation", () => {
       [{ ...REQUEST, messages: [{ role: "user", content: "y", placement: "input" } as never] }, "spark"],
       // Search items replayed when search is off.
       [{ ...REQUEST, messages: [...REQUEST.messages, assistant], replay: [searchItem] }, "spark"],
+      // An assistant turn's own items: search items only, only with search on, and only on an
+      // assistant turn.
+      [{ ...REQUEST, messages: [...REQUEST.messages, { ...assistant, replay: [searchItem] }] }, "spark"],
+      [
+        {
+          ...REQUEST,
+          toolSearch: true,
+          tools: [tool, deferred],
+          messages: [...REQUEST.messages, { ...assistant, replay: [{ type: "reasoning", encrypted_content: "r" }] }],
+        },
+        "spark",
+      ],
+      [
+        { ...REQUEST, toolSearch: true, tools: [tool, deferred], messages: [...REQUEST.messages, { ...assistant, replay: "x" as never }] },
+        "spark",
+      ],
+      [
+        {
+          ...REQUEST,
+          toolSearch: true,
+          tools: [tool, deferred],
+          messages: [{ role: "user", content: "y", replay: [searchItem] } as never, assistant],
+        },
+        "spark",
+      ],
     ];
     for (const [request, target] of bad) {
       const ledger = fakeLedger();
@@ -834,6 +859,29 @@ describe("complete, one call", () => {
     expect(result.toolSearches).toBe(1);
     expect(result.toolCalls).toEqual([{ id: "call_1", name: "propose_advance", argumentsJson: "{}" }]);
     expect(result.replay.map((r) => r.type)).toEqual(["tool_search_call", "tool_search_output"]);
+
+    // The next call carries that answer's search items pinned to its assistant turn.
+    const next = await complete(
+      "spark",
+      {
+        ...request,
+        messages: [
+          ...REQUEST.messages,
+          { role: "assistant", content: "", toolCalls: result.toolCalls, replay: result.replay },
+          { role: "tool", toolCallId: "call_1", content: "{}" },
+        ],
+      },
+      SESSION,
+      { fetch: fetchFn, db: ledger.db },
+    );
+    const resent = JSON.parse(String(fetchFn.mock.calls[1][1].body));
+    expect(resent.input.map((i: { type: string }) => i.type).slice(-4)).toEqual([
+      "tool_search_call",
+      "tool_search_output",
+      "function_call",
+      "function_call_output",
+    ]);
+    expect(next.callId).not.toBe(result.callId);
   });
 
   it("reserves a token figure per image and per PDF page, not the base64 length", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AiReplayItem, AiRequest } from "../types";
+import type { AiMessage, AiReplayItem, AiRequest } from "../types";
 import { metaBody, parseMeta } from "./meta";
 
 const OPTIONS = { maxOutputTokens: 1024, reasoningEffort: "low" as const };
@@ -448,6 +448,74 @@ describe("metaBody with tool search and the prompt cache", () => {
     );
     expect(body.input.slice(1, 3)).toEqual(replay);
     expect((body.input[3] as { type: string }).type).toBe("function_call");
+  });
+
+  it("keeps an earlier answer's search items before its tool call on every later call", () => {
+    const searchCall: AiReplayItem = { type: "tool_search_call", arguments: { paths: [""] }, call_id: null, execution: "server" };
+    const searchOutput: AiReplayItem = { type: "tool_search_output", call_id: null, execution: "server", tools: [] };
+    const reasoning1: AiReplayItem = { type: "reasoning", summary: [], encrypted_content: "r1" };
+    const reasoning2: AiReplayItem = { type: "reasoning", summary: [], encrypted_content: "r2" };
+    const base = {
+      purpose: "agent_operator_turn",
+      toolSearch: true,
+      tools: OPERATOR_REQUEST.tools!.map((t) => ({ ...t, deferLoading: t.name === "propose_advance" })),
+    };
+    const first: AiMessage[] = [
+      { role: "system", content: "You answer for the payroll desk." },
+      { role: "system", content: "STATE", placement: "input" },
+      { role: "user", content: "Advance D-01 $200." },
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{ id: "call_1", name: "propose_advance", argumentsJson: '{"cents":20000}' }],
+        replay: [searchCall, searchOutput],
+      },
+      { role: "tool", toolCallId: "call_1", content: '{"ok":true}' },
+    ];
+    const typesOf = (body: { input: unknown[] }) =>
+      body.input.map((item) => {
+        const i = item as { type: string; role?: string; call_id?: string | null; encrypted_content?: string };
+        return [i.type, i.role ?? i.call_id ?? i.encrypted_content ?? null];
+      });
+    // The second call: the last answer's whole list, in order, stands in for its own items.
+    const second = metaBody("muse-spark-1.3", { ...base, messages: first, replay: [reasoning1, searchCall, searchOutput] }, OPERATOR_OPTIONS);
+    expect(typesOf(second)).toEqual([
+      ["message", "system"],
+      ["message", "user"],
+      ["reasoning", "r1"],
+      ["tool_search_call", null],
+      ["tool_search_output", null],
+      ["function_call", "call_1"],
+      ["function_call_output", "call_1"],
+    ]);
+    // The third call: the first answer keeps its search items; the second answer's reasoning
+    // goes before its own call.
+    const third = metaBody(
+      "muse-spark-1.3",
+      {
+        ...base,
+        messages: [
+          ...first,
+          { role: "assistant", content: "", toolCalls: [{ id: "call_2", name: "get_driver", argumentsJson: '{"driver_id":"d-01"}' }] },
+          { role: "tool", toolCallId: "call_2", content: '{"cents":123400}' },
+        ],
+        replay: [reasoning2],
+      },
+      OPERATOR_OPTIONS,
+    );
+    expect(typesOf(third)).toEqual([
+      ["message", "system"],
+      ["message", "user"],
+      ["tool_search_call", null],
+      ["tool_search_output", null],
+      ["function_call", "call_1"],
+      ["function_call_output", "call_1"],
+      ["reasoning", "r2"],
+      ["function_call", "call_2"],
+      ["function_call_output", "call_2"],
+    ]);
+    expect(third.input[2]).toEqual(searchCall);
+    expect(third.input[3]).toEqual(searchOutput);
   });
 });
 

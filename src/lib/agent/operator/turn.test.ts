@@ -645,6 +645,74 @@ describe("runTurn with tool search and the prompt cache", () => {
     expect(db.statements.some((st) => /FROM invoices|FROM loads|FROM pay_items/.test(st.sql))).toBe(false);
   });
 
+  it("keeps each answer's search items pinned to it and sends its reasoning with the next call only", async () => {
+    const reasoning1 = { type: "reasoning" as const, encrypted_content: "r1" };
+    const reasoning2 = { type: "reasoning" as const, encrypted_content: "r2" };
+    const searchCall = { type: "tool_search_call" as const, call_id: null, execution: "server", arguments: { paths: [""] } };
+    const searchOutput = { type: "tool_search_output" as const, call_id: null, execution: "server", tools: [] };
+    const h = harness(
+      [
+        result({
+          callId: "call-m1",
+          toolCalls: [call("c1", "propose_advance", { driverId: DRIVER, amountCents: 20_000 })],
+          replay: [reasoning1, searchCall, searchOutput],
+          toolSearches: 1,
+        }),
+        result({ callId: "call-m2", toolCalls: [call("c2", "get_pay_items", { driverId: DRIVER })], replay: [reasoning2] }),
+        result({ callId: "call-m3", text: "A card is ready." }),
+      ],
+      gateway,
+    );
+    h.deps.tools = DEFERRED;
+    h.deps.request = ON;
+    await h.run();
+    expect(h.requests).toHaveLength(3);
+    const [, second, third] = h.requests.map((r) => r.request);
+    // The second call gets the first answer's whole list, in the order returned.
+    expect(second.replay).toEqual([reasoning1, searchCall, searchOutput]);
+    expect(second.messages[3]).toEqual({
+      role: "assistant",
+      content: "",
+      toolCalls: [call("c1", "propose_advance", { driverId: DRIVER, amountCents: 20_000 })],
+      replay: [searchCall, searchOutput],
+    });
+    // The third still carries the first answer's search items before its call to the deferred
+    // tool; the second answer, which did not search, has none; only its reasoning is replayed.
+    expect(third.messages.map((m) => m.role)).toEqual(["system", "system", "user", "assistant", "tool", "assistant", "tool"]);
+    expect(third.messages[3]).toEqual(second.messages[3]);
+    expect(third.messages[5]).toEqual({ role: "assistant", content: "", toolCalls: [call("c2", "get_pay_items", { driverId: DRIVER })] });
+    expect(third.replay).toEqual([reasoning2]);
+  });
+
+  it("sends the escalation today's message shape with the cache on: no input placement, no search items", async () => {
+    const searchCall = { type: "tool_search_call" as const, call_id: null, execution: "server", arguments: { paths: [""] } };
+    const h = harness(
+      [
+        result({ toolCalls: [call("s1", "propose_advance")], replay: [searchCall], toolSearches: 1 }),
+        result({ toolCalls: [call("s2", "propose_advance")] }),
+        result({ toolCalls: [call("w1", "propose_advance", { driverId: DRIVER })] }),
+        result({ text: "A card is ready." }),
+      ],
+      (c) => (c.id === "w1" ? allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT }) : invalid("propose_advance")),
+    );
+    h.deps.tools = DEFERRED;
+    h.deps.request = ON;
+    await h.run();
+    expect(h.requests.map((r) => r.target)).toEqual(["spark", "spark", "wonder", "spark"]);
+    const wonder = h.requests[2].request;
+    expect(wonder.messages[1]).toEqual({ role: "system", content: "STATE" });
+    for (const m of wonder.messages) {
+      expect(m).not.toHaveProperty("placement");
+      expect(m).not.toHaveProperty("replay");
+    }
+    expect(wonder.messages[3]).toEqual({ role: "assistant", content: "", toolCalls: [call("s1", "propose_advance")] });
+    expect(wonder).not.toHaveProperty("replay");
+    // Muse Spark's next call keeps both the input placement and the pinned search items.
+    const after = h.requests[3].request;
+    expect(after.messages[1]).toEqual({ role: "system", content: "STATE", placement: "input" });
+    expect(after.messages[3]).toMatchObject({ role: "assistant", replay: [searchCall] });
+  });
+
   it("sends the escalation its one tool in full, with no search and no cache", async () => {
     const h = harness(
       [

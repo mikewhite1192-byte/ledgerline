@@ -1,3 +1,4 @@
+// The saving is priced from the wrapper's one price table; prices.ts is a pure table that makes no model call.
 import { priceFor, savedByCache } from "../../../ai/prices";
 import type { AiTarget } from "../../../ai/types";
 import { sortVersions } from "../../../data/config-version";

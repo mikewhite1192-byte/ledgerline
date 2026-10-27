@@ -136,9 +136,24 @@ describe("summarizeModelWeek", () => {
     expect(unknown.savedNanocents).toBeNull();
   });
 
-  it("refuses token sums that are not whole numbers or do not fit together", () => {
+  it("refuses token sums that are not whole numbers", () => {
     expect(() => summarizeModelWeek({ ...empty, groups: [group({ inputTokens: Number.NaN })] })).toThrow(RangeError);
-    expect(() => summarizeModelWeek({ ...empty, groups: [group({ inputTokens: 10, cachedTokens: 11 })] })).toThrow(RangeError);
     expect(() => summarizeModelWeek({ ...empty, groups: [group({ inputTokens: 10, cachedTokens: 5, savedNanocents: 1.5 })] })).toThrow(RangeError);
+  });
+
+  it("makes the saving unknown for counts that do not fit together, and keeps the rest of the week", () => {
+    const week = summarizeModelWeek({
+      ...empty,
+      groups: [
+        group({ calls: 2, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: 1_912 * 110_000 }),
+        group({ status: "incomplete", calls: 1, inputTokens: 10, cachedTokens: 11, savedNanocents: 11 * 110_000 }),
+        group({ target: "wonder", model: "muse-wonder-1.0", calls: 1, inputTokens: 500, cachedTokens: 100, savedNanocents: 100 * 380_000 }),
+      ],
+    });
+    const spark = week.models.find((m) => m.target === "spark");
+    // The calls still count; the impossible pair stays out of the token sums.
+    expect(spark).toMatchObject({ calls: 3, inputTokens: 2_480, cachedTokens: 1_912, cachedShare: 77, savedNanocents: null });
+    expect(week.models.find((m) => m.target === "wonder")).toMatchObject({ savedNanocents: 38_000_000 });
+    expect(week).toMatchObject({ inputTokens: 2_980, cachedTokens: 2_012, savedNanocents: null });
   });
 });

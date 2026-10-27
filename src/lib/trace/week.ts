@@ -103,13 +103,18 @@ export function summarizeModelWeek(raw: WeekRaw): ModelWeek {
     m.unsettled += whole(g.unsettled, "an unsettled count");
     const input = whole(g.inputTokens, "an input token count");
     const cached = whole(g.cachedTokens, "a cached token count");
-    if (cached > input) throw new RangeError("more cached tokens than input tokens");
-    m.inputTokens += input;
-    m.cachedTokens += cached;
-    // A group with no cached tokens saved nothing, whatever its price; otherwise its saving must
-    // be known.
-    const saved = g.savedNanocents === null ? null : whole(g.savedNanocents, "a saving");
-    m.savedNanocents = addSaved(m.savedNanocents, cached === 0 ? 0 : saved);
+    if (cached > input) {
+      // Counts that do not fit together are left out of the token sums and make the saving
+      // unknown, as the per-call saving does, rather than blanking the whole page.
+      m.savedNanocents = null;
+    } else {
+      m.inputTokens += input;
+      m.cachedTokens += cached;
+      // A group with no cached tokens saved nothing, whatever its price; otherwise its saving must
+      // be known.
+      const saved = g.savedNanocents === null ? null : whole(g.savedNanocents, "a saving");
+      m.savedNanocents = addSaved(m.savedNanocents, cached === 0 ? 0 : saved);
+    }
     const version = key === "other" ? OTHER_MODEL : modelName(g.target, g.model);
     if (calls > 0 && !m.versions.includes(version)) m.versions.push(version);
   }

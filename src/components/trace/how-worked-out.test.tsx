@@ -73,7 +73,7 @@ describe("HowWorkedOut", () => {
     trace.steps[0] = { ...trace.steps[0], call: { ...call, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: 1_912 * 110_000 } };
     render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace })} />);
     fireEvent.click(screen.getByRole("button", { name: ANSWER }));
-    expect(await screen.findByText("1,912 of 2,480 input tokens from cache, saved 0.2 cents")).toBeTruthy();
+    expect(await screen.findByText("1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price")).toBeTruthy();
     expect(screen.queryAllByText(/input tokens from cache/)).toHaveLength(1);
   });
 

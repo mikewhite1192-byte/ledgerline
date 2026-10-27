@@ -119,6 +119,17 @@ function summaryLine(text: string): string {
 
 type Ending = { status: TurnOutcome["status"]; endedReason: string | null; text: string };
 
+// A message as the escalation to Muse Wonder sends it: today's shape, with no input placement and
+// no tool search items (Wonder's call offers neither search nor the cache). A message with
+// neither is passed as it is.
+function plainMessage(m: AiMessage): AiMessage {
+  if (m.role === "system" && m.placement !== undefined) return { role: "system", content: m.content };
+  if (m.role === "assistant" && m.replay !== undefined) {
+    return m.toolCalls ? { role: "assistant", content: m.content, toolCalls: m.toolCalls } : { role: "assistant", content: m.content };
+  }
+  return m;
+}
+
 export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOutcome> {
   const { session, turn } = input;
   const request = deps.request ?? PLAIN_REQUEST;
@@ -181,7 +192,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         target,
         {
           purpose: policy.purpose,
-          messages,
+          messages: target === "spark" ? messages : messages.map(plainMessage),
           tools,
           reasoningEffort: policy.reasoningEffort,
           maxOutputTokens: policy.maxOutputTokens,
@@ -403,7 +414,15 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         }
         return { status: "done", endedReason: null, text: shown.text };
       }
-      messages.push({ role: "assistant", content: result.text, toolCalls: result.toolCalls });
+      // The answer's tool search items stay pinned to it, so every later call sends them back
+      // before its tool calls; its reasoning goes back with the next call only.
+      const searched = result.replay.filter((item) => item.type !== "reasoning");
+      messages.push({
+        role: "assistant",
+        content: result.text,
+        toolCalls: result.toolCalls,
+        ...(searched.length > 0 ? { replay: searched } : {}),
+      });
       replay = result.replay;
       // Parallel calls run one by one, in the order returned, so the step cap is exact.
       for (let i = 0; i < result.toolCalls.length; i += 1) {

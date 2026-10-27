@@ -48,14 +48,17 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
     .map((m) => m.content)
     .join("\n\n");
   // Replayed items go just before the assistant turn they produced, the order the model
-  // returned them in.
+  // returned them in. The last answer's full list (request.replay) stands in for that turn's own
+  // items; every earlier turn keeps its tool search items, so a tool it loaded stays loaded.
   const lastAssistant = request.messages.findLastIndex((m) => m.role === "assistant");
-  const replay = (request.replay ?? []).filter(
-    (item) => ECHO_TOOL_SEARCH_ITEMS || !isToolSearchItem(item),
-  );
+  const echo = (items: readonly AiReplayItem[]) =>
+    items.filter((item) => ECHO_TOOL_SEARCH_ITEMS || !isToolSearchItem(item));
+  const replay = echo(request.replay ?? []);
   const input: unknown[] = [];
   request.messages.forEach((m, i) => {
-    if (i === lastAssistant) input.push(...replay);
+    if (m.role === "assistant") {
+      input.push(...(i === lastAssistant && replay.length > 0 ? replay : echo(m.replay ?? [])));
+    }
     switch (m.role) {
       case "system":
         if (m.placement === "input") {
