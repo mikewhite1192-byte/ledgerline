@@ -1,5 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { flags } from "../../config/flags";
+import { createMockPaymentAdapter } from "../adapters/payment/mock";
+import type { Session } from "../auth/claims";
 import { configForDay } from "../data/config-version";
 import {
   countTenantRows,
@@ -15,7 +18,11 @@ import type { TenantRows } from "../data/rows";
 import { TENANT_TABLES, type TenantTable } from "../data/tables";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, Queryable } from "../db/types";
+import { approvalFrom } from "../money/approval";
+import { executeMoneyAction, type MoneyHooks } from "../money/execute";
+import { markSent, reserve, settle, type Settlement } from "../money/ledger";
+import type { MoneyDraft } from "../money/types";
 import {
   advanceEligibility,
   findPaymentOnWrongInvoice,
@@ -32,7 +39,7 @@ import { instantAt } from "./calendar";
 import { DEMO_CARRIERS, type DemoCarrier } from "./carriers";
 import golden from "./golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "./plan";
-import { findDemoTenant, replaceTenantData } from "./run";
+import { clearTenantLedger, findDemoTenant, replaceTenantData } from "./run";
 import { countRows } from "./summary";
 import { CASE_A_ASK_CENTS, UNTRUSTED_SEED_KEYS } from "./untrusted-inputs";
 
@@ -112,7 +119,8 @@ describe("seeding the demo carriers", () => {
 
   afterAll(async () => {
     await bypass?.close();
-    // Only what this file made: the two tenants (their rows go with them) and the role.
+    // Only what this file made: the two tenants (their rows, memberships and ledger rows go with
+    // them, by cascade) and the role.
     for (const id of [A, B]) {
       await admin.withTenant(id, (q) =>
         q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"),
@@ -441,5 +449,236 @@ describe("seeding the demo carriers", () => {
     // Every read the seed and the app make names its tenant, so this login reads one only.
     expect(await rowsOf(bypass, A)).toEqual(sorted(planA.rows));
     expect(await countsOf(bypass, B)).toEqual(countRows(planB.rows));
+  });
+
+  // A staff login for the carrier; each label makes its own membership.
+  const member = async (tenantId: string, label: string): Promise<Session> => {
+    const sub = `seed-${label}-${tenantId}`;
+    await admin.withTenant(tenantId, (q) =>
+      q.execute(
+        `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+         VALUES (current_tenant_id(), $1, 'ops@carrier.example', 'staff')`,
+        [sub],
+      ),
+    );
+    return { sub, email: "", tenantId };
+  };
+  // A driver's pending request for a seeded advance (the plan writes them all paid).
+  const requested = (tenantId: string, advanceId: string) =>
+    app.withTenant(tenantId, (q) =>
+      q.execute(
+        `UPDATE advances SET status = 'requested', paid_at = NULL
+         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [advanceId],
+      ),
+    );
+  const ledgerRows = async (tenantId: string) => {
+    const [row] = await admin.withoutTenant((q) =>
+      q.query<{ n: number }>(
+        "SELECT count(*) AS n FROM money_actions WHERE tenant_id = CAST($1 AS uuid)",
+        [tenantId],
+      ),
+    );
+    return Number(row.n);
+  };
+
+  // The last two: they pay seeded advances, so the rows no longer equal the plan afterwards.
+  it("refuses a reseed while a ledger row is open, then clears the settled rows before a replace, so the re-created advance is paid once", async () => {
+    const saved = { ...flags };
+    flags.payoutsEnabled = true;
+    flags.paymentProvider = "mock";
+    try {
+      const one = async (q: Queryable, sql: string, id: string) => {
+        if ((await q.execute(sql, [id])) !== 1) throw new Error("expected one advance row");
+      };
+      const hooks: MoneyHooks = {
+        onReserved: (q, a) =>
+          one(
+            q,
+            `UPDATE advances SET status = 'approved'
+             WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+               AND status = 'requested'`,
+            a.subjectId,
+          ),
+        onConfirmed: (q, a) =>
+          one(
+            q,
+            `UPDATE advances SET status = 'paid', paid_at = now()
+             WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+               AND status = 'approved'`,
+            a.subjectId,
+          ),
+      };
+      const mock = createMockPaymentAdapter({ log: () => {} });
+      const pay = (session: Session, advance: CarrierPlan["rows"]["advances"][number]) =>
+        executeMoneyAction(
+          app,
+          session,
+          {
+            kind: "advance_payout",
+            subjectId: advance.id,
+            counterpartyId: advance.driver_id,
+            amountCents: advance.amount_cents,
+            proposedBy: "person",
+            subjectStatuses: ["requested"],
+          },
+          hooks,
+          { payment: mock, log: () => {} },
+        );
+
+      const [sessionA, sessionB] = [await member(A, "test"), await member(B, "test")];
+      const [advanceA] = planA.rows.advances;
+      const [advanceB] = planB.rows.advances;
+      expect(await requested(A, advanceA.id)).toBe(1);
+      expect(await requested(B, advanceB.id)).toBe(1);
+      const paid = await pay(sessionA, advanceA);
+      expect(paid.action.state).toBe("confirmed");
+      expect((await pay(sessionB, advanceB)).action.state).toBe("confirmed");
+
+      // A row still open (reserved, its outside outcome not known): the reseed refuses, names the
+      // count only, and deletes nothing, this carrier's settled row included.
+      const openA = planA.rows.advances[1];
+      expect(await requested(A, openA.id)).toBe(1);
+      const open = await app.withTenant(A, async (q) =>
+        reserve(q, await approvalFrom(q, sessionA), {
+          kind: "advance_payout",
+          subjectId: openA.id,
+          counterpartyId: openA.driver_id,
+          amountCents: openA.amount_cents,
+          proposedBy: "person",
+          subjectStatuses: ["requested"],
+        }),
+      );
+      expect(open.action.state).toBe("reserved");
+      const refused = await clearTenantLedger(admin, A).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(refused).toBeInstanceOf(Error);
+      const message = (refused as Error).message;
+      expect(message).toBe(
+        "1 ledger row(s) still reserved, sent or unknown; settle them before a reseed " +
+          "(nothing was cleared)",
+      );
+      expect(message).not.toContain(open.action.id);
+      expect(message).not.toContain(String(openA.amount_cents));
+      expect(await ledgerRows(A)).toBe(2);
+      expect(await ledgerRows(B)).toBe(1);
+      // Settled (refused before any call), the row is final, and the clear deletes both.
+      expect(
+        await app.withTenant(A, (q) =>
+          settle(q, open.action.id, { to: "failed", via: "refused", category: "disabled" }),
+        ),
+      ).toBe(true);
+
+      // What npm run seed does for blue-ridge: its settled ledger rows, then the replace.
+      expect(await clearTenantLedger(admin, A)).toBe(2);
+      await replaceTenantData(app, A, planA);
+      expect(await ledgerRows(A)).toBe(0);
+      // The admin login ignores row-level security; the tenant filter kept the other carrier's.
+      expect(await ledgerRows(B)).toBe(1);
+
+      expect(await requested(A, advanceA.id)).toBe(1);
+      const again = await pay(sessionA, advanceA);
+      expect(again).toMatchObject({ created: true, sent: true });
+      expect(again.action.state).toBe("confirmed");
+      expect(again.action.id).not.toBe(paid.action.id);
+      expect(again.action.idempotencyKey).toBe(`advance_payout:${advanceA.id}:1`);
+      // A second approval replays that row and sends nothing.
+      const replay = await pay(sessionA, advanceA);
+      expect(replay).toMatchObject({ created: false, sent: false });
+      expect(replay.action.id).toBe(again.action.id);
+      expect(mock.createdCount).toBe(3);
+      expect(await ledgerRows(A)).toBe(1);
+    } finally {
+      Object.assign(flags, saved);
+    }
+  });
+
+  it("refuses a reseed while a ledger row failed as amount_mismatch, deleting nothing, and still clears other failed rows", async () => {
+    const saved = { ...flags };
+    flags.payoutsEnabled = true;
+    flags.paymentProvider = "mock";
+    try {
+      const draftFor = (advance: CarrierPlan["rows"]["advances"][number]): MoneyDraft => ({
+        kind: "advance_payout",
+        subjectId: advance.id,
+        counterpartyId: advance.driver_id,
+        amountCents: advance.amount_cents,
+        proposedBy: "person",
+        subjectStatuses: ["requested"],
+      });
+      // A payout for a seeded advance, reserved and sent, then settled failed as given.
+      const failedPayout = async (
+        session: Session,
+        advance: CarrierPlan["rows"]["advances"][number],
+        settlement: Settlement,
+      ) => {
+        expect(await requested(session.tenantId, advance.id)).toBe(1);
+        return app.withTenant(session.tenantId, async (q) => {
+          const { action } = await reserve(q, await approvalFrom(q, session), draftFor(advance));
+          expect(await markSent(q, action.id)).toBe(true);
+          expect(await settle(q, action.id, settlement)).toBe(true);
+          return action;
+        });
+      };
+
+      const [sessionA, sessionB] = [await member(A, "mismatch"), await member(B, "mismatch")];
+      // Blue-ridge: the outside system reports a payout for another amount, so a person must look.
+      const advanceA = planA.rows.advances[2];
+      const outsideId = "mock_0000000000000099";
+      const outsideCents = advanceA.amount_cents + 100;
+      const mismatch = await failedPayout(sessionA, advanceA, {
+        to: "failed",
+        via: "read_back",
+        category: "amount_mismatch",
+        outside: { system: "mock", type: "payout", id: outsideId, amountCents: outsideCents },
+      });
+      // Prairie-wind: a definite no from the outside system, so no money moved.
+      await failedPayout(sessionB, planB.rows.advances[2], {
+        to: "failed",
+        via: "response",
+        category: "outside_failed",
+      });
+      const [rowsA, rowsB] = [await ledgerRows(A), await ledgerRows(B)];
+
+      // The reseed refuses, names the count and category only, and deletes nothing in either
+      // carrier.
+      const refused = await clearTenantLedger(admin, A).then(
+        () => null,
+        (err: unknown) => err,
+      );
+      expect(refused).toBeInstanceOf(Error);
+      const message = (refused as Error).message;
+      expect(message).toBe(
+        "1 ledger row(s) failed as amount_mismatch; a person must review them before a reseed " +
+          "(nothing was cleared)",
+      );
+      for (const secret of [mismatch.id, outsideId, advanceA.id, advanceA.driver_id]) {
+        expect(message).not.toContain(secret);
+      }
+      expect(message).not.toContain(String(advanceA.amount_cents));
+      expect(message).not.toContain(String(outsideCents));
+      expect(await ledgerRows(A)).toBe(rowsA);
+      expect(await ledgerRows(B)).toBe(rowsB);
+      // The subject stays closed: a retry as attempt 2 is still refused.
+      const retry = await app
+        .withTenant(A, async (q) =>
+          reserve(q, await approvalFrom(q, sessionA), { ...draftFor(advanceA), attempt: 2 }),
+        )
+        .then(
+          () => null,
+          (err: unknown) => err,
+        );
+      expect(retry).toMatchObject({ category: "duplicate" });
+
+      // A carrier whose failed rows are not amount_mismatch is cleared, the outside_failed row
+      // included, and the other carrier keeps its rows.
+      expect(await clearTenantLedger(admin, B)).toBe(rowsB);
+      expect(await ledgerRows(B)).toBe(0);
+      expect(await ledgerRows(A)).toBe(rowsA);
+    } finally {
+      Object.assign(flags, saved);
+    }
   });
 });

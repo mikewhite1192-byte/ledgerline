@@ -11,10 +11,10 @@ import { countRows } from "./summary";
 // row of the seeded tables (TENANT_TABLES) for that tenant, insert the plan, read the counts back,
 // and roll back on any difference. The seed never creates tenants or memberships.
 //
-// Two logins. The admin only looks the tenant up by slug (one SELECT on tenants). Every data
-// write runs as the app role inside withTenant, so row-level security bounds it too, and every
-// statement still names its tenant, so the writes stay on one tenant even under a login that
-// bypasses row-level security.
+// Two logins. The admin looks the tenant up by slug (one SELECT on tenants) and clears its money
+// ledger rows, which the app role cannot delete. Every data write runs as the app role inside
+// withTenant, so row-level security bounds it too, and every statement still names its tenant,
+// so the writes stay on one tenant even under a login that bypasses row-level security.
 
 export type SeedReport = {
   deleted: Record<TenantTable, number>;
@@ -36,6 +36,54 @@ export async function findDemoTenant(admin: Db, carrier: DemoCarrier): Promise<s
     throw new Error(`tenant ${carrier.slug} does not match the demo carrier`);
   }
   return t.id;
+}
+
+// A replace re-creates every subject with the same id, so the tenant's old ledger rows (keyed
+// kind:subject:attempt) would replay their old outcome, or block the subject for good, against
+// the new rows. The app role has no DELETE on money_actions, so the admin login removes them. That
+// login ignores row-level security, so each statement names the tenant itself, as a bound
+// parameter. Two kinds of row make the clear refuse and delete nothing, in the same transaction
+// as the delete: a row still reserved, sent or unknown, which may have reached the outside system
+// (the reconcile pass needs its keys to read the outcome back); and a row failed as
+// amount_mismatch, whatever its state, which is the permanent block reserve() keeps on that
+// subject because money may have moved for another amount, so only a person may lift it. The
+// refusal names the counts only. Otherwise it removes settled rows (confirmed or failed), and the
+// delete itself skips amount_mismatch rows too, so one that appears after the count stays.
+// Returns the rows deleted.
+export async function clearTenantLedger(admin: Db, tenantId: string): Promise<number> {
+  return admin.withTenant(tenantId, async (q) => {
+    const rows = await q.query<{ open: unknown; mismatch: unknown }>(
+      `SELECT count(*) FILTER (WHERE state IN ('reserved', 'sent', 'unknown')) AS open,
+              count(*) FILTER (WHERE failure_category = 'amount_mismatch') AS mismatch
+         FROM money_actions WHERE tenant_id = CAST($1 AS uuid)`,
+      [tenantId],
+    );
+    const open = rows.length === 1 ? Number(rows[0].open) : NaN;
+    const mismatch = rows.length === 1 ? Number(rows[0].mismatch) : NaN;
+    const counted = (n: number) => Number.isSafeInteger(n) && n >= 0;
+    if (!counted(open) || !counted(mismatch)) {
+      throw new Error("could not count the tenant's ledger rows; nothing was cleared");
+    }
+    const blocked: string[] = [];
+    if (open > 0) {
+      blocked.push(
+        `${open} ledger row(s) still reserved, sent or unknown; settle them before a reseed`,
+      );
+    }
+    if (mismatch > 0) {
+      blocked.push(
+        `${mismatch} ledger row(s) failed as amount_mismatch; a person must review them ` +
+          "before a reseed",
+      );
+    }
+    if (blocked.length > 0) throw new Error(`${blocked.join("; ")} (nothing was cleared)`);
+    return q.execute(
+      `DELETE FROM money_actions
+        WHERE tenant_id = CAST($1 AS uuid) AND state IN ('confirmed', 'failed')
+          AND failure_category IS DISTINCT FROM 'amount_mismatch'`,
+      [tenantId],
+    );
+  });
 }
 
 // Inside the tenant transaction: the current tenant is the carrier the plan was built for.

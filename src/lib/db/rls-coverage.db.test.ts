@@ -56,7 +56,14 @@ describe("row-level security coverage", () => {
   it("finds the tables (an empty list would make every check below pass)", async () => {
     const names = (await tables()).map((t) => t.name);
     expect(names).toEqual(
-      expect.arrayContaining(["memberships", "model_calls", "tenants", ...TENANT_TABLES]),
+      expect.arrayContaining([
+        "gateway_decisions",
+        "memberships",
+        "model_calls",
+        "money_actions",
+        "tenants",
+        ...TENANT_TABLES,
+      ]),
     );
   });
 

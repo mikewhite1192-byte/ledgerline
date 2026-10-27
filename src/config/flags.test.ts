@@ -6,6 +6,7 @@ describe("flags", () => {
     expect(flags.aiEnabled).toBe(false);
     expect(flags.aiProofRoute).toBe(false);
     expect(flags.accountingEnabled).toBe(false);
+    expect(flags.payoutsEnabled).toBe(false);
     expect(flags.inboundEmailEnabled).toBe(false);
     expect(flags.paymentProvider).toBe("mock");
     expect(flags.triageProvider).toBe("meta");

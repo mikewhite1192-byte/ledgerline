@@ -7,7 +7,7 @@ import { settleDriver } from "../src/lib/rules-engine";
 import { HERO_OPEN_WEEK } from "../src/lib/seed/assert-plan";
 import { DEMO_CARRIERS, carrierBySlug, type DemoCarrier } from "../src/lib/seed/carriers";
 import { buildCarrierPlan, type CarrierPlan } from "../src/lib/seed/plan";
-import { findDemoTenant, replaceTenantData } from "../src/lib/seed/run";
+import { clearTenantLedger, findDemoTenant, replaceTenantData } from "../src/lib/seed/run";
 import { countRows } from "../src/lib/seed/summary";
 import { isLocalDate } from "../src/lib/time/local-date";
 import { assertAccount, REGION, requireEnv } from "./lib/aws-account";
@@ -18,11 +18,13 @@ import { localDatabaseUrl } from "./lib/local-db";
 //
 // Fills the demo carriers with four weeks of invented trucking pay data (design section 4). The
 // anchor is required and is the only date the data depends on: the same anchor gives the same
-// rows and ids. Replace mode: each tenant's rows are deleted and rewritten in one transaction.
-// The tenants must already exist (npm run demo:users); the seed never creates them.
+// rows and ids. Replace mode: each tenant's money ledger rows are cleared first, then its rows
+// are deleted and rewritten in one transaction. The tenants must already exist
+// (npm run demo:users); the seed never creates them.
 //
-// The admin login only looks each tenant up by slug. The rows are written as payday_app, the
-// app's own role, inside the tenant's transaction.
+// The admin login looks each tenant up by slug and clears its ledger rows (the app role has no
+// DELETE on money_actions). The rows are written as payday_app, the app's own role, inside the
+// tenant's transaction.
 //
 // local:  DATABASE_URL, the admin login of a database on this machine; the app role connects to
 //         the same database as payday_app with no password (trust auth, local and CI only).
@@ -112,6 +114,15 @@ async function main(): Promise<void> {
     for (const plan of plans) {
       const slug = plan.carrier.slug;
       const tenantId = await findDemoTenant(admin, plan.carrier);
+      // Ledger rows first, then the replace. The clear refuses, deleting nothing, while any row
+      // is still reserved, sent or unknown (its outcome is not known yet) or failed as
+      // amount_mismatch (money may have moved for another amount, so a person must review it
+      // and the subject stays closed to a new payout). The two run on different logins, so they
+      // cannot share a transaction: if the replace then fails, the old subjects stay without
+      // their settled ledger rows. A paid advance or settlement still refuses a second payout by
+      // its own status; run the seed again before approving anything.
+      const cleared = await clearTenantLedger(admin, tenantId);
+      console.log(`cleared ${cleared} ledger rows for ${slug}`);
       const report = await replaceTenantData(app, tenantId, plan);
       for (const t of TENANT_TABLES) {
         console.log(`${slug} ${t}: deleted ${report.deleted[t]}, inserted ${report.inserted[t]}`);
