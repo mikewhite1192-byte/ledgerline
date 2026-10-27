@@ -29,6 +29,8 @@ export type PaystubProps = {
   carryForwardCents: number;
   exceptions: { category: string; label: string; sources: SourceRef[] }[];
   hrefFor?: HrefFor;
+  // When set, each line row gets the id `${lineIdPrefix}${seq}`, so a note can link to its line.
+  lineIdPrefix?: string;
   className?: string;
 };
 
@@ -102,13 +104,18 @@ export function Paystub({
   carryForwardCents,
   exceptions,
   hrefFor = recordHref,
+  lineIdPrefix,
   className,
 }: PaystubProps) {
   const bySeq = [...lines].sort((a, b) => a.seq - b.seq);
   const earnings = bySeq.filter((l) => EARNINGS.has(l.kind));
   const deductions = bySeq.filter((l) => !EARNINGS.has(l.kind));
   const row = (l: PaystubLine) => (
-    <tr key={l.seq} className="align-baseline">
+    <tr
+      key={l.seq}
+      id={lineIdPrefix ? `${lineIdPrefix}${l.seq}` : undefined}
+      className="scroll-mt-20 align-baseline target:bg-secondary"
+    >
       <td className="py-1.5 pr-4 text-body">
         <LineLabel line={l} hrefFor={hrefFor} />
       </td>
