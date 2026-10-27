@@ -65,6 +65,27 @@ export type Reservation = {
   at: string | null;
 };
 
+// What the cap test reads from a reservation.
+export type CapCheck = Pick<
+  Reservation,
+  "target" | "reserveNanocents" | "capNanocents" | "wonderCapNanocents"
+>;
+
+// The cap test reserve() makes under the counter's lock: true when the reservation would take the
+// overall spend past its cap, or a wonder reservation the Wonder spend past the Wonder cap (a
+// missing Wonder cap counts as zero, so it refuses). Exported so a read-only check made before a
+// call (spendRoom in ./index.ts) runs this same test and cannot drift from it.
+export function overCap(spend: Spend, r: CapCheck): boolean {
+  if (spend.spentNanocents + spend.reservedNanocents + r.reserveNanocents > r.capNanocents) {
+    return true;
+  }
+  return (
+    r.target === "wonder" &&
+    spend.wonderSpentNanocents + spend.wonderReservedNanocents + r.reserveNanocents >
+      (r.wonderCapNanocents ?? 0)
+  );
+}
+
 // The counter's row lock serializes reservations: a second one waits for the first to commit,
 // then sees its reservation. Two calls can never both pass a cap. A wonder reservation must pass
 // the overall cap and the Wonder cap, both read under the same lock, and then its job's hourly
@@ -85,19 +106,7 @@ export async function reserve(db: TenantDb, session: Session, r: Reservation): P
         )
       )[0],
     );
-    if (
-      counter.spent_nanocents + counter.reserved_nanocents + r.reserveNanocents >
-      r.capNanocents
-    ) {
-      throw new AiError("cap");
-    }
-    if (
-      wonder &&
-      counter.wonder_spent_nanocents + counter.wonder_reserved_nanocents + r.reserveNanocents >
-        (r.wonderCapNanocents ?? 0)
-    ) {
-      throw new AiError("cap");
-    }
+    if (overCap(spendOf(counter), r)) throw new AiError("cap");
     // Returned, not thrown: a throw would roll back the alert the watch just wrote.
     const job = await checkJob(q, {
       traceId: r.traceId,
@@ -242,11 +251,7 @@ export type Spend = {
   wonderReservedNanocents: number;
 };
 
-// The global counter. Any app transaction may read it; it holds no tenant's data.
-export async function readSpend(q: Queryable): Promise<Spend> {
-  const counter = checked(
-    (await q.query<Counter>(`SELECT ${COUNTER_COLUMNS} FROM ops.ai_spend WHERE id = 1`))[0],
-  );
+function spendOf(counter: Counter): Spend {
   return {
     spentNanocents: counter.spent_nanocents,
     reservedNanocents: counter.reserved_nanocents,
@@ -254,6 +259,15 @@ export async function readSpend(q: Queryable): Promise<Spend> {
     wonderSpentNanocents: counter.wonder_spent_nanocents,
     wonderReservedNanocents: counter.wonder_reserved_nanocents,
   };
+}
+
+// The global counter. Any app transaction may read it; it holds no tenant's data.
+export async function readSpend(q: Queryable): Promise<Spend> {
+  return spendOf(
+    checked(
+      (await q.query<Counter>(`SELECT ${COUNTER_COLUMNS} FROM ops.ai_spend WHERE id = 1`))[0],
+    ),
+  );
 }
 
 export type CallRow = {

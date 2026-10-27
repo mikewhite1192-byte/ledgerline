@@ -22,9 +22,12 @@ export type AiToolCall = { id: string; name: string; argumentsJson: string };
 export type AiImageMime = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
 
 // Sent inline (a base64 data URL), never through an upload API, so nothing is kept upstream.
+// A video is an H.264 or H.265 MP4 whose frame count the caller read from its header; the
+// wrapper reads the header again and refuses a count that differs.
 export type AiAttachment =
   | { kind: "image"; mime: AiImageMime; bytes: Uint8Array }
-  | { kind: "pdf"; bytes: Uint8Array; filename?: string };
+  | { kind: "pdf"; bytes: Uint8Array; filename?: string }
+  | { kind: "video"; mime: "video/mp4"; bytes: Uint8Array; frameCount: number };
 
 export type AiMessage =
   // A system message. placement "input" (Meta targets only) sends it as a system-role item in
@@ -238,6 +241,31 @@ export type SegmentMatch = {
   } | null;
 };
 
+// SAM 3.1 tracking one concept through a video. Frames are numbered from 0, as the answer's
+// frame markers number them.
+export type SegmentVideoRequest = AiCallOptions & {
+  video: { mime: "video/mp4"; bytes: Uint8Array; frameCount: number };
+  // One concept a request ("face", "license plate"), the same rule as SegmentRequest.prompt.
+  prompt: string;
+  // Default "both".
+  propagation?: "both" | "forward" | "backward";
+  // Default "one_bit": a redaction needs boxes, not exact masks.
+  maskEncoding?: "lossless" | "one_bit";
+  includeConfidence?: boolean;
+};
+
+export type SegmentVideoResult = {
+  callId: string;
+  // Only frames with at least one match; a frame missing from the map matched nothing.
+  frames: ReadonlyMap<number, SegmentMatch[]>;
+  // From the answer; null when nothing matched in any frame.
+  width: number | null;
+  height: number | null;
+  // As the provider reported it (billed at least 50).
+  framesProcessed: number;
+  costNanocents: number;
+};
+
 export type SegmentResult = {
   callId: string;
   // From the answer; null when nothing matched (the answer then carries no size).
@@ -287,7 +315,8 @@ export class AiError extends Error {
 export type Metered =
   | { unit: "tokens"; usage: AiUsage }
   | { unit: "audio_seconds"; seconds: number }
-  | { unit: "images"; count: number };
+  | { unit: "images"; count: number }
+  | { unit: "video_frames"; count: number };
 
 export type TextAnswer = {
   text: string;

@@ -21,6 +21,7 @@
     "policy:pdf": "tsx scripts/render-policy-pdf.ts",
     "docs:render": "tsx scripts/render-sample-docs.ts",
     "docs:photos": "tsx scripts/generate-sample-photos.ts",
+    "clips:demo": "tsx scripts/make-dock-clip.ts",
     "ai:models": "tsx scripts/ai-models.ts",
     "cdk": "cd infra && cdk"
   },
