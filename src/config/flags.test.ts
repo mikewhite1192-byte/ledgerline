@@ -132,6 +132,30 @@ describe("flags", () => {
     expect(flags.approveAllLimits).toEqual({ maxItems: 25 });
   });
 
+  it("keeps the sweep's second opinion off, with every cap inside the run's own", () => {
+    expect(flags.fanoutEnabled).toBe(false);
+    const l = flags.fanoutLimits;
+    expect(l).toEqual({
+      maxDrivers: 30,
+      parallel: 6,
+      maxCallsPerDriver: 3,
+      maxToolSteps: 4,
+      callCents: 3,
+      driverCents: 9,
+      planCents: 12,
+      reconcileCents: 12,
+      childTimeoutMs: 15_000,
+      tenantDayCents: 1_000,
+      runsPerTenantDay: 3,
+      runCapCents: 450,
+    });
+    // A driver's calls fit its own cap, and the sweep's own spend still fits inside the run's.
+    expect(l.callCents * l.maxCallsPerDriver).toBeLessThanOrEqual(l.driverCents);
+    expect(l.runCapCents).toBeGreaterThan(flags.sweepLimits.maxRunCents);
+    // A whole check ends well inside one slice.
+    expect(l.childTimeoutMs).toBeLessThan(flags.sweepLimits.sliceMs);
+  });
+
   it("ships invoicing and customer payments dark, with small caps and a start date", () => {
     expect(flags.invoicesEnabled).toBe(false);
     expect(flags.customerPaymentsEnabled).toBe(false);
