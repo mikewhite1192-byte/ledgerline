@@ -136,7 +136,7 @@ export function sampleTrace(): TurnTrace {
         id: SAMPLE_PROPOSAL_ID,
         gatewayDecisionId: D.allowed,
         operatorVerdict: "partial",
-        auditorVerdict: "agree",
+        auditorVerdict: "pass",
         auditorCall: c.auditor,
         flagged: false,
         exceptions: ["capped_to_eligible"],

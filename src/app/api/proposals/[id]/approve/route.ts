@@ -1,16 +1,15 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
 import { isCrossSite } from "@/lib/http/same-site";
-import { executeProposal } from "@/lib/proposals/execute";
+import { parseApproveBody } from "@/lib/proposals/approve-body";
+import { executeProposal, type ApproveOptions } from "@/lib/proposals/execute";
 import { isUuid } from "@/lib/uuid";
 
 // POST: a person approves a proposal from its card. The gate and the per-kind executor live in
-// src/lib/proposals/execute.ts, outside the agent tree. Categories only in the reply.
+// src/lib/proposals/execute.ts, outside the agent tree. The body is { confirmed?, overrideReason?,
+// auditedAt? } (./approve-body.ts); the reason is never logged. Categories only in the reply.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-
-const Body = z.strictObject({ confirmed: z.boolean().optional() });
 
 const STATUS: Readonly<Record<string, number>> = {
   not_found: 404,
@@ -28,17 +27,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!session) return reply({ error: "unauthenticated" }, 401);
   const { id } = await params;
   if (!isUuid(id)) return reply({ error: "bad_request" }, 400);
-  let confirmed = false;
+  let opts: ApproveOptions | null;
   try {
-    const text = await request.text();
-    const parsed = Body.safeParse(text ? JSON.parse(text) : {});
-    if (!parsed.success) return reply({ error: "bad_request" }, 400);
-    confirmed = parsed.data.confirmed === true;
+    opts = parseApproveBody(await request.text());
   } catch {
-    return reply({ error: "bad_request" }, 400);
+    opts = null;
   }
+  if (!opts) return reply({ error: "bad_request" }, 400);
   try {
-    const result = await executeProposal(session, id, { confirmed });
+    const result = await executeProposal(session, id, opts);
     if (result.ok) return reply(result, 200);
     return reply({ error: result.category, retryable: result.retryable }, STATUS[result.category] ?? 409);
   } catch (err) {

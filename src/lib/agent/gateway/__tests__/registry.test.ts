@@ -17,6 +17,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
   classify_message: { tier: "read", roles: ["triage"] },
+  get_proposal: { tier: "read", roles: ["auditor"] },
 };
 
 describe("tool registry", () => {
@@ -54,7 +55,7 @@ describe("tool registry", () => {
 
   it("offers each role only its own tools, as copies", () => {
     const counts = Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]));
-    expect(counts).toEqual({ operator: 13, auditor: 8, triage: 2 });
+    expect(counts).toEqual({ operator: 13, auditor: 9, triage: 2 });
     const first = toolsFor("operator");
     first.pop();
     expect(toolsFor("operator")).toHaveLength(13);

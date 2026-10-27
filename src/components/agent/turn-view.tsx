@@ -6,7 +6,7 @@ import type { Suggestion } from "@/components/app/prompt-chips";
 import { decodeEvents } from "@/lib/agent/operator/stream";
 import { flagWords } from "@/lib/agent/reasons";
 import type { StepView, TurnView } from "@/lib/agent/view";
-import { proposalCardFrom } from "./proposal-card-from";
+import { proposalCardFrom, type AuditContext } from "./proposal-card-from";
 
 // The live chat. A question posts one turn; its steps stream in over server-sent events, and if
 // no event arrives within 3 seconds (or the stream mode is poll) the view reads the turn back
@@ -16,6 +16,8 @@ import { proposalCardFrom } from "./proposal-card-from";
 const FALLBACK_MS = 3_000;
 const POLL_MS = 1_500;
 const POLL_LIMIT = 40;
+// The auditor's lease: a check still running is asked again once, after it would have lapsed.
+const AUDIT_RETRY_MS = 90_000;
 
 // What the card's row says when an approval does not go through. Fixed sentences per category.
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
@@ -24,7 +26,11 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   expired: "This proposal expired. Ask again for a fresh one.",
   role: "An admin must approve an amount this size.",
   auditor_required: "This waits for the auditor's check before anyone can approve it.",
-  needs_confirm: "Confirm the screening warning first.",
+  not_auditable: "This proposal was made before the auditor started. Ask the agent again for a fresh one.",
+  override_required: "Muse Wonder blocked this. Write why you approve it anyway, then confirm.",
+  stale: "The auditor's verdict changed. Reload the card.",
+  bad_request: "The reason must be 10 to 240 characters. Nothing changed.",
+  needs_confirm: "Confirm the warning on the card first.",
   not_found: "That proposal is not here.",
 };
 const APPROVE_FALLBACK = "The approval did not go through. Nothing changed.";
@@ -38,6 +44,9 @@ const START_NOTICE: Readonly<Record<string, string>> = {
 };
 
 type LocalTurn = TurnView & { notice?: string };
+
+// Where a proposal's card lives and what the approve request needs to say about it.
+type Owner = { turnId: string; flagged: boolean; verdict: string | null; checkedAt: string | null };
 
 function placeholder(turnId: string, conversationId: string | null, text: string): LocalTurn {
   return {
@@ -61,7 +70,14 @@ function noticeOf(map: Readonly<Record<string, string>>, category: unknown, fall
     : fallback;
 }
 
-export function toMessages(turns: LocalTurn[], notices: Readonly<Record<string, string>>): ChatMessage[] {
+// The auditor's state for the cards: switched on or not, and which checks this page waits on.
+export type AuditPage = { on: boolean; checking: Readonly<Record<string, boolean>> };
+
+export function toMessages(
+  turns: LocalTurn[],
+  notices: Readonly<Record<string, string>>,
+  audit?: AuditPage,
+): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const t of turns) {
     out.push({ id: `${t.id}:q`, role: "user", parts: [{ kind: "text", text: t.userText }] });
@@ -87,7 +103,10 @@ export function toMessages(turns: LocalTurn[], notices: Readonly<Record<string, 
     const traced = t.status !== "running" && t.steps.length > 0;
     if (traced) parts.push({ kind: "trace", turnId: t.id });
     for (const p of t.proposals) {
-      parts.push({ kind: "proposal", proposal: proposalCardFrom(p) });
+      const ctx: AuditContext | undefined = audit
+        ? { on: audit.on, checking: audit.checking[p.id] === true }
+        : undefined;
+      parts.push({ kind: "proposal", proposal: proposalCardFrom(p, ctx) });
       if (traced) parts.push({ kind: "trace", turnId: t.id, proposalId: p.id });
       const notice = notices[p.id];
       if (notice) parts.push({ kind: "text", text: notice });
@@ -119,9 +138,12 @@ export function AgentChat({
   disabledReason,
   suggestions,
   intro,
+  auditorOn = false,
 }: {
   initialTurns: TurnView[];
   streamMode: "sse" | "poll";
+  // flags.auditorEnabled: each waiting, unchecked proposal is sent to the auditor once per mount.
+  auditorOn?: boolean;
   // Set when the composer is off (the models are switched off); no request is made then.
   disabledReason?: string;
   suggestions?: Suggestion[];
@@ -134,6 +156,8 @@ export function AgentChat({
   const [pending, setPending] = useState(false);
   const [busyProposal, setBusyProposal] = useState<string | null>(null);
   const [notices, setNotices] = useState<Record<string, string>>({});
+  const [checking, setChecking] = useState<Record<string, boolean>>({});
+  const audited = useRef(new Set<string>());
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const alive = useRef(true);
 
@@ -180,6 +204,45 @@ export function AgentChat({
     },
     [patch],
   );
+
+  // One audit request per proposal per mount; a check still running (202) is asked once more after
+  // the lease would have lapsed. Whatever the answer, the turn is read back for the stored verdict.
+  const audit = useCallback(
+    async (proposalId: string, turnId: string, retried: boolean) => {
+      let running = false;
+      try {
+        const res = await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/audit`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+        });
+        running = res.status === 202;
+      } catch {
+        running = false;
+      }
+      if (!alive.current) return;
+      if (running && !retried) {
+        later(() => void audit(proposalId, turnId, true), AUDIT_RETRY_MS);
+        return;
+      }
+      await refresh(turnId);
+      if (alive.current) setChecking((c) => ({ ...c, [proposalId]: false }));
+    },
+    [later, refresh],
+  );
+
+  useEffect(() => {
+    if (!auditorOn) return;
+    const started: Record<string, boolean> = {};
+    for (const t of turns) {
+      for (const p of t.proposals) {
+        if (p.auditorVerdict !== null || p.status !== "proposed" || audited.current.has(p.id)) continue;
+        audited.current.add(p.id);
+        started[p.id] = true;
+        void audit(p.id, t.id, false);
+      }
+    }
+    if (Object.keys(started).length > 0) setChecking((c) => ({ ...c, ...started }));
+  }, [turns, auditorOn, audit]);
 
   async function send(text: string) {
     if (pending || disabledReason) return;
@@ -271,14 +334,20 @@ export function AgentChat({
     if (!finished) startPolling();
   }
 
-  async function approve(proposalId: string, turnId: string, flagged: boolean) {
+  async function approve(proposalId: string, o: Owner, overrideReason?: string) {
     setBusyProposal(proposalId);
     setNotices((n) => ({ ...n, [proposalId]: "" }));
+    // The card asked its question (the flag's, or the auditor's for anything but a pass) before
+    // Confirm, so that is the second confirm. An override carries the verdict instant it read.
+    const confirmed = o.flagged || o.verdict !== "pass";
+    const body = overrideReason
+      ? { confirmed, overrideReason, auditedAt: o.checkedAt ?? undefined }
+      : { confirmed };
     try {
       const res = await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/approve`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ confirmed: flagged }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const category = await errorOf(res);
@@ -287,7 +356,7 @@ export function AgentChat({
     } catch {
       setNotices((n) => ({ ...n, [proposalId]: APPROVE_FALLBACK }));
     }
-    await refresh(turnId);
+    await refresh(o.turnId);
     if (alive.current) setBusyProposal(null);
   }
 
@@ -308,10 +377,19 @@ export function AgentChat({
     if (alive.current) setBusyProposal(null);
   }
 
-  const owner = new Map<string, { turnId: string; flagged: boolean }>();
-  for (const t of turns) for (const p of t.proposals) owner.set(p.id, { turnId: t.id, flagged: p.flagged });
+  const owner = new Map<string, Owner>();
+  for (const t of turns) {
+    for (const p of t.proposals) {
+      owner.set(p.id, {
+        turnId: t.id,
+        flagged: p.flagged,
+        verdict: p.auditorVerdict,
+        checkedAt: p.auditorCheckedAt,
+      });
+    }
+  }
 
-  const messages = toMessages(turns, notices).map((m) => ({
+  const messages = toMessages(turns, notices, { on: auditorOn, checking }).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
       if (p.kind !== "proposal") return p;
@@ -322,7 +400,7 @@ export function AgentChat({
         proposal: {
           ...p.proposal,
           pending: busyProposal === p.proposal.id,
-          onApprove: (id) => void approve(id, o.turnId, o.flagged),
+          onApprove: (id, overrideReason) => void approve(id, o, overrideReason),
           onReject: (id) => void reject(id, o.turnId),
         },
       };

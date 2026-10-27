@@ -75,7 +75,7 @@ describe("HowWorkedOut", () => {
     await screen.findByRole("list", { name: "Steps, in order" });
     expect(screen.queryByText("Reading pay items: allowed")).toBeNull();
     expect(screen.getByText("Auditor (Muse Wonder)")).toBeTruthy();
-    expect(screen.getByText("Agrees with the proposal")).toBeTruthy();
+    expect(screen.getByText("Checked the proposal and found no problem")).toBeTruthy();
     expect(screen.getByText("3 model calls, 7.3 cents in all, 8.1 s of model time")).toBeTruthy();
   });
 
