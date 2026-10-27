@@ -1,0 +1,12 @@
+# The secret scan uses gitleaks' default rules plus one narrow exception.
+[extend]
+useDefault = true
+
+# A report column definition names its field in camelCase ending in Cents (days1To30Cents), and the
+# generic key rule reads the digits as a random key. Only that exact line shape, with kind "cents",
+# is let through, and only for that one rule.
+[[allowlists]]
+description = "Report column definitions: a camelCase field name ending in Cents is a column key, not a credential"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''^\s*\{ key: "[a-z][A-Za-z0-9]*Cents", header: "[^"]*", kind: "cents" \},?\s*$''']
