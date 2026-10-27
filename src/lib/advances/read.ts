@@ -47,8 +47,9 @@ export type AdvanceListRow = {
   source: string;
   fromFlow: boolean;
   payoutState: string | null;
-  // The driver's active fuel card, last four only; null when none is on file.
-  cardLast4: string | null;
+  // The card line under Payout, labelled as the record page labels it (see listCardLineFor);
+  // null shows no line.
+  cardLine: ListCardLine | null;
 };
 
 const LIST_LIMIT = 200;
@@ -83,7 +84,11 @@ export async function readAdvanceList(
     source: string;
     from_flow: boolean;
     payout_state: string | null;
-    card_last4: string | null;
+    recorded_id: string | null;
+    recorded_last4: string | null;
+    recorded_status: string | null;
+    active_last4: string | null;
+    active_status: string | null;
   }>(
     `SELECT a.id, a.driver_id, d.code AS driver_code, d.first_name, d.last_name, a.request_ref,
             to_char(a.requested_on, 'YYYY-MM-DD') AS requested_on, a.amount_cents, a.fee_cents,
@@ -92,11 +97,16 @@ export async function readAdvanceList(
               WHERE m.tenant_id = current_tenant_id() AND m.subject_table = 'advances'
                 AND m.subject_id = a.id AND m.kind = 'advance_payout'
               ORDER BY m.created_at DESC, m.attempt DESC LIMIT 1) AS payout_state,
-            (SELECT c.last4 FROM driver_cards c
-              WHERE c.tenant_id = current_tenant_id() AND c.driver_id = a.driver_id
-                AND c.status = 'active' LIMIT 1) AS card_last4
+            CAST(rc.id AS text) AS recorded_id, rc.last4 AS recorded_last4, rc.status AS recorded_status,
+            ac.last4 AS active_last4, ac.status AS active_status
        FROM advances a
        JOIN drivers d ON d.tenant_id = a.tenant_id AND d.id = a.driver_id
+       -- The card the advance recorded, only when it is the advance's own driver's (as on the
+       -- record page), and the driver's active card (at most one: driver_cards_one_active).
+       LEFT JOIN driver_cards rc ON rc.tenant_id = current_tenant_id() AND rc.id = a.card_id
+                                AND rc.driver_id = a.driver_id
+       LEFT JOIN driver_cards ac ON ac.tenant_id = current_tenant_id() AND ac.driver_id = a.driver_id
+                                AND ac.status = 'active'
       WHERE a.tenant_id = current_tenant_id() AND d.tenant_id = current_tenant_id()
         AND (CAST($1 AS text) IS NULL OR a.status = CAST($1 AS text))
       ORDER BY a.requested_at DESC, a.id
@@ -116,7 +126,11 @@ export async function readAdvanceList(
     source: r.source,
     fromFlow: r.from_flow === true,
     payoutState: r.payout_state,
-    cardLast4: last4Of(r.card_last4),
+    cardLine: listCardLineFor(
+      r.status,
+      r.recorded_id === null ? null : { last4: r.recorded_last4 ?? "", status: r.recorded_status ?? "" },
+      r.active_last4 === null ? null : { last4: r.active_last4, status: r.active_status ?? "" },
+    ),
   }));
 }
 
@@ -308,6 +322,25 @@ export function cardLineFor(status: string, card: RecordCard | null): CardLine |
   const summary: CardSummary = { last4: card.last4, status: card.status };
   if (card.recorded !== true) return { label: "Card on file", card: summary };
   return { label: paid ? "Paid to" : "Pays to", card: summary };
+}
+
+// The advance list's card line: a card, labelled as the record page labels it. A paid advance
+// names only the card it recorded ("Paid to", closed or not), and nothing without one, since the
+// driver's card now is not where it was paid. An unpaid advance names its recorded card while it
+// is still active ("Pays to"), else the driver's active card ("Card on file"). A recorded card of
+// any other shape names nothing. No card named, no line.
+export type ListCardLine = { label: CardLine["label"]; card: CardSummary };
+
+export function listCardLineFor(
+  status: string,
+  recorded: { last4: string; status: string } | null,
+  active: { last4: string; status: string } | null,
+): ListCardLine | null {
+  const recordedCard = recorded === null ? null : cardSummaryOf(recorded);
+  if (recorded !== null && recordedCard === null) return null;
+  const activeCard = status === "paid" || active === null ? null : cardSummaryOf(active);
+  const line = cardLineFor(status, recordCardFor(status, recordedCard, activeCard));
+  return line !== null && line.card !== null ? { label: line.label, card: line.card } : null;
 }
 
 // One advance with everything its page shows; null for a missing or another carrier's id (the

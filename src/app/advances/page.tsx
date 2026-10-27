@@ -115,8 +115,11 @@ export default async function AdvancesPage({
                 ) : (
                   <span className="text-muted-foreground">{r.fromFlow ? "Not sent" : "On file"}</span>
                 )}
-                {r.cardLast4 ? (
-                  <span className="block text-small text-muted-foreground">···· {r.cardLast4}</span>
+                {r.cardLine ? (
+                  <span className="block text-small text-muted-foreground">
+                    {r.cardLine.label} ···· {r.cardLine.card.last4}
+                    {r.cardLine.card.status === "closed" ? ", closed" : ""}
+                  </span>
                 ) : null}
               </span>
             ),

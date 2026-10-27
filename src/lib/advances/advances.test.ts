@@ -7,6 +7,7 @@ import { requestFromDesk, type DeskDeps } from "./desk";
 import {
   actionsFor,
   cardLineFor,
+  listCardLineFor,
   outsideTail,
   recordCardFor,
   type CardSummary,
@@ -371,6 +372,43 @@ describe("the record page's card line", () => {
     it("keeps Pays to the recorded card on an unpaid advance while it is still active", () => {
       expect(line("approved", active, active)).toEqual({ label: "Pays to", card: active });
     });
+  });
+});
+
+describe("the advance list's card line", () => {
+  const closed = { last4: "4417", status: "closed" };
+  const active = { last4: "9020", status: "active" };
+
+  it("names the card a paid advance was paid to, even after that card closed", () => {
+    expect(listCardLineFor("paid", closed, active)).toEqual({ label: "Paid to", card: closed });
+    expect(listCardLineFor("paid", closed, null)).toEqual({ label: "Paid to", card: closed });
+    expect(listCardLineFor("paid", active, active)).toEqual({ label: "Paid to", card: active });
+  });
+
+  it("names no card for a paid advance that recorded none, never the driver's card now", () => {
+    expect(listCardLineFor("paid", null, active)).toBeNull();
+    expect(listCardLineFor("paid", null, null)).toBeNull();
+  });
+
+  it("names the driver's active card as the card on file for an unpaid advance that recorded none", () => {
+    expect(listCardLineFor("requested", null, active)).toEqual({ label: "Card on file", card: active });
+    expect(listCardLineFor("approved", null, active)).toEqual({ label: "Card on file", card: active });
+  });
+
+  it("names an unpaid advance's recorded card while it is active, else the card on file", () => {
+    expect(listCardLineFor("approved", active, active)).toEqual({ label: "Pays to", card: active });
+    expect(listCardLineFor("approved", closed, active)).toEqual({ label: "Card on file", card: active });
+  });
+
+  it("shows no line when no card would be named", () => {
+    expect(listCardLineFor("requested", null, null)).toBeNull();
+    expect(listCardLineFor("approved", closed, null)).toBeNull();
+  });
+
+  it("names nothing when the recorded card has any other shape, and never puts the active card in its place", () => {
+    expect(listCardLineFor("paid", { last4: "12a4", status: "closed" }, active)).toBeNull();
+    expect(listCardLineFor("approved", { last4: "4417", status: "lost" }, active)).toBeNull();
+    expect(listCardLineFor("requested", null, { last4: "", status: "active" })).toBeNull();
   });
 });
 

@@ -32,7 +32,7 @@ import {
   type AdvanceDeps,
 } from "./approve";
 import { postAdvanceExpense } from "./post-expense";
-import { readAdvanceRecord } from "./read";
+import { readAdvanceList, readAdvanceRecord } from "./read";
 import { REQUEST_REF } from "./request";
 
 // The advance flow against a real database, as the app's own role, with the registered executor
@@ -1022,6 +1022,33 @@ describe("the advance flow", () => {
       await removeCards(admin, A, A.driverId);
       const none = await app.withTenant(A.tenantId, (q) => readAdvanceRecord(q, id, clock()));
       expect(none?.card).toBeNull();
+    });
+
+    it("lists a paid advance's own card even once closed, no card for a paid one that recorded none, and the card on file for an unpaid one", async () => {
+      const id = await addProposal();
+      expect(await approve(id, false, deps({ payment: sim() }))).toMatchObject({ ok: true, status: "done" });
+      const [paid] = await flowAdvances();
+      const paidTo = await activeCard(A.driverId);
+      await closeCard(admin, A, A.driverId);
+      await addCard(admin, A, A.driverId);
+      const onFile = await activeCard(A.driverId);
+      // Seeded history: paid, but no card recorded.
+      const cardless = await addAdvance(admin, A);
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE advances SET status = 'paid', paid_at = CAST('2026-11-02T16:00:00Z' AS timestamptz)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [cardless],
+        ),
+      );
+      const unpaid = await addAdvance(admin, A);
+
+      const rows = await app.withTenant(A.tenantId, (q) => readAdvanceList(q, null));
+      const lineOf = (advanceId: string) => rows.find((r) => r.id === advanceId)?.cardLine;
+      expect(lineOf(paid.id)).toEqual({ label: "Paid to", card: { last4: paidTo.last4, status: "closed" } });
+      expect(lineOf(cardless)).toBeNull();
+      expect(lineOf(unpaid)).toEqual({ label: "Card on file", card: { last4: onFile.last4, status: "active" } });
+      expect(rows.map((r) => r.id).sort()).toEqual([paid.id, cardless, unpaid].sort());
     });
 
     it("refuses a driver with no card on file before approving, and leaves the proposal waiting", async () => {
