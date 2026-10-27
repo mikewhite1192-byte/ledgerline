@@ -242,6 +242,15 @@ describe("noteLabel", () => {
     const label = noteLabel(note({ text: "y".repeat(80) }));
     expect(label).toBe(`Harbor Foods: ${"y".repeat(57)}...`);
   });
+
+  it("counts and cuts by code points, so an emoji is one character and never split in half", () => {
+    const emoji = "\u{1f600}";
+    const loneSurrogate = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
+    const label = noteLabel(note({ text: emoji.repeat(80) }));
+    expect(label).toBe(`Harbor Foods: ${emoji.repeat(57)}...`);
+    expect(loneSurrogate.test(label)).toBe(false);
+    expect(noteLabel(note({ text: emoji.repeat(40) }))).toBe(`Harbor Foods: ${emoji.repeat(40)}`);
+  });
 });
 
 describe("the store's writes", () => {

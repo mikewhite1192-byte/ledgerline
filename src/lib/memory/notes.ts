@@ -361,11 +361,13 @@ export function notesSection(
   };
 }
 
-// A note's name in a trace: who it is about and its first 60 characters.
+// A note's name in a trace: who it is about and its first 60 characters, counted and cut by code
+// points as noteChars counts them, so an emoji is never split in half.
 export function noteLabel(note: { subjectKind: string; subjectName: string | null; subjectCode: string | null; text: string }): string {
   const about =
     note.subjectKind === "carrier" ? "Whole carrier" : (note.subjectName?.trim() || note.subjectCode || "No longer on file");
   const words = note.text.replace(/\s+/g, " ").trim();
-  const short = words.length > 60 ? `${words.slice(0, 57).trimEnd()}...` : words;
+  const chars = Array.from(words);
+  const short = chars.length > 60 ? `${chars.slice(0, 57).join("").trimEnd()}...` : words;
   return `${about}: ${short}`;
 }

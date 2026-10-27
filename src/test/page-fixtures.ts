@@ -1286,7 +1286,7 @@ export const MEMORY_NOTES: NoteRow[] = [
     createdByEmail: null,
     createdAt: "2026-10-22T14:30:00.000Z",
   }),
-  memoryNote(144, { subjectId: null, subjectName: null, subjectCode: null, text: "Wants the paperwork by fax, not email" }),
+  memoryNote(144, { subjectName: null, subjectCode: null, text: "Wants the paperwork by fax, not email" }),
   memoryNote(145, {
     subjectKind: "driver",
     subjectId: id(21),
