@@ -33,6 +33,8 @@ export type Explained =
 export type ExplainDeps = { complete?: CompleteFn; ai?: AiDeps };
 
 export const EXPLANATION_MAX_CHARS = 400;
+// The explanation call's own time limit; the sweep's draft lease is sized to cover it.
+export const EXPLAIN_TIMEOUT_MS = 8_000;
 
 const FORMAT = {
   name: "sweep_explanation",
@@ -94,7 +96,7 @@ export async function explainFix(
       {
         purpose: "sweep_explain",
         maxCostCents: input.maxCostCents,
-        timeoutMs: 8_000,
+        timeoutMs: EXPLAIN_TIMEOUT_MS,
         traceId: input.traceId,
         maxOutputTokens: 400,
         reasoningEffort: "low",

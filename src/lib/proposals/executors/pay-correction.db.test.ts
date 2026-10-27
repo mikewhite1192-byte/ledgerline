@@ -239,7 +239,7 @@ describe("approving a sweep's pay correction", () => {
     expect(await corrections()).toHaveLength(2);
   });
 
-  it("refuses as stale, writing nothing, once the week is no longer open", async () => {
+  it("refuses as stale before the approval once the week is no longer open, leaving it waiting", async () => {
     const by = await sweep();
     const [owed] = by.get(legOf("missing_reimbursement").driverId)!;
     const period = plan.rows.settlement_periods.find((p) => p.period_start === openWeek.start)!;
@@ -248,7 +248,9 @@ describe("approving a sweep's pay correction", () => {
     );
     try {
       expect(await approve(owed.id)).toEqual({ ok: false, category: "stale", retryable: false });
-      expect(await proposal(owed.id)).toMatchObject({ status: "failed", decision_note: "stale" });
+      // The precheck refused it while it was still proposed: never approved, never failed, and a
+      // person can still reject it.
+      expect(await proposal(owed.id)).toEqual({ status: "proposed", decision_note: null, decided_by: null });
       expect(await corrections()).toEqual([]);
     } finally {
       await admin.withTenant(T, (q) =>
@@ -294,13 +296,39 @@ describe("approving a sweep's pay correction", () => {
         q.execute("UPDATE pay_items SET settlement_id = CAST($2 AS uuid) WHERE id = CAST($1 AS uuid)", [fuelItem, draft]),
       );
       expect(await approve(fuel[0].id)).toMatchObject({ ok: false, category: "stale" });
-      expect(await proposal(fuel[0].id)).toMatchObject({ status: "failed", decision_note: "stale" });
+      expect(await proposal(fuel[0].id)).toEqual({ status: "proposed", decision_note: null, decided_by: null });
+      expect(await proposal(insurance[0].id)).toMatchObject({ status: "proposed", decided_by: null });
       expect(await corrections()).toEqual([]);
     } finally {
       await admin.withTenant(T, async (q) => {
         await q.execute("UPDATE pay_items SET settlement_id = NULL WHERE id = CAST($1 AS uuid)", [fuelItem]);
         for (const id of made) await q.execute("DELETE FROM settlements WHERE id = CAST($1 AS uuid)", [id]);
       });
+    }
+  });
+
+  it("still fails a correction as stale when the week closes between the approval and its execution", async () => {
+    const by = await sweep();
+    const [owed] = by.get(legOf("missing_reimbursement").driverId)!;
+    const period = plan.rows.settlement_periods.find((p) => p.period_start === openWeek.start)!;
+    // As if the gate approved it (the precheck passed) and the week closed before the executor's
+    // own transaction ran: the next approve takes the resume path, where no precheck is asked.
+    await admin.withTenant(T, async (q) => {
+      await q.execute(
+        `UPDATE proposals SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz)
+          WHERE id = CAST($1 AS uuid)`,
+        [owed.id, SESSION.sub, NOW.toISOString()],
+      );
+      await q.execute("UPDATE settlement_periods SET status = 'approved' WHERE id = CAST($1 AS uuid)", [period.id]);
+    });
+    try {
+      expect(await approve(owed.id)).toEqual({ ok: false, category: "stale", retryable: false });
+      expect(await proposal(owed.id)).toMatchObject({ status: "failed", decision_note: "stale" });
+      expect(await corrections()).toEqual([]);
+    } finally {
+      await admin.withTenant(T, (q) =>
+        q.execute("UPDATE settlement_periods SET status = 'open' WHERE id = CAST($1 AS uuid)", [period.id]),
+      );
     }
   });
 });

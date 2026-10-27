@@ -47,6 +47,9 @@ GRANT UPDATE (status, phase, lease_until, lease_token, spent_cents, counts, trun
 --   source_refs  the finding's record refs, [{table, id}], first one the record at fault
 --   note         the fixed, code-built line for a person (needs_person), never model text
 --   explanation  the model's one-paragraph explanation, kept only if every figure checks out
+--   draft_attempts  drafts refused so far; a later run tries a refusal for a passing reason
+--                (the turn or a limit read unavailable, a screen or tool error, the day's
+--                budget) again while this is under the sweep's own bound, never a lasting one
 CREATE TABLE sweep_items (
   id               uuid PRIMARY KEY,
   tenant_id        uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -75,6 +78,7 @@ CREATE TABLE sweep_items (
   explain_category text CHECK (explain_category ~ '^[a-z_]{2,40}$'),
   explain_call_id  uuid,
   audit_attempts   smallint NOT NULL DEFAULT 0 CHECK (audit_attempts >= 0),
+  draft_attempts   smallint NOT NULL DEFAULT 0 CHECK (draft_attempts >= 0),
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now(),
   CHECK ((kind = 'fix') = (plan IS NOT NULL)),
@@ -94,15 +98,16 @@ CREATE POLICY tenant_isolation ON sweep_items
   USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
 GRANT SELECT, INSERT ON sweep_items TO payday_app;
 GRANT UPDATE (seen_run_id, status, refusal_category, proposal_id, explanation, explain_category,
-              explain_call_id, audit_attempts, updated_at) ON sweep_items TO payday_app;
+              explain_call_id, audit_attempts, draft_attempts, updated_at) ON sweep_items TO payday_app;
 
 -- SHARED BLOCK approval_batches (design-sweep-notes-reports.md 11): identical in the PAY-SWEEP
--- and SETTLEMENTS migrations; only the one that reaches production first keeps it.
+-- and SETTLEMENTS migrations, and safe to run twice. Production applies them in merge order and a
+-- fresh database in number order, so either may run second; the second one changes nothing.
 -- One deliberate approval over a listed set (Discord tip 4). id is the client's batch id, the
 -- dedupe key. scope says what item_ids are. requested_by is the session sub (proposals.decided_by
 -- holds the same kind of value). Status words: a sweep batch is reserved -> done | refused; a
 -- settlements batch is confirmed -> draining -> done | partial.
-CREATE TABLE approval_batches (
+CREATE TABLE IF NOT EXISTS approval_batches (
   id            uuid PRIMARY KEY,
   tenant_id     uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
   scope         text NOT NULL CHECK (scope IN ('proposals', 'settlements')),
@@ -119,15 +124,17 @@ CREATE TABLE approval_batches (
   UNIQUE (tenant_id, id),
   FOREIGN KEY (tenant_id, period_id) REFERENCES settlement_periods (tenant_id, id)
 );
-CREATE INDEX approval_batches_tenant_created ON approval_batches (tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS approval_batches_tenant_created ON approval_batches (tenant_id, created_at DESC);
 ALTER TABLE approval_batches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE approval_batches FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS tenant_isolation ON approval_batches;
 CREATE POLICY tenant_isolation ON approval_batches
   USING (tenant_id = current_tenant_id()) WITH CHECK (tenant_id = current_tenant_id());
 GRANT SELECT, INSERT ON approval_batches TO payday_app;
 GRANT UPDATE (status, result, legs_reserved, finished_at) ON approval_batches TO payday_app;
 
-ALTER TABLE proposals ADD COLUMN batch_id uuid;
+ALTER TABLE proposals ADD COLUMN IF NOT EXISTS batch_id uuid;
+ALTER TABLE proposals DROP CONSTRAINT IF EXISTS proposals_batch_fk;
 ALTER TABLE proposals ADD CONSTRAINT proposals_batch_fk
   FOREIGN KEY (tenant_id, batch_id) REFERENCES approval_batches (tenant_id, id);
 GRANT UPDATE (batch_id) ON proposals TO payday_app;

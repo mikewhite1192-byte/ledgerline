@@ -1,23 +1,36 @@
 import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import { readRowsWhereId, readTenant } from "../../data/read";
-import type { Queryable } from "../../db";
+import type { Queryable, TenantDb } from "../../db";
 import { reasonSentence } from "../../agent/reasons";
 import { assertMembership } from "../../tenant/context";
 import { isWithin, localDateOf, type LocalDate } from "../../time/local-date";
 import { isUuid } from "../../uuid";
-import type { Executor, ProposalResult } from "../execute";
+import type {
+  ApproveOptions,
+  ExecuteDeps,
+  Executor,
+  Precheck,
+  ProposalRefused,
+  ProposalResult,
+  ProposalRow,
+} from "../execute";
 
-// The pay_correction executor (design 3.4). The gate in execute.ts has already checked the
-// person, the age, the role, the auditor and the confirm, and moved the proposal to approved.
-// Here, in one transaction under the tenant's row-level security:
+// The pay_correction executor (design 3.4). The gate in execute.ts checks the person, the age,
+// the role, the auditor and the confirm, then asks precheckPayCorrection below while the proposal
+// is still proposed and locked: when the facts in b. no longer hold, the approval is refused as
+// "stale", the proposal stays waiting (a person may reject it) and nothing is written. Only then
+// does the gate move it to approved. Here, in one transaction under the tenant's row-level
+// security:
 //   a. re-read the proposal FOR UPDATE: approved or executing (a resume), kind pay_correction,
 //      and args that still say what the row says (driver, signed cents, direction);
 //   b. re-check the facts the gateway checked, because time passed: the week is still open, the
 //      driver's settlement in it is absent or a draft, the amount is inside the limit and the
-//      corrected pay item (if any) is still unsettled. Any failure marks the proposal failed with
-//      the note "stale" (the status guard allows approved -> failed, never approved -> rejected)
-//      and nothing is written. A correction never lands on a settled week;
+//      corrected pay item (if any) is still unsettled. The precheck asked the same moments ago,
+//      but the gate's transaction has committed since, so a week closed or a pay run approved in
+//      between is caught here. Any failure marks the proposal failed with the note "stale" (the
+//      status guard allows approved -> failed, never approved -> rejected) and nothing is
+//      written. A correction never lands on a settled week;
 //   c. approved -> executing;
 //   d. one pay item, keyed item_ref = 'correction:<proposal id>' (ON CONFLICT DO NOTHING, read
 //      back, so a resume finds the row and never writes a second): a reimbursement for a positive
@@ -48,7 +61,7 @@ type Args = {
   reasonCategories: string[];
 };
 
-const refused = (category: string): ProposalResult => ({ ok: false, category, retryable: false });
+const refused = (category: string): ProposalRefused => ({ ok: false, category, retryable: false });
 
 // The stored args, read whole. Anything off shape is a proposal the executor will not apply.
 function argsOf(text: string): Args | null {
@@ -58,6 +71,10 @@ function argsOf(text: string): Args | null {
   } catch {
     return null;
   }
+  return argsFrom(v);
+}
+
+function argsFrom(v: unknown): Args | null {
   if (!v || typeof v !== "object" || Array.isArray(v)) return null;
   const a = v as Record<string, unknown>;
   const delta = a.deltaCents;
@@ -75,6 +92,17 @@ function argsOf(text: string): Args | null {
     deltaCents: delta,
     reasonCategories: reasons,
   };
+}
+
+// The args say what the row says: the same driver, the same whole cents, and the direction their
+// sign gives.
+function argsMatchRow(a: Args | null, subjectId: string, amountCents: number, direction: string): a is Args {
+  return (
+    a !== null &&
+    a.driverId === subjectId.toLowerCase() &&
+    Math.abs(a.deltaCents) === amountCents &&
+    direction === (a.deltaCents < 0 ? "in" : "out")
+  );
 }
 
 // True when every fact the gateway checked still holds.
@@ -127,12 +155,7 @@ async function apply(q: Queryable, session: Session, proposalId: string, now: Da
   if (p.status !== "approved" && p.status !== "executing") return refused("already_decided");
   const nowIso = now.toISOString();
   const a = argsOf(p.args);
-  const amount = Number(p.amount_cents);
-  const whole =
-    a !== null &&
-    a.driverId === p.subject_id.toLowerCase() &&
-    Math.abs(a.deltaCents) === amount &&
-    p.direction === (a.deltaCents < 0 ? "in" : "out");
+  const whole = argsMatchRow(a, p.subject_id, Number(p.amount_cents), p.direction);
   const itemRef = correctionItemRef(p.id);
 
   // A resume after the item landed: finish the status and write nothing.
@@ -195,7 +218,29 @@ async function apply(q: Queryable, session: Session, proposalId: string, now: Da
   return { ok: true, proposalId: p.id, status: "done", moneyActionId: null };
 }
 
-export const payCorrectionExecutor: Executor = async (db, session, proposal, _opts, deps) => {
+// The gate's early refusal (see Precheck in execute.ts): inside the gate's transaction, with the
+// proposal still proposed and locked. Reads only. A correction whose facts no longer hold is
+// refused as stale and stays waiting, never approved and then failed.
+export const precheckPayCorrection: Precheck = async (q, proposal: ProposalRow) => {
+  if (proposal.kind !== "pay_correction") return refused("not_executable");
+  const a = argsFrom(proposal.args);
+  const facts = argsMatchRow(a, proposal.subjectId, proposal.amountCents, proposal.direction)
+    ? await factsHold(q, a)
+    : { ok: false as const };
+  if (facts.ok) return null;
+  console.info(`proposal ${proposal.id} pay_correction precheck=stale`);
+  return refused("stale");
+};
+
+async function runPayCorrection(
+  db: TenantDb,
+  session: Session,
+  proposal: ProposalRow,
+  _opts: ApproveOptions,
+  deps: ExecuteDeps,
+): Promise<ProposalResult> {
   const now = (deps.clock ?? (() => new Date()))();
   return db.withTenant(session.tenantId, (q) => apply(q, session, proposal.id, now));
-};
+}
+
+export const payCorrectionExecutor: Executor = Object.assign(runPayCorrection, { precheck: precheckPayCorrection });

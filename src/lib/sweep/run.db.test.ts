@@ -17,7 +17,7 @@ import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { fixPlanFor, type FixLeg } from "./plan";
-import { advanceSweep, startSweep, type SweepDeps } from "./run";
+import { advanceSweep, MAX_DRAFT_ATTEMPTS, startSweep, type SweepDeps } from "./run";
 import { readSweepPage } from "./view";
 
 // The sweep against the real database, as the app's role, with the real gateway, turn store and
@@ -41,6 +41,13 @@ const fixLegs: FixLeg[] = runAllChecks(input)
   .flatMap((f) => fixPlanFor(f, input, plan.periods[3]))
   .filter((l): l is FixLeg => l.kind === "fix");
 const legKeys = fixLegs.map((l) => `${l.driverId}:${l.expectedCents}`).sort();
+// Each fix leg's finding category (the engine's word for what it found, such as
+// newer_is_duplicate), which is not the correction's reason category (duplicate_charge).
+const fixFindings = runAllChecks(input).flatMap((f) =>
+  fixPlanFor(f, input, plan.periods[3])
+    .filter((l): l is FixLeg => l.kind === "fix")
+    .map((l) => ({ category: f.category as string, reason: l.reasonCategories[0] as string })),
+);
 
 let admin: Db;
 let app: Db;
@@ -86,6 +93,19 @@ async function items(runId: string) {
     ),
   );
 }
+
+async function fixRows(runId: string) {
+  return admin.withTenant(T, (q) =>
+    q.query<{ status: string; refusal_category: string | null; draft_attempts: number }>(
+      `SELECT status, refusal_category, draft_attempts FROM sweep_items
+        WHERE seen_run_id = CAST($1 AS uuid) AND kind = 'fix' ORDER BY finding_key`,
+      [runId],
+    ),
+  );
+}
+
+// The item's turn never opens (another turn holds the conversation): a passing refusal.
+const turnBusy: SweepDeps["openTurn"] = async () => ({ refused: "busy" });
 
 async function proposals() {
   return admin.withTenant(T, (q) =>
@@ -177,6 +197,15 @@ describe("a sweep of the open week", () => {
     expect(ps.every((p) => p.status === "proposed" && p.exceptions === "[]")).toBe(true);
     // One explanation per fix and one auditor run per audit slice, counted against the cap.
     expect(explain).toHaveBeenCalledTimes(5);
+    // Each explanation names the finding's own category, and the correction's reason beside it.
+    const asked = explain.mock.calls.map((c) => {
+      const sent = (c as unknown as [Session, { category: string; reasonCategory: string }])[1];
+      return { category: sent.category, reason: sent.reasonCategory };
+    });
+    expect(asked.map((a) => `${a.category}:${a.reason}`).sort()).toEqual(
+      fixFindings.map((f) => `${f.category}:${f.reason}`).sort(),
+    );
+    expect(asked.some((a) => a.category !== a.reason)).toBe(true);
     expect(runAudit).toHaveBeenCalledTimes(5);
     expect((await run(runId)).spent_cents).toBe(10);
     expect(await run(runId)).toMatchObject({ trigger: "button", started_by: SESSION.sub });
@@ -320,6 +349,56 @@ describe("a sweep of the open week", () => {
     const fixes = (await items(runId)).filter((i) => i.kind === "fix");
     expect(fixes.map((i) => i.status)).toEqual(Array(5).fill("drafted"));
     expect((await run(runId)).spent_cents).toBe(10);
+  });
+
+  it("tries an item refused for a passing reason again in a later run, and drafts it", async () => {
+    const first = await start();
+    await runToEnd(first, deps({ openTurn: turnBusy }));
+    expect(await fixRows(first)).toEqual(
+      Array(5).fill({ status: "refused", refusal_category: "turn_unavailable", draft_attempts: 1 }),
+    );
+    expect(await proposals()).toEqual([]);
+
+    const second = await start();
+    await runToEnd(second);
+    expect((await fixRows(second)).map((r) => [r.status, r.refusal_category])).toEqual(Array(5).fill(["drafted", null]));
+    expect((await proposals()).length).toBe(5);
+  });
+
+  it("never tries a lasting refusal again, and stops a passing one at the attempt limit", async () => {
+    // The gateway refuses every fix as over the limit: that refusal stands in every later run.
+    const overLimit: SweepDeps["callTool"] = async (_ctx, call) => ({
+      decision: "blocked",
+      decisionId: randomUUID(),
+      tool: call.name,
+      reason: "amount_over_limit",
+      result: { blocked: true, reason: "amount_over_limit" },
+      latencyMs: 1,
+    });
+    const first = await start();
+    await runToEnd(first, deps({ callTool: overLimit }));
+    expect((await fixRows(first)).map((r) => r.refusal_category)).toEqual(Array(5).fill("amount_over_limit"));
+    const again = await start();
+    await runToEnd(again);
+    expect(await fixRows(again)).toEqual(
+      Array(5).fill({ status: "refused", refusal_category: "amount_over_limit", draft_attempts: 1 }),
+    );
+    expect(await proposals()).toEqual([]);
+
+    // A passing refusal, run after run, until the items have had every try.
+    await clearTenantAgent(admin, T);
+    for (let i = 1; i <= MAX_DRAFT_ATTEMPTS; i++) {
+      const runId = await start();
+      await runToEnd(runId, deps({ openTurn: turnBusy }));
+      expect((await fixRows(runId)).map((r) => r.draft_attempts)).toEqual(Array(5).fill(i));
+    }
+    const last = await start();
+    await runToEnd(last);
+    expect(await fixRows(last)).toEqual(
+      Array(5).fill({ status: "refused", refusal_category: "turn_unavailable", draft_attempts: MAX_DRAFT_ATTEMPTS }),
+    );
+    expect(await proposals()).toEqual([]);
+    expect(explain).not.toHaveBeenCalled();
   });
 
   it("refuses everything while the switch is off", async () => {

@@ -8,8 +8,9 @@ import { GET as readRun } from "./[id]/route";
 import { POST as start } from "./route";
 
 // The sweep routes' gates, with the sweep itself a stand-in: the cross-site check and the switch
-// answer before any session is read, the internal route never reads a person's session, and its
-// key is checked before anything else. No database and no network.
+// answer before any session is read, the internal route never reads a person's session, and it
+// reads its key only once both switches are on, then checks it before the body. No database and
+// no network.
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const RUN = "6b1c9d2e-3f4a-4b5c-8d6e-7f8a9b0c1d2e";
@@ -93,10 +94,9 @@ describe("POST /api/internal/sweep", () => {
     expect(mocks.advanceSweep.mock.calls[0][0]).toBe(SERVICE);
   });
 
-  it("refuses a wrong or missing key with 403 before the switches or the body", async () => {
-    flags.sweepScheduleEnabled = false;
+  it("refuses a wrong or missing key with 403 before the body", async () => {
     for (const key of [null, "", `${KEY}x`, KEY.slice(1)]) {
-      const res = await call({ action: "start", tenantId: TENANT }, key);
+      const res = await call({ action: "start", tenantId: "not-a-tenant" }, key);
       expect(res.status, String(key)).toBe(403);
     }
     expect(mocks.serviceSession).not.toHaveBeenCalled();
@@ -126,6 +126,19 @@ describe("POST /api/internal/sweep", () => {
     expect(await disabled.json()).toMatchObject({ error: "disabled" });
     expect(mocks.startSweep).not.toHaveBeenCalled();
     expect(mocks.getSession).not.toHaveBeenCalled();
+  });
+
+  it("reads no key while either switch is off", async () => {
+    flags.sweepScheduleEnabled = false;
+    expect(await (await call({ action: "start", tenantId: TENANT }, null)).json()).toMatchObject({ error: "schedule_off" });
+    flags.sweepScheduleEnabled = true;
+    flags.sweepEnabled = false;
+    expect(await (await call({ action: "start", tenantId: TENANT }, null)).json()).toMatchObject({ error: "disabled" });
+    expect(mocks.internalKey).not.toHaveBeenCalled();
+    expect(mocks.serviceSession).not.toHaveBeenCalled();
+    flags.sweepEnabled = true;
+    expect((await call({ action: "start", tenantId: TENANT })).status).toBe(200);
+    expect(mocks.internalKey).toHaveBeenCalledTimes(1);
   });
 
   it("refuses a bad body and a carrier with no sweep login", async () => {

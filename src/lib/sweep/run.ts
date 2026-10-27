@@ -6,7 +6,7 @@ import { dbTurnStore, openAgentTurn, type OpenedTurn, type OpenTurnRefusal, type
 import type { GatewayContext, GatewayOutcome, ToolCall } from "../agent/gateway/types";
 import { CLEAN_SQL } from "../agent/proposals/clean";
 import { codeToWords } from "../format/labels";
-import { explainFix, type Explained, type ExplainInput } from "../agent/sweep/explain";
+import { EXPLAIN_TIMEOUT_MS, explainFix, type Explained, type ExplainInput } from "../agent/sweep/explain";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { Session } from "../auth/claims";
 import { readCheckInput, readReceivablesInput, readRowsWhereId } from "../data/read";
@@ -33,8 +33,10 @@ import { serviceSession } from "./service-session";
 //   find   one slice: run the engine's checks, plan each finding, write one item per leg (the
 //          dedupe key is finding_key per week, so a second run adds nothing it already has);
 //   draft  one item per step: open the item's turn, ask the gateway for the proposal (it checks
-//          the limits), save it, check the saved numbers are the engine's, explain it;
-//   audit  ONE auditor run per slice, first thing (an audit can outlast the 25 s lease, so this
+//          the limits), save it, check the saved numbers are the engine's, explain it. An item
+//          refused for a passing reason (TRANSIENT_REFUSALS) is tried again by a later run, at
+//          most MAX_DRAFT_ATTEMPTS times in all; a lasting refusal is never tried again;
+//   audit  ONE auditor run per slice, first thing (an audit can outlast the draft lease, so this
 //          phase's lease is 45 s);
 //   done   counts, and the run is closed.
 // Every model call is counted against the run's own cap before it starts (rule 29: an answer
@@ -85,13 +87,27 @@ export type SweepDeps = {
   runAudit?: (session: Session, proposalId: string) => Promise<AuditResult>;
 };
 
-const DRAFT_LEASE_S = 25;
+// The find and draft lease. A draft step may start just over STOP_BEFORE_MS before the slice's
+// deadline; the gateway stops by that deadline, then the explanation may take EXPLAIN_TIMEOUT_MS
+// more, then the last writes. 40 s covers that with room to spare, and is longer than the route's
+// own 30 s limit, so no step outlives its lease while its request is alive.
+export const DRAFT_LEASE_S = 40;
 const AUDIT_LEASE_S = 45;
 // The auditor's own constant (AUDIT_CALL, 10 cents), counted before each runAudit.
 const AUDIT_RESERVE_CENTS = 10;
 // Stop starting new work this close to the slice's deadline.
-const STOP_BEFORE_MS = 6_000;
+export const STOP_BEFORE_MS = 6_000;
+// The worst case of one draft step past the slice's deadline: the explanation's own timeout plus
+// the writes around it. The lease test holds DRAFT_LEASE_S to it.
+export const DRAFT_STEP_OVERRUN_MS = EXPLAIN_TIMEOUT_MS + 5_000;
 const ABANDONED_MS = 10 * 60_000;
+// Refusals that say nothing about the fix itself: the item's turn could not open, a limit could
+// not be read, the screen or the tool errored, or the day's model budget was spent. A later run
+// tries such an item again; any other refusal (over the limit, the engine refused, bad args)
+// stands.
+export const TRANSIENT_REFUSALS = ["turn_unavailable", "limit_unavailable", "screen_error", "tool_failed", "budget"] as const;
+// Draft tries per item across runs, the first included.
+export const MAX_DRAFT_ATTEMPTS = 3;
 const CATEGORY = /^[a-z_]{2,40}$/;
 
 const categoryOf = (value: unknown, fallback: string) =>
@@ -468,7 +484,9 @@ async function writeItem(q: Queryable, ctx: Ctx, run: Run, p: Planned, now: stri
              $4, $5, $6, $7, $8, CAST($9 AS uuid), $10, CAST($11 AS uuid), $12, CAST($13 AS jsonb),
              CAST($14 AS jsonb), $15, $16, CAST($17 AS uuid), CAST($18 AS timestamptz), CAST($18 AS timestamptz))
      ON CONFLICT (tenant_id, period_id, finding_key)
-       DO UPDATE SET seen_run_id = EXCLUDED.seen_run_id, updated_at = EXCLUDED.updated_at`,
+       DO UPDATE SET seen_run_id = EXCLUDED.seen_run_id, updated_at = EXCLUDED.updated_at,
+         status = CASE WHEN ${RETRY_SQL} THEN 'found' ELSE sweep_items.status END,
+         refusal_category = CASE WHEN ${RETRY_SQL} THEN NULL ELSE sweep_items.refusal_category END`,
     [
       randomUUID(),
       ctx.runId,
@@ -488,15 +506,24 @@ async function writeItem(q: Queryable, ctx: Ctx, run: Run, p: Planned, now: stri
       status,
       proposalId,
       now,
+      `{${TRANSIENT_REFUSALS.join(",")}}`,
+      MAX_DRAFT_ATTEMPTS,
     ],
   );
 }
+
+// A new run that finds an item refused for a passing reason, with tries left, puts it back to
+// found so this run drafts it again. Every SET expression reads the row as it was.
+const RETRY_SQL = `(sweep_items.seen_run_id <> EXCLUDED.seen_run_id AND sweep_items.kind = 'fix'
+  AND sweep_items.status = 'refused' AND sweep_items.refusal_category = ANY(CAST($19 AS text[]))
+  AND sweep_items.draft_attempts < $20)`;
 
 // ---- Draft ----
 
 type Item = {
   id: string;
   check_name: string;
+  category: string;
   driver_id: string;
   driver_code: string | null;
   expected_cents: number | string;
@@ -510,7 +537,7 @@ type Step = "done" | "none" | "cap";
 async function draftNext(ctx: Ctx): Promise<Step> {
   const next = await leased(ctx, (q) =>
     q.query<Item & { period_id: string; period_start: string; period_end: string; conversation_id: string | null }>(
-      `SELECT i.id, i.check_name, i.driver_id, d.code AS driver_code, i.expected_cents,
+      `SELECT i.id, i.check_name, i.category, i.driver_id, d.code AS driver_code, i.expected_cents,
               CAST(i.plan AS text) AS plan, i.explanation, i.status, i.period_id,
               CAST(sp.period_start AS text) AS period_start, CAST(sp.period_end AS text) AS period_end,
               r.conversation_id
@@ -623,7 +650,7 @@ async function draftNext(ctx: Ctx): Promise<Step> {
   const explained = await ctx.deps.explain(ctx.service, {
     traceId: turn.traceId,
     check: item.check_name,
-    category: leg.reasonCategories[0],
+    category: item.category,
     reasonCategory: leg.reasonCategories[0],
     driverCode: code,
     periodStart: item.period_start,
@@ -734,6 +761,7 @@ async function writeStatus(ctx: Ctx, itemId: string, w: StatusWrite): Promise<vo
     q.execute(
       `UPDATE sweep_items
           SET status = $2, refusal_category = $3, proposal_id = COALESCE(CAST($4 AS uuid), proposal_id),
+              draft_attempts = draft_attempts + CASE WHEN $2 = 'refused' THEN 1 ELSE 0 END,
               explanation = CASE WHEN $5 THEN $6 ELSE explanation END,
               explain_category = CASE WHEN $5 THEN $7 ELSE explain_category END,
               explain_call_id = CASE WHEN $5 THEN CAST($8 AS uuid) ELSE explain_call_id END,

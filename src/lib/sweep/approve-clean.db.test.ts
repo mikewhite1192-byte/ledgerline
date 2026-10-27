@@ -221,7 +221,7 @@ describe("approve all clean", () => {
     expect(await correctionCount()).toBe(5);
   });
 
-  it("carries on past one fix that goes stale at execution, and undoes none of the others", async () => {
+  it("carries on past one fix that has gone stale, and undoes none of the others", async () => {
     const { runId, fixes, ids, total } = await sweep();
     const target = fixes[0];
     const period = plan.rows.settlement_periods.find((p) => p.period_start === plan.periods[3].start)!;
@@ -243,6 +243,9 @@ describe("approve all clean", () => {
         fixes.filter((f) => f.subject_id === target.subject_id).map((f) => ({ proposalId: f.id, ok: false, category: "stale" })),
       );
       expect(await correctionCount()).toBe(5 - sameDriver);
+      // The stale ones were refused before their approval: they still wait for a person.
+      expect((await statuses()).filter((s) => s === "proposed")).toHaveLength(sameDriver);
+      expect((await statuses()).filter((s) => s === "done")).toHaveLength(5 - sameDriver);
     } finally {
       await admin.withTenant(T, (q) => q.execute("DELETE FROM settlements WHERE id = CAST($1 AS uuid)", [settlement]));
     }
