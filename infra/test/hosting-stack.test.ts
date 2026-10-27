@@ -13,7 +13,12 @@ import {
   GITHUB_TOKEN_SECRET_NAME,
   HostingStack,
   META_API_KEY_SECRET_NAME,
+  moneyEnv,
+  OPTIONAL_BRANCH_ENV_NAMES,
+  QBO_CLIENT_SECRET_NAME,
+  QBO_TOKEN_KEY_SECRET_NAME,
   REPOSITORY_URL,
+  STRIPE_SECRET_KEY_SECRET_NAME,
 } from "../lib/hosting-stack";
 import { asArray, joined, policyStatements, synthAll } from "./synth";
 
@@ -130,7 +135,7 @@ describe("HostingStack", () => {
     });
   });
 
-  it("lets the runtime call the Data API and read the app secret and the model keys, nothing more", () => {
+  it("lets the runtime call the Data API and read the app secret, the model keys and the money secrets, nothing more", () => {
     const [, compute] = role("ComputeRole");
     const statements = inlineStatements(compute);
     expect(statements).toHaveLength(2);
@@ -144,13 +149,13 @@ describe("HostingStack", () => {
     expect(secret.Action).toBe("secretsmanager:GetSecretValue");
     // The policy minimizer orders resources, so they are matched by content, not position.
     const resources = asArray(secret.Resource);
-    expect(resources).toHaveLength(3);
+    expect(resources).toHaveLength(6);
     const appSecret = resources.filter((r) =>
       JSON.stringify(r).includes("PublishOutputRefAppSecret"),
     );
     expect(appSecret).toHaveLength(1);
     expect(JSON.stringify(secret.Resource)).not.toMatch(/AdminSecret|ClusterSecret/);
-    // Each model key by its exact name. The only wildcard is the six-character suffix Secrets
+    // Each key and secret by its exact name. The only wildcard is the six-character suffix Secrets
     // Manager appends to every secret ARN, one "?" per character.
     const modelKeys = resources
       .filter((r) => r !== appSecret[0])
@@ -161,6 +166,9 @@ describe("HostingStack", () => {
       [
         `${secretArn}${META_API_KEY_SECRET_NAME}-??????`,
         `${secretArn}${BASETEN_API_KEY_SECRET_NAME}-??????`,
+        `${secretArn}${QBO_CLIENT_SECRET_NAME}-??????`,
+        `${secretArn}${QBO_TOKEN_KEY_SECRET_NAME}-??????`,
+        `${secretArn}${STRIPE_SECRET_KEY_SECRET_NAME}-??????`,
       ].sort(),
     );
     for (const arn of modelKeys) expect(arn).not.toContain("*");
@@ -173,15 +181,20 @@ describe("HostingStack", () => {
     }
   });
 
-  it("sets the compute role and the fifteen server settings on the main branch", () => {
+  it("sets the compute role and the twenty fixed server settings on the main branch", () => {
     const [computeId] = role("ComputeRole");
     const branches = Object.values(template.findResources("AWS::Amplify::Branch"));
     expect(branches).toHaveLength(1);
     const props = branches[0].Properties;
     expect(props.ComputeRoleArn).toEqual({ "Fn::GetAtt": [computeId, "Arn"] });
     const vars = props.EnvironmentVariables as { Name: string; Value: unknown }[];
-    expect(vars.map((e) => e.Name)).toEqual(BRANCH_ENV_NAMES);
-    expect(BRANCH_ENV_NAMES).toHaveLength(15);
+    // No money settings exported, on purpose (MONEY_SETTINGS=none): those four are left off,
+    // never sent empty.
+    expect(vars.map((e) => e.Name)).toEqual(
+      BRANCH_ENV_NAMES.filter((n) => !OPTIONAL_BRANCH_ENV_NAMES.includes(n)),
+    );
+    expect(BRANCH_ENV_NAMES).toHaveLength(24);
+    expect(vars).toHaveLength(20);
 
     // Each value, followed to the stack that exports it, is the resource it names: the cluster,
     // the app's own database login (never the admin secret), the user pool and its client.
@@ -206,9 +219,136 @@ describe("HostingStack", () => {
       META_API_KEY_SECRET_NAME,
       BASETEN_MODEL_ID: "meta-models/muse-spark-open-1026",
       BASETEN_API_KEY_SECRET_NAME,
+      QBO_ENVIRONMENT: "sandbox",
+      QBO_MINOR_VERSION: "75",
+      QBO_CLIENT_SECRET_NAME,
+      QBO_TOKEN_KEY_SECRET_NAME,
+      STRIPE_SECRET_KEY_SECRET_NAME,
     });
-    // Names only: no variable carries a key.
-    expect(BRANCH_ENV_NAMES.filter((n) => /_KEY$|TOKEN|PASSWORD/.test(n))).toEqual([]);
+    // Names only: no variable carries a key, a token or a secret; the *_SECRET_NAME and
+    // *_SECRET_ARN ones carry where a secret is stored.
+    expect(
+      BRANCH_ENV_NAMES.filter((n) => !/_SECRET_(NAME|ARN)$/.test(n) && /KEY|TOKEN|SECRET|PASSWORD/.test(n)),
+    ).toEqual([]);
+    for (const raw of ["QBO_CLIENT_SECRET", "QBO_TOKEN_KEY", "STRIPE_SECRET_KEY", "META_API_KEY", "BASETEN_API_KEY"]) {
+      expect(BRANCH_ENV_NAMES).not.toContain(raw);
+    }
+  });
+
+  // Made-up values: no real company id, client id or account ever sits in this repo.
+  const MONEY = {
+    qboClientId: "TESTCLIENT0000000000",
+    qboRedirectUri: "https://app.example.com/api/qbo/callback",
+    qboAllowedRealmId: "1234567890123456",
+    stripeTestDestinationAccount: "acct_TESTDESTINATION01",
+  };
+
+  // The same values as the deploying shell exports them.
+  const EXPORTED = {
+    QBO_CLIENT_ID: MONEY.qboClientId,
+    QBO_REDIRECT_URI: MONEY.qboRedirectUri,
+    QBO_ALLOWED_REALM_ID: MONEY.qboAllowedRealmId,
+    STRIPE_TEST_DESTINATION_ACCOUNT: MONEY.stripeTestDestinationAccount,
+  };
+
+  const branchVars = (exported: Record<string, string | undefined>) => {
+    const s = synthAll(undefined, exported);
+    try {
+      const branches = Object.values(s.hosting.findResources("AWS::Amplify::Branch"));
+      return branches[0].Properties.EnvironmentVariables as { Name: string; Value: unknown }[];
+    } finally {
+      s.cleanup();
+    }
+  };
+
+  const synthRefusal = (exported: Record<string, string | undefined>) => {
+    try {
+      synthAll(undefined, exported).cleanup();
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return null;
+  };
+
+  it("refuses to synthesize with no money setting exported, naming all four and how to opt out", () => {
+    const message = synthRefusal({});
+    expect(message).toMatch(
+      /^Refusing to synthesize: QBO_CLIENT_ID, QBO_REDIRECT_URI, QBO_ALLOWED_REALM_ID, STRIPE_TEST_DESTINATION_ACCOUNT are not exported\./,
+    );
+    expect(message).toContain("MONEY_SETTINGS=none");
+    // Blank exports are the same as none.
+    expect(synthRefusal({ QBO_CLIENT_ID: "", QBO_REDIRECT_URI: "  " })).toMatch(/^Refusing to synthesize: QBO_CLIENT_ID,/);
+  });
+
+  it("refuses a partial set, naming only the missing variables and never a value", () => {
+    const partial = { QBO_CLIENT_ID: EXPORTED.QBO_CLIENT_ID, STRIPE_TEST_DESTINATION_ACCOUNT: EXPORTED.STRIPE_TEST_DESTINATION_ACCOUNT };
+    const message = synthRefusal(partial);
+    expect(message).toMatch(/^Refusing to synthesize: QBO_REDIRECT_URI, QBO_ALLOWED_REALM_ID are not exported\./);
+    for (const value of Object.values(partial)) expect(message).not.toContain(value);
+    const one = synthRefusal({ ...EXPORTED, QBO_ALLOWED_REALM_ID: undefined });
+    expect(one).toMatch(/^Refusing to synthesize: QBO_ALLOWED_REALM_ID is not exported\./);
+    for (const value of Object.values(EXPORTED)) expect(one).not.toContain(value);
+  });
+
+  it("with MONEY_SETTINGS=none, synthesizes with none or with the ones exported, still checked", () => {
+    expect(branchVars({ MONEY_SETTINGS: "none" }).map((e) => e.Name)).toEqual(
+      BRANCH_ENV_NAMES.filter((n) => !OPTIONAL_BRANCH_ENV_NAMES.includes(n)),
+    );
+    const stripeOnly = branchVars({
+      MONEY_SETTINGS: "none",
+      STRIPE_TEST_DESTINATION_ACCOUNT: EXPORTED.STRIPE_TEST_DESTINATION_ACCOUNT,
+    });
+    expect(stripeOnly.map((e) => e.Name).filter((n) => OPTIONAL_BRANCH_ENV_NAMES.includes(n))).toEqual([
+      "STRIPE_TEST_DESTINATION_ACCOUNT",
+    ]);
+    // The opt-out never lets a partial QuickBooks set through.
+    expect(synthRefusal({ MONEY_SETTINGS: "none", QBO_CLIENT_ID: EXPORTED.QBO_CLIENT_ID })).toMatch(/set together/);
+    // Only the exact word opts out.
+    for (const word of ["None", "all", "yes"]) {
+      expect(synthRefusal({ MONEY_SETTINGS: word }), word).toBe("MONEY_SETTINGS may only be none");
+    }
+  });
+
+  it("sets the money settings exported at deploy, in order", () => {
+    const withMoney = synthAll(undefined, EXPORTED);
+    try {
+      const branches = Object.values(withMoney.hosting.findResources("AWS::Amplify::Branch"));
+      const vars = branches[0].Properties.EnvironmentVariables as { Name: string; Value: unknown }[];
+      expect(vars.map((e) => e.Name)).toEqual(BRANCH_ENV_NAMES);
+      expect(Object.fromEntries(vars.map((e) => [e.Name, e.Value]))).toMatchObject({
+        QBO_CLIENT_ID: MONEY.qboClientId,
+        QBO_REDIRECT_URI: MONEY.qboRedirectUri,
+        QBO_ALLOWED_REALM_ID: MONEY.qboAllowedRealmId,
+        STRIPE_TEST_DESTINATION_ACCOUNT: MONEY.stripeTestDestinationAccount,
+      });
+    } finally {
+      withMoney.cleanup();
+    }
+  });
+
+  it("refuses partial or malformed money settings, naming the variable only", () => {
+    const cases: [Record<string, string | undefined>, RegExp][] = [
+      [{ qboAllowedRealmId: undefined }, /set together/],
+      [{ qboClientId: "has space" }, /^QBO_CLIENT_ID/],
+      [{ qboRedirectUri: "http://app.example.com/api/qbo/callback" }, /^QBO_REDIRECT_URI/],
+      [{ qboRedirectUri: "https://app.example.com/api/qbo/callback?x=1" }, /^QBO_REDIRECT_URI/],
+      [{ qboAllowedRealmId: "12345" }, /^QBO_ALLOWED_REALM_ID/],
+      [{ stripeTestDestinationAccount: "acct-1" }, /^STRIPE_TEST_DESTINATION_ACCOUNT/],
+    ];
+    for (const [over, expected] of cases) {
+      let message = "";
+      try {
+        moneyEnv({ ...MONEY, ...over });
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message, JSON.stringify(over)).toMatch(expected);
+      for (const value of Object.values(over)) if (value) expect(message).not.toContain(value);
+    }
+    expect(moneyEnv({})).toEqual({});
+    expect(moneyEnv({ stripeTestDestinationAccount: MONEY.stripeTestDestinationAccount })).toEqual({
+      STRIPE_TEST_DESTINATION_ACCOUNT: MONEY.stripeTestDestinationAccount,
+    });
   });
 
   it("copies exactly the branch variables into the server build, and never a raw key", () => {

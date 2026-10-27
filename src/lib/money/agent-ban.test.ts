@@ -22,6 +22,13 @@ const FORBIDDEN_IMPORTS = [
   'import { paymentAdapter } from "../adapters";',
   'import { paymentAdapter } from "../adapters/index";',
   'import { createMockPaymentAdapter } from "../adapters/payment/mock";',
+  // The QuickBooks and Stripe test adapters, their secrets, connect flow and start-up guard.
+  'import { createQboAdapter } from "../adapters/accounting/qbo/adapter";',
+  'import { createQboConnect } from "@/lib/adapters/accounting/qbo/connect";',
+  'import { loadConnection } from "../adapters/accounting/qbo/store";',
+  'import { createStripeTestAdapter } from "../adapters/payment/stripe-test";',
+  'import { moneySecret } from "../adapters/secrets";',
+  'import { assertMoneyEnvSafe } from "../money/guard";',
   // Odd spellings of the same paths, and any other module under money/ or adapters/.
   'import { executeMoneyAction } from "../money/./execute";',
   'import { executeMoneyAction } from "../money//execute";',
