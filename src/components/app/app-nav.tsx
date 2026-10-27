@@ -1,4 +1,4 @@
-import { Cpu, HandCoins, House, NotebookPen } from "lucide-react";
+import { AudioLines, Cpu, FileText, HandCoins, House, NotebookPen } from "lucide-react";
 import { flags } from "@/config/flags";
 import type { NavItem } from "./nav-list";
 
@@ -6,8 +6,10 @@ import type { NavItem } from "./nav-list";
 // switch shows only while its switch is on, so a dark feature has no way in from the menu.
 const ITEMS = [
   { href: "/", label: "Home", icon: <House aria-hidden />, shown: () => true },
+  { href: "/documents", label: "Documents", icon: <FileText aria-hidden />, shown: () => flags.documentsEnabled === true },
   { href: "/advances", label: "Advances", icon: <HandCoins aria-hidden />, shown: () => flags.advancesEnabled === true },
   { href: "/driver-notes", label: "Driver notes", icon: <NotebookPen aria-hidden />, shown: () => flags.driverNotesEnabled === true },
+  { href: "/voice-notes", label: "Voice notes", icon: <AudioLines aria-hidden />, shown: () => flags.voiceIntakeEnabled === true },
   { href: "/models", label: "Meta models", icon: <Cpu aria-hidden />, shown: () => true },
 ] as const;
 

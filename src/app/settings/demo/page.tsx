@@ -85,8 +85,9 @@ export default async function DemoSettings() {
                   <CardTitle>{`Put ${view.name} back to its seeded week`}</CardTitle>
                   <CardDescription>
                     {`Every seeded record is rewritten exactly as the seed writes it for ${formatLocalDate(DEMO_ANCHOR)}. ` +
-                      "The agent's conversations and proposals, driver notes, and settled test-mode payouts " +
-                      "and bookings are deleted. It all happens at once: if any step fails, nothing changes."}
+                      "The agent's conversations and proposals, uploaded documents, voice notes, driver notes, " +
+                      "and settled test-mode payouts and bookings are deleted. " +
+                      "It all happens at once: if any step fails, nothing changes."}
                   </CardDescription>
                 </div>
               </CardHeader>

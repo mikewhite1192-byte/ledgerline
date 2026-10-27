@@ -160,6 +160,33 @@ No new table. An advance born from a person's approval of an advance proposal ca
   as the app role. The reseed's agent clear deletes flow advances (`proposal_id IS NOT NULL`)
   through the admin login before it deletes proposals.
 
+## Voice notes (`voice_notes`, `voice_note_audio`, 0012)
+
+A driver's voice note, as staff upload it: where it is in the pipeline, the ids of the model calls
+that worked on it, and the recording for playback. The transcript is an untrusted input
+(`untrusted_inputs`, kind `transcript`, source `voice`), screened like any outside message before a
+model reads it; this table holds the English text only after that screen passed.
+
+- The one tenant policy (ENABLE and FORCE) on both tables, `tenant_id` with `ON DELETE CASCADE`,
+  and composite `(tenant_id, x)` foreign keys to `drivers`, `untrusted_inputs` and
+  `conversations`, each `ON DELETE SET NULL` on its own column.
+- The app role gets `SELECT, INSERT` on `voice_notes` and `UPDATE` on the pipeline columns only
+  (status, category, language, English text, triage, amount, conversation, reply, the model call
+  ids, `updated_at`). Its driver, input, trace and tenant never change. No `DELETE`: nothing in the
+  app removes a note.
+- The recording is its own row in `voice_note_audio` (one per note, `bytea`, at most 700,000
+  bytes, so it reads back under the Data API's 1 MiB answer limit; the size column equals the
+  stored length), written by its own statement after the note and its transcript are stored. A
+  recording the database refuses leaves the note with none, and the transcription is never paid
+  for twice. The app role gets `SELECT, INSERT` only: a recording never changes, and it goes with
+  its note (`ON DELETE CASCADE`). The WAV sent to the model is not kept.
+- `status` moves `transcribed` to `ready` (or `blocked`, `failed`), then `handed_off`, then
+  `replied`; every move is `UPDATE ... WHERE status = <expected>`, so a repeated request changes
+  nothing. A `failed` or `blocked` note carries a category, never upstream text.
+- One note per input (`UNIQUE (tenant_id, input_id)` where set). Not in `TENANT_TABLES`: the reseed's
+  agent clear deletes voice notes (and with them their recordings) through the admin login first,
+  before the conversations and the inputs they name.
+
 ## The one security-definer function (`demo_reset_clear()`, 0025)
 
 Every other function runs as its caller. This one runs as its owner, the migrating admin, on
@@ -179,9 +206,10 @@ function and checked by tests:
   until the reset's transaction ends, then refuses (LR003, counts only, nothing deleted) while a
   ledger row is reserved, sent or unknown, a row failed as `amount_mismatch`, or a ledger row
   names a flagged proposal.
-- It deletes only the settled ledger rows, driver notes, the agent's records and the advances an
-  approval created, and returns how many per table. The seeded tables are rewritten after it, in
-  the same transaction, as `payday_app` under row-level security (`src/lib/seed/reset.ts`).
+- It deletes only the settled ledger rows, uploaded documents, voice notes and their recordings,
+  driver notes, the agent's records and the advances an approval created, and returns how many
+  per table. The seeded tables are rewritten after it, in the same transaction, as `payday_app`
+  under row-level security (`src/lib/seed/reset.ts`).
 
 `src/lib/db/rls-coverage.db.test.ts` checks the search path, the owner and the grants;
 `src/lib/seed/reset-coverage.db.test.ts` checks what it deletes, and fails CI for a table with no

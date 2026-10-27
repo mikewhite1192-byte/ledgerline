@@ -33,6 +33,9 @@ export const DEMO_RESET_CLEARED = {
   money_actions:
     "settled ledger rows, keyed kind:subject:attempt: against the re-created subjects they would " +
     "replay an old outcome or block a subject for good",
+  documents: "uploaded paperwork and its reading; each names an inbound message the replace deletes",
+  voice_note_audio: "the recording of each voice note that goes; it names its note",
+  voice_notes: "each names a driver, an inbound message and a conversation that go",
   driver_notes: "each names a settlement, a driver and a pay period the replace deletes",
   turn_steps: "the agent's steps of the turns that go",
   proposals: "each names a subject, an outside message or a ledger row the replace deletes",
@@ -68,6 +71,9 @@ export const RESET_TABLES: readonly ResetTable[] = [...TENANT_TABLES, ...CLEARED
 // (they name a proposal; the replace rewrites the rest of advances).
 export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "money_actions",
+  "documents",
+  "voice_note_audio",
+  "voice_notes",
   "driver_notes",
   "turn_steps",
   "advances",
@@ -99,6 +105,9 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   untrusted_inputs: "Inbound messages",
   screenings: "Message screenings",
   money_actions: "Settled payouts and bookings (test mode)",
+  documents: "Uploaded documents",
+  voice_note_audio: "Voice note recordings",
+  voice_notes: "Voice notes",
   driver_notes: "Driver notes",
   turn_steps: "Agent steps",
   proposals: "Agent proposals",

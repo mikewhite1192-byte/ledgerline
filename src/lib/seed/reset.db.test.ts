@@ -271,7 +271,8 @@ describe("the demo reset", () => {
   // Everything a demo leaves behind on a carrier: an advance an approval created, paid and booked
   // (two settled ledger rows naming its proposal); a failed payout on a seeded advance; a detention
   // charge an approval billed (an accessorial naming its proposal); a flagged proposal no ledger
-  // row names; a driver note being drafted; and a model charge.
+  // row names; a driver note being drafted; an uploaded document and a voice note with its
+  // recording, each naming a seeded inbound message; and a model charge.
   const dress = async (tenantId: string, plan: CarrierPlan, outsideTag: string) => {
     const session = await member(tenantId, "dress");
     const [driver, other] = plan.rows.drivers;
@@ -374,6 +375,29 @@ describe("the demo reset", () => {
       ),
     );
 
+    const input = await seededInput(tenantId);
+    const voiceNote = randomUUID();
+    await app.withTenant(tenantId, async (q) => {
+      await q.execute(
+        `INSERT INTO documents (id, tenant_id, uploaded_by, filename, mime, byte_length, bytes, content_hash,
+           untrusted_input_id, trace_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), $2, 'receipt.png', 'image/png', 4,
+           decode('89504e47', 'hex'), $3, CAST($4 AS uuid), CAST($5 AS uuid))`,
+        [randomUUID(), session.sub, randomUUID().replace(/-/g, "").repeat(2), input, randomUUID()],
+      );
+      await q.execute(
+        `INSERT INTO voice_notes (id, tenant_id, driver_id, input_id, trace_id, created_by, status)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid),
+           $5, 'transcribed')`,
+        [voiceNote, driver.id, input, randomUUID(), session.sub],
+      );
+      await q.execute(
+        `INSERT INTO voice_note_audio (tenant_id, voice_note_id, audio, audio_mime, audio_bytes)
+         VALUES (current_tenant_id(), CAST($1 AS uuid), decode('52494646', 'hex'), 'audio/wav', 4)`,
+        [voiceNote],
+      );
+    });
+
     await app.withTenant(tenantId, (q) =>
       q.execute(
         `INSERT INTO model_calls (tenant_id, provider, model, purpose, status, reserved_nanocents, target)
@@ -418,6 +442,9 @@ describe("the demo reset", () => {
       expect(preview.refusals).toEqual([]);
       expect(pick(preview.current, CLEARED_TABLES)).toEqual({
         money_actions: 3,
+        documents: 1,
+        voice_note_audio: 1,
+        voice_notes: 1,
         driver_notes: 1,
         turn_steps: 3,
         proposals: 3,
@@ -432,6 +459,9 @@ describe("the demo reset", () => {
       expect(report.before).toEqual(preview.current);
       expect(report.cleared).toEqual({
         money_actions: 3,
+        documents: 1,
+        voice_note_audio: 1,
+        voice_notes: 1,
         driver_notes: 1,
         turn_steps: 3,
         advances: 1,

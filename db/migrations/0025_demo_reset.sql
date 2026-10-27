@@ -3,11 +3,12 @@
 --
 -- This breaks the 0006 convention "never security definer" on purpose, and only here. The app logs
 -- in as payday_app, which has no DELETE on the money ledger (money_actions) or on the agent's
--- records (driver_notes, turn_steps, proposals, turns, conversations): they are the record of what
--- was paid and what the agent did. A reset needs exactly those rows gone for one demo carrier, and
--- an app process holds no other login, so this function runs as its owner (the migrating admin)
--- and does that one job. src/lib/db/rls-coverage.db.test.ts allows this function and no other
--- security-definer function, and checks every bound below.
+-- records (documents, voice_notes, voice_note_audio, driver_notes, turn_steps, proposals, turns,
+-- conversations): they are the record of what was paid and what the agent did. A reset needs
+-- exactly those rows gone for one demo carrier, and an app process holds no other login, so this
+-- function runs as its owner (the migrating admin) and does that one job.
+-- src/lib/db/rls-coverage.db.test.ts allows this function and no other security-definer function,
+-- and checks every bound below.
 --
 -- What bounds it:
 --   * search_path is fixed to public, then pg_temp, and every table and function it names is
@@ -32,14 +33,16 @@
 --     the advances, in one transaction, so no ledger row can be left naming a deleted advance.
 --
 -- It deletes, for that tenant only: the settled ledger rows (confirmed or failed, never
--- amount_mismatch), the driver notes, the agent's turn steps, the advances an approval created
--- (they name a proposal), the proposals, turns and conversations. Children go first, so each count
--- is the rows that table lost. A row that still names a deleted one makes the delete fail and the
--- whole transaction roll back. The caller then rewrites the seeded tables as payday_app, under
--- row-level security, in the same transaction (src/lib/seed/reset.ts), so a failure anywhere
--- leaves the carrier as it was. Nothing else is touched: logins, model charges, spend alerts, the
--- gateway's audit log (a deleted turn only clears its turn_id there), the QuickBooks link and every
--- other tenant stay as they are. It returns one row per table it deleted from, with the count.
+-- amount_mismatch), the uploaded documents, the voice notes' recordings and the voice notes (0013,
+-- 0012; each names an inbound message the replace deletes), the driver notes, the agent's turn
+-- steps, the advances an approval created (they name a proposal), the proposals, turns and
+-- conversations. Children go first, so each count is the rows that table lost. A row that still
+-- names a deleted one makes the delete fail and the whole transaction roll back. The caller then
+-- rewrites the seeded tables as payday_app, under row-level security, in the same transaction
+-- (src/lib/seed/reset.ts), so a failure anywhere leaves the carrier as it was. Nothing else is
+-- touched: logins, model charges, spend alerts, the gateway's audit log (a deleted turn only clears
+-- its turn_id there), the QuickBooks link and every other tenant stay as they are. It returns one
+-- row per table it deleted from, with the count.
 --
 -- Errors, a custom SQLSTATE class read by src/lib/seed/reset.ts:
 --   LR001  no tenant is set for the transaction
@@ -59,6 +62,9 @@ DECLARE
   v_mismatch      bigint;
   v_flagged       bigint;
   v_ledger        bigint;
+  v_documents     bigint;
+  v_audio         bigint;
+  v_voice_notes   bigint;
   v_notes         bigint;
   v_steps         bigint;
   v_advances      bigint;
@@ -96,6 +102,15 @@ BEGIN
      AND m.failure_category IS DISTINCT FROM 'amount_mismatch';
   GET DIAGNOSTICS v_ledger = ROW_COUNT;
 
+  DELETE FROM public.documents d WHERE d.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_documents = ROW_COUNT;
+
+  DELETE FROM public.voice_note_audio r WHERE r.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_audio = ROW_COUNT;
+
+  DELETE FROM public.voice_notes v WHERE v.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_voice_notes = ROW_COUNT;
+
   DELETE FROM public.driver_notes n WHERE n.tenant_id = v_tenant;
   GET DIAGNOSTICS v_notes = ROW_COUNT;
 
@@ -116,6 +131,9 @@ BEGIN
 
   RETURN QUERY VALUES
     (CAST('money_actions' AS text), v_ledger),
+    (CAST('documents' AS text), v_documents),
+    (CAST('voice_note_audio' AS text), v_audio),
+    (CAST('voice_notes' AS text), v_voice_notes),
     (CAST('driver_notes' AS text), v_notes),
     (CAST('turn_steps' AS text), v_steps),
     (CAST('advances' AS text), v_advances),
