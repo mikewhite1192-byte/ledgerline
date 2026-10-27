@@ -1,6 +1,10 @@
 // Release switches. Every outside effect (payments, accounting posts, email, model calls)
 // reads its switch here, and every path that reaches the write re-checks it.
 // Turning a switch on is the owner's call, in its own one-line PR.
+// The demo-path test's local overrides (src/config/local-overrides.ts) are inert in production
+// and whenever an Aurora cluster is configured.
+
+import { applyLocalOverrides } from "./local-overrides";
 
 export type Flags = {
   // Model calls through src/lib/ai. Off until the wrapper and its spend cap are live.
@@ -189,6 +193,10 @@ export type Flags = {
   // adds the charge to the load's open invoice. Off means neither tool is offered or runs and an
   // approval is refused before anything is written.
   detentionEnabled: boolean;
+  // The demo reset page (/settings/demo): a demo carrier's admin puts the carrier back to its
+  // seeded week in one transaction. Off means the page answers 404 and the action refuses before
+  // any read or write. It writes only our own database, never an outside system.
+  demoResetEnabled: boolean;
   // The pay sweep: checks one open week for every driver, drafts a pay correction for each
   // finding it can fix and lists the rest for a person. It only proposes; a person approves.
   // Off means the Sweep page shows its reason text and the routes refuse before any work.
@@ -299,6 +307,7 @@ export const flags: Flags = {
   voiceIntakeEnabled: false,
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
   detentionEnabled: false,
+  demoResetEnabled: false,
   sweepEnabled: false,
   sweepScheduleEnabled: false,
   payCorrectionsEnabled: false,
@@ -319,3 +328,5 @@ export const flags: Flags = {
     approvalWaitMinutes: 30,
   },
 };
+
+applyLocalOverrides(flags);
