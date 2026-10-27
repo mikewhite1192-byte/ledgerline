@@ -256,6 +256,7 @@ const passModel = (calls: { n: number }): CompleteFn => async () => {
     costNanocents: 1,
     upstreamId: null,
     replay: [],
+    toolSearches: 0,
   } satisfies AiResult;
 };
 

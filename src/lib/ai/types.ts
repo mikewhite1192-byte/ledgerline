@@ -27,24 +27,42 @@ export type AiAttachment =
   | { kind: "pdf"; bytes: Uint8Array; filename?: string };
 
 export type AiMessage =
-  | { role: "system"; content: string }
+  // A system message. placement "input" (Meta targets only) sends it as a system-role item in
+  // input at its position instead of joining it into instructions, so the text before it can
+  // stay a shared, cacheable prefix. Default "instructions".
+  | { role: "system"; content: string; placement?: "instructions" | "input" }
   // A user turn, with any images or PDFs it carries.
   | { role: "user"; content: string; attachments?: AiAttachment[] }
-  // An assistant turn: its text and the tool calls it made, if any.
-  | { role: "assistant"; content: string; toolCalls?: AiToolCall[] }
+  // An assistant turn: its text and the tool calls it made, if any. replay (Meta, with toolSearch
+  // on) holds the hosted tool search items that answer produced, sent back just before it on every
+  // later call so a tool it loaded stays loaded; only tool_search_call and tool_search_output.
+  | { role: "assistant"; content: string; toolCalls?: AiToolCall[]; replay?: AiReplayItem[] }
   // The result of one tool call, matched to it by id.
   | { role: "tool"; content: string; toolCallId: string };
 
-// parameters is a JSON Schema object.
-export type AiTool = { name: string; description: string; parameters: Record<string, unknown> };
+// parameters is a JSON Schema object. deferLoading (Meta targets, with toolSearch on) sends only
+// the name and description until the model searches for the tool.
+export type AiTool = {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+  deferLoading?: boolean;
+};
+
+// Meta's automatic prefix caching: one stable key shared by every request with the same prefix.
+// "in_memory" is the API's default and is never sent; "24h" asks for longer retention.
+export type AiCacheOptions = { key: string; retention?: "in_memory" | "24h" };
 
 // Structured output: the reply is constrained to this JSON Schema. The wrapper returns the JSON
 // as text and never parses it; the caller does.
 export type AiFormat = { name: string; schema: Record<string, unknown>; strict?: boolean };
 
-// Opaque provider items from the previous turn (Meta's encrypted reasoning), sent back unchanged
-// so the model keeps its reasoning across a tool loop. Never stored, never logged.
-export type AiReplayItem = { readonly type: "reasoning" } & Record<string, unknown>;
+// Opaque provider items from the previous turn (Meta's encrypted reasoning, and the hosted tool
+// search's call and output), sent back unchanged so the model keeps its reasoning and the tools
+// it loaded across a tool loop. Never stored, never logged.
+export type AiReplayItem = {
+  readonly type: "reasoning" | "tool_search_call" | "tool_search_output";
+} & Record<string, unknown>;
 
 // What every call takes besides its own input.
 export type AiCallOptions = {
@@ -66,7 +84,14 @@ export type AiRequest = AiCallOptions & {
   maxOutputTokens?: number;
   // Meta targets only. Default "low".
   reasoningEffort?: AiReasoningEffort;
+  // The last answer's items, in the order returned, sent just before the last assistant turn
+  // (where they stand in for that turn's own replay).
   replay?: AiReplayItem[];
+  // Meta targets only: offer the hosted tool_search tool. Requires at least one deferLoading
+  // tool, and every deferLoading tool requires it.
+  toolSearch?: boolean;
+  // Meta targets only.
+  cache?: AiCacheOptions;
 };
 
 export type AiUsage = { input: number; cached: number; output: number; reasoning: number };
@@ -82,6 +107,8 @@ export type AiResult = {
   costNanocents: number;
   upstreamId: string | null;
   replay: AiReplayItem[];
+  // How many hosted tool searches the model ran inside this answer.
+  toolSearches: number;
 };
 
 // Language names, not codes: what the transcription API takes. A hint only.
@@ -199,7 +226,12 @@ export type Metered =
   | { unit: "audio_seconds"; seconds: number }
   | { unit: "images"; count: number };
 
-export type TextAnswer = { text: string; toolCalls: AiToolCall[]; replay: AiReplayItem[] };
+export type TextAnswer = {
+  text: string;
+  toolCalls: AiToolCall[];
+  replay: AiReplayItem[];
+  toolSearches: number;
+};
 
 // What one HTTP call produced, before it is settled in the ledger.
 // answered: the provider reported what the price needs, so the cost is known.

@@ -165,20 +165,36 @@ export function readBySubject(
   );
 }
 
+// One record whose ledger rows a pending read is limited to.
+export type PendingSubject = { table: SubjectTable; id: string };
+const SUBJECT_TABLES: readonly SubjectTable[] = ["advances", "settlements", "invoices", "customer_payments"];
+
+// A subject checked whole: a known table and a lowercase UUID, or a RangeError.
+export function assertPendingSubject(subject: PendingSubject): void {
+  if (typeof subject !== "object" || subject === null) throw new RangeError("no subject");
+  if (!(SUBJECT_TABLES as readonly unknown[]).includes(subject.table)) {
+    throw new RangeError("unknown subject table");
+  }
+  if (!isCanonicalUuid(subject.id)) throw new RangeError("subject id is not a lowercase UUID");
+}
+
 // What the reconcile pass works on: rows left unknown, and rows still sent after the window
 // (their sender died or its settle failed), of the given kinds only (the ones the caller can
-// serve). Rows at the check limit need a person and are left out. Rows never checked come first,
-// then the least recently checked, so a row that keeps reading back nothing rotates behind newer
-// ones instead of holding its place; oldest send first within each. The ORDER BY names the table,
-// so it sorts the stored timestamps and id, not the millisecond text the SELECT list returns
-// under the same names (two checks in one millisecond would tie).
-// subjectId: only that record's rows (a record page's own refresh), compared whole.
+// serve), and of one subject only when the caller names one (a button on one record's page).
+// Rows at the check limit need a person and are left out, unless ignoreCheckLimit is true, which
+// is accepted only with a subject: a person's check on that one record reads its rows back even
+// past the limit (a RangeError without one, so an unscoped read never skips the cap). Rows never
+// checked come first, then the least recently checked, so a row that keeps reading back nothing
+// rotates behind newer ones instead of holding its place; oldest send first within each. The
+// ORDER BY names the table, so it sorts the stored timestamps and id, not the millisecond text
+// the SELECT list returns under the same names (two checks in one millisecond would tie).
 export function readPending(
   q: Queryable,
   olderThanSeconds: number,
   limit = 5,
   kinds: readonly MoneyActionKind[] = MONEY_ACTION_KINDS,
-  subjectId: string | null = null,
+  subject?: PendingSubject,
+  ignoreCheckLimit = false,
 ): Promise<MoneyAction[]> {
   if (!Number.isSafeInteger(olderThanSeconds) || olderThanSeconds < 0) {
     throw new RangeError("olderThanSeconds must be a whole number of seconds");
@@ -192,16 +208,24 @@ export function readPending(
   for (const k of kinds) {
     if (!(MONEY_ACTION_KINDS as readonly unknown[]).includes(k)) throw new RangeError("unknown kind");
   }
-  if (subjectId !== null && !isCanonicalUuid(subjectId)) throw new RangeError("subjectId must be a uuid");
+  if (subject !== undefined) assertPendingSubject(subject);
+  if (typeof ignoreCheckLimit !== "boolean") throw new RangeError("ignoreCheckLimit must be a boolean");
+  if (ignoreCheckLimit && subject === undefined) {
+    throw new RangeError("the check limit is lifted only for one named subject");
+  }
   const wanted = [...new Set(kinds)];
-  // One placeholder per kind; the kinds themselves travel as parameters.
+  // One placeholder per kind; the kinds themselves travel as parameters, and so does the subject.
   const slots = wanted.map((_, i) => `$${i + 3}`).join(", ");
-  const subject = subjectId === null ? "" : ` AND subject_id = CAST($${wanted.length + 3} AS uuid)`;
+  const next = wanted.length + 3;
+  const ofSubject = subject
+    ? ` AND subject_table = $${next} AND subject_id = CAST($${next + 1} AS uuid)`
+    : "";
+  const capped = ignoreCheckLimit ? "" : `check_count < ${MAX_CHECKS} AND `;
   return many(
     q,
-    `check_count < ${MAX_CHECKS} AND (state = 'unknown' OR (state = 'sent'
-       AND sent_at < now() - CAST($1 AS integer) * interval '1 second')) AND kind IN (${slots})${subject}`,
-    [olderThanSeconds, limit, ...wanted, ...(subjectId === null ? [] : [subjectId])],
+    `${capped}(state = 'unknown' OR (state = 'sent'
+       AND sent_at < now() - CAST($1 AS integer) * interval '1 second')) AND kind IN (${slots})${ofSubject}`,
+    [olderThanSeconds, limit, ...wanted, ...(subject ? [subject.table, subject.id] : [])],
     " ORDER BY money_actions.last_checked_at NULLS FIRST, money_actions.sent_at, money_actions.id" +
       " LIMIT CAST($2 AS integer)",
   );

@@ -97,7 +97,10 @@ export async function reconcileInvoice(
   const summary = await reconcileMoneyActions(
     db,
     session,
-    { subjectId: invoiceId, hooks: { invoice: invoiceReconcileHooks(db, session.tenantId, accounting) } },
+    {
+      subject: { table: "invoices", id: invoiceId },
+      hooks: { invoice: invoiceReconcileHooks(db, session.tenantId, accounting) },
+    },
     { ...deps, accounting },
   );
   return { ok: true, summary };

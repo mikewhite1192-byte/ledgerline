@@ -1214,4 +1214,114 @@ describe("seeding the demo carriers", () => {
       Object.assign(flags, saved);
     }
   });
+
+  // Runs on prairie-wind after the test above, which left it with no ledger or agent rows.
+  it("refuses the payout and agent clears, deleting nothing, while a ledger row names an advance an approval created, and clears it once none does", async () => {
+    const saved = { ...flags };
+    flags.payoutsEnabled = true;
+    flags.paymentProvider = "mock";
+    flags.accountingEnabled = true;
+    try {
+      const session = await member(B, "flow-advance");
+      expect(await ledgerRows(B)).toBe(0);
+      expect(await agentRowsOf(B)).toBe(0);
+      const driver = planB.rows.drivers[0];
+      const amountCents = 10_000;
+      const proposal = await agentChain(
+        B,
+        session,
+        { kind: "advance_payout", table: "drivers", id: driver.id, amountCents },
+        null,
+      );
+      // The advance an approval creates: it names its proposal and is not a seeded row.
+      const advanceId = randomUUID();
+      await app.withTenant(B, (q) =>
+        q.execute(
+          `INSERT INTO advances (id, tenant_id, driver_id, request_ref, requested_at, requested_on,
+             amount_cents, status, source, proposal_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3,
+             CAST('2026-11-02T15:00:00Z' AS timestamptz), CAST('2026-11-02' AS date), $4,
+             'approved', 'ui', CAST($5 AS uuid))`,
+          [advanceId, driver.id, `ADV-${proposal.replace(/-/g, "").slice(0, 12)}`, amountCents, proposal],
+        ),
+      );
+      const flowAdvances = async () => {
+        const [row] = await admin.withoutTenant((q) =>
+          q.query<{ n: number }>(
+            "SELECT count(*) AS n FROM advances WHERE tenant_id = CAST($1 AS uuid) AND proposal_id IS NOT NULL",
+            [B],
+          ),
+        );
+        return Number(row.n);
+      };
+      // Its payout confirmed and its expense posted, each row naming the advance and the proposal.
+      const settled = async (
+        kind: "advance_payout" | "advance_expense",
+        status: string,
+        outside: { system: "mock" | "qbo_sandbox"; type: string; id: string },
+      ) =>
+        app.withTenant(B, async (q) => {
+          const { action } = await reserve(q, await approvalFrom(q, session), {
+            kind,
+            subjectId: advanceId,
+            counterpartyId: driver.id,
+            amountCents,
+            proposedBy: "agent",
+            proposalId: proposal,
+            subjectStatuses: [status],
+          });
+          expect(await markSent(q, action.id)).toBe(true);
+          expect(
+            await settle(q, action.id, { to: "confirmed", via: "response", outside: { ...outside, amountCents } }),
+          ).toBe(true);
+        });
+      await settled("advance_payout", "approved", { system: "mock", type: "payout", id: "mock_flow_0001" });
+      await app.withTenant(B, (q) =>
+        q.execute(
+          `UPDATE advances SET status = 'paid', paid_at = CAST('2026-11-02T15:05:00Z' AS timestamptz)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [advanceId],
+        ),
+      );
+      await settled("advance_expense", "paid", { system: "qbo_sandbox", type: "Purchase", id: "3001" });
+      expect(await ledgerRows(B)).toBe(2);
+      expect(await agentRowsOf(B)).toBe(4);
+      expect(await flowAdvances()).toBe(1);
+
+      const refusalOf = async (work: Promise<number>) =>
+        ((await work.then(
+          () => null,
+          (err: unknown) => err,
+        )) as Error | null)?.message;
+      const block = (n: number) =>
+        `${n} ledger row(s) name an advance an approval created; a person must review them ` +
+        "before a reseed (nothing was cleared)";
+
+      // npm run seed's first step refuses on the booking row, before deleting the payout row.
+      expect(await refusalOf(clearTenantLedger(admin, B))).toBe(block(1));
+      expect(await ledgerRows(B)).toBe(2);
+      // The agent clear refuses on either row, deleting nothing.
+      expect(await refusalOf(clearTenantAgent(admin, B))).toBe(block(2));
+      expect(await flowAdvances()).toBe(1);
+      expect(await agentRowsOf(B)).toBe(4);
+      expect(await ledgerRows(B)).toBe(2);
+
+      // A person reviews the booking row and drops it; the payout row still names the advance.
+      expect(await clearTenantBookings(admin, B)).toBe(1);
+      expect(await refusalOf(clearTenantAgent(admin, B))).toBe(block(1));
+      expect(await flowAdvances()).toBe(1);
+      expect(await agentRowsOf(B)).toBe(4);
+
+      // Once no ledger row names it, the clears and the replace run: the advance goes with its chain.
+      expect(await clearTenantLedger(admin, B)).toBe(1);
+      expect(await clearTenantAgent(admin, B)).toBe(5);
+      expect(await flowAdvances()).toBe(0);
+      await replaceTenantData(app, B, planB);
+      expect(await agentRowsOf(B)).toBe(0);
+      expect(await ledgerRows(B)).toBe(0);
+      expect(await countsOf(app, B)).toEqual(golden.carriers[planB.carrier.slug].counts);
+    } finally {
+      Object.assign(flags, saved);
+    }
+  });
 });

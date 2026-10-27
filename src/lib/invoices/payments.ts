@@ -386,7 +386,7 @@ export async function reconcileCustomerPayment(
     db,
     session,
     {
-      subjectId: paymentId,
+      subject: { table: "customer_payments", id: paymentId },
       hooks: { customer_payment: paymentReconcileHooks(db, session.tenantId, accounting) },
     },
     { ...deps, accounting },

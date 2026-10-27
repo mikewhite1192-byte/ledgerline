@@ -15,6 +15,7 @@ const STATUS: Readonly<Record<string, number>> = {
   not_found: 404,
   role: 403,
   forbidden: 403,
+  disabled: 403,
 };
 
 function reply(body: unknown, status: number) {

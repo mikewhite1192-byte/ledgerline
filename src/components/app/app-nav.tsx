@@ -1,24 +1,20 @@
-import { Cpu, FileText, House, NotebookPen, Wallet } from "lucide-react";
+import { Cpu, FileText, HandCoins, House, NotebookPen, Wallet } from "lucide-react";
 import { flags } from "@/config/flags";
 import type { NavItem } from "./nav-list";
 
-// The signed-in pages' navigation, one list for every page so they cannot drift apart. A screen
-// whose switch is off stays out of the list; its page still says it is off if someone types the
-// address.
+// The signed-in sidebar, one list for every page so they cannot drift apart. An item behind a
+// switch shows only while its switch is on, so a dark feature has no way in from the menu; its
+// page still says it is off if someone types the address.
 const ITEMS = [
   { href: "/", label: "Home", icon: <House aria-hidden />, shown: () => true },
-  {
-    href: "/driver-notes",
-    label: "Driver notes",
-    icon: <NotebookPen aria-hidden />,
-    shown: () => flags.driverNotesEnabled,
-  },
-  { href: "/invoices", label: "Invoices", icon: <FileText aria-hidden />, shown: () => flags.invoicesEnabled },
+  { href: "/advances", label: "Advances", icon: <HandCoins aria-hidden />, shown: () => flags.advancesEnabled === true },
+  { href: "/driver-notes", label: "Driver notes", icon: <NotebookPen aria-hidden />, shown: () => flags.driverNotesEnabled === true },
+  { href: "/invoices", label: "Invoices", icon: <FileText aria-hidden />, shown: () => flags.invoicesEnabled === true },
   {
     href: "/customer-payments/new",
     label: "Payments",
     icon: <Wallet aria-hidden />,
-    shown: () => flags.customerPaymentsEnabled,
+    shown: () => flags.customerPaymentsEnabled === true,
   },
   { href: "/models", label: "Meta models", icon: <Cpu aria-hidden />, shown: () => true },
 ] as const;
