@@ -31,17 +31,22 @@ const isToolSearchItem = (item: AiReplayItem) =>
 
 const text = (type: "input_text" | "output_text", value: string) => ({ type, text: value });
 
-// An image as a base64 data URL; a PDF as inline file data, never a file id, so nothing of a
-// carrier's documents is kept upstream (https://dev.meta.ai/docs/image-understanding,
-// https://dev.meta.ai/docs/file-handling).
+// An image or a video as a base64 data URL; a PDF as inline file data, never a file id, so
+// nothing of a carrier's documents is kept upstream (https://dev.meta.ai/docs/image-understanding,
+// https://dev.meta.ai/docs/video-understanding, https://dev.meta.ai/docs/file-handling).
 function attachmentPart(a: AiAttachment) {
-  return a.kind === "image"
-    ? { type: "input_image", image_url: dataUrl(a.mime, a.bytes) }
-    : {
+  switch (a.kind) {
+    case "image":
+      return { type: "input_image", image_url: dataUrl(a.mime, a.bytes) };
+    case "video":
+      return { type: "input_video", video_url: dataUrl("video/mp4", a.bytes) };
+    case "pdf":
+      return {
         type: "input_file",
         file_data: dataUrl("application/pdf", a.bytes),
         ...(a.filename ? { filename: a.filename } : {}),
       };
+  }
 }
 
 export function metaBody(model: string, request: AiRequest, options: MetaOptions) {

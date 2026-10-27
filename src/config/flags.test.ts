@@ -17,7 +17,19 @@ describe("flags", () => {
     expect(flags.reportsEnabled).toBe(false);
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
+    expect(flags.clipsEnabled).toBe(false);
     expect(flags.detentionEnabled).toBe(false);
+  });
+
+  it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
+    expect(flags.clipLimits).toEqual({
+      bytes: 700_000,
+      durationMs: 20_000,
+      frames: 600,
+      redactMaxCostCents: 13,
+      readMaxCostCents: 10,
+      perTenantPerDay: 20,
+    });
   });
 
   it("keeps the agent gateway's limits small and the screener on its probed output mode", () => {

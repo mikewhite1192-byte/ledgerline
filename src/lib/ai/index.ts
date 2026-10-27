@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
-import { DbError, getDb, type TenantDb } from "../db";
+import { DbError, getDb, type Queryable, type TenantDb } from "../db";
+import { readMp4Header, type Mp4Header } from "../clips/mp4";
 import { ForbiddenError } from "../tenant/context";
 import { isUuid } from "../uuid";
 import { apiKey, forgetKey, type SecretsClient } from "./keys";
@@ -15,6 +16,7 @@ import {
   COMPUTER_TOOL_RESERVE_TOKENS,
   NANOCENTS_PER_CENT,
   SCREENSHOT_RESERVE_TOKENS,
+  videoFramesCost,
   wonderCapNanocents,
   type Price,
 } from "./prices";
@@ -24,14 +26,14 @@ import { post, type FetchFn } from "./providers/http";
 import { dataUrlLength, IMAGE_MIMES, looksLike, pdfPages } from "./providers/media";
 import { META_RESPONSES_URL, metaBody, metaComputerBody, parseMeta } from "./providers/meta";
 import { imageBody, META_IMAGES_URL, parseImage } from "./providers/meta-image";
-import { parseSam, samBody } from "./providers/meta-sam";
+import { parseSam, parseSamVideo, samBody, samVideoBody } from "./providers/meta-sam";
 import {
   META_TRANSCRIBE_ACCEPT,
   META_TRANSCRIBE_URL,
   parseVoice,
   voiceBody,
 } from "./providers/meta-voice";
-import { reserve, settle, type Settlement } from "./spend";
+import { overCap, readSpend, reserve, settle, type Settlement } from "./spend";
 import { shouldFallBack, standbyFor, type FirstAttempt } from "./standby";
 import { TARGETS, contributorMode, contributorRefusesAll, modelFor } from "./targets";
 import { jobCapNanocents } from "./watch";
@@ -59,6 +61,9 @@ import {
   type Metered,
   type SegmentRequest,
   type SegmentResult,
+  type SegmentVideoRequest,
+  type SegmentVideoResult,
+  type TextAnswer,
   type TranscribeRequest,
   type TranscribeResult,
 } from "./types";
@@ -97,13 +102,15 @@ export type {
   SegmentMatch,
   SegmentRequest,
   SegmentResult,
+  SegmentVideoRequest,
+  SegmentVideoResult,
   TranscribeRequest,
   TranscribeResult,
   TranscribeTurn,
 } from "./types";
 
 // The one door to a model. Every runtime model call in the app goes through complete(),
-// transcribe(), generateImage() or segment(), and all four through runCall(): it checks the
+// transcribe(), generateImage(), segment() or segmentVideo(), and all of them through runCall(): it checks the
 // switch, reserves the call's worst-case cost in the spend ledger, calls the provider once,
 // settles the ledger to the real cost, and writes one log line. It never retries a host. Muse
 // Spark Open alone has a standby host (./standby.ts): while flags.sparkOpenFallback names it,
@@ -162,6 +169,10 @@ const IMAGE_FORMATS: readonly string[] = ["png", "jpeg", "webp"];
 const MAX_ATTACHMENTS = 8;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
+// The evidence clip cap, the same as the table's CHECK: 933,336 base64 characters inline, well
+// under the 1 MiB request body Meta accepts.
+const MAX_VIDEO_BYTES = 700_000;
+const MAX_VIDEOS_PER_CALL = 1;
 const MAX_IMAGES_PER_CALL = 4;
 const MAX_PROMPT_CHARS = 4_000;
 const MAX_KEYWORDS = 20;
@@ -176,6 +187,8 @@ const DEFAULT_TIMEOUT_MS = 25_000;
 const SLOW_TIMEOUT_MS = 60_000;
 // A standby attempt is started only with at least this much of the caller's time left.
 const MIN_STANDBY_MS = 1_000;
+// Two of these run in parallel inside one upload request, so each stays well inside its budget.
+const SEGMENT_VIDEO_TIMEOUT_MS = 20_000;
 
 function inRange(value: unknown, min: number, max: number): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
@@ -228,7 +241,7 @@ type Failed<T> = Exclude<CallOutcome<T>, { kind: "answered" }>;
 // The ledger's units column: what a call that is not billed by tokens is billed by.
 function unitsOf(metered: Metered): number | null {
   if (metered.unit === "audio_seconds") return metered.seconds;
-  if (metered.unit === "images") return metered.count;
+  if (metered.unit === "images" || metered.unit === "video_frames") return metered.count;
   return null;
 }
 
@@ -272,6 +285,20 @@ type Sent<T> =
   | { kind: "answered"; callId: string; answer: Answered<T>; costNanocents: number }
   | { kind: "failed"; callId: string; outcome: Failed<T>; error: AiError };
 
+// A reserve over the call's own maxCostCents: refused too_expensive before anything is reserved.
+function overCallCost(reserveNanocents: number, c: Common): boolean {
+  return reserveNanocents > c.maxCostCents * NANOCENTS_PER_CENT;
+}
+
+// The overall cap and, for Wonder only, its own cap inside it, read on every call. Null refuses.
+function capsFor(target: AiTarget): { cap: number | null; wonderCap: number | null } {
+  const cap = capNanocents(process.env.AI_SPEND_CAP_CENTS);
+  // Unset or invalid refuses Wonder calls only.
+  const wonderCap =
+    target === "wonder" ? wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap) : null;
+  return { cap, wonderCap };
+}
+
 // Builds one attempt for one host: validates the call's own input and builds its body (plan),
 // reads the host's key, and checks the reserve against the call's maxCostCents and the job's
 // hourly allowance. A call that alone is over the allowance would be refused job_cap again right
@@ -289,10 +316,7 @@ async function prepare<T, U extends Price["unit"]>(
     console.error(`ai: ${ctx.target} ${label}not configured (no ${provider} key)`);
     return null;
   }
-  if (
-    p.reserveNanocents > ctx.c.maxCostCents * NANOCENTS_PER_CENT ||
-    p.reserveNanocents > ctx.jobCap
-  ) {
+  if (overCallCost(p.reserveNanocents, ctx.c) || p.reserveNanocents > ctx.jobCap) {
     throw new AiError("too_expensive");
   }
   return { provider, model: configured.model, price: configured.price, p, key };
@@ -421,10 +445,7 @@ async function runCall<T, U extends Price["unit"]>(
   const clock = deps.clock ?? (() => performance.now());
   const started = clock();
   const fetchFn = deps.fetch ?? (process.env.NODE_ENV === "test" ? undefined : fetch);
-  const cap = capNanocents(process.env.AI_SPEND_CAP_CENTS);
-  // Unset or invalid refuses Wonder calls only.
-  const wonderCap =
-    target === "wonder" ? wonderCapNanocents(process.env.AI_WONDER_CAP_CENTS, cap) : null;
+  const { cap, wonderCap } = capsFor(target);
   const jobCap = jobCapNanocents(flags.aiJobHourlyCapCents);
   if (contributorMode(process.env.META_CONTRIBUTOR_MODE) === null) {
     console.error("ai: META_CONTRIBUTOR_MODE must be unset, true or false; every call is refused");
@@ -537,6 +558,25 @@ function refusalCategory(err: unknown): string {
 
 type TextOptions = { maxOutputTokens: number; reasoningEffort: AiReasoningEffort };
 
+// A video's header when it is an MP4 under the cap that reads as a clip and whose declared frame
+// count is the header's own; null otherwise. The reserve is computed from that count, so a
+// caller cannot shrink it by declaring fewer frames.
+function videoHeader(video: unknown): Mp4Header | null {
+  if (typeof video !== "object" || video === null) return null;
+  const v = video as { mime?: unknown; bytes?: unknown; frameCount?: unknown };
+  if (
+    v.mime !== "video/mp4" ||
+    !(v.bytes instanceof Uint8Array) ||
+    v.bytes.length === 0 ||
+    v.bytes.length > MAX_VIDEO_BYTES ||
+    !looksLike("video/mp4", v.bytes)
+  ) {
+    return null;
+  }
+  const read = readMp4Header(v.bytes);
+  return read.ok && read.header.frameCount === v.frameCount ? read.header : null;
+}
+
 function validAttachment(a: AiAttachment): boolean {
   if (typeof a !== "object" || a === null || !(a.bytes instanceof Uint8Array)) return false;
   if (a.kind === "image") {
@@ -555,6 +595,7 @@ function validAttachment(a: AiAttachment): boolean {
       (a.filename === undefined || (typeof a.filename === "string" && FILE_NAME.test(a.filename)))
     );
   }
+  if (a.kind === "video") return videoHeader(a) !== null;
   return false;
 }
 
@@ -570,6 +611,7 @@ function validateText(target: AiTextTarget, request: AiRequest): TextOptions {
   const attachments = messages.flatMap((m) =>
     m.role === "user" && Array.isArray(m.attachments) ? m.attachments : [],
   );
+  const videos = attachments.filter((a) => a?.kind === "video").length;
   const ok =
     inRange(options.maxOutputTokens, 16, 8192) &&
     efforts.includes(options.reasoningEffort) &&
@@ -616,6 +658,10 @@ function validateText(target: AiTextTarget, request: AiRequest): TextOptions {
         (format.strict === undefined || typeof format.strict === "boolean"))) &&
     attachments.length <= MAX_ATTACHMENTS &&
     attachments.every(validAttachment) &&
+    // A video goes to Muse Spark only, one a call, and only from a caller that sized the call's
+    // cost for it: the default maxCostCents is for text and images.
+    (videos === 0 ||
+      (target === "spark" && videos <= MAX_VIDEOS_PER_CALL && request.maxCostCents !== undefined)) &&
     // Structured output and attachments are not checked on Baseten yet.
     (meta || (format === undefined && attachments.length === 0)) &&
     replay.every((item) => typeof item?.type === "string" && REPLAY_TYPES.includes(item.type)) &&
@@ -687,6 +733,56 @@ const TEXT_HOSTS: Record<
   fireworks: { url: FIREWORKS_CHAT_URL, parse: parseFireworks },
 };
 
+// A text call's plan for one host: its body, its reserve and how its answer is read. complete()
+// sends it; spendRoom() reads only its reserve, so the two always reserve the same amount.
+function textPlan(target: AiTextTarget, request: AiRequest): PlanFn<TextAnswer, "tokens"> {
+  return (model, price, provider) => {
+    const options = validateText(target, request);
+    const meta = provider === "meta";
+    // Fireworks takes Baseten's body: the same OpenAI chat shape.
+    const body = JSON.stringify(
+      meta
+        ? metaBody(model, request, options)
+        : basetenBody(model, request, { maxOutputTokens: options.maxOutputTokens }),
+    );
+    // The reserve counts the request's text, not its attachment data: each image and each
+    // PDF page is reserved at its own token figure instead.
+    let attachmentChars = 0;
+    let images = 0;
+    let pages = 0;
+    let video: { frames: number; durationMs: number } | null = null;
+    for (const m of request.messages) {
+      if (m.role !== "user") continue;
+      for (const a of m.attachments ?? []) {
+        const mime = a.kind === "pdf" ? "application/pdf" : a.mime;
+        attachmentChars += dataUrlLength(mime, a.bytes.length);
+        if (a.kind === "image") images += 1;
+        else if (a.kind === "video") {
+          // validateText already read this header; at most one video per call.
+          const header = videoHeader(a);
+          if (!header) bad();
+          video = { frames: header.frameCount, durationMs: header.durationMs };
+        } else pages += pdfPages(a.bytes);
+      }
+    }
+    const textBytes = new TextEncoder().encode(body).length - attachmentChars;
+    return {
+      url: TEXT_HOSTS[provider].url,
+      body,
+      reserveNanocents: estimateReserve(
+        price,
+        // Only a Meta request carries search; the standby host never gets it.
+        meta && request.toolSearch === true ? textBytes * SEARCH_INPUT_FACTOR : textBytes,
+        options.maxOutputTokens,
+        mediaReserveTokens(images, pages, video),
+      ),
+      // Baseten and Fireworks take no reasoning setting, so none is recorded for them.
+      reasoningEffort: meta ? options.reasoningEffort : null,
+      parse: TEXT_HOSTS[provider].parse,
+    };
+  };
+}
+
 export async function complete(
   target: AiTextTarget,
   request: AiRequest,
@@ -701,45 +797,7 @@ export async function complete(
     DEFAULT_TIMEOUT_MS,
     session,
     deps,
-    (model, price, provider) => {
-      const options = validateText(target, request);
-      const meta = provider === "meta";
-      // Fireworks takes Baseten's body: the same OpenAI chat shape.
-      const body = JSON.stringify(
-        meta
-          ? metaBody(model, request, options)
-          : basetenBody(model, request, { maxOutputTokens: options.maxOutputTokens }),
-      );
-      // The reserve counts the request's text, not its attachment data: each image and each
-      // PDF page is reserved at its own token figure instead.
-      let attachmentChars = 0;
-      let images = 0;
-      let pages = 0;
-      for (const m of request.messages) {
-        if (m.role !== "user") continue;
-        for (const a of m.attachments ?? []) {
-          const mime = a.kind === "image" ? a.mime : "application/pdf";
-          attachmentChars += dataUrlLength(mime, a.bytes.length);
-          if (a.kind === "image") images += 1;
-          else pages += pdfPages(a.bytes);
-        }
-      }
-      const textBytes = new TextEncoder().encode(body).length - attachmentChars;
-      return {
-        url: TEXT_HOSTS[provider].url,
-        body,
-        reserveNanocents: estimateReserve(
-          price,
-          // Only a Meta request carries search; the standby host never gets it.
-          meta && request.toolSearch === true ? textBytes * SEARCH_INPUT_FACTOR : textBytes,
-          options.maxOutputTokens,
-          mediaReserveTokens(images, pages),
-        ),
-        // Baseten and Fireworks take no reasoning setting, so none is recorded for them.
-        reasoningEffort: meta ? options.reasoningEffort : null,
-        parse: TEXT_HOSTS[provider].parse,
-      };
-    },
+    textPlan(target, request),
   );
   if (answer.metered.unit !== "tokens") throw new AiError("unknown");
   return {
@@ -753,6 +811,58 @@ export async function complete(
     replay: answer.value.replay,
     toolSearches: answer.value.toolSearches,
   };
+}
+
+export type SpendRoom = "room" | "cap" | "too_expensive";
+
+// What complete(target, request) would meet at its spend checks right now, read with one SELECT
+// of the counter and no lock and no write: the caps, job allowance, model, price and reserve
+// runCall uses, then prepare's maxCostCents and job allowance test ("too_expensive") and the
+// reserve's own cap test ("cap"). Null when the call would be refused for another reason first
+// (the switch, the configuration, a job allowance that is not a positive whole number of cents,
+// a malformed request): the call then answers for itself. A counter that cannot be read throws,
+// as at the reserve. Nothing is held, so a call that starts after this read can still take the
+// room; the reserve, under its lock, stays the real stop. Muse Spark Open's standby host is not
+// checked.
+export async function spendRoom(
+  target: AiTextTarget,
+  request: AiRequest,
+  q: Queryable,
+): Promise<SpendRoom | null> {
+  if (!flags.aiEnabled || !TEXT_TARGETS.includes(target)) return null;
+  const { cap, wonderCap } = capsFor(target);
+  const jobCap = jobCapNanocents(flags.aiJobHourlyCapCents);
+  const configured = modelFor(target, "tokens");
+  if (
+    cap === null ||
+    jobCap === null ||
+    (target === "wonder" && wonderCap === null) ||
+    contributorRefusesAll(process.env) ||
+    !configured
+  ) {
+    return null;
+  }
+  let reserveNanocents: number;
+  let c: Common;
+  try {
+    c = common(request, DEFAULT_TIMEOUT_MS);
+    reserveNanocents = textPlan(target, request)(
+      configured.model,
+      configured.price,
+      TARGETS[target].provider,
+    ).reserveNanocents;
+  } catch (err) {
+    if (err instanceof AiError) return null;
+    throw err;
+  }
+  if (overCallCost(reserveNanocents, c) || reserveNanocents > jobCap) return "too_expensive";
+  const refused = overCap(await readSpend(q), {
+    target,
+    reserveNanocents,
+    capNanocents: cap,
+    wonderCapNanocents: wonderCap,
+  });
+  return refused ? "cap" : "room";
 }
 
 // --- computerStep: one step of a computer-use loop, on the model flags.portalRunnerModel names ---
@@ -992,7 +1102,7 @@ export async function segment(
 ): Promise<SegmentResult> {
   const { callId, answer, costNanocents } = await runCall(
     "sam",
-    "images",
+    "segmentation",
     request,
     DEFAULT_TIMEOUT_MS,
     session,
@@ -1033,6 +1143,62 @@ export async function segment(
     imageWidth: answer.value.imageWidth,
     imageHeight: answer.value.imageHeight,
     matches: answer.value.matches,
+    costNanocents,
+  };
+}
+
+// --- segmentVideo: SAM 3.1 tracking through a video ---
+
+export async function segmentVideo(
+  request: SegmentVideoRequest,
+  session: Session,
+  deps: AiDeps = {},
+): Promise<SegmentVideoResult> {
+  const { callId, answer, costNanocents } = await runCall(
+    "sam",
+    "segmentation",
+    request,
+    SEGMENT_VIDEO_TIMEOUT_MS,
+    session,
+    deps,
+    (model, price) => {
+      const header = videoHeader(request.video);
+      const propagation = request.propagation ?? "both";
+      const maskEncoding = request.maskEncoding ?? "one_bit";
+      const includeConfidence = request.includeConfidence ?? true;
+      if (
+        !header ||
+        typeof request.prompt !== "string" ||
+        !SAM_PROMPT.test(request.prompt) ||
+        (propagation !== "both" && propagation !== "forward" && propagation !== "backward") ||
+        (maskEncoding !== "lossless" && maskEncoding !== "one_bit") ||
+        typeof includeConfidence !== "boolean"
+      ) {
+        bad();
+      }
+      return {
+        url: META_RESPONSES_URL,
+        body: JSON.stringify(
+          samVideoBody(model, request.video, request.prompt, {
+            maskEncoding,
+            includeConfidence,
+            propagation,
+          }),
+        ),
+        // Every frame of the clip, never under the per-request floor.
+        reserveNanocents: videoFramesCost(price, header.frameCount),
+        reasoningEffort: null,
+        parse: parseSamVideo(header.frameCount - 1, price.minFrames),
+      };
+    },
+  );
+  if (answer.metered.unit !== "video_frames") throw new AiError("unknown");
+  return {
+    callId,
+    frames: answer.value.frames,
+    width: answer.value.width,
+    height: answer.value.height,
+    framesProcessed: answer.value.framesProcessed,
     costNanocents,
   };
 }
