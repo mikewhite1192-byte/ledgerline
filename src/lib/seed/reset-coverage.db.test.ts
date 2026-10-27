@@ -82,14 +82,18 @@ describe("demo reset coverage", () => {
       ),
     );
     expect(fn).toBeDefined();
-    const deletes = [...fn.body.matchAll(/DELETE FROM public\.([a-z_]+)\s+[a-z]+\s+WHERE\s+([^;]+);/g)];
+    // A statement ends at its semicolon; the run and session deletes inside one WITH end at
+    // "RETURNING 1" and their closing parenthesis.
+    const deletes = [
+      ...fn.body.matchAll(/DELETE FROM public\.([a-z_]+)\s+[a-z]+\s+WHERE\s+([\s\S]+?)(?:;|\s+RETURNING 1\s*\))/g),
+    ];
     expect(deletes.map((d) => d[1]).sort()).toEqual([...FUNCTION_TABLES].sort());
     expect([...CLEARED_TABLES, "advances"].sort()).toEqual([...FUNCTION_TABLES].sort());
     // No other way to remove a row: every DELETE was matched above, and there is no TRUNCATE.
     expect(fn.body.match(/\bDELETE\b/g)?.length).toBe(deletes.length);
     expect(fn.body).not.toMatch(/\bTRUNCATE\b|\bUPDATE\s+public\.|\bINSERT\b/i);
     for (const [statement, table, where] of deletes) {
-      expect(where, statement).toMatch(new RegExp(`^[a-z]\\.tenant_id = v_tenant\\b`));
+      expect(where, statement).toMatch(new RegExp(`^[a-z]{1,2}\\.tenant_id = v_tenant\\b`));
       expect(table, statement).not.toBe("tenants");
     }
     // The tenant is the transaction's own, read once, and the gate is the two demo carriers' slug,

@@ -17,8 +17,9 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      not needed here on purpose: the function deletes every settled money_actions row before
 //      the flow advances, in one transaction, so no ledger row can outlive the advance it names;
 //   3. demo_reset_clear() (migration 0025), the one security-definer function, which checks the
-//      same things again under the tenant row lock and deletes the settled ledger rows and the
-//      agent's records (the app role has no DELETE on them);
+//      same things again under the tenant row lock and deletes the settled ledger rows, the
+//      agent's records and the fictional broker portal's loads (the app role has no DELETE on
+//      them); the portal's loads come back only with npm run seed, since the app cannot write them;
 //   4. the seed's replace of the 19 seeded tables, as the app role, under row-level security;
 //   5. the read-back: every seeded table equals the plan, every cleared table is empty, and the
 //      hero's open-week net is the worked example.
@@ -34,6 +35,15 @@ export const DEMO_RESET_CLEARED = {
     "settled ledger rows, keyed kind:subject:attempt: against the re-created subjects they would " +
     "replay an old outcome or block a subject for good",
   documents: "uploaded paperwork and its reading; each names an inbound message the replace deletes",
+  evidence_clips: "uploaded dock clips and their readings; each names a load the replace deletes",
+  portal_evidence: "what each portal run found; it names a run that goes and a load the replace deletes",
+  portal_run_checks: "the safety checks of the portal runs that go",
+  portal_run_steps: "the steps and screenshots of the portal runs that go",
+  portal_sessions: "the portal sign-in codes; a run's code names the run, which goes",
+  portal_runs: "the agent's portal runs; each names a load the replace deletes",
+  portal_loads:
+    "the fictional broker portal's loads; each names a load the replace deletes, and only the " +
+    "seed's admin login writes them back (npm run seed)",
   voice_note_audio: "the recording of each voice note that goes; it names its note",
   voice_notes: "each names a driver, an inbound message and a conversation that go",
   driver_notes: "each names a settlement, a driver and a pay period the replace deletes",
@@ -48,6 +58,9 @@ export const DEMO_RESET_KEPT = {
   tenants: "the carrier itself",
   memberships: "the staff and admin logins, so nobody is signed out of the carrier",
   model_calls: "the record of every model charge",
+  portal_accounts:
+    "the carrier's sign-in account on the fictional broker portal; it names only the carrier, and " +
+    "only the seed's admin login writes it",
   gateway_decisions:
     "the gateway's append-only audit log; it names nothing the reset deletes, and a deleted " +
     "turn only clears its turn_id",
@@ -72,6 +85,13 @@ export const RESET_TABLES: readonly ResetTable[] = [...TENANT_TABLES, ...CLEARED
 export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "money_actions",
   "documents",
+  "evidence_clips",
+  "portal_evidence",
+  "portal_run_checks",
+  "portal_run_steps",
+  "portal_sessions",
+  "portal_runs",
+  "portal_loads",
   "voice_note_audio",
   "voice_notes",
   "driver_notes",
@@ -106,6 +126,13 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   screenings: "Message screenings",
   money_actions: "Settled payouts and bookings (test mode)",
   documents: "Uploaded documents",
+  evidence_clips: "Dock clips",
+  portal_evidence: "Broker portal findings",
+  portal_run_checks: "Broker portal safety checks",
+  portal_run_steps: "Broker portal run steps",
+  portal_sessions: "Broker portal sign-in codes",
+  portal_runs: "Broker portal runs",
+  portal_loads: "Broker portal loads",
   voice_note_audio: "Voice note recordings",
   voice_notes: "Voice notes",
   driver_notes: "Driver notes",

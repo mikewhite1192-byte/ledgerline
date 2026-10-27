@@ -15,6 +15,8 @@ import { DEMO_ANCHOR } from "./anchor";
 import { HERO_OPEN_WEEK } from "./assert-plan";
 import { DEMO_CARRIERS } from "./carriers";
 import { buildCarrierPlan, type CarrierPlan } from "./plan";
+import { buildPortalPlan } from "./portal";
+import { seedTenantPortal } from "./portal-db";
 import {
   CLEARED_TABLES,
   DEMO_RESET_KEPT,
@@ -27,14 +29,17 @@ import {
 import { replaceTenantData } from "./run";
 import { countRows } from "./summary";
 
-// The demo reset end to end on a fresh database: carrier A (blue-ridge) reset with ledger, agent,
-// note, detention and flow-advance rows in place; carrier B (prairie-wind), a third carrier that
+// The demo reset end to end on a fresh database, both carriers seeded with the broker portal's
+// loads as npm run seed leaves them: carrier A (blue-ridge) reset with ledger, agent, note,
+// detention, flow-advance, dock clip and portal run rows in place; carrier B (prairie-wind), a third carrier that
 // is not a demo one, and the shared tables byte for byte unchanged; each refusal deleting
 // nothing; a failure after the clear rolling the clear back; and a second run changing nothing.
 
 const [BR, PW] = DEMO_CARRIERS;
 const planA = buildCarrierPlan(BR, DEMO_ANCHOR);
 const planB = buildCarrierPlan(PW, DEMO_ANCHOR);
+const portalA = buildPortalPlan(planA);
+const portalB = buildPortalPlan(planB);
 const A = randomUUID();
 const B = randomUUID();
 const C = randomUUID();
@@ -155,6 +160,9 @@ describe("the demo reset", () => {
     await createTenant(C, OTHER);
     await replaceTenantData(app, A, planA);
     await replaceTenantData(app, B, planB);
+    // As npm run seed does after the replace: the portal's account and loads, by the admin login.
+    expect(await seedTenantPortal(admin, A, portalA)).toBe(portalA.loads.length);
+    expect(await seedTenantPortal(admin, B, portalB)).toBe(portalB.loads.length);
   });
 
   afterAll(async () => {
@@ -272,7 +280,9 @@ describe("the demo reset", () => {
   // (two settled ledger rows naming its proposal); a failed payout on a seeded advance; a detention
   // charge an approval billed (an accessorial naming its proposal); a flagged proposal no ledger
   // row names; a driver note being drafted; an uploaded document and a voice note with its
-  // recording, each naming a seeded inbound message; and a model charge.
+  // recording, each naming a seeded inbound message; a dock clip being redacted; a finished portal
+  // run with its session (the two name each other), a step, an approved check and what it found;
+  // and a model charge.
   const dress = async (tenantId: string, plan: CarrierPlan, outsideTag: string) => {
     const session = await member(tenantId, "dress");
     const [driver, other] = plan.rows.drivers;
@@ -396,6 +406,55 @@ describe("the demo reset", () => {
          VALUES (current_tenant_id(), CAST($1 AS uuid), decode('52494646', 'hex'), 'audio/wav', 4)`,
         [voiceNote],
       );
+      await q.execute(
+        `INSERT INTO evidence_clips (id, tenant_id, load_id, stop, uploaded_by, filename, raw_hash, raw_byte_length,
+           width, height, frames_per_second, frame_count, duration_ms, status)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'delivery', $3, 'dock.mp4', $4, 1000,
+           640, 480, 10, 50, 5000, 'redacting')`,
+        [randomUUID(), load.id, session.sub, randomUUID().replace(/-/g, "").repeat(2)],
+      );
+    });
+
+    const [run, portalSession, step] = [randomUUID(), randomUUID(), randomUUID()];
+    await app.withTenant(tenantId, async (q) => {
+      await q.execute(
+        `INSERT INTO portal_runs (id, tenant_id, load_id, reference, requested_by, trace_id, model, status,
+           ended_reason, finished_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'FFE-000001', $3, $4, 'spark', 'done',
+           'answered', now())`,
+        [run, load.id, session.sub, `trace-${run.slice(0, 8)}`],
+      );
+      await q.execute(
+        `INSERT INTO portal_sessions (id, tenant_id, run_id, code_hash, expires_at, created_by)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, now() + interval '20 minutes', $4)`,
+        [portalSession, run, "c".repeat(64), session.sub],
+      );
+      expect(
+        await q.execute(
+          `UPDATE portal_runs SET session_id = CAST($2 AS uuid)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [run, portalSession],
+        ),
+      ).toBe(1);
+      await q.execute(
+        `INSERT INTO portal_run_steps (id, tenant_id, run_id, seq, executed)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 0, false)`,
+        [step, run],
+      );
+      await q.execute(
+        `INSERT INTO portal_run_checks (id, tenant_id, run_id, step_id, check_id, code, message, status,
+           decided_by, decided_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'check-1', 'sign_in',
+           'Sign in to the portal', 'approved', $4, now())`,
+        [randomUUID(), run, step, session.sub],
+      );
+      await q.execute(
+        `INSERT INTO portal_evidence (id, tenant_id, run_id, load_id, answer, untrusted_input_id, screen_verdict,
+           readback_match)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST('{}' AS jsonb),
+           CAST($4 AS uuid), 'clean', 'matches')`,
+        [randomUUID(), run, load.id, input],
+      );
     });
 
     await app.withTenant(tenantId, (q) =>
@@ -436,6 +495,7 @@ describe("the demo reset", () => {
       expect(before.keptA.memberships.n).toBe(1);
       expect(before.keptA.model_calls.n).toBe(1);
       expect(before.keptA.gateway_decisions.n).toBe(3);
+      expect(before.keptA.portal_accounts.n).toBe(1);
       expect(before.c.proposals.n).toBe(1);
 
       const preview = await app.withTenant(A, (q) => previewDemoReset(q, BR));
@@ -443,6 +503,13 @@ describe("the demo reset", () => {
       expect(pick(preview.current, CLEARED_TABLES)).toEqual({
         money_actions: 3,
         documents: 1,
+        evidence_clips: 1,
+        portal_evidence: 1,
+        portal_run_checks: 1,
+        portal_run_steps: 1,
+        portal_sessions: 1,
+        portal_runs: 1,
+        portal_loads: portalA.loads.length,
         voice_note_audio: 1,
         voice_notes: 1,
         driver_notes: 1,
@@ -457,9 +524,17 @@ describe("the demo reset", () => {
       const report = await resetDemoTenant(app, A, planA);
       expect(report.slug).toBe("blue-ridge");
       expect(report.before).toEqual(preview.current);
+      expect(portalA.loads.length).toBeGreaterThan(0);
       expect(report.cleared).toEqual({
         money_actions: 3,
         documents: 1,
+        evidence_clips: 1,
+        portal_evidence: 1,
+        portal_run_checks: 1,
+        portal_run_steps: 1,
+        portal_sessions: 1,
+        portal_runs: 1,
+        portal_loads: portalA.loads.length,
         voice_note_audio: 1,
         voice_notes: 1,
         driver_notes: 1,

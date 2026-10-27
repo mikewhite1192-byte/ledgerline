@@ -3,10 +3,11 @@
 --
 -- This breaks the 0006 convention "never security definer" on purpose, and only here. The app logs
 -- in as payday_app, which has no DELETE on the money ledger (money_actions) or on the agent's
--- records (documents, voice_notes, voice_note_audio, driver_notes, turn_steps, proposals, turns,
--- conversations): they are the record of what was paid and what the agent did. A reset needs
--- exactly those rows gone for one demo carrier, and an app process holds no other login, so this
--- function runs as its owner (the migrating admin) and does that one job.
+-- records (documents, evidence_clips, the portal runner's tables, voice_notes, voice_note_audio,
+-- driver_notes, turn_steps, proposals, turns, conversations): they are the record of what was paid
+-- and what the agent did. Nor on the fictional broker portal's loads, which only the seed writes.
+-- A reset needs exactly those rows gone for one demo carrier, and an app process holds no other
+-- login, so this function runs as its owner (the migrating admin) and does that one job.
 -- src/lib/db/rls-coverage.db.test.ts allows this function and no other security-definer function,
 -- and checks every bound below.
 --
@@ -35,16 +36,21 @@
 --     the advances, in one transaction, so no ledger row can be left naming a deleted advance.
 --
 -- It deletes, for that tenant only: the settled ledger rows (confirmed or failed, never
--- amount_mismatch), the uploaded documents, the voice notes' recordings and the voice notes (0013,
--- 0012; each names an inbound message the replace deletes), the driver notes, the agent's turn
--- steps, the advances an approval created (they name a proposal), the proposals, turns and
--- conversations. Children go first, so each count is the rows that table lost. A row that still
--- names a deleted one makes the delete fail and the whole transaction roll back. The caller then
--- rewrites the seeded tables as payday_app, under row-level security, in the same transaction
--- (src/lib/seed/reset.ts), so a failure anywhere leaves the carrier as it was. Nothing else is
--- touched: logins, model charges, spend alerts, the gateway's audit log (a deleted turn only clears
--- its turn_id there), the QuickBooks link and every other tenant stay as they are. It returns one
--- row per table it deleted from, with the count.
+-- amount_mismatch), the uploaded documents, the dock clips (0023; each names a load the replace
+-- deletes), the portal runner's evidence, checks, steps, sessions and runs (0021), the fictional
+-- broker portal's loads (0021; each names a load the replace deletes, and only the seed's admin
+-- login writes them back, so the portal has no loads until npm run seed runs again), the voice
+-- notes' recordings and the voice notes (0013, 0012; each names an inbound message the replace
+-- deletes), the driver notes, the agent's turn steps, the advances an approval created (they name
+-- a proposal), the proposals, turns and conversations. Children go first, so each count is the
+-- rows that table lost; a portal run and its session name each other, so those two go in one
+-- statement, whose foreign keys are checked at its end. A row that still names a deleted one
+-- makes the delete fail and the whole transaction roll back. The caller then rewrites the seeded
+-- tables as payday_app, under row-level security, in the same transaction (src/lib/seed/reset.ts),
+-- so a failure anywhere leaves the carrier as it was. Nothing else is touched: logins, model
+-- charges, spend alerts, the gateway's audit log (a deleted turn only clears its turn_id there),
+-- the portal's sign-in account, the QuickBooks link and every other tenant stay as they are. It
+-- returns one row per table it deleted from, with the count.
 --
 -- Errors, a custom SQLSTATE class read by src/lib/seed/reset.ts:
 --   LR001  no tenant is set for the transaction
@@ -67,6 +73,13 @@ DECLARE
   v_flagged       bigint;
   v_ledger        bigint;
   v_documents     bigint;
+  v_clips         bigint;
+  v_portal_evid   bigint;
+  v_portal_checks bigint;
+  v_portal_steps  bigint;
+  v_portal_sess   bigint;
+  v_portal_runs   bigint;
+  v_portal_loads  bigint;
   v_audio         bigint;
   v_voice_notes   bigint;
   v_notes         bigint;
@@ -113,6 +126,30 @@ BEGIN
   DELETE FROM public.documents d WHERE d.tenant_id = v_tenant;
   GET DIAGNOSTICS v_documents = ROW_COUNT;
 
+  DELETE FROM public.evidence_clips ec WHERE ec.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_clips = ROW_COUNT;
+
+  DELETE FROM public.portal_evidence pe WHERE pe.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_portal_evid = ROW_COUNT;
+
+  DELETE FROM public.portal_run_checks pc WHERE pc.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_portal_checks = ROW_COUNT;
+
+  DELETE FROM public.portal_run_steps ps WHERE ps.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_portal_steps = ROW_COUNT;
+
+  -- A run names its session and the session names its run: both go in this one statement.
+  WITH gone_sessions AS (
+    DELETE FROM public.portal_sessions px WHERE px.tenant_id = v_tenant RETURNING 1
+  ), gone_runs AS (
+    DELETE FROM public.portal_runs pr WHERE pr.tenant_id = v_tenant RETURNING 1
+  )
+  SELECT (SELECT count(*) FROM gone_sessions), (SELECT count(*) FROM gone_runs)
+    INTO v_portal_sess, v_portal_runs;
+
+  DELETE FROM public.portal_loads pl WHERE pl.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_portal_loads = ROW_COUNT;
+
   DELETE FROM public.voice_note_audio r WHERE r.tenant_id = v_tenant;
   GET DIAGNOSTICS v_audio = ROW_COUNT;
 
@@ -140,6 +177,13 @@ BEGIN
   RETURN QUERY VALUES
     (CAST('money_actions' AS text), v_ledger),
     (CAST('documents' AS text), v_documents),
+    (CAST('evidence_clips' AS text), v_clips),
+    (CAST('portal_evidence' AS text), v_portal_evid),
+    (CAST('portal_run_checks' AS text), v_portal_checks),
+    (CAST('portal_run_steps' AS text), v_portal_steps),
+    (CAST('portal_sessions' AS text), v_portal_sess),
+    (CAST('portal_runs' AS text), v_portal_runs),
+    (CAST('portal_loads' AS text), v_portal_loads),
     (CAST('voice_note_audio' AS text), v_audio),
     (CAST('voice_notes' AS text), v_voice_notes),
     (CAST('driver_notes' AS text), v_notes),

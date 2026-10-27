@@ -208,9 +208,12 @@ function and checked by tests:
   until the reset's transaction ends, then refuses (LR003, counts only, nothing deleted) while a
   ledger row is reserved, sent or unknown, a row failed as `amount_mismatch`, or a ledger row
   names a flagged proposal.
-- It deletes only the settled ledger rows, uploaded documents, voice notes and their recordings,
-  driver notes, the agent's records and the advances an approval created, and returns how many
-  per table. The seeded tables are rewritten after it, in the same transaction, as `payday_app`
+- It deletes only the settled ledger rows, uploaded documents, dock clips, the portal runner's
+  runs (with their sessions, steps, checks and evidence), the fictional broker portal's loads,
+  voice notes and their recordings, driver notes, the agent's records and the advances an
+  approval created, and returns how many per table. The portal's loads name loads the replace
+  deletes, and the app login cannot write them, so they come back only with `npm run seed`; the
+  portal's sign-in account is kept. The seeded tables are rewritten after it, in the same transaction, as `payday_app`
   under row-level security (`src/lib/seed/reset.ts`).
 
 `src/lib/db/rls-coverage.db.test.ts` checks the search path, the owner and the grants;
