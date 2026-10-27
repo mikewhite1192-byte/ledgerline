@@ -18,6 +18,7 @@ import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
 import { getPayItems } from "./tools/read/get-pay-items";
 import { getPaymentsIn } from "./tools/read/get-payments-in";
+import { getVoiceNote } from "./tools/read/get-voice-note";
 import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstanding";
 import { reportArAging } from "./tools/read/report-ar-aging";
 import { reportCashNeeded } from "./tools/read/report-cash-needed";
@@ -62,6 +63,7 @@ const TOOLS: readonly AnyToolDef[] = [
   getInvoiceQueue,
   getArAging,
   getPaymentsIn,
+  getVoiceNote,
   getProposal,
   findUnbilledDetentionTool,
   proposeAdvance,

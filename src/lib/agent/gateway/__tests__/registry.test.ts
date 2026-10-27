@@ -18,6 +18,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_invoice_queue: { tier: "read", roles: ["operator"] },
   get_ar_aging: { tier: "read", roles: ["operator"] },
   get_payments_in: { tier: "read", roles: ["operator"] },
+  get_voice_note: { tier: "read", roles: ["operator"] },
   propose_advance: { tier: "propose", roles: ["operator"] },
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
@@ -86,10 +87,10 @@ describe("tool registry", () => {
 
   it("offers each role only its own tools, as copies", () => {
     const counts = Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]));
-    expect(counts).toEqual({ operator: 13, auditor: 9, triage: 2 });
+    expect(counts).toEqual({ operator: 14, auditor: 9, triage: 2 });
     const first = toolsFor("operator");
     first.pop();
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(14);
     expect(toolsFor("nobody" as AgentRole)).toEqual([]);
   });
 
@@ -98,7 +99,7 @@ describe("tool registry", () => {
     for (const role of AGENT_ROLES) for (const n of DETENTION_TOOLS) expect(names(role)).not.toContain(n);
     flags.detentionEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 15,
+      operator: 16,
       auditor: 10,
       triage: 2,
     });
@@ -106,7 +107,7 @@ describe("tool registry", () => {
     expect(names("auditor")).toContain("find_unbilled_detention");
     expect(names("auditor")).not.toContain("propose_detention_charge");
     flags.detentionEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(14);
   });
 
   it("offers the invoice and customer payment tools only while their switches are on, read on every offer", () => {
@@ -115,14 +116,14 @@ describe("tool registry", () => {
     flags.invoicesEnabled = true;
     expect(names()).toEqual(expect.arrayContaining(INVOICE_TOOLS));
     for (const n of PAYMENT_TOOLS) expect(names(), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(14);
+    expect(toolsFor("operator")).toHaveLength(15);
     flags.invoicesEnabled = false;
     flags.customerPaymentsEnabled = true;
     expect(names()).toEqual(expect.arrayContaining(PAYMENT_TOOLS));
     for (const n of INVOICE_TOOLS) expect(names(), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(16);
+    expect(toolsFor("operator")).toHaveLength(17);
     flags.customerPaymentsEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(14);
     // Neither is ever offered to the auditor or triage.
     flags.invoicesEnabled = true;
     flags.customerPaymentsEnabled = true;
@@ -136,7 +137,7 @@ describe("tool registry", () => {
     expect(toolsFor("operator").map((t) => t.name).filter((n) => n.startsWith("report_"))).toEqual([]);
 
     flags.reportsEnabled = true;
-    expect(toolsFor("operator")).toHaveLength(18);
+    expect(toolsFor("operator")).toHaveLength(19);
     expect(toolsFor("auditor")).toHaveLength(9);
     expect(toolsFor("triage")).toHaveLength(2);
     for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
@@ -144,7 +145,7 @@ describe("tool registry", () => {
 
     flags.reportsEnabled = false;
     for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
-    expect(toolsFor("operator")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(14);
   });
 
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
@@ -154,7 +155,7 @@ describe("tool registry", () => {
     flags.customerPaymentsEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 24,
+      operator: 25,
       auditor: 10,
       triage: 2,
     });
@@ -214,6 +215,10 @@ describe("deferred loading for tool search", () => {
       // Off, each such tool is sent in full, with no deferLoading key.
       expect(plain.find((t) => t.name === name), name).not.toHaveProperty("deferLoading");
     }
+    // The voice note read is needed only when a note is handed to the agent, so it is deferred
+    // like get_inbound_message.
+    expect(ALWAYS_LOADED).not.toContain("get_voice_note");
+    expect(deferred.find((t) => t.name === "get_voice_note")?.deferLoading).toBe(true);
     expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...ALWAYS_LOADED].sort());
   });
 

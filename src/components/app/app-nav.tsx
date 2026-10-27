@@ -1,4 +1,4 @@
-import { Cpu, FileText, HandCoins, House, NotebookPen, Wallet } from "lucide-react";
+import { AudioLines, Cpu, FileText, HandCoins, House, NotebookPen, Wallet } from "lucide-react";
 import { flags } from "@/config/flags";
 import type { NavItem } from "./nav-list";
 
@@ -16,6 +16,7 @@ const ITEMS = [
     icon: <Wallet aria-hidden />,
     shown: () => flags.customerPaymentsEnabled === true,
   },
+  { href: "/voice-notes", label: "Voice notes", icon: <AudioLines aria-hidden />, shown: () => flags.voiceIntakeEnabled === true },
   { href: "/models", label: "Meta models", icon: <Cpu aria-hidden />, shown: () => true },
 ] as const;
 
