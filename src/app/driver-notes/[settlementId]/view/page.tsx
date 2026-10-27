@@ -1,11 +1,10 @@
-import { MessageSquareText } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
 import { Paystub } from "@/components/app/paystub";
-import { EmptyState, ErrorState } from "@/components/app/states";
+import { ErrorState, FeatureOff } from "@/components/app/states";
 import { Card, CardBody } from "@/components/ui/card";
 import { flags } from "@/config/flags";
 import { readDriverView, type DriverView } from "@/lib/driver-notes/view";
@@ -56,17 +55,19 @@ export default async function DriverViewPage({ params }: { params: Promise<{ set
     >
       <div className="mx-auto grid w-full max-w-[720px] gap-6">
         {!flags.driverNotesEnabled ? (
-          <Card>
-            <EmptyState
-              icon={<MessageSquareText aria-hidden />}
-              title="Driver notes are switched off"
-              body="Nothing is drafted or shown to drivers until they are switched on."
-            />
-          </Card>
+          <>
+            <PageHeader title="Driver note" />
+            <Card>
+              <FeatureOff name="Driver notes" plural />
+            </Card>
+          </>
         ) : !view ? (
-          <Card>
-            <ErrorState category="not_found" />
-          </Card>
+          <>
+            <PageHeader title="Driver note" />
+            <Card>
+              <ErrorState category="not_found" />
+            </Card>
+          </>
         ) : (
           <>
             <Link

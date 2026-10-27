@@ -1,5 +1,7 @@
-import { CircleAlert, Inbox } from "lucide-react";
+import { CircleAlert, Inbox, PowerOff, SearchX } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
+import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/cn";
 
@@ -8,17 +10,19 @@ export type EmptyStateProps = {
   title: ReactNode;
   body?: ReactNode;
   action?: ReactNode;
+  // A heading when the state is the whole page (its one h1) or a section's title; a plain line otherwise.
+  titleAs?: "p" | "h1" | "h2";
   className?: string;
 };
 
 // Says what would fill the space and offers the way to fill it.
-export function EmptyState({ icon, title, body, action, className }: EmptyStateProps) {
+export function EmptyState({ icon, title, body, action, titleAs: Title = "p", className }: EmptyStateProps) {
   return (
     <div className={cn("flex flex-col items-center gap-2 px-4 py-10 text-center", className)}>
       <span className="mb-1 grid size-10 place-items-center rounded-lg bg-secondary text-foreground-2 [&>svg]:size-5">
         {icon ?? <Inbox aria-hidden />}
       </span>
-      <p className="text-h3 text-foreground">{title}</p>
+      <Title className="text-h3 text-foreground">{title}</Title>
       {body ? <p className="max-w-[48ch] text-body text-foreground-2">{body}</p> : null}
       {action ? <div className="mt-2">{action}</div> : null}
     </div>
@@ -70,12 +74,12 @@ const ERROR_COPY: Record<ErrorCategory, { title: string; body: string }> = {
     body: "It may have been removed, or it may belong to another carrier.",
   },
   budget: {
-    title: "Demo budget reached",
-    body: "The agent pauses until the budget is raised; your data is unchanged.",
+    title: "The demo budget is used up",
+    body: "The agent pauses until the budget is raised. Your data and every payout are unchanged.",
   },
   job_cap: {
-    title: "This job was stopped",
-    body: "It used more than its hourly allowance. An admin can clear it on the Meta models page; your data is unchanged.",
+    title: "This job paused",
+    body: "It used more than its hourly budget. Nothing was lost or sent. An admin can resume it under Settings, Models and spend.",
   },
   unknown: {
     title: "Something failed and the cause is not known",
@@ -106,5 +110,44 @@ export function ErrorState({ category, title, body, retry, announce = true, clas
       <p className="max-w-[48ch] text-body text-foreground-2">{body ?? copy.body}</p>
       {retry ? <div className="mt-2">{retry}</div> : null}
     </div>
+  );
+}
+
+// The one link back from a dead end: Home is always on.
+function HomeLink() {
+  return (
+    <Link href="/" className={buttonVariants({ variant: "outline" })}>
+      Go to Home
+    </Link>
+  );
+}
+
+// Every switched-off page says the same thing in the same place: what is off, that nothing changed,
+// who can switch it on, and the way back. `name` is the feature as the menu says it ("Voice notes").
+export function FeatureOff({ name, plural = false, className }: { name: string; plural?: boolean; className?: string }) {
+  return (
+    <EmptyState
+      icon={<PowerOff aria-hidden />}
+      title={`${name} ${plural ? "are" : "is"} off for this carrier`}
+      body="Nothing here has changed. Ask your administrator to switch it on."
+      action={<HomeLink />}
+      titleAs="h2"
+      className={className}
+    />
+  );
+}
+
+// An address with no page behind it, or a page switched off before it reads anything. It is the
+// page's one heading, so it is the h1.
+export function PageNotFound({ className }: { className?: string }) {
+  return (
+    <EmptyState
+      icon={<SearchX aria-hidden />}
+      title="That page is not here"
+      body="The address may be wrong, or the page may be switched off for this carrier. Nothing changed."
+      action={<HomeLink />}
+      titleAs="h1"
+      className={className}
+    />
   );
 }

@@ -4,7 +4,7 @@ import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { DataTable, type Column } from "@/components/app/data-table";
 import { PageHeader } from "@/components/app/page-header";
-import { EmptyState, ErrorState } from "@/components/app/states";
+import { ErrorState, FeatureOff } from "@/components/app/states";
 import {
   claimRows,
   fieldLabel,
@@ -235,7 +235,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
   if (!flags.documentsEnabled) {
     body = (
       <Card>
-        <EmptyState title="Document reading is not switched on." />
+        <FeatureOff name="Document reading" />
       </Card>
     );
   } else if (readProblem) {

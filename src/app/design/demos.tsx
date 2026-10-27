@@ -42,11 +42,11 @@ export function ProposalGallery({ prefix }: { prefix: string }) {
   );
   const shown: { key: string; card: typeof ADVANCE_PROPOSAL; status: ProposalStatus; note: string }[] = [
     { key: "approved", card: PAYMENT_PROPOSAL, status: "approved", note: "Approved" },
-    { key: "executing", card: PAYMENT_PROPOSAL, status: "executing", note: "In progress" },
+    { key: "executing", card: PAYMENT_PROPOSAL, status: "executing", note: "Approving" },
     { key: "done", card: PAYMENT_PROPOSAL, status: "done", note: "Done" },
     { key: "rejected", card: MOVE_PROPOSAL, status: "rejected", note: "Rejected" },
     { key: "failed", card: ADVANCE_PROPOSAL, status: "failed", note: "Failed" },
-    { key: "unknown", card: ADVANCE_PROPOSAL, status: "unknown", note: "Outcome unknown" },
+    { key: "unknown", card: ADVANCE_PROPOSAL, status: "unknown", note: "Not confirmed yet" },
   ];
   return (
     <div className="grid gap-6">

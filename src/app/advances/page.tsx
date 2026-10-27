@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
@@ -15,9 +14,12 @@ import { formatLocalDate } from "@/lib/format/dates";
 import { statusLabel } from "@/lib/format/labels";
 import { SUBJECT_STATUSES } from "@/lib/money/types";
 import { withRequestTenant } from "@/lib/tenant/context";
-import { AdvanceFrame, problemOf, ReadFailed, type ReadProblem } from "./frame";
+import { AdvanceFrame, AdvancesOffPage, problemOf, ReadFailed, type ReadProblem } from "./frame";
 
 export const dynamic = "force-dynamic";
+
+const DESCRIPTION =
+  "Money a driver draws against pay already earned. The agent checks the pay rules and proposes; a person approves every payout.";
 
 // Every advance on file, newest first, with the latest payout's state and the load it is for. A
 // row opens the advance's record; the driver opens the driver's page. "Not armed" narrows the list
@@ -27,7 +29,7 @@ export default async function AdvancesPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  if (!advancesOn()) notFound();
+  if (!advancesOn()) return <AdvancesOffPage title="Advances" description={DESCRIPTION} />;
   const params = await searchParams;
   const raw = params.status;
   const status = isAdvanceStatus(raw) ? raw : null;
@@ -54,7 +56,7 @@ export default async function AdvancesPage({
     <AdvanceFrame shell={page.shell} title="Advances">
       <PageHeader
         title="Advances"
-        description="Money a driver draws against pay already earned. The agent checks the pay rules and proposes; a person approves every payout."
+        description={DESCRIPTION}
         actions={
           canRequest ? (
             <Link href="/advances/new" className={buttonVariants({ variant: "primary" })}>

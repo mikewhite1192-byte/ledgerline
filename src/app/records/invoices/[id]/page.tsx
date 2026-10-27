@@ -24,6 +24,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
   if (page.kind === "missing") {
     return (
       <SignedInPage tenant={page.shell} current="/invoices" title="Invoice">
+        <PageHeader title="Invoice" />
         <ErrorState category="not_found" />
       </SignedInPage>
     );

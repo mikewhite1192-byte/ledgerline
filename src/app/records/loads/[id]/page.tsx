@@ -23,6 +23,7 @@ export default async function LoadRecord({ params }: { params: Promise<{ id: str
   if (page.kind === "missing") {
     return (
       <SignedInPage tenant={page.shell} current="/invoices" title="Load">
+        <PageHeader title="Load" />
         <ErrorState category="not_found" />
       </SignedInPage>
     );

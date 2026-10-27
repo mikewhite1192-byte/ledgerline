@@ -144,6 +144,7 @@ export default async function Home({
       title="Home"
       signOut={signOut}
     >
+      <h1 className="sr-only">Home</h1>
       {flags.agentEnabled ? (
         <AgentChat
           initialTurns={agentTurns}

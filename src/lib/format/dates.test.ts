@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatInstant, formatLocalDate, formatPeriod } from "./dates";
+import { formatInstant, formatLocalDate, formatPeriod, zoneName } from "./dates";
 
 describe("formatLocalDate", () => {
   it("formats a calendar day from its digits, with no zone shift", () => {
@@ -69,5 +69,30 @@ describe("formatInstant", () => {
       );
     }
     expect(formatInstant("2028-02-29T23:59:59Z", "UTC")).toBe("Feb 29, 2028, 11:59 PM UTC");
+  });
+});
+
+describe("zoneName", () => {
+  const summer = new Date("2026-07-01T12:00:00Z");
+  const winter = new Date("2026-01-15T12:00:00Z");
+
+  it("names a carrier's zone the way people say it, the same in summer and winter", () => {
+    for (const at of [summer, winter]) {
+      expect(zoneName("America/New_York", at)).toBe("Eastern time");
+      expect(zoneName("America/Chicago", at)).toBe("Central time");
+      expect(zoneName("America/Denver", at)).toBe("Mountain time");
+      expect(zoneName("America/Los_Angeles", at)).toBe("Pacific time");
+    }
+  });
+
+  it("drops Standard from a zone with no daylight time", () => {
+    expect(zoneName("America/Phoenix", summer)).toBe("Mountain time");
+  });
+
+  it("reads UTC as UTC and an unknown id as the last part of it, never a raw id", () => {
+    expect(zoneName("UTC", summer)).toBe("UTC");
+    expect(zoneName("Etc/UTC", summer)).toBe("UTC");
+    expect(zoneName("Mars/Olympus_Mons", summer)).toBe("Olympus Mons time");
+    expect(zoneName("", summer)).toBe("Local time");
   });
 });

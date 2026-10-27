@@ -3,7 +3,7 @@ import Link from "next/link";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
-import { EmptyState } from "@/components/app/states";
+import { EmptyState, FeatureOff } from "@/components/app/states";
 import { Card, CardBody } from "@/components/ui/card";
 import { flags } from "@/config/flags";
 import { listNotePeriods, type NotePeriod } from "@/lib/driver-notes/view";
@@ -43,11 +43,7 @@ export default async function DriverNotesIndex() {
         />
         {!flags.driverNotesEnabled ? (
           <Card>
-            <EmptyState
-              icon={<NotebookPen aria-hidden />}
-              title="Driver notes are switched off"
-              body="Nothing is drafted or shown to drivers until they are switched on."
-            />
+            <FeatureOff name="Driver notes" plural />
           </Card>
         ) : periods.length === 0 ? (
           <Card>

@@ -1,4 +1,3 @@
-import { notFound } from "next/navigation";
 import { PageHeader } from "@/components/app/page-header";
 import { Card, CardBody } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
@@ -6,7 +5,7 @@ import { flags } from "@/config/flags";
 import { readDriverOptions, readShell, type DriverOption, type Shell } from "@/lib/advances/read";
 import { advancesOn } from "@/lib/advances/switches";
 import { withRequestTenant } from "@/lib/tenant/context";
-import { AdvanceFrame, problemOf, ReadFailed, type ReadProblem } from "../frame";
+import { AdvanceFrame, AdvancesOffPage, problemOf, ReadFailed, type ReadProblem } from "../frame";
 import { RequestForm } from "./request-form";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +13,7 @@ export const dynamic = "force-dynamic";
 // The request desk: pick a driver, an amount and a reason. The agent checks the pay rules and
 // puts a proposal in the chat; nothing is paid until a person approves it there.
 export default async function NewAdvancePage() {
-  if (!advancesOn()) notFound();
+  if (!advancesOn()) return <AdvancesOffPage title="New advance request" />;
   let page: { shell: Shell; drivers: DriverOption[] } | null = null;
   let problem: ReadProblem | null = null;
   try {

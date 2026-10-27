@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
@@ -13,7 +12,7 @@ import { voiceOn } from "@/lib/voice/http";
 import { readVoiceList, type VoiceListRow } from "@/lib/voice/read";
 import { categoryLabel, languageLabel } from "@/lib/voice/words";
 import { problemOf, ReadFailed, type ReadProblem } from "../advances/frame";
-import { VoiceFrame, VoiceStatusBadge } from "./frame";
+import { VoiceFrame, VoiceOffPage, VoiceStatusBadge } from "./frame";
 import { Uploader } from "./uploader";
 
 export const dynamic = "force-dynamic";
@@ -21,8 +20,11 @@ export const dynamic = "force-dynamic";
 // Drivers' voice notes, newest first, and the way to add one. A note is transcribed, screened, put
 // in English and sorted; a person hands it to the agent from its page. Dark while the voice switch
 // is off.
+const DESCRIPTION =
+  "A driver's voice note, in English or Spanish, transcribed and screened before any model reads it. The agent proposes; a person approves every payout.";
+
 export default async function VoiceNotesPage() {
-  if (!voiceOn()) notFound();
+  if (!voiceOn()) return <VoiceOffPage title="Voice notes" description={DESCRIPTION} />;
   let page: { shell: Shell; drivers: DriverOption[]; rows: VoiceListRow[] } | null = null;
   let problem: ReadProblem | null = null;
   try {
@@ -40,10 +42,7 @@ export default async function VoiceNotesPage() {
   const offReason = !flags.aiEnabled ? "The models are switched off, so new notes cannot be read right now." : null;
   return (
     <VoiceFrame shell={page.shell} title="Voice notes">
-      <PageHeader
-        title="Voice notes"
-        description="A driver's voice note, in English or Spanish, transcribed and screened before any model reads it. The agent proposes; a person approves every payout."
-      />
+      <PageHeader title="Voice notes" description={DESCRIPTION} />
       <Card>
         <CardHeader>
           <CardTitle>Add a voice note</CardTitle>
