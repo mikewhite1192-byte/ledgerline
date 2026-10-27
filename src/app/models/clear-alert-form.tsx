@@ -9,7 +9,7 @@ const MESSAGES: Record<ClearAlertCategory, string> = {
   invalid: "That alert could not be read. Reload the page and try again.",
   not_found: "That alert is not here. It may have been removed, or it may belong to another carrier.",
   forbidden: "Only an admin of this carrier can clear a stopped job.",
-  unreadable: "Could not reach the spend ledger. Nothing was cleared. Try again in a moment.",
+  unreadable: "Could not read the spend records. Nothing was cleared. Try again in a moment.",
 };
 
 export function ClearAlertForm({ alertId, job }: { alertId: string; job: string }) {

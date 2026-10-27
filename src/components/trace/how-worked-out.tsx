@@ -213,7 +213,7 @@ function Body({
       <EmptyState
         icon={<ListTree aria-hidden />}
         title="Nothing on file for this yet"
-        body="No model calls or gateway checks were recorded for it."
+        body="No model calls or safety checks were recorded for it."
         className="py-4"
       />
     );

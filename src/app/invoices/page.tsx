@@ -73,7 +73,7 @@ export default async function InvoicesPage({
       const queue = await readQueueView(q);
       const proposals = await readEngineProposalViews(q, "invoice_post");
       // The same gate as an agent's card: the auditor's line, its second confirm and override.
-      const audit = { on: flags.auditorEnabled, checking: false };
+      const audit = { on: flags.auditorEnabled, checking: false, timezone: shell.timezone };
       const cards: InvoiceCard[] = proposals.map((p) => ({
         card: proposalCardFrom(p, audit),
         verdict: p.auditorVerdict,
@@ -104,7 +104,7 @@ export default async function InvoicesPage({
     <SignedInPage tenant={view.shell} current="/invoices" title="Invoices">
       <PageHeader
         title="Invoices"
-        description="The rules engine prices each delivered load. Approve a card to invoice it."
+        description="Your rate rules price each delivered load. Approve a card to invoice it."
         actions={view.open ? <RefreshButton /> : undefined}
       />
       {view.open ? (
@@ -144,7 +144,7 @@ function ToInvoice({ cards, waiting }: { cards: InvoiceCard[]; waiting: QueueIte
       <EmptyState
         icon={<FileText aria-hidden />}
         title="Nothing to invoice"
-        body="Every delivered load is invoiced or waiting on something. Check Exceptions for loads the engine refused."
+        body="Every delivered load is invoiced or waiting on something. Check Exceptions for loads your rate rules could not price."
       />
     );
   }
@@ -162,7 +162,7 @@ function ToInvoice({ cards, waiting }: { cards: InvoiceCard[]; waiting: QueueIte
             { key: "delivered", header: "Delivered", cell: (r) => <Day value={r.deliveredOn} /> },
             {
               key: "total",
-              header: "Engine total",
+              header: "Invoice total",
               align: "right",
               cell: (r) => (r.amountCents === null ? "" : <Money cents={r.amountCents} tone="plain" />),
             },
@@ -176,10 +176,10 @@ function ToInvoice({ cards, waiting }: { cards: InvoiceCard[]; waiting: QueueIte
 function Exceptions({ rows }: { rows: QueueItemRow[] }) {
   return (
     <DataTable
-      caption="Delivered loads the engine cannot invoice yet"
+      caption="Delivered loads that cannot be invoiced yet"
       rows={rows}
       rowKey={(r) => r.loadId}
-      empty={{ title: "No exceptions", body: "Every delivered load has what the engine needs to invoice it." }}
+      empty={{ title: "No exceptions", body: "Every delivered load has what it needs to be invoiced." }}
       columns={[
         { key: "load", header: "Load", cell: (r) => <RecordLink table="loads" id={r.loadId}>{r.loadNumber}</RecordLink> },
         { key: "customer", header: "Customer", wrap: true, cell: (r) => r.customerName },

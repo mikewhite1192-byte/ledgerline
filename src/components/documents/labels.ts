@@ -133,7 +133,7 @@ export function noneSentence(reason: MatchNone["reason"], kind: DocumentKind | n
 
 const TABLE_LABELS: Record<MatchedTable, string> = {
   loads: "Load",
-  load_accessorials: "Accessorial",
+  load_accessorials: "Extra charge",
   pay_items: "Pay item",
   fuel_purchases: "Fuel purchase",
 };

@@ -49,7 +49,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
             items={[
               { label: "Amount", value: <Money cents={inv.amountCents} tone="plain" /> },
               { label: "Balance", value: <Money cents={inv.balanceCents} tone="plain" /> },
-              { label: "Aging", value: inv.bucket ? BUCKET_WORDS[inv.bucket] : "Nothing owed" },
+              { label: "How late", value: inv.bucket ? BUCKET_WORDS[inv.bucket] : "Nothing owed" },
               { label: "Issued", value: <Day value={inv.issuedOn} /> },
               { label: "Due", value: <Day value={inv.dueOn} /> },
               {
@@ -61,7 +61,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
                     "Opening balance"
                   ),
               },
-              { label: "QuickBooks", value: inv.qboTail ? `Posted, id ending ${inv.qboTail}` : "Not posted" },
+              { label: "QuickBooks", value: inv.qboTail ? `In QuickBooks, record ending ${inv.qboTail}` : "Not sent yet" },
             ]}
           />
         </CardBody>
@@ -70,7 +70,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
       {actions.check ? <CheckButton url={`/api/invoices/${encodeURIComponent(inv.id)}/reconcile`} /> : null}
       {inv.lines ? (
         <DataTable
-          caption="Lines, from the rules engine"
+          caption="Lines, from your rate rules"
           rows={inv.lines}
           rowKey={(l) => l.kind}
           columns={[

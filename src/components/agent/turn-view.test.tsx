@@ -121,7 +121,7 @@ describe("toMessages with a report", () => {
     // The disclosure of how it was worked out sits under the whole answer, its table included.
     expect(a.parts.map((p) => p.kind)).toEqual(["steps", "text", "table", "trace"]);
     expect(a.parts[3]).toEqual({ kind: "trace", turnId: "t-1" });
-    expect(a.parts[2]).toMatchObject({ kind: "table", table: { state: "loading", caption: "Receivables aging" } });
+    expect(a.parts[2]).toMatchObject({ kind: "table", table: { state: "loading", caption: "Open balances by how late they are" } });
   });
 
   it("shows the table and a CSV link with the same args once it is ready", () => {
@@ -335,8 +335,8 @@ describe("AgentChat with the auditor", () => {
   it("sends each waiting, unchecked proposal to the auditor once, then shows the stored verdict", async () => {
     const fetchFn = stubFetch(checked("pass"));
     render(<AgentChat initialTurns={[unflagged]} streamMode="poll" auditorOn />);
-    expect(screen.getByRole("status").textContent).toContain("Muse Wonder is checking...");
-    await waitFor(() => expect(screen.getByText("Checked by Muse Wonder: pass")).toBeTruthy());
+    expect(screen.getByRole("status").textContent).toContain("Running the second check...");
+    await waitFor(() => expect(screen.getByText("Second check passed")).toBeTruthy());
     const audits = fetchFn.mock.calls.filter(([url]) => url.endsWith("/audit"));
     expect(audits).toEqual([["/api/proposals/p-1/audit", expect.objectContaining({ method: "POST" })]]);
   });
@@ -353,7 +353,7 @@ describe("AgentChat with the auditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     await waitFor(() =>
       expect(
-        screen.getByText("This proposal was made before the auditor started. Ask the agent again for a fresh one."),
+        screen.getByText("This card was made before the second check started. Ask again for a fresh one."),
       ).toBeTruthy(),
     );
   });
@@ -378,7 +378,7 @@ describe("AgentChat with the auditor", () => {
   it("asks nothing while the auditor is off, and says so on the card", () => {
     const fetchFn = stubFetch(unflagged);
     render(<AgentChat initialTurns={[unflagged]} streamMode="poll" />);
-    expect(screen.getByText("Auditor off")).toBeTruthy();
+    expect(screen.getByText("Second check is off")).toBeTruthy();
     expect(fetchFn).not.toHaveBeenCalled();
   });
 

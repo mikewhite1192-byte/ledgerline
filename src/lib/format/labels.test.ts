@@ -7,6 +7,7 @@ import {
   lineKindLabel,
   modelCallStatusLabel,
   recordLabel,
+  stepLabel,
   statusLabel,
 } from "./labels";
 
@@ -99,10 +100,10 @@ describe("the rules engine's vocabularies", () => {
 });
 
 describe("recordLabel", () => {
-  it("names a short id in full and a long one by its tail", () => {
+  it("names a short id in full and a long one by its kind alone, never an id tail", () => {
     expect(recordLabel({ table: "loads", id: "L-10421" })).toBe("Load L-10421");
     expect(recordLabel({ table: "advances", id: "0b9f6a52-3c1d-4e8f-9a7b-5d2c1e7c41e2" })).toBe(
-      "Advance ending 7c41e2",
+      "Advance",
     );
     expect(recordLabel({ table: "pay_configs", id: "1" })).toBe("Pay rules 1");
     expect(recordLabel({ table: "odd_table", id: "9" })).toBe("Odd table 9");
@@ -116,11 +117,24 @@ describe("recordLabel", () => {
     expect(recordLabel({ table: "invoices", id: long }, " BR-INV-10001 ")).toBe("Invoice BR-INV-10001");
   });
 
-  it("falls back to the old label when the reference is missing or blank", () => {
+  it("falls back to the kind when the reference is missing or blank", () => {
     const long = "0b9f6a52-3c1d-4e8f-9a7b-5d2c1e7c41e2";
     for (const none of [undefined, null, "", "   "]) {
-      expect(recordLabel({ table: "loads", id: long }, none)).toBe("Load ending 7c41e2");
+      expect(recordLabel({ table: "loads", id: long }, none)).toBe("Load");
       expect(recordLabel({ table: "loads", id: "L-10421" }, none)).toBe("Load L-10421");
     }
+  });
+});
+
+describe("stepLabel", () => {
+  it("reads a saved step label with an internal word in plain words", () => {
+    expect(stepLabel("Reading the proposal and its evidence")).toBe("Reading the card and its evidence");
+    expect(stepLabel("Aging the receivables")).toBe("Sorting open invoices by how late they are");
+    expect(stepLabel("Preparing a proposal card")).toBe("Preparing a card");
+  });
+
+  it("leaves every other label as saved", () => {
+    expect(stepLabel("Reading loads")).toBe("Reading loads");
+    expect(stepLabel("")).toBe("");
   });
 });

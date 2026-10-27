@@ -6,12 +6,12 @@ import { Button } from "@/components/ui/button";
 import { outcomeLabel } from "@/lib/invoices/labels";
 import { postJson } from "./post-json";
 
-// What a post that went through reads as, by the ledger row's state.
+// What a post that went through reads as, by the payment record's state.
 const STATE_NOTE: Readonly<Record<string, string>> = {
-  confirmed: "Posted to QuickBooks.",
-  sent: "Sent to QuickBooks, waiting on the read-back.",
-  reserved: "Sent to QuickBooks, waiting on the read-back.",
-  unknown: "Sent to QuickBooks, waiting on the read-back.",
+  confirmed: "Sent and confirmed by QuickBooks.",
+  sent: "Sent to QuickBooks. Waiting for QuickBooks to confirm it.",
+  reserved: "Sent to QuickBooks. Waiting for QuickBooks to confirm it.",
+  unknown: "Sent to QuickBooks. Waiting for QuickBooks to confirm it.",
   // A failure may be a refusal or a record already there at another amount, so it claims neither.
   failed: "QuickBooks did not confirm it at this amount. Check QuickBooks before trying again.",
 };

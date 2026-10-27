@@ -63,13 +63,13 @@ function agreement(tree: FanoutTree): string | null {
   if (c.drivers_checked === 0) return lines[0];
   lines.push(
     c.engine === 0
-      ? "The rules engine found no problems for these drivers."
-      : `The second check also found ${c.agreed} of the engine's ${plural(c.engine, "problem", "problems")}.`,
+      ? "Your pay rules found no problems for these drivers."
+      : `The second check also found ${c.agreed} of the ${plural(c.engine, "problem", "problems")} your pay rules found.`,
   );
   lines.push(
     c.spark_only === 0
-      ? "It found nothing the engine did not."
-      : `It noticed ${c.spark_only} more the engine did not; ${c.spark_only === 1 ? "it is" : "they are"} under Needs a person.`,
+      ? "It found nothing your pay rules did not."
+      : `It noticed ${c.spark_only} more your pay rules did not; ${c.spark_only === 1 ? "it is" : "they are"} under Needs a person.`,
   );
   return lines.join(" ");
 }

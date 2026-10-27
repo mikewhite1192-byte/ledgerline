@@ -166,7 +166,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   sweep_items: "Pay sweep findings",
   sweep_runs: "Pay sweep runs",
   approval_batches: "Approve-all batches",
-  proposals: "Agent proposals",
+  proposals: "Agent cards",
   turns: "Agent turns",
   conversations: "Agent conversations",
 };
@@ -176,16 +176,17 @@ export const RESET_SQLSTATE = { noTenant: "LR001", notDemo: "LR002", refused: "L
 
 export type Refusal = { kind: "open" | "mismatch" | "flagged"; count: number };
 
-// Counts only, never a row's contents; the script prints these and the page shows them.
+// Counts only, never a row's contents; the script prints these and the page shows them, so they
+// use the page's words: a payment record, a card, waiting to send, not confirmed yet.
 export function refusalText(r: Refusal): string {
   switch (r.kind) {
     case "open":
-      return `${r.count} ledger row(s) still reserved, sent or unknown; settle them before a reset`;
+      return `${r.count} payment record(s) still waiting to send, sent or not confirmed yet; settle them before a reset`;
     case "mismatch":
-      return `${r.count} ledger row(s) failed as amount_mismatch; a person must review them before a reset`;
+      return `${r.count} payment record(s) failed because the amount did not match; a person must review them before a reset`;
     case "flagged":
       return (
-        `${r.count} proposal(s) a ledger row names carry a flag from an outside message; ` +
+        `${r.count} card(s) behind a payment record carry a flag from an outside message; ` +
         "a person must review them before a reset"
       );
   }

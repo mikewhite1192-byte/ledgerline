@@ -50,7 +50,7 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
               { label: "Credit left", value: <Money cents={p.creditCents} tone="plain" /> },
               { label: "Received", value: <Day value={p.receivedOn} /> },
               { label: "Method", value: METHOD_WORDS[p.method] ?? p.method },
-              { label: "QuickBooks", value: p.qboTail ? `Posted, id ending ${p.qboTail}` : "Not posted" },
+              { label: "QuickBooks", value: p.qboTail ? `In QuickBooks, record ending ${p.qboTail}` : "Not sent yet" },
             ]}
           />
         </CardBody>
@@ -59,7 +59,7 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
       {canCheck ? <CheckButton url={`/api/customer-payments/${encodeURIComponent(p.id)}/reconcile`} /> : null}
       {!confirmed && !p.invoicesPosted ? (
         <p className="text-body text-foreground-2">
-          Posting waits until every invoice this payment applies to is posted to QuickBooks.
+          This payment can be sent to QuickBooks once every invoice it applies to is there.
         </p>
       ) : null}
       <DataTable

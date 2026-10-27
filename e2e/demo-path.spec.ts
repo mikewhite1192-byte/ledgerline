@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { AUDIT_LINES, checkAuditLine } from "./audit-line";
+import { AUDIT_LINES, AUDITOR_OFF, checkAuditLine } from "./audit-line";
 import { APP_URL, E2E_CARRIER, E2E_LOGIN, FAKE_HOST } from "./env.local-mode";
 import { secretStep } from "./secret-step";
 
@@ -199,7 +199,7 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     await expect(card.getByRole("button", { name: /^(Approve|Override and approve)/ })).toBeVisible();
     const shown = (await auditLine.first().innerText()).trim();
     const audit = checkAuditLine(shown, { auditorOn: on.auditor, deployed: DEPLOYED });
-    const want = on.auditor ? "a verdict from the auditor" : "Auditor off";
+    const want = on.auditor ? "a second check result" : `"${AUDITOR_OFF}"`;
     expect(audit, `the auditor's line reads "${shown}", wanted ${want}`).not.toBe("wrong");
     // Deployed only: the shared demo budget is spent, so the auditor made no call and gave no
     // verdict. The card was checked above; the step is marked skipped, never passed.
@@ -212,7 +212,7 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     await expect(page.getByRole("heading", { name: "This pay week" })).toBeVisible();
     // The calls just made are in this week's count.
     if (on.agent) await expect(page.getByText("Model calls", { exact: true })).toBeVisible();
-    await expect(page.getByText(/^Demo budget used, across every carrier: /)).toBeVisible();
+    await expect(page.getByText(/^Spent so far this demo: /)).toBeVisible();
   });
 
   await test.step("6. sign out returns to the sign-in page", async () => {

@@ -54,7 +54,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const LINE_KIND_LABELS: Record<string, string> = {
   load_pay: "Load pay",
-  accessorial_pay: "Accessorial pay",
+  accessorial_pay: "Extra pay",
   reimbursement: "Reimbursement",
   fuel: "Fuel",
   other_deduction: "Other deduction",
@@ -94,7 +94,7 @@ const SOURCE_LABELS: Record<string, string> = {
   drivers: "Driver",
   loads: "Load",
   load_state_miles: "State miles",
-  load_accessorials: "Accessorial",
+  load_accessorials: "Extra charge",
   driver_days: "Driver day",
   fuel_purchases: "Fuel purchase",
   pay_configs: "Pay rules",
@@ -117,11 +117,26 @@ export function sourceLabel(table: string): string {
 const NAMED_BY_REFERENCE = new Set(["drivers", "customers"]);
 
 // A record's name for a link. With the record's own reference, the words a person uses: "Load
-// BR-L10244", or a driver's or customer's name alone. Without one: "Load L-10421", or "Load ending
-// 7c41e2" for a long generated id.
+// BR-L10244", or a driver's or customer's name alone. Without one: "Load L-10421" for a short id,
+// and the kind alone ("Load") for a long generated id, which means nothing to a person.
 export function recordLabel(ref: { table: string; id: string }, reference?: string | null): string {
   const kind = sourceLabel(ref.table);
   const named = reference?.trim();
   if (named) return NAMED_BY_REFERENCE.has(ref.table) ? named : `${kind} ${named}`;
-  return ref.id.length > 12 ? `${kind} ending ${ref.id.slice(-6)}` : `${kind} ${ref.id}`;
+  return ref.id.length > 12 ? kind : `${kind} ${ref.id}`;
+}
+
+// Step labels saved with a turn before the plain words, and the few fixed ones that still say an
+// internal word, read in plain words wherever a step is shown. The saved label is never changed.
+const STEP_LABEL_WORDS: Record<string, string> = {
+  "Reading the pay ledger": "Reading the pay records",
+  "Aging the receivables": "Sorting open invoices by how late they are",
+  "Building the receivables aging report": "Building the report of open balances by how late they are",
+  "Reading the proposal and its evidence": "Reading the card and its evidence",
+  "Asking Muse Wonder to form the proposal": "Asking Muse Wonder to form the card",
+  "Preparing a proposal card": "Preparing a card",
+};
+
+export function stepLabel(label: string): string {
+  return Object.hasOwn(STEP_LABEL_WORDS, label) ? STEP_LABEL_WORDS[label] : label;
 }

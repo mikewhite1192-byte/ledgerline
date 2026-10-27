@@ -37,7 +37,7 @@ export function RefreshButton() {
     const counts = reply.data.counts;
     if (reply.ok && isCounts(counts)) {
       const parts = [plural(counts.created, "new card", "new cards"), plural(counts.unchanged, "unchanged", "unchanged")];
-      if (counts.retired > 0) parts.push(plural(counts.retired, "retired", "retired"));
+      if (counts.retired > 0) parts.push(plural(counts.retired, "expired", "expired"));
       setNote(`${parts.join(", ")}.${counts.truncated ? " More loads wait for the next refresh." : ""}`);
     } else {
       setNote(outcomeLabel(reply.error));

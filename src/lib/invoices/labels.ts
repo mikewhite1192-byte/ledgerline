@@ -19,7 +19,7 @@ export const OUTCOME_LABELS: Readonly<Record<string, string>> = {
   not_connected: "Invoiced here. QuickBooks is not connected, so it was not posted.",
   not_configured: "Recorded here. QuickBooks is not set up for this yet, so it was not posted.",
   stale: "The load changed after this was proposed. Refresh the queue for a fresh total.",
-  superseded: "Replaced by a newer proposal.",
+  superseded: "Replaced by a newer card.",
   posted_outside: "This payment is already in QuickBooks, so it must be moved there by hand.",
   duplicate_ref: "A different payment already uses that reference.",
   over_applied: "An application is more than that invoice still owes, or more than the payment.",

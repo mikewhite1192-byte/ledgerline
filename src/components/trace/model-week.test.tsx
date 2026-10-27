@@ -15,12 +15,12 @@ describe("ModelWeekView", () => {
     render(<ModelWeekView week={summarizeModelWeek(empty)} />);
     expect(screen.getByText("No model calls this week")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Go to Home" }).getAttribute("href")).toBe("/");
-    expect(screen.getByText(/Oct 26 to Nov 1, 2026, in America\/Chicago time/)).toBeTruthy();
+    expect(screen.getByText(/Oct 26 to Nov 1, 2026, in Central time\./)).toBeTruthy();
     for (const name of ["Muse Spark", "Muse Wonder", "Muse Spark Open"]) {
       expect(screen.getByRole("heading", { name })).toBeTruthy();
     }
     expect(screen.getAllByText("No calls this week.")).toHaveLength(3);
-    expect(screen.queryByText("Gateway")).toBeNull();
+    expect(screen.queryByText("Safety check")).toBeNull();
   });
 
   it("shows each model's calls, spend and typical time, and the checks around them", () => {
@@ -51,7 +51,7 @@ describe("ModelWeekView", () => {
     expect(screen.getByRole("heading", { name: "SAM 3.1" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "Muse Image" })).toBeNull();
     expect(screen.queryByText(/Demo budget used/)).toBeNull();
-    expect(screen.getByText("Gateway")).toBeTruthy();
+    expect(screen.getByText("Safety check")).toBeTruthy();
     expect(screen.getByText("Screening")).toBeTruthy();
   });
 

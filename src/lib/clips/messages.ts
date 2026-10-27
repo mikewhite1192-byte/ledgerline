@@ -7,7 +7,7 @@ const MESSAGES: Readonly<Record<string, string>> = {
   disabled: "Dock clips are turned off.",
   too_large: "That file is over 700 KB. Trim it to 20 seconds or less and try again.",
   unsupported:
-    "That file is not a clip this page can take: an MP4 (H.264 or H.265) with a steady frame rate and an even width and height.",
+    "That file is not a clip this page can take: an MP4 video with a steady frame rate and an even width and height.",
   too_long: "A clip can be at most 20 seconds.",
   limit: "This carrier has reached today's clip limit. Try again tomorrow.",
   duplicate: "That clip was already uploaded.",
@@ -40,7 +40,7 @@ const STATUS_TEXT: Readonly<Record<ClipStatus, string>> = {
   redacted: "Blurred, not read yet",
   read: "Read",
   unreadable: "Needs a person to read it",
-  budget: "Waiting on the AI cap",
+  budget: "Waiting for budget",
 };
 
 export function clipStatusText(status: ClipStatus): string {

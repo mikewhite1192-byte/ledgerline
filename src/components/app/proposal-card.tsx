@@ -16,6 +16,7 @@ import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
 import { Money } from "./money";
 import { StatusBadge } from "./status-badge";
+import { Term } from "./term";
 
 export type ProposalStatus =
   | "proposed"
@@ -91,27 +92,29 @@ const STATUS_NOTE: Record<Exclude<ProposalStatus, "proposed">, string> = {
   rejected: "Rejected. Nothing changed.",
   failed: "Failed. Check the record before trying again.",
   expired: "Expired before anyone approved it. Nothing changed.",
-  unknown: "Sent, waiting on the read-back.",
+  unknown: "Sent. Waiting for it to be confirmed; it is checked again on its own, and nothing is paid twice.",
 };
 
 const RESUME_NOTE = "Approved, but it stopped before it finished. Resume picks it up where it stopped.";
 
+// The second check's line, in a clerk's words. The model that ran it is named on the trace
+// ("How this was worked out"), not here.
 const AUDIT_BADGE: Record<Exclude<ProposalAudit["state"], "checking">, { tone: BadgeTone; label: string }> = {
-  pass: { tone: "success", label: "Checked by Muse Wonder: pass" },
-  concerns: { tone: "warning", label: "Muse Wonder has concerns" },
-  block: { tone: "destructive", label: "Muse Wonder blocked this" },
-  unknown: { tone: "neutral", label: "Not checked" },
-  budget: { tone: "neutral", label: "Not checked: demo budget reached" },
-  off: { tone: "neutral", label: "Auditor off" },
+  pass: { tone: "success", label: "Second check passed" },
+  concerns: { tone: "warning", label: "Second check has concerns" },
+  block: { tone: "destructive", label: "Second check did not pass" },
+  unknown: { tone: "neutral", label: "Second check could not run" },
+  budget: { tone: "neutral", label: "Second check skipped: demo budget reached" },
+  off: { tone: "neutral", label: "Second check is off" },
 };
 
-const BUDGET_TEXT = "The auditor could not check this proposal. Your data is unchanged.";
+const BUDGET_TEXT = "The second check could not run on this request. Your data is unchanged.";
 
 function AuditLine({ audit }: { audit: ProposalAudit }) {
   if (audit.state === "checking") {
     return (
       <div role="status" className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
-        <span className="text-small text-foreground-2">Muse Wonder is checking...</span>
+        <span className="text-small text-foreground-2">Running the second check...</span>
         <Skeleton className="w-48 max-w-full" />
       </div>
     );
@@ -121,7 +124,9 @@ function AuditLine({ audit }: { audit: ProposalAudit }) {
   return (
     <div className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={badge.tone}>{badge.label}</Badge>
+        <Badge tone={badge.tone}>
+          <Term id="second-check">{badge.label}</Term>
+        </Badge>
       </div>
       {text && audit.state !== "pass" ? <p className="text-small text-foreground">{text}</p> : null}
       {audit.override ? (
@@ -263,7 +268,7 @@ export function ProposalCard({
           >
             <p className="text-body font-semibold text-foreground">
               {overriding
-                ? "Approve over Muse Wonder's block?"
+                ? "Approve even though the second check did not pass?"
                 : (confirmQuestion ?? (noAmount ? "Approve this?" : `Approve ${amount}?`))}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
