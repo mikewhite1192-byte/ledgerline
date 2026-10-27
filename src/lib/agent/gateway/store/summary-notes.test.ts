@@ -8,8 +8,10 @@ import { buildStateSummary } from "./summary";
 
 // The carrier notes section of the agent's summary (CARRIER-MEMORY). With the switch off the
 // summary is byte for byte what it was before notes existed, so the demo replay's first turn is
-// unchanged. With it on, the notes sit after the pay rules as labeled context, never add a figure
-// an answer may state, and never push the requests in the conversation below their own cap.
+// unchanged. With it on, the notes sit last as labeled context, so a tighter cap cuts them before
+// anything else; they never add a figure an answer may state, never push the requests in the
+// conversation below their own cap, and a note is named only when its own line reaches the model
+// whole.
 
 const SESSION: Session = { sub: "sub-test", email: "desk@example.test", tenantId: "11111111-1111-4111-8111-111111111111" };
 const CONVERSATION = "55555555-5555-4555-8555-555555555555";
@@ -27,7 +29,7 @@ const proposalId = (i: number) => `66666666-6666-4666-8666-${String(i).padStart(
 
 // A carrier with a conversation about one customer, one earlier turn, a page of requests and one
 // refused call. Pay rules cannot be read (no pay config), which the summary says in words.
-function fakeCarrier(proposals = 2): Queryable {
+function fakeCarrier(proposals = 2, earlier = "Asked which customers pay late"): Queryable {
   return {
     async query<T>(sql: string): Promise<T[]> {
       if (sql.includes("FROM tenants")) {
@@ -35,7 +37,7 @@ function fakeCarrier(proposals = 2): Queryable {
       }
       if (sql.includes("pay_configs")) return [] as T[];
       if (sql.includes("FROM conversations")) return [{ subject_table: "customers", subject_id: CUSTOMER }] as T[];
-      if (sql.includes("FROM turns")) return [{ seq: 1, summary: "Asked which customers pay late" }] as T[];
+      if (sql.includes("FROM turns")) return [{ seq: 1, summary: earlier }] as T[];
       if (sql.includes("FROM proposals p")) {
         return Array.from({ length: proposals }, (_, i) => ({
           id: proposalId(i),
@@ -130,7 +132,7 @@ describe("the carrier notes section", () => {
     expect(out.notesUsed).toEqual([]);
   });
 
-  it("flag on: the notes sit after the pay rules, labeled, and the turn names them", async () => {
+  it("flag on: the notes sit last, labeled, and the turn names them", async () => {
     flags.carrierMemoryEnabled = true;
     const notes = [note(1, { subjectKind: "carrier", subjectId: null, subjectCode: null, text: "Bill weekly" }), note(2)];
     const out = await buildStateSummary(fakeCarrier(), SESSION, CONVERSATION, NOW, CAP, "", notes);
@@ -139,8 +141,10 @@ describe("the carrier notes section", () => {
       `Carrier notes:\n${NOTES_LABEL}\n- Whole carrier: "Bill weekly"\n` +
         '- Customer BR-C03: "Pays about 45 days after due; send reminders early"',
     );
-    expect(out.text.indexOf("\n\nPay rules:\n")).toBeLessThan(out.text.indexOf("\n\nCarrier notes:\n"));
-    expect(out.text.indexOf("\n\nCarrier notes:\n")).toBeLessThan(out.text.indexOf("\n\nSubject:\n"));
+    expect(out.text.indexOf("\n\nRefused tool calls in this conversation:\n")).toBeLessThan(
+      out.text.indexOf("\n\nCarrier notes:\n"),
+    );
+    expect(out.text.endsWith(`\n\n${body}`)).toBe(true);
     expect(out.notesUsed).toEqual([notes[0].id, notes[1].id]);
     // Everything else is main's text with the section added.
     expect(out.text.replace(`\n\n${body}`, "")).toBe(MAIN_BYTES);
@@ -174,6 +178,48 @@ describe("the carrier notes section", () => {
       expect(section(out.text, title), title).toBe(section(before.text, title));
     }
     expect(out.text.length).toBeLessThanOrEqual(CAP);
+  });
+
+  it("a tighter cap cuts the notes first, and names only the notes whose lines reach the model whole", async () => {
+    flags.carrierMemoryEnabled = true;
+    const notes = [note(1, { text: "Bill weekly" }), note(2, { text: "Calls ahead before every pickup" })];
+    const first = `- Customer BR-C03: "Bill weekly"`;
+    const second = `- Customer BR-C03: "Calls ahead before every pickup"`;
+    const head = `${MAIN_BYTES}\n\nCarrier notes:\n${NOTES_LABEL}\n`;
+    const all = await buildStateSummary(fakeCarrier(), SESSION, CONVERSATION, NOW, CAP, "", notes);
+    expect(all.text).toBe(`${head}${first}\n${second}`);
+    expect(all.notesUsed).toEqual([notes[0].id, notes[1].id]);
+
+    // The cut ends inside the second note: the first is named, the second is not, and everything
+    // above the notes is main's text whole.
+    const inside = await buildStateSummary(fakeCarrier(), SESSION, CONVERSATION, NOW, head.length + first.length + 10, "", notes);
+    expect(inside.text.startsWith(`${head}${first}\n`)).toBe(true);
+    expect(inside.text.endsWith("...")).toBe(true);
+    expect(inside.notesUsed).toEqual([notes[0].id]);
+
+    // The cut ends right after the first note's line: its words reach the model whole.
+    const edge = await buildStateSummary(fakeCarrier(), SESSION, CONVERSATION, NOW, head.length + first.length + 3, "", notes);
+    expect(edge.text).toBe(`${head}${first}...`);
+    expect(edge.notesUsed).toEqual([notes[0].id]);
+
+    // The cut ends inside the first note: no note is named.
+    const none = await buildStateSummary(fakeCarrier(), SESSION, CONVERSATION, NOW, head.length + 8, "", notes);
+    expect(none.text.startsWith(MAIN_BYTES)).toBe(true);
+    expect(none.notesUsed).toEqual([]);
+  });
+
+  it("names a note by its own place in the section, never by the same words elsewhere", async () => {
+    flags.carrierMemoryEnabled = true;
+    const notes = [note(1, { subjectKind: "carrier", subjectId: null, subjectCode: null, text: "Bill weekly" })];
+    // An earlier turn's summary reads exactly as the note's line would.
+    const echo = 'Whole carrier: "Bill weekly"';
+    const bare = await buildStateSummary(fakeCarrier(2, echo), SESSION, CONVERSATION, NOW, CAP);
+    expect(bare.text).toContain(`\n- ${echo}\n`);
+    // A cap that cuts the notes section away whole leaves the echo in the text, and no note named.
+    const out = await buildStateSummary(fakeCarrier(2, echo), SESSION, CONVERSATION, NOW, bare.text.length + 6, "", notes);
+    expect(out.text).toContain(`\n- ${echo}\n`);
+    expect(out.text).not.toContain("Carrier notes:\n");
+    expect(out.notesUsed).toEqual([]);
   });
 
   it("a suggested note never appears in a summary", async () => {

@@ -15,7 +15,8 @@ import { STATE_HEADER } from "../../policy";
 // one exception is the carrier notes section (carrierMemoryEnabled), which holds only notes a
 // person of this carrier wrote or kept, one line each, in quotes, under a label that says they
 // are context and never a source for any amount; their figures are never added to cents, so an
-// amount stated only in a note is masked in the answer.
+// amount stated only in a note is masked in the answer. It is the last section, so the cut to the
+// turn's cap takes it first.
 
 export type SummarySection = { title: string; lines: string[]; maxChars: number };
 
@@ -26,14 +27,34 @@ function cut(text: string, max: number): string {
   return max <= ELLIPSIS.length ? text.slice(0, max) : text.slice(0, max - ELLIPSIS.length) + ELLIPSIS;
 }
 
-// Pure: sections in order, each cut to its own cap, the whole cut from the bottom to cap.
-export function assembleSummary(sections: readonly SummarySection[], cap: number): string {
+// Pure: the header, then each section with lines as it reads in the summary, cut to its own cap.
+function summaryParts(sections: readonly SummarySection[]): string[] {
   const parts = [STATE_HEADER];
   for (const s of sections) {
     if (s.lines.length === 0) continue;
     parts.push(cut([`${s.title}:`, ...s.lines].join("\n"), s.maxChars));
   }
-  return cut(parts.join("\n\n"), cap);
+  return parts;
+}
+
+// Pure: sections in order, each cut to its own cap, the whole cut from the bottom to cap.
+export function assembleSummary(sections: readonly SummarySection[], cap: number): string {
+  return cut(summaryParts(sections).join("\n\n"), cap);
+}
+
+// Pure: the lines of the last section that reach the summary whole once the whole is cut to cap,
+// by position: the section's own text up to where the cut ends, split into its lines. A line the
+// cut ends inside is not whole; nothing outside the section is looked at.
+function wholeLinesOfLast(sections: readonly SummarySection[], cap: number): string[] {
+  const parts = summaryParts(sections);
+  if (parts.length < 2) return [];
+  const joined = parts.join("\n\n");
+  const start = joined.length - parts[parts.length - 1].length;
+  const kept = joined.length <= cap ? joined.length : cap <= ELLIPSIS.length ? cap : cap - ELLIPSIS.length;
+  if (kept <= start) return [];
+  const lines = joined.slice(start, kept).split("\n");
+  // The last piece is whole only when the cut did not end inside it.
+  return kept < joined.length && joined[kept] !== "\n" ? lines.slice(0, -1) : lines;
 }
 
 const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -110,7 +131,7 @@ export function voiceNoteLines(row: VoiceRow | undefined, money: (n: number) => 
 // figure it states and the ids of the notes it holds. text: the person's message, which adds the
 // voice note section when it is the voice note page's hand-off sentence. notes: the carrier notes
 // read for this turn (the store reads them in their own transaction, so a failed read cannot end
-// this one); they add a section only while carrierMemoryEnabled is on, checked here again.
+// this one); they add the last section only while carrierMemoryEnabled is on, checked here again.
 export async function buildStateSummary(
   q: Queryable,
   _session: Session,
@@ -151,10 +172,6 @@ export async function buildStateSummary(
   }
   sections.push({ title: "Carrier", lines: header, maxChars: 300 });
   sections.push({ title: "Pay rules", lines: rules, maxChars: 600 });
-
-  // Context only: nothing here goes through money(), so no note figure joins cents.
-  const memory = flags.carrierMemoryEnabled && notes.length > 0 ? notesSection(notes, flags.carrierMemoryLimits) : null;
-  if (memory) sections.push(memory.section);
 
   const subject = await q.query<SubjectRow>(
     "SELECT subject_table, subject_id FROM conversations WHERE id = CAST($1 AS uuid)",
@@ -223,8 +240,19 @@ export async function buildStateSummary(
     maxChars: 600,
   });
 
+  // The carrier notes go last, so a tighter cap cuts them before anything above, the requests in
+  // this conversation included. Context only: nothing here goes through money(), so no note figure
+  // joins cents.
+  const memory = flags.carrierMemoryEnabled && notes.length > 0 ? notesSection(notes, flags.carrierMemoryLimits) : null;
+  if (memory && memory.section.lines.length > 0) sections.push(memory.section);
+
   const summary = assembleSummary(sections, cap);
-  // A note counts as used only when its whole line is in the text the model gets.
-  const notesUsed = memory ? memory.used.filter((_, i) => summary.includes(memory.section.lines[i + 1])) : [];
+  // A note counts as used only when its own line reaches the model whole, at its own place in the
+  // notes section (title, label, then one line per note).
+  let notesUsed: string[] = [];
+  if (memory && memory.section.lines.length > 0) {
+    const whole = wholeLinesOfLast(sections, cap);
+    notesUsed = memory.used.filter((_, i) => whole[i + 2] === memory.section.lines[i + 1]);
+  }
   return { text: summary, chars: summary.length, cents, notesUsed };
 }

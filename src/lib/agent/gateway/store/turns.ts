@@ -20,8 +20,8 @@ export type OpenTurnInput = {
   text: string;
   now: Date;
   summaryChars: number;
-  // The carrier notes read for this turn (openAgentTurn reads them while carrierMemoryEnabled is
-  // on); none otherwise.
+  // The carrier notes read for this turn (openAgentTurn reads them for an operator's own question
+  // while carrierMemoryEnabled is on); none otherwise.
   notes?: readonly NoteRow[];
 };
 

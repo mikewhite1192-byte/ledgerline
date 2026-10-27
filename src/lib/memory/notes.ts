@@ -21,8 +21,9 @@ export type NoteSubjectKind = "customer" | "driver" | "carrier";
 export type NoteStatus = "suggested" | "active";
 export const NOTE_SUBJECT_KINDS: readonly NoteSubjectKind[] = ["customer", "driver", "carrier"];
 
-// A web address, the same rule as the table's check plus a bare www. form.
-const WEB_ADDRESS = /https?:\/\/|\bwww\./i;
+// A web address: http:// or https:// in any case, or a bare www. that starts a word (the letters,
+// digits and underscore are spelled out, as in the table's check, so both refuse the same text).
+const WEB_ADDRESS = /https?:\/\/|(?:^|[^A-Za-z0-9_])www\./i;
 // Control characters (C0, DEL and C1) left after whitespace is folded; the table refuses them too.
 const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 
@@ -96,11 +97,11 @@ const isKind = (k: string): k is NoteSubjectKind => (NOTE_SUBJECT_KINDS as reado
 const isStatus = (s: string): s is NoteStatus => s === "suggested" || s === "active";
 const isWriter = (k: string): k is NoteRow["createdByKind"] => k === "person" || k === "agent" || k === "seed";
 
-// A row of any other shape is skipped, never shown or sent to the agent.
+// A row of any other shape is skipped. The words are not checked here: a row the table took always
+// shows on the page and can be removed there. The agent's line checks the words again (noteLine).
 function noteOf(r: NoteSqlRow): NoteRow | null {
   if (!isKind(r.subject_kind) || !isStatus(r.status) || !isWriter(r.created_by_kind)) return null;
   if ((r.subject_kind === "carrier") !== (r.subject_id === null)) return null;
-  if (!noteTextSchema.safeParse(r.text).success) return null;
   return {
     id: r.id,
     subjectKind: r.subject_kind,
@@ -157,6 +158,8 @@ export type NoteRefusal =
   | "subject_not_found"
   // The carrier already keeps the most notes it may.
   | "full"
+  // The same words about the same subject are already on file (carrier_notes_one_text).
+  | "duplicate"
   // No such note for this carrier (or not in the state the action needs).
   | "not_found";
 
@@ -166,8 +169,13 @@ const SUBJECT_TABLE: Record<"customer" | "driver", string> = { customer: "custom
 
 export type NewNote = { subjectKind: string; subjectId: string | null; text: string };
 
+// The subject id the table's one-note-per-words key uses for a whole-carrier note.
+const NO_SUBJECT = "00000000-0000-0000-0000-000000000000";
+
 // A person adds an active note. The subject must be a row of this carrier; the count is taken
-// under a per-carrier lock, so two adds at once cannot pass the cap together.
+// under a per-carrier lock, so two adds at once cannot pass the cap together. The same words about
+// the same subject are written once: a second add (a retry, a second press) writes nothing and
+// answers duplicate.
 export async function createNote(q: Queryable, session: Session, input: NewNote, now: Date): Promise<NoteWrite> {
   if (!flags.carrierMemoryEnabled) return { ok: false, refusal: "off" };
   const text = noteTextSchema.safeParse(input.text);
@@ -197,14 +205,16 @@ export async function createNote(q: Queryable, session: Session, input: NewNote,
                                 created_by_kind, created_by_sub, created_at, updated_at, updated_by_sub)
      VALUES (current_tenant_id(), $1, CAST($2 AS uuid), $3, 'active', 'person', 'person', $4,
              CAST($5 AS timestamptz), CAST($5 AS timestamptz), $4)
+     ON CONFLICT (tenant_id, subject_kind, (COALESCE(subject_id, CAST('${NO_SUBJECT}' AS uuid))), text) DO NOTHING
      RETURNING CAST(id AS text) AS id`,
     [kind, kind === "carrier" ? null : input.subjectId, text.data, session.sub, now.toISOString()],
   );
-  if (rows.length !== 1) throw new Error("note not written");
-  return { ok: true, id: rows[0].id };
+  return rows.length === 1 ? { ok: true, id: rows[0].id } : { ok: false, refusal: "duplicate" };
 }
 
-// A person changes an active note's words. A suggestion is kept first, then edited.
+// A person changes an active note's words. A suggestion is kept first, then edited. Words already
+// on file for the same subject are refused by the table's key (a unique violation, which the page's
+// action answers as duplicate); the transaction then ends and nothing changes.
 export async function updateNoteText(
   q: Queryable,
   session: Session,

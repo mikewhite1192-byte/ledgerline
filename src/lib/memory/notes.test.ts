@@ -6,6 +6,7 @@ import {
   createNote,
   deleteNote,
   keepNote,
+  listNotes,
   NOTES_LABEL,
   NOTES_TITLE,
   noteLabel,
@@ -65,7 +66,7 @@ const silent: Queryable = {
 };
 
 // A database that answers the create's reads and records every statement.
-function recording(answers: { subject?: boolean; count?: number }) {
+function recording(answers: { subject?: boolean; count?: number; inserted?: boolean }) {
   const seen: { sql: string; params: Param[] }[] = [];
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
@@ -75,7 +76,7 @@ function recording(answers: { subject?: boolean; count?: number }) {
       }
       if (sql.includes("pg_advisory_xact_lock")) return [{ ok: 1 }] as T[];
       if (sql.includes("count(*)")) return [{ n: String(answers.count ?? 0) }] as T[];
-      if (sql.startsWith("INSERT INTO carrier_notes")) return [{ id: NOTE }] as T[];
+      if (sql.startsWith("INSERT INTO carrier_notes")) return (answers.inserted === false ? [] : [{ id: NOTE }]) as T[];
       throw new Error(`unexpected query: ${sql}`);
     },
     async execute() {
@@ -94,13 +95,21 @@ describe("noteTextSchema", () => {
     expect(noteTextSchema.safeParse("   ").success).toBe(false);
     expect(noteTextSchema.safeParse("x".repeat(300)).success).toBe(true);
     expect(noteTextSchema.safeParse("x".repeat(301)).success).toBe(false);
+    // Counted by code point, as the table's char_length counts them.
+    expect(noteTextSchema.safeParse("\u{1f600}".repeat(300)).success).toBe(true);
+    expect(noteTextSchema.safeParse("\u{1f600}".repeat(301)).success).toBe(false);
   });
 
   it("refuses a web address in any case, and a bare www. form", () => {
     expect(noteTextSchema.safeParse("see https://example.test/pay").success).toBe(false);
     expect(noteTextSchema.safeParse("see HTTP://example.test").success).toBe(false);
     expect(noteTextSchema.safeParse("see www.example.test").success).toBe(false);
+    expect(noteTextSchema.safeParse("WWW.example.test").success).toBe(false);
+    expect(noteTextSchema.safeParse("(www.example.test)").success).toBe(false);
+    expect(noteTextSchema.safeParse("caf\u00e9www.example.test").success).toBe(false);
     expect(noteTextSchema.safeParse("Calls ahead on Fridays").success).toBe(true);
+    // www. inside a word is not a web address, the same as the table's check.
+    expect(noteTextSchema.safeParse("awww.ok").success).toBe(true);
   });
 
   it("refuses a control character that is not whitespace", () => {
@@ -129,6 +138,56 @@ describe("noteLine", () => {
     expect(noteLine(note({ status: "suggested" }))).toBeNull();
     expect(noteLine(note({ subjectCode: null }))).toBeNull();
     expect(noteLine(note({ text: "see https://example.test" }))).toBeNull();
+  });
+});
+
+describe("listNotes", () => {
+  // A row as the page's read returns it.
+  const row = (over: Record<string, string | null> = {}) => ({
+    id: NOTE,
+    subject_kind: "customer",
+    subject_id: CUSTOMER,
+    subject_name: "Harbor Foods",
+    subject_code: "BR-C03",
+    text: "Calls ahead",
+    status: "active",
+    source_kind: "person",
+    source_turn_id: null,
+    created_by_kind: "person",
+    created_by_email: "desk@example.test",
+    created_at: "2026-10-20T12:00:00.000Z",
+    updated_at: "2026-10-20T12:00:00.000Z",
+    ...over,
+  });
+  const answering = (rows: object[]): Queryable => ({
+    async query<T>(): Promise<T[]> {
+      return rows as T[];
+    },
+    async execute() {
+      throw new Error("the page only reads");
+    },
+  });
+
+  it("shows every row the table took, even words the app would refuse now, so it can be removed", async () => {
+    const odd = row({ text: "see https://example.test" });
+    const out = await listNotes(answering([odd]));
+    expect(out.map((n) => n.text)).toEqual(["see https://example.test"]);
+    // The agent never reads those words.
+    expect(noteLine(out[0])).toBeNull();
+  });
+
+  it("skips a row of another shape", async () => {
+    const out = await listNotes(
+      answering([
+        row({ subject_kind: "loads" }),
+        row({ status: "archived" }),
+        row({ created_by_kind: "robot" }),
+        row({ subject_kind: "carrier" }),
+        row({ subject_id: null }),
+        row({ id: "44444444-4444-4444-8444-444444444444" }),
+      ]),
+    );
+    expect(out.map((n) => n.id)).toEqual(["44444444-4444-4444-8444-444444444444"]);
   });
 });
 
@@ -246,5 +305,14 @@ describe("the store's writes", () => {
     const insert = seen.find((s) => s.sql.startsWith("INSERT"));
     expect(insert?.sql).toContain("'active', 'person', 'person'");
     expect(insert?.params).toEqual(["customer", CUSTOMER, "Calls ahead", SESSION.sub, NOW.toISOString()]);
+  });
+
+  it("answer duplicate when the same words about the same subject are already on file", async () => {
+    flags.carrierMemoryEnabled = true;
+    const { q, seen } = recording({ count: 3, inserted: false });
+    const input = { subjectKind: "customer", subjectId: CUSTOMER, text: "Calls ahead" };
+    expect(await createNote(q, SESSION, input, NOW)).toEqual({ ok: false, refusal: "duplicate" });
+    const insert = seen.find((s) => s.sql.startsWith("INSERT"));
+    expect(insert?.sql).toMatch(/ON CONFLICT \(tenant_id, subject_kind, \(COALESCE\(subject_id, .+\)\), text\) DO NOTHING/);
   });
 });

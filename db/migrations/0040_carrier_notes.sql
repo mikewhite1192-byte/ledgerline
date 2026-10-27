@@ -5,8 +5,13 @@
 -- allows. Everything is behind carrierMemoryEnabled (off): with the switch off nothing reads or
 -- writes these rows.
 --
--- A note is 1 to 300 characters of plain text on one line: no web address and no control
--- characters, so a note cannot pose as a link or start a new line inside the agent's summary.
+-- A note is 1 to 300 characters of plain text on one line: no web address (https:// or a bare
+-- www.) and no control characters, so a note cannot pose as a link or start a new line inside the
+-- agent's summary. The text check refuses every text the app's rule refuses (noteTextSchema in
+-- src/lib/memory/notes.ts) and accepts every text the app writes: both count characters as code
+-- points, a text of nothing but spaces of any kind is refused, and every class is spelled out
+-- rather than taken from the database's locale. So the page can show, and remove, every row the
+-- table holds.
 -- Status: suggested (written by the agent, seen by nobody yet) or active (written by a person, or
 -- a suggestion a person kept). Only active notes reach the agent. Removing a note is a real
 -- DELETE.
@@ -32,7 +37,9 @@ CREATE TABLE carrier_notes (
   text                     text NOT NULL CHECK (
                              char_length(text) BETWEEN 1 AND 300
                              AND text !~* 'https?://'
-                             AND text !~ '[[:cntrl:]]'
+                             AND text !~ '(^|[^A-Za-z0-9_])[Ww][Ww][Ww]\.'
+                             AND text !~ '[\u0001-\u001f\u007f-\u009f]'
+                             AND text ~ '[^ \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]'
                              AND text = btrim(text)
                            ),
   status                   text NOT NULL CHECK (status IN ('suggested', 'active')),
@@ -60,6 +67,13 @@ CREATE TABLE carrier_notes (
 );
 
 CREATE INDEX carrier_notes_subject ON carrier_notes (tenant_id, subject_kind, subject_id, status, created_at DESC);
+
+-- One note per subject and words: the same add sent twice writes one row (the app answers the
+-- second with "already on file"). A whole-carrier note has no subject id, so the zero id stands in
+-- for it here. Suggestions and kept notes share the key: the agent cannot suggest what the office
+-- already keeps, and keeping a suggestion can never collide with a note already kept.
+CREATE UNIQUE INDEX carrier_notes_one_text ON carrier_notes
+  (tenant_id, subject_kind, COALESCE(subject_id, CAST('00000000-0000-0000-0000-000000000000' AS uuid)), text);
 
 ALTER TABLE carrier_notes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE carrier_notes FORCE ROW LEVEL SECURITY;

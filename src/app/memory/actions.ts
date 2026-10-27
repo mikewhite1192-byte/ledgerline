@@ -15,6 +15,7 @@ export type NoteActionCategory =
   | "invalid"
   | "subject_not_found"
   | "full"
+  | "duplicate"
   | "not_found"
   | "forbidden"
   | "unreadable";
@@ -27,12 +28,17 @@ export type NoteActionResult = { ok: true } | { ok: false; category: NoteActionC
 // carrier may manage its notes. Signed out: withRequestTenant redirects to /sign-in, and that
 // redirect is rethrown. The arguments come from the browser, so each is checked as unknown.
 
+// A unique violation: the words are already on file for that subject (carrier_notes_one_text), as
+// when an edit gives a note the words of another. The transaction has ended; nothing changed.
+const UNIQUE_VIOLATION = "23505";
+
 async function run(write: (q: Queryable, session: Session) => Promise<NoteWrite>): Promise<NoteActionResult> {
   try {
     const result = await withRequestTenant(write);
     return result.ok ? { ok: true } : { ok: false, category: result.refusal };
   } catch (err) {
     if (err instanceof ForbiddenError) return { ok: false, category: "forbidden" };
+    if (err instanceof DbError && err.sqlState === UNIQUE_VIOLATION) return { ok: false, category: "duplicate" };
     if (err instanceof DbError) return { ok: false, category: "unreadable" };
     throw err;
   } finally {

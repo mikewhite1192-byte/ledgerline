@@ -29,9 +29,11 @@ vi.mock("@/lib/db", async (importOriginal) => ({
   getDb: mocks.getDb,
 }));
 
-type Carrier = { member?: boolean; found?: boolean; failing?: boolean };
+// taken: a write meets words already on file, either written nothing (an add) or refused by the
+// table's key (an edit, or an add that raced another).
+type Carrier = { member?: boolean; found?: boolean; failing?: boolean; taken?: "nothing" | "refused" };
 
-function carrier({ member = true, found = true, failing = false }: Carrier = {}) {
+function carrier({ member = true, found = true, failing = false, taken }: Carrier = {}) {
   const writes: { sql: string; params: Param[] }[] = [];
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
@@ -41,7 +43,9 @@ function carrier({ member = true, found = true, failing = false }: Carrier = {})
       if (sql.includes("pg_advisory_xact_lock")) return [{ ok: 1 }] as T[];
       if (sql.includes("count(*)")) return [{ n: "4" }] as T[];
       if (/^(INSERT|UPDATE|DELETE)/.test(sql)) {
+        if (taken === "refused") throw new DbError("sql", "23505");
         writes.push({ sql, params });
+        if (taken === "nothing") return [] as T[];
         return (found ? [{ id: NOTE }] : []) as T[];
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -141,6 +145,16 @@ describe("the Memory page's actions", () => {
     expect(await editNoteAction(NOTE, "Calls ahead")).toEqual({ ok: false, category: "not_found" });
     expect(await keepNoteAction(NOTE)).toEqual({ ok: false, category: "not_found" });
     expect(await removeNoteAction(NOTE)).toEqual({ ok: false, category: "not_found" });
+  });
+
+  it("report words already on file for the same subject as a duplicate", async () => {
+    const writes = carrier({ taken: "nothing" });
+    expect(await addNoteAction(`customer:${CUSTOMER}`, "Calls ahead")).toEqual({ ok: false, category: "duplicate" });
+    expect(writes.map((w) => w.sql.split(" ")[0])).toEqual(["INSERT"]);
+    carrier({ taken: "refused" });
+    expect(await editNoteAction(NOTE, "Calls ahead")).toEqual({ ok: false, category: "duplicate" });
+    expect(await addNoteAction("carrier", "Bill weekly")).toEqual({ ok: false, category: "duplicate" });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/memory");
   });
 
   it("refuse a login with no membership, writing nothing", async () => {

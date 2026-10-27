@@ -5,15 +5,17 @@ import { dbTurnStore, openAgentTurn, readAgentTurnTrace } from "../agent/gateway
 import type { Session } from "../auth/claims";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db, Param } from "../db/types";
-import { createNote, deleteNote, keepNote, listNotes, updateNoteText } from "./notes";
+import type { Db, Param, Queryable, TenantDb } from "../db/types";
+import { createNote, deleteNote, keepNote, listNotes, noteTextSchema, updateNoteText } from "./notes";
 
 // Carrier memory against a real database, as the app's role: each carrier sees and changes only
-// its own notes, the database refuses a note the app would refuse, the cap holds, and a question
-// carries only the active notes about its own customers and drivers plus the newest three about
-// the whole carrier, names them on its turn, and shows a removed one as removed in its trace. With
-// the switch off nothing is read and the turn names none. Only this file's three tenants are made,
-// and they are removed after (their rows go by cascade).
+// its own notes, the database refuses exactly the notes the app refuses, the same words about the
+// same subject are kept once, the cap holds, and a question carries only the active notes about
+// its own customers and drivers plus the newest three about the whole carrier, names them on its
+// turn, and shows a removed one as removed in its trace. Only an operator's own question reads
+// notes; a turn that does not ask gets no section and no extra transaction. With the switch off
+// nothing is read and the turn names none. Only this file's three tenants are made, and they are
+// removed after (their rows go by cascade).
 
 const A = randomUUID();
 const B = randomUUID();
@@ -106,12 +108,26 @@ const countOf = async (tenantId: string) => {
   return Number(row.n);
 };
 
-async function openIn(tenantId: string, conversationId: string, minute: number) {
+// An operator's own question by default (readNotes), as the chat, the advance desk and a voice
+// note's hand-off open it; readNotes false is a sweep or fan-out check turn.
+async function openIn(
+  tenantId: string,
+  conversationId: string,
+  minute: number,
+  { readNotes = true, db = app }: { readNotes?: boolean; db?: TenantDb } = {},
+) {
   const turnId = randomUUID();
   const opened = await openAgentTurn(
     session(tenantId),
-    { conversationId, turnId, text: "What should I know about this customer?", now: at(minute), summaryChars: 10_000 },
-    { db: app, clock: () => at(minute) },
+    {
+      conversationId,
+      turnId,
+      text: "What should I know about this customer?",
+      now: at(minute),
+      summaryChars: 10_000,
+      ...(readNotes ? { readNotes: true } : {}),
+    },
+    { db, clock: () => at(minute) },
   );
   if ("refused" in opened) throw new Error(`refused: ${opened.refused}`);
   await dbTurnStore(session(tenantId), { db: app, clock: () => at(minute) }).finishTurn(turnId, {
@@ -240,7 +256,17 @@ describe("carrier memory in the database", () => {
         ),
       );
     const person = "subject_kind, text, status, source_kind, created_by_kind, created_by_sub";
-    for (const text of ["See https://example.test", "Line one\nline two", " Padded", "", "x".repeat(301)]) {
+    for (const text of [
+      "See https://example.test",
+      "See www.example.test",
+      "Line one\nline two",
+      "Next\u0085line",
+      " Padded",
+      "\u00a0",
+      "",
+      "x".repeat(301),
+      "\u{1f600}".repeat(301),
+    ]) {
       expect(await insert(person, "'carrier', $1, 'active', 'person', 'person', 'sub-x'", [text]), JSON.stringify(text)).toBe("23514");
     }
     // A whole-carrier note names no subject, and a customer note names one.
@@ -270,6 +296,118 @@ describe("carrier memory in the database", () => {
       ),
     );
     expect(grant.notes).toBe(true);
+  });
+
+  it("refuses in the database exactly what the app refuses, and takes every note the app writes", async () => {
+    // Whether the table takes a person's whole-carrier note with these words; a taken row is removed.
+    const tableTakes = async (text: string) => {
+      try {
+        const [row] = await app.withTenant(A, (q) =>
+          q.query<{ id: string }>(
+            `INSERT INTO carrier_notes (tenant_id, subject_kind, text, status, source_kind, created_by_kind, created_by_sub)
+             VALUES (current_tenant_id(), 'carrier', $1, 'active', 'person', 'person', 'sub-x') RETURNING CAST(id AS text) AS id`,
+            [text],
+          ),
+        );
+        await app.withTenant(A, (q) => q.execute("DELETE FROM carrier_notes WHERE id = CAST($1 AS uuid)", [row.id]));
+        return true;
+      } catch (err) {
+        if ((err as { sqlState?: string }).sqlState === "23514") return false;
+        throw err;
+      }
+    };
+    const tricky = [
+      "Calls ahead",
+      "a  b",
+      "x".repeat(300),
+      "x".repeat(301),
+      "\u{1f600}".repeat(300),
+      "\u{1f600}".repeat(301),
+      `${"x".repeat(299)}\u{1f600}`,
+      `${"x".repeat(300)}\u{1f600}`,
+      "www.example.test",
+      "see www.example.test",
+      "WWW.example.test",
+      "wWw.x",
+      "(www.x)",
+      "awww.x",
+      "_www.x",
+      "1www.x",
+      "caf\u00e9www.x",
+      "\u017fwww.x",
+      "\u212awww.x",
+      "\u{1f600}www.x",
+      "x\u00a0www.y",
+      "https://x",
+      "HTTP://x",
+      "hTtPs://x",
+      "http:/x",
+      "a\u00a0b",
+      "a\u3000b",
+      "a\u200bb",
+      "\u180e",
+      "\u00a0",
+      "\u3000",
+      "\ufeff",
+      "\u2028",
+      " \u00a0 ",
+      "a\u0085b",
+      "a\u009fb",
+      "a\u007fb",
+      "bell\u0007",
+      "a\tb",
+      "a\nb",
+      " a",
+      "a ",
+      " ",
+      "",
+    ];
+    for (const text of tricky) {
+      const label = JSON.stringify(text);
+      const parsed = noteTextSchema.safeParse(text);
+      const takes = await tableTakes(text);
+      // A row the table took is one the app reads as a note, so the page shows it.
+      if (takes) expect(parsed.success, label).toBe(true);
+      // What the app writes, the table takes.
+      if (parsed.success) expect(await tableTakes(parsed.data), label).toBe(true);
+      // For words the app writes as they are, the two agree exactly.
+      if (text.replace(/\s+/g, " ").trim() === text) expect(takes, label).toBe(parsed.success);
+    }
+    expect(await countOf(A)).toBe(0);
+  });
+
+  it("keeps the same words about the same subject once, suggested or kept", async () => {
+    flags.carrierMemoryEnabled = true;
+    const [first, second] = CUSTOMERS[A];
+    const add = (subjectKind: string, subjectId: string | null, text: string, minute: number) =>
+      app.withTenant(A, (q) => createNote(q, session(A), { subjectKind, subjectId, text }, at(minute)));
+    const duplicate = { ok: false, refusal: "duplicate" };
+
+    const calls = await added(A, "customer", first, "Calls ahead", 1);
+    // The same add sent twice, and the same words with other spacing, write one row.
+    expect(await add("customer", first, "Calls ahead", 2)).toEqual(duplicate);
+    expect(await add("customer", first, "  Calls \n ahead ", 3)).toEqual(duplicate);
+    await added(A, "carrier", null, "Bill weekly", 4);
+    expect(await add("carrier", null, "Bill weekly", 5)).toEqual(duplicate);
+    expect(await countOf(A)).toBe(2);
+    // The same words about another subject are another note.
+    await added(A, "customer", second, "Calls ahead", 6);
+    await added(A, "carrier", null, "Calls ahead", 7);
+    // A suggestion shares the key: the agent cannot suggest what is kept, and a person's add of
+    // words already suggested writes nothing.
+    expect(await sqlStateOf(suggested(A, "customer", first, "Calls ahead", 8))).toBe("23505");
+    await suggested(A, "driver", DRIVER[A], "Prefers texts", 9);
+    expect(await add("driver", DRIVER[A], "Prefers texts", 10)).toEqual(duplicate);
+    // An edit to words already on file for the subject is refused by the key, and changes nothing.
+    const late = await added(A, "customer", first, "Pays late", 11);
+    expect(await sqlStateOf(app.withTenant(A, (q) => updateNoteText(q, session(A), late, "Calls ahead", at(12))))).toBe("23505");
+    const notes = await app.withTenant(A, (q) => listNotes(q));
+    expect(notes.find((n) => n.id === late)?.text).toBe("Pays late");
+    expect(notes.find((n) => n.id === calls)?.text).toBe("Calls ahead");
+    expect(await countOf(A)).toBe(6);
+
+    await admin.withTenant(A, (q) => q.execute("DELETE FROM carrier_notes WHERE tenant_id = current_tenant_id()"));
+    expect(await countOf(A)).toBe(0);
   });
 
   it("holds the cap per carrier", async () => {
@@ -356,5 +494,33 @@ describe("carrier memory in the database", () => {
         ),
       ),
     ).toBe("23514");
+  });
+
+  it("reads notes only for an operator's own question: any other turn gets no section and no extra transaction", async () => {
+    flags.carrierMemoryEnabled = true;
+    const counted = () => {
+      let n = 0;
+      const db: TenantDb = {
+        withTenant<T>(tenantId: string, fn: (q: Queryable) => Promise<T>) {
+          n += 1;
+          return app.withTenant(tenantId, fn);
+        },
+      };
+      return { db, transactions: () => n };
+    };
+    const conversation = await conversationAbout(M, "customers", CUSTOMERS[M][1]);
+
+    const other = counted();
+    const swept = await openIn(M, conversation, 30, { readNotes: false, db: other.db });
+    expect(other.transactions()).toBe(1);
+    expect(swept.summary).not.toContain("Carrier notes");
+    expect(await notesUsedOf(M, swept.turnId)).toEqual([]);
+
+    const own = counted();
+    const asked = await openIn(M, conversation, 31, { db: own.db });
+    expect(own.transactions()).toBe(2);
+    expect(asked.summary).toContain("\n\nCarrier notes:\n");
+    expect(asked.summary).toContain("Bill detention the same week");
+    expect((await notesUsedOf(M, asked.turnId)).length).toBeGreaterThan(0);
   });
 });

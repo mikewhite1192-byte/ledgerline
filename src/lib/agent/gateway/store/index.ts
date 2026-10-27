@@ -57,6 +57,12 @@ export function dbTurnStore(session: Session, deps: StoreDeps = {}): TurnStore {
   };
 }
 
+// What a caller of openAgentTurn passes: the turn, and readNotes for one of the operator's own
+// questions (the chat, the advance desk, a voice note's hand-off), whose model reads the summary.
+// Only those read the carrier notes; a sweep or fan-out check turn leaves it out and gets no notes
+// section and no extra transaction.
+export type AgentTurnInput = Omit<OpenTurnInput, "notes"> & { readNotes?: boolean };
+
 // The carrier notes for a turn, in their own short read-only transaction before the turn opens:
 // a failed read inside the turn's transaction would end it, and a notes problem must never stop a
 // question. Off (carrierMemoryEnabled), nothing is read. A read that fails gives no notes and one
@@ -64,7 +70,7 @@ export function dbTurnStore(session: Session, deps: StoreDeps = {}): TurnStore {
 async function readTurnNotes(
   db: TenantDb,
   session: Session,
-  input: OpenTurnInput,
+  input: Omit<OpenTurnInput, "notes">,
 ): Promise<readonly NoteRow[] | undefined> {
   if (!flags.carrierMemoryEnabled) return undefined;
   try {
@@ -79,13 +85,14 @@ async function readTurnNotes(
 
 export async function openAgentTurn(
   session: Session,
-  input: OpenTurnInput,
+  input: AgentTurnInput,
   deps: StoreDeps = {},
 ): Promise<OpenedTurn | { refused: OpenTurnRefusal }> {
   const db = deps.db ?? getDb();
-  const notes = await readTurnNotes(db, session, input);
+  const { readNotes, ...turn } = input;
+  const notes = readNotes === true ? await readTurnNotes(db, session, turn) : undefined;
   try {
-    return await withAgentTenant(db, session, (q) => openTurn(q, session, { ...input, notes }));
+    return await withAgentTenant(db, session, (q) => openTurn(q, session, { ...turn, notes }));
   } catch (err) {
     // Two submits raced for the same turn id or the same next seq.
     if (err instanceof DbError && err.sqlState === UNIQUE_VIOLATION) return { refused: "busy" };

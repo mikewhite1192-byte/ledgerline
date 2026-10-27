@@ -33,6 +33,7 @@ const MESSAGES: Record<NoteActionCategory | "unknown", string> = {
   invalid: "A note is 1 to 300 characters of plain words, with no web address. Nothing was saved.",
   subject_not_found: "That customer or driver is not on file for this carrier. Pick another and try again.",
   full: "This carrier keeps the most notes it can. Remove a note first.",
+  duplicate: "That note is already on file, word for word, for the same customer, driver or carrier. Nothing new was saved.",
   not_found: "That note is not here anymore. Someone may have changed it. Reload the page.",
   forbidden: "This login cannot change notes for this carrier.",
   unreadable: "Could not reach your records. Nothing was lost or sent. Try again in a moment.",
