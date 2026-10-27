@@ -93,6 +93,29 @@ describe("Paystub", () => {
     expect(within(alert).getByRole("link", { name: "Fuel purchase FP-1" }).getAttribute("href")).toBe("#fuel_purchases-FP-1");
   });
 
+  it("shows a record the link rules do not know as plain text, without a link", () => {
+    const lines = [
+      {
+        seq: 1,
+        kind: "load_pay",
+        label: "Load pay, 1 load",
+        amountCents: 240_000,
+        sources: [
+          { table: "users", id: "U-1" },
+          { table: "loads", id: "L-1" },
+          { table: "trips", id: "T-9" },
+        ],
+      },
+    ];
+    const exception = { category: "unmatched_fuel", label: "A fuel purchase has no load", sources: [{ table: "users", id: "U-2" }] };
+    // No hrefFor: the default record links refuse the unknown tables.
+    render(<Paystub {...props} lines={lines} exceptions={[exception]} hrefFor={undefined} />);
+    expect(screen.getByText("Load pay, 1 load").closest("a")).toBeNull();
+    expect(screen.getByText("Trips T-9").closest("a")).toBeNull();
+    expect(screen.getByText("Users U-2").closest("a")).toBeNull();
+    expect(screen.getByRole("link", { name: "Load L-1" }).getAttribute("href")).toBe("/records/loads/L-1");
+  });
+
   it("puts a single rule over each subtotal and a double rule under the net", () => {
     render(<Paystub {...props} />);
     expect(screen.getByText("$2,580.00").closest("td")?.className).toContain("rule-single");

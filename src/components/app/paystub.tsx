@@ -4,7 +4,7 @@ import { InlineAlert } from "@/components/ui/inline-alert";
 import { cn } from "@/lib/cn";
 import { formatPeriod } from "@/lib/format/dates";
 import { recordLabel } from "@/lib/format/labels";
-import { recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
+import { hrefOrNull, recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
 import { Money } from "./money";
 import { StatusBadge } from "./status-badge";
 
@@ -17,6 +17,7 @@ export type PaystubLine = {
   sources: SourceRef[];
 };
 
+// The four totals must come from the rules engine's settlement result (settleDriver), never built by hand.
 export type PaystubProps = {
   driver: { name: string; code: string; workerType: "company" | "owner_operator" };
   period: { start: string; end: string };
@@ -37,24 +38,37 @@ const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } a
 function LineLabel({ line, hrefFor }: { line: PaystubLine; hrefFor: HrefFor }) {
   const [first, ...rest] = line.sources;
   if (!first) return <span className="text-foreground">{line.label}</span>;
+  // A record the link rules do not know shows as its name, without a link.
+  const href = hrefOrNull(hrefFor, first);
   return (
     <>
-      <Link href={hrefFor(first)} className="text-foreground underline decoration-border underline-offset-4 hover:decoration-current">
-        {line.label}
-      </Link>
+      {href ? (
+        <Link href={href} className="text-foreground underline decoration-border underline-offset-4 hover:decoration-current">
+          {line.label}
+        </Link>
+      ) : (
+        <span className="text-foreground">{line.label}</span>
+      )}
       {rest.length > 0 ? (
         <details className="group mt-0.5 text-small">
           <summary className="w-fit cursor-pointer list-none text-link underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">
             and {rest.length} more {rest.length === 1 ? "record" : "records"}
           </summary>
           <ul className="mt-1 grid gap-0.5">
-            {rest.map((s) => (
-              <li key={`${s.table}:${s.id}`}>
-                <Link href={hrefFor(s)} className="text-link underline-offset-4 hover:underline">
-                  {recordLabel(s)}
-                </Link>
-              </li>
-            ))}
+            {rest.map((s) => {
+              const restHref = hrefOrNull(hrefFor, s);
+              return (
+                <li key={`${s.table}:${s.id}`}>
+                  {restHref ? (
+                    <Link href={restHref} className="text-link underline-offset-4 hover:underline">
+                      {recordLabel(s)}
+                    </Link>
+                  ) : (
+                    <span className="text-foreground-2">{recordLabel(s)}</span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </details>
       ) : null}
@@ -125,11 +139,18 @@ export function Paystub({
           {exceptions.map((x, i) => (
             <InlineAlert key={`${x.category}:${i}`} tone="warning" title={x.label}>
               <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-small">
-                {x.sources.map((s) => (
-                  <Link key={`${s.table}:${s.id}`} href={hrefFor(s)} className="text-foreground underline underline-offset-4">
-                    {recordLabel(s)}
-                  </Link>
-                ))}
+                {x.sources.map((s) => {
+                  const href = hrefOrNull(hrefFor, s);
+                  return href ? (
+                    <Link key={`${s.table}:${s.id}`} href={href} className="text-foreground underline underline-offset-4">
+                      {recordLabel(s)}
+                    </Link>
+                  ) : (
+                    <span key={`${s.table}:${s.id}`} className="text-foreground">
+                      {recordLabel(s)}
+                    </span>
+                  );
+                })}
               </span>
             </InlineAlert>
           ))}

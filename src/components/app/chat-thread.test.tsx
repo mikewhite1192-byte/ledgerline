@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatThread, type ChatMessage } from "./chat-thread";
 
@@ -66,5 +66,30 @@ describe("ChatThread", () => {
     render(<ChatThread messages={thread} composer={{}} />);
     expect(screen.getByRole("article", { name: "Pay a $200.00 advance" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Approve $200.00" })).toBeTruthy();
+  });
+
+  it("shows a proposal's record the link rules do not know as plain text instead of failing", () => {
+    const messages: ChatMessage[] = [
+      {
+        id: "a2",
+        role: "agent",
+        parts: [
+          {
+            kind: "proposal",
+            proposal: {
+              id: "p-2",
+              title: "Move a payment",
+              impact: { cents: 0, direction: "none" },
+              reasons: [{ text: "Applied twice", source: { table: "users", id: "U-1" } }],
+              status: "proposed",
+            },
+          },
+        ],
+      },
+    ];
+    render(<ChatThread messages={messages} composer={{}} />);
+    const card = screen.getByRole("article", { name: "Move a payment" });
+    expect(within(card).getByText("Users U-1").closest("a")).toBeNull();
+    expect(within(card).queryAllByRole("link")).toHaveLength(0);
   });
 });

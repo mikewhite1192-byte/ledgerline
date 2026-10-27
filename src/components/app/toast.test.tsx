@@ -30,9 +30,11 @@ function setup(...inputs: ToastInput[]) {
     </ToastProvider>,
   );
   const region = screen.getByRole("status", { name: "Notifications" });
+  // The whole stack: the polite region and, beside it, the errors.
+  const stack = region.parentElement as HTMLElement;
   const fire = (title: string) => fireEvent.click(screen.getByRole("button", { name: title }));
-  const shown = () => within(region).queryAllByRole("listitem").map((li) => li.querySelector("p")?.textContent);
-  return { region, fire, shown };
+  const shown = () => within(stack).queryAllByRole("listitem").map((li) => li.querySelector("p")?.textContent);
+  return { region, stack, fire, shown };
 }
 
 describe("toasts", () => {
@@ -52,11 +54,11 @@ describe("toasts", () => {
   });
 
   it("keeps a destructive toast until it is dismissed", () => {
-    const { region, fire, shown } = setup({ title: "Payment failed", tone: "destructive" });
+    const { stack, fire, shown } = setup({ title: "Payment failed", tone: "destructive" });
     fire("Payment failed");
     act(() => vi.advanceTimersByTime(TOAST_TIMEOUT_MS * 10));
     expect(shown()).toEqual(["Payment failed"]);
-    fireEvent.click(within(region).getByRole("button", { name: "Dismiss" }));
+    fireEvent.click(within(stack).getByRole("button", { name: "Dismiss" }));
     expect(shown()).toEqual([]);
   });
 
@@ -121,6 +123,35 @@ describe("toasts", () => {
     for (const t of tones) fire(t.title);
     expect(TOAST_LIMIT).toBe(3);
     expect(shown()).toEqual(["two", "three", "four"]);
+  });
+
+  it("a destructive toast survives three later successes", () => {
+    const later = ["one", "two", "three"].map((title) => ({ title, tone: "success" as const }));
+    const { fire, shown } = setup({ title: "Payment failed", tone: "destructive" }, ...later);
+    fire("Payment failed");
+    for (const t of later) fire(t.title);
+    expect(shown()).toHaveLength(TOAST_LIMIT);
+    expect(shown()).toContain("Payment failed");
+    expect(shown()).not.toContain("one");
+  });
+
+  it("announces an error at once as an alert and other news politely, each only once", () => {
+    const { region, fire } = setup(
+      { title: "Payment failed", tone: "destructive" },
+      { title: "Saved", tone: "success" },
+      { title: "Fuel feed is late", tone: "warning" },
+    );
+    fire("Payment failed");
+    fire("Saved");
+    fire("Fuel feed is late");
+    const alerts = screen.getAllByRole("alert");
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].textContent).toContain("Payment failed");
+    // Not inside any polite live region, so a screen reader reads it once.
+    expect(region.contains(alerts[0])).toBe(false);
+    expect(alerts[0].parentElement?.closest("[aria-live]")).toBeNull();
+    expect(within(region).getByText("Saved")).toBeTruthy();
+    expect(within(region).getByText("Fuel feed is late")).toBeTruthy();
   });
 });
 

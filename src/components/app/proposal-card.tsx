@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 import { recordLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
-import { recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
+import { hrefOrNull, recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
 import { Money } from "./money";
 import { StatusBadge } from "./status-badge";
 
@@ -83,6 +83,8 @@ export function ProposalCard({
   const cancelRef = useRef<HTMLButtonElement>(null);
   const opened = useRef(false);
   const amount = formatCents(Math.abs(impact.cents));
+  // With nothing paid or received, the buttons and the question leave the amount out.
+  const noAmount = impact.cents === 0 || impact.direction === "none";
   const shown = impact.direction === "out" ? -Math.abs(impact.cents) : Math.abs(impact.cents);
 
   useEffect(() => {
@@ -110,32 +112,36 @@ export function ProposalCard({
       <div className="px-4 pt-3 pb-4 sm:px-5">
         <p className="text-small font-semibold text-foreground-2">Why</p>
         <ul className="mt-1.5 grid gap-1.5">
-          {reasons.map((r, i) => (
-            <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-body">
-              <span className="text-foreground">{r.text}</span>
-              {r.source ? (
-                <Link
-                  href={hrefFor(r.source)}
-                  className="ml-auto text-small text-link underline-offset-4 hover:underline"
-                >
-                  {recordLabel(r.source)}
-                </Link>
-              ) : null}
-            </li>
-          ))}
+          {reasons.map((r, i) => {
+            const href = r.source ? hrefOrNull(hrefFor, r.source) : null;
+            return (
+              <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-body">
+                <span className="text-foreground">{r.text}</span>
+                {r.source && href ? (
+                  <Link href={href} className="ml-auto text-small text-link underline-offset-4 hover:underline">
+                    {recordLabel(r.source)}
+                  </Link>
+                ) : r.source ? (
+                  // A record the link rules do not know shows as its name, without a link.
+                  <span className="ml-auto text-small text-foreground-2">{recordLabel(r.source)}</span>
+                ) : null}
+              </li>
+            );
+          })}
         </ul>
         {sources.length > 0 ? (
           <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-small text-muted-foreground">
             <span>Also read:</span>
-            {sources.map((s) => (
-              <Link
-                key={`${s.table}:${s.id}`}
-                href={hrefFor(s)}
-                className="text-link underline-offset-4 hover:underline"
-              >
-                {recordLabel(s)}
-              </Link>
-            ))}
+            {sources.map((s) => {
+              const href = hrefOrNull(hrefFor, s);
+              return href ? (
+                <Link key={`${s.table}:${s.id}`} href={href} className="text-link underline-offset-4 hover:underline">
+                  {recordLabel(s)}
+                </Link>
+              ) : (
+                <span key={`${s.table}:${s.id}`}>{recordLabel(s)}</span>
+              );
+            })}
           </p>
         ) : null}
       </div>
@@ -148,7 +154,7 @@ export function ProposalCard({
             className="flex flex-col gap-3 border-t border-border bg-secondary px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5"
           >
             <p className="text-body font-semibold text-foreground">
-              {confirmQuestion ?? `Approve ${amount}?`}
+              {confirmQuestion ?? (noAmount ? "Approve this?" : `Approve ${amount}?`)}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button ref={cancelRef} variant="outline" disabled={pending} onClick={() => setConfirming(false)}>
@@ -171,7 +177,7 @@ export function ProposalCard({
                 setConfirming(true);
               }}
             >
-              Approve {amount}
+              {noAmount ? "Approve" : `Approve ${amount}`}
             </Button>
           </div>
         )

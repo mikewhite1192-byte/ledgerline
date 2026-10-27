@@ -19,6 +19,10 @@ export const TOAST_TIMEOUT_MS = 6000;
 export const TOAST_LIMIT = 3;
 const STAYS: ReadonlySet<ToastTone> = new Set(["warning", "destructive"]);
 
+function leavesOnItsOwn(t: ToastInput): boolean {
+  return !STAYS.has(t.tone ?? "neutral") && !t.action;
+}
+
 const ICONS = { neutral: Info, success: CircleCheck, warning: TriangleAlert, destructive: CircleAlert };
 const ICON_COLOR = {
   neutral: "text-info",
@@ -82,8 +86,7 @@ export function ToastView({
 }
 
 function TimedToast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) => void }) {
-  const tone = item.tone ?? "neutral";
-  const timed = !STAYS.has(tone) && !item.action;
+  const timed = leavesOnItsOwn(item);
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const paused = hovered || focused;
@@ -94,6 +97,23 @@ function TimedToast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numb
     return () => clearTimeout(timer);
   }, [item.id, timed, paused, onDismiss]);
   const action = item.action;
+  const view = (
+    <ToastView
+      {...item}
+      action={
+        action
+          ? {
+              label: action.label,
+              onClick: () => {
+                action.onClick();
+                onDismiss(item.id);
+              },
+            }
+          : undefined
+      }
+      onDismiss={() => onDismiss(item.id)}
+    />
+  );
   return (
     <li
       className="motion-safe:animate-rise"
@@ -105,21 +125,8 @@ function TimedToast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numb
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
       }}
     >
-      <ToastView
-        {...item}
-        action={
-          action
-            ? {
-                label: action.label,
-                onClick: () => {
-                  action.onClick();
-                  onDismiss(item.id);
-                },
-              }
-            : undefined
-        }
-        onDismiss={() => onDismiss(item.id)}
-      />
+      {/* An error announces itself at once; it sits outside the polite region so it is read once. */}
+      {item.tone === "destructive" ? <div role="alert">{view}</div> : view}
     </li>
   );
 }
@@ -130,24 +137,38 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const toast = useCallback((t: ToastInput) => {
     const id = next.current++;
-    // At most three: the oldest makes room for the newest.
-    setItems((prev) => [...prev, { ...t, id }].slice(-TOAST_LIMIT));
+    // At most three. The oldest toast that would leave on its own makes room first, so later good
+    // news never pushes out an error or a toast waiting on an action; only when every toast stays
+    // does the oldest of all make room.
+    setItems((prev) => {
+      const all = [...prev, { ...t, id }];
+      if (all.length <= TOAST_LIMIT) return all;
+      const timed = all.findIndex(leavesOnItsOwn);
+      const drop = timed === -1 ? 0 : timed;
+      return all.filter((_, i) => i !== drop);
+    });
   }, []);
   const dismiss = useCallback((id: number) => {
     setItems((prev) => prev.filter((i) => i.id !== id));
   }, []);
 
+  const news = items.filter((i) => i.tone !== "destructive");
+  const errors = items.filter((i) => i.tone === "destructive");
+
   return (
     <ToastContext.Provider value={toast}>
       {children}
-      <div
-        role="status"
-        aria-live="polite"
-        aria-label="Notifications"
-        className="pointer-events-none fixed inset-x-4 bottom-4 z-50 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:w-[22rem]"
-      >
-        <ol className="grid gap-2">
-          {items.map((item) => (
+      <div className="pointer-events-none fixed inset-x-4 bottom-4 z-50 sm:inset-x-auto sm:right-6 sm:bottom-6 sm:w-[22rem]">
+        <div role="status" aria-live="polite" aria-label="Notifications">
+          <ol className="grid gap-2">
+            {news.map((item) => (
+              <TimedToast key={item.id} item={item} onDismiss={dismiss} />
+            ))}
+          </ol>
+        </div>
+        {/* Errors stay until dismissed, so they sit nearest the corner where nothing above them moves them. */}
+        <ol aria-label="Errors" className={cn("grid gap-2", news.length > 0 && errors.length > 0 && "mt-2")}>
+          {errors.map((item) => (
             <TimedToast key={item.id} item={item} onDismiss={dismiss} />
           ))}
         </ol>

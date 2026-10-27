@@ -103,14 +103,43 @@ describe("ProposalCard", () => {
     expect(screen.queryByText("Not paid")).toBeNull();
   });
 
-  it("shows the amount a no-money move carries and names it on Approve", () => {
+  it("shows the amount a no-money move carries but leaves it off Approve", () => {
     render(<ProposalCard {...card} impact={{ cents: 185_000, direction: "none" }} confirmQuestion={undefined} />);
     expect(screen.getByText("No money moves")).toBeTruthy();
     const amount = screen.getByText("$1,850.00");
     expect(amount.hasAttribute("data-negative")).toBe(false);
-    expect(button("Approve $1,850.00")).toBeTruthy();
-    fireEvent.click(button("Approve $1,850.00")!);
-    expect(screen.getByText("Approve $1,850.00?")).toBeTruthy();
+    expect(button("Approve $1,850.00")).toBeNull();
+    fireEvent.click(button("Approve")!);
+    expect(screen.getByText("Approve this?")).toBeTruthy();
+  });
+
+  it("never asks to approve $0.00", () => {
+    render(<ProposalCard {...card} impact={{ cents: 0, direction: "out" }} confirmQuestion={undefined} />);
+    expect(button("Approve $0.00")).toBeNull();
+    fireEvent.click(button("Approve")!);
+    expect(screen.getByText("Approve this?")).toBeTruthy();
+    expect(screen.queryByText("Approve $0.00?")).toBeNull();
+  });
+
+  it("keeps a given question even when no money moves", () => {
+    render(
+      <ProposalCard {...card} impact={{ cents: 0, direction: "none" }} confirmQuestion="Move it to INV-2?" initialConfirming />,
+    );
+    expect(screen.getByText("Move it to INV-2?")).toBeTruthy();
+    expect(screen.queryByText("Approve this?")).toBeNull();
+  });
+
+  it("shows a record the link rules do not know as plain text, without a link", () => {
+    render(
+      <ProposalCard
+        {...card}
+        reasons={[{ text: "Applied twice", source: { table: "users", id: "U-1" } }]}
+        sources={[{ table: "loads", id: "" }]}
+      />,
+    );
+    expect(screen.getByText("Users U-1").closest("a")).toBeNull();
+    expect(screen.getByText("Load").closest("a")).toBeNull();
+    expect(screen.queryAllByRole("link")).toHaveLength(0);
   });
 
   it("says nothing changed when a proposal is rejected", () => {
