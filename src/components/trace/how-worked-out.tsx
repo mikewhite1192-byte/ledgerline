@@ -9,7 +9,7 @@ import { VisuallyHidden } from "@/components/ui/visually-hidden";
 import { traceLines, traceTotals, type TraceLine } from "@/lib/trace/format";
 import type { TurnTrace } from "@/lib/trace/types";
 import { cn } from "@/lib/cn";
-import { recordLabel } from "@/lib/format/labels";
+import { recordNamer } from "@/lib/format/labels";
 import { hrefOrNull, recordHref, type HrefFor } from "@/lib/records/href";
 
 // "How this was worked out": under an answer (the whole turn) or a proposal card (that card's
@@ -57,7 +57,7 @@ export function traceAnchor(turnId: string, proposalId?: string): string {
   return `trace-${proposalId ?? turnId}`;
 }
 
-function Line({ line, hrefFor }: { line: TraceLine; hrefFor: HrefFor }) {
+function Line({ line, hrefFor, name }: { line: TraceLine; hrefFor: HrefFor; name: ReturnType<typeof recordNamer> }) {
   return (
     <li className="grid gap-1 border-l-2 border-border pl-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -73,7 +73,7 @@ function Line({ line, hrefFor }: { line: TraceLine; hrefFor: HrefFor }) {
         <ul className="flex flex-wrap gap-x-3 gap-y-1" aria-label="Records it read">
           {line.refs.map((ref) => {
             const href = hrefOrNull(hrefFor, ref);
-            const label = recordLabel(ref);
+            const label = name(ref);
             return (
               <li key={`${ref.table}:${ref.id}`} className="text-small">
                 {href ? (
@@ -219,11 +219,13 @@ function Body({
     );
   }
   const totals = traceTotals(state.trace, proposalId);
+  // One name per record across every step, so a record read twice reads the same both times.
+  const name = recordNamer(lines.flatMap((l) => l.refs));
   return (
     <div className="grid gap-3">
       <ol className="grid gap-3" aria-label="Steps, in order">
         {lines.map((line) => (
-          <Line key={line.key} line={line} hrefFor={hrefFor} />
+          <Line key={line.key} line={line} hrefFor={hrefFor} name={name} />
         ))}
       </ol>
       {totals ? <p className="border-t border-border pt-2 text-small text-muted-foreground tabular-nums">{totals}</p> : null}

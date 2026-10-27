@@ -212,7 +212,12 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     await expect(page.getByRole("heading", { name: "This pay week" })).toBeVisible();
     // The calls just made are in this week's count.
     if (on.agent) await expect(page.getByText("Model calls", { exact: true })).toBeVisible();
-    await expect(page.getByText(/^Spent so far this demo: /)).toBeVisible();
+    // The whole line, in dollars: with a budget set ("$0.42 of $2.00.") or without one.
+    const spent = page.getByText(/^Spent so far this demo: /);
+    await expect(spent).toBeVisible();
+    await expect(spent).toHaveText(
+      /^Spent so far this demo: \$\d{1,3}(,\d{3})*\.\d{2}( of \$\d{1,3}(,\d{3})*\.\d{2}|, with no budget set, so every call is refused)\.$/,
+    );
   });
 
   await test.step("6. sign out returns to the sign-in page", async () => {

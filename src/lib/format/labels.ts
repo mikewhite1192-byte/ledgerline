@@ -116,14 +116,42 @@ export function sourceLabel(table: string): string {
 // Monique Vasquez").
 const NAMED_BY_REFERENCE = new Set(["drivers", "customers"]);
 
+// An id longer than this is a generated one, which means nothing to a person.
+const LONG_ID = 12;
+
+type RecordRef = { table: string; id: string };
+
 // A record's name for a link. With the record's own reference, the words a person uses: "Load
 // BR-L10244", or a driver's or customer's name alone. Without one: "Load L-10421" for a short id,
-// and the kind alone ("Load") for a long generated id, which means nothing to a person.
-export function recordLabel(ref: { table: string; id: string }, reference?: string | null): string {
+// and the kind alone ("Load") for a long generated id.
+export function recordLabel(ref: RecordRef, reference?: string | null): string {
   const kind = sourceLabel(ref.table);
   const named = reference?.trim();
   if (named) return NAMED_BY_REFERENCE.has(ref.table) ? named : `${kind} ${named}`;
-  return ref.id.length > 12 ? kind : `${kind} ${ref.id}`;
+  return ref.id.length > LONG_ID ? kind : `${kind} ${ref.id}`;
+}
+
+// Names for the records one block shows side by side (a card, a trace, one paystub line). A record
+// named by its kind alone would read the same as another of its kind, so when the block holds two
+// or more different ones, each also says its place among them ("Load 1 of 2", "Load 2 of 2"). The
+// links can then be told apart without showing a database id, and one record keeps one name.
+export function recordNamer(refs: readonly RecordRef[]): (ref: RecordRef) => string {
+  const byKind = new Map<string, string[]>();
+  const keyOf = (r: RecordRef) => `${r.table}:${r.id}`;
+  for (const r of refs) {
+    if (r.id.length <= LONG_ID) continue;
+    const kind = sourceLabel(r.table);
+    const keys = byKind.get(kind) ?? [];
+    if (!keys.includes(keyOf(r))) keys.push(keyOf(r));
+    byKind.set(kind, keys);
+  }
+  return (ref) => {
+    const label = recordLabel(ref);
+    if (ref.id.length <= LONG_ID) return label;
+    const keys = byKind.get(sourceLabel(ref.table)) ?? [];
+    const at = keys.indexOf(keyOf(ref));
+    return keys.length > 1 && at >= 0 ? `${label} ${at + 1} of ${keys.length}` : label;
+  };
 }
 
 // Step labels saved with a turn before the plain words, and the few fixed ones that still say an

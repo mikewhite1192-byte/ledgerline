@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { OVERRIDE_REASON, overrideReasonOf } from "@/lib/agent/auditor/words";
 import { cn } from "@/lib/cn";
-import { recordLabel } from "@/lib/format/labels";
+import { recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
 import { Money } from "./money";
@@ -171,6 +171,8 @@ export function ProposalCard({
   const opened = useRef(false);
   const cancelled = useRef(false);
   const amount = formatCents(Math.abs(impact.cents));
+  // One name per record across the reasons and "Also read", so two loads never both read "Load".
+  const sourceName = recordNamer([...reasons.flatMap((r) => (r.source ? [r.source] : [])), ...sources]);
   // With nothing paid or received, the buttons and the question leave the amount out.
   const noAmount = impact.cents === 0 || impact.direction === "none";
   const shown = impact.direction === "out" ? -Math.abs(impact.cents) : Math.abs(impact.cents);
@@ -224,11 +226,11 @@ export function ProposalCard({
                 <span className="text-foreground">{r.text}</span>
                 {r.source && href ? (
                   <Link href={href} className="ml-auto text-small text-link underline-offset-4 hover:underline">
-                    {recordLabel(r.source)}
+                    {sourceName(r.source)}
                   </Link>
                 ) : r.source ? (
                   // A record the link rules do not know shows as its name, without a link.
-                  <span className="ml-auto text-small text-foreground-2">{recordLabel(r.source)}</span>
+                  <span className="ml-auto text-small text-foreground-2">{sourceName(r.source)}</span>
                 ) : null}
               </li>
             );
@@ -241,10 +243,10 @@ export function ProposalCard({
               const href = hrefOrNull(hrefFor, s);
               return href ? (
                 <Link key={`${s.table}:${s.id}`} href={href} className="text-link underline-offset-4 hover:underline">
-                  {recordLabel(s)}
+                  {sourceName(s)}
                 </Link>
               ) : (
-                <span key={`${s.table}:${s.id}`}>{recordLabel(s)}</span>
+                <span key={`${s.table}:${s.id}`}>{sourceName(s)}</span>
               );
             })}
           </p>

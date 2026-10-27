@@ -9,6 +9,7 @@ import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
 import { PostButton } from "@/components/invoices/post-button";
+import { quickBooksStanding } from "@/lib/invoices/labels";
 import { readPaymentRecord } from "@/lib/invoices/views";
 import { readRecordPage } from "../../read-record";
 
@@ -50,7 +51,7 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
               { label: "Credit left", value: <Money cents={p.creditCents} tone="plain" /> },
               { label: "Received", value: <Day value={p.receivedOn} /> },
               { label: "Method", value: METHOD_WORDS[p.method] ?? p.method },
-              { label: "QuickBooks", value: p.qboTail ? `In QuickBooks, record ending ${p.qboTail}` : "Not sent yet" },
+              { label: "QuickBooks", value: quickBooksStanding(p.qboTail, p.ledger.map((r) => r.state)) },
             ]}
           />
         </CardBody>

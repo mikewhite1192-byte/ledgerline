@@ -68,8 +68,6 @@ function cellOf(column: ReportColumn, value: ReportCell, hrefFor: HrefFor): Reac
   }
 }
 
-// The aging uses today's open balances whatever date it ages them on, so its caption says so
-// instead of reading as the position on that date.
 // The title a person reads. The report route keeps its own title; only the screen's words change.
 const SCREEN_TITLES: Readonly<Partial<Record<ReportName, string>>> = {
   ar_aging: "Open balances by how late they are",
@@ -79,14 +77,21 @@ function titleOf(name: ReportName): string {
   return SCREEN_TITLES[name] ?? REPORT_TITLES[name];
 }
 
+// The open balances report uses today's balances whatever date it counts lateness on, so its
+// caption says so instead of reading as the balances on that date.
+function headOf(result: ReportResult): string {
+  if (result.period) return `${titleOf(result.report)}, ${formatPeriod(result.period.start, result.period.end)}`;
+  const asOf = formatLocalDate(result.asOf);
+  return result.report === "ar_aging"
+    ? `Open balances today, by how late they are as of ${asOf}`
+    : `${titleOf(result.report)}, as of ${asOf}`;
+}
+
 function captionOf(result: ReportResult): string {
-  const when = result.period
-    ? formatPeriod(result.period.start, result.period.end)
-    : `as of ${formatLocalDate(result.asOf)}`;
   const cut = result.truncated
     ? `. Showing the first ${result.rows.length} of ${result.rowsTotal} rows; the CSV has them all`
     : "";
-  return `${titleOf(result.report)}, ${when}${cut}`;
+  return `${headOf(result)}${cut}`;
 }
 
 function linesOf(result: ReportResult): Line[] {

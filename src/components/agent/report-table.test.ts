@@ -64,9 +64,9 @@ describe("reportTable captions and cells", () => {
     rowsTotal: 1,
   };
 
-  it("calls the aging report open balances by how late they are, as of the date asked", () => {
+  it("says the open balances are today's, counted late as of the date asked", () => {
     const t = reportTable("ar_aging", { state: "ready", result: aging });
-    expect(t.caption).toBe("Open balances by how late they are, as of Oct 15, 2026");
+    expect(t.caption).toBe("Open balances today, by how late they are as of Oct 15, 2026");
   });
 
   it("keeps the plain as-of caption for a report with no week", () => {

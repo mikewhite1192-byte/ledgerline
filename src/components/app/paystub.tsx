@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { cn } from "@/lib/cn";
 import { formatLocalDate, formatPeriod } from "@/lib/format/dates";
-import { codeToWords, recordLabel } from "@/lib/format/labels";
+import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { hrefOrNull, recordHref, type HrefFor, type SourceRef } from "@/lib/records/href";
 import { Money } from "./money";
 import { StatusBadge } from "./status-badge";
@@ -81,6 +81,7 @@ export function lineDescription(label: string): string {
 function LineLabel({ line, hrefFor }: { line: PaystubLine; hrefFor: HrefFor }) {
   const [first, ...rest] = line.sources;
   const label = lineDescription(line.label);
+  const name = recordNamer(rest);
   if (!first) return <span className="text-foreground">{label}</span>;
   // A record the link rules do not know shows as its name, without a link.
   const href = hrefOrNull(hrefFor, first);
@@ -105,10 +106,10 @@ function LineLabel({ line, hrefFor }: { line: PaystubLine; hrefFor: HrefFor }) {
                 <li key={`${s.table}:${s.id}`}>
                   {restHref ? (
                     <Link href={restHref} className="text-link underline-offset-4 hover:underline">
-                      {recordLabel(s)}
+                      {name(s)}
                     </Link>
                   ) : (
-                    <span className="text-foreground-2">{recordLabel(s)}</span>
+                    <span className="text-foreground-2">{name(s)}</span>
                   )}
                 </li>
               );
@@ -185,24 +186,27 @@ export function Paystub({
 
       {exceptions.length > 0 ? (
         <div className="mt-4 grid gap-2">
-          {exceptions.map((x, i) => (
-            <InlineAlert key={`${x.category}:${i}`} tone="warning" title={x.label}>
-              <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-small">
-                {x.sources.map((s) => {
-                  const href = hrefOrNull(hrefFor, s);
-                  return href ? (
-                    <Link key={`${s.table}:${s.id}`} href={href} className="text-foreground underline underline-offset-4">
-                      {recordLabel(s)}
-                    </Link>
-                  ) : (
-                    <span key={`${s.table}:${s.id}`} className="text-foreground">
-                      {recordLabel(s)}
-                    </span>
-                  );
-                })}
-              </span>
-            </InlineAlert>
-          ))}
+          {exceptions.map((x, i) => {
+            const name = recordNamer(x.sources);
+            return (
+              <InlineAlert key={`${x.category}:${i}`} tone="warning" title={x.label}>
+                <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-small">
+                  {x.sources.map((s) => {
+                    const href = hrefOrNull(hrefFor, s);
+                    return href ? (
+                      <Link key={`${s.table}:${s.id}`} href={href} className="text-foreground underline underline-offset-4">
+                        {name(s)}
+                      </Link>
+                    ) : (
+                      <span key={`${s.table}:${s.id}`} className="text-foreground">
+                        {name(s)}
+                      </span>
+                    );
+                  })}
+                </span>
+              </InlineAlert>
+            );
+          })}
         </div>
       ) : null}
 

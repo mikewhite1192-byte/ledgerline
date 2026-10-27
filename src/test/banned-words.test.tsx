@@ -3,6 +3,7 @@ import { readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { isValidElement, type ReactNode } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { reportTable, type ReportLoad } from "@/components/agent/report-table";
 import { toMessages } from "@/components/agent/turn-view";
@@ -38,8 +39,9 @@ import { VOICE_STATUS_WORDS } from "@/lib/voice/words";
 import * as fx from "./page-fixtures";
 
 // Every screen a person reads, rendered with fixture rows and scanned for the words that belong to
-// the code, not to a trucking office (design-ui-ease section 3). A new page.tsx must be rendered
-// here or listed below with the reason; nothing is skipped quietly.
+// the code, not to a trucking office (design-ui-ease section 3). A new route file under src/app (a
+// page, a layout, a loading or not-found screen) must be rendered here or listed below with the
+// reason; nothing is skipped quietly.
 
 // The banned words. Each is matched as a whole word (plurals included), in the visible text and in
 // the labels a screen reader or a hover reads.
@@ -82,8 +84,9 @@ const BANNED: readonly { word: string; re: RegExp }[] = [
   { word: "accessorial", re: /\baccessorials?\b/i },
   // A zone is "Eastern time", never America/New_York.
   { word: "America/", re: /\bAmerica\//i },
-  // A stored date is written in words ("Oct 19, 2026"), never 2026-10-19.
-  { word: "ISO date", re: /\b\d{4}-\d{2}-\d{2}\b/ },
+  // A stored date is written in words ("Oct 19, 2026"), never 2026-10-19, nor a stored timestamp
+  // (2026-10-19T15:00:00.000Z, where the T after the day leaves no word boundary to end on).
+  { word: "ISO date", re: /\b\d{4}-\d{2}-\d{2}(?!\d)/ },
   // A record is named by its reference, never by the tail of its database id.
   { word: "id tail", re: /\bending [0-9a-f]{6}\b/i },
   // Money is in dollars: "$0.00 of $2.00", never "0 cents of".
@@ -151,7 +154,7 @@ export function scan(root: HTMLElement, allow: ReadonlySet<string> = new Set()):
 // ---- The pages' reads, answered from fixtures ----
 
 const SESSION: Session = { sub: "sub-test-1", email: fx.EMAIL, tenantId: "00000000-0000-4000-8000-000000000001" };
-const state = vi.hoisted(() => ({ fx: {} as Record<string, unknown> }));
+const state = vi.hoisted(() => ({ fx: {} as Record<string, unknown>, session: null as Session | null }));
 const get = <T,>(key: string) => state.fx[key] as T;
 
 const fakeQ = {
@@ -172,8 +175,10 @@ vi.mock("@/lib/tenant/context", async (importOriginal) => {
     withSessionTenant: async <T,>(_s: Session, fn: (q: Queryable) => Promise<T>) => fn(fakeQ),
   };
 });
-vi.mock("@/lib/auth/session", () => ({ getSession: async () => null, requireSession: async () => SESSION }));
+vi.mock("@/lib/auth/session", () => ({ getSession: async () => state.session, requireSession: async () => SESSION }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => ({ value: "portal-session" }) }) }));
+// The typeface is built by the framework's compiler, which a test does not run; only its class name is read.
+vi.mock("@/app/fonts", () => ({ sans: { variable: "font-sans" } }));
 vi.mock("next/navigation", async (importOriginal) => {
   const real = await importOriginal<typeof import("next/navigation")>();
   return {
@@ -359,6 +364,7 @@ afterAll(() => {
 });
 beforeEach(() => {
   state.fx = defaults();
+  state.session = null;
 });
 afterEach(() => cleanup());
 
@@ -389,8 +395,16 @@ const p = <T extends object>(v: T) => Promise.resolve(v);
 const sp = (v: Record<string, string> = {}) => ({ searchParams: p(v) });
 const ID = fx.ID;
 
-type Variant = { name: string; setup?: () => void; load: () => Promise<ReactNode> };
-type PageCase = { file: string; variants: Variant[]; allow?: ReadonlySet<string> };
+// shows: words the variant must render, so it is known to have taken the path it names.
+type Variant = { name: string; setup?: () => void; load: () => Promise<ReactNode>; shows?: string };
+// failureScreen: the route file is itself a failure screen (not found), so it must show its title.
+type PageCase = { file: string; variants: Variant[]; allow?: ReadonlySet<string>; failureScreen?: boolean };
+
+// A loading screen: what a person sees while the page's reads run.
+const loading = (file: string, load: () => Promise<{ default: () => ReactNode }>): PageCase => ({
+  file,
+  variants: [{ name: "loading", load: async () => (await load()).default() }],
+});
 
 // The invoice record page with its Review card in each state worth reading.
 const REVIEW_CASES: [string, InvoiceReviewView][] = [
@@ -788,24 +802,62 @@ const PAGES: PageCase[] = [
       load: async () => (await import("@/app/voice-notes/[id]/page")).default({ params: p({ id: ID }) }),
     })),
   },
+  // The route files that are not a page.tsx.
+  {
+    file: "not-found.tsx",
+    failureScreen: true,
+    variants: [
+      { name: "signed out", load: async () => (await import("@/app/not-found")).default() },
+      {
+        name: "signed in, inside the menu",
+        setup: () => (state.session = SESSION),
+        load: async () => (await import("@/app/not-found")).default(),
+        shows: fx.TENANT.name,
+      },
+    ],
+  },
+  {
+    file: "portal/layout.tsx",
+    variants: [
+      {
+        name: "around a portal page",
+        load: async () => (await import("@/app/portal/layout")).default({ children: <p>Your loads</p> }),
+      },
+    ],
+  },
+  loading("documents/loading.tsx", () => import("@/app/documents/loading")),
+  loading("documents/[id]/loading.tsx", () => import("@/app/documents/[id]/loading")),
+  loading("driver-notes/loading.tsx", () => import("@/app/driver-notes/loading")),
+  loading("driver-notes/[settlementId]/view/loading.tsx", () => import("@/app/driver-notes/[settlementId]/view/loading")),
+  loading("invoices/loading.tsx", () => import("@/app/invoices/loading")),
+  loading("models/loading.tsx", () => import("@/app/models/loading")),
+  loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
+  loading("records/loading.tsx", () => import("@/app/records/loading")),
+  loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
 ];
 
-// Pages this test does not render, each with the reason. Keep it short: a new page belongs above.
+// Route files this test does not render as a page, each with the reason. Keep it short: a new page
+// belongs above.
 const LISTED: Readonly<Record<string, string>> = {
+  "layout.tsx":
+    "The document around every page: it puts each one in the html shell and the toast holder and shows no words on the page. Its tab title and description are scanned below.",
   "records/settlement_periods/[id]/page.tsx":
     "Shows nothing of its own: it only sends a pay week's link on to that week on the Settlements page, which is rendered above.",
   "design/page.tsx":
     "The builders' design reference: it shows status codes, token names and sample states on purpose, and no carrier or driver reaches it from the app's menu.",
 };
 
-function pageFiles(): string[] {
+// The App Router's own file names: each one is a screen, or wraps one, when its route is shown.
+const ROUTE_FILE = /^(page|layout|template|loading|not-found|error|global-error|global-not-found|default|forbidden|unauthorized)\.(tsx|jsx|ts|js)$/;
+
+function routeFiles(): string[] {
   const root = join(process.cwd(), "src", "app");
   const out: string[] = [];
   const walk = (dir: string) => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, e.name);
       if (e.isDirectory()) walk(full);
-      else if (e.name === "page.tsx") out.push(relative(root, full).split(sep).join("/"));
+      else if (ROUTE_FILE.test(e.name)) out.push(relative(root, full).split(sep).join("/"));
     }
   };
   walk(root);
@@ -813,11 +865,11 @@ function pageFiles(): string[] {
 }
 
 describe("every page is covered", () => {
-  it("renders or lists every page.tsx under src/app, and names no page that is gone", () => {
-    const files = pageFiles();
+  it("renders or lists every route file under src/app (pages, layouts, loading and not-found screens), and names none that is gone", () => {
+    const files = routeFiles();
     const rendered = PAGES.map((c) => c.file);
     const covered = new Set([...rendered, ...Object.keys(LISTED)]);
-    expect(files.filter((f) => !covered.has(f)), "a new page: render it in PAGES or list it in LISTED with the reason").toEqual([]);
+    expect(files.filter((f) => !covered.has(f)), "a new route file: render it in PAGES or list it in LISTED with the reason").toEqual([]);
     expect([...covered].filter((f) => !files.includes(f))).toEqual([]);
     expect(rendered.filter((f) => Object.hasOwn(LISTED, f))).toEqual([]);
     expect(new Set(rendered).size).toBe(rendered.length);
@@ -857,12 +909,35 @@ describe("no internal word on any page", () => {
         const container = await renderPage(v.load);
         const text = container.textContent ?? "";
         expect(text.trim().length).toBeGreaterThan(0);
-        expect(failures.filter((t) => text.includes(t)), "the page fell back to a failure screen").toEqual([]);
-        expect(text, "the page fell back to a switched-off screen").not.toMatch(/off for this carrier/);
+        if (v.shows) expect(text).toContain(v.shows);
+        if (c.failureScreen) {
+          expect(failures.some((t) => text.includes(t)), "the failure screen shows its title").toBe(true);
+        } else {
+          expect(failures.filter((t) => text.includes(t)), "the page fell back to a failure screen").toEqual([]);
+          expect(text, "the page fell back to a switched-off screen").not.toMatch(/off for this carrier/);
+        }
         expect(scan(container, c.allow)).toEqual([]);
       });
     }
   }
+});
+
+// The root layout renders the html document itself, which cannot sit inside a test's container, so
+// it is rendered to markup and read as a document: its tab title and description, and what it puts
+// around a page.
+describe("no internal word in the document around every page", () => {
+  it("layout.tsx", async () => {
+    const { default: RootLayout, metadata } = await import("@/app/layout");
+    expect(hitsIn(`${String(metadata.title)}\n${String(metadata.description)}`, new Set())).toEqual([]);
+    const html = renderToStaticMarkup(
+      <RootLayout>
+        <p>Your pay week</p>
+      </RootLayout>,
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    expect(doc.body.textContent).toContain("Your pay week");
+    expect(scan(doc.documentElement)).toEqual([]);
+  });
 });
 
 // ---- The shared components, in every state they can show ----
@@ -1118,6 +1193,13 @@ describe("the scan itself", () => {
     expect(words("Idempotency key")).toEqual(["idempotency"]);
     expect(words("Accessorials")).toEqual(["accessorial"]);
     expect(words("America/New_York")).toEqual(["America/"]);
+  });
+
+  it("finds a stored timestamp, not only a bare date, and not a longer number", () => {
+    const words = (s: string) => scan(el(`<span>${s}</span>`)).map((h) => h.word);
+    expect(words("2026-10-28T15:00:00.000Z")).toEqual(["ISO date"]);
+    expect(words("2026-10-28 15:04:00")).toEqual(["ISO date"]);
+    expect(words("2026-10-281")).toEqual([]);
   });
 
   it("keeps two cells apart, so a date is found next to a number", () => {

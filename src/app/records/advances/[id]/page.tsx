@@ -14,7 +14,7 @@ import { sourceWords } from "@/lib/advances/request";
 import { takebackReasonWords } from "@/lib/advances/takeback-words";
 import { advancesOn } from "@/lib/advances/switches";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
-import { codeToWords, recordLabel } from "@/lib/format/labels";
+import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { isUuid } from "@/lib/uuid";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { RecordActionButtons } from "./record-actions";
@@ -56,6 +56,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
     record;
   const when = (iso: string | null) => (iso ? formatInstant(iso, shell.timezone) : "Not yet");
   const cardLine = cardLineFor(advance.status, card);
+  const sourceName = recordNamer(eligibility?.sources ?? []);
   return (
     <AdvanceFrame shell={shell} title={`Advance ${advance.requestRef}`}>
       <PageHeader
@@ -213,10 +214,10 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
                       {i > 0 ? ", " : ""}
                       {s.table === "advances" ? (
                         <Link href={`/records/advances/${s.id}`} className="text-link underline-offset-4 hover:underline">
-                          {recordLabel(s)}
+                          {sourceName(s)}
                         </Link>
                       ) : (
-                        recordLabel(s)
+                        sourceName(s)
                       )}
                     </span>
                   ))}

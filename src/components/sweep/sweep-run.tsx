@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ProposalView } from "@/lib/agent/view";
 import { formatPeriod } from "@/lib/format/dates";
-import { codeToWords, recordLabel } from "@/lib/format/labels";
+import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
@@ -504,17 +504,18 @@ export function SweepRun({
 // The records behind a needs-a-person line, each one click away.
 function RecordLinks({ item }: { item: SweepItemView }) {
   const refs = item.sourceRefs.slice(0, 3);
+  const name = recordNamer(refs);
   return (
     <span className="flex flex-wrap gap-x-3 text-small">
       {refs.map((r) => {
         const href = hrefOrNull(recordHref, r);
         return href ? (
           <Link key={`${r.table}:${r.id}`} href={href} className="text-link underline-offset-4 hover:underline">
-            {recordLabel(r)}
+            {name(r)}
           </Link>
         ) : (
           <span key={`${r.table}:${r.id}`} className="text-foreground-2">
-            {recordLabel(r)}
+            {name(r)}
           </span>
         );
       })}

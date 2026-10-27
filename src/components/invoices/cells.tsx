@@ -34,9 +34,10 @@ export function Facts({ items }: { items: { label: string; value: ReactNode; ter
   );
 }
 
-// How late an open balance is, by the day it was due.
+// How late an open balance is, by the day it was due. "current" includes a balance due today
+// (agingBucket in rules-engine/receivables.ts), so it reads "Not late", never "Not due yet".
 export const BUCKET_WORDS: Readonly<Record<string, string>> = {
-  current: "Not due yet",
+  current: "Not late",
   "1_30": "1 to 30 days late",
   "31_60": "31 to 60 days late",
   "61_90": "61 to 90 days late",

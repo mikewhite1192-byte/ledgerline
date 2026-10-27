@@ -10,6 +10,7 @@ import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
 import { PostButton } from "@/components/invoices/post-button";
 import { ReviewCard } from "@/components/invoices/review-card";
+import { quickBooksStanding } from "@/lib/invoices/labels";
 import { invoiceRecordActions, readInvoiceRecordPage } from "@/lib/invoices/record-page";
 import { readRecordPage } from "../../read-record";
 
@@ -61,7 +62,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
                     "Opening balance"
                   ),
               },
-              { label: "QuickBooks", value: inv.qboTail ? `In QuickBooks, record ending ${inv.qboTail}` : "Not sent yet" },
+              { label: "QuickBooks", value: quickBooksStanding(inv.qboTail, inv.ledger.map((r) => r.state)) },
             ]}
           />
         </CardBody>
