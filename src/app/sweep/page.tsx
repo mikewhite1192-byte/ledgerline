@@ -74,6 +74,14 @@ export default async function SweepPage() {
     >
       <div className="mx-auto grid w-full max-w-[1080px] gap-6 px-4 py-6 md:px-6 md:py-8">
         <PageHeader title="Pay sweep" description={DESCRIPTION} />
+        {flags.fuelAnomalyEnabled ? (
+          <Card className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-5">
+            <p className="text-small text-foreground-2">Fill-ups that do not fit the truck, the route or the day.</p>
+            <Link href="/sweep/fuel" className="text-link underline-offset-4 hover:underline">
+              Fuel checks
+            </Link>
+          </Card>
+        ) : null}
         {home === null ? (
           <Card>
             <ErrorState category="unreadable" />

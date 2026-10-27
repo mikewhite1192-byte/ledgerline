@@ -40,6 +40,11 @@ const SENTENCES: Readonly<Record<string, string>> = {
     "The payment matches another open invoice for the same customer exactly, and overpays the one it is on.",
   driver_not_armed: "The driver is not armed to receive money. An admin can arm them on the driver page.",
   over_load_cap: "The amount is over what is left under the per-load cap for this load.",
+  // the fuel checks (engine proposals)
+  state_not_on_route: "The company card bought fuel in a state this load did not drive through.",
+  gallons_over_tank: "The fill-up was more fuel than the truck's tank holds.",
+  no_load_or_day: "The company card bought fuel on a day with no load and no dispatch day.",
+  same_fill_twice: "The same fill-up was turned in and paid back twice.",
   // the sweep's second opinion: an issue a driver's check raised that the rules engine did not
   sub_agent_flag:
     "A second check of this driver's week pointed at this record and the rules engine did not. Look at the record before paying.",

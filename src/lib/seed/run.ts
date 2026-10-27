@@ -190,6 +190,10 @@ const AGENT_CLEAR = [
   `DELETE FROM sweep_fanout WHERE tenant_id = CAST($1 AS uuid)`,
   `DELETE FROM sweep_items WHERE tenant_id = CAST($1 AS uuid)`,
   `DELETE FROM sweep_runs WHERE tenant_id = CAST($1 AS uuid)`,
+  // The fuel checks' findings name a fill-up, a load and a pay line the replace deletes, and the
+  // card they drafted; their runs go after them (0031).
+  `DELETE FROM fuel_findings WHERE tenant_id = CAST($1 AS uuid)`,
+  `DELETE FROM fuel_check_runs WHERE tenant_id = CAST($1 AS uuid)`,
   `DELETE FROM turn_steps s
     WHERE s.tenant_id = CAST($1 AS uuid)
       AND NOT EXISTS (SELECT 1 FROM proposals p

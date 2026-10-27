@@ -58,7 +58,7 @@ export type ReceiptExpect = {
   purchasedAt?: string;
   localTime?: string;
   state?: string;
-  paidWith?: "company_card";
+  paidWith?: "company_card" | "driver_own";
 };
 
 export type LoadExpect = {
@@ -121,6 +121,9 @@ export type PhotoDoc = FileFields & {
   origin: "generated" | "composed";
   expect: ReceiptExpect;
   shows: ReceiptShows;
+  // A second photo of the same paper receipt as that entry (the same receipt turned in twice):
+  // the same row, values and words, taken at a slight turn so the file differs.
+  retakeOf?: string;
 };
 
 export type RateConDoc = FileFields & {
@@ -205,6 +208,20 @@ export function parseManifest(value: unknown): Manifest {
       e.expect === null
     ) {
       throw new Error(`sample docs manifest: entry ${String(e?.id)} is malformed`);
+    }
+  }
+  for (const e of m.entries) {
+    if (!("retakeOf" in e) || e.retakeOf === undefined) continue;
+    const first = m.entries.find((x) => x.id === e.retakeOf);
+    if (
+      first === undefined ||
+      first === e ||
+      first.mime !== "image/webp" ||
+      ("retakeOf" in first && first.retakeOf !== undefined) ||
+      first.ref.table !== e.ref.table ||
+      first.ref.id !== e.ref.id
+    ) {
+      throw new Error(`sample docs manifest: entry ${e.id} is a retake of no photo of its row`);
     }
   }
   const bg = m.background;
