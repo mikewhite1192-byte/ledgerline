@@ -22,7 +22,7 @@ import { customerClassOf } from "./ar-plan";
 import { instantAt } from "./calendar";
 import { DETENTION_TOTAL_CENTS, HERO_OPEN_WEEK, seededAdvanceDecision } from "./assert-plan";
 import { DEMO_CARRIERS } from "./carriers";
-import { buildCarrierPlan, type CarrierPlan } from "./plan";
+import { buildCarrierPlan, buildDriverCards, type CarrierPlan } from "./plan";
 
 const ANCHOR = "2026-11-02";
 const plans = DEMO_CARRIERS.map((c) => buildCarrierPlan(c, ANCHOR));
@@ -206,6 +206,45 @@ describe("buildCarrierPlan", () => {
       for (const c of DEMO_CARRIERS) expect(() => buildCarrierPlan(c, anchor)).not.toThrow();
     },
   );
+});
+
+describe("fuel cards", () => {
+  it("gives every driver one active card, unique tokens and last four, and plants one declined and one slow", () => {
+    for (const plan of plans) {
+      const { drivers, driver_cards: cards } = plan.rows;
+      expect(cards).toHaveLength(drivers.length);
+      expect(new Set(cards.map((c) => c.driver_id))).toEqual(new Set(drivers.map((d) => d.id)));
+      expect(cards.every((c) => c.status === "active" && c.source === "seed" && c.closed_at === null)).toBe(true);
+      expect(new Set(cards.map((c) => c.provider_token)).size).toBe(cards.length);
+      expect(new Set(cards.map((c) => c.last4)).size).toBe(cards.length);
+      expect(cards.every((c) => /^fcs_card_[0-9a-f]{24}$/.test(c.provider_token) && /^[0-9]{4}$/.test(c.last4))).toBe(true);
+      expect(cards.filter((c) => c.sim_behavior === "declined")).toHaveLength(1);
+      expect(cards.filter((c) => c.sim_behavior === "slow")).toHaveLength(1);
+      expect(cards.some((c) => c.sim_behavior === "offline")).toBe(false);
+    }
+  });
+
+  it("plants the declined card on the highest non-hero driver code and the slow one on the next", () => {
+    const plan = plans.find((p) => p.carrier.heroCode === "BR-D07")!;
+    const codeOf = new Map(plan.rows.drivers.map((d) => [d.id, d.code]));
+    const by = (b: string) => plan.rows.driver_cards.filter((c) => c.sim_behavior === b).map((c) => codeOf.get(c.driver_id));
+    const codes = plan.rows.drivers.map((d) => d.code).filter((c) => c !== "BR-D07").sort();
+    expect(by("declined")).toEqual([codes[codes.length - 1]]);
+    expect(by("slow")).toEqual([codes[codes.length - 2]]);
+    const hero = plan.rows.drivers.find((d) => d.code === "BR-D07")!;
+    expect(plan.rows.driver_cards.find((c) => c.driver_id === hero.id)?.sim_behavior).toBe("ok");
+  });
+
+  it("skips the hero even when the hero holds the highest code", () => {
+    const drivers = ["X-D01", "X-D02", "X-D03"].map((code, i) => ({ id: `d${i}`, code }) as DriverRow);
+    const cards = buildDriverCards("test:2026-11-02", drivers, "X-D03");
+    expect(cards.map((c) => c.sim_behavior)).toEqual(["slow", "declined", "ok"]);
+  });
+
+  it("draws cards from their own stream, so the same seed gives the same cards", () => {
+    const again = DEMO_CARRIERS.map((c) => buildCarrierPlan(c, ANCHOR));
+    expect(again.map((p) => p.rows.driver_cards)).toEqual(plans.map((p) => p.rows.driver_cards));
+  });
 });
 
 describe("versioned pay rules", () => {

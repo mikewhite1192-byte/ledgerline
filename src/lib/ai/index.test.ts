@@ -23,7 +23,7 @@ import {
 } from "./prices";
 import { forgetKey } from "./keys";
 import type { FetchFn } from "./providers/http";
-import { JPEG_BYTES, makeWav, PDF_BYTES, PNG_BYTES } from "./test-fixtures";
+import { JPEG_BYTES, makeWav, PDF_BYTES, PNG_BYTES, QUIET_JOB } from "./test-fixtures";
 
 const KEY = "test-key-abcdefghijklmnop";
 // The standby host's key: a different value, so a test can tell which key went where.
@@ -159,12 +159,24 @@ function fakeLedger(
   const rows = new Map<string, Row>();
   // What each settle wrote besides the status: its failure category and its duration.
   const settled = new Map<string, { failure: Param; durationMs: Param }>();
-  const breaks = { membership: false, settleThrows: false, rowLost: false };
+  const breaks = { membership: false, settleThrows: false, rowLost: false, watchFails: false };
+  // The spend watch: what the job has spent in its hour and whether it has an open alert. watched
+  // gets each window read's parameters, alerts each alert row's, stamped each call's created_at.
+  const job = { spent: 0, open: false };
+  const watched: Param[][] = [];
+  const alerts: Param[][] = [];
+  const stamped = new Map<string, Param>();
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
       if (sql.includes("FROM memberships")) {
         steps.push("membership");
         return (breaks.membership ? [] : [{ ok: 1 }]) as T[];
+      }
+      if (sql.includes("FROM spend_alerts")) {
+        steps.push("watch job");
+        if (breaks.watchFails) throw new DbError("unavailable");
+        watched.push(params);
+        return [{ ...QUIET_JOB, open_alerts: job.open ? 1 : 0, spent_nanocents: job.spent }] as T[];
       }
       if (sql.includes("FROM ops.ai_spend")) {
         steps.push("lock counter");
@@ -190,8 +202,15 @@ function fakeLedger(
       throw new Error("unexpected query");
     },
     async execute(sql: string, params: Param[] = []): Promise<number> {
+      if (sql.startsWith("INSERT INTO spend_alerts")) {
+        steps.push("alert");
+        alerts.push(params);
+        job.open = true;
+        return 1;
+      }
       if (sql.startsWith("INSERT INTO model_calls")) {
         steps.push("insert call");
+        stamped.set(String(params[0]), params[9]);
         rows.set(String(params[0]), {
           target: String(params[1]),
           provider: String(params[2]),
@@ -238,7 +257,7 @@ function fakeLedger(
       return fn(q);
     },
   };
-  return { db, steps, counter, rows, settled, breaks };
+  return { db, steps, counter, rows, settled, breaks, job, watched, alerts, stamped };
 }
 
 function fakeFetch(
@@ -752,6 +771,145 @@ describe("every call, refusals before any reservation", () => {
   });
 });
 
+describe("the job's hourly allowance", () => {
+  const AT = "2026-10-27T06:00:00.000Z";
+  const now = () => new Date(AT);
+  const ALLOWANCE = 1_000 * NANOCENTS_PER_CENT;
+
+  it("checks the job under the counter lock, after the caps, with the injected instant", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps);
+    const result = await complete("spark", { ...REQUEST, traceId: TRACE }, SESSION, {
+      fetch: fetchFn,
+      db: ledger.db,
+      now,
+    });
+    expect(ledger.steps.slice(0, 5)).toEqual([
+      "tx tenant",
+      "membership",
+      "lock counter",
+      "watch job",
+      "insert call",
+    ]);
+    // A job with a trace is the trace; the window ends at the injected instant, which also
+    // stamps the ledger row.
+    expect(ledger.watched).toEqual([[TRACE, AT]]);
+    expect(ledger.stamped.get(result.callId)).toBe(AT);
+  });
+
+  it("groups a call with no trace by its purpose, and leaves the time to the database", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps);
+    const result = (await CALLS.spark({ fetch: fetchFn, db: ledger.db })) as { callId: string };
+    expect(ledger.watched).toEqual([["proof", null]]);
+    expect(ledger.stamped.get(result.callId)).toBeNull();
+  });
+
+  it("stops a job that would go past its allowance: one alert, nothing reserved, no call made", async () => {
+    const ledger = fakeLedger({ spent: 500, calls: 3 });
+    // The job spent its whole allowance this hour; any reservation takes it past.
+    ledger.job.spent = ALLOWANCE;
+    const fetchFn = fakeFetch(ledger.steps);
+    const err = await refusal(
+      complete("spark", { ...REQUEST, traceId: TRACE }, SESSION, { fetch: fetchFn, db: ledger.db, now }),
+    );
+    expect(err.category).toBe("job_cap");
+    expect(ledger.steps).toEqual(["tx tenant", "membership", "lock counter", "watch job", "alert"]);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(ledger.rows.size).toBe(0);
+    expect(ledger.counter).toMatchObject({ spent: 500, reserved: 0, calls: 3 });
+    expect(ledger.alerts).toHaveLength(1);
+    const [trace, purpose, start, end, spent, limit, at] = ledger.alerts[0];
+    expect([trace, purpose, start, end, limit, at]).toEqual([
+      TRACE,
+      "proof",
+      QUIET_JOB.window_start,
+      QUIET_JOB.window_end,
+      ALLOWANCE,
+      AT,
+    ]);
+    expect(Number(spent)).toBeGreaterThan(ALLOWANCE);
+    expect(logged).toEqual([
+      `ai: spark muse-spark-1.3 text proof refused: the job is over its hourly allowance trace=${TRACE}`,
+    ]);
+  });
+
+  it("keeps refusing a stopped job, with no second alert, until it is cleared", async () => {
+    const ledger = fakeLedger();
+    ledger.job.open = true;
+    const fetchFn = fakeFetch(ledger.steps);
+    expect((await refusal(CALLS.spark({ fetch: fetchFn, db: ledger.db }))).category).toBe("job_cap");
+    expect((await refusal(CALLS.spark({ fetch: fetchFn, db: ledger.db }))).category).toBe("job_cap");
+    expect(ledger.alerts).toEqual([]);
+    expect(ledger.rows.size).toBe(0);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the job's spend cannot be read", async () => {
+    const ledger = fakeLedger();
+    ledger.breaks.watchFails = true;
+    const fetchFn = fakeFetch(ledger.steps);
+    await expect(CALLS.spark({ fetch: fetchFn, db: ledger.db })).rejects.toBeInstanceOf(DbError);
+    expect(ledger.rows.size).toBe(0);
+    expect(ledger.counter.reserved).toBe(0);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("checks the overall cap first: a call over it is refused as cap, with no alert", async () => {
+    const ledger = fakeLedger({ spent: 12_000 * NANOCENTS_PER_CENT });
+    ledger.job.spent = ALLOWANCE;
+    const fetchFn = fakeFetch(ledger.steps);
+    expect((await refusal(CALLS.spark({ fetch: fetchFn, db: ledger.db }))).category).toBe("cap");
+    expect(ledger.alerts).toEqual([]);
+  });
+
+  it("refuses a call that alone is over the allowance before reserving, with no alert", async () => {
+    // 8192 output tokens could cost 3.48 cents on Spark: over a 3 cent allowance, under 4.
+    const saved = flags.aiJobHourlyCapCents;
+    const request = { ...REQUEST, maxOutputTokens: 8192, traceId: TRACE };
+    try {
+      flags.aiJobHourlyCapCents = 3;
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      const err = await refusal(
+        complete("spark", request, SESSION, { fetch: fetchFn, db: ledger.db, now }),
+      );
+      expect(err.category).toBe("too_expensive");
+      expect(ledger.steps).toEqual([]);
+      expect(ledger.alerts).toEqual([]);
+      expect(fetchFn).not.toHaveBeenCalled();
+
+      flags.aiJobHourlyCapCents = 4;
+      const fits = fakeLedger();
+      await complete("spark", request, SESSION, {
+        fetch: fakeFetch(fits.steps),
+        db: fits.db,
+        now,
+      });
+      expect([...fits.rows.values()].map((r) => r.status)).toEqual(["ok"]);
+    } finally {
+      flags.aiJobHourlyCapCents = saved;
+    }
+  });
+
+  it("refuses every call when the allowance is not a positive whole number of cents", async () => {
+    const saved = flags.aiJobHourlyCapCents;
+    try {
+      for (const bad of [0, -1, 1.5, Number.NaN]) {
+        flags.aiJobHourlyCapCents = bad;
+        const ledger = fakeLedger();
+        const fetchFn = fakeFetch(ledger.steps);
+        expect((await refusal(CALLS.spark({ fetch: fetchFn, db: ledger.db }))).category, String(bad)).toBe(
+          "not_configured",
+        );
+        expect(ledger.steps).toEqual([]);
+      }
+    } finally {
+      flags.aiJobHourlyCapCents = saved;
+    }
+  });
+});
+
 describe("complete, one call", () => {
   it("reserves before the call, settles after, and returns the answer with its real cost", async () => {
     const ledger = fakeLedger();
@@ -765,6 +923,7 @@ describe("complete, one call", () => {
       "tx tenant",
       "membership",
       "lock counter",
+      "watch job",
       "insert call",
       "reserve",
       "fetch",

@@ -58,7 +58,10 @@ function validRequest(p: PayoutRequest, ctx: SendContext): boolean {
     p.amountCents < AMOUNT_LIMIT_CENTS &&
     typeof p.memoCode === "string" &&
     p.memoCode.length > 0 &&
-    p.memoCode.length <= 80
+    p.memoCode.length <= 80 &&
+    // The bank rail only, with no fuel-card destination riding along.
+    p.rail === "bank" &&
+    p.destination === undefined
   );
 }
 

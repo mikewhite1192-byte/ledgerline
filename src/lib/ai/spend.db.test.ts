@@ -7,13 +7,16 @@ import type { Db } from "../db/types";
 import { ForbiddenError } from "../tenant/context";
 import { readRecentCalls, readSpend, reserve, settle, type Reservation, type Spend } from "./spend";
 import { AiError } from "./types";
+import { clearSpendAlert, readDaySpend, readSpendAlerts } from "./watch";
 
 // The spend ledger as the app's own role sees it: reservations race on the counter's row lock,
 // a settle happens once, refused calls release their reservation, unknown ones keep it, and a
 // tenant sees only its own calls. The counter is global, so this file puts it back as it found it.
+// Tenant C holds the spend watch's jobs, every one stamped with a fixed instant (never the clock).
 
 const A = randomUUID();
 const B = randomUUID();
+const C = randomUUID();
 const tag = A.slice(0, 8);
 const RESERVE = 500_000_000;
 const USAGE = { input: 15, cached: 0, output: 64, reasoning: 62 };
@@ -40,6 +43,8 @@ const reservation = (over: Partial<Reservation> = {}): Reservation => ({
   reserveNanocents: RESERVE,
   capNanocents: Number.MAX_SAFE_INTEGER,
   wonderCapNanocents: null,
+  jobCapNanocents: Number.MAX_SAFE_INTEGER,
+  at: null,
   ...over,
 });
 
@@ -94,6 +99,13 @@ describe("model spend ledger", () => {
     app = createPgDb({ connectionString: appUrl(), max: 2 });
     await seed(A, `a-${tag}`);
     await seed(B, `b-${tag}`);
+    await seed(C, `c-${tag}`);
+    await admin.withTenant(C, (q) =>
+      q.execute(
+        "INSERT INTO memberships (tenant_id, cognito_sub, email, role) VALUES (current_tenant_id(), $1, $2, 'staff')",
+        [`sub-staff-${C}`, `staff@c-${tag}.example`],
+      ),
+    );
     before = await spend();
   });
 
@@ -117,7 +129,7 @@ describe("model spend ledger", () => {
         ),
       );
     }
-    for (const id of [A, B]) {
+    for (const id of [A, B, C]) {
       await admin?.withTenant(id, (q) =>
         q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"),
       );
@@ -660,5 +672,262 @@ describe("model spend ledger", () => {
     for (const host of ["meta", "baseten", "fireworks"]) {
       expect(checks[0]?.def).toContain(`'${host}'`);
     }
+  });
+  // --- The spend watch: a job's hourly allowance ---
+
+  const CENT = 1_000_000_000;
+  const JOB_CAP = 1_000 * CENT;
+  const T0 = Date.parse("2026-10-27T12:00:00.000Z");
+  // An instant this many minutes after T0, as the wrapper passes it.
+  const at = (minutes: number) => new Date(T0 + minutes * 60_000).toISOString();
+  const jobCall = (over: Partial<Reservation> = {}) =>
+    reservation({ jobCapNanocents: JOB_CAP, ...over });
+  const staff = (tenantId: string): Session => ({ ...session(tenantId), sub: `sub-staff-${tenantId}` });
+
+  type AlertFacts = {
+    id: string;
+    trace_id: string | null;
+    purpose: string;
+    spent_nanocents: number;
+    limit_nanocents: number;
+    window_start: string;
+    window_end: string;
+    created: string;
+    cleared: string | null;
+    cleared_by: string | null;
+  };
+
+  // The admin login is not held by row security, so the tenant is named in the statement.
+  const alertsOf = (tenantId: string, job: { trace?: string; purpose?: string }) =>
+    admin.withTenant(tenantId, (q) =>
+      q.query<AlertFacts>(
+        `SELECT id, trace_id, purpose, spent_nanocents, limit_nanocents,
+                to_char(window_start AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS window_start,
+                to_char(window_end AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS window_end,
+                to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created,
+                to_char(cleared_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS cleared,
+                cleared_by
+           FROM spend_alerts
+          WHERE tenant_id = current_tenant_id()
+            AND (CAST($1 AS uuid) IS NULL OR trace_id = CAST($1 AS uuid))
+            AND (CAST($2 AS text) IS NULL OR (trace_id IS NULL AND purpose = $2))
+          ORDER BY created_at`,
+        [job.trace ?? null, job.purpose ?? null],
+      ),
+    );
+
+  const adminMemberOf = async (tenantId: string) => {
+    const [row] = await admin.withTenant(tenantId, (q) =>
+      q.query<{ id: string }>(
+        "SELECT id FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
+        [`sub-${tenantId}`],
+      ),
+    );
+    return row.id;
+  };
+
+  const categoryOf = async (work: Promise<unknown>) => {
+    const err = await failureOf(work);
+    expect(err).toBeInstanceOf(AiError);
+    return (err as AiError).category;
+  };
+
+  it("lets a job spend $9.99 in an hour, stops it at $10.01 with one alert, and keeps it stopped past the hour", async () => {
+    const trace = randomUUID();
+    const start = await spend();
+    await reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: 999 * CENT, at: at(0) }));
+
+    const over = jobCall({ traceId: trace, reserveNanocents: 2 * CENT, at: at(1) });
+    expect(await categoryOf(reserve(app, session(C), over))).toBe("job_cap");
+    // Nothing written to the ledger for the refused call, and its reservation never counted.
+    expect(await callRow(C, over.callId)).toBeUndefined();
+    expect(await spend()).toEqual({ ...start, reservedNanocents: start.reservedNanocents + 999 * CENT });
+
+    const alerts = await alertsOf(C, { trace });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toMatchObject({
+      trace_id: trace,
+      purpose: "proof",
+      spent_nanocents: 1_001 * CENT,
+      limit_nanocents: JOB_CAP,
+      window_start: at(-59),
+      window_end: at(1),
+      created: at(1),
+      cleared: null,
+      cleared_by: null,
+    });
+
+    // Asked again, the job is refused with no second alert, even a cent's call, even hours later.
+    const again = jobCall({ traceId: trace, reserveNanocents: CENT, at: at(2) });
+    expect(await categoryOf(reserve(app, session(C), again))).toBe("job_cap");
+    const later = jobCall({ traceId: trace, reserveNanocents: CENT, at: at(180) });
+    expect(await categoryOf(reserve(app, session(C), later))).toBe("job_cap");
+    expect(await alertsOf(C, { trace })).toHaveLength(1);
+    expect(await callRow(C, again.callId)).toBeUndefined();
+    expect(await callRow(C, later.callId)).toBeUndefined();
+  });
+
+  it("lets only an admin of the carrier clear a stop, records who and when, and starts a fresh hour", async () => {
+    const trace = randomUUID();
+    await reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: 999 * CENT, at: at(0) }));
+    expect(
+      await categoryOf(reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: 2 * CENT, at: at(1) }))),
+    ).toBe("job_cap");
+    const [alert] = await alertsOf(C, { trace });
+
+    // Staff are refused, and another carrier's admin cannot see the alert at all.
+    expect(await failureOf(app.withTenant(C, (q) => clearSpendAlert(q, staff(C), alert.id, at(2))))).toBeInstanceOf(
+      ForbiddenError,
+    );
+    expect(await app.withTenant(B, (q) => clearSpendAlert(q, session(B), alert.id, at(2)))).toBe("not_found");
+    expect(
+      await categoryOf(reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: CENT, at: at(2) }))),
+    ).toBe("job_cap");
+
+    expect(await app.withTenant(C, (q) => clearSpendAlert(q, session(C), alert.id, at(3)))).toBe("cleared");
+    expect(await app.withTenant(C, (q) => clearSpendAlert(q, session(C), alert.id, at(4)))).toBe("already_cleared");
+    expect((await alertsOf(C, { trace }))[0]).toMatchObject({
+      cleared: at(3),
+      cleared_by: await adminMemberOf(C),
+    });
+
+    // $9.99 was reserved at T0, inside the hour, but the hour now starts at the clear.
+    const fresh = jobCall({ traceId: trace, reserveNanocents: 999 * CENT, at: at(5) });
+    await reserve(app, session(C), fresh);
+    expect(await callRow(C, fresh.callId)).toMatchObject({ status: "reserved" });
+    // And the job is watched again from there: past the allowance, it stops with a new alert.
+    expect(
+      await categoryOf(reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: 2 * CENT, at: at(6) }))),
+    ).toBe("job_cap");
+    const both = await alertsOf(C, { trace });
+    expect(both.map((a) => [a.cleared, a.window_start, a.spent_nanocents])).toEqual([
+      [at(3), at(-59), 1_001 * CENT],
+      [null, at(3), 1_001 * CENT],
+    ]);
+  });
+
+  it("leaves another carrier's job with the same trace alone", async () => {
+    const trace = randomUUID();
+    await reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: 999 * CENT, at: at(0) }));
+    expect(
+      await categoryOf(reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: 2 * CENT, at: at(1) }))),
+    ).toBe("job_cap");
+
+    const theirs = jobCall({ traceId: trace, reserveNanocents: 999 * CENT, at: at(2) });
+    await reserve(app, session(B), theirs);
+    expect(await callRow(B, theirs.callId)).toMatchObject({ status: "reserved" });
+    expect(await alertsOf(B, { trace })).toEqual([]);
+    const seenByB = await app.withTenant(B, (q) => readSpendAlerts(q, 100));
+    expect(seenByB.filter((a) => a.traceId === trace)).toEqual([]);
+  });
+
+  it("groups calls with no trace by purpose, apart from traced calls and other purposes", async () => {
+    const alpha = `watch_alpha_${tag}`;
+    const beta = `watch_beta_${tag}`;
+    await reserve(app, session(C), jobCall({ purpose: alpha, reserveNanocents: 999 * CENT, at: at(0) }));
+    // Another purpose, and a traced call of the same purpose, are other jobs.
+    await reserve(app, session(C), jobCall({ purpose: beta, reserveNanocents: 999 * CENT, at: at(0) }));
+    await reserve(
+      app,
+      session(C),
+      jobCall({ purpose: alpha, traceId: randomUUID(), reserveNanocents: 999 * CENT, at: at(0) }),
+    );
+    expect(
+      await categoryOf(reserve(app, session(C), jobCall({ purpose: alpha, reserveNanocents: 2 * CENT, at: at(1) }))),
+    ).toBe("job_cap");
+    expect(
+      await categoryOf(reserve(app, session(C), jobCall({ purpose: alpha, reserveNanocents: CENT, at: at(2) }))),
+    ).toBe("job_cap");
+    const alerts = await alertsOf(C, { purpose: alpha });
+    expect(alerts.map((a) => [a.trace_id, a.purpose, a.spent_nanocents])).toEqual([[null, alpha, 1_001 * CENT]]);
+    // beta still has its cent of room.
+    await reserve(app, session(C), jobCall({ purpose: beta, reserveNanocents: CENT, at: at(2) }));
+  });
+
+  it("counts a settled call at its cost, never its reservation, and forgets calls older than the hour", async () => {
+    const trace = randomUUID();
+    await reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: 999 * CENT, at: at(-61) }));
+    const recent = jobCall({ traceId: trace, reserveNanocents: 999 * CENT, at: at(0) });
+    await reserve(app, session(C), recent);
+    await settle(app, session(C), recent.callId, {
+      kind: "answered",
+      status: "ok",
+      usage: USAGE,
+      units: null,
+      costNanocents: CENT,
+      upstreamId: null,
+      httpStatus: 200,
+      durationMs: 1,
+    });
+    // One cent spent plus $9.99 reaches the allowance exactly, which is allowed.
+    await reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: 999 * CENT, at: at(1) }));
+    expect(
+      await categoryOf(reserve(app, session(C), jobCall({ traceId: trace, reserveNanocents: 1, at: at(2) }))),
+    ).toBe("job_cap");
+  });
+
+  it("shows the carrier its alerts, open ones first with who cleared the rest, and its last day's spend", async () => {
+    const alerts = await app.withTenant(C, (q) => readSpendAlerts(q, 100));
+    expect(alerts.length).toBeGreaterThan(0);
+    const firstCleared = alerts.findIndex((a) => a.clearedAt !== null);
+    expect(firstCleared).toBeGreaterThan(0);
+    expect(alerts.slice(firstCleared).every((a) => a.clearedAt !== null)).toBe(true);
+    expect(alerts[firstCleared]).toMatchObject({ clearedByEmail: `ops@c-${tag}.example`, limitNanocents: JOB_CAP });
+
+    const [expected] = await admin.withTenant(C, (q) =>
+      q.query<{ spent: number; calls: number }>(
+        `SELECT CAST(COALESCE(SUM(COALESCE(cost_nanocents, reserved_nanocents)), 0) AS bigint) AS spent,
+                CAST(count(*) AS integer) AS calls
+           FROM model_calls
+          WHERE tenant_id = current_tenant_id() AND created_at > CAST($1 AS timestamptz) - interval '24 hours'`,
+        [at(30)],
+      ),
+    );
+    expect(expected.calls).toBeGreaterThan(0);
+    expect(await app.withTenant(C, (q) => readDaySpend(q, at(30)))).toEqual({
+      spentNanocents: expected.spent,
+      calls: expected.calls,
+    });
+    // A day after the last of them, nothing is in the window.
+    expect(await app.withTenant(C, (q) => readDaySpend(q, at(60 * 26)))).toEqual({ spentNanocents: 0, calls: 0 });
+  });
+
+  it("gives the app only reads, new alerts and the clear on spend_alerts", async () => {
+    const facts = await admin.withoutTenant(async (q) => {
+      const [grants] = await q.query<Record<string, boolean>>(
+        `SELECT has_table_privilege('payday_app', 'public.spend_alerts', 'SELECT') AS sel,
+                has_table_privilege('payday_app', 'public.spend_alerts', 'INSERT') AS ins,
+                has_table_privilege('payday_app', 'public.spend_alerts', 'UPDATE') AS upd,
+                has_table_privilege('payday_app', 'public.spend_alerts', 'DELETE') AS del`,
+      );
+      const updatable = await q.query<{ col: string }>(
+        `SELECT a.attname AS col
+           FROM pg_attribute a
+          WHERE a.attrelid = to_regclass('public.spend_alerts')
+            AND a.attnum > 0 AND NOT a.attisdropped
+            AND has_column_privilege('payday_app', a.attrelid, a.attnum, 'UPDATE')
+          ORDER BY 1`,
+      );
+      return { grants, updatable: updatable.map((u) => u.col) };
+    });
+    expect(facts.grants).toEqual({ sel: true, ins: true, upd: false, del: false });
+    expect(facts.updatable).toEqual(["cleared_at", "cleared_by"]);
+
+    const deleted = await failureOf(app.withTenant(C, (q) => q.execute("DELETE FROM spend_alerts")));
+    expect((deleted as { sqlState?: string }).sqlState).toBe("42501");
+    const changed = await failureOf(
+      app.withTenant(C, (q) => q.execute("UPDATE spend_alerts SET spent_nanocents = 0")),
+    );
+    expect((changed as { sqlState?: string }).sqlState).toBe("42501");
+    const forged = await failureOf(
+      app.withTenant(B, (q) =>
+        q.execute(
+          `INSERT INTO spend_alerts (tenant_id, purpose, window_start, window_end, spent_nanocents, limit_nanocents)
+           VALUES (CAST($1 AS uuid), 'proof', now(), now(), 2, 1)`,
+          [C],
+        ),
+      ),
+    );
+    expect((forged as { sqlState?: string }).sqlState).toBe("42501");
   });
 });

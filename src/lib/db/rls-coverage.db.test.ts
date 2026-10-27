@@ -68,6 +68,7 @@ describe("row-level security coverage", () => {
         "qbo_connections",
         "qbo_entity_ids",
         "qbo_oauth_states",
+        "spend_alerts",
         "sweep_items",
         "sweep_runs",
         "tenants",

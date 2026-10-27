@@ -5,6 +5,7 @@
       "counts": {
         "customers": 12,
         "drivers": 25,
+        "driver_cards": 25,
         "loads": 330,
         "load_state_miles": 1088,
         "load_accessorials": 90,
@@ -242,6 +243,7 @@
       "counts": {
         "customers": 12,
         "drivers": 25,
+        "driver_cards": 25,
         "loads": 315,
         "load_state_miles": 687,
         "load_accessorials": 103,

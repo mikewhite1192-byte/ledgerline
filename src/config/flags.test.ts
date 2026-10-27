@@ -96,4 +96,9 @@ describe("flags", () => {
     expect(flags.sweepLimits.sliceMs).toBeLessThan(25_000);
     expect(flags.approveAllLimits).toEqual({ maxItems: 25 });
   });
+
+  it("stops any one model job at $10 in an hour", () => {
+    expect(flags.aiJobHourlyCapCents).toBe(1000);
+    expect(Number.isSafeInteger(flags.aiJobHourlyCapCents)).toBe(true);
+  });
 });
