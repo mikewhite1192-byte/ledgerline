@@ -2,6 +2,7 @@ import type { AiTool } from "../../ai";
 import { enumValuesOf } from "./redact";
 import { classifyMessage } from "./tools/triage/classify-message";
 import { explainPaystub } from "./tools/read/explain-paystub";
+import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention";
 import { getAdvances } from "./tools/read/get-advances";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDriver } from "./tools/read/get-driver";
@@ -13,6 +14,7 @@ import { getProposal } from "./tools/read/get-proposal";
 import { getPayItems } from "./tools/read/get-pay-items";
 import { runChecks } from "./tools/read/run-checks";
 import { proposeAdvance } from "./tools/propose/propose-advance";
+import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
@@ -41,9 +43,11 @@ const TOOLS: readonly AnyToolDef[] = [
   runChecks,
   getInboundMessage,
   getProposal,
+  findUnbilledDetentionTool,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,
+  proposeDetentionCharge,
   classifyMessage,
 ];
 
@@ -67,26 +71,39 @@ export function toolNamed(name: string): AnyToolDef | null {
   return Object.hasOwn(TOOL_REGISTRY, name) ? TOOL_REGISTRY[name] : null;
 }
 
-// What each role is offered: JSON schemas made once from the same zod schemas the gateway parses.
-const OFFERED: Readonly<Record<AgentRole, readonly AiTool[]>> = Object.freeze(
+// What each role may be offered: JSON schemas made once from the same zod schemas the gateway
+// parses, each kept beside its tool so a release switch is read on every offer.
+type Offer = { tool: AnyToolDef; schema: AiTool };
+const OFFERS: Readonly<Record<AgentRole, readonly Offer[]>> = Object.freeze(
   Object.fromEntries(
     AGENT_ROLES.map((role) => [
       role,
       Object.freeze(
         Object.values(TOOL_REGISTRY)
           .filter((t) => t.roles.includes(role))
-          .map((t) => Object.freeze(aiToolOf(t))),
+          .map((t) => Object.freeze({ tool: t, schema: Object.freeze(aiToolOf(t)) })),
       ),
     ]),
-  ) as Record<AgentRole, readonly AiTool[]>,
+  ) as Record<AgentRole, readonly Offer[]>,
 );
 
+// Whether a tool's release switch is on. A tool without one is always on; a switch that throws
+// counts as off.
+export function isToolEnabled(tool: AnyToolDef): boolean {
+  if (!tool.enabled) return true;
+  try {
+    return tool.enabled() === true;
+  } catch {
+    return false;
+  }
+}
+
 export function toolsFor(role: AgentRole): AiTool[] {
-  if (!Object.hasOwn(OFFERED, role)) return [];
-  return [...OFFERED[role]];
+  if (!Object.hasOwn(OFFERS, role)) return [];
+  return OFFERS[role].filter((o) => isToolEnabled(o.tool)).map((o) => o.schema);
 }
 
 // Every enum value any tool schema declares: the only free strings the decision log keeps.
 export const REDACT_ENUMS: ReadonlySet<string> = enumValuesOf(
-  Object.values(OFFERED).flatMap((list) => list.map((t) => t.parameters)),
+  Object.values(OFFERS).flatMap((list) => list.map((o) => o.schema.parameters)),
 );

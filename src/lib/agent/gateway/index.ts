@@ -5,7 +5,7 @@ import { isUuid } from "../../uuid";
 import { INVALID_TRACE, isTraceId, logDecision, type DecisionRow } from "./decisions";
 import { redactArgs } from "./redact";
 import { assertRefsExist, distinctRefs } from "./refs";
-import { REDACT_ENUMS, TOOL_NAME, toolNamed } from "./registry";
+import { isToolEnabled, REDACT_ENUMS, TOOL_NAME, toolNamed } from "./registry";
 import { screenUntrustedInput } from "./screen";
 import { withAgentTenant } from "./tenant";
 import type {
@@ -24,6 +24,7 @@ import { parseArgs } from "./validate";
 // takes the same path, in the same order, and fails closed:
 //   1. unknown_tool   the name is not in the registry
 //   2. denied         the caller's role may not use the tool
+//      blocked        the tool's release switch is off (reason disabled), before its args are read
 //   3. invalid_args   the args fail the tool's strict schema (paths and codes only)
 //   4. unknown_record an id in the args is not a row of the caller's tenant
 //   5. blocked        a propose tool's amount is over the limit the rules engine sets
@@ -238,6 +239,8 @@ async function dispatch(
   // A trace id the log cannot hold (checked in callTool) fails the call here: no limit lookup,
   // screen or tool runs on it.
   if (ctx.traceId === INVALID_TRACE) throw new InvalidTraceId();
+  // A tool behind a release switch that is off: nothing is read, looked up or run.
+  if (!isToolEnabled(tool)) return refuse("blocked", "disabled", { blocked: true, reason: "disabled" });
 
   // 3: strict args. A failure reports field paths and codes, never the text.
   const parsed = parseArgs(tool.args, call.argumentsJson);

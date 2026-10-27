@@ -10,6 +10,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const paid = rows.settlement_periods.find((p) => p.status === "paid")!;
   const invoice = rows.invoices.find((i) => i.source === "load" && i.status === "open")!;
   const input = rows.untrusted_inputs[0];
+  // The first planted unbilled detention: 41,250 cents in October.
+  const detentionLoad = plan.planted.detentionLoadIds[0];
   const refs = [{ table: "drivers", id: hero.id }];
   return {
     get_driver: { driverId: hero.id },
@@ -43,6 +45,12 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       newAmountCents: invoice.amount_cents + 100,
       reasonCategories: ["rate_mismatch"],
       sourceRefs: [{ table: "invoices", id: invoice.id }],
+    },
+    find_unbilled_detention: { month: "2026-10" },
+    propose_detention_charge: {
+      loadId: detentionLoad,
+      amountCents: 41_250,
+      sourceRefs: [{ table: "loads", id: detentionLoad }],
     },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     // Proposals are not in a seed plan; any well-formed id parses.

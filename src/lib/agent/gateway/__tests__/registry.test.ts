@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { flags } from "../../../../config/flags";
 import { REDACT_ENUMS, STRICT_TOOL_SCHEMAS, TOOL_NAME, TOOL_REGISTRY, toolNamed, toolsFor } from "../registry";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, TIERS, type AgentRole } from "../types";
 
@@ -18,9 +19,18 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
   classify_message: { tier: "read", roles: ["triage"] },
   get_proposal: { tier: "read", roles: ["auditor"] },
+  find_unbilled_detention: { tier: "read", roles: ["operator", "auditor"] },
+  propose_detention_charge: { tier: "propose", roles: ["operator"] },
 };
 
+// The tools behind the detention switch: in the registry always, offered only while it is on.
+const DETENTION_TOOLS = ["find_unbilled_detention", "propose_detention_charge"];
+
 describe("tool registry", () => {
+  afterEach(() => {
+    flags.detentionEnabled = false;
+  });
+
   it("holds exactly the designed tools, each with its tier and roles", () => {
     const actual = Object.fromEntries(
       Object.values(TOOL_REGISTRY).map((t) => [t.name, { tier: t.tier, roles: [...t.roles] }]),
@@ -40,7 +50,7 @@ describe("tool registry", () => {
 
   it("gives every propose tool an engine limit", () => {
     const propose = Object.values(TOOL_REGISTRY).filter((t) => t.tier === "propose");
-    expect(propose).toHaveLength(3);
+    expect(propose).toHaveLength(4);
     for (const tool of propose) expect(typeof tool.limit).toBe("function");
   });
 
@@ -62,7 +72,24 @@ describe("tool registry", () => {
     expect(toolsFor("nobody" as AgentRole)).toEqual([]);
   });
 
+  it("offers the detention tools only while their switch is on, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    for (const role of AGENT_ROLES) for (const n of DETENTION_TOOLS) expect(names(role)).not.toContain(n);
+    flags.detentionEnabled = true;
+    expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
+      operator: 15,
+      auditor: 10,
+      triage: 2,
+    });
+    expect(names("operator")).toEqual(expect.arrayContaining(DETENTION_TOOLS));
+    expect(names("auditor")).toContain("find_unbilled_detention");
+    expect(names("auditor")).not.toContain("propose_detention_charge");
+    flags.detentionEnabled = false;
+    expect(toolsFor("operator")).toHaveLength(13);
+  });
+
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
+    flags.detentionEnabled = true;
     for (const role of AGENT_ROLES) {
       for (const tool of toolsFor(role)) {
         const params = tool.parameters as Record<string, unknown>;

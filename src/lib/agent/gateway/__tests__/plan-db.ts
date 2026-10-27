@@ -1,4 +1,5 @@
 import type { Param } from "../../../db";
+import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
@@ -57,7 +58,7 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
 // serves one stored proposal through withProposal.
 export const PROPOSAL_ID = "6a1f0c2e-9d3b-4c5a-8e7f-1b2c3d4e5f60";
 
-export type ProposalKindName = "advance_payout" | "pay_correction" | "invoice_fix";
+export type ProposalKindName = "advance_payout" | "pay_correction" | "invoice_fix" | "detention_charge";
 
 // One stored proposal per kind, as get_proposal's select returns it, over the plan's own records.
 export function proposalRowFor(plan: CarrierPlan, kind: ProposalKindName, over: Row = {}): Row {
@@ -101,6 +102,30 @@ export function proposalRowFor(plan: CarrierPlan, kind: ProposalKindName, over: 
       operator_verdict: "owed_to_driver",
       sources: JSON.stringify([{ table: "drivers", id: hero.id }, { table: "settlement_periods", id: open.id }]),
       args: JSON.stringify({ driverId: hero.id, periodId: open.id, deltaCents: 2_500 }),
+      ...over,
+    };
+  }
+  if (kind === "detention_charge") {
+    const load = rows.loads.find((l) => l.id === plan.planted.detentionLoadIds[0])!;
+    const check = detentionChargeOf({
+      load,
+      customer: rows.customers.find((c) => c.id === load.customer_id)!,
+      miles: rows.load_state_miles.filter((m) => m.load_id === load.id),
+      accessorials: rows.load_accessorials.filter((a) => a.load_id === load.id),
+      invoices: rows.invoices.filter((i) => i.load_id === load.id),
+    });
+    if (!check.ok) throw new Error("the planted detention load has no charge");
+    return {
+      ...base,
+      title: "Bill unbilled detention",
+      subject_table: "loads",
+      subject_id: load.id,
+      subject_label: load.load_number,
+      amount_cents: check.charge.amountCents,
+      direction: "in",
+      operator_verdict: "not_given",
+      sources: JSON.stringify(check.charge.sources),
+      args: JSON.stringify(chargeArgsOf(check.charge)),
       ...over,
     };
   }

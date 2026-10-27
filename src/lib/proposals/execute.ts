@@ -3,6 +3,7 @@ import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
 import { overrideReasonOf } from "../agent/auditor/words";
+import { executeDetentionCharge } from "./executors/detention-charge";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
 // purpose: approval is the only road from a proposal to the ledger, and the agent tree cannot
@@ -23,7 +24,12 @@ import { overrideReasonOf } from "../agent/auditor/words";
 // run. Each executor reserves its ledger row before any outside call (the money executor) and
 // moves the proposal on from there.
 
-export const PROPOSAL_KINDS = ["advance_payout", "pay_correction", "invoice_fix"] as const;
+export const PROPOSAL_KINDS = [
+  "advance_payout",
+  "pay_correction",
+  "invoice_fix",
+  "detention_charge",
+] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 
 export type ProposalRow = {
@@ -94,9 +100,15 @@ export type Executor = (
 
 export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>;
 
-// One executor per kind. Empty in this release: ADVANCES registers advance_payout (it creates the
-// advances row the ledger needs at approval); pay_correction and invoice_fix have none yet.
-export const EXECUTORS: ExecutorRegistry = {};
+// One executor per kind. advance_payout comes with ADVANCES (it creates the advances row the
+// ledger needs at approval); pay_correction and invoice_fix have none yet. detention_charge is
+// read through its release switch on every approval: with detentionEnabled off the kind has no
+// executor, so the gate refuses it as not_executable before it approves or writes anything.
+export const EXECUTORS: ExecutorRegistry = {
+  get detention_charge() {
+    return flags.detentionEnabled ? executeDetentionCharge : undefined;
+  },
+};
 
 const DAY_MS = 86_400_000;
 

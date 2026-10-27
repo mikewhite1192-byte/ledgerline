@@ -28,6 +28,8 @@ export type Flags = {
     payCorrectionMaxCents: number;
     // Largest change to an invoice total a proposal may carry.
     invoiceFixMaxCents: number;
+    // Largest detention charge one proposal may add to an invoice.
+    detentionChargeMaxCents: number;
   };
   // The agent chat. Off means the composer shows its reason text and the turn route refuses
   // before any model call. aiEnabled must also be on for a turn to reach a model.
@@ -57,6 +59,10 @@ export type Flags = {
   auditorRequired: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
+  // Unbilled detention: the agent's find and propose tools are offered and a person's approval
+  // adds the charge to the load's open invoice. Off means neither tool is offered or runs and an
+  // approval is refused before anything is written.
+  detentionEnabled: boolean;
 };
 
 export const flags: Flags = {
@@ -68,7 +74,11 @@ export const flags: Flags = {
   accountingEnabled: false,
   inboundEmailEnabled: false,
   screenOutputMode: "text",
-  gatewayLimits: { payCorrectionMaxCents: 50_000, invoiceFixMaxCents: 250_000 },
+  gatewayLimits: {
+    payCorrectionMaxCents: 50_000,
+    invoiceFixMaxCents: 250_000,
+    detentionChargeMaxCents: 100_000,
+  },
   agentEnabled: false,
   agentStreamMode: "sse",
   agentTurnLimits: {
@@ -83,4 +93,5 @@ export const flags: Flags = {
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
   approverRole: { adminAboveCents: 200_000 },
+  detentionEnabled: false,
 };

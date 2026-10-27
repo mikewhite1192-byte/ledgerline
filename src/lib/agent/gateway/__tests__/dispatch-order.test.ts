@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { flags } from "../../../../config/flags";
 import type { AiResult } from "../../../ai";
 import type { Queryable, TenantDb } from "../../../db";
 import { instantAt } from "../../../seed/calendar";
@@ -57,7 +58,10 @@ function screenModel(text: string): CompleteFn {
     }) satisfies AiResult;
 }
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  flags.detentionEnabled = false;
+});
 
 describe("callTool dispatch order", () => {
   it("1: refuses a name not in the registry, before any read, and logs it with no tier", async () => {
@@ -385,6 +389,8 @@ describe("callTool dispatch order", () => {
   });
 
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
+    // Every registered tool, the switched-off ones included.
+    flags.detentionEnabled = true;
     for (const [name, args] of Object.entries(ARGS)) {
       const auditor = name === "get_proposal";
       const db = planDb(plan, auditor ? withProposal(proposalRowFor(plan, "advance_payout"), screenStore) : screenStore);

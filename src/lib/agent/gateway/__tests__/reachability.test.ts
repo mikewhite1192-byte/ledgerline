@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { flags } from "../../../../config/flags";
 import { callTool } from "../index";
-import { TOOL_REGISTRY, toolsFor } from "../registry";
+import { isToolEnabled, TOOL_REGISTRY, toolsFor } from "../registry";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES } from "../types";
 import { aiToolOf, parseArgs } from "../validate";
 import { context, fixedClock, FakeDb, TENANT } from "./fake-db";
@@ -16,10 +17,19 @@ const ARGS = sampleArgs(plan);
 const TOOLS = Object.values(TOOL_REGISTRY);
 const call = (name: string, args: unknown) => ({ id: "c", name, argumentsJson: JSON.stringify(args) });
 
-afterEach(() => vi.restoreAllMocks());
+// Every tool's switch on, so each test below reaches every tool; the switch's own cases are in
+// detention-tools.test.ts.
+beforeEach(() => {
+  flags.detentionEnabled = true;
+});
+afterEach(() => {
+  flags.detentionEnabled = false;
+  vi.restoreAllMocks();
+});
 
 describe("reachability", () => {
-  it("(a) offers each role only registry tools, with the registry's own schemas", () => {
+  it.each([true, false])("(a) offers each role only registry tools, with the registry's own schemas (switch %s)", (on) => {
+    flags.detentionEnabled = on;
     for (const role of AGENT_ROLES) {
       const offered = toolsFor(role);
       expect(offered.length, role).toBeGreaterThan(0);
@@ -30,7 +40,9 @@ describe("reachability", () => {
         expect(tool).toEqual(aiToolOf(def));
       }
       const names = offered.map((t) => t.name);
-      expect(names).toEqual(TOOLS.filter((t) => t.roles.includes(role)).map((t) => t.name));
+      expect(names).toEqual(
+        TOOLS.filter((t) => t.roles.includes(role) && isToolEnabled(t)).map((t) => t.name),
+      );
       for (const reserved of RESERVED_TOOL_NAMES) expect(names).not.toContain(reserved);
     }
     expect(toolsFor("admin" as never)).toEqual([]);
