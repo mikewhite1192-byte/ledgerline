@@ -4,6 +4,7 @@
 export { accounting } from "./accounting";
 export { advances } from "./advances";
 export { clips } from "./clips";
+export { collections } from "./collections";
 export { customerPayments } from "./customer-payments";
 export { demo } from "./demo";
 export { documents } from "./documents";

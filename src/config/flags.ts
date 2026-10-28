@@ -309,6 +309,32 @@ export type Flags = {
   // the tools are not offered. invoicesEnabled must also be on. A post to accounting is always
   // left unsent there (a constant on the adapter, not a switch); LedgerLine never sends one.
   invoiceReviewEnabled: boolean;
+  // Collections: the Collections page lists invoices 30 or more days past due, Muse Spark drafts one
+  // short reminder email per invoice and stage, code checks every number in it against the invoice,
+  // and a person approves or rejects each one. Off means the page shows the switched-off state, the
+  // routes answer 404 before any read and the agent's read tool is not offered. aiEnabled must also
+  // be on for a draft to reach a model. Nothing here moves money.
+  collectionsEnabled: boolean;
+  // Approved reminders also go by email, to allowlisted addresses only. Off: approval records the
+  // reminder as approved and not sent, and the email path logs "would send" instead of sending.
+  collectionsEmailEnabled: boolean;
+  // Exact, lower-cased addresses the email path may send to. Empty refuses every address.
+  collectionsEmailAllowlist: string[];
+  // Email goes only for a reminder drafted on or after this date (YYYY-MM-DD, a whole date on the
+  // carrier's calendar). Older reminders are the backlog, and a release never notifies the backlog.
+  // The release PR that arms email sets this to its go-live date. A value that is not a whole date
+  // (the default, empty) refuses every email.
+  collectionsEmailFrom: string;
+  // Caps on reminder drafting: one reminder's worst case, the spend of one Draft run, the output
+  // budget of one reminder, how many reminders one run drafts, and how late an invoice must be (in
+  // whole days past its due date) before it gets a reminder.
+  collectionsLimits: {
+    maxDraftCents: number;
+    maxRunCents: number;
+    maxOutputTokens: number;
+    maxDraftsPerRun: number;
+    minDaysLate: number;
+  };
   // The Profit brief at /profit: last closed week's margin by route and by customer, how fast each
   // customer pays, and "Write this week's brief", which asks Muse Spark to word those figures (a
   // button press, never a schedule). Off: the page shows its off state, the route answers 409 and
@@ -467,6 +493,11 @@ export const flags: Flags = {
   batchApproveEnabled: false,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
   invoiceReviewEnabled: false,
+  collectionsEnabled: false,
+  collectionsEmailEnabled: false,
+  collectionsEmailAllowlist: [],
+  collectionsEmailFrom: "",
+  collectionsLimits: { maxDraftCents: 2, maxRunCents: 40, maxOutputTokens: 500, maxDraftsPerRun: 12, minDaysLate: 30 },
   profitBriefEnabled: false,
   profitBriefLimits: { maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 },
   carrierMemoryEnabled: false,

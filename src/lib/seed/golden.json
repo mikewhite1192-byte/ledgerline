@@ -25,6 +25,7 @@
         "payment_applications": 200,
         "untrusted_inputs": 6,
         "screenings": 0,
+        "collection_drafts": 0,
         "briefs": 0,
         "carrier_notes": 4
       },
@@ -331,6 +332,7 @@
         "payment_applications": 203,
         "untrusted_inputs": 6,
         "screenings": 0,
+        "collection_drafts": 0,
         "briefs": 0,
         "carrier_notes": 4
       },

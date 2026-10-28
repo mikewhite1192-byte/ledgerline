@@ -10,6 +10,16 @@ describe("homeSuggestions", () => {
     expect(on[3].label).toBe("What was our margin per load this month?");
   });
 
+  it("asks who needs a payment reminder in the fourth place only while collections is on", () => {
+    for (const reportsOn of [false, true]) {
+      const on = homeSuggestions(reportsOn, { collections: true });
+      expect(on.map((s) => s.id)).toEqual(["paystub-problems", "past-60", "pay-run-cost", "payment-reminder"]);
+      expect(on[3].label).toBe("Who needs a payment reminder?");
+    }
+    expect(homeSuggestions(false, { collections: false })).toEqual(homeSuggestions(false));
+    expect(homeSuggestions(true, { collections: false })).toEqual(homeSuggestions(true));
+  });
+
   it("asks how last week went in that place while the profit brief is on, reports on or off", () => {
     for (const reportsOn of [false, true]) {
       const out = homeSuggestions(reportsOn, { profitOn: true });
@@ -18,6 +28,7 @@ describe("homeSuggestions", () => {
     }
     expect(homeSuggestions(false, { profitOn: false })).toEqual(homeSuggestions(false));
     expect(homeSuggestions(true, {})).toEqual(homeSuggestions(true));
+    expect(homeSuggestions(true, { profitOn: true, collections: true })[3].id).toBe("profit-brief");
   });
 
   it("keeps the first question word for word, since it is what the agent is asked", () => {
@@ -36,6 +47,7 @@ describe("every suggestion says why", () => {
       ...homeSuggestions(false),
       ...homeSuggestions(true),
       ...homeSuggestions(false, { profitOn: true }),
+      ...homeSuggestions(false, { collections: true }),
       DETENTION_SUGGESTION,
       ...withPaystubSuggestion(homeSuggestions(true), paystub),
     ];

@@ -39,6 +39,7 @@ const SWITCHES = [
   "clipsEnabled",
   "invoicesEnabled",
   "customerPaymentsEnabled",
+  "collectionsEnabled",
   "profitBriefEnabled",
   "carrierMemoryEnabled",
 ] as const;
@@ -175,6 +176,12 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
     load: async () => (await import("./customer-payments/new/page")).default({ searchParams: searchParams() }),
     off: "Payments are off for this carrier",
     title: "Record a payment",
+  },
+  {
+    route: "/collections",
+    load: async () => (await import("./collections/page")).default(),
+    off: "Collections is off for this carrier",
+    title: "Collections",
   },
   {
     route: "/profit",

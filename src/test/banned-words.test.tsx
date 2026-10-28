@@ -27,7 +27,21 @@ import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
 import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
-import { refusalWords, writeOutcome } from "@/lib/briefs/words";
+import { refusalWords as briefRefusalWords, writeOutcome } from "@/lib/briefs/words";
+import {
+  approvedWords,
+  DECIDE_ERROR_WORDS,
+  DRAFT_ERROR_WORDS,
+  draftedWords,
+  EMAIL_UNCONFIRMED_WORDS,
+  REFUSAL_WORDS,
+  refusalWords,
+  REMINDER_STATUS_WORDS,
+  stillWaitingWords,
+  TONE_HELP,
+  TONE_WORDS,
+  UNCONFIRMED_DECISION_WORDS,
+} from "@/lib/collections/words";
 import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
 import { TERMS } from "@/lib/format/terms";
@@ -239,6 +253,10 @@ vi.mock("@/lib/invoices/views", async (importOriginal) => ({
   readCustomerRecord: async () => get("customerRecord"),
   readLoadRecord: async () => get("loadRecord"),
 }));
+vi.mock("@/lib/collections/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/collections/view")>()),
+  readCollectionsView: async () => get("collectionsView"),
+}));
 vi.mock("@/lib/documents/service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/documents/service")>()),
   getDocument: async () => get("document"),
@@ -356,6 +374,7 @@ function defaults(): Record<string, unknown> {
     driverAdvances: fx.DRIVER_ADVANCES,
     identity: fx.IDENTITY,
     clips: fx.CLIPS,
+    collectionsView: fx.COLLECTIONS_VIEW,
     paymentForm: fx.PAYMENT_FORM,
     invoices: fx.INVOICES,
     queue: fx.QUEUE,
@@ -696,6 +715,52 @@ const PAGES: PageCase[] = [
     variants: [
       { name: "clips", load: async () => (await import("@/app/clips/page")).default() },
       { name: "empty", setup: () => (state.fx.clips = []), load: async () => (await import("@/app/clips/page")).default() },
+    ],
+  },
+  {
+    file: "collections/page.tsx",
+    variants: [
+      {
+        name: "late invoices and a reminder in every state",
+        load: async () => (await import("@/app/collections/page")).default(),
+        shows: "and 1 more",
+      },
+      {
+        name: "refused, every reason",
+        setup: () =>
+          (state.fx.collectionsView = {
+            ...fx.COLLECTIONS_VIEW,
+            cards: [...Object.keys(REFUSAL_WORDS), null, "unheard_of"].map((refusalCategory, n) =>
+              fx.reminderCard(n + 20, { status: "refused", subject: null, body: null, refusalCategory }),
+            ),
+          }),
+        load: async () => (await import("@/app/collections/page")).default(),
+        shows: "did not pass its check",
+      },
+      {
+        name: "every late invoice has a reminder",
+        setup: () => (state.fx.collectionsView = { ...fx.COLLECTIONS_VIEW, toDraft: [] }),
+        load: async () => (await import("@/app/collections/page")).default(),
+        shows: "Every late invoice has a reminder",
+      },
+      {
+        name: "models switched off",
+        load: async () => {
+          flags.aiEnabled = false;
+          try {
+            return await (await import("@/app/collections/page")).default();
+          } finally {
+            flags.aiEnabled = true;
+          }
+        },
+        shows: "no reminders can be drafted right now",
+      },
+      {
+        name: "nobody past due",
+        setup: () => (state.fx.collectionsView = { ...fx.COLLECTIONS_VIEW, pastDueCount: 0, pastDueCents: 0, waiting: 0, approvedLastWeek: 0, toDraft: [], cards: [] }),
+        load: async () => (await import("@/app/collections/page")).default(),
+        shows: "Nobody is 30 or more days past due",
+      },
     ],
   },
   {
@@ -1203,6 +1268,7 @@ const PAGES: PageCase[] = [
       },
     ],
   },
+  loading("collections/loading.tsx", () => import("@/app/collections/loading")),
   loading("documents/loading.tsx", () => import("@/app/documents/loading")),
   loading("documents/[id]/loading.tsx", () => import("@/app/documents/[id]/loading")),
   loading("driver-notes/loading.tsx", () => import("@/app/driver-notes/loading")),
@@ -1301,6 +1367,21 @@ describe("no internal word on any page", () => {
       });
     }
   }
+});
+
+// A page switched off for the carrier shows only the shell and the off note. The page variants above
+// must never land there, so the off state is read here, with its own switch put back after.
+describe("no internal word on a switched-off page", () => {
+  it("collections/page.tsx (switch off)", async () => {
+    flags.collectionsEnabled = false;
+    try {
+      const container = await renderPage(async () => (await import("@/app/collections/page")).default());
+      expect(container.textContent).toContain("Collections is off for this carrier");
+      expect(scan(container)).toEqual([]);
+    } finally {
+      flags.collectionsEnabled = true;
+    }
+  });
 });
 
 // The record pages a paystub line links to, for a record this carrier does not have: each shows the
@@ -1850,7 +1931,7 @@ describe("no internal word on the profit brief, in every state", () => {
     const categories = ["format", "unknown_tag", "number_mismatch", "untagged", "timeout", "interrupted", "incomplete", "cap", "too_expensive", "job_cap", "disabled", "not_configured", "error"];
     const errors = ["exists", "in_progress", "open_period", "no_loads", "not_found", "brief_off", "disabled", "ai_off", "ai_disabled", "forbidden", "unauthenticated", "unknown", "network"];
     const sentences = [
-      ...categories.map(refusalWords),
+      ...categories.map(briefRefusalWords),
       ...errors.map((error) => writeOutcome({ ok: false, error, data: {} })),
       ...["drafted", "refused", "over_cap", "drafting"].flatMap((status) =>
         categories.map((category) => writeOutcome({ ok: true, error: null, data: { status, category } })),
@@ -1962,6 +2043,37 @@ describe("no internal word on a pay week's buttons and notes", () => {
         ))}
       </ul>,
     );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("no internal word in a collections note", () => {
+  it("every status, tone, refusal, approval, run and error line", () => {
+    const words = [
+      ...Object.values(REMINDER_STATUS_WORDS),
+      ...Object.values(TONE_WORDS),
+      TONE_HELP,
+      ...[...Object.keys(REFUSAL_WORDS), null, "unheard_of"].map(refusalWords),
+      approvedWords("logged", null, fx.TENANT.timezone),
+      approvedWords("email", null, fx.TENANT.timezone),
+      approvedWords("email", "2026-10-27T15:05:00.000Z", fx.TENANT.timezone),
+      draftedWords(1, 0),
+      draftedWords(3, 1),
+      ...[null, "cap", "model"].flatMap((stoppedBy) => [stillWaitingWords(1, stoppedBy) ?? "", stillWaitingWords(4, stoppedBy) ?? ""]),
+      ...Object.values(DRAFT_ERROR_WORDS),
+      ...Object.values(DECIDE_ERROR_WORDS),
+      UNCONFIRMED_DECISION_WORDS.title,
+      UNCONFIRMED_DECISION_WORDS.body,
+      EMAIL_UNCONFIRMED_WORDS,
+    ];
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(words.every((w) => w.length > 0)).toBe(true);
     expect(scan(container)).toEqual([]);
   });
 });

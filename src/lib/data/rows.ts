@@ -326,6 +326,28 @@ export type ScreeningRow = {
   expires_at: string | null;
 };
 
+// A reminder for a late invoice (0041). The seed plants none: the demo presses Draft reminders.
+export type CollectionDraftRow = {
+  id: string;
+  invoice_id: string;
+  customer_id: string;
+  stage: "30" | "60" | "90";
+  tone: "friendly" | "direct" | "firm";
+  status: "drafting" | "drafted" | "refused" | "over_cap" | "approved" | "rejected";
+  figures: Record<string, unknown>;
+  subject: string | null;
+  body: string | null;
+  refusal_category: string | null;
+  verification: Record<string, unknown> | null;
+  trace_id: string;
+  model_call_id: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  channel: "logged" | "email" | null;
+  sent_at: string | null;
+  updated_at: string;
+};
+
 // One brief (0042). figures, body and verification are jsonb whose shape each kind defines
 // (src/lib/briefs); the seed plants none.
 export type BriefRow = {
@@ -388,6 +410,7 @@ export type TenantRows = {
   payment_applications: PaymentApplicationRow[];
   untrusted_inputs: UntrustedInputRow[];
   screenings: ScreeningRow[];
+  collection_drafts: CollectionDraftRow[];
   briefs: BriefRow[];
   carrier_notes: CarrierNoteRow[];
 };

@@ -5,8 +5,9 @@ import { formatLocalDate } from "@/lib/format/dates";
 // why a person would ask it. With the reports on, the advance-limit question gives its place to
 // margin per load; "past 60 days" and "Friday's pay run" are then answered by the aging and cash
 // needed reports. With the profit brief on, that last place asks how last week went instead
-// (get_profit_brief answers it). The labels are sent to the agent as written, so a change to one is
-// a change to the question, not only to the screen.
+// (get_profit_brief answers it); with collections on and the profit brief off, it asks who needs a
+// payment reminder. The labels are sent to the agent as written, so a change to one is a change to
+// the question, not only to the screen.
 const BASE: readonly Suggestion[] = [
   {
     id: "paystub-problems",
@@ -38,13 +39,24 @@ const PROFIT: Suggestion = {
   reason: "Last closed week's margin by route and customer, every number checked.",
 };
 
-// Each other switch comes in by name, so a call that passes one switch for another fails to build.
-type HomeSwitches = { profitOn?: boolean };
+// With collections on, the fourth question asks who needs a payment reminder (get_collections
+// answers it), in place of the advance limit or margin per load. The profit brief keeps that place
+// when both are on.
+const REMINDER: Suggestion = {
+  id: "payment-reminder",
+  label: "Who needs a payment reminder?",
+  reason: "Lists invoices 30 or more days late and where each one's reminder stands.",
+};
 
-export function homeSuggestions(reportsOn: boolean, { profitOn = false }: HomeSwitches = {}): Suggestion[] {
+// Switches past the reports one come by name, so two switches can never be passed in each
+// other's place.
+export type SuggestionSwitches = { profitOn?: boolean; collections?: boolean };
+
+export function homeSuggestions(reportsOn: boolean, on: SuggestionSwitches = {}): Suggestion[] {
   return BASE.map((s) => {
     if (s.id !== "advance-limit") return { ...s };
-    if (profitOn) return { ...PROFIT };
+    if (on.profitOn) return { ...PROFIT };
+    if (on.collections) return { ...REMINDER };
     return reportsOn ? { ...MARGIN } : { ...s };
   });
 }
