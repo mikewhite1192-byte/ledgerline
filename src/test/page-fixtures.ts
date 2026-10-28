@@ -4,6 +4,7 @@ import { reasonSentence } from "@/lib/agent/reasons";
 import type { ProposalView, RuleChangeView, TurnView } from "@/lib/agent/view";
 import type { CallRow, Spend } from "@/lib/ai/spend";
 import type { DaySpend, SpendAlert } from "@/lib/ai/watch";
+import type { CashCheckView, CashHome, CashView, VendorBillView } from "@/lib/cash/view";
 import type { ClipView } from "@/lib/clips/types";
 import type { CollectionsView, LateInvoice, ReminderCard } from "@/lib/collections/view";
 import type { DocumentView } from "@/lib/documents/types";
@@ -1396,6 +1397,145 @@ export const profitView = (brief: ProfitView["brief"], over: Partial<ProfitView>
 
 export const PROFIT_VIEW = profitView({ kind: "none" });
 
+// ---- Cash Friday: a short week with all three moves, every receipt and bill status ----
+
+const BILL_ID = id(60);
+const LATE_CUSTOMER_ID = id(61);
+const reason = (category: string, source?: { table: string; id: string }) => ({ category, text: reasonSentence(category), source: source ?? null });
+
+export const VENDOR_BILL: VendorBillView = {
+  id: BILL_ID,
+  billRef: "BR-NTB-2229",
+  vendorName: "Northline Tire and Brake",
+  category: "maintenance",
+  amountCents: 888_424,
+  dueOn: "2026-11-06",
+  urgency: "flexible",
+  status: "open",
+  deferredTo: null,
+  paidOn: null,
+};
+
+export const VENDOR_BILLS: VendorBillView[] = [
+  VENDOR_BILL,
+  { ...VENDOR_BILL, id: id(62), billRef: "BR-SFI-1107", vendorName: "Summit Fleet Insurance", category: "insurance", amountCents: 1_240_000, urgency: "fixed" },
+  { ...VENDOR_BILL, id: id(63), billRef: "BR-RTL-0412", vendorName: "Ridgeline Truck Leasing", category: "lease", status: "deferred", deferredTo: "2026-11-20" },
+  { ...VENDOR_BILL, id: id(64), billRef: "BR-ORT-0388", vendorName: "Open Road Tolls", category: "tolls", amountCents: 41_250, status: "paid", paidOn: "2026-10-30" },
+];
+
+export const CASH_CHECK: CashCheckView = {
+  id: id(65),
+  asOf: "2026-11-02",
+  payDay: "2026-11-06",
+  createdAt: "2026-11-02T14:00:00.000Z",
+  payRunSource: "preview",
+  figures: {
+    bankBalanceCents: 1_449_362,
+    balanceAsOf: "2026-11-01",
+    cashOnHandCents: 1_449_362,
+    expectedReceiptsCents: 8_813_237,
+    payRunCents: 2_713_852,
+    fuelLoadsCents: 0,
+    vendorBillsDueCents: 8_228_747,
+    gapCents: -680_000,
+  },
+  lines: (["counted", "after_pay_day", "stalled"] as const).map((status, n) => ({
+    invoiceId: id(66 + n),
+    invoiceNumber: `BR-INV-1026${n}`,
+    customerId: n === 2 ? LATE_CUSTOMER_ID : CUSTOMER_ID,
+    customerName: n === 2 ? "Harbor Point Foods" : "Tanglewood Grocery Supply",
+    balanceCents: 182_500,
+    dueOn: "2026-10-30",
+    expectedOn: "2026-11-04",
+    onTimeBps: [9_250, 6_000, 2_500][n],
+    label: (["reliable", "mixed", "repeat_late"] as const)[n],
+    status,
+    expectedCents: status === "counted" ? 168_812 : 0,
+  })),
+  explanation:
+    "Cash on hand of $14,493.62 and $88,132.37 expected by Friday do not cover the $27,138.52 pay run and $82,287.47 of bills due, so Friday is short by $6,800.00. Delaying the $8,884.24 tire bill covers it on its own; factoring narrows it.",
+  explainCategory: null,
+};
+
+const cashCard = (over: Partial<ProposalView>): ProposalView =>
+  proposal({ direction: "in", destination: null, auditorVerdict: "pass", ...over });
+
+export const CASH_CARDS: ProposalView[] = [
+  cashCard({
+    id: id(70),
+    kind: "factoring_request",
+    subjectTable: "settlement_periods",
+    subjectId: PERIOD_ID,
+    subjectLabel: null,
+    amountCents: 184_701,
+    title: "Factor invoices (Test mode)",
+    reasons: [reason("narrows_short"), reason("factoring_test_mode")],
+    sources: [{ table: "invoices", id: INVOICE_ID }],
+    cash: {
+      kind: "factoring_request",
+      shortCents: 680_000,
+      advanceBps: 9_000,
+      feeBps: 300,
+      invoices: [
+        { invoiceId: INVOICE_ID, invoiceNumber: "BR-INV-10244", balanceCents: 212_300, advanceCents: 191_070, feeCents: 6_369, netCents: 184_701, reserveCents: 21_230 },
+      ],
+    },
+  }),
+  cashCard({
+    id: id(71),
+    kind: "bill_defer",
+    subjectTable: "vendor_bills",
+    subjectId: BILL_ID,
+    subjectLabel: "BR-NTB-2229",
+    amountCents: 888_424,
+    direction: "none",
+    title: "Delay a vendor bill",
+    reasons: [reason("bill_flexible", { table: "vendor_bills", id: BILL_ID }), reason("due_before_pay_day"), reason("covers_short")],
+    sources: [{ table: "vendor_bills", id: BILL_ID }],
+    cash: { kind: "bill_defer", billId: BILL_ID, billRef: "BR-NTB-2229", amountCents: 888_424, dueOn: "2026-11-06", deferredTo: "2026-11-20", shortCents: 680_000 },
+  }),
+  cashCard({
+    id: id(72),
+    kind: "collections_chase",
+    subjectTable: "customers",
+    subjectId: LATE_CUSTOMER_ID,
+    subjectLabel: "Harbor Point Foods",
+    amountCents: 2_607_400,
+    title: "Chase a late payer (Test mode)",
+    reasons: [reason("repeat_late_payer"), reason("past_due_balance"), reason("collections_test_mode")],
+    sources: [{ table: "customers", id: LATE_CUSTOMER_ID }],
+    cash: {
+      kind: "collections_chase",
+      overdueInvoices: 3,
+      invoices: [
+        { invoiceId: id(68), invoiceNumber: "BR-INV-10262", balanceCents: 182_500, dueOn: "2026-10-02" },
+        { invoiceId: id(69), invoiceNumber: "BR-INV-10263", balanceCents: 2_424_900, dueOn: "2026-10-09" },
+      ],
+    },
+  }),
+  // A chase already approved in test mode: its amount line says no money moved.
+  cashCard({
+    id: id(73),
+    kind: "collections_chase",
+    subjectTable: "customers",
+    subjectId: CUSTOMER_ID,
+    subjectLabel: "Tanglewood Grocery Supply",
+    amountCents: 182_500,
+    status: "done",
+    title: "Chase a late payer (Test mode)",
+    reasons: [reason("past_due_balance"), reason("collections_test_mode")],
+    sources: [{ table: "customers", id: CUSTOMER_ID }],
+    cash: {
+      kind: "collections_chase",
+      overdueInvoices: 1,
+      invoices: [{ invoiceId: id(66), invoiceNumber: "BR-INV-10260", balanceCents: 182_500, dueOn: "2026-10-30" }],
+    },
+  }),
+];
+
+export const CASH_VIEW: CashView = { check: CASH_CHECK, bills: VENDOR_BILLS, cards: CASH_CARDS };
+
+export const CASH_HOME: CashHome = { payDay: CASH_CHECK.payDay, gapCents: CASH_CHECK.figures.gapCents, createdAt: CASH_CHECK.createdAt };
 // The Memory page: a note about a customer, one about a driver, one about the whole carrier from a
 // person, one whose customer is no longer on file, and a suggestion from the chat waiting for Keep.
 const memoryNote = (n: number, over: Partial<NoteRow>): NoteRow => ({

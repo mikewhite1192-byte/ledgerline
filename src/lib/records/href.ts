@@ -22,6 +22,7 @@ export const RECORD_PAGES: readonly TableName[] = [
   "settlements",
   "invoices",
   "customer_payments",
+  "vendor_bills",
 ];
 
 export type RecordTable = TableName;

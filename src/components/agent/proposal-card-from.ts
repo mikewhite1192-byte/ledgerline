@@ -2,7 +2,7 @@ import type { ProposalAudit, ProposalCardProps } from "@/components/app/proposal
 import { auditConfirmQuestion, sentences } from "@/lib/agent/auditor/words";
 import { flagWords } from "@/lib/agent/reasons";
 import type { ProposalView } from "@/lib/agent/view";
-import { formatInstant } from "@/lib/format/dates";
+import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { sourceLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { isRuleKey } from "@/lib/pay-rules/rules";
@@ -191,6 +191,62 @@ export function detentionLines(d: NonNullable<ProposalView["detention"]>, amount
   return lines;
 }
 
+// "2026-11-06" as "Nov 6"; the card's dates sit within weeks of today.
+function shortDay(value: string): string {
+  return formatLocalDate(value).replace(/, \d{4}$/, "");
+}
+
+// A whole percent from basis points, as the card says a factoring rate: 9000 is "90%", 250 "2.5%".
+export function percentOf(bps: number): string {
+  const whole = Math.trunc(bps / 100);
+  const rest = bps % 100;
+  return rest === 0 ? `${whole}%` : `${whole}.${String(rest).padStart(2, "0").replace(/0$/, "")}%`;
+}
+
+// A Cash Friday card's why, every figure from the proposal's stored args (the engine's numbers
+// when the check ran). Each line links to the record it names.
+export function cashLines(c: NonNullable<ProposalView["cash"]>): { text: string; source?: { table: string; id: string } }[] {
+  if (c.kind === "factoring_request") {
+    return [
+      ...c.invoices.map((i) => ({
+        text:
+          `${i.invoiceNumber}: ${formatCents(i.balanceCents)} owed. ${formatCents(i.advanceCents)} paid now, ` +
+          `less a ${formatCents(i.feeCents)} fee; ${formatCents(i.reserveCents)} held until the customer pays.`,
+        source: { table: "invoices", id: i.invoiceId },
+      })),
+      {
+        text: `The factoring partner pays ${percentOf(c.advanceBps)} up front and charges ${percentOf(c.feeBps)}, against a ${formatCents(c.shortCents)} short.`,
+      },
+    ];
+  }
+  if (c.kind === "bill_defer") {
+    return [
+      {
+        text: `${c.billRef} for ${formatCents(c.amountCents)} is due ${shortDay(c.dueOn)}. It would move to ${shortDay(c.deferredTo)}, after pay day.`,
+        source: { table: "vendor_bills", id: c.billId },
+      },
+    ];
+  }
+  const lines: { text: string; source?: { table: string; id: string } }[] = c.invoices.map((i) => ({
+    text: `${i.invoiceNumber}: ${formatCents(i.balanceCents)}, due ${shortDay(i.dueOn)}.`,
+    source: { table: "invoices", id: i.invoiceId },
+  }));
+  const more = c.overdueInvoices - c.invoices.length;
+  if (more > 0) lines.push({ text: `${more} more past-due ${more === 1 ? "invoice" : "invoices"} not listed here.` });
+  return lines;
+}
+
+// What the amount line says on a Cash Friday card. A test-mode card never says money came in.
+function cashImpactLabel(p: ProposalView): string | undefined {
+  if (p.kind === "bill_defer") return "Bill amount; only its date moves";
+  if (p.kind !== "factoring_request" && p.kind !== "collections_chase") return undefined;
+  if (p.status === "done") return "Recorded in test mode; no money moved";
+  if (p.status === "proposed" || p.status === "approved" || p.status === "executing") {
+    return p.kind === "factoring_request" ? "Would come in before Friday" : "Past due from this customer";
+  }
+  return undefined;
+}
+
 // Who is looking at the card, for a kind whose button says up front that only an admin may save
 // it: admin, and the amount above which the approval gate asks for one (flags.approverRole).
 export type Viewer = { admin: boolean; adminAboveCents: number };
@@ -283,12 +339,15 @@ export function proposalCardFrom(
     p.kind === "detention_charge" && p.detention
       ? detentionLines(p.detention, p.amountCents).map((text) => ({ text }))
       : [];
+  const cash = p.cash ? cashLines(p.cash) : [];
+  const cashLabel = cashImpactLabel(p);
   const card: CardProps = {
     id: p.id,
     title: `${p.title}${subject}`,
-    impact: { cents: p.amountCents, direction: p.direction },
+    impact: { cents: p.amountCents, direction: p.direction, ...(cashLabel ? { label: cashLabel } : {}) },
     reasons: [
       ...detention,
+      ...cash,
       ...p.reasons.map((r) => (r.source ? { text: r.text, source: r.source } : { text: r.text })),
     ],
     sources: p.sources,

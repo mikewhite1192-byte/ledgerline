@@ -17,15 +17,16 @@ const ARGS = sampleArgs(plan);
 const TOOLS = Object.values(TOOL_REGISTRY);
 const call = (name: string, args: unknown) => ({ id: "c", name, argumentsJson: JSON.stringify(args) });
 
-// Every tool's switch on (detention, reports, invoicing, invoice review, customer payments, collections, the profit brief and pay rule changes), so each test
-// below reaches every registered tool. The detention switch's own cases are in detention-tools.test.ts; the last test here checks
-// the report switch-off path.
+// Every tool's switch on (detention, reports, invoicing, invoice review, customer payments, collections, Cash Friday, the
+// profit brief and pay rule changes), so each test below reaches every registered tool. The detention switch's own cases are in
+// detention-tools.test.ts; the last test here checks the report switch-off path.
 beforeEach(() => {
   flags.detentionEnabled = true;
   flags.reportsEnabled = true;
   flags.invoicesEnabled = true;
   flags.invoiceReviewEnabled = true;
   flags.customerPaymentsEnabled = true;
+  flags.cashFridayEnabled = true;
   flags.collectionsEnabled = true;
   flags.profitBriefEnabled = true;
   flags.rulesByTalkingEnabled = true;
@@ -37,6 +38,7 @@ afterEach(() => {
   flags.invoicesEnabled = false;
   flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
+  flags.cashFridayEnabled = false;
   flags.collectionsEnabled = false;
   flags.profitBriefEnabled = false;
   flags.rulesByTalkingEnabled = false;

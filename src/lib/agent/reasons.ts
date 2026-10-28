@@ -68,6 +68,15 @@ const SENTENCES: Readonly<Record<string, string>> = {
   source_changed: "A load behind a pay line is no longer delivered in this week.",
   advance_overrecovered: "An advance would be taken back for more than the driver owes.",
   schedule_inactive: "A deduction schedule on this paystub is no longer active this week.",
+  // Cash Friday (engine cards)
+  covers_short: "On its own, this covers Friday's short.",
+  narrows_short: "This makes Friday's short smaller but does not close it on its own.",
+  factoring_test_mode: "Test mode: approving records your decision. Nothing is sent to a factoring partner.",
+  bill_flexible: "The vendor accepts a later date on this bill.",
+  due_before_pay_day: "The bill is due on or before pay day.",
+  repeat_late_payer: "This customer usually pays late.",
+  past_due_balance: "These invoices are past their due date.",
+  collections_test_mode: "Test mode: approving records your decision. No message goes to the customer.",
 };
 
 const GENERIC = "A rule check found this.";

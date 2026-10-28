@@ -46,6 +46,40 @@ export type DetentionView = {
   }[];
 };
 
+// A Cash Friday card's engine figures, read from the proposal's stored args: the invoices a
+// factoring card would sell and what each brings in now, the bill a delay card moves and its new
+// date, or the past-due invoices a chase card asks about.
+export type CashCardView =
+  | {
+      kind: "factoring_request";
+      shortCents: number;
+      advanceBps: number;
+      feeBps: number;
+      invoices: {
+        invoiceId: string;
+        invoiceNumber: string;
+        balanceCents: number;
+        advanceCents: number;
+        feeCents: number;
+        netCents: number;
+        reserveCents: number;
+      }[];
+    }
+  | {
+      kind: "bill_defer";
+      billId: string;
+      billRef: string;
+      amountCents: number;
+      dueOn: string;
+      deferredTo: string;
+      shortCents: number;
+    }
+  | {
+      kind: "collections_chase";
+      overdueInvoices: number;
+      invoices: { invoiceId: string; invoiceNumber: string; balanceCents: number; dueOn: string }[];
+    };
+
 // A pay rule change's figures, read from the proposal's stored args (every field checked by the
 // change's schema): the rule, its two values, the dates, and the engine's impact on the newest
 // settled week. Plain shapes only: this file sits outside the gateway, so it names no type from
@@ -106,6 +140,8 @@ export type ProposalView = {
   // Set on an advance_payout only: the load it is for, with the per-load cap and what was left
   // under it after this advance at proposal time (both null when the carrier has no cap).
   load?: { number: string; capCents: number | null; leftAfterCents: number | null } | null;
+  // Set on a Cash Friday card only, when its stored args read back whole.
+  cash?: CashCardView | null;
   // Set on a pay_rule_change only, when its stored args read back whole.
   ruleChange?: RuleChangeView | null;
 };

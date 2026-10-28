@@ -8,6 +8,7 @@ import { executePaymentReapply } from "../invoices/reapply";
 import { executeSettlementApprove } from "../settlements/approve";
 import { assertMembership } from "../tenant/context";
 import { overrideReasonOf } from "../agent/auditor/words";
+import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
 import { executeDetentionCharge } from "./executors/detention-charge";
 import { loadRateFill } from "./executors/load-rate-fill";
 import { payCorrectionExecutor } from "./executors/pay-correction";
@@ -151,6 +152,18 @@ export const EXECUTORS: ExecutorRegistry = {
     return flags.detentionEnabled ? executeDetentionCharge : undefined;
   },
   settlement_approve: executeSettlementApprove,
+  // Cash Friday (src/lib/proposals/executors/cash-friday.ts): a delayed bill moves one bill's
+  // date; factoring and a chase are test mode and record the decision only. All three are read
+  // through cashFridayEnabled on every approval, like detention_charge.
+  get bill_defer() {
+    return flags.cashFridayEnabled ? executeBillDefer : undefined;
+  },
+  get factoring_request() {
+    return flags.cashFridayEnabled ? executeFactoringTestMode : undefined;
+  },
+  get collections_chase() {
+    return flags.cashFridayEnabled ? executeChaseTestMode : undefined;
+  },
   get pay_rule_change() {
     return flags.rulesByTalkingEnabled ? executePayRuleChange : undefined;
   },

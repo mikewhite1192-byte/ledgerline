@@ -1,10 +1,13 @@
 import { z } from "zod";
+import { flags } from "../../../../../config/flags";
+import { optionArgs, sameArgs } from "../../../../cash/args";
 import type { Queryable } from "../../../../db";
 import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionChargeRows } from "../../../../data/detention-charge";
 import { changeArgsSchema, changeMatches, readRuleChangeRows, ruleChangeOf } from "../../../../pay-rules/change";
 import { loadsOf } from "../../../../data/records";
 import {
   readAdvanceInput,
+  readCashFridayInput,
   readCheckInput,
   readReceivablesInput,
   readRowsWhereId,
@@ -16,6 +19,7 @@ import { lineSummary, sameLines, type LineSummary } from "../../../../invoices/q
 import { settlementEvidence } from "../../../../settlements/evidence";
 import {
   advanceEligibility,
+  computeCashFriday,
   findPaymentOnWrongInvoice,
   invoiceAmount,
   runAllChecks,
@@ -102,6 +106,7 @@ const SOURCE_FIELDS: Partial<Record<TenantTable, readonly string[]>> = {
   invoices: ["source", "load_id", "customer_id", "invoice_number", "amount_cents", "issued_on", "due_on", "status", "paid_on"],
   customer_payments: ["customer_id", "received_on", "amount_cents", "method", "source"],
   payment_applications: ["payment_id", "invoice_id", "amount_cents"],
+  vendor_bills: ["bill_ref", "category", "amount_cents", "due_on", "urgency", "status", "deferred_to", "paid_on"],
 };
 
 // A code, an enum, an id, a date or an instant. Anything with a space or other characters is
@@ -229,6 +234,12 @@ const PROPOSAL_SQL = `
              SELECT cp.payment_ref FROM payment_applications a
                JOIN customer_payments cp ON cp.tenant_id = a.tenant_id AND cp.id = a.payment_id
               WHERE a.tenant_id = current_tenant_id() AND a.id = p.subject_id)
+           WHEN 'vendor_bills' THEN (SELECT b.bill_ref FROM vendor_bills b
+                                      WHERE b.tenant_id = current_tenant_id() AND b.id = p.subject_id)
+           WHEN 'customers' THEN (SELECT c.code FROM customers c
+                                   WHERE c.tenant_id = current_tenant_id() AND c.id = p.subject_id)
+           WHEN 'settlement_periods' THEN (SELECT CAST(sp.period_start AS text) FROM settlement_periods sp
+                                            WHERE sp.tenant_id = current_tenant_id() AND sp.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.operator_verdict, p.status,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources,
@@ -548,6 +559,40 @@ async function paymentReapplyEngine(
   };
 }
 
+// A Cash Friday card (factoring_request, bill_defer, collections_chase), checked the way the Cash
+// page builds it: the engine runs on today's records (the bank position and factoring terms, the
+// open week's pay run, the bills, every open invoice and its customer's history) and the card's
+// stored args must equal, as a whole value, the args of the engine's option for the same kind and
+// subject now. The figures reported are the engine's. A refusal carries its category.
+async function cashEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow, raw: Record<string, unknown>): Promise<Engine> {
+  const input = await readCashFridayInput(q, ctx.timeZone, flags.cashFridayLimits);
+  const asOf = localDateOf(ctx.now.toISOString(), ctx.timeZone);
+  const result = computeCashFriday(input, asOf);
+  const base = { ok: true, check: "cash_friday", proposedCents: Number(p.amount_cents) };
+  if (!result.ok) return { ...base, engine: { ok: false, reason: result.refusal } };
+  const option = result.options.find(
+    (o) => o.kind === p.kind && o.subjectTable === p.subject_table && o.subjectId === p.subject_id,
+  );
+  const engine = {
+    ok: true,
+    payDay: result.payDay,
+    gapCents: result.figures.gapCents,
+    optionFound: option !== undefined,
+  };
+  if (!option) return { ...base, engine: { ...engine, matchesProposal: false } };
+  const args = optionArgs(option, result.payDay, -result.figures.gapCents);
+  return {
+    ...base,
+    engine: {
+      ...engine,
+      amountCents: option.amountCents,
+      coversShort: option.kind === "collections_chase" ? null : option.coversShort,
+      matchesProposal: option.amountCents === Number(p.amount_cents) && sameArgs(raw, args),
+      sources: refList(option.sources, MAX_ENGINE_SOURCES),
+    },
+  };
+}
+
 // The engine's own number for the proposal. A read or engine error is unavailable, never zero.
 async function engineFor(
   q: Queryable,
@@ -568,6 +613,10 @@ async function engineFor(
     if (p.kind === "detention_charge") return await detentionEngine(q, p);
     // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
     if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
+    // The cards' invoice lists are objects, which safeArgs leaves out; compared as stored.
+    if (p.kind === "factoring_request" || p.kind === "bill_defer" || p.kind === "collections_chase") {
+      return await cashEngine(q, ctx, p, raw);
+    }
     if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
     return UNAVAILABLE;
   } catch {

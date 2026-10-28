@@ -17,6 +17,7 @@ import { BADGE_STATUSES, StatusBadge } from "@/components/app/status-badge";
 import { ToastProvider } from "@/components/app/toast";
 import { ApproveAll } from "@/components/settlements/approve-all";
 import { ContinueBatch } from "@/components/settlements/continue-batch";
+import { OUT_OF_DATE } from "@/components/cash/friday-pay";
 import { doneNote } from "@/components/settlements/action-button";
 import { FuelChecks } from "@/components/fuel/fuel-checks";
 import { RuleChangeCards, type RuleChangeCard } from "@/components/pay-rules/rule-change-cards";
@@ -28,7 +29,18 @@ import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
 import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
+import { reasonSentence } from "@/lib/agent/reasons";
 import { refusalWords as briefRefusalWords, writeOutcome } from "@/lib/briefs/words";
+import {
+  BILL_CATEGORY_WORDS,
+  BILL_STATUS_WORDS,
+  CASH_CARD_NOTICES,
+  CHECK_NOT_CONFIRMED,
+  CHECK_NOTICE,
+  explainMissing,
+  PAYER_WORDS,
+  RECEIPT_STATUS_WORDS,
+} from "@/lib/cash/labels";
 import {
   approvedWords,
   DECIDE_ERROR_WORDS,
@@ -353,6 +365,12 @@ vi.mock("@/lib/briefs/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/briefs/view")>()),
   readProfitView: async () => get("profitView"),
 }));
+vi.mock("@/lib/cash/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/cash/view")>()),
+  readCashView: async () => get("cashView"),
+  readVendorBill: async () => get("vendorBill"),
+  readCashHome: async () => get("cashHome"),
+}));
 vi.mock("@/lib/memory/notes", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/memory/notes")>()),
   listNotes: async () => get("memoryNotes"),
@@ -436,6 +454,9 @@ function defaults(): Record<string, unknown> {
     extraChargeLoadId: null,
     heroLink: fx.HERO_LINK_DRAFT,
     profitView: fx.PROFIT_VIEW,
+    cashView: fx.CASH_VIEW,
+    vendorBill: fx.VENDOR_BILL,
+    cashHome: null,
     memoryNotes: fx.MEMORY_NOTES,
     noteSubjects: fx.NOTE_SUBJECTS,
   };
@@ -456,7 +477,14 @@ beforeEach(() => {
   state.fx = defaults();
   state.session = null;
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+// The Cash page and Home's Friday card read the carrier's today; these variants pin it (only Date is
+// faked) so each takes the path it names whatever day the test runs.
+const onDay = (iso: string) => vi.useFakeTimers({ toFake: ["Date"], now: new Date(iso) });
 
 // A server page may return an async server component at its top; run it to its tree.
 async function resolve(node: ReactNode): Promise<ReactNode> {
@@ -701,6 +729,24 @@ const PAGES: PageCase[] = [
         load: async () => (await import("@/app/page")).default(sp({ paystub: ID })),
       },
       {
+        name: "Friday's pay run short",
+        setup: () => {
+          onDay("2026-11-02T15:00:00.000Z");
+          state.fx.cashHome = fx.CASH_HOME;
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: "Short by $6,800.00",
+      },
+      {
+        name: "Friday's pay run out of date",
+        setup: () => {
+          onDay("2026-11-07T15:00:00.000Z");
+          state.fx.cashHome = fx.CASH_HOME;
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: OUT_OF_DATE,
+      },
+      {
         name: "asked to change a pay rule",
         load: async () => (await import("@/app/page")).default(sp({ rule: "1" })),
         shows: payWords.composerHelp(fx.NEXT_START),
@@ -737,6 +783,57 @@ const PAGES: PageCase[] = [
     variants: [
       { name: "clips", load: async () => (await import("@/app/clips/page")).default() },
       { name: "empty", setup: () => (state.fx.clips = []), load: async () => (await import("@/app/clips/page")).default() },
+    ],
+  },
+  {
+    file: "cash/page.tsx",
+    variants: [
+      {
+        name: "short, explained, with every move",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "Muse Wonder explains",
+      },
+      {
+        name: "covered, the own sentence after a timeout, from an earlier day",
+        setup: () => {
+          onDay("2026-11-04T15:00:00.000Z");
+          state.fx.cashView = {
+            ...fx.CASH_VIEW,
+            check: {
+              ...fx.CASH_CHECK,
+              payRunSource: "stored",
+              figures: { ...fx.CASH_CHECK.figures, gapCents: 214_000 },
+              explanation: null,
+              explainCategory: "timeout",
+            },
+            cards: [],
+          };
+        },
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "That was before today",
+      },
+      {
+        name: "short, the paragraph dropped for saying a move covers it",
+        setup: () => {
+          onDay("2026-11-02T15:00:00.000Z");
+          state.fx.cashView = { ...fx.CASH_VIEW, check: { ...fx.CASH_CHECK, explanation: null, explainCategory: "overclaim" } };
+        },
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "LedgerLine says",
+      },
+      {
+        name: "no open invoices",
+        setup: () => (state.fx.cashView = { ...fx.CASH_VIEW, check: { ...fx.CASH_CHECK, lines: [] } }),
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "No open invoices",
+      },
+      {
+        name: "no check yet",
+        setup: () => (state.fx.cashView = { check: null, bills: [], cards: [] }),
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "No check yet",
+      },
     ],
   },
   {
@@ -1065,6 +1162,15 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "records/vendor_bills/[id]/page.tsx",
+    variants: fx.VENDOR_BILLS.map((b) => ({
+      name: `${b.status}, ${b.urgency}`,
+      setup: () => (state.fx.vendorBill = b),
+      load: async () => (await import("@/app/records/vendor_bills/[id]/page")).default({ params: p({ id: b.id }) }),
+      shows: b.billRef,
+    })),
+  },
+  {
     file: "settlements/page.tsx",
     variants: [
       { name: "week", load: async () => (await import("@/app/settlements/page")).default(sp()) },
@@ -1318,6 +1424,7 @@ const PAGES: PageCase[] = [
       },
     ],
   },
+  loading("cash/loading.tsx", () => import("@/app/cash/loading")),
   loading("collections/loading.tsx", () => import("@/app/collections/loading")),
   loading("documents/loading.tsx", () => import("@/app/documents/loading")),
   loading("documents/[id]/loading.tsx", () => import("@/app/documents/[id]/loading")),
@@ -2088,6 +2195,34 @@ describe("no internal word on a pay week's buttons and notes", () => {
       ...states.map((st) => doneNote("retry", { state: st })),
       ...states.map((st) => doneNote("post", { legs: { bill: st, billPayment: st } })),
     ];
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("no internal word in the Cash page's notes and words", () => {
+  it("every refusal after a press, card notice, reason the paragraph is not shown, table word and card reason", () => {
+    const missing = ["figures", "disabled", "not_configured", "timeout", "cap", "job_cap", "too_expensive", "overclaim", "other"];
+    const reasons = ["covers_short", "narrows_short", "factoring_test_mode", "bill_flexible", "due_before_pay_day", "repeat_late_payer", "past_due_balance", "collections_test_mode"];
+    const words = [
+      ...Object.values(CHECK_NOTICE),
+      CHECK_NOT_CONFIRMED,
+      OUT_OF_DATE,
+      ...Object.values(CASH_CARD_NOTICES),
+      ...missing.map((c) => explainMissing(c) ?? ""),
+      ...Object.values(RECEIPT_STATUS_WORDS),
+      ...Object.values(PAYER_WORDS),
+      ...Object.values(BILL_CATEGORY_WORDS),
+      ...Object.values(BILL_STATUS_WORDS),
+      ...reasons.map(reasonSentence),
+    ];
+    expect(words.every((w) => w.length > 0)).toBe(true);
     const { container } = render(
       <ul>
         {words.map((w, n) => (

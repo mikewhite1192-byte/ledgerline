@@ -55,6 +55,7 @@ export type TenantLockPurpose =
   | "invoice_number"
   | "invoice_propose"
   | "customer_payment"
+  | "cash_check"
   | "sweep_day_cents"
   | "collections_draft"
   | "brief_write";

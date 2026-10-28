@@ -188,6 +188,23 @@ describe("flags", () => {
     expect(flags.approveAllLimits).toEqual({ maxItems: 25 });
   });
 
+  it("ships Cash Friday dark, with its explanation and option counts capped", () => {
+    expect(flags.cashFridayEnabled).toBe(false);
+    expect(flags.cashFridayLimits).toEqual({
+      maxExplainCents: 8,
+      maxExplainChars: 600,
+      maxFactorInvoices: 3,
+      maxChaseCustomers: 2,
+      graceDays: 14,
+      factoringMaxAgeDays: 45,
+    });
+    for (const v of Object.values(flags.cashFridayLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The explanation fits the cash_checks.explanation CHECK in migration 0029.
+    expect(flags.cashFridayLimits.maxExplainChars).toBeLessThanOrEqual(600);
+  });
+
   it("keeps the sweep's second opinion off, with every cap inside the run's own", () => {
     expect(flags.fanoutEnabled).toBe(false);
     const l = flags.fanoutLimits;

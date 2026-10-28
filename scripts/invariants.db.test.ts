@@ -236,6 +236,7 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "sweep_fanout",
     "sweep_fanout_checks",
     "approval_batches",
+    "cash_checks",
     // Seeded, but filled here as a person writes them too (0027), so the probe also reads rows the
     // app role wrote.
     "driver_arm_events",
@@ -465,6 +466,14 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           `INSERT INTO driver_identities (id, tenant_id, driver_id, system, external_id, source)
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'tms', 'invariants-test', 'ui')`,
           [randomUUID(), c.driver],
+        );
+        // A Cash Friday check of the open week that came out covered, its explanation refused (0029).
+        await q.execute(
+          `INSERT INTO cash_checks (id, tenant_id, period_id, as_of, pay_day, figures, gap_cents, pay_run_source,
+             explain_category, created_by)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), DATE '2026-11-02', DATE '2026-11-06',
+             CAST('{"gapCents":0}' AS jsonb), 0, 'preview', 'disabled', 'invariants-test')`,
+          [randomUUID(), c.settlement.period],
         );
         // A saved pay rule change on the carrier's first rules version, its proposal long gone
         // (0030).
