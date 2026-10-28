@@ -8,6 +8,45 @@ the action. A person approves; the engine executes.
 Built from scratch for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026), Indie track,
 "Build for Your World" theme.
 
+## Trucking pay in one week
+
+A trucking company is paid by customers to haul loads, and it pays the drivers who haul them. Money
+in: a delivered load becomes a customer invoice. Money out: every Friday, each driver's week becomes
+a paystub. Monique's week at Blue Ridge Freight Lines, a fictional carrier in the demo: three loads
+$2,400.00, fuel and tolls back $180.00, an advance taken Wednesday -$200.00, insurance for five days
+-$55.00, escrow -$100.00, net pay $2,225.00. The numbers live in the dispatch system, the fuel cards,
+text messages, spreadsheets and QuickBooks. One advance logged twice leaves her $200.00 short.
+LedgerLine reads all of it, finds the problems, explains each one and proposes the fix. A person
+approves. Only then is anything paid or sent.
+
+The app tells the same story, line by line, on its public page `/help/how-pay-works` (no sign-in).
+
+## Safety by design
+
+Every agent action is checked four ways before it can touch money: the gateway lets the agent read
+and propose, never execute; the rules engine recomputes every number in integer cents; Muse Wonder
+audits the proposal in a fresh context; a person approves. Every untrusted input (a driver's
+message, a document, a voice note, a web page) is screened on Muse Spark Open before the agent
+reads it. Every outside write targets test mode or the QuickBooks sandbox; a production key is
+refused at startup. A ledger row is reserved before any call, so the same event can never pay
+twice. A demo login for judges and visitors, one that can propose but not approve, is being added.
+
+## Built on open weights
+
+Muse Spark Open, served through Baseten (Fireworks standby), runs the jobs that see every untrusted
+byte first: input screening on every message, document and voice note the agent reads, and the
+broker portal's answer screen. Inbound email triage runs on Muse Spark today; one switch moves it to
+Muse Spark Open. It is cheap, fast, and can run on a carrier's own hardware, which matters for a
+shop that will not send its pay data to a cloud model. [EVAL: Muse Spark Open screens n of m
+injection attempts and triages n of m messages correctly; cost per correct answer $x.]
+
+## How often the models agree, and who is right
+
+[EVAL: when the operator (Muse Spark) and the auditor (Muse Wonder) agree on a proposal, they are
+right n of m times against the planted answer; when they disagree, the auditor was right n of m.]
+In the app, every pay sweep prints the live version: how many drivers were checked a second time
+and how many of the engine's problems the second check also found.
+
 ## Meta models in this project
 
 Each model below is reached through one wrapper (`src/lib/ai/`) with a hard spend cap, and every
@@ -39,6 +78,9 @@ evaluation will compare Muse Spark, Muse Spark Open and Muse Wonder on planted p
 - Runs on AWS (us-east-2): the Next.js app on Amplify Hosting, data in Aurora PostgreSQL
   Serverless v2 through the Data API, sign-in with Cognito, inbound email through SES, S3 and
   Lambda. All infrastructure is code, with the CDK.
+- Dependencies: `npm audit` reports two findings, both from the postcss that `next` 15.5 bundles
+  (one moderate, one high, in how it reads CSS source maps). The fix is the Next 16 upgrade, queued
+  after judging.
 
 ## Layout
 

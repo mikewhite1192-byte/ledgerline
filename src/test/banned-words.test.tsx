@@ -20,12 +20,14 @@ import { ContinueBatch } from "@/components/settlements/continue-batch";
 import { doneNote } from "@/components/settlements/action-button";
 import { FuelChecks } from "@/components/fuel/fuel-checks";
 import { HowWorkedOut } from "@/components/trace/how-worked-out";
+import { WriteBrief } from "@/components/profit/write-brief";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
-import type { ProposalView, TurnView } from "@/lib/agent/view";
+import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
-import type { Queryable } from "@/lib/db";
+import { refusalWords, writeOutcome } from "@/lib/briefs/words";
+import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
 import { TERMS } from "@/lib/format/terms";
 import {
@@ -314,11 +316,23 @@ vi.mock("@/lib/invoices/review-read", async (importOriginal) => ({
   readInvoiceReview: async () => get("invoiceReview"),
   readMemberRoles: async () => new Map([[fx.MEMBER_ID, "staff"]]),
 }));
+vi.mock("@/lib/briefs/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/briefs/view")>()),
+  readProfitView: async () => get("profitView"),
+}));
 vi.mock("@/lib/voice/read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/voice/read")>()),
   readVoiceList: async () => get("voiceList"),
   readVoiceDetail: async () => get("voiceDetail"),
 }));
+vi.mock("@/lib/records/views", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/records/views")>()),
+  readPayItemView: async () => get("payItemView"),
+  readDriverDayView: async () => get("driverDayView"),
+  readScheduleView: async () => get("scheduleView"),
+  readExtraChargeLoadId: async () => get("extraChargeLoadId"),
+}));
+vi.mock("@/lib/help/hero-link", () => ({ readHeroLink: async () => get("heroLink") }));
 
 function defaults(): Record<string, unknown> {
   return {
@@ -366,6 +380,12 @@ function defaults(): Record<string, unknown> {
     paystubAsk: null,
     reviewQueue: fx.REVIEW_QUEUE,
     invoiceReview: fx.INVOICE_REVIEW,
+    payItemView: fx.PAY_ITEM_CASES[0][1],
+    driverDayView: fx.DRIVER_DAY_CASES[0][1],
+    scheduleView: fx.SCHEDULE_CASES[0][1],
+    extraChargeLoadId: null,
+    heroLink: fx.HERO_LINK_DRAFT,
+    profitView: fx.PROFIT_VIEW,
   };
 }
 
@@ -413,8 +433,9 @@ const p = <T extends object>(v: T) => Promise.resolve(v);
 const sp = (v: Record<string, string> = {}) => ({ searchParams: p(v) });
 const ID = fx.ID;
 
-// shows: words the variant must render, so it is known to have taken the path it names.
-type Variant = { name: string; setup?: () => void; load: () => Promise<ReactNode>; shows?: string };
+// shows: words the variant must render (one string or several), so it is known to have taken the
+// path it names and the state it names is the one the scan read.
+type Variant = { name: string; setup?: () => void; load: () => Promise<ReactNode>; shows?: string | string[] };
 // failureScreen: the route file is itself a failure screen (not found), so it must show its title.
 type PageCase = { file: string; variants: Variant[]; allow?: ReadonlySet<string>; failureScreen?: boolean };
 
@@ -590,7 +611,38 @@ const PAGES: PageCase[] = [
   {
     file: "page.tsx",
     variants: [
-      { name: "home", load: async () => (await import("@/app/page")).default(sp()) },
+      {
+        name: "home",
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: [
+          "Needs you",
+          "card in your chat waiting for approval",
+          "paystubs waiting for approval",
+          "advance request waiting for a decision",
+          "invoice waiting for approval",
+          "invoices past due",
+          "Open driver notes",
+        ],
+      },
+      {
+        name: "home, nothing waiting",
+        setup: () => {
+          state.fx.turns = [];
+          state.fx.advances = [];
+          state.fx.invoices = [];
+          state.fx.invoiceProposals = [];
+          state.fx.settlementsView = { ...fx.SETTLEMENTS_VIEW, rows: [] };
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: ["Nothing is waiting on you. Ask a question or open a page from the menu."],
+      },
+      {
+        name: "home, waiting list not read",
+        // A thenable that rejects only when the page awaits it, as a failed read does.
+        setup: () => (state.fx.advances = { then: (_ok: unknown, fail: (e: unknown) => void) => fail(new DbError("unknown")) }),
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: ["Could not check everything that is waiting right now. Reload the page to try again."],
+      },
       {
         name: "asked about a paystub",
         setup: () => (state.fx.paystubAsk = fx.PAYSTUB_ASK),
@@ -752,6 +804,66 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "profit/page.tsx",
+    variants: [
+      { name: "no brief yet", load: async () => (await import("@/app/profit/page")).default(sp()), shows: "No brief for this week yet" },
+      {
+        name: "being written",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "writing" })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "The brief is being written",
+      },
+      {
+        name: "written",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "drafted", brief: fx.PROFIT_BRIEF, changed: false })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "checked against them.",
+      },
+      {
+        name: "written, figures changed since",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "drafted", brief: fx.PROFIT_BRIEF, changed: true })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "changed after this brief was written on",
+      },
+      {
+        name: "did not pass its number check",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "refused", category: "number_mismatch" })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "Write the brief again",
+      },
+      {
+        name: "cut off while being written",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "refused", category: "interrupted" })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "took too long",
+      },
+      {
+        name: "no priced load that week",
+        setup: () =>
+          (state.fx.profitView = fx.profitView(
+            { kind: "none" },
+            {
+              profit: {
+                ...fx.PROFIT_WEEK,
+                totals: { ...fx.PROFIT_WEEK.totals, loads: 0, revenueCents: 0, driverPayCents: 0, marginCents: 0, marginBps: null },
+                routes: [],
+                customers: [],
+                figures: [],
+              },
+            },
+          )),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "nothing to write about",
+      },
+      {
+        name: "no closed week yet",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "none" }, { weeks: [], week: null, profit: null })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "The first brief appears",
+      },
+    ],
+  },
+  {
     file: "records/advances/[id]/page.tsx",
     variants: ADVANCE_RECORD_CASES.map(([name, record, shows]) => ({
       name,
@@ -794,6 +906,44 @@ const PAGES: PageCase[] = [
   {
     file: "records/loads/[id]/page.tsx",
     variants: [{ name: "record", load: async () => (await import("@/app/records/loads/[id]/page")).default({ params: p({ id: ID }) }) }],
+  },
+  {
+    file: "records/pay_items/[id]/page.tsx",
+    variants: fx.PAY_ITEM_CASES.map(([name, view]) => ({
+      name,
+      setup: () => (state.fx.payItemView = view),
+      load: async () => (await import("@/app/records/pay_items/[id]/page")).default({ params: p({ id: ID }) }),
+    })),
+  },
+  {
+    file: "records/driver_days/[id]/page.tsx",
+    variants: fx.DRIVER_DAY_CASES.map(([name, view, shows]) => ({
+      name,
+      shows,
+      setup: () => (state.fx.driverDayView = view),
+      load: async () => (await import("@/app/records/driver_days/[id]/page")).default({ params: p({ id: ID }) }),
+    })),
+  },
+  {
+    file: "records/deduction_schedules/[id]/page.tsx",
+    variants: fx.SCHEDULE_CASES.map(([name, view]) => ({
+      name,
+      setup: () => (state.fx.scheduleView = view),
+      load: async () => (await import("@/app/records/deduction_schedules/[id]/page")).default({ params: p({ id: ID }) }),
+    })),
+  },
+  // An extra charge this carrier has sends the reader on to its load (checked below); one it does
+  // not have is the only screen this route shows.
+  {
+    file: "records/load_accessorials/[id]/page.tsx",
+    failureScreen: true,
+    variants: [
+      {
+        name: "an extra charge this carrier does not have",
+        load: async () => (await import("@/app/records/load_accessorials/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Extra charge",
+      },
+    ],
   },
   {
     file: "settlements/page.tsx",
@@ -876,6 +1026,40 @@ const PAGES: PageCase[] = [
       { name: "form", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({}) }) },
       { name: "invalid", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "invalid" }) }) },
       { name: "unavailable", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "unavailable" }) }) },
+    ],
+  },
+  {
+    file: "help/how-pay-works/page.tsx",
+    variants: [
+      {
+        name: "signed out",
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: "Sign in to try the demo",
+      },
+      {
+        name: "signed in, her paystub drafted",
+        setup: () => (state.session = SESSION),
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: "See her paystub",
+      },
+      {
+        name: "signed in, the week not run yet",
+        setup: () => {
+          state.session = SESSION;
+          state.fx.heroLink = fx.HERO_LINK_DRIVER;
+        },
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: "run the week on Settlements",
+      },
+      {
+        name: "signed in, a carrier without her",
+        setup: () => {
+          state.session = SESSION;
+          state.fx.heroLink = null;
+        },
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: fx.TENANT.name,
+      },
     ],
   },
   {
@@ -994,6 +1178,7 @@ const PAGES: PageCase[] = [
   loading("invoices/loading.tsx", () => import("@/app/invoices/loading")),
   loading("models/loading.tsx", () => import("@/app/models/loading")),
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
+  loading("profit/loading.tsx", () => import("@/app/profit/loading")),
   loading("records/loading.tsx", () => import("@/app/records/loading")),
   loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
   loading("sweep/fuel/loading.tsx", () => import("@/app/sweep/fuel/loading")),
@@ -1072,7 +1257,7 @@ describe("no internal word on any page", () => {
         const container = await renderPage(v.load);
         const text = container.textContent ?? "";
         expect(text.trim().length).toBeGreaterThan(0);
-        if (v.shows) expect(text).toContain(v.shows);
+        for (const words of [v.shows ?? []].flat()) expect(text, "the state this variant names").toContain(words);
         if (c.failureScreen) {
           expect(failures.some((t) => text.includes(t)), "the failure screen shows its title").toBe(true);
         } else {
@@ -1083,6 +1268,42 @@ describe("no internal word on any page", () => {
       });
     }
   }
+});
+
+// The record pages a paystub line links to, for a record this carrier does not have: each shows the
+// not-here screen under its own plain title. A page case scans one file once, so these sit here.
+describe("the paystub line record pages, for a record that is not here", () => {
+  const MISSING: [string, string, () => Promise<{ default: (a: { params: Promise<{ id: string }> }) => Promise<ReactNode> }>][] = [
+    ["payItemView", "Pay item", () => import("@/app/records/pay_items/[id]/page")],
+    ["driverDayView", "Day driven", () => import("@/app/records/driver_days/[id]/page")],
+    ["scheduleView", "Weekly deduction", () => import("@/app/records/deduction_schedules/[id]/page")],
+  ];
+  let failures: string[] = [];
+  beforeAll(() => {
+    failures = failureTitles();
+  });
+
+  for (const [key, title, mod] of MISSING) {
+    it(`${title}`, async () => {
+      state.fx[key] = null;
+      const container = await renderPage(async () => (await mod()).default({ params: p({ id: ID }) }));
+      const text = container.textContent ?? "";
+      expect(text).toContain(title);
+      expect(failures.some((t) => text.includes(t)), "the not-here screen shows its title").toBe(true);
+      expect(scan(container)).toEqual([]);
+    });
+  }
+
+  it("an extra charge this carrier has sends the reader to its load's Extra charges table", async () => {
+    state.fx.extraChargeLoadId = fx.LOAD_RECORD.id;
+    const { default: page } = await import("@/app/records/load_accessorials/[id]/page");
+    await expect(page({ params: p({ id: ID }) })).rejects.toThrow(`redirect /records/loads/${fx.LOAD_RECORD.id}#extra-charges`);
+  });
+
+  it("the help page's tab title and description", async () => {
+    const { metadata } = await import("@/app/help/how-pay-works/page");
+    expect(hitsIn(`${String(metadata.title)}\n${String(metadata.description)}`, new Set())).toEqual([]);
+  });
 });
 
 // The root layout renders the html document itself, which cannot sit inside a test's container, so
@@ -1377,6 +1598,35 @@ describe("no internal word in a chat answer or its trace", () => {
     expect(scan(container)).toEqual([]);
   });
 
+  it("an answer in paragraphs, bullets and bold, a stopped turn with its card, and repeated steps", () => {
+    const thinking = (i: number) => ({ id: `think-${i}`, seq: i, kind: "model" as const, label: "Thinking it through", state: "done" as const });
+    const answered: TurnView = {
+      ...fx.TURNS[0],
+      id: "turn-bullets",
+      text: "Three drivers need a look:\n\n* **Rosa Delgado (BR-D07)** is short $250.00\n- Marcus Hale has 1 exception\n\nNothing was paid.",
+      steps: [thinking(1), { ...fx.TURNS[0].steps[1], seq: 2 }, thinking(3), thinking(4)],
+      proposals: [],
+    };
+    const stopped: TurnView = {
+      ...fx.TURNS[0],
+      id: "turn-stopped",
+      status: "partial",
+      endedReason: "steps",
+      text: `${STOPPED_TEXT}\n\nRosa Delgado can take up to $400.00.`,
+    };
+    const empty: TurnView = { ...stopped, id: "turn-stopped-empty", proposals: [], text: STOPPED_TEXT };
+    const messages = toMessages([answered, stopped, empty], {}, {}, undefined, { on: true, checking: {}, timezone: fx.TENANT.timezone });
+    const { container } = render(<ChatThread messages={messages} composer={{}} />);
+    const text = container.textContent ?? "";
+    expect(text).toContain(FOUND_TEXT);
+    expect(text).toContain("Rosa Delgado (BR-D07)");
+    expect(container.querySelector("strong")).not.toBeNull();
+    // The repeated step shows once in the first answer's list.
+    const first = screen.getAllByRole("list", { name: "What the agent did" })[0];
+    expect(first.textContent?.match(/Thinking it through/g)).toHaveLength(1);
+    expect(scan(container)).toEqual([]);
+  });
+
   it("the trace, for the answer and for a card", async () => {
     render(
       <>
@@ -1389,9 +1639,91 @@ describe("no internal word in a chat answer or its trace", () => {
         fireEvent.click(button);
       });
     }
+    // Open every Details, so the per-step effort and cache lines are read too.
+    for (const summary of await screen.findAllByText("Details", { selector: "summary" })) {
+      fireEvent.click(summary);
+    }
     const body = document.body;
     expect(body.textContent).toMatch(/Muse/);
+    expect(screen.getAllByRole("list", { name: "Models used" })).toHaveLength(2);
+    expect(screen.getAllByRole("list", { name: "Details for each step" })).toHaveLength(2);
+    expect(body.textContent).toMatch(/Asked for (low|high) effort/);
     expect(scan(body)).toEqual([]);
+  });
+});
+
+describe("no internal word on the profit brief, in every state", () => {
+  const show = async () => renderPage(async () => (await import("@/app/profit/page")).default(sp()));
+
+  it("the written brief, with each number a link to where it came from", async () => {
+    state.fx.profitView = fx.profitView({ kind: "drafted", brief: fx.PROFIT_BRIEF, changed: false });
+    const container = await show();
+    const brief = screen.getByText(/^Revenue was/).closest("p");
+    if (!brief) throw new Error("no brief paragraph");
+    expect(within(brief).getAllByRole("link").map((a) => a.getAttribute("title"))).toEqual([
+      "Revenue",
+      "Driver pay",
+      "Margin",
+      "Margin percent",
+      "Customer Tanglewood Grocery Supply: margin",
+    ]);
+    expect(brief.textContent).not.toMatch(/\[f\d+\]/);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the confirm before the agent writes, opened", async () => {
+    const container = await show();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Write this week's brief" }));
+    });
+    expect(screen.getByRole("button", { name: "Write the brief" })).toBeTruthy();
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("every sentence a press of the button or a stored refusal can show", () => {
+    const categories = ["format", "unknown_tag", "number_mismatch", "untagged", "timeout", "interrupted", "incomplete", "cap", "too_expensive", "job_cap", "disabled", "not_configured", "error"];
+    const errors = ["exists", "in_progress", "open_period", "no_loads", "not_found", "brief_off", "disabled", "ai_off", "ai_disabled", "forbidden", "unauthenticated", "unknown", "network"];
+    const sentences = [
+      ...categories.map(refusalWords),
+      ...errors.map((error) => writeOutcome({ ok: false, error, data: {} })),
+      ...["drafted", "refused", "over_cap", "drafting"].flatMap((status) =>
+        categories.map((category) => writeOutcome({ ok: true, error: null, data: { status, category } })),
+      ),
+    ];
+    const { container } = render(
+      <ul>
+        {[...new Set(sentences)].map((t) => (
+          <li key={t}>{t}</li>
+        ))}
+      </ul>,
+    );
+    expect(sentences.every((t) => t.length > 0)).toBe(true);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the button to write it again, after a try that did not pass", () => {
+    const { container } = render(
+      <ToastProvider>
+        <WriteBrief periodStart="2026-10-19" weekText="Oct 19 to Oct 25, 2026" again maxCents={6} />
+      </ToastProvider>,
+    );
+    expect(screen.getByRole("button", { name: "Write the brief again" })).toBeTruthy();
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the page with Profit brief switched off", async () => {
+    const switches = flags as Record<string, unknown>;
+    const was = switches.profitBriefEnabled;
+    switches.profitBriefEnabled = false;
+    try {
+      const container = await show();
+      expect(container.textContent).toMatch(/Profit brief/);
+      expect(container.textContent).toMatch(/off for this carrier/);
+      expect(container.querySelector("table")).toBeNull();
+      expect(scan(container)).toEqual([]);
+    } finally {
+      switches.profitBriefEnabled = was;
+    }
   });
 });
 

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
@@ -56,6 +57,12 @@ export default async function SignIn({
             </Button>
           </form>
         </Card>
+        <p className="text-center text-body text-foreground-2">
+          New to trucking pay?{" "}
+          <Link href="/help/how-pay-works" className="text-link underline-offset-4 hover:underline">
+            How trucking pay works
+          </Link>
+        </p>
       </div>
     </main>
   );
