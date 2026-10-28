@@ -20,6 +20,7 @@ import { getInvoiceReviewQueue } from "./tools/read/get-invoice-review-queue";
 import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
+import { getProfitBrief } from "./tools/read/get-profit-brief";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
 import { getSettlements } from "./tools/read/get-settlements";
@@ -82,6 +83,7 @@ const TOOLS: readonly AnyToolDef[] = [
   findUnbilledDetentionTool,
   getDriverIdentity,
   getAdvanceHeadroom,
+  getProfitBrief,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,

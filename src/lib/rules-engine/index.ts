@@ -85,10 +85,12 @@ export {
 export {
   ageReceivables,
   agingBucket,
+  daysToPay,
   findPaymentOnWrongInvoice,
   invoiceStatus,
   paymentProfile,
 } from "./receivables";
+export type { DaysToPay } from "./receivables";
 export {
   COLLECTION_STAGES,
   COLLECTION_TONES,
@@ -103,6 +105,27 @@ export {
   findUnbilledDetention,
   lastFullMonthBefore,
 } from "./detention";
+export {
+  customerPaying,
+  FIGURE_KINDS,
+  marginBpsOf,
+  profitFigures,
+  profitTotals,
+  rollupByCustomer,
+  rollupByLane,
+  routeOf,
+} from "./profit";
+export type {
+  BriefFigure,
+  CustomerPaying,
+  CustomerRollup,
+  FigureKind,
+  FigureSource,
+  LaneRollup,
+  ProfitFigureLimits,
+  ProfitLine,
+  ProfitTotals,
+} from "./profit";
 export {
   FUEL_CATEGORY_OF,
   FUEL_CHECK_NAMES,

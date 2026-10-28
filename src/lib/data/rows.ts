@@ -348,6 +348,26 @@ export type CollectionDraftRow = {
   updated_at: string;
 };
 
+// One brief (0042). figures, body and verification are jsonb whose shape each kind defines
+// (src/lib/briefs); the seed plants none.
+export type BriefRow = {
+  id: string;
+  kind: "profit_week" | "quarter";
+  period_start: string;
+  period_end: string;
+  as_of: string;
+  status: "drafting" | "drafted" | "refused" | "over_cap" | "superseded";
+  figures: unknown[];
+  body: Record<string, unknown> | null;
+  refusal_category: string | null;
+  verification: Record<string, unknown> | null;
+  model: "spark" | "wonder" | null;
+  trace_id: string | null;
+  model_call_id: string | null;
+  created_by: string;
+  updated_at: string;
+};
+
 export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
@@ -372,6 +392,7 @@ export type TenantRows = {
   untrusted_inputs: UntrustedInputRow[];
   screenings: ScreeningRow[];
   collection_drafts: CollectionDraftRow[];
+  briefs: BriefRow[];
 };
 
 // Compile-time proof that TenantRows has exactly one key per table.

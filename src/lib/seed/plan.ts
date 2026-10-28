@@ -1138,6 +1138,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     untrusted_inputs: [],
     screenings: [],
     collection_drafts: [],
+    briefs: [],
   };
   applyHistory({ slug, zone, rows, newId });
   // The take-back is recorded after history, which never recovered from it, so no settled week moves.

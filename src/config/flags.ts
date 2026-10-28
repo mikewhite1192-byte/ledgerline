@@ -335,6 +335,20 @@ export type Flags = {
     maxDraftsPerRun: number;
     minDaysLate: number;
   };
+  // The Profit brief at /profit: last closed week's margin by route and by customer, how fast each
+  // customer pays, and "Write this week's brief", which asks Muse Spark to word those figures (a
+  // button press, never a schedule). Off: the page shows its off state, the route answers 409 and
+  // the agent's read tool is not offered. aiEnabled must also be on for the button to reach a model.
+  profitBriefEnabled: boolean;
+  profitBriefLimits: {
+    // One brief's worst case, checked by the wrapper before the request goes out.
+    maxBriefCents: number;
+    // The brief's output budget, reasoning included.
+    maxOutputTokens: number;
+    // Rows the brief's figures and the page's tables keep, best margin first.
+    maxLanes: number;
+    maxCustomers: number;
+  };
   // Fuel checks: every fill-up held against the truck's tank, the load's route and the driver's
   // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
   // and proposes; a person approves a pay correction on its card. Off means the Fuel checks page
@@ -469,6 +483,8 @@ export const flags: Flags = {
   collectionsEmailAllowlist: [],
   collectionsEmailFrom: "",
   collectionsLimits: { maxDraftCents: 2, maxRunCents: 40, maxOutputTokens: 500, maxDraftsPerRun: 12, minDaysLate: 30 },
+  profitBriefEnabled: false,
+  profitBriefLimits: { maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 },
   fuelAnomalyEnabled: false,
   fuelAnomalyLimits: {
     from: "2026-10-27",

@@ -41,6 +41,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_driver_identity: { tier: "read", roles: ["operator", "auditor"] },
   get_advance_headroom: { tier: "read", roles: ["operator", "auditor"] },
   get_collections: { tier: "read", roles: ["operator"] },
+  get_profit_brief: { tier: "read", roles: ["operator"] },
 };
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
@@ -61,6 +62,7 @@ afterEach(() => {
   flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
   flags.collectionsEnabled = false;
+  flags.profitBriefEnabled = false;
 });
 
 describe("tool registry", () => {
@@ -209,9 +211,10 @@ describe("tool registry", () => {
     flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
     flags.collectionsEnabled = true;
+    flags.profitBriefEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 34,
+      operator: 35,
       auditor: 15,
       triage: 2,
     });
@@ -287,6 +290,21 @@ describe("deferred loading for tool search", () => {
       expect(ALWAYS_LOADED, name).not.toContain(name);
       expect(deferred.find((t) => t.name === name)?.deferLoading, name).toBe(true);
     }
+  });
+
+  it("offers the profit brief read to the operator only while its switch is on, deferred, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    expect(flags.profitBriefEnabled).toBe(false);
+    expect(names("operator")).not.toContain("get_profit_brief");
+    expect(toolsFor("operator")).toHaveLength(20);
+    flags.profitBriefEnabled = true;
+    expect(names("operator")).toContain("get_profit_brief");
+    expect(toolsFor("operator")).toHaveLength(21);
+    for (const role of ["auditor", "triage"] as const) expect(names(role)).not.toContain("get_profit_brief");
+    expect(ALWAYS_LOADED).not.toContain("get_profit_brief");
+    expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_profit_brief")?.deferLoading).toBe(true);
+    flags.profitBriefEnabled = false;
+    expect(names("operator")).not.toContain("get_profit_brief");
   });
 
   it("defers the portal evidence tool, which few questions need", () => {
