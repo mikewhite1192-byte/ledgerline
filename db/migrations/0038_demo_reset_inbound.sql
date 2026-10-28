@@ -1,14 +1,19 @@
 -- The demo reset (0025) clears the agent's records for a demo carrier and rewrites the seeded
 -- tables. An Inbox message (0037) is a record of what a driver sent and what the agent was handed:
 -- the demo starts with an empty Inbox, so the reset clears these rows too (DEMO_RESET_CLEARED in
--- src/lib/seed/reset.ts), and payday_app has no DELETE on them. The function is re-created whole,
--- copied from 0034 (0025 plus the sweep's second checks from 0033 and the fuel checks from 0034)
--- with one more DELETE and one more returned row, every bound unchanged: the fixed search_path, the
--- demo carrier gate, the tenant row lock, the refusals, a tenant filter on every statement and
--- EXECUTE for payday_app only. A later number than every migration that may re-create it, so on a
--- fresh database this one runs last; it must hold every DELETE of every re-creation merged before
--- it (the same rule binds any later re-creation), because whichever re-creation runs last on a
--- database is the function that database keeps.
+-- src/lib/seed/reset.ts), and payday_app has no DELETE on them.
+--
+-- demo_reset_clear() re-created whole from its latest definition (0036: 0025, plus the sweep's
+-- second checks from 0033, the fuel checks from 0034 and the pay rule changes from 0036), unchanged
+-- except for one more DELETE (after the portal's loads, before the voice note recordings and so
+-- before the conversations it names), its variable and its returned row. Every delete 0036 has
+-- stays. Same owner, same security definer and search path, same refusals (LR001, LR002, LR003),
+-- the same two demo carriers, the same tenant row lock, a tenant filter on every statement, the
+-- same revoke and grant. A later number than every migration on main that re-creates it, and it
+-- applies after 0036 in production too, so on both this one runs last; any later migration that
+-- re-creates it starts from the newest definition and keeps every DELETE in it, because whichever
+-- re-creation runs last on a database is the function that database keeps
+-- (src/lib/seed/reset-coverage.db.test.ts fails otherwise).
 CREATE OR REPLACE FUNCTION demo_reset_clear()
   RETURNS TABLE (table_name text, deleted bigint)
   LANGUAGE plpgsql
@@ -44,6 +49,7 @@ DECLARE
   v_sweep_runs    bigint;
   v_fuel_findings bigint;
   v_fuel_runs     bigint;
+  v_rule_changes  bigint;
   v_batches       bigint;
   v_advances      bigint;
   v_proposals     bigint;
@@ -153,6 +159,11 @@ BEGIN
   DELETE FROM public.fuel_check_runs fr WHERE fr.tenant_id = v_tenant;
   GET DIAGNOSTICS v_fuel_runs = ROW_COUNT;
 
+  -- A pay rule change names the proposal it came from and the version it wrote (0030); the
+  -- replace rewrites the versions, so the changes go with the agent's records.
+  DELETE FROM public.pay_rule_changes rc WHERE rc.tenant_id = v_tenant;
+  GET DIAGNOSTICS v_rule_changes = ROW_COUNT;
+
   DELETE FROM public.advances a WHERE a.tenant_id = v_tenant AND a.proposal_id IS NOT NULL;
   GET DIAGNOSTICS v_advances = ROW_COUNT;
 
@@ -191,6 +202,7 @@ BEGIN
     (CAST('sweep_runs' AS text), v_sweep_runs),
     (CAST('fuel_findings' AS text), v_fuel_findings),
     (CAST('fuel_check_runs' AS text), v_fuel_runs),
+    (CAST('pay_rule_changes' AS text), v_rule_changes),
     (CAST('approval_batches' AS text), v_batches),
     (CAST('advances' AS text), v_advances),
     (CAST('proposals' AS text), v_proposals),
