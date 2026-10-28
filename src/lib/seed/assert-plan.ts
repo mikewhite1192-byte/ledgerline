@@ -49,6 +49,7 @@ import { reviewFactsOf, reviewInputOf } from "../invoices/review-input";
 import { customerClassOf } from "./ar-plan";
 import { rankCandidates, reconcileStatement, topIsTied } from "../rules-engine/card-recon";
 import { PLANT_FUEL_EXTRA_CENTS, PLANT_LOAD_CENTS, PLANT_UNKNOWN_CENTS, STATEMENT_DAYS } from "./card-statement";
+import { cashPositionOf, plantedGapCents } from "./cash-plan";
 import type { CarrierPlan } from "./plan";
 
 // The whole plan is checked before anything is written: keys, references, dates, the history the
@@ -152,6 +153,7 @@ export function assertPlan(plan: CarrierPlan): void {
   loadsAndDays(rows, zone, lastDay, openWeek.start);
   receivables(plan, lastDay);
   addendumPlants(plan);
+  cashFriday(plan);
   invoiceReviewPlants(plan);
   cardStatementPlants(plan);
 
@@ -365,6 +367,7 @@ function keysAndReferences(rows: TenantRows): void {
   unique(rows.pay_configs, (x) => x.effective_from, "pay config date");
   unique(rows.untrusted_inputs, (x) => x.seed_key ?? x.id, "untrusted seed key");
   unique(rows.screenings, (x) => `${x.content_hash}:${x.screener_version}`, "screening key");
+  unique(rows.vendor_bills, (x) => x.bill_ref, "bill ref");
   if (rows.pay_configs.length === 0) fail("a tenant needs a pay config");
 
   const customers = idsOf(rows.customers);
@@ -393,6 +396,13 @@ function keysAndReferences(rows: TenantRows): void {
   refs(rows.payment_applications, (x) => x.invoice_id, idsOf(rows.invoices), "an application");
   refs(rows.untrusted_inputs, (x) => x.driver_id, drivers, "an untrusted input");
   refs(rows.screenings, (x) => x.input_id, idsOf(rows.untrusted_inputs), "a screening");
+  // A note names a customer, a driver or nobody (the whole carrier), and the seed's are active.
+  for (const n of rows.carrier_notes) {
+    const pool = n.subject_kind === "customer" ? customers : n.subject_kind === "driver" ? drivers : null;
+    if ((pool === null) !== (n.subject_id === null)) fail("a carrier note has half a subject");
+    if (pool !== null && !pool.has(n.subject_id!)) fail("a carrier note names a subject the plan does not hold");
+    if (n.status !== "active" || n.created_by_kind !== "seed") fail("a seeded carrier note is not an active sample");
+  }
 
   // A pay item's reference points at a row of the table it names.
   const byTable: Record<string, Set<string>> = {
@@ -605,6 +615,24 @@ function addendumPlants(plan: CarrierPlan): void {
       fail("a new plant landed on the hero");
     }
   }
+}
+
+// Cash Friday (design 4.9): one bank position, six bills with two flexible ones due by pay day, no
+// checks, and the planted gap to the cent at any anchor (the balance is set from the engine). Which
+// options a short carrier gets depends on its receivables at the anchor, so the golden anchor pins
+// them (golden.json cashFriday: three invoices to factor, a bill to delay, two late payers).
+function cashFriday(plan: CarrierPlan): void {
+  const { rows, carrier, anchor } = plan;
+  if (rows.cash_settings.length !== 1) fail("a carrier needs one cash settings row");
+  if (rows.cash_checks.length !== 0) fail("the seed writes no cash checks");
+  if (rows.vendor_bills.length !== 6) fail("a carrier needs six vendor bills");
+  const r = cashPositionOf(rows, carrier, anchor, flags.cashFridayLimits);
+  if (r.figures.gapCents !== plantedGapCents(carrier.slug)) fail("the cash gap is not the planted one");
+  const flexible = rows.vendor_bills.filter(
+    (b) => b.status === "open" && b.urgency === "flexible" && b.due_on <= r.payDay,
+  );
+  if (flexible.length !== 2) fail("two flexible bills must be due by pay day");
+  if (r.figures.gapCents >= 0 && r.options.length !== 0) fail("a covered carrier has cash options");
 }
 
 // The invoice review plants: each planted invoice reads back as its planted status through the

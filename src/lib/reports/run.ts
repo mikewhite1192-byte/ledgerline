@@ -30,7 +30,7 @@ export type ReportClock = { now: Date; timeZone: string };
 
 // The pay rules in force on a day, or null before the first version. Any other problem with the
 // rules (none on file, two on one date) is refused, never read as "no rules".
-function payConfigOn(versions: readonly PayConfigRow[]): (day: string) => PayConfig | null {
+export function payConfigOn(versions: readonly PayConfigRow[]): (day: string) => PayConfig | null {
   return (day) => {
     try {
       return payConfigOf(configForDay(versions, day));

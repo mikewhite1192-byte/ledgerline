@@ -7,7 +7,15 @@ import { ALWAYS_LOADED } from "../gateway/loading";
 import { toolsFor } from "../gateway/registry";
 import { planDb, blueRidgePlan } from "../gateway/__tests__/plan-db";
 import { sampleArgs } from "../gateway/__tests__/sample-args";
-import { LOOP_TEXT, OPERATOR_PROMPT, REPORT_PROMPT, TOOL_SEARCH_RULE, operatorCacheKey } from "../policy";
+import {
+  COLLECTIONS_RULE,
+  LOOP_TEXT,
+  OPERATOR_PROMPT,
+  REPORT_PROMPT,
+  TOOL_SEARCH_RULE,
+  operatorCacheKey,
+  operatorPrompt,
+} from "../policy";
 import { AiError, runTurn, turnRequest, type TurnDeps } from "./turn";
 import { WITHHELD } from "./figures";
 
@@ -636,6 +644,20 @@ describe("runTurn with tool search and the prompt cache", () => {
       expect(JSON.stringify(request.tools)).toBe(JSON.stringify(tools));
       for (const t of request.tools ?? []) expect(t).not.toHaveProperty("deferLoading");
     }
+  });
+
+  it("adds the collections line only while get_collections is offered", () => {
+    expect(flags.collectionsEnabled).toBe(false);
+    expect(operatorPrompt(toolsFor("operator").map((t) => t.name), false)).toBe(OPERATOR_PROMPT);
+    flags.collectionsEnabled = true;
+    onTestFinished(() => {
+      flags.collectionsEnabled = false;
+    });
+    const names = toolsFor("operator").map((t) => t.name);
+    expect(names).toContain("get_collections");
+    expect(operatorPrompt(names, false)).toBe(`${OPERATOR_PROMPT}\n${COLLECTIONS_RULE}`);
+    expect(operatorPrompt(names, true)).toBe(`${OPERATOR_PROMPT}\n${TOOL_SEARCH_RULE}\n${COLLECTIONS_RULE}`);
+    expect(COLLECTIONS_RULE).toContain("get_collections");
   });
 
   it("asks Muse Spark to search the deferred tools, keys the cache and puts the summary in input", async () => {

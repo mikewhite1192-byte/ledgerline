@@ -1,7 +1,12 @@
 import {
   cents,
+  ConfigError,
+  InputError,
   parsePayConfig,
   type AdvanceRecord,
+  type CashFridayInput,
+  type CashFridayLimits,
+  type CashSettingsRecord,
   type Cents,
   type CheckInput,
   type CustomerPaymentRecord,
@@ -20,11 +25,13 @@ import {
   type SettlementInput,
   type SettlementPeriodRecord,
   type SettlementRecord,
+  type VendorBillRecord,
 } from "../rules-engine";
-import type { LocalDate, Period } from "../time/local-date";
+import { localDateOf, type LocalDate, type Period } from "../time/local-date";
 import { checkVersionOf, configFor } from "./config-version";
 import type {
   AdvanceRow,
+  CashSettingsRow,
   CustomerPaymentRow,
   CustomerRow,
   DeductionScheduleRow,
@@ -41,6 +48,7 @@ import type {
   SettlementPeriodRow,
   SettlementRow,
   TenantRows,
+  VendorBillRow,
 } from "./rows";
 
 // Table rows (snake_case, as stored) to the engine's records (camelCase, money as Cents). The seed
@@ -263,6 +271,32 @@ export function applicationOf(r: PaymentApplicationRow): PaymentApplicationRecor
   return { id: r.id, paymentId: r.payment_id, invoiceId: r.invoice_id, amountCents: c(r.amount_cents) };
 }
 
+export function vendorBillOf(r: VendorBillRow): VendorBillRecord {
+  return {
+    id: r.id,
+    billRef: r.bill_ref,
+    vendorName: r.vendor_name,
+    category: r.category,
+    amountCents: c(r.amount_cents),
+    dueOn: r.due_on,
+    urgency: r.urgency,
+    status: r.status,
+    deferredTo: r.deferred_to,
+    paidOn: r.paid_on,
+  };
+}
+
+export function cashSettingsOf(r: CashSettingsRow): CashSettingsRecord {
+  return {
+    id: r.id,
+    bankBalanceCents: c(r.bank_balance_cents),
+    balanceAsOf: r.balance_as_of,
+    payDayDow: r.pay_day_dow,
+    factoringAdvanceBps: r.factoring_advance_bps,
+    factoringFeeBps: r.factoring_fee_bps,
+  };
+}
+
 // ---- Whole inputs, from one tenant's rows ----
 
 // Everything the six pay checks read, under the open period's pay rules version.
@@ -342,4 +376,65 @@ export function receivablesInputOf(
     applications: rows.payment_applications.map(applicationOf),
     asOf,
   };
+}
+
+export type CashFridayRows = Pick<
+  TenantRows,
+  | "pay_configs"
+  | "settlement_periods"
+  | "settlements"
+  | "drivers"
+  | "loads"
+  | "load_state_miles"
+  | "load_accessorials"
+  | "driver_days"
+  | "pay_items"
+  | "deduction_schedules"
+  | "advances"
+  | "invoices"
+  | "customer_payments"
+  | "payment_applications"
+  | "vendor_bills"
+  | "cash_settings"
+>;
+
+// Everything Cash Friday reads (design 4.2). Paid instants become dates in the tenant's zone here,
+// so the engine sees only dates. The pay run preview is one settlement input per driver active in
+// the one open week; when the week is not exactly one, or a driver's input cannot be built (no
+// pay rules version for the week, a record that does not fit), previews are null and the engine
+// refuses the pay run as unknown rather than counting it as zero.
+export function cashFridayInputOf(
+  rows: CashFridayRows,
+  zone: string,
+  limits: CashFridayLimits,
+): CashFridayInput {
+  if (rows.cash_settings.length > 1) throw new Error("more than one cash settings row");
+  const paidOn = (at: string | null): LocalDate | null => (at === null ? null : localDateOf(at, zone));
+  return {
+    settings: rows.cash_settings.length === 1 ? cashSettingsOf(rows.cash_settings[0]) : null,
+    periods: rows.settlement_periods.map(periodOf),
+    settlements: rows.settlements.map((r) => ({ ...settlementOf(r), paidOn: paidOn(r.paid_at) })),
+    previews: previewsOf(rows),
+    advances: rows.advances.map((r) => ({ ...advanceOf(r), paidOn: paidOn(r.paid_at) })),
+    invoices: rows.invoices.map(invoiceOf),
+    payments: rows.customer_payments.map(paymentOf),
+    applications: rows.payment_applications.map(applicationOf),
+    bills: rows.vendor_bills.map(vendorBillOf),
+    limits,
+  };
+}
+
+function previewsOf(rows: CashFridayRows): SettlementInput[] | null {
+  const open = rows.settlement_periods.filter((p) => p.status === "open");
+  if (open.length !== 1) return null;
+  const period: Period = { start: open[0].period_start, end: open[0].period_end };
+  const active = rows.drivers
+    .filter((d) => d.active_from <= period.end && (d.active_to === null || d.active_to >= period.start))
+    .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
+  try {
+    return active.map((d) => settlementInputOf(rows, d.id, period));
+  } catch (error) {
+    if (error instanceof ConfigError || error instanceof InputError) return null;
+    throw error;
+  }
 }

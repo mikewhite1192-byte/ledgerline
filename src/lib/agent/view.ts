@@ -46,6 +46,66 @@ export type DetentionView = {
   }[];
 };
 
+// A Cash Friday card's engine figures, read from the proposal's stored args: the invoices a
+// factoring card would sell and what each brings in now, the bill a delay card moves and its new
+// date, or the past-due invoices a chase card asks about.
+export type CashCardView =
+  | {
+      kind: "factoring_request";
+      shortCents: number;
+      advanceBps: number;
+      feeBps: number;
+      invoices: {
+        invoiceId: string;
+        invoiceNumber: string;
+        balanceCents: number;
+        advanceCents: number;
+        feeCents: number;
+        netCents: number;
+        reserveCents: number;
+      }[];
+    }
+  | {
+      kind: "bill_defer";
+      billId: string;
+      billRef: string;
+      amountCents: number;
+      dueOn: string;
+      deferredTo: string;
+      shortCents: number;
+    }
+  | {
+      kind: "collections_chase";
+      overdueInvoices: number;
+      invoices: { invoiceId: string; invoiceNumber: string; balanceCents: number; dueOn: string }[];
+    };
+
+// A pay rule change's figures, read from the proposal's stored args (every field checked by the
+// change's schema): the rule, its two values, the dates, and the engine's impact on the newest
+// settled week. Plain shapes only: this file sits outside the gateway, so it names no type from
+// the pay rules code.
+export type RuleChangeView = {
+  ruleKey: string;
+  oldValue: number | string | null;
+  newValue: number | string | null;
+  askedFrom: string;
+  effectiveFrom: string;
+  snapped: boolean;
+  applied: "new_version" | "edited_version";
+  appliesTo: string;
+  impact: {
+    basis: "settled_week" | "no_settled_week" | "advances_only";
+    periodId: string | null;
+    periodStart: string | null;
+    periodEnd: string | null;
+    driversCompared: number;
+    driversChanged: number;
+    netDeltaCents: number;
+    ownerOperatorsOnly: boolean;
+    top: { driverId: string; code: string; deltaCents: number; settlementId: string }[];
+  };
+};
+
 export type ProposalView = {
   id: string;
   kind: ProposalKind;
@@ -83,6 +143,10 @@ export type ProposalView = {
   // Set on a card_match only, when its stored args read back whole: the statement row by its last
   // four digits, the driver picked, and the other drivers code ranked for that day.
   cardMatch?: CardMatchView | null;
+  // Set on a Cash Friday card only, when its stored args read back whole.
+  cash?: CashCardView | null;
+  // Set on a pay_rule_change only, when its stored args read back whole.
+  ruleChange?: RuleChangeView | null;
 };
 
 export type CardMatchView = {
@@ -133,4 +197,20 @@ export function turnErrorFor(status: TurnStatus, endedReason: string | null): Tu
   if (endedReason === "job_cap") return "job_cap";
   if (endedReason === "clock" || endedReason === "model_timeout") return "timeout";
   return "unknown";
+}
+
+// The sentence the loop opens a stopped turn with (policy.ts LOOP_TEXT.stopped; this file is
+// read in the browser, so it holds its own copy and a test keeps the two the same).
+export const STOPPED_TEXT = "I stopped before finishing this answer. Here is what I found so far.";
+export const FOUND_TEXT = "Here is what I found.";
+
+// The answer text the chat shows. A turn that stopped early but still produced a card or a report
+// opens with "Here is what I found." instead, so a complete card is not read as a broken one; with
+// nothing to show, it keeps saying it stopped. The turn's status is unchanged either way.
+export function answerTextOf(t: Pick<TurnView, "status" | "text" | "proposals" | "reports">): string {
+  if (t.status !== "partial") return t.text;
+  if (t.proposals.length === 0 && t.reports.length === 0) return t.text;
+  if (!t.text.startsWith(STOPPED_TEXT)) return t.text;
+  const rest = t.text.slice(STOPPED_TEXT.length).replace(/^\s+/, "");
+  return rest ? `${FOUND_TEXT}\n\n${rest}` : FOUND_TEXT;
 }

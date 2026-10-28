@@ -1,3 +1,4 @@
+import { flags } from "../../config/flags";
 import { configFor, configForDay } from "../data/config-version";
 import { loadsOf, payConfigOf } from "../data/records";
 import type {
@@ -33,8 +34,10 @@ import { assertPlan, seededAdvanceDecision } from "./assert-plan";
 import { instantAt } from "./calendar";
 import { buildCardStatement, type StatementPlanted } from "./card-statement";
 import { detentionTermsOf, type DemoCarrier } from "./carriers";
+import { buildCashRows } from "./cash-plan";
 import { applyHistory } from "./history";
 import { HERO_LANES, LANES, laneMiles, reverseLane, type Lane } from "./lanes";
+import { buildCarrierNotes } from "./memory-plan";
 import { CUSTOMERS, FIRST_NAMES, LAST_NAMES } from "./names";
 import { Rng } from "./prng";
 import {
@@ -1143,6 +1146,12 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     screenings: [],
     card_recon_runs: [],
     card_recon_breaks: [],
+    collection_drafts: [],
+    briefs: [],
+    vendor_bills: [],
+    cash_settings: [],
+    cash_checks: [],
+    carrier_notes: [],
   };
   applyHistory({ slug, zone, rows, newId });
   // The take-back is recorded after history, which never recovered from it, so no settled week moves.
@@ -1159,6 +1168,10 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     avoidPurchaseIds: new Set([wrongPurchase.id, offRoute.id, overTank.id, parked.id]),
   });
   rows.card_transactions = statement.rows;
+  // The sample notes for Memory, from their own id stream for the same reason.
+  rows.carrier_notes = buildCarrierNotes({ slug, anchor, customers: rows.customers, drivers: rows.drivers });
+  // Cash Friday's bills and bank position, last: the balance is planted from everything above.
+  Object.assign(rows, buildCashRows({ carrier, anchor, openWeek, rows, limits: flags.cashFridayLimits }));
 
   const plan: CarrierPlan = {
     carrier,

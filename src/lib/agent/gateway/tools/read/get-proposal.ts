@@ -1,10 +1,14 @@
 import { z } from "zod";
+import { flags } from "../../../../../config/flags";
+import { optionArgs, sameArgs } from "../../../../cash/args";
 import type { Queryable } from "../../../../db";
 import { readCandidateFacts, readMatchFacts } from "../../../../data/card-recon";
 import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionChargeRows } from "../../../../data/detention-charge";
+import { changeArgsSchema, changeMatches, readRuleChangeRows, ruleChangeOf } from "../../../../pay-rules/change";
 import { loadsOf } from "../../../../data/records";
 import {
   readAdvanceInput,
+  readCashFridayInput,
   readCheckInput,
   readReceivablesInput,
   readRowsWhereId,
@@ -16,6 +20,7 @@ import { lineSummary, sameLines, type LineSummary } from "../../../../invoices/q
 import { settlementEvidence } from "../../../../settlements/evidence";
 import {
   advanceEligibility,
+  computeCashFriday,
   findPaymentOnWrongInvoice,
   invoiceAmount,
   runAllChecks,
@@ -75,13 +80,24 @@ const SOURCE_FIELDS: Partial<Record<TenantTable, readonly string[]>> = {
   load_accessorials: ["load_id", "kind", "amount_cents", "paid_by_driver"],
   driver_days: ["driver_id", "day", "source", "load_id"],
   fuel_purchases: ["driver_id", "load_id", "purchased_on", "state", "gallons_milli", "amount_cents", "paid_with"],
+  // Every knob of a version (numbers and enums); the note is free text and stays out.
   pay_configs: [
     "effective_from",
+    "source",
+    "week_start_dow",
+    "percent_base",
+    "empty_miles_paid_bps",
+    "accessorial_driver_share_bps",
+    "insurance_applies_to",
+    "insurance_per_day_cents",
+    "escrow_target_cents",
+    "escrow_per_settlement_cents",
+    "net_pay_floor_cents",
+    "advance_recovery_cap_cents",
     "advance_fee_cents",
     "advance_limit_default_cents",
     "advance_max_bps_of_earned",
     "advance_min_cents",
-    "net_pay_floor_cents",
   ],
   deduction_schedules: ["driver_id", "kind", "amount_cents", "target_cents", "active_from", "active_to"],
   settlement_periods: ["period_start", "period_end", "status"],
@@ -94,6 +110,7 @@ const SOURCE_FIELDS: Partial<Record<TenantTable, readonly string[]>> = {
   payment_applications: ["payment_id", "invoice_id", "amount_cents"],
   // A card statement row by its last four digits; never the token or the merchant.
   card_transactions: ["kind", "card_last4", "posted_on", "amount_cents", "state", "gallons_milli"],
+  vendor_bills: ["bill_ref", "category", "amount_cents", "due_on", "urgency", "status", "deferred_to", "paid_on"],
 };
 
 // A code, an enum, an id, a date or an instant. Anything with a space or other characters is
@@ -223,6 +240,12 @@ const PROPOSAL_SQL = `
               WHERE a.tenant_id = current_tenant_id() AND a.id = p.subject_id)
            WHEN 'card_transactions' THEN (SELECT t.card_last4 FROM card_transactions t
                                            WHERE t.tenant_id = current_tenant_id() AND t.id = p.subject_id)
+           WHEN 'vendor_bills' THEN (SELECT b.bill_ref FROM vendor_bills b
+                                      WHERE b.tenant_id = current_tenant_id() AND b.id = p.subject_id)
+           WHEN 'customers' THEN (SELECT c.code FROM customers c
+                                   WHERE c.tenant_id = current_tenant_id() AND c.id = p.subject_id)
+           WHEN 'settlement_periods' THEN (SELECT CAST(sp.period_start AS text) FROM settlement_periods sp
+                                            WHERE sp.tenant_id = current_tenant_id() AND sp.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.operator_verdict, p.status,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources,
@@ -459,6 +482,42 @@ async function detentionEngine(q: Queryable, p: ProposalRow): Promise<Engine> {
   };
 }
 
+// A pay rule change, checked the way its executor checks it: the engine sizes the same change
+// again now (the sentence was checked when it was proposed, so grounding is skipped), and the
+// stored figures must equal the engine's whole. A refusal (a week that began, a version paid
+// under, a later version) is a mismatch, never a yes.
+async function ruleChangeEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow): Promise<Engine> {
+  if (p.subject_table !== "pay_configs" || !isUuid(p.subject_id)) return UNAVAILABLE;
+  const stored = changeArgsSchema.safeParse(parseJson(p.args));
+  if (!stored.success || stored.data.baseVersionId !== p.subject_id) return UNAVAILABLE;
+  const a = stored.data;
+  const check = ruleChangeOf(
+    await readRuleChangeRows(q),
+    { ruleKey: a.ruleKey, newValue: a.newValue, askedFrom: a.askedFrom },
+    "skip",
+    ctx.now,
+  );
+  const base = { ok: true, check: "pay_rule_change", proposedCents: Number(p.amount_cents) };
+  if (!check.ok) return { ...base, engine: { ok: false, reason: check.reason } };
+  const c = check.change;
+  return {
+    ...base,
+    engine: {
+      ok: true,
+      amountCents: Math.abs(c.impact.netDeltaCents),
+      figures: {
+        oldValue: c.oldValue,
+        newValue: c.newValue,
+        effectiveFrom: c.effectiveFrom,
+        driversChanged: c.impact.driversChanged,
+        netDeltaCents: c.impact.netDeltaCents,
+      },
+      matchesProposal: changeMatches(a, c) && Number(p.amount_cents) === Math.abs(c.impact.netDeltaCents),
+      sources: refList(c.sources, MAX_ENGINE_SOURCES),
+    },
+  };
+}
+
 // A payment move (payment_reapply), checked the way its executor checks it: the payment is not in
 // QuickBooks yet and has no post reserved, sent or not yet known (the executor's own rule), the
 // application is where the card says, and the engine's payment_on_wrong_invoice finding still
@@ -540,6 +599,40 @@ async function cardMatchEngine(p: ProposalRow, q: Queryable, args: Record<string
   };
 }
 
+// A Cash Friday card (factoring_request, bill_defer, collections_chase), checked the way the Cash
+// page builds it: the engine runs on today's records (the bank position and factoring terms, the
+// open week's pay run, the bills, every open invoice and its customer's history) and the card's
+// stored args must equal, as a whole value, the args of the engine's option for the same kind and
+// subject now. The figures reported are the engine's. A refusal carries its category.
+async function cashEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow, raw: Record<string, unknown>): Promise<Engine> {
+  const input = await readCashFridayInput(q, ctx.timeZone, flags.cashFridayLimits);
+  const asOf = localDateOf(ctx.now.toISOString(), ctx.timeZone);
+  const result = computeCashFriday(input, asOf);
+  const base = { ok: true, check: "cash_friday", proposedCents: Number(p.amount_cents) };
+  if (!result.ok) return { ...base, engine: { ok: false, reason: result.refusal } };
+  const option = result.options.find(
+    (o) => o.kind === p.kind && o.subjectTable === p.subject_table && o.subjectId === p.subject_id,
+  );
+  const engine = {
+    ok: true,
+    payDay: result.payDay,
+    gapCents: result.figures.gapCents,
+    optionFound: option !== undefined,
+  };
+  if (!option) return { ...base, engine: { ...engine, matchesProposal: false } };
+  const args = optionArgs(option, result.payDay, -result.figures.gapCents);
+  return {
+    ...base,
+    engine: {
+      ...engine,
+      amountCents: option.amountCents,
+      coversShort: option.kind === "collections_chase" ? null : option.coversShort,
+      matchesProposal: option.amountCents === Number(p.amount_cents) && sameArgs(raw, args),
+      sources: refList(option.sources, MAX_ENGINE_SOURCES),
+    },
+  };
+}
+
 // The engine's own number for the proposal. A read or engine error is unavailable, never zero.
 async function engineFor(
   q: Queryable,
@@ -561,6 +654,11 @@ async function engineFor(
     // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
     if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
     if (p.kind === "card_match") return await cardMatchEngine(p, q, args);
+    // The cards' invoice lists are objects, which safeArgs leaves out; compared as stored.
+    if (p.kind === "factoring_request" || p.kind === "bill_defer" || p.kind === "collections_chase") {
+      return await cashEngine(q, ctx, p, raw);
+    }
+    if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
     return UNAVAILABLE;
   } catch {
     console.warn("gateway: the auditor's engine check could not be computed");

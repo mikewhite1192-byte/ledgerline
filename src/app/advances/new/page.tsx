@@ -11,9 +11,9 @@ import { RequestForm } from "./request-form";
 export const dynamic = "force-dynamic";
 
 // The request desk: pick a driver, an amount and a reason. The agent checks the pay rules and
-// puts a proposal in the chat; nothing is paid until a person approves it there.
+// answers on Home; nothing is paid until a person approves it there.
 export default async function NewAdvancePage() {
-  if (!advancesOn()) return <AdvancesOffPage title="New advance request" />;
+  if (!advancesOn()) return <AdvancesOffPage title="Request an advance" />;
   let page: { shell: Shell; drivers: DriverOption[] } | null = null;
   let problem: ReadProblem | null = null;
   try {
@@ -32,10 +32,10 @@ export default async function NewAdvancePage() {
       ? "The models are switched off, so the agent cannot check a request right now."
       : null;
   return (
-    <AdvanceFrame shell={page.shell} title="New advance request">
+    <AdvanceFrame shell={page.shell} title="Request an advance">
       <PageHeader
-        title="New advance request"
-        description="The agent checks the request against the pay rules and proposes an amount in the chat. Nothing is paid until a person approves it."
+        title="Request an advance"
+        description="Pick a driver, an amount and a reason. The agent checks it against your pay rules and answers on Home. Nothing is paid until a person approves it."
       />
       {offReason ? <InlineAlert tone="warning">{offReason}</InlineAlert> : null}
       <Card className="max-w-[560px]">

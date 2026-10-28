@@ -1,15 +1,19 @@
 import Link from "next/link";
 import { flags } from "@/config/flags";
-import { homeSuggestions, withPaystubSuggestion } from "@/components/agent/suggestions";
+import { DETENTION_SUGGESTION, homeSuggestions, ruleChangeSuggestion, withPaystubSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { ChatThread } from "@/components/app/chat-thread";
+import { HOW_PAY_WORKS } from "@/components/app/signed-in-page";
 import { DataTable } from "@/components/app/data-table";
+import { NeedsYou } from "@/components/app/needs-you";
 import { StatCard } from "@/components/app/stat-card";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Wordmark } from "@/components/brand/wordmark";
+import { FridayPay } from "@/components/cash/friday-pay";
+import { NewHereLine } from "@/components/help/how-pay-works";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -19,15 +23,20 @@ import {
   wonderCapNanocents,
 } from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
+import { readCashHome, type CashHome } from "@/lib/cash/view";
 import { DbError } from "@/lib/db";
 import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
 import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
+import { cardsRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/lib/home/needs-you";
+import { readNextWeekStart } from "@/lib/pay-rules/read";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
+import { carrierToday } from "@/lib/tenant/shell";
+import type { LocalDate } from "@/lib/time/local-date";
 import { isUuid } from "@/lib/uuid";
 import { AiProofForm } from "./ai-proof-form";
 
@@ -40,12 +49,17 @@ type Carrier = {
   ledger: ModelLedger | null;
   paystub: { driverName: string; periodEnd: string } | null;
   session: Session;
+  admin: boolean;
+  // The first date a pay rule change may start, while pay rule changes are switched on.
+  nextStart: LocalDate | null;
 };
 
 // The signed-in carrier's shell. Every read runs inside withRequestTenant, so this page can only
 // ever see the carrier on the verified token. Signed out: withRequestTenant redirects to /sign-in.
 // ?document=<input id>, from a document's page: the question box starts with a request to check
 // that document. Only an id is taken from the address; the text around it is fixed.
+// ?rule=1, from the Pay rules page: with pay rule changes switched on, the box starts with the
+// example sentence and the help under it.
 // ?paystub=<settlement id>: "Ask about this paystub" links here with the paystub's id; anything
 // else is ignored.
 export default async function Home({
@@ -56,6 +70,7 @@ export default async function Home({
   const params = await searchParams;
   const asked = params.document;
   const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
+  const ruleAsked = params.rule === "1";
   const askedPaystub = params.paystub;
   const paystubId =
     typeof askedPaystub === "string" && isUuid(askedPaystub) ? askedPaystub.toLowerCase() : null;
@@ -66,8 +81,8 @@ export default async function Home({
       const tenants = await q.query<{ name: string; timezone: string }>(
         "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
       );
-      const members = await q.query<{ email: string }>(
-        "SELECT email FROM memberships WHERE cognito_sub = $1",
+      const members = await q.query<{ email: string; role: string }>(
+        "SELECT email, role FROM memberships WHERE cognito_sub = $1",
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
@@ -93,6 +108,8 @@ export default async function Home({
         ledger,
         paystub,
         session,
+        admin: members[0].role === "admin",
+        nextStart: flags.rulesByTalkingEnabled ? await readNextWeekStart(q, new Date()) : null,
       };
     });
   } catch (err) {
@@ -113,12 +130,39 @@ export default async function Home({
   // The agent's recent turns, for a reload to show the same thread. A failed read shows an empty
   // thread with the box still working; the turns are read back again on the next question.
   let agentTurns: TurnView[] = [];
+  let turnsUnread = false;
   if (carrier && flags.agentEnabled) {
     try {
       agentTurns = await readRecentAgentTurns(carrier.session);
     } catch (err) {
+      turnsUnread = true;
       console.error("agent turns read failed:", err instanceof Error ? err.name : "unknown");
     }
+  }
+
+  // "Needs you": its own carrier transaction, so a failed read here never takes the page down and
+  // never reads as "nothing is waiting".
+  let needsYou: NeedsYouView | null = null;
+  if (carrier) {
+    let rows: NeedsYouRow[] = [];
+    let unread = turnsUnread;
+    try {
+      const today = carrierToday(carrier.timezone, new Date());
+      rows = await withRequestTenant((q) =>
+        readNeedsYou(q, {
+          today,
+          settlements: flags.settlementsEnabled,
+          advances: flags.advancesEnabled,
+          invoices: flags.invoicesEnabled,
+        }),
+      );
+    } catch (err) {
+      if (!(err instanceof ForbiddenError || err instanceof DbError)) throw err;
+      unread = true;
+      console.error("needs you read failed:", err.name);
+    }
+    const cards = flags.agentEnabled ? cardsRow(agentTurns) : null;
+    needsYou = { rows: cards ? [cards, ...rows] : rows, unread };
   }
 
   // The last sweep's line, when the sweep is on. A failed read leaves the card out.
@@ -128,6 +172,18 @@ export default async function Home({
       lastSweep = (await readSweepHome(carrier.session)).runs[0] ?? null;
     } catch (err) {
       console.error("sweep home read failed:", err instanceof Error ? err.name : "unknown");
+    }
+  }
+
+  // Friday's pay run, when Cash Friday is on: the latest check's verdict, that it is out of date
+  // (its pay day has passed), or that there is none.
+  // A failed read leaves the card out (undefined), never "not checked".
+  let cashHome: CashHome | null | undefined;
+  if (carrier && flags.cashFridayEnabled) {
+    try {
+      cashHome = await readCashHome(carrier.session);
+    } catch (err) {
+      console.error("cash home read failed:", err instanceof Error ? err.name : "unknown");
     }
   }
 
@@ -147,17 +203,28 @@ export default async function Home({
     );
   }
 
-  const base = flags.detentionEnabled ? [...SUGGESTIONS, DETENTION_SUGGESTION] : SUGGESTIONS;
+  const base = [
+    ...SUGGESTIONS,
+    ...(flags.detentionEnabled ? [DETENTION_SUGGESTION] : []),
+    ...(carrier.nextStart ? [ruleChangeSuggestion(carrier.nextStart)] : []),
+  ];
   const suggestions = withPaystubSuggestion(base, carrier.paystub);
+  // ?rule=1 starts the box with the chip's own sentence and help, both dated the first week a
+  // change can start.
+  const ruleAsk = !documentInput && ruleAsked && carrier.nextStart ? ruleChangeSuggestion(carrier.nextStart) : null;
 
   return (
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
       nav={appNav("/")}
+      help={HOW_PAY_WORKS}
       title="Home"
       signOut={signOut}
     >
       <h1 className="sr-only">Home</h1>
+      {needsYou ? <NeedsYou view={needsYou} /> : null}
+      <NewHereLine />
+      <RecordCounts counts={carrier.counts} />
       {flags.agentEnabled ? (
         <AgentChat
           initialTurns={agentTurns}
@@ -165,8 +232,10 @@ export default async function Home({
           auditorOn={flags.auditorEnabled}
           timezone={carrier.timezone}
           suggestions={suggestions}
-          initialDraft={documentInput ? `Check document ${documentInput}` : undefined}
-          intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
+          initialDraft={documentInput ? `Check document ${documentInput}` : ruleAsk?.fill}
+          initialHelp={ruleAsk?.help}
+          viewer={{ admin: carrier.admin, adminAboveCents: flags.approverRole.adminAboveCents }}
+          intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
           disabledReason={
             flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
           }
@@ -179,19 +248,21 @@ export default async function Home({
           composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
         />
       )}
+      {cashHome !== undefined ? (
+        <FridayPay home={cashHome} today={carrierToday(carrier.timezone, new Date())} />
+      ) : null}
       {lastSweep ? <LastSweep run={lastSweep} /> : null}
-      <RecordCounts counts={carrier.counts} />
       {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
     </AppShell>
   );
 }
 
 // Shown before the agent can answer; they light up when it can.
-const SUGGESTIONS = homeSuggestions(flags.reportsEnabled);
-
-// Offered only while the detention tools are switched on, so the chip never asks for a tool the
-// agent does not have.
-const DETENTION_SUGGESTION = { id: "unbilled-detention", label: "Find detention we never billed last month" };
+const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, {
+  profitOn: flags.profitBriefEnabled,
+  collections: flags.collectionsEnabled,
+  cashFridayOn: flags.cashFridayEnabled,
+});
 
 // "Last sweep: 7 problems, 5 fixes drafted, 2 approved", one click from the run.
 function LastSweep({ run }: { run: SweepRunView }) {
@@ -215,13 +286,18 @@ function LastSweep({ run }: { run: SweepRunView }) {
   );
 }
 
-// What this carrier has on file, from the counts read above.
+// What this carrier has on file, from the counts read above, under "Needs you" so it never
+// scrolls away under the thread. Pay periods opens Driver notes, where each week is listed.
 function RecordCounts({ counts }: { counts: Carrier["counts"] }) {
   return (
-    <section aria-label="Records on file" className="mx-auto mt-12 grid w-full max-w-[720px] gap-3 sm:grid-cols-3">
+    <section aria-label="Records on file" className="mx-auto mt-3 mb-6 grid w-full max-w-[720px] grid-cols-2 gap-3">
       <StatCard label="Drivers" value={counts.drivers.toLocaleString("en-US")} />
-      <StatCard label="Loads" value={counts.loads.toLocaleString("en-US")} />
-      <StatCard label="Pay periods" value={counts.periods.toLocaleString("en-US")} />
+      <StatCard
+        label="Pay periods"
+        value={counts.periods.toLocaleString("en-US")}
+        hint={flags.driverNotesEnabled ? "Open driver notes" : undefined}
+        href={flags.driverNotesEnabled ? "/driver-notes" : undefined}
+      />
     </section>
   );
 }

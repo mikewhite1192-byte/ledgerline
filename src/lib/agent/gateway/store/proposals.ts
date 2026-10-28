@@ -18,6 +18,10 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   detention_charge: "Bill unbilled detention",
   settlement_approve: "Approve weekly pay",
   card_match: "Match a card to a driver",
+  factoring_request: "Factor invoices (Test mode)",
+  bill_defer: "Delay a vendor bill",
+  collections_chase: "Chase a late payer (Test mode)",
+  pay_rule_change: "Change a pay rule",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;
@@ -58,6 +62,16 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   if (kind === "invoice_post") return { amountCents, direction: "in" } as const;
   // Money the customer owes the carrier on top of the invoice.
   if (kind === "detention_charge") return { amountCents, direction: "in" } as const;
+  // Cash Friday: factoring brings cash in early, a chase asks a customer to pay what it owes, and
+  // a delayed bill moves its date while the amount stays owed.
+  if (kind === "factoring_request" || kind === "collections_chase") return { amountCents, direction: "in" } as const;
+  if (kind === "bill_defer") return { amountCents, direction: "none" } as const;
+  // A pay rule change's amount is the engine's signed change to last settled week's total net pay:
+  // more pay is money out, less pay money kept in, none when no one's pay changes.
+  if (kind === "pay_rule_change") {
+    const direction = amountCents > 0 ? "out" : amountCents < 0 ? "in" : "none";
+    return { amountCents: Math.abs(amountCents), direction } as const;
+  }
   return { amountCents, direction: "out" } as const;
 }
 

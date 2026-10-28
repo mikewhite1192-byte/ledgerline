@@ -562,7 +562,7 @@ describe("the request desk", () => {
     const result = await requestFromDesk(session, { driverId, amountCents: 30_000, category: "fuel" }, d);
     expect(result).toEqual({ ok: true, conversationId: "c-1", turnId, status: "done" });
     expect(calls.run).toEqual(["Request an advance of $300.00 for driver BR-C01 (fuel)"]);
-    expect(calls.open[0]).toMatchObject({ conversationId: null, turnId, text: calls.run[0] });
+    expect(calls.open[0]).toMatchObject({ conversationId: null, turnId, text: calls.run[0], readNotes: true });
   });
 
   it("checks its switches in order before reading anything", async () => {

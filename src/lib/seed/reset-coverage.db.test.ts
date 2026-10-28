@@ -129,8 +129,9 @@ describe("demo reset coverage", () => {
       (r) => REWRITTEN.has(r.from_table) && CLEARED.has(r.to_table),
     );
     // advances_proposal_fk has no delete action: the function deletes those advances before the
-    // proposals. load_accessorials_proposal_fk clears (n = SET NULL): a billed detention charge
-    // stays billed until the replace rewrites the table.
+    // proposals. load_accessorials_proposal_fk and vendor_bills_proposal_fk clear (n = SET NULL): a
+    // billed detention charge stays billed, and a moved bill stays moved, until the replace rewrites
+    // the table.
     expect(intoCleared).toEqual([
       { name: "advances_proposal_fk", from_table: "advances", to_table: "proposals", on_delete: "a" },
       {
@@ -139,6 +140,8 @@ describe("demo reset coverage", () => {
         to_table: "proposals",
         on_delete: "n",
       },
+      // The same for a bill a bill_defer card moved: its link clears, then the replace rewrites it.
+      { name: "vendor_bills_proposal_fk", from_table: "vendor_bills", to_table: "proposals", on_delete: "n" },
     ]);
   });
 });
