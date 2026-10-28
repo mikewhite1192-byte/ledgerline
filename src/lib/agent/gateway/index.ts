@@ -303,7 +303,7 @@ async function dispatch(
   if (remaining() <= 0) throw new GatewayTimeout();
   const ran: ToolResult = await withTimeout(
     inTenant(db, ctx, (q) =>
-      tool.run(q, ctx, args, { screen, limit: limit && limit.ok ? limit : null }),
+      tool.run(q, ctx, args, { screen, limit: limit && limit.ok ? limit : null, modelCallId: row.modelCallId }),
     ),
     remaining(),
   );

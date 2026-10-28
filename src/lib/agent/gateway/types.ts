@@ -128,11 +128,13 @@ export type ScreenVerdict = {
   screenerVersion: 1;
 };
 
-// What a tool's run receives beyond its args: the screen verdict (for a tool that screens) and
-// the limit result (for a propose tool).
+// What a tool's run receives beyond its args: the screen verdict (for a tool that screens), the
+// limit result (for a propose tool) and the model call that asked for this tool (a uuid, or null
+// when the caller named none), which a record tool stores as the note's writer.
 export type RunExtras = {
   screen: ScreenVerdict | null;
   limit: Extract<LimitResult, { ok: true }> | null;
+  modelCallId?: string | null;
 };
 
 // The one list of proposal kinds. src/lib/proposals/execute.ts imports it from here (the ledger

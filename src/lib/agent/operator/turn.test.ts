@@ -10,6 +10,7 @@ import { sampleArgs } from "../gateway/__tests__/sample-args";
 import {
   COLLECTIONS_RULE,
   LOOP_TEXT,
+  MEMORY_PROMPT,
   OPERATOR_PROMPT,
   REPORT_PROMPT,
   TOOL_SEARCH_RULE,
@@ -658,6 +659,28 @@ describe("runTurn with tool search and the prompt cache", () => {
     expect(operatorPrompt(names, false)).toBe(`${OPERATOR_PROMPT}\n${COLLECTIONS_RULE}`);
     expect(operatorPrompt(names, true)).toBe(`${OPERATOR_PROMPT}\n${TOOL_SEARCH_RULE}\n${COLLECTIONS_RULE}`);
     expect(COLLECTIONS_RULE).toContain("get_collections");
+  });
+
+  it("adds the memory lines only while the note suggestion tool is offered", async () => {
+    flags.carrierMemoryEnabled = true;
+    onTestFinished(() => {
+      flags.carrierMemoryEnabled = false;
+    });
+    const tools = toolsFor("operator");
+    expect(tools.map((t) => t.name)).toContain("remember_note");
+    const h = harness(script(), gateway);
+    h.deps.tools = tools;
+    h.deps.request = turnRequest(tools, false, { enabled: false, retention: "in_memory" });
+    await h.run();
+    expect(h.requests.length).toBeGreaterThan(0);
+    for (const { request } of h.requests) {
+      expect(request.messages[0]).toEqual({ role: "system", content: `${OPERATOR_PROMPT}\n${MEMORY_PROMPT}` });
+    }
+    // Off again: the default tool list and the prompt are today's.
+    flags.carrierMemoryEnabled = false;
+    const off = toolsFor("operator");
+    expect(off.map((t) => t.name)).not.toContain("remember_note");
+    expect(operatorPrompt(off.map((t) => t.name), false)).toBe(OPERATOR_PROMPT);
   });
 
   it("asks Muse Spark to search the deferred tools, keys the cache and puts the summary in input", async () => {
