@@ -22,6 +22,7 @@ const SWITCHES = [
   "accountingEnabled",
   "portalRunnerEnabled",
   "demoResetEnabled",
+  "groundedRatesEnabled",
 ] as const;
 type Switch = (typeof SWITCHES)[number];
 
@@ -55,6 +56,7 @@ describe("appNav", () => {
       ["Settings", "/models", "Models and spend", false],
       ["Settings", "/portal-runs", "Portal runs", false],
       ["Settings", "/settings/demo", "Demo", false],
+      ["Settings", "/settings/rates", "Fuel and tax rates", false],
     ]);
   });
 
@@ -80,6 +82,7 @@ describe("appNav", () => {
       accountingEnabled: "/settings/accounting",
       portalRunnerEnabled: "/portal-runs",
       demoResetEnabled: "/settings/demo",
+      groundedRatesEnabled: "/settings/rates",
     };
     for (const s of SWITCHES) {
       setAll(true);

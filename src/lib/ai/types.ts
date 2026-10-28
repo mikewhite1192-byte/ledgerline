@@ -95,6 +95,29 @@ export type AiRequest = AiCallOptions & {
   toolSearch?: boolean;
   // Meta targets only.
   cache?: AiCacheOptions;
+  // Muse Spark on Meta only: offer the hosted web search tool, at most maxCalls searches in this
+  // answer. Not combined with function tools, tool search or structured output. Only the rate
+  // lookup service sets it; the agent never searches.
+  webSearch?: AiWebSearch;
+};
+
+export type AiWebSearch = { maxCalls: 1 | 2 | 3; contextSize: "low" | "medium" };
+
+// A url_citation annotation on the answer text: the cited page and the span of the answer text
+// (character offsets, start inclusive, end exclusive) it backs.
+export type AiCitation = { url: string; title: string; startIndex: number; endIndex: number };
+
+// One page a web search returned, as the API listed it.
+export type AiSearchResult = { url: string; title: string; snippet: string };
+
+// What a web search answer carries besides its text: the answer without the model's progress
+// notes (messages marked phase "commentary", such as "I'll search for..."), the citations on the
+// text, the pages the searches returned, and how many web searches ran (each is billed).
+export type AiWebAnswer = {
+  answerText: string;
+  citations: AiCitation[];
+  searchResults: AiSearchResult[];
+  searchCalls: number;
 };
 
 export type AiUsage = { input: number; cached: number; output: number; reasoning: number };
@@ -112,6 +135,8 @@ export type AiResult = {
   replay: AiReplayItem[];
   // How many hosted tool searches the model ran inside this answer.
   toolSearches: number;
+  // Set only when the request offered web search (empty lists and zero when none ran).
+  web?: AiWebAnswer;
 };
 
 // --- Computer use (a Meta model driving a browser, https://dev.meta.ai/docs/computer-use) ---
@@ -313,7 +338,8 @@ export class AiError extends Error {
 
 // What the provider reported that the price is computed from.
 export type Metered =
-  | { unit: "tokens"; usage: AiUsage }
+  // searches: the web searches the answer ran, billed per search on top of the tokens.
+  | { unit: "tokens"; usage: AiUsage; searches?: number }
   | { unit: "audio_seconds"; seconds: number }
   | { unit: "images"; count: number }
   | { unit: "video_frames"; count: number };
@@ -323,6 +349,8 @@ export type TextAnswer = {
   toolCalls: AiToolCall[];
   replay: AiReplayItem[];
   toolSearches: number;
+  // Set only when the answer carried a web search call or a citation.
+  web?: AiWebAnswer;
   // Set only when the request offered the computer tool and the model asked for an action.
   computerCall?: ComputerCall;
 };

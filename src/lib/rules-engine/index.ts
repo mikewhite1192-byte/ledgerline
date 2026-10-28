@@ -108,3 +108,5 @@ export {
   suggestedCorrection,
 } from "./fuel";
 export type { FuelCategory, FuelCheckName, FuelFinding, FuelLimits, NoSuggestionReason } from "./fuel";
+export { PINNED_RATE_KINDS, rateOn } from "./rates";
+export type { PinnedRate, PinnedRateKind } from "./rates";

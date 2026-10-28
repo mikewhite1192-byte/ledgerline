@@ -2774,3 +2774,85 @@ describe("computerStep, one browser step", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 });
+
+describe("complete with web search", () => {
+  const LOOKUP: AiRequest = { ...REQUEST, purpose: "rate_lookup", webSearch: { maxCalls: 2, contextSize: "low" } };
+  const searchItem = (status = "completed") => ({
+    type: "web_search_call",
+    id: "ws_1",
+    status,
+    action: { type: "search", query: "diesel price" },
+    results: [{ type: "text_result", title: "Diesel averaged $3.712", url: "https://rates.example/diesel", snippet: "" }],
+  });
+  const answered = (searches: number) => () =>
+    Response.json({
+      ...metaAnswer(),
+      output: [
+        ...Array.from({ length: searches }, () => searchItem()),
+        { type: "message", role: "assistant", content: [{ type: "output_text", text: "3.712", annotations: [] }] },
+      ],
+    });
+
+  it("reserves each allowed search's pages as input and its fee, on top of the doubled input", async () => {
+    for (const maxCalls of [1, 2] as const) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps, answered(1));
+      const result = await complete("spark", { ...LOOKUP, webSearch: { maxCalls, contextSize: "low" } }, SESSION, {
+        fetch: fetchFn,
+        db: ledger.db,
+      });
+      const bytes = new TextEncoder().encode(String(fetchFn.mock.calls[0][1].body)).length;
+      const price = priceFor("spark", "meta", "muse-spark-1.3") as TokenPrice;
+      expect(ledger.rows.get(result.callId)?.reserved).toBe(
+        estimateReserve(price, bytes * 2, 1024, maxCalls * 8_000) + maxCalls * 250_000_000,
+      );
+    }
+  });
+
+  it("settles the tokens plus one fee per search that ran: none, one or two", async () => {
+    for (const searches of [0, 1, 2]) {
+      const ledger = fakeLedger();
+      const result = await complete("spark", LOOKUP, SESSION, {
+        fetch: fakeFetch(ledger.steps, answered(searches)),
+        db: ledger.db,
+      });
+      expect(result.costNanocents, `${searches} searches`).toBe(COST + searches * 250_000_000);
+      expect(ledger.rows.get(result.callId)?.cost).toBe(COST + searches * 250_000_000);
+      expect(result.web?.searchCalls).toBe(searches);
+    }
+  });
+
+  it("always hands back the web part when search was offered, empty when none ran", async () => {
+    const ledger = fakeLedger();
+    const result = await complete("spark", LOOKUP, SESSION, { fetch: fakeFetch(ledger.steps), db: ledger.db });
+    expect(result.web).toEqual({ answerText: "Hello, money desk.", citations: [], searchResults: [], searchCalls: 0 });
+    const plain = await complete("spark", REQUEST, SESSION, { fetch: fakeFetch(ledger.steps), db: ledger.db });
+    expect(plain).not.toHaveProperty("web");
+  });
+
+  it("refuses web search outside its one measured shape as bad_request, before reserving", async () => {
+    const tool = { name: "get_driver", description: "Read one driver", parameters: {} };
+    const ok = { maxCalls: 2, contextSize: "low" } as const;
+    const bad: [AiRequest, AiTextTarget][] = [
+      [LOOKUP, "spark_open"],
+      [LOOKUP, "wonder"],
+      [{ ...LOOKUP, tools: [tool] }, "spark"],
+      [{ ...LOOKUP, toolSearch: true, tools: [tool, { ...tool, name: "x", deferLoading: true }] }, "spark"],
+      [{ ...LOOKUP, format: { name: "rate", schema: { type: "object" } } } as never, "spark"],
+      [{ ...REQUEST, webSearch: { ...ok, extra: 1 } as never }, "spark"],
+      [{ ...REQUEST, webSearch: { ...ok, maxCalls: 4 } as never }, "spark"],
+      [{ ...REQUEST, webSearch: { ...ok, maxCalls: 0 } as never }, "spark"],
+      [{ ...REQUEST, webSearch: { ...ok, contextSize: "high" } as never }, "spark"],
+      [{ ...REQUEST, webSearch: { maxCalls: 2 } as never }, "spark"],
+      [{ ...REQUEST, webSearch: null as never }, "spark"],
+      [{ ...REQUEST, webSearch: true as never }, "spark"],
+    ];
+    for (const [request, target] of bad) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      const err = await refusal(complete(target, request, SESSION, { fetch: fetchFn, db: ledger.db }));
+      expect(err.category, `${target} ${JSON.stringify(request).slice(0, 200)}`).toBe("bad_request");
+      expect(ledger.steps).toEqual([]);
+    }
+  });
+});

@@ -21,6 +21,7 @@ import type {
 import { REVIEW_REASON_LABELS, REVIEW_STATUS_LABELS, reviewReasonSentence } from "@/lib/invoices/labels";
 import type { InvoiceReviewView, ReviewQueue } from "@/lib/invoices/review-read";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
+import type { RatesPage, RateView } from "@/lib/rates/read";
 import type { RunSummary, RunView } from "@/lib/portal/views";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "@/lib/rules-engine";
 import type { Cents, PayLine } from "@/lib/rules-engine/types";
@@ -1361,4 +1362,91 @@ export const FUEL_PAGE: FuelPage = {
   lastRun: FUEL_RUN,
   needYou: FUEL_ROWS.filter((r) => r.status === "open").length,
   rows: FUEL_ROWS,
+};
+
+// The Fuel and tax rates page: a pinned diesel price with a newer lookup waiting, one state pinned
+// by hand, one state whose lookup could not match its number, and one not pinned yet. Synthetic
+// pages only (rates.example).
+const RATE_BASE: RateView = {
+  id: "5a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  kind: "diesel_index",
+  state: null,
+  status: "pinned",
+  valueMcents: 365_700,
+  perGallon: "$3.657",
+  sourceUrl: "https://rates.example/diesel/weekly",
+  sourceTitle: "Weekly diesel prices, all regions",
+  sourceHost: "rates.example",
+  quote: null,
+  asOf: null,
+  effectiveFrom: "2026-10-19",
+  pinnedAt: "2026-10-20T14:00:00.000Z",
+  pinnedOn: "2026-10-20",
+  byYou: true,
+  typed: false,
+  createdAt: "2026-10-20T13:58:00.000Z",
+};
+export const RATE_PINNED: RateView = RATE_BASE;
+export const RATE_SUGGESTED: RateView = {
+  ...RATE_BASE,
+  id: "6b2e3d4c-5f6a-4b7c-9d8e-0f1a2b3c4d5e",
+  status: "suggested",
+  valueMcents: 371_200,
+  perGallon: "$3.712",
+  quote: "U.S. on-highway diesel averaged 3.712 dollars a gallon for the week of October 26, 2026.",
+  asOf: "2026-10-26",
+  effectiveFrom: null,
+  pinnedAt: null,
+  pinnedOn: null,
+  createdAt: "2026-10-27T15:00:00.000Z",
+};
+export const RATE_UNCONFIRMED: RateView = {
+  ...RATE_BASE,
+  id: "7c3f4e5d-6a7b-4c8d-8e9f-1a2b3c4d5e6f",
+  kind: "ifta_rate",
+  state: "IL",
+  status: "unconfirmed",
+  valueMcents: null,
+  perGallon: null,
+  sourceUrl: "https://rates.example/fuel-tax/illinois",
+  sourceTitle: "Illinois motor fuel tax",
+  quote: null,
+  asOf: null,
+  effectiveFrom: null,
+  pinnedAt: null,
+  pinnedOn: null,
+  byYou: false,
+  createdAt: "2026-10-27T15:05:00.000Z",
+};
+export const RATES_PAGE: RatesPage = {
+  today: "2026-10-27",
+  canPin: true,
+  lookupsLeft: 17,
+  diesel: { pinned: RATE_PINNED, suggestion: RATE_SUGGESTED },
+  states: [
+    { code: "IL", name: "Illinois", pinned: null, suggestion: RATE_UNCONFIRMED },
+    {
+      code: "IN",
+      name: "Indiana",
+      pinned: {
+        ...RATE_BASE,
+        id: "8d4a5f6e-7b8c-4d9e-9f0a-2b3c4d5e6f7a",
+        kind: "ifta_rate",
+        state: "IN",
+        valueMcents: 61_000,
+        perGallon: "$0.6100",
+        sourceUrl: "https://rates.example/fuel-tax/indiana",
+        sourceTitle: "Indiana fuel tax rates",
+        byYou: false,
+        typed: true,
+      },
+      suggestion: null,
+    },
+    { code: "OH", name: "Ohio", pinned: null, suggestion: null },
+  ],
+};
+export const RATES_EMPTY: RatesPage = {
+  ...RATES_PAGE,
+  diesel: { pinned: null, suggestion: null },
+  states: RATES_PAGE.states.map((s) => ({ ...s, pinned: null, suggestion: null })),
 };

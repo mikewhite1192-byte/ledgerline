@@ -685,3 +685,142 @@ describe("parseMeta computer calls", () => {
     expect(parseMeta(answer(output), 200)).toEqual({ kind: "unknown", category: "unknown", httpStatus: 200 });
   });
 });
+
+// Web search (https://dev.meta.ai/docs/search-grounding). The answer shape follows a recorded
+// Muse Spark answer from Oct 27, 2026: a commentary message, then the search with its results
+// (snippets empty), then the answer with no annotations. Addresses and titles here are synthetic.
+describe("metaBody with web search", () => {
+  const LOOKUP: AiRequest = {
+    purpose: "rate_lookup",
+    messages: [
+      { role: "system", content: "Find the figure and the page it is on." },
+      { role: "user", content: "This week's national average diesel price." },
+    ],
+  };
+
+  it("offers only the web search tool, caps the searches and asks for the pages back", () => {
+    const body = metaBody("muse-spark-1.3", { ...LOOKUP, webSearch: { maxCalls: 2, contextSize: "low" } }, OPTIONS);
+    expect(body.tools).toEqual([{ type: "web_search", search_context_size: "low" }]);
+    expect(body.max_tool_calls).toBe(2);
+    expect(body).not.toHaveProperty("tool_choice");
+    expect(body.include).toEqual(["reasoning.encrypted_content", "web_search_call.results"]);
+    expect(body.store).toBe(false);
+  });
+
+  it("sends today's body byte for byte without it", () => {
+    const body = metaBody("muse-spark-1.3", LOOKUP, OPTIONS);
+    expect(body).not.toHaveProperty("tools");
+    expect(body).not.toHaveProperty("max_tool_calls");
+    expect(body.include).toEqual(["reasoning.encrypted_content"]);
+  });
+});
+
+describe("parseMeta with web search", () => {
+  const DIESEL = "https://rates.example/diesel/weekly";
+  const NEWS = "https://rates.example/news/fuel";
+  const RECORDED = {
+    id: "resp_web1",
+    status: "completed",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        phase: "commentary",
+        content: [{ type: "output_text", text: "I'll search for the latest price.", annotations: [] }],
+      },
+      {
+        type: "web_search_call",
+        id: "ws_1",
+        status: "completed",
+        action: { type: "search", query: "national average diesel price this week" },
+        results: [
+          { type: "text_result", title: "Diesel averaged $3.712 for the week of Oct. 26, 2026", url: DIESEL, snippet: "" },
+          { type: "text_result", title: "Fuel news", url: NEWS, snippet: "" },
+          { type: "text_result", title: "No address", url: 7, snippet: "" },
+          { type: "text_result", title: "x".repeat(501), url: "https://rates.example/long", snippet: "" },
+        ],
+      },
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: `3.712 dollars a gallon, from ${DIESEL}`, annotations: [] }],
+      },
+    ],
+    usage: USAGE,
+  };
+
+  it("keeps the answer without the progress note, the pages returned and the search count", () => {
+    const outcome = parseMeta(RECORDED, 200);
+    expect(outcome).toMatchObject({
+      kind: "answered",
+      status: "ok",
+      metered: { unit: "tokens", usage: { input: 15, cached: 0, output: 64, reasoning: 62 }, searches: 1 },
+      value: {
+        text: `I'll search for the latest price.3.712 dollars a gallon, from ${DIESEL}`,
+        web: {
+          answerText: `3.712 dollars a gallon, from ${DIESEL}`,
+          citations: [],
+          searchResults: [
+            { url: DIESEL, title: "Diesel averaged $3.712 for the week of Oct. 26, 2026", snippet: "" },
+            { url: NEWS, title: "Fuel news", snippet: "" },
+            // A title over its bound is dropped whole, never cut; the address is kept.
+            { url: "https://rates.example/long", title: "", snippet: "" },
+          ],
+          searchCalls: 1,
+        },
+      },
+    });
+  });
+
+  it("reads citations with their spans moved into the joined text, and drops a bad one", () => {
+    const text = "Diesel was 3.712.";
+    const outcome = parseMeta(
+      {
+        ...RECORDED,
+        output: [
+          RECORDED.output[0],
+          RECORDED.output[1],
+          {
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text,
+                annotations: [
+                  { type: "url_citation", url: DIESEL, title: "Weekly diesel", start_index: 11, end_index: 16 },
+                  { type: "url_citation", url: NEWS, title: "Fuel news", start_index: 5, end_index: 5 },
+                  { type: "url_citation", url: NEWS, title: "Fuel news", start_index: 0, end_index: 99 },
+                  { type: "file_citation", url: NEWS, start_index: 0, end_index: 3 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      200,
+    );
+    const shift = "I'll search for the latest price.".length;
+    expect(outcome.kind === "answered" && outcome.value.web?.citations).toEqual([
+      { url: DIESEL, title: "Weekly diesel", startIndex: 11 + shift, endIndex: 16 + shift },
+    ]);
+    if (outcome.kind !== "answered") throw new Error("not answered");
+    const c = outcome.value.web!.citations[0];
+    expect(outcome.value.text.slice(c.startIndex, c.endIndex)).toBe("3.712");
+  });
+
+  it("bills every search item, whatever its status, and two searches as two", () => {
+    const failedSearch = { type: "web_search_call", id: "ws_2", status: "failed", action: { type: "search", query: "q" } };
+    const outcome = parseMeta({ ...RECORDED, output: [...RECORDED.output, failedSearch] }, 200);
+    expect(outcome).toMatchObject({ metered: { searches: 2 }, value: { web: { searchCalls: 2 } } });
+  });
+
+  it("leaves the web part and the search count out of an answer that never searched", () => {
+    const outcome = parseMeta({ ...RECORDED, output: [RECORDED.output[2]] }, 200);
+    expect(outcome.kind === "answered" && outcome.metered).toEqual({
+      unit: "tokens",
+      usage: { input: 15, cached: 0, output: 64, reasoning: 62 },
+    });
+    expect(outcome.kind === "answered" && "web" in outcome.value).toBe(false);
+  });
+});

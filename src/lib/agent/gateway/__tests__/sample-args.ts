@@ -80,6 +80,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       sourceRefs: [{ table: "loads", id: detentionLoad }],
     },
     get_portal_evidence: { loadId: delivered.id },
+    get_pinned_rates: { kind: "ifta_rate", state: "IL", day: "2026-10-27" },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     report_ar_aging: { asOf: "2026-11-02" },
     report_driver_pay_summary: { periodStart: paid.period_start, driverId: hero.id },

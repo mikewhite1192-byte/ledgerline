@@ -1,6 +1,7 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
-// and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, and
-// the driver identity map and arming log from 0027, in an order where every table comes after the
+// and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, the
+// driver identity map and arming log from 0027, and the pinned fuel and tax rates from 0053 (the
+// seed pins none, so its replace only empties them), in an order where every table comes after the
 // tables it references (insert in this order, delete in reverse). Each column says how it
 // travels: the Data API sends strings as text, so uuid, date, timestamptz and jsonb columns need
 // a CAST on the way in, and reads turn timestamptz into one ISO form and jsonb into text so both
@@ -37,6 +38,7 @@ export const TENANT_TABLES = [
   "payment_applications",
   "untrusted_inputs",
   "screenings",
+  "pinned_rates",
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
@@ -395,6 +397,28 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["model_call_id", "uuid"],
       ["latency_ms", "int"],
       ["expires_at", "timestamptz"],
+    ],
+  },
+  pinned_rates: {
+    table: "pinned_rates",
+    columns: [
+      ["id", "uuid"],
+      ["kind", "text"],
+      ["state", "text"],
+      ["status", "text"],
+      ["value_mcents", "int"],
+      ["source", "text"],
+      ["source_url", "text"],
+      ["source_title", "text"],
+      ["quote", "text"],
+      ["as_of", "date"],
+      ["effective_from", "date"],
+      ["lookup_call_id", "uuid"],
+      ["trace_id", "uuid"],
+      ["created_by", "uuid"],
+      ["pinned_by", "uuid"],
+      ["pinned_at", "timestamptz"],
+      ["retired_at", "timestamptz"],
     ],
   },
 };

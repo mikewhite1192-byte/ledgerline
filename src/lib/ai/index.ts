@@ -18,6 +18,8 @@ import {
   NANOCENTS_PER_CENT,
   SCREENSHOT_RESERVE_TOKENS,
   videoFramesCost,
+  WEB_SEARCH_QUERY_NANOCENTS,
+  WEB_SEARCH_RESERVE_TOKENS,
   wonderCapNanocents,
   type Price,
 } from "./prices";
@@ -84,11 +86,14 @@ export type {
   AiReplayItem,
   AiRequest,
   AiResult,
+  AiSearchResult,
   AiTarget,
   AiTextTarget,
   AiTool,
   AiToolCall,
   AiUsage,
+  AiWebAnswer,
+  AiWebSearch,
   ComputerAction,
   ComputerButton,
   ComputerCall,
@@ -249,7 +254,8 @@ function unitsOf(metered: Metered): number | null {
 function usageLine(metered: Metered): string {
   if (metered.unit !== "tokens") return `units=${unitsOf(metered)}`;
   const u = metered.usage;
-  return `in=${u.input} cached=${u.cached} out=${u.output} reasoning=${u.reasoning}`;
+  const searches = metered.searches === undefined ? "" : ` searches=${metered.searches}`;
+  return `in=${u.input} cached=${u.cached} out=${u.output} reasoning=${u.reasoning}${searches}`;
 }
 
 type PlanFn<T, U extends Price["unit"]> = (
@@ -670,9 +676,30 @@ function validateText(target: AiTextTarget, request: AiRequest): TextOptions {
     replay.every((item) => typeof item?.type === "string" && REPLAY_TYPES.includes(item.type)) &&
     // Replayed reasoning belongs to an assistant turn, and only Meta returns it.
     (replay.length === 0 || (meta && messages.some((m) => m.role === "assistant"))) &&
-    validSearchAndCache(meta, request, tools, messages, replay);
+    validSearchAndCache(meta, request, tools, messages, replay) &&
+    validWebSearch(target, request, tools);
   if (!ok) bad();
   return options;
+}
+
+const WEB_SEARCH_CALLS: readonly number[] = [1, 2, 3];
+const WEB_SEARCH_CONTEXT: readonly string[] = ["low", "medium"];
+
+// Hosted web search: Muse Spark only, in the one shape the lookup uses. It is refused beside
+// function tools, tool search and structured output, combinations this app has not measured.
+function validWebSearch(target: AiTextTarget, request: AiRequest, tools: AiTool[]): boolean {
+  const { webSearch } = request;
+  if (webSearch === undefined) return true;
+  if (target !== "spark" || typeof webSearch !== "object" || webSearch === null) return false;
+  const keys = Object.keys(webSearch);
+  return (
+    keys.length === 2 &&
+    WEB_SEARCH_CALLS.includes(webSearch.maxCalls) &&
+    WEB_SEARCH_CONTEXT.includes(webSearch.contextSize) &&
+    tools.length === 0 &&
+    request.toolSearch !== true &&
+    request.format === undefined
+  );
 }
 
 // Tool search, deferred tools, the prompt cache and input-placed system messages: Meta only, and
@@ -769,16 +796,22 @@ function textPlan(target: AiTextTarget, request: AiRequest): PlanFn<TextAnswer, 
       }
     }
     const textBytes = new TextEncoder().encode(body).length - attachmentChars;
+    // Only a Meta request carries a search; the standby host never gets one.
+    const searches = meta && request.webSearch ? request.webSearch.maxCalls : 0;
+    const searched = meta && (request.toolSearch === true || searches > 0);
     return {
       url: TEXT_HOSTS[provider].url,
       body,
-      reserveNanocents: estimateReserve(
-        price,
-        // Only a Meta request carries search; the standby host never gets it.
-        meta && request.toolSearch === true ? textBytes * SEARCH_INPUT_FACTOR : textBytes,
-        options.maxOutputTokens,
-        mediaReserveTokens(images, pages, video),
-      ),
+      reserveNanocents:
+        estimateReserve(
+          price,
+          searched ? textBytes * SEARCH_INPUT_FACTOR : textBytes,
+          options.maxOutputTokens,
+          // Each web search the request allows: the pages it returns, read as input.
+          mediaReserveTokens(images, pages, video) + searches * WEB_SEARCH_RESERVE_TOKENS,
+        ) +
+        // And the search itself, billed per search.
+        searches * WEB_SEARCH_QUERY_NANOCENTS,
       // Baseten and Fireworks take no reasoning setting, so none is recorded for them.
       reasoningEffort: meta ? options.reasoningEffort : null,
       parse: TEXT_HOSTS[provider].parse,
@@ -813,6 +846,17 @@ export async function complete(
     upstreamId: answer.upstreamId,
     replay: answer.value.replay,
     toolSearches: answer.value.toolSearches,
+    // A request that offered web search always gets the web part back, empty when none ran.
+    ...(request.webSearch
+      ? {
+          web: answer.value.web ?? {
+            answerText: answer.value.text,
+            citations: [],
+            searchResults: [],
+            searchCalls: 0,
+          },
+        }
+      : {}),
   };
 }
 

@@ -40,6 +40,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_detention_charge: { tier: "propose", roles: ["operator"] },
   get_driver_identity: { tier: "read", roles: ["operator", "auditor"] },
   get_advance_headroom: { tier: "read", roles: ["operator", "auditor"] },
+  get_pinned_rates: { tier: "read", roles: ["operator", "auditor"] },
 };
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
@@ -57,6 +58,7 @@ afterEach(() => {
   flags.invoicesEnabled = false;
   flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
+  flags.groundedRatesEnabled = false;
 });
 
 describe("tool registry", () => {
@@ -188,10 +190,11 @@ describe("tool registry", () => {
     flags.invoicesEnabled = true;
     flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
+    flags.groundedRatesEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 33,
-      auditor: 15,
+      operator: 34,
+      auditor: 16,
       triage: 2,
     });
     for (const role of AGENT_ROLES) {

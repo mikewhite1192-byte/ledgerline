@@ -34,6 +34,8 @@ export const TERMS = {
   "credit-on-account": "Money a customer paid that is not yet matched to an invoice.",
   "second-check": "A separate model re-read this against your records before anyone approves.",
   "test-payout": "A simulated payment; no real money moves in this demo.",
+  "diesel-index": "The weekly average diesel price many customers tie the fuel surcharge to.",
+  "fuel-tax-rate": "What each state charges per gallon of diesel burned on its roads; settled every quarter.",
 } as const;
 
 export type TermId = keyof typeof TERMS;

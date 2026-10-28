@@ -17,6 +17,8 @@ export function recordHref(ref: SourceRef): string {
     throw new RangeError("not a record table");
   }
   if (typeof ref.id !== "string" || ref.id.length === 0) throw new RangeError("a record id is missing");
+  // A pinned rate has no record page of its own: it lives on the Fuel and tax rates page.
+  if (ref.table === "pinned_rates") return "/settings/rates";
   return `/records/${ref.table}/${encodeURIComponent(ref.id)}`;
 }
 

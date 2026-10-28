@@ -25,6 +25,13 @@ describe("flags", () => {
     // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
     expect(flags.demoResetEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
+    expect(flags.groundedRatesEnabled).toBe(false);
+  });
+
+  it("keeps a rate lookup small and its switch out of the local overrides", () => {
+    expect(flags.ratesLimits).toEqual({ lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 });
+    // The demo path turns every local override on; the read tool must stay out of its tool list.
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("groundedRatesEnabled");
   });
 
   it("starts fuel checks on a fixed date and keeps the receipt compare and corrections small", () => {

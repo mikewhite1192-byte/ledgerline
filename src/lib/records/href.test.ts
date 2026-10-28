@@ -12,6 +12,10 @@ describe("recordHref", () => {
     expect(recordHref({ table: "customer_payments", id: "CP-1" })).toBe("/records/customer_payments/CP-1");
   });
 
+  it("sends a pinned rate to the Fuel and tax rates page, which holds every pin", () => {
+    expect(recordHref({ table: "pinned_rates", id: "0b6f3c1e-4a2d-4e8b-9c7a-1d2e3f4a5b6c" })).toBe("/settings/rates");
+  });
+
   it("encodes the id so it stays one path segment", () => {
     expect(recordHref({ table: "advances", id: "x/../y" })).toBe("/records/advances/x%2F..%2Fy");
   });
