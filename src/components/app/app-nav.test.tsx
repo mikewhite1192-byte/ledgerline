@@ -22,6 +22,7 @@ const SWITCHES = [
   "accountingEnabled",
   "portalRunnerEnabled",
   "demoResetEnabled",
+  "profitBriefEnabled",
 ] as const;
 type Switch = (typeof SWITCHES)[number];
 
@@ -42,6 +43,7 @@ describe("appNav", () => {
     setAll(true);
     expect(shape("/invoices")).toEqual([
       ["Today", "/", "Home", false],
+      ["Today", "/profit", "Profit brief", false],
       ["Pay", "/sweep", "Pay sweep", false],
       ["Pay", "/settlements", "Settlements", false],
       ["Pay", "/driver-notes", "Driver notes", false],
@@ -80,6 +82,7 @@ describe("appNav", () => {
       accountingEnabled: "/settings/accounting",
       portalRunnerEnabled: "/portal-runs",
       demoResetEnabled: "/settings/demo",
+      profitBriefEnabled: "/profit",
     };
     for (const s of SWITCHES) {
       setAll(true);
