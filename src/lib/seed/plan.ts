@@ -1138,6 +1138,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     payment_applications: ar.applications,
     untrusted_inputs: [],
     screenings: [],
+    briefs: [],
     carrier_notes: [],
   };
   applyHistory({ slug, zone, rows, newId });

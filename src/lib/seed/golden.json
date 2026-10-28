@@ -25,6 +25,7 @@
         "payment_applications": 200,
         "untrusted_inputs": 6,
         "screenings": 0,
+        "briefs": 0,
         "carrier_notes": 4
       },
       "linehaulCents": 30165000,
@@ -330,6 +331,7 @@
         "payment_applications": 203,
         "untrusted_inputs": 6,
         "screenings": 0,
+        "briefs": 0,
         "carrier_notes": 4
       },
       "linehaulCents": 23376800,

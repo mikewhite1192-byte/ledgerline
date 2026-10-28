@@ -309,6 +309,20 @@ export type Flags = {
   // the tools are not offered. invoicesEnabled must also be on. A post to accounting is always
   // left unsent there (a constant on the adapter, not a switch); LedgerLine never sends one.
   invoiceReviewEnabled: boolean;
+  // The Profit brief at /profit: last closed week's margin by route and by customer, how fast each
+  // customer pays, and "Write this week's brief", which asks Muse Spark to word those figures (a
+  // button press, never a schedule). Off: the page shows its off state, the route answers 409 and
+  // the agent's read tool is not offered. aiEnabled must also be on for the button to reach a model.
+  profitBriefEnabled: boolean;
+  profitBriefLimits: {
+    // One brief's worst case, checked by the wrapper before the request goes out.
+    maxBriefCents: number;
+    // The brief's output budget, reasoning included.
+    maxOutputTokens: number;
+    // Rows the brief's figures and the page's tables keep, best margin first.
+    maxLanes: number;
+    maxCustomers: number;
+  };
   // Carrier memory: short notes the office keeps about customers, drivers and its own ways, which
   // the agent reads as context on each question (never for an amount; the notes' figures are
   // never allowed in an answer). Off: the Memory page shows that it is off, the menu has no
@@ -453,6 +467,8 @@ export const flags: Flags = {
   batchApproveEnabled: false,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
   invoiceReviewEnabled: false,
+  profitBriefEnabled: false,
+  profitBriefLimits: { maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 },
   carrierMemoryEnabled: false,
   carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
   fuelAnomalyEnabled: false,

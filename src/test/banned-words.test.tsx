@@ -5,6 +5,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { proposalCardFrom } from "@/components/agent/proposal-card-from";
 import { reportTable, type ReportLoad } from "@/components/agent/report-table";
 import { toMessages } from "@/components/agent/turn-view";
 import { ChatThread } from "@/components/app/chat-thread";
@@ -19,13 +20,15 @@ import { ContinueBatch } from "@/components/settlements/continue-batch";
 import { doneNote } from "@/components/settlements/action-button";
 import { FuelChecks } from "@/components/fuel/fuel-checks";
 import { HowWorkedOut } from "@/components/trace/how-worked-out";
+import { WriteBrief } from "@/components/profit/write-brief";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { NotesBoard } from "@/app/memory/notes-board";
 import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
-import type { TurnView } from "@/lib/agent/view";
+import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
-import type { Queryable } from "@/lib/db";
+import { refusalWords, writeOutcome } from "@/lib/briefs/words";
+import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
 import { TERMS } from "@/lib/format/terms";
 import {
@@ -314,6 +317,10 @@ vi.mock("@/lib/invoices/review-read", async (importOriginal) => ({
   readInvoiceReview: async () => get("invoiceReview"),
   readMemberRoles: async () => new Map([[fx.MEMBER_ID, "staff"]]),
 }));
+vi.mock("@/lib/briefs/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/briefs/view")>()),
+  readProfitView: async () => get("profitView"),
+}));
 vi.mock("@/lib/memory/notes", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/memory/notes")>()),
   listNotes: async () => get("memoryNotes"),
@@ -332,6 +339,14 @@ vi.mock("@/lib/voice/read", async (importOriginal) => ({
   readVoiceList: async () => get("voiceList"),
   readVoiceDetail: async () => get("voiceDetail"),
 }));
+vi.mock("@/lib/records/views", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/records/views")>()),
+  readPayItemView: async () => get("payItemView"),
+  readDriverDayView: async () => get("driverDayView"),
+  readScheduleView: async () => get("scheduleView"),
+  readExtraChargeLoadId: async () => get("extraChargeLoadId"),
+}));
+vi.mock("@/lib/help/hero-link", () => ({ readHeroLink: async () => get("heroLink") }));
 
 function defaults(): Record<string, unknown> {
   return {
@@ -379,6 +394,12 @@ function defaults(): Record<string, unknown> {
     paystubAsk: null,
     reviewQueue: fx.REVIEW_QUEUE,
     invoiceReview: fx.INVOICE_REVIEW,
+    payItemView: fx.PAY_ITEM_CASES[0][1],
+    driverDayView: fx.DRIVER_DAY_CASES[0][1],
+    scheduleView: fx.SCHEDULE_CASES[0][1],
+    extraChargeLoadId: null,
+    heroLink: fx.HERO_LINK_DRAFT,
+    profitView: fx.PROFIT_VIEW,
     memoryNotes: fx.MEMORY_NOTES,
     noteSubjects: fx.NOTE_SUBJECTS,
   };
@@ -428,8 +449,9 @@ const p = <T extends object>(v: T) => Promise.resolve(v);
 const sp = (v: Record<string, string> = {}) => ({ searchParams: p(v) });
 const ID = fx.ID;
 
-// shows: words the variant must render, so it is known to have taken the path it names.
-type Variant = { name: string; setup?: () => void; load: () => Promise<ReactNode>; shows?: string };
+// shows: words the variant must render (one string or several), so it is known to have taken the
+// path it names and the state it names is the one the scan read.
+type Variant = { name: string; setup?: () => void; load: () => Promise<ReactNode>; shows?: string | string[] };
 // failureScreen: the route file is itself a failure screen (not found), so it must show its title.
 type PageCase = { file: string; variants: Variant[]; allow?: ReadonlySet<string>; failureScreen?: boolean };
 
@@ -438,6 +460,103 @@ const loading = (file: string, load: () => Promise<{ default: () => ReactNode }>
   file,
   variants: [{ name: "loading", load: async () => (await load()).default() }],
 });
+
+// The advance record page in each state a person meets: waiting, paid, rejected, taken back,
+// recorded by the office before the app, refused by today's pay rules, and unreadable rules.
+const RECORD = fx.ADVANCE_RECORD;
+const EVERY_REFUSAL = [
+  "driver_inactive",
+  "driver_not_armed",
+  "below_minimum",
+  "no_unpaid_earnings",
+  "exceeds_earned_share",
+  "over_driver_limit",
+  "possible_duplicate",
+  "over_load_cap",
+] as const;
+const ADVANCE_RECORD_CASES: [string, typeof RECORD, string][] = [
+  ["approved, payout not confirmed", RECORD, "Advance for Rosa Delgado, Oct 28, 2026"],
+  ["allowed by today's pay rules", RECORD, "Yes, it would be allowed today."],
+  [
+    "waiting for a person",
+    {
+      ...RECORD,
+      advance: { ...RECORD.advance, status: "requested", decidedAt: null, decidedByMembershipId: null },
+      proposal: RECORD.proposal && { ...RECORD.proposal, status: "proposed", decidedAt: null },
+      ledger: [],
+    },
+    "Not yet",
+  ],
+  [
+    "paid",
+    {
+      ...RECORD,
+      advance: { ...RECORD.advance, status: "paid", paidAt: "2026-10-28T14:31:00.000Z", recoveredCents: 5_000 },
+      proposal: RECORD.proposal && { ...RECORD.proposal, status: "done" },
+      ledger: [{ ...RECORD.ledger[0], state: "confirmed", failureCategory: null, settledAt: "2026-10-28T14:31:00.000Z" }],
+    },
+    "Repaid from pay so far",
+  ],
+  [
+    "rejected",
+    {
+      ...RECORD,
+      advance: { ...RECORD.advance, status: "rejected" },
+      proposal: RECORD.proposal && { ...RECORD.proposal, status: "rejected", decisionNote: "Driver already has an advance open." },
+      card: null,
+      ledger: [],
+    },
+    "Rejected",
+  ],
+  [
+    "taken back",
+    {
+      ...RECORD,
+      advance: { ...RECORD.advance, status: "cancelled", takenBackCents: 0, takenBackAt: "2026-10-28T15:00:00.000Z", takebackReason: "wrong_driver" },
+      takeback: { cents: 0, at: "2026-10-28T15:00:00.000Z", reason: "wrong_driver" },
+    },
+    "Canceled before payout",
+  ],
+  [
+    "recorded by the office before the app",
+    {
+      ...RECORD,
+      advance: {
+        ...RECORD.advance,
+        proposalId: null,
+        source: "seed",
+        status: "paid",
+        sourceInputId: null,
+        decidedAt: null,
+        decidedByMembershipId: null,
+        paidAt: null,
+        loadId: null,
+      },
+      proposal: null,
+      ledger: [],
+      input: null,
+      actions: { retry: false, check: false, post: false, takeBack: false },
+      load: null,
+      headroom: null,
+      siblingsOnLoad: [],
+    },
+    "Recorded by the office before this app",
+  ],
+  [
+    "refused by today's pay rules",
+    {
+      ...RECORD,
+      eligibility: RECORD.eligibility && { ...RECORD.eligibility, eligible: false, maxCents: 0, reasons: [...EVERY_REFUSAL] },
+    },
+    "No, it would not be allowed today.",
+  ],
+  ["pay rules unreadable", { ...RECORD, eligibility: null }, "The pay rules could not be checked right now."],
+  [
+    "agent's check not given, flagged message",
+    { ...RECORD, proposal: RECORD.proposal && { ...RECORD.proposal, operatorVerdict: "not_given", flagged: true } },
+    "Not given",
+  ],
+];
 
 // The invoice record page with its Review card in each state worth reading.
 const REVIEW_CASES: [string, InvoiceReviewView][] = [
@@ -508,7 +627,38 @@ const PAGES: PageCase[] = [
   {
     file: "page.tsx",
     variants: [
-      { name: "home", load: async () => (await import("@/app/page")).default(sp()) },
+      {
+        name: "home",
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: [
+          "Needs you",
+          "card in your chat waiting for approval",
+          "paystubs waiting for approval",
+          "advance request waiting for a decision",
+          "invoice waiting for approval",
+          "invoices past due",
+          "Open driver notes",
+        ],
+      },
+      {
+        name: "home, nothing waiting",
+        setup: () => {
+          state.fx.turns = [];
+          state.fx.advances = [];
+          state.fx.invoices = [];
+          state.fx.invoiceProposals = [];
+          state.fx.settlementsView = { ...fx.SETTLEMENTS_VIEW, rows: [] };
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: ["Nothing is waiting on you. Ask a question or open a page from the menu."],
+      },
+      {
+        name: "home, waiting list not read",
+        // A thenable that rejects only when the page awaits it, as a failed read does.
+        setup: () => (state.fx.advances = { then: (_ok: unknown, fail: (e: unknown) => void) => fail(new DbError("unknown")) }),
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: ["Could not check everything that is waiting right now. Reload the page to try again."],
+      },
       {
         name: "asked about a paystub",
         setup: () => (state.fx.paystubAsk = fx.PAYSTUB_ASK),
@@ -519,10 +669,22 @@ const PAGES: PageCase[] = [
   {
     file: "advances/page.tsx",
     variants: [
-      { name: "all", load: async () => (await import("@/app/advances/page")).default(sp()) },
+      { name: "all", load: async () => (await import("@/app/advances/page")).default(sp()), shows: "Paid to" },
       { name: "paid", load: async () => (await import("@/app/advances/page")).default(sp({ status: "paid" })) },
       { name: "not armed", load: async () => (await import("@/app/advances/page")).default(sp({ armed: "no" })) },
-      { name: "empty", setup: () => (state.fx.advances = []), load: async () => (await import("@/app/advances/page")).default(sp()) },
+      { name: "empty", setup: () => (state.fx.advances = []), load: async () => (await import("@/app/advances/page")).default(sp()), shows: "Advances appear here" },
+      {
+        name: "empty, paid only",
+        setup: () => (state.fx.advances = []),
+        load: async () => (await import("@/app/advances/page")).default(sp({ status: "paid" })),
+        shows: "advances appear here",
+      },
+      {
+        name: "empty, drivers not armed",
+        setup: () => (state.fx.advances = []),
+        load: async () => (await import("@/app/advances/page")).default(sp({ armed: "no" })),
+        shows: "for drivers not armed appear here",
+      },
     ],
   },
   {
@@ -674,8 +836,73 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "profit/page.tsx",
+    variants: [
+      { name: "no brief yet", load: async () => (await import("@/app/profit/page")).default(sp()), shows: "No brief for this week yet" },
+      {
+        name: "being written",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "writing" })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "The brief is being written",
+      },
+      {
+        name: "written",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "drafted", brief: fx.PROFIT_BRIEF, changed: false })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "checked against them.",
+      },
+      {
+        name: "written, figures changed since",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "drafted", brief: fx.PROFIT_BRIEF, changed: true })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "changed after this brief was written on",
+      },
+      {
+        name: "did not pass its number check",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "refused", category: "number_mismatch" })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "Write the brief again",
+      },
+      {
+        name: "cut off while being written",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "refused", category: "interrupted" })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "took too long",
+      },
+      {
+        name: "no priced load that week",
+        setup: () =>
+          (state.fx.profitView = fx.profitView(
+            { kind: "none" },
+            {
+              profit: {
+                ...fx.PROFIT_WEEK,
+                totals: { ...fx.PROFIT_WEEK.totals, loads: 0, revenueCents: 0, driverPayCents: 0, marginCents: 0, marginBps: null },
+                routes: [],
+                customers: [],
+                figures: [],
+              },
+            },
+          )),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "nothing to write about",
+      },
+      {
+        name: "no closed week yet",
+        setup: () => (state.fx.profitView = fx.profitView({ kind: "none" }, { weeks: [], week: null, profit: null })),
+        load: async () => (await import("@/app/profit/page")).default(sp()),
+        shows: "The first brief appears",
+      },
+    ],
+  },
+  {
     file: "records/advances/[id]/page.tsx",
-    variants: [{ name: "record", load: async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }) }],
+    variants: ADVANCE_RECORD_CASES.map(([name, record, shows]) => ({
+      name,
+      setup: () => (state.fx.advanceRecord = record),
+      load: async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }),
+      shows,
+    })),
   },
   {
     file: "records/customer_payments/[id]/page.tsx",
@@ -711,6 +938,44 @@ const PAGES: PageCase[] = [
   {
     file: "records/loads/[id]/page.tsx",
     variants: [{ name: "record", load: async () => (await import("@/app/records/loads/[id]/page")).default({ params: p({ id: ID }) }) }],
+  },
+  {
+    file: "records/pay_items/[id]/page.tsx",
+    variants: fx.PAY_ITEM_CASES.map(([name, view]) => ({
+      name,
+      setup: () => (state.fx.payItemView = view),
+      load: async () => (await import("@/app/records/pay_items/[id]/page")).default({ params: p({ id: ID }) }),
+    })),
+  },
+  {
+    file: "records/driver_days/[id]/page.tsx",
+    variants: fx.DRIVER_DAY_CASES.map(([name, view, shows]) => ({
+      name,
+      shows,
+      setup: () => (state.fx.driverDayView = view),
+      load: async () => (await import("@/app/records/driver_days/[id]/page")).default({ params: p({ id: ID }) }),
+    })),
+  },
+  {
+    file: "records/deduction_schedules/[id]/page.tsx",
+    variants: fx.SCHEDULE_CASES.map(([name, view]) => ({
+      name,
+      setup: () => (state.fx.scheduleView = view),
+      load: async () => (await import("@/app/records/deduction_schedules/[id]/page")).default({ params: p({ id: ID }) }),
+    })),
+  },
+  // An extra charge this carrier has sends the reader on to its load (checked below); one it does
+  // not have is the only screen this route shows.
+  {
+    file: "records/load_accessorials/[id]/page.tsx",
+    failureScreen: true,
+    variants: [
+      {
+        name: "an extra charge this carrier does not have",
+        load: async () => (await import("@/app/records/load_accessorials/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Extra charge",
+      },
+    ],
   },
   {
     file: "settlements/page.tsx",
@@ -793,6 +1058,40 @@ const PAGES: PageCase[] = [
       { name: "form", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({}) }) },
       { name: "invalid", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "invalid" }) }) },
       { name: "unavailable", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "unavailable" }) }) },
+    ],
+  },
+  {
+    file: "help/how-pay-works/page.tsx",
+    variants: [
+      {
+        name: "signed out",
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: "Sign in to try the demo",
+      },
+      {
+        name: "signed in, her paystub drafted",
+        setup: () => (state.session = SESSION),
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: "See her paystub",
+      },
+      {
+        name: "signed in, the week not run yet",
+        setup: () => {
+          state.session = SESSION;
+          state.fx.heroLink = fx.HERO_LINK_DRIVER;
+        },
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: "run the week on Settlements",
+      },
+      {
+        name: "signed in, a carrier without her",
+        setup: () => {
+          state.session = SESSION;
+          state.fx.heroLink = null;
+        },
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: fx.TENANT.name,
+      },
     ],
   },
   {
@@ -912,6 +1211,7 @@ const PAGES: PageCase[] = [
   loading("memory/loading.tsx", () => import("@/app/memory/loading")),
   loading("models/loading.tsx", () => import("@/app/models/loading")),
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
+  loading("profit/loading.tsx", () => import("@/app/profit/loading")),
   loading("records/loading.tsx", () => import("@/app/records/loading")),
   loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
   loading("sweep/fuel/loading.tsx", () => import("@/app/sweep/fuel/loading")),
@@ -990,7 +1290,7 @@ describe("no internal word on any page", () => {
         const container = await renderPage(v.load);
         const text = container.textContent ?? "";
         expect(text.trim().length).toBeGreaterThan(0);
-        if (v.shows) expect(text).toContain(v.shows);
+        for (const words of [v.shows ?? []].flat()) expect(text, "the state this variant names").toContain(words);
         if (c.failureScreen) {
           expect(failures.some((t) => text.includes(t)), "the failure screen shows its title").toBe(true);
         } else {
@@ -1001,6 +1301,42 @@ describe("no internal word on any page", () => {
       });
     }
   }
+});
+
+// The record pages a paystub line links to, for a record this carrier does not have: each shows the
+// not-here screen under its own plain title. A page case scans one file once, so these sit here.
+describe("the paystub line record pages, for a record that is not here", () => {
+  const MISSING: [string, string, () => Promise<{ default: (a: { params: Promise<{ id: string }> }) => Promise<ReactNode> }>][] = [
+    ["payItemView", "Pay item", () => import("@/app/records/pay_items/[id]/page")],
+    ["driverDayView", "Day driven", () => import("@/app/records/driver_days/[id]/page")],
+    ["scheduleView", "Weekly deduction", () => import("@/app/records/deduction_schedules/[id]/page")],
+  ];
+  let failures: string[] = [];
+  beforeAll(() => {
+    failures = failureTitles();
+  });
+
+  for (const [key, title, mod] of MISSING) {
+    it(`${title}`, async () => {
+      state.fx[key] = null;
+      const container = await renderPage(async () => (await mod()).default({ params: p({ id: ID }) }));
+      const text = container.textContent ?? "";
+      expect(text).toContain(title);
+      expect(failures.some((t) => text.includes(t)), "the not-here screen shows its title").toBe(true);
+      expect(scan(container)).toEqual([]);
+    });
+  }
+
+  it("an extra charge this carrier has sends the reader to its load's Extra charges table", async () => {
+    state.fx.extraChargeLoadId = fx.LOAD_RECORD.id;
+    const { default: page } = await import("@/app/records/load_accessorials/[id]/page");
+    await expect(page({ params: p({ id: ID }) })).rejects.toThrow(`redirect /records/loads/${fx.LOAD_RECORD.id}#extra-charges`);
+  });
+
+  it("the help page's tab title and description", async () => {
+    const { metadata } = await import("@/app/help/how-pay-works/page");
+    expect(hitsIn(`${String(metadata.title)}\n${String(metadata.description)}`, new Set())).toEqual([]);
+  });
 });
 
 // The root layout renders the html document itself, which cannot sit inside a test's container, so
@@ -1052,6 +1388,137 @@ describe("no internal word on a card", () => {
       });
     }
   }
+});
+
+// Every kind's card as the chat builds it, plus a kind the table has no row for, in every status;
+// a waiting card is also read with its approve question open and with its reject question open.
+const KIND_VIEWS: [string, ProposalView][] = (() => {
+  const base: ProposalView = {
+    id: fx.ID,
+    kind: "advance_payout",
+    subjectTable: "drivers",
+    subjectId: fx.ID,
+    subjectLabel: "BR-D07",
+    amountCents: 20_000,
+    direction: "out",
+    title: "Pay advance",
+    reasons: [{ category: "earned_unpaid_covers", text: "Earned, unpaid pay this week covers the advance.", source: { table: "drivers", id: fx.ID } }],
+    sources: [
+      { table: "drivers", id: fx.ID },
+      { table: "loads", id: "0b9f6a52-3c1d-4e8f-9a7b-000000000004" },
+      { table: "loads", id: "0b9f6a52-3c1d-4e8f-9a7b-000000000005" },
+    ],
+    status: "proposed",
+    flagged: false,
+    flagCategories: [],
+    operatorVerdict: "eligible",
+    auditorVerdict: "pass",
+    auditorConcerns: [],
+    auditorCheckedAt: "2026-10-28T15:00:00.000Z",
+    auditorOverride: null,
+    destination: null,
+  };
+  const loads = { subjectTable: "loads", subjectLabel: "BR-L0412" };
+  return [
+    ["advance, card on file", { ...base, destination: { label: "fuel card", last4: "4417", testMode: true } }],
+    ["advance, no card", { ...base, destination: { label: "no fuel card on file", last4: null, testMode: true } }],
+    ["advance, flagged", { ...base, flagged: true, flagCategories: ["authority_claim"], destination: { label: "fuel card", last4: "4417", testMode: true } }],
+    ["pay correction", { ...base, kind: "pay_correction", title: "Correct pay" }],
+    ["load rate", { ...base, ...loads, kind: "load_rate_fill", direction: "none", title: "Fill load rate" }],
+    ["invoice", { ...base, ...loads, kind: "invoice_post", direction: "in", title: "Create invoice" }],
+    ["payment move", { ...base, subjectTable: "payment_applications", subjectLabel: "CHK-1042", kind: "payment_reapply", direction: "none", title: "Move payment" }],
+    ["detention", { ...base, ...loads, kind: "detention_charge", direction: "in", title: "Bill detention" }],
+    ["paystub", { ...base, subjectTable: "settlements", kind: "settlement_approve", title: "Approve paystub" }],
+    ["paystub, no payout", { ...base, subjectTable: "settlements", kind: "settlement_approve", amountCents: 0, title: "Approve paystub" }],
+    ["invoice fix", { ...base, ...loads, kind: "invoice_fix", direction: "none", title: "Fix invoice" }],
+    ["a kind with no row yet", { ...base, kind: "money_code" as ProposalView["kind"], title: "Issue money code" }],
+    ["no subject code", { ...base, subjectLabel: null }],
+  ];
+})();
+
+describe("no internal word on a card built from each kind", () => {
+  for (const [name, view] of KIND_VIEWS) {
+    it(name, async () => {
+      for (const status of STATUSES) {
+        const card = proposalCardFrom({ ...view, status }, { on: true, checking: false, timezone: "America/Chicago" });
+        for (const confirming of [false, true]) {
+          const { container, unmount } = render(
+            <ProposalCard {...card} onApprove={() => {}} onReject={() => {}} initialConfirming={confirming} />,
+          );
+          expect(scan(container), `${status}${confirming ? ", confirm open" : ""}`).toEqual([]);
+          unmount();
+        }
+        if (status === "proposed") {
+          const { container, unmount } = render(<ProposalCard {...card} onApprove={() => {}} onReject={() => {}} />);
+          fireEvent.click(screen.getByRole("button", { name: "Reject" }));
+          expect(screen.getByRole("group", { name: "Confirm rejection" })).toBeTruthy();
+          expect(scan(container), "reject question open").toEqual([]);
+          unmount();
+        }
+      }
+    });
+  }
+});
+
+describe("no internal word on the advance request form", () => {
+  const DRIVER_ID = "0b9f6a52-3c1d-4e8f-9a7b-000000000003";
+  const REFUSALS = ["disabled", "agent_off", "ai_off", "not_found", "busy", "bad_request", "unauthenticated", "forbidden", "something_new"];
+
+  async function fill() {
+    fireEvent.change(screen.getByLabelText("Driver"), { target: { value: DRIVER_ID } });
+    await act(async () => {});
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "250" } });
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "fuel" } });
+  }
+
+  it("its field errors, and its switched-off look", async () => {
+    const { RequestForm } = await import("@/app/advances/new/request-form");
+    for (const disabled of [false, true]) {
+      const { container, unmount } = render(
+        <ToastProvider>
+          <RequestForm drivers={[{ id: DRIVER_ID, code: "BR-D07", name: "Rosa Delgado" }]} disabled={disabled} />
+        </ToastProvider>,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Check this request" }));
+      expect(scan(container)).toEqual([]);
+      unmount();
+    }
+  });
+
+  it("every refusal sentence, a lost answer, an unfinished check, and the toast after the answer", async () => {
+    const { RequestForm } = await import("@/app/advances/new/request-form");
+    const done = new Response(JSON.stringify({ ok: true, status: "done" }), { status: 200 });
+    const answers: (Response | "lost")[] = [
+      ...REFUSALS.map((error) => new Response(JSON.stringify({ error }), { status: 409 })),
+      "lost",
+      new Response(JSON.stringify({ ok: true, status: "failed" }), { status: 200 }),
+      done,
+    ];
+    for (const answer of answers) {
+      vi.stubGlobal("fetch", async (url: string) => {
+        if (url !== "/api/advances/request") {
+          return new Response(JSON.stringify({ loads: [], suggestion: { armed: true, maxCents: 25_000, suggestedCents: 25_000, feeCents: 0, load: null } }));
+        }
+        if (answer === "lost") throw new TypeError("network");
+        return answer;
+      });
+      const { container, unmount } = render(
+        <ToastProvider>
+          <RequestForm drivers={[{ id: DRIVER_ID, code: "BR-D07", name: "Rosa Delgado" }]} disabled={false} />
+        </ToastProvider>,
+      );
+      await fill();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Check this request" }));
+      });
+      // Each answer shows its words: the toast after a finished check, a sentence on the form otherwise.
+      if (answer === done) expect(container.textContent).toContain("The answer appears on Home.");
+      else expect(screen.getByRole("alert").textContent?.length).toBeGreaterThan(0);
+      expect(scan(container)).toEqual([]);
+      unmount();
+    }
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+  });
 });
 
 describe("no internal word on a paystub", () => {
@@ -1164,6 +1631,35 @@ describe("no internal word in a chat answer or its trace", () => {
     expect(scan(container)).toEqual([]);
   });
 
+  it("an answer in paragraphs, bullets and bold, a stopped turn with its card, and repeated steps", () => {
+    const thinking = (i: number) => ({ id: `think-${i}`, seq: i, kind: "model" as const, label: "Thinking it through", state: "done" as const });
+    const answered: TurnView = {
+      ...fx.TURNS[0],
+      id: "turn-bullets",
+      text: "Three drivers need a look:\n\n* **Rosa Delgado (BR-D07)** is short $250.00\n- Marcus Hale has 1 exception\n\nNothing was paid.",
+      steps: [thinking(1), { ...fx.TURNS[0].steps[1], seq: 2 }, thinking(3), thinking(4)],
+      proposals: [],
+    };
+    const stopped: TurnView = {
+      ...fx.TURNS[0],
+      id: "turn-stopped",
+      status: "partial",
+      endedReason: "steps",
+      text: `${STOPPED_TEXT}\n\nRosa Delgado can take up to $400.00.`,
+    };
+    const empty: TurnView = { ...stopped, id: "turn-stopped-empty", proposals: [], text: STOPPED_TEXT };
+    const messages = toMessages([answered, stopped, empty], {}, {}, undefined, { on: true, checking: {}, timezone: fx.TENANT.timezone });
+    const { container } = render(<ChatThread messages={messages} composer={{}} />);
+    const text = container.textContent ?? "";
+    expect(text).toContain(FOUND_TEXT);
+    expect(text).toContain("Rosa Delgado (BR-D07)");
+    expect(container.querySelector("strong")).not.toBeNull();
+    // The repeated step shows once in the first answer's list.
+    const first = screen.getAllByRole("list", { name: "What the agent did" })[0];
+    expect(first.textContent?.match(/Thinking it through/g)).toHaveLength(1);
+    expect(scan(container)).toEqual([]);
+  });
+
   it("the trace, for the answer and for a card", async () => {
     render(
       <>
@@ -1176,8 +1672,15 @@ describe("no internal word in a chat answer or its trace", () => {
         fireEvent.click(button);
       });
     }
+    // Open every Details, so the per-step effort and cache lines are read too.
+    for (const summary of await screen.findAllByText("Details", { selector: "summary" })) {
+      fireEvent.click(summary);
+    }
     const body = document.body;
     expect(body.textContent).toMatch(/Muse/);
+    expect(screen.getAllByRole("list", { name: "Models used" })).toHaveLength(2);
+    expect(screen.getAllByRole("list", { name: "Details for each step" })).toHaveLength(2);
+    expect(body.textContent).toMatch(/Asked for (low|high) effort/);
     expect(scan(body)).toEqual([]);
   });
 
@@ -1311,6 +1814,81 @@ describe("no internal word on the Memory board, in every state", () => {
       expect(scan(container)).toEqual([]);
     } finally {
       switches.carrierMemoryEnabled = was;
+    }
+  });
+});
+
+describe("no internal word on the profit brief, in every state", () => {
+  const show = async () => renderPage(async () => (await import("@/app/profit/page")).default(sp()));
+
+  it("the written brief, with each number a link to where it came from", async () => {
+    state.fx.profitView = fx.profitView({ kind: "drafted", brief: fx.PROFIT_BRIEF, changed: false });
+    const container = await show();
+    const brief = screen.getByText(/^Revenue was/).closest("p");
+    if (!brief) throw new Error("no brief paragraph");
+    expect(within(brief).getAllByRole("link").map((a) => a.getAttribute("title"))).toEqual([
+      "Revenue",
+      "Driver pay",
+      "Margin",
+      "Margin percent",
+      "Customer Tanglewood Grocery Supply: margin",
+    ]);
+    expect(brief.textContent).not.toMatch(/\[f\d+\]/);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the confirm before the agent writes, opened", async () => {
+    const container = await show();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Write this week's brief" }));
+    });
+    expect(screen.getByRole("button", { name: "Write the brief" })).toBeTruthy();
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("every sentence a press of the button or a stored refusal can show", () => {
+    const categories = ["format", "unknown_tag", "number_mismatch", "untagged", "timeout", "interrupted", "incomplete", "cap", "too_expensive", "job_cap", "disabled", "not_configured", "error"];
+    const errors = ["exists", "in_progress", "open_period", "no_loads", "not_found", "brief_off", "disabled", "ai_off", "ai_disabled", "forbidden", "unauthenticated", "unknown", "network"];
+    const sentences = [
+      ...categories.map(refusalWords),
+      ...errors.map((error) => writeOutcome({ ok: false, error, data: {} })),
+      ...["drafted", "refused", "over_cap", "drafting"].flatMap((status) =>
+        categories.map((category) => writeOutcome({ ok: true, error: null, data: { status, category } })),
+      ),
+    ];
+    const { container } = render(
+      <ul>
+        {[...new Set(sentences)].map((t) => (
+          <li key={t}>{t}</li>
+        ))}
+      </ul>,
+    );
+    expect(sentences.every((t) => t.length > 0)).toBe(true);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the button to write it again, after a try that did not pass", () => {
+    const { container } = render(
+      <ToastProvider>
+        <WriteBrief periodStart="2026-10-19" weekText="Oct 19 to Oct 25, 2026" again maxCents={6} />
+      </ToastProvider>,
+    );
+    expect(screen.getByRole("button", { name: "Write the brief again" })).toBeTruthy();
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the page with Profit brief switched off", async () => {
+    const switches = flags as Record<string, unknown>;
+    const was = switches.profitBriefEnabled;
+    switches.profitBriefEnabled = false;
+    try {
+      const container = await show();
+      expect(container.textContent).toMatch(/Profit brief/);
+      expect(container.textContent).toMatch(/off for this carrier/);
+      expect(container.querySelector("table")).toBeNull();
+      expect(scan(container)).toEqual([]);
+    } finally {
+      switches.profitBriefEnabled = was;
     }
   });
 });
@@ -1458,10 +2036,14 @@ describe("no internal word on a fuel check's detail and notes", () => {
         await click("Confirm");
         read();
       }
-      await click("Cancel");
+      await click("Keep reviewing");
       for (const error of ["refused", "unknown"]) {
         answer(error);
-        await click("Reject");
+        // Reject asks once: open its question when it is not open, then reject from inside it.
+        if (!screen.queryByRole("group", { name: "Confirm rejection" })) await click("Reject");
+        await act(async () => {
+          fireEvent.click(within(screen.getByRole("group", { name: "Confirm rejection" })).getByRole("button", { name: "Reject" }));
+        });
         read();
       }
     } finally {
@@ -1495,6 +2077,42 @@ describe("no internal word on a fuel check's detail and notes", () => {
       </ul>,
     );
     expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("the advances pages read by driver and date", () => {
+  it("lists the driver first, then when, how much, the fee, where it stands and where it was paid", async () => {
+    await renderPage(async () => (await import("@/app/advances/page")).default(sp()));
+    expect(screen.getAllByRole("columnheader").map((th) => th.textContent)).toEqual([
+      "Driver",
+      "Requested",
+      "Amount",
+      "Fee",
+      "Status",
+      "Paid to",
+    ]);
+    const row = fx.ADVANCES[0];
+    const link = screen.getAllByRole("link", { name: new RegExp(`^Advance for ${row.driverName}, `) })[0];
+    expect(link.getAttribute("href")).toBe(`/records/advances/${row.id}`);
+  });
+
+  it("titles an advance record with the driver's name and the day it was asked for", async () => {
+    await renderPage(async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }));
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/^Advance for Rosa Delgado, Oct 28, 2026/);
+  });
+
+  it("names the driver's other advances on the load by amount, adding the reference only when two match", async () => {
+    const sibling = fx.ADVANCE_RECORD.siblingsOnLoad[0];
+    await renderPage(async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }));
+    expect(screen.getByRole("link", { name: "Advance of $100.00" }).getAttribute("href")).toBe(`/records/advances/${sibling.id}`);
+    expect(screen.queryByText(sibling.requestRef)).toBeNull();
+    cleanup();
+
+    const twin = { ...sibling, id: "0b9f6a52-3c1d-4e8f-9a7b-000000000099", requestRef: "ADV-1041" };
+    state.fx.advanceRecord = { ...fx.ADVANCE_RECORD, siblingsOnLoad: [sibling, twin] };
+    await renderPage(async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }));
+    expect(screen.getByRole("link", { name: "Advance of $100.00, ADV-1040" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Advance of $100.00, ADV-1041" })).toBeTruthy();
   });
 });
 
