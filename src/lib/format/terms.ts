@@ -35,6 +35,9 @@ export const TERMS = {
   "credit-on-account": "Money a customer paid that is not yet matched to an invoice.",
   "second-check": "A separate model re-read this against your records before anyone approves.",
   "test-payout": "A simulated payment; no real money moves in this demo.",
+  margin: "What is left of the revenue after driver pay.",
+  "days-to-pay":
+    "The average days from an invoice's date to the day it was paid, over invoices paid in the 180 days before the week ended.",
 } as const;
 
 export type TermId = keyof typeof TERMS;

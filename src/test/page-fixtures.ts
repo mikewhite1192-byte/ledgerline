@@ -7,6 +7,8 @@ import type { DaySpend, SpendAlert } from "@/lib/ai/watch";
 import type { ClipView } from "@/lib/clips/types";
 import type { DocumentView } from "@/lib/documents/types";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
+import { figureValueText, profitWeek, type ClosedWeek } from "@/lib/briefs/figures";
+import type { BriefRecord, ProfitView } from "@/lib/briefs/view";
 import { fuelSentence, type SentenceInput } from "@/lib/fuel/help";
 import type { FuelPage, FuelRowView, FuelRunView } from "@/lib/fuel/view";
 import type {
@@ -28,6 +30,7 @@ import type { Cents, PayLine } from "@/lib/rules-engine/types";
 import { DEMO_ANCHOR } from "@/lib/seed/anchor";
 import { DEMO_CARRIERS } from "@/lib/seed/carriers";
 import { buildCarrierPlan } from "@/lib/seed/plan";
+import type { MarginLine } from "@/lib/reports/margin-per-load";
 import { RESET_TABLES, type DemoResetPreview } from "@/lib/seed/reset";
 import { exceptionLabel, parkLabel } from "@/lib/settlements/labels";
 import type {
@@ -1242,6 +1245,88 @@ export const REVIEW_QUEUE: ReviewQueue = {
     queueRow(7, "ready_to_send", null, { posted: true, emailStatus: "need_to_send" }),
   ],
 };
+
+// ---- The profit brief: one closed week priced by the real engine, and its brief in each state ----
+
+const PROFIT_PERIOD = { start: "2026-10-19", end: "2026-10-25" };
+const PIEDMONT_ID = id(401);
+const marginLine = (n: number, over: Partial<MarginLine>): MarginLine => ({
+  loadId: id(410 + n),
+  loadNumber: `BR-L1024${n}`,
+  deliveredOn: "2026-10-22",
+  customerId: CUSTOMER_ID,
+  customerName: "Tanglewood Grocery Supply",
+  driverId: DRIVER_ID,
+  driverName: "Rosa Delgado (BR-D07)",
+  lane: { originCity: "Roanoke", originState: "VA", destCity: "Charlotte", destState: "NC" },
+  loadedMiles: 290,
+  revenueCents: 185_000,
+  driverPayCents: 116_000,
+  marginCents: 69_000,
+  marginBps: 3730,
+  note: null,
+  ...over,
+});
+const PROFIT_LINES: MarginLine[] = [
+  marginLine(1, {}),
+  marginLine(2, {
+    lane: { originCity: "Charlotte", originState: "NC", destCity: "Atlanta", destState: "GA" },
+    loadedMiles: 245,
+    revenueCents: 142_000,
+    driverPayCents: 98_000,
+    marginCents: 44_000,
+    marginBps: 3099,
+  }),
+  marginLine(3, { customerId: PIEDMONT_ID, customerName: "Piedmont Paper Co", revenueCents: 176_000, driverPayCents: 121_000, marginCents: 55_000, marginBps: 3125 }),
+  // Delivered with no rate: counted and listed, never priced.
+  marginLine(4, { customerId: PIEDMONT_ID, customerName: "Piedmont Paper Co", revenueCents: null, driverPayCents: null, marginCents: null, marginBps: null, note: "No rate on the load" }),
+];
+const priced = profitWeek(
+  { lines: PROFIT_LINES, receivables: { invoices: [], payments: [], applications: [], asOf: PROFIT_PERIOD.end } },
+  PROFIT_PERIOD,
+  { maxLanes: 10, maxCustomers: 12 },
+);
+// How each customer pays, set by hand so the table shows a mean and every habit word.
+export const PROFIT_WEEK = {
+  ...priced,
+  customers: priced.customers.map((c, i) => (i === 0 ? { ...c, meanDays: 31, paidCount: 6, habit: "repeat_late" as const } : c)),
+};
+const PROFIT_WEEKS: ClosedWeek[] = [
+  { id: id(402), ...PROFIT_PERIOD },
+  { id: id(403), start: "2026-10-12", end: "2026-10-18" },
+];
+
+// The brief's words, built from the figures so the number check passes and every number links.
+const cite = (label: string): string => {
+  const figure = PROFIT_WEEK.figures.find((f) => f.label === label);
+  if (!figure) throw new Error(`no figure ${label}`);
+  return `${figureValueText(figure)} [${figure.key}]`;
+};
+export const PROFIT_BRIEF_TEXT =
+  `Revenue was ${cite("Revenue")} against driver pay of ${cite("Driver pay")}, a margin of ${cite("Margin")} or ` +
+  `${cite("Margin percent")}. Tanglewood Grocery Supply gave the most margin at ${cite("Customer Tanglewood Grocery Supply: margin")}.`;
+
+export const PROFIT_BRIEF: BriefRecord = {
+  id: id(404),
+  status: "drafted",
+  periodStart: PROFIT_PERIOD.start,
+  periodEnd: PROFIT_PERIOD.end,
+  asOf: "2026-10-27",
+  figures: PROFIT_WEEK.figures,
+  text: PROFIT_BRIEF_TEXT,
+  category: null,
+  updatedAt: "2026-10-27T15:00:00.000Z",
+};
+
+export const profitView = (brief: ProfitView["brief"], over: Partial<ProfitView> = {}): ProfitView => ({
+  weeks: PROFIT_WEEKS,
+  week: PROFIT_WEEKS[0],
+  profit: PROFIT_WEEK,
+  brief,
+  ...over,
+});
+
+export const PROFIT_VIEW = profitView({ kind: "none" });
 
 // The fuel checks page: every problem, every row status (a sent row with its card, a carried-out
 // card that reads Corrected, a dismissed and a cleared row), and a duplicate whose two photos were
