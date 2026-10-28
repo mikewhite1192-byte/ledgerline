@@ -98,7 +98,7 @@ const LINE_SYSTEM_WORDS: Readonly<Record<string, string>> = {
 
 const LINE_WORDS: Readonly<Record<string, string>> = {
   not_connected: "not connected in this demo",
-  over_limit: "more records than one check reads; the rest are read next time",
+  over_limit: "more records than one check reads; the oldest were read and the rest were not checked",
   too_many_rows: "more card transactions than one check reads; the oldest were compared",
   too_many_differences: "more differences than one check lists; the most serious are listed",
   too_many_records: "more payment records than one check reads; the oldest were compared",

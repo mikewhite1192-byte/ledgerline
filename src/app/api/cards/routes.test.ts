@@ -122,6 +122,18 @@ describe("POST /api/cards/check", () => {
     expect(logged).not.toContain("4417");
   });
 
+  it("counts the first slice's deadline from the request's start, so opening the check uses up its time", async () => {
+    const begun = 1_800_000_000_000;
+    let now = begun;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    mocks.startCardCheck.mockImplementationOnce(async () => {
+      now += 12_000;
+      return { ok: true, runId: RUN, resumed: false };
+    });
+    expect((await start(post("/api/cards/check"))).status).toBe(202);
+    expect(mocks.advanceCardCheck).toHaveBeenCalledWith(SESSION, RUN, begun + flags.cardRecon.limits.sliceMs);
+  });
+
   it("answers a membership refusal as 403", async () => {
     const err = new Error("no membership");
     err.name = "ForbiddenError";
@@ -136,6 +148,18 @@ describe("/api/cards/check/[runId]", () => {
     expect(res.status).toBe(200);
     expect((await res.json()).runId).toBe(RUN);
     expect(mocks.advanceCardCheck).toHaveBeenCalledWith(SESSION, RUN, expect.any(Number));
+  });
+
+  it("POST counts the slice's deadline from the request's start", async () => {
+    const begun = 1_800_000_000_000;
+    let now = begun;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    mocks.getSession.mockImplementationOnce(async () => {
+      now += 3_000;
+      return SESSION;
+    });
+    expect((await advance(post(`/api/cards/check/${RUN}`), runParams(RUN))).status).toBe(200);
+    expect(mocks.advanceCardCheck).toHaveBeenCalledWith(SESSION, RUN, begun + flags.cardRecon.limits.sliceMs);
   });
 
   it("POST refuses cross-site, off, no session and a bad id, in that order, before any slice", async () => {

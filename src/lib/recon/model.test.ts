@@ -241,5 +241,9 @@ describe("the words a difference shows", () => {
     expect(lineWords({ system: "made_up", category: "timeout" })).toBe(
       "Another system: did not answer in time; nothing it found before was closed.",
     );
+    // Past the per-system cap the same oldest records are read again next time: no promise of more.
+    expect(lineWords({ system: "payment:bank", category: "over_limit" })).toBe(
+      "Bank: more records than one check reads; the oldest were read and the rest were not checked.",
+    );
   });
 });

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { PaymentAdapter, ReadBack } from "../adapters/types";
+import { readEngineProposalViews, readProposalViews } from "../agent/gateway/store/views";
 import type { CompleteFn } from "../agent/gateway/types";
 import type { AiResult } from "../ai";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
@@ -436,6 +437,46 @@ describe("approving the match card", () => {
     await runToEnd();
     const after = byTxn(await breaks(), planted.cardUnknownId);
     expect(after.map((b) => b.status)).toEqual(["resolved"]);
+  });
+
+  it("shows the person who approves it the card's last four, the day and the driver picked", async () => {
+    const id = await matchCard();
+    const txn = plan.rows.card_transactions.find((t) => t.id === planted.cardUnknownId);
+    const code = plan.rows.drivers.find((d) => d.id === planted.candidateDriverId)?.code;
+    expect(txn && code).toBeTruthy();
+    const [onPage, byId] = await app.withTenant(T, async (q) => [
+      await readEngineProposalViews(q, "card_match", 5, planted.cardUnknownId),
+      await readProposalViews(q, [id]),
+    ]);
+    for (const views of [onPage, byId]) {
+      expect(views.map((v) => v.id)).toEqual([id]);
+      expect(views[0].cardMatch).toMatchObject({ last4: txn?.card_last4, postedOn: txn?.posted_on, driverCode: code });
+    }
+  });
+
+  it("refuses as stale once a person dismissed its difference, waiting or approved, and writes nothing", async () => {
+    const id = await matchCard();
+    const unknown = byTxn(await breaks(), planted.cardUnknownId)[0];
+    expect(await dismissBreak(SESSION, unknown.id, "explained", { db: app, clock })).toEqual({ ok: true });
+    // Still waiting: the gate's early check refuses it and the card stays as it was.
+    expect(await approve(id)).toMatchObject({ ok: false, category: "stale" });
+    expect(await proposalStatus(id)).toBe("proposed");
+    // Approved before the dismissal landed (a resume): the executor refuses it and fails the card.
+    await admin.withTenant(T, (q) =>
+      q.execute(
+        `UPDATE proposals SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz)
+          WHERE id = CAST($1 AS uuid)`,
+        [id, SESSION.sub, NOW.toISOString()],
+      ),
+    );
+    expect(await approve(id)).toMatchObject({ ok: false, category: "stale" });
+    expect(await proposalStatus(id)).toBe("failed");
+    const ref = plan.rows.card_transactions.find((t) => t.id === planted.cardUnknownId)?.provider_ref;
+    expect(await count("SELECT count(*) AS n FROM driver_cards WHERE tenant_id = current_tenant_id() AND source = 'recon'")).toBe(0);
+    expect(
+      await count("SELECT count(*) AS n FROM fuel_purchases WHERE tenant_id = current_tenant_id() AND purchase_ref = $1", [ref]),
+    ).toBe(0);
+    expect(byTxn(await breaks(), planted.cardUnknownId).map((b) => b.status)).toEqual(["dismissed"]);
   });
 
   it("refuses while the card check is switched off, before anything is read", async () => {

@@ -19,9 +19,11 @@ import type {
 //   a. re-read the proposal FOR UPDATE: approved or executing (a resume), kind card_match, args
 //      that still say what the row says (the transaction, its whole cents);
 //   b. re-check the facts, because time passed: the statement row is the one the card named (its
-//      reference and amount), its card is on no driver's file, its purchase is not recorded, and
-//      the driver is active on the posting day. Any failure marks the proposal failed with the
-//      note "stale" and writes nothing;
+//      reference and amount), its card is on no driver's file, its purchase is not recorded, the
+//      driver is active on the posting day, and a person has not dismissed the card check's "card
+//      not on file" difference on that row (its break is locked first, so a dismissal at the same
+//      moment either lands before this read or waits for this approval to finish). Any failure
+//      marks the proposal failed with the note "stale" and writes nothing;
 //   c. approved -> executing;
 //   d. the card on the driver's file (source 'recon', a generic pool card under its portal name,
 //      never the default card, so no payout changes where it goes), and the purchase recorded for
@@ -104,10 +106,24 @@ async function factsHold(q: Queryable, a: Args): Promise<boolean> {
                          WHERE p.tenant_id = t.tenant_id AND p.purchase_ref = t.provider_ref)
         AND EXISTS (SELECT 1 FROM drivers d
                      WHERE d.tenant_id = t.tenant_id AND d.id = CAST($4 AS uuid)
-                       AND d.active_from <= t.posted_on AND (d.active_to IS NULL OR d.active_to >= t.posted_on))`,
+                       AND d.active_from <= t.posted_on AND (d.active_to IS NULL OR d.active_to >= t.posted_on))
+        AND NOT EXISTS (SELECT 1 FROM card_recon_breaks b
+                         WHERE b.tenant_id = t.tenant_id AND b.card_transaction_id = t.id
+                           AND b.category = 'card_unknown' AND b.status = 'dismissed')`,
     [a.transactionId, a.providerRef, a.amountCents, a.driverId],
   );
   return rows.length === 1;
+}
+
+// The row's "card not on file" difference, locked until this transaction ends, before the facts
+// are read: a dismissal of it cannot slip in between the read and the writes.
+async function lockBreak(q: Queryable, transactionId: string): Promise<void> {
+  await q.query(
+    `SELECT 1 AS ok FROM card_recon_breaks
+      WHERE tenant_id = current_tenant_id() AND card_transaction_id = CAST($1 AS uuid) AND category = 'card_unknown'
+      FOR UPDATE`,
+    [transactionId],
+  );
 }
 
 // Both records already written for this driver: a resume after the inserts landed.
@@ -176,6 +192,7 @@ async function apply(q: Queryable, session: Session, proposalId: string, now: Da
   const nowIso = now.toISOString();
   const a = argsOf(p.args);
   const whole = argsMatchRow(a, p.subject_id, Number(p.amount_cents));
+  if (whole) await lockBreak(q, a.transactionId);
   if (whole && (await landed(q, a))) {
     await resolveBreak(q, a.transactionId, nowIso);
     await finish(q, p.id, p.status, nowIso);

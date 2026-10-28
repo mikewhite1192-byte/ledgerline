@@ -311,7 +311,7 @@ const PROPOSAL_SQL = `
                  WHERE a.tenant_id = p.tenant_id AND a.proposal_id = p.id AND a.driver_id = p.subject_id)
            END
          END AS card_last4,
-         CASE WHEN p.kind IN ('detention_charge', 'advance_payout') THEN CAST(p.args AS text) END AS args,
+         CASE WHEN p.kind IN ('detention_charge', 'advance_payout', 'card_match') THEN CAST(p.args AS text) END AS args,
          CAST(p.exceptions AS text) AS exceptions
     FROM proposals p`;
 

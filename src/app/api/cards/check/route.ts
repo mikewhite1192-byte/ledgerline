@@ -12,6 +12,8 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function POST(request: Request) {
+  // The slice's deadline counts from the request's start, so opening the check uses up its time too.
+  const begun = Date.now();
   if (isCrossSite(request)) return reply({ error: "forbidden" }, 403);
   // The switch is read here and again inside startCardCheck and advanceCardCheck.
   if (!flags.cardRecon.enabled) return refused("disabled");
@@ -20,7 +22,7 @@ export async function POST(request: Request) {
   try {
     const started = await startCardCheck(session);
     if (!started.ok) return refused(started.category);
-    const state = await advanceCardCheck(session, started.runId, Date.now() + flags.cardRecon.limits.sliceMs);
+    const state = await advanceCardCheck(session, started.runId, begun + flags.cardRecon.limits.sliceMs);
     if (!state.ok) return refused(state.category);
     return reply({ ...runBody(state.run), resumed: started.resumed }, 202);
   } catch (err) {
