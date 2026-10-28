@@ -477,6 +477,7 @@ export async function handOffVoiceNote(session: Session, voiceNoteId: string, de
       text,
       now: new Date(startedAt),
       summaryChars: flags.agentTurnLimits.summaryChars,
+      readNotes: true,
     });
   } catch (err) {
     await inTenant(db, session, (q) => q.execute(UNCLAIM_SQL, [id, iso()]));

@@ -49,10 +49,13 @@ describe("the function's demo-carrier gate", () => {
     expect(DEFINITIONS[0]).toBe("0025_demo_reset.sql");
   });
 
-  // 0033 added the sweep's second checks, 0034 the fuel checks and 0038 the Inbox messages, each
-  // re-creating the function whole, so whichever ran last keeps the same gate.
-  it("is re-created whole by 0033, 0034 and 0038", () => {
-    expect(DEFINITIONS).toEqual(expect.arrayContaining(["0033_demo_reset_fanout.sql", "0034_fuel_reset.sql", "0038_demo_reset_inbound.sql"]));
+  // 0033 with the sweep's second checks, 0034 with the fuel checks, 0036 with the pay rule changes,
+  // then 0038 with the Inbox messages last, so a fresh database ends on the full union.
+  it("is re-created whole by 0033, 0034 and 0036, then 0038 last", () => {
+    expect(DEFINITIONS).toContain("0033_demo_reset_fanout.sql");
+    expect(DEFINITIONS).toContain("0034_fuel_reset.sql");
+    expect(DEFINITIONS).toContain("0036_demo_reset_pay_rule_changes.sql");
+    expect(DEFINITIONS.at(-1)).toBe("0038_demo_reset_inbound.sql");
   });
 
   it("finds a definition in any spelling, and never a call or a longer name", () => {

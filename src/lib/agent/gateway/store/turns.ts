@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Session } from "../../../auth/claims";
 import { readTenant } from "../../../data/read";
 import type { Queryable } from "../../../db";
+import type { NoteRow } from "../../../memory/notes";
 import type { StepView } from "../../view";
 import { buildStateSummary } from "./summary";
 import type { OpenTurnRefusal, OpenedTurn, StepFinish, StepStart, TurnFinish } from "./types";
@@ -19,6 +20,9 @@ export type OpenTurnInput = {
   text: string;
   now: Date;
   summaryChars: number;
+  // The carrier notes read for this turn (openAgentTurn reads them for an operator's own question
+  // while carrierMemoryEnabled is on); none otherwise.
+  notes?: readonly NoteRow[];
 };
 
 // Starts a turn: the conversation (new, or this person's own), a refusal while another turn in
@@ -71,6 +75,7 @@ export async function openTurn(
     input.now,
     input.summaryChars,
     input.text,
+    input.notes ?? [],
   );
   const next = await q.query<{ seq: number | string }>(
     "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM turns WHERE conversation_id = CAST($1 AS uuid)",
@@ -80,11 +85,12 @@ export async function openTurn(
   const traceId = randomUUID();
   await q.execute(
     `INSERT INTO turns (id, tenant_id, conversation_id, seq, user_text, summary_chars, status,
-                        trace_id, started_at)
+                        trace_id, started_at, notes_used)
      VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, 'running', $6,
-             CAST($7 AS timestamptz))`,
-    [input.turnId, conversationId, seq, input.text, summary.chars, traceId, nowIso],
+             CAST($7 AS timestamptz), CAST($8 AS jsonb))`,
+    [input.turnId, conversationId, seq, input.text, summary.chars, traceId, nowIso, JSON.stringify(summary.notesUsed)],
   );
+  if (input.notes !== undefined) console.info(`memory: ${summary.notesUsed.length} notes for turn ${input.turnId}`);
   await q.execute(
     "UPDATE conversations SET updated_at = CAST($2 AS timestamptz) WHERE id = CAST($1 AS uuid)",
     [conversationId, nowIso],

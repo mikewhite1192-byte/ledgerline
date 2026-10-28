@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../rules-engine";
-import { checkVersionOf, configFor, configForDay, sortVersions } from "./config-version";
+import { checkVersionOf, configFor, configForDay, firstPeriodOf, sortVersions } from "./config-version";
 
 // A version as the selector sees it: its date, the week shape and an id to tell versions apart.
 const version = (id: string, effective_from: string, week_start_dow = 1) => ({
@@ -68,6 +68,33 @@ describe("configFor", () => {
     const sunday = [...BLUE_RIDGE, version("br-3", "2026-11-01", 0)];
     refuses(() => configFor(sunday, "2026-10-26"), "week_start_changed");
     expect(() => sortVersions([version("br-x", "2026-02-30")])).toThrow(RangeError);
+  });
+});
+
+describe("firstPeriodOf", () => {
+  it("is the version's own date when it starts a period", () => {
+    expect(BLUE_RIDGE.map((v) => firstPeriodOf(BLUE_RIDGE, v))).toEqual(["2026-10-05", "2026-10-19"]);
+    expect(firstPeriodOf(PRAIRIE_WIND, PRAIRIE_WIND[0])).toBe("2026-10-04");
+  });
+
+  it("is the next period start for a version dated mid-period, the week configFor first picks it", () => {
+    // Wednesday Oct 28 under Monday weeks first runs the week of Nov 2; Nov 2 under Sunday weeks
+    // first runs the week of Nov 8.
+    const br3 = version("br-3", "2026-10-28");
+    const br = [...BLUE_RIDGE, br3];
+    expect(firstPeriodOf(br, br3)).toBe("2026-11-02");
+    expect(configFor(br, "2026-11-02").id).toBe("br-3");
+    const pw2 = version("pw-2", "2026-11-02", 0);
+    expect(firstPeriodOf([...PRAIRIE_WIND, pw2], pw2)).toBe("2026-11-08");
+  });
+
+  it("is null for a version a later one replaces before its first period starts", () => {
+    // Oct 28 and Oct 30 both first reach the week of Nov 2, which runs under the Oct 30 version.
+    const [br3, br4] = [version("br-3", "2026-10-28"), version("br-4", "2026-10-30")];
+    const br = [...BLUE_RIDGE, br3, br4];
+    expect(firstPeriodOf(br, br3)).toBeNull();
+    expect(firstPeriodOf(br, br4)).toBe("2026-11-02");
+    expect(firstPeriodOf(br, BLUE_RIDGE[1])).toBe("2026-10-19");
   });
 });
 
