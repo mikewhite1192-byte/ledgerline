@@ -8,6 +8,7 @@ import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention"
 import { getAdvanceHeadroom } from "./tools/read/get-advance-headroom";
 import { getAdvances } from "./tools/read/get-advances";
 import { getArAging } from "./tools/read/get-ar-aging";
+import { getCollections } from "./tools/read/get-collections";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
@@ -19,6 +20,7 @@ import { getInvoiceReviewQueue } from "./tools/read/get-invoice-review-queue";
 import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
+import { getProfitBrief } from "./tools/read/get-profit-brief";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
 import { getSettlements } from "./tools/read/get-settlements";
@@ -76,12 +78,14 @@ const TOOLS: readonly AnyToolDef[] = [
   getInvoiceReviewQueue,
   getArAging,
   getPaymentsIn,
+  getCollections,
   getVoiceNote,
   getProposal,
   getDocument,
   findUnbilledDetentionTool,
   getDriverIdentity,
   getAdvanceHeadroom,
+  getProfitBrief,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,

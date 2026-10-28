@@ -279,10 +279,10 @@ describe("the demo reset", () => {
   // Everything a demo leaves behind on a carrier: an advance an approval created, paid and booked
   // (two settled ledger rows naming its proposal); a failed payout on a seeded advance; a detention
   // charge an approval billed (an accessorial naming its proposal); a flagged proposal no ledger
-  // row names; a driver note being drafted; an uploaded document and a voice note with its
-  // recording, each naming a seeded inbound message; a dock clip being redacted; a finished portal
-  // run with its session (the two name each other), a step, an approved check and what it found;
-  // and a model charge.
+  // row names; a driver note being drafted; a Memory note added and a seeded one changed; an
+  // uploaded document and a voice note with its recording, each naming a seeded inbound message; a
+  // dock clip being redacted; a finished portal run with its session (the two name each other), a
+  // step, an approved check and what it found; and a model charge.
   const dress = async (tenantId: string, plan: CarrierPlan, outsideTag: string) => {
     const session = await member(tenantId, "dress");
     const [driver, other] = plan.rows.drivers;
@@ -383,6 +383,23 @@ describe("the demo reset", () => {
         [randomUUID(), other.id],
       );
     });
+    // A note a person added on the Memory page and a seeded note they changed (0040): the replace
+    // removes the first and writes the seeded words back.
+    await app.withTenant(tenantId, async (q) => {
+      await q.execute(
+        `INSERT INTO carrier_notes (id, tenant_id, subject_kind, subject_id, text, status, source_kind,
+           created_by_kind, created_by_sub)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'driver', CAST($2 AS uuid), 'Asks for advances on Thursdays',
+           'active', 'person', 'person', $3)`,
+        [randomUUID(), other.id, session.sub],
+      );
+      expect(
+        await q.execute(
+          "UPDATE carrier_notes SET text = 'Changed during the demo', updated_by_sub = $2 WHERE id = CAST($1 AS uuid)",
+          [plan.rows.carrier_notes[0].id, session.sub],
+        ),
+      ).toBe(1);
+    });
 
     await agentChain(
       tenantId,
@@ -398,6 +415,17 @@ describe("the demo reset", () => {
          VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid),
            'en', 'drafting', CAST($5 AS uuid))`,
         [randomUUID(), settlement.id, settlement.driver_id, settlement.period_id, randomUUID()],
+      ),
+    );
+    // A profit brief the owner had written (0042): a seeded table with none planted, so the replace
+    // removes it.
+    await app.withTenant(tenantId, (q) =>
+      q.execute(
+        `INSERT INTO briefs (id, tenant_id, kind, period_start, period_end, as_of, status, figures, model, trace_id,
+           created_by)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'profit_week', DATE '2026-10-05', DATE '2026-10-11',
+           DATE '2026-10-14', 'drafting', CAST('[]' AS jsonb), 'spark', CAST($2 AS uuid), 'reset-test')`,
+        [randomUUID(), randomUUID()],
       ),
     );
 
@@ -655,6 +683,8 @@ describe("the demo reset", () => {
       expect(preview.current.load_accessorials).toBe(planA.rows.load_accessorials.length + 1);
       expect(preview.current.driver_arm_events).toBe(planA.rows.driver_arm_events.length + 1);
       expect(preview.current.driver_identities).toBe(planA.rows.driver_identities.length + 1);
+      expect(preview.current.briefs).toBe(planA.rows.briefs.length + 1);
+      expect(preview.current.carrier_notes).toBe(planA.rows.carrier_notes.length + 1);
 
       const report = await resetDemoTenant(app, A, planA);
       expect(report.slug).toBe("blue-ridge");

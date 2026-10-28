@@ -42,6 +42,8 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_advance_headroom: { tier: "read", roles: ["operator", "auditor"] },
   preview_rule_change: { tier: "read", roles: ["operator"] },
   propose_rule_change: { tier: "propose", roles: ["operator"] },
+  get_collections: { tier: "read", roles: ["operator"] },
+  get_profit_brief: { tier: "read", roles: ["operator"] },
 };
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
@@ -54,6 +56,8 @@ const PAYMENT_TOOLS = ["get_ar_aging", "get_payments_in", "propose_payment_reapp
 const RULE_TOOLS = ["preview_rule_change", "propose_rule_change"];
 // The invoice review tools need both the invoicing and the invoice review switches.
 const REVIEW_TOOLS = ["get_invoice_review", "get_invoice_review_queue"];
+// The collections read, behind its own switch.
+const COLLECTIONS_TOOLS = ["get_collections"];
 
 afterEach(() => {
   flags.reportsEnabled = false;
@@ -62,6 +66,8 @@ afterEach(() => {
   flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
   flags.rulesByTalkingEnabled = false;
+  flags.collectionsEnabled = false;
+  flags.profitBriefEnabled = false;
 });
 
 describe("tool registry", () => {
@@ -191,6 +197,22 @@ describe("tool registry", () => {
     none("auditor");
   });
 
+  it("offers the collections read to the operator only while its switch is on, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    expect(flags.collectionsEnabled).toBe(false);
+    for (const role of AGENT_ROLES) for (const n of COLLECTIONS_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
+    flags.collectionsEnabled = true;
+    expect(names("operator")).toEqual(expect.arrayContaining(COLLECTIONS_TOOLS));
+    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("triage")).toHaveLength(2);
+    // Deferred like the other receivables reads: few questions need it.
+    expect(ALWAYS_LOADED).not.toContain("get_collections");
+    expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_collections")?.deferLoading).toBe(true);
+    flags.collectionsEnabled = false;
+    expect(toolsFor("operator")).toHaveLength(20);
+  });
+
   it("offers and finds the report tools only while their switch is on, read on every call", () => {
     expect(flags.reportsEnabled).toBe(false);
     for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
@@ -215,9 +237,11 @@ describe("tool registry", () => {
     flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
     flags.rulesByTalkingEnabled = true;
+    flags.collectionsEnabled = true;
+    flags.profitBriefEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 35,
+      operator: 37,
       auditor: 15,
       triage: 2,
     });
@@ -307,6 +331,21 @@ describe("deferred loading for tool search", () => {
     for (const name of RULE_TOOLS) {
       expect(toolsFor("operator", { defer: true }).map((t) => t.name), name).not.toContain(name);
     }
+  });
+
+  it("offers the profit brief read to the operator only while its switch is on, deferred, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    expect(flags.profitBriefEnabled).toBe(false);
+    expect(names("operator")).not.toContain("get_profit_brief");
+    expect(toolsFor("operator")).toHaveLength(20);
+    flags.profitBriefEnabled = true;
+    expect(names("operator")).toContain("get_profit_brief");
+    expect(toolsFor("operator")).toHaveLength(21);
+    for (const role of ["auditor", "triage"] as const) expect(names(role)).not.toContain("get_profit_brief");
+    expect(ALWAYS_LOADED).not.toContain("get_profit_brief");
+    expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_profit_brief")?.deferLoading).toBe(true);
+    flags.profitBriefEnabled = false;
+    expect(names("operator")).not.toContain("get_profit_brief");
   });
 
   it("defers the portal evidence tool, which few questions need", () => {

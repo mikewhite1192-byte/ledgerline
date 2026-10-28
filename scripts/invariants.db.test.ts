@@ -215,7 +215,9 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "money_actions",
     "model_calls",
     "driver_notes",
+    "collection_drafts",
     "screenings",
+    "briefs",
     "qbo_connections",
     "qbo_entity_ids",
     "qbo_oauth_states",
@@ -312,10 +314,25 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
              'drafting', CAST($5 AS uuid))`,
           [note, c.settlement.id, c.settlement.driver, c.settlement.period, randomUUID()],
         );
+        // A reminder reserved for a late invoice (0041), as the drafting path writes it.
+        await q.execute(
+          `INSERT INTO collection_drafts (id, tenant_id, invoice_id, customer_id, stage, tone, status, figures, trace_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), '30', 'friendly',
+             'drafting', CAST('{}' AS jsonb), CAST($4 AS uuid))`,
+          [randomUUID(), c.invoice.id, c.invoice.customer, randomUUID()],
+        );
         await q.execute(
           `INSERT INTO screenings (id, tenant_id, input_id, content_hash, verdict, via, latency_ms)
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'clean', 'pattern', 1)`,
           [randomUUID(), c.input, randomBytes(32).toString("hex")],
+        );
+        // A profit brief reserved before its model call (0042).
+        await q.execute(
+          `INSERT INTO briefs (id, tenant_id, kind, period_start, period_end, as_of, status, figures, model, trace_id,
+             created_by)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'profit_week', DATE '2026-10-05', DATE '2026-10-11',
+             DATE '2026-10-14', 'drafting', CAST('[]' AS jsonb), 'spark', CAST($2 AS uuid), 'invariants-test')`,
+          [randomUUID(), randomUUID()],
         );
         await q.execute(
           `INSERT INTO qbo_connections (tenant_id, realm_id, access_token_enc, refresh_token_enc, access_expires_at,

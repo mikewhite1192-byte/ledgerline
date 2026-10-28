@@ -45,13 +45,22 @@ export type ProposalCardProps = {
   reasons: { text: string; source?: SourceRef; label?: string }[];
   sources?: (SourceRef & { label?: string })[];
   status: ProposalStatus;
-  // Where the money would land, one small line under the amount, e.g. "To fuel card ···· 4417".
+  // Where the money would land, one small line under the amount, e.g. "To fuel card ending 4417".
   // testMode adds " · Test mode" to it.
   destination?: { label: string; testMode: boolean };
   // One more small line under the amount, e.g. "Load L-1042: $120.00 of $300.00 cap left after this."
   detail?: string;
-  // The second question before a money action, e.g. "Pay $200.00 to Dana Whitfield?"
+  // The confirm's question, verb and object, e.g. "Pay $200.00 to Dana Whitfield's fuel card ending
+  // 4417?" Without one it asks "Approve this <noun>?".
   confirmQuestion?: string;
+  // What one of these is called, for the confirm's count line ("1 advance, $200.00.") and Reject's
+  // question ("Reject this advance?"). "request" when not given.
+  confirmNoun?: string;
+  // What happens once it is confirmed, one sentence under the count line.
+  confirmNext?: string;
+  // Names for records the caller knows, keyed "table:id" ("Driver BR-D07"). Any other record is
+  // named by its kind alone, never by an id tail.
+  references?: Readonly<Record<string, string>>;
   // A warning shown above the buttons, e.g. why this proposal needs a second look.
   flagNote?: string;
   audit?: ProposalAudit;
@@ -118,6 +127,12 @@ const STATUS_NOTE: Record<Exclude<ProposalStatus, "proposed">, string> = {
 
 const RESUME_NOTE = "Approved, but it stopped before it finished. Resume picks it up where it stopped.";
 
+// The confirm's last line when the caller does not say what happens next.
+export const CONFIRM_NEXT = "It runs once you confirm, and this card shows what happened.";
+// Rejecting writes the decision and nothing else: no payment, no message, no outside call.
+export const REJECT_NEXT = "Nothing is paid or sent, and nobody is told.";
+const OVERRIDE_NEXT = "Your reason is saved with this approval.";
+
 // The second check's line, in a clerk's words. The model that ran it is named on the trace
 // ("How this was worked out"), not here.
 const AUDIT_BADGE: Record<Exclude<ProposalAudit["state"], "checking">, { tone: BadgeTone; label: string }> = {
@@ -130,6 +145,8 @@ const AUDIT_BADGE: Record<Exclude<ProposalAudit["state"], "checking">, { tone: B
 };
 
 const BUDGET_TEXT = "The second check could not run on this request. Your data is unchanged.";
+
+const CONFIRM_ROW = "grid gap-3 border-t border-border bg-secondary px-4 py-3 sm:px-5";
 
 function AuditLine({
   audit,
@@ -190,8 +207,9 @@ function AuditLine({
 }
 
 // What the agent wants to do, what it costs, and why, with each reason one click from its record.
-// A money action never happens on one tap: Approve asks once more, and only Confirm fires. A
-// proposal the auditor blocked has no Approve: the person writes why, then confirms the override.
+// Nothing happens on one tap: Approve asks once more and only Confirm fires; Reject asks once and
+// only its second Reject fires. A card the second check blocked has no plain Approve: the person
+// writes why, then confirms "Approve anyway".
 export function ProposalCard({
   id,
   title,
@@ -202,6 +220,9 @@ export function ProposalCard({
   destination,
   detail,
   confirmQuestion,
+  confirmNoun = "request",
+  confirmNext = CONFIRM_NEXT,
+  references,
   flagNote,
   audit,
   onApprove,
@@ -219,30 +240,64 @@ export function ProposalCard({
   className,
 }: ProposalCardProps) {
   const [confirming, setConfirming] = useState(initialConfirming);
+  const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const [overriding, setOverriding] = useState(false);
   const blocked = audit?.state === "block" && !audit.override;
   const validReason = overrideReasonOf(reason);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const approveRef = useRef<HTMLButtonElement>(null);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  const rejectRef = useRef<HTMLButtonElement>(null);
   const opened = useRef(false);
   const cancelled = useRef(false);
+  const rejectOpened = useRef(false);
+  const kept = useRef(false);
   const amount = formatCents(Math.abs(impact.cents));
   // One name per record across the reasons and "Also read", so two loads never both read "Load".
-  const sourceName = recordNamer([...reasons.flatMap((r) => (r.source ? [r.source] : [])), ...sources]);
+  // A record the caller named keeps that name; the rest are named by kind, numbered among
+  // themselves when two of a kind would read the same.
+  const known = (s: SourceRef) => references !== undefined && Object.hasOwn(references, `${s.table}:${s.id}`);
+  const unnamed = recordNamer([...reasons.flatMap((r) => (r.source ? [r.source] : [])), ...sources].filter((s) => !known(s)));
+  const sourceName = (s: SourceRef) => (references && known(s) ? references[`${s.table}:${s.id}`] : unnamed(s));
   // With nothing paid or received, the buttons and the question leave the amount out.
   const noAmount = impact.cents === 0 || impact.direction === "none";
   const shown = impact.direction === "out" ? -Math.abs(impact.cents) : Math.abs(impact.cents);
 
   useEffect(() => {
-    // Focus moves to Cancel (the safe choice) when the person opens the confirm row.
+    // Focus moves to Keep reviewing (the safe choice) when the person opens the confirm row.
     if (confirming && opened.current) cancelRef.current?.focus();
-    // Cancel closes the row it sits in, so focus goes back to Approve instead of the page.
+    // Keep reviewing closes the row it sits in, so focus goes back to Approve instead of the page.
     if (!confirming && cancelled.current) {
       cancelled.current = false;
       approveRef.current?.focus();
     }
   }, [confirming]);
+
+  useEffect(() => {
+    // The same for Reject: Keep it takes focus when the question opens, and Reject gets it back.
+    if (rejecting && rejectOpened.current) keepRef.current?.focus();
+    if (!rejecting && kept.current) {
+      kept.current = false;
+      rejectRef.current?.focus();
+    }
+  }, [rejecting]);
+
+  // The secondary control: the outlined Reject, or the kind's own words as a plain link. Either
+  // one only opens the question; the question's own Reject fires.
+  const openReject = () => {
+    rejectOpened.current = true;
+    setRejecting(true);
+  };
+  const rejectButton = wording ? (
+    <Button ref={rejectRef} variant="link" disabled={pending} onClick={openReject} className="self-center sm:mr-2">
+      {wording.reject}
+    </Button>
+  ) : (
+    <Button ref={rejectRef} variant="outline" disabled={pending} onClick={openReject}>
+      Reject
+    </Button>
+  );
 
   return (
     <Card className={cn("overflow-hidden", className)} aria-label={title} role="article">
@@ -321,18 +376,47 @@ export function ProposalCard({
       {footnote ? <p className="mx-4 mb-3 text-small text-foreground-2 sm:mx-5">{footnote}</p> : null}
 
       {status === "proposed" ? (
-        confirming ? (
-          <div
-            role="group"
-            aria-label="Confirm approval"
-            className="flex flex-col gap-3 border-t border-border bg-secondary px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5"
-          >
-            <p className="text-body font-semibold text-foreground">
-              {overriding
-                ? "Approve even though the second check did not pass?"
-                : (confirmQuestion ?? wording?.question ?? (noAmount ? "Approve this?" : `Approve ${amount}?`))}
+        rejecting ? (
+          <div role="group" aria-label="Confirm rejection" className={CONFIRM_ROW}>
+            <p className="text-body font-semibold text-foreground">Reject this {confirmNoun}?</p>
+            <p className="text-small text-foreground-2">{REJECT_NEXT}</p>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button
+                ref={keepRef}
+                variant="outline"
+                disabled={pending}
+                onClick={() => {
+                  kept.current = true;
+                  setRejecting(false);
+                }}
+              >
+                Keep it
+              </Button>
+              <Button variant="destructive" pending={pending} pendingLabel="Rejecting" onClick={() => onReject?.(id)}>
+                Reject
+              </Button>
+            </div>
+          </div>
+        ) : confirming ? (
+          // One shape for every approval (design 4.7): the question, the count and total, what
+          // happens next, then Keep reviewing and Confirm. It only asks: Confirm sends what it
+          // always sent.
+          <div role="group" aria-label="Confirm approval" className={CONFIRM_ROW}>
+            <div className="grid gap-1">
+              <p className="text-body font-semibold text-foreground">
+                {overriding
+                  ? "Approve even though the second check did not pass?"
+                  : (confirmQuestion ?? wording?.question ?? `Approve this ${confirmNoun}?`)}
+              </p>
+              <p className="text-body text-foreground">
+                1 {confirmNoun}, <Money cents={Math.abs(impact.cents)} sign="never" tone="plain" />.
+              </p>
+            </div>
+            <p className="text-small text-foreground-2">
+              {confirmNext}
+              {overriding ? ` ${OVERRIDE_NEXT}` : ""}
             </p>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
               <Button
                 ref={cancelRef}
                 variant="outline"
@@ -343,7 +427,7 @@ export function ProposalCard({
                   setOverriding(false);
                 }}
               >
-                Cancel
+                Keep reviewing
               </Button>
               <Button
                 pending={pending}
@@ -359,7 +443,7 @@ export function ProposalCard({
           </div>
         ) : blocked && noOverride ? (
           <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:justify-end sm:px-5">
-            <RejectControl wording={wording} pending={pending} onClick={() => onReject?.(id)} />
+            {rejectButton}
           </div>
         ) : blocked ? (
           <div className="grid gap-2 border-t border-border px-4 py-3 sm:px-5">
@@ -379,7 +463,7 @@ export function ProposalCard({
               {reason.trim().length} of {OVERRIDE_REASON.max}
             </p>
             <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-              <RejectControl wording={wording} pending={pending} onClick={() => onReject?.(id)} />
+              {rejectButton}
               <Button
                 ref={approveRef}
                 disabled={pending || validReason === null}
@@ -389,13 +473,13 @@ export function ProposalCard({
                   setConfirming(true);
                 }}
               >
-                Override and approve
+                Approve anyway
               </Button>
             </div>
           </div>
         ) : (
           <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-end sm:px-5">
-            <RejectControl wording={wording} pending={pending} onClick={() => onReject?.(id)} />
+            {rejectButton}
             <Button
               ref={approveRef}
               disabled={pending || approveBlockedLabel !== undefined}
@@ -422,27 +506,6 @@ export function ProposalCard({
         <DecidedNote note={statusNotes?.[status] ?? { text: STATUS_NOTE[status] }} />
       )}
     </Card>
-  );
-}
-
-// The secondary control: today's outlined Reject, or the kind's own words as a plain link.
-function RejectControl({
-  wording,
-  pending,
-  onClick,
-}: {
-  wording?: ProposalWording;
-  pending: boolean;
-  onClick: () => void;
-}) {
-  return wording ? (
-    <Button variant="link" disabled={pending} onClick={onClick} className="self-center sm:mr-2">
-      {wording.reject}
-    </Button>
-  ) : (
-    <Button variant="outline" disabled={pending} onClick={onClick}>
-      Reject
-    </Button>
   );
 }
 

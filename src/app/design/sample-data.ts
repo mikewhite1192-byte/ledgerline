@@ -3,6 +3,7 @@
 import type { ProposalCardProps } from "@/components/app/proposal-card";
 import type { DriverIdentity } from "@/lib/advances/identity";
 import type { PaystubProps } from "@/components/app/paystub";
+import type { Suggestion } from "@/components/app/prompt-chips";
 import { formatCents } from "@/lib/format/money";
 import {
   AUDIT_LINES,
@@ -157,14 +158,17 @@ export const ADVANCE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
     { text: `Advance limit: ${formatCents(50_000)}; this request fits`, source: SOURCES.payRules },
   ],
   sources: [SOURCES.load2, SOURCES.load3],
-  destination: { label: `To fuel card ···· ${FUEL_CARD_LAST4}`, testMode: true },
-  confirmQuestion: `Pay ${formatCents(20_000)} to ${DRIVER.name}'s fuel card ···· ${FUEL_CARD_LAST4}? Test mode.`,
+  destination: { label: `To fuel card ending ${FUEL_CARD_LAST4}`, testMode: true },
+  confirmQuestion: `Pay ${formatCents(20_000)} to ${DRIVER.name}'s fuel card ending ${FUEL_CARD_LAST4}?`,
+  confirmNoun: "advance",
+  confirmNext: "This is a test payout to the driver's fuel card. It is taken back from the driver's pay on a later paystub.",
 };
 
 export const PAYMENT_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
   id: "proposal-payment",
   title: "Record Hartwell Produce's payment against invoice INV-20417",
   impact: { cents: 320_000, direction: "in", label: "Applies to INV-20417" },
+  confirmNoun: "payment",
   reasons: [
     { text: `Check for ${formatCents(320_000)} received Oct 30`, source: SOURCES.customer },
     { text: `Open balance on INV-20417: ${formatCents(320_000)}`, source: SOURCES.invoiceA },
@@ -175,6 +179,7 @@ export const MOVE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
   id: "proposal-move",
   title: "Move a payment that landed on the wrong invoice",
   impact: { cents: 185_000, direction: "none", label: "Moves between invoices" },
+  confirmNoun: "payment",
   reasons: [
     { text: `${formatCents(185_000)} was applied to INV-20417 but matches INV-20418`, source: SOURCES.invoiceB },
   ],
@@ -228,9 +233,9 @@ export const LOADS: LoadRow[] = [
   { id: "L-10423", customer: "Hartwell Produce", lane: "Chicago IL to Phoenix AZ", delivered: "2026-10-31", miles: 1_750, status: "delivered", payCents: 105_000 },
 ];
 
-export const SUGGESTIONS = [
-  { id: "paystub-problems", label: "Who has a problem on this week's paystub?" },
-  { id: "past-60", label: "Who owes us money past 60 days?" },
-  { id: "pay-run-cost", label: "What will Friday's pay run cost?" },
-  { id: "advance-limit", label: "Who is over their advance limit?" },
+export const SUGGESTIONS: Suggestion[] = [
+  { id: "paystub-problems", label: "Who has a problem on this week's paystub?", reason: "Finds the paystubs that need a look before Friday." },
+  { id: "past-60", label: "Who owes us money past 60 days?", reason: "Lists late invoices by customer." },
+  { id: "pay-run-cost", label: "What will Friday's pay run cost?", reason: "Totals the week so you know the cash needed." },
+  { id: "advance-limit", label: "Who is over their advance limit?", reason: "Checks each driver's advances against the most their pay allows." },
 ];

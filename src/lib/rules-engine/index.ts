@@ -85,16 +85,47 @@ export {
 export {
   ageReceivables,
   agingBucket,
+  daysToPay,
   findPaymentOnWrongInvoice,
   invoiceStatus,
   paymentProfile,
 } from "./receivables";
+export type { DaysToPay } from "./receivables";
+export {
+  COLLECTION_STAGES,
+  COLLECTION_TONES,
+  collectionStage,
+  collectionTone,
+  planCollections,
+} from "./collections";
+export type { ChaseCandidate, CollectionStage, CollectionTone } from "./collections";
 export {
   detentionCents,
   detentionStops,
   findUnbilledDetention,
   lastFullMonthBefore,
 } from "./detention";
+export {
+  customerPaying,
+  FIGURE_KINDS,
+  marginBpsOf,
+  profitFigures,
+  profitTotals,
+  rollupByCustomer,
+  rollupByLane,
+  routeOf,
+} from "./profit";
+export type {
+  BriefFigure,
+  CustomerPaying,
+  CustomerRollup,
+  FigureKind,
+  FigureSource,
+  LaneRollup,
+  ProfitFigureLimits,
+  ProfitLine,
+  ProfitTotals,
+} from "./profit";
 export {
   FUEL_CATEGORY_OF,
   FUEL_CHECK_NAMES,

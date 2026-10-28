@@ -6,7 +6,7 @@ import type { Suggestion } from "@/components/app/prompt-chips";
 import { decodeEvents } from "@/lib/agent/operator/stream";
 import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
-import type { ReportView, StepView, TurnView } from "@/lib/agent/view";
+import { answerTextOf, type ReportView, type StepView, type TurnView } from "@/lib/agent/view";
 import { stepLabel } from "@/lib/format/labels";
 import { NOT_NOW_FAILED, SAVE_FAILED, SAVE_NOTICES } from "@/lib/pay-rules/words";
 import { reportPath } from "@/lib/reports/types";
@@ -121,7 +121,10 @@ export function toMessages(
       });
     }
     if (t.error) parts.push({ kind: "error", category: t.error });
-    else if (t.text) parts.push({ kind: "text", text: t.text });
+    else if (t.text) {
+      // A stopped turn that still built a card or a report says what it found, not that it stopped.
+      parts.push({ kind: "text", text: answerTextOf({ ...t, reports: t.reports ?? [] }) });
+    }
     for (const r of t.reports ?? []) {
       const load = reports[reportKey(t.id, r)] ?? { state: "loading" };
       parts.push({

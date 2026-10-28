@@ -34,6 +34,7 @@ import { instantAt } from "./calendar";
 import { detentionTermsOf, type DemoCarrier } from "./carriers";
 import { applyHistory } from "./history";
 import { HERO_LANES, LANES, laneMiles, reverseLane, type Lane } from "./lanes";
+import { buildCarrierNotes } from "./memory-plan";
 import { CUSTOMERS, FIRST_NAMES, LAST_NAMES } from "./names";
 import { Rng } from "./prng";
 import {
@@ -1137,12 +1138,17 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     payment_applications: ar.applications,
     untrusted_inputs: [],
     screenings: [],
+    collection_drafts: [],
+    briefs: [],
+    carrier_notes: [],
   };
   applyHistory({ slug, zone, rows, newId });
   // The take-back is recorded after history, which never recovered from it, so no settled week moves.
   const takenBack = plantTakeBack(rows.advances, takenBackId);
   // Outside text for the agent's screener, from its own id stream so no other row changes.
   rows.untrusted_inputs = buildUntrustedInputs({ carrier, anchor, rows });
+  // The sample notes for Memory, from their own id stream for the same reason.
+  rows.carrier_notes = buildCarrierNotes({ slug, anchor, customers: rows.customers, drivers: rows.drivers });
 
   const plan: CarrierPlan = {
     carrier,

@@ -5,8 +5,11 @@ import type { ProposalView, RuleChangeView, TurnView } from "@/lib/agent/view";
 import type { CallRow, Spend } from "@/lib/ai/spend";
 import type { DaySpend, SpendAlert } from "@/lib/ai/watch";
 import type { ClipView } from "@/lib/clips/types";
+import type { CollectionsView, LateInvoice, ReminderCard } from "@/lib/collections/view";
 import type { DocumentView } from "@/lib/documents/types";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
+import { figureValueText, profitWeek, type ClosedWeek } from "@/lib/briefs/figures";
+import type { BriefRecord, ProfitView } from "@/lib/briefs/view";
 import { fuelSentence, type SentenceInput } from "@/lib/fuel/help";
 import type { FuelPage, FuelRowView, FuelRunView } from "@/lib/fuel/view";
 import type {
@@ -20,15 +23,18 @@ import type {
 } from "@/lib/invoices/views";
 import { REVIEW_REASON_LABELS, REVIEW_STATUS_LABELS, reviewReasonSentence } from "@/lib/invoices/labels";
 import type { InvoiceReviewView, ReviewQueue } from "@/lib/invoices/review-read";
+import { noteLabel, type NoteRow, type NoteSubject } from "@/lib/memory/notes";
 import type { PayRulesPage } from "@/lib/pay-rules/read";
-import { RULES, formatValue, labelFor } from "@/lib/pay-rules/rules";
+import { RULES as RULE_SPECS, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
 import type { RunSummary, RunView } from "@/lib/portal/views";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "@/lib/rules-engine";
+import type { DriverDayView, PayItemView, ScheduleView } from "@/lib/records/views";
 import type { Cents, PayLine } from "@/lib/rules-engine/types";
 import { DEMO_ANCHOR } from "@/lib/seed/anchor";
 import { DEMO_CARRIERS } from "@/lib/seed/carriers";
 import { buildCarrierPlan } from "@/lib/seed/plan";
+import type { MarginLine } from "@/lib/reports/margin-per-load";
 import { RESET_TABLES, type DemoResetPreview } from "@/lib/seed/reset";
 import { exceptionLabel, parkLabel } from "@/lib/settlements/labels";
 import type {
@@ -1244,6 +1250,221 @@ export const REVIEW_QUEUE: ReviewQueue = {
   ],
 };
 
+// The collections page: late invoices with no reminder yet (more than the list names, so "and N
+// more" shows) and a reminder in every state, approved both ways. A refused reminder has no draft.
+const lateInvoice = (n: number, over: Partial<LateInvoice> = {}): LateInvoice => ({
+  invoiceId: id(200 + n),
+  customerId: CUSTOMER_ID,
+  customerName: "Tanglewood Grocery Supply",
+  invoiceNumber: `BR-INV-102${String(n).padStart(2, "0")}`,
+  daysLate: 31 + n,
+  balanceCents: 182_500,
+  dueOn: "2026-09-25",
+  stage: "30",
+  tone: "friendly",
+  ...over,
+});
+
+export const reminderCard = (n: number, over: Partial<ReminderCard> = {}): ReminderCard => ({
+  id: id(250 + n),
+  invoiceId: id(230 + n),
+  customerId: CUSTOMER_ID,
+  customerName: "Tanglewood Grocery Supply",
+  invoiceNumber: `BR-INV-103${String(n).padStart(2, "0")}`,
+  stage: "60",
+  tone: "direct",
+  status: "drafted",
+  daysLate: 64,
+  balanceCents: 245_000,
+  dueOn: "2026-08-24",
+  subject: `Invoice BR-INV-103${String(n).padStart(2, "0")} is 64 days past due`,
+  body: "Hello,\n\nInvoice BR-INV-10301 for $2,450.00 was due on Aug 24, 2026 and is now 64 days past due. Please send payment or reply with a date we can expect it.\n\nThank you,\nBlue Ridge Freight",
+  refusalCategory: null,
+  channel: null,
+  sentAt: null,
+  ...over,
+});
+
+export const COLLECTIONS_VIEW: CollectionsView = {
+  asOf: "2026-10-27",
+  timezone: TENANT.timezone,
+  pastDueCount: 12,
+  pastDueCents: 2_604_000,
+  waiting: 3,
+  approvedLastWeek: 2,
+  toDraft: [
+    lateInvoice(1),
+    lateInvoice(2, { customerName: "Harbor Point Lumber", tone: "direct" }),
+    lateInvoice(3, { stage: "60", daysLate: 61, tone: "firm" }),
+    lateInvoice(4, { stage: "90", daysLate: 95 }),
+    lateInvoice(5),
+    lateInvoice(6),
+  ],
+  cards: [
+    reminderCard(1),
+    reminderCard(2, { tone: "friendly", stage: "30", daysLate: 33 }),
+    reminderCard(3, { tone: "firm", stage: "90", daysLate: 97 }),
+    reminderCard(4, { status: "drafting", subject: null, body: null }),
+    reminderCard(5, { status: "over_cap", subject: null, body: null }),
+    reminderCard(6, { status: "refused", subject: null, body: null, refusalCategory: "number_mismatch" }),
+    reminderCard(7, { status: "approved", channel: "logged" }),
+    reminderCard(8, { status: "approved", channel: "email", sentAt: "2026-10-27T15:05:00.000Z" }),
+    reminderCard(9, { status: "approved", channel: "email" }),
+    reminderCard(10, { status: "rejected" }),
+  ],
+};
+
+// ---- The profit brief: one closed week priced by the real engine, and its brief in each state ----
+
+const PROFIT_PERIOD = { start: "2026-10-19", end: "2026-10-25" };
+const PIEDMONT_ID = id(401);
+const marginLine = (n: number, over: Partial<MarginLine>): MarginLine => ({
+  loadId: id(410 + n),
+  loadNumber: `BR-L1024${n}`,
+  deliveredOn: "2026-10-22",
+  customerId: CUSTOMER_ID,
+  customerName: "Tanglewood Grocery Supply",
+  driverId: DRIVER_ID,
+  driverName: "Rosa Delgado (BR-D07)",
+  lane: { originCity: "Roanoke", originState: "VA", destCity: "Charlotte", destState: "NC" },
+  loadedMiles: 290,
+  revenueCents: 185_000,
+  driverPayCents: 116_000,
+  marginCents: 69_000,
+  marginBps: 3730,
+  note: null,
+  ...over,
+});
+const PROFIT_LINES: MarginLine[] = [
+  marginLine(1, {}),
+  marginLine(2, {
+    lane: { originCity: "Charlotte", originState: "NC", destCity: "Atlanta", destState: "GA" },
+    loadedMiles: 245,
+    revenueCents: 142_000,
+    driverPayCents: 98_000,
+    marginCents: 44_000,
+    marginBps: 3099,
+  }),
+  marginLine(3, { customerId: PIEDMONT_ID, customerName: "Piedmont Paper Co", revenueCents: 176_000, driverPayCents: 121_000, marginCents: 55_000, marginBps: 3125 }),
+  // Delivered with no rate: counted and listed, never priced.
+  marginLine(4, { customerId: PIEDMONT_ID, customerName: "Piedmont Paper Co", revenueCents: null, driverPayCents: null, marginCents: null, marginBps: null, note: "No rate on the load" }),
+];
+const priced = profitWeek(
+  { lines: PROFIT_LINES, receivables: { invoices: [], payments: [], applications: [], asOf: PROFIT_PERIOD.end } },
+  PROFIT_PERIOD,
+  { maxLanes: 10, maxCustomers: 12 },
+);
+// How each customer pays, set by hand so the table shows a mean and every habit word.
+export const PROFIT_WEEK = {
+  ...priced,
+  customers: priced.customers.map((c, i) => (i === 0 ? { ...c, meanDays: 31, paidCount: 6, habit: "repeat_late" as const } : c)),
+};
+const PROFIT_WEEKS: ClosedWeek[] = [
+  { id: id(402), ...PROFIT_PERIOD },
+  { id: id(403), start: "2026-10-12", end: "2026-10-18" },
+];
+
+// The brief's words, built from the figures so the number check passes and every number links.
+const cite = (label: string): string => {
+  const figure = PROFIT_WEEK.figures.find((f) => f.label === label);
+  if (!figure) throw new Error(`no figure ${label}`);
+  return `${figureValueText(figure)} [${figure.key}]`;
+};
+export const PROFIT_BRIEF_TEXT =
+  `Revenue was ${cite("Revenue")} against driver pay of ${cite("Driver pay")}, a margin of ${cite("Margin")} or ` +
+  `${cite("Margin percent")}. Tanglewood Grocery Supply gave the most margin at ${cite("Customer Tanglewood Grocery Supply: margin")}.`;
+
+export const PROFIT_BRIEF: BriefRecord = {
+  id: id(404),
+  status: "drafted",
+  periodStart: PROFIT_PERIOD.start,
+  periodEnd: PROFIT_PERIOD.end,
+  asOf: "2026-10-27",
+  figures: PROFIT_WEEK.figures,
+  text: PROFIT_BRIEF_TEXT,
+  category: null,
+  updatedAt: "2026-10-27T15:00:00.000Z",
+};
+
+export const profitView = (brief: ProfitView["brief"], over: Partial<ProfitView> = {}): ProfitView => ({
+  weeks: PROFIT_WEEKS,
+  week: PROFIT_WEEKS[0],
+  profit: PROFIT_WEEK,
+  brief,
+  ...over,
+});
+
+export const PROFIT_VIEW = profitView({ kind: "none" });
+
+// The Memory page: a note about a customer, one about a driver, one about the whole carrier from a
+// person, one whose customer is no longer on file, and a suggestion from the chat waiting for Keep.
+const memoryNote = (n: number, over: Partial<NoteRow>): NoteRow => ({
+  id: id(n),
+  subjectKind: "customer",
+  subjectId: CUSTOMER_ID,
+  subjectName: "Tanglewood Grocery Supply",
+  subjectCode: "BR-C01",
+  text: "Pays about 45 days after due; send the reminder a week early",
+  status: "active",
+  sourceKind: "seed",
+  sourceTurnId: null,
+  createdByKind: "seed",
+  createdByEmail: null,
+  createdAt: "2026-10-20T17:00:00.000Z",
+  updatedAt: "2026-10-20T17:00:00.000Z",
+  ...over,
+});
+
+export const NOTE_SUBJECTS: NoteSubject[] = [
+  { kind: "customer", id: CUSTOMER_ID, name: "Tanglewood Grocery Supply", code: "BR-C01" },
+  { kind: "driver", id: DRIVER_ID, name: "Rosa Delgado", code: "BR-D07" },
+  { kind: "driver", id: id(21), name: "Marcus Hale", code: "BR-D12" },
+];
+
+export const MEMORY_NOTES: NoteRow[] = [
+  memoryNote(141, {}),
+  memoryNote(142, {
+    subjectKind: "driver",
+    subjectId: DRIVER_ID,
+    subjectName: "Rosa Delgado",
+    subjectCode: "BR-D07",
+    text: "Takes the Charlotte runs; ask before a weekend dispatch",
+    createdByKind: "person",
+    createdByEmail: EMAIL,
+  }),
+  memoryNote(143, {
+    subjectKind: "carrier",
+    subjectId: null,
+    subjectName: null,
+    subjectCode: null,
+    text: "Bill every detention charge the same week it happens",
+    createdByKind: "person",
+    createdByEmail: null,
+    createdAt: "2026-10-22T14:30:00.000Z",
+  }),
+  memoryNote(144, { subjectName: null, subjectCode: null, text: "Wants the paperwork by fax, not email" }),
+  memoryNote(145, {
+    subjectKind: "driver",
+    subjectId: id(21),
+    subjectName: "Marcus Hale",
+    subjectCode: "BR-D12",
+    text: "Prefers a text over a call",
+    status: "suggested",
+    sourceKind: "chat",
+    sourceTurnId: id(146),
+    createdByKind: "agent",
+    createdAt: "2026-10-27T15:10:00.000Z",
+  }),
+];
+
+// The notes a trace says the agent read: two still on file (named as the trace names them) and one
+// removed since, which the trace counts but cannot link.
+export const NOTES_USED = [
+  { id: MEMORY_NOTES[0].id, label: noteLabel(MEMORY_NOTES[0]) },
+  { id: MEMORY_NOTES[2].id, label: noteLabel(MEMORY_NOTES[2]) },
+  { id: id(147), label: null },
+];
+
 // The fuel checks page: every problem, every row status (a sent row with its card, a carried-out
 // card that reads Corrected, a dismissed and a cleared row), and a duplicate whose two photos were
 // compared. Each sentence comes from the page's own template, so its words are the ones a person reads.
@@ -1371,7 +1592,7 @@ export const FUEL_PAGE: FuelPage = {
 // saved, and one over the admin amount. The notes are written the way a save writes them.
 export const NEXT_START = "2026-11-02";
 const ruleNote = (key: "insurance_per_day_cents" | "net_pay_floor_cents", from: number, to: number) =>
-  `${labelFor(key, "owner_operator")} to ${formatValue(RULES[key], to)} (from ${formatValue(RULES[key], from)})`;
+  `${labelFor(key, "owner_operator")} to ${formatValue(RULE_SPECS[key], to)} (from ${formatValue(RULE_SPECS[key], from)})`;
 const seedVersions = plan.rows.pay_configs;
 const newestSeed = seedVersions[seedVersions.length - 1];
 const SAVED_VERSION = id(400);
@@ -1484,3 +1705,118 @@ export const RULE_CHANGES_DECIDED: ProposalView[] = [
   }),
   ruleCard(19, { ruleChange: ruleChange({ impact: { ...ruleChange().impact, driversChanged: 0, netDeltaCents: 0, top: [] } }) }),
 ];
+
+// ---- The record pages a paystub line links to: a pay item, a day driven, a weekly deduction ----
+
+const PAYSTUB_REF = { id: id(400), periodStart: "2026-10-19", periodEnd: "2026-10-25" };
+const DRIVER_REF = { id: DRIVER_ID, name: "Monique Vasquez", code: "BR-D07" };
+const LOAD_REF = { table: "loads", id: LOAD_ID, label: "Load BR-L10247" };
+
+const payItem = (over: Partial<PayItemView>): PayItemView => ({
+  id: ID,
+  kind: "reimbursement",
+  subkind: "toll",
+  amountCents: 4_500,
+  itemDate: "2026-10-26",
+  description: "Tolls",
+  correction: false,
+  driver: DRIVER_REF,
+  for: { kind: "load", load: LOAD_REF },
+  paidOn: null,
+  ...over,
+});
+
+// Every kind a pay item can be, and every thing it can be for.
+export const PAY_ITEM_CASES: [string, PayItemView][] = [
+  ["tolls on a load, not paid yet", payItem({})],
+  [
+    "a lumper the driver paid, on a paystub",
+    payItem({
+      subkind: "lumper",
+      amountCents: 22_500,
+      description: "Lumper paid by driver",
+      for: { kind: "extra_charge", load: LOAD_REF, chargeId: id(401), chargeKind: "lumper" },
+      paidOn: PAYSTUB_REF,
+    }),
+  ],
+  [
+    "fuel on the company card",
+    payItem({
+      kind: "fuel",
+      subkind: "fuel",
+      amountCents: 31_996,
+      description: "Fuel, company card",
+      for: { kind: "fuel_purchase", purchasedOn: "2026-10-27", state: "MD", amountCents: 31_996 },
+      paidOn: PAYSTUB_REF,
+    }),
+  ],
+  [
+    "a shortfall carried from last week",
+    payItem({ kind: "carried_shortfall", subkind: "shortfall", amountCents: 12_000, description: "", for: { kind: "paystub", paystub: PAYSTUB_REF } }),
+  ],
+  [
+    "a pay correction",
+    payItem({ kind: "other_deduction", subkind: "correction", amountCents: 20_000, description: "Advance logged twice", correction: true, for: { kind: "correction" } }),
+  ],
+  [
+    "a deduction tied to nothing, driver not found",
+    payItem({ kind: "other_deduction", subkind: "eld_fee", amountCents: 3_500, description: "ELD subscription", driver: null, for: { kind: "none" } }),
+  ],
+];
+
+const RULES: NonNullable<DriverDayView["rules"]> = { effectiveFrom: "2026-10-19", note: "Insurance rate raised", perDayCents: 1_100, appliesTo: "owner_operator" };
+const driverDay = (over: Partial<DriverDayView>): DriverDayView => ({
+  id: ID,
+  day: "2026-10-26",
+  source: "load",
+  driver: DRIVER_REF,
+  workerType: "owner_operator",
+  ownInsurance: false,
+  load: LOAD_REF,
+  rules: RULES,
+  ...over,
+});
+
+// Each answer the "Charged to this driver" line can give, with the words it must show.
+const NOT_KNOWN = "Not known: the driver's record could not be read";
+export const DRIVER_DAY_CASES: [string, DriverDayView, string][] = [
+  ["a load day, charged", driverDay({}), "Yes, once for this day"],
+  ["a dispatch day with no load", driverDay({ source: "dispatch", load: null, rules: { ...RULES, note: null } }), "Yes, once for this day"],
+  ["a company driver, owner-operators only", driverDay({ workerType: "company" }), "No, this carrier charges insurance to owner-operators only"],
+  ["the driver carries their own insurance", driverDay({ ownInsurance: true }), "No, the driver carries their own insurance"],
+  ["no pay rules cover the week", driverDay({ rules: null }), "No pay rules cover this week"],
+  ["the driver could not be read", driverDay({ driver: null, workerType: null, rules: { ...RULES, appliesTo: "all" } }), NOT_KNOWN],
+  [
+    "the driver could not be read, owner-operators only",
+    driverDay({ driver: null, workerType: null, rules: { ...RULES, appliesTo: "owner_operator" } }),
+    NOT_KNOWN,
+  ],
+];
+
+const schedule = (over: Partial<ScheduleView>): ScheduleView => ({
+  id: ID,
+  kind: "escrow",
+  amountCents: 10_000,
+  description: "Escrow",
+  activeFrom: "2026-09-07",
+  activeTo: null,
+  driver: DRIVER_REF,
+  escrow: { balanceCents: 80_000, targetCents: 200_000 },
+  ...over,
+});
+
+// Escrow (building, reached, not known), a truck lease that ends, and another weekly deduction.
+export const SCHEDULE_CASES: [string, ScheduleView][] = [
+  ["escrow building to its target", schedule({})],
+  ["escrow at its target", schedule({ escrow: { balanceCents: 200_000, targetCents: 200_000 } })],
+  ["escrow, balance and target not known", schedule({ driver: null, escrow: { balanceCents: null, targetCents: null } })],
+  [
+    "a truck lease with an end date",
+    schedule({ kind: "lease", amountCents: 45_000, description: "Truck lease-purchase payment", activeTo: "2027-09-06", escrow: null }),
+  ],
+  ["another weekly deduction", schedule({ kind: "other", amountCents: 2_500, description: "Cell phone plan", escrow: null })],
+];
+
+// The help page's link to the worked week's driver: her draft paystub, or her driver page.
+export const HERO_LINK_DRAFT = { href: `/records/settlements/${PAYSTUB_REF.id}`, draft: true };
+export const HERO_LINK_DRIVER = { href: `/records/drivers/${DRIVER_ID}`, draft: false };

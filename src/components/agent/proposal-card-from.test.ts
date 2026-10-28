@@ -7,6 +7,7 @@ import {
   auditFor,
   detentionLines,
   hoursMinutes,
+  kindCopy,
   proposalCardFrom,
 } from "./proposal-card-from";
 
@@ -31,7 +32,7 @@ const view: ProposalView = {
   auditorConcerns: [],
   auditorCheckedAt: null,
   auditorOverride: null,
-  destination: { label: "fuel card ···· 4417", last4: "4417", testMode: true },
+  destination: { label: "fuel card ending 4417", last4: "4417", testMode: true },
 };
 
 const noCard: ProposalView = {
@@ -47,8 +48,11 @@ describe("proposalCardFrom", () => {
       title: "Pay advance for BR-D07",
       impact: { cents: 20_000, direction: "out" },
       status: "proposed",
-      destination: { label: "To fuel card ···· 4417", testMode: true },
-      confirmQuestion: "Pay $200.00 to BR-D07's fuel card ···· 4417? Test mode.",
+      destination: { label: "To fuel card ending 4417", testMode: true },
+      confirmQuestion: "Pay $200.00 to BR-D07's fuel card ending 4417?",
+      confirmNoun: "advance",
+      confirmNext: "This is a test payout to the driver's fuel card. It is taken back from the driver's pay on a later paystub.",
+      references: { [`drivers:${DRIVER}`]: "Driver BR-D07" },
     });
     expect(card.flagNote).toBeUndefined();
     expect(card.reasons).toEqual([{ text: view.reasons[0].text, source: { table: "drivers", id: DRIVER } }]);
@@ -58,6 +62,7 @@ describe("proposalCardFrom", () => {
     const card = proposalCardFrom(noCard);
     expect(card.destination).toEqual({ label: "No fuel card on file", testMode: false });
     expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07?");
+    expect(card.confirmNext).toBe("This driver has no fuel card on file, so nothing can be paid until one is added.");
   });
 
   it("names an advance's load and, under a cap, what was left after it", () => {
@@ -75,13 +80,14 @@ describe("proposalCardFrom", () => {
   it("shows no destination for a kind that pays no card", () => {
     const card = proposalCardFrom({ ...view, kind: "pay_correction", destination: null });
     expect(card.destination).toBeUndefined();
-    expect(card.confirmQuestion).toBeUndefined();
+    expect(card.confirmQuestion).toBe("Add this pay correction to BR-D07's pay?");
+    expect(card.confirmNoun).toBe("pay correction");
   });
 
   it("keeps the flag question on a flagged proposal even with a card on file", () => {
     const card = proposalCardFrom({ ...view, flagged: true, flagCategories: ["authority_claim"] });
     expect(card.confirmQuestion).toBe(FLAG_QUESTION);
-    expect(card.destination).toEqual({ label: "To fuel card ···· 4417", testMode: true });
+    expect(card.destination).toEqual({ label: "To fuel card ending 4417", testMode: true });
   });
 
   it("asks the flag question and names the flag on a flagged proposal", () => {
@@ -162,7 +168,7 @@ describe("the auditor on the card", () => {
     );
     // No verdict yet reads as not checked.
     expect(proposalCardFrom(view, on).confirmQuestion).toBe("The second check could not run. Approve anyway?");
-    const pay = "Pay $200.00 to BR-D07's fuel card ···· 4417? Test mode.";
+    const pay = "Pay $200.00 to BR-D07's fuel card ending 4417?";
     expect(proposalCardFrom({ ...view, auditorVerdict: "pass" }, on).confirmQuestion).toBe(pay);
     expect(proposalCardFrom({ ...view, auditorVerdict: "block" }, on).confirmQuestion).toBe(pay);
   });
@@ -175,7 +181,7 @@ describe("the auditor on the card", () => {
   it("adds no audit line and no audit question without the page's audit context", () => {
     const card = proposalCardFrom({ ...view, auditorVerdict: "concerns", auditorConcerns: ["source_missing"] });
     expect(card).not.toHaveProperty("audit");
-    expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07's fuel card ···· 4417? Test mode.");
+    expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07's fuel card ending 4417?");
   });
 
   it("explains a detention charge stop by stop from the stored figures, then the invoice change", () => {
@@ -201,7 +207,8 @@ describe("the auditor on the card", () => {
     });
     expect(card.title).toBe("Bill unbilled detention for BR-L0412");
     expect(card.impact).toEqual({ cents: 37_500, direction: "in" });
-    expect(card.confirmQuestion).toBeUndefined();
+    expect(card.confirmQuestion).toBe("Add a $375.00 detention charge to load BR-L0412?");
+    expect(card.confirmNoun).toBe("detention charge");
     expect(card.reasons).toEqual([
       { text: "7 h 00 min at the shipper, 2 h 00 min free, 20 started quarter hours at $75.00 an hour: $375.00." },
       { text: "The open invoice goes from $2,500.00 to $2,875.00." },
@@ -342,5 +349,62 @@ describe("proposalCardFrom for a pay rule change", () => {
       direction: "none",
       label: "No change to weekly pay",
     });
+  });
+});
+
+describe("each kind's confirm words", () => {
+  const LOAD = "22222222-2222-4222-8222-222222222222";
+  const APPLICATION = "44444444-4444-4444-8444-444444444444";
+
+  it("names what each kind is and says what its approval does", () => {
+    const cases: [ProposalView["kind"], Partial<ProposalView>, string, string | undefined][] = [
+      ["advance_payout", {}, "advance", "Pay $200.00 to BR-D07's fuel card ending 4417?"],
+      ["pay_correction", { destination: null }, "pay correction", "Add this pay correction to BR-D07's pay?"],
+      ["load_rate_fill", { subjectTable: "loads", subjectId: LOAD, subjectLabel: "BR-L0412", destination: null }, "load rate", "Write the rate onto load BR-L0412?"],
+      ["invoice_post", { subjectTable: "loads", subjectId: LOAD, subjectLabel: "BR-L0412", destination: null, direction: "in" }, "invoice", "Create a $200.00 invoice for load BR-L0412?"],
+      ["payment_reapply", { subjectTable: "payment_applications", subjectId: APPLICATION, subjectLabel: "CHK-1042", destination: null, direction: "none" }, "payment", "Move payment CHK-1042 to the right invoice?"],
+      ["settlement_approve", { subjectTable: "settlements", destination: null }, "paystub", "Approve this paystub and pay $200.00?"],
+    ];
+    for (const [kind, extra, noun, question] of cases) {
+      const card = proposalCardFrom({ ...view, kind, ...extra });
+      expect(card.confirmNoun, kind).toBe(noun);
+      expect(card.confirmQuestion, kind).toBe(question);
+      expect(card.confirmNext, kind).toMatch(/\.$/);
+    }
+  });
+
+  it("says nothing is paid or sent where the kind moves no money", () => {
+    expect(proposalCardFrom({ ...view, kind: "load_rate_fill", destination: null }).confirmNext).toContain("No money moves and nothing is sent.");
+    expect(proposalCardFrom({ ...view, kind: "payment_reapply", destination: null }).confirmNext).toContain("No money moves and nothing is sent.");
+    expect(proposalCardFrom({ ...view, kind: "invoice_post", destination: null }).confirmNext).toContain("Nothing is emailed to the customer.");
+  });
+
+  it("leaves a $0 paystub's question to the paystub card, and says no payout is sent", () => {
+    const card = proposalCardFrom({ ...view, kind: "settlement_approve", subjectTable: "settlements", amountCents: 0, destination: null });
+    expect(card.confirmQuestion).toBeUndefined();
+    expect(card.confirmNext).toBe("No payout is sent. The paystub is booked, and any deductions left over carry to next week.");
+  });
+
+  it("reads a kind with no row as a plain request, so a new kind never breaks the card", () => {
+    expect(kindCopy("money_code")).toEqual({ noun: "request" });
+    expect(kindCopy("toString").noun).toBe("request");
+    expect(kindCopy("__proto__").noun).toBe("request");
+    const card = proposalCardFrom({ ...view, kind: "fuel_anomaly" as ProposalView["kind"], destination: null });
+    expect(card.confirmNoun).toBe("request");
+    expect(card.confirmQuestion).toBeUndefined();
+    expect(card).not.toHaveProperty("confirmNext");
+    expect(card.references).toEqual({ [`drivers:${DRIVER}`]: "Driver BR-D07" });
+    // invoice_fix has no executor yet, so it reads the fallback too.
+    expect(proposalCardFrom({ ...view, kind: "invoice_fix", destination: null }).confirmNoun).toBe("request");
+  });
+
+  it("names the subject by its code for Also read, and nothing at all without one", () => {
+    const load = proposalCardFrom({ ...view, kind: "detention_charge", subjectTable: "loads", subjectId: LOAD, subjectLabel: "BR-L0412", destination: null });
+    expect(load.references).toEqual({ [`loads:${LOAD}`]: "Load BR-L0412" });
+    const payment = proposalCardFrom({ ...view, kind: "payment_reapply", subjectTable: "payment_applications", subjectId: APPLICATION, subjectLabel: "CHK-1042", destination: null });
+    expect(payment.references).toEqual({ [`payment_applications:${APPLICATION}`]: "Payment CHK-1042" });
+    expect(proposalCardFrom({ ...view, subjectLabel: "" })).not.toHaveProperty("references");
+    expect(proposalCardFrom({ ...view, subjectLabel: "   " })).not.toHaveProperty("references");
+    expect(proposalCardFrom({ ...view, subjectLabel: null })).not.toHaveProperty("references");
   });
 });
