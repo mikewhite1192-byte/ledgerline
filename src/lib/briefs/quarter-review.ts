@@ -17,8 +17,8 @@ export const QUARTER_SECTIONS = ["went_well", "problems", "recovered", "change"]
 export type QuarterSection = (typeof QUARTER_SECTIONS)[number];
 export type QuarterBody = Record<QuarterSection, string[]>;
 
-// How many items each list holds: the format asks for these (write-quarter.ts) and the check holds
-// the reply to them.
+// How many items each list holds: the rules ask for these (write-quarter.ts) and the check holds
+// the reply to them. The format's schema leaves counts out (outside the verified strict subset).
 export const SECTION_ITEMS: Readonly<Record<QuarterSection, { min: number; max: number }>> = {
   went_well: { min: 1, max: 5 },
   problems: { min: 1, max: 5 },
@@ -89,24 +89,27 @@ export type QuarterRecord = {
   quarterEnd: LocalDate;
   // The carrier's date the review was asked for: the figures run to this day.
   asOf: LocalDate;
+  // Empty when a drafted row's stored figures no longer read back (its body is then null too).
   figures: BriefFigure[];
-  // The checked lists, with their [fN] tags; null unless drafted.
+  // The checked lists, with their [fN] tags; null unless drafted and readable.
   body: QuarterBody | null;
   category: string | null;
   updatedAt: string;
 };
 
+// A row whose figures do not read back is left out, except a drafted one: that row still holds
+// its quarter (it is final), so it is kept with no figures and no body and reads as unreadable.
 function recordOf(row: BriefRow): QuarterRecord | null {
   const figures = figuresOf(row.figures);
-  if (figures === null) return null;
-  const body = row.status === "drafted" ? quarterBodyOf(row.body) : null;
+  if (figures === null && row.status !== "drafted") return null;
+  const body = row.status === "drafted" && figures !== null ? quarterBodyOf(row.body) : null;
   return {
     id: row.id,
     status: row.status,
     quarterStart: row.period_start,
     quarterEnd: row.period_end,
     asOf: row.as_of,
-    figures,
+    figures: figures ?? [],
     body,
     category: row.refusal_category,
     updatedAt: row.updated_at,
@@ -133,11 +136,15 @@ export type QuarterState =
   // The last try did not pass (or never went out); "Write again" is offered.
   | { kind: "refused"; category: string }
   // Passed the check. `changed` when the figures moved after it was written: it keeps its own.
-  | { kind: "drafted"; review: QuarterRecord; changed: boolean };
+  | { kind: "drafted"; review: QuarterRecord; changed: boolean }
+  // A drafted review whose stored lists or figures no longer read back. It still holds the quarter,
+  // so a new press would only be told it exists: nothing is offered.
+  | { kind: "unreadable" };
 
 export function quarterStateOf(reviews: readonly QuarterRecord[], live: readonly BriefFigure[], now: Date): QuarterState {
-  const drafted = reviews.find((r) => r.status === "drafted" && r.body !== null);
+  const drafted = reviews.find((r) => r.status === "drafted");
   if (drafted) {
+    if (drafted.body === null) return { kind: "unreadable" };
     return { kind: "drafted", review: drafted, changed: figuresText(drafted.figures) !== figuresText(live) };
   }
   const latest = reviews.find((r) => r.status !== "superseded");

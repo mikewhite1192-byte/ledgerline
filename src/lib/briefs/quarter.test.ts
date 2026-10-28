@@ -25,7 +25,14 @@ import {
   verifyQuarter,
   type QuarterRecord,
 } from "./quarter-review";
-import { REVIEW_CHECK_FAILED, REVIEW_DID_NOT_FINISH, reviewOutcome, reviewRefusalWords, SECTION_TITLES } from "./quarter-words";
+import {
+  REVIEW_CHECK_FAILED,
+  REVIEW_DID_NOT_FINISH,
+  REVIEW_UNREADABLE,
+  reviewOutcome,
+  reviewRefusalWords,
+  SECTION_TITLES,
+} from "./quarter-words";
 import { BRIEF_LEASE_MS, figuresOf } from "./view";
 import {
   QUARTER_FORMAT,
@@ -225,9 +232,19 @@ describe("the review's model request", () => {
     expect(r.maxOutputTokens).toBe(flags.quarterReviewLimits.maxOutputTokens);
     expect(r.maxCostCents).toBe(flags.quarterReviewLimits.maxReviewCents);
     expect(QUARTER_FORMAT).toMatchObject({ name: "quarter_review", strict: true });
-    const schema = QUARTER_FORMAT.schema as { required: string[]; properties: Record<string, { minItems: number; maxItems: number }> };
+    const schema = QUARTER_FORMAT.schema as { required: string[]; additionalProperties: boolean; properties: Record<string, object> };
     expect(schema.required).toEqual([...QUARTER_SECTIONS]);
-    expect(schema.properties.change).toMatchObject({ minItems: 3, maxItems: 3 });
+    expect(schema.additionalProperties).toBe(false);
+    // Only the verified strict subset: no item counts in the schema, which a provider could turn
+    // down for every press. The check holds the counts instead.
+    for (const s of QUARTER_SECTIONS) {
+      expect(schema.properties[s], s).toEqual({ type: "array", items: { type: "string" } });
+    }
+    expect(JSON.stringify(QUARTER_FORMAT.schema)).not.toMatch(/minItems|maxItems/);
+    const good = JSON.parse(replyFrom(figures)) as Record<string, string[]>;
+    expect(quarterBodyOf({ ...good, change: [...good.change, good.change[0]] })).toBeNull();
+    expect(quarterBodyOf({ ...good, change: good.change.slice(0, 2) })).toBeNull();
+    expect(quarterBodyOf({ ...good, went_well: [] })).toBeNull();
     expect(r.messages.map((m) => m.role)).toEqual(["system", "user"]);
     const user = r.messages[1].content;
     expect(user).toContain(figuresText(figures));
@@ -236,6 +253,23 @@ describe("the review's model request", () => {
     expect(user).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     expect(user).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
     expect(user).not.toContain("@");
+    const named = plan.rows.drivers.filter((d) => figures.some((f) => "table" in f.source && f.source.id === d.id));
+    expect(named.length).toBeGreaterThan(0);
+    for (const d of named) {
+      expect(user, d.id).not.toContain(d.last_name);
+      expect(user, d.id).toContain(`Driver ${d.first_name} ${d.last_name[0]}. (`);
+    }
+  });
+
+  it("names a driver by first name and last initial, and an item that uses that name passes the check", async () => {
+    const { figures } = await seeded();
+    const driver = figures.find((f) => "table" in f.source && f.source.table === "drivers" && f.kind === "cents");
+    if (!driver?.subject) throw new Error("no driver figure");
+    expect(driver.subject).toMatch(/^\S+ \S\.$/);
+    expect(driver.label).toBe(`Driver ${driver.subject} (most net pay): net pay`);
+    const item = `${driver.subject} had the most net pay, ${figureValueText(driver)} [${driver.key}].`;
+    const checked = verifyQuarter(replyFrom(figures, { went_well: [item] }), figures);
+    expect(checked).toMatchObject({ ok: true });
   });
 });
 
@@ -280,6 +314,15 @@ describe("the review's state", () => {
       kind: "drafted",
     });
   });
+
+  it("reads a drafted review whose lists do not read back as unreadable, never as a try to write again", () => {
+    expect(quarterStateOf([record({ body: null })], FIGS, NOW)).toEqual({ kind: "unreadable" });
+    expect(quarterStateOf([record({ body: null, figures: [] })], FIGS, NOW)).toEqual({ kind: "unreadable" });
+    // An older failed try under it does not turn it back into "write again".
+    expect(
+      quarterStateOf([record({ body: null }), record({ id: "r0", status: "refused", body: null, category: "timeout" })], FIGS, NOW),
+    ).toEqual({ kind: "unreadable" });
+  });
 });
 
 describe("the review's words", () => {
@@ -307,6 +350,7 @@ describe("the review's words", () => {
     const all = [
       REVIEW_CHECK_FAILED,
       REVIEW_DID_NOT_FINISH,
+      REVIEW_UNREADABLE,
       ...Object.values(SECTION_TITLES),
       ...["cap", "too_expensive", "job_cap", "disabled", "timeout"].map(reviewRefusalWords),
       ...["exists", "in_progress", "no_activity", "review_off", "ai_off", "forbidden", "unknown"].map((error) =>
@@ -442,6 +486,22 @@ describe("writing the review", () => {
     // The page reads the review back with its figures unchanged.
     const view = await db.withTenant(TENANT, (q) => readQuarterView(q, PLAN_ANCHOR, TZ, 40_000, NOW));
     expect(view.review).toMatchObject({ kind: "drafted", changed: false });
+  });
+
+  it("a written review whose stored lists or figures no longer read back is unreadable, and a press still finds it written", async () => {
+    const { db, briefs } = writerDb();
+    const { figures } = await seeded();
+    const call = vi.fn<QuarterCompleteFn>(async () => answer(replyFrom(figures)));
+    expect(await writer(db, call)).toMatchObject({ ok: true, status: "drafted" });
+    const read = () => db.withTenant(TENANT, (q) => readQuarterView(q, PLAN_ANCHOR, TZ, 40_000, NOW));
+    const body = briefs[0].body as Record<string, string[]>;
+    briefs[0].body = { ...body, change: body.change.slice(0, 2) };
+    expect((await read()).review).toEqual({ kind: "unreadable" });
+    briefs[0].body = body;
+    briefs[0].figures = [{ key: "f1", label: "Pay runs so far", kind: "words", value: 3 }];
+    expect((await read()).review).toEqual({ kind: "unreadable" });
+    expect(await writer(db, call)).toEqual({ ok: false, category: "exists" });
+    expect(call).toHaveBeenCalledTimes(1);
   });
 
   it("an item with an untagged number refuses the review and keeps no words; the next press writes again", async () => {

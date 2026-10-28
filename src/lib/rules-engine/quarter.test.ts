@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { findUnbilledDetention } from "./detention";
 import type { ProfitLine } from "./profit";
-import { fixWords, QUARTER_DRIVERS, quarterOf, type QuarterInput } from "./quarter";
+import { driverFigureName, fixWords, QUARTER_DRIVERS, quarterOf, type QuarterInput } from "./quarter";
 import { c } from "./test-records";
 import { InputError, type InvoiceRecord, type SettlementRecord } from "./types";
 
@@ -346,5 +346,18 @@ describe("quarterFigures", () => {
     );
     expect(named(few)).toEqual(["Dee", "Cal", "Bea", "Ann"]);
     expect(named(few)).toHaveLength(QUARTER_DRIVERS + 1);
+  });
+
+  it("names each driver by first name and last initial, never the full name, since the figures go to the model", () => {
+    const q = quarterOf(input(), QUARTER, AS_OF);
+    const driverFigures = q.figures.filter((f) => "table" in f.source && f.source.table === "drivers");
+    expect(driverFigures.length).toBeGreaterThan(0);
+    expect(new Set(driverFigures.map((f) => f.subject))).toEqual(new Set(["Avery L.", "Blake M."]));
+    const words = JSON.stringify(q.figures);
+    for (const last of ["Lane", "Moss"]) expect(words).not.toContain(last);
+    expect(q.figures.map((f) => f.label)).toContain("Driver Avery L. (most net pay): net pay");
+    expect(driverFigureName("  Avery   Lane ")).toBe("Avery L.");
+    expect(driverFigureName("Gus")).toBe("Gus");
+    expect(driverFigureName("")).toBe("");
   });
 });

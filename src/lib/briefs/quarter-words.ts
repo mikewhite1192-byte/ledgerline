@@ -5,6 +5,8 @@ const CHECK_CATEGORIES = new Set(["format", "unknown_tag", "number_mismatch", "u
 
 export const REVIEW_CHECK_FAILED = "The review did not pass its number check. Your figures are unchanged; try again.";
 export const REVIEW_DID_NOT_FINISH = "The review did not finish. Your figures are unchanged; try again.";
+// A written review that can no longer be read back. It still counts as written, so no try is offered.
+export const REVIEW_UNREADABLE = "The review was written, but it could not be read back. Your figures below are unchanged.";
 
 // The four lists, as the page heads them.
 export const SECTION_TITLES = {

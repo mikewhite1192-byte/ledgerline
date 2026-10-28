@@ -10,7 +10,7 @@ import { assertMembership } from "../tenant/context";
 import { localDateOf, quarterContaining } from "../time/local-date";
 import { figuresText } from "./figures";
 import { packFigures, readQuarter } from "./quarter-figures";
-import { hasActivity, QUARTER_SECTIONS, SECTION_ITEMS, verifyQuarter, type QuarterBody } from "./quarter-review";
+import { hasActivity, QUARTER_SECTIONS, verifyQuarter, type QuarterBody } from "./quarter-review";
 import type { BriefVerification } from "./verify";
 import { BRIEF_LEASE_MS } from "./view";
 
@@ -29,7 +29,9 @@ import { BRIEF_LEASE_MS } from "./view";
 // written again (the new row supersedes it). A drafted review is final for its quarter.
 
 export const QUARTER_PURPOSE = "quarter_review";
-export const QUARTER_TIMEOUT_MS = 25_000;
+// The same as the profit brief: under the route's maxDuration (30 s) with room for the reads and the
+// two transactions around the call, so the route is never killed with a review left drafting.
+export const QUARTER_TIMEOUT_MS = 20_000;
 // Each item is short, so the four lists fit the output budget with room for the model's reasoning.
 export const QUARTER_ITEM_CHARS = 240;
 
@@ -59,7 +61,10 @@ export const QUARTER_RULES = [
   'Reply with JSON only: {"went_well": [...], "problems": [...], "recovered": [...], "change": [...]}.',
 ].join("\n");
 
-// The four lists, each of strings, with the item counts the check holds the reply to.
+// The four lists, each of strings. Only keywords inside the verified strict subset (a root object,
+// additionalProperties false, every key required): a schema the provider turned down would refuse
+// every press. The item counts are asked for in the rules above and held by quarterBodyOf, which
+// refuses a reply with the wrong number of items.
 export const QUARTER_FORMAT: AiFormat = {
   name: "quarter_review",
   strict: true,
@@ -67,12 +72,7 @@ export const QUARTER_FORMAT: AiFormat = {
     type: "object",
     additionalProperties: false,
     required: [...QUARTER_SECTIONS],
-    properties: Object.fromEntries(
-      QUARTER_SECTIONS.map((s) => [
-        s,
-        { type: "array", minItems: SECTION_ITEMS[s].min, maxItems: SECTION_ITEMS[s].max, items: { type: "string" } },
-      ]),
-    ),
+    properties: Object.fromEntries(QUARTER_SECTIONS.map((s) => [s, { type: "array", items: { type: "string" } }])),
   },
 };
 

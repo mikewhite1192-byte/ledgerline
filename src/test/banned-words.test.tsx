@@ -1195,6 +1195,12 @@ const PAGES: PageCase[] = [
         shows: "The review did not finish",
       },
       {
+        name: "written, but no longer reads back",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "unreadable" })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "could not be read back",
+      },
+      {
         name: "nothing happened yet this quarter",
         setup: () => (state.fx.quarterView = fx.quarterView({ kind: "none" }, { quarter: fx.QUARTER_EMPTY, packed: [] })),
         load: async () => (await import("@/app/quarter/page")).default(),

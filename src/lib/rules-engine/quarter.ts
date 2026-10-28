@@ -33,6 +33,14 @@ export const QUARTER_DRIVERS = 3;
 // Customers named in the figures, most invoiced first.
 export const QUARTER_CUSTOMERS = 12;
 
+// A driver as the figures name them: first name and last initial ("Avery L."), never the full
+// name, since the figures go to the model with each driver's net pay. A single name stays as is.
+export function driverFigureName(name: string): string {
+  const parts = name.trim().split(/\s+/).filter((p) => p.length > 0);
+  if (parts.length < 2) return parts[0] ?? "";
+  return `${parts[0]} ${Array.from(parts[parts.length - 1])[0]}.`;
+}
+
 // One of the agent's suggested fixes, with the carrier's own dates.
 export type QuarterProposal = {
   id: string;
@@ -343,7 +351,8 @@ export function quarterOf(
 
 // The numbered figure list, headline first: pay runs, margin, money in, what the carrier is owed,
 // money recovered, the exceptions, then customers, then the drivers with the most and the least
-// net pay. Labels hold no digits, so words copied from a label never carry an untagged number.
+// net pay, each by first name and last initial. Labels hold no digits, so words copied from a
+// label never carry an untagged number.
 export function quarterFigures(q: Omit<Quarter, "figures">): BriefFigure[] {
   const out: BriefFigure[] = [];
   const add = (figure: Omit<BriefFigure, "key">) => out.push({ key: `f${out.length + 1}`, ...figure });
@@ -426,9 +435,11 @@ export function quarterFigures(q: Omit<Quarter, "figures">): BriefFigure[] {
     .filter((d) => !shown.has(d.driverId))
     .reverse();
   for (const [d, rank] of [...top.map((d) => [d, "most"] as const), ...bottom.map((d) => [d, "least"] as const)]) {
-    const about = { source: { table: "drivers", id: d.driverId } as const, subject: d.name };
-    add({ ...about, label: `Driver ${d.name} (${rank} net pay): net pay`, kind: "cents", value: d.netCents });
-    add({ ...about, label: `Driver ${d.name} (${rank} net pay): paystubs`, kind: "int", value: d.paystubs });
+    // The subject is the name as the label writes it, so the check reads that name as a name.
+    const name = driverFigureName(d.name);
+    const about = { source: { table: "drivers", id: d.driverId } as const, subject: name };
+    add({ ...about, label: `Driver ${name} (${rank} net pay): net pay`, kind: "cents", value: d.netCents });
+    add({ ...about, label: `Driver ${name} (${rank} net pay): paystubs`, kind: "int", value: d.paystubs });
   }
   return out;
 }

@@ -13,15 +13,16 @@ import { RecordLink } from "@/components/invoices/cells";
 import { WriteReview } from "@/components/quarter/write-review";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
 import { bpsText } from "@/lib/briefs/figures";
-import { briefLinks, type FigureHref } from "@/lib/briefs/render";
+import { briefLinks, briefPlainText, type FigureHref } from "@/lib/briefs/render";
 import { hasActivity, QUARTER_SECTIONS, readQuarterView, type QuarterState, type QuarterView } from "@/lib/briefs/quarter-review";
-import { reviewRefusalWords, SECTION_TITLES } from "@/lib/briefs/quarter-words";
+import { REVIEW_UNREADABLE, reviewRefusalWords, SECTION_TITLES } from "@/lib/briefs/quarter-words";
+import { ReadLimitError } from "@/lib/data/read";
 import { DbError } from "@/lib/db";
 import { formatInstant, formatPeriod } from "@/lib/format/dates";
 import { paymentHabitLabel } from "@/lib/format/labels";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import { reportPath } from "@/lib/reports/types";
-import type { FigureSection, Quarter, QuarterCustomer, QuarterFixes, QuarterPayRun } from "@/lib/rules-engine";
+import { InputError, type FigureSection, type Quarter, type QuarterCustomer, type QuarterFixes, type QuarterPayRun } from "@/lib/rules-engine";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday, readShell, type ShellTenant } from "@/lib/tenant/shell";
 
@@ -77,8 +78,16 @@ export default async function QuarterPage() {
     });
   } catch (err) {
     if (err instanceof ForbiddenError) problem = "forbidden";
-    else if (err instanceof DbError) problem = "unreadable";
-    else throw err;
+    // A failed read, a read past its row bound, an amount that is not whole cents, or a record the
+    // engine refuses: the quarter cannot be shown, never shown as empty.
+    else if (
+      err instanceof DbError ||
+      err instanceof ReadLimitError ||
+      err instanceof RangeError ||
+      err instanceof InputError
+    ) {
+      problem = "unreadable";
+    } else throw err;
   }
   if (!view) return <NoCarrierPage problem={problem ?? "unreadable"} />;
   const data = view.quarter;
@@ -191,20 +200,24 @@ function ReviewCard({ state, timezone, action }: { state: QuarterState; timezone
                 <ul className="grid max-w-[72ch] list-disc gap-1 pl-5 text-body text-foreground">
                   {state.review.body?.[section].map((item, i) => (
                     <li key={i}>
-                      {briefLinks(item, state.review.figures, hrefFor).map((piece, j) =>
-                        piece.href ? (
-                          <Link
-                            key={j}
-                            href={piece.href}
-                            title={piece.label}
-                            className="text-link underline decoration-border underline-offset-4 hover:decoration-current"
-                          >
-                            {piece.text}
-                          </Link>
-                        ) : (
-                          <span key={j}>{piece.text}</span>
-                        ),
-                      )}
+                      {/* Once the figures moved, the tables on this page show other values than the
+                          review's numbers, so its numbers are plain words with no links. */}
+                      {state.changed
+                        ? briefPlainText(item)
+                        : briefLinks(item, state.review.figures, hrefFor).map((piece, j) =>
+                            piece.href ? (
+                              <Link
+                                key={j}
+                                href={piece.href}
+                                title={piece.label}
+                                className="text-link underline decoration-border underline-offset-4 hover:decoration-current"
+                              >
+                                {piece.text}
+                              </Link>
+                            ) : (
+                              <span key={j}>{piece.text}</span>
+                            ),
+                          )}
                     </li>
                   ))}
                 </ul>
@@ -223,6 +236,8 @@ function ReviewCard({ state, timezone, action }: { state: QuarterState; timezone
           </p>
         ) : state.kind === "refused" ? (
           <p className="text-body text-foreground">{reviewRefusalWords(state.category)}</p>
+        ) : state.kind === "unreadable" ? (
+          <p className="text-body text-foreground">{REVIEW_UNREADABLE}</p>
         ) : (
           <p className="text-body text-foreground-2">
             No review yet. The agent writes what went well, the recurring problems, the money recovered and three things

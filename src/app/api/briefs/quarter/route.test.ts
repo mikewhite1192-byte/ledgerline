@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
-import { POST } from "./route";
+import { maxDuration, POST } from "./route";
 
 const SESSION: Session = { sub: "sub-1", email: "", tenantId: "11111111-1111-4111-8111-111111111111" };
 
@@ -104,5 +104,13 @@ describe("POST /api/briefs/quarter", () => {
     // It may have failed after the model was asked: the outcome is unknown, never "nothing was sent".
     expect(await response.json()).toEqual({ error: "unknown" });
     expect(JSON.stringify(quiet.mock.calls)).not.toContain("secret");
+  });
+
+  it("gives up on the model well before the route is stopped, leaving room for the reads and the two transactions", async () => {
+    const { QUARTER_TIMEOUT_MS } = await vi.importActual<typeof import("@/lib/briefs/write-quarter")>(
+      "@/lib/briefs/write-quarter",
+    );
+    expect(QUARTER_TIMEOUT_MS).toBe(20_000);
+    expect(maxDuration * 1_000 - QUARTER_TIMEOUT_MS).toBeGreaterThanOrEqual(10_000);
   });
 });
