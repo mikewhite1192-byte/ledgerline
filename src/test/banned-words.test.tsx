@@ -23,10 +23,10 @@ import { WriteBrief } from "@/components/profit/write-brief";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
-import type { TurnView } from "@/lib/agent/view";
+import { FOUND_TEXT, STOPPED_TEXT, type TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { refusalWords, writeOutcome } from "@/lib/briefs/words";
-import type { Queryable } from "@/lib/db";
+import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
 import { TERMS } from "@/lib/format/terms";
 import {
@@ -432,8 +432,9 @@ const p = <T extends object>(v: T) => Promise.resolve(v);
 const sp = (v: Record<string, string> = {}) => ({ searchParams: p(v) });
 const ID = fx.ID;
 
-// shows: words the variant must render, so it is known to have taken the path it names.
-type Variant = { name: string; setup?: () => void; load: () => Promise<ReactNode>; shows?: string };
+// shows: words the variant must render (one string or several), so it is known to have taken the
+// path it names and the state it names is the one the scan read.
+type Variant = { name: string; setup?: () => void; load: () => Promise<ReactNode>; shows?: string | string[] };
 // failureScreen: the route file is itself a failure screen (not found), so it must show its title.
 type PageCase = { file: string; variants: Variant[]; allow?: ReadonlySet<string>; failureScreen?: boolean };
 
@@ -512,7 +513,38 @@ const PAGES: PageCase[] = [
   {
     file: "page.tsx",
     variants: [
-      { name: "home", load: async () => (await import("@/app/page")).default(sp()) },
+      {
+        name: "home",
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: [
+          "Needs you",
+          "card in your chat waiting for approval",
+          "paystubs waiting for approval",
+          "advance request waiting for a decision",
+          "invoice waiting for approval",
+          "invoices past due",
+          "Open driver notes",
+        ],
+      },
+      {
+        name: "home, nothing waiting",
+        setup: () => {
+          state.fx.turns = [];
+          state.fx.advances = [];
+          state.fx.invoices = [];
+          state.fx.invoiceProposals = [];
+          state.fx.settlementsView = { ...fx.SETTLEMENTS_VIEW, rows: [] };
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: ["Nothing is waiting on you. Ask a question or open a page from the menu."],
+      },
+      {
+        name: "home, waiting list not read",
+        // A thenable that rejects only when the page awaits it, as a failed read does.
+        setup: () => (state.fx.advances = { then: (_ok: unknown, fail: (e: unknown) => void) => fail(new DbError("unknown")) }),
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: ["Could not check everything that is waiting right now. Reload the page to try again."],
+      },
       {
         name: "asked about a paystub",
         setup: () => (state.fx.paystubAsk = fx.PAYSTUB_ASK),
@@ -1110,7 +1142,7 @@ describe("no internal word on any page", () => {
         const container = await renderPage(v.load);
         const text = container.textContent ?? "";
         expect(text.trim().length).toBeGreaterThan(0);
-        if (v.shows) expect(text).toContain(v.shows);
+        for (const words of [v.shows ?? []].flat()) expect(text, "the state this variant names").toContain(words);
         if (c.failureScreen) {
           expect(failures.some((t) => text.includes(t)), "the failure screen shows its title").toBe(true);
         } else {
@@ -1320,6 +1352,35 @@ describe("no internal word in a chat answer or its trace", () => {
     expect(scan(container)).toEqual([]);
   });
 
+  it("an answer in paragraphs, bullets and bold, a stopped turn with its card, and repeated steps", () => {
+    const thinking = (i: number) => ({ id: `think-${i}`, seq: i, kind: "model" as const, label: "Thinking it through", state: "done" as const });
+    const answered: TurnView = {
+      ...fx.TURNS[0],
+      id: "turn-bullets",
+      text: "Three drivers need a look:\n\n* **Rosa Delgado (BR-D07)** is short $250.00\n- Marcus Hale has 1 exception\n\nNothing was paid.",
+      steps: [thinking(1), { ...fx.TURNS[0].steps[1], seq: 2 }, thinking(3), thinking(4)],
+      proposals: [],
+    };
+    const stopped: TurnView = {
+      ...fx.TURNS[0],
+      id: "turn-stopped",
+      status: "partial",
+      endedReason: "steps",
+      text: `${STOPPED_TEXT}\n\nRosa Delgado can take up to $400.00.`,
+    };
+    const empty: TurnView = { ...stopped, id: "turn-stopped-empty", proposals: [], text: STOPPED_TEXT };
+    const messages = toMessages([answered, stopped, empty], {}, {}, undefined, { on: true, checking: {}, timezone: fx.TENANT.timezone });
+    const { container } = render(<ChatThread messages={messages} composer={{}} />);
+    const text = container.textContent ?? "";
+    expect(text).toContain(FOUND_TEXT);
+    expect(text).toContain("Rosa Delgado (BR-D07)");
+    expect(container.querySelector("strong")).not.toBeNull();
+    // The repeated step shows once in the first answer's list.
+    const first = screen.getAllByRole("list", { name: "What the agent did" })[0];
+    expect(first.textContent?.match(/Thinking it through/g)).toHaveLength(1);
+    expect(scan(container)).toEqual([]);
+  });
+
   it("the trace, for the answer and for a card", async () => {
     render(
       <>
@@ -1332,8 +1393,15 @@ describe("no internal word in a chat answer or its trace", () => {
         fireEvent.click(button);
       });
     }
+    // Open every Details, so the per-step effort and cache lines are read too.
+    for (const summary of await screen.findAllByText("Details", { selector: "summary" })) {
+      fireEvent.click(summary);
+    }
     const body = document.body;
     expect(body.textContent).toMatch(/Muse/);
+    expect(screen.getAllByRole("list", { name: "Models used" })).toHaveLength(2);
+    expect(screen.getAllByRole("list", { name: "Details for each step" })).toHaveLength(2);
+    expect(body.textContent).toMatch(/Asked for (low|high) effort/);
     expect(scan(body)).toEqual([]);
   });
 });

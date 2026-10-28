@@ -3,6 +3,7 @@
 import type { ProposalCardProps } from "@/components/app/proposal-card";
 import type { DriverIdentity } from "@/lib/advances/identity";
 import type { PaystubProps } from "@/components/app/paystub";
+import type { Suggestion } from "@/components/app/prompt-chips";
 import { formatCents } from "@/lib/format/money";
 import type { SourceRef } from "@/lib/records/href";
 
@@ -177,9 +178,9 @@ export const LOADS: LoadRow[] = [
   { id: "L-10423", customer: "Hartwell Produce", lane: "Chicago IL to Phoenix AZ", delivered: "2026-10-31", miles: 1_750, status: "delivered", payCents: 105_000 },
 ];
 
-export const SUGGESTIONS = [
-  { id: "paystub-problems", label: "Who has a problem on this week's paystub?" },
-  { id: "past-60", label: "Who owes us money past 60 days?" },
-  { id: "pay-run-cost", label: "What will Friday's pay run cost?" },
-  { id: "advance-limit", label: "Who is over their advance limit?" },
+export const SUGGESTIONS: Suggestion[] = [
+  { id: "paystub-problems", label: "Who has a problem on this week's paystub?", reason: "Finds the paystubs that need a look before Friday." },
+  { id: "past-60", label: "Who owes us money past 60 days?", reason: "Lists late invoices by customer." },
+  { id: "pay-run-cost", label: "What will Friday's pay run cost?", reason: "Totals the week so you know the cash needed." },
+  { id: "advance-limit", label: "Who is over their advance limit?", reason: "Checks each driver's advances against the most their pay allows." },
 ];
