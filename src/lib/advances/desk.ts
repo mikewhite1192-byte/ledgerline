@@ -101,6 +101,7 @@ export async function requestFromDesk(
     text,
     now: new Date(startedAt),
     summaryChars: flags.agentTurnLimits.summaryChars,
+    readNotes: true,
   });
   if ("refused" in opened) return { ok: false, category: opened.refused === "busy" ? "busy" : "not_found" };
   const status = await (deps.run ?? runDefault)(session, opened, text, startedAt);

@@ -22,6 +22,7 @@ import type {
 } from "@/lib/invoices/views";
 import { REVIEW_REASON_LABELS, REVIEW_STATUS_LABELS, reviewReasonSentence } from "@/lib/invoices/labels";
 import type { InvoiceReviewView, ReviewQueue } from "@/lib/invoices/review-read";
+import { noteLabel, type NoteRow, type NoteSubject } from "@/lib/memory/notes";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
 import type { RunSummary, RunView } from "@/lib/portal/views";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "@/lib/rules-engine";
@@ -1327,6 +1328,75 @@ export const profitView = (brief: ProfitView["brief"], over: Partial<ProfitView>
 });
 
 export const PROFIT_VIEW = profitView({ kind: "none" });
+
+// The Memory page: a note about a customer, one about a driver, one about the whole carrier from a
+// person, one whose customer is no longer on file, and a suggestion from the chat waiting for Keep.
+const memoryNote = (n: number, over: Partial<NoteRow>): NoteRow => ({
+  id: id(n),
+  subjectKind: "customer",
+  subjectId: CUSTOMER_ID,
+  subjectName: "Tanglewood Grocery Supply",
+  subjectCode: "BR-C01",
+  text: "Pays about 45 days after due; send the reminder a week early",
+  status: "active",
+  sourceKind: "seed",
+  sourceTurnId: null,
+  createdByKind: "seed",
+  createdByEmail: null,
+  createdAt: "2026-10-20T17:00:00.000Z",
+  updatedAt: "2026-10-20T17:00:00.000Z",
+  ...over,
+});
+
+export const NOTE_SUBJECTS: NoteSubject[] = [
+  { kind: "customer", id: CUSTOMER_ID, name: "Tanglewood Grocery Supply", code: "BR-C01" },
+  { kind: "driver", id: DRIVER_ID, name: "Rosa Delgado", code: "BR-D07" },
+  { kind: "driver", id: id(21), name: "Marcus Hale", code: "BR-D12" },
+];
+
+export const MEMORY_NOTES: NoteRow[] = [
+  memoryNote(141, {}),
+  memoryNote(142, {
+    subjectKind: "driver",
+    subjectId: DRIVER_ID,
+    subjectName: "Rosa Delgado",
+    subjectCode: "BR-D07",
+    text: "Takes the Charlotte runs; ask before a weekend dispatch",
+    createdByKind: "person",
+    createdByEmail: EMAIL,
+  }),
+  memoryNote(143, {
+    subjectKind: "carrier",
+    subjectId: null,
+    subjectName: null,
+    subjectCode: null,
+    text: "Bill every detention charge the same week it happens",
+    createdByKind: "person",
+    createdByEmail: null,
+    createdAt: "2026-10-22T14:30:00.000Z",
+  }),
+  memoryNote(144, { subjectName: null, subjectCode: null, text: "Wants the paperwork by fax, not email" }),
+  memoryNote(145, {
+    subjectKind: "driver",
+    subjectId: id(21),
+    subjectName: "Marcus Hale",
+    subjectCode: "BR-D12",
+    text: "Prefers a text over a call",
+    status: "suggested",
+    sourceKind: "chat",
+    sourceTurnId: id(146),
+    createdByKind: "agent",
+    createdAt: "2026-10-27T15:10:00.000Z",
+  }),
+];
+
+// The notes a trace says the agent read: two still on file (named as the trace names them) and one
+// removed since, which the trace counts but cannot link.
+export const NOTES_USED = [
+  { id: MEMORY_NOTES[0].id, label: noteLabel(MEMORY_NOTES[0]) },
+  { id: MEMORY_NOTES[2].id, label: noteLabel(MEMORY_NOTES[2]) },
+  { id: id(147), label: null },
+];
 
 // The fuel checks page: every problem, every row status (a sent row with its card, a carried-out
 // card that reads Corrected, a dismissed and a cleared row), and a duplicate whose two photos were

@@ -1,11 +1,13 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
-// and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, and
-// the driver identity map and arming log from 0027, and the owner's briefs from 0042 (none
-// planted), in an order where every table comes after the tables it references (insert in this
-// order, delete in reverse). Each column says how it travels: the Data API sends strings as text,
-// so uuid, date, timestamptz and jsonb columns need a CAST on the way in, and reads turn
-// timestamptz into one ISO form and jsonb into text so both drivers return the same values. tenant_id and created_at are never listed: tenant_id is always
-// current_tenant_id() and created_at is the database's own.
+// and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, the
+// driver identity map and arming log from 0027, the owner's briefs from 0042 (none planted), and
+// the carrier notes from 0040 (last: a note names its customer or driver by a soft reference), in
+// an order where every table comes after the tables it references (insert in this order, delete in
+// reverse). Each column says how it travels: the Data API sends strings as text, so uuid, date,
+// timestamptz and jsonb columns need a CAST on the way in, and reads turn timestamptz into one ISO
+// form and jsonb into text so both drivers return the same values. tenant_id and created_at are
+// never listed: tenant_id is always current_tenant_id() and created_at is the database's own (a
+// note's updated_at too).
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
 
@@ -38,6 +40,7 @@ export const TENANT_TABLES = [
   "untrusted_inputs",
   "screenings",
   "briefs",
+  "carrier_notes",
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
@@ -416,6 +419,24 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["model_call_id", "uuid"],
       ["created_by", "text"],
       ["updated_at", "timestamptz"],
+    ],
+  },
+  carrier_notes: {
+    table: "carrier_notes",
+    columns: [
+      ["id", "uuid"],
+      ["subject_kind", "text"],
+      ["subject_id", "uuid"],
+      ["text", "text"],
+      ["status", "text"],
+      ["source_kind", "text"],
+      ["source_turn_id", "uuid"],
+      ["source_table", "text"],
+      ["source_id", "uuid"],
+      ["created_by_kind", "text"],
+      ["created_by_sub", "text"],
+      ["created_by_model_call_id", "uuid"],
+      ["updated_by_sub", "text"],
     ],
   },
 };

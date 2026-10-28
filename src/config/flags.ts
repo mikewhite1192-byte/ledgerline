@@ -323,6 +323,21 @@ export type Flags = {
     maxLanes: number;
     maxCustomers: number;
   };
+  // Carrier memory: short notes the office keeps about customers, drivers and its own ways, which
+  // the agent reads as context on each question (never for an amount; the notes' figures are
+  // never allowed in an answer). Off: the Memory page shows that it is off, the menu has no
+  // item, the note actions refuse before any read or write, the agent's summary has no notes
+  // section and a turn's trace lists none. No model call of its own, so no spend cap.
+  carrierMemoryEnabled: boolean;
+  carrierMemoryLimits: {
+    // Notes one question may carry, and their characters in the agent's summary.
+    maxNotesPerTurn: number;
+    maxPromptChars: number;
+    // One note's length (the table's own check holds 300 too).
+    maxNoteChars: number;
+    // Notes one carrier may keep; the page refuses one more with "Remove a note first".
+    maxNotesPerCarrier: number;
+  };
   // Fuel checks: every fill-up held against the truck's tank, the load's route and the driver's
   // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
   // and proposes; a person approves a pay correction on its card. Off means the Fuel checks page
@@ -454,6 +469,8 @@ export const flags: Flags = {
   invoiceReviewEnabled: false,
   profitBriefEnabled: false,
   profitBriefLimits: { maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 },
+  carrierMemoryEnabled: false,
+  carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
   fuelAnomalyEnabled: false,
   fuelAnomalyLimits: {
     from: "2026-10-27",
