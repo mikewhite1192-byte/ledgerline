@@ -22,6 +22,7 @@ import { FuelChecks } from "@/components/fuel/fuel-checks";
 import { HowWorkedOut } from "@/components/trace/how-worked-out";
 import { WriteBrief } from "@/components/profit/write-brief";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
+import { NotesBoard } from "@/app/memory/notes-board";
 import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
 import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/lib/agent/view";
@@ -338,6 +339,19 @@ vi.mock("@/lib/briefs/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/briefs/view")>()),
   readProfitView: async () => get("profitView"),
 }));
+vi.mock("@/lib/memory/notes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/memory/notes")>()),
+  listNotes: async () => get("memoryNotes"),
+  listNoteSubjects: async () => get("noteSubjects"),
+}));
+// The Memory board's saves answer what each test sets, so every refusal it can show is read.
+const noteActions = vi.hoisted(() => ({
+  addNoteAction: vi.fn(),
+  editNoteAction: vi.fn(),
+  keepNoteAction: vi.fn(),
+  removeNoteAction: vi.fn(),
+}));
+vi.mock("@/app/memory/actions", () => noteActions);
 vi.mock("@/lib/voice/read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/voice/read")>()),
   readVoiceList: async () => get("voiceList"),
@@ -405,6 +419,8 @@ function defaults(): Record<string, unknown> {
     extraChargeLoadId: null,
     heroLink: fx.HERO_LINK_DRAFT,
     profitView: fx.PROFIT_VIEW,
+    memoryNotes: fx.MEMORY_NOTES,
+    noteSubjects: fx.NOTE_SUBJECTS,
   };
 }
 
@@ -826,6 +842,22 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "memory/page.tsx",
+    variants: [
+      {
+        name: "notes and a suggestion",
+        load: async () => (await import("@/app/memory/page")).default(),
+        shows: "The agent suggested 1 note",
+      },
+      {
+        name: "empty",
+        setup: () => (state.fx.memoryNotes = []),
+        load: async () => (await import("@/app/memory/page")).default(),
+        shows: "No notes yet",
+      },
+    ],
+  },
+  {
     file: "models/page.tsx",
     variants: [{ name: "models", load: async () => (await import("@/app/models/page")).default() }],
   },
@@ -1242,6 +1274,7 @@ const PAGES: PageCase[] = [
   loading("driver-notes/loading.tsx", () => import("@/app/driver-notes/loading")),
   loading("driver-notes/[settlementId]/view/loading.tsx", () => import("@/app/driver-notes/[settlementId]/view/loading")),
   loading("invoices/loading.tsx", () => import("@/app/invoices/loading")),
+  loading("memory/loading.tsx", () => import("@/app/memory/loading")),
   loading("models/loading.tsx", () => import("@/app/models/loading")),
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
   loading("profit/loading.tsx", () => import("@/app/profit/loading")),
@@ -1730,6 +1763,139 @@ describe("no internal word in a chat answer or its trace", () => {
     expect(screen.getAllByRole("list", { name: "Details for each step" })).toHaveLength(2);
     expect(body.textContent).toMatch(/Asked for (low|high) effort/);
     expect(scan(body)).toEqual([]);
+  });
+
+  it("the trace's note links, for an answer that read the office's notes", async () => {
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace: { ...sampleTrace(), notesUsed: fx.NOTES_USED } })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /How this was worked out/i }));
+    });
+    const notes = screen.getByRole("list", { name: "Notes it read" });
+    const kept = fx.NOTES_USED.filter((n) => n.label !== null);
+    expect(within(notes).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual(kept.map((n) => `/memory#note-${n.id}`));
+    expect(document.body.textContent).toContain("Remembered 3 notes from the office; 1 has since been removed");
+    expect(scan(document.body)).toEqual([]);
+  });
+});
+
+describe("no internal word on the Memory board, in every state", () => {
+  const board = (notes = fx.MEMORY_NOTES, maxNotes = 500) =>
+    render(
+      <ToastProvider>
+        <NotesBoard notes={notes} subjects={fx.NOTE_SUBJECTS} timeZone={fx.TENANT.timezone} maxChars={300} maxNotes={maxNotes} />
+      </ToastProvider>,
+    );
+  const click = async (name: string, inside: HTMLElement = document.body) => {
+    await act(async () => {
+      fireEvent.click(within(inside).getByRole("button", { name }));
+    });
+  };
+  // Every category a save can answer, and a save lost on the way (read as not known).
+  const REFUSALS = ["off", "invalid", "subject_not_found", "full", "duplicate", "not_found", "forbidden", "unreadable"] as const;
+  type Act = (typeof noteActions)[keyof typeof noteActions];
+  // Each refusal, then the lost save, through one action; returns the words each one showed.
+  const refuseEach = async (action: Act, save: () => Promise<void>, shown: () => string): Promise<string[]> => {
+    const seen: string[] = [];
+    for (const category of REFUSALS) {
+      action.mockResolvedValueOnce({ ok: false, category });
+      await save();
+      seen.push(shown());
+      expect(scan(document.body), category).toEqual([]);
+    }
+    action.mockRejectedValueOnce(new Error("lost on the way"));
+    await save();
+    seen.push(shown());
+    expect(scan(document.body), "not known").toEqual([]);
+    return seen;
+  };
+
+  afterEach(() => {
+    for (const f of Object.values(noteActions)) f.mockReset();
+  });
+
+  it("full, at the most notes a carrier keeps", () => {
+    board(fx.MEMORY_NOTES, fx.MEMORY_NOTES.length);
+    expect(screen.getByText("Remove a note first")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("adding a note: the form, an empty save, each refusal (the duplicate among them) and the done note", async () => {
+    board();
+    await click("Add a note");
+    expect(screen.getByRole("heading", { name: "Add a note" })).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    await click("Save note");
+    expect(screen.getByText("Write the note first.")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Calls ahead on every delivery" } });
+    const seen = await refuseEach(noteActions.addNoteAction, () => click("Save note"), () => document.getElementById("note-text-error")?.textContent ?? "");
+    expect(new Set(seen).size).toBe(REFUSALS.length + 1);
+    expect(seen.every((t) => t.length > 0)).toBe(true);
+    noteActions.addNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Save note");
+    expect(screen.getByText("Note added")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("editing a note: the open editor, an empty save, each refusal and the done note", async () => {
+    board();
+    const target = fx.MEMORY_NOTES[0];
+    await click("Edit the note about Tanglewood Grocery Supply");
+    const editor = `edit-${target.id}`;
+    expect(document.getElementById(editor)).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    fireEvent.change(document.getElementById(editor)!, { target: { value: " " } });
+    await click("Save");
+    expect(screen.getByText("Write the note first, or remove it.")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    fireEvent.change(document.getElementById(editor)!, { target: { value: "Pays about 30 days after due" } });
+    const seen = await refuseEach(noteActions.editNoteAction, () => click("Save"), () => document.getElementById(`${editor}-error`)?.textContent ?? "");
+    expect(new Set(seen).size).toBe(REFUSALS.length + 1);
+    noteActions.editNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Save");
+    expect(screen.getByText("Note saved")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("a suggestion kept or discarded, and a note removed: each refusal, the question first and the done notes", async () => {
+    board();
+    const alert = () => screen.getByRole("alert").textContent ?? "";
+    const keep = await refuseEach(noteActions.keepNoteAction, () => click("Keep the note about Marcus Hale"), alert);
+    expect(new Set(keep).size).toBe(REFUSALS.length + 1);
+    const discard = await refuseEach(noteActions.removeNoteAction, () => click("Discard the note about Marcus Hale"), alert);
+    expect(new Set(discard).size).toBe(REFUSALS.length + 1);
+
+    await click("Remove the note about Rosa Delgado");
+    const question = () => screen.getByRole("group", { name: "Remove this note?" });
+    expect(within(question()).getByText("The agent stops seeing it on the next question.")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    const remove = await refuseEach(noteActions.removeNoteAction, () => click("Remove", question()), alert);
+    expect(new Set(remove).size).toBe(REFUSALS.length + 1);
+    noteActions.removeNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Remove", question());
+    expect(screen.getByText("Note removed")).toBeTruthy();
+    noteActions.keepNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Keep the note about Marcus Hale");
+    expect(screen.getByText("Note kept")).toBeTruthy();
+    noteActions.removeNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Discard the note about Marcus Hale");
+    expect(screen.getByText("Suggestion discarded")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("the page with Memory switched off", async () => {
+    const switches = flags as Record<string, unknown>;
+    const was = switches.carrierMemoryEnabled;
+    switches.carrierMemoryEnabled = false;
+    try {
+      const container = await renderPage(async () => (await import("@/app/memory/page")).default());
+      expect(container.textContent).toMatch(/Memory/);
+      expect(container.textContent).toMatch(/off for this carrier/);
+      expect(container.querySelector("table")).toBeNull();
+      expect(scan(container)).toEqual([]);
+    } finally {
+      switches.carrierMemoryEnabled = was;
+    }
   });
 });
 

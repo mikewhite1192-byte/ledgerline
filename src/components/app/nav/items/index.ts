@@ -11,6 +11,7 @@ export { documents } from "./documents";
 export { driverNotes } from "./driver-notes";
 export { home } from "./home";
 export { invoices } from "./invoices";
+export { memory } from "./memory";
 export { models } from "./models";
 export { portalRuns } from "./portal-runs";
 export { profitBrief } from "./profit-brief";

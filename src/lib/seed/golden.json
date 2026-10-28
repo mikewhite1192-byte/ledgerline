@@ -26,7 +26,8 @@
         "untrusted_inputs": 6,
         "screenings": 0,
         "collection_drafts": 0,
-        "briefs": 0
+        "briefs": 0,
+        "carrier_notes": 4
       },
       "linehaulCents": 30165000,
       "hero": {
@@ -332,7 +333,8 @@
         "untrusted_inputs": 6,
         "screenings": 0,
         "collection_drafts": 0,
-        "briefs": 0
+        "briefs": 0,
+        "carrier_notes": 4
       },
       "linehaulCents": 23376800,
       "hero": null,

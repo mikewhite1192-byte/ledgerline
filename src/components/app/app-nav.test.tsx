@@ -25,6 +25,7 @@ const SWITCHES = [
   "portalRunnerEnabled",
   "demoResetEnabled",
   "profitBriefEnabled",
+  "carrierMemoryEnabled",
 ] as const;
 type Switch = (typeof SWITCHES)[number];
 
@@ -60,6 +61,7 @@ describe("appNav", () => {
       ["Settings", "/models", "Models and spend", false],
       ["Settings", "/portal-runs", "Portal runs", false],
       ["Settings", "/settings/demo", "Demo", false],
+      ["Settings", "/memory", "Memory", false],
     ]);
   });
 
@@ -87,6 +89,7 @@ describe("appNav", () => {
       portalRunnerEnabled: "/portal-runs",
       demoResetEnabled: "/settings/demo",
       profitBriefEnabled: "/profit",
+      carrierMemoryEnabled: "/memory",
     };
     for (const s of SWITCHES) {
       setAll(true);

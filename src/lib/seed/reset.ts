@@ -157,6 +157,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   screenings: "Message screenings",
   collection_drafts: "Collection reminders",
   briefs: "Profit briefs",
+  carrier_notes: "Memory notes",
   money_actions: "Settled payouts and bookings (test mode)",
   documents: "Uploaded documents",
   evidence_clips: "Dock clips",
