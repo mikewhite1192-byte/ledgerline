@@ -57,7 +57,7 @@ function post(path: string, body?: unknown, headers: Record<string, string> = {}
     ...(body === undefined ? {} : { body: typeof body === "string" ? body : JSON.stringify(body) }),
   });
 }
-const get = (path: string) => new Request(`https://app.example${path}`);
+const get = (path: string, headers: Record<string, string> = {}) => new Request(`https://app.example${path}`, { headers });
 const runParams = (runId: string) => ({ params: Promise.resolve({ runId }) });
 const breakParams = (id: string) => ({ params: Promise.resolve({ id }) });
 
@@ -165,6 +165,20 @@ describe("/api/cards/check/[runId]", () => {
     expect((await readOne(get(`/api/cards/check/${RUN}`), runParams(RUN))).status).toBe(404);
     expect(mocks.getSession).not.toHaveBeenCalled();
     expect(mocks.readRun).not.toHaveBeenCalled();
+  });
+
+  it("GET refuses a cross-site request before the switch and the session, and reads a same-site one", async () => {
+    const cross = await readOne(get(`/api/cards/check/${RUN}`, { "Sec-Fetch-Site": "cross-site" }), runParams(RUN));
+    expect(cross.status).toBe(403);
+    expect(await cross.json()).toEqual({ error: "forbidden" });
+    flags.cardRecon.enabled = false;
+    expect((await readOne(get(`/api/cards/check/${RUN}`, { "Sec-Fetch-Site": "same-site" }), runParams(RUN))).status).toBe(403);
+    expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(mocks.readRun).not.toHaveBeenCalled();
+    flags.cardRecon.enabled = true;
+    const same = await readOne(get(`/api/cards/check/${RUN}`, { "Sec-Fetch-Site": "same-origin" }), runParams(RUN));
+    expect(same.status).toBe(200);
+    expect(mocks.readRun).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -10,10 +10,24 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
 import { flags } from "@/config/flags";
 import { readEngineProposalViews } from "@/lib/agent/gateway/store";
+import { reasonSentence } from "@/lib/agent/reasons";
 import type { BreakView } from "@/lib/data/card-recon";
 import { DbError, type Queryable } from "@/lib/db";
-import { breakSentence, breakTitle, dayWords, fixOf, gallons, readCardBreak, severityOf, statusOf, whatLine } from "@/lib/recon/view";
-import { money, recordWords, systemWords } from "@/lib/recon/words";
+import {
+  breakSentence,
+  breakTitle,
+  dayWords,
+  fixOf,
+  gallons,
+  readCardBreak,
+  readHandPick,
+  severityOf,
+  statusOf,
+  whatLine,
+  workedLine,
+  type HandPick,
+} from "@/lib/recon/view";
+import { HAND_PICK_WORDS, money, recordWords, systemWords } from "@/lib/recon/words";
 import { readShell } from "@/lib/tenant/shell";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { readRecordPage } from "@/app/records/read-record";
@@ -25,14 +39,16 @@ const TITLE = "Card check";
 // The payment records that have their own page; any other is named in words only.
 const LINKED_RECORDS: readonly string[] = ["advances", "settlements", "invoices", "customer_payments"];
 
-type PageData = { brk: BreakView; cards: InvoiceCard[] };
+type PageData = { brk: BreakView; cards: InvoiceCard[]; handPick: HandPick | null };
 
 async function readPage(q: Queryable, id: string): Promise<PageData | null> {
   const brk = await readCardBreak(q, id);
   if (!brk) return null;
+  // An unknown card with no match card: who could have used it, ranked by code (no model call).
+  const handPick = await readHandPick(q, brk);
   // The match waiting for a person, through the same gate as any card. Only an open card
   // difference has one; a closed one shows its outcome.
-  if (brk.status !== "open" || brk.fixKind !== "card_match" || !brk.transaction) return { brk, cards: [] };
+  if (brk.status !== "open" || brk.fixKind !== "card_match" || !brk.transaction) return { brk, cards: [], handPick };
   const audit = { on: flags.auditorEnabled, checking: false };
   const proposals = await readEngineProposalViews(q, "card_match", 5, brk.transaction.id);
   const cards = proposals.map((p) => ({
@@ -41,7 +57,7 @@ async function readPage(q: Queryable, id: string): Promise<PageData | null> {
     checkedAt: p.auditorCheckedAt,
     flagged: p.flagged,
   }));
-  return { brk, cards };
+  return { brk, cards, handPick };
 }
 
 async function readOffShell() {
@@ -127,6 +143,46 @@ function Theirs({ brk }: { brk: BreakView }) {
   );
 }
 
+// A card on no driver's file with no match card: why a person picks the driver, and who could have
+// used the card, best fit first, ranked by code from this carrier's own days and loads. Read only.
+function HandPickCard({ pick }: { pick: HandPick }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Pick the driver by hand</CardTitle>
+      </CardHeader>
+      <CardBody className="grid gap-3">
+        <p className="text-body text-foreground">{HAND_PICK_WORDS[pick.why]}</p>
+        {pick.candidates.length > 0 ? (
+          <>
+            <p className="text-small text-foreground-2">Drivers who worked near that day, best fit first:</p>
+            <ol className="grid gap-3">
+              {pick.candidates.map((c) => {
+                const worked = workedLine(c.evidence);
+                return (
+                  <li key={c.driverId} className="grid gap-1">
+                    <span className="text-body">
+                      <RecordLink table="drivers" id={c.driverId}>
+                        {c.code}
+                      </RecordLink>
+                    </span>
+                    {c.reasons.map((r) => (
+                      <span key={r} className="text-small text-foreground-2">
+                        {reasonSentence(r)}
+                      </span>
+                    ))}
+                    {worked ? <span className="text-small text-foreground-2">{worked}</span> : null}
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
+}
+
 // One difference: what our records say, what the other system says, why they differ, and the one
 // way to close it (approve the match, wait for a later read, or dismiss it with a reason). Dark
 // while its switch is off. A missing id and another carrier's id read the same "not here".
@@ -159,7 +215,7 @@ export default async function CardBreakPage({ params }: { params: Promise<{ brea
       </SignedInPage>
     );
   }
-  const { brk, cards } = page.record;
+  const { brk, cards, handPick } = page.record;
   const status = statusOf(brk);
   const severity = severityOf(brk);
   return (
@@ -190,6 +246,7 @@ export default async function CardBreakPage({ params }: { params: Promise<{ brea
         <Ours brk={brk} />
         <Theirs brk={brk} />
       </div>
+      {handPick ? <HandPickCard pick={handPick} /> : null}
       {cards.length > 0 ? <InvoiceCards cards={cards} auditorOn={flags.auditorEnabled} /> : null}
       {brk.status === "open" ? <DismissBreak breakId={brk.id} /> : null}
       <p className="text-small">{back}</p>

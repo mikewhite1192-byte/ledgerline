@@ -1,14 +1,28 @@
+import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
 import {
   countOpenBreaks,
   readBreak,
   readBreaks,
+  readCandidateFacts,
+  readLastSeenRunCents,
   readLatestRun,
   type BreakView,
   type RunView,
 } from "../data/card-recon";
 import { formatLocalDate } from "../format/dates";
-import { categoryWords, DISMISS_WORDS, FIX_WORDS, fixedSentence, lineWords, money, recordWords, RECORD_WORDS } from "./words";
+import { rankCandidates, topIsTied, type Candidate } from "../rules-engine/card-recon";
+import {
+  categoryWords,
+  DISMISS_WORDS,
+  FIX_WORDS,
+  fixedSentence,
+  lineWords,
+  money,
+  recordWords,
+  RECORD_WORDS,
+  type HandPickWhy,
+} from "./words";
 
 // What the card check's pages read and how they say it: the newest check, the open differences
 // (most serious first), and the counters. Every sentence is built here from fixed words and the
@@ -122,6 +136,53 @@ export function severityOf(b: Pick<BreakView, "severity">): Pill {
 export function fixOf(b: Pick<BreakView, "fixKind" | "proposalId">): string {
   if (b.fixKind === "card_match" && !b.proposalId) return FIX_WORDS.by_hand;
   return Object.hasOwn(FIX_WORDS, b.fixKind) ? FIX_WORDS[b.fixKind] : FIX_WORDS.by_hand;
+}
+
+// An open fuel purchase on a card on no driver's file that shows "By hand": a person picks the
+// driver, so its page lists who could have used the card and why no match card was made.
+export function needsHandPick(
+  b: Pick<BreakView, "status" | "category" | "fixKind" | "proposalId" | "transaction">,
+): boolean {
+  return b.status === "open" && b.category === "card_unknown" && b.transaction?.kind === "fuel" && fixOf(b) === FIX_WORDS.by_hand;
+}
+
+// Why no match card, from the ranking as it stands and what the check that last saw the card
+// spent: an empty ranking, a tie at the top, a budget too spent for one more pick (the run's own
+// reservation rule), else no single driver was settled on.
+export function handPickWhy(
+  ranked: readonly Candidate[],
+  runCents: number | null,
+  limits: { matchMaxCents: number; maxRunCents: number },
+): HandPickWhy {
+  if (ranked.length === 0) return "none_fit";
+  if (topIsTied(ranked)) return "tied";
+  if (runCents !== null && runCents + limits.matchMaxCents > limits.maxRunCents) return "budget";
+  return "not_picked";
+}
+
+export type HandPick = { why: HandPickWhy; candidates: Candidate[] };
+
+// The drivers who could have used an unknown card, ranked by code now (at most three), and why a
+// person picks. Reads only this carrier's rows through the caller's transaction; no model call and
+// no write. Null while the card check is off or when the difference does not wait on a hand pick.
+export async function readHandPick(q: Queryable, b: BreakView): Promise<HandPick | null> {
+  if (!flags.cardRecon.enabled || !needsHandPick(b) || !b.transaction) return null;
+  const t = b.transaction;
+  const candidates = rankCandidates(
+    { postedOn: t.postedOn, state: t.state, portalName: t.portalName },
+    await readCandidateFacts(q, t.postedOn),
+  );
+  const clear = candidates.length > 0 && !topIsTied(candidates);
+  const runCents = clear ? await readLastSeenRunCents(q, b.id) : null;
+  return { why: handPickWhy(candidates, runCents, flags.cardRecon.limits), candidates };
+}
+
+// "Worked Oct 29, 2026 and Oct 30, 2026": the days that put a driver on the list, each once.
+export function workedLine(evidence: readonly { day: string }[]): string {
+  const days = [...new Set(evidence.map((e) => e.day))].map(day);
+  if (days.length === 0) return "";
+  const list = days.length === 1 ? days[0] : `${days.slice(0, -1).join(", ")} and ${days[days.length - 1]}`;
+  return `Worked ${list}`;
 }
 
 export function statusOf(b: Pick<BreakView, "status" | "fixKind" | "dismissCategory">): Pill {

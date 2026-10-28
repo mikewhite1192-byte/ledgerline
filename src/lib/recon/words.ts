@@ -32,6 +32,20 @@ export const FIX_WORDS: Readonly<Record<string, string>> = {
   none: "Nothing to do",
 };
 
+// Why an unknown card waits for a person to pick its driver, one fixed sentence each: the drivers
+// ranked by code tie at the top, no driver fits, the check's model budget ran out before its pick,
+// or (any other case: no pick came back, or the check has not reached it yet) no single driver was
+// settled on.
+export const HAND_PICK_WHYS = ["tied", "none_fit", "budget", "not_picked"] as const;
+export type HandPickWhy = (typeof HAND_PICK_WHYS)[number];
+
+export const HAND_PICK_WORDS: Readonly<Record<HandPickWhy, string>> = {
+  tied: "Two or more drivers fit this card equally well, so the check did not pick one.",
+  none_fit: "No driver fits: no active driver worked on that day or the day either side.",
+  budget: "The check ran out of budget before it could suggest a driver.",
+  not_picked: "The check did not settle on one driver.",
+};
+
 export const DISMISS_WORDS: Readonly<Record<string, string>> = {
   explained: "Explained",
   duplicate: "Duplicate",

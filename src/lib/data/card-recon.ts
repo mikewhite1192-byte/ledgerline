@@ -338,6 +338,20 @@ export async function readBreak(q: Queryable, id: string): Promise<BreakView | n
   return rows.length === 1 ? breakView(rows[0]) : null;
 }
 
+// What the check that last saw one difference spent on model calls, in whole cents, or null when
+// the difference is not this carrier's. Its page reads it to say whether that check's budget ran out.
+export async function readLastSeenRunCents(q: Queryable, breakId: string): Promise<number | null> {
+  if (!isUuid(breakId)) return null;
+  const rows = await q.query<Record<string, unknown>>(
+    `SELECT r.model_cents
+       FROM card_recon_breaks b
+       JOIN card_recon_runs r ON r.tenant_id = b.tenant_id AND r.id = b.last_seen_run_id
+      WHERE b.tenant_id = current_tenant_id() AND b.id = CAST($1 AS uuid)`,
+    [breakId.toLowerCase()],
+  );
+  return rows.length === 1 ? num(rows[0].model_cents) : null;
+}
+
 export type RunView = {
   id: string;
   status: "running" | "done" | "failed";

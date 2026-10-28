@@ -15,7 +15,8 @@ export const maxDuration = 30;
 
 type Params = { params: Promise<{ runId: string }> };
 
-export async function GET(_request: Request, { params }: Params) {
+export async function GET(request: Request, { params }: Params) {
+  if (isCrossSite(request)) return reply({ error: "forbidden" }, 403);
   if (!flags.cardRecon.enabled) return refused("disabled");
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);

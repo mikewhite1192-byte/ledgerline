@@ -22,7 +22,7 @@ import type {
 import { REVIEW_REASON_LABELS, REVIEW_STATUS_LABELS, reviewReasonSentence } from "@/lib/invoices/labels";
 import type { InvoiceReviewView, ReviewQueue } from "@/lib/invoices/review-read";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
-import type { CardHome } from "@/lib/recon/view";
+import type { CardHome, HandPick } from "@/lib/recon/view";
 import type { RunSummary, RunView } from "@/lib/portal/views";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "@/lib/rules-engine";
 import type { Cents, PayLine } from "@/lib/rules-engine/types";
@@ -1543,3 +1543,23 @@ export const CARD_MATCH_PROPOSAL: ProposalView = proposal({
   destination: null,
   cardMatch: { last4: "7781", portalName: "TEST FUEL STOP 12", postedOn: "2026-10-27", state: "OK", driverCode: "BR-D07", others: ["BR-D12"] },
 });
+
+// The list a card on no driver's file shows when no match card was made: two drivers tied at the
+// top on a load through the card's state, and a third who only worked that day.
+export const CARD_HAND_PICK: HandPick = {
+  why: "tied",
+  candidates: [
+    {
+      driverId: DRIVER_ID,
+      code: "BR-D07",
+      score: 3,
+      reasons: ["on_load_in_state"],
+      evidence: [
+        { day: "2026-10-26", loadId: LOAD_ID },
+        { day: "2026-10-27", loadId: LOAD_ID },
+      ],
+    },
+    { driverId: id(391), code: "BR-D12", score: 3, reasons: ["on_load_in_state"], evidence: [{ day: "2026-10-27", loadId: id(392) }] },
+    { driverId: id(393), code: "BR-D15", score: 2, reasons: ["worked_that_day"], evidence: [{ day: "2026-10-28", loadId: null }] },
+  ],
+};

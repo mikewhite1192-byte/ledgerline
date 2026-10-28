@@ -6,7 +6,7 @@ import type { CompleteFn } from "../agent/gateway/types";
 import type { AiResult } from "../ai";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { Session } from "../auth/claims";
-import { readRun } from "../data/card-recon";
+import { readBreak, readLastSeenRunCents, readRun } from "../data/card-recon";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
@@ -17,6 +17,7 @@ import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { instantAt } from "../seed/calendar";
 import { advanceCardCheck, dismissBreak, startCardCheck, type CardCheckDeps } from "./run";
+import { readHandPick } from "./view";
 
 // The card check against the real database, as the app's role: the seeded statement compared with
 // the seeded records, payment records read back through a stand-in adapter, one sentence and one
@@ -365,6 +366,21 @@ describe("a card check of the seeded statement", () => {
     // No pick past the cap either: the unknown card is fixed by hand.
     expect(byTxn(open, planted.cardUnknownId)[0].fix_kind).toBe("by_hand");
     expect(calls.filter((c) => c.purpose === "card_recon_match")).toEqual([]);
+  });
+
+  it("shows the unknown card's page the ranked drivers and the spent budget, to this carrier only", async () => {
+    flags.cardRecon.limits.maxRunCents = 3;
+    await runToEnd();
+    const id = byTxn(await breaks(), planted.cardUnknownId)[0].id;
+    const pick = await app.withTenant(T, async (q) => {
+      const brk = await readBreak(q, id);
+      return brk ? readHandPick(q, brk) : null;
+    });
+    expect(pick?.why).toBe("budget");
+    expect(pick?.candidates[0].driverId).toBe(planted.candidateDriverId);
+    expect(pick?.candidates.length).toBeLessThanOrEqual(3);
+    expect(await app.withTenant(other.tenantId, (q) => readLastSeenRunCents(q, id))).toBeNull();
+    expect(await app.withTenant(other.tenantId, (q) => readBreak(q, id))).toBeNull();
   });
 });
 
