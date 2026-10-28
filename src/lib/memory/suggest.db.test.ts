@@ -320,6 +320,25 @@ describe("the agent's suggested notes in the database", () => {
       ]),
     );
     expect(JSON.parse(stored.used)).toEqual(notesUsed);
+    // Fixed with the verdict (0059): the app's role cannot change the notes the check saw, to
+    // none or to any other list, and the stored list stays as it was.
+    for (const next of ["[]", JSON.stringify([kept[0]])]) {
+      const changed = await app
+        .withTenant(S, (q) =>
+          q.execute("UPDATE proposals SET auditor_notes_used = CAST($2 AS jsonb) WHERE id = CAST($1 AS uuid)", [proposalId, next]),
+        )
+        .then(
+          () => undefined,
+          (e: unknown) => (e as { sqlState?: string }).sqlState,
+        );
+      expect(changed, next).toBe("23514");
+    }
+    const [after] = await app.withTenant(S, (q) =>
+      q.query<{ used: string }>("SELECT CAST(auditor_notes_used AS text) AS used FROM proposals WHERE id = CAST($1 AS uuid)", [
+        proposalId,
+      ]),
+    );
+    expect(JSON.parse(after.used)).toEqual(notesUsed);
 
     // The trace names each note by its label now, and one removed since as removed.
     expect(await app.withTenant(S, (q) => deleteNote(q, session(S), kept[0]))).toEqual({ ok: true, id: kept[0] });

@@ -90,6 +90,10 @@ export type GatewayContext = {
   // The sentence the person typed this turn, for a tool that must find a value in it (a pay rule
   // change's new value). Null or absent outside a turn, which such a tool refuses.
   userText?: string | null;
+  // The flagged outside text this turn already read, once the turn's loop has seen one. A tool
+  // that must not act on a flagged turn (remember_note) refuses on it without reading the
+  // decision log, and still reads the log when it is absent.
+  flaggedInputId?: string | null;
 };
 
 // A model call, as the screener needs it. The default is complete() from src/lib/ai.

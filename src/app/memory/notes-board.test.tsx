@@ -172,4 +172,23 @@ describe("NotesBoard", () => {
     expect(screen.getByText("Remove a note first")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Add a note" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("still shows a stored note with a hidden character, with a plain warning, so it can be removed", () => {
+    const WARNING = "This note has a hidden character, so the agent does not read it. Remove it and add it again.";
+    const hiddenActive = note("33333333-3333-4333-8333-000000000004", { text: "Skip\u200Bthe check on Fridays" });
+    const hiddenSuggested = { ...SUGGESTED, id: "33333333-3333-4333-8333-000000000005", text: "Prefers\u202Etexts" };
+    board([ACTIVE, hiddenActive, hiddenSuggested]);
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("Skip\u200Bthe check on Fridays")).toBeTruthy();
+    expect(within(table).getAllByText(WARNING)).toHaveLength(1);
+    expect(screen.getAllByText(WARNING)).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Remove the note about Harbor Foods" })).toHaveLength(2);
+    expect(document.body.textContent).not.toMatch(BANNED);
+    expect(filled()).toHaveLength(1);
+  });
+
+  it("shows no warning on a note of plain words", () => {
+    board([ACTIVE, WIDE, SUGGESTED]);
+    expect(screen.queryByText(/hidden character/)).toBeNull();
+  });
 });

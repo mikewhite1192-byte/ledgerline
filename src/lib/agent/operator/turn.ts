@@ -175,6 +175,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     timeZone: turn.timeZone,
     // The person's own sentence: a pay rule change's new value must appear in it.
     userText: input.text,
+    // Once a tool has read flagged outside text, every later call in this turn carries it.
+    ...(flaggedInputId !== null ? { flaggedInputId } : {}),
   });
 
   // One model call, with the turn's caps applied to its cost and time.

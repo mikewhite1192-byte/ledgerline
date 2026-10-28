@@ -68,7 +68,9 @@ export const rememberNote = defineTool({
     if (!flags.carrierMemoryEnabled) throw new Error("carrier memory is switched off");
     const modelCallId = extras.modelCallId ?? null;
     if (!isUuid(ctx.turnId) || !isUuid(modelCallId)) return notSuggested("no_chat_turn");
-    // A turn that read flagged outside text suggests nothing.
+    // A turn that read flagged outside text suggests nothing: refused on the loop's own flag
+    // first, so a lost decision row cannot open it, then on the decision log.
+    if (ctx.flaggedInputId !== undefined && ctx.flaggedInputId !== null) return notSuggested("flagged_turn");
     const flagged = await q.query<{ ok: number }>(
       `SELECT 1 AS ok FROM gateway_decisions
         WHERE tenant_id = current_tenant_id() AND turn_id = CAST($1 AS uuid) AND reason = 'screen_flagged'

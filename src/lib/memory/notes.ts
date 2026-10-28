@@ -4,6 +4,7 @@ import type { Session } from "../auth/claims";
 import type { Queryable } from "../db/types";
 import { patternHits } from "../agent/gateway/patterns";
 import { isUuid } from "../uuid";
+import { hasHiddenCharacter } from "./links";
 
 // Carrier memory (CARRIER-MEMORY, migration 0040): short notes the office keeps about a customer,
 // a driver or the carrier as a whole. People write, edit, keep and remove them on the Memory page;
@@ -33,7 +34,9 @@ const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
 const noteChars = (text: string): number => Array.from(text).length;
 
 // A note's text: whitespace folded to single spaces (so a note is always one line), trimmed,
-// 1 to 300 characters (code points), no web address, no control character.
+// 1 to 300 characters (code points), no web address, no control character, and no hidden (Unicode
+// format) character, which could split a phrase the pattern pre-screen looks for. Every write and
+// every model read checks it, so a stored note with one is never passed to a model.
 export const noteTextSchema = z
   .string()
   .transform((s) => s.replace(/\s+/g, " ").trim())
@@ -43,8 +46,16 @@ export const noteTextSchema = z
       .min(1)
       .max(NOTE_MAX_CHARS)
       .refine((s) => !WEB_ADDRESS.test(s), { message: "web address" })
-      .refine((s) => !CONTROL.test(s), { message: "control character" }),
+      .refine((s) => !CONTROL.test(s), { message: "control character" })
+      .refine((s) => !hasHiddenCharacter(s), { message: "hidden character" }),
   );
+
+// A count as a whole number, or infinity (which passes no cap) when it does not read as one: a
+// missing row, null, a non-numeric string. Unknown is not zero.
+function whole(v: unknown): number {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v) ? Number(v) : Number.NaN;
+  return Number.isSafeInteger(n) && n >= 0 ? n : Number.POSITIVE_INFINITY;
+}
 
 export type NoteRow = {
   id: string;
@@ -103,7 +114,8 @@ const isStatus = (s: string): s is NoteStatus => s === "suggested" || s === "act
 const isWriter = (k: string): k is NoteRow["createdByKind"] => k === "person" || k === "agent" || k === "seed";
 
 // A row of any other shape is skipped. The words are not checked here: a row the table took always
-// shows on the page and can be removed there. The agent's line checks the words again (noteLine).
+// shows on the page and can be removed there (one with a hidden character shows with a plain
+// warning). The agent's line checks the words again (noteLine).
 function noteOf(r: NoteSqlRow): NoteRow | null {
   if (!isKind(r.subject_kind) || !isStatus(r.status) || !isWriter(r.created_by_kind)) return null;
   if ((r.subject_kind === "carrier") !== (r.subject_id === null)) return null;
@@ -203,7 +215,7 @@ export async function createNote(q: Queryable, session: Session, input: NewNote,
   const count = await q.query<{ n: number | string }>(
     "SELECT count(*) AS n FROM carrier_notes WHERE tenant_id = current_tenant_id()",
   );
-  if (Number(count[0]?.n ?? 0) >= flags.carrierMemoryLimits.maxNotesPerCarrier) return { ok: false, refusal: "full" };
+  if (whole(count[0]?.n) >= flags.carrierMemoryLimits.maxNotesPerCarrier) return { ok: false, refusal: "full" };
 
   const rows = await q.query<{ id: string }>(
     `INSERT INTO carrier_notes (tenant_id, subject_kind, subject_id, text, status, source_kind,
@@ -339,11 +351,7 @@ export async function suggestNote(
        FROM carrier_notes WHERE tenant_id = current_tenant_id()`,
     [input.turnId],
   );
-  // Unknown is not zero: a count that does not read as a whole number refuses.
-  const whole = (v: unknown) => {
-    const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v) ? Number(v) : Number.NaN;
-    return Number.isSafeInteger(n) && n >= 0 ? n : Number.POSITIVE_INFINITY;
-  };
+  // Unknown is not zero: a count that does not read as a whole number refuses (whole).
   if (whole(count?.total) >= flags.carrierMemoryLimits.maxNotesPerCarrier) return { ok: false, refusal: "full" };
   if (whole(count?.waiting) >= limits.maxSuggestionsWaiting) return { ok: false, refusal: "waiting_full" };
   if (whole(count?.this_turn) >= limits.maxSuggestionsPerTurn) return { ok: false, refusal: "turn_full" };

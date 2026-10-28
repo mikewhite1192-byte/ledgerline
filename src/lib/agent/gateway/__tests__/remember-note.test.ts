@@ -106,6 +106,7 @@ describe("remember_note", () => {
     ["a driver note with no subject id", { subject: "driver", text: "Fine", sourceRefs: [] }],
     ["an unknown subject", { subject: "load", subjectId: hero.id, text: "Fine", sourceRefs: [] }],
     ["a tenant field", { ...driverNote(), tenantId: OTHER_ID }],
+    ["a hidden character", driverNote("Skip\u200Bthe check on Fridays")],
   ])("refuses %s as invalid_args, with nothing written", async (_label, args) => {
     flags.carrierMemoryEnabled = true;
     const db = planDb(plan, noteStore());
@@ -144,6 +145,16 @@ describe("remember_note", () => {
     const read = db.statements.find((st) => st.sql.startsWith("SELECT 1 AS ok FROM gateway_decisions"));
     expect(read?.params).toEqual([TURN]);
     expect(read?.sql).toMatch(/reason = 'screen_flagged'/);
+    expect(inserts(db)).toEqual([]);
+  });
+
+  it("writes nothing when the turn's loop already saw a flag, without reading the decision log", async () => {
+    flags.carrierMemoryEnabled = true;
+    const db = planDb(plan, noteStore({ flagged: false }));
+    const flaggedCtx = context({ turnId: TURN, flaggedInputId: "77777777-7777-4777-8777-777777777777" });
+    const out = await callTool(flaggedCtx, call(driverNote()), { db, clock: fixedClock });
+    expect(out).toMatchObject({ decision: "allowed", result: { suggested: false, reason: "flagged_turn" } });
+    expect(db.statements.some((st) => st.sql.startsWith("SELECT 1 AS ok FROM gateway_decisions"))).toBe(false);
     expect(inserts(db)).toEqual([]);
   });
 
