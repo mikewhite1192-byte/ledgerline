@@ -1300,7 +1300,8 @@ const codeAction = (over: Partial<MoneyAction>): MoneyAction => ({
   settledVia: "response",
   outsideSystem: "fuel_card_sim",
   outsideType: "money_code",
-  outsideId: "mc_sim_7c41e2a9b3",
+  // The simulated card provider's reference shape: fcs_code_ and 24 hex.
+  outsideId: "fcs_code_7c41e2a9b30d5f18a6e4c2b9",
   outsideRef: null,
   outsideAmountCents: 15_000,
   proposedBy: "agent",
@@ -1319,7 +1320,8 @@ const codeAction = (over: Partial<MoneyAction>): MoneyAction => ({
 
 export const MONEY_CODE_DETAIL: MoneyCodeDetail = {
   code: MONEY_CODES[0],
-  charge: { id: id(324), label: "Charge", amountCents: -15_000, itemDate: "2026-10-28" },
+  // As stored: the charge is an other_deduction pay item of +$150.00, the reimbursement +$150.00.
+  charge: { id: id(324), label: "Charge", amountCents: 15_000, itemDate: "2026-10-28" },
   reimbursement: { id: id(325), label: "Reimbursement", amountCents: 15_000, itemDate: "2026-10-28" },
   accessorial: { id: id(323), amountCents: 15_000, description: "Lumper" },
   receipt: { id: id(320), filename: "lumper-receipt.webp", isImage: true },

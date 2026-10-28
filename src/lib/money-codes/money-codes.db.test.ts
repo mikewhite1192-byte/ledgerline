@@ -1,18 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
-import { createMoneyCodeIssuer } from "../adapters/payment/fuel-card-sim";
+import { codeRef, createMoneyCodeIssuer } from "../adapters/payment/fuel-card-sim";
 import type { MoneyCodeIssuer } from "../adapters/types";
 import { readSettlementInput } from "../data/read";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
+import { readBySubject } from "../money/read";
 import { clearLedger, dropTenant, makeTenant, setArmed, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal } from "../proposals/execute";
 import { settleDriver } from "../rules-engine/settlement";
-import { chargeItemRef, checkPendingCode, revealMoneyCode, reimbursementItemRef, type MoneyCodeDeps } from "./execute";
+import {
+  chargeItemRef,
+  checkPendingCode,
+  finishIssuedCode,
+  revealMoneyCode,
+  reimbursementItemRef,
+  type MoneyCodeDeps,
+} from "./execute";
 import { readMoneyCode } from "./read";
-import { requestMoneyCode } from "./request";
+import { readRequestChoices, requestMoneyCode } from "./request";
 
 // The money-code flow against a real database, as the app's own role, with the registered
 // executor and the simulated issuer. A person's request from the form makes one waiting proposal;
@@ -140,6 +148,18 @@ const proposalStatus = async (id: string, f: Fixture = A) =>
     )
   )[0]?.status;
 
+// The proposal's last change, as the executor stamped it.
+const proposalStamp = async (id: string, f: Fixture = A) =>
+  (
+    await admin.withTenant(f.tenantId, (q) =>
+      q.query<{ at: string }>(
+        `SELECT to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at
+           FROM proposals WHERE id = CAST($1 AS uuid)`,
+        [id],
+      ),
+    )
+  )[0]?.at;
+
 describe("money codes against the database", () => {
   beforeAll(() => {
     admin = createPgDb({ connectionString: adminUrl() });
@@ -241,6 +261,8 @@ describe("money codes against the database", () => {
     expect(await lumpers()).toEqual([]);
     expect(await ledger()).toEqual([{ state: "failed", attempt: 1, failure_category: "declined" }]);
     expect(await proposalStatus(proposalId)).toBe("failed");
+    // The failure is stamped with the injected clock, not the machine's.
+    expect(await proposalStamp(proposalId)).toBe(new Date(NOW).toISOString());
     const shown = await revealMoneyCode(A.session, codes[0].id, deps());
     expect(shown).toMatchObject({ ok: false, category: "not_issued" });
   });
@@ -257,10 +279,12 @@ describe("money codes against the database", () => {
     expect((await ledger()).map((a) => a.state)).toEqual(["unknown"]);
     expect(await revealMoneyCode(A.session, codes[0].id, deps())).toMatchObject({ ok: false, category: "not_issued" });
 
+    const settled = { checked: 0, confirmed: 0, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 };
     const checked = await checkPendingCode(A.session, codes[0].id, deps());
-    expect(checked).toMatchObject({ ok: true });
+    expect(checked).toEqual({ ok: true, summary: { ...settled, checked: 1, confirmed: 1 }, tooNew: 0, stillWaiting: 0 });
+    // Asked again, nothing is open: nothing read back, nothing written.
     const again = await checkPendingCode(A.session, codes[0].id, deps());
-    expect(again).toMatchObject({ ok: true });
+    expect(again).toEqual({ ok: true, summary: settled, tooNew: 0, stillWaiting: 0 });
 
     codes = await codeRows();
     expect(codes.map((c) => c.status)).toEqual(["issued"]);
@@ -273,6 +297,73 @@ describe("money codes against the database", () => {
     expect(await proposalStatus(proposalId)).toBe("done");
     // Never a second issue: one ledger row, attempt 1.
     expect((await ledger()).map((a) => a.attempt)).toEqual([1]);
+  });
+
+  it("a confirm with no settle time takes the injected clock as the issue time", async () => {
+    const loadId = await addLoadOnTheRoad(A);
+    const proposalId = await ask(A, loadId, 9_998);
+    expect(await approve(proposalId)).toMatchObject({ ok: true, status: "executing" });
+    const [code] = await codeRows();
+    expect(code.status).toBe("unknown");
+    // The post-confirm step on its own, as Check pending runs it, for a confirmed row whose settle
+    // time is missing: the code's times and the paystub day come from the clock it is handed.
+    const at = "2026-11-02T16:30:00.000Z";
+    await app.withTenant(A.tenantId, async (q) => {
+      const [action] = (await readBySubject(q, "money_codes", code.id)).filter((a) => a.kind === "money_code_issue");
+      await finishIssuedCode(
+        q,
+        { ...action, state: "confirmed", settledAt: null, outsideId: codeRef(action.requestId) },
+        issuer,
+        at,
+      );
+    });
+    const [after] = await codeRows();
+    expect(after.status).toBe("issued");
+    expect(after.issued_at).toBe(at);
+    expect(after.expires_at).toBe("2026-11-03T16:30:00.000Z");
+    expect((await payItems()).map((i) => [i.kind, i.item_date])).toEqual([
+      ["other_deduction", "2026-11-02"],
+      ["reimbursement", "2026-11-02"],
+    ]);
+  });
+
+  it("offers an invoiced load delivered in the last three days, and takes a repair code on it but not a lumper code", async () => {
+    await addLoadOnTheRoad(A);
+    // Delivered two days ago (Chicago), invoiced since.
+    const billedId = randomUUID();
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO loads (id, tenant_id, load_number, customer_id, driver_id, status, origin_city,
+           origin_state, dest_city, dest_state, pickup_on, delivered_on, delivered_at, loaded_miles, linehaul_cents)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'L-BILLED', CAST($2 AS uuid), CAST($3 AS uuid),
+           'invoiced', 'Dallas', 'TX', 'Tulsa', 'OK', CAST('2026-10-30' AS date), CAST('2026-10-31' AS date),
+           CAST('2026-10-31T18:00:00Z' AS timestamptz), 2000, 400000)`,
+        [billedId, A.customerId, A.driverId],
+      ),
+    );
+    const choices = await app.withTenant(A.tenantId, (q) => readRequestChoices(q, clock()));
+    expect(choices.loads.filter((l) => l.id === billedId).map((l) => [l.loadNumber, l.status])).toEqual([
+      ["L-BILLED", "delivered"],
+    ]);
+
+    const lumper = await requestMoneyCode(
+      A.session,
+      { loadId: billedId, amountCents: 15_000, purpose: "lumper", documentId: null },
+      { db: app, clock },
+    );
+    expect(lumper).toMatchObject({ ok: false, category: "load_invoiced" });
+    expect(await codeRows()).toEqual([]);
+
+    const proposalId = await ask(A, billedId, 12_000, "repair");
+    expect(await approve(proposalId)).toMatchObject({ ok: true, status: "done" });
+    const [code] = await codeRows();
+    expect(code.status).toBe("issued");
+    expect(code.accessorial_id).toBeNull();
+    expect(await lumpers()).toEqual([]);
+    expect((await payItems()).map((i) => [i.kind, i.subkind, i.amount_cents])).toEqual([
+      ["other_deduction", "money_code", "12000"],
+      ["reimbursement", "repair", "12000"],
+    ]);
   });
 
   it("the paystub nets to zero after a code", async () => {

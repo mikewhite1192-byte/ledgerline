@@ -8,11 +8,13 @@ import { assertDate, assertId, assertOneOf, instantMs, type Cents, type LoadStat
 //
 // Rules, every one checked, refusals listed in the fixed order of MONEY_CODE_REFUSALS:
 //   the load is this driver's, and in transit or delivered within MONEY_CODE_ACTIVE_DAYS of today
+//     (an invoiced load counts as delivered, except for a lumper: its billable line needs a load
+//     not invoiced yet)
 //   the amount is a positive whole number of cents at or under the cap
 //   a cited document was read, with the kind, total and load number not marked low; its kind fits
 //     the purpose; its total equals the amount (whole value); its load number is this load's
-//   a cited voice note is this driver's (or names no driver) and one of its spoken amounts equals
-//     the amount
+//   a cited voice note came from this driver (a note from no known driver backs no code) and one
+//     of its spoken amounts equals the amount
 //   the driver is armed for money
 //   no other live code on this load for the same purpose and amount in the last 24 hours
 //   at most perDriverPerDay live codes for this driver on the tenant-local day
@@ -31,6 +33,7 @@ const LIVE_STATUSES: readonly MoneyCodeStatus[] = ["issuing", "issued", "unknown
 export const MONEY_CODE_REFUSALS = [
   "load_not_drivers",
   "load_not_active",
+  "load_invoiced",
   "amount_invalid",
   "over_code_cap",
   "evidence_missing",
@@ -39,6 +42,7 @@ export const MONEY_CODE_REFUSALS = [
   "receipt_total_differs",
   "receipt_other_load",
   "voice_other_driver",
+  "voice_driver_unmatched",
   "voice_amount_differs",
   "driver_not_armed",
   "duplicate_code",
@@ -141,9 +145,11 @@ function validAmount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+// An invoiced load was delivered, so it counts by its delivery day like a delivered one. Whether a
+// lumper may still use it is checked apart (load_invoiced).
 function loadActive(load: MoneyCodeLoad, today: LocalDate): MoneyCodeReason | null {
   if (load.status === "in_transit") return "load_in_transit";
-  if (load.status !== "delivered" || load.deliveredOn === null) return null;
+  if ((load.status !== "delivered" && load.status !== "invoiced") || load.deliveredOn === null) return null;
   const days = daysBetween(load.deliveredOn, today);
   return days >= 0 && days <= MONEY_CODE_ACTIVE_DAYS ? "load_delivered_recently" : null;
 }
@@ -180,7 +186,9 @@ function receiptRefusal(
 function voiceRefusal(voice: MoneyCodeVoice | null, driverId: string, amount: number | null): MoneyCodeRefusal[] {
   if (voice === null) return ["evidence_missing"];
   const out: MoneyCodeRefusal[] = [];
-  if (voice.driverId !== null && voice.driverId !== driverId) out.push("voice_other_driver");
+  // A sender matched to no driver could be anyone, so the note backs no driver's code.
+  if (voice.driverId === null) out.push("voice_driver_unmatched");
+  else if (voice.driverId !== driverId) out.push("voice_other_driver");
   if (amount === null || !voice.amountsCents.some((a) => a === amount)) out.push("voice_amount_differs");
   return out;
 }
@@ -203,6 +211,9 @@ export function checkMoneyCode(input: MoneyCodeInput): MoneyCodeDecision {
   const active = load === null ? null : loadActive(load, today);
   if (load !== null && active === null) found.add("load_not_active");
   if (active !== null) reasons.push(active);
+  // A lumper code also writes a billable lumper line for the load's invoice, which an invoiced load
+  // no longer takes.
+  if (load !== null && load.status === "invoiced" && purpose === "lumper") found.add("load_invoiced");
 
   if (amount === null) found.add("amount_invalid");
   else if (amount > cap) found.add("over_code_cap");

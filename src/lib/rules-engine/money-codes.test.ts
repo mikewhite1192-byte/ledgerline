@@ -97,9 +97,56 @@ describe("checkMoneyCode", () => {
     expect(refusalsOf({ load: delivered(null) })).toEqual(["load_not_active"]);
   });
 
-  it.each(["planned", "invoiced", "cancelled"] as const)("refuses a %s load", (status) => {
+  it.each(["planned", "cancelled"] as const)("refuses a %s load", (status) => {
     const load = { id: LOAD, driverId: DRIVER, status, loadNumber: "L-1001", deliveredOn: "2026-10-28" };
     expect(refusalsOf({ load })).toEqual(["load_not_active"]);
+  });
+
+  it("counts an invoiced load as delivered for a repair or other code, in the same three days", () => {
+    const invoiced = (deliveredOn: string | null) => ({
+      id: LOAD,
+      driverId: DRIVER,
+      status: "invoiced" as const,
+      loadNumber: "L-1001",
+      deliveredOn,
+    });
+    const form = { source: "form" as const, receipt: null };
+    for (const purpose of ["repair", "other"] as const) {
+      // Delivered two days ago and invoiced this morning: still allowed.
+      expect(checkMoneyCode(input({ ...form, purpose, load: invoiced("2026-10-26") }))).toEqual({
+        ok: true,
+        amountCents: 15_000,
+        purpose,
+        reasons: ["load_delivered_recently", "driver_armed"],
+      });
+      expect(refusalsOf({ ...form, purpose, load: invoiced("2026-10-25") })).toEqual([]);
+      expect(refusalsOf({ ...form, purpose, load: invoiced("2026-10-24") })).toEqual(["load_not_active"]);
+      expect(refusalsOf({ ...form, purpose, load: invoiced("2026-10-29") })).toEqual(["load_not_active"]);
+      expect(refusalsOf({ ...form, purpose, load: invoiced(null) })).toEqual(["load_not_active"]);
+    }
+    // A repair receipt on an invoiced load is checked like any other.
+    expect(
+      refusalsOf({ purpose: "repair", receipt: receipt({ kind: "other" }), load: invoiced("2026-10-27") }),
+    ).toEqual([]);
+  });
+
+  it("refuses a lumper code on an invoiced load, whose invoice can no longer take the lumper line", () => {
+    const invoiced = (deliveredOn: string | null) => ({
+      id: LOAD,
+      driverId: DRIVER,
+      status: "invoiced" as const,
+      loadNumber: "L-1001",
+      deliveredOn,
+    });
+    expect(checkMoneyCode(input({ load: invoiced("2026-10-27") }))).toEqual({
+      ok: false,
+      category: "load_invoiced",
+      refusals: ["load_invoiced"],
+    });
+    expect(refusalsOf({ source: "form", receipt: null, load: invoiced("2026-10-28") })).toEqual(["load_invoiced"]);
+    expect(refusalsOf({ load: invoiced("2026-10-24") })).toEqual(["load_not_active", "load_invoiced"]);
+    // Delivered, not invoiced yet: the lumper line can still reach the invoice.
+    expect(refusalsOf({ load: { ...invoiced("2026-10-27"), status: "delivered" } })).toEqual([]);
   });
 
   it("refuses an amount that is not a positive whole number of cents, and one over the cap", () => {
@@ -165,13 +212,26 @@ describe("checkMoneyCode", () => {
     expect(refusalsOf({ source: "voice_note", receipt: null, voice: { ...voice, amountsCents: [] } })).toEqual([
       "voice_amount_differs",
     ]);
-    expect(refusalsOf({ source: "voice_note", receipt: null, voice: { driverId: null, amountsCents: [15_000] } })).toEqual(
-      [],
-    );
+    expect(refusalsOf({ source: "voice_note", receipt: null, voice: null })).toEqual(["evidence_missing"]);
+  });
+
+  it("takes a voice note only from this driver: another driver's or an unmatched sender's is refused", () => {
+    const voice = { driverId: DRIVER, amountsCents: [15_000] };
+    // Matched to this driver: passes.
+    expect(refusalsOf({ source: "voice_note", receipt: null, voice })).toEqual([]);
+    // Matched to another driver.
     expect(refusalsOf({ source: "voice_note", receipt: null, voice: { ...voice, driverId: OTHER_DRIVER } })).toEqual([
       "voice_other_driver",
     ]);
-    expect(refusalsOf({ source: "voice_note", receipt: null, voice: null })).toEqual(["evidence_missing"]);
+    // Matched to no driver: its own reason, even when the amount is spoken exactly.
+    expect(checkMoneyCode(input({ source: "voice_note", receipt: null, voice: { ...voice, driverId: null } }))).toEqual({
+      ok: false,
+      category: "voice_driver_unmatched",
+      refusals: ["voice_driver_unmatched"],
+    });
+    expect(
+      refusalsOf({ source: "voice_note", receipt: null, voice: { driverId: null, amountsCents: [15_001] } }),
+    ).toEqual(["voice_driver_unmatched", "voice_amount_differs"]);
   });
 
   it("checks no evidence for a chat or form request", () => {

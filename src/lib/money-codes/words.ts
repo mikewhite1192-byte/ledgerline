@@ -7,6 +7,7 @@ import type { MoneyCodePurpose, MoneyCodeRefusal, MoneyCodeStatus } from "../rul
 export const REFUSAL_SENTENCES: Readonly<Record<MoneyCodeRefusal, string>> = {
   load_not_drivers: "That load is not one of this driver's loads.",
   load_not_active: "The load is not on the road and was not delivered in the last three days.",
+  load_invoiced: "The load is already invoiced, so a lumper code cannot add its billable line to the invoice.",
   amount_invalid: "The amount must be a dollar amount above $0.00.",
   over_code_cap: "The amount is over the most one money code can be.",
   evidence_missing: "The receipt or voice note it names was not found.",
@@ -15,6 +16,7 @@ export const REFUSAL_SENTENCES: Readonly<Record<MoneyCodeRefusal, string>> = {
   receipt_total_differs: "The amount does not equal the receipt's total.",
   receipt_other_load: "The receipt names a different load, or no load.",
   voice_other_driver: "The voice note came from a different driver.",
+  voice_driver_unmatched: "This voice note did not come from a known driver, so it cannot back a code. Use the form instead.",
   voice_amount_differs: "The driver did not say that amount in the voice note.",
   driver_not_armed: "This driver is not armed to receive money. An admin can arm them on the driver page.",
   duplicate_code: "A code for this load, purpose and amount was already asked for in the last 24 hours.",

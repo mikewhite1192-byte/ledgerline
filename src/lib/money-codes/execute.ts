@@ -76,6 +76,10 @@ class Stop extends Error {
 
 const no = (category: string, retryable = false) => ({ ok: false as const, category, retryable });
 
+// Now, from the injected clock. The one place this file reads the wall clock is the default when
+// no clock is injected; every stamp below is written from the value this returns.
+const nowOf = (deps: MoneyCodeDeps): Date => (deps.clock ?? (() => new Date()))();
+
 // ---- The proposal's args ----
 
 type CodeArgs = {
@@ -302,8 +306,14 @@ async function payItemId(q: Queryable, itemRef: string): Promise<string> {
 // Idempotent: the code row is locked first, an issued code is left as it is (only its proposal
 // is closed), and the pay items are keyed by item_ref, so a confirm read back twice writes once.
 // A code no longer issuing or unknown (called off while the code went out) throws, so the ledger
-// row stays open for a person.
-export async function finishIssuedCode(q: Queryable, action: MoneyAction, issuer: MoneyCodeIssuer): Promise<void> {
+// row stays open for a person. nowIso is the caller's clock, the issue time when the ledger row
+// carries no settle time.
+export async function finishIssuedCode(
+  q: Queryable,
+  action: MoneyAction,
+  issuer: MoneyCodeIssuer,
+  nowIso: string,
+): Promise<void> {
   if (action.kind !== "money_code_issue" || action.state !== "confirmed") throw new MoneyError("validation");
   const code = await codeBy(q, "id", action.subjectId, true);
   if (!code || code.driverId !== action.counterpartyId || code.amountCents !== action.amountCents) {
@@ -328,7 +338,7 @@ export async function finishIssuedCode(q: Queryable, action: MoneyAction, issuer
   if (!LAST4.test(last4)) throw new MoneyError("validation");
   if (!(await lockLoad(q, code.loadId))) throw new MoneyError("validation");
   const zone = await readTenantZone(q);
-  const issuedAt = action.settledAt ?? new Date().toISOString();
+  const issuedAt = action.settledAt ?? nowIso;
   const issuedMs = Date.parse(issuedAt);
   if (!Number.isFinite(issuedMs)) throw new MoneyError("validation");
   const expiresAt = new Date(issuedMs + CODE_LIFETIME_MS).toISOString();
@@ -397,23 +407,24 @@ export async function finishIssuedCode(q: Queryable, action: MoneyAction, issuer
   await closeProposal();
 }
 
-// A definite failure: no code was issued. The code ends failed and so does its proposal.
-async function onCodeFailed(q: Queryable, action: MoneyAction): Promise<void> {
+// A definite failure: no code was issued. The code ends failed and so does its proposal, stamped
+// with the caller's clock.
+async function onCodeFailed(q: Queryable, action: MoneyAction, nowIso: string): Promise<void> {
   await q.execute(
     `UPDATE money_codes SET status = 'failed', updated_at = now()
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status IN ('issuing', 'unknown')`,
     [action.subjectId],
   );
   if (action.proposalId) {
-    await failProposal(q, action.proposalId, `code_failed: ${action.failureCategory ?? "unknown"}`, new Date().toISOString());
+    await failProposal(q, action.proposalId, `code_failed: ${action.failureCategory ?? "unknown"}`, nowIso);
   }
 }
 
-function sendHooks(issuer: MoneyCodeIssuer, purpose: MoneyCodePurpose): MoneyHooks {
+function sendHooks(issuer: MoneyCodeIssuer, purpose: MoneyCodePurpose, nowIso: string): MoneyHooks {
   return {
     onReserved: onCodeReserved,
-    onConfirmed: (q, action) => finishIssuedCode(q, action, issuer),
-    onFailed: onCodeFailed,
+    onConfirmed: (q, action) => finishIssuedCode(q, action, issuer, nowIso),
+    onFailed: (q, action) => onCodeFailed(q, action, nowIso),
     ready: () => issuer.ready(),
     // The feature switch at the write, on top of the money executor's payoutsEnabled; the issuer
     // asks both again itself.
@@ -424,10 +435,10 @@ function sendHooks(issuer: MoneyCodeIssuer, purpose: MoneyCodePurpose): MoneyHoo
   };
 }
 
-export function codeReconcileHooks(issuer: MoneyCodeIssuer, purpose: MoneyCodePurpose): ReconcileHooks {
+export function codeReconcileHooks(issuer: MoneyCodeIssuer, purpose: MoneyCodePurpose, nowIso: string): ReconcileHooks {
   return {
-    onConfirmed: (q, action) => finishIssuedCode(q, action, issuer),
-    onFailed: onCodeFailed,
+    onConfirmed: (q, action) => finishIssuedCode(q, action, issuer, nowIso),
+    onFailed: (q, action) => onCodeFailed(q, action, nowIso),
     ready: () => issuer.ready(),
     readBack: (action, ctx) =>
       issuer.readBackCode(
@@ -562,7 +573,7 @@ async function prepare(
   if (code.status === "issued") return { kind: "done", code, moneyActionId: latest?.id ?? null };
   if (code.status === "voided") throw new Stop("already_decided");
   if (code.status === "failed" || latest?.state === "failed") {
-    if (latest) await onCodeFailed(q, latest);
+    if (latest) await onCodeFailed(q, latest, nowIso);
     else await failProposal(q, p.id, "code_failed", nowIso);
     return { kind: "failed", category: latest?.failureCategory === "declined" ? "code_declined" : "code_failed" };
   }
@@ -628,8 +639,7 @@ async function issue(
   proposal: ProposalRow,
   deps: MoneyCodeDeps,
 ): Promise<Issued> {
-  const now = (deps.clock ?? (() => new Date()))();
-  const nowIso = now.toISOString();
+  const nowIso = nowOf(deps).toISOString();
   // The issue gate once more, right before the money executor: the executor itself re-checks
   // only payoutsEnabled and the issuer. A refusal here is a definite no with nothing reserved.
   let refusal: string | null;
@@ -661,7 +671,7 @@ async function issue(
         traceId: isCanonicalUuid(proposal.traceId) ? proposal.traceId : null,
         subjectStatuses: ["issuing", "unknown"],
       },
-      sendHooks(issuer, code.purpose),
+      sendHooks(issuer, code.purpose, nowIso),
       deps.money,
     );
     if (r.action.state === "confirmed") return { ok: true, state: "confirmed", actionId: r.action.id };
@@ -697,7 +707,7 @@ export const executeMoneyCodeProposal: Executor = async (
   if (!moneyCodesOn()) return no("codes_off");
   const a = codeArgsOf(proposal);
   if (!a) return no("not_executable");
-  const now = (deps.clock ?? (() => new Date()))();
+  const now = nowOf(deps);
   const newId = deps.newId ?? randomUUID;
   let prepared: Prepared;
   try {
@@ -748,6 +758,7 @@ export async function checkPendingCode(
 ): Promise<CheckResult> {
   if (!moneyCodesOn()) return no("codes_off");
   const db = deps.db ?? getDb();
+  const nowIso = nowOf(deps).toISOString();
   const found = await db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
     return codeBy(q, "id", codeId, false);
@@ -758,7 +769,7 @@ export async function checkPendingCode(
     db,
     session,
     {
-      hooks: { money_code_issue: codeReconcileHooks(issuer, found.purpose) },
+      hooks: { money_code_issue: codeReconcileHooks(issuer, found.purpose, nowIso) },
       limit: 5,
       olderThanSeconds: CHECK_AFTER_SECONDS,
       subject: { table: "money_codes", id: found.id },
@@ -788,7 +799,7 @@ export type RevealResult =
 export async function revealMoneyCode(session: Session, codeId: string, deps: MoneyCodeDeps = {}): Promise<RevealResult> {
   if (!moneyCodesOn()) return no("codes_off");
   const db = deps.db ?? getDb();
-  const now = (deps.clock ?? (() => new Date()))();
+  const now = nowOf(deps);
   const picked = await db.withTenant(session.tenantId, async (q) => {
     const member = await memberId(q, session);
     const rows = await q.query<{ status: string; expires_at: string | null }>(

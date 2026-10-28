@@ -33,7 +33,9 @@ export type RequestChoices = { loads: RequestChoiceLoad[]; receipts: RequestChoi
 const CHOICES_MAX = 100;
 // Receipts read in the last week, the kinds a money code can be for.
 const RECEIPT_DAYS = 7;
-// The engine's window for a delivered load, so the list offers only loads it can allow.
+// The engine's window for a delivered load, so the list offers only loads it can allow. An
+// invoiced load was delivered too and is offered the same way (the engine still refuses a lumper
+// code on it, with a sentence that says why).
 const DELIVERED_DAYS = 3;
 
 // What the form offers, read in the caller's tenant transaction.
@@ -53,7 +55,8 @@ export async function readRequestChoices(q: Queryable, now: Date): Promise<Reque
        JOIN drivers d ON d.tenant_id = l.tenant_id AND d.id = l.driver_id
       WHERE l.tenant_id = current_tenant_id()
         AND (l.status = 'in_transit'
-             OR (l.status = 'delivered' AND l.delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)))
+             OR (l.status IN ('delivered', 'invoiced')
+                 AND l.delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)))
       ORDER BY d.code, l.load_number
       LIMIT ${CHOICES_MAX}`,
     [addDays(today, -DELIVERED_DAYS), today],
@@ -73,7 +76,7 @@ export async function readRequestChoices(q: Queryable, now: Date): Promise<Reque
       loadNumber: l.load_number,
       driverCode: l.driver_code,
       driverName: l.driver_name,
-      status: l.status === "delivered" ? "delivered" : "in_transit",
+      status: l.status === "in_transit" ? "in_transit" : "delivered",
     })),
     receipts: receipts.map((r) => ({
       id: r.id,
