@@ -3,16 +3,21 @@ import type { Queryable } from "../db";
 import { untrustedContentHash } from "../data/content-hash";
 import { transcriptionOf } from "./schema";
 import {
+  MARKUP_ATTEMPTS_MAX,
   READ_ATTEMPTS_MAX,
   type DocumentKind,
   type DocumentMime,
   type DocumentRead,
+  type MarkupCategory,
+  type MarkupStatus,
   type ReadStatus,
 } from "./types";
 
 // The documents table, inside a tenant transaction the caller opened (row-level security scopes
 // every statement, and each one also names the tenant). Bytes travel as base64 both ways; no
-// statement here but readDocumentBytes ever selects them.
+// statement here but readDocumentBytes ever selects them, and none but readMarkupBytes selects
+// the marked copy's: a statement names one bytea column at most, so one answer stays under the
+// Data API's 1 MiB limit (store.test.ts pins it).
 
 export type DocumentMetaRow = {
   id: string;
@@ -30,14 +35,22 @@ export type DocumentMetaRow = {
   trace_id: string;
   created_at: string;
   updated_at: string;
+  markup_status: MarkupStatus;
+  markup_attempts: number;
+  markup_category: MarkupCategory | null;
+  markup_at: string | null;
 };
+
+const utc = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
 const columns = (reading: string) =>
   "id, filename, mime, byte_length, page_count, read_status, read_attempts, document_kind," +
   ` ${reading} AS reading, CAST(match AS text) AS match, untrusted_input_id,` +
   " read_call_id, trace_id," +
-  ` to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,` +
-  ` to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at`;
+  ` ${utc("created_at")} AS created_at,` +
+  ` ${utc("updated_at")} AS updated_at,` +
+  " markup_status, markup_attempts, markup_category," +
+  ` ${utc("markup_at")} AS markup_at`;
 
 const META_COLUMNS = columns("CAST(reading AS text)");
 
@@ -191,4 +204,152 @@ export async function insertTranscription(q: Queryable, read: DocumentRead, nowI
     [id, text, untrustedContentHash("document", text), nowIso],
   );
   return id;
+}
+
+// --- The marked copy (migration 0055) ---
+
+// Documents whose marked copy was tried in the 24 hours before now, or is being made, other than
+// this one (a retry on a document already counted today is not a second document). Read under
+// lockTenantUploads, so two tries at once cannot both pass the count.
+export async function countRecentMarkups(q: Queryable, id: string, nowIso: string): Promise<number> {
+  const rows = await q.query<{ n: number | string }>(
+    `SELECT count(*) AS n FROM documents
+      WHERE tenant_id = current_tenant_id() AND id <> CAST($1 AS uuid)
+        AND (markup_at > CAST($2 AS timestamptz) - interval '24 hours' OR markup_status = 'marking')`,
+    [id, nowIso],
+  );
+  const n = Number(rows[0]?.n);
+  if (!Number.isSafeInteger(n)) throw new Error("count is not a number");
+  return n;
+}
+
+// The one place a try starts: a read photo with no kept copy, no try running (or one older than
+// the cutoff, whose request is gone) and tries left. Marks the try (status, count, time, target
+// and callout) and clears the last try's result, in one statement, so two clicks start one try.
+// The new try count when taken, else null. The count and the time are the lease every later
+// write names.
+export async function claimMarkup(
+  q: Queryable,
+  id: string,
+  c: { target: string; callout: string; cutoffIso: string; nowIso: string },
+): Promise<number | null> {
+  const rows = await q.query<{ markup_attempts: number | string }>(
+    `UPDATE documents
+        SET markup_status = 'marking', markup_attempts = markup_attempts + 1,
+            markup_at = CAST($4 AS timestamptz), markup_target = $2, markup_callout = $3,
+            markup_category = NULL, markup_check = NULL,
+            markup_edit_call_id = NULL, markup_check_call_id = NULL
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+        AND read_status = 'read' AND mime IN ('image/jpeg', 'image/png', 'image/webp')
+        AND markup_status <> 'checked'
+        AND (markup_status <> 'marking' OR markup_at < CAST($5 AS timestamptz))
+        AND markup_attempts < $6
+      RETURNING markup_attempts`,
+    [id, c.target, c.callout, c.nowIso, c.cutoffIso, MARKUP_ATTEMPTS_MAX],
+  );
+  if (rows.length === 0) return null;
+  const n = Number(rows[0].markup_attempts);
+  if (!Number.isSafeInteger(n)) throw new Error("attempts is not a number");
+  return n;
+}
+
+// A budget refusal found before any try started: the row says it waits for budget, and no try
+// is used (the count and the time stay as they were). 1 when written.
+export async function markMarkupBudget(q: Queryable, id: string, cutoffIso: string): Promise<number> {
+  return q.execute(
+    `UPDATE documents SET markup_status = 'unavailable', markup_category = 'budget'
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+        AND markup_status <> 'checked'
+        AND (markup_status <> 'marking' OR markup_at < CAST($2 AS timestamptz))`,
+    [id, cutoffIso],
+  );
+}
+
+export type MarkupLease = { attempt: number; atIso: string };
+
+const LEASE = `tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND markup_status = 'marking'
+        AND markup_attempts = $2 AND markup_at = CAST($3 AS timestamptz)`;
+
+export type MarkupFailure = {
+  status: "mismatch" | "unavailable";
+  category: MarkupCategory;
+  // The read-back, kept for the trace (never shown), or null.
+  check: Record<string, unknown> | null;
+  editCallId: string | null;
+  checkCallId: string | null;
+  // True when nothing was paid for and the try is given back (a refusal before any call ran).
+  refund: boolean;
+};
+
+// Ends this try without a copy, once (the lease). 1 when this call ended it.
+export async function finishMarkupFailed(
+  q: Queryable,
+  id: string,
+  lease: MarkupLease,
+  f: MarkupFailure,
+): Promise<number> {
+  return q.execute(
+    `UPDATE documents
+        SET markup_status = $4, markup_category = $5, markup_check = CAST($6 AS jsonb),
+            markup_edit_call_id = CAST($7 AS uuid), markup_check_call_id = CAST($8 AS uuid),
+            markup_attempts = markup_attempts - $9
+      WHERE ${LEASE}`,
+    [
+      id,
+      lease.attempt,
+      lease.atIso,
+      f.status,
+      f.category,
+      f.check === null ? null : JSON.stringify(f.check),
+      f.editCallId,
+      f.checkCallId,
+      f.refund ? 1 : 0,
+    ],
+  );
+}
+
+export type MarkupCopy = {
+  mime: "image/png" | "image/jpeg" | "image/webp";
+  bytesBase64: string;
+  byteLength: number;
+  hash: string;
+  check: Record<string, unknown>;
+  editCallId: string;
+  checkCallId: string;
+};
+
+// Keeps a copy that passed the check, once (the lease). The only write of markup_bytes. 1 when
+// this call kept it.
+export async function finishMarkupChecked(q: Queryable, id: string, lease: MarkupLease, c: MarkupCopy): Promise<number> {
+  return q.execute(
+    `UPDATE documents
+        SET markup_status = 'checked', markup_category = NULL, markup_mime = $4, markup_length = $5,
+            markup_bytes = decode($6, 'base64'), markup_hash = $7, markup_check = CAST($8 AS jsonb),
+            markup_edit_call_id = CAST($9 AS uuid), markup_check_call_id = CAST($10 AS uuid)
+      WHERE ${LEASE}`,
+    [id, lease.attempt, lease.atIso, c.mime, c.byteLength, c.bytesBase64, c.hash, JSON.stringify(c.check), c.editCallId, c.checkCallId],
+  );
+}
+
+// The kept copy's file, or null when there is none (only a checked row holds one).
+export async function readMarkupBytes(
+  q: Queryable,
+  id: string,
+): Promise<{ mime: "image/png" | "image/jpeg" | "image/webp"; base64: string } | null> {
+  const rows = await q.query<{ mime: "image/png" | "image/jpeg" | "image/webp"; base64: string }>(
+    `SELECT markup_mime AS mime, encode(markup_bytes, 'base64') AS base64 FROM documents
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND markup_status = 'checked'`,
+    [id],
+  );
+  return rows[0] ?? null;
+}
+
+// The matched driver's language for the callout: "es" or "en", null when there is no such driver.
+export async function readDriverLanguage(q: Queryable, driverId: string): Promise<"en" | "es" | null> {
+  const rows = await q.query<{ preferred_language: string }>(
+    `SELECT preferred_language FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+    [driverId],
+  );
+  const lang = rows[0]?.preferred_language;
+  return lang === "es" ? "es" : lang === "en" ? "en" : null;
 }
