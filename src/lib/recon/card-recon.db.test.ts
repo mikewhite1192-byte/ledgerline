@@ -11,13 +11,15 @@ import { readBreak, readLastSeenRunCents, readRun } from "../data/card-recon";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
+import { readSentInWindow } from "../money/read";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal } from "../proposals/execute";
+import { sentInWindow } from "../rules-engine/card-recon";
 import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { instantAt } from "../seed/calendar";
-import { advanceCardCheck, dismissBreak, startCardCheck, type CardCheckDeps } from "./run";
+import { MAX_LEDGER_ROWS, advanceCardCheck, dismissBreak, startCardCheck, type CardCheckDeps } from "./run";
 import { readHandPick } from "./view";
 
 // The card check against the real database, as the app's role: the seeded statement compared with
@@ -96,8 +98,10 @@ const deps = (over: CardCheckDeps = {}): CardCheckDeps => ({
 async function runToEnd(d: CardCheckDeps = deps(), max = 40) {
   const s = await startCardCheck(SESSION, d);
   if (!s.ok) throw new Error(`start refused: ${s.category}`);
+  // Each slice's deadline counts from the check's own clock, so a test can move the check's day.
+  const at = (d.clock ?? clock)().getTime();
   for (let i = 0; i < max; i++) {
-    const a = await advanceCardCheck(SESSION, s.runId, NOW.getTime() + SLICE, d);
+    const a = await advanceCardCheck(SESSION, s.runId, at + SLICE, d);
     if (!a.ok) throw new Error(`advance refused: ${a.category}`);
     if (a.run.status !== "running") return a.run;
   }
@@ -183,6 +187,38 @@ async function ledgerRow(p: Pick, to: "unknown" | "confirmed"): Promise<string> 
   });
   return id;
 }
+
+// n payment records sent at one instant and never settled, each for its own made-up advance: the
+// bulk a check's read limit is measured against. A sent record is clean to the check, so none of
+// them makes a difference of its own.
+async function sentRows(n: number, sentAt: string): Promise<string[]> {
+  const ids = await admin.withTenant(T, async (q) => {
+    const rows = await q.query<{ id: string }>(
+      `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, idempotency_key,
+         request_id, amount_cents, counterparty_table, counterparty_id, proposed_by, approver_membership_id)
+       SELECT g.id, current_tenant_id(), 'advance_payout', 'payment', 'advances', g.subject_id,
+              'advance_payout:' || CAST(g.subject_id AS text) || ':1', replace(CAST(g.id AS text), '-', ''),
+              100, 'drivers', CAST($2 AS uuid), 'person', CAST($3 AS uuid)
+         FROM (SELECT gen_random_uuid() AS id, gen_random_uuid() AS subject_id
+                 FROM generate_series(1, CAST($1 AS integer))) AS g
+       RETURNING CAST(id AS text) AS id`,
+      [n, picks[0].driverId, memberId],
+    );
+    const made = rows.map((r) => r.id);
+    madeActions.push(...made);
+    await q.execute(
+      `UPDATE money_actions SET state = 'sent', sent_at = CAST($2 AS timestamptz)
+        WHERE tenant_id = current_tenant_id()
+          AND id IN (SELECT CAST(x AS uuid) FROM jsonb_array_elements_text(CAST($1 AS jsonb)) AS x)`,
+      [JSON.stringify(made), sentAt],
+    );
+    return made;
+  });
+  expect(ids).toHaveLength(n);
+  return ids;
+}
+
+const LIMIT_LINE = { system: "payment_records", category: "too_many_records" };
 
 beforeAll(async () => {
   admin = createPgDb({ connectionString: adminUrl() });
@@ -531,6 +567,87 @@ describe("payment records read back", () => {
     expect((await breaks()).filter((b) => b.money_action_id === id).map((b) => b.status)).toEqual(["resolved"]);
     expect(clean.counts.recordsClean).toBe(1);
     expect(sends).toEqual([]);
+  });
+});
+
+describe("which payment records a check reads", () => {
+  // The carrier is in New York and the check runs on 2026-11-02, so its window is 2026-10-19 to
+  // 2026-11-02 local: from 2026-10-19 04:00 UTC (daylight time) up to 2026-11-03 05:00 UTC
+  // (standard time, after the clocks went back on 2026-11-01).
+  const zone = CARRIER.timezone;
+
+  it("checks every record in the window when a thousand were sent just before it and a thousand after", async () => {
+    expect(zone).toBe("America/New_York");
+    // 22:00 local on the day before the window, which a read from that day's UTC midnight meets first.
+    await sentRows(MAX_LEDGER_ROWS, "2026-10-19T02:00:00.000Z");
+    // 01:00 local on the day after the window.
+    await sentRows(MAX_LEDGER_ROWS, "2026-11-03T06:00:00.000Z");
+    const inside = [
+      ...(await sentRows(1, "2026-10-19T04:00:00.000Z")), // 00:00 on the window's first day
+      ...(await sentRows(1, "2026-10-30T15:00:00.000Z")),
+      ...(await sentRows(1, "2026-11-03T04:59:59.999Z")), // 23:59:59.999 on its last day
+    ];
+    const run = await runToEnd();
+    expect([run.windowFrom, run.windowTo]).toEqual(["2026-10-19", "2026-11-02"]);
+    expect(run.counts.records).toBe(inside.length);
+    expect(run.unchecked).not.toContainEqual(LIMIT_LINE);
+    const read = await app.withTenant(T, (q) => readSentInWindow(q, run.windowFrom, run.windowTo, zone, MAX_LEDGER_ROWS));
+    expect(read.map((a) => a.id)).toEqual(inside);
+  }, 60_000);
+
+  it("still says the limit was reached when the window itself holds more records than one check reads", async () => {
+    await sentRows(MAX_LEDGER_ROWS + 1, "2026-10-30T15:00:00.000Z");
+    const run = await runToEnd();
+    expect(run.counts.records).toBe(MAX_LEDGER_ROWS);
+    expect(run.unchecked).toContainEqual(LIMIT_LINE);
+  }, 60_000);
+
+  it("puts a send on the local date it fell on when the clocks change, in the read and in the check", async () => {
+    // Clocks go back at 02:00 on 2026-11-01 (a 25-hour day) and forward at 02:00 on 2027-03-14 (a
+    // 23-hour day). Each pair is the last moment before the day and the first moment of it, then
+    // the last moment of the day and the first moment after it.
+    const fallBack = { start: "2026-11-01", end: "2026-11-01" };
+    const springForward = { start: "2027-03-14", end: "2027-03-14" };
+    const at = async (sentAt: string) => ({ id: (await sentRows(1, sentAt))[0], sentAt });
+    const fb = [
+      await at("2026-11-01T03:59:59.999Z"), // 2026-10-31 23:59:59.999 daylight time: before
+      await at("2026-11-01T04:00:00.000Z"), // 2026-11-01 00:00 daylight time: in
+      await at("2026-11-02T04:59:59.999Z"), // 2026-11-01 23:59:59.999 standard time: in
+      await at("2026-11-02T05:00:00.000Z"), // 2026-11-02 00:00 standard time: after
+    ];
+    const sf = [
+      await at("2027-03-14T04:59:59.999Z"), // 2027-03-13 23:59:59.999 standard time: before
+      await at("2027-03-14T05:00:00.000Z"), // 2027-03-14 00:00 standard time: in
+      await at("2027-03-15T03:59:59.999Z"), // 2027-03-14 23:59:59.999 daylight time: in
+      await at("2027-03-15T04:00:00.000Z"), // 2027-03-15 00:00 daylight time: after
+    ];
+    for (const [window, rows] of [
+      [fallBack, fb],
+      [springForward, sf],
+    ] as const) {
+      const read = await app.withTenant(T, (q) => readSentInWindow(q, window.start, window.end, zone, MAX_LEDGER_ROWS));
+      expect(read.map((a) => a.id)).toEqual([rows[1].id, rows[2].id]);
+      // The read and the check's own filter agree on every send.
+      for (const r of rows) {
+        expect(sentInWindow(r.sentAt, zone, window)).toBe(read.some((a) => a.id === r.id));
+      }
+    }
+    // A check on 2026-11-01 (window 2026-10-18 to 2026-11-01) counts the three fall-back sends up to
+    // that day's last moment, and neither the one at midnight after it nor the spring ones.
+    const noon = new Date(instantAt("2026-11-01", 12, 0, zone));
+    const run = await runToEnd(deps({ clock: () => noon }));
+    expect([run.windowFrom, run.windowTo]).toEqual(["2026-10-18", "2026-11-01"]);
+    expect(run.counts.records).toBe(3);
+  });
+
+  it("refuses a window, zone or limit that is not well formed, before it reads", async () => {
+    await app.withTenant(T, async (q) => {
+      expect(() => readSentInWindow(q, "2026-11-02", "2026-11-01", zone, 10)).toThrow(RangeError);
+      expect(() => readSentInWindow(q, "2026-11-1", "2026-11-02", zone, 10)).toThrow(RangeError);
+      expect(() => readSentInWindow(q, "2026-11-01", "2026-11-02", "", 10)).toThrow(RangeError);
+      expect(() => readSentInWindow(q, "2026-11-01", "2026-11-02", zone, 0)).toThrow(RangeError);
+      expect(() => readSentInWindow(q, "2026-11-01", "2026-11-02", zone, 1001)).toThrow(RangeError);
+    });
   });
 });
 

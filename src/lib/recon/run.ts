@@ -20,7 +20,7 @@ import {
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { tenantLock } from "../invoices/number";
 import { resolveDeps, type MoneyDeps } from "../money/execute";
-import { readAction, readSentSince, readTenantZone } from "../money/read";
+import { readAction, readSentInWindow, readTenantZone } from "../money/read";
 import type { MoneyAction } from "../money/types";
 import { retireEngineProposalsExcept } from "../proposals/engine";
 import {
@@ -38,7 +38,7 @@ import {
   type ReconBreak,
 } from "../rules-engine/card-recon";
 import { ForbiddenError, assertMembership } from "../tenant/context";
-import { addDays, localDateOf } from "../time/local-date";
+import { localDateOf } from "../time/local-date";
 import { isUuid } from "../uuid";
 import { EXPLAIN_TIMEOUT_MS, explainBreak } from "./explain";
 import { MATCH_TIMEOUT_MS, persistMatch, pickDriver, type Picked } from "./match";
@@ -415,8 +415,10 @@ export async function startCardCheck(session: Session, deps: CardCheckDeps = {})
       );
     }
 
-    // The window's payment records: a day early in UTC, then by the local date of each send.
-    const sent = await readSentSince(q, `${addDays(window.start, -1)}T00:00:00.000Z`, MAX_LEDGER_ROWS);
+    // The window's payment records, by the local date of each send in the carrier's zone. The read
+    // takes that date before its limit, so a record outside the window never takes a place, and
+    // too_many_records means the window alone reached the limit. The filter checks it again.
+    const sent = await readSentInWindow(q, window.start, window.end, zone, MAX_LEDGER_ROWS);
     if (sent.length >= MAX_LEDGER_ROWS) addLine(lines, { system: "payment_records", category: "too_many_records" });
     const inWindow = sent.filter((a) => sentInWindow(a.sentAt, zone, window));
     counts.records = inWindow.length;
