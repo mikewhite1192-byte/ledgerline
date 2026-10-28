@@ -2,9 +2,33 @@ import type { ProposalAudit, ProposalCardProps } from "@/components/app/proposal
 import { auditConfirmQuestion, sentences } from "@/lib/agent/auditor/words";
 import { flagWords } from "@/lib/agent/reasons";
 import type { ProposalView } from "@/lib/agent/view";
-import { formatInstant } from "@/lib/format/dates";
+import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { sourceLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
+import { isRuleKey } from "@/lib/pay-rules/rules";
+import {
+  AUDIT_LINES,
+  CONCERNS_QUESTION,
+  FAILED_LINE,
+  FLAGGED_QUESTION,
+  NOT_NOW_LABEL,
+  NOTHING_CHANGES,
+  PAY_RULES_PATH,
+  REJECTED_LINE,
+  SAVE_LABEL,
+  SAVE_QUESTION,
+  SAVED_LINK,
+  SAVING_LABEL,
+  SAVING_LINE,
+  UNCHECKED_QUESTION,
+  adminOnlyLabel,
+  impactLabel,
+  impactLine,
+  ruleTitle,
+  savedLine,
+  shortPeriod,
+  startsLine,
+} from "@/lib/pay-rules/words";
 
 // A stored proposal as card props. Every word on the card is a fixed label or a fixed sentence
 // per reason category; the amount is the engine's, in cents. A flagged proposal asks the flag
@@ -167,10 +191,137 @@ export function detentionLines(d: NonNullable<ProposalView["detention"]>, amount
   return lines;
 }
 
+// "2026-11-06" as "Nov 6"; the card's dates sit within weeks of today.
+function shortDay(value: string): string {
+  return formatLocalDate(value).replace(/, \d{4}$/, "");
+}
+
+// A whole percent from basis points, as the card says a factoring rate: 9000 is "90%", 250 "2.5%".
+export function percentOf(bps: number): string {
+  const whole = Math.trunc(bps / 100);
+  const rest = bps % 100;
+  return rest === 0 ? `${whole}%` : `${whole}.${String(rest).padStart(2, "0").replace(/0$/, "")}%`;
+}
+
+// A Cash Friday card's why, every figure from the proposal's stored args (the engine's numbers
+// when the check ran). Each line links to the record it names.
+export function cashLines(c: NonNullable<ProposalView["cash"]>): { text: string; source?: { table: string; id: string } }[] {
+  if (c.kind === "factoring_request") {
+    return [
+      ...c.invoices.map((i) => ({
+        text:
+          `${i.invoiceNumber}: ${formatCents(i.balanceCents)} owed. ${formatCents(i.advanceCents)} paid now, ` +
+          `less a ${formatCents(i.feeCents)} fee; ${formatCents(i.reserveCents)} held until the customer pays.`,
+        source: { table: "invoices", id: i.invoiceId },
+      })),
+      {
+        text: `The factoring partner pays ${percentOf(c.advanceBps)} up front and charges ${percentOf(c.feeBps)}, against a ${formatCents(c.shortCents)} short.`,
+      },
+    ];
+  }
+  if (c.kind === "bill_defer") {
+    return [
+      {
+        text: `${c.billRef} for ${formatCents(c.amountCents)} is due ${shortDay(c.dueOn)}. It would move to ${shortDay(c.deferredTo)}, after pay day.`,
+        source: { table: "vendor_bills", id: c.billId },
+      },
+    ];
+  }
+  const lines: { text: string; source?: { table: string; id: string } }[] = c.invoices.map((i) => ({
+    text: `${i.invoiceNumber}: ${formatCents(i.balanceCents)}, due ${shortDay(i.dueOn)}.`,
+    source: { table: "invoices", id: i.invoiceId },
+  }));
+  const more = c.overdueInvoices - c.invoices.length;
+  if (more > 0) lines.push({ text: `${more} more past-due ${more === 1 ? "invoice" : "invoices"} not listed here.` });
+  return lines;
+}
+
+// What the amount line says on a Cash Friday card. A test-mode card never says money came in.
+function cashImpactLabel(p: ProposalView): string | undefined {
+  if (p.kind === "bill_defer") return "Bill amount; only its date moves";
+  if (p.kind !== "factoring_request" && p.kind !== "collections_chase") return undefined;
+  if (p.status === "done") return "Recorded in test mode; no money moved";
+  if (p.status === "proposed" || p.status === "approved" || p.status === "executing") {
+    return p.kind === "factoring_request" ? "Would come in before Friday" : "Past due from this customer";
+  }
+  return undefined;
+}
+
+// Who is looking at the card, for a kind whose button says up front that only an admin may save
+// it: admin, and the amount above which the approval gate asks for one (flags.approverRole).
+export type Viewer = { admin: boolean; adminAboveCents: number };
+
+type CardProps = Omit<ProposalCardProps, "hrefFor">;
+
+// A pay rule change's card, in the words of its design: the rule and both values as the title,
+// when it starts, what it would have done to last week's pay (each figure linked to its paystub),
+// the double-check, and that nothing changes until it is saved. The amount is the engine's change
+// to last week's total net pay; it moves no money, so it shows unsigned with its own label.
+function ruleChangeCard(p: ProposalView, base: CardProps, audit?: AuditContext, viewer?: Viewer): CardProps {
+  const c = p.ruleChange ?? null;
+  const net = c
+    ? c.impact.netDeltaCents
+    : p.direction === "out"
+      ? p.amountCents
+      : p.direction === "in"
+        ? -p.amountCents
+        : 0;
+  const reasons: ProposalCardProps["reasons"] = [];
+  const sources: NonNullable<ProposalCardProps["sources"]> = [];
+  if (c) {
+    reasons.push({ text: startsLine(c) });
+    const top = c.impact.top[0];
+    reasons.push({
+      text: impactLine(c.impact),
+      ...(top ? { source: { table: "settlements", id: top.settlementId }, label: `Driver ${top.code}'s paystub` } : {}),
+    });
+    if (c.impact.periodId && c.impact.periodStart && c.impact.periodEnd) {
+      sources.push({
+        table: "settlement_periods",
+        id: c.impact.periodId,
+        label: `Last week's pay (${shortPeriod(c.impact.periodStart, c.impact.periodEnd)})`,
+      });
+    }
+    for (const t of c.impact.top.slice(1)) {
+      sources.push({ table: "settlements", id: t.settlementId, label: `Driver ${t.code}'s paystub` });
+    }
+  }
+  let confirmQuestion = SAVE_QUESTION;
+  if (p.flagged) confirmQuestion = FLAGGED_QUESTION;
+  else if (audit && p.auditorVerdict === "concerns") confirmQuestion = CONCERNS_QUESTION;
+  else if (audit && p.auditorVerdict !== "pass" && p.auditorVerdict !== "block") confirmQuestion = UNCHECKED_QUESTION;
+  const overAdmin = viewer !== undefined && !viewer.admin && p.amountCents > viewer.adminAboveCents;
+  return {
+    ...base,
+    title: c && isRuleKey(c.ruleKey) ? ruleTitle({ ...c, ruleKey: c.ruleKey }) : p.title,
+    impact: { cents: p.amountCents, direction: "none", label: impactLabel(net) },
+    reasons,
+    sources,
+    confirmQuestion,
+    wording: { approve: SAVE_LABEL, approving: SAVING_LABEL, question: SAVE_QUESTION, reject: NOT_NOW_LABEL },
+    ...(overAdmin && p.status === "proposed" ? { approveBlockedLabel: adminOnlyLabel(viewer.adminAboveCents) } : {}),
+    auditWords: AUDIT_LINES,
+    footnote: NOTHING_CHANGES,
+    noOverride: true,
+    statusNotes: {
+      approved: { text: SAVING_LINE },
+      executing: { text: SAVING_LINE },
+      done: c
+        ? { text: savedLine(c.effectiveFrom), link: { href: PAY_RULES_PATH, label: SAVED_LINK } }
+        : { text: `Saved. See it under ${SAVED_LINK}.`, link: { href: PAY_RULES_PATH, label: SAVED_LINK } },
+      failed: { text: FAILED_LINE },
+      rejected: { text: REJECTED_LINE },
+    },
+    // The executor re-sizes the whole change on a resume and writes at most one version.
+    ...(p.status === "approved" ? { canResume: true } : {}),
+  };
+}
+
 export function proposalCardFrom(
   p: ProposalView,
   audit?: AuditContext,
-): Omit<ProposalCardProps, "hrefFor"> {
+  viewer?: Viewer,
+): CardProps {
   const subject = p.subjectLabel ? ` for ${p.subjectLabel}` : "";
   const copy = kindCopy(p.kind);
   let confirmQuestion: string | undefined;
@@ -188,12 +339,15 @@ export function proposalCardFrom(
     p.kind === "detention_charge" && p.detention
       ? detentionLines(p.detention, p.amountCents).map((text) => ({ text }))
       : [];
-  return {
+  const cash = p.cash ? cashLines(p.cash) : [];
+  const cashLabel = cashImpactLabel(p);
+  const card: CardProps = {
     id: p.id,
     title: `${p.title}${subject}`,
-    impact: { cents: p.amountCents, direction: p.direction },
+    impact: { cents: p.amountCents, direction: p.direction, ...(cashLabel ? { label: cashLabel } : {}) },
     reasons: [
       ...detention,
+      ...cash,
       ...p.reasons.map((r) => (r.source ? { text: r.text, source: r.source } : { text: r.text })),
     ],
     sources: p.sources,
@@ -216,4 +370,5 @@ export function proposalCardFrom(
       ? { canResume: true }
       : {}),
   };
+  return p.kind === "pay_rule_change" ? ruleChangeCard(p, card, audit, viewer) : card;
 }

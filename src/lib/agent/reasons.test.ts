@@ -52,6 +52,8 @@ describe("reason sentences", () => {
       "engine_total",
       "payment_on_wrong_invoice",
       "missing_rate",
+      "rule_change_sized_by_engine",
+      "escrow_on_driver_schedules",
       "insurance_exempt",
       "net_below_zero",
       ...PARK_REASON_LIST,

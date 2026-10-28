@@ -11,6 +11,7 @@ import {
   readSettlementInput,
 } from "../../data/read";
 import { matchWrongInvoiceFinding, type ReapplyIds } from "../../invoices/match";
+import { readRuleChangeRows, ruleChangeOf } from "../../pay-rules/change";
 import { paymentPostedOutside } from "../../invoices/posted-outside";
 import {
   advanceEligibility,
@@ -437,4 +438,51 @@ export async function moneyCodeLimit(
     reasons: [...decision.reasons],
     sources,
   };
+}
+
+export type RuleChangeLimitArgs = {
+  ruleKey: string;
+  newValue: number | string | null;
+  askedFrom: string;
+  effectiveFrom: string;
+  oldValue: number | string | null;
+  impactCents: number;
+};
+
+// A pay rule change: the shared check runs again from the rows, with the person's sentence from
+// this turn, and the start date, the old value and the weekly impact must each equal the engine's
+// (whole values). Any refusal of the change, or any difference, is engine_refused; an impact whose
+// size is over ruleChangeImpactMaxCents is amount_over_limit. The switch is read here too. The
+// amount compared is the size of the change to last settled week's total net pay.
+export async function ruleChangeLimit(
+  q: Queryable,
+  ctx: GatewayContext,
+  args: RuleChangeLimitArgs,
+): Promise<LimitResult> {
+  const max = flags.gatewayLimits.ruleChangeImpactMaxCents;
+  const requested = Math.abs(args.impactCents);
+  if (!flags.rulesByTalkingEnabled || !Number.isSafeInteger(max) || max <= 0) {
+    return unavailable(requested);
+  }
+  try {
+    const rows = await readRuleChangeRows(q);
+    const check = ruleChangeOf(rows, args, { text: ctx.userText ?? null }, ctx.now);
+    if (!check.ok) return refused("engine_refused", null, requested);
+    const c = check.change;
+    const engine = c.impact.netDeltaCents;
+    if (c.effectiveFrom !== args.effectiveFrom || c.oldValue !== args.oldValue || engine !== args.impactCents) {
+      return refused("engine_refused", Math.min(Math.abs(engine), max), requested);
+    }
+    if (Math.abs(engine) > max) return refused("amount_over_limit", max, requested);
+    return {
+      ok: true,
+      limitCents: cents(max),
+      requestedCents: cents(Math.abs(engine)),
+      exceptions: [],
+      reasons: ["rule_change_sized_by_engine"],
+      sources: c.sources,
+    };
+  } catch {
+    return unavailable(requested);
+  }
 }

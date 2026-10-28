@@ -163,7 +163,26 @@ export type PayConfigRow = PayConfigKnobs & {
   id: string;
   effective_from: string;
   note: string | null;
-  source: "seed" | "ui";
+  // "proposal": written by a person's approval of a pay rule change (migration 0030).
+  source: "seed" | "ui" | "proposal";
+};
+
+// One executed pay rule change (migration 0030): the diff a person approved, beside the version
+// it created or edited. Not a TenantRows table: the seed never writes it. The demo reset clears it
+// (demo_reset_clear, re-created in 0036), and npm run seed's replace through the pay_configs
+// cascade.
+export type PayRuleChangeRow = {
+  id: string;
+  pay_config_id: string;
+  proposal_id: string | null;
+  rule_key: string;
+  old_value: string;
+  new_value: string;
+  asked_from: string;
+  effective_from: string;
+  applied: "new_version" | "edited_version";
+  decided_by: string;
+  created_at: string;
 };
 
 export type DeductionScheduleRow = {
@@ -351,6 +370,28 @@ export type ScreeningRow = {
   expires_at: string | null;
 };
 
+// A reminder for a late invoice (0041). The seed plants none: the demo presses Draft reminders.
+export type CollectionDraftRow = {
+  id: string;
+  invoice_id: string;
+  customer_id: string;
+  stage: "30" | "60" | "90";
+  tone: "friendly" | "direct" | "firm";
+  status: "drafting" | "drafted" | "refused" | "over_cap" | "approved" | "rejected";
+  figures: Record<string, unknown>;
+  subject: string | null;
+  body: string | null;
+  refusal_category: string | null;
+  verification: Record<string, unknown> | null;
+  trace_id: string;
+  model_call_id: string | null;
+  decided_by: string | null;
+  decided_at: string | null;
+  channel: "logged" | "email" | null;
+  sent_at: string | null;
+  updated_at: string;
+};
+
 // One brief (0042). figures, body and verification are jsonb whose shape each kind defines
 // (src/lib/briefs); the seed plants none.
 export type BriefRow = {
@@ -369,6 +410,66 @@ export type BriefRow = {
   model_call_id: string | null;
   created_by: string;
   updated_at: string;
+};
+
+export type VendorBillRow = {
+  id: string;
+  bill_ref: string;
+  vendor_name: string;
+  category: "fuel_supplier" | "insurance" | "maintenance" | "tolls" | "software" | "lease" | "other";
+  amount_cents: number;
+  due_on: string;
+  urgency: "fixed" | "flexible";
+  status: "open" | "deferred" | "paid";
+  deferred_to: string | null;
+  paid_on: string | null;
+  proposal_id: string | null;
+};
+
+export type CashSettingsRow = {
+  id: string;
+  bank_balance_cents: number;
+  balance_as_of: string;
+  pay_day_dow: number;
+  factoring_advance_bps: number;
+  factoring_fee_bps: number;
+};
+
+// One Cash Friday check as stored: figures, lines and options are the engine's own output (cents,
+// dates, ids), explanation the verified paragraph or null with explain_category saying why.
+export type CashCheckRow = {
+  id: string;
+  period_id: string;
+  as_of: string;
+  pay_day: string;
+  figures: Record<string, unknown>;
+  lines: unknown[];
+  options: unknown[];
+  gap_cents: number;
+  pay_run_source: "stored" | "preview";
+  explanation: string | null;
+  explain_call_id: string | null;
+  explain_category: string | null;
+  created_by: string;
+};
+
+// A carrier note (0040): a short line of context the office keeps about a customer, a driver or
+// the carrier as a whole. subject_id is null for the whole carrier. Only an active note reaches
+// the agent. created_at and updated_at are the database's own, so they are not listed.
+export type CarrierNoteRow = {
+  id: string;
+  subject_kind: "customer" | "driver" | "carrier";
+  subject_id: string | null;
+  text: string;
+  status: "suggested" | "active";
+  source_kind: "chat" | "record" | "person" | "seed";
+  source_turn_id: string | null;
+  source_table: string | null;
+  source_id: string | null;
+  created_by_kind: "person" | "agent" | "seed";
+  created_by_sub: string | null;
+  created_by_model_call_id: string | null;
+  updated_by_sub: string | null;
 };
 
 export type TenantRows = {
@@ -395,7 +496,12 @@ export type TenantRows = {
   payment_applications: PaymentApplicationRow[];
   untrusted_inputs: UntrustedInputRow[];
   screenings: ScreeningRow[];
+  collection_drafts: CollectionDraftRow[];
   briefs: BriefRow[];
+  vendor_bills: VendorBillRow[];
+  cash_settings: CashSettingsRow[];
+  cash_checks: CashCheckRow[];
+  carrier_notes: CarrierNoteRow[];
 };
 
 // Compile-time proof that TenantRows has exactly one key per table.

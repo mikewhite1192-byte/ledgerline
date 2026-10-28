@@ -46,6 +46,11 @@ const SENTENCES: Readonly<Record<string, string>> = {
   receipt_total_matches: "The receipt's total, type and load number match the code asked for.",
   voice_amount: "The driver's voice note names this exact amount.",
   driver_armed: "The driver is armed to receive money.",
+  // propose_rule_change
+  rule_change_sized_by_engine: "Sized on last week's pay with the same math that pays drivers.",
+  // a pay rule change refused: escrow per week while a driver's escrow schedule runs
+  escrow_on_driver_schedules:
+    "Each driver's escrow schedule sets what is held back each week, so changing the carrier's escrow per week would not change anyone's pay. Nothing was changed.",
   // the fuel checks (engine proposals)
   state_not_on_route: "The company card bought fuel in a state this load did not drive through.",
   gallons_over_tank: "The fill-up was more fuel than the truck's tank holds.",
@@ -69,6 +74,15 @@ const SENTENCES: Readonly<Record<string, string>> = {
   source_changed: "A load behind a pay line is no longer delivered in this week.",
   advance_overrecovered: "An advance would be taken back for more than the driver owes.",
   schedule_inactive: "A deduction schedule on this paystub is no longer active this week.",
+  // Cash Friday (engine cards)
+  covers_short: "On its own, this covers Friday's short.",
+  narrows_short: "This makes Friday's short smaller but does not close it on its own.",
+  factoring_test_mode: "Test mode: approving records your decision. Nothing is sent to a factoring partner.",
+  bill_flexible: "The vendor accepts a later date on this bill.",
+  due_before_pay_day: "The bill is due on or before pay day.",
+  repeat_late_payer: "This customer usually pays late.",
+  past_due_balance: "These invoices are past their due date.",
+  collections_test_mode: "Test mode: approving records your decision. No message goes to the customer.",
 };
 
 const GENERIC = "A rule check found this.";

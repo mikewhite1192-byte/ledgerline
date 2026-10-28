@@ -33,6 +33,7 @@ describe("flags", () => {
       startDate: "2026-10-28",
     });
     expect(isLocalDate(flags.moneyCodes.startDate)).toBe(true);
+    expect(flags.rulesByTalkingEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
   });
 
@@ -80,6 +81,7 @@ describe("flags", () => {
       payCorrectionMaxCents: 50_000,
       invoiceFixMaxCents: 250_000,
       detentionChargeMaxCents: 100_000,
+      ruleChangeImpactMaxCents: 500_000,
     });
     for (const v of Object.values(flags.gatewayLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
@@ -155,6 +157,30 @@ describe("flags", () => {
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 
+  it("keeps collections dark, with no email address allowed, no send date and small caps", () => {
+    expect(flags.collectionsEnabled).toBe(false);
+    expect(flags.collectionsEmailEnabled).toBe(false);
+    expect(flags.collectionsEmailAllowlist).toEqual([]);
+    // Not a whole date, so every email is refused until a release PR sets one.
+    expect(flags.collectionsEmailFrom).toBe("");
+    expect(isLocalDate(flags.collectionsEmailFrom)).toBe(false);
+    expect(flags.collectionsLimits).toEqual({
+      maxDraftCents: 2,
+      maxRunCents: 40,
+      maxOutputTokens: 500,
+      maxDraftsPerRun: 12,
+      minDaysLate: 30,
+    });
+    for (const v of Object.values(flags.collectionsLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.collectionsLimits.maxDraftCents).toBeLessThan(flags.collectionsLimits.maxRunCents);
+    // A local override can never turn collections on: its tool is not on the recorded demo path.
+    for (const key of ["collectionsEnabled", "collectionsEmailEnabled"]) {
+      expect((LOCAL_OVERRIDABLE as readonly string[]).includes(key)).toBe(false);
+    }
+  });
+
   it("keeps the sweep off, its schedule off, its fixes unable to run and its caps small", () => {
     expect(flags.sweepEnabled).toBe(false);
     expect(flags.sweepScheduleEnabled).toBe(false);
@@ -169,6 +195,23 @@ describe("flags", () => {
     // One slice answers inside the 30 second route limit with room for the last write.
     expect(flags.sweepLimits.sliceMs).toBeLessThan(25_000);
     expect(flags.approveAllLimits).toEqual({ maxItems: 25 });
+  });
+
+  it("ships Cash Friday dark, with its explanation and option counts capped", () => {
+    expect(flags.cashFridayEnabled).toBe(false);
+    expect(flags.cashFridayLimits).toEqual({
+      maxExplainCents: 8,
+      maxExplainChars: 600,
+      maxFactorInvoices: 3,
+      maxChaseCustomers: 2,
+      graceDays: 14,
+      factoringMaxAgeDays: 45,
+    });
+    for (const v of Object.values(flags.cashFridayLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The explanation fits the cash_checks.explanation CHECK in migration 0029.
+    expect(flags.cashFridayLimits.maxExplainChars).toBeLessThanOrEqual(600);
   });
 
   it("keeps the sweep's second opinion off, with every cap inside the run's own", () => {

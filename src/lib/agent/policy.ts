@@ -82,6 +82,21 @@ export const REPORT_PROMPT = [
   "  (the total or the largest rows) in one or two lines and say the full table is below.",
 ].join("\n");
 
+// Added to the prompt only while get_cash_friday is offered (flags.cashFridayEnabled), so a turn
+// with the switch off sends exactly today's prompt.
+export const CASH_PROMPT = [
+  "- \"Can we make Friday's pay run?\": call get_cash_friday. Say covered or short and by how much,",
+  "  then the moves it found; a person presses Check Friday's cash and approves each card on the",
+  "  Cash page.",
+].join("\n");
+
+// Added to the prompt only while get_collections is offered (flags.collectionsEnabled), so a turn
+// with collections off sends exactly today's prompt.
+export const COLLECTIONS_RULE = [
+  "- For who needs a payment reminder, call get_collections. Reminders are drafted, approved and",
+  "  sent only on the Collections page; never write one in chat or say one was sent.",
+].join("\n");
+
 // Added to the prompt only while propose_money_code is offered (flags.moneyCodes.enabled), so a
 // turn with the switch off sends exactly today's prompt.
 export const MONEY_CODE_PROMPT = [
@@ -96,14 +111,18 @@ export const MONEY_CODE_PROMPT = [
 ].join("\n");
 
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
-// is on (it is one of the rules), then the report section while the report tools are offered,
-// then the money code section while propose_money_code is offered. With search off and both
-// switches off it is the prompt above.
+// is on (it is one of the rules), the collections rule while get_collections is offered, the Cash
+// Friday line while get_cash_friday is offered, then the report section while the report tools are
+// offered, then the money code section while propose_money_code is offered. With search,
+// collections, Cash Friday and money codes off it is the prompt above, plus the report section
+// when reports are on.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
-  let prompt = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
-  if (toolNames.some((n) => reportOfTool(n) !== null)) prompt = `${prompt}\n${REPORT_PROMPT}`;
-  if (toolNames.includes("propose_money_code")) prompt = `${prompt}\n${MONEY_CODE_PROMPT}`;
-  return prompt;
+  const searched = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
+  const collections = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
+  const prompt = toolNames.includes("get_cash_friday") ? `${collections}\n${CASH_PROMPT}` : collections;
+  const reports = toolNames.some((n) => reportOfTool(n) !== null);
+  const reported = reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
+  return toolNames.includes("propose_money_code") ? `${reported}\n${MONEY_CODE_PROMPT}` : reported;
 }
 
 export const STATE_HEADER = "Current state (from the database, for this turn only):";

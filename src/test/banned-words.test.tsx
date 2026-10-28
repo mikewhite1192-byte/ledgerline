@@ -17,16 +17,44 @@ import { BADGE_STATUSES, StatusBadge } from "@/components/app/status-badge";
 import { ToastProvider } from "@/components/app/toast";
 import { ApproveAll } from "@/components/settlements/approve-all";
 import { ContinueBatch } from "@/components/settlements/continue-batch";
+import { OUT_OF_DATE } from "@/components/cash/friday-pay";
 import { doneNote } from "@/components/settlements/action-button";
 import { FuelChecks } from "@/components/fuel/fuel-checks";
+import { RuleChangeCards, type RuleChangeCard } from "@/components/pay-rules/rule-change-cards";
 import { HowWorkedOut } from "@/components/trace/how-worked-out";
 import { WriteBrief } from "@/components/profit/write-brief";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
+import { NotesBoard } from "@/app/memory/notes-board";
 import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
 import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
-import { refusalWords, writeOutcome } from "@/lib/briefs/words";
+import { reasonSentence } from "@/lib/agent/reasons";
+import { refusalWords as briefRefusalWords, writeOutcome } from "@/lib/briefs/words";
+import {
+  BILL_CATEGORY_WORDS,
+  BILL_STATUS_WORDS,
+  CASH_CARD_NOTICES,
+  CHECK_NOT_CONFIRMED,
+  CHECK_NOTICE,
+  explainMissing,
+  PAYER_WORDS,
+  RECEIPT_STATUS_WORDS,
+} from "@/lib/cash/labels";
+import {
+  approvedWords,
+  DECIDE_ERROR_WORDS,
+  DRAFT_ERROR_WORDS,
+  draftedWords,
+  EMAIL_UNCONFIRMED_WORDS,
+  REFUSAL_WORDS,
+  refusalWords,
+  REMINDER_STATUS_WORDS,
+  stillWaitingWords,
+  TONE_HELP,
+  TONE_WORDS,
+  UNCONFIRMED_DECISION_WORDS,
+} from "@/lib/collections/words";
 import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
 import { TERMS } from "@/lib/format/terms";
@@ -41,6 +69,8 @@ import {
   runLine,
 } from "@/lib/fuel/help";
 import { SUBJECT_STATUSES } from "@/lib/money/types";
+import { RULE_KEYS, RULES, formatValue, labelFor } from "@/lib/pay-rules/rules";
+import * as payWords from "@/lib/pay-rules/words";
 import { INVOICE_REVIEW_STATUSES } from "@/lib/rules-engine";
 import { FUEL_CHECK_NAMES, NO_SUGGESTION_REASONS } from "@/lib/rules-engine/fuel";
 import { REPORT_COLUMNS, REPORT_NAMES, REPORT_TITLES, type ReportName, type ReportResult, type ReportRow } from "@/lib/reports/types";
@@ -238,6 +268,10 @@ vi.mock("@/lib/invoices/views", async (importOriginal) => ({
   readCustomerRecord: async () => get("customerRecord"),
   readLoadRecord: async () => get("loadRecord"),
 }));
+vi.mock("@/lib/collections/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/collections/view")>()),
+  readCollectionsView: async () => get("collectionsView"),
+}));
 vi.mock("@/lib/documents/service", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/documents/service")>()),
   getDocument: async () => get("document"),
@@ -254,6 +288,7 @@ vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
   readEngineProposalViews: async () => get("invoiceProposals"),
   readAgentModelWeek: async () => get("week"),
   readRecentAgentTurns: async () => get("turns"),
+  readWaitingRuleChangeViews: async () => get("ruleChanges"),
 }));
 vi.mock("@/lib/ai/spend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/ai/spend")>()),
@@ -273,6 +308,16 @@ vi.mock("@/lib/sweep/view", async (importOriginal) => ({
 vi.mock("@/lib/fuel/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/fuel/view")>()),
   readFuelPage: async () => get("fuelPage"),
+}));
+vi.mock("@/lib/pay-rules/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/pay-rules/read")>()),
+  // An Error fixture stands for rules that could not be read whole.
+  readPayRulesPage: async () => {
+    const page = get<unknown>("payRulesPage");
+    if (page instanceof Error) throw page;
+    return page;
+  },
+  readNextWeekStart: async () => get("nextStart"),
 }));
 vi.mock("@/lib/portal/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/portal/views")>()),
@@ -329,6 +374,25 @@ vi.mock("@/lib/briefs/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/briefs/view")>()),
   readProfitView: async () => get("profitView"),
 }));
+vi.mock("@/lib/cash/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/cash/view")>()),
+  readCashView: async () => get("cashView"),
+  readVendorBill: async () => get("vendorBill"),
+  readCashHome: async () => get("cashHome"),
+}));
+vi.mock("@/lib/memory/notes", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/memory/notes")>()),
+  listNotes: async () => get("memoryNotes"),
+  listNoteSubjects: async () => get("noteSubjects"),
+}));
+// The Memory board's saves answer what each test sets, so every refusal it can show is read.
+const noteActions = vi.hoisted(() => ({
+  addNoteAction: vi.fn(),
+  editNoteAction: vi.fn(),
+  keepNoteAction: vi.fn(),
+  removeNoteAction: vi.fn(),
+}));
+vi.mock("@/app/memory/actions", () => noteActions);
 vi.mock("@/lib/voice/read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/voice/read")>()),
   readVoiceList: async () => get("voiceList"),
@@ -351,6 +415,7 @@ function defaults(): Record<string, unknown> {
     driverAdvances: fx.DRIVER_ADVANCES,
     identity: fx.IDENTITY,
     clips: fx.CLIPS,
+    collectionsView: fx.COLLECTIONS_VIEW,
     paymentForm: fx.PAYMENT_FORM,
     invoices: fx.INVOICES,
     queue: fx.QUEUE,
@@ -392,12 +457,20 @@ function defaults(): Record<string, unknown> {
     moneyCodes: fx.MONEY_CODES,
     moneyCode: fx.MONEY_CODE_DETAIL,
     codeChoices: fx.CODE_CHOICES,
+    payRulesPage: fx.PAY_RULES_PAGE,
+    nextStart: fx.NEXT_START,
+    ruleChanges: fx.RULE_CHANGES,
     payItemView: fx.PAY_ITEM_CASES[0][1],
     driverDayView: fx.DRIVER_DAY_CASES[0][1],
     scheduleView: fx.SCHEDULE_CASES[0][1],
     extraChargeLoadId: null,
     heroLink: fx.HERO_LINK_DRAFT,
     profitView: fx.PROFIT_VIEW,
+    cashView: fx.CASH_VIEW,
+    vendorBill: fx.VENDOR_BILL,
+    cashHome: null,
+    memoryNotes: fx.MEMORY_NOTES,
+    noteSubjects: fx.NOTE_SUBJECTS,
   };
 }
 
@@ -420,7 +493,14 @@ beforeEach(() => {
   state.fx = defaults();
   state.session = null;
 });
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+// The Cash page and Home's Friday card read the carrier's today; these variants pin it (only Date is
+// faked) so each takes the path it names whatever day the test runs.
+const onDay = (iso: string) => vi.useFakeTimers({ toFake: ["Date"], now: new Date(iso) });
 
 // A server page may return an async server component at its top; run it to its tree.
 async function resolve(node: ReactNode): Promise<ReactNode> {
@@ -664,6 +744,29 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.paystubAsk = fx.PAYSTUB_ASK),
         load: async () => (await import("@/app/page")).default(sp({ paystub: ID })),
       },
+      {
+        name: "Friday's pay run short",
+        setup: () => {
+          onDay("2026-11-02T15:00:00.000Z");
+          state.fx.cashHome = fx.CASH_HOME;
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: "Short by $6,800.00",
+      },
+      {
+        name: "Friday's pay run out of date",
+        setup: () => {
+          onDay("2026-11-07T15:00:00.000Z");
+          state.fx.cashHome = fx.CASH_HOME;
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: OUT_OF_DATE,
+      },
+      {
+        name: "asked to change a pay rule",
+        load: async () => (await import("@/app/page")).default(sp({ rule: "1" })),
+        shows: payWords.composerHelp(fx.NEXT_START),
+      },
     ],
   },
   {
@@ -696,6 +799,103 @@ const PAGES: PageCase[] = [
     variants: [
       { name: "clips", load: async () => (await import("@/app/clips/page")).default() },
       { name: "empty", setup: () => (state.fx.clips = []), load: async () => (await import("@/app/clips/page")).default() },
+    ],
+  },
+  {
+    file: "cash/page.tsx",
+    variants: [
+      {
+        name: "short, explained, with every move",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "Muse Wonder explains",
+      },
+      {
+        name: "covered, the own sentence after a timeout, from an earlier day",
+        setup: () => {
+          onDay("2026-11-04T15:00:00.000Z");
+          state.fx.cashView = {
+            ...fx.CASH_VIEW,
+            check: {
+              ...fx.CASH_CHECK,
+              payRunSource: "stored",
+              figures: { ...fx.CASH_CHECK.figures, gapCents: 214_000 },
+              explanation: null,
+              explainCategory: "timeout",
+            },
+            cards: [],
+          };
+        },
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "That was before today",
+      },
+      {
+        name: "short, the paragraph dropped for saying a move covers it",
+        setup: () => {
+          onDay("2026-11-02T15:00:00.000Z");
+          state.fx.cashView = { ...fx.CASH_VIEW, check: { ...fx.CASH_CHECK, explanation: null, explainCategory: "overclaim" } };
+        },
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "LedgerLine says",
+      },
+      {
+        name: "no open invoices",
+        setup: () => (state.fx.cashView = { ...fx.CASH_VIEW, check: { ...fx.CASH_CHECK, lines: [] } }),
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "No open invoices",
+      },
+      {
+        name: "no check yet",
+        setup: () => (state.fx.cashView = { check: null, bills: [], cards: [] }),
+        load: async () => (await import("@/app/cash/page")).default(),
+        shows: "No check yet",
+      },
+    ],
+  },
+  {
+    file: "collections/page.tsx",
+    variants: [
+      {
+        name: "late invoices and a reminder in every state",
+        load: async () => (await import("@/app/collections/page")).default(),
+        shows: "and 1 more",
+      },
+      {
+        name: "refused, every reason",
+        setup: () =>
+          (state.fx.collectionsView = {
+            ...fx.COLLECTIONS_VIEW,
+            cards: [...Object.keys(REFUSAL_WORDS), null, "unheard_of"].map((refusalCategory, n) =>
+              fx.reminderCard(n + 20, { status: "refused", subject: null, body: null, refusalCategory }),
+            ),
+          }),
+        load: async () => (await import("@/app/collections/page")).default(),
+        shows: "did not pass its check",
+      },
+      {
+        name: "every late invoice has a reminder",
+        setup: () => (state.fx.collectionsView = { ...fx.COLLECTIONS_VIEW, toDraft: [] }),
+        load: async () => (await import("@/app/collections/page")).default(),
+        shows: "Every late invoice has a reminder",
+      },
+      {
+        name: "models switched off",
+        load: async () => {
+          flags.aiEnabled = false;
+          try {
+            return await (await import("@/app/collections/page")).default();
+          } finally {
+            flags.aiEnabled = true;
+          }
+        },
+        shows: "no reminders can be drafted right now",
+      },
+      {
+        name: "nobody past due",
+        setup: () => (state.fx.collectionsView = { ...fx.COLLECTIONS_VIEW, pastDueCount: 0, pastDueCents: 0, waiting: 0, approvedLastWeek: 0, toDraft: [], cards: [] }),
+        load: async () => (await import("@/app/collections/page")).default(),
+        shows: "Nobody is 30 or more days past due",
+      },
     ],
   },
   {
@@ -773,6 +973,22 @@ const PAGES: PageCase[] = [
         name: "review, nothing to review",
         setup: () => (state.fx.reviewQueue = { counts: Object.fromEntries(INVOICE_REVIEW_STATUSES.map((st) => [st, 0])), rows: [] }),
         load: async () => (await import("@/app/invoices/page")).default(sp({ tab: "review" })),
+      },
+    ],
+  },
+  {
+    file: "memory/page.tsx",
+    variants: [
+      {
+        name: "notes and a suggestion",
+        load: async () => (await import("@/app/memory/page")).default(),
+        shows: "The agent suggested 1 note",
+      },
+      {
+        name: "empty",
+        setup: () => (state.fx.memoryNotes = []),
+        load: async () => (await import("@/app/memory/page")).default(),
+        shows: "No notes yet",
       },
     ],
   },
@@ -1006,6 +1222,15 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "records/vendor_bills/[id]/page.tsx",
+    variants: fx.VENDOR_BILLS.map((b) => ({
+      name: `${b.status}, ${b.urgency}`,
+      setup: () => (state.fx.vendorBill = b),
+      load: async () => (await import("@/app/records/vendor_bills/[id]/page")).default({ params: p({ id: b.id }) }),
+      shows: b.billRef,
+    })),
+  },
+  {
     file: "settlements/page.tsx",
     variants: [
       { name: "week", load: async () => (await import("@/app/settlements/page")).default(sp()) },
@@ -1079,6 +1304,34 @@ const PAGES: PageCase[] = [
   {
     file: "settings/demo/page.tsx",
     variants: [{ name: "preview", load: async () => (await import("@/app/settings/demo/page")).default() }],
+  },
+  {
+    file: "settings/pay-rules/page.tsx",
+    variants: [
+      {
+        name: "rules and changes waiting",
+        load: async () => (await import("@/app/settings/pay-rules/page")).default(),
+        shows: payWords.NOTHING_CHANGES,
+      },
+      {
+        name: "nothing waiting",
+        setup: () => (state.fx.ruleChanges = []),
+        load: async () => (await import("@/app/settings/pay-rules/page")).default(),
+        shows: payWords.WAITING_EMPTY_TITLE,
+      },
+      {
+        name: "staff, a change over the admin amount",
+        setup: () => (state.fx.payRulesPage = { ...fx.PAY_RULES_PAGE, role: "staff" }),
+        load: async () => (await import("@/app/settings/pay-rules/page")).default(),
+        shows: payWords.adminOnlyLabel(flags.approverRole.adminAboveCents),
+      },
+      {
+        name: "rules could not be read",
+        setup: () => (state.fx.payRulesPage = new Error("unreadable")),
+        load: async () => (await import("@/app/settings/pay-rules/page")).default(),
+        shows: payWords.LOAD_FAILED_TITLE,
+      },
+    ],
   },
   {
     file: "sign-in/page.tsx",
@@ -1231,15 +1484,19 @@ const PAGES: PageCase[] = [
       },
     ],
   },
+  loading("cash/loading.tsx", () => import("@/app/cash/loading")),
+  loading("collections/loading.tsx", () => import("@/app/collections/loading")),
   loading("documents/loading.tsx", () => import("@/app/documents/loading")),
   loading("documents/[id]/loading.tsx", () => import("@/app/documents/[id]/loading")),
   loading("driver-notes/loading.tsx", () => import("@/app/driver-notes/loading")),
   loading("driver-notes/[settlementId]/view/loading.tsx", () => import("@/app/driver-notes/[settlementId]/view/loading")),
   loading("invoices/loading.tsx", () => import("@/app/invoices/loading")),
+  loading("memory/loading.tsx", () => import("@/app/memory/loading")),
   loading("models/loading.tsx", () => import("@/app/models/loading")),
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
   loading("profit/loading.tsx", () => import("@/app/profit/loading")),
   loading("records/loading.tsx", () => import("@/app/records/loading")),
+  loading("settings/pay-rules/loading.tsx", () => import("@/app/settings/pay-rules/loading")),
   loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
   loading("sweep/fuel/loading.tsx", () => import("@/app/sweep/fuel/loading")),
 ];
@@ -1328,6 +1585,21 @@ describe("no internal word on any page", () => {
       });
     }
   }
+});
+
+// A page switched off for the carrier shows only the shell and the off note. The page variants above
+// must never land there, so the off state is read here, with its own switch put back after.
+describe("no internal word on a switched-off page", () => {
+  it("collections/page.tsx (switch off)", async () => {
+    flags.collectionsEnabled = false;
+    try {
+      const container = await renderPage(async () => (await import("@/app/collections/page")).default());
+      expect(container.textContent).toContain("Collections is off for this carrier");
+      expect(scan(container)).toEqual([]);
+    } finally {
+      flags.collectionsEnabled = true;
+    }
+  });
 });
 
 // The record pages a paystub line links to, for a record this carrier does not have: each shows the
@@ -1550,7 +1822,8 @@ describe("no internal word on the advance request form", () => {
 
 describe("no internal word on a paystub", () => {
   it("the sample paystubs", () => {
-    for (const stub of [PAYSTUB, SHORT_WEEK_PAYSTUB]) {
+    const underRules = [{ ...PAYSTUB, payRules: { from: "2026-10-19", href: payWords.PAY_RULES_PATH } }, { ...PAYSTUB, payRules: { from: "2026-10-19" } }];
+    for (const stub of [PAYSTUB, SHORT_WEEK_PAYSTUB, ...underRules]) {
       const { container, unmount } = render(<Paystub {...stub} />);
       expect(scan(container)).toEqual([]);
       unmount();
@@ -1710,6 +1983,139 @@ describe("no internal word in a chat answer or its trace", () => {
     expect(body.textContent).toMatch(/Asked for (low|high) effort/);
     expect(scan(body)).toEqual([]);
   });
+
+  it("the trace's note links, for an answer that read the office's notes", async () => {
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace: { ...sampleTrace(), notesUsed: fx.NOTES_USED } })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /How this was worked out/i }));
+    });
+    const notes = screen.getByRole("list", { name: "Notes it read" });
+    const kept = fx.NOTES_USED.filter((n) => n.label !== null);
+    expect(within(notes).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual(kept.map((n) => `/memory#note-${n.id}`));
+    expect(document.body.textContent).toContain("Remembered 3 notes from the office; 1 has since been removed");
+    expect(scan(document.body)).toEqual([]);
+  });
+});
+
+describe("no internal word on the Memory board, in every state", () => {
+  const board = (notes = fx.MEMORY_NOTES, maxNotes = 500) =>
+    render(
+      <ToastProvider>
+        <NotesBoard notes={notes} subjects={fx.NOTE_SUBJECTS} timeZone={fx.TENANT.timezone} maxChars={300} maxNotes={maxNotes} />
+      </ToastProvider>,
+    );
+  const click = async (name: string, inside: HTMLElement = document.body) => {
+    await act(async () => {
+      fireEvent.click(within(inside).getByRole("button", { name }));
+    });
+  };
+  // Every category a save can answer, and a save lost on the way (read as not known).
+  const REFUSALS = ["off", "invalid", "subject_not_found", "full", "duplicate", "not_found", "forbidden", "unreadable"] as const;
+  type Act = (typeof noteActions)[keyof typeof noteActions];
+  // Each refusal, then the lost save, through one action; returns the words each one showed.
+  const refuseEach = async (action: Act, save: () => Promise<void>, shown: () => string): Promise<string[]> => {
+    const seen: string[] = [];
+    for (const category of REFUSALS) {
+      action.mockResolvedValueOnce({ ok: false, category });
+      await save();
+      seen.push(shown());
+      expect(scan(document.body), category).toEqual([]);
+    }
+    action.mockRejectedValueOnce(new Error("lost on the way"));
+    await save();
+    seen.push(shown());
+    expect(scan(document.body), "not known").toEqual([]);
+    return seen;
+  };
+
+  afterEach(() => {
+    for (const f of Object.values(noteActions)) f.mockReset();
+  });
+
+  it("full, at the most notes a carrier keeps", () => {
+    board(fx.MEMORY_NOTES, fx.MEMORY_NOTES.length);
+    expect(screen.getByText("Remove a note first")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("adding a note: the form, an empty save, each refusal (the duplicate among them) and the done note", async () => {
+    board();
+    await click("Add a note");
+    expect(screen.getByRole("heading", { name: "Add a note" })).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    await click("Save note");
+    expect(screen.getByText("Write the note first.")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    fireEvent.change(screen.getByLabelText("Note"), { target: { value: "Calls ahead on every delivery" } });
+    const seen = await refuseEach(noteActions.addNoteAction, () => click("Save note"), () => document.getElementById("note-text-error")?.textContent ?? "");
+    expect(new Set(seen).size).toBe(REFUSALS.length + 1);
+    expect(seen.every((t) => t.length > 0)).toBe(true);
+    noteActions.addNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Save note");
+    expect(screen.getByText("Note added")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("editing a note: the open editor, an empty save, each refusal and the done note", async () => {
+    board();
+    const target = fx.MEMORY_NOTES[0];
+    await click("Edit the note about Tanglewood Grocery Supply");
+    const editor = `edit-${target.id}`;
+    expect(document.getElementById(editor)).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    fireEvent.change(document.getElementById(editor)!, { target: { value: " " } });
+    await click("Save");
+    expect(screen.getByText("Write the note first, or remove it.")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    fireEvent.change(document.getElementById(editor)!, { target: { value: "Pays about 30 days after due" } });
+    const seen = await refuseEach(noteActions.editNoteAction, () => click("Save"), () => document.getElementById(`${editor}-error`)?.textContent ?? "");
+    expect(new Set(seen).size).toBe(REFUSALS.length + 1);
+    noteActions.editNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Save");
+    expect(screen.getByText("Note saved")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("a suggestion kept or discarded, and a note removed: each refusal, the question first and the done notes", async () => {
+    board();
+    const alert = () => screen.getByRole("alert").textContent ?? "";
+    const keep = await refuseEach(noteActions.keepNoteAction, () => click("Keep the note about Marcus Hale"), alert);
+    expect(new Set(keep).size).toBe(REFUSALS.length + 1);
+    const discard = await refuseEach(noteActions.removeNoteAction, () => click("Discard the note about Marcus Hale"), alert);
+    expect(new Set(discard).size).toBe(REFUSALS.length + 1);
+
+    await click("Remove the note about Rosa Delgado");
+    const question = () => screen.getByRole("group", { name: "Remove this note?" });
+    expect(within(question()).getByText("The agent stops seeing it on the next question.")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+    const remove = await refuseEach(noteActions.removeNoteAction, () => click("Remove", question()), alert);
+    expect(new Set(remove).size).toBe(REFUSALS.length + 1);
+    noteActions.removeNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Remove", question());
+    expect(screen.getByText("Note removed")).toBeTruthy();
+    noteActions.keepNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Keep the note about Marcus Hale");
+    expect(screen.getByText("Note kept")).toBeTruthy();
+    noteActions.removeNoteAction.mockResolvedValueOnce({ ok: true });
+    await click("Discard the note about Marcus Hale");
+    expect(screen.getByText("Suggestion discarded")).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("the page with Memory switched off", async () => {
+    const switches = flags as Record<string, unknown>;
+    const was = switches.carrierMemoryEnabled;
+    switches.carrierMemoryEnabled = false;
+    try {
+      const container = await renderPage(async () => (await import("@/app/memory/page")).default());
+      expect(container.textContent).toMatch(/Memory/);
+      expect(container.textContent).toMatch(/off for this carrier/);
+      expect(container.querySelector("table")).toBeNull();
+      expect(scan(container)).toEqual([]);
+    } finally {
+      switches.carrierMemoryEnabled = was;
+    }
+  });
 });
 
 describe("no internal word on the profit brief, in every state", () => {
@@ -1744,7 +2150,7 @@ describe("no internal word on the profit brief, in every state", () => {
     const categories = ["format", "unknown_tag", "number_mismatch", "untagged", "timeout", "interrupted", "incomplete", "cap", "too_expensive", "job_cap", "disabled", "not_configured", "error"];
     const errors = ["exists", "in_progress", "open_period", "no_loads", "not_found", "brief_off", "disabled", "ai_off", "ai_disabled", "forbidden", "unauthenticated", "unknown", "network"];
     const sentences = [
-      ...categories.map(refusalWords),
+      ...categories.map(briefRefusalWords),
       ...errors.map((error) => writeOutcome({ ok: false, error, data: {} })),
       ...["drafted", "refused", "over_cap", "drafting"].flatMap((status) =>
         categories.map((category) => writeOutcome({ ok: true, error: null, data: { status, category } })),
@@ -1860,6 +2266,65 @@ describe("no internal word on a pay week's buttons and notes", () => {
   });
 });
 
+describe("no internal word in the Cash page's notes and words", () => {
+  it("every refusal after a press, card notice, reason the paragraph is not shown, table word and card reason", () => {
+    const missing = ["figures", "disabled", "not_configured", "timeout", "cap", "job_cap", "too_expensive", "overclaim", "other"];
+    const reasons = ["covers_short", "narrows_short", "factoring_test_mode", "bill_flexible", "due_before_pay_day", "repeat_late_payer", "past_due_balance", "collections_test_mode"];
+    const words = [
+      ...Object.values(CHECK_NOTICE),
+      CHECK_NOT_CONFIRMED,
+      OUT_OF_DATE,
+      ...Object.values(CASH_CARD_NOTICES),
+      ...missing.map((c) => explainMissing(c) ?? ""),
+      ...Object.values(RECEIPT_STATUS_WORDS),
+      ...Object.values(PAYER_WORDS),
+      ...Object.values(BILL_CATEGORY_WORDS),
+      ...Object.values(BILL_STATUS_WORDS),
+      ...reasons.map(reasonSentence),
+    ];
+    expect(words.every((w) => w.length > 0)).toBe(true);
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("no internal word in a collections note", () => {
+  it("every status, tone, refusal, approval, run and error line", () => {
+    const words = [
+      ...Object.values(REMINDER_STATUS_WORDS),
+      ...Object.values(TONE_WORDS),
+      TONE_HELP,
+      ...[...Object.keys(REFUSAL_WORDS), null, "unheard_of"].map(refusalWords),
+      approvedWords("logged", null, fx.TENANT.timezone),
+      approvedWords("email", null, fx.TENANT.timezone),
+      approvedWords("email", "2026-10-27T15:05:00.000Z", fx.TENANT.timezone),
+      draftedWords(1, 0),
+      draftedWords(3, 1),
+      ...[null, "cap", "model"].flatMap((stoppedBy) => [stillWaitingWords(1, stoppedBy) ?? "", stillWaitingWords(4, stoppedBy) ?? ""]),
+      ...Object.values(DRAFT_ERROR_WORDS),
+      ...Object.values(DECIDE_ERROR_WORDS),
+      UNCONFIRMED_DECISION_WORDS.title,
+      UNCONFIRMED_DECISION_WORDS.body,
+      EMAIL_UNCONFIRMED_WORDS,
+    ];
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(words.every((w) => w.length > 0)).toBe(true);
+    expect(scan(container)).toEqual([]);
+  });
+});
+
 // The fuel checks page's parts that show only after a click: each row's detail (the dismiss picker
 // open on a row that needs a person), every note an action can leave, and every fixed line.
 describe("no internal word on a fuel check's detail and notes", () => {
@@ -1970,6 +2435,125 @@ describe("no internal word on a fuel check's detail and notes", () => {
         ))}
       </ul>,
     );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("no internal word on a pay rule change", () => {
+  const ADMIN = { admin: true, adminAboveCents: flags.approverRole.adminAboveCents };
+  const STAFF = { admin: false, adminAboveCents: flags.approverRole.adminAboveCents };
+  const cardOf = (v: (typeof fx.RULE_CHANGES)[number], on = true): RuleChangeCard => ({
+    card: proposalCardFrom(v, on ? { on: true, checking: false } : undefined, ADMIN),
+    verdict: v.auditorVerdict,
+    flagged: v.flagged,
+  });
+  const click = async (name: string | RegExp) => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name }));
+    });
+  };
+  // Every POST answers with this refusal category; with none, it succeeds.
+  const answer = (error: string | null) =>
+    vi.stubGlobal("fetch", async () =>
+      error === null ? new Response(JSON.stringify({ ok: true }), { status: 200 }) : new Response(JSON.stringify({ error }), { status: 409 }),
+    );
+
+  it("every card in the chat, waiting and decided, for an admin and for staff, with the second check on and off", () => {
+    const cards = [...fx.RULE_CHANGES, ...fx.RULE_CHANGES_DECIDED];
+    const notices = Object.fromEntries(cards.map((c, n) => [c.id, Object.values(payWords.SAVE_NOTICES)[n % Object.keys(payWords.SAVE_NOTICES).length]]));
+    const turn: TurnView = { ...fx.TURNS[0], proposals: cards };
+    for (const viewer of [ADMIN, STAFF]) {
+      for (const on of [true, false]) {
+        const checking = Object.fromEntries(cards.filter((c) => c.auditorVerdict === null).map((c) => [c.id, true]));
+        const messages = toMessages([turn], notices, {}, undefined, { on, checking, timezone: fx.TENANT.timezone }, viewer);
+        const { container, unmount } = render(<ChatThread messages={messages} composer={{}} />);
+        expect(container.textContent).toContain(payWords.NOTHING_CHANGES);
+        expect(scan(container)).toEqual([]);
+        unmount();
+      }
+    }
+  });
+
+  it("every card on the Pay rules page, while the second check runs", async () => {
+    await act(async () => {
+      render(<RuleChangeCards cards={fx.RULE_CHANGES.map((v) => cardOf(v))} auditorOn />);
+    });
+    expect(document.body.textContent).toContain(payWords.AUDIT_LINES.checking);
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("every note under a card after Save and Not now", async () => {
+    render(<RuleChangeCards cards={[cardOf(fx.RULE_CHANGES[0])]} />);
+    const hits: Hit[] = [];
+    const seen = new Set<string>();
+    const read = () => {
+      for (const s of screen.queryAllByRole("status")) if (s.textContent) seen.add(s.textContent);
+      hits.push(...scan(document.body));
+    };
+    try {
+      for (const error of [...Object.keys(payWords.SAVE_NOTICES), "refused", "unavailable", null]) {
+        answer(error);
+        if (!screen.queryByRole("button", { name: "Confirm" })) await click(payWords.SAVE_LABEL);
+        await click("Confirm");
+        read();
+      }
+      await click("Keep reviewing");
+      for (const error of ["refused", "unknown"]) {
+        answer(error);
+        // Not now asks once, like every Reject; the question's own Reject sends it.
+        if (!screen.queryByRole("group", { name: "Confirm rejection" })) await click(payWords.NOT_NOW_LABEL);
+        await click("Reject");
+        read();
+      }
+    } finally {
+      vi.stubGlobal("fetch", () => new Promise(() => {}));
+    }
+    // Each refusal left its own note (the empty ones say nothing more), so every path above was read.
+    expect(seen.size).toBeGreaterThanOrEqual(10);
+    expect(hits).toEqual([]);
+  });
+
+  it("every fixed line, rule label, hover help and value, and every line the figures write", () => {
+    const fixed = Object.values(payWords).flatMap((w) => (typeof w === "string" ? [w] : typeof w === "object" && w !== null ? Object.values(w) : []));
+    const impact = fx.RULE_CHANGES[0].ruleChange!.impact;
+    const words = [
+      ...fixed,
+      ...RULE_KEYS.flatMap((key) => {
+        const spec = RULES[key];
+        const values = spec.values ?? [spec.min, spec.max, ...(spec.nullable ? [null] : [])];
+        return [
+          labelFor(key, "owner_operator"),
+          labelFor(key, "all"),
+          spec.help,
+          ...values.map((v) => formatValue(spec, v)),
+          payWords.ruleTitle({ ruleKey: key, oldValue: values[0], newValue: values[values.length - 1], appliesTo: "owner_operator" }),
+        ];
+      }),
+      ...[true, false].map((snapped) => payWords.startsLine({ effectiveFrom: "2026-11-09", askedFrom: "2026-11-04", snapped })),
+      ...(["settled_week", "no_settled_week", "advances_only"] as const).flatMap((basis) =>
+        [0, 1, 4].flatMap((driversChanged) =>
+          [true, false].flatMap((ownerOperatorsOnly) =>
+            [-2_400, 0, 4_100].map((netDeltaCents) => payWords.impactLine({ ...impact, basis, driversChanged, ownerOperatorsOnly, netDeltaCents })),
+          ),
+        ),
+      ),
+      ...[-1, 0, 1].map((n) => payWords.impactLabel(n)),
+      payWords.adminOnlyLabel(flags.approverRole.adminAboveCents),
+      payWords.adminOnlyLabel(250_050),
+      payWords.savedLine("2026-11-09"),
+      payWords.paidUnderLine("2026-10-19"),
+      payWords.composerHelp(fx.NEXT_START),
+      payWords.exampleSentence(fx.NEXT_START),
+      payWords.shortPeriod("2026-10-26", "2026-11-01"),
+    ];
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(words.length).toBeGreaterThan(60);
     expect(scan(container)).toEqual([]);
   });
 });

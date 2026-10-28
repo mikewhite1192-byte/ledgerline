@@ -1,3 +1,4 @@
+import { flags } from "../../config/flags";
 import { sortVersions } from "../data/config-version";
 import { customerOf, loadStopsOf, receivablesInputOf, settlementInputOf } from "../data/records";
 import type { TenantRows } from "../data/rows";
@@ -16,6 +17,7 @@ import {
 import { daysBetween, isWithin, type Period } from "../time/local-date";
 import type { CustomerClass } from "./ar-plan";
 import { fuelAnomalyIds } from "./assert-plan";
+import { cashPositionOf } from "./cash-plan";
 import { MONEY_CODE_RECEIPT_CENTS, type CarrierPlan } from "./plan";
 
 // The numbers that describe one seeded carrier, small enough to read in a review. golden.json is
@@ -79,6 +81,23 @@ export type CarrierSummary = {
   };
   // The load MONEY-CODE's sample lumper receipt names, and its total; null with no hero.
   moneyCode: { loadNumber: string; receiptCents: number } | null;
+  // The Cash page's first check at the anchor (design 4.9): the figures, and how many invoices
+  // the factoring card names and how many customers the chase cards name (none when covered).
+  cashFriday: {
+    payDay: string;
+    bankBalanceCents: number;
+    cashOnHandCents: number;
+    expectedReceiptsCents: number;
+    payRunCents: number;
+    payRunSource: string;
+    fuelLoadsCents: number;
+    vendorBillsDueCents: number;
+    gapCents: number;
+    factoringInvoices: number;
+    factoringNetCents: number;
+    deferBillRef: string | null;
+    chaseCustomers: number;
+  };
 };
 
 export function countRows(rows: TenantRows): Record<TenantTable, number> {
@@ -251,5 +270,27 @@ export function summarizePlan(plan: CarrierPlan): CarrierSummary {
             loadNumber: rows.loads.find((l) => l.id === plan.planted.moneyCodeLoadId)!.load_number,
             receiptCents: MONEY_CODE_RECEIPT_CENTS,
           },
+    cashFriday: cashFridayOf(plan),
+  };
+}
+
+function cashFridayOf(plan: CarrierPlan): CarrierSummary["cashFriday"] {
+  const r = cashPositionOf(plan.rows, plan.carrier, plan.anchor, flags.cashFridayLimits);
+  const factoring = r.options.find((o) => o.kind === "factoring_request");
+  const defer = r.options.find((o) => o.kind === "bill_defer");
+  return {
+    payDay: r.payDay,
+    bankBalanceCents: r.figures.bankBalanceCents,
+    cashOnHandCents: r.figures.cashOnHandCents,
+    expectedReceiptsCents: r.figures.expectedReceiptsCents,
+    payRunCents: r.figures.payRunCents,
+    payRunSource: r.payRunSource,
+    fuelLoadsCents: r.figures.fuelLoadsCents,
+    vendorBillsDueCents: r.figures.vendorBillsDueCents,
+    gapCents: r.figures.gapCents,
+    factoringInvoices: factoring?.kind === "factoring_request" ? factoring.invoices.length : 0,
+    factoringNetCents: factoring?.amountCents ?? 0,
+    deferBillRef: defer?.kind === "bill_defer" ? defer.billRef : null,
+    chaseCustomers: r.options.filter((o) => o.kind === "collections_chase").length,
   };
 }

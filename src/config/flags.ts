@@ -46,6 +46,8 @@ export type Flags = {
     invoiceFixMaxCents: number;
     // Largest detention charge one proposal may add to an invoice.
     detentionChargeMaxCents: number;
+    // Largest absolute change to last settled week's total net pay a rule change may carry.
+    ruleChangeImpactMaxCents: number;
   };
   // The agent chat. Off means the composer shows its reason text and the turn route refuses
   // before any model call. aiEnabled must also be on for a turn to reach a model.
@@ -197,6 +199,10 @@ export type Flags = {
   // seeded week in one transaction. Off means the page answers 404 and the action refuses before
   // any read or write. It writes only our own database, never an outside system.
   demoResetEnabled: boolean;
+  // Pay rules changed by talking: the two chat tools, the approval executor and the Pay rules
+  // page. Off means neither tool is offered or runs, an approval is refused before anything is
+  // written, and the page shows the switched-off state.
+  rulesByTalkingEnabled: boolean;
   // The pay sweep: checks one open week for every driver, drafts a pay correction for each
   // finding it can fix and lists the rest for a person. It only proposes; a person approves.
   // Off means the Sweep page shows its reason text and the routes refuse before any work.
@@ -218,6 +224,23 @@ export type Flags = {
     sliceMs: number;
     // Audit tries per item while the auditor answers "in progress".
     maxAuditAttempts: number;
+  };
+  // Cash Friday: the Cash page answers whether the bank covers Friday's pay run, fuel card loads
+  // and bills due, and drafts up to three ways to close a short for a person to approve. Off
+  // means the page is not found, the check route and the agent's read tool refuse, and the three
+  // option kinds have no executor, so an approval is refused before anything is written.
+  cashFridayEnabled: boolean;
+  cashFridayLimits: {
+    // The cap on one explanation call, in cents, and the longest paragraph kept.
+    maxExplainCents: number;
+    maxExplainChars: number;
+    // Invoices one factoring option may name, and late payers the chase options may name.
+    maxFactorInvoices: number;
+    maxChaseCustomers: number;
+    // Days past a customer's usual lateness before an invoice is no longer expected by pay day.
+    graceDays: number;
+    // Only invoices issued within this many days can be factored.
+    factoringMaxAgeDays: number;
   };
   // The sweep's second opinion: Muse Wonder orders the drivers, one short Muse Spark check per
   // driver reads that driver's records, and Muse Wonder writes how the two views compare. It
@@ -309,6 +332,32 @@ export type Flags = {
   // the tools are not offered. invoicesEnabled must also be on. A post to accounting is always
   // left unsent there (a constant on the adapter, not a switch); LedgerLine never sends one.
   invoiceReviewEnabled: boolean;
+  // Collections: the Collections page lists invoices 30 or more days past due, Muse Spark drafts one
+  // short reminder email per invoice and stage, code checks every number in it against the invoice,
+  // and a person approves or rejects each one. Off means the page shows the switched-off state, the
+  // routes answer 404 before any read and the agent's read tool is not offered. aiEnabled must also
+  // be on for a draft to reach a model. Nothing here moves money.
+  collectionsEnabled: boolean;
+  // Approved reminders also go by email, to allowlisted addresses only. Off: approval records the
+  // reminder as approved and not sent, and the email path logs "would send" instead of sending.
+  collectionsEmailEnabled: boolean;
+  // Exact, lower-cased addresses the email path may send to. Empty refuses every address.
+  collectionsEmailAllowlist: string[];
+  // Email goes only for a reminder drafted on or after this date (YYYY-MM-DD, a whole date on the
+  // carrier's calendar). Older reminders are the backlog, and a release never notifies the backlog.
+  // The release PR that arms email sets this to its go-live date. A value that is not a whole date
+  // (the default, empty) refuses every email.
+  collectionsEmailFrom: string;
+  // Caps on reminder drafting: one reminder's worst case, the spend of one Draft run, the output
+  // budget of one reminder, how many reminders one run drafts, and how late an invoice must be (in
+  // whole days past its due date) before it gets a reminder.
+  collectionsLimits: {
+    maxDraftCents: number;
+    maxRunCents: number;
+    maxOutputTokens: number;
+    maxDraftsPerRun: number;
+    minDaysLate: number;
+  };
   // The Profit brief at /profit: last closed week's margin by route and by customer, how fast each
   // customer pays, and "Write this week's brief", which asks Muse Spark to word those figures (a
   // button press, never a schedule). Off: the page shows its off state, the route answers 409 and
@@ -322,6 +371,21 @@ export type Flags = {
     // Rows the brief's figures and the page's tables keep, best margin first.
     maxLanes: number;
     maxCustomers: number;
+  };
+  // Carrier memory: short notes the office keeps about customers, drivers and its own ways, which
+  // the agent reads as context on each question (never for an amount; the notes' figures are
+  // never allowed in an answer). Off: the Memory page shows that it is off, the menu has no
+  // item, the note actions refuse before any read or write, the agent's summary has no notes
+  // section and a turn's trace lists none. No model call of its own, so no spend cap.
+  carrierMemoryEnabled: boolean;
+  carrierMemoryLimits: {
+    // Notes one question may carry, and their characters in the agent's summary.
+    maxNotesPerTurn: number;
+    maxPromptChars: number;
+    // One note's length (the table's own check holds 300 too).
+    maxNoteChars: number;
+    // Notes one carrier may keep; the page refuses one more with "Remove a note first".
+    maxNotesPerCarrier: number;
   };
   // Fuel checks: every fill-up held against the truck's tank, the load's route and the driver's
   // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
@@ -379,6 +443,7 @@ export const flags: Flags = {
     payCorrectionMaxCents: 50_000,
     invoiceFixMaxCents: 250_000,
     detentionChargeMaxCents: 100_000,
+    ruleChangeImpactMaxCents: 500_000,
   },
   agentEnabled: false,
   agentStreamMode: "sse",
@@ -427,6 +492,7 @@ export const flags: Flags = {
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
   detentionEnabled: false,
   demoResetEnabled: false,
+  rulesByTalkingEnabled: false,
   sweepEnabled: false,
   sweepScheduleEnabled: false,
   payCorrectionsEnabled: false,
@@ -447,6 +513,15 @@ export const flags: Flags = {
     runCapCents: 450,
   },
   approveAllLimits: { maxItems: 25 },
+  cashFridayEnabled: false,
+  cashFridayLimits: {
+    maxExplainCents: 8,
+    maxExplainChars: 600,
+    maxFactorInvoices: 3,
+    maxChaseCustomers: 2,
+    graceDays: 14,
+    factoringMaxAgeDays: 45,
+  },
   portalRunnerEnabled: false,
   portalRunnerModel: "spark",
   portalRunLimits: {
@@ -467,8 +542,15 @@ export const flags: Flags = {
   batchApproveEnabled: false,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
   invoiceReviewEnabled: false,
+  collectionsEnabled: false,
+  collectionsEmailEnabled: false,
+  collectionsEmailAllowlist: [],
+  collectionsEmailFrom: "",
+  collectionsLimits: { maxDraftCents: 2, maxRunCents: 40, maxOutputTokens: 500, maxDraftsPerRun: 12, minDaysLate: 30 },
   profitBriefEnabled: false,
   profitBriefLimits: { maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 },
+  carrierMemoryEnabled: false,
+  carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
   fuelAnomalyEnabled: false,
   fuelAnomalyLimits: {
     from: "2026-10-27",
