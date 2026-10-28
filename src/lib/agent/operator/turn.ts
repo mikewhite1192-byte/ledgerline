@@ -186,6 +186,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     now: new Date(deps.clock()),
     deadlineAt: budget.deadlineAt,
     timeZone: turn.timeZone,
+    // The person's own sentence: a pay rule change's new value must appear in it.
+    userText: input.text,
   });
 
   // One model call, with the turn's caps applied to its cost and time.

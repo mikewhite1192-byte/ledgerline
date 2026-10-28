@@ -82,6 +82,21 @@ export const REPORT_PROMPT = [
   "  (the total or the largest rows) in one or two lines and say the full table is below.",
 ].join("\n");
 
+// Added to the prompt only while get_cash_friday is offered (flags.cashFridayEnabled), so a turn
+// with the switch off sends exactly today's prompt.
+export const CASH_PROMPT = [
+  "- \"Can we make Friday's pay run?\": call get_cash_friday. Say covered or short and by how much,",
+  "  then the moves it found; a person presses Check Friday's cash and approves each card on the",
+  "  Cash page.",
+].join("\n");
+
+// Added to the prompt only while get_collections is offered (flags.collectionsEnabled), so a turn
+// with collections off sends exactly today's prompt.
+export const COLLECTIONS_RULE = [
+  "- For who needs a payment reminder, call get_collections. Reminders are drafted, approved and",
+  "  sent only on the Collections page; never write one in chat or say one was sent.",
+].join("\n");
+
 // The checklist rule (design-agents-101 3.1), added while set_checklist is offered (always, for
 // the operator). The person sees the list above the steps as the answer is worked out.
 export const CHECKLIST_RULE = [
@@ -100,12 +115,15 @@ export const CHECKLIST_RULE = [
 export const CHECKLIST_TOOL = "set_checklist";
 
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
-// is on (it is one of the rules), the checklist rule while set_checklist is offered, then the
-// report section while the report tools are offered. With search off and neither offered it is
-// the prompt above.
+// is on (it is one of the rules), the collections rule while get_collections is offered, the Cash
+// Friday line while get_cash_friday is offered, the checklist rule while set_checklist is offered,
+// then the report section while the report tools are offered. With search off and none of those
+// offered it is the prompt above.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
   const searched = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
-  const prompt = toolNames.includes(CHECKLIST_TOOL) ? `${searched}\n${CHECKLIST_RULE}` : searched;
+  const collections = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
+  const cash = toolNames.includes("get_cash_friday") ? `${collections}\n${CASH_PROMPT}` : collections;
+  const prompt = toolNames.includes(CHECKLIST_TOOL) ? `${cash}\n${CHECKLIST_RULE}` : cash;
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
   return reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
 }

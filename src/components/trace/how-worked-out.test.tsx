@@ -69,6 +69,18 @@ describe("HowWorkedOut", () => {
     expect(links[0].getAttribute("href")).toMatch(/^\/records\/pay_items\//);
   });
 
+  it("links each carrier note it remembered to its row on Memory, by its label", async () => {
+    const id = "77777777-7777-4777-8777-000000000001";
+    const trace = { ...sampleTrace(), notesUsed: [{ id, label: "Harbor Foods: Pays about 45 days after due" }, { id: "77777777-7777-4777-8777-000000000002", label: null }] };
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace })} />);
+    fireEvent.click(screen.getByRole("button", { name: ANSWER }));
+    const notes = await screen.findByRole("list", { name: "Notes it read" });
+    const link = screen.getByRole("link", { name: "Harbor Foods: Pays about 45 days after due" });
+    expect(notes.contains(link)).toBe(true);
+    expect(link.getAttribute("href")).toBe(`/memory#note-${id}`);
+    expect(screen.getByText("Remembered 2 notes from the office; 1 has since been removed")).toBeTruthy();
+  });
+
   it("shows the prompt cache line under a model call that has its counts", async () => {
     const trace = sampleTrace();
     const call = trace.steps[0].call!;

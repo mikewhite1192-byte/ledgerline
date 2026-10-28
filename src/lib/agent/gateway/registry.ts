@@ -8,6 +8,8 @@ import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention"
 import { getAdvanceHeadroom } from "./tools/read/get-advance-headroom";
 import { getAdvances } from "./tools/read/get-advances";
 import { getArAging } from "./tools/read/get-ar-aging";
+import { getCashFriday } from "./tools/read/get-cash-friday";
+import { getCollections } from "./tools/read/get-collections";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
@@ -40,6 +42,8 @@ import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
+import { proposeRuleChange } from "./tools/propose/propose-rule-change";
+import { previewRuleChange } from "./tools/read/preview-rule-change";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
 
@@ -76,6 +80,7 @@ const TOOLS: readonly AnyToolDef[] = [
   getInvoiceReviewQueue,
   getArAging,
   getPaymentsIn,
+  getCollections,
   getVoiceNote,
   getProposal,
   getDocument,
@@ -89,8 +94,11 @@ const TOOLS: readonly AnyToolDef[] = [
   proposePaymentReapply,
   proposeLoadRate,
   proposeDetentionCharge,
+  previewRuleChange,
+  proposeRuleChange,
   getPortalEvidence,
   classifyMessage,
+  getCashFriday,
   setChecklist,
 ];
 

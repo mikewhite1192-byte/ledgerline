@@ -50,6 +50,12 @@ const STATUS_LABELS: Record<string, string> = {
   duplicate_warning: "Duplicate warning",
   needs_review: "Needs review",
   ready_to_send: "Ready to send",
+  // vendor bills (Cash Friday): a bill moved to a later date
+  deferred: "Moved",
+  // Cash Friday's expected customer payments
+  counted: "Counted for Friday",
+  after_pay_day: "Expected after Friday",
+  stalled: "Overdue, not counted",
 };
 
 const LINE_KIND_LABELS: Record<string, string> = {
@@ -98,6 +104,7 @@ const SOURCE_LABELS: Record<string, string> = {
   driver_days: "Driver day",
   fuel_purchases: "Fuel purchase",
   pay_configs: "Pay rules",
+  pay_rule_changes: "Pay rule change",
   deduction_schedules: "Deduction schedule",
   pay_items: "Pay item",
   advances: "Advance",

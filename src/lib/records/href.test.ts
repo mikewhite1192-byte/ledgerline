@@ -48,6 +48,7 @@ describe("RECORD_PAGES", () => {
         "pay_items",
         "settlement_periods",
         "settlements",
+        "vendor_bills",
       ].sort(),
     );
   });

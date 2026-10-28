@@ -1,11 +1,15 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
-// and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, and
-// the driver identity map and arming log from 0027, and the owner's briefs from 0042 (none
-// planted), in an order where every table comes after the tables it references (insert in this
-// order, delete in reverse). Each column says how it travels: the Data API sends strings as text,
-// so uuid, date, timestamptz and jsonb columns need a CAST on the way in, and reads turn
-// timestamptz into one ISO form and jsonb into text so both drivers return the same values. tenant_id and created_at are never listed: tenant_id is always
-// current_tenant_id() and created_at is the database's own.
+// and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, the
+// driver identity map and arming log from 0027, the collection reminders from 0041 (seeded
+// empty), the owner's briefs from 0042 (none planted), Cash Friday's bills, bank position and
+// checks from 0029 (the seed leaves cash_checks empty; the replace, and so the demo reset, clears it
+// before the weeks a check names), and the carrier notes from 0040 (last: a note names its customer
+// or driver by a soft reference), in an order where every table comes after the tables it
+// references (insert in this order, delete in reverse). Each column says how it travels: the Data
+// API sends strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the way in,
+// and reads turn timestamptz into one ISO form and jsonb into text so both drivers return the same
+// values. tenant_id and created_at are never listed: tenant_id is always current_tenant_id() and
+// created_at is the database's own (a note's updated_at too).
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
 
@@ -37,7 +41,12 @@ export const TENANT_TABLES = [
   "payment_applications",
   "untrusted_inputs",
   "screenings",
+  "collection_drafts",
   "briefs",
+  "vendor_bills",
+  "cash_settings",
+  "cash_checks",
+  "carrier_notes",
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
@@ -398,6 +407,29 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["expires_at", "timestamptz"],
     ],
   },
+  collection_drafts: {
+    table: "collection_drafts",
+    columns: [
+      ["id", "uuid"],
+      ["invoice_id", "uuid"],
+      ["customer_id", "uuid"],
+      ["stage", "text"],
+      ["tone", "text"],
+      ["status", "text"],
+      ["figures", "jsonb"],
+      ["subject", "text"],
+      ["body", "text"],
+      ["refusal_category", "text"],
+      ["verification", "jsonb"],
+      ["trace_id", "uuid"],
+      ["model_call_id", "uuid"],
+      ["decided_by", "text"],
+      ["decided_at", "timestamptz"],
+      ["channel", "text"],
+      ["sent_at", "timestamptz"],
+      ["updated_at", "timestamptz"],
+    ],
+  },
   briefs: {
     table: "briefs",
     columns: [
@@ -416,6 +448,69 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["model_call_id", "uuid"],
       ["created_by", "text"],
       ["updated_at", "timestamptz"],
+    ],
+  },
+  vendor_bills: {
+    table: "vendor_bills",
+    columns: [
+      ["id", "uuid"],
+      ["bill_ref", "text"],
+      ["vendor_name", "text"],
+      ["category", "text"],
+      ["amount_cents", "int"],
+      ["due_on", "date"],
+      ["urgency", "text"],
+      ["status", "text"],
+      ["deferred_to", "date"],
+      ["paid_on", "date"],
+      ["proposal_id", "uuid"],
+    ],
+  },
+  cash_settings: {
+    table: "cash_settings",
+    columns: [
+      ["id", "uuid"],
+      ["bank_balance_cents", "int"],
+      ["balance_as_of", "date"],
+      ["pay_day_dow", "int"],
+      ["factoring_advance_bps", "int"],
+      ["factoring_fee_bps", "int"],
+    ],
+  },
+  cash_checks: {
+    table: "cash_checks",
+    columns: [
+      ["id", "uuid"],
+      ["period_id", "uuid"],
+      ["as_of", "date"],
+      ["pay_day", "date"],
+      ["figures", "jsonb"],
+      ["lines", "jsonb"],
+      ["options", "jsonb"],
+      ["gap_cents", "int"],
+      ["pay_run_source", "text"],
+      ["explanation", "text"],
+      ["explain_call_id", "uuid"],
+      ["explain_category", "text"],
+      ["created_by", "text"],
+    ],
+  },
+  carrier_notes: {
+    table: "carrier_notes",
+    columns: [
+      ["id", "uuid"],
+      ["subject_kind", "text"],
+      ["subject_id", "uuid"],
+      ["text", "text"],
+      ["status", "text"],
+      ["source_kind", "text"],
+      ["source_turn_id", "uuid"],
+      ["source_table", "text"],
+      ["source_id", "uuid"],
+      ["created_by_kind", "text"],
+      ["created_by_sub", "text"],
+      ["created_by_model_call_id", "uuid"],
+      ["updated_by_sub", "text"],
     ],
   },
 };

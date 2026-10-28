@@ -202,7 +202,7 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     await expect(card.getByText("Why", { exact: true })).toBeVisible();
     await expect(card.locator("ul > li").first()).not.toBeEmpty();
     await expect(card.getByRole("button", { name: "Reject" })).toBeVisible();
-    // A card the auditor blocked offers "Override and approve" instead of Approve.
+    // A card the auditor blocked offers "Approve anyway" (once "Override and approve") instead of Approve.
     await expect(card.getByRole("button", { name: /^(Approve|Override and approve)/ })).toBeVisible();
     const shown = (await auditLine.first().innerText()).trim();
     const audit = checkAuditLine(shown, { auditorOn: on.auditor, deployed: DEPLOYED });

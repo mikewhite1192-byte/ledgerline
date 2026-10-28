@@ -174,6 +174,14 @@ function approveCard(driver: string) {
   if (approve) fireEvent.click(approve);
   fireEvent.click(within(cardOf(driver)).getByRole("button", { name: "Confirm" }));
 }
+// Reject asks once; a question still open from a failed try is answered again.
+function rejectCard(driver: string) {
+  const card = cardOf(driver);
+  if (!within(card).queryByRole("group", { name: "Confirm rejection" })) {
+    fireEvent.click(within(card).getByRole("button", { name: "Reject" }));
+  }
+  fireEvent.click(within(within(card).getByRole("group", { name: "Confirm rejection" })).getByRole("button", { name: "Reject" }));
+}
 // The notice under a card (beside it, not inside it).
 const noticeOf = (driver: string) =>
   cardOf(driver).parentElement?.querySelector(":scope > p[role=status]")?.textContent ?? null;
@@ -210,7 +218,7 @@ describe("SweepRun answers", () => {
       "The answer did not come back, so this may or may not have been rejected. Check the card's status before trying again.";
     const answers = [unknown, unknown, "The rejection did not go through. Try again."];
     for (const [n, expected] of answers.entries()) {
-      fireEvent.click(within(cardOf("D-proposed")).getByRole("button", { name: "Reject" }));
+      rejectCard("D-proposed");
       await waitFor(() => expect(sent).toHaveLength(n + 1));
       await settled("D-proposed", "Reject");
       expect(noticeOf("D-proposed")).toBe(expected);
