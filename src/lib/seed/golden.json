@@ -25,7 +25,8 @@
         "customer_payments": 167,
         "payment_applications": 200,
         "untrusted_inputs": 6,
-        "screenings": 0
+        "screenings": 0,
+        "briefs": 0
       },
       "linehaulCents": 30165000,
       "hero": {
@@ -334,7 +335,8 @@
         "customer_payments": 161,
         "payment_applications": 203,
         "untrusted_inputs": 6,
-        "screenings": 0
+        "screenings": 0,
+        "briefs": 0
       },
       "linehaulCents": 23376800,
       "hero": null,

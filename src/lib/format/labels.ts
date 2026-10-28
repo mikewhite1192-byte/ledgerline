@@ -172,3 +172,14 @@ const STEP_LABEL_WORDS: Record<string, string> = {
 export function stepLabel(label: string): string {
   return Object.hasOwn(STEP_LABEL_WORDS, label) ? STEP_LABEL_WORDS[label] : label;
 }
+
+// How a customer pays (rules-engine paymentProfile): "repeat_late" reads "Often late".
+const PAYMENT_HABIT_LABELS: Record<string, string> = {
+  reliable: "Reliable",
+  mixed: "Mixed",
+  repeat_late: "Often late",
+};
+
+export function paymentHabitLabel(habit: string): string {
+  return Object.hasOwn(PAYMENT_HABIT_LABELS, habit) ? PAYMENT_HABIT_LABELS[habit] : codeToWords(habit);
+}

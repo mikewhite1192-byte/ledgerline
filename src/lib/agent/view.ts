@@ -122,3 +122,19 @@ export function turnErrorFor(status: TurnStatus, endedReason: string | null): Tu
   if (endedReason === "clock" || endedReason === "model_timeout") return "timeout";
   return "unknown";
 }
+
+// The sentence the loop opens a stopped turn with (policy.ts LOOP_TEXT.stopped; this file is
+// read in the browser, so it holds its own copy and a test keeps the two the same).
+export const STOPPED_TEXT = "I stopped before finishing this answer. Here is what I found so far.";
+export const FOUND_TEXT = "Here is what I found.";
+
+// The answer text the chat shows. A turn that stopped early but still produced a card or a report
+// opens with "Here is what I found." instead, so a complete card is not read as a broken one; with
+// nothing to show, it keeps saying it stopped. The turn's status is unchanged either way.
+export function answerTextOf(t: Pick<TurnView, "status" | "text" | "proposals" | "reports">): string {
+  if (t.status !== "partial") return t.text;
+  if (t.proposals.length === 0 && t.reports.length === 0) return t.text;
+  if (!t.text.startsWith(STOPPED_TEXT)) return t.text;
+  const rest = t.text.slice(STOPPED_TEXT.length).replace(/^\s+/, "");
+  return rest ? `${FOUND_TEXT}\n\n${rest}` : FOUND_TEXT;
+}

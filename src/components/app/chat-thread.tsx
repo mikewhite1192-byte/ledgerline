@@ -6,6 +6,8 @@ import { Mark } from "@/components/brand/mark";
 import { HowWorkedOut, type TraceLoader } from "@/components/trace/how-worked-out";
 import { cn } from "@/lib/cn";
 import { recordHref, type HrefFor } from "@/lib/records/href";
+import { AnswerText } from "./answer-text";
+import { cardAnchor } from "@/lib/home/card-anchor";
 import { Composer, type ComposerProps } from "./composer";
 import { DataTable, type DataTableProps } from "./data-table";
 import { ProposalCard, type ProposalCardProps } from "./proposal-card";
@@ -49,10 +51,31 @@ function StepDot({ state }: { state: Step["state"] }) {
   return <span className="block size-4 rounded-full border-2 border-primary motion-safe:animate-pulse-dot" />;
 }
 
+// A turn's steps with each label once: the agent thinks between tool calls, so "Thinking it
+// through" would otherwise show once per round. A label keeps its first place; it shows working
+// while its newest run is working, failed if any run failed, and done otherwise. The announcer
+// below reads the steps as they happened, not this list.
+export function collapseSteps(steps: readonly Step[]): Step[] {
+  const byLabel = new Map<string, { step: Step; failed: boolean; latest: Step["state"] }>();
+  for (const s of steps) {
+    const seen = byLabel.get(s.label);
+    if (seen) {
+      seen.failed ||= s.state === "failed";
+      seen.latest = s.state;
+    } else {
+      byLabel.set(s.label, { step: s, failed: s.state === "failed", latest: s.state });
+    }
+  }
+  return [...byLabel.values()].map(({ step, failed, latest }) => ({
+    ...step,
+    state: latest === "running" ? "running" : failed ? "failed" : latest,
+  }));
+}
+
 function Steps({ steps }: { steps: Step[] }) {
   return (
     <ul className="grid gap-1.5" aria-label="What the agent did">
-      {steps.map((s) => (
+      {collapseSteps(steps).map((s) => (
         <li key={s.id} className="flex items-start gap-2.5 text-body">
           <span className="mt-0.5 shrink-0">
             <StepDot state={s.state} />
@@ -173,15 +196,18 @@ export function ChatThread({
                             <blockquote className="whitespace-pre-wrap break-words text-body text-foreground">{p.text}</blockquote>
                           </figure>
                         ) : (
-                          <p key={i} className="max-w-[68ch] text-body text-foreground">
-                            {p.text}
-                          </p>
+                          <AnswerText key={i} text={p.text} />
                         );
                       case "steps":
                         return <Steps key={i} steps={p.steps} />;
                       case "proposal":
                         // Keyed by the proposal, not its place, so an open confirm row stays with it.
-                        return <ProposalCard key={`proposal:${p.proposal.id}`} {...p.proposal} hrefFor={hrefFor} />;
+                        // The anchor (card-<id>) is where Home's "Needs you" link lands.
+                        return (
+                          <div key={`proposal:${p.proposal.id}`} id={cardAnchor(p.proposal.id)} className="min-w-0 scroll-mt-24">
+                            <ProposalCard {...p.proposal} hrefFor={hrefFor} />
+                          </div>
+                        );
                       case "table":
                         return p.onVisible ? (
                           <WhenVisible key={i} onVisible={p.onVisible}>

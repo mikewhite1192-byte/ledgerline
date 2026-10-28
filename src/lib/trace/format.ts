@@ -48,6 +48,20 @@ export function targetJob(target: string): string {
   return has(TARGET_JOBS, target) ? TARGET_JOBS[target] : "A model this page has no description for yet.";
 }
 
+// The same jobs in a few words, for the "Models used" group under an answer or a card.
+const TARGET_ROLES: Readonly<Record<string, string>> = {
+  spark: "Answers and cards",
+  wonder: "Second check",
+  spark_open: "Screens outside text",
+  voice: "Transcribes voice notes",
+  image: "Makes images",
+  sam: "Finds objects in photos and video",
+};
+
+export function targetRole(target: string): string {
+  return has(TARGET_ROLES, target) ? TARGET_ROLES[target] : "Other work";
+}
+
 const SPARK_VERSION = /^muse-spark-([0-9]{1,2}\.[0-9]{1,2})(?:-contributor)?$/;
 
 // Who serves each target when nothing has gone wrong (the wrapper's TARGETS, kept here so the
@@ -285,12 +299,15 @@ const PURPOSE_WORDS: Readonly<Record<string, string>> = {
 
 export type TraceTone = "neutral" | "info" | "success" | "warning" | "destructive";
 
-// One row of the disclosure: who did it, its effort, time and cost, and what happened. cache is
-// the prompt cache line for a row that names a model call, set only when the call has counts.
+// One row of the disclosure: who did it, its time and cost, and what happened. effort and cache
+// are the row's details, shown only when a person opens Details: the reasoning effort the call
+// asked for, and the prompt cache line, each set only for a row that names a model call with that
+// figure.
 export type TraceLine = {
   key: string;
   who: string;
   meta: string[];
+  effort?: string;
   cache?: string;
   text: string;
   badge: { tone: TraceTone; label: string } | null;
@@ -299,12 +316,16 @@ export type TraceLine = {
 
 function callMeta(call: TraceCall): string[] {
   const out: string[] = [];
-  const effort = effortWords(call.effort);
-  if (effort) out.push(effort);
   const latency = formatLatency(call.durationMs);
   if (latency) out.push(latency);
   out.push(formatCallCost(call.costNanocents));
   return out;
+}
+
+// Adds a model call's effort to its row's details when the call names a known effort.
+function withEffort(line: TraceLine, call: TraceCall | null): TraceLine {
+  const effort = call ? effortWords(call.effort) : null;
+  return effort === null ? line : { ...line, effort };
 }
 
 const CALL_FAILED = new Set(["failed", "unknown", "reserved"]);
@@ -459,13 +480,15 @@ function pairFailedSteps(trace: TurnTrace): { calls: Map<number, TraceCall>; use
   return { calls, used };
 }
 
-// Adds a model call's cache line to its row when the call has the counts for one.
+// Adds a model call's details to its row: its effort, and its cache line when the call has the
+// counts for one.
 function withCache(line: TraceLine, call: TraceCall | null): TraceLine {
   const cache = call ? formatCached(call) : null;
-  return cache === null ? line : { ...line, cache };
+  const out = withEffort(line, call);
+  return cache === null ? out : { ...out, cache };
 }
 
-// Tool and proposal rows show no model call, so they carry no cache line.
+// Tool and proposal rows show no model call, so they carry no details.
 function stepLine(s: TraceStep, call: TraceCall | null): TraceLine {
   return withCache(lineOfStep(s, call), s.kind === "tool" || s.kind === "proposal" ? null : call);
 }
@@ -614,10 +637,8 @@ export function traceLines(trace: TurnTrace, proposalId?: string): TraceLine[] {
   return out;
 }
 
-// The footer: the distinct model calls behind these rows, their time and cost. The cost is the sum
-// of each call's shown figure, so the rows add up to it and it is never below the ledger; from a
-// dollar up it reads in whole cents, rounded up.
-export function traceTotals(trace: TurnTrace, proposalId?: string): string | null {
+// The distinct model calls behind these rows, in the order the rows name them.
+function traceCalls(trace: TurnTrace, proposalId?: string): TraceCall[] {
   const keys = new Set(traceLines(trace, proposalId).map((l) => l.key));
   const { calls: paired } = pairFailedSteps(trace);
   const calls = new Map<string, TraceCall>();
@@ -630,23 +651,68 @@ export function traceTotals(trace: TurnTrace, proposalId?: string): string | nul
   for (const p of trace.proposals) {
     if (p.auditorCall && keys.has(`proposal:${p.id}:auditor`)) calls.set(p.auditorCall.id, p.auditorCall);
   }
-  if (calls.size === 0) return null;
+  return [...calls.values()];
+}
+
+// Time and cost of a set of calls. The cost is the sum of each call's shown figure, so the rows
+// add up to it and it is never below the ledger; from a dollar up it reads in whole cents, rounded
+// up.
+type CallSum = { calls: number; spend: string; ms: number; unsettled: number; unknown: number };
+
+function sumCalls(calls: readonly TraceCall[]): CallSum {
   let tenths = 0;
   let unsettled = 0;
   let unknown = 0;
   let ms = 0;
-  for (const c of calls.values()) {
+  for (const c of calls) {
     if (c.costNanocents === null) unsettled++;
     else if (isNanocents(c.costNanocents)) tenths += shownTenths(c.costNanocents);
     else unknown++;
     if (c.durationMs !== null && Number.isSafeInteger(c.durationMs) && c.durationMs > 0) ms += c.durationMs;
   }
   const spend = tenths === 0 ? "0 cents" : tenths >= 1_000 ? formatCents(ceilDiv(tenths, 10)) : tenthsText(tenths);
-  const parts = [countWords(calls.size, "model call", "model calls"), `${spend} in all`];
-  const time = formatLatency(ms);
-  if (time && ms > 0) parts.push(`${time} of model time`);
+  return { calls: calls.length, spend, ms, unsettled, unknown };
+}
+
+// The footer: the distinct model calls behind these rows, their time and cost.
+export function traceTotals(trace: TurnTrace, proposalId?: string): string | null {
+  const calls = traceCalls(trace, proposalId);
+  if (calls.length === 0) return null;
+  const sum = sumCalls(calls);
+  const parts = [countWords(sum.calls, "model call", "model calls"), `${sum.spend} in all`];
+  const time = formatLatency(sum.ms);
+  if (time && sum.ms > 0) parts.push(`${time} of model time`);
   let line = parts.join(", ");
-  if (unsettled > 0) line += `; ${countWords(unsettled, "call is", "calls are")} not settled yet`;
-  if (unknown > 0) line += `; ${countWords(unknown, "call has", "calls have")} no known cost`;
+  if (sum.unsettled > 0) line += `; ${countWords(sum.unsettled, "call is", "calls are")} not settled yet`;
+  if (sum.unknown > 0) line += `; ${countWords(sum.unknown, "call has", "calls have")} no known cost`;
   return line;
+}
+
+// One model in the "Models used" group: its name as the rows show it, its job in a few words, and
+// its calls, time and cost behind these rows, summed the way the footer sums them, so the models
+// add up to the footer.
+export type TraceModel = { key: string; name: string; job: string; calls: string; time: string | null; cost: string };
+
+export function traceModels(trace: TurnTrace, proposalId?: string): TraceModel[] {
+  const groups = new Map<string, { target: string; calls: TraceCall[] }>();
+  for (const c of traceCalls(trace, proposalId)) {
+    const name = modelName(c.target, c.model, c.provider);
+    const group = groups.get(name);
+    if (group) group.calls.push(c);
+    else groups.set(name, { target: c.target, calls: [c] });
+  }
+  return [...groups.entries()].map(([name, g]) => {
+    const sum = sumCalls(g.calls);
+    let cost = sum.spend;
+    if (sum.unsettled > 0) cost += `, ${countWords(sum.unsettled, "call", "calls")} not settled yet`;
+    if (sum.unknown > 0) cost += `, ${countWords(sum.unknown, "call", "calls")} with no known cost`;
+    return {
+      key: name,
+      name,
+      job: targetRole(g.target),
+      calls: countWords(sum.calls, "call", "calls"),
+      time: sum.ms > 0 ? formatLatency(sum.ms) : null,
+      cost,
+    };
+  });
 }

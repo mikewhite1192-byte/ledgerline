@@ -8,13 +8,16 @@ import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdvanceFrame, AdvancesOffPage, problemOf, ReadFailed, type ReadProblem } from "@/app/advances/frame";
-import { cardLineFor, readAdvanceRecord, readShell, type AdvanceRecord, type Shell } from "@/lib/advances/read";
+import { cardLineFor, readAdvanceRecord, readShell, type AdvanceRecord, type EligibilityNow, type Shell } from "@/lib/advances/read";
 import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
 import { takebackReasonWords } from "@/lib/advances/takeback-words";
 import { advancesOn } from "@/lib/advances/switches";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { codeToWords, recordNamer } from "@/lib/format/labels";
+import { formatCents } from "@/lib/format/money";
+import { hrefOrNull, recordHref, type SourceRef } from "@/lib/records/href";
+import type { AdvanceRefusal } from "@/lib/rules-engine/types";
 import { isUuid } from "@/lib/uuid";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { RecordActionButtons } from "./record-actions";
@@ -22,9 +25,31 @@ import { TakeBack } from "./take-back";
 
 export const dynamic = "force-dynamic";
 
-// One advance: what was asked, what the pay rules say now, the proposal a person decided, and
-// every payout and QuickBooks attempt from the ledger. A missing id and another carrier's id read
-// the same "not here", so an id's existence elsewhere is never revealed.
+// The agent's own judgment of the request, in words; any other code reads as its words.
+const AGENT_CHECK: Readonly<Record<string, string>> = {
+  eligible: "Within the pay rules",
+  partial: "Within the pay rules for part of the amount",
+  ineligible: "Outside the pay rules",
+  not_given: "Not given",
+};
+
+// Each pay rule the advance check runs, as a plain line read with "yes" or "no". The rules engine
+// runs every one and lists each that fails, so a rule not listed passed. The load's cap is a rule
+// only when the load has one.
+const RULE_LINES: Readonly<Record<AdvanceRefusal, (e: EligibilityNow) => string>> = {
+  driver_inactive: () => "The driver is active",
+  driver_not_armed: () => "The driver is armed to receive money",
+  below_minimum: (e) => `At least the carrier's smallest advance, ${formatCents(e.minCents)}`,
+  no_unpaid_earnings: () => "The driver has earned pay that is not paid yet",
+  exceeds_earned_share: () => "Within the share of earned, unpaid pay the carrier allows",
+  over_driver_limit: (e) => `Open advances stay under the driver's limit of ${formatCents(e.limitCents)}`,
+  possible_duplicate: () => "Not a repeat of a request from the last 24 hours",
+  over_load_cap: () => "Within the cap on advances for this load",
+};
+
+// One advance: what was asked, what the pay rules say now, the request a person decided, and
+// every payout and QuickBooks attempt on record. A missing id and another carrier's id read the
+// same "not here", so an id's existence elsewhere is never revealed.
 export default async function AdvanceRecordPage({ params }: { params: Promise<{ id: string }> }) {
   if (!advancesOn()) return <AdvancesOffPage title="Advance" />;
   const { id: raw } = await params;
@@ -56,17 +81,44 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
     record;
   const when = (iso: string | null) => (iso ? formatInstant(iso, shell.timezone) : "Not yet");
   const cardLine = cardLineFor(advance.status, card);
-  const sourceName = recordNamer(eligibility?.sources ?? []);
+  // Recorded by the office before this app: no request, no approval and no payout ran here.
+  const beforeApp = advance.proposalId === null;
+  // The driver's other advances on this load, by their amount ("Advance of $125.00"), since a
+  // reference can be an office code a person does not know. Two of the same amount add the
+  // reference so they never read the same.
+  const byAmount = (o: (typeof siblingsOnLoad)[number]) => `Advance of ${formatCents(o.amountCents)}`;
+  const siblingName = (o: (typeof siblingsOnLoad)[number]) =>
+    siblingsOnLoad.filter((x) => x.amountCents === o.amountCents).length > 1 ? `${byAmount(o)}, ${o.requestRef}` : byAmount(o);
+  // The records the check read, by the names this page already knows (the driver, the load, this
+  // advance and the others on its load); any other is named by its kind, never an id tail.
+  const known = new Map<string, string>([
+    [`drivers:${driver.id}`, driver.name],
+    [`advances:${advance.id}`, "This advance"],
+    ...(load ? ([[`loads:${load.id}`, `Load ${load.number}`]] as [string, string][]) : []),
+    ...siblingsOnLoad.map((o) => [`advances:${o.id}`, siblingName(o)] as [string, string]),
+  ]);
+  const keyOf = (s: SourceRef) => `${s.table}:${s.id}`;
+  const unnamed = recordNamer((eligibility?.sources ?? []).filter((s) => !known.has(keyOf(s))));
+  const sourceName = (s: SourceRef) => known.get(keyOf(s)) ?? unnamed(s);
+  const title = `Advance for ${driver.name}, ${formatLocalDate(advance.requestedOn)}`;
+  const decidedLabel = advance.status === "rejected" ? "Rejected" : "Approved";
+  const decided = advance.decidedAt ? when(advance.decidedAt) : beforeApp ? "Recorded by the office before this app" : "Not yet";
+  const paid = advance.paidAt ? when(advance.paidAt) : advance.status === "paid" && beforeApp ? "Before this app" : "Not yet";
+  const rules = (Object.keys(RULE_LINES) as AdvanceRefusal[]).filter((code) => code !== "over_load_cap" || headroom !== null);
   return (
-    <AdvanceFrame shell={shell} title={`Advance ${advance.requestRef}`}>
+    <AdvanceFrame shell={shell} title={title}>
       <PageHeader
         title={
           <span className="flex flex-wrap items-center gap-3">
-            <Money cents={advance.amountCents} /> for {driver.name}
+            {title}
             <StatusBadge status={advance.status} />
           </span>
         }
-        description={`${advance.requestRef} · driver ${driver.code} · requested ${formatLocalDate(advance.requestedOn)}`}
+        description={
+          <Link href={`/records/drivers/${driver.id}`} className="text-link underline-offset-4 hover:underline">
+            {driver.name} ({driver.code})
+          </Link>
+        }
       />
       <RecordActionButtons advanceId={advance.id} actions={actions} />
       <TakeBack
@@ -82,23 +134,28 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         </CardHeader>
         <CardBody>
           <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-            <Item label="Driver">
-              <Link href={`/records/drivers/${driver.id}`} className="text-link underline-offset-4 hover:underline">
-                {driver.name}
-              </Link>
-            </Item>
-            <Item label="Amount"><Money cents={advance.amountCents} /></Item>
-            <Item label="Fee, charged back later"><Money cents={advance.feeCents} /></Item>
-            <Item label="Recovered from pay"><Money cents={advance.recoveredCents} /></Item>
-            <Item label="Requested through">{sourceWords(advance.source)}{input ? `, ${codeToWords(input.kind).toLowerCase()} received ${when(input.receivedAt)}` : ""}</Item>
+            <Item label="Reference">{advance.requestRef}</Item>
             <Item label="Requested">{when(advance.requestedAt)}</Item>
-            <Item label="Approved">{when(advance.decidedAt)}</Item>
-            <Item label="Paid">{when(advance.paidAt)}</Item>
+            <Item label="Amount"><Money cents={advance.amountCents} /></Item>
+            <Item label="Fee"><Money cents={advance.feeCents} /></Item>
+            <Item label={decidedLabel}>{decided}</Item>
+            <Item label="Paid">{paid}</Item>
+            {cardLine ? (
+              <Item label={cardLine.label}>
+                {cardLine.card ? (
+                  <FuelCardChip last4={cardLine.card.last4} status={cardLine.card.status} />
+                ) : (
+                  "No fuel card on file"
+                )}
+              </Item>
+            ) : null}
+            <Item label="Repaid from pay so far"><Money cents={advance.recoveredCents} /></Item>
+            <Item label="Requested through">{sourceWords(advance.source)}{input ? `, ${codeToWords(input.kind).toLowerCase()} received ${when(input.receivedAt)}` : ""}</Item>
             {load ? <Item label="For load">{load.number}</Item> : null}
             {headroom ? (
-              <Item label="Headroom on this load">
-                <Money cents={headroom.headroomCents} /> of <Money cents={headroom.capCents} /> cap,{" "}
-                <Money cents={headroom.openOnLoadCents} /> open
+              <Item label="Room left on this load">
+                <Money cents={headroom.headroomCents} /> of the <Money cents={headroom.capCents} /> cap,{" "}
+                <Money cents={headroom.openOnLoadCents} /> already advanced
               </Item>
             ) : null}
             {takeback ? (
@@ -108,16 +165,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
                     <Money cents={takeback.cents} /> on {when(takeback.at)}: {takebackReasonWords(takeback.reason).toLowerCase()}
                   </>
                 ) : (
-                  <>Cancelled before payout on {when(takeback.at)}: {takebackReasonWords(takeback.reason).toLowerCase()}</>
-                )}
-              </Item>
-            ) : null}
-            {cardLine ? (
-              <Item label={cardLine.label}>
-                {cardLine.card ? (
-                  <FuelCardChip last4={cardLine.card.last4} status={cardLine.card.status} />
-                ) : (
-                  "No fuel card on file"
+                  <>Canceled before payout on {when(takeback.at)}: {takebackReasonWords(takeback.reason).toLowerCase()}</>
                 )}
               </Item>
             ) : null}
@@ -138,9 +186,8 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
               {siblingsOnLoad.map((o) => (
                 <li key={o.id} className="flex flex-wrap items-center gap-2 text-body text-foreground">
                   <Link href={`/records/advances/${o.id}`} className="text-link underline-offset-4 hover:underline">
-                    {o.requestRef}
+                    {siblingName(o)}
                   </Link>
-                  <Money cents={o.amountCents} />
                   <StatusBadge status={o.status} />
                 </li>
               ))}
@@ -154,7 +201,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
           <CardHeader>
             <div className="grid gap-0.5">
               <CardTitle>The request</CardTitle>
-              <CardDescription>What the assistant suggested and what a person decided.</CardDescription>
+              <CardDescription>What the agent suggested and what a person decided.</CardDescription>
             </div>
           </CardHeader>
           <CardBody className="grid gap-3">
@@ -167,9 +214,11 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
               </p>
             ) : null}
             <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
-              <Item label="Proposed">{when(proposal.createdAt)}</Item>
+              <Item label="Suggested">{when(proposal.createdAt)}</Item>
               <Item label="Decided">{when(proposal.decidedAt)}</Item>
-              <Item label="Agent's check">{codeToWords(proposal.operatorVerdict)}</Item>
+              <Item label="Agent's check">
+                {Object.hasOwn(AGENT_CHECK, proposal.operatorVerdict) ? AGENT_CHECK[proposal.operatorVerdict] : codeToWords(proposal.operatorVerdict)}
+              </Item>
               <Item label="Outside message">{proposal.flagged ? "Flagged by screening, so approval needed a second confirm" : "None flagged"}</Item>
             </dl>
             {decisionNoteSentence(proposal.decisionNote) ? (
@@ -182,45 +231,56 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
       <Card>
         <CardHeader>
           <div className="grid gap-0.5">
-            <CardTitle>If asked again now</CardTitle>
-            <CardDescription>The pay rules run on today&apos;s records for the same amount. No model is involved.</CardDescription>
+            <CardTitle>If this were requested today</CardTitle>
+            <CardDescription>Your pay rules, run on today&apos;s records for the same amount. No model is involved.</CardDescription>
           </div>
         </CardHeader>
         <CardBody>
           {eligibility === null ? (
-            <p className="text-body text-foreground-2">Eligibility could not be checked right now. Nothing is assumed.</p>
+            <p className="text-body text-foreground-2">The pay rules could not be checked right now. Nothing is assumed; try again later.</p>
           ) : (
             <div className="grid gap-3">
+              <p className="text-body font-semibold text-foreground">
+                {eligibility.eligible ? "Yes, it would be allowed today." : "No, it would not be allowed today."}
+              </p>
+              <ul aria-label="Pay rules checked" className="grid gap-1.5">
+                {rules.map((code) => {
+                  const failed = eligibility.reasons.includes(code);
+                  return (
+                    <li key={code} className="text-body text-foreground">
+                      {RULE_LINES[code](eligibility)}: <span className={failed ? "font-semibold text-destructive" : undefined}>{failed ? "no" : "yes"}</span>
+                      {failed ? (
+                        <span className="block text-small text-foreground-2">{refusalSentence(code, eligibility)}</span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
               <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-3">
-                <Item label="Most allowed now"><Money cents={eligibility.maxCents} /></Item>
-                <Item label="Earned, unpaid"><Money cents={eligibility.earnedUnpaidCents} /></Item>
-                <Item label="Open advances"><Money cents={eligibility.openCents} /></Item>
+                <Item label="Most that could be paid now"><Money cents={eligibility.maxCents} /></Item>
+                <Item label="Earned, not paid yet"><Money cents={eligibility.earnedUnpaidCents} /></Item>
+                <Item label="Advances still open"><Money cents={eligibility.openCents} /></Item>
                 <Item label="Driver's limit"><Money cents={eligibility.limitCents} /></Item>
                 <Item label="Fee"><Money cents={eligibility.feeCents} /></Item>
-                <Item label="Result">{eligibility.eligible ? "Eligible" : "Not eligible"}</Item>
               </dl>
-              {eligibility.reasons.length > 0 ? (
-                <ul className="grid list-disc gap-1 pl-5 text-body text-foreground-2">
-                  {eligibility.reasons.map((r) => (
-                    <li key={r}>{refusalSentence(r, eligibility)}</li>
-                  ))}
-                </ul>
-              ) : null}
               {eligibility.sources.length > 0 ? (
                 <p className="text-small text-muted-foreground">
-                  From:{" "}
-                  {eligibility.sources.map((s, i) => (
-                    <span key={`${s.table}:${s.id}`}>
-                      {i > 0 ? ", " : ""}
-                      {s.table === "advances" ? (
-                        <Link href={`/records/advances/${s.id}`} className="text-link underline-offset-4 hover:underline">
-                          {sourceName(s)}
-                        </Link>
-                      ) : (
-                        sourceName(s)
-                      )}
-                    </span>
-                  ))}
+                  Read from:{" "}
+                  {eligibility.sources.map((s, i) => {
+                    const href = hrefOrNull(recordHref, s);
+                    return (
+                      <span key={keyOf(s)}>
+                        {i > 0 ? ", " : ""}
+                        {href ? (
+                          <Link href={href} className="text-link underline-offset-4 hover:underline">
+                            {sourceName(s)}
+                          </Link>
+                        ) : (
+                          sourceName(s)
+                        )}
+                      </span>
+                    );
+                  })}
                 </p>
               ) : null}
             </div>
@@ -238,7 +298,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         <CardBody>
           {ledger.length === 0 ? (
             <p className="text-body text-foreground-2">
-              {advance.proposalId ? "Nothing has been sent yet." : "Recorded before this app; no payout was sent from here."}
+              {beforeApp ? "The office recorded this before the app. Nothing was paid from here." : "Nothing has been sent yet."}
             </p>
           ) : (
             <ol className="grid gap-3">

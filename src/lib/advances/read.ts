@@ -57,7 +57,7 @@ export type AdvanceListRow = {
   driverArmed: boolean;
 };
 
-const LIST_LIMIT = 200;
+export const LIST_LIMIT = 200;
 const LAST4 = /^[0-9]{4}$/;
 
 // Four digits or nothing: a value of any other shape is never shown.

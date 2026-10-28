@@ -21,6 +21,7 @@ export const TERMS = {
   "company-driver": "A driver in a company truck, paid per mile.",
   escrow: "Money held back from an owner-operator's pay and returned when the lease ends.",
   "truck-lease": "The weekly payment an owner-operator makes on the truck.",
+  insurance: "A daily charge for insurance coverage, taken for each day the driver drove.",
   "carried-shortfall": "When deductions were more than pay one week, the rest is taken next week.",
   advance: "Pay given early, against work already done; it is taken back from the next paystub.",
   "advance-repaid": "The part of an earlier advance taken back on this paystub.",
@@ -37,6 +38,9 @@ export const TERMS = {
   "money-code":
     "A one-time code the driver gives a lumper or a repair shop to pay at the dock; it is charged to the driver's week and paid back from the receipt.",
   "card-provider": "The company that issues the fuel cards and money codes; in this demo it is simulated, so no real money moves.",
+  margin: "What is left of the revenue after driver pay.",
+  "days-to-pay":
+    "The average days from an invoice's date to the day it was paid, over invoices paid in the 180 days before the week ended.",
 } as const;
 
 export type TermId = keyof typeof TERMS;

@@ -13,6 +13,7 @@ export { invoices } from "./invoices";
 export { models } from "./models";
 export { moneyCodes } from "./money-codes";
 export { portalRuns } from "./portal-runs";
+export { profitBrief } from "./profit-brief";
 export { settlements } from "./settlements";
 export { sweep } from "./sweep";
 export { voiceNotes } from "./voice-notes";
