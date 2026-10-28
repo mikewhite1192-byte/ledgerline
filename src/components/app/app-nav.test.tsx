@@ -8,6 +8,7 @@ import { appNav, NAV_HREFS, type NavKey } from "./app-nav";
 import * as registry from "./nav/items";
 import { MENU_GROUPS } from "./nav/menu-item";
 import { NavList } from "./nav-list";
+import { HOW_PAY_WORKS } from "./signed-in-page";
 
 const SWITCHES = [
   "sweepEnabled",
@@ -203,11 +204,21 @@ describe("every signed-in page is reachable", () => {
     expect(routes).toEqual(expect.arrayContaining(["/", "/models", "/settings/accounting", "/settings/demo", "/advances/new"]));
   });
 
+  // The help link sits under the menu on every signed-in page (SignedInPage, and Home's shell).
+  const shellLinks = [HOW_PAY_WORKS.href];
+
   it("reaches each route from the menu or from a menu item's page", () => {
     const unreachable = routes.filter(
-      (route) => !NAV_HREFS.includes(route) && !NAV_HREFS.some((href) => itemPage(href).includes(`href="${route}"`)),
+      (route) =>
+        !NAV_HREFS.includes(route) &&
+        !shellLinks.includes(route) &&
+        !NAV_HREFS.some((href) => itemPage(href).includes(`href="${route}"`)),
     );
     expect(unreachable).toEqual([]);
+  });
+
+  it("puts the help link under Home's menu too (Home builds its own shell)", () => {
+    expect(itemPage("/")).toContain("help={HOW_PAY_WORKS}");
   });
 
   it("points every menu item at a page that exists", () => {

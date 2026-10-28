@@ -17,20 +17,28 @@ export function SignOutForm() {
   );
 }
 
-// A signed-in page inside the shell, with the app's nav and the carrier chip.
+export type HelpLinkTarget = { href: string; label: string };
+
+// The help link under the nav on every signed-in page: the plain-words tour of trucking pay.
+export const HOW_PAY_WORKS: HelpLinkTarget = { href: "/help/how-pay-works", label: "How trucking pay works" };
+
+// A signed-in page inside the shell, with the app's nav, the carrier chip and the help link (null
+// leaves it off, as on the help page itself).
 export function SignedInPage({
   tenant,
   current,
   title,
+  help = HOW_PAY_WORKS,
   children,
 }: {
   tenant: TenantInfo;
   current: NavKey;
   title: string;
+  help?: HelpLinkTarget | null;
   children: ReactNode;
 }) {
   return (
-    <AppShell tenant={tenant} nav={appNav(current)} title={title} signOut={<SignOutForm />}>
+    <AppShell tenant={tenant} nav={appNav(current)} title={title} help={help ?? undefined} signOut={<SignOutForm />}>
       <div className="mx-auto grid w-full max-w-[960px] min-w-0 gap-6">{children}</div>
     </AppShell>
   );
