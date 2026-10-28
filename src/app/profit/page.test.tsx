@@ -99,6 +99,10 @@ describe("/profit", () => {
       expect(screen.getAllByText(label).length, label).toBeGreaterThan(0);
     }
     expect(screen.getByText(/No brief for this week yet\./)).toBeTruthy();
+    // The header promises no link the page does not have: with no brief and reports off, the
+    // figures here link nowhere.
+    expect(screen.getByText(/how fast each customer pays\.$/)).toBeTruthy();
+    expect(document.body.textContent).not.toMatch(/links to where/i);
     // One obvious next step.
     expect(screen.getByRole("button", { name: "Write this week's brief" })).toBeTruthy();
     expect(screen.getByText("By route")).toBeTruthy();

@@ -98,7 +98,8 @@ describe("POST /api/briefs/profit", () => {
     mocks.writeBrief.mockRejectedValueOnce(new Error("connection to db.secret.example refused"));
     const response = await press(JSON.stringify({ periodStart: WEEK }));
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: "unavailable" });
+    // It may have failed after the model was asked: the outcome is unknown, never "nothing was sent".
+    expect(await response.json()).toEqual({ error: "unknown" });
     expect(JSON.stringify(quiet.mock.calls)).not.toContain("secret");
   });
 });

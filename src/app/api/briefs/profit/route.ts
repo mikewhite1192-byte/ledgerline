@@ -55,6 +55,8 @@ export async function POST(request: Request) {
   } catch (err) {
     if (err instanceof Error && err.name === "ForbiddenError") return reply({ error: "forbidden" }, 403);
     console.error("profit brief failed:", err instanceof Error ? err.name : "unknown");
-    return reply({ error: "unavailable" }, 503);
+    // It may have failed after the model was asked or while the outcome was stored, so the outcome
+    // is unknown, never "nothing was sent": the page reads the brief back.
+    return reply({ error: "unknown" }, 503);
   }
 }

@@ -15,8 +15,9 @@ import type { BriefFigure } from "../rules-engine";
 // figure with a letter or a size right after it ("$48k", "$1.2 M") is refused, not read short. The
 // names a figure is about (a route, a customer) are read as names, never as numbers; a name that
 // itself holds a number refuses the brief when the words use it, since that number would go
-// unchecked. A figure below zero needs its own minus sign, or a loss word in its own clause. A
-// brief that fails keeps no text: the caller stores the category and the counts below.
+// unchecked. A figure below zero needs its own minus sign, or a loss word in its own clause; a
+// figure at or above zero has neither, and no dash of any kind right before it. A brief that fails
+// keeps no text: the caller stores the category and the counts below.
 
 export const BRIEF_CATEGORIES = ["format", "unknown_tag", "number_mismatch", "untagged"] as const;
 export type BriefCategory = (typeof BRIEF_CATEGORIES)[number];
@@ -85,6 +86,9 @@ const AFTER_FIGURE = /^(?:\p{L}|\s*(?:k|m|mm|mn|b|bn|mil|grand)\b)/iu;
 // script, a fraction like ½, a superscript like ², a numeral like Ⅳ) is refused before it.
 const OTHER_NUMBER = /\p{N}/u;
 const MINUS = /[-−]$/;
+// Any dash right before a figure reads as a minus, so one at or above zero never has one. Only
+// MINUS is accepted as the sign of a figure below zero.
+const DASH = /[-\u2010-\u2015\u2212]$/;
 const LOSS_WORDS = /\b(?:loss|losses|lost|losing|negative|minus)\b/i;
 // A loss word counts only in the figure's own clause: after the tag before it, after the end of
 // the sentence or clause it follows, and at most this many characters back.
@@ -210,11 +214,13 @@ export function checkBriefText(words: string, figures: readonly BriefFigure[]): 
     }
     if (!same) return fail("number_mismatch");
     // The sign: a figure below zero is written with a minus right before it, or with a loss word
-    // in its own clause (never one that belongs to the figure before it, never a name); one above
-    // zero never carries a minus.
-    const minus = MINUS.test(text.slice(0, start));
-    if (figure.value < 0 && !minus && !LOSS_WORDS.test(ownClause(masked, start, tags))) return fail("number_mismatch");
-    if (figure.value >= 0 && minus) return fail("number_mismatch");
+    // in its own clause (never one that belongs to the figure before it, never a name); one at or
+    // above zero has neither a dash right before it nor a loss word in its own clause.
+    const before = text.slice(0, start);
+    const minus = MINUS.test(before);
+    const lossWord = LOSS_WORDS.test(ownClause(masked, start, tags));
+    if (figure.value < 0 && !minus && !lossWord) return fail("number_mismatch");
+    if (figure.value >= 0 && (DASH.test(before) || lossWord)) return fail("number_mismatch");
     spans.push({ start: minus ? start - 1 : start, numberEnd: end, tagStart: tag.start, end: tag.end, key: tag.key });
   }
   return { ok: true, text, spans, tags, verification: record(null) };

@@ -87,7 +87,7 @@ export default async function ProfitPage({
     <SignedInPage tenant={view.shell} current="/profit" title="Profit brief">
       <PageHeader
         title="Profit brief"
-        description="Last week's revenue, driver pay and margin by route and by customer, and how fast each customer pays. Every number links to where it came from."
+        description="Last week's revenue, driver pay and margin by route and by customer, and how fast each customer pays."
       />
       {!profit ? (
         <Card>

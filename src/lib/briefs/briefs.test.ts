@@ -292,12 +292,30 @@ describe("the number check", () => {
     expect(check("Roanoke, VA to Charlotte, NC made $125.00 [f6].")).toMatchObject({ ok: false, category: "number_mismatch" });
     expect(check("Roanoke, VA to Charlotte, NC came in at -$125.00 [f6].").ok).toBe(true);
     expect(check("Margin was -$18,110.00 [f3].")).toMatchObject({ ok: false, category: "number_mismatch" });
+    // A gain is never called a loss, in its own clause or by any dash right before it.
+    expect(check("Margin was a loss of $18,110.00 [f3].")).toMatchObject({ ok: false, category: "number_mismatch" });
+    const gain = FIGURES.map((f) => (f.key === "f6" ? { ...f, value: 12_500 } : f));
+    const lost = "Roanoke, VA to Charlotte, NC lost $125.00 [f6].";
+    expect(checkBriefText(lost, gain)).toMatchObject({ ok: false, category: "number_mismatch" });
+    expect(checkBriefText("Roanoke, VA to Charlotte, NC made $125.00 [f6].", gain).ok).toBe(true);
+    for (const dash of ["\u2013", "\u2014", "\u2010", "\u2212"]) {
+      expect(check(`Margin was ${dash}$18,110.00 [f3].`), dash).toMatchObject({ ok: false, category: "number_mismatch" });
+    }
+    // A loss word that belongs to the figure before a gain is not the gain's.
+    expect(check("A loss of $125.00 [f6]; margin was $18,110.00 [f3].").ok).toBe(true);
+    // A name is never read as a loss word on a gain either.
+    const named = FIGURES.map((f) => (f.key === "f7" ? { ...f, subject: "Lost Creek Farms" } : f));
+    expect(checkBriefText("Lost Creek Farms takes 41 [f7] days to pay.", named).ok).toBe(true);
   });
 
   it("needs a loss word in the loss's own clause, never one that belongs to the figure before it", () => {
-    // f6 is below zero: the loss word before it belongs to f3, so f6 would read as a gain.
-    expect(check("Lost $18,110.00 [f3]; margin $125.00 [f6].")).toMatchObject({ ok: false, category: "number_mismatch" });
-    expect(check("A loss of $18,110.00 [f3], then $125.00 [f6].")).toMatchObject({ ok: false, category: "number_mismatch" });
+    // f3 and f6 both below zero here: the loss word before f6 belongs to f3, so f6 would read as a
+    // gain.
+    const twoLosses = FIGURES.map((f) => (f.key === "f3" ? { ...f, value: -f.value } : f));
+    expect(checkBriefText("Lost $18,110.00 [f3].", twoLosses).ok).toBe(true);
+    for (const text of ["Lost $18,110.00 [f3]; margin $125.00 [f6].", "A loss of $18,110.00 [f3], then $125.00 [f6]."]) {
+      expect(checkBriefText(text, twoLosses), text).toMatchObject({ ok: false, category: "number_mismatch" });
+    }
     // A loss word in an earlier sentence or clause is not this figure's either.
     expect(check("We lost ground. Margin was $125.00 [f6].")).toMatchObject({ ok: false, category: "number_mismatch" });
     expect(check("No loss; margin was $125.00 [f6].")).toMatchObject({ ok: false, category: "number_mismatch" });
