@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Session } from "../../../auth/claims";
 import { readTenant } from "../../../data/read";
 import type { Queryable } from "../../../db";
+import { checklistSchema, type Checklist } from "../../checklist";
 import type { StepView } from "../../view";
 import { buildStateSummary } from "./summary";
 import type { OpenTurnRefusal, OpenedTurn, StepFinish, StepStart, TurnFinish } from "./types";
@@ -12,6 +13,10 @@ import type { OpenTurnRefusal, OpenedTurn, StepFinish, StepStart, TurnFinish } f
 // A turn still running after this long was cut off (a lost request); it no longer holds the
 // conversation.
 export const ABANDONED_AFTER_MS = 120_000;
+
+// The longest state summary and model note a turn keeps (migration 0044's checks).
+export const CONTEXT_SUMMARY_MAX = 10_000;
+export const REASONING_NOTE_MAX = 2_000;
 
 export type OpenTurnInput = {
   conversationId: string | null;
@@ -78,12 +83,22 @@ export async function openTurn(
   );
   const seq = Number(next[0]?.seq ?? 1);
   const traceId = randomUUID();
+  // The summary the model starts from is kept whole on the turn, for the step-through.
   await q.execute(
     `INSERT INTO turns (id, tenant_id, conversation_id, seq, user_text, summary_chars, status,
-                        trace_id, started_at)
+                        trace_id, started_at, context_summary)
      VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, 'running', $6,
-             CAST($7 AS timestamptz))`,
-    [input.turnId, conversationId, seq, input.text, summary.chars, traceId, nowIso],
+             CAST($7 AS timestamptz), $8)`,
+    [
+      input.turnId,
+      conversationId,
+      seq,
+      input.text,
+      summary.chars,
+      traceId,
+      nowIso,
+      summary.text.slice(0, CONTEXT_SUMMARY_MAX),
+    ],
   );
   await q.execute(
     "UPDATE conversations SET updated_at = CAST($2 AS timestamptz) WHERE id = CAST($1 AS uuid)",
@@ -145,7 +160,8 @@ export async function finishStep(
             model_call_id = COALESCE(CAST($5 AS uuid), model_call_id),
             gateway_decision_id = COALESCE(CAST($6 AS uuid), gateway_decision_id),
             proposal_id = COALESCE(CAST($7 AS uuid), proposal_id),
-            detail = detail || CAST($8 AS jsonb)
+            detail = detail || CAST($8 AS jsonb),
+            reasoning_note = COALESCE($9, reasoning_note)
       WHERE id = CAST($1 AS uuid) AND turn_id = CAST($2 AS uuid) AND state = 'running'
       RETURNING id, seq, kind, label, state`,
     [
@@ -157,10 +173,23 @@ export async function finishStep(
       finish.gatewayDecisionId ?? null,
       finish.proposalId ?? null,
       JSON.stringify(finish.detail ?? {}),
+      finish.reasoningNote ? finish.reasoningNote.slice(0, REASONING_NOTE_MAX) : null,
     ],
   );
   if (rows.length !== 1) throw new Error("turn step not finished");
   return stepView(rows[0]);
+}
+
+// The turn's checklist, replaced whole while the turn runs. Checked against the stored shape
+// first, so a bad list is never written.
+export async function setChecklist(q: Queryable, turnId: string, checklist: Checklist): Promise<void> {
+  const valid = checklistSchema.parse(checklist);
+  const n = await q.execute(
+    `UPDATE turns SET checklist = CAST($2 AS jsonb)
+      WHERE id = CAST($1 AS uuid) AND status = 'running'`,
+    [turnId, JSON.stringify(valid)],
+  );
+  if (n !== 1) throw new Error("turn checklist not written");
 }
 
 // The cost is the larger of the loop's own sum and the ledger's rows for the trace, which also
@@ -175,6 +204,7 @@ export async function finishTurn(
     `UPDATE turns
         SET status = $2, ended_reason = $3, assistant_text = $4, summary = $5, step_count = $6,
             model_call_count = $7, finished_at = CAST($9 AS timestamptz),
+            checklist = COALESCE(CAST($10 AS jsonb), checklist),
             cost_nanocents = GREATEST($8, COALESCE((SELECT SUM(m.cost_nanocents) FROM model_calls m
                                      WHERE m.trace_id = CAST(turns.trace_id AS uuid)), 0))
       WHERE id = CAST($1 AS uuid) AND status = 'running'`,
@@ -188,6 +218,7 @@ export async function finishTurn(
       finish.modelCallCount,
       finish.costNanocents,
       now.toISOString(),
+      finish.checklist ? JSON.stringify(checklistSchema.parse(finish.checklist)) : null,
     ],
   );
   if (n !== 1) throw new Error("turn not finished");

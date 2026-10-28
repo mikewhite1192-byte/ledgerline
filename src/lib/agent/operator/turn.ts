@@ -1,11 +1,13 @@
 import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import { AiError, complete, type AiMessage, type AiReplayItem, type AiResult, type AiTool } from "../../ai";
+import { finalChecklist, modelChecklist, sameChecklist, type Checklist, type ChecklistDraft } from "../checklist";
 import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY } from "../gateway";
 import { dbTurnStore, type OpenedTurn, type StepFinish, type TurnStore } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
 import {
   CALL_MARGIN_MS,
+  CHECKLIST_TOOL,
   ESCALATE_AFTER_INVALID,
   ESCALATION_CALL,
   LOOP_TEXT,
@@ -15,6 +17,7 @@ import {
   invalidArgsNote,
   operatorCacheKey,
 } from "../policy";
+import { stopSummary } from "../stop-summary";
 import type { StepView } from "../view";
 import { TurnBudget, type CapReason, type TurnLimits } from "./budget";
 import { idsIn, validateRefs } from "./citations";
@@ -71,7 +74,8 @@ export function defaultTurnDeps(session: Session, emit?: TurnEmitter): TurnDeps 
     store: dbTurnStore(session),
     tools,
     clock: Date.now,
-    limits: flags.agentTurnLimits,
+    // The one ceiling over every run rides with the turn's own caps; the smaller one stops it.
+    limits: { ...flags.agentTurnLimits, maxTurns: flags.runLimits.maxTurns },
     emit,
     request: turnRequest(tools, flags.agentToolSearch, flags.agentPromptCache),
   };
@@ -100,6 +104,7 @@ const MODEL_LABEL = "Thinking it through";
 const ESCALATION_LABEL = "Asking Muse Wonder to form the proposal";
 const PROPOSAL_LABEL = "Preparing a proposal card";
 const UNKNOWN_TOOL_LABEL = "Checking a tool";
+const CHECKLIST_UPDATED_LABEL = "Updated the checklist";
 
 // The fixed label the registry holds for a tool that is switched on; never the name the model
 // typed, and never a switched-off tool's label for a call the gateway will refuse.
@@ -152,6 +157,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   let flaggedInputId: string | null = null;
   let lastText = "";
   let replay: AiReplayItem[] = [];
+  // The answer's checklist as last set (figures masked), or null when it set none.
+  let checklist: Checklist | null = null;
 
   const emitStep = (s: StepView) => deps.emit?.({ event: "step", data: s });
   const start = async (kind: StepView["kind"], label: string) => {
@@ -212,9 +219,17 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     }
   };
 
-  // One tool call through the gateway, its step, and (for an allowed proposal) its card.
-  const dispatch = async (call: ToolCall, model: "spark" | "wonder"): Promise<GatewayOutcome> => {
-    const step = await start("tool", labelFor(call.name));
+  // One tool call through the gateway, its step, and (for an allowed proposal) its card. counted
+  // false is only the first checklist write of a model response: it reads nothing, so the step
+  // cap (which bounds reads and cards) is not spent on it, and the model-call cap bounds how many
+  // such writes a turn can make.
+  const dispatch = async (
+    call: ToolCall,
+    model: "spark" | "wonder",
+    counted = true,
+  ): Promise<GatewayOutcome> => {
+    const label = call.name === CHECKLIST_TOOL && checklist ? CHECKLIST_UPDATED_LABEL : labelFor(call.name);
+    const step = await start("tool", label);
     let outcome: GatewayOutcome;
     try {
       outcome = await deps.callTool(ctxFor(model), call);
@@ -228,8 +243,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         latencyMs: 0,
       };
     }
-    budget.addToolStep();
+    if (counted) budget.addToolStep();
     const report = outcome.decision === "allowed" ? reportRefOf(outcome.tool, outcome.result) : null;
+    if (outcome.decision === "allowed" && outcome.checklist) await keepChecklist(outcome.checklist);
     if (outcome.decision === "allowed") {
       toolsDone += 1;
       centsIn(outcome.result, allowedCents);
@@ -258,6 +274,15 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       return { ...outcome, result: await persist(outcome) };
     }
     return outcome;
+  };
+
+  // The checklist set_checklist returned: figures the records did not give are withheld, as in an
+  // answer, then it is stored on the turn and shown. It changes nothing else.
+  const keepChecklist = async (draft: ChecklistDraft) => {
+    const list = modelChecklist(draft, allowedCents);
+    await deps.store.setChecklist(turn.turnId, list);
+    checklist = list;
+    deps.emit?.({ event: "checklist", data: list });
   };
 
   // The card for an allowed propose_* outcome. What the model is told back replaces the tool's
@@ -398,8 +423,10 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       // Figures the tools did not return, and the person did not type, are withheld before the
       // text is kept anywhere.
       const shown = maskFigures(result.text.trim(), allowedCents);
+      const note = result.reasoningSummary ? maskFigures(result.reasoningSummary.trim(), allowedCents).text : "";
       await finish(step, "done", {
         modelCallId: result.callId,
+        ...(note ? { reasoningNote: note } : {}),
         detail: {
           status: result.status,
           toolCalls: result.toolCalls.length,
@@ -426,14 +453,21 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         ...(searched.length > 0 ? { replay: searched } : {}),
       });
       replay = result.replay;
-      // Parallel calls run one by one, in the order returned, so the step cap is exact.
+      // Parallel calls run one by one, in the order returned, so the step cap is exact. The
+      // first checklist write in a response is not a counted step; it still waits on the clock.
+      let checklistWritten = false;
       for (let i = 0; i < result.toolCalls.length; i += 1) {
         const call = result.toolCalls[i];
-        const stepCap = budget.beforeToolStep();
+        const free = call.name === CHECKLIST_TOOL && !checklistWritten;
+        if (free) checklistWritten = true;
+        const stepCap = free ? (budget.remainingMs() <= 0 ? "clock" : null) : budget.beforeToolStep();
         if (stepCap) return stopped(stepCap);
-        const outcome = await dispatch({ ...call, modelCallId: result.callId }, "spark");
+        const outcome = await dispatch({ ...call, modelCallId: result.callId }, "spark", !free);
         messages.push(toolMessage(call, outcome));
         if (outcome.decision !== "invalid_args") continue;
+        // A checklist the schema refused is told back to the model and left there: it never
+        // escalates to Muse Wonder and never ends the answer.
+        if (call.name === CHECKLIST_TOOL) continue;
         const name = toolNameFor(call.name);
         const count = (invalid.get(name) ?? 0) + 1;
         invalid.set(name, count);
@@ -456,7 +490,16 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   };
 
   // A store write that fails mid-turn throws; the route records the turn as failed.
-  const ending = await loop();
+  const ended = await loop();
+  // The checklist as the answer ended: the item in hand is done when it finished and not done
+  // when it stopped; one never started is not done. A stop then says what was done and what is
+  // left in place of the plain stop line, still followed by what was found.
+  const finalList = checklist ? finalChecklist(checklist, ended.status) : null;
+  const ending: Ending =
+    finalList && ended.status === "partial" && ended.text.startsWith(LOOP_TEXT.stopped)
+      ? { ...ended, text: `${stopSummary(finalList, { steps: stepCount })}${ended.text.slice(LOOP_TEXT.stopped.length)}` }
+      : ended;
+  if (finalList && !sameChecklist(finalList, checklist)) deps.emit?.({ event: "checklist", data: finalList });
   await deps.store.finishTurn(turn.turnId, {
     status: ending.status,
     endedReason: ending.endedReason,
@@ -465,6 +508,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     stepCount,
     modelCallCount: budget.modelCalls,
     costNanocents: budget.costNanocents,
+    ...(finalList ? { checklist: finalList } : {}),
   });
   return {
     status: ending.status,

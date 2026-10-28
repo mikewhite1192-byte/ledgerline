@@ -128,6 +128,12 @@ async function run(runId: string) {
   return rows[0];
 }
 
+// The run's checklist as the page reads it: each item's key and state.
+async function ticks(runId: string) {
+  const page = await readSweepPage(SESSION, runId, { db: app });
+  return Object.fromEntries((page?.run.checklist?.items ?? []).map((i) => [i.key, i.state]));
+}
+
 async function start(runId = randomUUID()) {
   const s = await startSweep(SESSION, { runId, trigger: "button" }, deps());
   if (!s.ok) throw new Error(`start refused: ${s.category}`);
@@ -249,6 +255,7 @@ describe("a sweep of the open week", () => {
     expect(fixes.filter((i) => i.status === "found")).toHaveLength(2);
     expect((await run(runId)).spent_cents).toBe(10);
     expect(runAudit).not.toHaveBeenCalled();
+    expect(await ticks(runId)).toEqual({ find: "done", draft: "not_done", audit: "not_done" });
   });
 
   it("marks a saved proposal whose numbers are not the engine's, so it is never clean", async () => {
@@ -467,6 +474,36 @@ describe("a sweep of the open week", () => {
     expect(page?.clean.proposalIds).not.toContain(gone.id);
   });
 
+  it("writes the run's checklist when it starts and ticks it in the same update that moves each phase", async () => {
+    const runId = await start();
+    expect(await ticks(runId)).toEqual({ find: "doing", draft: "todo", audit: "todo" });
+    const page = await readSweepPage(SESSION, runId, { db: app });
+    expect(page?.run.checklist?.items.map((i) => i.text)).toEqual([
+      "Find every pay problem in the open week",
+      "Draft a fix for each problem",
+      "Run the second check on every draft",
+    ]);
+    // The find phase runs, then the slice hands the run back while drafting.
+    await advanceSweep(SESSION, runId, NOW.getTime() + 5_000, deps());
+    expect(await ticks(runId)).toEqual({ find: "done", draft: "doing", audit: "todo" });
+    await runToEnd(runId);
+    expect(await ticks(runId)).toEqual({ find: "done", draft: "done", audit: "done" });
+    // A run given up while nobody held it shows what it left as not finished.
+    const other = await start();
+    await admin.withTenant(T, (q) =>
+      q.execute(
+        "UPDATE sweep_runs SET status = 'failed', failure_category = 'abandoned', finished_at = CAST($2 AS timestamptz) WHERE id = CAST($1 AS uuid)",
+        [other, NOW.toISOString()],
+      ),
+    );
+    expect(await ticks(other)).toEqual({ find: "not_done", draft: "not_done", audit: "not_done" });
+    // A run from before the checklist has none, and moving it on writes none.
+    const old = await start();
+    await admin.withTenant(T, (q) => q.execute("UPDATE sweep_runs SET checklist = NULL WHERE id = CAST($1 AS uuid)", [old]));
+    await runToEnd(old);
+    expect((await readSweepPage(SESSION, old, { db: app }))?.run.checklist).toBeNull();
+  });
+
   it("carries a run cut off by its deadline on in the next slice", async () => {
     const runId = await start();
     // Too little time for any draft: the find phase runs, then the slice hands the run back.
@@ -517,6 +554,7 @@ describe("a sweep of the open week", () => {
     const fixes = (await items(runId)).filter((i) => i.kind === "fix");
     expect(fixes.map((i) => i.status)).toEqual(Array(5).fill("drafted"));
     expect((await run(runId)).spent_cents).toBe(10);
+    expect(await ticks(runId)).toEqual({ find: "done", draft: "done", audit: "skipped" });
   });
 
   it("tries an item refused for a passing reason again in a later run, and drafts it", async () => {

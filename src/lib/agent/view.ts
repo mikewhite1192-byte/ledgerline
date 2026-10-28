@@ -4,6 +4,7 @@
 // agent's final answer and, for a flagged input, the quoted text the person is warned about.
 
 import type { ReportName } from "../reports/types";
+import type { Checklist } from "./checklist";
 import type { ProposalKind } from "./gateway/types";
 
 export const TURN_STATUSES = ["running", "done", "partial", "failed"] as const;
@@ -106,12 +107,15 @@ export type TurnView = {
   flags: FlagView[];
   reports: ReportView[];
   error: TurnError | null;
+  // The answer's checklist, when it set one: live while it runs, final once it ended.
+  checklist?: Checklist | null;
 };
 
 // The server-sent events of one turn. The client reads the full turn back when done arrives.
 export type TurnEvent =
   | { event: "start"; data: { turnId: string; conversationId: string } }
   | { event: "step"; data: StepView }
+  | { event: "checklist"; data: Checklist }
   | { event: "done"; data: { turnId: string; status: TurnStatus } };
 
 // What a failed or partial turn shows, by its ended reason.

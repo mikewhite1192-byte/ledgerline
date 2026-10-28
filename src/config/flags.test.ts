@@ -90,6 +90,9 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(flags.agentTurnLimits.wallClockMs).toBeLessThan(30_000);
+    // One ceiling over every run; the tighter caps above still win.
+    expect(flags.runLimits).toEqual({ maxTurns: 30 });
+    expect(flags.runLimits.maxTurns).toBeGreaterThanOrEqual(flags.agentTurnLimits.maxModelCalls);
     expect(flags.proposalMaxAgeDays).toBe(7);
     expect(flags.auditorEnabled).toBe(false);
     expect(flags.auditorRequired).toBe(true);
@@ -369,6 +372,8 @@ describe("local overrides for the demo-path test", () => {
       { accountingEnabled: true },
       { driverNotesEmailEnabled: true },
       { agentEnabled: true, "agentTurnLimits.maxToolSteps": 99 },
+      { runLimits: { maxTurns: 1000 } },
+      { "runLimits.maxTurns": 1000 },
       // Not on the demo path yet: adding it is detention's own change, with a re-recorded replay.
       { detentionEnabled: true },
     ]) {

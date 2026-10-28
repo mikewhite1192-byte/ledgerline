@@ -4,6 +4,7 @@ import { isUuid } from "../../../uuid";
 import { argStrings, parseReportArgs } from "../../../reports/args";
 import { isReportName } from "../../../reports/types";
 import { cardLabel } from "../../../advances/cards";
+import { finalChecklist, parseChecklist } from "../../checklist";
 import { reasonSentence } from "../../reasons";
 import {
   turnErrorFor,
@@ -32,6 +33,7 @@ type TurnRow = {
   status: string;
   ended_reason: string | null;
   assistant_text: string;
+  checklist: string | null;
 };
 type StepRow = {
   id: string;
@@ -70,7 +72,8 @@ type ProposalRow = {
 type FlagRow = { input_id: string; body_text: string; categories: string | null };
 
 const TURN_COLUMNS =
-  "t.id, t.conversation_id, t.seq, t.user_text, t.status, t.ended_reason, t.assistant_text";
+  "t.id, t.conversation_id, t.seq, t.user_text, t.status, t.ended_reason, t.assistant_text, " +
+  "CAST(t.checklist AS text) AS checklist";
 
 // What the card shows, from the proposal and its ledger row. approved with no ledger row stays
 // approved, not unknown: the ledger reserves its row before any outside call, so no row means no
@@ -311,6 +314,10 @@ async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
     [t.id],
   );
   const status = t.status as TurnStatus;
+  // A turn that ended without the loop's own last write (a failed store write, a lost request)
+  // still reads with no item left in hand.
+  const list = parseChecklist(t.checklist);
+  const checklist = list && status !== "running" ? finalChecklist(list, status) : list;
   return {
     id: t.id,
     conversationId: t.conversation_id,
@@ -338,6 +345,7 @@ async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
       }),
     ),
     error: turnErrorFor(status, t.ended_reason),
+    checklist,
   };
 }
 
