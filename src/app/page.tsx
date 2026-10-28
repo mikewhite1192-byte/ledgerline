@@ -5,12 +5,14 @@ import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { ChatThread } from "@/components/app/chat-thread";
+import { HOW_PAY_WORKS } from "@/components/app/signed-in-page";
 import { DataTable } from "@/components/app/data-table";
 import { NeedsYou } from "@/components/app/needs-you";
 import { StatCard } from "@/components/app/stat-card";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Wordmark } from "@/components/brand/wordmark";
+import { NewHereLine } from "@/components/help/how-pay-works";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -184,11 +186,13 @@ export default async function Home({
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
       nav={appNav("/")}
+      help={HOW_PAY_WORKS}
       title="Home"
       signOut={signOut}
     >
       <h1 className="sr-only">Home</h1>
       {needsYou ? <NeedsYou view={needsYou} /> : null}
+      <NewHereLine />
       <RecordCounts counts={carrier.counts} />
       {flags.agentEnabled ? (
         <AgentChat
