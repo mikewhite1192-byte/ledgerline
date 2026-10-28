@@ -29,7 +29,7 @@ export default async function PortalRunsPage() {
   const tz = carrier.timezone;
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: tz }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: tz, role: carrier.role }}
       nav={appNav("/portal-runs")}
       title="Portal runs"
       signOut={signOut}

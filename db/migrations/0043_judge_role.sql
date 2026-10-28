@@ -55,4 +55,6 @@ GRANT SELECT, INSERT ON demo_sessions TO payday_app;
 GRANT UPDATE (last_seen_at, spent_nanocents, reserved_nanocents, turns) ON demo_sessions TO payday_app;
 
 ALTER TABLE conversations ADD COLUMN demo_session_id uuid;
-CREATE INDEX conversations_tenant_demo_session_idx ON conversations (tenant_id, demo_session_id);
+-- Only a visit's conversations are looked up by visit; staff and admin ones (null) stay out of it.
+CREATE INDEX conversations_tenant_demo_session_idx ON conversations (tenant_id, demo_session_id)
+  WHERE demo_session_id IS NOT NULL;

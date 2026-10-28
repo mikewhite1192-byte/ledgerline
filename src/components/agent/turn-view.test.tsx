@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import type { TurnView } from "@/lib/agent/view";
 import { REPORT_COLUMNS, REPORT_TITLES, type ReportResult } from "@/lib/reports/types";
 import { AgentChat, toMessages } from "./turn-view";
@@ -356,6 +357,19 @@ describe("AgentChat with the auditor", () => {
         screen.getByText("This card was made before the second check started. Ask again for a fresh one."),
       ).toBeTruthy(),
     );
+  });
+
+  it("answers a demo visitor's refused approval (403 judge) with the staff-only line", async () => {
+    const fetchFn = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(async (url) => {
+      if (url.endsWith("/approve")) return Response.json({ error: "judge", retryable: false }, { status: 403 });
+      if (url.startsWith("/api/agent/turns/")) return Response.json({ turn: unflagged });
+      return Response.json({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetchFn);
+    render(<AgentChat initialTurns={[unflagged]} streamMode="poll" />);
+    fireEvent.click(screen.getByRole("button", { name: /^Approve/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(screen.getByText(STAFF_ONLY_NOTE)).toBeTruthy());
   });
 
   it("resumes an approved advance that stopped, with one click and one approve request", async () => {

@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { ProposalCard } from "@/components/app/proposal-card";
 import { StatCard } from "@/components/app/stat-card";
 import { EmptyState, ErrorState } from "@/components/app/states";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -48,6 +49,8 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That fix is not here.",
   not_executable: "Pay corrections are switched off, so this fix was not applied. Nothing changed.",
+  // A demo visitor: the staff check refused the press before any work.
+  judge: STAFF_ONLY_NOTE,
 };
 // The card statuses listed under Needs a look: still waiting, or approved and not finished.
 const LOOK_STATUSES: ReadonlySet<string> = new Set(["proposed", "approved", "executing", "unknown"]);
@@ -276,6 +279,8 @@ export function SweepRun({
           setAllNotice(`The clean list changed: it now has ${n} ${n === 1 ? "fix" : "fixes"}, ${total} total. Check them and approve again. Nothing was approved.`);
         } else if (error === "role") {
           setAllNotice("An admin must approve a batch this size. Nothing was approved.");
+        } else if (error === "judge") {
+          setAllNotice(STAFF_ONLY_NOTE);
         } else if (error === "batch_reused" || error === "batch_taken") {
           // This id can never be ours again: the next try takes a new one.
           setAllNotice("The approval did not go through. Nothing was approved.");

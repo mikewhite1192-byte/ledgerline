@@ -7,8 +7,8 @@ import { cn } from "@/lib/cn";
 import { zoneName } from "@/lib/format/dates";
 import { ThemeToggle } from "./theme-toggle";
 
-// role is the membership's, read with the rest; a fixture without one shows as staff.
-export type TenantInfo = { name: string; email: string; timezone: string; role?: Role };
+// role is the membership's, read with the rest. Required: a page that cannot read it fails closed.
+export type TenantInfo = { name: string; email: string; timezone: string; role: Role };
 
 // Two letters for the carrier chip: the first letters of the first two words, else the first two
 // letters of the one word.

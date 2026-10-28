@@ -5,7 +5,12 @@ import { initials, TenantPanel, TenantSwitcher, type TenantInfo } from "./tenant
 
 afterEach(cleanup);
 
-const tenant: TenantInfo = { name: "Sample Freight Co", email: "ops@samplefreight.example", timezone: "America/Chicago" };
+const tenant: TenantInfo = {
+  name: "Sample Freight Co",
+  email: "ops@samplefreight.example",
+  timezone: "America/Chicago",
+  role: "staff",
+};
 const signOut = <button type="button">Sign out</button>;
 
 describe("TenantPanel", () => {

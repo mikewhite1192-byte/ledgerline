@@ -203,4 +203,13 @@ describe("the judge role (0043)", () => {
       { id: visitConv, demo_session_id: visit },
     ]);
   });
+
+  it("indexes only a visit's conversations, never the staff and admin ones with none", async () => {
+    const [index] = await admin.withTenant(A, (q) =>
+      q.query<{ indexdef: string }>(
+        "SELECT indexdef FROM pg_indexes WHERE tablename = 'conversations' AND indexname = 'conversations_tenant_demo_session_idx'",
+      ),
+    );
+    expect(index.indexdef).toMatch(/\(tenant_id, demo_session_id\) WHERE \(demo_session_id IS NOT NULL\)$/);
+  });
 });

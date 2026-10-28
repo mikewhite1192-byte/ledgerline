@@ -28,6 +28,54 @@ const GATED_HELPERS: Readonly<Record<string, readonly string[]>> = {
   "src/lib/voice/http.ts": ["voiceStaffAction"],
 };
 
+// Words no judge allowlist entry may name: money, approvals, sends and settings. Compared as whole
+// segments of the key (split on "/", "-", "." and "#", the method left out), so "arm" never matches
+// "farm" and "mark-sent" is caught by its parts.
+const REFUSED_SEGMENTS: ReadonlySet<string> = new Set([
+  "apply",
+  "approvals",
+  "approve",
+  "arm",
+  "batch",
+  "batches",
+  "card",
+  "cards",
+  "clear",
+  "close",
+  "connect",
+  "default",
+  "disconnect",
+  "drain",
+  "draft",
+  "mark",
+  "pay",
+  "payment",
+  "payments",
+  "payout",
+  "payouts",
+  "post",
+  "posts",
+  "qbo",
+  "reconcile",
+  "reject",
+  "reply",
+  "reset",
+  "retry",
+  "send",
+  "sent",
+  "settlement",
+  "settlements",
+  "sweep",
+  "sweeps",
+]);
+
+function refusedSegments(key: string): string[] {
+  return key
+    .replace(/^[A-Z]+ /, "")
+    .split(/[/\-.#]/)
+    .filter((segment) => REFUSED_SEGMENTS.has(segment));
+}
+
 type Imported = { module: string; name: string };
 type Handler = { key: string; file: string; gated: boolean; problem?: string };
 
@@ -152,8 +200,20 @@ function onlyGuardsBefore(stmt: ts.Statement, imports: Map<string, Imported>): b
   return false;
 }
 
-// The three ways a body is gated:
-// 1. `const x = await staffGate(...); if (x) return ...;` on its own, after guards only;
+// Guards only, at every level: from the check's own statement up to the statement directly under
+// the handler's body, each statement that sits in a block has only guards before it there. So no
+// work runs before the check, whether it is written before a try, before the tenant transaction or
+// inside either.
+function guardsAllTheWay(stmt: ts.Statement, body: ts.Block, imports: Map<string, Imported>): boolean {
+  for (let cur: ts.Node = stmt; cur !== body; cur = cur.parent) {
+    if (!cur.parent) return false;
+    if (ts.isBlock(cur.parent) && !onlyGuardsBefore(cur as ts.Statement, imports)) return false;
+  }
+  return true;
+}
+
+// The three ways a body is gated (each after guards only, at every level up to the body):
+// 1. `const x = await staffGate(...); if (x) return ...;` on its own;
 // 2. `await requireStaff(...)` as the first statement of its block (inside the tenant callback);
 // 3. `return helper(...)` for a helper in GATED_HELPERS, on every call.
 function gateOf(body: ts.Block, imports: Map<string, Imported>): boolean {
@@ -168,7 +228,7 @@ function gateOf(body: ts.Block, imports: Map<string, Imported>): boolean {
         isAwaited(d.initializer) &&
         callsImported(unwrapAwait(d.initializer), imports, STAFF_GATE, ["staffGate"]) &&
         unconditional(n, body) &&
-        onlyGuardsBefore(n, imports)
+        guardsAllTheWay(n, body, imports)
       ) {
         const block = n.parent as ts.Block;
         const next = block.statements[block.statements.indexOf(n) + 1];
@@ -193,12 +253,13 @@ function gateOf(body: ts.Block, imports: Map<string, Imported>): boolean {
       callsImported(unwrapAwait(n.expression), imports, ROLE, ["requireStaff"]) &&
       ts.isBlock(n.parent) &&
       n.parent.statements[0] === n &&
-      unconditional(n, body)
+      unconditional(n, body) &&
+      guardsAllTheWay(n, body, imports)
     ) {
       gated = true;
       return;
     }
-    if (ts.isReturnStatement(n) && n.expression && unconditional(n, body) && onlyGuardsBefore(n, imports)) {
+    if (ts.isReturnStatement(n) && n.expression && unconditional(n, body) && guardsAllTheWay(n, body, imports)) {
       const call = unwrapAwait(n.expression);
       if (ts.isCallExpression(call) && ts.isIdentifier(call.expression)) {
         const imp = imports.get(call.expression.text);
@@ -357,9 +418,7 @@ describe("judge allowlist reachability", () => {
   });
 
   it("the money and approval routes are not on the allowlist", () => {
-    for (const key of Object.keys(JUDGE_ALLOWED)) {
-      expect(key).not.toMatch(/approve|reject|settlement|payout|post|reconcile|batches|sweeps|qbo|reset|arm|cards/);
-    }
+    for (const key of Object.keys(JUDGE_ALLOWED)) expect(refusedSegments(key), key).toEqual([]);
   });
 
   it("every shared helper a route leans on runs staffGate itself", () => {
@@ -437,6 +496,40 @@ describe("judge allowlist walker", () => {
     expect([first, later, branch, caught].map((h) => h[0].gated)).toEqual([true, false, false, false]);
   });
 
+  it("refuses work before the tenant callback or before a try, at any level above the check", () => {
+    const parsedFirst = one(`export async function POST(request: Request) {
+      await request.json();
+      return withRequestTenant(async (q, s) => { await requireStaff(q, s); return work(q); });
+    }`);
+    const readFirst = one(`export async function POST(request: Request) {
+      const body = await request.json();
+      return withRequestTenant(async (q, s) => { await requireStaff(q, s); return work(q, body); });
+    }`);
+    const beforeTry = one(`export async function POST() {
+      const session = await getSession();
+      await write();
+      try { const g = await staffGate(session); if (g) return g; return work(); } catch { return no(); }
+    }`);
+    const insideTry = one(`export async function POST() {
+      try { await write(); return withRequestTenant(async (q, s) => { await requireStaff(q, s); }); } catch { return no(); }
+    }`);
+    const guarded = one(`export async function POST() {
+      const session = await getSession();
+      if (!session) return no();
+      try {
+        const r = await withRequestTenant(async (q, s) => { await requireStaff(q, s); return work(q); });
+        return r;
+      } catch { return no(); }
+    }`);
+    expect([parsedFirst, readFirst, beforeTry, insideTry, guarded].map((h) => h[0].gated)).toEqual([
+      false,
+      false,
+      false,
+      false,
+      true,
+    ]);
+  });
+
   it("accepts a gated helper and refuses an ungated one", () => {
     const gated = one(`export async function POST(r: Request, c: C) { return advanceAction(r, c.params, run); }`);
     const open = one(`export async function POST(r: Request, c: C) { return voiceAction(r, c.params, "x", run); }`);
@@ -450,6 +543,21 @@ describe("judge allowlist walker", () => {
     const star = one(`export * from "./other";`);
     const inline = one(`export async function GET() { async function act() { "use server"; await work(); } return act; }`);
     for (const h of [asConst, reexport, star, inline]) expect(h.some((x) => x.problem)).toBe(true);
+  });
+
+  it("refuses an allowlist word only as a whole segment of the key, never inside another word", () => {
+    expect(refusedSegments("POST /api/invoices/[id]/mark-sent")).toEqual(["mark", "sent"]);
+    expect(refusedSegments("POST /api/messages/send")).toEqual(["send"]);
+    expect(refusedSegments("POST /api/pay/[id]/apply")).toEqual(["pay", "apply"]);
+    expect(refusedSegments("POST /api/collections/draft")).toEqual(["draft"]);
+    expect(refusedSegments("GET /api/qbo/connect")).toEqual(["qbo", "connect"]);
+    expect(refusedSegments("POST /api/drivers/[id]/cards/[cardId]/default")).toEqual(["cards", "default"]);
+    expect(refusedSegments("POST /api/drivers/[id]/cards/[cardId]/close")).toEqual(["cards", "close"]);
+    expect(refusedSegments("src/app/settings/demo/reset-action.ts#resetDemoAction")).toEqual(["reset"]);
+    // Not inside another word, and never the method.
+    expect(refusedSegments("POST /api/farm/alarm")).toEqual([]);
+    expect(refusedSegments("POST /api/postcards/sender")).toEqual([]);
+    expect(refusedSegments("POST /api/agent/turn")).toEqual([]);
   });
 
   it("treats a listed writing GET as a write and every other GET as a read", () => {

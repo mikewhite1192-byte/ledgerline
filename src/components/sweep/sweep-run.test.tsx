@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import type { CardStatus, ProposalView } from "@/lib/agent/view";
 import type { SweepCounts } from "@/lib/sweep/run";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
@@ -179,6 +180,19 @@ describe("SweepRun answers", () => {
     }
   });
 
+  it("answers a demo visitor's refused approval (403 judge) with the staff-only line", async () => {
+    const sent = serve(page, {
+      approve: [{ status: 403, body: { error: "judge", retryable: false } }],
+      reject: [],
+      clean: [],
+    });
+    render(<SweepRun initial={page} auditorOn />);
+    approveCard("D-proposed");
+    await waitFor(() => expect(sent).toHaveLength(1));
+    await settled("D-proposed", "Confirm");
+    expect(noticeOf("D-proposed")).toBe(STAFF_ONLY_NOTE);
+  });
+
   it("says a rejection's outcome is unknown when the answer is lost, and keeps a refusal definite", async () => {
     const sent = serve(page, {
       approve: [],
@@ -248,6 +262,14 @@ describe("SweepRun approve all", () => {
     expect(noticeOf("D-b")).toBe(
       "The answer did not come back, so this may or may not have been approved. Check the card's status before trying again.",
     );
+  });
+
+  it("answers a demo visitor's refused approve all (403 judge) with the staff-only line", async () => {
+    serve(cleanPage, { approve: [], reject: [], clean: [{ status: 403, body: { error: "judge", retryable: false } }] });
+    render(<SweepRun initial={cleanPage} auditorOn />);
+    confirmAll();
+    expect(await screen.findByText(STAFF_ONLY_NOTE)).toBeTruthy();
+    expect(screen.queryByText(/did not go through/)).toBeNull();
   });
 
   it("says the outcome is unknown when the server stops part way or the answer is lost, keeping the batch id", async () => {

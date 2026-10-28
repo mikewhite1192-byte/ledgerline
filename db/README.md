@@ -202,7 +202,8 @@ fails CI for any write that neither checks nor is listed.
   optional salted SHA-256.
 - The demo reset keeps `demo_sessions` (`DEMO_RESET_KEPT`), so a reset never refills a visit's
   budget; `demo_reset_clear()` does not change. `conversations.demo_session_id` names the visit a
-  conversation belongs to, with no foreign key, since the reset clears conversations.
+  conversation belongs to, with no foreign key, since the reset clears conversations; its index
+  holds only a visit's conversations (`WHERE demo_session_id IS NOT NULL`).
 - The nightly invariants fail on a ledger row a judge membership approved (I3) and on a visit whose
   spent plus reserved is over `flags.judgeAccess.sessionCapCents` (I4).
 

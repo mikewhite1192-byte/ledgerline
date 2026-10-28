@@ -6,6 +6,7 @@ import { isCanonicalUuid } from "../money/keys";
 import { readBySubject } from "../money/read";
 import { SUBJECT_STATUSES, type MoneyAction } from "../money/types";
 import { advanceEligibility, type AdvanceRefusal, type SourceRef } from "../rules-engine";
+import { isRole, type Role } from "../roles";
 import { ForbiddenError } from "../tenant/context";
 import { DESK_LOAD_NUMBER } from "./request";
 import { readAdvanceView, type AdvanceView } from "./rows";
@@ -20,19 +21,22 @@ export function isAdvanceStatus(value: unknown): value is AdvanceStatusFilter {
   return typeof value === "string" && (SUBJECT_STATUSES.advances as readonly string[]).includes(value);
 }
 
-export type Shell = { name: string; timezone: string; email: string };
+export type Shell = { name: string; timezone: string; email: string; role: Role };
 
-// The signed-in member's carrier, for the page shell.
+// The signed-in member's carrier and role, for the page shell. A role this code does not know is
+// refused (fail closed), never shown as staff.
 export async function readShell(q: Queryable, session: Session): Promise<Shell> {
   const tenants = await q.query<{ name: string; timezone: string }>(
     "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
   );
-  const members = await q.query<{ email: string }>(
-    "SELECT email FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
+  const members = await q.query<{ email: string; role: unknown }>(
+    "SELECT email, role FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
     [session.sub],
   );
   if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
-  return { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email };
+  const role = members[0].role;
+  if (!isRole(role)) throw new ForbiddenError();
+  return { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email, role };
 }
 
 export type AdvanceListRow = {

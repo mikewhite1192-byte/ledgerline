@@ -73,7 +73,7 @@ export function AppShell({
           </div>
         </header>
         <main id="main" tabIndex={-1} aria-label={title} className="px-4 py-6 outline-none md:px-6 md:py-8">
-          <ViewerRoleProvider role={tenant.role ?? "staff"}>{children}</ViewerRoleProvider>
+          <ViewerRoleProvider role={tenant.role}>{children}</ViewerRoleProvider>
         </main>
       </div>
     </div>
