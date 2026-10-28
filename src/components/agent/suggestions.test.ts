@@ -10,6 +10,16 @@ describe("homeSuggestions", () => {
     expect(on[3].label).toBe("What was our margin per load this month?");
   });
 
+  it("asks how last week went in that place while the profit brief is on, reports on or off", () => {
+    for (const reportsOn of [false, true]) {
+      const out = homeSuggestions(reportsOn, { profitOn: true });
+      expect(out.map((s) => s.id)).toEqual(["paystub-problems", "past-60", "pay-run-cost", "profit-brief"]);
+      expect(out[3].label).toBe("How did we do last week?");
+    }
+    expect(homeSuggestions(false, { profitOn: false })).toEqual(homeSuggestions(false));
+    expect(homeSuggestions(true, {})).toEqual(homeSuggestions(true));
+  });
+
   it("keeps the first question word for word, since it is what the agent is asked", () => {
     expect(homeSuggestions(false)[0]).toEqual({
       id: "paystub-problems",
@@ -25,6 +35,7 @@ describe("every suggestion says why", () => {
     const all = [
       ...homeSuggestions(false),
       ...homeSuggestions(true),
+      ...homeSuggestions(false, { profitOn: true }),
       DETENTION_SUGGESTION,
       ...withPaystubSuggestion(homeSuggestions(true), paystub),
     ];

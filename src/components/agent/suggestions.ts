@@ -4,8 +4,9 @@ import { formatLocalDate } from "@/lib/format/dates";
 // The home screen's suggested questions: four, each one a tool can answer, each with one line on
 // why a person would ask it. With the reports on, the advance-limit question gives its place to
 // margin per load; "past 60 days" and "Friday's pay run" are then answered by the aging and cash
-// needed reports. The labels are sent to the agent as written, so a change to one is a change to
-// the question, not only to the screen.
+// needed reports. With the profit brief on, that last place asks how last week went instead
+// (get_profit_brief answers it). The labels are sent to the agent as written, so a change to one is
+// a change to the question, not only to the screen.
 const BASE: readonly Suggestion[] = [
   {
     id: "paystub-problems",
@@ -31,8 +32,21 @@ const MARGIN: Suggestion = {
   reason: "What each load billed, less what its driver was paid.",
 };
 
-export function homeSuggestions(reportsOn: boolean): Suggestion[] {
-  return BASE.map((s) => (reportsOn && s.id === "advance-limit" ? { ...MARGIN } : { ...s }));
+const PROFIT: Suggestion = {
+  id: "profit-brief",
+  label: "How did we do last week?",
+  reason: "Last closed week's margin by route and customer, every number checked.",
+};
+
+// Each other switch comes in by name, so a call that passes one switch for another fails to build.
+type HomeSwitches = { profitOn?: boolean };
+
+export function homeSuggestions(reportsOn: boolean, { profitOn = false }: HomeSwitches = {}): Suggestion[] {
+  return BASE.map((s) => {
+    if (s.id !== "advance-limit") return { ...s };
+    if (profitOn) return { ...PROFIT };
+    return reportsOn ? { ...MARGIN } : { ...s };
+  });
 }
 
 // Offered only while the detention tools are switched on, so the chip never asks for a tool the

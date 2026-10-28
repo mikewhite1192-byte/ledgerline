@@ -10,6 +10,7 @@ import type { AiResult } from "../ai";
 import type { Session } from "../auth/claims";
 import { readInvoiceQueue, readReceivablesInput } from "../data/read";
 import { createPgDb } from "../db/pg";
+import { refreshPlannerStats } from "../db/test-stats";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param } from "../db/types";
 import { dbLedgerStore, type LedgerStore } from "../money/execute";
@@ -70,11 +71,13 @@ const adminWrite = (t: Carrier, sql: string, params: Param[] = []) =>
 
 type Card = { id: string; subject_id: string; status: string; decision_note: string | null; amount_cents: string };
 
+// Every card is made at the test's fixed instant and card ids are random, so the seeded load id
+// orders them: "the first waiting card" is the same card on every run.
 const cards = (t: Carrier) =>
   adminRows<Card>(
     t,
     `SELECT id, subject_id, status, decision_note, amount_cents::text FROM proposals
-      WHERE tenant_id = $1 AND kind = 'invoice_post' ORDER BY created_at, id`,
+      WHERE tenant_id = $1 AND kind = 'invoice_post' ORDER BY created_at, subject_id, id`,
     [t.id],
   );
 
@@ -292,6 +295,8 @@ describe("invoices against a seeded database", () => {
       });
       await replaceTenantData(app, t.id, t.plan);
     }
+    // Plans fit these rows, not counts an earlier file's cleanup left behind (see test-stats.ts).
+    await refreshPlannerStats(admin);
     flags.invoicesEnabled = true;
     flags.customerPaymentsEnabled = true;
     flags.accountingEnabled = false;
@@ -401,7 +406,12 @@ describe("invoices against a seeded database", () => {
     });
 
     it("does not ask again about a card a person rejected while its content is the same", async () => {
-      const [card] = await waitingCards(BR);
+      // A load that has only this one card: the test above left two expired cards on its own load,
+      // and that load can be the first waiting card.
+      const all = await cards(BR);
+      const [card] = all.filter(
+        (c) => c.status === "proposed" && all.filter((o) => o.subject_id === c.subject_id).length === 1,
+      );
       expect(await rejectProposal(BR.session, card.id, "not_needed", { db: app, clock })).toEqual({ ok: true });
       const again = await proposeInvoices(app, BR.session, clock());
       expect(again).toMatchObject({ ok: true, counts: { created: 0, decided: 1 } });

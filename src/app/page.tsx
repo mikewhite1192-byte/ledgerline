@@ -218,7 +218,7 @@ export default async function Home({
 }
 
 // Shown before the agent can answer; they light up when it can.
-const SUGGESTIONS = homeSuggestions(flags.reportsEnabled);
+const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, { profitOn: flags.profitBriefEnabled });
 
 // "Last sweep: 7 problems, 5 fixes drafted, 2 approved", one click from the run.
 function LastSweep({ run }: { run: SweepRunView }) {
