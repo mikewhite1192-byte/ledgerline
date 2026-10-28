@@ -1435,14 +1435,20 @@ const driverDay = (over: Partial<DriverDayView>): DriverDayView => ({
   ...over,
 });
 
-// Each answer the "Charged to this driver" line can give.
-export const DRIVER_DAY_CASES: [string, DriverDayView][] = [
-  ["a load day, charged", driverDay({})],
-  ["a dispatch day with no load", driverDay({ source: "dispatch", load: null, rules: { ...RULES, note: null } })],
-  ["a company driver, owner-operators only", driverDay({ workerType: "company" })],
-  ["the driver carries their own insurance", driverDay({ ownInsurance: true })],
-  ["no pay rules cover the week", driverDay({ rules: null })],
-  ["the driver could not be read", driverDay({ driver: null, workerType: null, rules: { ...RULES, appliesTo: "all" } })],
+// Each answer the "Charged to this driver" line can give, with the words it must show.
+const NOT_KNOWN = "Not known: the driver's record could not be read";
+export const DRIVER_DAY_CASES: [string, DriverDayView, string][] = [
+  ["a load day, charged", driverDay({}), "Yes, once for this day"],
+  ["a dispatch day with no load", driverDay({ source: "dispatch", load: null, rules: { ...RULES, note: null } }), "Yes, once for this day"],
+  ["a company driver, owner-operators only", driverDay({ workerType: "company" }), "No, this carrier charges insurance to owner-operators only"],
+  ["the driver carries their own insurance", driverDay({ ownInsurance: true }), "No, the driver carries their own insurance"],
+  ["no pay rules cover the week", driverDay({ rules: null }), "No pay rules cover this week"],
+  ["the driver could not be read", driverDay({ driver: null, workerType: null, rules: { ...RULES, appliesTo: "all" } }), NOT_KNOWN],
+  [
+    "the driver could not be read, owner-operators only",
+    driverDay({ driver: null, workerType: null, rules: { ...RULES, appliesTo: "owner_operator" } }),
+    NOT_KNOWN,
+  ],
 ];
 
 const schedule = (over: Partial<ScheduleView>): ScheduleView => ({

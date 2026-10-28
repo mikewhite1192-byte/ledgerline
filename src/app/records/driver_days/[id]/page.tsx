@@ -18,11 +18,12 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 // Whether this day adds an insurance charge to the driver's paystub, in words.
 function chargedWords(d: DriverDayView): string {
   if (!d.rules) return "No pay rules cover this week";
+  // Checked before any answer that depends on the driver row: an unread row is unknown, never "No".
+  if (d.workerType === null) return "Not known: the driver's record could not be read";
   if (d.ownInsurance) return "No, the driver carries their own insurance";
   if (d.rules.appliesTo === "owner_operator" && d.workerType !== "owner_operator") {
     return "No, this carrier charges insurance to owner-operators only";
   }
-  if (d.workerType === null) return "Not known: the driver's record could not be read";
   return "Yes, once for this day";
 }
 

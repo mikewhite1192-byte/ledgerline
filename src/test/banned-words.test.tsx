@@ -703,8 +703,9 @@ const PAGES: PageCase[] = [
   },
   {
     file: "records/driver_days/[id]/page.tsx",
-    variants: fx.DRIVER_DAY_CASES.map(([name, view]) => ({
+    variants: fx.DRIVER_DAY_CASES.map(([name, view, shows]) => ({
       name,
+      shows,
       setup: () => (state.fx.driverDayView = view),
       load: async () => (await import("@/app/records/driver_days/[id]/page")).default({ params: p({ id: ID }) }),
     })),
