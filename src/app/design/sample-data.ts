@@ -139,14 +139,17 @@ export const ADVANCE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
     { text: `Advance limit: ${formatCents(50_000)}; this request fits`, source: SOURCES.payRules },
   ],
   sources: [SOURCES.load2, SOURCES.load3],
-  destination: { label: `To fuel card ···· ${FUEL_CARD_LAST4}`, testMode: true },
-  confirmQuestion: `Pay ${formatCents(20_000)} to ${DRIVER.name}'s fuel card ···· ${FUEL_CARD_LAST4}? Test mode.`,
+  destination: { label: `To fuel card ending ${FUEL_CARD_LAST4}`, testMode: true },
+  confirmQuestion: `Pay ${formatCents(20_000)} to ${DRIVER.name}'s fuel card ending ${FUEL_CARD_LAST4}?`,
+  confirmNoun: "advance",
+  confirmNext: "This is a test payout to the driver's fuel card. It is taken back from the driver's pay on a later paystub.",
 };
 
 export const PAYMENT_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
   id: "proposal-payment",
   title: "Record Hartwell Produce's payment against invoice INV-20417",
   impact: { cents: 320_000, direction: "in", label: "Applies to INV-20417" },
+  confirmNoun: "payment",
   reasons: [
     { text: `Check for ${formatCents(320_000)} received Oct 30`, source: SOURCES.customer },
     { text: `Open balance on INV-20417: ${formatCents(320_000)}`, source: SOURCES.invoiceA },
@@ -157,6 +160,7 @@ export const MOVE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
   id: "proposal-move",
   title: "Move a payment that landed on the wrong invoice",
   impact: { cents: 185_000, direction: "none", label: "Moves between invoices" },
+  confirmNoun: "payment",
   reasons: [
     { text: `${formatCents(185_000)} was applied to INV-20417 but matches INV-20418`, source: SOURCES.invoiceB },
   ],
