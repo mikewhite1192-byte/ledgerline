@@ -324,6 +324,14 @@ vi.mock("@/lib/voice/read", async (importOriginal) => ({
   readVoiceList: async () => get("voiceList"),
   readVoiceDetail: async () => get("voiceDetail"),
 }));
+vi.mock("@/lib/records/views", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/records/views")>()),
+  readPayItemView: async () => get("payItemView"),
+  readDriverDayView: async () => get("driverDayView"),
+  readScheduleView: async () => get("scheduleView"),
+  readExtraChargeLoadId: async () => get("extraChargeLoadId"),
+}));
+vi.mock("@/lib/help/hero-link", () => ({ readHeroLink: async () => get("heroLink") }));
 
 function defaults(): Record<string, unknown> {
   return {
@@ -371,6 +379,11 @@ function defaults(): Record<string, unknown> {
     paystubAsk: null,
     reviewQueue: fx.REVIEW_QUEUE,
     invoiceReview: fx.INVOICE_REVIEW,
+    payItemView: fx.PAY_ITEM_CASES[0][1],
+    driverDayView: fx.DRIVER_DAY_CASES[0][1],
+    scheduleView: fx.SCHEDULE_CASES[0][1],
+    extraChargeLoadId: null,
+    heroLink: fx.HERO_LINK_DRAFT,
     profitView: fx.PROFIT_VIEW,
   };
 }
@@ -748,6 +761,44 @@ const PAGES: PageCase[] = [
     variants: [{ name: "record", load: async () => (await import("@/app/records/loads/[id]/page")).default({ params: p({ id: ID }) }) }],
   },
   {
+    file: "records/pay_items/[id]/page.tsx",
+    variants: fx.PAY_ITEM_CASES.map(([name, view]) => ({
+      name,
+      setup: () => (state.fx.payItemView = view),
+      load: async () => (await import("@/app/records/pay_items/[id]/page")).default({ params: p({ id: ID }) }),
+    })),
+  },
+  {
+    file: "records/driver_days/[id]/page.tsx",
+    variants: fx.DRIVER_DAY_CASES.map(([name, view, shows]) => ({
+      name,
+      shows,
+      setup: () => (state.fx.driverDayView = view),
+      load: async () => (await import("@/app/records/driver_days/[id]/page")).default({ params: p({ id: ID }) }),
+    })),
+  },
+  {
+    file: "records/deduction_schedules/[id]/page.tsx",
+    variants: fx.SCHEDULE_CASES.map(([name, view]) => ({
+      name,
+      setup: () => (state.fx.scheduleView = view),
+      load: async () => (await import("@/app/records/deduction_schedules/[id]/page")).default({ params: p({ id: ID }) }),
+    })),
+  },
+  // An extra charge this carrier has sends the reader on to its load (checked below); one it does
+  // not have is the only screen this route shows.
+  {
+    file: "records/load_accessorials/[id]/page.tsx",
+    failureScreen: true,
+    variants: [
+      {
+        name: "an extra charge this carrier does not have",
+        load: async () => (await import("@/app/records/load_accessorials/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Extra charge",
+      },
+    ],
+  },
+  {
     file: "settlements/page.tsx",
     variants: [
       { name: "week", load: async () => (await import("@/app/settlements/page")).default(sp()) },
@@ -828,6 +879,40 @@ const PAGES: PageCase[] = [
       { name: "form", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({}) }) },
       { name: "invalid", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "invalid" }) }) },
       { name: "unavailable", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "unavailable" }) }) },
+    ],
+  },
+  {
+    file: "help/how-pay-works/page.tsx",
+    variants: [
+      {
+        name: "signed out",
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: "Sign in to try the demo",
+      },
+      {
+        name: "signed in, her paystub drafted",
+        setup: () => (state.session = SESSION),
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: "See her paystub",
+      },
+      {
+        name: "signed in, the week not run yet",
+        setup: () => {
+          state.session = SESSION;
+          state.fx.heroLink = fx.HERO_LINK_DRIVER;
+        },
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: "run the week on Settlements",
+      },
+      {
+        name: "signed in, a carrier without her",
+        setup: () => {
+          state.session = SESSION;
+          state.fx.heroLink = null;
+        },
+        load: async () => (await import("@/app/help/how-pay-works/page")).default(),
+        shows: fx.TENANT.name,
+      },
     ],
   },
   {
@@ -1036,6 +1121,42 @@ describe("no internal word on any page", () => {
       });
     }
   }
+});
+
+// The record pages a paystub line links to, for a record this carrier does not have: each shows the
+// not-here screen under its own plain title. A page case scans one file once, so these sit here.
+describe("the paystub line record pages, for a record that is not here", () => {
+  const MISSING: [string, string, () => Promise<{ default: (a: { params: Promise<{ id: string }> }) => Promise<ReactNode> }>][] = [
+    ["payItemView", "Pay item", () => import("@/app/records/pay_items/[id]/page")],
+    ["driverDayView", "Day driven", () => import("@/app/records/driver_days/[id]/page")],
+    ["scheduleView", "Weekly deduction", () => import("@/app/records/deduction_schedules/[id]/page")],
+  ];
+  let failures: string[] = [];
+  beforeAll(() => {
+    failures = failureTitles();
+  });
+
+  for (const [key, title, mod] of MISSING) {
+    it(`${title}`, async () => {
+      state.fx[key] = null;
+      const container = await renderPage(async () => (await mod()).default({ params: p({ id: ID }) }));
+      const text = container.textContent ?? "";
+      expect(text).toContain(title);
+      expect(failures.some((t) => text.includes(t)), "the not-here screen shows its title").toBe(true);
+      expect(scan(container)).toEqual([]);
+    });
+  }
+
+  it("an extra charge this carrier has sends the reader to its load's Extra charges table", async () => {
+    state.fx.extraChargeLoadId = fx.LOAD_RECORD.id;
+    const { default: page } = await import("@/app/records/load_accessorials/[id]/page");
+    await expect(page({ params: p({ id: ID }) })).rejects.toThrow(`redirect /records/loads/${fx.LOAD_RECORD.id}#extra-charges`);
+  });
+
+  it("the help page's tab title and description", async () => {
+    const { metadata } = await import("@/app/help/how-pay-works/page");
+    expect(hitsIn(`${String(metadata.title)}\n${String(metadata.description)}`, new Set())).toEqual([]);
+  });
 });
 
 // The root layout renders the html document itself, which cannot sit inside a test's container, so

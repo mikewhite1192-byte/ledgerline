@@ -21,6 +21,7 @@ export const TERMS = {
   "company-driver": "A driver in a company truck, paid per mile.",
   escrow: "Money held back from an owner-operator's pay and returned when the lease ends.",
   "truck-lease": "The weekly payment an owner-operator makes on the truck.",
+  insurance: "A daily charge for insurance coverage, taken for each day the driver drove.",
   "carried-shortfall": "When deductions were more than pay one week, the rest is taken next week.",
   advance: "Pay given early, against work already done; it is taken back from the next paystub.",
   "advance-repaid": "The part of an earlier advance taken back on this paystub.",
