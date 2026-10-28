@@ -40,6 +40,11 @@ const SENTENCES: Readonly<Record<string, string>> = {
     "The payment matches another open invoice for the same customer exactly, and overpays the one it is on.",
   driver_not_armed: "The driver is not armed to receive money. An admin can arm them on the driver page.",
   over_load_cap: "The amount is over what is left under the per-load cap for this load.",
+  // propose_rule_change
+  rule_change_sized_by_engine: "Sized on last week's pay with the same math that pays drivers.",
+  // a pay rule change refused: escrow per week while a driver's escrow schedule runs
+  escrow_on_driver_schedules:
+    "Each driver's escrow schedule sets what is held back each week, so changing the carrier's escrow per week would not change anyone's pay. Nothing was changed.",
   // the fuel checks (engine proposals)
   state_not_on_route: "The company card bought fuel in a state this load did not drive through.",
   gallons_over_tank: "The fill-up was more fuel than the truck's tank holds.",

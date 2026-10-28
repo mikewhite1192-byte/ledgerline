@@ -13,6 +13,7 @@ export { home } from "./home";
 export { invoices } from "./invoices";
 export { memory } from "./memory";
 export { models } from "./models";
+export { payRules } from "./pay-rules";
 export { portalRuns } from "./portal-runs";
 export { profitBrief } from "./profit-brief";
 export { settlements } from "./settlements";

@@ -98,6 +98,7 @@ const SOURCE_LABELS: Record<string, string> = {
   driver_days: "Driver day",
   fuel_purchases: "Fuel purchase",
   pay_configs: "Pay rules",
+  pay_rule_changes: "Pay rule change",
   deduction_schedules: "Deduction schedule",
   pay_items: "Pay item",
   advances: "Advance",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Queryable } from "../../../../db";
 import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionChargeRows } from "../../../../data/detention-charge";
+import { changeArgsSchema, changeMatches, readRuleChangeRows, ruleChangeOf } from "../../../../pay-rules/change";
 import { loadsOf } from "../../../../data/records";
 import {
   readAdvanceInput,
@@ -73,13 +74,24 @@ const SOURCE_FIELDS: Partial<Record<TenantTable, readonly string[]>> = {
   load_accessorials: ["load_id", "kind", "amount_cents", "paid_by_driver"],
   driver_days: ["driver_id", "day", "source", "load_id"],
   fuel_purchases: ["driver_id", "load_id", "purchased_on", "state", "gallons_milli", "amount_cents", "paid_with"],
+  // Every knob of a version (numbers and enums); the note is free text and stays out.
   pay_configs: [
     "effective_from",
+    "source",
+    "week_start_dow",
+    "percent_base",
+    "empty_miles_paid_bps",
+    "accessorial_driver_share_bps",
+    "insurance_applies_to",
+    "insurance_per_day_cents",
+    "escrow_target_cents",
+    "escrow_per_settlement_cents",
+    "net_pay_floor_cents",
+    "advance_recovery_cap_cents",
     "advance_fee_cents",
     "advance_limit_default_cents",
     "advance_max_bps_of_earned",
     "advance_min_cents",
-    "net_pay_floor_cents",
   ],
   deduction_schedules: ["driver_id", "kind", "amount_cents", "target_cents", "active_from", "active_to"],
   settlement_periods: ["period_start", "period_end", "status"],
@@ -453,6 +465,42 @@ async function detentionEngine(q: Queryable, p: ProposalRow): Promise<Engine> {
   };
 }
 
+// A pay rule change, checked the way its executor checks it: the engine sizes the same change
+// again now (the sentence was checked when it was proposed, so grounding is skipped), and the
+// stored figures must equal the engine's whole. A refusal (a week that began, a version paid
+// under, a later version) is a mismatch, never a yes.
+async function ruleChangeEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow): Promise<Engine> {
+  if (p.subject_table !== "pay_configs" || !isUuid(p.subject_id)) return UNAVAILABLE;
+  const stored = changeArgsSchema.safeParse(parseJson(p.args));
+  if (!stored.success || stored.data.baseVersionId !== p.subject_id) return UNAVAILABLE;
+  const a = stored.data;
+  const check = ruleChangeOf(
+    await readRuleChangeRows(q),
+    { ruleKey: a.ruleKey, newValue: a.newValue, askedFrom: a.askedFrom },
+    "skip",
+    ctx.now,
+  );
+  const base = { ok: true, check: "pay_rule_change", proposedCents: Number(p.amount_cents) };
+  if (!check.ok) return { ...base, engine: { ok: false, reason: check.reason } };
+  const c = check.change;
+  return {
+    ...base,
+    engine: {
+      ok: true,
+      amountCents: Math.abs(c.impact.netDeltaCents),
+      figures: {
+        oldValue: c.oldValue,
+        newValue: c.newValue,
+        effectiveFrom: c.effectiveFrom,
+        driversChanged: c.impact.driversChanged,
+        netDeltaCents: c.impact.netDeltaCents,
+      },
+      matchesProposal: changeMatches(a, c) && Number(p.amount_cents) === Math.abs(c.impact.netDeltaCents),
+      sources: refList(c.sources, MAX_ENGINE_SOURCES),
+    },
+  };
+}
+
 // A payment move (payment_reapply), checked the way its executor checks it: the payment is not in
 // QuickBooks yet and has no post reserved, sent or not yet known (the executor's own rule), the
 // application is where the card says, and the engine's payment_on_wrong_invoice finding still
@@ -520,6 +568,7 @@ async function engineFor(
     if (p.kind === "detention_charge") return await detentionEngine(q, p);
     // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
     if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
+    if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
     return UNAVAILABLE;
   } catch {
     console.warn("gateway: the auditor's engine check could not be computed");

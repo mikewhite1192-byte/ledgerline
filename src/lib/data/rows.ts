@@ -163,7 +163,26 @@ export type PayConfigRow = PayConfigKnobs & {
   id: string;
   effective_from: string;
   note: string | null;
-  source: "seed" | "ui";
+  // "proposal": written by a person's approval of a pay rule change (migration 0030).
+  source: "seed" | "ui" | "proposal";
+};
+
+// One executed pay rule change (migration 0030): the diff a person approved, beside the version
+// it created or edited. Not a TenantRows table: the seed never writes it. The demo reset clears it
+// (demo_reset_clear, re-created in 0036), and npm run seed's replace through the pay_configs
+// cascade.
+export type PayRuleChangeRow = {
+  id: string;
+  pay_config_id: string;
+  proposal_id: string | null;
+  rule_key: string;
+  old_value: string;
+  new_value: string;
+  asked_from: string;
+  effective_from: string;
+  applied: "new_version" | "edited_version";
+  decided_by: string;
+  created_at: string;
 };
 
 export type DeductionScheduleRow = {

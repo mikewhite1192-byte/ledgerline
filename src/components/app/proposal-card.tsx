@@ -41,8 +41,9 @@ export type ProposalCardProps = {
   id: string;
   title: string;
   impact: { cents: number; direction: "in" | "out" | "none"; label?: string };
-  reasons: { text: string; source?: SourceRef }[];
-  sources?: SourceRef[];
+  // label, when set, names the record's link in place of its kind and id ("Driver BR-D07's paystub").
+  reasons: { text: string; source?: SourceRef; label?: string }[];
+  sources?: (SourceRef & { label?: string })[];
   status: ProposalStatus;
   // Where the money would land, one small line under the amount, e.g. "To fuel card ending 4417".
   // testMode adds " · Test mode" to it.
@@ -75,8 +76,28 @@ export type ProposalCardProps = {
   hrefFor?: HrefFor;
   // Opens with the confirm row showing (for review pages).
   initialConfirming?: boolean;
+  // Words a kind uses in place of the defaults: a pay rule change is saved, not approved, and its
+  // secondary control is a plain "Not now" link.
+  wording?: ProposalWording;
+  // Set when this person cannot approve it (an amount above their role): the main button shows
+  // this text, disabled, and no confirm row opens.
+  approveBlockedLabel?: string;
+  // A block cannot be approved over with a reason (a pay rule change is asked again instead): a
+  // blocked card offers only the secondary control.
+  noOverride?: boolean;
+  // Plain lines in place of the auditor's badges, by state (a pay rule change says
+  // "double-checked"). A state with no line keeps its badge.
+  auditWords?: Partial<Record<ProposalAudit["state"], string>>;
+  // One line above the buttons, on every status.
+  footnote?: string;
+  // The line under a decided card, in place of the default for its status, with an optional link.
+  statusNotes?: Partial<Record<Exclude<ProposalStatus, "proposed">, StatusNote>>;
   className?: string;
 };
+
+export type ProposalWording = { approve: string; approving: string; question: string; reject: string };
+
+export type StatusNote = { text: string; link?: { href: string; label: string } };
 
 // What the amount line says, by status. Only a done proposal may say that money moved.
 const IMPACT_LABEL: Record<ProposalStatus, { in: string; out: string }> = {
@@ -127,7 +148,37 @@ const BUDGET_TEXT = "The second check could not run on this request. Your data i
 
 const CONFIRM_ROW = "grid gap-3 border-t border-border bg-secondary px-4 py-3 sm:px-5";
 
-function AuditLine({ audit }: { audit: ProposalAudit }) {
+function AuditLine({
+  audit,
+  words,
+}: {
+  audit: ProposalAudit;
+  words?: Partial<Record<ProposalAudit["state"], string>>;
+}) {
+  const line = words?.[audit.state];
+  if (line !== undefined) {
+    // The kind's own plain line for this state, then the same concern text and override as below.
+    return (
+      <div role={audit.state === "checking" ? "status" : undefined} className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
+        <p
+          className={cn(
+            "text-small",
+            audit.state === "block" ? "font-semibold text-destructive" : audit.state === "pass" ? "text-success" : "text-foreground-2",
+          )}
+        >
+          {line}
+        </p>
+        {audit.text && audit.state !== "pass" && audit.state !== "checking" ? (
+          <p className="text-small text-foreground">{audit.text}</p>
+        ) : null}
+        {audit.override ? (
+          <p className="text-small text-foreground-2">
+            Overridden by {audit.override.byLabel} on {audit.override.at}: {audit.override.reason}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
   if (audit.state === "checking") {
     return (
       <div role="status" className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
@@ -180,6 +231,12 @@ export function ProposalCard({
   pending = false,
   hrefFor = recordHref,
   initialConfirming = false,
+  wording,
+  approveBlockedLabel,
+  auditWords,
+  footnote,
+  statusNotes,
+  noOverride = false,
   className,
 }: ProposalCardProps) {
   const [confirming, setConfirming] = useState(initialConfirming);
@@ -226,16 +283,18 @@ export function ProposalCard({
     }
   }, [rejecting]);
 
-  const rejectButton = (
-    <Button
-      ref={rejectRef}
-      variant="outline"
-      disabled={pending}
-      onClick={() => {
-        rejectOpened.current = true;
-        setRejecting(true);
-      }}
-    >
+  // The secondary control: the outlined Reject, or the kind's own words as a plain link. Either
+  // one only opens the question; the question's own Reject fires.
+  const openReject = () => {
+    rejectOpened.current = true;
+    setRejecting(true);
+  };
+  const rejectButton = wording ? (
+    <Button ref={rejectRef} variant="link" disabled={pending} onClick={openReject} className="self-center sm:mr-2">
+      {wording.reject}
+    </Button>
+  ) : (
+    <Button ref={rejectRef} variant="outline" disabled={pending} onClick={openReject}>
       Reject
     </Button>
   );
@@ -279,11 +338,11 @@ export function ProposalCard({
                 <span className="text-foreground">{r.text}</span>
                 {r.source && href ? (
                   <Link href={href} className="ml-auto text-small text-link underline-offset-4 hover:underline">
-                    {sourceName(r.source)}
+                    {r.label ?? sourceName(r.source)}
                   </Link>
                 ) : r.source ? (
                   // A record the link rules do not know shows as its name, without a link.
-                  <span className="ml-auto text-small text-foreground-2">{sourceName(r.source)}</span>
+                  <span className="ml-auto text-small text-foreground-2">{r.label ?? sourceName(r.source)}</span>
                 ) : null}
               </li>
             );
@@ -296,23 +355,25 @@ export function ProposalCard({
               const href = hrefOrNull(hrefFor, s);
               return href ? (
                 <Link key={`${s.table}:${s.id}`} href={href} className="text-link underline-offset-4 hover:underline">
-                  {sourceName(s)}
+                  {s.label ?? sourceName(s)}
                 </Link>
               ) : (
-                <span key={`${s.table}:${s.id}`}>{sourceName(s)}</span>
+                <span key={`${s.table}:${s.id}`}>{s.label ?? sourceName(s)}</span>
               );
             })}
           </p>
         ) : null}
       </div>
 
-      {audit ? <AuditLine audit={audit} /> : null}
+      {audit ? <AuditLine audit={audit} words={auditWords} /> : null}
 
       {flagNote ? (
         <p role="note" className="mx-4 mb-3 rounded-md border border-warning bg-warning-soft px-3 py-2 text-small text-foreground sm:mx-5">
           {flagNote}
         </p>
       ) : null}
+
+      {footnote ? <p className="mx-4 mb-3 text-small text-foreground-2 sm:mx-5">{footnote}</p> : null}
 
       {status === "proposed" ? (
         rejecting ? (
@@ -345,7 +406,7 @@ export function ProposalCard({
               <p className="text-body font-semibold text-foreground">
                 {overriding
                   ? "Approve even though the second check did not pass?"
-                  : (confirmQuestion ?? `Approve this ${confirmNoun}?`)}
+                  : (confirmQuestion ?? wording?.question ?? `Approve this ${confirmNoun}?`)}
               </p>
               <p className="text-body text-foreground">
                 1 {confirmNoun}, <Money cents={Math.abs(impact.cents)} sign="never" tone="plain" />.
@@ -370,7 +431,7 @@ export function ProposalCard({
               </Button>
               <Button
                 pending={pending}
-                pendingLabel="Approving"
+                pendingLabel={wording?.approving ?? "Approving"}
                 disabled={overriding ? validReason === null : blocked}
                 onClick={() =>
                   overriding && validReason !== null ? onApprove?.(id, validReason) : onApprove?.(id)
@@ -379,6 +440,10 @@ export function ProposalCard({
                 Confirm
               </Button>
             </div>
+          </div>
+        ) : blocked && noOverride ? (
+          <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:justify-end sm:px-5">
+            {rejectButton}
           </div>
         ) : blocked ? (
           <div className="grid gap-2 border-t border-border px-4 py-3 sm:px-5">
@@ -413,17 +478,18 @@ export function ProposalCard({
             </div>
           </div>
         ) : (
-          <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:justify-end sm:px-5">
+          <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-end sm:px-5">
             {rejectButton}
             <Button
               ref={approveRef}
-              disabled={pending}
+              disabled={pending || approveBlockedLabel !== undefined}
               onClick={() => {
+                if (approveBlockedLabel !== undefined) return;
                 opened.current = true;
                 setConfirming(true);
               }}
             >
-              {noAmount ? "Approve" : `Approve ${amount}`}
+              {approveBlockedLabel ?? wording?.approve ?? (noAmount ? "Approve" : `Approve ${amount}`)}
             </Button>
           </div>
         )
@@ -437,10 +503,35 @@ export function ProposalCard({
           </Button>
         </div>
       ) : (
-        <p className="border-t border-border px-4 py-3 text-small text-foreground-2 sm:px-5">
-          {STATUS_NOTE[status]}
-        </p>
+        <DecidedNote note={statusNotes?.[status] ?? { text: STATUS_NOTE[status] }} />
       )}
     </Card>
+  );
+}
+
+// A decided card's line. A link's label, where the sentence says it, becomes the link in place;
+// otherwise the link follows the sentence.
+function DecidedNote({ note }: { note: StatusNote }) {
+  const at = note.link ? note.text.lastIndexOf(note.link.label) : -1;
+  const link = note.link ? (
+    <Link href={note.link.href} className="text-link underline-offset-4 hover:underline">
+      {note.link.label}
+    </Link>
+  ) : null;
+  return (
+    <p className="border-t border-border px-4 py-3 text-small text-foreground-2 sm:px-5">
+      {note.link && at >= 0 ? (
+        <>
+          {note.text.slice(0, at)}
+          {link}
+          {note.text.slice(at + note.link.label.length)}
+        </>
+      ) : (
+        <>
+          {note.text}
+          {link ? <> {link}</> : null}
+        </>
+      )}
+    </p>
   );
 }

@@ -479,6 +479,16 @@ describe("the demo reset", () => {
         batch,
         detention,
       ]);
+      // A saved pay rule change (0030): it names a proposal that goes and a rules version the
+      // replace rewrites, so the clear must take it before either.
+      const version = plan.rows.pay_configs[0];
+      await q.execute(
+        `INSERT INTO pay_rule_changes (id, tenant_id, pay_config_id, proposal_id, rule_key, old_value, new_value,
+           asked_from, effective_from, applied, decided_by)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'insurance_per_day_cents',
+           '1100', '1200', CAST($4 AS date), CAST($4 AS date), 'edited_version', $5)`,
+        [randomUUID(), version.id, detention, version.effective_from, session.sub],
+      );
     });
 
     // A fuel check whose finding names a seeded fill-up, its load, one of the driver's pay lines and
@@ -664,6 +674,7 @@ describe("the demo reset", () => {
         fuel_findings: 1,
         fuel_check_runs: 1,
         approval_batches: 1,
+        pay_rule_changes: 1,
         proposals: 3,
         turns: 3,
         conversations: 3,
@@ -700,6 +711,7 @@ describe("the demo reset", () => {
         fuel_findings: 1,
         fuel_check_runs: 1,
         approval_batches: 1,
+        pay_rule_changes: 1,
         advances: 1,
         proposals: 3,
         turns: 3,

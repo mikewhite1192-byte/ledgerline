@@ -12,6 +12,8 @@ export type ComposerProps = {
   disabledReason?: string;
   placeholder?: string;
   pending?: boolean;
+  // A line of help under the box while it is on (a suggestion that fills the box sets it).
+  help?: string;
   className?: string;
 };
 
@@ -25,6 +27,7 @@ export function Composer({
   disabledReason,
   placeholder = "Ask about pay, advances, invoices or loads",
   pending = false,
+  help,
   className,
 }: ComposerProps) {
   const [draft, setDraft] = useState("");
@@ -75,7 +78,7 @@ export function Composer({
           value={text}
           readOnly={off}
           aria-disabled={off || undefined}
-          aria-describedby={off && disabledReason ? reasonId : undefined}
+          aria-describedby={off && disabledReason ? reasonId : !off && help ? `${reasonId}-help` : undefined}
           placeholder={placeholder}
           onChange={(e) => set(e.target.value)}
           onKeyDown={(e) => {
@@ -97,6 +100,10 @@ export function Composer({
       {off && disabledReason ? (
         <p id={reasonId} className="mt-2 text-small text-muted-foreground">
           {disabledReason}
+        </p>
+      ) : !off && help ? (
+        <p id={`${reasonId}-help`} className="mt-2 text-small text-muted-foreground">
+          {help}
         </p>
       ) : null}
     </div>

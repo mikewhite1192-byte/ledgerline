@@ -24,6 +24,7 @@ const SWITCHES = [
   "accountingEnabled",
   "portalRunnerEnabled",
   "demoResetEnabled",
+  "rulesByTalkingEnabled",
   "profitBriefEnabled",
   "carrierMemoryEnabled",
 ] as const;
@@ -58,6 +59,7 @@ describe("appNav", () => {
       ["Drivers", "/voice-notes", "Voice notes", false],
       ["Drivers", "/clips", "Dock clips", false],
       ["Settings", "/settings/accounting", "QuickBooks", false],
+      ["Settings", "/settings/pay-rules", "Pay rules", false],
       ["Settings", "/models", "Models and spend", false],
       ["Settings", "/portal-runs", "Portal runs", false],
       ["Settings", "/settings/demo", "Demo", false],
@@ -88,6 +90,7 @@ describe("appNav", () => {
       accountingEnabled: "/settings/accounting",
       portalRunnerEnabled: "/portal-runs",
       demoResetEnabled: "/settings/demo",
+      rulesByTalkingEnabled: "/settings/pay-rules",
       profitBriefEnabled: "/profit",
       carrierMemoryEnabled: "/memory",
     };

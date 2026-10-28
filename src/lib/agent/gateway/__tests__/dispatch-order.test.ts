@@ -419,8 +419,8 @@ describe("callTool dispatch order", () => {
 
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
-    // the afterEach above; the report, invoicing, invoice review, customer payments, collections
-    // and profit brief switches after this test.
+    // the afterEach above; the report, invoicing, invoice review, customer payments, collections,
+    // profit brief and pay rule change switches after this test.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.invoicesEnabled = true;
@@ -428,6 +428,7 @@ describe("callTool dispatch order", () => {
     flags.customerPaymentsEnabled = true;
     flags.collectionsEnabled = true;
     flags.profitBriefEnabled = true;
+    flags.rulesByTalkingEnabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;
       flags.invoicesEnabled = false;
@@ -435,6 +436,7 @@ describe("callTool dispatch order", () => {
       flags.customerPaymentsEnabled = false;
       flags.collectionsEnabled = false;
       flags.profitBriefEnabled = false;
+      flags.rulesByTalkingEnabled = false;
     });
     for (const [name, args] of Object.entries(ARGS)) {
       const auditor = name === "get_proposal";
@@ -459,6 +461,12 @@ describe("callTool dispatch order", () => {
       });
       // propose_invoice_fix is sent a total the engine does not compute: refused by the engine.
       if (name === "propose_invoice_fix") {
+        expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
+        continue;
+      }
+      // propose_rule_change runs outside a turn, so there is no sentence to find the new value in:
+      // the engine's grounding refuses it before a draft.
+      if (name === "propose_rule_change") {
         expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
         continue;
       }
