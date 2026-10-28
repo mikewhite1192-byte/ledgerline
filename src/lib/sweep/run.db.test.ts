@@ -403,6 +403,10 @@ describe("a sweep of the open week", () => {
     expect(runs.length).toBeGreaterThan(1);
     expect((await run(runs[0])).truncated_reason).toBe("max_items");
     for (const id of runs.slice(0, -1)) expect((await run(id)).truncated_reason).toBe("max_items");
+    // A run that took the first findings only ends with what it left not finished; the run that
+    // took the rest ends with every item done.
+    for (const id of runs.slice(0, -1)) expect(await ticks(id)).toEqual({ find: "done", draft: "done", audit: "not_done" });
+    expect(await ticks(runs.at(-1) as string)).toEqual({ find: "done", draft: "done", audit: "done" });
     seen.slice(1).forEach((n, i) => expect(n, `run ${i + 2}`).toBeGreaterThan(seen[i]));
     const last = await items(runs.at(-1) as string);
     expect(last).toHaveLength(8);

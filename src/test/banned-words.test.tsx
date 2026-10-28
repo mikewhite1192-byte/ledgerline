@@ -1400,7 +1400,7 @@ describe("no internal word in a chat answer or its trace", () => {
     expect(lists[0].textContent).toContain("Skipped");
     expect(lists[0].textContent).toContain("Not finished");
     const text = container.textContent ?? "";
-    expect(text).toContain("I stopped after 30 steps. Done: Read Rosa's loads this week. Not done:");
+    expect(text).toContain("I stopped after 6 steps. Done: Read Rosa's loads this week. Not done:");
     expect(text).toContain("Nothing was paid or sent.");
     expect(scan(container)).toEqual([]);
   });

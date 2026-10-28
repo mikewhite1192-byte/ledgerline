@@ -212,7 +212,7 @@ export const CHECKLIST_TURNS: TurnView[] = [
     id: id(341),
     status: "partial",
     endedReason: "max_turns",
-    text: `${stopSummary(STOPPED_CHECKLIST, { steps: 30 })}\n\nRosa Delgado ran 4 loads this week.`,
+    text: `${stopSummary(STOPPED_CHECKLIST, { steps: 6 })}\n\nRosa Delgado ran 4 loads this week.`,
     proposals: [],
     checklist: STOPPED_CHECKLIST,
   },

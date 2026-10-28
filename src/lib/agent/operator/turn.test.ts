@@ -678,12 +678,87 @@ describe("runTurn with a checklist", () => {
     const out = await h.run();
     expect(out.status).toBe("partial");
     expect(out.endedReason).toBe("model_calls");
+    // The count is the four reads, not the four model calls and two checklist writes beside them;
+    // the turn's own step count still holds every step.
+    expect(out.stepCount).toBe(10);
     expect(out.text).toBe(
-      `I stopped after ${out.stepCount} steps. Done: Read Rosa's week. Not done: Check her pay; Draft a fix. Nothing was paid or sent.\n\nTwo loads are short.`,
+      "I stopped after 4 steps. Done: Read Rosa's week. Not done: Check her pay; Draft a fix. Nothing was paid or sent.\n\nTwo loads are short.",
     );
     expect(out.text).not.toContain(LOOP_TEXT.stopped);
     expect(states(h.finished()?.checklist)).toEqual(["done", "not_done", "not_done"]);
     expect(h.finished()?.text).toBe(out.text);
+  });
+
+  it("leaves the item in hand not finished when a call after the last list was refused or made no card", async () => {
+    const propose = (id: string) => call(id, "propose_advance", { amountCents: 20_000 });
+    const card = () => allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT, refs: [{ table: "drivers", id: TYPED }] });
+    // Over the engine's limit: the gateway blocks it and says the limit.
+    const overLimit = (): Outcome => ({
+      decision: "blocked",
+      decisionId: "d-propose-over",
+      tool: "propose_advance",
+      reason: "amount_over_limit",
+      result: { error: "amount_over_limit" },
+      limitCents: 15_000 as Extract<Outcome, { decision: "blocked" }>["limitCents"],
+      latencyMs: 1,
+    });
+    const plan = (first: string, second: string) =>
+      list(`l-${first}-${second}`, [
+        { text: "Read Rosa's week", state: first },
+        { text: "Propose the advance", state: second },
+      ]);
+    const answer = (gw: (c: Call) => Outcome, replies: Result[]) => {
+      const h = harness(replies, gw);
+      return h.run().then((out) => ({ out, h, final: states(h.finished()?.checklist) }));
+    };
+    const withPropose = (outcome: () => Outcome) => (c: Call) =>
+      c.name === "set_checklist" ? listOutcome(c) : c.name === "propose_advance" ? outcome() : allowed(c.name, {});
+    const proposeTurn = (calls: Call[]) => [
+      result({ toolCalls: [plan("doing", "todo"), call("c1", "get_pay_items")] }),
+      result({ toolCalls: calls }),
+      result({ text: "I could not propose that." }),
+    ];
+
+    // Blocked by the gateway: the answer finished, the proposal item is not finished.
+    const refused = await answer(withPropose(overLimit), proposeTurn([plan("done", "doing"), propose("p1")]));
+    expect(refused.out).toMatchObject({ status: "done", text: "I could not propose that." });
+    expect(refused.final).toEqual(["done", "not_done"]);
+    expect(refused.h.proposals.size).toBe(0);
+    // Allowed, but the same proposal was already decided: no card, so not finished either.
+    const decided = harness(proposeTurn([plan("done", "doing"), propose("p1")]), withPropose(card));
+    decided.decided.set(`advance_payout:${DRIVER}:${JSON.stringify(ADVANCE_DRAFT.args)}`, { id: "proposal-old", status: "rejected" });
+    expect(await decided.run()).toMatchObject({ status: "done" });
+    expect(states(decided.finished()?.checklist)).toEqual(["done", "not_done"]);
+    // A list sent in the same response after the refused call was written without knowing it.
+    const after = await answer(withPropose(overLimit), proposeTurn([propose("p1"), plan("done", "doing")]));
+    expect(after.final).toEqual(["done", "not_done"]);
+  });
+
+  it("still ticks the item in hand when the card was made, and when a list came after an earlier refusal", async () => {
+    const card = () => allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT, refs: [{ table: "drivers", id: TYPED }] });
+    const denied: Outcome = { decision: "denied", decisionId: "d-no", tool: "get_pay_items", reason: "unknown_record", result: { error: "unknown_record" }, latencyMs: 1 };
+    let firstRead = true;
+    const gw = (c: Call): Outcome => {
+      if (c.name === "set_checklist") return listOutcome(c);
+      if (c.name === "propose_advance") return card();
+      // The first read is refused; the model sees it and sends the list again with the card.
+      if (firstRead) {
+        firstRead = false;
+        return denied;
+      }
+      return allowed(c.name, {});
+    };
+    const h = harness(
+      [
+        result({ toolCalls: [list("l1", [{ text: "Read Rosa's week", state: "doing" }, { text: "Propose the advance" }]), call("c1", "get_pay_items")] }),
+        result({ toolCalls: [list("l2", [{ text: "Read Rosa's week", state: "done" }, { text: "Propose the advance", state: "doing" }]), call("p1", "propose_advance")] }),
+        result({ text: "Proposed the advance." }),
+      ],
+      gw,
+    );
+    expect(await h.run()).toMatchObject({ status: "done", text: "Proposed the advance." });
+    expect(h.proposals.size).toBe(1);
+    expect(states(h.finished()?.checklist)).toEqual(["done", "done"]);
   });
 
   it("keeps today's stop line and stores no list when the answer set none", async () => {

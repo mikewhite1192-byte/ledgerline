@@ -1080,13 +1080,19 @@ export async function countItems(q: Queryable, runId: string): Promise<SweepCoun
   return counts;
 }
 
-// The checklist ends with the run: "cap" stopped it with work left; the audit step switched off
-// is skipped rather than done.
+// The checklist ends with the run: "cap" stopped it with work left, and so did "max_items" (the
+// find phase took the first findings only, read here from the run row); the audit step switched
+// off is skipped rather than done.
 async function finishRun(ctx: Ctx, truncated: string | null, opts: { skipped?: "audit" } = {}): Promise<void> {
   const now = ctx.clock().toISOString();
-  const ending: SweepChecklistChange = { ended: truncated === "cap" ? "stopped" : "done", ...opts };
   const counts = await leased(ctx, async (q) => {
     const counts = await countItems(q, ctx.runId);
+    const cut = await q.query<{ truncated_reason: string | null }>(
+      "SELECT truncated_reason FROM sweep_runs WHERE id = CAST($1 AS uuid)",
+      [ctx.runId],
+    );
+    const reason = truncated ?? cut[0]?.truncated_reason ?? null;
+    const ending: SweepChecklistChange = { ended: reason === "cap" || reason === "max_items" ? "stopped" : "done", ...opts };
     await q.execute(
       `UPDATE sweep_runs
           SET status = 'done', phase = 'done', counts = CAST($2 AS jsonb),

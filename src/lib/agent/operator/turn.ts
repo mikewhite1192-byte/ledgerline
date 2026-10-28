@@ -159,6 +159,12 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   let replay: AiReplayItem[] = [];
   // The answer's checklist as last set (figures masked), or null when it set none.
   let checklist: Checklist | null = null;
+  // Which Muse Spark response is under way, the last one that set the checklist, and the last one
+  // in which a call other than the checklist was refused or made no card. A list sent in a later
+  // response was written knowing how that call went; one sent in the same response was not.
+  let response = 0;
+  let listResponse = 0;
+  let refusedResponse = 0;
 
   const emitStep = (s: StepView) => deps.emit?.({ event: "step", data: s });
   const start = async (kind: StepView["kind"], label: string) => {
@@ -271,8 +277,11 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       },
     });
     if (outcome.decision === "allowed" && outcome.draft) {
-      return { ...outcome, result: await persist(outcome) };
+      const result = await persist(outcome);
+      if (result.proposed === false) refusedResponse = response;
+      return { ...outcome, result };
     }
+    if (outcome.decision !== "allowed" && call.name !== CHECKLIST_TOOL) refusedResponse = response;
     return outcome;
   };
 
@@ -282,6 +291,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     const list = modelChecklist(draft, allowedCents);
     await deps.store.setChecklist(turn.turnId, list);
     checklist = list;
+    listResponse = response;
     deps.emit?.({ event: "checklist", data: list });
   };
 
@@ -420,6 +430,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         return modelFailed(called.error, called.reducedCap);
       }
       const { result } = called;
+      response += 1;
       // Figures the tools did not return, and the person did not type, are withheld before the
       // text is kept anywhere.
       const shown = maskFigures(result.text.trim(), allowedCents);
@@ -492,12 +503,16 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // A store write that fails mid-turn throws; the route records the turn as failed.
   const ended = await loop();
   // The checklist as the answer ended: the item in hand is done when it finished and not done
-  // when it stopped; one never started is not done. A stop then says what was done and what is
-  // left in place of the plain stop line, still followed by what was found.
-  const finalList = checklist ? finalChecklist(checklist, ended.status) : null;
+  // when it stopped; one never started is not done. A call refused, or a proposal that made no
+  // card, after the list was last sent leaves the item in hand not done even on a finished answer:
+  // never a check beside a card that does not exist. A stop then says what was done and what is
+  // left in place of the plain stop line, still followed by what was found. Its count is the
+  // tool steps the step cap counted, not the model calls.
+  const unsettled = refusedResponse > 0 && refusedResponse >= listResponse;
+  const finalList = checklist ? finalChecklist(checklist, ended.status === "done" && unsettled ? "partial" : ended.status) : null;
   const ending: Ending =
     finalList && ended.status === "partial" && ended.text.startsWith(LOOP_TEXT.stopped)
-      ? { ...ended, text: `${stopSummary(finalList, { steps: stepCount })}${ended.text.slice(LOOP_TEXT.stopped.length)}` }
+      ? { ...ended, text: `${stopSummary(finalList, { steps: budget.toolSteps })}${ended.text.slice(LOOP_TEXT.stopped.length)}` }
       : ended;
   if (finalList && !sameChecklist(finalList, checklist)) deps.emit?.({ event: "checklist", data: finalList });
   await deps.store.finishTurn(turn.turnId, {
