@@ -98,7 +98,8 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
         .sort((x, y) => (x.code === y.code ? (x.id < y.id ? -1 : 1) : x.code < y.code ? -1 : 1));
     }
     // The money-code check's reads (data/read.ts readMoneyCodeInput): the driver's switch, the
-    // load, and the recent codes (none in a plan unless a test adds them).
+    // load, and the recent codes or those citing the same evidence (none in a plan unless a test
+    // adds them).
     if (sql === MONEY_CODE_DRIVER_SQL) {
       return plan.rows.drivers.filter((d) => d.id === params[0]).map((d) => ({ money_armed: d.money_armed }));
     }
@@ -115,7 +116,13 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     }
     if (sql === MONEY_CODES_SQL) {
       return (tables.money_codes ?? [])
-        .filter((r) => r.driver_id === params[0] || r.load_id === params[1])
+        .filter(
+          (r) =>
+            r.driver_id === params[0] ||
+            r.load_id === params[1] ||
+            (params[3] !== null && r.document_id === params[3]) ||
+            (params[4] !== null && r.voice_note_id === params[4]),
+        )
         .map((r) => ({ ...r }));
     }
     if (MONEY_CODE_LIST.test(sql)) return [];

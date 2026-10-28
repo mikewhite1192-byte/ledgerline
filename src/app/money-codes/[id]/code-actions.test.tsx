@@ -76,6 +76,19 @@ describe("Check pending", () => {
     );
   });
 
+  it("says a 200 reply with no well-formed answer as not reached, never as nothing waiting", async () => {
+    for (const body of ["not json", "", { ok: true }, { ok: true, summary: "x", tooNew: 0, stillWaiting: 0 }, { ok: true, summary: { checked: 0 } }]) {
+      answer(200, body);
+      render(<CheckPending codeId={CODE} />);
+      fireEvent.click(screen.getByRole("button", { name: "Check pending" }));
+      expect((await screen.findByRole("alert")).textContent, JSON.stringify(body)).toBe(
+        "The server could not be reached. Nothing changed; try again in a minute.",
+      );
+      expect(screen.queryByText("Nothing was waiting to be checked.")).toBeNull();
+      cleanup();
+    }
+  });
+
   it("says a lost reply as not reached, never as nothing", async () => {
     answer(503, "not json");
     render(<CheckPending codeId={CODE} />);

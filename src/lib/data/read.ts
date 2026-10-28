@@ -442,16 +442,19 @@ export type MoneyCodeAsk = {
 };
 
 // The codes a check counts: this driver's or this load's, made in the last few days (the duplicate
-// window is 24 hours and the daily limit is one tenant-local day). More than the bound is a
+// window is 24 hours and the daily limit is one tenant-local day), and every code citing the same
+// document ($4) or voice note ($5), however old (null cites none). More than the bound is a
 // refusal to read, never a short list.
 const MONEY_CODE_ROWS_MAX = 200;
 export const MONEY_CODES_SQL =
   "SELECT CAST(id AS text) AS id, CAST(driver_id AS text) AS driver_id, CAST(load_id AS text) AS load_id," +
   " purpose, amount_cents, status," +
-  " to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS created_at" +
+  " to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS created_at," +
+  " CAST(document_id AS text) AS document_id, CAST(voice_note_id AS text) AS voice_note_id" +
   " FROM money_codes WHERE tenant_id = current_tenant_id()" +
-  " AND (driver_id = CAST($1 AS uuid) OR load_id = CAST($2 AS uuid))" +
-  " AND created_at > CAST($3 AS timestamptz) - interval '3 days'" +
+  " AND (((driver_id = CAST($1 AS uuid) OR load_id = CAST($2 AS uuid))" +
+  " AND created_at > CAST($3 AS timestamptz) - interval '3 days')" +
+  " OR document_id = CAST($4 AS uuid) OR voice_note_id = CAST($5 AS uuid))" +
   ` ORDER BY created_at, id LIMIT ${MONEY_CODE_ROWS_MAX + 1}`;
 
 export const MONEY_CODE_LOAD_SQL =
@@ -514,6 +517,8 @@ function moneyCodeRecordOf(
     amount_cents: number | string;
     status: string;
     created_at: string;
+    document_id: string | null;
+    voice_note_id: string | null;
   },
   zone: string,
 ): MoneyCodeRecord {
@@ -530,6 +535,8 @@ function moneyCodeRecordOf(
     status: r.status as MoneyCodeStatus,
     createdAt: r.created_at,
     createdOn: localDateOf(r.created_at, zone),
+    documentId: r.document_id,
+    voiceNoteId: r.voice_note_id,
   };
 }
 
@@ -559,14 +566,17 @@ export async function readMoneyCodeInput(q: Queryable, ask: MoneyCodeAsk, now: I
         deliveredOn: row.delivered_on === null ? null : assertLocalDate(row.delivered_on, "delivered_on"),
       }
     : null;
-  const receipt =
+  // The evidence cited by its own id, lower case, as the database writes a uuid as text.
+  const documentId =
     ask.source === "document" && typeof ask.documentId === "string"
-      ? await moneyCodeReceipt(q, ask.documentId)
+      ? assertUuid(ask.documentId, "documentId").toLowerCase()
       : null;
-  const voice =
+  const voiceNoteId =
     ask.source === "voice_note" && typeof ask.voiceNoteId === "string"
-      ? await moneyCodeVoice(q, ask.voiceNoteId)
+      ? assertUuid(ask.voiceNoteId, "voiceNoteId").toLowerCase()
       : null;
+  const receipt = documentId !== null ? await moneyCodeReceipt(q, documentId) : null;
+  const voice = voiceNoteId !== null ? await moneyCodeVoice(q, voiceNoteId) : null;
   const codeRows = await q.query<{
     id: string;
     driver_id: string;
@@ -575,7 +585,9 @@ export async function readMoneyCodeInput(q: Queryable, ask: MoneyCodeAsk, now: I
     amount_cents: number | string;
     status: string;
     created_at: string;
-  }>(MONEY_CODES_SQL, [driverId, loadId, now]);
+    document_id: string | null;
+    voice_note_id: string | null;
+  }>(MONEY_CODES_SQL, [driverId, loadId, now, documentId, voiceNoteId]);
   if (codeRows.length > MONEY_CODE_ROWS_MAX) throw new ReadLimitError();
   return {
     driverId,
@@ -590,6 +602,8 @@ export async function readMoneyCodeInput(q: Queryable, ask: MoneyCodeAsk, now: I
     source: ask.source,
     receipt,
     voice,
+    documentId,
+    voiceNoteId,
     codes: codeRows.map((r) => moneyCodeRecordOf(r, tenant.timezone)),
   };
 }

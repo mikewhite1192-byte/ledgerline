@@ -17,8 +17,11 @@ import { assertDate, assertId, assertOneOf, instantMs, type Cents, type LoadStat
 //     of its spoken amounts equals the amount
 //   the driver is armed for money
 //   no other live code on this load for the same purpose and amount in the last 24 hours
+//   no other live code cites the same document or voice note, whatever its purpose, amount or day
+//     (one receipt or note backs one charge and reimbursement pair)
 //   at most perDriverPerDay live codes for this driver on the tenant-local day
-// A failed or voided code is not live: it counts for neither the duplicate nor the daily limit.
+// A failed or voided code is not live: it counts for none of the duplicate, the evidence and the
+// daily limit checks.
 
 export const MONEY_CODE_PURPOSES = ["lumper", "repair", "other"] as const;
 export type MoneyCodePurpose = (typeof MONEY_CODE_PURPOSES)[number];
@@ -46,6 +49,7 @@ export const MONEY_CODE_REFUSALS = [
   "voice_amount_differs",
   "driver_not_armed",
   "duplicate_code",
+  "evidence_reused",
   "daily_limit",
 ] as const;
 export type MoneyCodeRefusal = (typeof MONEY_CODE_REFUSALS)[number];
@@ -106,6 +110,9 @@ export type MoneyCodeRecord = {
   createdAt: Instant;
   // The tenant-local day the code was created.
   createdOn: LocalDate;
+  // The evidence the code cites by id, null when it cites none of that kind.
+  documentId: string | null;
+  voiceNoteId: string | null;
 };
 
 export type MoneyCodeInput = {
@@ -126,7 +133,11 @@ export type MoneyCodeInput = {
   receipt: MoneyCodeReceipt | null;
   // Required for a voice-note source, null when the note was not found or is not ready.
   voice: MoneyCodeVoice | null;
-  // This driver's and this load's codes, without the one the current request already made.
+  // The evidence this request cites by id, null when it cites none of that kind.
+  documentId: string | null;
+  voiceNoteId: string | null;
+  // This driver's and this load's recent codes and every code citing the same document or voice
+  // note, without the one the current request already made.
   codes: readonly MoneyCodeRecord[];
 };
 
@@ -242,6 +253,17 @@ export function checkMoneyCode(input: MoneyCodeInput): MoneyCodeDecision {
     })
   ) {
     found.add("duplicate_code");
+  }
+  // One receipt or voice note backs one live code, whatever its purpose, amount or day: a second
+  // code on it would write a second charge and reimbursement pair for the same expense.
+  const documentId = input.documentId === null ? null : assertId(input.documentId, "documentId");
+  const voiceNoteId = input.voiceNoteId === null ? null : assertId(input.voiceNoteId, "voiceNoteId");
+  if (
+    live.some(
+      (c) => (documentId !== null && c.documentId === documentId) || (voiceNoteId !== null && c.voiceNoteId === voiceNoteId),
+    )
+  ) {
+    found.add("evidence_reused");
   }
   const todays = live.filter((c) => c.driverId === driverId && assertDate(c.createdOn, "code createdOn") === today);
   if (todays.length >= perDay) found.add("daily_limit");

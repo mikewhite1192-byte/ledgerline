@@ -34,7 +34,8 @@ import { issueGate, moneyCodesOn } from "./switches";
 // proposal gate (src/lib/proposals/execute.ts) has checked the person, the role (an amount above
 // approverRole.adminAboveCents needs an admin), the auditor and the second confirm, and asked
 // precheckMoneyCode while the proposal still waited. Then, in one tenant transaction with the
-// proposal, the driver and the load locked, this executor asks the issue gate again, re-runs
+// proposal, the driver and the load locked (a resume whose code is already written locks only the
+// proposal and reads the arming), this executor asks the issue gate again, re-runs
 // checkMoneyCode as of now (a proposal whose facts no longer hold ends failed, nothing issued),
 // writes the money_codes row as 'issuing' (one per proposal: money_codes_one_per_proposal) and
 // moves the proposal to executing. The money executor then reserves the ledger row (idempotency
@@ -503,18 +504,27 @@ async function prepare(
   const zone = await readTenantZone(q);
   const refusal = issueGate(a.amountCents, localDateOf(nowIso, zone));
   if (refusal) throw new Stop(refusal);
-  // Arming takes the driver lock, so it cannot change between this read and the commit.
-  const armed = await driverArmed(q, a.driverId, true);
+  // A resume (the proposal executing, its code already written) writes no code, so it takes
+  // neither the driver nor the load lock. The settle transaction locks the code, then the load,
+  // then the driver (the paystub lines' key) and then the proposal; this one holds the proposal,
+  // so waiting on the driver or the load here would close a cycle with a settle in flight, and
+  // the database would abort one of them. The arming is still read, so a resume never sends for
+  // a driver disarmed since.
+  const existing = status === "executing" ? await codeBy(q, "proposal_id", p.id, false) : null;
+  const resume = existing !== null;
+  // On a new code, arming takes the driver lock, so it cannot change between this read and the
+  // commit that writes the code.
+  const armed = await driverArmed(q, a.driverId, !resume);
   if (armed === null) throw new Stop("not_found");
   if (!armed) throw new Stop("driver_not_armed");
-  if (!(await lockLoad(q, a.loadId))) throw new Stop("not_found");
+  if (!resume && !(await lockLoad(q, a.loadId))) throw new Stop("not_found");
 
   // The code row is read, never locked, here. The reserve, settle and close transactions lock the
-  // code first and then the load or the proposal; this one already holds the proposal and the
-  // load, so waiting on the code here would close a cycle (a second approval pressed while the
-  // first reserves). The proposal lock already serializes approvals, and the reserve locks the
-  // code itself and asks its status again.
-  let code = await codeBy(q, "proposal_id", p.id, false);
+  // code first and then the load or the proposal; this one already holds the proposal (and, for
+  // a new code, the load), so waiting on the code here would close a cycle (a second approval
+  // pressed while the first reserves). The proposal lock already serializes approvals, and the
+  // reserve locks the code itself and asks its status again.
+  let code = resume ? existing : await codeBy(q, "proposal_id", p.id, false);
   if (!code) {
     let decision: MoneyCodeDecision;
     try {

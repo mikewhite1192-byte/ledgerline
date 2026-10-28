@@ -283,6 +283,19 @@ describe("advance parity", () => {
     }
   });
 
+  it("plants the money code sample only on an armed driver's load, never the disarmed driver's", () => {
+    for (const plan of plans.filter((p) => p.planted.moneyCodeLoadId !== null)) {
+      const load = plan.rows.loads.find((l) => l.id === plan.planted.moneyCodeLoadId)!;
+      expect(plan.rows.drivers.find((d) => d.id === load.driver_id)!.money_armed).toBe(true);
+    }
+    // At this anchor the only load on the road is the planted disarmed driver's, whose code the
+    // arming rule would refuse, so no sample is planted at all.
+    const plan = buildCarrierPlan(DEMO_CARRIERS.find((c) => c.slug === "blue-ridge")!, "2026-11-23");
+    const onRoad = plan.rows.loads.filter((l) => l.status === "in_transit");
+    expect(onRoad.map((l) => l.driver_id)).toEqual([plan.planted.parity.disarmedDriverId]);
+    expect(plan.planted.moneyCodeLoadId).toBeNull();
+  });
+
   it("gives each driver one dispatch-system id, unique within the carrier", () => {
     for (const plan of plans) {
       const ids = plan.rows.driver_identities;

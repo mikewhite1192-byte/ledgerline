@@ -128,14 +128,23 @@ export type CarrierPlan = {
 // The total on MONEY-CODE's sample lumper receipt (public/samples/docs, manifest.json).
 export const MONEY_CODE_RECEIPT_CENTS = 15_000;
 
-// The load MONEY-CODE's sample receipt names (Planted.moneyCodeLoadId). Reads the finished rows
-// only and draws no number, so no other row changes.
+// The load MONEY-CODE's sample receipt names (Planted.moneyCodeLoadId): on the road, not the
+// hero's, with no lumper line, and driven by a driver armed for money (a disarmed driver's code
+// would be refused). Reads the finished rows only and draws no number, so no other row changes.
 function moneyCodeLoadOf(rows: TenantRows, heroCode: string | null): string | null {
   if (!heroCode) return null;
   const hero = rows.drivers.find((d) => d.code === heroCode);
+  const armed = new Set(rows.drivers.filter((d) => d.money_armed).map((d) => d.id));
   const withLumper = new Set(rows.load_accessorials.filter((a) => a.kind === "lumper").map((a) => a.load_id));
   const load = rows.loads
-    .filter((l) => l.status === "in_transit" && l.driver_id !== null && l.driver_id !== hero?.id && !withLumper.has(l.id))
+    .filter(
+      (l) =>
+        l.status === "in_transit" &&
+        l.driver_id !== null &&
+        l.driver_id !== hero?.id &&
+        armed.has(l.driver_id) &&
+        !withLumper.has(l.id),
+    )
     .sort((a, b) => compareText(a.load_number, b.load_number))[0];
   return load?.id ?? null;
 }

@@ -20,6 +20,7 @@ export const REFUSAL_SENTENCES: Readonly<Record<MoneyCodeRefusal, string>> = {
   voice_amount_differs: "The driver did not say that amount in the voice note.",
   driver_not_armed: "This driver is not armed to receive money. An admin can arm them on the driver page.",
   duplicate_code: "A code for this load, purpose and amount was already asked for in the last 24 hours.",
+  evidence_reused: "This receipt or voice note already backs another code.",
   daily_limit: "This driver already has the most money codes allowed for today.",
 };
 

@@ -8,15 +8,16 @@ import { POST as requestPost } from "./route";
 // The money code routes: a cross-site post is refused first, then the money codes switch, the
 // login, the id in the path and the strict body, each before the service runs. A refusal answers
 // with its category only; anything thrown is unavailable, never its text; nothing is cached.
+// The ids carry hex letters, so a test of upper and lower case really changes them.
 
 const SESSION: Session = {
   sub: "sub-test",
   email: "desk@example.test",
-  tenantId: "11111111-1111-4111-8111-111111111111",
+  tenantId: "aaaaaaaa-1111-4aaa-8aaa-aaaaaaaaaaaa",
 };
-const CODE = "22222222-2222-4222-8222-222222222222";
-const LOAD = "33333333-3333-4333-8333-333333333333";
-const DOC = "44444444-4444-4444-8444-444444444444";
+const CODE = "bbbbbbbb-2222-4bbb-8bbb-bbbbbbbbbbbb";
+const LOAD = "cccccccc-3333-4ccc-8ccc-cccccccccccc";
+const DOC = "dddddddd-4444-4ddd-8ddd-dddddddddddd";
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -67,12 +68,16 @@ afterEach(() => {
 const GOOD = { loadId: LOAD, amountCents: 15_000, purpose: "lumper", documentId: DOC };
 
 describe("POST /api/money-codes", () => {
-  it("sends a well-formed request with lower-case ids and answers with the outcome, never cached", async () => {
-    const res = await requestPost(req({ ...GOOD, loadId: LOAD.toUpperCase() }));
+  it("passes a well-formed request on with its ids as sent and answers with the outcome, never cached", async () => {
+    // The route takes an upper-case id as well-formed and hands it on unchanged; the service
+    // lower-cases it (the database test of the request asks with upper-case ids).
+    const upper = { ...GOOD, loadId: LOAD.toUpperCase(), documentId: DOC.toUpperCase() };
+    expect([upper.loadId, upper.documentId]).not.toEqual([LOAD, DOC]);
+    const res = await requestPost(req(upper));
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.json()).toEqual({ ok: true, outcome: "created", proposalId: CODE });
-    expect(mocks.requestMoneyCode).toHaveBeenCalledWith(SESSION, { ...GOOD, loadId: LOAD });
+    expect(mocks.requestMoneyCode).toHaveBeenCalledWith(SESSION, upper);
   });
 
   it("takes no receipt as null", async () => {
@@ -124,11 +129,13 @@ describe("POST /api/money-codes", () => {
 
 describe("POST /api/money-codes/[id]/check and /reveal", () => {
   it("runs each for a well-formed id, lower-cased", async () => {
+    expect(CODE.toUpperCase()).not.toBe(CODE);
     const checked = await onCode(checkPost, CODE.toUpperCase());
     expect(checked.status).toBe(200);
     expect(mocks.checkPendingCode).toHaveBeenCalledWith(SESSION, CODE);
-    const shown = await onCode(revealPost);
+    const shown = await onCode(revealPost, CODE.toUpperCase());
     expect(shown.status).toBe(200);
+    expect(mocks.revealMoneyCode).toHaveBeenCalledWith(SESSION, CODE);
     expect(shown.headers.get("cache-control")).toBe("no-store");
     expect(await shown.json()).toEqual({ ok: true, code: "0123456789", expiresAt: "2026-10-29T15:00:00.000Z" });
   });

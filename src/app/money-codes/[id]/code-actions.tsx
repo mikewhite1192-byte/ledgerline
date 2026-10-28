@@ -9,7 +9,7 @@ import { actionSentence, checkSentence, type CheckSummary } from "@/lib/money-co
 type Body = {
   error?: unknown;
   code?: unknown;
-  summary?: CheckSummary;
+  summary?: unknown;
   tooNew?: unknown;
   stillWaiting?: unknown;
 };
@@ -27,6 +27,19 @@ async function post(url: string): Promise<{ ok: boolean; body: Body }> {
 
 const errorOf = (body: Body) => actionSentence(typeof body.error === "string" ? body.error : "unavailable");
 const TEN_DIGITS = /^\d{10}$/;
+
+const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+
+// Check pending's answer, only when the reply is the whole of it. An empty, cut-off or malformed
+// body is null: unknown, so it reads as not reached, never as nothing waiting.
+function checkAnswerOf(body: Body): { summary: CheckSummary; tooNew: number; stillWaiting: number } | null {
+  const s = body.summary;
+  if (typeof s !== "object" || s === null) return null;
+  const { checked, confirmed, failed, stillUnknown } = s as Record<string, unknown>;
+  if (!isCount(checked) || !isCount(confirmed) || !isCount(failed) || !isCount(stillUnknown)) return null;
+  if (!isCount(body.tooNew) || !isCount(body.stillWaiting)) return null;
+  return { summary: { checked, confirmed, failed, stillUnknown }, tooNew: body.tooNew, stillWaiting: body.stillWaiting };
+}
 
 // Reveal: asks the server for an issued code's digits and shows them in large type with Copy. The
 // digits live only in this view's memory; they are never put in the address, the page or storage,
@@ -108,9 +121,16 @@ export function CheckPending({ codeId }: { codeId: string }) {
     setNotice(null);
     try {
       const { ok, body } = await post(`/api/money-codes/${encodeURIComponent(codeId)}/check`);
-      const tooNew = typeof body.tooNew === "number" ? body.tooNew : 0;
-      const stillWaiting = typeof body.stillWaiting === "number" ? body.stillWaiting : 0;
-      setNotice(ok ? { ok: true, text: checkSentence(body.summary, tooNew, stillWaiting) } : { ok: false, text: errorOf(body) });
+      if (!ok) {
+        setNotice({ ok: false, text: errorOf(body) });
+      } else {
+        const answer = checkAnswerOf(body);
+        setNotice(
+          answer
+            ? { ok: true, text: checkSentence(answer.summary, answer.tooNew, answer.stillWaiting) }
+            : { ok: false, text: actionSentence("unavailable") },
+        );
+      }
     } catch {
       setNotice({ ok: false, text: actionSentence("unavailable") });
     } finally {

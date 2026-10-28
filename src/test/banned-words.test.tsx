@@ -2010,6 +2010,15 @@ describe("the advances pages read by driver and date", () => {
   });
 });
 
+describe("the money code record page", () => {
+  it("describes the receipt by what it is, never as a photo or an image", async () => {
+    await renderPage(async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }));
+    const alt = screen.getByRole("img", { name: /receipt/ }).getAttribute("alt");
+    expect(alt).toBe(`The receipt, ${fx.MONEY_CODE_DETAIL.receipt?.filename}`);
+    expect(alt).not.toMatch(/photo|image|picture/i);
+  });
+});
+
 describe("the scan itself", () => {
   const el = (html: string) => {
     const div = document.createElement("div");

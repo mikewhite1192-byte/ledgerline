@@ -216,7 +216,7 @@ export default async function MoneyCodePage({ params }: { params: Promise<{ id: 
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={`/api/documents/${receipt.id}/file`}
-              alt={`${receipt.filename}, the receipt photo`}
+              alt={`The receipt, ${receipt.filename}`}
               className="h-auto w-full max-w-[320px] rounded-md border border-border"
             />
           </CardBody>

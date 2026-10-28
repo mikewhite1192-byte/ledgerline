@@ -14,6 +14,8 @@ import { InputError } from "./types";
 const DRIVER = "driver-a";
 const OTHER_DRIVER = "driver-b";
 const LOAD = "load-1";
+const DOC = "doc-1";
+const NOTE = "note-1";
 const NOW = "2026-10-28T15:00:00.000Z";
 const TODAY = "2026-10-28";
 
@@ -37,6 +39,8 @@ const code = (over: Partial<MoneyCodeRecord> = {}): MoneyCodeRecord => ({
   status: "issued",
   createdAt: "2026-10-28T09:00:00.000Z",
   createdOn: TODAY,
+  documentId: null,
+  voiceNoteId: null,
   ...over,
 });
 
@@ -54,6 +58,8 @@ function input(over: Partial<MoneyCodeInput> = {}): MoneyCodeInput {
     source: "document",
     receipt: receipt(),
     voice: null,
+    documentId: DOC,
+    voiceNoteId: null,
     codes: [],
     ...over,
   };
@@ -265,6 +271,64 @@ describe("checkMoneyCode", () => {
     ).toEqual(["duplicate_code"]);
     // A code stamped after now is not treated as old.
     expect(refusalsOf({ codes: [code({ createdAt: "2026-10-28T16:00:00.000Z" })] })).toEqual(["duplicate_code"]);
+  });
+
+  it("refuses a receipt that already backs a live code, for any purpose, amount, load or day", () => {
+    const days = { createdAt: "2026-10-20T09:00:00.000Z", createdOn: "2026-10-20" };
+    // Another purpose and amount, a week ago: not a duplicate, still the same receipt.
+    expect(refusalsOf({ codes: [code({ purpose: "repair", amountCents: 9_000, documentId: DOC, ...days })] })).toEqual([
+      "evidence_reused",
+    ]);
+    // The same purpose and amount, past the 24-hour duplicate window.
+    expect(
+      refusalsOf({
+        codes: [code({ documentId: DOC, createdAt: "2026-10-27T15:00:00.000Z", createdOn: "2026-10-27" })],
+      }),
+    ).toEqual(["evidence_reused"]);
+    // Another load or driver citing it (the read finds codes by the receipt too).
+    expect(refusalsOf({ codes: [code({ loadId: "load-2", driverId: OTHER_DRIVER, documentId: DOC, ...days })] })).toEqual([
+      "evidence_reused",
+    ]);
+    for (const status of ["issuing", "issued", "unknown"] as const) {
+      expect(refusalsOf({ codes: [code({ status, documentId: DOC, ...days })] }), status).toEqual(["evidence_reused"]);
+    }
+    // Another receipt, or a code citing none, is not this one.
+    expect(refusalsOf({ codes: [code({ documentId: "doc-2", ...days })] })).toEqual([]);
+    expect(refusalsOf({ codes: [code({ ...days })] })).toEqual([]);
+    // Inside 24 hours with the same purpose and amount, both hold, the duplicate first.
+    expect(refusalsOf({ codes: [code({ documentId: DOC })] })).toEqual(["duplicate_code", "evidence_reused"]);
+  });
+
+  it("refuses a voice note that already backs a live code", () => {
+    const voiceAsk = {
+      source: "voice_note" as const,
+      receipt: null,
+      documentId: null,
+      voiceNoteId: NOTE,
+      voice: { driverId: DRIVER, amountsCents: [15_000] },
+    };
+    const earlier = { purpose: "other" as const, amountCents: 7_500, createdAt: "2026-10-25T09:00:00.000Z", createdOn: "2026-10-25" };
+    expect(refusalsOf({ ...voiceAsk, codes: [code({ ...earlier, voiceNoteId: NOTE })] })).toEqual(["evidence_reused"]);
+    expect(refusalsOf({ ...voiceAsk, codes: [code({ ...earlier, voiceNoteId: "note-2" })] })).toEqual([]);
+    // A receipt id on a live code is not this voice note.
+    expect(refusalsOf({ ...voiceAsk, codes: [code({ ...earlier, documentId: NOTE })] })).toEqual([]);
+  });
+
+  it("lets a failed or voided code's receipt or voice note back a new code", () => {
+    for (const status of ["failed", "voided"] as const) {
+      expect(refusalsOf({ codes: [code({ status, documentId: DOC })] }), status).toEqual([]);
+      expect(
+        refusalsOf({
+          source: "voice_note",
+          receipt: null,
+          documentId: null,
+          voiceNoteId: NOTE,
+          voice: { driverId: DRIVER, amountsCents: [15_000] },
+          codes: [code({ status, voiceNoteId: NOTE })],
+        }),
+        status,
+      ).toEqual([]);
+    }
   });
 
   it("allows perDriverPerDay live codes on the tenant-local day", () => {

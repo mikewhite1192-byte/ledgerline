@@ -56,6 +56,14 @@ CREATE INDEX money_codes_tenant_load ON money_codes (tenant_id, load_id);
 -- One code per approval: the same proposal approved twice finds the row the first run made.
 CREATE UNIQUE INDEX money_codes_one_per_proposal ON money_codes (tenant_id, proposal_id)
   WHERE proposal_id IS NOT NULL;
+-- One live code per receipt and per voice note: the same evidence never backs a second charge and
+-- reimbursement pair. The rules engine refuses it first (evidence_reused); these hold it in the
+-- database too. A failed or voided code no longer holds its evidence, and no code goes back to a
+-- live status from those.
+CREATE UNIQUE INDEX money_codes_one_live_per_document ON money_codes (tenant_id, document_id)
+  WHERE document_id IS NOT NULL AND status IN ('issuing', 'issued', 'unknown');
+CREATE UNIQUE INDEX money_codes_one_live_per_voice_note ON money_codes (tenant_id, voice_note_id)
+  WHERE voice_note_id IS NOT NULL AND status IN ('issuing', 'issued', 'unknown');
 ALTER TABLE money_codes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE money_codes FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON money_codes
