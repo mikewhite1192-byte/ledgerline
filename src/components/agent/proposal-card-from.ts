@@ -3,6 +3,7 @@ import { auditConfirmQuestion, sentences } from "@/lib/agent/auditor/words";
 import { flagWords } from "@/lib/agent/reasons";
 import type { ProposalView } from "@/lib/agent/view";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
+import { sourceLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 
 // A stored proposal as card props. Every word on the card is a fixed label or a fixed sentence
@@ -52,8 +53,90 @@ export function auditFor(p: ProposalView, ctx: AuditContext): ProposalAudit {
 function destinationFor(p: ProposalView): ProposalCardProps["destination"] {
   if (!p.destination) return undefined;
   return p.destination.last4
-    ? { label: `To ${p.destination.label}`, testMode: true }
+    ? { label: `To fuel card ending ${p.destination.last4}`, testMode: true }
     : { label: "No fuel card on file", testMode: false };
+}
+
+// What the confirm says for each kind of card: the noun its count line and Reject use ("1 advance,
+// $100.00."), the question when the card asks nothing else (a flag or a second-check question goes
+// first), and what happens once it is confirmed, one sentence that says only what that kind's
+// approval does. A kind with no row reads the fallback, so a new kind only adds a row here.
+// Copy only: the approval and what it sends never depend on this table.
+type KindCopy = {
+  noun: string;
+  ask?: (p: ProposalView, amount: string) => string | undefined;
+  next?: (p: ProposalView) => string;
+};
+
+const FALLBACK_COPY: KindCopy = { noun: "request" };
+
+const KIND_COPY: Readonly<Record<string, KindCopy>> = {
+  advance_payout: {
+    noun: "advance",
+    ask: (p, amount) => {
+      if (p.amountCents <= 0) return undefined;
+      if (!p.subjectLabel) return `Pay this ${amount} advance?`;
+      return p.destination?.last4
+        ? `Pay ${amount} to ${p.subjectLabel}'s fuel card ending ${p.destination.last4}?`
+        : `Pay ${amount} to ${p.subjectLabel}?`;
+    },
+    next: (p) =>
+      p.destination && !p.destination.last4
+        ? "This driver has no fuel card on file, so nothing can be paid until one is added."
+        : "This is a test payout to the driver's fuel card. It is taken back from the driver's pay on a later paystub.",
+  },
+  pay_correction: {
+    noun: "pay correction",
+    ask: (p) => (p.subjectLabel ? `Add this pay correction to ${p.subjectLabel}'s pay?` : undefined),
+    next: () => "It is added as one line on the driver's paystub for this week. Nothing is paid now.",
+  },
+  load_rate_fill: {
+    noun: "load rate",
+    ask: (p) => (p.subjectLabel ? `Write the rate onto load ${p.subjectLabel}?` : undefined),
+    next: () => "The rate is written onto the load. No money moves and nothing is sent.",
+  },
+  invoice_post: {
+    noun: "invoice",
+    ask: (p, amount) => (p.subjectLabel ? `Create a ${amount} invoice for load ${p.subjectLabel}?` : `Create this ${amount} invoice?`),
+    next: () =>
+      "The invoice is created and the load is marked invoiced. It is booked to QuickBooks only when accounting is on. Nothing is emailed to the customer.",
+  },
+  payment_reapply: {
+    noun: "payment",
+    ask: (p) => (p.subjectLabel ? `Move payment ${p.subjectLabel} to the right invoice?` : undefined),
+    next: () => "The payment moves off the wrong invoice and onto the right one. No money moves and nothing is sent.",
+  },
+  detention_charge: {
+    noun: "detention charge",
+    ask: (p, amount) => (p.subjectLabel ? `Add a ${amount} detention charge to load ${p.subjectLabel}?` : undefined),
+    next: () => "The charge is added to the load and its open invoice goes up by the same amount. Nothing is sent to the customer.",
+  },
+  settlement_approve: {
+    noun: "paystub",
+    // A $0 week asks nothing here: the paystub card asks its own no-payout question.
+    ask: (p, amount) => (p.amountCents > 0 ? `Approve this paystub and pay ${amount}?` : undefined),
+    next: (p) =>
+      p.amountCents > 0
+        ? "The paystub is checked against the records once more, then paid to the driver's bank by test payout when payouts are on."
+        : "No payout is sent. The paystub is booked, and any deductions left over carry to next week.",
+  },
+};
+
+export function kindCopy(kind: string): KindCopy {
+  return Object.hasOwn(KIND_COPY, kind) ? KIND_COPY[kind] : FALLBACK_COPY;
+}
+
+// A subject's kind in words where the record list's word does not fit the code it carries: a
+// payment application is named by its payment's reference.
+const SUBJECT_NOUN: Readonly<Record<string, string>> = { payment_applications: "Payment" };
+
+// The names the card can give its records: the subject, by the code the proposal view read for it
+// ("Driver BR-D07", "Load BR-L0412"). Every other record falls back to its kind, never an id tail.
+function referencesFor(p: ProposalView): Record<string, string> | undefined {
+  const code = p.subjectLabel?.trim();
+  if (!code) return undefined;
+  const noun = Object.hasOwn(SUBJECT_NOUN, p.subjectTable) ? SUBJECT_NOUN[p.subjectTable] : sourceLabel(p.subjectTable);
+  return { [`${p.subjectTable}:${p.subjectId}`]: `${noun} ${code}` };
 }
 
 // An advance's load line: the load and, under a per-load cap, what was left after this advance
@@ -145,6 +228,7 @@ export function proposalCardFrom(
   audit?: AuditContext,
 ): Omit<ProposalCardProps, "hrefFor"> {
   const subject = p.subjectLabel ? ` for ${p.subjectLabel}` : "";
+  const copy = kindCopy(p.kind);
   let confirmQuestion: string | undefined;
   // Anything other than a pass needs the second confirm, and the question names why.
   const auditQuestion =
@@ -153,11 +237,9 @@ export function proposalCardFrom(
       : null;
   if (p.flagged) confirmQuestion = FLAG_QUESTION;
   else if (auditQuestion) confirmQuestion = auditQuestion;
-  else if (p.kind === "advance_payout" && p.subjectLabel && p.amountCents > 0) {
-    confirmQuestion = p.destination?.last4
-      ? `Pay ${formatCents(p.amountCents)} to ${p.subjectLabel}'s ${p.destination.label}? Test mode.`
-      : `Pay ${formatCents(p.amountCents)} to ${p.subjectLabel}?`;
-  }
+  else confirmQuestion = copy.ask?.(p, formatCents(Math.abs(p.amountCents)));
+  const confirmNext = copy.next?.(p);
+  const references = referencesFor(p);
   const detention =
     p.kind === "detention_charge" && p.detention
       ? detentionLines(p.detention, p.amountCents).map((text) => ({ text }))
@@ -178,6 +260,9 @@ export function proposalCardFrom(
     destination: destinationFor(p),
     ...(p.kind === "advance_payout" && p.load ? { detail: advanceLoadDetail(p.load) } : {}),
     confirmQuestion,
+    confirmNoun: copy.noun,
+    ...(confirmNext ? { confirmNext } : {}),
+    ...(references ? { references } : {}),
     flagNote: p.flagged ? flagNoteFor(p.flagCategories) : undefined,
     ...(audit ? { audit: auditFor(p, audit) } : {}),
     // An advance and a pay correction have executors that resume an approval left approved by a

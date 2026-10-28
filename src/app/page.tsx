@@ -1,16 +1,19 @@
 import Link from "next/link";
 import { flags } from "@/config/flags";
-import { homeSuggestions, withPaystubSuggestion } from "@/components/agent/suggestions";
+import { DETENTION_SUGGESTION, homeSuggestions, withPaystubSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { ChatThread } from "@/components/app/chat-thread";
+import { HOW_PAY_WORKS } from "@/components/app/signed-in-page";
 import { DataTable } from "@/components/app/data-table";
+import { NeedsYou } from "@/components/app/needs-you";
 import { StatCard } from "@/components/app/stat-card";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Wordmark } from "@/components/brand/wordmark";
 import { FridayPay } from "@/components/cash/friday-pay";
+import { NewHereLine } from "@/components/help/how-pay-works";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -26,6 +29,7 @@ import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
 import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
+import { cardsRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/lib/home/needs-you";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
@@ -116,12 +120,39 @@ export default async function Home({
   // The agent's recent turns, for a reload to show the same thread. A failed read shows an empty
   // thread with the box still working; the turns are read back again on the next question.
   let agentTurns: TurnView[] = [];
+  let turnsUnread = false;
   if (carrier && flags.agentEnabled) {
     try {
       agentTurns = await readRecentAgentTurns(carrier.session);
     } catch (err) {
+      turnsUnread = true;
       console.error("agent turns read failed:", err instanceof Error ? err.name : "unknown");
     }
+  }
+
+  // "Needs you": its own carrier transaction, so a failed read here never takes the page down and
+  // never reads as "nothing is waiting".
+  let needsYou: NeedsYouView | null = null;
+  if (carrier) {
+    let rows: NeedsYouRow[] = [];
+    let unread = turnsUnread;
+    try {
+      const today = carrierToday(carrier.timezone, new Date());
+      rows = await withRequestTenant((q) =>
+        readNeedsYou(q, {
+          today,
+          settlements: flags.settlementsEnabled,
+          advances: flags.advancesEnabled,
+          invoices: flags.invoicesEnabled,
+        }),
+      );
+    } catch (err) {
+      if (!(err instanceof ForbiddenError || err instanceof DbError)) throw err;
+      unread = true;
+      console.error("needs you read failed:", err.name);
+    }
+    const cards = flags.agentEnabled ? cardsRow(agentTurns) : null;
+    needsYou = { rows: cards ? [cards, ...rows] : rows, unread };
   }
 
   // The last sweep's line, when the sweep is on. A failed read leaves the card out.
@@ -169,10 +200,14 @@ export default async function Home({
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
       nav={appNav("/")}
+      help={HOW_PAY_WORKS}
       title="Home"
       signOut={signOut}
     >
       <h1 className="sr-only">Home</h1>
+      {needsYou ? <NeedsYou view={needsYou} /> : null}
+      <NewHereLine />
+      <RecordCounts counts={carrier.counts} />
       {flags.agentEnabled ? (
         <AgentChat
           initialTurns={agentTurns}
@@ -181,7 +216,7 @@ export default async function Home({
           timezone={carrier.timezone}
           suggestions={suggestions}
           initialDraft={documentInput ? `Check document ${documentInput}` : undefined}
-          intro="Ask about pay, advances, invoices or loads. Every number comes from your records."
+          intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
           disabledReason={
             flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
           }
@@ -198,18 +233,16 @@ export default async function Home({
         <FridayPay home={cashHome} today={carrierToday(carrier.timezone, new Date())} />
       ) : null}
       {lastSweep ? <LastSweep run={lastSweep} /> : null}
-      <RecordCounts counts={carrier.counts} />
       {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
     </AppShell>
   );
 }
 
 // Shown before the agent can answer; they light up when it can.
-const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, flags.cashFridayEnabled);
-
-// Offered only while the detention tools are switched on, so the chip never asks for a tool the
-// agent does not have.
-const DETENTION_SUGGESTION = { id: "unbilled-detention", label: "Find detention we never billed last month" };
+const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, {
+  profitOn: flags.profitBriefEnabled,
+  cashFridayOn: flags.cashFridayEnabled,
+});
 
 // "Last sweep: 7 problems, 5 fixes drafted, 2 approved", one click from the run.
 function LastSweep({ run }: { run: SweepRunView }) {
@@ -233,13 +266,18 @@ function LastSweep({ run }: { run: SweepRunView }) {
   );
 }
 
-// What this carrier has on file, from the counts read above.
+// What this carrier has on file, from the counts read above, under "Needs you" so it never
+// scrolls away under the thread. Pay periods opens Driver notes, where each week is listed.
 function RecordCounts({ counts }: { counts: Carrier["counts"] }) {
   return (
-    <section aria-label="Records on file" className="mx-auto mt-12 grid w-full max-w-[720px] gap-3 sm:grid-cols-3">
+    <section aria-label="Records on file" className="mx-auto mt-3 mb-6 grid w-full max-w-[720px] grid-cols-2 gap-3">
       <StatCard label="Drivers" value={counts.drivers.toLocaleString("en-US")} />
-      <StatCard label="Loads" value={counts.loads.toLocaleString("en-US")} />
-      <StatCard label="Pay periods" value={counts.periods.toLocaleString("en-US")} />
+      <StatCard
+        label="Pay periods"
+        value={counts.periods.toLocaleString("en-US")}
+        hint={flags.driverNotesEnabled ? "Open driver notes" : undefined}
+        href={flags.driverNotesEnabled ? "/driver-notes" : undefined}
+      />
     </section>
   );
 }

@@ -11,7 +11,9 @@ import {
   formatSpend,
   modelName,
   PRIMARY_HOSTS,
+  targetRole,
   traceLines,
+  traceModels,
   traceTotals,
 } from "./format";
 import { SAMPLE_CALLS, SAMPLE_PROPOSAL_ID, sampleTrace } from "./sample";
@@ -33,7 +35,7 @@ const RAW_CODES = [
 
 function textOf(trace: TurnTrace, proposalId?: string): string {
   return traceLines(trace, proposalId)
-    .map((l) => [l.who, ...l.meta, l.text, l.badge?.label ?? ""].join(" | "))
+    .map((l) => [l.who, ...l.meta, l.text, l.badge?.label ?? "", l.effort ?? "", l.cache ?? ""].join(" | "))
     .join("\n");
 }
 
@@ -155,7 +157,8 @@ describe("traceLines", () => {
     ]);
     expect(lines[0]).toMatchObject({
       who: "Muse Spark 1.3",
-      meta: ["low effort", "1.8 s", "0.7 cents"],
+      meta: ["1.8 s", "0.7 cents"],
+      effort: "low effort",
       text: "Planned the next step: asked for 1 tool",
     });
     expect(lines[1]).toMatchObject({ who: "Safety check", text: "Reading pay items: passed the safety check", badge: null });
@@ -189,7 +192,8 @@ describe("traceLines", () => {
     expect(lines[6].text).toBe("Cut to the most the pay rules allow after a larger ask was refused.");
     expect(lines[7]).toMatchObject({
       who: "Second check (Muse Wonder)",
-      meta: ["high effort", "4.1 s", "5.8 cents"],
+      meta: ["4.1 s", "5.8 cents"],
+      effort: "high effort",
       text: "Gave the card a second check: passed",
       badge: { tone: "success", label: "Passed" },
     });
@@ -229,13 +233,15 @@ describe("traceLines", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatchObject({
       who: "Muse Spark 1.3",
-      meta: ["low effort", "2.1 s", "no charge"],
+      meta: ["2.1 s", "no charge"],
+      effort: "low effort",
       text: "Did not finish thinking it through: the call failed: the model took too long",
       badge: { tone: "destructive", label: "Failed" },
     });
     expect(lines[1]).toMatchObject({
       who: "Muse Wonder",
-      meta: ["high effort", "4.1 s", "5.8 cents"],
+      meta: ["4.1 s", "5.8 cents"],
+      effort: "high effort",
       text: "Took over after Muse Spark could not form the card twice",
       badge: { tone: "info", label: "Escalated" },
     });
@@ -474,3 +480,40 @@ describe("prompt cache and tool search lines", () => {
     });
   });
 });
+
+describe("traceModels", () => {
+  it("lists each model once with its job, calls, time and cost", () => {
+    expect(traceModels(sampleTrace())).toEqual([
+      { key: "Muse Spark 1.3", name: "Muse Spark 1.3", job: "Answers and cards", calls: "4 calls", time: "7.0 s", cost: "2.5 cents" },
+      { key: "Muse Spark Open", name: "Muse Spark Open", job: "Screens outside text", calls: "1 call", time: "0.4 s", cost: "0.1 cents" },
+    ]);
+  });
+
+  it("adds up to the footer under the steps, for an answer and for a card", () => {
+    for (const id of [undefined, SAMPLE_PROPOSAL_ID]) {
+      const models = traceModels(sampleTrace(), id);
+      const calls = models.reduce((n, m) => n + Number(m.calls.split(" ")[0]), 0);
+      const cents = models.reduce((n, m) => n + Number.parseFloat(m.cost), 0);
+      const footer = traceTotals(sampleTrace(), id) ?? "";
+      expect(footer.startsWith(`${calls} model calls, ${cents.toFixed(1)} cents in all`), footer).toBe(true);
+    }
+    expect(traceModels(sampleTrace(), SAMPLE_PROPOSAL_ID).map((m) => [m.name, m.job])).toEqual([
+      ["Muse Spark 1.3", "Answers and cards"],
+      ["Muse Wonder", "Second check"],
+    ]);
+  });
+
+  it("names a job for every model target, and a plain fallback for an unknown one", () => {
+    for (const t of Object.keys(TARGETS)) expect(targetRole(t), t).not.toBe("Other work");
+    expect(targetRole("not_a_target")).toBe("Other work");
+  });
+
+  it("says when a call is not settled yet instead of counting it as free", () => {
+    const trace = sampleTrace();
+    const call = trace.steps[0].call!;
+    trace.steps[0] = { ...trace.steps[0], call: { ...call, costNanocents: null, status: "reserved" } };
+    const spark = traceModels(trace).find((m) => m.name === "Muse Spark 1.3");
+    expect(spark?.cost).toContain("1 call not settled yet");
+  });
+});
+

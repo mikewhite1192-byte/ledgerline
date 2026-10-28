@@ -462,6 +462,29 @@ describe("paymentProfile", () => {
     expect([profile.invoices, profile.paidCount, profile.openPast30]).toEqual([2, 1, 1]);
   });
 
+  it("counts only payments received by the day asked, so a later payment does not move it", () => {
+    // Due Sep 1, paid Oct 28: as of Oct 2 it is still open, more than 30 days past due.
+    const input = history([["2026-09-01", "2026-10-28"]]);
+    expect(paymentProfile("cust-a", input, "2026-10-02")).toMatchObject({
+      invoices: 1,
+      paidCount: 0,
+      medianDaysLate: null,
+      openPast30: 1,
+      label: "mixed",
+    });
+    // A part paid by then and the rest after reads as open, not paid.
+    const split = history([["2026-09-01", null]]);
+    split.payments.push(
+      { ...payment("p1", 5_000), receivedOn: "2026-09-20" },
+      { ...payment("p2", 5_000), receivedOn: "2026-10-28" },
+    );
+    split.applications.push(apply("a1", "p1", "cust-a-0", 5_000), apply("a2", "p2", "cust-a-0", 5_000));
+    expect(paymentProfile("cust-a", split, "2026-10-27")).toMatchObject({ paidCount: 0, openPast30: 1 });
+    // On the day it arrives, it counts.
+    expect(paymentProfile("cust-a", input, "2026-10-28")).toMatchObject({ paidCount: 1, medianDaysLate: 57, openPast30: 0 });
+    expect(paymentProfile("cust-a", split, "2026-10-28")).toMatchObject({ paidCount: 1, medianDaysLate: 57, openPast30: 0 });
+  });
+
   it("reads a customer with nothing paid yet as mixed", () => {
     const profile = paymentProfile("cust-a", history([]), AS_OF);
     const { paidCount, medianDaysLate, lateShareBps, label } = profile;

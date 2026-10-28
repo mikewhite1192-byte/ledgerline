@@ -1,13 +1,13 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
 // and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, and
-// the driver identity map and arming log from 0027, and Cash Friday's bills, bank position and
-// checks from 0029 (the seed leaves cash_checks empty; the replace, and so the demo reset, clears
-// it before the weeks a check names), in an order where every table comes after the tables it
-// references (insert in this order, delete in reverse). Each column says how it travels: the Data
-// API sends strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the way
-// in, and reads turn timestamptz into one ISO form and jsonb into text so both drivers return the
-// same values. tenant_id and created_at are never listed: tenant_id is always current_tenant_id()
-// and created_at is the database's own.
+// the driver identity map and arming log from 0027, the owner's briefs from 0042 (none planted),
+// and Cash Friday's bills, bank position and checks from 0029 (the seed leaves cash_checks empty;
+// the replace, and so the demo reset, clears it before the weeks a check names), in an order where
+// every table comes after the tables it references (insert in this order, delete in reverse). Each
+// column says how it travels: the Data API sends strings as text, so uuid, date, timestamptz and
+// jsonb columns need a CAST on the way in, and reads turn timestamptz into one ISO form and jsonb
+// into text so both drivers return the same values. tenant_id and created_at are never listed:
+// tenant_id is always current_tenant_id() and created_at is the database's own.
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
 
@@ -39,6 +39,7 @@ export const TENANT_TABLES = [
   "payment_applications",
   "untrusted_inputs",
   "screenings",
+  "briefs",
   "vendor_bills",
   "cash_settings",
   "cash_checks",
@@ -400,6 +401,26 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["model_call_id", "uuid"],
       ["latency_ms", "int"],
       ["expires_at", "timestamptz"],
+    ],
+  },
+  briefs: {
+    table: "briefs",
+    columns: [
+      ["id", "uuid"],
+      ["kind", "text"],
+      ["period_start", "date"],
+      ["period_end", "date"],
+      ["as_of", "date"],
+      ["status", "text"],
+      ["figures", "jsonb"],
+      ["body", "jsonb"],
+      ["refusal_category", "text"],
+      ["verification", "jsonb"],
+      ["model", "text"],
+      ["trace_id", "uuid"],
+      ["model_call_id", "uuid"],
+      ["created_by", "text"],
+      ["updated_at", "timestamptz"],
     ],
   },
   vendor_bills: {

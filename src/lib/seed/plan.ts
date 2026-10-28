@@ -1139,6 +1139,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     payment_applications: ar.applications,
     untrusted_inputs: [],
     screenings: [],
+    briefs: [],
     vendor_bills: [],
     cash_settings: [],
     cash_checks: [],

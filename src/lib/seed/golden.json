@@ -25,6 +25,7 @@
         "payment_applications": 200,
         "untrusted_inputs": 6,
         "screenings": 0,
+        "briefs": 0,
         "vendor_bills": 6,
         "cash_settings": 1,
         "cash_checks": 0
@@ -347,6 +348,7 @@
         "payment_applications": 203,
         "untrusted_inputs": 6,
         "screenings": 0,
+        "briefs": 0,
         "vendor_bills": 6,
         "cash_settings": 1,
         "cash_checks": 0
