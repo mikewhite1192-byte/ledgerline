@@ -381,7 +381,11 @@ describe("the number check", () => {
 
 describe("a checked brief on the page", () => {
   const hrefFor = (source: FigureSource) =>
-    "table" in source ? `/records/${source.table}/${source.id}` : `/report/${source.report}.csv`;
+    "table" in source
+      ? `/records/${source.table}/${source.id}`
+      : "report" in source
+        ? `/report/${source.report}.csv`
+        : `#${source.section}`;
 
   it("links each number to where it came from and drops the tags", () => {
     const pieces = briefLinks(GOOD, FIGURES, hrefFor);
@@ -461,7 +465,8 @@ describe("the brief's state", () => {
       { ...good[0], kind: "dollars" },
       { ...good[0], value: 1.5 },
       { ...good[0], value: null },
-      { ...good[0], source: { table: "drivers", id: CUSTOMER } },
+      { ...good[0], source: { table: "loads", id: CUSTOMER } },
+      { ...good[0], source: { section: "routes" } },
       { ...good[0], source: { report: "ar_aging", args: {} } },
       { ...good[0], source: { report: "margin_per_load", args: { periodStart: "Oct 19", periodEnd: "2026-10-25" } } },
       { ...good[0], subject: 5 },

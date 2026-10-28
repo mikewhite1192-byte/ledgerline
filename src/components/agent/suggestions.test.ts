@@ -116,6 +116,18 @@ describe("ruleChangeSuggestion", () => {
     );
     expect(s.help).not.toContain("Nov 9");
   });
+
+  it("asks how the quarter is going in that place while the quarter review is on, ahead of last week", () => {
+    for (const reportsOn of [false, true]) {
+      for (const profitOn of [false, true]) {
+        const out = homeSuggestions(reportsOn, { profitOn, quarterOn: true });
+        expect(out.map((s) => s.id)).toEqual(["paystub-problems", "past-60", "pay-run-cost", "quarter-review"]);
+        expect(out[3].label).toBe("How is the quarter going?");
+      }
+    }
+    expect(homeSuggestions(false, { quarterOn: false })).toEqual(homeSuggestions(false));
+    expect(homeSuggestions(true, { profitOn: true, quarterOn: false })).toEqual(homeSuggestions(true, { profitOn: true }));
+  });
 });
 
 describe("withPaystubSuggestion", () => {

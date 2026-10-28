@@ -23,6 +23,7 @@ import { FuelChecks } from "@/components/fuel/fuel-checks";
 import { RuleChangeCards, type RuleChangeCard } from "@/components/pay-rules/rule-change-cards";
 import { HowWorkedOut } from "@/components/trace/how-worked-out";
 import { WriteBrief } from "@/components/profit/write-brief";
+import { WriteReview } from "@/components/quarter/write-review";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { NotesBoard } from "@/app/memory/notes-board";
 import { flags } from "@/config/flags";
@@ -31,6 +32,7 @@ import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/li
 import type { Session } from "@/lib/auth/claims";
 import { reasonSentence } from "@/lib/agent/reasons";
 import { refusalWords as briefRefusalWords, writeOutcome } from "@/lib/briefs/words";
+import { reviewOutcome, reviewRefusalWords } from "@/lib/briefs/quarter-words";
 import {
   BILL_CATEGORY_WORDS,
   BILL_STATUS_WORDS,
@@ -398,6 +400,10 @@ const noteActions = vi.hoisted(() => ({
   removeNoteAction: vi.fn(),
 }));
 vi.mock("@/app/memory/actions", () => noteActions);
+vi.mock("@/lib/briefs/quarter-review", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/briefs/quarter-review")>()),
+  readQuarterView: async () => get("quarterView"),
+}));
 vi.mock("@/lib/voice/read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/voice/read")>()),
   readVoiceList: async () => get("voiceList"),
@@ -476,6 +482,7 @@ function defaults(): Record<string, unknown> {
     cashHome: null,
     memoryNotes: fx.MEMORY_NOTES,
     noteSubjects: fx.NOTE_SUBJECTS,
+    quarterView: fx.QUARTER_VIEW,
   };
 }
 
@@ -1154,6 +1161,48 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "quarter/page.tsx",
+    variants: [
+      { name: "no review yet", load: async () => (await import("@/app/quarter/page")).default(), shows: "No review yet" },
+      {
+        name: "being written",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "writing" })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "The review is being written",
+      },
+      {
+        name: "written",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "drafted", review: fx.QUARTER_REVIEW, changed: false })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "checked against them.",
+      },
+      {
+        name: "written, figures changed since",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "drafted", review: fx.QUARTER_REVIEW, changed: true })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "changed after this review was written on",
+      },
+      {
+        name: "did not pass its number check",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "refused", category: "number_mismatch" })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "Write the quarter review again",
+      },
+      {
+        name: "timed out",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "refused", category: "timeout" })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "The review did not finish",
+      },
+      {
+        name: "nothing happened yet this quarter",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "none" }, { quarter: fx.QUARTER_EMPTY, packed: [] })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "appear after its first pay run or invoice",
+      },
+    ],
+  },
+  {
     file: "records/advances/[id]/page.tsx",
     variants: ADVANCE_RECORD_CASES.map(([name, record, shows]) => ({
       name,
@@ -1515,6 +1564,7 @@ const PAGES: PageCase[] = [
   loading("models/loading.tsx", () => import("@/app/models/loading")),
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
   loading("profit/loading.tsx", () => import("@/app/profit/loading")),
+  loading("quarter/loading.tsx", () => import("@/app/quarter/loading")),
   loading("records/loading.tsx", () => import("@/app/records/loading")),
   loading("settings/pay-rules/loading.tsx", () => import("@/app/settings/pay-rules/loading")),
   loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
@@ -2226,6 +2276,84 @@ describe("no internal word on the profit brief, in every state", () => {
       expect(scan(container)).toEqual([]);
     } finally {
       switches.profitBriefEnabled = was;
+    }
+  });
+});
+
+describe("no internal word on the quarter review, in every state", () => {
+  const show = async () => renderPage(async () => (await import("@/app/quarter/page")).default());
+
+  it("the written review, with each number a link to where it came from", async () => {
+    state.fx.quarterView = fx.quarterView({ kind: "drafted", review: fx.QUARTER_REVIEW, changed: false });
+    const container = await show();
+    const recovered = screen.getByRole("region", { name: "Money recovered" });
+    expect(within(recovered).getAllByRole("link").map((a) => a.getAttribute("title"))).toEqual([
+      "Detention recovered",
+      "Advances recovered from pay",
+    ]);
+    expect(within(recovered).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual([
+      "#quarter-recovered",
+      "#quarter-recovered",
+    ]);
+    const change = screen.getByRole("region", { name: "Three things to change" });
+    expect(within(change).getAllByRole("listitem")).toHaveLength(3);
+    expect(container.textContent).not.toMatch(/\[f\d+\]/);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the confirm before the agent writes, opened", async () => {
+    const container = await show();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Write the quarter review" }));
+    });
+    expect(screen.getByRole("button", { name: "Write the review" })).toBeTruthy();
+    expect(container.textContent).toMatch(/costs at most \$0\.30/);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("every sentence a press of the button or a stored refusal can show", () => {
+    const categories = ["format", "unknown_tag", "number_mismatch", "untagged", "timeout", "interrupted", "incomplete", "cap", "too_expensive", "job_cap", "disabled", "not_configured", "error", "rate_limited", "unavailable"];
+    const errors = ["exists", "in_progress", "no_activity", "not_found", "review_off", "disabled", "ai_off", "ai_disabled", "forbidden", "unauthenticated", "unknown", "network"];
+    const sentences = [
+      ...categories.map(reviewRefusalWords),
+      ...errors.map((error) => reviewOutcome({ ok: false, error, data: {} })),
+      ...["drafted", "refused", "over_cap", "drafting"].flatMap((status) =>
+        categories.map((category) => reviewOutcome({ ok: true, error: null, data: { status, category } })),
+      ),
+    ];
+    const { container } = render(
+      <ul>
+        {[...new Set(sentences)].map((t) => (
+          <li key={t}>{t}</li>
+        ))}
+      </ul>,
+    );
+    expect(sentences.every((t) => t.length > 0)).toBe(true);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the button to write it again, after a try that did not pass", () => {
+    const { container } = render(
+      <ToastProvider>
+        <WriteReview again maxCents={30} />
+      </ToastProvider>,
+    );
+    expect(screen.getByRole("button", { name: "Write the quarter review again" })).toBeTruthy();
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the page with Quarter review switched off", async () => {
+    const switches = flags as Record<string, unknown>;
+    const was = switches.quarterReviewEnabled;
+    switches.quarterReviewEnabled = false;
+    try {
+      const container = await show();
+      expect(container.textContent).toMatch(/Quarter review/);
+      expect(container.textContent).toMatch(/off for this carrier/);
+      expect(container.querySelector("table")).toBeNull();
+      expect(scan(container)).toEqual([]);
+    } finally {
+      switches.quarterReviewEnabled = was;
     }
   });
 });

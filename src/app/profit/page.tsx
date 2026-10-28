@@ -34,6 +34,7 @@ type View = { shell: ShellTenant; profit: ProfitView | null };
 // report's file (only while reports are on; otherwise the number shows as plain text).
 const hrefFor: FigureHref = (source) => {
   if ("table" in source) return hrefOrNull(recordHref, source);
+  if (!("report" in source)) return null;
   return flags.reportsEnabled ? reportPath(source.report, source.args, "csv") : null;
 };
 

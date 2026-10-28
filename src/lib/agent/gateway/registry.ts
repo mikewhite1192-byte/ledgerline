@@ -24,6 +24,7 @@ import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
 import { getProfitBrief } from "./tools/read/get-profit-brief";
 import { getProposal } from "./tools/read/get-proposal";
+import { getQuarterReview } from "./tools/read/get-quarter-review";
 import { ALWAYS_LOADED } from "./loading";
 import { getSettlements } from "./tools/read/get-settlements";
 import { getPayItems } from "./tools/read/get-pay-items";
@@ -91,6 +92,7 @@ const TOOLS: readonly AnyToolDef[] = [
   getDriverIdentity,
   getAdvanceHeadroom,
   getProfitBrief,
+  getQuarterReview,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,

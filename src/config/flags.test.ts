@@ -352,6 +352,18 @@ describe("flags", () => {
     }
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("profitBriefEnabled");
   });
+
+  it("ships the quarter review dark, at most 30 cents a review, and never switched on by local mode", () => {
+    expect(flags.quarterReviewEnabled).toBe(false);
+    expect(flags.quarterReviewLimits).toEqual({ maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 });
+    for (const v of Object.values(flags.quarterReviewLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The wrapper refuses an output budget over 8192 tokens.
+    expect(flags.quarterReviewLimits.maxOutputTokens).toBeLessThanOrEqual(8192);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewEnabled");
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewLimits");
+  });
 });
 
 describe("local overrides for the demo-path test", () => {

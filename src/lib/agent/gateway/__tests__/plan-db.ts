@@ -1,4 +1,5 @@
 import type { Param } from "../../../db";
+import { QUARTER_DETENTION_SQL, QUARTER_PROPOSALS_SQL, QUARTER_RECOVERY_SQL } from "../../../briefs/quarter-figures";
 import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
 import { ESCROW_LINES, QUEUE_CHILDREN, QUEUE_LOADS } from "../../../data/read";
 import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
@@ -102,6 +103,45 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
           (params[0] === null || r.subject_id === params[0]),
       );
       return [...new Set(cards.map((r) => String(r.subject_id)))].map((load_id) => ({ load_id }));
+    }
+    // The quarter review's own reads (briefs/quarter-figures.ts). A seed plan holds no proposals,
+    // so the fixes and the detention they billed answer from a proposals list a test adds, or none.
+    if (sql === QUARTER_RECOVERY_SQL) {
+      return (tables.settlement_lines ?? [])
+        .filter((r) => r.kind === "advance_recovery")
+        .map((r) => ({ settlement_id: r.settlement_id, kind: r.kind, amount_cents: r.amount_cents }));
+    }
+    if (sql === QUARTER_PROPOSALS_SQL) {
+      const since = String(params[0]);
+      return (tables.proposals ?? [])
+        .filter((r) => String(r.created_at) >= since || (r.decided_at != null && String(r.decided_at) >= since))
+        .sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))
+        .map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          status: r.status,
+          direction: r.direction,
+          amount_cents: r.amount_cents,
+          created_at: r.created_at,
+          decided_at: r.decided_at ?? null,
+        }));
+    }
+    if (sql === QUARTER_DETENTION_SQL) {
+      const fixes = new Map((tables.proposals ?? []).map((p) => [String(p.id), p]));
+      return (tables.load_accessorials ?? [])
+        .filter((a) => a.kind === "detention" && a.proposal_id != null && fixes.has(String(a.proposal_id)))
+        .sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))
+        .map((a) => {
+          const p = fixes.get(String(a.proposal_id))!;
+          return {
+            id: a.id,
+            load_id: a.load_id,
+            amount_cents: a.amount_cents,
+            proposal_id: p.id,
+            proposal_status: p.status,
+            decided_at: p.decided_at ?? null,
+          };
+        });
     }
     const m = FROM.exec(sql);
     if (!m) return undefined;
