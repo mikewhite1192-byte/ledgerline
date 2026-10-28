@@ -509,6 +509,45 @@ export type CarrierNoteRow = {
   updated_by_sub: string | null;
 };
 
+// One approved "Factor these invoices" card as submitted to the test-mode partner (0060): the
+// engine's totals in cents and the request's rolled-up status. proposal_id is null only for a
+// row a test writes by hand.
+export type FactoringRequestRow = {
+  id: string;
+  period_id: string;
+  proposal_id: string | null;
+  membership_id: string;
+  provider: "factoring_sim";
+  advance_bps: number;
+  fee_bps: number;
+  balance_cents: number;
+  advance_cents: number;
+  fee_cents: number;
+  net_cents: number;
+  reserve_cents: number;
+  status: "submitted" | "funded" | "partly_funded" | "declined" | "unknown" | "failed";
+  funded_at: string | null;
+};
+
+// One invoice of a factoring request: its own numbers, the ledger try (attempt), the packet
+// snapshot and the partner's reference once funded.
+export type FactoringRequestInvoiceRow = {
+  id: string;
+  request_id: string;
+  invoice_id: string;
+  attempt: number;
+  balance_cents: number;
+  advance_cents: number;
+  fee_cents: number;
+  net_cents: number;
+  reserve_cents: number;
+  money_action_id: string | null;
+  provider_ref: string | null;
+  status: "submitted" | "funded" | "declined" | "unknown" | "failed";
+  packet: Record<string, unknown>;
+  settled_at: string | null;
+};
+
 export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
@@ -540,6 +579,8 @@ export type TenantRows = {
   vendor_bills: VendorBillRow[];
   cash_settings: CashSettingsRow[];
   cash_checks: CashCheckRow[];
+  factoring_requests: FactoringRequestRow[];
+  factoring_request_invoices: FactoringRequestInvoiceRow[];
   carrier_notes: CarrierNoteRow[];
 };
 

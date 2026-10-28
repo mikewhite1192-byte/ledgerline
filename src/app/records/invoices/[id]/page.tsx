@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
@@ -10,6 +11,9 @@ import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
 import { PostButton } from "@/components/invoices/post-button";
 import { ReviewCard } from "@/components/invoices/review-card";
+import { readFactoredLine } from "@/lib/factoring/read";
+import { factoringOn } from "@/lib/factoring/switches";
+import { dayOf, requestStatusWords } from "@/lib/factoring/words";
 import { quickBooksStanding } from "@/lib/invoices/labels";
 import { invoiceRecordActions, readInvoiceRecordPage } from "@/lib/invoices/record-page";
 import { readRecordPage } from "../../read-record";
@@ -21,7 +25,12 @@ export const dynamic = "force-dynamic";
 // invoice queue made (record-page.ts).
 export default async function InvoiceRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const page = await readRecordPage(id, readInvoiceRecordPage);
+  // With factoring on, the invoice's live factoring line too (off, it is never read).
+  const page = await readRecordPage(id, async (q, rid, today) => {
+    const record = await readInvoiceRecordPage(q, rid, today);
+    if (!record) return null;
+    return { ...record, factored: factoringOn() ? await readFactoredLine(q, rid) : null };
+  });
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   if (page.kind === "missing") {
     return (
@@ -34,6 +43,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
   const inv = page.record.record;
   const review = page.record.review;
   const actions = invoiceRecordActions(page.record);
+  const factored = page.record.factored;
   return (
     <SignedInPage tenant={page.shell} current="/invoices" title={`Invoice ${inv.invoiceNumber}`}>
       <PageHeader
@@ -63,6 +73,24 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
                   ),
               },
               { label: "QuickBooks", value: quickBooksStanding(inv.qboTail, inv.ledger.map((r) => r.state)) },
+              ...(factored
+                ? [
+                    {
+                      label: "Factoring",
+                      term: "factoring" as const,
+                      value: (
+                        <span>
+                          {factored.status === "funded"
+                            ? `Factored (Test mode) on ${dayOf(factored.at, page.shell.timezone)}, `
+                            : `${requestStatusWords(factored.status)} (Test mode), sent ${dayOf(factored.at, page.shell.timezone)}, `}
+                          <Link href={`/factoring/${factored.requestId}`} className="text-link underline-offset-4 hover:underline">
+                            see the request
+                          </Link>
+                        </span>
+                      ),
+                    },
+                  ]
+                : []),
             ]}
           />
         </CardBody>

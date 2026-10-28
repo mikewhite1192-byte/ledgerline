@@ -11,9 +11,9 @@ import type { Executor, ProposalResult } from "../execute";
 // sets the bill deferred to the card's date with the proposal's id, and the proposal moves to done
 // in the same transaction. A second approval of the same card finds it done and writes nothing.
 //
-// factoring_request and collections_chase are test mode until FACTORING and COLLECTIONS ship: the
+// collections_chase, and factoring_request while factoring.enabled is off, are test mode: the
 // approval is recorded (the proposal moves to done with the note test_mode) and nothing else is
-// written, sent or paid.
+// written, sent or paid. With factoring on, src/lib/factoring/execute.ts runs the card instead.
 //
 // The switch: cashFridayEnabled off refuses as not_executable before anything is read or written.
 // No money moves here and nothing leaves the system.

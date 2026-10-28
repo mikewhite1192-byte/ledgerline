@@ -144,6 +144,17 @@ export type {
   ProfitTotals,
 } from "./profit";
 export {
+  compareFactoringLines,
+  FACTORING_REFUSALS,
+  factoringFor,
+  factoringLineOf,
+  factoringOptionOf,
+  type FactoringDecision,
+  type FactoringInput,
+  type FactoringRates,
+  type FactoringRefusal,
+} from "./factoring";
+export {
   FUEL_CATEGORY_OF,
   FUEL_CHECK_NAMES,
   findFuelDuplicate,

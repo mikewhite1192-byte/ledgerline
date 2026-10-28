@@ -238,6 +238,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "sweep_fanout_checks",
     "approval_batches",
     "cash_checks",
+    "factoring_requests",
+    "factoring_request_invoices",
     // Seeded, but filled here as a person writes them too (0027), so the probe also reads rows the
     // app role wrote.
     "driver_arm_events",
@@ -542,6 +544,23 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           [randomUUID(), randomBytes(32).toString("hex"), cardRun],
         );
         expect(cardFound).toBe(1);
+        // A factoring request the test-mode partner declined, on the carrier's paid invoice (0060).
+        // Declined, so no ledger row and no money; it only gives the probe a row to (not) see.
+        const request = randomUUID();
+        await q.execute(
+          `INSERT INTO factoring_requests (id, tenant_id, period_id, membership_id, provider, advance_bps, fee_bps,
+             balance_cents, advance_cents, fee_cents, net_cents, reserve_cents, status)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'factoring_sim', 9000,
+             300, 10000, 9000, 300, 8700, 1000, 'declined')`,
+          [request, c.settlement.period, c.membership],
+        );
+        await q.execute(
+          `INSERT INTO factoring_request_invoices (id, tenant_id, request_id, invoice_id, balance_cents,
+             advance_cents, fee_cents, net_cents, reserve_cents, status, settled_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 10000, 9000, 300,
+             8700, 1000, 'declined', now())`,
+          [randomUUID(), request, c.invoice.id],
+        );
       });
       ids.proposals.push(proposal);
       ids.accountingRows.push(action);
@@ -615,6 +634,87 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           }),
         () => sql("DELETE FROM money_actions WHERE id = CAST($1 AS uuid)", [action]),
         { payout_mismatch: 1 },
+      );
+    });
+
+    // A confirmed factoring advance on one invoice line (0060): clean when the ledger amount, the
+    // partner's amount and the line's net agree and the payee is the invoice's customer; a cent off
+    // is a mismatch, and a row no line names has no subject. Attempt 2, beside the declined first
+    // try the fill test wrote for the same invoice.
+    async function plantFactoring(net: number, outside: number, named: boolean): Promise<() => Promise<void>> {
+      const c = carriers[1];
+      const [request, line, action] = [randomUUID(), randomUUID(), randomUUID()];
+      await admin.withoutTenant(async (q) => {
+        await q.execute(
+          `INSERT INTO factoring_requests (id, tenant_id, period_id, membership_id, provider, advance_bps, fee_bps,
+             balance_cents, advance_cents, fee_cents, net_cents, reserve_cents, status, funded_at)
+           VALUES (CAST($1 AS uuid), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid), 'factoring_sim', 9000,
+             300, 10000, 9000, 300, 8700, 1000, 'funded', now())`,
+          [request, c.id, c.settlement.period, c.membership],
+        );
+        await q.execute(
+          `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, attempt,
+             idempotency_key, request_id, amount_cents, counterparty_table, counterparty_id, proposed_by,
+             approver_membership_id)
+           VALUES (CAST($1 AS uuid), CAST($2 AS uuid), 'factoring_advance', 'payment', 'invoices', CAST($3 AS uuid),
+             2, $4, $5, $6, 'customers', CAST($7 AS uuid), 'person', CAST($8 AS uuid))`,
+          [action, c.id, c.invoice.id, `factoring_advance:${c.invoice.id}:2`, action.replace(/-/g, ""), net,
+            c.invoice.customer, c.membership],
+        );
+        await q.execute("UPDATE money_actions SET state = 'sent', sent_at = now() WHERE id = CAST($1 AS uuid)", [action]);
+        await q.execute(
+          `UPDATE money_actions SET state = 'confirmed', settled_via = 'response', settled_at = now(),
+             outside_system = 'factoring_sim', outside_type = 'factoring_advance',
+             outside_id = 'fsim_adv_000000000000000000000000', outside_amount_cents = $2
+           WHERE id = CAST($1 AS uuid)`,
+          [action, outside],
+        );
+        await q.execute(
+          `INSERT INTO factoring_request_invoices (id, tenant_id, request_id, invoice_id, attempt, balance_cents,
+             advance_cents, fee_cents, net_cents, reserve_cents, money_action_id, provider_ref, status, settled_at)
+           VALUES (CAST($1 AS uuid), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid), 2, 10000, 9000, 300, 8700,
+             1000, CAST($5 AS uuid), 'fsim_adv_000000000000000000000000', 'funded', now())`,
+          [line, c.id, request, c.invoice.id, named ? action : null],
+        );
+      });
+      return async () => {
+        await sql("DELETE FROM factoring_requests WHERE id = CAST($1 AS uuid)", [request]);
+        await sql("DELETE FROM money_actions WHERE id = CAST($1 AS uuid)", [action]);
+      };
+    }
+
+    it("passes a confirmed factoring advance that matches its invoice line and customer", async () => {
+      const before = (await expectAllPass()).I1.counts.payouts;
+      const undo = await plantFactoring(8700, 8700, true);
+      try {
+        const after = await expectAllPass();
+        expect(after.I1.counts.payouts).toBe(Number(before) + 1);
+      } finally {
+        await undo();
+      }
+    });
+
+    it("catches a confirmed factoring advance one cent off its line's net", async () => {
+      let undo: () => Promise<void> = async () => {};
+      await planted(
+        "I1",
+        async () => {
+          undo = await plantFactoring(8701, 8701, true);
+        },
+        () => undo(),
+        { payout_mismatch: 1 },
+      );
+    });
+
+    it("catches a confirmed factoring advance no invoice line names", async () => {
+      let undo: () => Promise<void> = async () => {};
+      await planted(
+        "I1",
+        async () => {
+          undo = await plantFactoring(8700, 8700, false);
+        },
+        () => undo(),
+        { payout_subject_missing: 1 },
       );
     });
 

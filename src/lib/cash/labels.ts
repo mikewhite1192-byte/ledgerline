@@ -1,3 +1,4 @@
+import { FACTORING_APPROVE_NOTICE } from "../factoring/words";
 import type { PaymentLabel, ReceiptStatus, VendorBillCategory, VendorBillStatus } from "../rules-engine/types";
 
 // Fixed words for the Cash page. Categories reach the page; these turn them into plain text.
@@ -51,6 +52,8 @@ export const CHECK_NOT_CONFIRMED =
 
 // The card notices the Cash page says in its own words; the rest are the shared ones.
 export const CASH_CARD_NOTICES: Readonly<Record<string, string>> = {
+  // A factoring card's own refusals (src/lib/factoring/words.ts); every key is factoring's.
+  ...FACTORING_APPROVE_NOTICE,
   stale: "The bill changed after this card was made. Nothing was moved. Press Check Friday's cash for a fresh card.",
   expired: "This card expired. Nothing was moved. Press Check Friday's cash for a fresh card.",
   not_auditable:

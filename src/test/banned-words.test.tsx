@@ -398,6 +398,12 @@ const noteActions = vi.hoisted(() => ({
   removeNoteAction: vi.fn(),
 }));
 vi.mock("@/app/memory/actions", () => noteActions);
+vi.mock("@/lib/factoring/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/factoring/read")>()),
+  listRequests: async () => get("factoringRequests"),
+  readRequest: async () => get("factoringRequest"),
+  readFactoredLine: async () => get("factoredLine"),
+}));
 vi.mock("@/lib/voice/read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/voice/read")>()),
   readVoiceList: async () => get("voiceList"),
@@ -476,18 +482,25 @@ function defaults(): Record<string, unknown> {
     cashHome: null,
     memoryNotes: fx.MEMORY_NOTES,
     noteSubjects: fx.NOTE_SUBJECTS,
+    factoringRequests: fx.FACTORING_REQUESTS,
+    factoringRequest: fx.FACTORING_REQUEST,
+    factoredLine: null,
   };
 }
 
 // Every switch on, so each page shows its working state, not the off page.
 const SWITCHES = Object.keys(flags).filter((k) => typeof (flags as Record<string, unknown>)[k] === "boolean");
 const saved = Object.fromEntries(SWITCHES.map((k) => [k, (flags as Record<string, unknown>)[k]]));
+// Factoring's switch is a field of its own settings object, so it is turned on beside the others.
+const savedFactoring = flags.factoring.enabled;
 beforeAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = true;
+  flags.factoring.enabled = true;
   vi.stubGlobal("fetch", () => new Promise(() => {}));
 });
 afterAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = saved[k];
+  flags.factoring.enabled = savedFactoring;
   vi.unstubAllGlobals();
 });
 beforeEach(() => {
@@ -1001,6 +1014,39 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "factoring/page.tsx",
+    variants: [
+      { name: "requests", load: async () => (await import("@/app/factoring/page")).default(), shows: "Partly funded" },
+      {
+        name: "none yet",
+        setup: () => (state.fx.factoringRequests = []),
+        load: async () => (await import("@/app/factoring/page")).default(),
+        shows: "No invoices factored yet",
+      },
+    ],
+  },
+  {
+    file: "factoring/[id]/page.tsx",
+    variants: [
+      {
+        name: "partly funded, one invoice not confirmed yet",
+        load: async () => (await import("@/app/factoring/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Check pending",
+      },
+      {
+        name: "funded",
+        setup: () =>
+          (state.fx.factoringRequest = {
+            ...fx.FACTORING_REQUEST,
+            status: "funded",
+            lines: fx.FACTORING_REQUEST.lines.map((l) => ({ ...l, status: "funded" })),
+          }),
+        load: async () => (await import("@/app/factoring/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Funded",
+      },
+    ],
+  },
+  {
     file: "pay/[periodId]/notes/page.tsx",
     variants: [
       {
@@ -1191,6 +1237,18 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.invoiceReview = view),
         load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
       })),
+      {
+        name: "factored",
+        setup: () => (state.fx.factoredLine = fx.FACTORED_LINE),
+        load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Factored (Test mode)",
+      },
+      {
+        name: "sent to factoring, not confirmed yet",
+        setup: () => (state.fx.factoredLine = { ...fx.FACTORED_LINE, status: "unknown" }),
+        load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Sent, not confirmed yet (Test mode)",
+      },
     ],
   },
   {

@@ -89,9 +89,13 @@ export const RECOVERY_LINES_SQL = `SELECT count(*) AS lines,
   FROM settlement_lines l
  WHERE l.kind = 'advance_recovery'`;
 
-// A payout whose subject is gone (no advance or settlement behind it) is a violation of its own,
-// judged before its amounts. Otherwise the amount must equal the subject's, the outside amount
-// must equal the amount (a missing outside amount never does), and the driver must match.
+// A payout whose subject is gone (no advance, settlement or factored invoice line behind it) is a
+// violation of its own, judged before its amounts. Otherwise the amount must equal the subject's,
+// the outside amount must equal the amount (a missing outside amount never does), and the payee
+// must match: the driver for a driver payout, the invoice's customer for a factoring advance
+// (whose subject amount is the net of the line that names the ledger row, on the same invoice).
+// A payment kind with no branch here has no subject amount, so it counts as subject_missing:
+// unknown is never judged clean.
 export const PAYOUTS_SQL = `SELECT count(*) AS payouts,
        count(*) FILTER (WHERE p.subject_amount IS NULL) AS subject_missing,
        count(*) FILTER (WHERE p.subject_amount IS NOT NULL AND p.amount IS NULL) AS unread,
@@ -99,14 +103,20 @@ export const PAYOUTS_SQL = `SELECT count(*) AS payouts,
                           AND (p.amount <> p.subject_amount OR p.outside_amount IS DISTINCT FROM p.amount
                                OR NOT p.same_driver)) AS mismatch
   FROM (SELECT m.amount_cents AS amount, m.outside_amount_cents AS outside_amount,
-               CASE m.kind WHEN 'advance_payout' THEN a.amount_cents WHEN 'settlement_payout' THEN s.net_cents END
+               CASE m.kind WHEN 'advance_payout' THEN a.amount_cents WHEN 'settlement_payout' THEN s.net_cents
+                           WHEN 'factoring_advance' THEN f.net_cents END
                  AS subject_amount,
-               (m.counterparty_table = 'drivers' AND m.counterparty_id =
-                 CASE m.kind WHEN 'advance_payout' THEN a.driver_id WHEN 'settlement_payout' THEN s.driver_id END)
-                 IS TRUE AS same_driver
+               (CASE WHEN m.kind = 'factoring_advance'
+                     THEN m.counterparty_table = 'customers' AND m.counterparty_id = i.customer_id
+                     ELSE m.counterparty_table = 'drivers' AND m.counterparty_id =
+                       CASE m.kind WHEN 'advance_payout' THEN a.driver_id WHEN 'settlement_payout' THEN s.driver_id END
+                END) IS TRUE AS same_driver
           FROM money_actions m
           LEFT JOIN advances a ON m.kind = 'advance_payout' AND a.tenant_id = m.tenant_id AND a.id = m.subject_id
           LEFT JOIN settlements s ON m.kind = 'settlement_payout' AND s.tenant_id = m.tenant_id AND s.id = m.subject_id
+          LEFT JOIN factoring_request_invoices f ON m.kind = 'factoring_advance' AND f.tenant_id = m.tenant_id
+                AND f.money_action_id = m.id AND f.invoice_id = m.subject_id
+          LEFT JOIN invoices i ON m.kind = 'factoring_advance' AND i.tenant_id = m.tenant_id AND i.id = m.subject_id
          WHERE m.channel = 'payment' AND m.state = 'confirmed') p`;
 
 export const PAYMENTS_SQL = `SELECT count(*) AS payments,

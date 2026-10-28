@@ -1,0 +1,463 @@
+import { randomUUID } from "node:crypto";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { flags } from "../../config/flags";
+import { factoringBehavior } from "../adapters/factoring/sim";
+import type { Session } from "../auth/claims";
+import { runCashCheck } from "../cash/check";
+import { factoringArgsSchema, type FactoringArgs } from "../cash/args";
+import { createPgDb } from "../db/pg";
+import { adminUrl, appUrl } from "../db/test-urls";
+import type { Db, Queryable } from "../db/types";
+import { readCashFridayInput } from "../data/read";
+import { readTenantZone } from "../money/read";
+import { EXECUTORS, executeProposal } from "../proposals/execute";
+import { persistEngineProposal } from "../proposals/engine";
+import { computeCashFriday } from "../rules-engine";
+import { factoringFor } from "../rules-engine/factoring";
+import { DEMO_ANCHOR } from "../seed/anchor";
+import { DEMO_CARRIERS } from "../seed/carriers";
+import { buildCarrierPlan } from "../seed/plan";
+import { clearTenantAgent, replaceTenantData } from "../seed/run";
+import { localDateOf } from "../time/local-date";
+import { checkPendingFactoring } from "./execute";
+import { factoringProposalOf } from "./propose";
+import { listRequests, readFactoredLine, readFactoringInput, readRequest } from "./read";
+
+// FACTORING against the real database, as the app's role, with the simulated partner (balance
+// ending in 99 cents declined, 98 slow, every other funded). An engine Cash Friday card approved
+// with every switch on makes one request, one line and one ledger row per invoice, funded, and
+// approving it again (or twice at once) writes nothing more. A card with one 99 invoice ends
+// partly funded; a 98 invoice stays unknown until Check pending reads it back. A card naming an
+// invoice already factored, or any switch off, is refused before anything is written. Another
+// carrier reads and changes nothing. Both demo carriers are seeded from their plans; the two
+// tenants are removed after.
+
+const [BR, PW] = DEMO_CARRIERS;
+const planA = buildCarrierPlan(BR, DEMO_ANCHOR);
+const planB = buildCarrierPlan(PW, DEMO_ANCHOR);
+
+const NOW = new Date(`${DEMO_ANCHOR}T18:00:00.000Z`);
+const clock = () => NOW;
+const A = randomUUID();
+const B = randomUUID();
+const ADMIN_A: Session = { sub: `sub-admin-${A}`, email: "admin@factor-a.example", tenantId: A };
+const STAFF_B: Session = { sub: `sub-staff-${B}`, email: "staff@factor-b.example", tenantId: B };
+
+const saved = { ...flags, factoring: { ...flags.factoring }, cashFridayLimits: { ...flags.cashFridayLimits } };
+
+function switchesOn(): void {
+  flags.cashFridayEnabled = true;
+  flags.payoutsEnabled = true;
+  flags.factoring.enabled = true;
+  flags.factoring.armed = true;
+  flags.factoring.requirePacket = false;
+}
+
+let admin: Db;
+let app: Db;
+
+const explain = async () => ({ ok: true as const, text: "Short for Friday.", callId: randomUUID(), costNanocents: 1 });
+const approve = (s: Session, id: string) =>
+  executeProposal(s, id, { confirmed: false }, { db: app, clock, executors: EXECUTORS });
+
+async function storePass(tenantId: string, id: string): Promise<void> {
+  await admin.withTenant(tenantId, (q) =>
+    q.execute(
+      `UPDATE proposals SET auditor_verdict = 'pass', auditor_agrees = true, auditor_checked_at = CAST($2 AS timestamptz)
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+      [id, NOW.toISOString()],
+    ),
+  );
+}
+
+type Proposal = { status: string; money_action_id: string | null; decision_note: string | null; args: string };
+
+async function proposal(id: string): Promise<Proposal> {
+  const [row] = await admin.withTenant(A, (q) =>
+    q.query<Proposal>(
+      `SELECT status, CAST(money_action_id AS text) AS money_action_id, decision_note, CAST(args AS text) AS args
+         FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+      [id],
+    ),
+  );
+  return row;
+}
+
+type RequestRow = { id: string; status: string; net_cents: string; funded_at: string | null; membership_id: string };
+
+async function requestFor(proposalId: string): Promise<RequestRow | null> {
+  const rows = await admin.withTenant(A, (q) =>
+    q.query<RequestRow>(
+      `SELECT CAST(id AS text) AS id, status, CAST(net_cents AS text) AS net_cents, CAST(funded_at AS text) AS funded_at,
+              CAST(membership_id AS text) AS membership_id
+         FROM factoring_requests WHERE tenant_id = current_tenant_id() AND proposal_id = CAST($1 AS uuid)`,
+      [proposalId],
+    ),
+  );
+  return rows[0] ?? null;
+}
+
+type LineRow = { invoice_id: string; status: string; net_cents: string; money_action_id: string | null; provider_ref: string | null };
+
+async function linesOf(requestId: string): Promise<LineRow[]> {
+  return admin.withTenant(A, (q) =>
+    q.query<LineRow>(
+      `SELECT CAST(invoice_id AS text) AS invoice_id, status, CAST(net_cents AS text) AS net_cents,
+              CAST(money_action_id AS text) AS money_action_id, provider_ref
+         FROM factoring_request_invoices WHERE tenant_id = current_tenant_id() AND request_id = CAST($1 AS uuid)
+        ORDER BY invoice_id`,
+      [requestId],
+    ),
+  );
+}
+
+type MoneyRow = {
+  id: string;
+  subject_id: string;
+  state: string;
+  settled_via: string | null;
+  failure_category: string | null;
+  amount_cents: string;
+  idempotency_key: string;
+  outside_system: string | null;
+  counterparty_table: string;
+  channel: string;
+  proposed_by: string;
+};
+
+async function moneyRows(): Promise<MoneyRow[]> {
+  return admin.withTenant(A, (q) =>
+    q.query<MoneyRow>(
+      `SELECT CAST(id AS text) AS id, CAST(subject_id AS text) AS subject_id, state, settled_via, failure_category,
+              CAST(amount_cents AS text) AS amount_cents, idempotency_key, outside_system, counterparty_table,
+              channel, proposed_by
+         FROM money_actions WHERE tenant_id = current_tenant_id() AND kind = 'factoring_advance'
+        ORDER BY subject_id, attempt`,
+    ),
+  );
+}
+
+async function countRows(tenantId: string, table: "factoring_requests" | "factoring_request_invoices" | "money_actions"): Promise<number> {
+  const [row] = await admin.withTenant(tenantId, (q) =>
+    q.query<{ n: string }>(`SELECT count(*) AS n FROM ${table} WHERE tenant_id = current_tenant_id()`),
+  );
+  return Number(row.n);
+}
+
+// The open load invoices the engine will factor today, one at a time, largest balance first.
+async function factorable(): Promise<{ id: string; balance: number }[]> {
+  return app.withTenant(A, async (q) => {
+    const rows = await q.query<{ id: string; balance: string }>(
+      `SELECT CAST(i.id AS text) AS id,
+              CAST(i.amount_cents - COALESCE((SELECT sum(a.amount_cents) FROM payment_applications a
+                                               WHERE a.tenant_id = i.tenant_id AND a.invoice_id = i.id), 0) AS text) AS balance
+         FROM invoices i
+        WHERE i.tenant_id = current_tenant_id() AND i.source = 'load' AND i.status IN ('open', 'partially_paid')
+        ORDER BY 2 DESC, i.invoice_number`,
+    );
+    // The engine's own checks, on one read of the carrier's records (the card path reads the
+    // same input per card).
+    const zone = await readTenantZone(q);
+    const today = localDateOf(NOW.toISOString(), zone);
+    const limits = flags.cashFridayLimits;
+    const cash = computeCashFriday(await readCashFridayInput(q, zone, limits), today);
+    if (!cash.ok || cash.figures.gapCents >= 0) throw new Error("the carrier is not short");
+    const input = await readFactoringInput(q, cash.periodId);
+    const opts = { maxAgeDays: limits.factoringMaxAgeDays, maxInvoices: limits.maxFactorInvoices };
+    return rows
+      .filter((r) => factoringFor(input, [r.id], today, opts, -cash.figures.gapCents).ok)
+      .map((r) => ({ id: r.id, balance: Number(r.balance) }));
+  });
+}
+
+// Moves an invoice's balance by under a dollar so it ends in the given cents (the simulated
+// partner's convention). Written by the admin login; no money moves.
+async function endBalanceIn(invoiceId: string, balance: number, tail: number): Promise<void> {
+  const delta = tail - (balance % 100);
+  await admin.withTenant(A, (q) =>
+    q.execute(
+      "UPDATE invoices SET amount_cents = amount_cents + $2 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+      [invoiceId, delta],
+    ),
+  );
+}
+
+// An engine factoring card for exactly these invoices, sized by the rules engine now, with the
+// auditor's pass stored. Persisting retires any other waiting factoring card for the week.
+async function cardFor(invoiceIds: string[]): Promise<{ id: string; args: FactoringArgs }> {
+  const made = await app.withTenant(A, async (q: Queryable) => {
+    const p = await factoringProposalOf(q, await readTenantZone(q), NOW, invoiceIds);
+    if (!p.ok) throw new Error(`the engine refused the card: ${p.category}`);
+    const r = await persistEngineProposal(
+      q,
+      {
+        kind: "factoring_request",
+        subjectTable: "settlement_periods",
+        subjectId: p.option.subjectId,
+        amountCents: p.option.amountCents,
+        args: p.args,
+        exceptions: [],
+        reasons: [],
+        sources: p.option.sources,
+      },
+      ADMIN_A,
+      NOW,
+    );
+    if (r.kind !== "created") throw new Error(`the card was not created: ${r.kind}`);
+    return { id: r.proposalId, args: p.args };
+  });
+  await storePass(A, made.id);
+  return made;
+}
+
+beforeAll(async () => {
+  admin = createPgDb({ connectionString: adminUrl() });
+  app = createPgDb({ connectionString: appUrl() });
+  for (const [id, plan] of [
+    [A, planA],
+    [B, planB],
+  ] as const) {
+    await admin.withTenant(id, (q) =>
+      q.execute("INSERT INTO tenants (id, slug, name, timezone) VALUES (current_tenant_id(), $1, $2, $3)", [
+        plan.carrier.slug,
+        plan.carrier.name,
+        plan.carrier.timezone,
+      ]),
+    );
+    await replaceTenantData(app, id, plan);
+  }
+  await admin.withTenant(A, (q) =>
+    q.execute("INSERT INTO memberships (tenant_id, cognito_sub, email, role) VALUES (current_tenant_id(), $1, $2, 'admin')", [
+      ADMIN_A.sub,
+      ADMIN_A.email,
+    ]),
+  );
+  await admin.withTenant(B, (q) =>
+    q.execute("INSERT INTO memberships (tenant_id, cognito_sub, email, role) VALUES (current_tenant_id(), $1, $2, 'staff')", [
+      STAFF_B.sub,
+      STAFF_B.email,
+    ]),
+  );
+});
+
+afterEach(() => {
+  Object.assign(flags, saved, { factoring: { ...saved.factoring }, cashFridayLimits: { ...saved.cashFridayLimits } });
+});
+
+afterAll(async () => {
+  Object.assign(flags, saved, { factoring: { ...saved.factoring }, cashFridayLimits: { ...saved.cashFridayLimits } });
+  if (admin) {
+    for (const id of [A, B]) {
+      await clearTenantAgent(admin, id).catch(() => undefined);
+      await admin.withTenant(id, (q) => q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"));
+    }
+  }
+  await app?.close();
+  await admin?.close();
+});
+
+describe("factoring on the real database", { timeout: 60_000 }, () => {
+  let engineCard: { id: string; args: FactoringArgs };
+  let engineRequest: RequestRow;
+
+  it("funds the Cash Friday card once, one line and one ledger row per invoice, however often it is approved", async () => {
+    switchesOn();
+    const check = await runCashCheck(ADMIN_A, NOW, { db: app, explain });
+    if (!check.ok) throw new Error(`the check refused: ${check.category}`);
+    const option = check.options.find((o) => o.kind === "factoring_request");
+    if (!option) throw new Error("no factoring card");
+    const stored = await proposal(option.proposalId);
+    const args = factoringArgsSchema.parse(JSON.parse(stored.args));
+    engineCard = { id: option.proposalId, args };
+    // The seeded balances are all funded by the simulated partner.
+    expect(args.invoices.every((i) => factoringBehavior(i.balanceCents) === "funded")).toBe(true);
+    await storePass(A, engineCard.id);
+
+    // Two presses at once: the second either finds the card decided or resumes the first run's
+    // request; the ledger's one row per invoice keeps either from sending twice.
+    const results = await Promise.all([approve(ADMIN_A, engineCard.id), approve(ADMIN_A, engineCard.id)]);
+    expect(results.some((r) => r.ok && r.status === "done")).toBe(true);
+    for (const r of results) expect(r.ok ? r.status : r.category).toMatch(/^(done|already_decided)$/);
+    expect(await approve(ADMIN_A, engineCard.id)).toMatchObject({ ok: false, category: "already_decided" });
+
+    const request = await requestFor(engineCard.id);
+    if (!request) throw new Error("no factoring request");
+    engineRequest = request;
+    expect([request.status, Number(request.net_cents), request.funded_at !== null]).toEqual(["funded", args.amountCents, true]);
+    const lines = await linesOf(request.id);
+    expect(lines.map((l) => l.invoice_id)).toEqual(args.invoices.map((i) => i.invoiceId).sort());
+    expect(lines.every((l) => l.status === "funded" && /^fsim_adv_[0-9a-f]{24}$/.test(l.provider_ref ?? ""))).toBe(true);
+
+    const money = await moneyRows();
+    expect(money).toHaveLength(args.invoices.length);
+    for (const i of args.invoices) {
+      const row = money.find((m) => m.subject_id === i.invoiceId);
+      expect(row).toMatchObject({
+        state: "confirmed",
+        settled_via: "response",
+        amount_cents: String(i.netCents),
+        idempotency_key: `factoring_advance:${i.invoiceId}:1`,
+        outside_system: "factoring_sim",
+        counterparty_table: "customers",
+        channel: "payment",
+        proposed_by: "person",
+      });
+      expect(lines.find((l) => l.invoice_id === i.invoiceId)?.money_action_id).toBe(row?.id);
+    }
+    const done = await proposal(engineCard.id);
+    expect(done.status).toBe("done");
+    expect(money.map((m) => m.id)).toContain(done.money_action_id);
+  });
+
+  it("reads the request back through the app role and marks each invoice factored", async () => {
+    const list = await app.withTenant(A, (q) => listRequests(q, 50));
+    expect(list.map((r) => [r.id, r.status, r.invoiceCount, r.netCents, r.proposalId])).toEqual([
+      [engineRequest.id, "funded", engineCard.args.invoices.length, engineCard.args.amountCents, engineCard.id],
+    ]);
+    expect(list[0].balanceCents).toBe(engineCard.args.balanceCents);
+    expect(list[0].reserveCents).toBe(engineCard.args.reserveCents);
+    const detail = await app.withTenant(A, (q) => readRequest(q, engineRequest.id));
+    expect(detail?.lines.map((l) => l.invoiceNumber)).toEqual(engineCard.args.invoices.map((i) => i.invoiceNumber).sort());
+    expect(detail?.lines.every((l) => l.packet.invoice === true)).toBe(true);
+    const first = engineCard.args.invoices[0].invoiceId;
+    expect(await app.withTenant(A, (q) => readFactoredLine(q, first))).toMatchObject({ requestId: engineRequest.id, status: "funded" });
+  });
+
+  it("never offers or chases a factored invoice again", async () => {
+    switchesOn();
+    const check = await runCashCheck(ADMIN_A, NOW, { db: app, explain });
+    if (!check.ok) throw new Error(`the check refused: ${check.category}`);
+    const sold = new Set(engineCard.args.invoices.map((i) => i.invoiceId));
+    const option = check.options.find((o) => o.kind === "factoring_request");
+    if (option) {
+      const args = factoringArgsSchema.parse(JSON.parse((await proposal(option.proposalId)).args));
+      expect(args.invoices.some((i) => sold.has(i.invoiceId))).toBe(false);
+    }
+    const left = await factorable();
+    expect(left.some((i) => sold.has(i.id))).toBe(false);
+  });
+
+  it("refuses a card that names an invoice already factored, before anything is written", async () => {
+    switchesOn();
+    // The funded card's own figures under a new card (a different short, so a new card).
+    const copy = { ...engineCard.args, shortCents: engineCard.args.shortCents + 1 };
+    const id = await app.withTenant(A, async (q) => {
+      const r = await persistEngineProposal(
+        q,
+        {
+          kind: "factoring_request",
+          subjectTable: "settlement_periods",
+          subjectId: copy.periodId,
+          amountCents: copy.amountCents,
+          args: copy,
+          exceptions: [],
+          reasons: [],
+          sources: copy.invoices.map((i) => ({ table: "invoices" as const, id: i.invoiceId })),
+        },
+        ADMIN_A,
+        NOW,
+      );
+      return r.proposalId;
+    });
+    await storePass(A, id);
+    const before = [await countRows(A, "factoring_requests"), await countRows(A, "money_actions")];
+    expect(await approve(ADMIN_A, id)).toMatchObject({ ok: false, category: "invoices_changed" });
+    expect([await countRows(A, "factoring_requests"), await countRows(A, "money_actions")]).toEqual(before);
+    expect((await proposal(id)).status).toBe("proposed");
+  });
+
+  it("refuses with any switch off, and writes nothing", async () => {
+    const [one] = await factorable();
+    const card = await cardFor([one.id]);
+    const before = [await countRows(A, "factoring_requests"), await countRows(A, "money_actions")];
+    for (const [flip, category] of [
+      [() => (flags.factoring.armed = false), "factoring_not_armed"],
+      [() => (flags.payoutsEnabled = false), "factoring_payouts_off"],
+      [() => (flags.factoring.maxNetCents = card.args.amountCents - 1), "over_factoring_cap"],
+      [() => (flags.factoring.startDate = "2026-11-03"), "factoring_before_start"],
+    ] as const) {
+      switchesOn();
+      flags.factoring.maxNetCents = saved.factoring.maxNetCents;
+      flags.factoring.startDate = saved.factoring.startDate;
+      flip();
+      expect(await approve(ADMIN_A, card.id)).toMatchObject({ ok: false, category });
+    }
+    expect([await countRows(A, "factoring_requests"), await countRows(A, "money_actions")]).toEqual(before);
+    expect((await proposal(card.id)).status).toBe("proposed");
+  });
+
+  it("declines a 99-cent invoice alone and funds the rest: partly funded, the card done", async () => {
+    switchesOn();
+    const [x, y] = await factorable();
+    await endBalanceIn(x.id, x.balance, 99);
+    if (factoringBehavior(y.balance) !== "funded") await endBalanceIn(y.id, y.balance, 0);
+    const card = await cardFor([x.id, y.id]);
+    expect(await approve(ADMIN_A, card.id)).toMatchObject({ ok: true, status: "done" });
+    const request = await requestFor(card.id);
+    expect(request?.status).toBe("partly_funded");
+    const lines = await linesOf(request?.id ?? "");
+    expect(Object.fromEntries(lines.map((l) => [l.invoice_id, l.status]))).toEqual({ [x.id]: "declined", [y.id]: "funded" });
+    const money = await moneyRows();
+    expect(money.find((m) => m.subject_id === x.id)).toMatchObject({ state: "failed", failure_category: "declined" });
+    expect(money.find((m) => m.subject_id === y.id)).toMatchObject({ state: "confirmed" });
+    // The proposal names the funded line's ledger row.
+    expect((await proposal(card.id)).money_action_id).toBe(money.find((m) => m.subject_id === y.id)?.id);
+    // The declined invoice is the carrier's again: the engine offers it once more.
+    expect((await factorable()).some((i) => i.id === x.id)).toBe(true);
+  });
+
+  it("keeps a 98-cent invoice unknown until Check pending reads it back, then funds it", async () => {
+    switchesOn();
+    const candidates = await factorable();
+    const z = candidates.find((c) => factoringBehavior(c.balance) !== "declined") ?? candidates[0];
+    await endBalanceIn(z.id, z.balance, 98);
+    const card = await cardFor([z.id]);
+    expect(await approve(ADMIN_A, card.id)).toMatchObject({ ok: true, status: "executing" });
+    const request = await requestFor(card.id);
+    if (!request) throw new Error("no factoring request");
+    expect(request.status).toBe("unknown");
+    expect((await linesOf(request.id)).map((l) => l.status)).toEqual(["unknown"]);
+    expect((await moneyRows()).find((m) => m.subject_id === z.id)?.state).toBe("unknown");
+    expect((await proposal(card.id)).status).toBe("executing");
+
+    // Approving again sends nothing new.
+    const rowsBefore = await countRows(A, "money_actions");
+    await approve(ADMIN_A, card.id);
+    expect(await countRows(A, "money_actions")).toBe(rowsBefore);
+
+    const checked = await checkPendingFactoring(ADMIN_A, request.id, { db: app, clock });
+    expect(checked).toMatchObject({ ok: true, status: "funded", tooNew: 0, stillWaiting: 0 });
+    if (checked.ok) expect(checked.summary.confirmed).toBe(1);
+    expect((await linesOf(request.id)).map((l) => l.status)).toEqual(["funded"]);
+    expect((await moneyRows()).find((m) => m.subject_id === z.id)).toMatchObject({ state: "confirmed", settled_via: "read_back" });
+    const closed = await proposal(card.id);
+    expect(closed.status).toBe("done");
+    expect(closed.money_action_id).not.toBeNull();
+    // A second press finds nothing waiting.
+    const second = await checkPendingFactoring(ADMIN_A, request.id, { db: app, clock });
+    expect(second).toMatchObject({ ok: true, status: "funded" });
+    if (second.ok) expect(second.summary.checked).toBe(0);
+  });
+
+  it("shows and changes nothing for another carrier", async () => {
+    switchesOn();
+    expect(await app.withTenant(B, (q) => listRequests(q, 50))).toEqual([]);
+    expect(await app.withTenant(B, (q) => readRequest(q, engineRequest.id))).toBeNull();
+    const first = engineCard.args.invoices[0].invoiceId;
+    expect(await app.withTenant(B, (q) => readFactoredLine(q, first))).toBeNull();
+    expect(await checkPendingFactoring(STAFF_B, engineRequest.id, { db: app, clock })).toMatchObject({
+      ok: false,
+      category: "not_found",
+    });
+    const changed = await app.withTenant(B, (q) =>
+      q.execute("UPDATE factoring_requests SET status = 'failed' WHERE id = CAST($1 AS uuid)", [engineRequest.id]),
+    );
+    expect(changed).toBe(0);
+    const seen = await app.withTenant(B, (q) =>
+      q.query<{ n: string }>("SELECT count(*) AS n FROM factoring_request_invoices"),
+    );
+    expect(Number(seen[0].n)).toBe(0);
+    expect(await countRows(B, "factoring_requests")).toBe(0);
+    expect((await requestFor(engineCard.id))?.status).toBe("funded");
+  });
+});

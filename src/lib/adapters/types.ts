@@ -116,6 +116,35 @@ export interface PaymentAdapter {
   ): Promise<ReadBack>;
 }
 
+// One invoice offered to the factoring partner. Codes only, never a name: the invoice number and
+// the customer's record id. The numbers are the rules engine's, whole cents; the partner answers
+// with the advance less its fee (netCents) or a definite no.
+export type FactoringSubmission = {
+  actionId: string;
+  invoiceNumber: string;
+  customerCode: string;
+  balanceCents: number;
+  advanceCents: number;
+  feeCents: number;
+  netCents: number;
+  reserveCents: number;
+};
+
+// The factoring partner. Simulated only today (Test mode); a real partner would be a second
+// implementation of this same interface.
+export interface FactoringAdapter {
+  readonly system: "factoring_sim";
+  // Repeats the switch checks on every call.
+  ready(): Promise<Ready>;
+  // The one outside call: offer one invoice for an advance.
+  submitInvoice(req: FactoringSubmission, ctx: SendContext): Promise<SendOutcome>;
+  // Reads only; the original submission rides along, as for a payout read-back.
+  readBack(
+    ref: { requestId: string; outsideId?: string | null; request: FactoringSubmission },
+    ctx: SendContext,
+  ): Promise<ReadBack>;
+}
+
 // kind is the rules engine's invoice line kind; it picks the accounting item for the line.
 export type InvoiceLine = {
   kind: "linehaul" | "fuel_surcharge" | "detention" | "layover" | "stop" | "lumper";

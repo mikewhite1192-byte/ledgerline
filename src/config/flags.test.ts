@@ -30,6 +30,15 @@ describe("flags", () => {
     expect(flags.cardRecon.enabled).toBe(false);
     expect(flags.rulesByTalkingEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
+    // Factoring submits to the simulated partner only, dark and unarmed until the owner's go.
+    expect(flags.factoring).toEqual({
+      enabled: false,
+      armed: false,
+      maxNetCents: 2_500_000,
+      requirePacket: false,
+      startDate: "2026-10-28",
+    });
+    expect(isLocalDate(flags.factoring.startDate)).toBe(true);
   });
 
   it("keeps carrier memory dark, with the agent's suggestions and the second check's notes few", () => {

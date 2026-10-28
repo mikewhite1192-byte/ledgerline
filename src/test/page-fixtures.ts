@@ -11,6 +11,7 @@ import type { ClipView } from "@/lib/clips/types";
 import type { BreakView, RunView as CardRunView } from "@/lib/data/card-recon";
 import type { CollectionsView, LateInvoice, ReminderCard } from "@/lib/collections/view";
 import type { DocumentView } from "@/lib/documents/types";
+import type { RequestDetail, RequestSummary } from "@/lib/factoring/read";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
 import { figureValueText, profitWeek, type ClosedWeek } from "@/lib/briefs/figures";
 import type { BriefRecord, ProfitView } from "@/lib/briefs/view";
@@ -2216,3 +2217,109 @@ export const SCHEDULE_CASES: [string, ScheduleView][] = [
 // The help page's link to the worked week's driver: her draft paystub, or her driver page.
 export const HERO_LINK_DRAFT = { href: `/records/settlements/${PAYSTUB_REF.id}`, draft: true };
 export const HERO_LINK_DRIVER = { href: `/records/drivers/${DRIVER_ID}`, draft: false };
+// ---- Factoring (Test mode) ----
+
+const FACTORING_REQUEST_ID = id(530);
+const FACTORING_DOC_RC = id(531);
+const FACTORING_DOC_BOL = id(532);
+
+const factoringRequest = (over: Partial<RequestSummary>): RequestSummary => ({
+  id: FACTORING_REQUEST_ID,
+  createdAt: "2026-11-02T15:20:00.000Z",
+  invoiceCount: 3,
+  balanceCents: 645_000,
+  advanceCents: 580_500,
+  feeCents: 19_350,
+  netCents: 561_150,
+  reserveCents: 64_500,
+  status: "partly_funded",
+  fundedAt: "2026-11-02T15:20:04.000Z",
+  proposalId: id(533),
+  advanceBps: 9_000,
+  feeBps: 300,
+  ...over,
+});
+
+export const FACTORING_REQUESTS: RequestSummary[] = [
+  factoringRequest({}),
+  factoringRequest({ id: id(534), createdAt: "2026-10-30T14:00:00.000Z", invoiceCount: 1, status: "unknown", fundedAt: null }),
+  factoringRequest({ id: id(535), createdAt: "2026-10-23T14:00:00.000Z", invoiceCount: 2, status: "funded" }),
+  factoringRequest({ id: id(536), createdAt: "2026-10-16T14:00:00.000Z", invoiceCount: 1, status: "declined", fundedAt: null }),
+];
+
+export const FACTORING_REQUEST: RequestDetail = {
+  ...factoringRequest({}),
+  lines: [
+    {
+      id: id(537),
+      invoiceId: INVOICE_ID,
+      invoiceNumber: "BR-INV-10231",
+      customerId: CUSTOMER_ID,
+      customerName: "Tanglewood Grocery Supply",
+      attempt: 1,
+      balanceCents: 215_000,
+      advanceCents: 193_500,
+      feeCents: 6_450,
+      netCents: 187_050,
+      reserveCents: 21_500,
+      status: "funded",
+      providerRef: "fsim_adv_3f2a9c1d7e5b4a0c9d8e7f6a",
+      moneyActionId: id(538),
+      settledAt: "2026-11-02T15:20:04.000Z",
+      packet: {
+        invoice: true,
+        rateConfirmation: { onFile: true, documentId: FACTORING_DOC_RC },
+        billOfLading: { onFile: true, documentId: FACTORING_DOC_BOL },
+        pod: { onFile: true, portalRunId: RUN_ID },
+      },
+    },
+    {
+      id: id(539),
+      invoiceId: id(540),
+      invoiceNumber: "BR-INV-10236",
+      customerId: CUSTOMER_ID,
+      customerName: "Tanglewood Grocery Supply",
+      attempt: 1,
+      balanceCents: 214_998,
+      advanceCents: 193_498,
+      feeCents: 6_450,
+      netCents: 187_048,
+      reserveCents: 21_500,
+      status: "unknown",
+      providerRef: null,
+      moneyActionId: id(541),
+      settledAt: null,
+      packet: {
+        invoice: true,
+        rateConfirmation: { onFile: true, documentId: FACTORING_DOC_RC },
+        billOfLading: { onFile: false, documentId: null },
+        pod: { onFile: false, portalRunId: null },
+      },
+    },
+    {
+      id: id(542),
+      invoiceId: id(543),
+      invoiceNumber: "BR-INV-10238",
+      customerId: CUSTOMER_ID,
+      customerName: "Tanglewood Grocery Supply",
+      attempt: 1,
+      balanceCents: 215_002,
+      advanceCents: 193_502,
+      feeCents: 6_450,
+      netCents: 187_052,
+      reserveCents: 21_500,
+      status: "declined",
+      providerRef: null,
+      moneyActionId: id(544),
+      settledAt: "2026-11-02T15:20:03.000Z",
+      packet: {
+        invoice: true,
+        rateConfirmation: { onFile: false, documentId: null },
+        billOfLading: { onFile: false, documentId: null },
+        pod: { onFile: false, portalRunId: null },
+      },
+    },
+  ],
+};
+
+export const FACTORED_LINE = { requestId: FACTORING_REQUEST_ID, status: "funded", at: "2026-11-02T15:20:04.000Z" };

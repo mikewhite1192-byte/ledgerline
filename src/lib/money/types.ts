@@ -11,6 +11,12 @@ export const MONEY_ACTION_KINDS = [
   "settlement_bill_payment",
   "invoice",
   "customer_payment",
+  // A simulated factoring partner's advance on one invoice (FACTORING, 0060). Payment channel, no
+  // rail: the caller sends through its own hook.
+  "factoring_advance",
+  // A one-time money code from the simulated card provider (MONEY-CODE, 0048). Payment channel,
+  // no rail: the caller sends through its own hook.
+  "money_code_issue",
 ] as const;
 export type MoneyActionKind = (typeof MONEY_ACTION_KINDS)[number];
 
@@ -38,8 +44,14 @@ export const MONEY_FAILURES = [
 ] as const;
 export type MoneyFailure = (typeof MONEY_FAILURES)[number];
 
-// The same list as money_actions_outside_system_check (0017).
-export const OUTSIDE_SYSTEMS = ["mock", "stripe_test", "qbo_sandbox", "fuel_card_sim"] as const;
+// The same list as money_actions_outside_system_check (0017, widened by 0048 and 0060).
+export const OUTSIDE_SYSTEMS = [
+  "mock",
+  "stripe_test",
+  "qbo_sandbox",
+  "fuel_card_sim",
+  "factoring_sim",
+] as const;
 export type OutsideSystem = (typeof OUTSIDE_SYSTEMS)[number];
 
 // Where a payout lands. Fixed per kind in code, never chosen per row: an advance loads the
@@ -53,7 +65,8 @@ export const RAIL_OF_KIND: Readonly<Record<"advance_payout" | "settlement_payout
   settlement_payout: "bank",
 };
 
-// The rail a kind pays on, or null for a kind that moves no money (an accounting post).
+// The rail a kind pays on, or null for a kind with no payout rail: an accounting post, or a
+// payment kind the caller sends through its own hook (factoring_advance, money_code_issue).
 export function railOf(kind: unknown): PayoutRail | null {
   if (kind === "advance_payout" || kind === "settlement_payout") return RAIL_OF_KIND[kind];
   return null;
@@ -65,7 +78,12 @@ export const SIM_BEHAVIORS = ["ok", "declined", "slow", "offline"] as const;
 export type SimBehavior = (typeof SIM_BEHAVIORS)[number];
 
 export type MoneyChannel = "payment" | "accounting";
-export type SubjectTable = "advances" | "settlements" | "invoices" | "customer_payments";
+export type SubjectTable =
+  | "advances"
+  | "settlements"
+  | "invoices"
+  | "customer_payments"
+  | "money_codes";
 export type CounterpartyTable = "drivers" | "customers";
 export type SettledVia = "response" | "read_back" | "refused";
 export const PROPOSERS = ["agent", "person"] as const;
@@ -102,14 +120,27 @@ export const KIND_SHAPES: Readonly<Record<MoneyActionKind, KindShape>> = {
     subjectTable: "customer_payments",
     counterpartyTable: "customers",
   },
+  factoring_advance: {
+    channel: "payment",
+    subjectTable: "invoices",
+    counterpartyTable: "customers",
+  },
+  money_code_issue: {
+    channel: "payment",
+    subjectTable: "money_codes",
+    counterpartyTable: "drivers",
+  },
 };
 
-// The statuses each subject table allows (0005). customer_payments has none.
+// The statuses each subject table allows (0005). customer_payments has none. money_codes lists
+// only the statuses a money action may start from (0048): a code being issued, or one whose last
+// try is not confirmed yet.
 export const SUBJECT_STATUSES = {
   advances: ["requested", "approved", "paid", "rejected", "cancelled"],
   settlements: ["draft", "approved", "paid"],
   invoices: ["open", "partially_paid", "paid", "void"],
   customer_payments: [],
+  money_codes: ["issuing", "unknown"],
 } as const satisfies Record<SubjectTable, readonly string[]>;
 export type SubjectStatus<T extends SubjectTable> = (typeof SUBJECT_STATUSES)[T][number];
 

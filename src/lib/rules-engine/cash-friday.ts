@@ -1,5 +1,6 @@
 import { addDays, dayOfWeek, daysBetween, type LocalDate, type Period } from "../time/local-date";
 import { cents, mulBps, sub, sum } from "./money";
+import { compareFactoringLines, factoringLineOf, factoringOptionOf } from "./factoring";
 import { invoiceStatus, paymentProfile } from "./receivables";
 import { settleDriver } from "./settlement";
 import {
@@ -279,58 +280,24 @@ export function factoringOption(
   const eligible = lines
     .filter((l) => {
       const invoice = invoices.get(l.invoiceId);
-      if (!invoice || invoice.source !== "load") return false;
+      // An invoice already on a live factoring line is never offered again.
+      if (!invoice || invoice.source !== "load" || invoice.factored === true) return false;
       const age = daysBetween(invoice.issuedOn, asOf);
       return l.status === "after_pay_day" && age >= 0 && age <= limits.factoringMaxAgeDays;
     })
-    .sort(
-      (a, b) =>
-        b.balanceCents - a.balanceCents ||
-        compareText(a.invoiceNumber, b.invoiceNumber) ||
-        compareText(a.invoiceId, b.invoiceId),
-    );
+    .map((l) =>
+      factoringLineOf({ id: l.invoiceId, invoiceNumber: l.invoiceNumber, customerId: l.customerId }, l.balanceCents, settings),
+    )
+    .sort(compareFactoringLines);
   const picked: FactoringLine[] = [];
   let net = cents(0);
   for (const line of eligible) {
     if (picked.length >= limits.maxFactorInvoices || net >= shortCents) break;
-    const advanceCents = mulBps(line.balanceCents, settings.factoringAdvanceBps);
-    const feeCents = mulBps(line.balanceCents, settings.factoringFeeBps);
-    const own = sub(advanceCents, feeCents);
-    picked.push({
-      invoiceId: line.invoiceId,
-      invoiceNumber: line.invoiceNumber,
-      customerId: line.customerId,
-      balanceCents: line.balanceCents,
-      advanceCents,
-      feeCents,
-      netCents: own,
-      reserveCents: sub(line.balanceCents, advanceCents),
-    });
-    net = sum([net, own]);
+    picked.push(line);
+    net = sum([net, line.netCents]);
   }
   if (picked.length === 0 || net <= 0) return null;
-  return {
-    kind: "factoring_request",
-    subjectTable: "settlement_periods",
-    subjectId: period.id,
-    direction: "in",
-    amountCents: net,
-    advanceBps: settings.factoringAdvanceBps,
-    feeBps: settings.factoringFeeBps,
-    invoices: picked,
-    balanceCents: sum(picked.map((p) => p.balanceCents)),
-    advanceCents: sum(picked.map((p) => p.advanceCents)),
-    feeCents: sum(picked.map((p) => p.feeCents)),
-    reserveCents: sum(picked.map((p) => p.reserveCents)),
-    coversShort: net >= shortCents,
-    sources: [
-      { table: "settlement_periods", id: period.id },
-      ...picked.flatMap((p): SourceRef[] => [
-        { table: "invoices", id: p.invoiceId },
-        { table: "customers", id: p.customerId },
-      ]),
-    ],
-  };
+  return factoringOptionOf(picked, settings, period, shortCents);
 }
 
 // Option 2: move the largest open flexible bill due by pay day to a week after pay day.
@@ -460,7 +427,9 @@ export function computeCashFriday(input: CashFridayInput, asOfDate: LocalDate): 
     applications: input.applications,
     asOf,
   };
-  const openInvoiceList = openInvoices(input);
+  // An invoice on a live factoring line is the partner's to collect: neither expected from the
+  // customer by pay day, nor chased, nor offered for factoring again.
+  const openInvoiceList = openInvoices(input).filter((o) => o.invoice.factored !== true);
   const profiles = profilesFor(openInvoiceList, receivables, asOf);
   const lines = lessUnappliedSince(
     expectedReceipts(openInvoiceList, profiles, asOf, payDay, limits.graceDays),

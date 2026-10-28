@@ -12,6 +12,8 @@ import { getCardBreaks } from "./tools/read/get-card-breaks";
 import { getCashFriday } from "./tools/read/get-cash-friday";
 import { getCollections } from "./tools/read/get-collections";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
+import { getFactoringPacket } from "./tools/read/get-factoring-packet";
+import { getFactoringRequests } from "./tools/read/get-factoring-requests";
 import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
 import { getDriverIdentity } from "./tools/read/get-driver-identity";
@@ -40,6 +42,7 @@ import { setChecklist } from "./tools/note/set-checklist";
 import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeCardMatch } from "./tools/propose/propose-card-match";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
+import { proposeFactoring } from "./tools/propose/propose-factoring";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
@@ -106,6 +109,9 @@ const TOOLS: readonly AnyToolDef[] = [
   getCashFriday,
   setChecklist,
   rememberNote,
+  getFactoringPacket,
+  getFactoringRequests,
+  proposeFactoring,
 ];
 
 function build(): Readonly<Record<string, AnyToolDef>> {

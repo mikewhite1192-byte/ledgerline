@@ -2,6 +2,7 @@ import type { ProposalAudit, ProposalCardProps } from "@/components/app/proposal
 import { auditConfirmQuestion, sentences } from "@/lib/agent/auditor/words";
 import { flagWords } from "@/lib/agent/reasons";
 import type { ProposalView } from "@/lib/agent/view";
+import { receiveLine, requestStatusWords } from "@/lib/factoring/words";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { sourceLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
@@ -232,6 +233,16 @@ export function cashLines(c: NonNullable<ProposalView["cash"]>): { text: string;
       {
         text: `The factoring partner pays ${percentOf(c.advanceBps)} up front and charges ${percentOf(c.feeBps)}, against a ${formatCents(c.shortCents)} short.`,
       },
+      {
+        text: receiveLine(
+          formatCents(c.invoices.reduce((t, i) => t + i.netCents, 0)),
+          formatCents(c.invoices.reduce((t, i) => t + i.reserveCents, 0)),
+          formatCents(c.invoices.reduce((t, i) => t + i.feeCents, 0)),
+        ),
+      },
+      ...(c.requestStatus
+        ? [{ text: `Factoring request: ${requestStatusWords(c.requestStatus)}. The Factoring page shows each invoice. Test mode.` }]
+        : []),
     ];
   }
   if (c.kind === "bill_defer") {
@@ -255,6 +266,12 @@ export function cashLines(c: NonNullable<ProposalView["cash"]>): { text: string;
 function cashImpactLabel(p: ProposalView): string | undefined {
   if (p.kind === "bill_defer") return "Bill amount; only its date moves";
   if (p.kind !== "factoring_request" && p.kind !== "collections_chase") return undefined;
+  // A factoring card the simulated partner answered says what came of it, never more.
+  const request = p.kind === "factoring_request" && p.cash?.kind === "factoring_request" ? p.cash.requestStatus : null;
+  if (request === "funded") return "Came in from the factoring partner (Test mode)";
+  if (request === "partly_funded") return "Part of this came in; see Factoring (Test mode)";
+  if (request === "submitted" || request === "unknown") return "Sent, not confirmed yet (Test mode)";
+  if (request === "declined" || request === "failed") return "Nothing came in (Test mode)";
   if (p.status === "done") return "Recorded in test mode; no money moved";
   if (p.status === "proposed" || p.status === "approved" || p.status === "executing") {
     return p.kind === "factoring_request" ? "Would come in before Friday" : "Past due from this customer";

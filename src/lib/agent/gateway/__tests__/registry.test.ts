@@ -49,7 +49,13 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_profit_brief: { tier: "read", roles: ["operator"] },
   set_checklist: { tier: "read", roles: ["operator"] },
   remember_note: { tier: "record", roles: ["operator"] },
+  get_factoring_packet: { tier: "read", roles: ["operator", "auditor"] },
+  get_factoring_requests: { tier: "read", roles: ["operator", "auditor"] },
+  propose_factoring: { tier: "propose", roles: ["operator"] },
 };
+
+// The tools behind the factoring switch: in the registry always, offered only while it is on.
+const FACTORING_TOOLS = ["get_factoring_packet", "get_factoring_requests", "propose_factoring"];
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
 const DETENTION_TOOLS = ["find_unbilled_detention", "propose_detention_charge"];
@@ -78,6 +84,7 @@ afterEach(() => {
   flags.collectionsEnabled = false;
   flags.profitBriefEnabled = false;
   flags.carrierMemoryEnabled = false;
+  flags.factoring.enabled = false;
 });
 
 describe("tool registry", () => {
@@ -104,7 +111,7 @@ describe("tool registry", () => {
 
   it("gives every propose tool an engine limit", () => {
     const propose = Object.values(TOOL_REGISTRY).filter((t) => t.tier === "propose");
-    expect(propose).toHaveLength(8);
+    expect(propose).toHaveLength(9);
     for (const tool of propose) expect(typeof tool.limit).toBe("function");
   });
 
@@ -213,6 +220,29 @@ describe("tool registry", () => {
     }
     flags.rulesByTalkingEnabled = false;
     expect(toolsFor("operator")).toHaveLength(21);
+  });
+
+  it("offers the factoring tools only while the factoring switch is on, read on every offer, all deferred", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    // Off by default: the default lists, and so the replayed demo's tool fingerprints, are unchanged.
+    expect(flags.factoring.enabled).toBe(false);
+    for (const role of AGENT_ROLES) for (const n of FACTORING_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
+    expect(toolsFor("operator")).toHaveLength(20);
+    expect(toolsFor("auditor")).toHaveLength(12);
+    flags.factoring.enabled = true;
+    for (const n of FACTORING_TOOLS) expect(names("operator"), n).toContain(n);
+    expect(names("auditor")).toEqual(expect.arrayContaining(["get_factoring_packet", "get_factoring_requests"]));
+    expect(names("auditor")).not.toContain("propose_factoring");
+    for (const n of FACTORING_TOOLS) expect(names("triage"), n).not.toContain(n);
+    expect(toolsFor("operator")).toHaveLength(23);
+    expect(toolsFor("auditor")).toHaveLength(14);
+    for (const n of FACTORING_TOOLS) {
+      expect(ALWAYS_LOADED, n).not.toContain(n);
+      expect(toolsFor("operator", { defer: true }).find((t) => t.name === n)?.deferLoading, n).toBe(true);
+    }
+    flags.factoring.enabled = false;
+    expect(toolsFor("operator")).toHaveLength(20);
+    expect(toolsFor("auditor")).toHaveLength(12);
   });
 
   it("offers the invoice review tools to the operator and the auditor only while both switches are on", () => {

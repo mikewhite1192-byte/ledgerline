@@ -469,6 +469,22 @@ export type Flags = {
       sliceMs: number;
     };
   };
+  // Factoring (Test mode): invoices sold to a simulated factoring partner for cash now, the rest
+  // held back until the customer pays. enabled: the Factoring page, its menu item, the agent's
+  // three tools and approving a "Factor these invoices" card through the partner; off, the page
+  // shows the feature as off, the check route answers 404, the tools are not offered and the card
+  // keeps Cash Friday's record-only behavior. armed, maxNetCents (inclusive: the most one request
+  // may pay out), requirePacket (refuse an invoice whose rate confirmation, bill of lading or POD
+  // is missing) and startDate (YYYY-MM-DD, tenant-local; it gates submitting, never proposing) are
+  // asked again on every approval, before the ledger reserves a row and by the partner adapter
+  // itself at each call, on top of payoutsEnabled.
+  factoring: {
+    enabled: boolean;
+    armed: boolean;
+    maxNetCents: number;
+    requirePacket: boolean;
+    startDate: string;
+  };
 };
 
 export const flags: Flags = {
@@ -623,6 +639,7 @@ export const flags: Flags = {
       sliceMs: 20_000,
     },
   },
+  factoring: { enabled: false, armed: false, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
 };
 
 applyLocalOverrides(flags);

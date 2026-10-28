@@ -1,9 +1,10 @@
-import type { PayoutDestination, ReadBack, SendContext } from "../adapters/types";
+import type { PayoutDestination, ReadBack, Ready, SendContext } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import type { Queryable, TenantDb } from "../db";
 import {
   adapterReady,
   categoryOf,
+  isHooked,
   needsDestination,
   paymentFor,
   payoutOf,
@@ -40,11 +41,13 @@ export type ReconcileHooks = {
   // never confirmed without it.
   onConfirmed(q: Queryable, action: MoneyAction): Promise<void>;
   onFailed?(q: Queryable, action: MoneyAction): Promise<void>;
-  // Accounting kinds only: the read-back for this action. Payouts read back through the payment
-  // adapter and must not pass this.
+  // Hooked kinds only (an accounting post, or a payment kind with no rail): the read-back for
+  // this action. Payouts on a rail read back through the payment adapter and must not pass this.
   readBack?(action: MoneyAction, ctx: SendContext): Promise<ReadBack>;
-  // Payment kinds only, the executor's hook: where the payout went, read again for the read-back.
-  // A kind whose adapter needs a destination is skipped without it, never guessed at.
+  // Payment kinds with no rail only: the caller's adapter asked whether it can answer now.
+  ready?(): Promise<Ready>;
+  // Payment kinds on a rail only, the executor's hook: where the payout went, read again for the
+  // read-back. A kind whose adapter needs a destination is skipped without it, never guessed at.
   destination?(q: Queryable, action: MoneyAction): Promise<PayoutDestination | null>;
 };
 
@@ -80,9 +83,8 @@ async function readBackOf(
   ctx: SendContext,
   d: MoneyDeps,
 ): Promise<Found | { category: MoneyFailure }> {
-  const { channel } = KIND_SHAPES[action.kind];
   let work: () => Promise<ReadBack>;
-  if (channel === "payment") {
+  if (!isHooked(action.kind)) {
     const payment = paymentFor(action.kind, d);
     // The destination the send used, read again in its own short transaction.
     let destination: PayoutDestination | null = null;
@@ -143,8 +145,9 @@ function settlementOf(
   return { category: "unknown" };
 }
 
-// The hooks a kind needs: onConfirmed always, a readBack for accounting kinds only, a
-// destination for payment kinds only, and that destination whenever the kind's adapter needs one.
+// The hooks a kind needs: onConfirmed always; a readBack for hooked kinds only (accounting, or
+// payment with no rail), and a ready check for the rail-less payment kinds only; a destination
+// for payment kinds on a rail only, and that destination whenever the kind's adapter needs one.
 function hooksFit(
   kind: MoneyActionKind,
   hooks: ReconcileHooks | undefined,
@@ -153,14 +156,24 @@ function hooksFit(
   if (typeof hooks !== "object" || hooks === null || typeof hooks.onConfirmed !== "function") {
     return false;
   }
-  const accounting = KIND_SHAPES[kind].channel === "accounting";
-  if (accounting !== (typeof hooks.readBack === "function")) return false;
-  if (accounting) return hooks.destination === undefined;
+  const hooked = isHooked(kind);
+  if (hooked !== (typeof hooks.readBack === "function")) return false;
+  const railless = hooked && KIND_SHAPES[kind].channel === "payment";
+  if (railless !== (typeof hooks.ready === "function")) return false;
+  if (hooked) return hooks.destination === undefined;
   return typeof hooks.destination === "function" || !needsDestination(paymentFor(kind, d));
 }
 
+// The adapter a kind is asked through, keyed so one pass asks each adapter once: per rail, once
+// for accounting, and per kind for a rail-less payment kind (its own hook).
+function readyKey(kind: MoneyActionKind): string {
+  if (KIND_SHAPES[kind].channel === "accounting") return "accounting";
+  const rail = railOf(kind);
+  return rail === null ? `payment:kind:${kind}` : `payment:${rail}`;
+}
+
 // The kinds this pass can finish now: hooks that fit, the channel's switch on and its adapter
-// ready (asked once per rail, and once for accounting). The pending read asks for these kinds
+// ready (asked once per rail, once for accounting, once per rail-less payment kind). The pending read asks for these kinds
 // only, so rows the pass would skip never take the places of rows it can finish.
 async function servableKinds(
   db: TenantDb,
@@ -173,10 +186,10 @@ async function servableKinds(
   for (const kind of MONEY_ACTION_KINDS) {
     const { channel } = KIND_SHAPES[kind];
     if (!hooksFit(kind, hooks?.[kind], d) || !switchOn(channel)) continue;
-    const key = channel === "payment" ? `payment:${railOf(kind)}` : "accounting";
+    const key = readyKey(kind);
     let ok = ready.get(key);
     if (ok === undefined) {
-      ok = (await adapterReady(db, tenantId, kind, d)).ok;
+      ok = (await adapterReady(db, tenantId, kind, d, hooks?.[kind]?.ready)).ok;
       ready.set(key, ok);
     }
     if (ok) kinds.push(kind);
@@ -230,7 +243,7 @@ export async function reconcileMoneyActions(
     if (
       !hooksFit(action.kind, hooks, d) ||
       !switchOn(channel) ||
-      !(await adapterReady(db, tenantId, action.kind, d)).ok
+      !(await adapterReady(db, tenantId, action.kind, d, hooks.ready)).ok
     ) {
       summary.skipped += 1;
       continue;

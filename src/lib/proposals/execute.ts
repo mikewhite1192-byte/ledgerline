@@ -9,6 +9,7 @@ import { executeSettlementApprove } from "../settlements/approve";
 import { assertMembership } from "../tenant/context";
 import { overrideReasonOf } from "../agent/auditor/words";
 import { cardMatchExecutor } from "./executors/card-match";
+import { factoringRequestExecutor } from "../factoring/execute";
 import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
 import { executeDetentionCharge } from "./executors/detention-charge";
 import { loadRateFill } from "./executors/load-rate-fill";
@@ -159,12 +160,16 @@ export const EXECUTORS: ExecutorRegistry = {
     return flags.cardRecon.enabled ? cardMatchExecutor : undefined;
   },
   // Cash Friday (src/lib/proposals/executors/cash-friday.ts): a delayed bill moves one bill's
-  // date; factoring and a chase are test mode and record the decision only. All three are read
-  // through cashFridayEnabled on every approval, like detention_charge.
+  // date; a chase is test mode and records the decision only. All three are read through
+  // cashFridayEnabled on every approval, like detention_charge. A factoring card goes to the
+  // simulated factoring partner (src/lib/factoring/execute.ts) while factoring.enabled is on, with
+  // a precheck that refuses before the approval when it could not be sent; with factoring off it
+  // keeps the test-mode record of the decision.
   get bill_defer() {
     return flags.cashFridayEnabled ? executeBillDefer : undefined;
   },
   get factoring_request() {
+    if (flags.factoring?.enabled === true) return factoringRequestExecutor;
     return flags.cashFridayEnabled ? executeFactoringTestMode : undefined;
   },
   get collections_chase() {

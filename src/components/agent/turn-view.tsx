@@ -7,6 +7,7 @@ import { decodeEvents } from "@/lib/agent/operator/stream";
 import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
 import { answerTextOf, type ReportView, type StepView, type TurnView } from "@/lib/agent/view";
+import { FACTORING_APPROVE_NOTICE } from "@/lib/factoring/words";
 import { stepLabel } from "@/lib/format/labels";
 import { NOT_NOW_FAILED, SAVE_FAILED, SAVE_NOTICES } from "@/lib/pay-rules/words";
 import { reportPath } from "@/lib/reports/types";
@@ -25,9 +26,10 @@ const POLL_LIMIT = 40;
 const AUDIT_RETRY_MS = 90_000;
 
 // What the card's row says when an approval does not go through. Fixed sentences per category;
-// the advance executor's own refusals come from its closed list.
+// the advance and factoring executors' own refusals come from their closed lists.
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   ...ADVANCE_APPROVE_NOTICE,
+  ...FACTORING_APPROVE_NOTICE,
   not_executable: "This type of card cannot be approved yet. Nothing changed.",
   already_decided: "This card was already decided.",
   expired: "This card expired. Ask again for a fresh one.",

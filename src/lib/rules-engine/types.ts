@@ -379,6 +379,10 @@ export type InvoiceRecord = {
   status: InvoiceStatus;
   paidOn: LocalDate | null;
   qboId: string | null;
+  // True while the invoice is on a live factoring line (submitted, funded or not confirmed yet):
+  // the partner, not the customer's next payment, brings its cash in, so Cash Friday neither
+  // expects it by pay day nor offers it again. Absent means not factored.
+  factored?: boolean;
 };
 
 // ---- Settlement: one driver, one period ----

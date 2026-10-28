@@ -38,6 +38,10 @@ export const TERMS = {
   margin: "What is left of the revenue after driver pay.",
   "days-to-pay":
     "The average days from an invoice's date to the day it was paid, over invoices paid in the 180 days before the week ended.",
+  factoring: "Selling an open invoice to a factoring company for cash now, instead of waiting for the customer to pay.",
+  "advance-rate": "The share of an invoice the factoring company pays now; the rest is held back.",
+  "held-back": "The part of a factored invoice kept until the customer pays it (in factoring, the reserve).",
+  "factoring-fee": "What the factoring company charges for paying early, taken from the money paid now.",
 } as const;
 
 export type TermId = keyof typeof TERMS;
