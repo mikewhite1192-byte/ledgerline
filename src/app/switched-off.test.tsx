@@ -15,7 +15,7 @@ const fakeQ = {
   async query(sql: string) {
     reads.sql.push(sql);
     if (/FROM tenants/.test(sql)) return [{ name: "Test Carrier", timezone: "America/Chicago" }];
-    if (/FROM memberships/.test(sql)) return [{ email: SESSION.email }];
+    if (/FROM memberships/.test(sql)) return [{ email: SESSION.email, role: "admin" }];
     throw new Error(`unexpected read: ${sql}`);
   },
 } as unknown as Queryable;

@@ -89,6 +89,7 @@ describe("row-level security coverage", () => {
         "portal_evidence",
         "voice_note_audio",
         "voice_notes",
+        "demo_sessions",
         ...TENANT_TABLES,
       ]),
     );

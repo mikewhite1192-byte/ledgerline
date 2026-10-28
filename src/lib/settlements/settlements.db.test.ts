@@ -16,6 +16,7 @@ import golden from "../seed/golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "../seed/plan";
 import { resetDemoTenant } from "../seed/reset";
 import { replaceTenantData } from "../seed/run";
+import { ForbiddenError } from "../tenant/context";
 import { settlementApproveExecutor } from "./approve";
 import { confirmBatch, type BatchRequest } from "./batch";
 import { readCleanSet } from "./clean";
@@ -709,6 +710,38 @@ describe("settlements against a seeded database", () => {
     );
     expect(batch.status).toBe("done");
     expect(batch.finished_at).not.toBeNull();
+  }, 60_000);
+
+  // With payouts on, a confirm builds an Approval before it reserves a leg, and approvalFrom takes
+  // admin and staff only: the transaction rolls back whole. (With payouts off nothing is reserved,
+  // no Approval is built, and the route's staff gate is the refusal; see src/lib/auth/judge-routes.test.ts.)
+  it("refuses a demo visitor's batch confirm with payouts on, and writes nothing", async () => {
+    const req = await requestFor(BR, ["BR-D12", "BR-D13"]);
+    const judge: Session = { sub: `settlements-judge-${BR.carrier.slug}`, email: "", tenantId: BR.id };
+    await adminWrite(
+      BR,
+      `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+       VALUES (current_tenant_id(), $1, $2, 'judge')`,
+      [judge.sub, `judge@${BR.carrier.slug}.example`],
+    );
+    try {
+      const ledgerBefore = await ledgerCount(BR);
+      const batchesBefore = await batchCount(BR);
+      // Above the admin line the approver check answers "role" first; lift the line so the confirm
+      // reaches approvalFrom, the refusal this test is about.
+      flags.approverRole.adminAboveCents = Number.MAX_SAFE_INTEGER;
+      const err = await withSwitches(true, () => confirmBatch(app, judge, req, clock(), money)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForbiddenError);
+      expect(await batchCount(BR)).toBe(batchesBefore);
+      expect(await ledgerCount(BR)).toBe(ledgerBefore);
+      for (const id of req.proposalIds) expect((await cardById(BR, id)).status).toBe("proposed");
+      expect((await settlementOf(BR, "BR-D12")).status).toBe("draft");
+    } finally {
+      flags.approverRole.adminAboveCents = saved.approverRole.adminAboveCents;
+      await adminWrite(BR, "DELETE FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1", [
+        judge.sub,
+      ]);
+    }
   }, 60_000);
 
   it("approves a batch with the switches off as not paid: nothing reserved, each leg logged as held", async () => {

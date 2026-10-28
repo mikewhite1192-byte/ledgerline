@@ -25,6 +25,23 @@ describe("flags", () => {
     // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
     expect(flags.demoResetEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
+    // The demo visitor sign-in: dark until the owner's one-line release PR.
+    expect(flags.judgeAccess.enabled).toBe(false);
+  });
+
+  it("keeps a demo visit small: a dollar of model time, 25 turns, $8.00 a day across every visit", () => {
+    expect(flags.judgeAccess).toEqual({
+      enabled: false,
+      sessionCapCents: 100,
+      turnsPerSession: 25,
+      dayCapCents: 800,
+      sessionsPerIpPerHour: 5,
+      sessionsPerDay: 150,
+      cookieHours: 2,
+    });
+    // Five judging days at the day cap fit the $40.00 reserve with nothing else drawing on it.
+    expect(flags.judgeAccess.dayCapCents * 5).toBeLessThanOrEqual(4_000);
+    expect(flags.judgeAccess.sessionCapCents).toBeLessThanOrEqual(flags.judgeAccess.dayCapCents);
   });
 
   it("starts fuel checks on a fixed date and keeps the receipt compare and corrections small", () => {

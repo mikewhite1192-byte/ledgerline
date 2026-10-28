@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { OVERRIDE_REASON, overrideReasonOf } from "@/lib/agent/auditor/words";
+import { STAFF_ONLY_BODY, STAFF_ONLY_NOTE, STAFF_ONLY_TITLE } from "./staff-only";
 import { cn } from "@/lib/cn";
 import { recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
@@ -17,6 +18,7 @@ import { hrefOrNull, recordHref, type HrefFor, type SourceRef } from "@/lib/reco
 import { Money } from "./money";
 import { StatusBadge } from "./status-badge";
 import { Term } from "./term";
+import { useViewerRole } from "./viewer-role";
 
 export type ProposalStatus =
   | "proposed"
@@ -138,6 +140,31 @@ function AuditLine({ audit }: { audit: ProposalAudit }) {
   );
 }
 
+// A demo visitor's buttons: the same ones in the same place, but each opens the staff-only line
+// instead of a confirm, and none calls the server (which would refuse a judge anyway).
+function StaffOnlyActions({ lead, actions }: { lead?: string; actions: { label: string; outline?: boolean }[] }) {
+  const [shown, setShown] = useState(false);
+  return (
+    <div className="grid gap-2 border-t border-border px-4 py-3 sm:px-5">
+      {lead ? <p className="text-small text-foreground-2">{lead}</p> : null}
+      <p role="status" className={cn("rounded-md bg-secondary px-3 py-2 text-small text-foreground", !shown && "sr-only")}>
+        {shown ? (
+          <>
+            <span className="font-semibold">{STAFF_ONLY_TITLE}.</span> {STAFF_ONLY_BODY}
+          </>
+        ) : null}
+      </p>
+      <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+        {actions.map((a) => (
+          <Button key={a.label} variant={a.outline ? "outline" : undefined} title={STAFF_ONLY_NOTE} onClick={() => setShown(true)}>
+            {a.label}
+          </Button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // What the agent wants to do, what it costs, and why, with each reason one click from its record.
 // A money action never happens on one tap: Approve asks once more, and only Confirm fires. A
 // proposal the auditor blocked has no Approve: the person writes why, then confirms the override.
@@ -161,7 +188,8 @@ export function ProposalCard({
   initialConfirming = false,
   className,
 }: ProposalCardProps) {
-  const [confirming, setConfirming] = useState(initialConfirming);
+  const judge = useViewerRole() === "judge";
+  const [confirming, setConfirming] = useState(initialConfirming && !judge);
   const [reason, setReason] = useState("");
   const [overriding, setOverriding] = useState(false);
   const blocked = audit?.state === "block" && !audit.override;
@@ -261,7 +289,14 @@ export function ProposalCard({
         </p>
       ) : null}
 
-      {status === "proposed" ? (
+      {status === "proposed" && judge ? (
+        <StaffOnlyActions
+          actions={[
+            { label: "Reject", outline: true },
+            { label: blocked ? "Override and approve" : noAmount ? "Approve" : `Approve ${amount}` },
+          ]}
+        />
+      ) : status === "proposed" ? (
         confirming ? (
           <div
             role="group"
@@ -349,6 +384,8 @@ export function ProposalCard({
             </Button>
           </div>
         )
+      ) : canResume && status === "approved" && judge ? (
+        <StaffOnlyActions lead={RESUME_NOTE} actions={[{ label: "Resume" }]} />
       ) : canResume && status === "approved" ? (
         // The approval already stands (it passed its confirm when it was given), so Resume is one
         // click: it carries on the same approval and never asks for a new decision.

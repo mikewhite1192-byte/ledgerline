@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { flags } from "@/config/flags";
+import { requireStaff } from "@/lib/auth/role";
 import { DbError } from "@/lib/db";
 import { DEMO_ANCHOR } from "@/lib/seed/anchor";
 import { buildCarrierPlan } from "@/lib/seed/plan";
@@ -61,6 +62,7 @@ export async function resetDemoAction(_prev: ResetState, formData: FormData): Pr
     // The role, the carrier, the refusals, the clear, the replace and the read-back share the one
     // transaction, so a refusal or a failure at any step leaves the carrier as it was.
     const report = await withRequestTenant(async (q, session) => {
+      await requireStaff(q, session);
       const rows = await q.query<{ role: string }>(
         "SELECT role FROM memberships WHERE cognito_sub = $1",
         [session.sub],

@@ -3,13 +3,14 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Session } from "@/lib/auth/claims";
+import { isRole, type Role } from "@/lib/auth/role";
 import { DbError, type Queryable } from "@/lib/db";
 import { ForbiddenError } from "@/lib/tenant/context";
 
 // What every signed-in page's shell needs besides the navigation (src/components/app/app-nav):
 // the sign-out form and the carrier's name, time zone and the member's email.
 
-export type ShellInfo = { name: string; timezone: string; email: string };
+export type ShellInfo = { name: string; timezone: string; email: string; role: Role };
 
 export function SignOutForm() {
   return (
@@ -26,12 +27,14 @@ export async function readShell(q: Queryable, session: Session): Promise<ShellIn
   const tenants = await q.query<{ name: string; timezone: string }>(
     "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
   );
-  const members = await q.query<{ email: string }>(
-    "SELECT email FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
+  const members = await q.query<{ email: string; role: unknown }>(
+    "SELECT email, role FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
     [session.sub],
   );
   if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
-  return { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email };
+  const role = members[0].role;
+  if (!isRole(role)) throw new ForbiddenError();
+  return { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email, role };
 }
 
 export type ShellProblem = "forbidden" | "unreadable";

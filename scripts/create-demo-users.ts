@@ -16,45 +16,37 @@ import { createDataApiDb } from "../src/lib/db/data-api";
 import { DbError } from "../src/lib/db/types";
 import { isUuid } from "../src/lib/uuid";
 import { assertAccount, REGION, requireEnv } from "./lib/aws-account";
+import {
+  DEMO_SECRET_NAME,
+  demoLogins,
+  JUDGE_SECRET_NAME,
+  parseDemoUserArgs,
+  planPasswords,
+  type DemoLogin,
+  type Password,
+} from "./lib/demo-logins";
 import { ensureRows } from "./lib/demo-rows";
 import { generatePassword } from "./lib/password";
 
-// npm run demo:users [-- --reset-passwords]
+// npm run demo:users [-- --reset-passwords] [-- --clerk] [-- --judge]
 //
-// Creates the two synthetic demo carriers, each with one admin login, from the laptop. Needs
-// EXPECTED_AWS_ACCOUNT_ID, COGNITO_USER_POOL_ID, DB_CLUSTER_ARN, DB_ADMIN_SECRET_ARN and DB_NAME.
-// Invented names on reserved .example domains: no real company, no real mailbox.
+// Creates the two synthetic demo carriers, each with one admin login, from the laptop. --clerk
+// adds the office clerk's staff login on Blue Ridge (key blue-ridge-clerk in demo-logins); --judge
+// adds the demo visitor's judge login on Blue Ridge, whose password goes to its own secret,
+// JUDGE_SECRET_NAME. Needs EXPECTED_AWS_ACCOUNT_ID, COGNITO_USER_POOL_ID, DB_CLUSTER_ARN,
+// DB_ADMIN_SECRET_ARN and DB_NAME. The logins and the secrets' names are in lib/demo-logins.ts.
 //
-// The tenant id is a random UUID stored on the login as custom:tenant_id (immutable), so a rerun
-// reads it back from the login instead of deriving it. Passwords go only to the
-// DEMO_SECRET_NAME secret, written before any password is set, so a password that works always
-// exists in the secret. The terminal shows the emails and the secret name, nothing else. A rerun
-// keeps existing logins and their passwords unless --reset-passwords is passed.
+// A carrier's tenant id is a random UUID stored on its admin login as custom:tenant_id
+// (immutable), so a rerun reads it back from the login instead of deriving it; the clerk and the
+// judge get the same tenant id, read back from Blue Ridge's admin login. Passwords go only to the
+// secrets, written before any password is set, so a password that works always exists in a
+// secret. Every run applies each login's password from its secret, so a login always matches it;
+// --reset-passwords gives every login a new one. The terminal shows the emails and the secret
+// names, nothing else.
 //
 // It runs as the database admin, which row-level security does not hold (on Aurora the master
 // user reads every carrier even with app.tenant_id set), so the row statements in
 // lib/demo-rows.ts name their tenant themselves. See db/README.md.
-
-const DEMO_SECRET_NAME = "payday-copilot/demo-logins";
-
-const CARRIERS = [
-  {
-    slug: "blue-ridge",
-    name: "Blue Ridge Freight Lines",
-    timezone: "America/New_York",
-    email: "ops@blueridge.example",
-  },
-  {
-    slug: "prairie-wind",
-    name: "Prairie Wind Transport",
-    timezone: "America/Chicago",
-    email: "ops@prairiewind.example",
-  },
-] as const;
-
-type Carrier = (typeof CARRIERS)[number];
-type Login = { email: string; password: string };
-type Logins = Record<string, Login>;
 
 type Aws = {
   cognito: CognitoIdentityProviderClient;
@@ -66,57 +58,67 @@ function attribute(attrs: AttributeType[] | undefined, name: string): string | u
   return attrs?.find((a) => a.Name === name)?.Value;
 }
 
-// The login for this carrier, created if missing. Returns its subject, tenant and whether it
-// still needs a permanent password.
-async function ensureLogin({ cognito, userPoolId }: Aws, carrier: Carrier) {
+// The login, created if missing, with its subject and tenant. An admin login creates its carrier
+// with a new tenant id; any other login joins `tenantId` (its carrier's, read back from the admin
+// login) and must already name it if it exists.
+async function ensureLogin({ cognito, userPoolId }: Aws, login: DemoLogin, tenantId?: string) {
   try {
     const user = await cognito.send(
-      new AdminGetUserCommand({ UserPoolId: userPoolId, Username: carrier.email }),
+      new AdminGetUserCommand({ UserPoolId: userPoolId, Username: login.email }),
     );
     const sub = attribute(user.UserAttributes, "sub");
-    const tenantId = attribute(user.UserAttributes, "custom:tenant_id");
-    if (!sub || !isUuid(tenantId)) throw new Error(`${carrier.email} exists without a valid tenant`);
-    return { sub, tenantId, created: false, confirmed: user.UserStatus === "CONFIRMED" };
+    const tenant = attribute(user.UserAttributes, "custom:tenant_id");
+    if (!sub || !isUuid(tenant)) throw new Error(`${login.email} exists without a valid tenant`);
+    if (tenantId !== undefined && tenant !== tenantId) {
+      throw new Error(`${login.email} belongs to another tenant; fix it by hand`);
+    }
+    return { sub, tenantId: tenant };
   } catch (err) {
     if (!(err instanceof Error) || err.name !== "UserNotFoundException") throw err;
   }
-  const tenantId = randomUUID();
+  const newTenant = tenantId ?? randomUUID();
   const out = await cognito.send(
     new AdminCreateUserCommand({
       UserPoolId: userPoolId,
-      Username: carrier.email,
+      Username: login.email,
       MessageAction: "SUPPRESS",
       UserAttributes: [
-        { Name: "email", Value: carrier.email },
+        { Name: "email", Value: login.email },
         { Name: "email_verified", Value: "true" },
-        { Name: "custom:tenant_id", Value: tenantId },
+        { Name: "custom:tenant_id", Value: newTenant },
       ],
     }),
   );
   const sub = attribute(out.User?.Attributes, "sub");
-  if (!sub) throw new Error(`${carrier.email} was created without a subject`);
-  return { sub, tenantId, created: true, confirmed: false };
+  if (!sub) throw new Error(`${login.email} was created without a subject`);
+  return { sub, tenantId: newTenant };
 }
 
-async function readLogins({ secrets }: Aws): Promise<Logins | undefined> {
+async function readSecret({ secrets }: Aws, name: string): Promise<unknown> {
   try {
-    const out = await secrets.send(new GetSecretValueCommand({ SecretId: DEMO_SECRET_NAME }));
-    return JSON.parse(out.SecretString ?? "{}") as Logins;
+    const out = await secrets.send(new GetSecretValueCommand({ SecretId: name }));
+    return JSON.parse(out.SecretString ?? "{}") as unknown;
   } catch (err) {
     if (err instanceof Error && err.name === "ResourceNotFoundException") return undefined;
     throw err;
   }
 }
 
-async function writeLogins({ secrets }: Aws, logins: Logins, exists: boolean): Promise<void> {
-  const SecretString = JSON.stringify(logins);
+async function writeSecret(
+  { secrets }: Aws,
+  name: string,
+  value: Record<string, Password> | Password,
+  exists: boolean,
+  description: string,
+): Promise<void> {
+  const SecretString = JSON.stringify(value);
   if (exists) {
-    await secrets.send(new PutSecretValueCommand({ SecretId: DEMO_SECRET_NAME, SecretString }));
+    await secrets.send(new PutSecretValueCommand({ SecretId: name, SecretString }));
   } else {
     await secrets.send(
       new CreateSecretCommand({
-        Name: DEMO_SECRET_NAME,
-        Description: "LedgerLine demo carrier logins",
+        Name: name,
+        Description: description,
         SecretString,
         Tags: [{ Key: "project", Value: "payday-copilot" }],
       }),
@@ -124,13 +126,13 @@ async function writeLogins({ secrets }: Aws, logins: Logins, exists: boolean): P
   }
 }
 
-// Set from the secret write until every password is applied, so a failure there says how to
+// Set from the first secret write until every password is applied, so a failure there says how to
 // recover. It starts before the write: a write that errors may still have landed, and a rerun
-// without --reset-passwords would then trust the new, never-set passwords and skip them.
+// applies whatever the secrets then hold.
 let settingPasswords = false;
 
 async function main(): Promise<void> {
-  const resetPasswords = process.argv.includes("--reset-passwords");
+  const args = parseDemoUserArgs(process.argv.slice(2));
   const userPoolId = requireEnv("COGNITO_USER_POOL_ID");
   const clusterArn = requireEnv("DB_CLUSTER_ARN");
   const adminSecretArn = requireEnv("DB_ADMIN_SECRET_ARN");
@@ -151,39 +153,58 @@ async function main(): Promise<void> {
     region: REGION,
   });
   try {
-    const stored = await readLogins(aws);
-    const logins: Logins = { ...stored };
-    const toSet: Carrier[] = [];
-    for (const carrier of CARRIERS) {
-      const login = await ensureLogin(aws, carrier);
-      await ensureRows(db, carrier, login.tenantId, login.sub);
-      const saved = logins[carrier.slug];
-      const known = saved?.email === carrier.email && typeof saved.password === "string";
-      // A password nobody has recorded is useless, so a confirmed login missing from the secret
-      // gets a new one too.
-      if (login.created || !login.confirmed || resetPasswords || !known) {
-        logins[carrier.slug] = { email: carrier.email, password: generatePassword() };
-        toSet.push(carrier);
+    const logins = demoLogins(args);
+    const storedDemo = await readSecret(aws, DEMO_SECRET_NAME);
+    const storedJudge = args.judge ? await readSecret(aws, JUDGE_SECRET_NAME) : undefined;
+    // Admin logins come first in the list, so each carrier's tenant is known before its others.
+    const tenants = new Map<string, string>();
+    for (const login of logins) {
+      const known = tenants.get(login.carrier.slug);
+      if (login.role !== "admin" && known === undefined) {
+        throw new Error(`${login.email} needs ${login.carrier.slug}'s admin login first`);
       }
+      const user = await ensureLogin(aws, login, login.role === "admin" ? undefined : known);
+      if (login.role === "admin") tenants.set(login.carrier.slug, user.tenantId);
+      await ensureRows(db, login.carrier, user.tenantId, {
+        sub: user.sub,
+        email: login.email,
+        role: login.role,
+      });
     }
 
-    if (toSet.length > 0) {
-      settingPasswords = true;
-      await writeLogins(aws, logins, stored !== undefined);
-      for (const carrier of toSet) {
-        await aws.cognito.send(
-          new AdminSetUserPasswordCommand({
-            UserPoolId: userPoolId,
-            Username: carrier.email,
-            Password: logins[carrier.slug].password,
-            Permanent: true,
-          }),
-        );
-      }
-      settingPasswords = false;
+    const plan = planPasswords(
+      logins,
+      { demo: storedDemo, judge: storedJudge },
+      args.resetPasswords,
+      generatePassword,
+    );
+    settingPasswords = true;
+    if (plan.writeDemo) {
+      await writeSecret(aws, DEMO_SECRET_NAME, plan.demo, storedDemo !== undefined, "LedgerLine demo carrier logins");
     }
-    for (const carrier of CARRIERS) console.log(`ready: ${carrier.email}`);
+    if (plan.writeJudge && plan.judge) {
+      await writeSecret(
+        aws,
+        JUDGE_SECRET_NAME,
+        plan.judge,
+        storedJudge !== undefined,
+        "LedgerLine demo visitor login",
+      );
+    }
+    for (const { email, password } of plan.apply) {
+      await aws.cognito.send(
+        new AdminSetUserPasswordCommand({
+          UserPoolId: userPoolId,
+          Username: email,
+          Password: password,
+          Permanent: true,
+        }),
+      );
+    }
+    settingPasswords = false;
+    for (const login of logins) console.log(`ready: ${login.email} (${login.role})`);
     console.log(`passwords: Secrets Manager ${DEMO_SECRET_NAME}`);
+    if (args.judge) console.log(`demo visitor password: Secrets Manager ${JUDGE_SECRET_NAME}`);
   } finally {
     await db.close();
     aws.cognito.destroy();
@@ -197,7 +218,7 @@ main().catch((err: unknown) => {
   const name = err instanceof Error ? err.name : "unknown";
   console.error(`demo users: ${own ? (err as Error).message : `failed (${name})`}`);
   if (settingPasswords) {
-    console.error("the secret may hold new passwords not all applied: rerun with --reset-passwords");
+    console.error("a secret may hold passwords not all applied: rerun to apply them");
   }
   process.exit(1);
 });

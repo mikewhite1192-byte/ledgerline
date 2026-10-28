@@ -16,6 +16,8 @@ const ID = "22222222-2222-4222-8222-222222222222";
 const mocks = vi.hoisted(() => ({ getSession: vi.fn(), executeProposal: vi.fn() }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here every caller is staff.
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/proposals/execute", () => ({ executeProposal: mocks.executeProposal }));
 
 function approve(opts: { id?: string; body?: string; site?: string } = {}) {
