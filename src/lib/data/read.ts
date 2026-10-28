@@ -161,6 +161,13 @@ export async function readRowsWhereId<K extends TenantTable>(
   return readWhere(q, table, where, [assertUuid(id, column)]);
 }
 
+// The escrow lines of the current tenant's settlements, at most one per settlement. Each line's
+// meta holds the escrow balance its week started from (balanceBeforeCents), as the engine wrote it.
+export const ESCROW_LINES = "kind = 'escrow'";
+export async function readEscrowLines(q: Queryable): Promise<TenantRows["settlement_lines"]> {
+  return readWhere(q, "settlement_lines", ESCROW_LINES, []);
+}
+
 // Every version of the tenant's pay rules, oldest first (the settings page). Refuses a tenant with
 // none, two on one date, or a week shape that changed between versions.
 export async function readPayConfigVersions(q: Queryable): Promise<PayConfigRow[]> {

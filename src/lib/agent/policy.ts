@@ -90,13 +90,22 @@ export const CASH_PROMPT = [
   "  Cash page.",
 ].join("\n");
 
+// Added to the prompt only while get_collections is offered (flags.collectionsEnabled), so a turn
+// with collections off sends exactly today's prompt.
+export const COLLECTIONS_RULE = [
+  "- For who needs a payment reminder, call get_collections. Reminders are drafted, approved and",
+  "  sent only on the Collections page; never write one in chat or say one was sent.",
+].join("\n");
+
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
-// is on (it is one of the rules), the Cash Friday line while its tool is offered, then the report
-// section while the report tools are offered. With search off and both switches off it is the
-// prompt above.
+// is on (it is one of the rules), the collections rule while get_collections is offered, the Cash
+// Friday line while get_cash_friday is offered, then the report section while the report tools are
+// offered. With search, collections and Cash Friday off it is the prompt above, plus the report
+// section when reports are on.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
-  const base = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
-  const prompt = toolNames.includes("get_cash_friday") ? `${base}\n${CASH_PROMPT}` : base;
+  const searched = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
+  const collections = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
+  const prompt = toolNames.includes("get_cash_friday") ? `${collections}\n${CASH_PROMPT}` : collections;
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
   return reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
 }

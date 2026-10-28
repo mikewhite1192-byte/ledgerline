@@ -4,7 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const cash = {
   group: "Money in",
-  order: 40,
+  order: 50,
   href: "/cash",
   label: "Cash",
   icon: <Banknote aria-hidden />,

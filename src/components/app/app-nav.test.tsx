@@ -17,6 +17,7 @@ const SWITCHES = [
   "advancesEnabled",
   "invoicesEnabled",
   "customerPaymentsEnabled",
+  "collectionsEnabled",
   "cashFridayEnabled",
   "documentsEnabled",
   "voiceIntakeEnabled",
@@ -24,7 +25,9 @@ const SWITCHES = [
   "accountingEnabled",
   "portalRunnerEnabled",
   "demoResetEnabled",
+  "rulesByTalkingEnabled",
   "profitBriefEnabled",
+  "carrierMemoryEnabled",
 ] as const;
 type Switch = (typeof SWITCHES)[number];
 
@@ -52,14 +55,17 @@ describe("appNav", () => {
       ["Pay", "/advances", "Advances", false],
       ["Money in", "/invoices", "Invoices", true],
       ["Money in", "/customer-payments/new", "Payments", false],
+      ["Money in", "/collections", "Collections", false],
       ["Money in", "/cash", "Cash", false],
       ["Drivers", "/documents", "Documents", false],
       ["Drivers", "/voice-notes", "Voice notes", false],
       ["Drivers", "/clips", "Dock clips", false],
       ["Settings", "/settings/accounting", "QuickBooks", false],
+      ["Settings", "/settings/pay-rules", "Pay rules", false],
       ["Settings", "/models", "Models and spend", false],
       ["Settings", "/portal-runs", "Portal runs", false],
       ["Settings", "/settings/demo", "Demo", false],
+      ["Settings", "/memory", "Memory", false],
     ]);
   });
 
@@ -79,6 +85,7 @@ describe("appNav", () => {
       advancesEnabled: "/advances",
       invoicesEnabled: "/invoices",
       customerPaymentsEnabled: "/customer-payments/new",
+      collectionsEnabled: "/collections",
       cashFridayEnabled: "/cash",
       documentsEnabled: "/documents",
       voiceIntakeEnabled: "/voice-notes",
@@ -86,7 +93,9 @@ describe("appNav", () => {
       accountingEnabled: "/settings/accounting",
       portalRunnerEnabled: "/portal-runs",
       demoResetEnabled: "/settings/demo",
+      rulesByTalkingEnabled: "/settings/pay-rules",
       profitBriefEnabled: "/profit",
+      carrierMemoryEnabled: "/memory",
     };
     for (const s of SWITCHES) {
       setAll(true);
@@ -153,6 +162,7 @@ describe("NavList", () => {
     setAll(true);
     flags.invoicesEnabled = false;
     flags.customerPaymentsEnabled = false;
+    flags.collectionsEnabled = false;
     flags.cashFridayEnabled = false;
     render(<NavList items={appNav("/")} />);
     expect(screen.queryByText("Money in")).toBeNull();

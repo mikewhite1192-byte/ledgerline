@@ -1,15 +1,18 @@
 // The saving is priced from the wrapper's one price table; prices.ts is a pure table that makes no model call.
 import { priceFor, savedByCache } from "../../../ai/prices";
 import type { AiProvider, AiTarget } from "../../../ai/types";
+import { flags } from "../../../../config/flags";
 import { sortVersions } from "../../../data/config-version";
 import { readTable, readTenant } from "../../../data/read";
 import type { Queryable } from "../../../db";
+import { noteLabel } from "../../../memory/notes";
 import { addDays, localDateOf, periodContaining } from "../../../time/local-date";
 import { isUuid } from "../../../uuid";
 import type {
   TraceCall,
   TraceDecision,
   TraceExtraCall,
+  TraceNote,
   TraceProposal,
   TraceRef,
   TraceStep,
@@ -192,9 +195,48 @@ const CALL_SELECT = (a: string) =>
    ${a}.failure AS m_failure, ${a}.duration_ms AS m_duration_ms, ${a}.cost_nanocents AS m_cost,
    ${a}.input_tokens AS m_input, ${a}.cached_tokens AS m_cached`;
 
+// The most notes one trace names; a turn holds at most carrierMemoryLimits.maxNotesPerTurn.
+const NOTES_NAMED = 20;
+
+// The notes a turn's summary held, in the order it held them, each with its label now, or as
+// removed when the note is gone. Off (carrierMemoryEnabled), none are read or shown.
+async function readTraceNotes(q: Queryable, notesUsed: string | null | undefined): Promise<TraceNote[]> {
+  if (!flags.carrierMemoryEnabled || typeof notesUsed !== "string") return [];
+  const ids = parseArray(notesUsed)
+    .filter((x): x is string => isUuid(x))
+    .slice(0, NOTES_NAMED);
+  if (ids.length === 0) return [];
+  const rows = await q.query<{
+    id: string;
+    subject_kind: string;
+    subject_name: string | null;
+    subject_code: string | null;
+    text: string;
+  }>(
+    `SELECT CAST(n.id AS text) AS id, n.subject_kind,
+            CASE n.subject_kind WHEN 'customer' THEN c.name
+                                WHEN 'driver' THEN d.first_name || ' ' || d.last_name END AS subject_name,
+            CASE n.subject_kind WHEN 'customer' THEN c.code WHEN 'driver' THEN d.code END AS subject_code,
+            n.text
+       FROM carrier_notes n
+       LEFT JOIN customers c ON n.subject_kind = 'customer' AND c.tenant_id = n.tenant_id AND c.id = n.subject_id
+       LEFT JOIN drivers d ON n.subject_kind = 'driver' AND d.tenant_id = n.tenant_id AND d.id = n.subject_id
+      WHERE n.tenant_id = current_tenant_id()
+        AND n.id IN (SELECT CAST(x AS uuid) FROM jsonb_array_elements_text(CAST($1 AS jsonb)) AS x)`,
+    [JSON.stringify(ids)],
+  );
+  const byId = new Map(
+    rows.map((r) => [
+      r.id,
+      noteLabel({ subjectKind: r.subject_kind, subjectName: r.subject_name, subjectCode: r.subject_code, text: r.text }),
+    ]),
+  );
+  return [...new Set(ids)].map((id) => ({ id, label: byId.get(id) ?? null }));
+}
+
 export async function readTurnTrace(q: Queryable, sub: string, turnId: string): Promise<TurnTrace | null> {
   const turns = await q.query<TurnRow>(
-    `SELECT t.id, t.status, t.trace_id
+    `SELECT t.id, t.status, t.trace_id, CAST(t.notes_used AS text) AS notes_used
        FROM turns t
        JOIN conversations c ON c.id = t.conversation_id AND c.tenant_id = t.tenant_id
       WHERE t.id = CAST($1 AS uuid) AND c.created_by = $2 AND t.tenant_id = current_tenant_id()`,
@@ -210,7 +252,7 @@ export async function readTurnTrace(q: Queryable, sub: string, turnId: string): 
 // not found.
 export async function readTurnTraceInRun(q: Queryable, runId: string, turnId: string): Promise<TurnTrace | null> {
   const turns = await q.query<TurnRow>(
-    `SELECT t.id, t.status, t.trace_id
+    `SELECT t.id, t.status, t.trace_id, CAST(t.notes_used AS text) AS notes_used
        FROM turns t
       WHERE t.id = CAST($1 AS uuid) AND t.tenant_id = current_tenant_id()
         AND (EXISTS (SELECT 1 FROM sweep_fanout f
@@ -224,7 +266,7 @@ export async function readTurnTraceInRun(q: Queryable, runId: string, turnId: st
   return traceOfTurn(q, turns[0]);
 }
 
-type TurnRow = { id: string; status: string; trace_id: string };
+type TurnRow = { id: string; status: string; trace_id: string; notes_used: string | null };
 
 async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
   const steps = await q.query<StepRow>(
@@ -283,9 +325,12 @@ async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
     );
   }
 
+  const notesUsed = await readTraceNotes(q, turn.notes_used);
+
   return {
     turnId: turn.id,
     status: turn.status,
+    ...(notesUsed.length > 0 ? { notesUsed } : {}),
     steps: steps.map(stepOf),
     extraCalls: extras.flatMap((r): TraceExtraCall[] => {
       const call = callOf(r);

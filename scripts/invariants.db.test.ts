@@ -215,6 +215,7 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "money_actions",
     "model_calls",
     "driver_notes",
+    "collection_drafts",
     "screenings",
     "briefs",
     "qbo_connections",
@@ -240,6 +241,7 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     // app role wrote.
     "driver_arm_events",
     "driver_identities",
+    "pay_rule_changes",
     "fuel_check_runs",
     "fuel_findings",
   ];
@@ -312,6 +314,13 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid), 'en',
              'drafting', CAST($5 AS uuid))`,
           [note, c.settlement.id, c.settlement.driver, c.settlement.period, randomUUID()],
+        );
+        // A reminder reserved for a late invoice (0041), as the drafting path writes it.
+        await q.execute(
+          `INSERT INTO collection_drafts (id, tenant_id, invoice_id, customer_id, stage, tone, status, figures, trace_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), '30', 'friendly',
+             'drafting', CAST('{}' AS jsonb), CAST($4 AS uuid))`,
+          [randomUUID(), c.invoice.id, c.invoice.customer, randomUUID()],
         );
         await q.execute(
           `INSERT INTO screenings (id, tenant_id, input_id, content_hash, verdict, via, latency_ms)
@@ -465,6 +474,19 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), DATE '2026-11-02', DATE '2026-11-06',
              CAST('{"gapCents":0}' AS jsonb), 0, 'preview', 'disabled', 'invariants-test')`,
           [randomUUID(), c.settlement.period],
+        );
+        // A saved pay rule change on the carrier's first rules version, its proposal long gone
+        // (0030).
+        await q.execute(
+          `INSERT INTO pay_rule_changes (id, tenant_id, pay_config_id, proposal_id, rule_key, old_value, new_value,
+             asked_from, effective_from, applied, decided_by)
+           SELECT CAST($1 AS uuid), current_tenant_id(), pc.id, NULL, 'insurance_per_day_cents', '1100', '1200',
+             pc.effective_from, pc.effective_from, 'edited_version', 'invariants-test'
+             FROM pay_configs pc
+            WHERE pc.tenant_id = current_tenant_id()
+            ORDER BY pc.effective_from
+            LIMIT 1`,
+          [randomUUID()],
         );
         // A finished fuel check with one finding left for a person, on one of the carrier's own
         // fill-ups (0031).

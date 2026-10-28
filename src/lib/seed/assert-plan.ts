@@ -393,6 +393,13 @@ function keysAndReferences(rows: TenantRows): void {
   refs(rows.payment_applications, (x) => x.invoice_id, idsOf(rows.invoices), "an application");
   refs(rows.untrusted_inputs, (x) => x.driver_id, drivers, "an untrusted input");
   refs(rows.screenings, (x) => x.input_id, idsOf(rows.untrusted_inputs), "a screening");
+  // A note names a customer, a driver or nobody (the whole carrier), and the seed's are active.
+  for (const n of rows.carrier_notes) {
+    const pool = n.subject_kind === "customer" ? customers : n.subject_kind === "driver" ? drivers : null;
+    if ((pool === null) !== (n.subject_id === null)) fail("a carrier note has half a subject");
+    if (pool !== null && !pool.has(n.subject_id!)) fail("a carrier note names a subject the plan does not hold");
+    if (n.status !== "active" || n.created_by_kind !== "seed") fail("a seeded carrier note is not an active sample");
+  }
 
   // A pay item's reference points at a row of the table it names.
   const byTable: Record<string, Set<string>> = {

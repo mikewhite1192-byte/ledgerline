@@ -279,10 +279,11 @@ describe("the demo reset", () => {
   // Everything a demo leaves behind on a carrier: an advance an approval created, paid and booked
   // (two settled ledger rows naming its proposal); a failed payout on a seeded advance; a detention
   // charge an approval billed (an accessorial naming its proposal); a flagged proposal no ledger
-  // row names; a driver note being drafted; an uploaded document and a voice note with its
-  // recording, each naming a seeded inbound message; a dock clip being redacted; a finished portal
-  // run with its session (the two name each other), a step, an approved check and what it found;
-  // a vendor bill an approved card moved and a stored cash check; and a model charge.
+  // row names; a driver note being drafted; a Memory note added and a seeded one changed; an
+  // uploaded document and a voice note with its recording, each naming a seeded inbound message; a
+  // dock clip being redacted; a finished portal run with its session (the two name each other), a
+  // step, an approved check and what it found; a vendor bill an approved card moved and a stored
+  // cash check; and a model charge.
   const dress = async (tenantId: string, plan: CarrierPlan, outsideTag: string) => {
     const session = await member(tenantId, "dress");
     const [driver, other] = plan.rows.drivers;
@@ -382,6 +383,23 @@ describe("the demo reset", () => {
          VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'tms', 'reset-test-1', 'ui')`,
         [randomUUID(), other.id],
       );
+    });
+    // A note a person added on the Memory page and a seeded note they changed (0040): the replace
+    // removes the first and writes the seeded words back.
+    await app.withTenant(tenantId, async (q) => {
+      await q.execute(
+        `INSERT INTO carrier_notes (id, tenant_id, subject_kind, subject_id, text, status, source_kind,
+           created_by_kind, created_by_sub)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'driver', CAST($2 AS uuid), 'Asks for advances on Thursdays',
+           'active', 'person', 'person', $3)`,
+        [randomUUID(), other.id, session.sub],
+      );
+      expect(
+        await q.execute(
+          "UPDATE carrier_notes SET text = 'Changed during the demo', updated_by_sub = $2 WHERE id = CAST($1 AS uuid)",
+          [plan.rows.carrier_notes[0].id, session.sub],
+        ),
+      ).toBe(1);
     });
 
     await agentChain(
@@ -491,6 +509,16 @@ describe("the demo reset", () => {
         batch,
         detention,
       ]);
+      // A saved pay rule change (0030): it names a proposal that goes and a rules version the
+      // replace rewrites, so the clear must take it before either.
+      const version = plan.rows.pay_configs[0];
+      await q.execute(
+        `INSERT INTO pay_rule_changes (id, tenant_id, pay_config_id, proposal_id, rule_key, old_value, new_value,
+           asked_from, effective_from, applied, decided_by)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'insurance_per_day_cents',
+           '1100', '1200', CAST($4 AS date), CAST($4 AS date), 'edited_version', $5)`,
+        [randomUUID(), version.id, detention, version.effective_from, session.sub],
+      );
     });
 
     // A fuel check whose finding names a seeded fill-up, its load, one of the driver's pay lines and
@@ -676,6 +704,7 @@ describe("the demo reset", () => {
         fuel_findings: 1,
         fuel_check_runs: 1,
         approval_batches: 1,
+        pay_rule_changes: 1,
         proposals: 4,
         turns: 4,
         conversations: 4,
@@ -687,6 +716,7 @@ describe("the demo reset", () => {
       expect(preview.current.briefs).toBe(planA.rows.briefs.length + 1);
       expect(preview.current.cash_checks).toBe(1);
       expect(planA.rows.cash_checks).toEqual([]);
+      expect(preview.current.carrier_notes).toBe(planA.rows.carrier_notes.length + 1);
 
       const report = await resetDemoTenant(app, A, planA);
       expect(report.slug).toBe("blue-ridge");
@@ -713,6 +743,7 @@ describe("the demo reset", () => {
         fuel_findings: 1,
         fuel_check_runs: 1,
         approval_batches: 1,
+        pay_rule_changes: 1,
         advances: 1,
         proposals: 4,
         turns: 4,

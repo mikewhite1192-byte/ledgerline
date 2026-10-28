@@ -5,6 +5,19 @@ import type { DriverIdentity } from "@/lib/advances/identity";
 import type { PaystubProps } from "@/components/app/paystub";
 import type { Suggestion } from "@/components/app/prompt-chips";
 import { formatCents } from "@/lib/format/money";
+import {
+  AUDIT_LINES,
+  NOT_NOW_LABEL,
+  NOTHING_CHANGES,
+  SAVE_LABEL,
+  SAVE_QUESTION,
+  SAVING_LABEL,
+  impactLabel,
+  impactLine,
+  ruleTitle,
+  shortPeriod,
+  startsLine,
+} from "@/lib/pay-rules/words";
 import type { SourceRef } from "@/lib/records/href";
 
 export const SAMPLE_TENANT = {
@@ -59,6 +72,9 @@ export const SOURCES = {
   customer: ref("customers", "C-HARTWELL"),
   invoiceA: ref("invoices", "INV-20417"),
   invoiceB: ref("invoices", "INV-20418"),
+  lastWeek: ref("settlement_periods", "SP-1026"),
+  paystubD11: ref("settlements", "ST-1026-D11"),
+  paystubD14: ref("settlements", "ST-1026-D14"),
 };
 
 // Every record a link on this page points at, with what it is. The table at the bottom of the
@@ -78,6 +94,9 @@ export const SOURCE_ROWS: { ref: SourceRef; what: string }[] = [
   { ref: SOURCES.customer, what: "Hartwell Produce, net 30" },
   { ref: SOURCES.invoiceA, what: "Invoice for L-10421, $3,200.00, sent Oct 26" },
   { ref: SOURCES.invoiceB, what: "Invoice for L-10422, $1,850.00, sent Oct 28" },
+  { ref: SOURCES.lastWeek, what: "Pay week Oct 26 to Nov 1, paid" },
+  { ref: SOURCES.paystubD11, what: "Owner-operator SF-D11, Oct 26 to Nov 1, 7 insured days" },
+  { ref: SOURCES.paystubD14, what: "Owner-operator SF-D14, Oct 26 to Nov 1, 6 insured days" },
 ];
 
 // The hero week: the totals are given, never recomputed by the paystub.
@@ -164,6 +183,38 @@ export const MOVE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
   reasons: [
     { text: `${formatCents(185_000)} was applied to INV-20417 but matches INV-20418`, source: SOURCES.invoiceB },
   ],
+};
+
+// A pay rule change waiting to be saved, in the words the real card uses: owner-operator insurance
+// from $11.00 to $12.00 a day, starting with the next full week, sized on last week's pay.
+const RULE_CHANGE_IMPACT = {
+  basis: "settled_week",
+  periodStart: PERIOD.start,
+  periodEnd: PERIOD.end,
+  driversChanged: 4,
+  netDeltaCents: -2_400,
+  ownerOperatorsOnly: true,
+  top: [{ code: "SF-D11", deltaCents: -700 }],
+} as const;
+
+export const RULE_CHANGE_PROPOSAL: Omit<ProposalCardProps, "hrefFor" | "status"> = {
+  id: "proposal-rule-change",
+  title: ruleTitle({ ruleKey: "insurance_per_day_cents", oldValue: 1_100, newValue: 1_200, appliesTo: "owner_operator" }),
+  impact: { cents: 2_400, direction: "none", label: impactLabel(RULE_CHANGE_IMPACT.netDeltaCents) },
+  reasons: [
+    { text: startsLine({ effectiveFrom: "2026-11-09", askedFrom: "2026-11-09", snapped: false }) },
+    { text: impactLine(RULE_CHANGE_IMPACT), source: SOURCES.paystubD11, label: "Driver SF-D11's paystub" },
+  ],
+  sources: [
+    { ...SOURCES.lastWeek, label: `Last week's pay (${shortPeriod(PERIOD.start, PERIOD.end)})` },
+    { ...SOURCES.paystubD14, label: "Driver SF-D14's paystub" },
+  ],
+  confirmQuestion: SAVE_QUESTION,
+  wording: { approve: SAVE_LABEL, approving: SAVING_LABEL, question: SAVE_QUESTION, reject: NOT_NOW_LABEL },
+  audit: { state: "pass" },
+  auditWords: AUDIT_LINES,
+  footnote: NOTHING_CHANGES,
+  noOverride: true,
 };
 
 export type LoadRow = {

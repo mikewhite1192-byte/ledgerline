@@ -57,6 +57,7 @@ export type TenantLockPurpose =
   | "customer_payment"
   | "cash_check"
   | "sweep_day_cents"
+  | "collections_draft"
   | "brief_write";
 
 export async function tenantLock(q: Queryable, purpose: TenantLockPurpose): Promise<void> {

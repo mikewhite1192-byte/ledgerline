@@ -569,7 +569,7 @@ describe("handOffVoiceNote", () => {
     });
     expect(handOffText(NOTE)).toBe(`Handle voice note ${NOTE}`);
     expect(calls.open).toHaveLength(1);
-    expect(calls.open[0]).toMatchObject({ text: handOffText(NOTE), conversationId: null });
+    expect(calls.open[0]).toMatchObject({ text: handOffText(NOTE), conversationId: null, readNotes: true });
     expect(calls.run).toEqual([handOffText(NOTE)]);
     expect(db.writes.map((w) => w.sql.slice(0, 60))).toEqual([
       expect.stringContaining("SET status = 'handed_off'"),

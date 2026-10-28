@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { flags } from "@/config/flags";
-import { DETENTION_SUGGESTION, homeSuggestions, withPaystubSuggestion } from "@/components/agent/suggestions";
+import { DETENTION_SUGGESTION, homeSuggestions, ruleChangeSuggestion, withPaystubSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
@@ -30,11 +30,13 @@ import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { formatInstant } from "@/lib/format/dates";
 import { cardsRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/lib/home/needs-you";
+import { readNextWeekStart } from "@/lib/pay-rules/read";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday } from "@/lib/tenant/shell";
+import type { LocalDate } from "@/lib/time/local-date";
 import { isUuid } from "@/lib/uuid";
 import { AiProofForm } from "./ai-proof-form";
 
@@ -47,12 +49,17 @@ type Carrier = {
   ledger: ModelLedger | null;
   paystub: { driverName: string; periodEnd: string } | null;
   session: Session;
+  admin: boolean;
+  // The first date a pay rule change may start, while pay rule changes are switched on.
+  nextStart: LocalDate | null;
 };
 
 // The signed-in carrier's shell. Every read runs inside withRequestTenant, so this page can only
 // ever see the carrier on the verified token. Signed out: withRequestTenant redirects to /sign-in.
 // ?document=<input id>, from a document's page: the question box starts with a request to check
 // that document. Only an id is taken from the address; the text around it is fixed.
+// ?rule=1, from the Pay rules page: with pay rule changes switched on, the box starts with the
+// example sentence and the help under it.
 // ?paystub=<settlement id>: "Ask about this paystub" links here with the paystub's id; anything
 // else is ignored.
 export default async function Home({
@@ -63,6 +70,7 @@ export default async function Home({
   const params = await searchParams;
   const asked = params.document;
   const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
+  const ruleAsked = params.rule === "1";
   const askedPaystub = params.paystub;
   const paystubId =
     typeof askedPaystub === "string" && isUuid(askedPaystub) ? askedPaystub.toLowerCase() : null;
@@ -73,8 +81,8 @@ export default async function Home({
       const tenants = await q.query<{ name: string; timezone: string }>(
         "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
       );
-      const members = await q.query<{ email: string }>(
-        "SELECT email FROM memberships WHERE cognito_sub = $1",
+      const members = await q.query<{ email: string; role: string }>(
+        "SELECT email, role FROM memberships WHERE cognito_sub = $1",
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
@@ -100,6 +108,8 @@ export default async function Home({
         ledger,
         paystub,
         session,
+        admin: members[0].role === "admin",
+        nextStart: flags.rulesByTalkingEnabled ? await readNextWeekStart(q, new Date()) : null,
       };
     });
   } catch (err) {
@@ -193,8 +203,15 @@ export default async function Home({
     );
   }
 
-  const base = flags.detentionEnabled ? [...SUGGESTIONS, DETENTION_SUGGESTION] : SUGGESTIONS;
+  const base = [
+    ...SUGGESTIONS,
+    ...(flags.detentionEnabled ? [DETENTION_SUGGESTION] : []),
+    ...(carrier.nextStart ? [ruleChangeSuggestion(carrier.nextStart)] : []),
+  ];
   const suggestions = withPaystubSuggestion(base, carrier.paystub);
+  // ?rule=1 starts the box with the chip's own sentence and help, both dated the first week a
+  // change can start.
+  const ruleAsk = !documentInput && ruleAsked && carrier.nextStart ? ruleChangeSuggestion(carrier.nextStart) : null;
 
   return (
     <AppShell
@@ -215,7 +232,9 @@ export default async function Home({
           auditorOn={flags.auditorEnabled}
           timezone={carrier.timezone}
           suggestions={suggestions}
-          initialDraft={documentInput ? `Check document ${documentInput}` : undefined}
+          initialDraft={documentInput ? `Check document ${documentInput}` : ruleAsk?.fill}
+          initialHelp={ruleAsk?.help}
+          viewer={{ admin: carrier.admin, adminAboveCents: flags.approverRole.adminAboveCents }}
           intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
           disabledReason={
             flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
@@ -241,6 +260,7 @@ export default async function Home({
 // Shown before the agent can answer; they light up when it can.
 const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, {
   profitOn: flags.profitBriefEnabled,
+  collections: flags.collectionsEnabled,
   cashFridayOn: flags.cashFridayEnabled,
 });
 

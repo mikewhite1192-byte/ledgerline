@@ -1,6 +1,7 @@
 import type { Queryable } from "../../../db";
 import { billDeferArgsSchema, chaseArgsSchema, factoringArgsSchema } from "../../../cash/args";
 import { chargeArgsSchema } from "../../../data/detention-charge";
+import { changeArgsSchema } from "../../../pay-rules/change";
 import { isUuid } from "../../../uuid";
 import { argStrings, parseReportArgs } from "../../../reports/args";
 import { isReportName } from "../../../reports/types";
@@ -15,6 +16,7 @@ import {
   type ProposalView,
   type RefView,
   type ReportView,
+  type RuleChangeView,
   type StepView,
   type TurnStatus,
   type TurnView,
@@ -233,6 +235,47 @@ function cashOf(r: ProposalRow): CashCardView | null {
   };
 }
 
+// A pay rule change's figures from its stored args, every field checked; null when they do not
+// read back whole (the card then shows the title and amount only).
+function ruleChangeOf(r: ProposalRow): RuleChangeView | null {
+  if (r.kind !== "pay_rule_change" || typeof r.args !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(r.args);
+  } catch {
+    return null;
+  }
+  const parsed = changeArgsSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const a = parsed.data;
+  return {
+    ruleKey: a.ruleKey,
+    oldValue: a.oldValue,
+    newValue: a.newValue,
+    askedFrom: a.askedFrom,
+    effectiveFrom: a.effectiveFrom,
+    snapped: a.snapped,
+    applied: a.applied,
+    appliesTo: a.appliesTo,
+    impact: {
+      basis: a.impact.basis,
+      periodId: a.impact.periodId,
+      periodStart: a.impact.periodStart,
+      periodEnd: a.impact.periodEnd,
+      driversCompared: a.impact.driversCompared,
+      driversChanged: a.impact.driversChanged,
+      netDeltaCents: a.impact.netDeltaCents,
+      ownerOperatorsOnly: a.impact.ownerOperatorsOnly,
+      top: a.impact.top.map((t) => ({
+        driverId: t.driverId,
+        code: t.code,
+        deltaCents: t.deltaCents,
+        settlementId: t.settlementId,
+      })),
+    },
+  };
+}
+
 function proposalView(r: ProposalRow): ProposalView {
   const reasons = parseArray(r.reasons).flatMap((x) => {
     const category = x && typeof x === "object" ? (x as Record<string, unknown>).category : null;
@@ -268,6 +311,7 @@ function proposalView(r: ProposalRow): ProposalView {
     ...(r.kind === "detention_charge" ? { detention: detentionOf(r) } : {}),
     ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args) } : {}),
     ...(CASH_KINDS.has(r.kind) ? { cash: cashOf(r) } : {}),
+    ...(r.kind === "pay_rule_change" ? { ruleChange: ruleChangeOf(r) } : {}),
   };
 }
 
@@ -303,6 +347,8 @@ const PROPOSAL_SQL = `
                                       WHERE b.tenant_id = p.tenant_id AND b.id = p.subject_id)
            WHEN 'customers' THEN (SELECT c.code FROM customers c
                                    WHERE c.tenant_id = p.tenant_id AND c.id = p.subject_id)
+           WHEN 'pay_configs' THEN (SELECT CAST(c.effective_from AS text) FROM pay_configs c
+                                     WHERE c.tenant_id = p.tenant_id AND c.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.title,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources, p.status,
@@ -332,7 +378,7 @@ const PROPOSAL_SQL = `
            END
          END AS card_last4,
          CASE WHEN p.kind IN ('detention_charge', 'advance_payout', 'factoring_request', 'bill_defer',
-                             'collections_chase')
+                             'collections_chase', 'pay_rule_change')
               THEN CAST(p.args AS text) END AS args,
          CAST(p.exceptions AS text) AS exceptions
     FROM proposals p`;
@@ -440,6 +486,18 @@ export async function readRecentTurnViews(q: Queryable, sub: string): Promise<Tu
   const out: TurnView[] = [];
   for (const r of rows.reverse()) out.push(await viewOf(q, r));
   return out;
+}
+
+// Every waiting pay rule change of the carrier, from any chat, oldest first: the Pay rules page's
+// "Waiting for you". Any staff member sees them, as the approve gate allows.
+export async function readWaitingRuleChangeViews(q: Queryable): Promise<ProposalView[]> {
+  const rows = await q.query<ProposalRow>(
+    `${PROPOSAL_SQL}
+      WHERE p.tenant_id = current_tenant_id() AND p.kind = 'pay_rule_change'
+        AND p.status IN ('proposed', 'approved', 'executing')
+      ORDER BY p.created_at, p.id LIMIT 50`,
+  );
+  return rows.map(proposalView);
 }
 
 // The cards the rules engine made for one kind (the invoice queue), still waiting or running, for

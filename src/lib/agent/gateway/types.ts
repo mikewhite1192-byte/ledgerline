@@ -38,6 +38,8 @@ export const REASON_CATEGORIES = [
   "capped_to_eligible",
   // A proposal exception: the advance names a card that is not one of the driver's active cards.
   "card_not_drivers",
+  // A pay rule change's weekly impact, computed by the rules engine on the newest settled week.
+  "rule_change_sized_by_engine",
 ] as const;
 export type ReasonCategory = (typeof REASON_CATEGORIES)[number];
 
@@ -85,6 +87,9 @@ export type GatewayContext = {
   deadlineAt: number;
   // The tenant's IANA zone; dates in tool args are read in it.
   timeZone: string;
+  // The sentence the person typed this turn, for a tool that must find a value in it (a pay rule
+  // change's new value). Null or absent outside a turn, which such a tool refuses.
+  userText?: string | null;
 };
 
 // A model call, as the screener needs it. The default is complete() from src/lib/ai.
@@ -145,6 +150,7 @@ export const PROPOSAL_KINDS = [
   "factoring_request",
   "bill_defer",
   "collections_chase",
+  "pay_rule_change",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 

@@ -12,6 +12,7 @@ import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from
 import { executeDetentionCharge } from "./executors/detention-charge";
 import { loadRateFill } from "./executors/load-rate-fill";
 import { payCorrectionExecutor } from "./executors/pay-correction";
+import { executePayRuleChange } from "./executors/pay-rule-change";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
 // purpose: approval is the only road from a proposal to the ledger, and the agent tree cannot
@@ -123,10 +124,12 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 // no money; invoice_post writes the approved invoice and payment_reapply moves one payment
 // application. pay_correction writes one pay item for the next pay run
 // (src/lib/proposals/executors/pay-correction.ts), with a precheck that refuses a stale fix before
-// the approval. invoice_fix has none yet, so it is refused as not_executable. detention_charge and
-// pay_correction are read through their release switches on every approval: with
-// detentionEnabled or payCorrectionsEnabled off the kind has no executor, so it can be neither
-// approved nor executed (and each executor checks its switch again itself). On a resume (a row already
+// the approval. pay_rule_change writes one dated version of the pay rules
+// (src/lib/proposals/executors/pay-rule-change.ts) and moves no money. invoice_fix has none yet,
+// so it is refused as not_executable. detention_charge, pay_correction and pay_rule_change are
+// read through their release switches on every approval: with detentionEnabled,
+// payCorrectionsEnabled or rulesByTalkingEnabled off the kind has no executor, so it can be
+// neither approved nor executed (and each executor checks its switch again itself). On a resume (a row already
 // approved or executing), gate refuses it as not_executable before the executor runs. Otherwise
 // that refusal is gate's last check before the approve write, and every earlier outcome comes
 // first: the membership check, not_found, already_decided, expiring an aged proposal (which writes
@@ -160,6 +163,9 @@ export const EXECUTORS: ExecutorRegistry = {
   },
   get collections_chase() {
     return flags.cashFridayEnabled ? executeChaseTestMode : undefined;
+  },
+  get pay_rule_change() {
+    return flags.rulesByTalkingEnabled ? executePayRuleChange : undefined;
   },
 };
 
