@@ -101,7 +101,7 @@ export type Flags = {
   };
   // The marked copy of a document photo: the image model circles the line in question and writes
   // what the records say beside it, then a second read checks the copy before it is kept. On top
-  // of documentsEnabled. Off: the block says it is off and the route refuses before any call.
+  // of documentsEnabled. Off: the block is hidden and the route refuses before any call.
   documentMarkupEnabled: boolean;
   // Per try: the edit's and the check's cost bounds in cents (the wrapper's spend cap still
   // applies), marked copies started per carrier per day, and the largest copy kept, in bytes

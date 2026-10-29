@@ -61,6 +61,20 @@ describe("checkMarkup", () => {
     ).toEqual({ ok: true });
   });
 
+  it("keeps a Spanish callout read back without its accents, and refuses one with another word", () => {
+    const spanish: MarkupExpected = { ...EXPECTED, callout: "Aún no está en el talón de pago: $175.00" };
+    expect(checkMarkup(spanish, answer({ calloutText: "Aun no esta en el talon de pago: $175.00" }))).toEqual({ ok: true });
+    expect(checkMarkup(spanish, answer({ calloutText: "Aún no está en el talón de pago: $175.00" }))).toEqual({ ok: true });
+    expect(checkMarkup(spanish, answer({ calloutText: "Aun no esta en el recibo de pago: $175.00" }))).toEqual({
+      ok: false,
+      category: "callout_wrong",
+    });
+    expect(checkMarkup(spanish, answer({ calloutText: "Aun no esta en el talon de pago: $157.00" }))).toEqual({
+      ok: false,
+      category: "callout_wrong",
+    });
+  });
+
   it.each<[string, MarkupCheckRead | null, string]>([
     ["no read-back", null, "off_schema"],
     ["a changed total", answer({}, { totalCents: 17_600 }), "field_changed"],

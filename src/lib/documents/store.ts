@@ -254,10 +254,13 @@ export async function claimMarkup(
 }
 
 // A budget refusal found before any try started: the row says it waits for budget, and no try
-// is used (the count and the time stay as they were). 1 when written.
+// is used (the count and the time stay as they were). The last try's read-back and call ids go
+// with its status, so a budget row never carries an old check. 1 when written.
 export async function markMarkupBudget(q: Queryable, id: string, cutoffIso: string): Promise<number> {
   return q.execute(
-    `UPDATE documents SET markup_status = 'unavailable', markup_category = 'budget'
+    `UPDATE documents
+        SET markup_status = 'unavailable', markup_category = 'budget', markup_check = NULL,
+            markup_edit_call_id = NULL, markup_check_call_id = NULL
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
         AND markup_status <> 'checked'
         AND (markup_status <> 'marking' OR markup_at < CAST($2 AS timestamptz))`,

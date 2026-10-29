@@ -338,6 +338,25 @@ describe("marked copies in the database", () => {
     expect(out.ok && out.view.markup.status).toBe("checked");
   });
 
+  it("clears the last try's read-back when the budget refuses a copy that did not match", async () => {
+    const id = await upload();
+    await adminSet(
+      id,
+      "markup_status = 'mismatch', markup_category = 'callout_wrong', markup_attempts = 1, markup_check = CAST('{}' AS jsonb), markup_edit_call_id = CAST($2 AS uuid), markup_check_call_id = CAST($3 AS uuid)",
+      [randomUUID(), randomUUID()],
+    );
+    room.value = "cap";
+    expect(await markDocument(A.session, id, fakes().deps)).toEqual({ ok: false, error: "budget" });
+    expect(await markupRow(id)).toMatchObject({
+      markup_status: "unavailable",
+      markup_category: "budget",
+      markup_attempts: 1,
+      has_check: false,
+      markup_edit_call_id: null,
+      markup_check_call_id: null,
+    });
+  });
+
   it("refuses a PDF, a switch that is off, and a document with nothing to mark", async () => {
     const pdf = await upload(
       {},

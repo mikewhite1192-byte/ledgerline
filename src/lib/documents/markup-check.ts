@@ -6,8 +6,9 @@ import { CONFIDENCE_FIELDS, type ConfidenceField, type DocumentRead, type StopCl
 // Whether a marked copy may be kept: its read-back compared with the original reading and with
 // the callout and line our code asked for, by whole values only (strings after trimming,
 // collapsing spaces and line breaks and upper-casing, and for the callout and the line also
-// closing periods off; integers exactly; a value the original read as null must still be null). Pure. The first failing rule names the category; a copy that fails any rule is
-// never stored or shown.
+// closing periods off, and for the callout also accents off; integers exactly; a value the
+// original read as null must still be null). Pure. The first failing rule names the category; a
+// copy that fails any rule is never stored or shown.
 //
 //   off_schema     the read-back is not the schema's shape
 //   field_changed  a document field reads differently, or the SAMPLE band is gone
@@ -70,6 +71,16 @@ function drawn(s: string | null): string | null {
   return out === "" ? null : out;
 }
 
+// The callout as compared: drawn, then accents off on both sides (NFD, combining marks removed),
+// because a reader may drop the accent on a Spanish word ("Aun", "mas"); an accent never changes a
+// number. Still the whole text.
+function calloutKey(s: string | null): string | null {
+  const d = drawn(s);
+  if (d === null) return null;
+  const out = d.normalize("NFD").replace(/\p{M}/gu, "");
+  return out === "" ? null : out;
+}
+
 function sameScalar(a: string | number | null, b: string | number | null): boolean {
   if (a === null || b === null) return a === b;
   if (typeof a === "number" || typeof b === "number") return a === b;
@@ -112,8 +123,8 @@ export function checkMarkup(expected: MarkupExpected, answer: MarkupCheckRead | 
     return { ok: false, category: "field_changed" };
   }
   if (!copy.fields.sampleWord) return { ok: false, category: "field_changed" };
-  const callout = drawn(answer.calloutText);
-  if (callout === null || callout !== drawn(expected.callout)) {
+  const callout = calloutKey(answer.calloutText);
+  if (callout === null || callout !== calloutKey(expected.callout)) {
     return { ok: false, category: "callout_wrong" };
   }
   const circled = drawn(answer.circledLineText);

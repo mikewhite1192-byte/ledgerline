@@ -222,7 +222,7 @@ export function planMarkup(
 }
 
 // The edit instruction. The line and the callout are the only variable parts; both come from
-// this file (the line is the reading's own transcription, at most 160 characters).
+// this file (the line is the reading's own transcription, at most 80 characters, MARKUP_ANCHOR_MAX).
 export function markupPrompt(plan: Extract<MarkupPlan, { ok: true }>): string {
   const band = plan.hasSampleBand
     ? "Keep every other letter, number and part of the photo exactly as it is, including the SAMPLE band."

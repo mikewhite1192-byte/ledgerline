@@ -148,7 +148,7 @@ export function MarkupBlock({
             picture: the numbers on this page come from your records, never from this copy.
           </p>
           <div>
-            <a href={src} download="marked-copy" className="text-small font-medium text-link underline-offset-4 hover:underline">
+            <a href={src} className="text-small font-medium text-link underline-offset-4 hover:underline">
               Save image
             </a>
           </div>
