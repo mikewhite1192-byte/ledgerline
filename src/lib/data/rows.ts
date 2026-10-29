@@ -370,6 +370,68 @@ export type ScreeningRow = {
   expires_at: string | null;
 };
 
+// The card provider's statement (0046): Test mode, seeded; the simulated provider appends nothing.
+export type CardTransactionRow = {
+  id: string;
+  provider: "fuel_card_sim";
+  provider_ref: string;
+  kind: "fuel" | "load";
+  card_token: string;
+  card_last4: string;
+  portal_name: string;
+  posted_at: string;
+  posted_on: string;
+  amount_cents: number;
+  state: string | null;
+  gallons_milli: number | null;
+  merchant: string | null;
+  source: "seed";
+};
+
+// One card check (0046). The seed writes none.
+export type CardReconRunRow = {
+  id: string;
+  membership_id: string;
+  status: "running" | "done" | "failed";
+  phase: "read" | "explain" | "match" | "done";
+  todo: string[];
+  lease_token: string | null;
+  lease_until: string | null;
+  fail_category: string | null;
+  window_from: string;
+  window_to: string;
+  counts: Record<string, unknown>;
+  unchecked: unknown[];
+  model_cents: number;
+  started_at: string;
+  finished_at: string | null;
+};
+
+// One difference a card check found (0046). The seed writes none.
+export type CardReconBreakRow = {
+  id: string;
+  fingerprint: string;
+  category: string;
+  severity: "high" | "medium" | "low";
+  outside_system: string | null;
+  card_transaction_id: string | null;
+  money_action_id: string | null;
+  fuel_purchase_id: string | null;
+  driver_id: string | null;
+  our_cents: number | null;
+  outside_cents: number | null;
+  explanation: string | null;
+  explain_category: string | null;
+  fix_kind: string;
+  proposal_id: string | null;
+  status: "open" | "resolved" | "dismissed";
+  dismiss_category: string | null;
+  first_seen_run_id: string;
+  last_seen_run_id: string;
+  resolved_at: string | null;
+  updated_at: string;
+};
+
 // A reminder for a late invoice (0041). The seed plants none: the demo presses Draft reminders.
 export type CollectionDraftRow = {
   id: string;
@@ -483,6 +545,7 @@ export type TenantRows = {
   load_accessorials: LoadAccessorialRow[];
   driver_days: DriverDayRow[];
   fuel_purchases: FuelPurchaseRow[];
+  card_transactions: CardTransactionRow[];
   pay_configs: PayConfigRow[];
   deduction_schedules: DeductionScheduleRow[];
   settlement_periods: SettlementPeriodRow[];
@@ -496,6 +559,8 @@ export type TenantRows = {
   payment_applications: PaymentApplicationRow[];
   untrusted_inputs: UntrustedInputRow[];
   screenings: ScreeningRow[];
+  card_recon_runs: CardReconRunRow[];
+  card_recon_breaks: CardReconBreakRow[];
   collection_drafts: CollectionDraftRow[];
   briefs: BriefRow[];
   vendor_bills: VendorBillRow[];

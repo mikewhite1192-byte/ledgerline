@@ -1,4 +1,5 @@
 import { DbError, type Param, type Queryable } from "../db";
+import { isLocalDate } from "../time/local-date";
 import { isCanonicalUuid } from "./keys";
 import {
   isMoneyFailure,
@@ -176,6 +177,33 @@ export function readBySubject(
 export function readByKind(q: Queryable, kind: MoneyActionKind): Promise<MoneyAction[]> {
   oneOf(kind, MONEY_ACTION_KINDS);
   return many(q, "kind = $1", [kind], " ORDER BY created_at, attempt, id");
+}
+
+// The card check's reading list: every row whose send falls, in the carrier's zone, on a date
+// from start to end (both inclusive), in any state, oldest first, at most limit of them. The check
+// reads back the confirmed ones, flags the unconfirmed ones, and lets a row that has since failed
+// or confirmed close what an earlier check found on it. The local date is taken in the statement,
+// before the limit, so a row sent outside the window never takes one of its places; on a daylight
+// saving day the local day is 23 or 25 hours long and the date follows it. The zone travels as a
+// parameter, never in the statement text. Read only; the check never changes a row.
+export function readSentInWindow(
+  q: Queryable,
+  start: string,
+  end: string,
+  zone: string,
+  limit: number,
+): Promise<MoneyAction[]> {
+  if (!isLocalDate(start) || !isLocalDate(end) || start > end) {
+    throw new RangeError("the window is two YYYY-MM-DD dates, start first");
+  }
+  if (typeof zone !== "string" || zone === "") throw new RangeError("zone is required");
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new RangeError("limit is 1 to 1000");
+  return many(
+    q,
+    "CAST(sent_at AT TIME ZONE CAST($3 AS text) AS date) BETWEEN CAST($1 AS date) AND CAST($2 AS date)",
+    [start, end, zone],
+    ` ORDER BY sent_at, id LIMIT ${limit}`,
+  );
 }
 
 // One record whose ledger rows a pending read is limited to.

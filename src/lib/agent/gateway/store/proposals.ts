@@ -17,6 +17,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   payment_reapply: "Move payment to the right invoice",
   detention_charge: "Bill unbilled detention",
   settlement_approve: "Approve weekly pay",
+  card_match: "Match a card to a driver",
   factoring_request: "Factor invoices (Test mode)",
   bill_defer: "Delay a vendor bill",
   collections_chase: "Chase a late payer (Test mode)",
@@ -51,7 +52,9 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   if (kind === "pay_correction") {
     return { amountCents: Math.abs(amountCents), direction: amountCents < 0 ? "in" : "out" } as const;
   }
-  if (kind === "invoice_fix" || kind === "payment_reapply") {
+  // A card match records a purchase the card provider already charged; nothing moves. The amount
+  // is the transaction's, so the approval gate weighs it like any other card.
+  if (kind === "invoice_fix" || kind === "payment_reapply" || kind === "card_match") {
     return { amountCents, direction: "none" } as const;
   }
   // A rate fill moves no money.

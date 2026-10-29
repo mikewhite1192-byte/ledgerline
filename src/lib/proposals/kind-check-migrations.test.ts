@@ -14,9 +14,10 @@ import { TABLES } from "../rules-engine/types";
 const DIR = path.join(process.cwd(), "db/migrations");
 const FILE = /^(\d{4})_[a-z0-9_]+\.sql$/;
 
-// Kinds a migration lists before their code is on the mainline: harmless in an allow list.
-// card_match is CARD-RECON's (0046), listed by 0048 so whichever of the two runs last keeps it.
-const PENDING_KINDS = ["settlement_approve", "pay_rule_change", "card_match"] as const;
+// Kinds a migration lists before their code is on the mainline: harmless in an allow list. 0046
+// and 0048 each list both card_match and money_code, so whichever of the two runs last keeps both;
+// both kinds now have code here, so neither is pending.
+const PENDING_KINDS = ["settlement_approve", "pay_rule_change"] as const;
 
 // The union every re-creation since 0022 has listed (the queue's rule).
 const BASE_UNION = [

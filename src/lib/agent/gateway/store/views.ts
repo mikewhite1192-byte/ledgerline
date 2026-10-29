@@ -184,8 +184,43 @@ export function advanceLoadOf(args: string | null): NonNullable<ProposalView["lo
   return { number, capCents, leftAfterCents };
 }
 
+// A card match's lines from its stored args: the card by its last four digits, its pool name, the
+// day and state of the purchase, the driver picked and the other drivers code ranked. Null when the
+// args do not read back whole; a value outside its shape is never shown.
+const DRIVER_CODE = /^[A-Za-z0-9._-]{1,40}$/;
+const PORTAL_NAME = /^[A-Z0-9 -]{2,40}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+export function cardMatchOf(args: string | null): NonNullable<ProposalView["cardMatch"]> | null {
+  if (typeof args !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  const { last4, portalName, postedOn, state, driverCode, candidates } = a;
+  if (typeof last4 !== "string" || !LAST4.test(last4)) return null;
+  if (typeof portalName !== "string" || !PORTAL_NAME.test(portalName)) return null;
+  if (typeof postedOn !== "string" || !DAY.test(postedOn)) return null;
+  if (state !== null && (typeof state !== "string" || !/^[A-Z]{2}$/.test(state))) return null;
+  if (typeof driverCode !== "string" || !DRIVER_CODE.test(driverCode)) return null;
+  const others: string[] = [];
+  if (Array.isArray(candidates)) {
+    for (const c of candidates) {
+      const code = c && typeof c === "object" ? (c as Record<string, unknown>).code : null;
+      if (typeof code === "string" && DRIVER_CODE.test(code) && code !== driverCode && !others.includes(code)) {
+        others.push(code);
+      }
+    }
+  }
+  return { last4, portalName, postedOn, state: state as string | null, driverCode, others: others.slice(0, 5) };
+}
+
 // An exception the gateway attached that the card states, after the reasons.
-const SHOWN_EXCEPTIONS: ReadonlySet<string> = new Set(["capped_to_eligible", "card_not_drivers"]);
+const SHOWN_EXCEPTIONS: ReadonlySet<string> = new Set(["capped_to_eligible", "card_not_drivers", "driver_not_candidate"]);
 
 const CASH_KINDS: ReadonlySet<string> = new Set(["factoring_request", "bill_defer", "collections_chase"]);
 
@@ -313,6 +348,7 @@ function proposalView(r: ProposalRow): ProposalView {
     destination: destinationOf(r),
     ...(r.kind === "detention_charge" ? { detention: detentionOf(r) } : {}),
     ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args) } : {}),
+    ...(r.kind === "card_match" ? { cardMatch: cardMatchOf(r.args) } : {}),
     ...(CASH_KINDS.has(r.kind) ? { cash: cashOf(r) } : {}),
     ...(r.kind === "pay_rule_change" ? { ruleChange: ruleChangeOf(r) } : {}),
   };
@@ -346,6 +382,8 @@ const PROPOSAL_SQL = `
              SELECT cp.payment_ref FROM payment_applications a
                JOIN customer_payments cp ON cp.tenant_id = a.tenant_id AND cp.id = a.payment_id
               WHERE a.tenant_id = p.tenant_id AND a.id = p.subject_id)
+           WHEN 'card_transactions' THEN (SELECT 'card ending ' || t.card_last4 FROM card_transactions t
+                                           WHERE t.tenant_id = p.tenant_id AND t.id = p.subject_id)
            WHEN 'vendor_bills' THEN (SELECT b.bill_ref FROM vendor_bills b
                                       WHERE b.tenant_id = p.tenant_id AND b.id = p.subject_id)
            WHEN 'customers' THEN (SELECT c.code FROM customers c
@@ -380,7 +418,7 @@ const PROPOSAL_SQL = `
                  WHERE a.tenant_id = p.tenant_id AND a.proposal_id = p.id AND a.driver_id = p.subject_id)
            END
          END AS card_last4,
-         CASE WHEN p.kind IN ('detention_charge', 'advance_payout', 'factoring_request', 'bill_defer',
+         CASE WHEN p.kind IN ('detention_charge', 'advance_payout', 'card_match', 'factoring_request', 'bill_defer',
                              'collections_chase', 'pay_rule_change')
               THEN CAST(p.args AS text) END AS args,
          CAST(p.exceptions AS text) AS exceptions

@@ -35,6 +35,8 @@ describe("flags", () => {
       startDate: "2026-10-28",
     });
     expect(isLocalDate(flags.moneyCodes.startDate)).toBe(true);
+    // The card check writes no money, but it reads three systems and spends model cents.
+    expect(flags.cardRecon.enabled).toBe(false);
     expect(flags.rulesByTalkingEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
   });
@@ -73,6 +75,23 @@ describe("flags", () => {
     const note = src.slice(at, src.indexOf("from: string;", at)).replace(/\s*\/\/\s*/g, " ");
     expect(note).toContain("The release PR that turns fuelAnomalyEnabled on also sets this to its go-live date");
     expect(note).not.toMatch(/switching on never/);
+  });
+
+  it("keeps the card check's window, read-backs and model spend small", () => {
+    expect(flags.cardRecon.limits).toEqual({
+      windowDays: 14,
+      maxBreaks: 50,
+      maxReadBacksPerSystem: 40,
+      readBackTimeoutMs: 5_000,
+      maxExplainCents: 3,
+      matchMaxCents: 3,
+      maxRunCents: 100,
+      sliceMs: 20_000,
+    });
+    for (const v of Object.values(flags.cardRecon.limits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.cardRecon.limits.sliceMs).toBeLessThan(25_000);
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
@@ -451,6 +470,9 @@ describe("local overrides for the demo-path test", () => {
       { "runLimits.maxTurns": 1000 },
       // Not on the demo path yet: adding it is detention's own change, with a re-recorded replay.
       { detentionEnabled: true },
+      // Not on the demo path: its tools stay out of the replay's tool list.
+      { cardRecon: { enabled: true } },
+      { "cardRecon.enabled": true },
     ]) {
       const target = copy();
       const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify(bad) };

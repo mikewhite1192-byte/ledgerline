@@ -42,6 +42,8 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_advance_headroom: { tier: "read", roles: ["operator", "auditor"] },
   get_money_codes: { tier: "read", roles: ["operator", "auditor"] },
   propose_money_code: { tier: "propose", roles: ["operator"] },
+  get_card_breaks: { tier: "read", roles: ["operator", "auditor"] },
+  propose_card_match: { tier: "propose", roles: ["operator"] },
   get_cash_friday: { tier: "read", roles: ["operator"] },
   preview_rule_change: { tier: "read", roles: ["operator"] },
   propose_rule_change: { tier: "propose", roles: ["operator"] },
@@ -56,6 +58,8 @@ const DETENTION_TOOLS = ["find_unbilled_detention", "propose_detention_charge"];
 // The tools behind the money codes switch, likewise.
 const MONEY_CODE_TOOLS = ["get_money_codes", "propose_money_code"];
 const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_"));
+// The card check's tools, behind its switch.
+const CARD_TOOLS = ["get_card_breaks", "propose_card_match"];
 // The tools behind the invoicing and customer payments switches, likewise.
 const INVOICE_TOOLS = ["get_invoice_queue"];
 const PAYMENT_TOOLS = ["get_ar_aging", "get_payments_in", "propose_payment_reapply"];
@@ -70,6 +74,7 @@ afterEach(() => {
   flags.reportsEnabled = false;
   flags.detentionEnabled = false;
   flags.moneyCodes.enabled = false;
+  flags.cardRecon.enabled = false;
   flags.invoicesEnabled = false;
   flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
@@ -104,7 +109,7 @@ describe("tool registry", () => {
 
   it("gives every propose tool an engine limit", () => {
     const propose = Object.values(TOOL_REGISTRY).filter((t) => t.tier === "propose");
-    expect(propose).toHaveLength(8);
+    expect(propose).toHaveLength(9);
     for (const tool of propose) expect(typeof tool.limit).toBe("function");
   });
 
@@ -156,6 +161,23 @@ describe("tool registry", () => {
     expect(names("auditor")).not.toContain("propose_money_code");
     expect(toolNamed("propose_money_code")?.limit).toBeTypeOf("function");
     flags.moneyCodes.enabled = false;
+    expect(toolsFor("operator")).toHaveLength(21);
+  });
+
+  it("offers the card check tools only while its switch is on, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    for (const role of AGENT_ROLES) for (const n of CARD_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
+    flags.cardRecon.enabled = true;
+    expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
+      operator: 23,
+      auditor: 13,
+      triage: 2,
+    });
+    expect(names("operator")).toEqual(expect.arrayContaining(CARD_TOOLS));
+    expect(names("auditor")).toContain("get_card_breaks");
+    expect(names("auditor")).not.toContain("propose_card_match");
+    for (const n of CARD_TOOLS) expect(names("triage"), n).not.toContain(n);
+    flags.cardRecon.enabled = false;
     expect(toolsFor("operator")).toHaveLength(21);
   });
 
@@ -298,14 +320,15 @@ describe("tool registry", () => {
     flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
     flags.moneyCodes.enabled = true;
+    flags.cardRecon.enabled = true;
     flags.rulesByTalkingEnabled = true;
     flags.collectionsEnabled = true;
     flags.profitBriefEnabled = true;
     flags.carrierMemoryEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 41,
-      auditor: 16,
+      operator: 43,
+      auditor: 17,
       triage: 2,
     });
     for (const role of AGENT_ROLES) {

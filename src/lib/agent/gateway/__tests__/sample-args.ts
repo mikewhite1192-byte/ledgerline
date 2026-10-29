@@ -19,6 +19,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   // A load on the road and its own driver: the only kind of load a money code is for.
   const onRoad = rows.loads.find((l) => l.status === "in_transit")!;
   const refs = [{ table: "drivers", id: hero.id }];
+  // The statement's planted card that is on no driver's file, and the driver code ranks first.
+  const unknownCard = plan.planted.cardRecon;
   return {
     get_driver: { driverId: hero.id },
     get_loads: { driverId: hero.id, from: paid.period_start, to: open.period_end },
@@ -103,6 +105,11 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     },
     get_driver_identity: { driverId: hero.id },
     get_advance_headroom: { driverId: hero.id, amountCents: 10_000 },
+    get_card_breaks: { status: "open", limit: 10 },
+    propose_card_match: {
+      transactionId: unknownCard.cardUnknownId,
+      driverId: unknownCard.candidateDriverId ?? hero.id,
+    },
     // The hero's owner-operator insurance, $11.00 to $12.00 a day, from the first week a change may
     // start at the fixed clock; the figures need only parse here.
     preview_rule_change: { ruleKey: "insurance_per_day_cents", newValue: 1_200, askedFrom: "2026-11-09" },

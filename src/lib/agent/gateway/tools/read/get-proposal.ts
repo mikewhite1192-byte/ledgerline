@@ -2,6 +2,7 @@ import { z } from "zod";
 import { flags } from "../../../../../config/flags";
 import { optionArgs, sameArgs } from "../../../../cash/args";
 import type { Queryable } from "../../../../db";
+import { readCandidateFacts, readMatchFacts } from "../../../../data/card-recon";
 import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionChargeRows } from "../../../../data/detention-charge";
 import { changeArgsSchema, changeMatches, readRuleChangeRows, ruleChangeOf } from "../../../../pay-rules/change";
 import { loadsOf } from "../../../../data/records";
@@ -31,6 +32,7 @@ import {
   type MoneyCodePurpose,
   type MoneyCodeSource,
 } from "../../../../rules-engine";
+import { rankCandidates, topIsTied } from "../../../../rules-engine/card-recon";
 import { localDateOf } from "../../../../time/local-date";
 import { isUuid } from "../../../../uuid";
 import { defineTool, type AgentRole, type GatewayContext } from "../../types";
@@ -119,6 +121,8 @@ const SOURCE_FIELDS: Partial<Record<TenantTable, readonly string[]>> = {
   invoices: ["source", "load_id", "customer_id", "invoice_number", "amount_cents", "issued_on", "due_on", "status", "paid_on"],
   customer_payments: ["customer_id", "received_on", "amount_cents", "method", "source"],
   payment_applications: ["payment_id", "invoice_id", "amount_cents"],
+  // A card statement row by its last four digits; never the token or the merchant.
+  card_transactions: ["kind", "card_last4", "posted_on", "amount_cents", "state", "gallons_milli"],
   vendor_bills: ["bill_ref", "category", "amount_cents", "due_on", "urgency", "status", "deferred_to", "paid_on"],
 };
 
@@ -247,6 +251,8 @@ const PROPOSAL_SQL = `
              SELECT cp.payment_ref FROM payment_applications a
                JOIN customer_payments cp ON cp.tenant_id = a.tenant_id AND cp.id = a.payment_id
               WHERE a.tenant_id = current_tenant_id() AND a.id = p.subject_id)
+           WHEN 'card_transactions' THEN (SELECT t.card_last4 FROM card_transactions t
+                                           WHERE t.tenant_id = current_tenant_id() AND t.id = p.subject_id)
            WHEN 'vendor_bills' THEN (SELECT b.bill_ref FROM vendor_bills b
                                       WHERE b.tenant_id = current_tenant_id() AND b.id = p.subject_id)
            WHEN 'customers' THEN (SELECT c.code FROM customers c
@@ -630,6 +636,40 @@ async function moneyCodeEngine(
   };
 }
 
+// A card match (card_match), checked the way its executor checks it: the statement row is still a
+// fuel purchase on a card on no driver's file and not recorded yet, its cents equal the card's,
+// and where the driver stands among the candidates code ranks for it now.
+async function cardMatchEngine(p: ProposalRow, q: Queryable, args: Record<string, unknown>): Promise<Engine> {
+  const { transactionId, driverId } = args;
+  if (
+    p.subject_table !== "card_transactions" ||
+    transactionId !== p.subject_id ||
+    !isUuid(transactionId) ||
+    !isUuid(driverId)
+  ) {
+    return UNAVAILABLE;
+  }
+  const facts = await readMatchFacts(q, transactionId);
+  if (!facts) return { ok: true, check: "card_match", found: false };
+  const candidates = rankCandidates(facts.txn, await readCandidateFacts(q, facts.txn.postedOn));
+  const chosen = candidates.find((c) => c.driverId === driverId) ?? null;
+  return {
+    ok: true,
+    check: "card_match",
+    found: true,
+    proposedCents: Number(p.amount_cents),
+    transactionCents: facts.txn.amountCents,
+    fuelPurchase: facts.kind === "fuel",
+    cardOnFile: facts.cardOnFile,
+    purchaseOnFile: facts.purchaseOnFile,
+    driverIsCandidate: chosen !== null,
+    score: chosen?.score ?? null,
+    topScore: candidates[0]?.score ?? null,
+    tied: topIsTied(candidates),
+    candidates: candidates.map((c) => ({ driverId: c.driverId, score: c.score, reasons: [...c.reasons] })),
+  };
+}
+
 // A Cash Friday card (factoring_request, bill_defer, collections_chase), checked the way the Cash
 // page builds it: the engine runs on today's records (the bank position and factoring terms, the
 // open week's pay run, the bills, every open invoice and its customer's history) and the card's
@@ -684,6 +724,7 @@ async function engineFor(
     if (p.kind === "detention_charge") return await detentionEngine(q, p);
     // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
     if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
+    if (p.kind === "card_match") return await cardMatchEngine(p, q, args);
     // The cards' invoice lists are objects, which safeArgs leaves out; compared as stored.
     if (p.kind === "factoring_request" || p.kind === "bill_defer" || p.kind === "collections_chase") {
       return await cashEngine(q, ctx, p, raw);

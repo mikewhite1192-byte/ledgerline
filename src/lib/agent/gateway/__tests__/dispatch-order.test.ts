@@ -11,6 +11,7 @@ import { callTool, capResult, MAX_RESULT_CHARS } from "../index";
 import { UNTRUSTED_WARNING } from "../tools/read/get-inbound-message";
 import type { CompleteFn, GatewayContext } from "../types";
 import { context, fixedClock, NOW, OTHER_ID, type FakeDb, type Handler } from "./fake-db";
+import { cardReconHandler } from "./card-db";
 import { blueRidgePlan, planDb, proposalRowFor, withProposal } from "./plan-db";
 import { sampleArgs } from "./sample-args";
 
@@ -19,6 +20,7 @@ import { sampleArgs } from "./sample-args";
 // (two when the call screened outside text: the screen logs its own).
 
 const plan = blueRidgePlan();
+const cards = cardReconHandler(plan);
 const zone = plan.carrier.timezone;
 const hero = plan.rows.drivers.find((d) => d.code === plan.carrier.heroCode)!;
 const today = addDays(plan.anchor, -2);
@@ -427,6 +429,7 @@ describe("callTool dispatch order", () => {
     flags.invoicesEnabled = true;
     flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
+    flags.cardRecon.enabled = true;
     flags.cashFridayEnabled = true;
     flags.collectionsEnabled = true;
     flags.moneyCodes.enabled = true;
@@ -438,6 +441,7 @@ describe("callTool dispatch order", () => {
       flags.invoicesEnabled = false;
       flags.invoiceReviewEnabled = false;
       flags.customerPaymentsEnabled = false;
+      flags.cardRecon.enabled = false;
       flags.cashFridayEnabled = false;
       flags.collectionsEnabled = false;
       flags.moneyCodes.enabled = false;
@@ -446,7 +450,8 @@ describe("callTool dispatch order", () => {
       flags.carrierMemoryEnabled = false;
     });
     // The second check's read of the office's notes about the driver: none on file.
-    const store: Handler = (sql, params) => (sql.includes("FROM carrier_notes n") ? [] : screenStore(sql, params));
+    const store: Handler = (sql, params) =>
+      sql.includes("FROM carrier_notes n") ? [] : (screenStore(sql, params) ?? cards(sql, params));
     for (const [name, args] of Object.entries(ARGS)) {
       const auditor = name === "get_proposal";
       const db = planDb(plan, auditor ? withProposal(proposalRowFor(plan, "advance_payout"), store) : store);

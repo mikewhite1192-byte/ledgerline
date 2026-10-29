@@ -9,6 +9,7 @@ import { executePaymentReapply } from "../invoices/reapply";
 import { executeSettlementApprove } from "../settlements/approve";
 import { assertMembership } from "../tenant/context";
 import { overrideReasonOf } from "../agent/auditor/words";
+import { cardMatchExecutor } from "./executors/card-match";
 import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
 import { executeDetentionCharge } from "./executors/detention-charge";
 import { loadRateFill } from "./executors/load-rate-fill";
@@ -137,10 +138,12 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 // the row as expired), the role refusal, the auditor refusals (not_auditable, auditor_required,
 // override_required, stale) and needs_confirm.
 // settlement_approve pays one driver's week (src/lib/settlements/approve.ts); its own switch is
-// read inside the executor, which writes nothing while it is off. money_code issues one code
-// (src/lib/money-codes/execute.ts), with a precheck that refuses before the approval when the
-// code could not be issued now; it is read through moneyCodes.enabled the same way, and the
-// executor asks the whole issue gate again itself.
+// read inside the executor, which writes nothing while it is off. card_match puts a card on a
+// driver's file and records its purchase (src/lib/proposals/executors/card-match.ts), read through
+// cardRecon.enabled like pay_correction, with a precheck that refuses a card no longer unknown.
+// money_code issues one code (src/lib/money-codes/execute.ts), with a precheck that refuses before
+// the approval when the code could not be issued now; it is read through moneyCodes.enabled the
+// same way, and the executor asks the whole issue gate again itself.
 export const EXECUTORS: ExecutorRegistry = {
   advance_payout: Object.assign(
     (...args: Parameters<Executor>) => executeAdvanceProposal(...args),
@@ -156,6 +159,9 @@ export const EXECUTORS: ExecutorRegistry = {
     return flags.detentionEnabled ? executeDetentionCharge : undefined;
   },
   settlement_approve: executeSettlementApprove,
+  get card_match() {
+    return flags.cardRecon.enabled ? cardMatchExecutor : undefined;
+  },
   // Cash Friday (src/lib/proposals/executors/cash-friday.ts): a delayed bill moves one bill's
   // date; factoring and a chase are test mode and record the decision only. All three are read
   // through cashFridayEnabled on every approval, like detention_charge.

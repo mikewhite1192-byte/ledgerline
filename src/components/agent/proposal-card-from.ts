@@ -171,6 +171,21 @@ export function advanceLoadDetail(load: ProposalView["load"]): string | undefine
   return `Load ${load.number}: ${formatCents(load.leftAfterCents)} of ${formatCents(load.capCents)} cap left after this.`;
 }
 
+// A card match's line: the card by its last four digits and its pool name, the day and state of
+// the purchase, the driver it would go to, and the other drivers who worked near that day.
+export function cardMatchDetail(m: ProposalView["cardMatch"]): string | undefined {
+  if (!m) return undefined;
+  let day: string;
+  try {
+    day = formatLocalDate(m.postedOn);
+  } catch {
+    return undefined;
+  }
+  const where = m.state ? ` in ${m.state}` : "";
+  const others = m.others.length > 0 ? ` Others who worked then: ${m.others.join(", ")}.` : " No other driver worked then.";
+  return `Card ending ${m.last4} (${m.portalName}), ${day}${where}. To driver ${m.driverCode}.${others}`;
+}
+
 // Hours and minutes, as the card says a stop's time: 420 is "7 h 00 min".
 export function hoursMinutes(minutes: number): string {
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
@@ -354,19 +369,24 @@ export function proposalCardFrom(
     status: p.status,
     destination: destinationFor(p),
     ...(p.kind === "advance_payout" && p.load ? { detail: advanceLoadDetail(p.load) } : {}),
+    ...(p.kind === "card_match" && p.cardMatch ? { detail: cardMatchDetail(p.cardMatch) } : {}),
     confirmQuestion,
     confirmNoun: copy.noun,
     ...(confirmNext ? { confirmNext } : {}),
     ...(references ? { references } : {}),
     flagNote: p.flagged ? flagNoteFor(p.flagCategories) : undefined,
     ...(audit ? { audit: auditFor(p, audit) } : {}),
-    // An advance, a pay correction and a money code have executors that resume an approval left
-    // approved by a stop before its run finished (the correction's pay item is keyed by the
-    // proposal, and a money code is one row per proposal, so a resume never writes a second). An
-    // executing one is already running (an advance's page and a code's page check it; a
-    // correction never stays executing, since its run is one transaction).
-    ...((p.kind === "advance_payout" || p.kind === "pay_correction" || p.kind === "money_code") &&
-    p.status === "approved"
+    // An advance, a pay correction, a money code and a card match have executors that resume an
+    // approval left approved by a stop before its run finished (the correction's pay item is keyed
+    // by the proposal, a money code is one row per proposal, and the match's card and purchase by
+    // its statement row, so a resume never writes a second). An executing one is already running
+    // (an advance's page and a code's page check it; a correction or a match never stays
+    // executing, since its run is one transaction).
+    ...((p.kind === "advance_payout" ||
+      p.kind === "pay_correction" ||
+      p.kind === "money_code" ||
+      p.kind === "card_match") &&
+      p.status === "approved"
       ? { canResume: true }
       : {}),
   };

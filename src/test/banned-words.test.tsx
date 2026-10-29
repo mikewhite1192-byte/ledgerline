@@ -55,6 +55,7 @@ import {
   TONE_WORDS,
   UNCONFIRMED_DECISION_WORDS,
 } from "@/lib/collections/words";
+import type { BreakView } from "@/lib/data/card-recon";
 import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
 import { TERMS } from "@/lib/format/terms";
@@ -73,6 +74,8 @@ import { RULE_KEYS, RULES, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import * as payWords from "@/lib/pay-rules/words";
 import { INVOICE_REVIEW_STATUSES } from "@/lib/rules-engine";
 import { FUEL_CHECK_NAMES, NO_SUGGESTION_REASONS } from "@/lib/rules-engine/fuel";
+import type { HandPick } from "@/lib/recon/view";
+import { HAND_PICK_WORDS } from "@/lib/recon/words";
 import { REPORT_COLUMNS, REPORT_NAMES, REPORT_TITLES, type ReportName, type ReportResult, type ReportRow } from "@/lib/reports/types";
 import { DEMO_ANCHOR } from "@/lib/seed/anchor";
 import { DEMO_CARRIERS } from "@/lib/seed/carriers";
@@ -284,6 +287,16 @@ vi.mock("@/lib/driver-notes/view", async (importOriginal) => ({
   readPeriodNotes: async () => get("periodNotes"),
   readDriverView: async () => get("driverView"),
 }));
+vi.mock("@/lib/recon/view", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/lib/recon/view")>();
+  return {
+    ...real,
+    readCardHome: async () => get("cardHome"),
+    readCardBreak: async () => get("cardBreak"),
+    // Only a difference that waits on a hand pick lists drivers, as the real read decides.
+    readHandPick: async (_q: Queryable, b: BreakView) => (real.needsHandPick(b) ? get("cardHandPick") : null),
+  };
+});
 vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/agent/gateway/store")>()),
   readEngineProposalViews: async () => get("invoiceProposals"),
@@ -458,6 +471,9 @@ function defaults(): Record<string, unknown> {
     moneyCodes: fx.MONEY_CODES,
     moneyCode: fx.MONEY_CODE_DETAIL,
     codeChoices: fx.CODE_CHOICES,
+    cardHome: fx.CARD_HOME,
+    cardBreak: fx.CARD_BREAKS[0],
+    cardHandPick: fx.CARD_HAND_PICK,
     payRulesPage: fx.PAY_RULES_PAGE,
     nextStart: fx.NEXT_START,
     ruleChanges: fx.RULE_CHANGES,
@@ -703,8 +719,65 @@ const SETTLEMENT_CASES: [string, SettlementRecordView][] = [
   ],
 ];
 
+// The card check's switch sits inside its own settings block, so its pages turn it on themselves.
+const cardReconSaved = flags.cardRecon.enabled;
+afterAll(() => {
+  flags.cardRecon.enabled = cardReconSaved;
+});
+const cardsOn = (fixtures: Record<string, unknown>) => () => {
+  flags.cardRecon.enabled = true;
+  Object.assign(state.fx, fixtures);
+};
+const NO_RUN_HOME = { run: null, breaks: [], open: { needsYou: 0, notConfirmed: 0 } };
+const CARD_PAGE_CASES: [string, Record<string, unknown>][] = [
+  ["differences", { cardHome: fx.CARD_HOME }],
+  ["first visit", { cardHome: NO_RUN_HOME }],
+  ["running", { cardHome: { ...NO_RUN_HOME, run: { ...fx.CARD_RUN, status: "running", phase: "records", finishedAt: null, unchecked: [] } } }],
+  ["stopped", { cardHome: { ...NO_RUN_HOME, run: { ...fx.CARD_RUN, status: "failed", failCategory: "unknown" } } }],
+  ["all clear", { cardHome: { ...NO_RUN_HOME, run: { ...fx.CARD_RUN, counts: { ...fx.CARD_RUN.counts, needsYou: 0, notConfirmed: 0 }, unchecked: [] } } }],
+];
+const CARD_BREAK_CASES: [string, Record<string, unknown>][] = [
+  ...fx.CARD_BREAKS.map((b, i): [string, Record<string, unknown>] => [
+    `${b.category} ${i + 1}`,
+    { cardBreak: b, invoiceProposals: b.fixKind === "card_match" && b.proposalId ? [fx.CARD_MATCH_PROPOSAL] : [] },
+  ]),
+  ["fixed", { cardBreak: { ...fx.CARD_BREAKS[2], status: "resolved" }, invoiceProposals: [] }],
+  ["dismissed", { cardBreak: { ...fx.CARD_BREAKS[3], status: "dismissed", dismissCategory: "wrong_system" }, invoiceProposals: [] }],
+];
+// An unknown card with no match card, once per reason a person picks the driver.
+const HAND_PICK_CASES: [string, HandPick][] = [
+  ["by hand: tied", fx.CARD_HAND_PICK],
+  ["by hand: no driver fits", { why: "none_fit", candidates: [] }],
+  ["by hand: budget spent", { why: "budget", candidates: fx.CARD_HAND_PICK.candidates.slice(0, 1) }],
+  ["by hand: no pick", { why: "not_picked", candidates: fx.CARD_HAND_PICK.candidates.slice(1) }],
+];
+
 // Every page that renders, keyed by its file under src/app, with each state worth reading.
 const PAGES: PageCase[] = [
+  {
+    file: "cards/page.tsx",
+    variants: CARD_PAGE_CASES.map(([name, fixtures]) => ({
+      name,
+      setup: cardsOn(fixtures),
+      load: async () => (await import("@/app/cards/page")).default(),
+    })),
+  },
+  {
+    file: "cards/[breakId]/page.tsx",
+    variants: CARD_BREAK_CASES.map(([name, fixtures]) => ({
+      name,
+      setup: cardsOn(fixtures),
+      load: async () => (await import("@/app/cards/[breakId]/page")).default({ params: p({ breakId: ID }) }),
+      shows: "Our records",
+    })).concat(
+      HAND_PICK_CASES.map(([name, pick]) => ({
+        name,
+        setup: cardsOn({ cardBreak: { ...fx.CARD_BREAKS[1], fixKind: "by_hand" }, invoiceProposals: [], cardHandPick: pick }),
+        load: async () => (await import("@/app/cards/[breakId]/page")).default({ params: p({ breakId: ID }) }),
+        shows: HAND_PICK_WORDS[pick.why],
+      })),
+    ),
+  },
   {
     file: "page.tsx",
     variants: [

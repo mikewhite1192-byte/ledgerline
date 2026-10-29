@@ -8,6 +8,7 @@ import type { CallRow, Spend } from "@/lib/ai/spend";
 import type { DaySpend, SpendAlert } from "@/lib/ai/watch";
 import type { CashCheckView, CashHome, CashView, VendorBillView } from "@/lib/cash/view";
 import type { ClipView } from "@/lib/clips/types";
+import type { BreakView, RunView as CardRunView } from "@/lib/data/card-recon";
 import type { CollectionsView, LateInvoice, ReminderCard } from "@/lib/collections/view";
 import type { DocumentView } from "@/lib/documents/types";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
@@ -33,6 +34,7 @@ import { noteLabel, type NoteRow, type NoteSubject } from "@/lib/memory/notes";
 import type { PayRulesPage } from "@/lib/pay-rules/read";
 import { RULES as RULE_SPECS, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
+import type { CardHome, HandPick } from "@/lib/recon/view";
 import type { RunSummary, RunView } from "@/lib/portal/views";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "@/lib/rules-engine";
 import type { DriverDayView, PayItemView, ScheduleView } from "@/lib/records/views";
@@ -1908,6 +1910,205 @@ export const FUEL_PAGE: FuelPage = {
   lastRun: FUEL_RUN,
   needYou: FUEL_ROWS.filter((r) => r.status === "open").length,
   rows: FUEL_ROWS,
+};
+
+// ---- The card check: one check, every kind of difference, and a match card ----
+
+const CARD_TXN_ID = id(300);
+
+export const CARD_RUN: CardRunView = {
+  id: id(301),
+  status: "done",
+  phase: "done",
+  failCategory: null,
+  windowFrom: "2026-10-16",
+  windowTo: "2026-10-29",
+  counts: { statement: 168, records: 42, recordsClean: 31, needsYou: 10, notConfirmed: 1 },
+  unchecked: [
+    { system: "stripe_test", category: "not_connected" },
+    { system: "accounting", category: "timeout" },
+    { system: "payment_records", category: "too_many_records" },
+    { system: "fuel_card_sim", category: "read_failed" },
+  ],
+  modelCents: 2,
+  startedAt: "2026-10-29T15:00:00.000Z",
+  finishedAt: "2026-10-29T15:00:20.000Z",
+};
+
+const fuelTxn = (n: number, over: Partial<NonNullable<BreakView["transaction"]>> = {}): NonNullable<BreakView["transaction"]> => ({
+  id: id(310 + n),
+  kind: "fuel",
+  last4: "4417",
+  portalName: "TEST FUEL STOP 12",
+  postedOn: "2026-10-27",
+  state: "OK",
+  gallonsMilli: 112_400,
+  amountCents: 21_250,
+  ...over,
+});
+
+const cardBreak = (n: number, over: Partial<BreakView>): BreakView => ({
+  id: id(330 + n),
+  category: "fuel_amount_differs",
+  severity: "medium",
+  outsideSystem: "fuel_card_sim",
+  fixKind: "by_hand",
+  status: "open",
+  dismissCategory: null,
+  ourCents: null,
+  outsideCents: null,
+  explanation: null,
+  proposalId: null,
+  transaction: null,
+  record: null,
+  purchaseId: null,
+  driver: null,
+  firstSeenAt: "2026-10-29T15:00:10.000Z",
+  updatedAt: "2026-10-29T15:00:10.000Z",
+  ...over,
+});
+
+const moneyRecord = (n: number, kind: string, subjectTable: string, subjectId: string, state = "confirmed") => ({
+  id: id(350 + n),
+  kind,
+  subjectTable,
+  subjectId,
+  state,
+});
+
+export const CARD_BREAKS: BreakView[] = [
+  cardBreak(1, {
+    category: "card_unknown",
+    severity: "high",
+    fixKind: "card_match",
+    proposalId: id(360),
+    outsideCents: 18_040,
+    transaction: { ...fuelTxn(1, { last4: "7781", amountCents: 18_040 }), id: CARD_TXN_ID },
+  }),
+  cardBreak(2, {
+    category: "card_unknown",
+    severity: "high",
+    fixKind: "card_match",
+    outsideCents: 9_900,
+    transaction: fuelTxn(2, { last4: "7790", portalName: "POOL CARD 4", state: "TX", amountCents: 9_900 }),
+  }),
+  cardBreak(3, {
+    category: "fuel_amount_differs",
+    ourCents: 21_240,
+    outsideCents: 21_250,
+    explanation: "The card provider shows $212.50 for fuel on Oct 27, 2026; the fuel purchase on file is $212.40.",
+    transaction: fuelTxn(3),
+    purchaseId: id(370),
+    driver: { id: DRIVER_ID, code: "BR-D07" },
+  }),
+  cardBreak(4, {
+    category: "purchase_not_recorded",
+    outsideCents: 15_675,
+    transaction: fuelTxn(4, { amountCents: 15_675, gallonsMilli: null, state: null }),
+    driver: { id: DRIVER_ID, code: "BR-D07" },
+  }),
+  cardBreak(5, {
+    category: "load_not_in_ledger",
+    severity: "high",
+    outsideCents: 10_000,
+    transaction: fuelTxn(5, { kind: "load", amountCents: 10_000, gallonsMilli: null }),
+    driver: { id: DRIVER_ID, code: "BR-D07" },
+  }),
+  cardBreak(6, {
+    category: "load_amount_differs",
+    severity: "high",
+    ourCents: 10_000,
+    outsideCents: 15_000,
+    transaction: fuelTxn(6, { kind: "load", amountCents: 15_000, gallonsMilli: null }),
+    record: moneyRecord(1, "advance_payout", "advances", id(380)),
+    driver: { id: DRIVER_ID, code: "BR-D07" },
+  }),
+  cardBreak(7, {
+    category: "missing_outside",
+    severity: "high",
+    outsideSystem: "stripe_test",
+    fixKind: "retry",
+    ourCents: 96_975,
+    record: moneyRecord(2, "settlement_payout", "settlements", id(381)),
+  }),
+  cardBreak(8, {
+    category: "reversed_outside",
+    severity: "high",
+    fixKind: "by_hand",
+    ourCents: 25_000,
+    outsideCents: 25_000,
+    record: moneyRecord(3, "advance_payout", "advances", id(382)),
+  }),
+  cardBreak(9, {
+    category: "amount_differs_outside",
+    severity: "high",
+    outsideSystem: "qbo_sandbox",
+    ourCents: 182_500,
+    outsideCents: 180_000,
+    record: moneyRecord(4, "invoice", "invoices", INVOICE_ID),
+  }),
+  cardBreak(10, {
+    category: "pending_outside",
+    severity: "low",
+    outsideSystem: "qbo_sandbox",
+    fixKind: "check_pending",
+    ourCents: 50_000,
+    record: moneyRecord(5, "customer_payment", "customer_payments", PAYMENT_ID),
+  }),
+  cardBreak(11, {
+    category: "not_confirmed",
+    severity: "medium",
+    outsideSystem: null,
+    fixKind: "check_pending",
+    ourCents: 10_000,
+    record: moneyRecord(6, "settlement_bill", "settlements", id(383), "unknown"),
+  }),
+];
+
+export const CARD_HOME: CardHome = { run: CARD_RUN, breaks: CARD_BREAKS, open: { needsYou: 10, notConfirmed: 1 } };
+
+// The match card the first difference waits on.
+export const CARD_MATCH_PROPOSAL: ProposalView = proposal({
+  id: id(360),
+  kind: "card_match",
+  subjectTable: "card_transactions",
+  subjectId: CARD_TXN_ID,
+  subjectLabel: "card ending 7781",
+  amountCents: 18_040,
+  direction: "none",
+  title: "Match a card to a driver",
+  reasons: [
+    { category: "on_load_in_state", text: "The driver was on a load in that state that day or the day next to it.", source: { table: "loads", id: LOAD_ID } },
+    { category: "holds_pool_card", text: "The driver already holds another card with the same pool name.", source: null },
+  ],
+  sources: [
+    { table: "card_transactions", id: CARD_TXN_ID },
+    { table: "drivers", id: DRIVER_ID },
+    { table: "loads", id: LOAD_ID },
+  ],
+  operatorVerdict: "match_picked",
+  destination: null,
+  cardMatch: { last4: "7781", portalName: "TEST FUEL STOP 12", postedOn: "2026-10-27", state: "OK", driverCode: "BR-D07", others: ["BR-D12"] },
+});
+
+// The list a card on no driver's file shows when no match card was made: two drivers tied at the
+// top on a load through the card's state, and a third who only worked that day.
+export const CARD_HAND_PICK: HandPick = {
+  why: "tied",
+  candidates: [
+    {
+      driverId: DRIVER_ID,
+      code: "BR-D07",
+      score: 3,
+      reasons: ["on_load_in_state"],
+      evidence: [
+        { day: "2026-10-26", loadId: LOAD_ID },
+        { day: "2026-10-27", loadId: LOAD_ID },
+      ],
+    },
+    { driverId: id(391), code: "BR-D12", score: 3, reasons: ["on_load_in_state"], evidence: [{ day: "2026-10-27", loadId: id(392) }] },
+    { driverId: id(393), code: "BR-D15", score: 2, reasons: ["worked_that_day"], evidence: [{ day: "2026-10-28", loadId: null }] },
+  ],
 };
 
 // The Pay rules page: the seed's versions, a later one saved from a chat, and one replaced before
