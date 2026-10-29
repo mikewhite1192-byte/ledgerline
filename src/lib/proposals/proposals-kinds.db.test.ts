@@ -7,7 +7,7 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 
-// The proposals table on a fresh database after 0015: every kind the code knows is a kind the
+// The proposals table on a fresh database after 0029: every kind the code knows is a kind the
 // table takes, an engine proposal carries none of a chat turn's links, and an agent proposal keeps
 // all of them and its trace. Each row is written by the app's role inside this file's own tenant,
 // which is removed after (its rows go with it).
@@ -89,8 +89,9 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // 0013, 0015, 0022, 0030 and 0032 each re-create the check, so whichever ran last decides it.
-    // Every one of them lists these kinds, kinds without code included.
+    // 0013, 0015, 0022, 0029, 0030 and 0032 each re-create the check, so whichever ran last decides
+    // it. 0029, 0030 and 0032 run after the others in number order and in production's merge order,
+    // and each lists the full union of twelve in the same order, kinds without code included.
     const union = [
       "advance_payout",
       "pay_correction",
@@ -100,10 +101,11 @@ describe("proposal kinds and origins on a fresh database", () => {
       "payment_reapply",
       "settlement_approve",
       "detention_charge",
+      "factoring_request",
+      "bill_defer",
+      "collections_chase",
+      "pay_rule_change",
     ];
-    // 0013 and 0015 list these three more, and 0030 and 0032 these four; 0022 lists none of them,
-    // so the check keeps them only when a migration that lists them ran after 0022.
-    const widest = [...union, "factoring_request", "bill_defer", "collections_chase", "pay_rule_change"];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);
     }
@@ -114,9 +116,19 @@ describe("proposal kinds and origins on a fresh database", () => {
       ),
     );
     const listed = [...def.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
-    expect(listed).toEqual(expect.arrayContaining(union));
-    expect(widest).toEqual(expect.arrayContaining(listed));
-    expect(new Set(listed).size).toBe(listed.length);
+    expect(listed).toEqual(union);
+  });
+
+  it("lists vendor bills as a subject table after 0029, after the seventeen of 0009", async () => {
+    const [def] = await admin.withoutTenant((q) =>
+      q.query<{ def: string }>(
+        `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
+          WHERE conrelid = CAST('public.proposals' AS regclass) AND conname = 'proposals_subject_table_check'`,
+      ),
+    );
+    const listed = [...def.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
+    expect(listed).toHaveLength(18);
+    expect(listed[listed.length - 1]).toBe("vendor_bills");
   });
 
   it("keeps the dedupe key the engine computes inside the table's pattern", () => {

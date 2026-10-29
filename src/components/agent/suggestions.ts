@@ -8,8 +8,9 @@ import type { LocalDate } from "@/lib/time/local-date";
 // margin per load; "past 60 days" and "Friday's pay run" are then answered by the aging and cash
 // needed reports. With the profit brief on, that last place asks how last week went instead
 // (get_profit_brief answers it); with collections on and the profit brief off, it asks who needs a
-// payment reminder. The labels are sent to the agent as written, so a change to one is a change to
-// the question, not only to the screen.
+// payment reminder. With Cash Friday on, the pay run's cost gives its place to whether there is cash
+// to make it (get_cash_friday). The labels are sent to the agent as written, so a change to one is a
+// change to the question, not only to the screen.
 const BASE: readonly Suggestion[] = [
   {
     id: "paystub-problems",
@@ -41,6 +42,12 @@ const PROFIT: Suggestion = {
   reason: "Last closed week's margin by route and customer, every number checked.",
 };
 
+const CASH: Suggestion = {
+  id: "make-pay-run",
+  label: "Can we make Friday's pay run?",
+  reason: "Weighs cash on hand and payments due by Friday against the pay run and bills.",
+};
+
 // With collections on, the fourth question asks who needs a payment reminder (get_collections
 // answers it), in place of the advance limit or margin per load. The profit brief keeps that place
 // when both are on.
@@ -52,10 +59,11 @@ const REMINDER: Suggestion = {
 
 // Switches past the reports one come by name, so two switches can never be passed in each
 // other's place.
-export type SuggestionSwitches = { profitOn?: boolean; collections?: boolean };
+export type SuggestionSwitches = { profitOn?: boolean; collections?: boolean; cashFridayOn?: boolean };
 
 export function homeSuggestions(reportsOn: boolean, on: SuggestionSwitches = {}): Suggestion[] {
   return BASE.map((s) => {
+    if (s.id === "pay-run-cost") return on.cashFridayOn ? { ...CASH } : { ...s };
     if (s.id !== "advance-limit") return { ...s };
     if (on.profitOn) return { ...PROFIT };
     if (on.collections) return { ...REMINDER };

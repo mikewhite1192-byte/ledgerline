@@ -12,6 +12,7 @@ import { StatCard } from "@/components/app/stat-card";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Wordmark } from "@/components/brand/wordmark";
+import { FridayPay } from "@/components/cash/friday-pay";
 import { NewHereLine } from "@/components/help/how-pay-works";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +23,7 @@ import {
   wonderCapNanocents,
 } from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
+import { readCashHome, type CashHome } from "@/lib/cash/view";
 import { DbError } from "@/lib/db";
 import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
 import type { TurnView } from "@/lib/agent/view";
@@ -173,6 +175,18 @@ export default async function Home({
     }
   }
 
+  // Friday's pay run, when Cash Friday is on: the latest check's verdict, that it is out of date
+  // (its pay day has passed), or that there is none.
+  // A failed read leaves the card out (undefined), never "not checked".
+  let cashHome: CashHome | null | undefined;
+  if (carrier && flags.cashFridayEnabled) {
+    try {
+      cashHome = await readCashHome(carrier.session);
+    } catch (err) {
+      console.error("cash home read failed:", err instanceof Error ? err.name : "unknown");
+    }
+  }
+
   if (!carrier) {
     return (
       <main className="flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
@@ -234,6 +248,9 @@ export default async function Home({
           composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
         />
       )}
+      {cashHome !== undefined ? (
+        <FridayPay home={cashHome} today={carrierToday(carrier.timezone, new Date())} />
+      ) : null}
       {lastSweep ? <LastSweep run={lastSweep} /> : null}
       {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
     </AppShell>
@@ -244,6 +261,7 @@ export default async function Home({
 const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, {
   profitOn: flags.profitBriefEnabled,
   collections: flags.collectionsEnabled,
+  cashFridayOn: flags.cashFridayEnabled,
 });
 
 // "Last sweep: 7 problems, 5 fixes drafted, 2 approved", one click from the run.

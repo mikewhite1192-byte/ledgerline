@@ -11,6 +11,38 @@ describe("homeSuggestions", () => {
     expect(on[3].label).toBe("What was our margin per load this month?");
   });
 
+  it("asks whether Friday's pay run can be made while Cash Friday is on", () => {
+    expect(homeSuggestions(false, { cashFridayOn: true }).map((s) => s.id)).toEqual([
+      "paystub-problems",
+      "past-60",
+      "make-pay-run",
+      "advance-limit",
+    ]);
+    expect(homeSuggestions(true, { cashFridayOn: true })[2].label).toBe("Can we make Friday's pay run?");
+    expect(homeSuggestions(true, { cashFridayOn: false })[2].label).toBe("What will Friday's pay run cost?");
+    // With the profit brief on too, each switch takes its own place.
+    expect(homeSuggestions(false, { profitOn: true, cashFridayOn: true }).map((s) => s.id)).toEqual([
+      "paystub-problems",
+      "past-60",
+      "make-pay-run",
+      "profit-brief",
+    ]);
+    // With collections on too, Cash Friday keeps the third place and the profit brief keeps the fourth.
+    const all = homeSuggestions(true, { profitOn: true, collections: true, cashFridayOn: true });
+    expect(all.map((s) => s.id)).toEqual([
+      "paystub-problems",
+      "past-60",
+      "make-pay-run",
+      "profit-brief",
+    ]);
+    expect(homeSuggestions(true, { collections: true, cashFridayOn: true }).map((s) => s.id)).toEqual([
+      "paystub-problems",
+      "past-60",
+      "make-pay-run",
+      "payment-reminder",
+    ]);
+  });
+
   it("asks who needs a payment reminder in the fourth place only while collections is on", () => {
     for (const reportsOn of [false, true]) {
       const on = homeSuggestions(reportsOn, { collections: true });
@@ -48,6 +80,7 @@ describe("every suggestion says why", () => {
       ...homeSuggestions(false),
       ...homeSuggestions(true),
       ...homeSuggestions(false, { profitOn: true }),
+      ...homeSuggestions(false, { cashFridayOn: true }),
       ...homeSuggestions(false, { collections: true }),
       DETENTION_SUGGESTION,
       ruleChangeSuggestion("2026-11-02"),

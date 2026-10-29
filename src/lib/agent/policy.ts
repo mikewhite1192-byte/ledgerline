@@ -82,6 +82,14 @@ export const REPORT_PROMPT = [
   "  (the total or the largest rows) in one or two lines and say the full table is below.",
 ].join("\n");
 
+// Added to the prompt only while get_cash_friday is offered (flags.cashFridayEnabled), so a turn
+// with the switch off sends exactly today's prompt.
+export const CASH_PROMPT = [
+  "- \"Can we make Friday's pay run?\": call get_cash_friday. Say covered or short and by how much,",
+  "  then the moves it found; a person presses Check Friday's cash and approves each card on the",
+  "  Cash page.",
+].join("\n");
+
 // Added to the prompt only while get_collections is offered (flags.collectionsEnabled), so a turn
 // with collections off sends exactly today's prompt.
 export const COLLECTIONS_RULE = [
@@ -99,13 +107,14 @@ export const MEMORY_PROMPT = [
 ].join("\n");
 
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
-// is on (it is one of the rules), the collections rule while get_collections is offered, then the
-// report section while the report tools are offered, then the memory section while remember_note
-// is. With search and collections off it is the prompt above, plus those sections when their
-// tools are offered.
+// is on (it is one of the rules), the collections rule while get_collections is offered, the Cash
+// Friday line while get_cash_friday is offered, then the report section while the report tools are
+// offered, then the memory section while remember_note is. With search, collections and Cash Friday
+// off it is the prompt above, plus those sections when their tools are offered.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
   const searched = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
-  const prompt = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
+  const collections = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
+  const prompt = toolNames.includes("get_cash_friday") ? `${collections}\n${CASH_PROMPT}` : collections;
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
   const withReports = reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
   return toolNames.includes("remember_note") ? `${withReports}\n${MEMORY_PROMPT}` : withReports;

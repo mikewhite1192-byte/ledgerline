@@ -34,15 +34,29 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   not_found: "That card is not here.",
 };
 
-const notice = (category: string | null) =>
-  category && Object.hasOwn(APPROVE_NOTICE, category) ? APPROVE_NOTICE[category] : outcomeLabel(category);
+// A page may say some outcomes in its own words (the Cash page's cards name its button); the rest
+// are the shared sentences.
+function noticeFor(category: string | null, own?: Readonly<Record<string, string>>): string {
+  if (category && own && Object.hasOwn(own, category)) return own[category];
+  return category && Object.hasOwn(APPROVE_NOTICE, category) ? APPROVE_NOTICE[category] : outcomeLabel(category);
+}
 
 // The engine's invoice cards, through the same gate as an agent's card. With the auditor on, each
 // waiting card nobody has checked is sent to it once per mount. Approve runs the approve route (the
 // gate, then the invoice_post executor) and sends the second confirm whenever the card asked its
 // question: a flag, or any verdict but a pass. An override over a block carries the verdict instant
 // the card showed. Reject records the decision. Either way the page reads itself back.
-export function InvoiceCards({ cards, auditorOn = false }: { cards: InvoiceCard[]; auditorOn?: boolean }) {
+export function InvoiceCards({
+  cards,
+  auditorOn = false,
+  label = "Invoices to approve",
+  notices,
+}: {
+  cards: InvoiceCard[];
+  auditorOn?: boolean;
+  label?: string;
+  notices?: Readonly<Record<string, string>>;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
@@ -50,6 +64,7 @@ export function InvoiceCards({ cards, auditorOn = false }: { cards: InvoiceCard[
   const audited = useRef(new Set<string>());
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const alive = useRef(true);
+  const notice = (category: string | null) => noticeFor(category, notices);
 
   useEffect(() => {
     alive.current = true;
@@ -135,7 +150,7 @@ export function InvoiceCards({ cards, auditorOn = false }: { cards: InvoiceCard[
   }
 
   return (
-    <ul className="grid gap-4" aria-label="Invoices to approve">
+    <ul className="grid gap-4" aria-label={label}>
       {cards.map((c) => {
         const id = c.card.id;
         // The page drew an unchecked card as not checked; while this mount waits on the auditor

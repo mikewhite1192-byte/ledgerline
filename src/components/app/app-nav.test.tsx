@@ -18,6 +18,7 @@ const SWITCHES = [
   "invoicesEnabled",
   "customerPaymentsEnabled",
   "collectionsEnabled",
+  "cashFridayEnabled",
   "documentsEnabled",
   "voiceIntakeEnabled",
   "clipsEnabled",
@@ -55,6 +56,7 @@ describe("appNav", () => {
       ["Money in", "/invoices", "Invoices", true],
       ["Money in", "/customer-payments/new", "Payments", false],
       ["Money in", "/collections", "Collections", false],
+      ["Money in", "/cash", "Cash", false],
       ["Drivers", "/documents", "Documents", false],
       ["Drivers", "/voice-notes", "Voice notes", false],
       ["Drivers", "/clips", "Dock clips", false],
@@ -84,6 +86,7 @@ describe("appNav", () => {
       invoicesEnabled: "/invoices",
       customerPaymentsEnabled: "/customer-payments/new",
       collectionsEnabled: "/collections",
+      cashFridayEnabled: "/cash",
       documentsEnabled: "/documents",
       voiceIntakeEnabled: "/voice-notes",
       clipsEnabled: "/clips",
@@ -160,6 +163,7 @@ describe("NavList", () => {
     flags.invoicesEnabled = false;
     flags.customerPaymentsEnabled = false;
     flags.collectionsEnabled = false;
+    flags.cashFridayEnabled = false;
     render(<NavList items={appNav("/")} />);
     expect(screen.queryByText("Money in")).toBeNull();
     expect(screen.queryByRole("list", { name: "Money in" })).toBeNull();
