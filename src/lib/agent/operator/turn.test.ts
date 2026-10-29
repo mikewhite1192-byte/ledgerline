@@ -852,6 +852,19 @@ describe("runTurn with tool search and the prompt cache", () => {
       ? allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT })
       : allowed(c.name, { totalCents: 150_000 });
 
+  // The switches that add prompt lines, set for one test and put back as shipped when it ends.
+  const promptSwitches = (set: { reportsEnabled: boolean; collectionsEnabled: boolean; cashFridayEnabled: boolean }) => {
+    const before = {
+      reportsEnabled: flags.reportsEnabled,
+      collectionsEnabled: flags.collectionsEnabled,
+      cashFridayEnabled: flags.cashFridayEnabled,
+    };
+    onTestFinished(() => {
+      Object.assign(flags, before);
+    });
+    Object.assign(flags, set);
+  };
+
   it("gives the same outcome, gateway calls and proposals with both on as with both off", async () => {
     const off = harness(script(), gateway);
     const on = harness(script(), gateway);
@@ -878,10 +891,7 @@ describe("runTurn with tool search and the prompt cache", () => {
   });
 
   it("sends today's request with both off and the report tools on: their full schemas and the report lines", async () => {
-    flags.reportsEnabled = true;
-    onTestFinished(() => {
-      flags.reportsEnabled = false;
-    });
+    promptSwitches({ reportsEnabled: true, collectionsEnabled: false, cashFridayEnabled: false });
     const tools = toolsFor("operator");
     expect(tools.filter((t) => t.name.startsWith("report_"))).toHaveLength(5);
     const h = harness(script(), gateway);
@@ -900,12 +910,9 @@ describe("runTurn with tool search and the prompt cache", () => {
   });
 
   it("adds the collections line only while get_collections is offered", () => {
-    expect(flags.collectionsEnabled).toBe(false);
+    promptSwitches({ reportsEnabled: false, collectionsEnabled: false, cashFridayEnabled: false });
     expect(operatorPrompt(toolsFor("operator").map((t) => t.name), false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
     flags.collectionsEnabled = true;
-    onTestFinished(() => {
-      flags.collectionsEnabled = false;
-    });
     const names = toolsFor("operator").map((t) => t.name);
     expect(names).toContain("get_collections");
     expect(operatorPrompt(names, false)).toBe(`${OPERATOR_PROMPT}\n${COLLECTIONS_RULE}\n${CHECKLIST_RULE}`);

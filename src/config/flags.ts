@@ -415,9 +415,12 @@ export type Flags = {
   // receipt compare is called, and the agent's run_checks leaves fuel findings out.
   fuelAnomalyEnabled: boolean;
   fuelAnomalyLimits: {
-    // Tenant-local date: fill-ups before it are never listed. The release PR that turns
-    // fuelAnomalyEnabled on also sets this to its go-live date; left as it is, the first run lists
-    // every fill-up from this date up to go-live.
+    // Tenant-local date: fill-ups before it are never listed. The release for the demo carriers set
+    // it to the first day of the earlier seeded open week (Prairie Wind's, Sunday 2026-10-25), so
+    // every planted fill-up lists again after a demo reset; fuel checks only list and propose, and
+    // nothing goes outside. Before a carrier with real history uses fuel checks, its release moves
+    // this to that go-live date; left as it is, the first run lists every fill-up from this date up
+    // to go-live.
     from: string;
     // Two fill-ups with the same gallons, amount and state this close together are one fill-up
     // turned in twice.
@@ -435,14 +438,14 @@ export type Flags = {
 };
 
 export const flags: Flags = {
-  aiEnabled: false,
+  aiEnabled: true,
   aiJobHourlyCapCents: 1000,
   aiProofRoute: false,
   triageProvider: "baseten",
   sparkOpenFallback: "off",
-  payoutsEnabled: false,
-  paymentProvider: "mock",
-  accountingEnabled: false,
+  payoutsEnabled: true,
+  paymentProvider: "stripe_test",
+  accountingEnabled: true,
   inboundEmailEnabled: false,
   screenOutputMode: "text",
   gatewayLimits: {
@@ -451,7 +454,7 @@ export const flags: Flags = {
     detentionChargeMaxCents: 100_000,
     ruleChangeImpactMaxCents: 500_000,
   },
-  agentEnabled: false,
+  agentEnabled: true,
   agentStreamMode: "sse",
   runLimits: {
     maxTurns: 30,
@@ -464,31 +467,31 @@ export const flags: Flags = {
     summaryChars: 10_000,
   },
   proposalMaxAgeDays: 7,
-  auditorEnabled: false,
+  auditorEnabled: true,
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
   approverRole: { adminAboveCents: 200_000 },
-  documentsEnabled: false,
+  documentsEnabled: true,
   documentCrop: false,
   documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
-  advancesEnabled: false,
-  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-27" },
+  advancesEnabled: true,
+  advancePayouts: { armed: true, capCents: 50_000, startDate: "2026-10-29" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
-  advanceTakeback: { enabled: false, maxCents: 100_000 },
-  agentToolSearch: false,
-  agentPromptCache: { enabled: false, retention: "in_memory" },
-  driverNotesEnabled: false,
+  advanceTakeback: { enabled: true, maxCents: 100_000 },
+  agentToolSearch: true,
+  agentPromptCache: { enabled: true, retention: "in_memory" },
+  driverNotesEnabled: true,
   driverNotesEmailEnabled: false,
   driverNotesEmailAllowlist: [],
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
-  reportsEnabled: false,
-  invoicesEnabled: false,
+  reportsEnabled: true,
+  invoicesEnabled: true,
   invoicesStart: "2026-10-05",
   invoiceLimits: { proposalsPerRun: 50, maxPostAttempts: 3 },
-  customerPaymentsEnabled: false,
+  customerPaymentsEnabled: true,
   customerPaymentLimits: { perDay: 50, maxCents: 5_000_000 },
-  clipsEnabled: false,
+  clipsEnabled: true,
   clipLimits: {
     bytes: 700_000,
     durationMs: 20_000,
@@ -497,18 +500,18 @@ export const flags: Flags = {
     readMaxCostCents: 10,
     perTenantPerDay: 20,
   },
-  inboxEnabled: false,
+  inboxEnabled: true,
   inboxLimits: { messagesPerDay: 50, maxChars: 20_000, maxAttempts: 3 },
-  voiceIntakeEnabled: false,
+  voiceIntakeEnabled: true,
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
-  detentionEnabled: false,
-  demoResetEnabled: false,
-  rulesByTalkingEnabled: false,
-  sweepEnabled: false,
+  detentionEnabled: true,
+  demoResetEnabled: true,
+  rulesByTalkingEnabled: true,
+  sweepEnabled: true,
   sweepScheduleEnabled: false,
-  payCorrectionsEnabled: false,
+  payCorrectionsEnabled: true,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
-  fanoutEnabled: false,
+  fanoutEnabled: true,
   fanoutLimits: {
     maxDrivers: 30,
     parallel: 6,
@@ -524,7 +527,7 @@ export const flags: Flags = {
     runCapCents: 450,
   },
   approveAllLimits: { maxItems: 25 },
-  cashFridayEnabled: false,
+  cashFridayEnabled: true,
   cashFridayLimits: {
     maxExplainCents: 8,
     maxExplainChars: 600,
@@ -533,7 +536,7 @@ export const flags: Flags = {
     graceDays: 14,
     factoringMaxAgeDays: 45,
   },
-  portalRunnerEnabled: false,
+  portalRunnerEnabled: true,
   portalRunnerModel: "spark",
   portalRunLimits: {
     maxSteps: 15,
@@ -547,24 +550,24 @@ export const flags: Flags = {
     podMaxBytes: 300_000,
     approvalWaitMinutes: 30,
   },
-  settlementsEnabled: false,
+  settlementsEnabled: true,
   settlementsStart: "2026-10-05",
   settlementLimits: { driversPerRun: 200, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
-  batchApproveEnabled: false,
+  batchApproveEnabled: true,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
-  invoiceReviewEnabled: false,
-  collectionsEnabled: false,
+  invoiceReviewEnabled: true,
+  collectionsEnabled: true,
   collectionsEmailEnabled: false,
   collectionsEmailAllowlist: [],
   collectionsEmailFrom: "",
   collectionsLimits: { maxDraftCents: 2, maxRunCents: 40, maxOutputTokens: 500, maxDraftsPerRun: 12, minDaysLate: 30 },
-  profitBriefEnabled: false,
+  profitBriefEnabled: true,
   profitBriefLimits: { maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 },
-  carrierMemoryEnabled: false,
+  carrierMemoryEnabled: true,
   carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
-  fuelAnomalyEnabled: false,
+  fuelAnomalyEnabled: true,
   fuelAnomalyLimits: {
-    from: "2026-10-27",
+    from: "2026-10-25",
     duplicateWindowMinutes: 60,
     chargebackMaxCents: 50_000,
     compareMaxCostCents: 5,

@@ -1,38 +1,175 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { isTestKey } from "../lib/adapters/payment/stripe-test";
+import { assertMoneyEnvSafe, MoneyEnvRefused } from "../lib/money/guard";
 import { isLocalDate } from "../lib/time/local-date";
 import { flags, type Flags } from "./flags";
-import { applyLocalOverrides, LOCAL_OVERRIDABLE } from "./local-overrides";
+import { LOCAL_SWITCHES } from "../../e2e/env.local-mode";
+import { applyLocalOverrides, LOCAL_OFF_ONLY, LOCAL_OVERRIDABLE } from "./local-overrides";
+
+// Keys are put together at run time so no scanner reads a key shape in this file.
+const key = (...parts: string[]) => parts.join("_");
+const env = (vars: Record<string, string>) => vars as unknown as NodeJS.ProcessEnv;
+
+// Every on/off switch in flags.ts, by path, as the release sets it for the demo carriers.
+const RELEASED_ON = [
+  "aiEnabled",
+  "payoutsEnabled",
+  "accountingEnabled",
+  "agentEnabled",
+  "auditorEnabled",
+  "documentsEnabled",
+  "advancesEnabled",
+  "advancePayouts.armed",
+  "advanceTakeback.enabled",
+  "agentToolSearch",
+  "agentPromptCache.enabled",
+  "driverNotesEnabled",
+  "reportsEnabled",
+  "invoicesEnabled",
+  "customerPaymentsEnabled",
+  "clipsEnabled",
+  "inboxEnabled",
+  "voiceIntakeEnabled",
+  "detentionEnabled",
+  "demoResetEnabled",
+  "rulesByTalkingEnabled",
+  "sweepEnabled",
+  "payCorrectionsEnabled",
+  "fanoutEnabled",
+  "cashFridayEnabled",
+  "portalRunnerEnabled",
+  "settlementsEnabled",
+  "batchApproveEnabled",
+  "invoiceReviewEnabled",
+  "collectionsEnabled",
+  "profitBriefEnabled",
+  "carrierMemoryEnabled",
+  "fuelAnomalyEnabled",
+] as const;
+
+// What stays off, each waiting on a missing piece or an outside send the owner has not released.
+const KEPT_OFF = [
+  // On only to prove a deploy.
+  "aiProofRoute",
+  // No SES domain yet.
+  "inboundEmailEnabled",
+  // Not built: on would do nothing new.
+  "documentCrop",
+  // Outside sends: the pages show "would send" lines instead.
+  "driverNotesEmailEnabled",
+  "collectionsEmailEnabled",
+  // The nightly kicker waits on the scheduler stack.
+  "sweepScheduleEnabled",
+] as const;
+
+// The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
+// switch object, so a switch added later is caught by the tests below.
+function booleanSwitches(f: Flags): [string, boolean][] {
+  const out: [string, boolean][] = [];
+  for (const [name, value] of Object.entries(f)) {
+    if (typeof value === "boolean") out.push([name, value]);
+    else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      for (const [inner, v] of Object.entries(value)) if (typeof v === "boolean") out.push([`${name}.${inner}`, v]);
+    }
+  }
+  return out;
+}
 
 describe("flags", () => {
-  it("ships every outside effect dark", () => {
-    expect(flags.aiEnabled).toBe(false);
+  it("releases every finished feature for the demo carriers, and nothing else", () => {
+    const switches = Object.fromEntries(booleanSwitches(flags));
+    for (const name of RELEASED_ON) expect(switches[name], name).toBe(true);
+    for (const name of KEPT_OFF) expect(switches[name], name).toBe(false);
+    // auditorRequired ships on with the auditor: a proposal waits for its verdict.
+    expect(Object.keys(switches).sort()).toEqual([...RELEASED_ON, ...KEPT_OFF, "auditorRequired"].sort());
+    expect(flags.auditorRequired).toBe(true);
+  });
+
+  it("keeps every outside send and the standby host off", () => {
     expect(flags.aiProofRoute).toBe(false);
-    expect(flags.accountingEnabled).toBe(false);
-    expect(flags.payoutsEnabled).toBe(false);
     expect(flags.inboundEmailEnabled).toBe(false);
-    expect(flags.paymentProvider).toBe("mock");
-    // Driver messages are sorted by Muse Spark Open, the open-weights model, unless the owner flips it.
-    expect(flags.triageProvider).toBe("baseten");
-    expect(flags.inboxEnabled).toBe(false);
-    expect(flags.agentEnabled).toBe(false);
-    expect(flags.documentsEnabled).toBe(false);
     expect(flags.documentCrop).toBe(false);
-    expect(flags.reportsEnabled).toBe(false);
-    // Spark Open's standby host is dark until the owner turns it on in its own PR.
+    expect(flags.driverNotesEmailEnabled).toBe(false);
+    expect(flags.collectionsEmailEnabled).toBe(false);
+    expect(flags.sweepScheduleEnabled).toBe(false);
+    // Spark Open's standby host stays dark: Baseten serves screening and sorting alone.
     expect(flags.sparkOpenFallback).toBe("off");
-    expect(flags.clipsEnabled).toBe(false);
-    expect(flags.detentionEnabled).toBe(false);
-    // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
-    expect(flags.demoResetEnabled).toBe(false);
-    expect(flags.rulesByTalkingEnabled).toBe(false);
-    expect(flags.fuelAnomalyEnabled).toBe(false);
+    // Driver messages and voice notes are sorted by Muse Spark Open, the open-weights model.
+    expect(flags.triageProvider).toBe("baseten");
+  });
+
+  it("pays through Stripe test mode only, and the start-up check still refuses a live key", () => {
+    expect(flags.payoutsEnabled).toBe(true);
+    expect(flags.paymentProvider).toBe("stripe_test");
+    for (const live of [key("sk", "live", "0".repeat(24)), key("rk", "live", "0".repeat(24))]) {
+      expect(isTestKey(live)).toBe(false);
+      expect(() => assertMoneyEnvSafe(env({ STRIPE_SECRET_KEY: live }), flags)).toThrow(MoneyEnvRefused);
+    }
+    expect(isTestKey(key("sk", "test", "0".repeat(24)))).toBe(true);
+  });
+
+  it("books to the QuickBooks sandbox only, and the start-up check refuses anything else", () => {
+    expect(flags.accountingEnabled).toBe(true);
+    const refused = (vars: Record<string, string>) => {
+      try {
+        assertMoneyEnvSafe(env(vars), flags);
+      } catch (err) {
+        if (err instanceof MoneyEnvRefused) return err.variable;
+        throw err;
+      }
+      return null;
+    };
+    expect(refused({ QBO_ENVIRONMENT: "production", QBO_ALLOWED_REALM_ID: "1234567890123456" })).toBe("QBO_ENVIRONMENT");
+    expect(refused({ QBO_ALLOWED_REALM_ID: "1234567890123456" })).toBe("QBO_ENVIRONMENT");
+    expect(refused({ QBO_ENVIRONMENT: "sandbox" })).toBe("QBO_ALLOWED_REALM_ID");
+    expect(refused({ QBO_ENVIRONMENT: "sandbox", QBO_ALLOWED_REALM_ID: "1234567890123456" })).toBeNull();
+  });
+
+  it("dates every start so the seeded demo weeks work after a reset and nothing older is sent", () => {
+    // Audits every proposal made from the day before the release's first build on.
+    expect(flags.auditorStart).toBe("2026-10-27T00:00:00Z");
+    expect(Number.isNaN(Date.parse(flags.auditorStart))).toBe(false);
+    // Advance payouts (Stripe test mode) open on the release date, read as the approval's own date.
+    expect(flags.advancePayouts.startDate).toBe("2026-10-29");
+    // The seeded weeks' loads and pay periods start Oct 4 and 5; the open weeks (Oct 25 and 26)
+    // are the ones a person runs and invoices.
+    expect(flags.invoicesStart).toBe("2026-10-05");
+    expect(flags.settlementsStart).toBe("2026-10-05");
+    // The first day of the earlier seeded open week, so every planted fill-up lists.
+    expect(flags.fuelAnomalyLimits.from).toBe("2026-10-25");
+    // Email stays off; the driver note date is the one a later release arms with, and the
+    // collections date is empty, which refuses every email even if its switch were on.
+    expect(flags.driverNotesEmailFrom).toBe("2026-10-27");
+    expect(flags.collectionsEmailFrom).toBe("");
+    for (const d of [
+      flags.advancePayouts.startDate,
+      flags.invoicesStart,
+      flags.settlementsStart,
+      flags.fuelAnomalyLimits.from,
+      flags.driverNotesEmailFrom,
+    ]) {
+      expect(isLocalDate(d), d).toBe(true);
+    }
+    expect(isLocalDate(flags.collectionsEmailFrom)).toBe(false);
+  });
+
+  it("pins every switch that ships on for the demo-path run, on or off as its replay was recorded", () => {
+    const local = [...LOCAL_OVERRIDABLE, ...LOCAL_OFF_ONLY] as readonly string[];
+    // The two lists never share a switch.
+    expect(LOCAL_OVERRIDABLE.filter((k) => (LOCAL_OFF_ONLY as readonly string[]).includes(k))).toEqual([]);
+    for (const [name, on] of booleanSwitches(flags)) {
+      if (on && name !== "auditorRequired") expect(local, name).toContain(name);
+    }
+    // Nothing that stays off can be switched by local mode at all.
+    for (const name of KEPT_OFF) expect(local).not.toContain(name);
   });
 
   it("starts fuel checks on a fixed date and keeps the receipt compare and corrections small", () => {
+    expect(flags.fuelAnomalyEnabled).toBe(true);
     expect(flags.fuelAnomalyLimits).toEqual({
-      from: "2026-10-27",
+      from: "2026-10-25",
       duplicateWindowMinutes: 60,
       chargebackMaxCents: 50_000,
       compareMaxCostCents: 5,
@@ -47,13 +184,15 @@ describe("flags", () => {
     );
   });
 
-  it("tells the release PR beside the fuel start date to move it to go-live with the switch", () => {
+  it("tells the next release beside the fuel start date to move it to go-live for a carrier with real history", () => {
     // The start date is production posture, and the switch alone does not keep older fill-ups off
-    // the first run: the note beside the date is the release PR's instruction.
+    // the first run: the note beside the date says why the demo carriers' date is what it is and
+    // what a carrier with real history needs first.
     const src = readFileSync(join(__dirname, "flags.ts"), "utf8");
     const at = src.indexOf("fuelAnomalyLimits: {");
     const note = src.slice(at, src.indexOf("from: string;", at)).replace(/\s*\/\/\s*/g, " ");
-    expect(note).toContain("The release PR that turns fuelAnomalyEnabled on also sets this to its go-live date");
+    expect(note).toContain("first day of the earlier seeded open week");
+    expect(note).toContain("Before a carrier with real history uses fuel checks, its release moves this to that go-live date");
     expect(note).not.toMatch(/switching on never/);
   });
 
@@ -98,7 +237,8 @@ describe("flags", () => {
     expect(flags.runLimits).toEqual({ maxTurns: 30 });
     expect(flags.runLimits.maxTurns).toBeGreaterThanOrEqual(flags.agentTurnLimits.maxModelCalls);
     expect(flags.proposalMaxAgeDays).toBe(7);
-    expect(flags.auditorEnabled).toBe(false);
+    // The auditor and its requirement go on together, so a proposal can be approved at all.
+    expect(flags.auditorEnabled).toBe(true);
     expect(flags.auditorRequired).toBe(true);
     expect(Number.isNaN(Date.parse(flags.auditorStart))).toBe(false);
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
@@ -116,9 +256,9 @@ describe("flags", () => {
     }
   });
 
-  it("ships the advance flow dark, disarmed, capped and dated", () => {
-    expect(flags.advancesEnabled).toBe(false);
-    expect(flags.advancePayouts).toEqual({ armed: false, capCents: 50_000, startDate: "2026-10-27" });
+  it("releases the advance flow armed, with its cap kept and dated from the release", () => {
+    expect(flags.advancesEnabled).toBe(true);
+    expect(flags.advancePayouts).toEqual({ armed: true, capCents: 50_000, startDate: "2026-10-29" });
     expect(isLocalDate(flags.advancePayouts.startDate)).toBe(true);
     expect(flags.advancesLimits).toEqual({
       proposalsPerDay: 30,
@@ -130,18 +270,19 @@ describe("flags", () => {
     }
   });
 
-  it("ships the advance take-back off, with a whole-cent cap", () => {
-    expect(flags.advanceTakeback).toEqual({ enabled: false, maxCents: 100_000 });
+  it("releases the advance take-back, with its whole-cent cap kept", () => {
+    expect(flags.advanceTakeback).toEqual({ enabled: true, maxCents: 100_000 });
     expect(Number.isSafeInteger(flags.advanceTakeback.maxCents)).toBe(true);
   });
 
-  it("ships tool search and the prompt cache off, with the default retention", () => {
-    expect(flags.agentToolSearch).toBe(false);
-    expect(flags.agentPromptCache).toEqual({ enabled: false, retention: "in_memory" });
+  it("releases tool search and the prompt cache, keeping the default retention", () => {
+    expect(flags.agentToolSearch).toBe(true);
+    // "24h" has its own price; the release keeps the default.
+    expect(flags.agentPromptCache).toEqual({ enabled: true, retention: "in_memory" });
   });
 
-  it("keeps driver notes dark, with no email address allowed and small caps", () => {
-    expect(flags.driverNotesEnabled).toBe(false);
+  it("releases driver notes with their email off, no email address allowed and small caps", () => {
+    expect(flags.driverNotesEnabled).toBe(true);
     expect(flags.driverNotesEmailEnabled).toBe(false);
     expect(flags.driverNotesEmailAllowlist).toEqual([]);
     expect(flags.driverNotesEmailFrom).toBe("2026-10-27");
@@ -153,8 +294,8 @@ describe("flags", () => {
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 
-  it("keeps collections dark, with no email address allowed, no send date and small caps", () => {
-    expect(flags.collectionsEnabled).toBe(false);
+  it("releases collections with their email off, no email address allowed, no send date and small caps", () => {
+    expect(flags.collectionsEnabled).toBe(true);
     expect(flags.collectionsEmailEnabled).toBe(false);
     expect(flags.collectionsEmailAllowlist).toEqual([]);
     // Not a whole date, so every email is refused until a release PR sets one.
@@ -172,15 +313,16 @@ describe("flags", () => {
     }
     expect(flags.collectionsLimits.maxDraftCents).toBeLessThan(flags.collectionsLimits.maxRunCents);
     // A local override can never turn collections on: its tool is not on the recorded demo path.
-    for (const key of ["collectionsEnabled", "collectionsEmailEnabled"]) {
-      expect((LOCAL_OVERRIDABLE as readonly string[]).includes(key)).toBe(false);
+    for (const name of ["collectionsEnabled", "collectionsEmailEnabled"]) {
+      expect((LOCAL_OVERRIDABLE as readonly string[]).includes(name)).toBe(false);
     }
   });
 
-  it("keeps the sweep off, its schedule off, its fixes unable to run and its caps small", () => {
-    expect(flags.sweepEnabled).toBe(false);
+  it("releases the sweep and its fixes, keeps its schedule off and its caps small", () => {
+    expect(flags.sweepEnabled).toBe(true);
+    // The nightly kicker waits on the scheduler stack.
     expect(flags.sweepScheduleEnabled).toBe(false);
-    expect(flags.payCorrectionsEnabled).toBe(false);
+    expect(flags.payCorrectionsEnabled).toBe(true);
     expect(flags.sweepLimits).toEqual({
       maxItems: 40,
       maxRunCents: 150,
@@ -193,8 +335,8 @@ describe("flags", () => {
     expect(flags.approveAllLimits).toEqual({ maxItems: 25 });
   });
 
-  it("ships Cash Friday dark, with its explanation and option counts capped", () => {
-    expect(flags.cashFridayEnabled).toBe(false);
+  it("releases Cash Friday, with its explanation and option counts capped", () => {
+    expect(flags.cashFridayEnabled).toBe(true);
     expect(flags.cashFridayLimits).toEqual({
       maxExplainCents: 8,
       maxExplainChars: 600,
@@ -210,8 +352,8 @@ describe("flags", () => {
     expect(flags.cashFridayLimits.maxExplainChars).toBeLessThanOrEqual(600);
   });
 
-  it("keeps the sweep's second opinion off, with every cap inside the run's own", () => {
-    expect(flags.fanoutEnabled).toBe(false);
+  it("releases the sweep's second opinion, with every cap inside the run's own", () => {
+    expect(flags.fanoutEnabled).toBe(true);
     const l = flags.fanoutLimits;
     expect(l).toEqual({
       maxDrivers: 30,
@@ -234,10 +376,10 @@ describe("flags", () => {
     expect(l.childTimeoutMs).toBeLessThan(flags.sweepLimits.sliceMs);
   });
 
-  it("ships invoicing and customer payments dark, with small caps and a start date", () => {
-    expect(flags.invoicesEnabled).toBe(false);
-    expect(flags.customerPaymentsEnabled).toBe(false);
-    expect(flags.invoiceReviewEnabled).toBe(false);
+  it("releases invoicing, invoice review and customer payments, with small caps and a start date", () => {
+    expect(flags.invoicesEnabled).toBe(true);
+    expect(flags.customerPaymentsEnabled).toBe(true);
+    expect(flags.invoiceReviewEnabled).toBe(true);
     expect(flags.invoicesStart).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(flags.invoicesStart).toBe("2026-10-05");
     expect(flags.invoiceLimits).toEqual({ proposalsPerRun: 50, maxPostAttempts: 3 });
@@ -247,8 +389,8 @@ describe("flags", () => {
     }
   });
 
-  it("ships the portal runner dark, on Muse Spark, with every run capped", () => {
-    expect(flags.portalRunnerEnabled).toBe(false);
+  it("releases the portal runner, on Muse Spark, with every run capped", () => {
+    expect(flags.portalRunnerEnabled).toBe(true);
     expect(flags.portalRunnerModel).toBe("spark");
     expect(flags.portalRunLimits).toEqual({
       maxSteps: 15,
@@ -266,8 +408,8 @@ describe("flags", () => {
     expect(flags.portalRunLimits.maxCallCents).toBeLessThanOrEqual(flags.portalRunLimits.maxRunCents);
   });
 
-  it("ships voice intake dark, with its upload sizes and daily count capped", () => {
-    expect(flags.voiceIntakeEnabled).toBe(false);
+  it("releases voice intake, with its upload sizes and daily count capped", () => {
+    expect(flags.voiceIntakeEnabled).toBe(true);
     expect(flags.voiceLimits).toEqual({
       maxWavBytes: 2_000_000,
       maxOriginalBytes: 700_000,
@@ -284,8 +426,8 @@ describe("flags", () => {
     expect(flags.voiceLimits.maxDurationMs).toBeLessThanOrEqual(Math.floor((flags.voiceLimits.maxWavBytes - 44) / 32));
   });
 
-  it("ships the Inbox dark, with its daily count, message size and sorting tries capped", () => {
-    expect(flags.inboxEnabled).toBe(false);
+  it("releases the Inbox, with its daily count, message size and sorting tries capped", () => {
+    expect(flags.inboxEnabled).toBe(true);
     expect(flags.inboxLimits).toEqual({ messagesPerDay: 50, maxChars: 20_000, maxAttempts: 3 });
     for (const v of Object.values(flags.inboxLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
@@ -299,9 +441,9 @@ describe("flags", () => {
     expect(Number.isSafeInteger(flags.aiJobHourlyCapCents)).toBe(true);
   });
 
-  it("ships the pay run and batch approval dark, with small caps and a start date", () => {
-    expect(flags.settlementsEnabled).toBe(false);
-    expect(flags.batchApproveEnabled).toBe(false);
+  it("releases the pay run and batch approval, with small caps and a start date", () => {
+    expect(flags.settlementsEnabled).toBe(true);
+    expect(flags.batchApproveEnabled).toBe(true);
     expect(flags.settlementsStart).toBe("2026-10-05");
     expect(flags.settlementLimits).toEqual({
       driversPerRun: 200,
@@ -316,8 +458,8 @@ describe("flags", () => {
     expect(flags.batchLimits.maxTotalCents).toBeLessThan(1_000_000_000);
   });
 
-  it("ships the profit brief dark, at most 6 cents a brief, and never switched on by local mode", () => {
-    expect(flags.profitBriefEnabled).toBe(false);
+  it("releases the profit brief, at most 6 cents a brief, and never switched on by local mode", () => {
+    expect(flags.profitBriefEnabled).toBe(true);
     expect(flags.profitBriefLimits).toEqual({ maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 });
     for (const v of Object.values(flags.profitBriefLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
@@ -331,6 +473,14 @@ describe("local overrides for the demo-path test", () => {
   const ALL_ON = JSON.stringify(Object.fromEntries(LOCAL_OVERRIDABLE.map((k) => [k, true])));
   let logged: string[];
   const copy = (): Flags => structuredClone(flags);
+  // The shipped flags with one switch set, by path, as the override sets it.
+  const withSwitch = (f: Flags, name: string, value: boolean): Flags => {
+    const [outer, inner] = name.split(".");
+    if (inner === undefined) return { ...f, [outer]: value };
+    return { ...f, [outer]: { ...(f[outer as keyof Flags] as object), [inner]: value } };
+  };
+  // A copy with every overridable switch off, so turning them on can be seen.
+  const dark = (): Flags => LOCAL_OVERRIDABLE.reduce((f, k) => withSwitch(f, k, false), copy());
 
   beforeEach(() => {
     logged = [];
@@ -354,43 +504,71 @@ describe("local overrides for the demo-path test", () => {
   });
 
   it("in local mode, turns on the allowlisted switches and nothing else", () => {
-    const target = copy();
+    const target = dark();
+    const before = structuredClone(target);
     const keys = applyLocalOverrides(target, { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: ALL_ON });
     expect(keys).toEqual([...LOCAL_OVERRIDABLE]);
     expect(target.aiEnabled && target.agentEnabled && target.auditorEnabled).toBe(true);
     expect(target.reportsEnabled && target.driverNotesEnabled && target.inboxEnabled).toBe(true);
     expect(target.advancesEnabled && target.payoutsEnabled && target.advancePayouts.armed).toBe(true);
-    // Everything else, every cap and limit among it, is exactly as shipped.
-    expect({ ...target, advancePayouts: { ...target.advancePayouts, armed: false } }).toEqual({
-      ...flags,
-      aiEnabled: true,
-      agentEnabled: true,
-      auditorEnabled: true,
-      reportsEnabled: true,
-      driverNotesEnabled: true,
-      inboxEnabled: true,
-      advancesEnabled: true,
-      payoutsEnabled: true,
-    });
+    // Everything else, every cap and limit among it, is exactly as it was.
+    expect(target).toEqual(LOCAL_OVERRIDABLE.reduce((f, k) => withSwitch(f, k, true), before));
     expect(target.advancePayouts.capCents).toBe(flags.advancePayouts.capCents);
     expect(target.advancePayouts.startDate).toBe(flags.advancePayouts.startDate);
   });
 
-  it("is ignored in a production build", () => {
+  it("in local mode, turns an off-only switch off, and nothing else", () => {
+    for (const name of LOCAL_OFF_ONLY) {
+      const target = copy();
+      const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify({ [name]: false }) };
+      expect(applyLocalOverrides(target, env), name).toEqual([name]);
+      expect(target, name).toEqual(withSwitch(flags, name, false));
+    }
+  });
+
+  it("never turns an off-only switch on, and then changes nothing at all", () => {
+    for (const name of LOCAL_OFF_ONLY) {
+      logged = [];
+      const target = withSwitch(copy(), name, false);
+      const before = structuredClone(target);
+      const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify({ [name]: true }) };
+      expect(applyLocalOverrides(target, env), name).toEqual([]);
+      expect(target, name).toEqual(before);
+      expect(logged).toEqual(["flags: FLAGS_LOCAL_OVERRIDES sets something it may not; nothing changed"]);
+      // Mixed with an allowed key, the whole value is refused.
+      const mixed = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify({ agentEnabled: false, [name]: true }) };
+      expect(applyLocalOverrides(target, mixed), name).toEqual([]);
+      expect(target, name).toEqual(before);
+    }
+  });
+
+  it("runs the demo path on the switches its replay was recorded with", () => {
     const target = copy();
-    expect(applyLocalOverrides(target, { NODE_ENV: "production", FLAGS_LOCAL_OVERRIDES: ALL_ON })).toEqual([]);
+    const keys = applyLocalOverrides(target, { NODE_ENV: "test", FLAGS_LOCAL_OVERRIDES: LOCAL_SWITCHES });
+    expect(keys).toEqual([...LOCAL_OVERRIDABLE, ...LOCAL_OFF_ONLY]);
+    for (const name of LOCAL_OVERRIDABLE) expect(Object.fromEntries(booleanSwitches(target))[name], name).toBe(true);
+    for (const name of LOCAL_OFF_ONLY) expect(Object.fromEntries(booleanSwitches(target))[name], name).toBe(false);
+    // Caps, limits, dates, providers and every kept-off switch are exactly as shipped.
+    const expected = [...LOCAL_OFF_ONLY].reduce((f, k) => withSwitch(f, k, false), copy());
+    expect(target).toEqual(expected);
+  });
+
+  it("is ignored in a production build", () => {
+    // The recorded set turns shipped switches off, so a change would show.
+    const target = copy();
+    expect(applyLocalOverrides(target, { NODE_ENV: "production", FLAGS_LOCAL_OVERRIDES: LOCAL_SWITCHES })).toEqual([]);
     expect(target).toEqual(flags);
     expect(logged).toEqual(["flags: FLAGS_LOCAL_OVERRIDES ignored outside local mode"]);
   });
 
   it("is ignored when NODE_ENV is unset or not exactly development or test, even off Aurora", () => {
     const envs: Record<string, string>[] = [
-      { FLAGS_LOCAL_OVERRIDES: ALL_ON },
-      { DB_CLUSTER_ARN: "", FLAGS_LOCAL_OVERRIDES: ALL_ON },
+      { FLAGS_LOCAL_OVERRIDES: LOCAL_SWITCHES },
+      { DB_CLUSTER_ARN: "", FLAGS_LOCAL_OVERRIDES: LOCAL_SWITCHES },
       ...["", "staging", "preview", "Development", "production"].map((NODE_ENV) => ({
         NODE_ENV,
         DB_CLUSTER_ARN: "",
-        FLAGS_LOCAL_OVERRIDES: ALL_ON,
+        FLAGS_LOCAL_OVERRIDES: LOCAL_SWITCHES,
       })),
     ];
     for (const env of envs) {
@@ -405,7 +583,7 @@ describe("local overrides for the demo-path test", () => {
   it("is ignored whenever an Aurora cluster is configured", () => {
     for (const NODE_ENV of ["development", "test"]) {
       const target = copy();
-      const env = { NODE_ENV, DB_CLUSTER_ARN: ARN, FLAGS_LOCAL_OVERRIDES: ALL_ON };
+      const env = { NODE_ENV, DB_CLUSTER_ARN: ARN, FLAGS_LOCAL_OVERRIDES: LOCAL_SWITCHES };
       expect(applyLocalOverrides(target, env)).toEqual([]);
       expect(target).toEqual(flags);
     }
@@ -431,8 +609,13 @@ describe("local overrides for the demo-path test", () => {
       { agentEnabled: true, "agentTurnLimits.maxToolSteps": 99 },
       { runLimits: { maxTurns: 1000 } },
       { "runLimits.maxTurns": 1000 },
-      // Not on the demo path yet: adding it is detention's own change, with a re-recorded replay.
+      // Off-only: on locally, it would add a tool the recorded replay never saw.
       { detentionEnabled: true },
+      { collectionsEnabled: true },
+      { "agentPromptCache.enabled": true },
+      { sparkOpenFallback: "fireworks" },
+      { inboundEmailEnabled: false },
+      { sweepScheduleEnabled: false },
     ]) {
       const target = copy();
       const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify(bad) };

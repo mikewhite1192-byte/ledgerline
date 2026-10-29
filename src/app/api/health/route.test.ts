@@ -4,13 +4,28 @@ import { GET } from "./route";
 
 const shipped = structuredClone(flags);
 
+// Every switch the health check reads, off: each test states the switches it needs.
+function switchesOff() {
+  Object.assign(flags, {
+    aiEnabled: false,
+    agentEnabled: false,
+    auditorEnabled: false,
+    reportsEnabled: false,
+    driverNotesEnabled: false,
+    advancesEnabled: false,
+    payoutsEnabled: false,
+    accountingEnabled: false,
+  });
+}
+
 afterEach(() => {
   Object.assign(flags, structuredClone(shipped));
   vi.unstubAllEnvs();
 });
 
 describe("GET /api/health", () => {
-  it("reports the build's commit and every feature off as shipped", async () => {
+  it("reports the build's commit and every feature off while its switches are off", async () => {
+    switchesOff();
     vi.stubEnv("APP_COMMIT", "abc1234");
     const body = await GET().json();
     expect(body).toEqual({
@@ -29,6 +44,7 @@ describe("GET /api/health", () => {
   });
 
   it("reports a feature on only when a visitor can use it", async () => {
+    switchesOff();
     flags.agentEnabled = true;
     flags.auditorEnabled = true;
     flags.reportsEnabled = true;

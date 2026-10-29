@@ -592,9 +592,11 @@ describe("planted fuel anomalies", () => {
     });
   }
 
-  // What the fuel checks page lists for each carrier, with the engine's numbers. Prairie Wind's
-  // fill-up on a day off is from before the checks' start date, so it is never listed.
+  // What the fuel checks page lists for each carrier, with the engine's numbers. The start date is
+  // the first day of the earlier seeded open week (Prairie Wind's, Sunday Oct 25), so every planted
+  // fill-up is listed, Prairie Wind's on a day off among them.
   it("lists each carrier's fill-ups from the start date on, to the cent", () => {
+    expect(flags.fuelAnomalyLimits.from).toBe("2026-10-25");
     const listed = plans.map(({ rows }) =>
       runFuelChecks(checkInputOf(rows), flags.fuelAnomalyLimits).map((f) => [
         f.check,
@@ -614,6 +616,7 @@ describe("planted fuel anomalies", () => {
       [
         ["fuel_off_route", "2026-10-29", 36575, -36575, null],
         ["fuel_over_tank", "2026-10-27", 111696, "over_tank", 33696],
+        ["fuel_while_parked", "2026-10-25", 43896, -43896, null],
         ["fuel_duplicate", "2026-10-30", 31996, -31996, null],
       ],
     ]);

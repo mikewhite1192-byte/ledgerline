@@ -107,13 +107,16 @@ const stored = (args: unknown, over: Partial<NonNullable<Locked>> = {}): Locked 
   ...over,
 });
 
+const shipped = flags.rulesByTalkingEnabled;
+
 afterEach(() => {
-  flags.rulesByTalkingEnabled = false;
+  flags.rulesByTalkingEnabled = shipped;
   vi.restoreAllMocks();
 });
 
 describe("executePayRuleChange", () => {
   it("refuses with the switch off, or for another kind, before reading anything", async () => {
+    flags.rulesByTalkingEnabled = false;
     const off = dbFor(stored(ARGS));
     expect(await run(off)).toEqual({ ok: false, category: "not_executable", retryable: false });
     expect(off.statements).toEqual([]);

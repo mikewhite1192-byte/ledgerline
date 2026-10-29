@@ -15,20 +15,57 @@ export const LOCAL_OVERRIDABLE = [
   "advancePayouts.armed",
 ] as const;
 
+// Switches FLAGS_LOCAL_OVERRIDES may only turn off, never on. They ship on, but the demo-path
+// test's model replay was recorded with them off: each one adds a tool, a prompt line or a
+// request field the replay never saw (or, for accounting, a start-up check that needs the sandbox
+// company's id). The local run sets every one of them false so it replays what it recorded.
+export const LOCAL_OFF_ONLY = [
+  "accountingEnabled",
+  "documentsEnabled",
+  "advanceTakeback.enabled",
+  "agentToolSearch",
+  "agentPromptCache.enabled",
+  "invoicesEnabled",
+  "customerPaymentsEnabled",
+  "clipsEnabled",
+  "voiceIntakeEnabled",
+  "detentionEnabled",
+  "demoResetEnabled",
+  "rulesByTalkingEnabled",
+  "sweepEnabled",
+  "payCorrectionsEnabled",
+  "fanoutEnabled",
+  "cashFridayEnabled",
+  "portalRunnerEnabled",
+  "settlementsEnabled",
+  "batchApproveEnabled",
+  "invoiceReviewEnabled",
+  "collectionsEnabled",
+  "profitBriefEnabled",
+  "carrierMemoryEnabled",
+  "fuelAnomalyEnabled",
+] as const;
+
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];
+type OffOnly = (typeof LOCAL_OFF_ONLY)[number];
+type LocalKey = Overridable | OffOnly;
 
 function isOverridable(key: string): key is Overridable {
   return (LOCAL_OVERRIDABLE as readonly string[]).includes(key);
 }
 
-// The demo-path test runs the app with its switches on, without editing flags.ts. In local mode
+function isOffOnly(key: string): key is OffOnly {
+  return (LOCAL_OFF_ONLY as readonly string[]).includes(key);
+}
+
+// The demo-path test runs the app with its switches set, without editing flags.ts. In local mode
 // only (no Aurora cluster, NODE_ENV exactly development or test; see local-mode.ts),
 // FLAGS_LOCAL_OVERRIDES may hold a JSON object such as
-// {"agentEnabled":true,"advancePayouts.armed":true}. All or nothing: a value that is not
-// JSON, not an object, names any other key or holds anything but a boolean changes nothing, with
-// one log line. Outside local mode the variable is ignored, with one log line. Returns the keys
-// it set, in the order given.
-export function applyLocalOverrides(target: Flags, env: LocalModeEnv = process.env): Overridable[] {
+// {"agentEnabled":true,"advancePayouts.armed":true,"detentionEnabled":false}. All or nothing: a
+// value that is not JSON, not an object, names any other key, holds anything but a boolean or
+// turns an off-only switch on changes nothing, with one log line. Outside local mode the variable
+// is ignored, with one log line. Returns the keys it set, in the order given.
+export function applyLocalOverrides(target: Flags, env: LocalModeEnv = process.env): LocalKey[] {
   const raw = env.FLAGS_LOCAL_OVERRIDES;
   if (raw === undefined || raw === "") return [];
   if (!localHooksAllowed(env)) {
@@ -47,9 +84,10 @@ export function applyLocalOverrides(target: Flags, env: LocalModeEnv = process.e
     return [];
   }
   const entries = Object.entries(parsed);
-  const set: [Overridable, boolean][] = [];
+  const set: [LocalKey, boolean][] = [];
   for (const [key, value] of entries) {
-    if (!isOverridable(key) || typeof value !== "boolean") {
+    const allowed = typeof value === "boolean" && (isOverridable(key) || (isOffOnly(key) && value === false));
+    if (!allowed) {
       console.error("flags: FLAGS_LOCAL_OVERRIDES sets something it may not; nothing changed");
       return [];
     }
@@ -58,6 +96,10 @@ export function applyLocalOverrides(target: Flags, env: LocalModeEnv = process.e
   for (const [key, value] of set) {
     if (key === "advancePayouts.armed") {
       target.advancePayouts = { ...target.advancePayouts, armed: value };
+    } else if (key === "advanceTakeback.enabled") {
+      target.advanceTakeback = { ...target.advanceTakeback, enabled: value };
+    } else if (key === "agentPromptCache.enabled") {
+      target.agentPromptCache = { ...target.agentPromptCache, enabled: value };
     } else {
       target[key] = value;
     }

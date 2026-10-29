@@ -90,8 +90,10 @@ function proposeArgs(c: RuleChange, over: Record<string, unknown> = {}) {
   };
 }
 
+const shipped = flags.rulesByTalkingEnabled;
+
 afterEach(() => {
-  flags.rulesByTalkingEnabled = false;
+  flags.rulesByTalkingEnabled = shipped;
   flags.gatewayLimits.ruleChangeImpactMaxCents = CAP;
 });
 
@@ -103,6 +105,7 @@ describe("pay rule change tools switched off", () => {
       { ...ASK, effectiveFrom: "2026-11-02", oldValue: 1_100, impactCents: -600, sourceRefs: [] },
     ],
   ])("%s refuses as disabled before reading a record, with one decision row", async (name, args) => {
+    flags.rulesByTalkingEnabled = false;
     const { out, db } = await run(name, args);
     expect(out).toMatchObject({ decision: "blocked", reason: "disabled" });
     expect(db.decisions).toHaveLength(1);
