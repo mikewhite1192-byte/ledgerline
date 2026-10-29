@@ -10,16 +10,16 @@ import type { Session } from "../auth/claims";
 import { readBreak, readLastSeenRunCents, readRun } from "../data/card-recon";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, Param, Queryable, TenantDb } from "../db/types";
 import { readSentInWindow } from "../money/read";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal } from "../proposals/execute";
-import { sentInWindow } from "../rules-engine/card-recon";
+import { SEVERITY_OF, fingerprintOf, sentInWindow, type BreakCategory } from "../rules-engine/card-recon";
 import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { instantAt } from "../seed/calendar";
-import { MAX_LEDGER_ROWS, advanceCardCheck, dismissBreak, startCardCheck, type CardCheckDeps } from "./run";
+import { MAX_LEDGER_ROWS, WRITE_BATCH, advanceCardCheck, dismissBreak, startCardCheck, type CardCheckDeps } from "./run";
 import { readHandPick } from "./view";
 
 // The card check against the real database, as the app's role: the seeded statement compared with
@@ -190,8 +190,9 @@ async function ledgerRow(p: Pick, to: "unknown" | "confirmed"): Promise<string> 
 
 // n payment records sent at one instant and never settled, each for its own made-up advance: the
 // bulk a check's read limit is measured against. A sent record is clean to the check, so none of
-// them makes a difference of its own.
-async function sentRows(n: number, sentAt: string): Promise<string[]> {
+// them makes a difference of its own. Given another end state, each then settles the way
+// ledgerRow settles one: unknown (a difference of its own) or confirmed (left for the read step).
+async function sentRows(n: number, sentAt: string, to: "sent" | "unknown" | "confirmed" = "sent"): Promise<string[]> {
   const ids = await admin.withTenant(T, async (q) => {
     const rows = await q.query<{ id: string }>(
       `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, idempotency_key,
@@ -212,6 +213,21 @@ async function sentRows(n: number, sentAt: string): Promise<string[]> {
           AND id IN (SELECT CAST(x AS uuid) FROM jsonb_array_elements_text(CAST($1 AS jsonb)) AS x)`,
       [JSON.stringify(made), sentAt],
     );
+    const these = `tenant_id = current_tenant_id()
+          AND id IN (SELECT CAST(x AS uuid) FROM jsonb_array_elements_text(CAST($1 AS jsonb)) AS x)`;
+    if (to === "unknown") {
+      await q.execute(`UPDATE money_actions SET state = 'unknown', failure_category = 'timeout' WHERE ${these}`, [
+        JSON.stringify(made),
+      ]);
+    } else if (to === "confirmed") {
+      await q.execute(
+        `UPDATE money_actions SET state = 'confirmed', settled_via = 'response', settled_at = CAST($2 AS timestamptz),
+                outside_system = 'mock', outside_type = 'payout', outside_id = 'po_' || request_id,
+                outside_amount_cents = amount_cents
+          WHERE ${these}`,
+        [JSON.stringify(made), sentAt],
+      );
+    }
     return made;
   });
   expect(ids).toHaveLength(n);
@@ -600,6 +616,170 @@ describe("which payment records a check reads", () => {
     const run = await runToEnd();
     expect(run.counts.records).toBe(MAX_LEDGER_ROWS);
     expect(run.unchecked).toContainEqual(LIMIT_LINE);
+  }, 60_000);
+
+  it("writes a full window's records a set at a time, leaving what one record at a time left", async () => {
+    // More than one statement's worth of each kind: not confirmed yet (a difference of its own),
+    // sent and not settled (clean), and confirmed (left for the read step).
+    const unknown = await sentRows(2 * WRITE_BATCH + 1, SENT_AT, "unknown");
+    const sent = await sentRows(WRITE_BATCH + 1, SENT_AT);
+    const confirmed = await sentRows(WRITE_BATCH + 1, SENT_AT, "confirmed");
+    const fp = (category: BreakCategory, id: string) =>
+      fingerprintOf({ category, cardTransactionId: null, moneyActionId: id, fuelPurchaseId: null });
+    const OLD = "2026-10-20T12:00:00.000Z";
+    const WAITING = "Still waiting on the rail.";
+    type Earlier = { category: BreakCategory; id: string; status?: string; ourCents?: number; explanation?: string };
+    // What an earlier check left on these records: the start reopens, keeps, resets or closes each.
+    const earlier: Earlier[] = [
+      { category: "not_confirmed", id: unknown[0], status: "dismissed" },
+      { category: "not_confirmed", id: unknown[1], status: "resolved" },
+      { category: "not_confirmed", id: unknown[2], explanation: WAITING },
+      { category: "not_confirmed", id: unknown[3], ourCents: 99, explanation: WAITING },
+      ...unknown.map((id) => ({ category: "amount_differs_outside" as const, id })),
+      ...sent.map((id) => ({ category: "missing_outside" as const, id })),
+      { category: "pending_outside", id: sent[0], status: "dismissed" },
+      ...confirmed.map((id) => ({ category: "not_confirmed" as const, id })),
+      ...confirmed.map((id) => ({ category: "amount_differs_outside" as const, id })),
+    ];
+    const plant = async (q: Queryable, run: string, member: string, rows: Earlier[]) => {
+      await q.execute(
+        `INSERT INTO card_recon_runs (id, tenant_id, membership_id, status, phase, window_from, window_to,
+           started_at, finished_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'done', 'done', CAST('2026-10-06' AS date),
+           CAST('2026-10-20' AS date), CAST($3 AS timestamptz), CAST($3 AS timestamptz))`,
+        [run, member, OLD],
+      );
+      await q.execute(
+        `INSERT INTO card_recon_breaks (id, tenant_id, fingerprint, category, severity, outside_system,
+           money_action_id, our_cents, explanation, fix_kind, status, dismiss_category, first_seen_run_id,
+           last_seen_run_id, resolved_at, created_at, updated_at)
+         SELECT gen_random_uuid(), current_tenant_id(), r.fingerprint, r.category, r.severity, 'mock',
+                r.money_action_id, r.our_cents, r.explanation, 'by_hand', r.status,
+                CASE WHEN r.status = 'dismissed' THEN 'other' END, CAST($2 AS uuid), CAST($2 AS uuid),
+                CASE WHEN r.status = 'open' THEN NULL ELSE CAST($3 AS timestamptz) END,
+                CAST($3 AS timestamptz), CAST($3 AS timestamptz)
+           FROM jsonb_to_recordset(CAST($1 AS jsonb))
+             AS r(fingerprint text, category text, severity text, money_action_id uuid, our_cents bigint,
+                  explanation text, status text)`,
+        [
+          JSON.stringify(
+            rows.map((b) => ({
+              fingerprint: fp(b.category, b.id),
+              category: b.category,
+              severity: SEVERITY_OF[b.category],
+              money_action_id: b.id,
+              our_cents: b.ourCents ?? 100,
+              explanation: b.explanation ?? null,
+              status: b.status ?? "open",
+            })),
+          ),
+          run,
+          OLD,
+        ],
+      );
+    };
+    const before = randomUUID();
+    await admin.withTenant(T, (q) => plant(q, before, memberId, earlier));
+    // Another carrier's break that names one of these records: never this carrier's to close.
+    const theirRun = randomUUID();
+    await admin.withTenant(other.tenantId, (q) =>
+      plant(q, theirRun, other.memberId, [{ category: "not_confirmed", id: confirmed[0] }]),
+    );
+    // The app's database, counting the statements the start sends.
+    let statements = 0;
+    const db: TenantDb = {
+      withTenant<R>(tenantId: string, fn: (q: Queryable) => Promise<R>): Promise<R> {
+        return app.withTenant(tenantId, (q) =>
+          fn({
+            query<Q>(sql: string, params?: Param[]) {
+              statements += 1;
+              return q.query<Q>(sql, params);
+            },
+            execute(sql: string, params?: Param[]) {
+              statements += 1;
+              return q.execute(sql, params);
+            },
+          }),
+        );
+      },
+    };
+    try {
+      const s = await startCardCheck(SESSION, deps({ db }));
+      if (!s.ok) throw new Error(`start refused: ${s.category}`);
+      expect(s.resumed).toBe(false);
+      // One record at a time, this start sent one or two statements per record (over 600); a set at
+      // a time, a few per kind.
+      expect(statements).toBeLessThan(30);
+      const run = await app.withTenant(T, (q) => readRun(q, s.runId));
+      expect(run?.counts).toMatchObject({
+        records: unknown.length + sent.length + confirmed.length,
+        recordBreaks: unknown.length,
+      });
+      const todo = await admin.withTenant(T, (q) =>
+        q.query<{ todo: string }>("SELECT CAST(todo AS text) AS todo FROM card_recon_runs WHERE id = CAST($1 AS uuid)", [
+          s.runId,
+        ]),
+      );
+      expect([...(JSON.parse(todo[0].todo) as string[])].sort()).toEqual([...confirmed].sort());
+
+      // Every break on these records, as one record at a time left it: each record not confirmed
+      // yet has its one open difference (a dismissed one stays dismissed, a resolved one reopens,
+      // its sentence kept unless an amount moved) and every other difference on it closed; each
+      // clean record has every open difference closed; each confirmed record has only its "not
+      // confirmed yet" closed.
+      const want = (
+        category: BreakCategory,
+        id: string,
+        status: string,
+        o: { explanation?: string; fix?: string; first?: string; last?: string } = {},
+      ) => [fp(category, id), status, o.explanation ?? null, "100", o.fix ?? "by_hand", o.first ?? before, o.last ?? before];
+      const expected = [
+        ...unknown.map((id, i) =>
+          want("not_confirmed", id, i === 0 ? "dismissed" : "open", {
+            explanation: i === 2 ? WAITING : undefined,
+            fix: "check_pending",
+            first: i < 4 ? before : s.runId,
+            last: s.runId,
+          }),
+        ),
+        ...unknown.map((id) => want("amount_differs_outside", id, "resolved")),
+        ...sent.map((id) => want("missing_outside", id, "resolved")),
+        want("pending_outside", sent[0], "dismissed"),
+        ...confirmed.map((id) => want("not_confirmed", id, "resolved")),
+        ...confirmed.map((id) => want("amount_differs_outside", id, "open")),
+      ];
+      const mine = new Set([...unknown, ...sent, ...confirmed]);
+      const actual = (await breaks())
+        .filter((b) => b.money_action_id !== null && mine.has(b.money_action_id))
+        .map((b) => [b.fingerprint, b.status, b.explanation, b.our_cents, b.fix_kind, b.first_seen_run_id, b.last_seen_run_id]);
+      const byPrint = (a: (string | null)[], b: (string | null)[]) => String(a[0]).localeCompare(String(b[0]));
+      expect(actual.sort(byPrint)).toEqual(expected.sort(byPrint));
+      // Each one closed now is closed at the start's time, and the reopened one is open again.
+      const closedNow = await count(
+        `SELECT count(*) AS n FROM card_recon_breaks
+          WHERE tenant_id = current_tenant_id() AND status = 'resolved' AND resolved_at = CAST($1 AS timestamptz)`,
+        [NOW.toISOString()],
+      );
+      expect(closedNow).toBe(unknown.length + sent.length + confirmed.length);
+      const reopened = await count(
+        `SELECT count(*) AS n FROM card_recon_breaks
+          WHERE tenant_id = current_tenant_id() AND fingerprint = $1 AND status = 'open' AND resolved_at IS NULL`,
+        [fp("not_confirmed", unknown[1])],
+      );
+      expect(reopened).toBe(1);
+      // The other carrier's break is as it was.
+      const theirs = await admin.withTenant(other.tenantId, (q) =>
+        q.query<{ status: string; last: string }>(
+          "SELECT status, CAST(last_seen_run_id AS text) AS last FROM card_recon_breaks WHERE tenant_id = current_tenant_id()",
+        ),
+      );
+      expect(theirs).toEqual([{ status: "open", last: theirRun }]);
+    } finally {
+      await admin.withTenant(other.tenantId, async (q) => {
+        await q.execute("DELETE FROM card_recon_breaks WHERE tenant_id = current_tenant_id()");
+        await q.execute("DELETE FROM card_recon_runs WHERE tenant_id = current_tenant_id()");
+      });
+    }
   }, 60_000);
 
   it("puts a send on the local date it fell on when the clocks change, in the read and in the check", async () => {

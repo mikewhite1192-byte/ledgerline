@@ -91,6 +91,11 @@ const ABANDONED_MS = 10 * 60_000;
 export const READ_BATCH = 8;
 export const MAX_LEDGER_ROWS = 1_000;
 export const MAX_STATEMENT_BREAKS = 500;
+// The start's writes go a set at a time, at most this many rows per statement. A break is at most
+// about half a kilobyte as JSON, so a statement's one parameter stays near 50 KB, the size of the
+// run's own list of 1,000 record ids (about 40 KB) and far from the large writes the Data API is
+// not proven with. A full window is a few dozen round trips instead of one or two per record.
+export const WRITE_BATCH = 100;
 const MAX_LINES = 20;
 
 const STATEMENT_CATEGORIES: readonly BreakCategory[] = [
@@ -243,73 +248,107 @@ async function readRunRow(q: Queryable, runId: string): Promise<RunRow | null> {
   };
 }
 
-// One break per fingerprint. A break seen again keeps its explanation unless an amount moved,
-// keeps its match card's fix while it has one, reopens when it had been resolved, and stays
-// dismissed when a person dismissed it.
-async function upsertBreak(q: Queryable, b: ReconBreak, runId: string, nowIso: string, id: string): Promise<void> {
-  await q.execute(
-    `INSERT INTO card_recon_breaks
-       (id, tenant_id, fingerprint, category, severity, outside_system, card_transaction_id,
-        money_action_id, fuel_purchase_id, driver_id, our_cents, outside_cents, fix_kind,
-        first_seen_run_id, last_seen_run_id, created_at, updated_at)
-     VALUES (CAST($1 AS uuid), current_tenant_id(), $2, $3, $4, $5, CAST($6 AS uuid), CAST($7 AS uuid),
-             CAST($8 AS uuid), CAST($9 AS uuid), $10, $11, $12, CAST($13 AS uuid), CAST($13 AS uuid),
-             CAST($14 AS timestamptz), CAST($14 AS timestamptz))
-     ON CONFLICT (tenant_id, fingerprint) DO UPDATE SET
-       severity = EXCLUDED.severity,
-       outside_system = EXCLUDED.outside_system,
-       driver_id = EXCLUDED.driver_id,
-       explanation = CASE WHEN card_recon_breaks.our_cents IS DISTINCT FROM EXCLUDED.our_cents
-                            OR card_recon_breaks.outside_cents IS DISTINCT FROM EXCLUDED.outside_cents
-                          THEN NULL ELSE card_recon_breaks.explanation END,
-       explain_category = CASE WHEN card_recon_breaks.our_cents IS DISTINCT FROM EXCLUDED.our_cents
-                                 OR card_recon_breaks.outside_cents IS DISTINCT FROM EXCLUDED.outside_cents
-                               THEN NULL ELSE card_recon_breaks.explain_category END,
-       our_cents = EXCLUDED.our_cents,
-       outside_cents = EXCLUDED.outside_cents,
-       fix_kind = CASE WHEN card_recon_breaks.proposal_id IS NOT NULL THEN card_recon_breaks.fix_kind
-                       ELSE EXCLUDED.fix_kind END,
-       status = CASE WHEN card_recon_breaks.status = 'dismissed' THEN 'dismissed' ELSE 'open' END,
-       resolved_at = CASE WHEN card_recon_breaks.status = 'dismissed' THEN card_recon_breaks.resolved_at
-                          ELSE NULL END,
-       last_seen_run_id = EXCLUDED.last_seen_run_id,
-       updated_at = EXCLUDED.updated_at`,
-    [
-      id,
-      fingerprintOf(b),
-      b.category,
-      b.severity,
-      b.outsideSystem,
-      b.cardTransactionId,
-      b.moneyActionId,
-      b.fuelPurchaseId,
-      b.driverId,
-      b.ourCents,
-      b.outsideCents,
-      b.fixKind,
-      runId,
-      nowIso,
-    ],
-  );
+// The rows of one statement each: at most WRITE_BATCH, and, given a key, no key twice in one
+// statement (a key seen again starts the next one), so every row lands as it would one at a time.
+function batches<T>(rows: readonly T[], keyOf?: (row: T) => string): T[][] {
+  const out: T[][] = [];
+  let part: T[] = [];
+  const keys = new Set<string>();
+  for (const row of rows) {
+    const key = keyOf?.(row);
+    if (part.length >= WRITE_BATCH || (key !== undefined && keys.has(key))) {
+      out.push(part);
+      part = [];
+      keys.clear();
+    }
+    part.push(row);
+    if (key !== undefined) keys.add(key);
+  }
+  if (part.length > 0) out.push(part);
+  return out;
 }
 
-// Closes the open breaks of the given categories on one payment record, all but the one just
-// found (keep), when the record now reads clean or reads as that one difference.
+type NewBreak = { b: ReconBreak; id: string };
+
+// One break per fingerprint. A break seen again keeps its explanation unless an amount moved,
+// keeps its match card's fix while it has one, reopens when it had been resolved, and stays
+// dismissed when a person dismissed it. One statement per batch of breaks.
+async function upsertBreaks(q: Queryable, rows: readonly NewBreak[], runId: string, nowIso: string): Promise<void> {
+  const items = rows.map(({ b, id }) => ({
+    id,
+    fingerprint: fingerprintOf(b),
+    category: b.category,
+    severity: b.severity,
+    outside_system: b.outsideSystem,
+    card_transaction_id: b.cardTransactionId,
+    money_action_id: b.moneyActionId,
+    fuel_purchase_id: b.fuelPurchaseId,
+    driver_id: b.driverId,
+    our_cents: b.ourCents,
+    outside_cents: b.outsideCents,
+    fix_kind: b.fixKind,
+  }));
+  for (const part of batches(items, (i) => i.fingerprint)) {
+    await q.execute(
+      `INSERT INTO card_recon_breaks
+         (id, tenant_id, fingerprint, category, severity, outside_system, card_transaction_id,
+          money_action_id, fuel_purchase_id, driver_id, our_cents, outside_cents, fix_kind,
+          first_seen_run_id, last_seen_run_id, created_at, updated_at)
+       SELECT r.id, current_tenant_id(), r.fingerprint, r.category, r.severity, r.outside_system,
+              r.card_transaction_id, r.money_action_id, r.fuel_purchase_id, r.driver_id, r.our_cents,
+              r.outside_cents, r.fix_kind, CAST($2 AS uuid), CAST($2 AS uuid), CAST($3 AS timestamptz),
+              CAST($3 AS timestamptz)
+         FROM jsonb_to_recordset(CAST($1 AS jsonb))
+           AS r(id uuid, fingerprint text, category text, severity text, outside_system text,
+                card_transaction_id uuid, money_action_id uuid, fuel_purchase_id uuid, driver_id uuid,
+                our_cents bigint, outside_cents bigint, fix_kind text)
+       ON CONFLICT (tenant_id, fingerprint) DO UPDATE SET
+         severity = EXCLUDED.severity,
+         outside_system = EXCLUDED.outside_system,
+         driver_id = EXCLUDED.driver_id,
+         explanation = CASE WHEN card_recon_breaks.our_cents IS DISTINCT FROM EXCLUDED.our_cents
+                              OR card_recon_breaks.outside_cents IS DISTINCT FROM EXCLUDED.outside_cents
+                            THEN NULL ELSE card_recon_breaks.explanation END,
+         explain_category = CASE WHEN card_recon_breaks.our_cents IS DISTINCT FROM EXCLUDED.our_cents
+                                   OR card_recon_breaks.outside_cents IS DISTINCT FROM EXCLUDED.outside_cents
+                                 THEN NULL ELSE card_recon_breaks.explain_category END,
+         our_cents = EXCLUDED.our_cents,
+         outside_cents = EXCLUDED.outside_cents,
+         fix_kind = CASE WHEN card_recon_breaks.proposal_id IS NOT NULL THEN card_recon_breaks.fix_kind
+                         ELSE EXCLUDED.fix_kind END,
+         status = CASE WHEN card_recon_breaks.status = 'dismissed' THEN 'dismissed' ELSE 'open' END,
+         resolved_at = CASE WHEN card_recon_breaks.status = 'dismissed' THEN card_recon_breaks.resolved_at
+                            ELSE NULL END,
+         last_seen_run_id = EXCLUDED.last_seen_run_id,
+         updated_at = EXCLUDED.updated_at`,
+      [JSON.stringify(part), runId, nowIso],
+    );
+  }
+}
+
+// A payment record and the one difference just found on it, if any (its fingerprint).
+type RecordSeen = { id: string; keep: string | null };
+
+// Closes the open breaks of the given categories on each payment record, all but the one just
+// found on it (keep), when the record now reads clean or reads as that one difference. One
+// statement per batch of records.
 async function resolveRecordBreaks(
   q: Queryable,
-  moneyActionId: string,
-  keep: string | null,
+  records: readonly RecordSeen[],
   categories: readonly BreakCategory[],
   nowIso: string,
 ): Promise<void> {
-  await q.execute(
-    `UPDATE card_recon_breaks
-        SET status = 'resolved', resolved_at = CAST($3 AS timestamptz), updated_at = CAST($3 AS timestamptz)
-      WHERE tenant_id = current_tenant_id() AND status = 'open' AND money_action_id = CAST($1 AS uuid)
-        AND category IN (${sqlList(categories)})
-        AND (CAST($2 AS text) IS NULL OR fingerprint <> CAST($2 AS text))`,
-    [moneyActionId, keep, nowIso],
-  );
+  for (const part of batches(records)) {
+    await q.execute(
+      `UPDATE card_recon_breaks AS b
+          SET status = 'resolved', resolved_at = CAST($2 AS timestamptz), updated_at = CAST($2 AS timestamptz)
+         FROM jsonb_to_recordset(CAST($1 AS jsonb)) AS r(id uuid, keep text)
+        WHERE b.tenant_id = current_tenant_id() AND b.status = 'open' AND b.money_action_id = r.id
+          AND b.category IN (${sqlList(categories)})
+          AND (r.keep IS NULL OR b.fingerprint <> r.keep)`,
+      [JSON.stringify(part), nowIso],
+    );
+  }
 }
 
 function ledgerFact(a: MoneyAction, d: MoneyDeps): LedgerFact {
@@ -397,7 +436,7 @@ export async function startCardCheck(session: Session, deps: CardCheckDeps = {})
       whole = false;
       addLine(lines, { system: "fuel_card_sim", category: "too_many_differences" });
     }
-    for (const b of kept) await upsertBreak(q, b, runId, nowIso, newId());
+    await upsertBreaks(q, kept.map((b) => ({ b, id: newId() })), runId, nowIso);
     // A statement row that now matches closes what an earlier check found on it. Only when the
     // whole window was compared: a row left out is not a row that matched.
     if (whole) {
@@ -423,22 +462,32 @@ export async function startCardCheck(session: Session, deps: CardCheckDeps = {})
     const inWindow = sent.filter((a) => sentInWindow(a.sentAt, zone, window));
     counts.records = inWindow.length;
     const todo: string[] = [];
+    const recordBreaks: NewBreak[] = [];
+    const confirmedNow: RecordSeen[] = [];
+    const settled: RecordSeen[] = [];
     for (const a of inWindow) {
       if (a.state === "confirmed") {
         // Confirmed now: an earlier "not confirmed yet" on it is closed; the read step compares it.
         todo.push(a.id);
-        await resolveRecordBreaks(q, a.id, null, ["not_confirmed"], nowIso);
+        confirmedNow.push({ id: a.id, keep: null });
         continue;
       }
       const cmp = compareReadBack(ledgerFact(a, money), null);
       if (cmp.kind === "break") {
-        await upsertBreak(q, cmp.break, runId, nowIso, newId());
-        await resolveRecordBreaks(q, a.id, fingerprintOf(cmp.break), LEDGER_CATEGORIES, nowIso);
+        recordBreaks.push({ b: cmp.break, id: newId() });
+        settled.push({ id: a.id, keep: fingerprintOf(cmp.break) });
         counts.recordBreaks += 1;
       } else if (cmp.kind === "clean") {
-        await resolveRecordBreaks(q, a.id, null, LEDGER_CATEGORIES, nowIso);
+        settled.push({ id: a.id, keep: null });
       }
     }
+    // Written a set at a time. Every write here names one record's own breaks (its id is in the
+    // break's fingerprint and in the filter), and the window lists each record once, so this order
+    // leaves what one record at a time left: the difference just found open, the rest on that
+    // record closed.
+    await upsertBreaks(q, recordBreaks, runId, nowIso);
+    await resolveRecordBreaks(q, confirmedNow, ["not_confirmed"], nowIso);
+    await resolveRecordBreaks(q, settled, LEDGER_CATEGORIES, nowIso);
     await q.execute(
       `UPDATE card_recon_runs SET todo = CAST($2 AS jsonb), counts = CAST($3 AS jsonb), unchecked = CAST($4 AS jsonb)
         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
@@ -670,11 +719,11 @@ async function readStep(ctx: Ctx, run: RunRow): Promise<void> {
       const cmp = compareReadBack(ledgerFact(a, ctx.money), confirmed ? outcome : null);
       if (outcome?.ok) counts.recordsRead += 1;
       if (cmp.kind === "break") {
-        await upsertBreak(q, cmp.break, ctx.runId, nowIso, randomUUID());
-        await resolveRecordBreaks(q, a.id, fingerprintOf(cmp.break), LEDGER_CATEGORIES, nowIso);
+        await upsertBreaks(q, [{ b: cmp.break, id: randomUUID() }], ctx.runId, nowIso);
+        await resolveRecordBreaks(q, [{ id: a.id, keep: fingerprintOf(cmp.break) }], LEDGER_CATEGORIES, nowIso);
         counts.recordBreaks += 1;
       } else if (cmp.kind === "clean") {
-        await resolveRecordBreaks(q, a.id, null, LEDGER_CATEGORIES, nowIso);
+        await resolveRecordBreaks(q, [{ id: a.id, keep: null }], LEDGER_CATEGORIES, nowIso);
         if (confirmed) counts.recordsClean += 1;
       } else {
         // Threw or timed out: unknown, so nothing it found earlier is closed.
