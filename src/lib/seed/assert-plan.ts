@@ -47,6 +47,8 @@ import {
 } from "../time/local-date";
 import { reviewFactsOf, reviewInputOf } from "../invoices/review-input";
 import { customerClassOf } from "./ar-plan";
+import { rankCandidates, reconcileStatement, topIsTied } from "../rules-engine/card-recon";
+import { PLANT_FUEL_EXTRA_CENTS, PLANT_LOAD_CENTS, PLANT_UNKNOWN_CENTS, STATEMENT_DAYS } from "./card-statement";
 import { cashPositionOf, plantedGapCents } from "./cash-plan";
 import type { CarrierPlan } from "./plan";
 
@@ -153,6 +155,7 @@ export function assertPlan(plan: CarrierPlan): void {
   addendumPlants(plan);
   cashFriday(plan);
   invoiceReviewPlants(plan);
+  cardStatementPlants(plan);
 
   // Victims: eleven distinct drivers, never the hero.
   const codes = Object.values(victims);
@@ -683,5 +686,100 @@ function invoiceReviewPlants(plan: CarrierPlan): void {
     if (c.billing_email === null || !/^[a-z0-9._-]+@[a-z0-9-]+\.example$/.test(c.billing_email)) {
       fail(`customer ${c.code} has no example billing address`);
     }
+  }
+}
+
+// The card provider's statement: the card check finds exactly the four planted differences, the
+// unknown card is on no driver's file, and its candidates put one driver on top (or, where every
+// state is shared, a tie a person resolves). The seed writes no check and no difference.
+function cardStatementPlants(plan: CarrierPlan): void {
+  const { rows, anchor, carrier } = plan;
+  const p = plan.planted.cardRecon;
+  const heroId = carrier.heroCode ? rows.drivers.find((d) => d.code === carrier.heroCode)?.id : undefined;
+  if (rows.card_recon_runs.length !== 0 || rows.card_recon_breaks.length !== 0) {
+    fail("the seed writes no card check and no difference");
+  }
+  unique(rows.card_transactions, (t) => t.provider_ref, "statement reference");
+  unique(rows.card_transactions, (t) => t.id, "statement id");
+  for (const t of rows.card_transactions) {
+    if ((t.kind === "fuel") !== (t.state !== null && t.gallons_milli !== null)) fail("a statement row is half fuel");
+    if (t.kind === "load" && !/^fcs_load_[0-9a-f]{24}$/.test(t.provider_ref)) fail("a card load has a bad reference");
+    if (!/^[A-Z0-9 -]{2,40}$/.test(t.portal_name)) fail("a statement row has a bad portal name");
+  }
+  const window = { start: addDays(anchor, -STATEMENT_DAYS), end: addDays(anchor, -1) };
+  const found = reconcileStatement({
+    txns: rows.card_transactions.map((t) => ({
+      id: t.id,
+      providerRef: t.provider_ref,
+      kind: t.kind,
+      cardToken: t.card_token,
+      cardLast4: t.card_last4,
+      portalName: t.portal_name,
+      postedOn: t.posted_on,
+      amountCents: t.amount_cents,
+      state: t.state,
+      gallonsMilli: t.gallons_milli,
+    })),
+    purchases: rows.fuel_purchases.map((f) => ({
+      id: f.id,
+      driverId: f.driver_id,
+      purchaseRef: f.purchase_ref,
+      amountCents: f.amount_cents,
+    })),
+    cards: rows.driver_cards.map((c) => ({
+      driverId: c.driver_id,
+      providerToken: c.provider_token,
+      portalName: c.portal_name,
+      status: c.status,
+    })),
+    cardLoads: [],
+    window,
+  });
+  const got = found.map((b) => `${b.category}:${b.cardTransactionId}`).sort().join();
+  const want = [
+    `fuel_amount_differs:${p.fuelAmountDiffersId}`,
+    `purchase_not_recorded:${p.purchaseNotRecordedId}`,
+    `card_unknown:${p.cardUnknownId}`,
+    `load_not_in_ledger:${p.loadNotInLedgerId}`,
+  ]
+    .sort()
+    .join();
+  if (got !== want) fail("the card check finds more or less than the four statement plants");
+  const amount = found.find((b) => b.category === "fuel_amount_differs")!;
+  if (amount.outsideCents! - amount.ourCents! !== PLANT_FUEL_EXTRA_CENTS) fail("the amount plant is not $3.40 over");
+  const txn = (id: string) => rows.card_transactions.find((t) => t.id === id)!;
+  if (txn(p.loadNotInLedgerId).amount_cents !== PLANT_LOAD_CENTS) fail("the card load plant is not $150.00");
+  const unknown = txn(p.cardUnknownId);
+  if (unknown.amount_cents !== PLANT_UNKNOWN_CENTS) fail("the unknown card plant is not $212.40");
+  if (rows.driver_cards.some((c) => c.provider_token === unknown.card_token || c.last4 === unknown.card_last4)) {
+    fail("the unknown card is on file");
+  }
+  if (rows.fuel_purchases.some((f) => f.purchase_ref === txn(p.loadNotInLedgerId).provider_ref)) {
+    fail("the card load plant matches a purchase");
+  }
+  for (const id of [p.fuelAmountDiffersId, p.purchaseNotRecordedId, p.cardUnknownId, p.loadNotInLedgerId]) {
+    if (!isWithin(txn(id).posted_on, plan.periods[3])) fail("a statement plant is outside the open week");
+  }
+  const ranked = rankCandidates(
+    { postedOn: unknown.posted_on, state: unknown.state, portalName: unknown.portal_name },
+    {
+      drivers: rows.drivers.map((d) => ({ id: d.id, code: d.code, activeFrom: d.active_from, activeTo: d.active_to })),
+      days: rows.driver_days.map((d) => ({ driverId: d.driver_id, day: d.day, loadId: d.load_id })),
+      loads: rows.loads.map((l) => ({ id: l.id, originState: l.origin_state, destState: l.dest_state })),
+      stateMiles: rows.load_state_miles.map((m) => ({ loadId: m.load_id, state: m.state })),
+      cards: rows.driver_cards.map((c) => ({
+        driverId: c.driver_id,
+        providerToken: c.provider_token,
+        portalName: c.portal_name,
+        status: c.status,
+      })),
+    },
+  );
+  if (ranked.length === 0 || ranked[0].score < 3) fail("the unknown card has no driver on a load in its state");
+  if (p.candidateDriverId === null) {
+    if (!topIsTied(ranked)) fail("the unknown card's tie plant has a clear top");
+  } else {
+    if (topIsTied(ranked) || ranked[0].driverId !== p.candidateDriverId) fail("the unknown card's top is not the plant");
+    if (p.candidateDriverId === heroId) fail("the unknown card's driver is the hero");
   }
 }

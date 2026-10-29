@@ -13,6 +13,7 @@
         "load_accessorials": 90,
         "driver_days": 456,
         "fuel_purchases": 466,
+        "card_transactions": 168,
         "pay_configs": 2,
         "deduction_schedules": 18,
         "settlement_periods": 4,
@@ -25,6 +26,8 @@
         "payment_applications": 200,
         "untrusted_inputs": 6,
         "screenings": 0,
+        "card_recon_runs": 0,
+        "card_recon_breaks": 0,
         "collection_drafts": 0,
         "briefs": 0,
         "vendor_bills": 6,
@@ -310,6 +313,35 @@
           }
         ]
       },
+      "cardRecon": {
+        "planted": {
+          "fuelAmountDiffers": {
+            "postedOn": "2026-10-27",
+            "last4": "3067",
+            "amountCents": 39748,
+            "state": "SC"
+          },
+          "purchaseNotRecorded": {
+            "postedOn": "2026-10-27",
+            "last4": "5737",
+            "amountCents": 54524,
+            "state": "NC"
+          },
+          "cardUnknown": {
+            "postedOn": "2026-10-27",
+            "last4": "8583",
+            "amountCents": 21240,
+            "state": "MD"
+          },
+          "loadNotInLedger": {
+            "postedOn": "2026-10-27",
+            "last4": "0993",
+            "amountCents": 15000,
+            "state": null
+          }
+        },
+        "candidateDriverCode": "BR-D13"
+      },
       "cashFriday": {
         "payDay": "2026-11-06",
         "bankBalanceCents": 1513354,
@@ -338,6 +370,7 @@
         "load_accessorials": 103,
         "driver_days": 336,
         "fuel_purchases": 366,
+        "card_transactions": 141,
         "pay_configs": 1,
         "deduction_schedules": 18,
         "settlement_periods": 4,
@@ -350,6 +383,8 @@
         "payment_applications": 203,
         "untrusted_inputs": 6,
         "screenings": 0,
+        "card_recon_runs": 0,
+        "card_recon_breaks": 0,
         "collection_drafts": 0,
         "briefs": 0,
         "vendor_bills": 6,
@@ -565,6 +600,35 @@
             "amountCents": 171700
           }
         ]
+      },
+      "cardRecon": {
+        "planted": {
+          "fuelAmountDiffers": {
+            "postedOn": "2026-10-26",
+            "last4": "9564",
+            "amountCents": 31976,
+            "state": "NE"
+          },
+          "purchaseNotRecorded": {
+            "postedOn": "2026-10-26",
+            "last4": "7310",
+            "amountCents": 38443,
+            "state": "CO"
+          },
+          "cardUnknown": {
+            "postedOn": "2026-10-26",
+            "last4": "4243",
+            "amountCents": 21240,
+            "state": "CO"
+          },
+          "loadNotInLedger": {
+            "postedOn": "2026-10-26",
+            "last4": "8201",
+            "amountCents": 15000,
+            "state": null
+          }
+        },
+        "candidateDriverCode": null
       },
       "cashFriday": {
         "payDay": "2026-11-06",

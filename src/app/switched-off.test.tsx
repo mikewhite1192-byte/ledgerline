@@ -206,6 +206,18 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
     title: "Record a payment",
   },
   {
+    route: "/cards",
+    load: async () => (await import("./cards/page")).default(),
+    off: "Card check is off for this carrier",
+    title: "Card check",
+  },
+  {
+    route: "/cards/[breakId]",
+    load: async () => (await import("./cards/[breakId]/page")).default({ params: Promise.resolve({ breakId: ID }) }),
+    off: "Card check is off for this carrier",
+    title: "Card check",
+  },
+  {
     route: "/collections",
     load: async () => (await import("./collections/page")).default(),
     off: "Collections is off for this carrier",
