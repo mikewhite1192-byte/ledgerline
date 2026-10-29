@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { VisuallyHidden } from "@/components/ui/visually-hidden";
 import { cn } from "@/lib/cn";
 import { formatInstant } from "@/lib/format/dates";
-import { noteAnchor } from "@/lib/memory/links";
+import { hasHiddenCharacter, noteAnchor } from "@/lib/memory/links";
 import type { NoteRow, NoteSubject } from "@/lib/memory/notes";
 import { recordHref } from "@/lib/records/href";
 import {
@@ -30,7 +30,7 @@ import {
 // Fixed words per category; nothing from the server is shown as it is.
 const MESSAGES: Record<NoteActionCategory | "unknown", string> = {
   off: "Memory is switched off for this carrier. Nothing was saved.",
-  invalid: "A note is 1 to 300 characters of plain words, with no web address. Nothing was saved.",
+  invalid: "A note is 1 to 300 characters of plain words, with no web address and no hidden characters (text pasted from another page can carry them). Nothing was saved.",
   subject_not_found: "That customer or driver is not on file for this carrier. Pick another and try again.",
   full: "This carrier keeps the most notes it can. Remove a note first.",
   duplicate: "That note is already on file, word for word, for the same customer, driver or carrier. Nothing new was saved.",
@@ -91,6 +91,17 @@ function addedAt(iso: string, timeZone: string): string {
 }
 
 const CARD_OR_BANK = "Do not put card or bank numbers in a note.";
+
+// A note stored with a hidden character (from before the check, or written outside this page)
+// shows as stored, with a plain warning: the agent never reads it, and it can be removed here.
+function HiddenCharacterWarning({ note }: { note: NoteRow }) {
+  if (!hasHiddenCharacter(note.text)) return null;
+  return (
+    <p className="mt-1 text-small text-warning">
+      This note has a hidden character, so the agent does not read it. Remove it and add it again.
+    </p>
+  );
+}
 
 export function NotesBoard({
   notes,
@@ -225,7 +236,10 @@ export function NotesBoard({
             </div>
           </div>
         ) : (
-          <span className="text-foreground">{note.text}</span>
+          <>
+            <span className="text-foreground">{note.text}</span>
+            <HiddenCharacterWarning note={note} />
+          </>
         ),
     },
     { key: "about", header: "About", cell: (note) => <About note={note} /> },
@@ -382,6 +396,7 @@ export function NotesBoard({
                   <CardBody className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
                     <div className="grid min-w-0 gap-1">
                       <p className="text-body text-foreground">{note.text}</p>
+                      <HiddenCharacterWarning note={note} />
                       <p className="text-small text-foreground-2">
                         About <About note={note} />. From the chat on {addedAt(note.createdAt, timeZone)}.
                       </p>

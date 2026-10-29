@@ -408,6 +408,17 @@ export type Flags = {
     // Notes one carrier may keep; the page refuses one more with "Remove a note first".
     maxNotesPerCarrier: number;
   };
+  // The agent's side of carrier memory, under the same switch: the operator may suggest a note from
+  // a chat turn (it waits as a suggestion until a person keeps it; no model reads it before), and
+  // the second check sees the kept notes about the request's driver or customer, never as evidence
+  // for an amount.
+  carrierMemoryAgentLimits: {
+    // Suggestions one question may make, and suggestions that may wait unkept at once.
+    maxSuggestionsPerTurn: number;
+    maxSuggestionsWaiting: number;
+    // Notes the second check sees on one request.
+    maxAuditorNotes: number;
+  };
   // Fuel checks: every fill-up held against the truck's tank, the load's route and the driver's
   // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
   // and proposes; a person approves a pay correction on its card. Off means the Fuel checks page
@@ -588,6 +599,7 @@ export const flags: Flags = {
   profitBriefLimits: { maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 },
   carrierMemoryEnabled: false,
   carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
+  carrierMemoryAgentLimits: { maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 },
   fuelAnomalyEnabled: false,
   fuelAnomalyLimits: {
     from: "2026-10-27",

@@ -2,19 +2,20 @@ import { randomUUID } from "node:crypto";
 import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import { AiError, complete } from "../../ai";
+import { isUuid } from "../../uuid";
 import { callTool } from "../gateway";
 import { dbAuditStore, type AuditState, type AuditStore, type StoreDeps } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
 import {
   AUDIT_CALL,
   AUDITOR_MODEL,
-  AUDITOR_PROMPT,
   EVIDENCE_DEADLINE_MS,
   LEASE_MS,
   MAX_AUDIT_ATTEMPTS,
   NO_VERDICT,
   VERDICT_FORMAT,
   agreesOf,
+  auditorPrompt,
   isAuditConcern,
   isAuditVerdict,
   parseVerdict,
@@ -84,6 +85,19 @@ function startedBefore(state: AuditState): boolean {
 
 type Called = { verdict: ParsedVerdict; callId: string | null } | { retry: true };
 
+// The ids of the carrier notes the evidence carried, in its order, each once (none while
+// carrierMemoryEnabled is off: get_proposal then adds no notes key).
+const NOTES_NAMED = 4;
+function noteIdsOf(evidence: Record<string, unknown>): string[] {
+  const notes = evidence.notes;
+  if (!Array.isArray(notes)) return [];
+  const ids = notes.flatMap((n) => {
+    const id = n && typeof n === "object" ? (n as Record<string, unknown>).id : null;
+    return isUuid(id) ? [id] : [];
+  });
+  return [...new Set(ids)].slice(0, NOTES_NAMED);
+}
+
 async function askWonder(
   session: Session,
   evidence: Record<string, unknown>,
@@ -96,7 +110,7 @@ async function askWonder(
       {
         ...AUDIT_CALL,
         messages: [
-          { role: "system", content: AUDITOR_PROMPT },
+          { role: "system", content: auditorPrompt(noteIdsOf(evidence).length > 0) },
           { role: "user", content: JSON.stringify(evidence) },
         ],
         format: VERDICT_FORMAT,
@@ -144,12 +158,23 @@ export async function runAudit(
   }
   const { traceId, attempts } = lease;
 
-  const write = async (verdict: ParsedVerdict, callId: string | null): Promise<AuditResult> => {
+  const write = async (
+    verdict: ParsedVerdict,
+    callId: string | null,
+    notesUsed: readonly string[] = [],
+  ): Promise<AuditResult> => {
     // Only while this run still holds its own lease: one that lapsed and was taken over writes
-    // nothing, so the newer run's answer is the one stored.
+    // nothing, so the newer run's answer is the one stored. The notes the evidence carried are
+    // stored with the verdict they informed, in the same write.
     const wrote = await store.write(
       proposalId,
-      { verdict: verdict.verdict, agrees: agreesOf(verdict.verdict), callId, concerns: verdict.concerns },
+      {
+        verdict: verdict.verdict,
+        agrees: agreesOf(verdict.verdict),
+        callId,
+        concerns: verdict.concerns,
+        ...(notesUsed.length > 0 ? { notesUsed } : {}),
+      },
       clock(),
       leasedAt,
     );
@@ -224,6 +249,7 @@ export async function runAudit(
   const called = await askWonder(session, outcome.result, traceId, run);
   if ("retry" in called) return retry();
 
-  // f. Write once, then read back what is stored.
-  return write(called.verdict, called.callId);
+  // f. Write once, then read back what is stored. The notes are named only when a call answered:
+  // a refused call showed them to no model.
+  return write(called.verdict, called.callId, called.callId === null ? [] : noteIdsOf(outcome.result));
 }

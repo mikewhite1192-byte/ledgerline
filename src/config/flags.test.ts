@@ -32,6 +32,15 @@ describe("flags", () => {
     expect(flags.fuelAnomalyEnabled).toBe(false);
   });
 
+  it("keeps carrier memory dark, with the agent's suggestions and the second check's notes few", () => {
+    expect(flags.carrierMemoryEnabled).toBe(false);
+    expect(flags.carrierMemoryAgentLimits).toEqual({ maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 });
+    for (const v of Object.values(flags.carrierMemoryAgentLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.carrierMemoryAgentLimits.maxSuggestionsWaiting).toBeLessThan(flags.carrierMemoryLimits.maxNotesPerCarrier);
+  });
+
   it("starts fuel checks on a fixed date and keeps the receipt compare and corrections small", () => {
     expect(flags.fuelAnomalyLimits).toEqual({
       from: "2026-10-27",

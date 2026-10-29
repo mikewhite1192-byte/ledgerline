@@ -17,6 +17,7 @@ import { TENANT_TABLES, type TenantTable } from "../../../../data/tables";
 import { matchWrongInvoiceFinding } from "../../../../invoices/match";
 import { paymentPostedOutside } from "../../../../invoices/posted-outside";
 import { lineSummary, sameLines, type LineSummary } from "../../../../invoices/queue";
+import { notesAboutSubject, type SubjectNote } from "../../../../memory/notes";
 import { settlementEvidence } from "../../../../settlements/evidence";
 import {
   advanceEligibility,
@@ -38,7 +39,11 @@ import { idField } from "../../validate";
 // was flagged, and why, comes from the proposal and its screening. For a rate fill the check is
 // the gateway's own rate limit run again now (the stored reading compared with the load in code);
 // only its outcome, as codes, reaches the pack, never the document's text. A person's override
-// reason is never selected. Every string that reaches the pack is a code, an enum, an id or a date.
+// reason is never selected. Every string that reaches the pack is a code, an enum, an id or a date,
+// with one exception behind carrierMemoryEnabled: the office's kept notes about the request's own
+// driver or customer (at most MAX_NOTES, newest first), which a person wrote or kept, screened as
+// the agent's summary screens them. The prompt names them office context, never evidence for an
+// amount, and they are the first thing cut when the pack is too large.
 
 const AUDITOR: readonly AgentRole[] = ["auditor"];
 
@@ -47,6 +52,8 @@ const MAX_FINDINGS = 8;
 const MAX_ENGINE_SOURCES = 8;
 // Below the gateway's 8,000-character cap, so the pack is never cut to a note.
 const MAX_PACK_CHARS = 7_600;
+// The most carrier notes one pack holds, whatever the switch's own limit says.
+const MAX_NOTES = 4;
 
 // The figures a source row shows, per table. Names, emails, addresses, descriptions and memos are
 // never in this list.
@@ -114,7 +121,7 @@ const SOURCE_FIELDS: Partial<Record<TenantTable, readonly string[]>> = {
 };
 
 // A code, an enum, an id, a date or an instant. Anything with a space or other characters is
-// dropped: free text never reaches the auditor.
+// dropped: free text from a record never reaches the auditor.
 const SAFE_TEXT = /^[A-Za-z0-9_.:-]{1,64}$/;
 const CATEGORY = /^[a-z_]{2,40}$/;
 const ARG_KEY = /^[A-Za-z]{1,40}$/;
@@ -666,8 +673,21 @@ async function engineFor(
   }
 }
 
-// The pack cut to fit: first the source figures go (their references stay), then the findings.
-function fit(pack: { proposal: Record<string, unknown>; engine: Engine }, refs: Ref[]) {
+type Pack = { proposal: Record<string, unknown>; engine: Engine; notes?: SubjectNote[] };
+
+// The pack cut to fit: first the notes go, oldest first (they are context, never evidence, so a
+// pack that fit before notes fits the same way with them), then the source figures (their
+// references stay), then the findings.
+function fit(full: Pack, refs: Ref[]): Pack {
+  if (JSON.stringify(full).length <= MAX_PACK_CHARS) return full;
+  const { notes: allNotes, ...bare } = full;
+  const notes = [...(allNotes ?? [])];
+  while (notes.length > 0) {
+    notes.pop();
+    const pack = notes.length > 0 ? { ...bare, notes } : bare;
+    if (JSON.stringify(pack).length <= MAX_PACK_CHARS) return pack;
+  }
+  const pack: Pack = bare;
   if (JSON.stringify(pack).length <= MAX_PACK_CHARS) return pack;
   const lean = { ...pack, proposal: { ...pack.proposal, sources: refList(refs, MAX_SOURCES) } };
   if (JSON.stringify(lean).length <= MAX_PACK_CHARS) return lean;
@@ -716,6 +736,12 @@ export const getProposal = defineTool({
       flagCategories: categoriesOf(p.flag_categories),
     };
     const engine = await engineFor(q, ctx, p, args, raw);
-    return { result: fit({ proposal, engine }, refs) };
+    // The office's kept notes about the request's own driver or customer. Off, or none: no key.
+    const notes = await notesAboutSubject(
+      q,
+      { table: p.subject_table, id: p.subject_id },
+      Math.min(MAX_NOTES, flags.carrierMemoryAgentLimits.maxAuditorNotes),
+    );
+    return { result: fit({ proposal, engine, ...(notes.length > 0 ? { notes } : {}) }, refs) };
   },
 });

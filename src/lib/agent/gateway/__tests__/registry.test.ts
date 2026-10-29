@@ -48,6 +48,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_collections: { tier: "read", roles: ["operator"] },
   get_profit_brief: { tier: "read", roles: ["operator"] },
   set_checklist: { tier: "read", roles: ["operator"] },
+  remember_note: { tier: "record", roles: ["operator"] },
 };
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
@@ -76,6 +77,7 @@ afterEach(() => {
   flags.rulesByTalkingEnabled = false;
   flags.collectionsEnabled = false;
   flags.profitBriefEnabled = false;
+  flags.carrierMemoryEnabled = false;
 });
 
 describe("tool registry", () => {
@@ -269,6 +271,26 @@ describe("tool registry", () => {
     expect(toolsFor("operator")).toHaveLength(21);
   });
 
+  it("offers the note suggestion tool to the operator only while carrier memory is on, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    expect(flags.carrierMemoryEnabled).toBe(false);
+    // Off: the default operator list, and so the demo turn's tool names, are unchanged.
+    for (const role of AGENT_ROLES) expect(names(role)).not.toContain("remember_note");
+    expect(toolsFor("operator")).toHaveLength(21);
+    flags.carrierMemoryEnabled = true;
+    expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
+      operator: 22,
+      auditor: 12,
+      triage: 2,
+    });
+    expect(names("operator")).toContain("remember_note");
+    expect(names("auditor")).not.toContain("remember_note");
+    expect(toolNamed("remember_note")?.tier).toBe("record");
+    flags.carrierMemoryEnabled = false;
+    expect(names("operator")).not.toContain("remember_note");
+    expect(toolsFor("operator")).toHaveLength(21);
+  });
+
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
@@ -279,9 +301,10 @@ describe("tool registry", () => {
     flags.rulesByTalkingEnabled = true;
     flags.collectionsEnabled = true;
     flags.profitBriefEnabled = true;
+    flags.carrierMemoryEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 40,
+      operator: 41,
       auditor: 16,
       triage: 2,
     });
@@ -386,6 +409,14 @@ describe("deferred loading for tool search", () => {
     expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_profit_brief")?.deferLoading).toBe(true);
     flags.profitBriefEnabled = false;
     expect(names("operator")).not.toContain("get_profit_brief");
+  });
+
+  it("defers the note suggestion tool, and leaves it out deferred too while its switch is off", () => {
+    expect(ALWAYS_LOADED).not.toContain("remember_note");
+    expect(toolsFor("operator", { defer: true }).map((t) => t.name)).not.toContain("remember_note");
+    flags.carrierMemoryEnabled = true;
+    expect(toolsFor("operator", { defer: true }).find((t) => t.name === "remember_note")?.deferLoading).toBe(true);
+    expect(toolsFor("operator").find((t) => t.name === "remember_note")).not.toHaveProperty("deferLoading");
   });
 
   it("defers the portal evidence tool, which few questions need", () => {

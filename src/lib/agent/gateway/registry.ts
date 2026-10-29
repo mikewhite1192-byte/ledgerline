@@ -46,6 +46,7 @@ import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
 import { proposeRuleChange } from "./tools/propose/propose-rule-change";
 import { previewRuleChange } from "./tools/read/preview-rule-change";
+import { rememberNote } from "./tools/record/remember-note";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
 
@@ -104,6 +105,7 @@ const TOOLS: readonly AnyToolDef[] = [
   classifyMessage,
   getCashFriday,
   setChecklist,
+  rememberNote,
 ];
 
 function build(): Readonly<Record<string, AnyToolDef>> {

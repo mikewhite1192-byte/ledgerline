@@ -74,10 +74,13 @@ export type TraceProposal = {
   auditorCall: TraceCall | null;
   flagged: boolean;
   exceptions: string[];
+  // The carrier notes the second check saw on this card. Absent or empty when it saw none, or while
+  // carrierMemoryEnabled is off.
+  auditorNotes?: TraceNote[];
 };
 
-// A carrier note the turn's summary held (carrierMemoryEnabled). label is null for a note removed
-// since: the turn keeps only ids, so a removed note has nothing left to name.
+// A carrier note the turn's summary held, or the second check saw (carrierMemoryEnabled). label is
+// null for a note removed since: only ids are kept, so a removed note has nothing left to name.
 export type TraceNote = { id: string; label: string | null };
 
 export type TurnTrace = {

@@ -422,7 +422,8 @@ describe("callTool dispatch order", () => {
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, invoicing, invoice review, customer payments, collections,
-    // Cash Friday, profit brief and pay rule change switches after this test.
+    // Cash Friday, profit brief, pay rule change and carrier memory switches after this test. remember_note
+    // outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.invoicesEnabled = true;
@@ -433,6 +434,7 @@ describe("callTool dispatch order", () => {
     flags.collectionsEnabled = true;
     flags.profitBriefEnabled = true;
     flags.rulesByTalkingEnabled = true;
+    flags.carrierMemoryEnabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;
       flags.invoicesEnabled = false;
@@ -443,10 +445,13 @@ describe("callTool dispatch order", () => {
       flags.collectionsEnabled = false;
       flags.profitBriefEnabled = false;
       flags.rulesByTalkingEnabled = false;
+      flags.carrierMemoryEnabled = false;
     });
+    // The second check's read of the office's notes about the driver: none on file.
+    const store: Handler = (sql, params) =>
+      sql.includes("FROM carrier_notes n") ? [] : (screenStore(sql, params) ?? cards(sql, params));
     for (const [name, args] of Object.entries(ARGS)) {
       const auditor = name === "get_proposal";
-      const store: Handler = (sql, params) => screenStore(sql, params) ?? cards(sql, params);
       const db = planDb(plan, auditor ? withProposal(proposalRowFor(plan, "advance_payout"), store) : store);
       // get_document reads only an uploaded document: the seeded document input gets one, not read.
       if (name === "get_document") {
