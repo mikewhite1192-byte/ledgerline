@@ -141,10 +141,22 @@ export type ProposalView = {
   // Set on an advance_payout only: the load it is for, with the per-load cap and what was left
   // under it after this advance at proposal time (both null when the carrier has no cap).
   load?: { number: string; capCents: number | null; leftAfterCents: number | null } | null;
+  // Set on a card_match only, when its stored args read back whole: the statement row by its last
+  // four digits, the driver picked, and the other drivers code ranked for that day.
+  cardMatch?: CardMatchView | null;
   // Set on a Cash Friday card only, when its stored args read back whole.
   cash?: CashCardView | null;
   // Set on a pay_rule_change only, when its stored args read back whole.
   ruleChange?: RuleChangeView | null;
+};
+
+export type CardMatchView = {
+  last4: string;
+  portalName: string;
+  postedOn: string;
+  state: string | null;
+  driverCode: string;
+  others: string[];
 };
 
 // An outside message this turn read that failed screening. quote is shown to the person only, in

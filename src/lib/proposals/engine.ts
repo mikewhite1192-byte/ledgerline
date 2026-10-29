@@ -32,6 +32,9 @@ export type EngineDraft = {
   exceptions: string[];
   reasons: string[];
   sources: GatewayRef[];
+  // What the code that drafted the card found, as a category (0009's pattern). Default 'engine';
+  // the card check's driver pick says 'match_picked'.
+  operatorVerdict?: string;
 };
 
 export type EnginePersistResult =
@@ -114,6 +117,8 @@ export async function persistEngineProposal(
   const existing = await findByDedupe(q, key);
   if (existing) return { kind: "already_decided", proposalId: existing.id, status: existing.status };
 
+  const verdict = draft.operatorVerdict ?? "engine";
+  if (!CATEGORY.test(verdict)) throw new Error("not a verdict category");
   const id = randomUUID();
   const impact = impactOf(draft.kind, draft.amountCents);
   const reasons = [...new Set(draft.reasons.filter((c) => CATEGORY.test(c)))].slice(0, 12);
@@ -124,7 +129,7 @@ export async function persistEngineProposal(
         exceptions, operator_verdict, dedupe_key, created_at, updated_at)
      VALUES (CAST($1 AS uuid), current_tenant_id(), 'engine', NULL, NULL, NULL, NULL, $2, $3,
              CAST($4 AS uuid), $5, $6, $7, CAST($8 AS jsonb), CAST($9 AS jsonb), CAST($10 AS jsonb),
-             CAST($11 AS jsonb), 'engine', $12, CAST($13 AS timestamptz), CAST($13 AS timestamptz))`,
+             CAST($11 AS jsonb), $14, $12, CAST($13 AS timestamptz), CAST($13 AS timestamptz))`,
     [
       id,
       draft.kind,
@@ -139,6 +144,7 @@ export async function persistEngineProposal(
       JSON.stringify(draft.exceptions.filter((c) => CATEGORY.test(c))),
       key,
       now.toISOString(),
+      verdict,
     ],
   );
   return { kind: "created", proposalId: id };
