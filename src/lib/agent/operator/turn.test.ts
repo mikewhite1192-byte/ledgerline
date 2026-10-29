@@ -977,13 +977,13 @@ describe("runTurn with tool search and the prompt cache", () => {
     await h.run();
     expect(h.requests.length).toBeGreaterThan(0);
     for (const { request } of h.requests) {
-      expect(request.messages[0]).toEqual({ role: "system", content: `${OPERATOR_PROMPT}\n${MEMORY_PROMPT}` });
+      expect(request.messages[0]).toEqual({ role: "system", content: `${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${MEMORY_PROMPT}` });
     }
     // Off again: the default tool list and the prompt are today's.
     flags.carrierMemoryEnabled = false;
     const off = toolsFor("operator");
     expect(off.map((t) => t.name)).not.toContain("remember_note");
-    expect(operatorPrompt(off.map((t) => t.name), false)).toBe(OPERATOR_PROMPT);
+    expect(operatorPrompt(off.map((t) => t.name), false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
   });
 
   it("asks Muse Spark to search the deferred tools, keys the cache and puts the summary in input", async () => {

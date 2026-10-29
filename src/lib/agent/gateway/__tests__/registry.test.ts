@@ -254,10 +254,10 @@ describe("tool registry", () => {
     expect(flags.carrierMemoryEnabled).toBe(false);
     // Off: the default operator list, and so the demo turn's tool names, are unchanged.
     for (const role of AGENT_ROLES) expect(names(role)).not.toContain("remember_note");
-    expect(toolsFor("operator")).toHaveLength(20);
+    expect(toolsFor("operator")).toHaveLength(21);
     flags.carrierMemoryEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 21,
+      operator: 22,
       auditor: 12,
       triage: 2,
     });
@@ -266,7 +266,7 @@ describe("tool registry", () => {
     expect(toolNamed("remember_note")?.tier).toBe("record");
     flags.carrierMemoryEnabled = false;
     expect(names("operator")).not.toContain("remember_note");
-    expect(toolsFor("operator")).toHaveLength(20);
+    expect(toolsFor("operator")).toHaveLength(21);
   });
 
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
@@ -281,7 +281,7 @@ describe("tool registry", () => {
     flags.carrierMemoryEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 38,
+      operator: 39,
       auditor: 15,
       triage: 2,
     });
