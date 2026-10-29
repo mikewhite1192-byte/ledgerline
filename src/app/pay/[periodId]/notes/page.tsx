@@ -73,6 +73,16 @@ export default async function PeriodNotesPage({ params }: { params: Promise<{ pe
             <PageHeader
               title={formatPeriod(notes.period.periodStart, notes.period.periodEnd)}
               description="Each note is written in the driver's language and checked against the paystub. Only a note that passed the check can be approved."
+              actions={
+                flags.payCardsEnabled ? (
+                  <Link
+                    href={`/pay/${notes.period.id}/cards`}
+                    className="text-small text-link underline-offset-4 hover:underline"
+                  >
+                    Pay cards
+                  </Link>
+                ) : undefined
+              }
             />
             {notes.cards.length === 0 ? (
               <Card>

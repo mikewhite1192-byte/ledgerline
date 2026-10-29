@@ -206,6 +206,20 @@ describe("flags", () => {
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 
+  it("keeps pay cards dark, with small caps and a picture size limit", () => {
+    expect(flags.payCardsEnabled).toBe(false);
+    expect(flags.payCardLimits).toEqual({
+      checkMaxCostCents: 3,
+      maxBatchCents: 40,
+      cardsPerTenantPerDay: 100,
+      maxPngBytes: 400_000,
+    });
+    for (const v of Object.values(flags.payCardLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.payCardLimits.checkMaxCostCents).toBeLessThan(flags.payCardLimits.maxBatchCents);
+  });
+
   it("keeps collections dark, with no email address allowed, no send date and small caps", () => {
     expect(flags.collectionsEnabled).toBe(false);
     expect(flags.collectionsEmailEnabled).toBe(false);
@@ -475,6 +489,8 @@ describe("local overrides for the demo-path test", () => {
       { gatewayLimits: { payCorrectionMaxCents: 1, invoiceFixMaxCents: 1 } },
       { approverRole: { adminAboveCents: 1 } },
       { driverNoteLimits: { maxNoteCents: 1000, maxBatchCents: 1000, maxOutputTokens: 1 } },
+      { payCardLimits: { checkMaxCostCents: 1000, maxBatchCents: 100_000 } },
+      { payCardsEnabled: true },
       { advancesLimits: { proposalsPerDay: 1000 } },
       { paymentProvider: "stripe" },
       { triageProvider: "meta" },

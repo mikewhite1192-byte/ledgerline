@@ -1,3 +1,4 @@
+import { Download } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { appNav } from "@/components/app/app-nav";
@@ -8,6 +9,7 @@ import { ErrorState, FeatureOff } from "@/components/app/states";
 import { Card, CardBody } from "@/components/ui/card";
 import { flags } from "@/config/flags";
 import { readDriverView, type DriverView } from "@/lib/driver-notes/view";
+import { readDriverCard } from "@/lib/pay-cards/read";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { isUuid } from "@/lib/uuid";
 import {
@@ -33,18 +35,23 @@ export default async function DriverViewPage({ params }: { params: Promise<{ set
   const { settlementId } = await params;
   if (!isUuid(settlementId)) notFound();
 
-  let data: { shell: ShellInfo; view: DriverView | null } | null = null;
+  let data: { shell: ShellInfo; view: DriverView | null; card: { id: string } | null } | null = null;
   let problem: ShellProblem | null = null;
   try {
-    data = await withRequestTenant(async (q, session) => ({
-      shell: await readShell(q, session),
-      view: flags.driverNotesEnabled ? await readDriverView(q, settlementId) : null,
-    }));
+    data = await withRequestTenant(async (q, session) => {
+      const view = flags.driverNotesEnabled ? await readDriverView(q, settlementId) : null;
+      return {
+        shell: await readShell(q, session),
+        view,
+        // Only a checked card whose figures still match the paystub; otherwise nothing is shown.
+        card: view && flags.payCardsEnabled ? await readDriverCard(q, settlementId) : null,
+      };
+    });
   } catch (err) {
     problem = shellProblemOf(err);
   }
   if (!data) return <ShellProblemPage problem={problem ?? "unreadable"} />;
-  const { shell, view } = data;
+  const { shell, view, card } = data;
 
   return (
     <AppShell
@@ -80,6 +87,29 @@ export default async function DriverViewPage({ params }: { params: Promise<{ set
               title="What the driver sees"
               description={`${view.source.driver.first_name} ${view.source.driver.last_name} sees this with their paystub.`}
             />
+            {card ? (
+              <Card>
+                <CardBody className="grid justify-items-start gap-3">
+                  <p className="text-small font-medium text-foreground-2">Pay card</p>
+                  {/* eslint-disable-next-line @next/next/no-img-element -- a checked card from this app's own file route, shown as saved */}
+                  <img
+                    src={`/api/pay-cards/${card.id}/file`}
+                    alt={`Pay card for ${view.source.driver.first_name}`}
+                    width={1080}
+                    height={1350}
+                    className="h-auto w-full max-w-[360px] rounded-md border border-border"
+                  />
+                  <a
+                    href={`/api/pay-cards/${card.id}/file`}
+                    download
+                    className="inline-flex w-fit items-center gap-1.5 text-small text-link underline-offset-4 hover:underline"
+                  >
+                    <Download aria-hidden className="size-4" />
+                    Save image
+                  </a>
+                </CardBody>
+              </Card>
+            ) : null}
             {view.message ? (
               <Card>
                 <CardBody className="grid gap-1.5">

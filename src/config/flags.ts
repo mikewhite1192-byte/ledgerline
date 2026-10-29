@@ -158,6 +158,23 @@ export type Flags = {
   // Caps on note drafting: one note's worst case, the spend of one period's notes, and the
   // output budget of one note.
   driverNoteLimits: { maxNoteCents: number; maxBatchCents: number; maxOutputTokens: number };
+  // Pay cards: a picture of a driver's approved week (take-home pay, earned, taken out, loads,
+  // change from last week) drawn in the browser from the settlement's own engine figures, read
+  // back by Muse Spark and kept only when every figure matches, for the clerk to save and send
+  // from their phone. Off means the cards page shows the switched-off state, its link is hidden,
+  // the routes refuse before any work and the driver view shows no card. aiEnabled must also be on
+  // for a check to reach a model. Nothing is ever sent by the app.
+  payCardsEnabled: boolean;
+  payCardLimits: {
+    // The cap on one read-back call, in cents.
+    checkMaxCostCents: number;
+    // The spend of one run of the cards page, in cents.
+    maxBatchCents: number;
+    // Cards one carrier may check in 24 hours, every outcome counted.
+    cardsPerTenantPerDay: number;
+    // The largest card picture the check takes, in bytes.
+    maxPngBytes: number;
+  };
   // The five report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
@@ -549,6 +566,8 @@ export const flags: Flags = {
   driverNotesEmailAllowlist: [],
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
+  payCardsEnabled: false,
+  payCardLimits: { checkMaxCostCents: 3, maxBatchCents: 40, cardsPerTenantPerDay: 100, maxPngBytes: 400_000 },
   reportsEnabled: false,
   invoicesEnabled: false,
   invoicesStart: "2026-10-05",
