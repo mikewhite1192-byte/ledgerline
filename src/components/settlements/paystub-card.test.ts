@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FLAG_QUESTION } from "@/components/agent/proposal-card-from";
+import { FLAG_QUESTION, proposalCardFrom } from "@/components/agent/proposal-card-from";
 import type { ProposalView } from "@/lib/agent/view";
 import { NO_PAYOUT_QUESTION, paystubCardFrom } from "./paystub-card";
 
@@ -49,6 +49,7 @@ describe("paystubCardFrom", () => {
 
   it("leaves a paystub with money to send as the shared card builds it", () => {
     const paid = { ...card, amountCents: 125_000 };
-    expect(paystubCardFrom(paid, audit, 125_000).confirmQuestion).toBeUndefined();
+    expect(paystubCardFrom(paid, audit, 125_000)).toEqual(proposalCardFrom(paid, audit));
+    expect(paystubCardFrom(paid, audit, 125_000).confirmQuestion).toBe("Approve this paystub and pay $1,250.00?");
   });
 });

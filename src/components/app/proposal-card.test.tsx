@@ -2,7 +2,14 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { STAFF_ONLY_NOTE } from "./staff-only";
-import { ProposalCard, type ProposalAudit, type ProposalCardProps, type ProposalStatus } from "./proposal-card";
+import {
+  CONFIRM_NEXT,
+  ProposalCard,
+  REJECT_NEXT,
+  type ProposalAudit,
+  type ProposalCardProps,
+  type ProposalStatus,
+} from "./proposal-card";
 import { ViewerRoleProvider } from "./viewer-role";
 
 afterEach(cleanup);
@@ -70,9 +77,9 @@ describe("ProposalCard", () => {
     expect(onApprove).not.toHaveBeenCalled();
     expect(screen.getByRole("group", { name: "Confirm approval" })).toBeTruthy();
     expect(screen.getByText("Pay $200.00 to Sample Driver?")).toBeTruthy();
-    expect(document.activeElement).toBe(button("Cancel"));
+    expect(document.activeElement).toBe(button("Keep reviewing"));
 
-    fireEvent.click(button("Cancel")!);
+    fireEvent.click(button("Keep reviewing")!);
     expect(onApprove).not.toHaveBeenCalled();
     expect(button("Confirm")).toBeNull();
 
@@ -82,18 +89,18 @@ describe("ProposalCard", () => {
     expect(onApprove).toHaveBeenCalledWith("p-1");
   });
 
-  it("puts focus back on Approve after Cancel, so keyboard users keep their place", () => {
+  it("puts focus back on Approve after Keep reviewing, so keyboard users keep their place", () => {
     const { unmount } = render(<ProposalCard {...card} />);
     fireEvent.click(button("Approve $200.00")!);
-    expect(document.activeElement).toBe(button("Cancel"));
-    fireEvent.click(button("Cancel")!);
+    expect(document.activeElement).toBe(button("Keep reviewing"));
+    fireEvent.click(button("Keep reviewing")!);
     expect(document.activeElement).toBe(button("Approve $200.00"));
     unmount();
 
     // A card that opens with the confirm row showing does the same.
     render(<ProposalCard {...card} initialConfirming />);
     expect(document.activeElement).toBe(document.body);
-    fireEvent.click(button("Cancel")!);
+    fireEvent.click(button("Keep reviewing")!);
     expect(document.activeElement).toBe(button("Approve $200.00"));
   });
 
@@ -104,7 +111,7 @@ describe("ProposalCard", () => {
     unmount();
 
     render(<ProposalCard {...card} pending initialConfirming />);
-    expect((button("Cancel") as HTMLButtonElement).disabled).toBe(true);
+    expect((button("Keep reviewing") as HTMLButtonElement).disabled).toBe(true);
     expect((button(/Approving/) as HTMLButtonElement).disabled).toBe(true);
   });
 
@@ -166,14 +173,14 @@ describe("ProposalCard", () => {
     expect(amount.hasAttribute("data-negative")).toBe(false);
     expect(button("Approve $1,850.00")).toBeNull();
     fireEvent.click(button("Approve")!);
-    expect(screen.getByText("Approve this?")).toBeTruthy();
+    expect(screen.getByText("Approve this request?")).toBeTruthy();
   });
 
   it("never asks to approve $0.00", () => {
     render(<ProposalCard {...card} impact={{ cents: 0, direction: "out" }} confirmQuestion={undefined} />);
     expect(button("Approve $0.00")).toBeNull();
     fireEvent.click(button("Approve")!);
-    expect(screen.getByText("Approve this?")).toBeTruthy();
+    expect(screen.getByText("Approve this request?")).toBeTruthy();
     expect(screen.queryByText("Approve $0.00?")).toBeNull();
   });
 
@@ -182,7 +189,7 @@ describe("ProposalCard", () => {
       <ProposalCard {...card} impact={{ cents: 0, direction: "none" }} confirmQuestion="Move it to INV-2?" initialConfirming />,
     );
     expect(screen.getByText("Move it to INV-2?")).toBeTruthy();
-    expect(screen.queryByText("Approve this?")).toBeNull();
+    expect(screen.queryByText("Approve this request?")).toBeNull();
   });
 
   it("shows a record the link rules do not know as plain text, without a link", () => {
@@ -227,16 +234,16 @@ describe("ProposalCard", () => {
     render(
       <ProposalCard
         {...card}
-        destination={{ label: "To fuel card ···· 4417", testMode: true }}
-        confirmQuestion="Pay $200.00 to Sample Driver's fuel card ···· 4417? Test mode."
+        destination={{ label: "To fuel card ending 4417", testMode: true }}
+        confirmQuestion="Pay $200.00 to Sample Driver's fuel card ending 4417?"
       />,
     );
-    const line = screen.getByText("To fuel card ···· 4417 · Test mode");
+    const line = screen.getByText("To fuel card ending 4417 · Test mode");
     // One small line that may wrap at phone width: nothing in it refuses to break.
     expect(line.closest("p")?.className).not.toContain("nowrap");
     expect(line.closest("p")?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     fireEvent.click(button("Approve $200.00")!);
-    expect(screen.getByText("Pay $200.00 to Sample Driver's fuel card ···· 4417? Test mode.")).toBeTruthy();
+    expect(screen.getByText("Pay $200.00 to Sample Driver's fuel card ending 4417?")).toBeTruthy();
   });
 
   it("says no card is on file without Test mode, and shows no line when there is no destination", () => {
@@ -248,6 +255,111 @@ describe("ProposalCard", () => {
     unmount();
     render(<ProposalCard {...card} />);
     expect(screen.queryByText(/fuel card/i)).toBeNull();
+  });
+});
+
+describe("ProposalCard's confirm and reject questions", () => {
+  const LONG_DRIVER = "11111111-1111-4111-8111-111111111111";
+  const LONG_LOAD_A = "22222222-2222-4222-8222-222222222222";
+  const LONG_LOAD_B = "33333333-3333-4333-8333-333333333333";
+
+  it("sends exactly the card's id on Confirm, as before, and nothing on Approve or Keep reviewing", () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(<ProposalCard {...card} confirmNoun="advance" onApprove={onApprove} onReject={onReject} />);
+    fireEvent.click(button("Approve $200.00")!);
+    fireEvent.click(button("Keep reviewing")!);
+    fireEvent.click(button("Approve $200.00")!);
+    expect(onApprove).not.toHaveBeenCalled();
+    fireEvent.click(button("Confirm")!);
+    // The card's whole output is this call; the chat builds the same request body from it.
+    expect(onApprove.mock.calls).toEqual([["p-1"]]);
+    expect(onReject).not.toHaveBeenCalled();
+  });
+
+  it("writes the count, the total and what happens next under the question", () => {
+    const { unmount } = render(
+      <ProposalCard {...card} confirmNoun="advance" confirmNext="This is a test payout to the driver's fuel card." initialConfirming />,
+    );
+    const group = screen.getByRole("group", { name: "Confirm approval" });
+    expect(group.textContent).toContain("Pay $200.00 to Sample Driver?");
+    expect(group.textContent).toContain("1 advance, $200.00.");
+    expect(group.textContent).toContain("This is a test payout to the driver's fuel card.");
+    unmount();
+
+    // Without the caller's words the card still says what it is and what happens.
+    render(<ProposalCard {...card} confirmQuestion={undefined} initialConfirming />);
+    const plain = screen.getByRole("group", { name: "Confirm approval" });
+    expect(plain.textContent).toContain("Approve this request?");
+    expect(plain.textContent).toContain("1 request, $200.00.");
+    expect(plain.textContent).toContain(CONFIRM_NEXT);
+  });
+
+  it("asks once before Reject, says nothing is sent, and rejects only on the second Reject", () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(<ProposalCard {...card} confirmNoun="advance" onApprove={onApprove} onReject={onReject} />);
+    fireEvent.click(button("Reject")!);
+    expect(onReject).not.toHaveBeenCalled();
+    const group = screen.getByRole("group", { name: "Confirm rejection" });
+    expect(group.textContent).toContain("Reject this advance?");
+    expect(group.textContent).toContain(REJECT_NEXT);
+    expect(document.activeElement).toBe(button("Keep it"));
+    // Approve is not offered while the reject question is open.
+    expect(button("Approve $200.00")).toBeNull();
+
+    fireEvent.click(button("Keep it")!);
+    expect(screen.queryByRole("group", { name: "Confirm rejection" })).toBeNull();
+    expect(document.activeElement).toBe(button("Reject"));
+    expect(onReject).not.toHaveBeenCalled();
+
+    fireEvent.click(button("Reject")!);
+    const confirmReject = screen.getByRole("group", { name: "Confirm rejection" }).querySelectorAll("button")[1];
+    expect(confirmReject.textContent).toBe("Reject");
+    fireEvent.click(confirmReject);
+    expect(onReject.mock.calls).toEqual([["p-1"]]);
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("disables both reject buttons while the rejection is in flight", () => {
+    const { rerender } = render(<ProposalCard {...card} />);
+    fireEvent.click(button("Reject")!);
+    rerender(<ProposalCard {...card} pending />);
+    expect((button("Keep it") as HTMLButtonElement).disabled).toBe(true);
+    expect((button(/Rejecting/) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("asks before rejecting a blocked card too, and keeps the reason typed so far", () => {
+    const onReject = vi.fn();
+    render(<ProposalCard {...card} audit={{ state: "block" }} onReject={onReject} />);
+    const box = () => screen.getByLabelText(/Why approve it anyway/) as HTMLTextAreaElement;
+    fireEvent.change(box(), { target: { value: "Driver showed the receipt" } });
+    fireEvent.click(button("Reject")!);
+    expect(screen.getByText("Reject this request?")).toBeTruthy();
+    fireEvent.click(button("Keep it")!);
+    expect(box().value).toBe("Driver showed the receipt");
+    fireEvent.click(button("Reject")!);
+    fireEvent.click(screen.getByRole("group", { name: "Confirm rejection" }).querySelectorAll("button")[1]);
+    expect(onReject.mock.calls).toEqual([["p-1"]]);
+  });
+
+  it("names records the caller knows in Also read, and any other by its kind with no id tail", () => {
+    render(
+      <ProposalCard
+        {...card}
+        reasons={[{ text: "Earned and unpaid this week: $2,400.00", source: { table: "loads", id: LONG_LOAD_A } }]}
+        sources={[
+          { table: "drivers", id: LONG_DRIVER },
+          { table: "loads", id: LONG_LOAD_B },
+        ]}
+        references={{ [`drivers:${LONG_DRIVER}`]: "Driver BR-D07" }}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "Driver BR-D07" }).getAttribute("href")).toBe(`/records/drivers/${LONG_DRIVER}`);
+    // Two loads the caller did not name read by kind, numbered, never by a piece of their id.
+    expect(screen.getByRole("link", { name: "Load 1 of 2" }).getAttribute("href")).toBe(`/records/loads/${LONG_LOAD_A}`);
+    expect(screen.getByRole("link", { name: "Load 2 of 2" }).getAttribute("href")).toBe(`/records/loads/${LONG_LOAD_B}`);
+    expect(document.body.textContent).not.toMatch(/2222|3333|1111/);
   });
 });
 
@@ -296,13 +408,13 @@ describe("ProposalCard with the auditor's check", () => {
     expect(onApprove).toHaveBeenCalledWith("p-1");
   });
 
-  it("offers no Approve on a block, only a reason box, a counter and Override", () => {
+  it("offers no plain Approve on a block, only a reason box, a counter and Approve anyway", () => {
     render(<ProposalCard {...card} audit={{ state: "block", text: "The amount does not match the records." }} />);
     expect(button("Approve $200.00")).toBeNull();
     expect(button("Reject")).toBeTruthy();
     const box = screen.getByLabelText("Why approve it anyway? (10 to 240 characters)");
     expect(screen.getByText("0 of 240")).toBeTruthy();
-    const override = button("Override and approve") as HTMLButtonElement;
+    const override = button("Approve anyway") as HTMLButtonElement;
     expect(override.disabled).toBe(true);
 
     fireEvent.change(box, { target: { value: "too short" } });
@@ -324,19 +436,19 @@ describe("ProposalCard with the auditor's check", () => {
     const onApprove = vi.fn();
     render(<ProposalCard {...card} audit={{ state: "block" }} onApprove={onApprove} />);
     fireEvent.change(screen.getByLabelText(/Why approve it anyway/), { target: { value: "  Driver showed the receipt  " } });
-    fireEvent.click(button("Override and approve")!);
+    fireEvent.click(button("Approve anyway")!);
     expect(onApprove).not.toHaveBeenCalled();
     expect(screen.getByText("Approve even though the second check did not pass?")).toBeTruthy();
-    expect(document.activeElement).toBe(button("Cancel"));
+    expect(document.activeElement).toBe(button("Keep reviewing"));
 
-    fireEvent.click(button("Cancel")!);
+    fireEvent.click(button("Keep reviewing")!);
     expect(button("Confirm")).toBeNull();
-    expect(document.activeElement).toBe(button("Override and approve"));
+    expect(document.activeElement).toBe(button("Approve anyway"));
 
-    fireEvent.click(button("Override and approve")!);
+    fireEvent.click(button("Approve anyway")!);
+    expect(screen.getByRole("group", { name: "Confirm approval" }).textContent).toContain("Your reason is saved with this approval.");
     fireEvent.click(button("Confirm")!);
-    expect(onApprove).toHaveBeenCalledTimes(1);
-    expect(onApprove).toHaveBeenCalledWith("p-1", "Driver showed the receipt");
+    expect(onApprove.mock.calls).toEqual([["p-1", "Driver showed the receipt"]]);
   });
 
   it("keeps Confirm disabled on a block that opens with the confirm row and no reason", () => {
@@ -401,7 +513,7 @@ describe("ProposalCard for a demo visitor", () => {
       audit: { state: "block", text: "The amount does not match the load." },
     });
     expect(screen.queryByRole("textbox")).toBeNull();
-    fireEvent.click(button("Override and approve")!);
+    fireEvent.click(button("Approve anyway")!);
     expect(note()).toBeTruthy();
     expect(onApprove).not.toHaveBeenCalled();
   });
@@ -419,5 +531,81 @@ describe("ProposalCard for a demo visitor", () => {
     );
     fireEvent.click(button("Approve $200.00")!);
     expect(button("Confirm")).toBeTruthy();
+  });
+});
+
+describe("ProposalCard with a kind's own words", () => {
+  const rule: ProposalCardProps = {
+    id: "p-rule",
+    title: "Owner-operator insurance: $11.00 to $12.00 per day",
+    impact: { cents: 4_100, direction: "none", label: "Would pay out less per week" },
+    reasons: [{ text: "Starts Monday, Nov 2" }],
+    status: "proposed",
+    wording: { approve: "Save this pay rule", approving: "Saving", question: "Save this pay rule?", reject: "Not now" },
+    auditWords: { pass: "Double-checked: the numbers match.", checking: "Double-check still running" },
+    footnote: "Nothing changes until you save it. Past weeks never change.",
+    statusNotes: {
+      done: { text: "Saved. Starts with the week of Nov 2. See it under Pay rules.", link: { href: "/settings/pay-rules", label: "Pay rules" } },
+      rejected: { text: "Not saved. Nothing changed." },
+    },
+  };
+
+  it("saves through its own button and question, with Not now as the secondary", () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(<ProposalCard {...rule} onApprove={onApprove} onReject={onReject} />);
+    expect(button("Reject")).toBeNull();
+    expect(button(/Approve/)).toBeNull();
+    // Not now asks once, like every Reject; only the question's own Reject fires.
+    fireEvent.click(button("Not now")!);
+    expect(onReject).not.toHaveBeenCalled();
+    const confirmReject = screen.getByRole("group", { name: "Confirm rejection" }).querySelectorAll("button")[1];
+    fireEvent.click(confirmReject);
+    expect(onReject).toHaveBeenCalledWith("p-rule");
+    fireEvent.click(button("Keep it")!);
+    fireEvent.click(button("Save this pay rule")!);
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(screen.getByText("Save this pay rule?")).toBeTruthy();
+    fireEvent.click(button("Confirm")!);
+    expect(onApprove).toHaveBeenCalledWith("p-rule");
+  });
+
+  it("shows the footnote on every status and the kind's line for a decided card, its link in place", () => {
+    const { unmount } = render(<ProposalCard {...rule} />);
+    expect(screen.getByText(rule.footnote!)).toBeTruthy();
+    unmount();
+    render(<ProposalCard {...rule} status="done" />);
+    expect(screen.getByText(rule.footnote!)).toBeTruthy();
+    const link = screen.getByRole("link", { name: "Pay rules" });
+    expect(link.getAttribute("href")).toBe("/settings/pay-rules");
+    expect(link.parentElement?.textContent).toBe("Saved. Starts with the week of Nov 2. See it under Pay rules.");
+    expect(screen.queryByText("Done and recorded.")).toBeNull();
+  });
+
+  it("keeps the default line for a status the kind does not word", () => {
+    render(<ProposalCard {...rule} status="expired" />);
+    expect(screen.getByText("Expired before anyone approved it. Nothing changed.")).toBeTruthy();
+  });
+
+  it("disables the main button with the reason when the person cannot save it", () => {
+    const onApprove = vi.fn();
+    render(<ProposalCard {...rule} approveBlockedLabel="Ask an admin to save this (over $2,000 a week)" onApprove={onApprove} />);
+    const main = button("Ask an admin to save this (over $2,000 a week)") as HTMLButtonElement;
+    expect(main.disabled).toBe(true);
+    fireEvent.click(main);
+    expect(screen.queryByRole("group", { name: "Confirm approval" })).toBeNull();
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("says the auditor's state in the kind's words, and keeps a badge for a state it does not word", () => {
+    const { unmount } = render(<ProposalCard {...rule} audit={{ state: "pass" }} />);
+    expect(screen.getByText("Double-checked: the numbers match.")).toBeTruthy();
+    expect(screen.queryByText(/Muse Wonder/)).toBeNull();
+    unmount();
+    const view = render(<ProposalCard {...rule} audit={{ state: "checking" }} />);
+    expect(screen.getByRole("status").textContent).toBe("Double-check still running");
+    view.unmount();
+    render(<ProposalCard {...rule} audit={{ state: "off" }} />);
+    expect(screen.getByText("Second check is off")).toBeTruthy();
   });
 });

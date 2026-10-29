@@ -8,6 +8,7 @@ import { appNav, NAV_HREFS, type NavKey } from "./app-nav";
 import * as registry from "./nav/items";
 import { MENU_GROUPS } from "./nav/menu-item";
 import { NavList } from "./nav-list";
+import { HOW_PAY_WORKS } from "./signed-in-page";
 
 const SWITCHES = [
   "sweepEnabled",
@@ -16,12 +17,17 @@ const SWITCHES = [
   "advancesEnabled",
   "invoicesEnabled",
   "customerPaymentsEnabled",
+  "collectionsEnabled",
+  "cashFridayEnabled",
   "documentsEnabled",
   "voiceIntakeEnabled",
   "clipsEnabled",
   "accountingEnabled",
   "portalRunnerEnabled",
   "demoResetEnabled",
+  "rulesByTalkingEnabled",
+  "profitBriefEnabled",
+  "carrierMemoryEnabled",
 ] as const;
 type Switch = (typeof SWITCHES)[number];
 
@@ -42,19 +48,24 @@ describe("appNav", () => {
     setAll(true);
     expect(shape("/invoices")).toEqual([
       ["Today", "/", "Home", false],
+      ["Today", "/profit", "Profit brief", false],
       ["Pay", "/sweep", "Pay sweep", false],
       ["Pay", "/settlements", "Settlements", false],
       ["Pay", "/driver-notes", "Driver notes", false],
       ["Pay", "/advances", "Advances", false],
       ["Money in", "/invoices", "Invoices", true],
       ["Money in", "/customer-payments/new", "Payments", false],
+      ["Money in", "/collections", "Collections", false],
+      ["Money in", "/cash", "Cash", false],
       ["Drivers", "/documents", "Documents", false],
       ["Drivers", "/voice-notes", "Voice notes", false],
       ["Drivers", "/clips", "Dock clips", false],
       ["Settings", "/settings/accounting", "QuickBooks", false],
+      ["Settings", "/settings/pay-rules", "Pay rules", false],
       ["Settings", "/models", "Models and spend", false],
       ["Settings", "/portal-runs", "Portal runs", false],
       ["Settings", "/settings/demo", "Demo", false],
+      ["Settings", "/memory", "Memory", false],
     ]);
   });
 
@@ -74,12 +85,17 @@ describe("appNav", () => {
       advancesEnabled: "/advances",
       invoicesEnabled: "/invoices",
       customerPaymentsEnabled: "/customer-payments/new",
+      collectionsEnabled: "/collections",
+      cashFridayEnabled: "/cash",
       documentsEnabled: "/documents",
       voiceIntakeEnabled: "/voice-notes",
       clipsEnabled: "/clips",
       accountingEnabled: "/settings/accounting",
       portalRunnerEnabled: "/portal-runs",
       demoResetEnabled: "/settings/demo",
+      rulesByTalkingEnabled: "/settings/pay-rules",
+      profitBriefEnabled: "/profit",
+      carrierMemoryEnabled: "/memory",
     };
     for (const s of SWITCHES) {
       setAll(true);
@@ -146,6 +162,8 @@ describe("NavList", () => {
     setAll(true);
     flags.invoicesEnabled = false;
     flags.customerPaymentsEnabled = false;
+    flags.collectionsEnabled = false;
+    flags.cashFridayEnabled = false;
     render(<NavList items={appNav("/")} />);
     expect(screen.queryByText("Money in")).toBeNull();
     expect(screen.queryByRole("list", { name: "Money in" })).toBeNull();
@@ -203,11 +221,21 @@ describe("every signed-in page is reachable", () => {
     expect(routes).toEqual(expect.arrayContaining(["/", "/models", "/settings/accounting", "/settings/demo", "/advances/new"]));
   });
 
+  // The help link sits under the menu on every signed-in page (SignedInPage, and Home's shell).
+  const shellLinks = [HOW_PAY_WORKS.href];
+
   it("reaches each route from the menu or from a menu item's page", () => {
     const unreachable = routes.filter(
-      (route) => !NAV_HREFS.includes(route) && !NAV_HREFS.some((href) => itemPage(href).includes(`href="${route}"`)),
+      (route) =>
+        !NAV_HREFS.includes(route) &&
+        !shellLinks.includes(route) &&
+        !NAV_HREFS.some((href) => itemPage(href).includes(`href="${route}"`)),
     );
     expect(unreachable).toEqual([]);
+  });
+
+  it("puts the help link under Home's menu too (Home builds its own shell)", () => {
+    expect(itemPage("/")).toContain("help={HOW_PAY_WORKS}");
   });
 
   it("points every menu item at a page that exists", () => {

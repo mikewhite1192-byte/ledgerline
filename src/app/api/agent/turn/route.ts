@@ -54,6 +54,7 @@ export async function POST(request: Request) {
       text: body.text,
       now: new Date(startedAt),
       summaryChars: flags.agentTurnLimits.summaryChars,
+      readNotes: true,
     });
   } catch (err) {
     if (err instanceof Error && err.name === "ForbiddenError") return refuse("forbidden", 403);

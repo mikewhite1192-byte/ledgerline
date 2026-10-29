@@ -17,13 +17,15 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      not needed here on purpose: the function deletes every settled money_actions row before
 //      the flow advances, in one transaction, so no ledger row can outlive the advance it names;
 //   3. demo_reset_clear() (migration 0025, re-created by 0033, then by 0034 to empty the fuel
-//      checks too), the one security-definer function, which checks the same things again under
-//      the tenant row lock and deletes the settled ledger rows, the
-//      agent's records and the fictional broker portal's loads (the app role has no DELETE on
-//      them); the portal's loads come back only with npm run seed, since the app cannot write them;
-//   4. the seed's replace of the 22 seeded tables, as the app role, under row-level security (the
-//      arming log, which the app role may add to but never delete from, goes with its drivers
-//      through the foreign key's cascade, and the plan's log is written again);
+//      checks too, then by 0036 to empty the pay rule changes), the one security-definer
+//      function, which checks the same things again under the tenant row lock and deletes the
+//      settled ledger rows, the agent's records and the fictional broker portal's loads (the app
+//      role has no DELETE on them); the portal's loads come back only with npm run seed, since
+//      the app cannot write them;
+//   4. the seed's replace of the 28 seeded tables (TENANT_TABLES, with Cash Friday's checks, which
+//      the seed leaves empty), as the app role, under row-level security (the arming log, which the
+//      app role may add to but never delete from, goes with its drivers through the foreign key's
+//      cascade, and the plan's log is written again);
 //   5. the read-back: every seeded table equals the plan, every cleared table is empty, and the
 //      hero's open-week net is the worked example.
 // Any failure rolls the whole transaction back, so a carrier is either reset or left as it was.
@@ -66,6 +68,9 @@ export const DEMO_RESET_CLEARED = {
   approval_batches:
     "approve-all batches; each lists items that go, is named by the proposals it approved and names a " +
     "pay week the replace deletes",
+  pay_rule_changes:
+    "what each saved pay rule change changed (0030); each names its proposal, which goes, and the " +
+    "pay rules version it wrote, which the replace rewrites",
   proposals:
     "the agent's proposals and the invoice queue's cards (0015); each names a subject, an " +
     "outside message or a ledger row the replace deletes",
@@ -128,6 +133,7 @@ export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "fuel_findings",
   "fuel_check_runs",
   "approval_batches",
+  "pay_rule_changes",
   "advances",
   "proposals",
   "turns",
@@ -158,6 +164,9 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   payment_applications: "Payment applications",
   untrusted_inputs: "Inbound messages",
   screenings: "Message screenings",
+  collection_drafts: "Collection reminders",
+  briefs: "Profit briefs",
+  carrier_notes: "Memory notes",
   money_actions: "Settled payouts and bookings (test mode)",
   documents: "Uploaded documents",
   evidence_clips: "Dock clips",
@@ -178,9 +187,13 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   fuel_findings: "Fuel check findings",
   fuel_check_runs: "Fuel check runs",
   approval_batches: "Approve-all batches",
+  pay_rule_changes: "Pay rule changes",
   proposals: "Agent cards",
   turns: "Agent turns",
   conversations: "Agent conversations",
+  vendor_bills: "Vendor bills",
+  cash_settings: "Bank balance and cash settings",
+  cash_checks: "Cash checks",
 };
 
 // The SQLSTATEs demo_reset_clear() raises (0025).
