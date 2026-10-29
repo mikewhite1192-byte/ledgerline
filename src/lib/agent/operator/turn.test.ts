@@ -12,6 +12,7 @@ import {
   CHECKLIST_RULE,
   COLLECTIONS_RULE,
   LOOP_TEXT,
+  MEMORY_PROMPT,
   OPERATOR_PROMPT,
   REPORT_PROMPT,
   TOOL_SEARCH_RULE,
@@ -479,6 +480,54 @@ describe("runTurn", () => {
     expect([...h.proposals.values()][0].input.flaggedInputId).toBe(INPUT);
   });
 
+  it("refuses remember_note in a flagged turn even when the flag's decision row is not on file", async () => {
+    flags.carrierMemoryEnabled = true;
+    onTestFinished(() => {
+      flags.carrierMemoryEnabled = false;
+    });
+    const INPUT = "77777777-7777-4777-8777-777777777777";
+    const MODEL_CALL = "c0ffee00-0000-4000-8000-0000000000bb";
+    const plan = blueRidgePlan();
+    const hero = plan.rows.drivers.find((d) => d.code === plan.carrier.heroCode)!;
+    // The flagged read's decision row was never written, so the decision log has no screen_flagged
+    // row for this turn.
+    const db = planDb(plan, (sql) => (sql.startsWith("SELECT 1 AS ok FROM gateway_decisions") ? [] : undefined));
+    const note = { subject: "driver", subjectId: hero.id, text: "Prefers a text before a call", sourceRefs: [] };
+    const h = harness(
+      [
+        result({ callId: MODEL_CALL, toolCalls: [call("m", "get_pay_items"), call("r", "remember_note", note)] }),
+        result({ text: "Done." }),
+      ],
+      () => {
+        throw new Error("answered below");
+      },
+    );
+    h.deps.callTool = async (ctx, c) =>
+      c.name === "get_pay_items"
+        ? allowed("get_pay_items", {}, { reason: "screen_flagged", flaggedInputId: INPUT })
+        : callTool(ctx, c, { db, clock: h.deps.clock });
+    await h.run();
+    const told = h.requests[1].request.messages.find((m) => m.role === "tool" && m.toolCallId === "r");
+    expect(JSON.parse(String(told?.content))).toEqual({ suggested: false, reason: "flagged_turn" });
+    expect(db.decisions).toEqual([expect.objectContaining({ tool: "remember_note", decision: "allowed", modelCallId: MODEL_CALL })]);
+    // Refused on the loop's own flag: the decision log is not read and nothing is written.
+    expect(db.statements.some((st) => st.sql.startsWith("SELECT 1 AS ok FROM gateway_decisions"))).toBe(false);
+    expect(db.statements.some((st) => st.sql.startsWith("INSERT INTO carrier_notes"))).toBe(false);
+  });
+
+  it("carries no flag on a turn that read nothing flagged", async () => {
+    const seen: (string | null | undefined)[] = [];
+    const h = harness([result({ toolCalls: [call("a", "get_pay_items"), call("b", "get_pay_items")] }), result({ text: "Done." })], () =>
+      allowed("get_pay_items", {}),
+    );
+    h.deps.callTool = async (ctx) => {
+      seen.push(ctx.flaggedInputId);
+      return allowed("get_pay_items", {});
+    };
+    await h.run();
+    expect(seen).toEqual([undefined, undefined]);
+  });
+
   it("withholds a money figure no tool returned", async () => {
     const h = harness(
       [result({ toolCalls: [call("c1", "get_pay_items")] }), result({ text: "Gross is $1,500.00 and the advance is $999.99." })],
@@ -920,6 +969,28 @@ describe("runTurn with tool search and the prompt cache", () => {
       `${OPERATOR_PROMPT}\n${TOOL_SEARCH_RULE}\n${COLLECTIONS_RULE}\n${CHECKLIST_RULE}`,
     );
     expect(COLLECTIONS_RULE).toContain("get_collections");
+  });
+
+  it("adds the memory lines only while the note suggestion tool is offered", async () => {
+    flags.carrierMemoryEnabled = true;
+    onTestFinished(() => {
+      flags.carrierMemoryEnabled = false;
+    });
+    const tools = toolsFor("operator");
+    expect(tools.map((t) => t.name)).toContain("remember_note");
+    const h = harness(script(), gateway);
+    h.deps.tools = tools;
+    h.deps.request = turnRequest(tools, false, { enabled: false, retention: "in_memory" });
+    await h.run();
+    expect(h.requests.length).toBeGreaterThan(0);
+    for (const { request } of h.requests) {
+      expect(request.messages[0]).toEqual({ role: "system", content: `${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${MEMORY_PROMPT}` });
+    }
+    // Off again: the default tool list and the prompt are today's.
+    flags.carrierMemoryEnabled = false;
+    const off = toolsFor("operator");
+    expect(off.map((t) => t.name)).not.toContain("remember_note");
+    expect(operatorPrompt(off.map((t) => t.name), false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
   });
 
   it("asks Muse Spark to search the deferred tools, keys the cache and puts the summary in input", async () => {

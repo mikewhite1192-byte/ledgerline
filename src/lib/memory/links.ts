@@ -11,3 +11,13 @@ export function noteHref(id: string): string {
 // The table name a trace ref carries for a note. Not a record table: it links to Memory, never to
 // /records.
 export const NOTE_REF_TABLE = "carrier_notes";
+
+// A Unicode format character (a zero-width space or joiner, a direction override, a tag character
+// and the like): invisible on a page, and able to hide words from the pattern pre-screen. A note
+// with one is never written, and one already stored never reaches a model. Pure, so the Memory
+// page can say so beside the note.
+const FORMAT_CHARACTER = /\p{Cf}/u;
+
+export function hasHiddenCharacter(text: string): boolean {
+  return FORMAT_CHARACTER.test(text);
+}

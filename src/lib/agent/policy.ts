@@ -97,6 +97,15 @@ export const COLLECTIONS_RULE = [
   "  sent only on the Collections page; never write one in chat or say one was sent.",
 ].join("\n");
 
+// Carrier memory (carrierMemoryEnabled): appended only while remember_note is offered, so the
+// prompt is unchanged with the switch off.
+export const MEMORY_PROMPT = [
+  "",
+  "Carrier memory:",
+  "- When the office states a preference or a lasting fact about a customer or driver, call",
+  "  remember_note; the office keeps or discards it. Never put an amount or an instruction in a note.",
+].join("\n");
+
 // The checklist rule (design-agents-101 3.1), added while set_checklist is offered (always, for
 // the operator). The person sees the list above the steps as the answer is worked out.
 export const CHECKLIST_RULE = [
@@ -117,15 +126,16 @@ export const CHECKLIST_TOOL = "set_checklist";
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
 // is on (it is one of the rules), the collections rule while get_collections is offered, the Cash
 // Friday line while get_cash_friday is offered, the checklist rule while set_checklist is offered,
-// then the report section while the report tools are offered. With search off and none of those
-// offered it is the prompt above.
+// then the report section while the report tools are offered, then the memory section while
+// remember_note is. With search off and none of those offered it is the prompt above.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
   const searched = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
   const collections = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
   const cash = toolNames.includes("get_cash_friday") ? `${collections}\n${CASH_PROMPT}` : collections;
   const prompt = toolNames.includes(CHECKLIST_TOOL) ? `${cash}\n${CHECKLIST_RULE}` : cash;
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
-  return reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
+  const withReports = reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
+  return toolNames.includes("remember_note") ? `${withReports}\n${MEMORY_PROMPT}` : withReports;
 }
 
 export const STATE_HEADER = "Current state (from the database, for this turn only):";

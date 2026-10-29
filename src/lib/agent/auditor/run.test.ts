@@ -3,6 +3,7 @@ import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import type { AuditState, AuditStore, VerdictWrite } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
+import { AUDITOR_NOTES_RULE, AUDITOR_PROMPT } from "./policy";
 import { AiError, runAudit, type AuditDeps, type AuditResult } from "./run";
 
 // runAudit with a fake store, a fake gateway and a fake model (design 4.2 step 4): one Wonder call
@@ -497,5 +498,63 @@ describe("runAudit", () => {
       expect(keys.has(key), key).toBe(false);
     }
     expect(model.mock.calls[0][1].messages[0]).toMatchObject({ role: "system" });
+  });
+});
+
+// The office's kept notes in the evidence (CARRIER-MEMORY PR 2): the prompt says what they are only
+// when they are there, and the verdict names the notes the call saw, in the same write.
+describe("runAudit with carrier notes", () => {
+  const NOTE_A = "7d6c5b4a-3928-4170-8e6f-000000000001";
+  const NOTE_B = "7d6c5b4a-3928-4170-8e6f-000000000002";
+  const WITH_NOTES = {
+    ...PACK,
+    notes: [
+      { id: NOTE_A, text: "Prefers a text before a call" },
+      { id: NOTE_B, text: "Fuel advances only on Fridays" },
+      { id: NOTE_A, text: "Prefers a text before a call" },
+      { id: "not-a-uuid", text: "x" },
+    ],
+  };
+
+  it("adds the notes rule to the prompt and names the notes the call saw with the verdict", async () => {
+    const { store, log } = fakeStore();
+    const model = fakeModel(() => okResult(verdictText()));
+    await runAudit(SESSION, PROPOSAL, deps({ store, callTool: fakeTool(allowed(WITH_NOTES)).fn, complete: model }));
+    const system = model.mock.calls[0][1].messages[0].content as string;
+    expect(system).toBe(`${AUDITOR_PROMPT}\n${AUDITOR_NOTES_RULE}`);
+    expect(log.writes).toEqual([
+      {
+        verdict: "pass",
+        agrees: true,
+        callId: "c0ffee00-0000-4000-8000-000000000001",
+        concerns: [],
+        notesUsed: [NOTE_A, NOTE_B],
+      },
+    ]);
+  });
+
+  it("keeps the prompt and the write unchanged when the evidence has no notes", async () => {
+    for (const pack of [PACK, { ...PACK, notes: [] }, { ...PACK, notes: "Prefers a text" }]) {
+      const { store, log } = fakeStore();
+      const model = fakeModel(() => okResult(verdictText()));
+      await runAudit(SESSION, PROPOSAL, deps({ store, callTool: fakeTool(allowed(pack)).fn, complete: model }));
+      expect(model.mock.calls[0][1].messages[0].content).toBe(AUDITOR_PROMPT);
+      expect(log.writes[0]).not.toHaveProperty("notesUsed");
+    }
+  });
+
+  it("names no notes when no call answered, as on a budget refusal", async () => {
+    const { store, log } = fakeStore();
+    const model = fakeModel(() => Promise.reject(new AiError("cap")));
+    await runAudit(SESSION, PROPOSAL, deps({ store, callTool: fakeTool(allowed(WITH_NOTES)).fn, complete: model }));
+    expect(log.writes).toEqual([{ verdict: "unknown", agrees: null, callId: null, concerns: ["budget"] }]);
+  });
+
+  it("names at most four notes", async () => {
+    const ids = Array.from({ length: 6 }, (_, i) => `7d6c5b4a-3928-4170-8e6f-00000000001${i}`);
+    const { store, log } = fakeStore();
+    const pack = { ...PACK, notes: ids.map((id) => ({ id, text: "n" })) };
+    await runAudit(SESSION, PROPOSAL, deps({ store, callTool: fakeTool(allowed(pack)).fn }));
+    expect(log.writes[0].notesUsed).toEqual(ids.slice(0, 4));
   });
 });
