@@ -4,6 +4,7 @@ import { flags } from "../../config/flags";
 import { ADVANCE_STATUS } from "../advances/http";
 import type { Session } from "../auth/claims";
 import { getSession } from "../auth/session";
+import { staffGate } from "../auth/staff-gate";
 import { isCrossSite } from "../http/same-site";
 import { isUuid } from "../uuid";
 
@@ -114,19 +115,25 @@ export async function inboxSession(
   return { ok: true, session };
 }
 
-// One button press on a message's page: run it and answer with its category.
+// One button press on a message's page: run it and answer with its category. The checks are
+// inboxSession's, written out so the staff check comes after guards only: a demo visitor (the judge
+// role) is refused before any work (src/lib/auth/judge-allowlist.test.ts follows this helper).
 export async function inboxAction<T extends Outcome>(
   request: Request,
   params: Promise<{ id: string }>,
   what: string,
   run: (session: Session, inboundId: string) => Promise<T>,
 ): Promise<NextResponse> {
-  const checked = await inboxSession(request);
-  if (!checked.ok) return checked.response;
+  if (isCrossSite(request)) return inboxRefuse("forbidden");
+  if (!inboxOn()) return inboxRefuse("disabled");
+  const session = await getSession();
+  if (!session) return inboxRefuse("unauthenticated");
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id } = await params;
   if (!isUuid(id)) return inboxRefuse("bad_request");
   try {
-    return answer(await run(checked.session, id.toLowerCase()));
+    return answer(await run(session, id.toLowerCase()));
   } catch (err) {
     return failed(err, what);
   }

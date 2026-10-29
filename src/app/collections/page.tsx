@@ -41,7 +41,7 @@ export default async function CollectionsPage() {
 
   return (
     <AppShell
-      tenant={{ name: shell.name, email: shell.email, timezone: shell.timezone }}
+      tenant={{ name: shell.name, email: shell.email, timezone: shell.timezone, role: shell.role }}
       nav={appNav("/collections")}
       title="Collections"
       signOut={<SignOutForm />}

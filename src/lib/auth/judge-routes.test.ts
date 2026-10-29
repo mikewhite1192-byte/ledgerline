@@ -116,6 +116,17 @@ describe("a judge on every staff-only route", () => {
       "POST /api/sweeps/[id]/approve-clean",
       "POST /api/driver-notes/[id]/approve",
       "POST /api/drivers/[id]/arm",
+      "POST /api/collections/[id]/approve",
+      "POST /api/collections/[id]/reject",
+      "POST /api/collections/draft",
+      "POST /api/cards/check",
+      "POST /api/cards/check/[runId]",
+      "POST /api/cards/breaks/[id]/dismiss",
+      "POST /api/cash/check",
+      "POST /api/briefs/profit",
+      "POST /api/inbound-messages",
+      "POST /api/inbound-messages/[id]/sort",
+      "POST /api/inbound-messages/[id]/hand-off",
     ]) {
       expect(keys).toContain(k);
     }

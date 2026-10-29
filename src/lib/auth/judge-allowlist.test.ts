@@ -24,6 +24,7 @@ const SESSION = "src/lib/auth/session.ts";
 // Shared route helpers that run staffGate themselves before any work (each checked below).
 const GATED_HELPERS: Readonly<Record<string, readonly string[]>> = {
   "src/lib/advances/http.ts": ["advanceAction", "bodyAction"],
+  "src/lib/inbound/http.ts": ["inboxAction"],
   "src/lib/portal/http.ts": ["decideRoute"],
   "src/lib/voice/http.ts": ["voiceStaffAction"],
 };
@@ -410,6 +411,7 @@ describe("judge allowlist reachability", () => {
     expect(keys).toContain("GET /api/qbo/connect");
     expect(keys).toContain("src/app/settings/demo/reset-action.ts#resetDemoAction");
     expect(keys).toContain("src/app/sign-in/actions.ts#signInAction");
+    expect(keys).toContain("src/app/memory/actions.ts#keepNoteAction");
     expect(handlers.length).toBeGreaterThan(50);
   });
 
