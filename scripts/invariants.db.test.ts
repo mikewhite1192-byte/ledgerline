@@ -225,6 +225,7 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "spend_alerts",
     "voice_notes",
     "voice_note_audio",
+    "inbound_messages",
     "documents",
     "portal_runs",
     "portal_sessions",
@@ -372,6 +373,13 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           `INSERT INTO voice_note_audio (tenant_id, voice_note_id, audio, audio_mime, audio_bytes)
            VALUES (current_tenant_id(), CAST($1 AS uuid), decode($2, 'hex'), 'audio/wav', 4)`,
           [voiceNote, "52494646"],
+        );
+        // A pasted Inbox message, not sorted yet (0037).
+        await q.execute(
+          `INSERT INTO inbound_messages (id, tenant_id, channel, received_at, status, created_by, trace_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'paste', now(), 'received', 'invariants-test',
+             CAST($2 AS uuid))`,
+          [randomUUID(), randomUUID()],
         );
         // An uploaded receipt not read yet (0013).
         await q.execute(

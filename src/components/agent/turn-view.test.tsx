@@ -4,6 +4,8 @@ import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ChatThread } from "@/components/app/chat-thread";
 import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
+import type { Checklist } from "@/lib/agent/checklist";
+import { encodeEvent } from "@/lib/agent/operator/stream";
 import { FOUND_TEXT, STOPPED_TEXT, type TurnView } from "@/lib/agent/view";
 import { REPORT_COLUMNS, REPORT_TITLES, type ReportResult } from "@/lib/reports/types";
 import { AgentChat, toMessages } from "./turn-view";
@@ -241,6 +243,76 @@ describe("AgentChat", () => {
     ];
     expect(screen.getAllByRole("button", { name: /^How this was worked out/ })).toHaveLength(2);
     for (const t of toggles) expect(t.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("shows the answer's checklist live as it streams in, above the steps, then the finished list", async () => {
+    const list = (doing: string, items: [string, Checklist["items"][number]["state"]][]): Checklist => ({
+      v: 1,
+      by: "model",
+      items: items.map(([text, state], i) => ({ key: `m${i + 1}`, text, state: text === doing ? "doing" : state })),
+    });
+    const first = list("Read Rosa's week", [
+      ["Read Rosa's week", "todo"],
+      ["Check her pay", "todo"],
+    ]);
+    const second = list("Check her pay", [
+      ["Read Rosa's week", "done"],
+      ["Check her pay", "todo"],
+    ]);
+    const finished = list("", [
+      ["Read Rosa's week", "done"],
+      ["Check her pay", "done"],
+    ]);
+    const enc = new TextEncoder();
+    let push: (text: string) => void = () => {};
+    let close: () => void = () => {};
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        push = (text) => c.enqueue(enc.encode(text));
+        close = () => c.close();
+      },
+    });
+    let turnId = "";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/agent/turn") {
+          turnId = String((JSON.parse(String(init?.body)) as { turnId: string }).turnId);
+          return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }
+        const back: TurnView = { ...turn, id: turnId, text: "Her pay is right.", proposals: [], flags: [], checklist: finished };
+        return new Response(JSON.stringify({ turn: back }), { status: 200 });
+      }),
+    );
+    render(<AgentChat initialTurns={[]} streamMode="sse" />);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Is Rosa's pay right?" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Send" }));
+    await waitFor(() => expect(turnId).not.toBe(""));
+
+    await act(async () => {
+      push(encodeEvent({ event: "start", data: { turnId, conversationId: "c-1" } }));
+      push(encodeEvent({ event: "checklist", data: first }));
+      push(encodeEvent({ event: "step", data: { id: "s-1", seq: 1, kind: "tool", label: "Made a checklist", state: "done" } }));
+    });
+    const live = await screen.findByRole("list", { name: "Checklist" });
+    expect(live.getAttribute("aria-live")).toBe("polite");
+    expect(live.textContent).toContain("Read Rosa's week, working on it");
+    expect(live.textContent).toContain("Check her pay, to do");
+    // Above the steps, in the answer's own column.
+    const steps = screen.getByRole("list", { name: "What the agent did" });
+    expect(live.compareDocumentPosition(steps) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await act(async () => push(encodeEvent({ event: "checklist", data: second })));
+    await waitFor(() => expect(screen.getByRole("list", { name: "Checklist" }).textContent).toContain("Read Rosa's week, done"));
+    expect(screen.getByRole("list", { name: "Checklist" }).textContent).toContain("Check her pay, working on it");
+
+    await act(async () => {
+      push(encodeEvent({ event: "done", data: { turnId, status: "done" } }));
+      close();
+    });
+    await screen.findByText("Her pay is right.");
+    expect(screen.getByRole("list", { name: "Checklist" }).textContent).toContain("Check her pay, done");
+    expect(screen.getAllByRole("list", { name: "Checklist" })).toHaveLength(1);
   });
 
   it("keeps the next question in the same conversation in poll mode, where no start event comes", async () => {

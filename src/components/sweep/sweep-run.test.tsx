@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import type { CardStatus, ProposalView } from "@/lib/agent/view";
+import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
 import type { SweepCounts } from "@/lib/sweep/run";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
 import { SweepRun } from "./sweep-run";
@@ -113,6 +114,25 @@ const titles = (el: HTMLElement) =>
 const folded = (summary: RegExp) => screen.getByText(summary).closest("details") as HTMLElement;
 
 describe("SweepRun", () => {
+  it("shows the run's checklist under the header, with what a stopped run did not finish", () => {
+    const stopped = endSweep(tickSweep(sweepChecklist(false), "draft"), "stopped");
+    render(<SweepRun initial={{ ...page, run: { ...page.run, truncatedReason: "cap", checklist: stopped } }} auditorOn={false} />);
+    const list = screen.getByRole("list", { name: "Checklist" });
+    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Find every pay problem in the open week, done",
+      "Draft a fix for each problemNot finished, not finished",
+      "Run the second check on every draftNot finished, not finished",
+    ]);
+    // Above the counts.
+    const counts = screen.getByRole("region", { name: "Counts" });
+    expect(list.compareDocumentPosition(counts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows no checklist for a run started without one", () => {
+    render(<SweepRun initial={page} auditorOn={false} />);
+    expect(screen.queryByRole("list", { name: "Checklist" })).toBeNull();
+  });
+
   it("lists only rejected and failed fixes as declined, and keeps approved, running and unknown ones under Needs a look", () => {
     render(<SweepRun initial={page} auditorOn />);
     expect(titles(folded(/^Declined \(/))).toEqual(["Pay correction for D-rejected", "Pay correction for D-failed"]);

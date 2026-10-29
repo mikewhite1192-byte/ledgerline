@@ -813,6 +813,7 @@ export async function complete(
     upstreamId: answer.upstreamId,
     replay: answer.value.replay,
     toolSearches: answer.value.toolSearches,
+    ...(answer.value.reasoningSummary ? { reasoningSummary: answer.value.reasoningSummary } : {}),
   };
 }
 

@@ -6,7 +6,7 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/app/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { VisuallyHidden } from "@/components/ui/visually-hidden";
-import { traceLines, traceModels, traceTotals, type TraceLine, type TraceModel } from "@/lib/trace/format";
+import { isNotesLine, traceLines, traceModels, traceTotals, type TraceLine, type TraceModel } from "@/lib/trace/format";
 import type { TurnTrace } from "@/lib/trace/types";
 import { cn } from "@/lib/cn";
 import { recordNamer } from "@/lib/format/labels";
@@ -87,7 +87,7 @@ function Line({
       </div>
       <p className="text-body text-foreground-2">{line.text}</p>
       {line.refs.length > 0 ? (
-        <ul className="flex flex-wrap gap-x-3 gap-y-1" aria-label={line.key === "memory" ? "Notes it read" : "Records it read"}>
+        <ul className="flex flex-wrap gap-x-3 gap-y-1" aria-label={isNotesLine(line) ? "Notes it read" : "Records it read"}>
           {line.refs.map((ref) => {
             // A carrier note links to its row on the Memory page, never to a record page.
             const href = ref.table === NOTE_REF_TABLE ? noteHref(ref.id) : hrefOrNull(hrefFor, ref);

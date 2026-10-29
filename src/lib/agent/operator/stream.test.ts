@@ -20,4 +20,19 @@ describe("turn stream", () => {
     const out = decodeEvents("event: step\ndata: {not json\n\n" + encodeEvent(DONE));
     expect(out.events).toEqual([DONE]);
   });
+
+  it("passes the answer's checklist through, read back through its schema", () => {
+    const list: TurnEvent = {
+      event: "checklist",
+      data: { v: 1, by: "model", items: [{ key: "m1", text: "Read Rosa's week", state: "doing" }] },
+    };
+    expect(decodeEvents(encodeEvent(list) + encodeEvent(DONE)).events).toEqual([list, DONE]);
+    // A list that is not one is skipped, never shown half-read.
+    const bad = 'event: checklist\ndata: {"v":1,"by":"model","items":[{"key":"m1","text":"x","state":"maybe"}]}\n\n';
+    expect(decodeEvents(bad + encodeEvent(DONE)).events).toEqual([DONE]);
+  });
+
+  it("skips an event name it does not know", () => {
+    expect(decodeEvents("event: other\ndata: {}\n\n" + encodeEvent(DONE)).events).toEqual([DONE]);
+  });
 });

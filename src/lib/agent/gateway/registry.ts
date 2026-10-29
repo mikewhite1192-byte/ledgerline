@@ -35,6 +35,7 @@ import { reportCashNeeded } from "./tools/read/report-cash-needed";
 import { reportDriverPaySummary } from "./tools/read/report-driver-pay-summary";
 import { reportMarginPerLoad } from "./tools/read/report-margin-per-load";
 import { runChecks } from "./tools/read/run-checks";
+import { setChecklist } from "./tools/note/set-checklist";
 import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
@@ -43,6 +44,7 @@ import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
 import { proposeRuleChange } from "./tools/propose/propose-rule-change";
 import { previewRuleChange } from "./tools/read/preview-rule-change";
+import { rememberNote } from "./tools/record/remember-note";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
 
@@ -98,6 +100,8 @@ const TOOLS: readonly AnyToolDef[] = [
   getPortalEvidence,
   classifyMessage,
   getCashFriday,
+  setChecklist,
+  rememberNote,
 ];
 
 function build(): Readonly<Record<string, AnyToolDef>> {

@@ -81,6 +81,24 @@ describe("HowWorkedOut", () => {
     expect(screen.getByText("Remembered 2 notes from the office; 1 has since been removed")).toBeTruthy();
   });
 
+  it("links the notes a card's second check saw to Memory, under that card", async () => {
+    const id = "77777777-7777-4777-8777-000000000003";
+    const base = sampleTrace();
+    const trace = {
+      ...base,
+      proposals: base.proposals.map((p) =>
+        p.id === SAMPLE_PROPOSAL_ID ? { ...p, auditorNotes: [{ id, label: "Driver T-104: Prefers a text before a call" }] } : p,
+      ),
+    };
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} proposalId={SAMPLE_PROPOSAL_ID} load={async () => ({ trace })} />);
+    fireEvent.click(screen.getByRole("button", { name: CARD }));
+    const notes = await screen.findByRole("list", { name: "Notes it read" });
+    const link = screen.getByRole("link", { name: "Driver T-104: Prefers a text before a call" });
+    expect(notes.contains(link)).toBe(true);
+    expect(link.getAttribute("href")).toBe(`/memory#note-${id}`);
+    expect(screen.getByText("Notes the second check saw: 1 note from the office")).toBeTruthy();
+  });
+
   it("shows the prompt cache line under a model call that has its counts", async () => {
     const trace = sampleTrace();
     const call = trace.steps[0].call!;

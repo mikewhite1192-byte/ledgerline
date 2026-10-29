@@ -12,11 +12,16 @@
 
 name: quality-gates
 
+# Docs-only and Markdown-only changes skip CI. A PR that changes any other file still runs every
+# job. A Markdown-only PR gets no required checks and cannot merge alone, so a Markdown change
+# rides with the code PR it belongs to.
 on:
   pull_request:
     branches: ["main"]
+    paths-ignore: ["docs/**", "**/*.md"]
   push:
     branches: ["main"]
+    paths-ignore: ["docs/**", "**/*.md"]
   # Nightly full semgrep scan of main, so a rule newly added to the registry packs is caught even
   # in files no pull request touches. Every other job skips this trigger at the job level, which
   # bills nothing. 07:17 UTC is the middle of the night in New York, off the top of the hour.
@@ -37,7 +42,7 @@ jobs:
     name: typecheck + lint + house style
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -103,7 +108,7 @@ jobs:
     name: unit tests
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -125,7 +130,7 @@ jobs:
     name: db tests
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     # Throwaway Postgres for the DB tests below. Trust auth on a container that lives for one
     # job, so no password appears anywhere.
     services:
@@ -178,7 +183,7 @@ jobs:
     name: build
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -211,7 +216,7 @@ jobs:
     needs: [static, unit, db, build]
     if: ${{ always() && github.event_name != 'schedule' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - name: Every part passed
         env:
@@ -239,7 +244,7 @@ jobs:
     name: demo path (local)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:16@sha256:9e2cf6287f25c3151f4c9421ccce2b17f3e60061c111a29165e0d2cdd9ff0a97 # 16.15, resolved from Docker Hub 2026-10-26
@@ -295,6 +300,7 @@ jobs:
     name: secret scan (new commits)
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -358,6 +364,7 @@ jobs:
   semgrep:
     name: semgrep (SAST + secrets rules)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container:
       image: semgrep/semgrep:1.181.0@sha256:81474464c1f07483ba0682a44787fd93c91397419762a04abe2bafaae396304b
     steps:

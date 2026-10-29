@@ -4,6 +4,7 @@ import type { Session } from "../../../auth/claims";
 import { createPgDb } from "../../../db/pg";
 import { adminUrl, appUrl } from "../../../db/test-urls";
 import type { Db } from "../../../db/types";
+import type { Checklist } from "../../checklist";
 import type { ProposalDraft } from "../types";
 import { dbTurnStore, openAgentTurn, readAgentTurn, readRecentAgentTurns } from "./index";
 
@@ -140,6 +141,101 @@ describe("the agent's store", () => {
     await expect(
       store.finishTurn(turn.turnId, { status: "failed", endedReason: "store", text: "x", summary: "x", stepCount: 0, modelCallCount: 0, costNanocents: 0 }),
     ).rejects.toThrow();
+  });
+
+  it("keeps the answer's checklist, the summary it started from and a model step's note, and ends the list with the turn", async () => {
+    const turn = await open(A, null, T0 + 60_000);
+    const store = dbTurnStore(session(A), { db: app, clock: clockAt(T0 + 61_000) });
+    const list: Checklist = {
+      v: 1,
+      by: "model",
+      items: [
+        { key: "m1", text: "Read Sam's week", state: "done" },
+        { key: "m2", text: "Check his advance limit", state: "doing" },
+        { key: "m3", text: "Draft the advance", state: "todo" },
+      ],
+    };
+    await store.setChecklist(turn.turnId, list);
+    expect((await readAgentTurn(session(A), turn.turnId, { db: app }))?.checklist).toEqual(list);
+    // Another carrier's answer is not there to tick.
+    expect(
+      await app.withTenant(B, (q) =>
+        q.execute("UPDATE turns SET checklist = NULL WHERE id = CAST($1 AS uuid)", [turn.turnId]),
+      ),
+    ).toBe(0);
+    // A list the code would never write is refused by the table too.
+    for (const bad of ['{"v":1,"items":"x"}', '{"v":1,"items":[]}', '"a list"']) {
+      expect(
+        await sqlStateOf(
+          app.withTenant(A, (q) => q.execute("UPDATE turns SET checklist = CAST($2 AS jsonb) WHERE id = CAST($1 AS uuid)", [turn.turnId, bad])),
+        ),
+        bad,
+      ).toBe("23514");
+    }
+    await expect(store.setChecklist(turn.turnId, { ...list, items: [] })).rejects.toThrow();
+
+    const step = await store.startStep(turn.turnId, { kind: "model", label: "Thinking it through" });
+    await store.finishStep(turn.turnId, step.id, { state: "done", detail: { toolCalls: 1 }, reasoningNote: "Read the limit next." });
+    const stored = await admin.withTenant(A, (q) =>
+      q.query<{ context_summary: string | null; note: string | null }>(
+        `SELECT t.context_summary, s.reasoning_note AS note FROM turns t JOIN turn_steps s ON s.turn_id = t.id
+          WHERE t.id = CAST($1 AS uuid)`,
+        [turn.turnId],
+      ),
+    );
+    expect(stored).toEqual([{ context_summary: turn.summary, note: "Read the limit next." }]);
+
+    // The turn stopped with the item in hand: the stored list says it was not finished.
+    await store.finishTurn(turn.turnId, {
+      status: "partial",
+      endedReason: "max_turns",
+      text: "I stopped after 1 step.",
+      summary: "Stopped.",
+      stepCount: 1,
+      modelCallCount: 1,
+      costNanocents: 0,
+      checklist: { ...list, items: list.items.map((i) => (i.state === "done" ? i : { ...i, state: "not_done" })) },
+    });
+    const ended = await readAgentTurn(session(A), turn.turnId, { db: app });
+    expect(ended?.checklist?.items.map((i) => i.state)).toEqual(["done", "not_done", "not_done"]);
+    expect(ended?.endedReason).toBe("max_turns");
+    // A finished answer's list is not ticked again.
+    await expect(store.setChecklist(turn.turnId, list)).rejects.toThrow();
+  });
+
+  it("ends the list on read for an answer that finished without writing it, and shows none for an answer that set none", async () => {
+    const turn = await open(A, null, T0 + 120_000);
+    const store = dbTurnStore(session(A), { db: app, clock: clockAt(T0 + 121_000) });
+    await store.setChecklist(turn.turnId, {
+      v: 1,
+      by: "model",
+      items: [
+        { key: "m1", text: "Read Sam's week", state: "doing" },
+        { key: "m2", text: "Draft the advance", state: "todo" },
+      ],
+    });
+    await store.finishTurn(turn.turnId, {
+      status: "failed",
+      endedReason: "store",
+      text: "",
+      summary: "",
+      stepCount: 0,
+      modelCallCount: 0,
+      costNanocents: 0,
+    });
+    const view = await readAgentTurn(session(A), turn.turnId, { db: app });
+    expect(view?.checklist?.items.map((i) => i.state)).toEqual(["not_done", "not_done"]);
+    const plain = await open(A, null, T0 + 180_000);
+    await dbTurnStore(session(A), { db: app, clock: clockAt(T0 + 181_000) }).finishTurn(plain.turnId, {
+      status: "done",
+      endedReason: null,
+      text: "Yes.",
+      summary: "Yes.",
+      stepCount: 0,
+      modelCallCount: 1,
+      costNanocents: 0,
+    });
+    expect((await readAgentTurn(session(A), plain.turnId, { db: app }))?.checklist).toBeNull();
   });
 
   it("keeps each carrier's and each person's turns to themselves", async () => {
@@ -324,6 +420,8 @@ describe("the agent's store", () => {
       "UPDATE proposals SET amount_cents = 1 WHERE tenant_id = current_tenant_id()",
       "UPDATE proposals SET args = CAST('{}' AS jsonb) WHERE tenant_id = current_tenant_id()",
       "UPDATE turns SET user_text = 'x' WHERE tenant_id = current_tenant_id()",
+      // The summary a turn started from is written once, when it opens.
+      "UPDATE turns SET context_summary = 'x' WHERE tenant_id = current_tenant_id()",
       "UPDATE turn_steps SET label = 'x' WHERE tenant_id = current_tenant_id()",
       "UPDATE conversations SET created_by = 'x' WHERE tenant_id = current_tenant_id()",
     ]) {
