@@ -73,6 +73,7 @@ type ProposalRow = CallCols & {
   auditor_verdict: string | null;
   flagged: boolean;
   exceptions: string | null;
+  auditor_notes_used: string | null;
 };
 
 type ExtraRow = CallCols & { after_seq: number | string; screen_verdict: string | null; screen_via: string | null };
@@ -197,15 +198,43 @@ const CALL_SELECT = (a: string) =>
 
 // The most notes one trace names; a turn holds at most carrierMemoryLimits.maxNotesPerTurn.
 const NOTES_NAMED = 20;
+// The most notes named for one card's second check; get_proposal sends at most four.
+const AUDITOR_NOTES_NAMED = 4;
+// The most cards whose second-check notes one trace names.
+const AUDITED_CARDS_NAMED = 20;
+
+// The note ids a stored list holds, each once, in its order, at most `most`.
+function noteIdsIn(text: string | null | undefined, most: number): string[] {
+  if (typeof text !== "string") return [];
+  return [...new Set(parseArray(text).filter((x): x is string => isUuid(x)))].slice(0, most);
+}
 
 // The notes a turn's summary held, in the order it held them, each with its label now, or as
 // removed when the note is gone. Off (carrierMemoryEnabled), none are read or shown.
 async function readTraceNotes(q: Queryable, notesUsed: string | null | undefined): Promise<TraceNote[]> {
-  if (!flags.carrierMemoryEnabled || typeof notesUsed !== "string") return [];
-  const ids = parseArray(notesUsed)
-    .filter((x): x is string => isUuid(x))
-    .slice(0, NOTES_NAMED);
+  if (!flags.carrierMemoryEnabled) return [];
+  const ids = noteIdsIn(notesUsed, NOTES_NAMED);
   if (ids.length === 0) return [];
+  const labels = await readNoteLabels(q, ids);
+  return ids.map((id) => ({ id, label: labels.get(id) ?? null }));
+}
+
+// The notes each card's second check saw, read in one query for the whole turn. Off, none.
+async function readAuditorNotes(q: Queryable, rows: readonly ProposalRow[]): Promise<Map<string, TraceNote[]>> {
+  const out = new Map<string, TraceNote[]>();
+  if (!flags.carrierMemoryEnabled) return out;
+  const perCard = rows
+    .slice(0, AUDITED_CARDS_NAMED)
+    .map((r) => [r.id, noteIdsIn(r.auditor_notes_used, AUDITOR_NOTES_NAMED)] as const)
+    .filter(([, ids]) => ids.length > 0);
+  if (perCard.length === 0) return out;
+  const labels = await readNoteLabels(q, [...new Set(perCard.flatMap(([, ids]) => ids))]);
+  for (const [id, ids] of perCard) out.set(id, ids.map((n) => ({ id: n, label: labels.get(n) ?? null })));
+  return out;
+}
+
+// Each named note's label now; a note that is gone has none.
+async function readNoteLabels(q: Queryable, ids: readonly string[]): Promise<Map<string, string>> {
   const rows = await q.query<{
     id: string;
     subject_kind: string;
@@ -225,13 +254,12 @@ async function readTraceNotes(q: Queryable, notesUsed: string | null | undefined
         AND n.id IN (SELECT CAST(x AS uuid) FROM jsonb_array_elements_text(CAST($1 AS jsonb)) AS x)`,
     [JSON.stringify(ids)],
   );
-  const byId = new Map(
+  return new Map(
     rows.map((r) => [
       r.id,
       noteLabel({ subjectKind: r.subject_kind, subjectName: r.subject_name, subjectCode: r.subject_code, text: r.text }),
     ]),
   );
-  return [...new Set(ids)].map((id) => ({ id, label: byId.get(id) ?? null }));
 }
 
 export async function readTurnTrace(q: Queryable, sub: string, turnId: string): Promise<TurnTrace | null> {
@@ -289,6 +317,7 @@ async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
   const proposals = await q.query<ProposalRow>(
     `SELECT p.id, p.gateway_decision_id, p.operator_verdict, p.auditor_verdict,
             p.flagged_input_id IS NOT NULL AS flagged, CAST(p.exceptions AS text) AS exceptions,
+            CAST(p.auditor_notes_used AS text) AS auditor_notes_used,
             ${CALL_SELECT("a")}
        FROM proposals p
        LEFT JOIN model_calls a ON a.id = p.auditor_call_id AND a.tenant_id = p.tenant_id
@@ -326,6 +355,7 @@ async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
   }
 
   const notesUsed = await readTraceNotes(q, turn.notes_used);
+  const auditorNotes = await readAuditorNotes(q, proposals);
 
   return {
     turnId: turn.id,
@@ -354,6 +384,7 @@ async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
         auditorCall: callOf(r),
         flagged: r.flagged === true,
         exceptions: parseArray(r.exceptions).filter((c): c is string => typeof c === "string" && CODE.test(c)),
+        ...(auditorNotes.has(r.id) ? { auditorNotes: auditorNotes.get(r.id) } : {}),
       }),
     ),
   };

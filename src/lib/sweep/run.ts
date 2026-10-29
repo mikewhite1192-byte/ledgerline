@@ -28,6 +28,7 @@ import {
 } from "./plan";
 import { fanoutLimits, fanoutOn, lockTenantDay } from "./fanout/limits";
 import { checkPhase, planPhase, reconcilePhase, type FanoutCtx } from "./fanout/run";
+import { nextSweepChecklist, sweepChecklist, type SweepChecklistChange } from "./checklist";
 import { serviceSession } from "./service-session";
 
 // The pay sweep (design 3.2): one run checks one open week, drafts a pay correction for each
@@ -224,7 +225,8 @@ export async function startSweep(
   if (!isUuid(input.runId) || (periodId !== null && !isUuid(periodId))) return { ok: false, category: "bad_request" };
   // With the second opinion on, the run starts with room for it (design 3.7): the sweep's own
   // spend stays its own number inside the larger cap.
-  const cap = fanoutOn() ? fanoutLimits().runCapCents : flags.sweepLimits.maxRunCents;
+  const secondLook = fanoutOn();
+  const cap = secondLook ? fanoutLimits().runCapCents : flags.sweepLimits.maxRunCents;
   if (!Number.isSafeInteger(cap) || cap <= 0) return { ok: false, category: "not_configured" };
   const db = deps.db ?? getDb();
   const now = (deps.clock ?? (() => new Date()))();
@@ -265,10 +267,10 @@ export async function startSweep(
       }
     }
     await q.execute(
-      `INSERT INTO sweep_runs (id, tenant_id, period_id, trigger, started_by, cap_cents, started_at)
-       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, CAST($6 AS timestamptz))
+      `INSERT INTO sweep_runs (id, tenant_id, period_id, trigger, started_by, cap_cents, started_at, checklist)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, CAST($6 AS timestamptz), CAST($7 AS jsonb))
        ON CONFLICT DO NOTHING`,
-      [runId, period.id, input.trigger, session.sub, cap, nowIso],
+      [runId, period.id, input.trigger, session.sub, cap, nowIso, JSON.stringify(sweepChecklist(secondLook))],
     );
     const now2 = await q.query<{ id: string }>(
       "SELECT id FROM sweep_runs WHERE period_id = CAST($1 AS uuid) AND status = 'running'",
@@ -374,8 +376,12 @@ const leased = <T>(ctx: Ctx, fn: (q: Queryable) => Promise<T>) =>
 const timeLeft = (ctx: Ctx) => ctx.deadlineAt - ctx.clock().getTime() > STOP_BEFORE_MS;
 
 async function setPhase(ctx: Ctx, phase: SweepState["phase"]): Promise<void> {
-  await leased(ctx, (q) =>
-    q.execute("UPDATE sweep_runs SET phase = $2 WHERE id = CAST($1 AS uuid)", [ctx.runId, phase]),
+  await leased(ctx, async (q) =>
+    q.execute("UPDATE sweep_runs SET phase = $2, checklist = COALESCE(CAST($3 AS jsonb), checklist) WHERE id = CAST($1 AS uuid)", [
+      ctx.runId,
+      phase,
+      await nextSweepChecklist(q, ctx.runId, { phase }),
+    ]),
   );
 }
 
@@ -429,7 +435,8 @@ async function slice(ctx: Ctx, run: Run): Promise<void> {
   }
   if (phase === "audit") {
     const step = await auditNext(ctx);
-    if (step === "none" || step === "disabled") return finishRun(ctx, null);
+    if (step === "none") return finishRun(ctx, null);
+    if (step === "disabled") return finishRun(ctx, null, { skipped: "audit" });
     if (step === "cap") return finishRun(ctx, "cap");
     return;
   }
@@ -498,8 +505,9 @@ async function findPhase(ctx: Ctx, run: Run): Promise<"plan" | "draft" | null> {
     for (const leg of kept.flat()) await writeItem(q, ctx, run, leg, now);
     const next = fanoutOn() && Number(run.cap_cents) >= fanoutLimits().runCapCents ? "plan" : "draft";
     await q.execute(
-      `UPDATE sweep_runs SET phase = $3, truncated_reason = $2 WHERE id = CAST($1 AS uuid)`,
-      [ctx.runId, waiting > 0 ? "max_items" : null, next],
+      `UPDATE sweep_runs SET phase = $3, truncated_reason = $2, checklist = COALESCE(CAST($4 AS jsonb), checklist)
+        WHERE id = CAST($1 AS uuid)`,
+      [ctx.runId, waiting > 0 ? "max_items" : null, next, await nextSweepChecklist(q, ctx.runId, { phase: next })],
     );
     return next;
   });
@@ -1033,9 +1041,9 @@ async function auditNext(ctx: Ctx): Promise<"done" | "none" | "cap" | "disabled"
 async function failRun(q: Queryable, ctx: Ctx, category: string, now: string): Promise<void> {
   await q.execute(
     `UPDATE sweep_runs SET status = 'failed', failure_category = $2, finished_at = CAST($3 AS timestamptz),
-            lease_until = NULL, lease_token = NULL
+            lease_until = NULL, lease_token = NULL, checklist = COALESCE(CAST($5 AS jsonb), checklist)
       WHERE id = CAST($1 AS uuid) AND lease_token = CAST($4 AS uuid)`,
-    [ctx.runId, category, now, ctx.token],
+    [ctx.runId, category, now, ctx.token, await nextSweepChecklist(q, ctx.runId, { ended: "failed" })],
   );
 }
 
@@ -1072,18 +1080,27 @@ export async function countItems(q: Queryable, runId: string): Promise<SweepCoun
   return counts;
 }
 
-async function finishRun(ctx: Ctx, truncated: string | null): Promise<void> {
+// The checklist ends with the run: "cap" stopped it with work left, and so did "max_items" (the
+// find phase took the first findings only, read here from the run row); the audit step switched
+// off is skipped rather than done.
+async function finishRun(ctx: Ctx, truncated: string | null, opts: { skipped?: "audit" } = {}): Promise<void> {
   const now = ctx.clock().toISOString();
   const counts = await leased(ctx, async (q) => {
     const counts = await countItems(q, ctx.runId);
+    const cut = await q.query<{ truncated_reason: string | null }>(
+      "SELECT truncated_reason FROM sweep_runs WHERE id = CAST($1 AS uuid)",
+      [ctx.runId],
+    );
+    const reason = truncated ?? cut[0]?.truncated_reason ?? null;
+    const ending: SweepChecklistChange = { ended: reason === "cap" || reason === "max_items" ? "stopped" : "done", ...opts };
     await q.execute(
       `UPDATE sweep_runs
           SET status = 'done', phase = 'done', counts = CAST($2 AS jsonb),
               spent_cents = spent_cents + reserved_cents, reserved_cents = 0,
               truncated_reason = COALESCE($3, truncated_reason), finished_at = CAST($4 AS timestamptz),
-              lease_until = NULL, lease_token = NULL
+              lease_until = NULL, lease_token = NULL, checklist = COALESCE(CAST($5 AS jsonb), checklist)
         WHERE id = CAST($1 AS uuid)`,
-      [ctx.runId, JSON.stringify(counts), truncated, now],
+      [ctx.runId, JSON.stringify(counts), truncated, now, await nextSweepChecklist(q, ctx.runId, ending)],
     );
     await afterSweepDone(q, { runId: ctx.runId, counts });
     return counts;

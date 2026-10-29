@@ -123,6 +123,9 @@ export type VerdictWrite = {
   agrees: boolean | null;
   callId: string | null;
   concerns: readonly string[];
+  // The carrier notes the evidence carried (carrierMemoryEnabled), by id. Absent means none, which
+  // is the column's default.
+  notesUsed?: readonly string[];
 };
 
 // Writes the verdict once, and only on a proposal still waiting, by the caller still holding the
@@ -140,7 +143,7 @@ export async function writeAuditVerdict(
     `UPDATE proposals
         SET auditor_verdict = $2, auditor_agrees = $3, auditor_call_id = CAST($4 AS uuid),
             auditor_concerns = CAST($5 AS jsonb), auditor_checked_at = CAST($6 AS timestamptz),
-            updated_at = CAST($6 AS timestamptz)
+            updated_at = CAST($6 AS timestamptz), auditor_notes_used = CAST($8 AS jsonb)
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND auditor_verdict IS NULL
         AND status = 'proposed' AND auditor_started_at = CAST($7 AS timestamptz)`,
     [
@@ -151,6 +154,7 @@ export async function writeAuditVerdict(
       JSON.stringify(v.concerns),
       now.toISOString(),
       startedAt.toISOString(),
+      JSON.stringify(v.notesUsed ?? []),
     ],
   );
   return n === 1;

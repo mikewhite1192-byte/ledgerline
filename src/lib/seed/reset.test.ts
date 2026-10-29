@@ -49,12 +49,13 @@ describe("the function's demo-carrier gate", () => {
     expect(DEFINITIONS[0]).toBe("0025_demo_reset.sql");
   });
 
-  // 0033 with the sweep's second checks, 0034 with the fuel checks, then 0036 with the pay rule
-  // changes last, so a fresh database ends on the full union.
-  it("is re-created whole by 0033 and 0034, then 0036 last", () => {
+  // 0033 with the sweep's second checks, 0034 with the fuel checks, 0036 with the pay rule changes,
+  // then 0038 with the Inbox messages last, so a fresh database ends on the full union.
+  it("is re-created whole by 0033, 0034 and 0036, then 0038 last", () => {
     expect(DEFINITIONS).toContain("0033_demo_reset_fanout.sql");
     expect(DEFINITIONS).toContain("0034_fuel_reset.sql");
-    expect(DEFINITIONS.at(-1)).toBe("0036_demo_reset_pay_rule_changes.sql");
+    expect(DEFINITIONS).toContain("0036_demo_reset_pay_rule_changes.sql");
+    expect(DEFINITIONS.at(-1)).toBe("0038_demo_reset_inbound.sql");
   });
 
   it("finds a definition in any spelling, and never a call or a longer name", () => {
@@ -86,6 +87,19 @@ describe("the function's demo-carrier gate", () => {
     // One gate, and no slug-only check left beside it.
     expect(sql.match(/ERRCODE = 'LR002'/g)).toHaveLength(1);
     expect(sql).not.toMatch(/v_slug (NOT )?IN/);
+  });
+
+  // Production applies migrations in the order they merged, a fresh database in number order, and
+  // each keeps whichever re-creation ran last. Only a newest re-creation that deletes everything
+  // every earlier one deletes gives both the same function.
+  it("keeps every table an earlier definition deletes in the newest one, which deletes exactly FUNCTION_TABLES", () => {
+    const deletes = (file: string) =>
+      new Set([...readFileSync(new URL(file, MIGRATIONS), "utf8").matchAll(/DELETE FROM public\.(\w+) /g)].map((m) => m[1]));
+    const newest = deletes(DEFINITIONS[DEFINITIONS.length - 1]);
+    for (const file of DEFINITIONS) {
+      for (const table of deletes(file)) expect(newest.has(table), `${file} deletes ${table}`).toBe(true);
+    }
+    expect([...newest].sort()).toEqual([...FUNCTION_TABLES].sort());
   });
 });
 

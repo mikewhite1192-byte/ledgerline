@@ -16,12 +16,12 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      seed's fourth refusal (a ledger row naming a flow advance, FLOW_ADVANCE_ROWS in run.ts) is
 //      not needed here on purpose: the function deletes every settled money_actions row before
 //      the flow advances, in one transaction, so no ledger row can outlive the advance it names;
-//   3. demo_reset_clear() (migration 0025, re-created by 0033, then by 0034 to empty the fuel
-//      checks too, then by 0036 to empty the pay rule changes), the one security-definer
-//      function, which checks the same things again under the tenant row lock and deletes the
-//      settled ledger rows, the agent's records and the fictional broker portal's loads (the app
-//      role has no DELETE on them); the portal's loads come back only with npm run seed, since
-//      the app cannot write them;
+//   3. demo_reset_clear() (migration 0025, re-created whole by later migrations: 0033, then 0034 to
+//      empty the fuel checks too, then 0036 to empty the pay rule changes, then 0038 with the Inbox
+//      messages), the one security-definer function, which checks the same things again under the
+//      tenant row lock and deletes the settled ledger rows, the agent's records and the fictional
+//      broker portal's loads (the app role has no DELETE on them); the portal's loads come back
+//      only with npm run seed, since the app cannot write them;
 //   4. the seed's replace of the 29 seeded tables (TENANT_TABLES, with Cash Friday's checks and the
 //      money codes, which the seed leaves empty), as the app role, under row-level security (the
 //      arming log, which the app role may add to but never delete from, goes with its drivers
@@ -49,6 +49,7 @@ export const DEMO_RESET_CLEARED = {
   portal_loads:
     "the fictional broker portal's loads; each names a load the replace deletes, and only the " +
     "seed's admin login writes them back (npm run seed)",
+  inbound_messages: "messages the office pasted or received; the demo starts with an empty Inbox",
   voice_note_audio: "the recording of each voice note that goes; it names its note",
   voice_notes: "each names a driver, an inbound message and a conversation that go",
   driver_notes: "each names a settlement, a driver and a pay period the replace deletes",
@@ -119,6 +120,7 @@ export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "portal_sessions",
   "portal_runs",
   "portal_loads",
+  "inbound_messages",
   "voice_note_audio",
   "voice_notes",
   "driver_notes",
@@ -174,6 +176,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   portal_sessions: "Broker portal sign-in codes",
   portal_runs: "Broker portal runs",
   portal_loads: "Broker portal loads",
+  inbound_messages: "Inbox messages",
   voice_note_audio: "Voice note recordings",
   voice_notes: "Voice notes",
   driver_notes: "Driver notes",

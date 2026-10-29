@@ -13,7 +13,9 @@ describe("flags", () => {
     expect(flags.payoutsEnabled).toBe(false);
     expect(flags.inboundEmailEnabled).toBe(false);
     expect(flags.paymentProvider).toBe("mock");
-    expect(flags.triageProvider).toBe("meta");
+    // Driver messages are sorted by Muse Spark Open, the open-weights model, unless the owner flips it.
+    expect(flags.triageProvider).toBe("baseten");
+    expect(flags.inboxEnabled).toBe(false);
     expect(flags.agentEnabled).toBe(false);
     expect(flags.documentsEnabled).toBe(false);
     expect(flags.documentCrop).toBe(false);
@@ -35,6 +37,15 @@ describe("flags", () => {
     expect(isLocalDate(flags.moneyCodes.startDate)).toBe(true);
     expect(flags.rulesByTalkingEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
+  });
+
+  it("keeps carrier memory dark, with the agent's suggestions and the second check's notes few", () => {
+    expect(flags.carrierMemoryEnabled).toBe(false);
+    expect(flags.carrierMemoryAgentLimits).toEqual({ maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 });
+    for (const v of Object.values(flags.carrierMemoryAgentLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.carrierMemoryAgentLimits.maxSuggestionsWaiting).toBeLessThan(flags.carrierMemoryLimits.maxNotesPerCarrier);
   });
 
   it("starts fuel checks on a fixed date and keeps the receipt compare and corrections small", () => {
@@ -101,6 +112,9 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(flags.agentTurnLimits.wallClockMs).toBeLessThan(30_000);
+    // One ceiling over every run; the tighter caps above still win.
+    expect(flags.runLimits).toEqual({ maxTurns: 30 });
+    expect(flags.runLimits.maxTurns).toBeGreaterThanOrEqual(flags.agentTurnLimits.maxModelCalls);
     expect(flags.proposalMaxAgeDays).toBe(7);
     expect(flags.auditorEnabled).toBe(false);
     expect(flags.auditorRequired).toBe(true);
@@ -288,6 +302,16 @@ describe("flags", () => {
     expect(flags.voiceLimits.maxDurationMs).toBeLessThanOrEqual(Math.floor((flags.voiceLimits.maxWavBytes - 44) / 32));
   });
 
+  it("ships the Inbox dark, with its daily count, message size and sorting tries capped", () => {
+    expect(flags.inboxEnabled).toBe(false);
+    expect(flags.inboxLimits).toEqual({ messagesPerDay: 50, maxChars: 20_000, maxAttempts: 3 });
+    for (const v of Object.values(flags.inboxLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The attempts CHECK in migration 0037 holds 0 to 3.
+    expect(flags.inboxLimits.maxAttempts).toBeLessThanOrEqual(3);
+  });
+
   it("stops any one model job at $10 in an hour", () => {
     expect(flags.aiJobHourlyCapCents).toBe(1000);
     expect(Number.isSafeInteger(flags.aiJobHourlyCapCents)).toBe(true);
@@ -352,7 +376,7 @@ describe("local overrides for the demo-path test", () => {
     const keys = applyLocalOverrides(target, { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: ALL_ON });
     expect(keys).toEqual([...LOCAL_OVERRIDABLE]);
     expect(target.aiEnabled && target.agentEnabled && target.auditorEnabled).toBe(true);
-    expect(target.reportsEnabled && target.driverNotesEnabled).toBe(true);
+    expect(target.reportsEnabled && target.driverNotesEnabled && target.inboxEnabled).toBe(true);
     expect(target.advancesEnabled && target.payoutsEnabled && target.advancePayouts.armed).toBe(true);
     // Everything else, every cap and limit among it, is exactly as shipped.
     expect({ ...target, advancePayouts: { ...target.advancePayouts, armed: false } }).toEqual({
@@ -362,6 +386,7 @@ describe("local overrides for the demo-path test", () => {
       auditorEnabled: true,
       reportsEnabled: true,
       driverNotesEnabled: true,
+      inboxEnabled: true,
       advancesEnabled: true,
       payoutsEnabled: true,
     });
@@ -411,16 +436,19 @@ describe("local overrides for the demo-path test", () => {
       { "advancePayouts.capCents": 10_000_000 },
       { advancePayouts: { armed: true, capCents: 10_000_000, startDate: "2020-01-01" } },
       { "advancePayouts.startDate": "2020-01-01" },
+      { "inboxLimits.messagesPerDay": 1000 },
       { gatewayLimits: { payCorrectionMaxCents: 1, invoiceFixMaxCents: 1 } },
       { approverRole: { adminAboveCents: 1 } },
       { driverNoteLimits: { maxNoteCents: 1000, maxBatchCents: 1000, maxOutputTokens: 1 } },
       { advancesLimits: { proposalsPerDay: 1000 } },
       { paymentProvider: "stripe" },
-      { triageProvider: "baseten" },
+      { triageProvider: "meta" },
       { auditorStart: "2020-01-01T00:00:00Z" },
       { accountingEnabled: true },
       { driverNotesEmailEnabled: true },
       { agentEnabled: true, "agentTurnLimits.maxToolSteps": 99 },
+      { runLimits: { maxTurns: 1000 } },
+      { "runLimits.maxTurns": 1000 },
       // Not on the demo path yet: adding it is detention's own change, with a re-recorded replay.
       { detentionEnabled: true },
     ]) {

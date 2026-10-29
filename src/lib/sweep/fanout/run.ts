@@ -7,6 +7,7 @@ import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../..
 import { reasonSentence } from "../../agent/reasons";
 import type { Session } from "../../auth/claims";
 import type { Queryable } from "../../db";
+import { nextSweepChecklist } from "../checklist";
 import { runChildCheck, type ChildOutcome, type ValidCheck } from "./check";
 import {
   dayUse,
@@ -116,11 +117,13 @@ async function runWeek(q: Queryable, runId: string): Promise<Week & { periodId: 
   return { periodId: rows[0].period_id, start: rows[0].period_start, end: rows[0].period_end };
 }
 
+// The run's checklist is ticked in the same update (sweep/checklist.ts).
 async function setPhase(q: Queryable, runId: string, phase: "check" | "reconcile" | "draft"): Promise<void> {
-  await q.execute("UPDATE sweep_runs SET phase = $2 WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()", [
-    runId,
-    phase,
-  ]);
+  await q.execute(
+    `UPDATE sweep_runs SET phase = $2, checklist = COALESCE(CAST($3 AS jsonb), checklist)
+      WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()`,
+    [runId, phase, await nextSweepChecklist(q, runId, { phase })],
+  );
 }
 
 // The turn a dead slice left running for the plan or the comparison. Closed before the next try
