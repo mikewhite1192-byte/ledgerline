@@ -112,6 +112,7 @@ const SOURCE_LABELS: Record<string, string> = {
   settlements: "Settlement",
   settlement_lines: "Paystub line",
   invoices: "Invoice",
+  card_transactions: "Card transaction",
 };
 
 // What kind of record a source is, in words: "loads" reads "Load".

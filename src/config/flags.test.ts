@@ -63,6 +63,8 @@ const KEPT_OFF = [
   "sweepScheduleEnabled",
   // No runner is wired on the hosted site: the page's only action would always refuse.
   "portalRunnerEnabled",
+  // As merged: the card check writes no money, but it reads three systems and spends model cents.
+  "cardRecon.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -204,6 +206,23 @@ describe("flags", () => {
     expect(note).toContain("first day of the earlier seeded open week");
     expect(note).toContain("Before a carrier with real history uses fuel checks, its release moves this to that go-live date");
     expect(note).not.toMatch(/switching on never/);
+  });
+
+  it("keeps the card check's window, read-backs and model spend small", () => {
+    expect(flags.cardRecon.limits).toEqual({
+      windowDays: 14,
+      maxBreaks: 50,
+      maxReadBacksPerSystem: 40,
+      readBackTimeoutMs: 5_000,
+      maxExplainCents: 3,
+      matchMaxCents: 3,
+      maxRunCents: 100,
+      sliceMs: 20_000,
+    });
+    for (const v of Object.values(flags.cardRecon.limits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.cardRecon.limits.sliceMs).toBeLessThan(25_000);
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
@@ -626,6 +645,9 @@ describe("local overrides for the demo-path test", () => {
       { sparkOpenFallback: "fireworks" },
       { inboundEmailEnabled: false },
       { sweepScheduleEnabled: false },
+      // Not on the demo path: its tools stay out of the replay's tool list.
+      { cardRecon: { enabled: true } },
+      { "cardRecon.enabled": true },
     ]) {
       const target = copy();
       const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify(bad) };

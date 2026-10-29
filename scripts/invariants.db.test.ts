@@ -245,6 +245,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "pay_rule_changes",
     "fuel_check_runs",
     "fuel_findings",
+    "card_recon_runs",
+    "card_recon_breaks",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -519,6 +521,27 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           [randomUUID(), fuelRun],
         );
         expect(fuelFound).toBe(1);
+        // A finished card check with one difference left for a person, on one of the carrier's own
+        // statement rows (0046).
+        const cardRun = randomUUID();
+        await q.execute(
+          `INSERT INTO card_recon_runs (id, tenant_id, membership_id, status, phase, window_from, window_to,
+             finished_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'done', 'done',
+             CAST('2026-10-14' AS date), CAST('2026-10-28' AS date), now())`,
+          [cardRun, c.membership],
+        );
+        const cardFound = await q.execute(
+          `INSERT INTO card_recon_breaks (id, tenant_id, fingerprint, category, severity, outside_system,
+             card_transaction_id, outside_cents, fix_kind, first_seen_run_id, last_seen_run_id)
+           SELECT CAST($1 AS uuid), current_tenant_id(), $2, 'card_unknown', 'high', 'fuel_card_sim', t.id,
+             t.amount_cents, 'by_hand', CAST($3 AS uuid), CAST($3 AS uuid)
+             FROM card_transactions t
+            ORDER BY t.provider_ref
+            LIMIT 1`,
+          [randomUUID(), randomBytes(32).toString("hex"), cardRun],
+        );
+        expect(cardFound).toBe(1);
       });
       ids.proposals.push(proposal);
       ids.accountingRows.push(action);

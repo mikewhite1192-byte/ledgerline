@@ -447,6 +447,32 @@ export type Flags = {
     comparesPerRun: number;
     comparesPerTenantPerDay: number;
   };
+  // Card check: compares the card provider's statement (Test mode: seeded rows), the bank and the
+  // books with our own payment records, lists each difference with a plain sentence and a fix,
+  // and drafts a card that matches an unknown card to a driver. Off: the page and menu item are
+  // hidden, the routes answer 404, the two agent tools are not offered and an approved match card
+  // does nothing. It writes only our own records: never money, never QuickBooks (reads only).
+  cardRecon: {
+    enabled: boolean;
+    limits: {
+      // Days back from the carrier's today, in its zone, for statement rows and payment records.
+      windowDays: number;
+      // Open differences one check keeps; past it the check says how many it left out.
+      maxBreaks: number;
+      // Payment records read back per outside system in one check; the rest are listed unchecked.
+      maxReadBacksPerSystem: number;
+      // One read-back's wait; past it the record is unchecked, never resolved.
+      readBackTimeoutMs: number;
+      // One plain-sentence explanation, in cents.
+      maxExplainCents: number;
+      // One driver pick for an unknown card, in cents.
+      matchMaxCents: number;
+      // All model calls of one check together, in cents; past it the sentences are fixed text.
+      maxRunCents: number;
+      // How long one request works before it answers "still checking" and the page asks again.
+      sliceMs: number;
+    };
+  };
 };
 
 export const flags: Flags = {
@@ -587,6 +613,19 @@ export const flags: Flags = {
     compareMaxOutputTokens: 200,
     comparesPerRun: 10,
     comparesPerTenantPerDay: 20,
+  },
+  cardRecon: {
+    enabled: false,
+    limits: {
+      windowDays: 14,
+      maxBreaks: 50,
+      maxReadBacksPerSystem: 40,
+      readBackTimeoutMs: 5_000,
+      maxExplainCents: 3,
+      matchMaxCents: 3,
+      maxRunCents: 100,
+      sliceMs: 20_000,
+    },
   },
 };
 

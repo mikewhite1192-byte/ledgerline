@@ -1,13 +1,15 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
 // and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, the
-// driver identity map and arming log from 0027, the collection reminders from 0041 (seeded
-// empty), the owner's briefs from 0042 (none planted), Cash Friday's bills, bank position and
-// checks from 0029 (the seed leaves cash_checks empty; the replace, and so the demo reset, clears it
-// before the weeks a check names), and the carrier notes from 0040 (last: a note names its customer
-// or driver by a soft reference), in an order where every table comes after the tables it
-// references (insert in this order, delete in reverse). Each column says how it travels: the Data
-// API sends strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the way in,
-// and reads turn timestamptz into one ISO form and jsonb into text so both drivers return the same
+// driver identity map and arming log from 0027, the card provider's statement and the card
+// check's runs and differences from 0046 (the seed writes no run and no difference; the replace,
+// and so the demo reset, clears them), the collection reminders from 0041 (seeded empty), the
+// owner's briefs from 0042 (none planted), Cash Friday's bills, bank position and checks from 0029
+// (the seed leaves cash_checks empty; the replace, and so the demo reset, clears it before the
+// weeks a check names), and the carrier notes from 0040 (last: a note names its customer or driver
+// by a soft reference), in an order where every table comes after the tables it references
+// (insert in this order, delete in reverse). Each column says how it travels: the Data API sends
+// strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the way in, and
+// reads turn timestamptz into one ISO form and jsonb into text so both drivers return the same
 // values. tenant_id and created_at are never listed: tenant_id is always current_tenant_id() and
 // created_at is the database's own (a note's updated_at too).
 
@@ -29,6 +31,7 @@ export const TENANT_TABLES = [
   "load_accessorials",
   "driver_days",
   "fuel_purchases",
+  "card_transactions",
   "pay_configs",
   "deduction_schedules",
   "settlement_periods",
@@ -41,6 +44,8 @@ export const TENANT_TABLES = [
   "payment_applications",
   "untrusted_inputs",
   "screenings",
+  "card_recon_runs",
+  "card_recon_breaks",
   "collection_drafts",
   "briefs",
   "vendor_bills",
@@ -205,6 +210,25 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["amount_cents", "int"],
       ["paid_with", "text"],
       ["purchase_ref", "text"],
+    ],
+  },
+  card_transactions: {
+    table: "card_transactions",
+    columns: [
+      ["id", "uuid"],
+      ["provider", "text"],
+      ["provider_ref", "text"],
+      ["kind", "text"],
+      ["card_token", "text"],
+      ["card_last4", "text"],
+      ["portal_name", "text"],
+      ["posted_at", "timestamptz"],
+      ["posted_on", "date"],
+      ["amount_cents", "int"],
+      ["state", "text"],
+      ["gallons_milli", "int"],
+      ["merchant", "text"],
+      ["source", "text"],
     ],
   },
   pay_configs: {
@@ -405,6 +429,52 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["model_call_id", "uuid"],
       ["latency_ms", "int"],
       ["expires_at", "timestamptz"],
+    ],
+  },
+  card_recon_runs: {
+    table: "card_recon_runs",
+    columns: [
+      ["id", "uuid"],
+      ["membership_id", "uuid"],
+      ["status", "text"],
+      ["phase", "text"],
+      ["todo", "jsonb"],
+      ["lease_token", "uuid"],
+      ["lease_until", "timestamptz"],
+      ["fail_category", "text"],
+      ["window_from", "date"],
+      ["window_to", "date"],
+      ["counts", "jsonb"],
+      ["unchecked", "jsonb"],
+      ["model_cents", "int"],
+      ["started_at", "timestamptz"],
+      ["finished_at", "timestamptz"],
+    ],
+  },
+  card_recon_breaks: {
+    table: "card_recon_breaks",
+    columns: [
+      ["id", "uuid"],
+      ["fingerprint", "text"],
+      ["category", "text"],
+      ["severity", "text"],
+      ["outside_system", "text"],
+      ["card_transaction_id", "uuid"],
+      ["money_action_id", "uuid"],
+      ["fuel_purchase_id", "uuid"],
+      ["driver_id", "uuid"],
+      ["our_cents", "int"],
+      ["outside_cents", "int"],
+      ["explanation", "text"],
+      ["explain_category", "text"],
+      ["fix_kind", "text"],
+      ["proposal_id", "uuid"],
+      ["status", "text"],
+      ["dismiss_category", "text"],
+      ["first_seen_run_id", "uuid"],
+      ["last_seen_run_id", "uuid"],
+      ["resolved_at", "timestamptz"],
+      ["updated_at", "timestamptz"],
     ],
   },
   collection_drafts: {

@@ -32,6 +32,7 @@ import {
 import { buildReceivables, type CollectionsPlant, type WrongInvoicePlant } from "./ar-plan";
 import { assertPlan, seededAdvanceDecision } from "./assert-plan";
 import { instantAt } from "./calendar";
+import { buildCardStatement, type StatementPlanted } from "./card-statement";
 import { detentionTermsOf, type DemoCarrier } from "./carriers";
 import { buildCashRows } from "./cash-plan";
 import { applyHistory } from "./history";
@@ -112,6 +113,8 @@ export type Planted = {
   invoiceReview: ReviewPlant;
   // Arming, the extra cards, the load pair and the take-back (parity-plan.ts).
   parity: ParityPlanted;
+  // The card provider's statement plants for the card check (card-statement.ts).
+  cardRecon: StatementPlanted;
 };
 
 export type CarrierPlan = {
@@ -1122,6 +1125,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     load_accessorials: accessorials,
     driver_days: days,
     fuel_purchases: fuelPurchases,
+    card_transactions: [],
     pay_configs: versions.map(({ effective_from, note, ...knobs }) => ({
       id: newId(),
       effective_from,
@@ -1140,6 +1144,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     payment_applications: ar.applications,
     untrusted_inputs: [],
     screenings: [],
+    card_recon_runs: [],
+    card_recon_breaks: [],
     collection_drafts: [],
     briefs: [],
     vendor_bills: [],
@@ -1152,6 +1158,16 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   const takenBack = plantTakeBack(rows.advances, takenBackId);
   // Outside text for the agent's screener, from its own id stream so no other row changes.
   rows.untrusted_inputs = buildUntrustedInputs({ carrier, anchor, rows });
+  // The card provider's statement, from its own id stream too, after every purchase is final.
+  const statement = buildCardStatement({
+    carrier,
+    anchor,
+    openWeek,
+    rows,
+    heroId: carrier.heroCode ? driver(carrier.heroCode).id : null,
+    avoidPurchaseIds: new Set([wrongPurchase.id, offRoute.id, overTank.id, parked.id]),
+  });
+  rows.card_transactions = statement.rows;
   // The sample notes for Memory, from their own id stream for the same reason.
   rows.carrier_notes = buildCarrierNotes({ slug, anchor, customers: rows.customers, drivers: rows.drivers });
   // Cash Friday's bills and bank position, last: the balance is planted from everything above.
@@ -1188,6 +1204,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
         genericCardId: cardPlan.generic,
         closedCardId: cardPlan.closed,
       },
+      cardRecon: statement.planted,
     },
     rows,
   };

@@ -7,7 +7,7 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 
-// The proposals table on a fresh database after 0029: every kind the code knows is a kind the
+// The proposals table on a fresh database after 0046: every kind the code knows is a kind the
 // table takes, an engine proposal carries none of a chat turn's links, and an agent proposal keeps
 // all of them and its trace. Each row is written by the app's role inside this file's own tenant,
 // which is removed after (its rows go with it).
@@ -89,9 +89,10 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // 0013, 0015, 0022, 0029, 0030 and 0032 each re-create the check, so whichever ran last decides
-    // it. 0029, 0030 and 0032 run after the others in number order and in production's merge order,
-    // and each lists the full union of twelve in the same order, kinds without code included.
+    // 0013, 0015, 0022, 0029, 0030, 0032 and 0046 each re-create the check, so whichever ran last
+    // decides it. 0046 runs after the others in number order and in production's merge order, and
+    // lists the full union of fourteen: 0029's twelve in the same order, then card_match and
+    // money_code, kinds without code included.
     const union = [
       "advance_payout",
       "pay_correction",
@@ -105,6 +106,8 @@ describe("proposal kinds and origins on a fresh database", () => {
       "bill_defer",
       "collections_chase",
       "pay_rule_change",
+      "card_match",
+      "money_code",
     ];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);
@@ -119,7 +122,7 @@ describe("proposal kinds and origins on a fresh database", () => {
     expect(listed).toEqual(union);
   });
 
-  it("lists vendor bills as a subject table after 0029, after the seventeen of 0009", async () => {
+  it("lists vendor bills (0029) and card statement rows (0046) as subject tables, after the seventeen of 0009", async () => {
     const [def] = await admin.withoutTenant((q) =>
       q.query<{ def: string }>(
         `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
@@ -127,8 +130,8 @@ describe("proposal kinds and origins on a fresh database", () => {
       ),
     );
     const listed = [...def.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
-    expect(listed).toHaveLength(18);
-    expect(listed[listed.length - 1]).toBe("vendor_bills");
+    expect(listed).toHaveLength(19);
+    expect(listed.slice(17)).toEqual(["vendor_bills", "card_transactions"]);
   });
 
   it("keeps the dedupe key the engine computes inside the table's pattern", () => {

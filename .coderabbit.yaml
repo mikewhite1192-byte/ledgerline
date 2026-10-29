@@ -15,6 +15,11 @@
 #      two flagged something Major or Critical. A PR that touches only UI, copy, docs, tests or
 #      seed data gets ONE round and is never re-requested. The reviewer answers any request
 #      comment, so the cap is enforced where requests start (a local hook), never here.
+#   6. Low-risk PRs skip this reviewer. A PR that touches only UI, copy, docs, tests or seed
+#      data carries "[skip-cr]" in its title, and the author requests a GitHub Copilot review on
+#      it instead (billed per request, not per file). Never on a PR that touches a danger zone, a
+#      migration, auth, secrets or env, CI workflows, or billing or payments code: those always
+#      get this review. Nothing here can enforce that, so the author checks the diff before tagging.
 # Not reviewed (path_filters below), since each file costs and these drew most of the nitpicks:
 # docs and Markdown, the lockfile, tests and test helpers, e2e, fixtures, snapshots, seed data
 # files and generated files. Seed CODE stays reviewed: the demo reset runs on production.
@@ -30,6 +35,7 @@ reviews:
     drafts: false
     auto_incremental_review: false
     base_branches: ["main"]
+    ignore_title_keywords: ["[skip-cr]"]   # low-risk PRs only (cadence step 6)
   path_filters:
     - "!node_modules/**"
     - "!**/*.local.*"

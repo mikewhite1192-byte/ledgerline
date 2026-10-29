@@ -101,11 +101,13 @@ describe("proposalCardFrom", () => {
     expect(card.reasons).toEqual([{ text: "A rule check found this." }]);
   });
 
-  it("lets a person resume only an approved advance payout or pay correction, never one executing or another kind", () => {
+  it("lets a person resume only an approved advance payout, pay correction or card match, never one executing or another kind", () => {
     expect(proposalCardFrom({ ...view, status: "approved" }).canResume).toBe(true);
     expect(proposalCardFrom({ ...view, kind: "pay_correction", status: "approved" }).canResume).toBe(true);
+    // A card match left approved by a request that stopped before its executor ran.
+    expect(proposalCardFrom({ ...view, kind: "card_match", status: "approved" }).canResume).toBe(true);
     expect(proposalCardFrom({ ...view, kind: "invoice_fix", status: "approved" }).canResume).toBeUndefined();
-    for (const kind of ["advance_payout", "pay_correction"] as const) {
+    for (const kind of ["advance_payout", "pay_correction", "card_match"] as const) {
       for (const status of ["proposed", "executing", "done", "failed", "unknown", "rejected"] as const) {
         expect(proposalCardFrom({ ...view, kind, status }).canResume, `${kind} ${status}`).toBeUndefined();
       }
