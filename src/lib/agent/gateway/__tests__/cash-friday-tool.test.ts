@@ -87,7 +87,7 @@ describe("get_cash_friday", () => {
 
   it("adds its prompt lines only while it is offered, so the switched-off prompt is unchanged", () => {
     // The other switches that add prompt lines are off too, so the base prompt is the whole of it.
-    Object.assign(flags, { cashFridayEnabled: false, collectionsEnabled: false, reportsEnabled: false });
+    Object.assign(flags, { cashFridayEnabled: false, collectionsEnabled: false, reportsEnabled: false, carrierMemoryEnabled: false });
     const off = toolsFor("operator").map((t) => t.name);
     expect(operatorPrompt(off, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
     flags.cashFridayEnabled = true;

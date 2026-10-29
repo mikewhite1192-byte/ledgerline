@@ -304,7 +304,8 @@ export type Flags = {
   approveAllLimits: { maxItems: number };
   // The portal runner: the agent opens the fictional broker portal in a browser and reads a
   // load's delivery stamps and POD. Off gates the portal pages, the run routes, the gateway tool
-  // and the worker, which re-checks it when it claims a run. aiEnabled must also be on.
+  // and the worker, which re-checks it when it claims a run. aiEnabled must also be on. Ships off:
+  // no runner is wired on the hosted site, so the page's only action would always refuse.
   portalRunnerEnabled: boolean;
   // The model that drives the browser, and the only one a computer step may call. Muse Spark is
   // the default: Muse Wonder answered 400 "Unsupported tool type: 'computer'" when the runner was
@@ -547,7 +548,7 @@ export const flags: Flags = {
     graceDays: 14,
     factoringMaxAgeDays: 45,
   },
-  portalRunnerEnabled: true,
+  portalRunnerEnabled: false,
   portalRunnerModel: "spark",
   portalRunLimits: {
     maxSteps: 15,

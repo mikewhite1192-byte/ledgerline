@@ -39,7 +39,6 @@ const RELEASED_ON = [
   "payCorrectionsEnabled",
   "fanoutEnabled",
   "cashFridayEnabled",
-  "portalRunnerEnabled",
   "settlementsEnabled",
   "batchApproveEnabled",
   "invoiceReviewEnabled",
@@ -62,6 +61,8 @@ const KEPT_OFF = [
   "collectionsEmailEnabled",
   // The nightly kicker waits on the scheduler stack.
   "sweepScheduleEnabled",
+  // No runner is wired on the hosted site: the page's only action would always refuse.
+  "portalRunnerEnabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -166,8 +167,8 @@ describe("flags", () => {
     for (const name of KEPT_OFF) expect(local).not.toContain(name);
   });
 
-  it("keeps carrier memory dark, with the agent's suggestions and the second check's notes few", () => {
-    expect(flags.carrierMemoryEnabled).toBe(false);
+  it("releases carrier memory, with the agent's suggestions and the second check's notes few", () => {
+    expect(flags.carrierMemoryEnabled).toBe(true);
     expect(flags.carrierMemoryAgentLimits).toEqual({ maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 });
     for (const v of Object.values(flags.carrierMemoryAgentLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
@@ -398,8 +399,8 @@ describe("flags", () => {
     }
   });
 
-  it("releases the portal runner, on Muse Spark, with every run capped", () => {
-    expect(flags.portalRunnerEnabled).toBe(true);
+  it("keeps the portal runner off until a runner is wired, on Muse Spark, with every run capped", () => {
+    expect(flags.portalRunnerEnabled).toBe(false);
     expect(flags.portalRunnerModel).toBe("spark");
     expect(flags.portalRunLimits).toEqual({
       maxSteps: 15,

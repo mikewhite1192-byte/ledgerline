@@ -36,7 +36,6 @@ export const LOCAL_OFF_ONLY = [
   "payCorrectionsEnabled",
   "fanoutEnabled",
   "cashFridayEnabled",
-  "portalRunnerEnabled",
   "settlementsEnabled",
   "batchApproveEnabled",
   "invoiceReviewEnabled",
