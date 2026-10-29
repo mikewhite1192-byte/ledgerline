@@ -91,6 +91,10 @@ export type GatewayContext = {
   // The sentence the person typed this turn, for a tool that must find a value in it (a pay rule
   // change's new value). Null or absent outside a turn, which such a tool refuses.
   userText?: string | null;
+  // The flagged outside text this turn already read, once the turn's loop has seen one. A tool
+  // that must not act on a flagged turn (remember_note) refuses on it without reading the
+  // decision log, and still reads the log when it is absent.
+  flaggedInputId?: string | null;
 };
 
 // A model call, as the screener needs it. The default is complete() from src/lib/ai.
@@ -129,11 +133,13 @@ export type ScreenVerdict = {
   screenerVersion: 1;
 };
 
-// What a tool's run receives beyond its args: the screen verdict (for a tool that screens) and
-// the limit result (for a propose tool).
+// What a tool's run receives beyond its args: the screen verdict (for a tool that screens), the
+// limit result (for a propose tool) and the model call that asked for this tool (a uuid, or null
+// when the caller named none), which a record tool stores as the note's writer.
 export type RunExtras = {
   screen: ScreenVerdict | null;
   limit: Extract<LimitResult, { ok: true }> | null;
+  modelCallId?: string | null;
 };
 
 // The one list of proposal kinds. src/lib/proposals/execute.ts imports it from here (the ledger

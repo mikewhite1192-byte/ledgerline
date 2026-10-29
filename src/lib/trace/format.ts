@@ -319,12 +319,29 @@ export type TraceLine = {
 // Memory page. A note removed since is counted, never named.
 function notesLine(notes: readonly TraceNote[]): TraceLine | null {
   if (notes.length === 0) return null;
+  return notesRow("memory", `Remembered ${countWords(notes.length, "note", "notes")} from the office`, notes);
+}
+
+// The key of a card's line for the notes its second check saw.
+export const auditorNotesKey = (proposalId: string) => `proposal:${proposalId}:notes`;
+
+// Whether a line lists carrier notes (its links read "Notes it read").
+export const isNotesLine = (line: TraceLine) => line.key === "memory" || /^proposal:[^:]+:notes$/.test(line.key);
+
+// The carrier notes a card's second check saw (carrierMemoryEnabled), each linking to its row on
+// the Memory page; office context for the check, never its evidence for an amount.
+function auditorNotesLine(p: TraceProposal): TraceLine | null {
+  const notes = p.auditorNotes ?? [];
+  if (notes.length === 0) return null;
+  return notesRow(auditorNotesKey(p.id), `Notes the second check saw: ${countWords(notes.length, "note", "notes")} from the office`, notes);
+}
+
+function notesRow(key: string, head: string, notes: readonly TraceNote[]): TraceLine {
   const present = notes.filter((n): n is { id: string; label: string } => n.label !== null);
   const removed = notes.length - present.length;
-  let text = `Remembered ${countWords(notes.length, "note", "notes")} from the office`;
-  if (removed > 0) text += `; ${countWords(removed, "has", "have")} since been removed`;
+  const text = removed > 0 ? `${head}; ${countWords(removed, "has", "have")} since been removed` : head;
   return {
-    key: "memory",
+    key,
     who: "Memory",
     meta: [],
     text,
@@ -587,6 +604,8 @@ function proposalLines(p: TraceProposal, operator: TraceCall | null): TraceLine[
       refs: [],
     }, p.auditorCall));
   }
+  const notes = auditorNotesLine(p);
+  if (notes) out.push(notes);
   return out;
 }
 
