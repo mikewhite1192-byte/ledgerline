@@ -707,6 +707,20 @@ async function issue(
   }
 }
 
+// The two live-evidence indexes (0048): breaking one means the same document or voice note
+// already backs a live code. Matched on the whole constraint name the driver reports (pg's own
+// field, or the quoted name the Data API's text gives), never a part of it. Any other unique
+// violation, or one with no name, stays code_ref_collision. Either way the transaction rolled
+// back, so nothing was written.
+const EVIDENCE_INDEXES: ReadonlySet<string> = new Set([
+  "money_codes_one_live_per_document",
+  "money_codes_one_live_per_voice_note",
+]);
+
+export function uniqueViolationCategory(constraint: string | undefined): "evidence_reused" | "code_ref_collision" {
+  return constraint !== undefined && EVIDENCE_INDEXES.has(constraint) ? "evidence_reused" : "code_ref_collision";
+}
+
 export const executeMoneyCodeProposal: Executor = async (
   db: TenantDb,
   session: Session,
@@ -724,7 +738,7 @@ export const executeMoneyCodeProposal: Executor = async (
     prepared = await db.withTenant(session.tenantId, (q) => prepare(q, session, proposal, a, now, newId));
   } catch (err) {
     if (err instanceof Stop) return err.result;
-    if (err instanceof DbError && err.sqlState === "23505") return no("code_ref_collision");
+    if (err instanceof DbError && err.sqlState === "23505") return no(uniqueViolationCategory(err.constraint));
     throw err;
   }
   if (prepared.kind === "refused") return no(prepared.category);

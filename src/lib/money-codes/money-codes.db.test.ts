@@ -6,7 +6,7 @@ import type { MoneyCodeIssuer } from "../adapters/types";
 import { readMoneyCodeInput, readSettlementInput } from "../data/read";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, Queryable, TenantDb } from "../db/types";
 import { CONFIDENCE_FIELDS } from "../documents/types";
 import { readBySubject } from "../money/read";
 import { clearLedger, dropTenant, makeTenant, setArmed, sqlStateOf, type Fixture } from "../money/test-db";
@@ -594,6 +594,47 @@ describe("money codes against the database", () => {
     // Another carrier's code on the same id is its own.
     const otherLoad = await addLoadOnTheRoad(B);
     expect(await sqlStateOf(insertCode(B, otherLoad, { documentId: doc }))).toBe("no error");
+  });
+
+  it("an approval whose receipt gets a live code past the rules is refused as reused evidence, with no second row", async () => {
+    const loadId = await addLoadOnTheRoad(A);
+    const receipt = await addReceipt(A, "other", 6_000, "L-ROAD");
+    const asked = await askAt(NOW, { loadId, amountCents: 6_000, purpose: "repair", documentId: receipt });
+    if (!asked.ok) throw new Error(`request refused: ${asked.category}`);
+    // Another live code citing the receipt lands after the rules engine read the codes and right
+    // before the approval writes its own, in the same transaction, so only the index stops it.
+    let planted = false;
+    const racing: TenantDb = {
+      withTenant: (tenantId, fn) =>
+        app.withTenant(tenantId, (q) => {
+          const wrapped: Queryable = {
+            query: q.query.bind(q),
+            execute: async (sql, params) => {
+              if (!planted && sql.includes("INSERT INTO money_codes (")) {
+                planted = true;
+                await q.execute(
+                  `INSERT INTO money_codes (id, tenant_id, driver_id, load_id, purpose, amount_cents, source_kind,
+                                            document_id, membership_id, created_at, updated_at)
+                   VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'other', 6000,
+                           'document', CAST($4 AS uuid), CAST($5 AS uuid), CAST($6 AS timestamptz),
+                           CAST($6 AS timestamptz))`,
+                  [randomUUID(), A.driverId, loadId, receipt, A.memberId, new Date(NOW).toISOString()],
+                );
+              }
+              return q.execute(sql, params);
+            },
+          };
+          return fn(wrapped);
+        }),
+    };
+    expect(await approve(asked.proposalId, A.session, deps({ db: racing }))).toMatchObject({
+      ok: false,
+      category: "evidence_reused",
+    });
+    expect(planted).toBe(true);
+    // The transaction rolled back: no code row was kept and no ledger row was reserved.
+    expect(await codeRows()).toEqual([]);
+    expect(await ledger()).toEqual([]);
   });
 
   it("offers an invoiced load delivered in the last three days, and takes a repair code on it but not a lumper code", async () => {
