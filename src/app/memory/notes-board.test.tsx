@@ -156,7 +156,7 @@ describe("NotesBoard", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save note" }));
     });
-    expect(screen.getByText("A note is 1 to 300 characters of plain words, with no web address. Nothing was saved.")).toBeTruthy();
+    expect(screen.getByText("A note is 1 to 300 characters of plain words, with no web address and no hidden characters (text pasted from another page can carry them). Nothing was saved.")).toBeTruthy();
   });
 
   it("asks for words before sending an empty note", () => {

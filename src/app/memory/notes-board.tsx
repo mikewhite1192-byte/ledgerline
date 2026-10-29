@@ -30,7 +30,7 @@ import {
 // Fixed words per category; nothing from the server is shown as it is.
 const MESSAGES: Record<NoteActionCategory | "unknown", string> = {
   off: "Memory is switched off for this carrier. Nothing was saved.",
-  invalid: "A note is 1 to 300 characters of plain words, with no web address. Nothing was saved.",
+  invalid: "A note is 1 to 300 characters of plain words, with no web address and no hidden characters (text pasted from another page can carry them). Nothing was saved.",
   subject_not_found: "That customer or driver is not on file for this carrier. Pick another and try again.",
   full: "This carrier keeps the most notes it can. Remove a note first.",
   duplicate: "That note is already on file, word for word, for the same customer, driver or carrier. Nothing new was saved.",
