@@ -34,6 +34,17 @@ function dollarsToCents(whole: string, frac: string | undefined): number {
   return digits(whole) * 100 + fraction;
 }
 
+// Each dollar figure in a text written the house way, cents always shown: "$100" reads "$100.00"
+// and "$1,234.5" reads "$1,234.50". Only how a figure is written changes, never its value; run it
+// after maskFigures, so only figures a record gave are left to write.
+export function houseDollars(text: string): string {
+  return text.replace(DOLLARS, (m, whole: string, frac: string | undefined) => {
+    const cents = dollarsToCents(whole, frac);
+    if (!Number.isSafeInteger(cents)) return m;
+    return `$${Math.trunc(cents / 100).toLocaleString("en-US")}.${String(cents % 100).padStart(2, "0")}`;
+  });
+}
+
 // Every dollar or cents figure in a piece of text, as cents, read exactly as maskFigures reads
 // them. Only for the signed-in person's own typed message for this turn: never a tool result,
 // untrusted text or model text, which keep the rule above.

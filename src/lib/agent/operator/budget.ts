@@ -9,9 +9,12 @@ export type TurnLimits = {
   maxTurnCents: number;
   wallClockMs: number;
   summaryChars: number;
+  // The one ceiling over every run (flags.runLimits.maxTurns), counted in model calls here. Only
+  // ever tightens: with both set, the smaller of it and maxModelCalls stops the turn.
+  maxTurns?: number;
 };
 
-export type CapReason = "steps" | "model_calls" | "cents" | "clock";
+export type CapReason = "steps" | "model_calls" | "max_turns" | "cents" | "clock";
 
 const NANOCENTS_PER_CENT = 1_000_000_000;
 
@@ -41,6 +44,7 @@ export class TurnBudget {
   // The cap that stops the next model call, if any.
   beforeModelCall(): CapReason | null {
     if (this.modelCalls >= this.limits.maxModelCalls) return "model_calls";
+    if (this.limits.maxTurns !== undefined && this.modelCalls >= this.limits.maxTurns) return "max_turns";
     if (this.centsLeft() < 1) return "cents";
     if (this.remainingMs() <= CALL_MARGIN_MS) return "clock";
     return null;

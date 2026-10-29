@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import golden from "../../../seed/golden.json";
 import { instantAt } from "../../../seed/calendar";
-import { CASH_PROMPT, OPERATOR_PROMPT, operatorPrompt } from "../../policy";
+import { CASH_PROMPT, CHECKLIST_RULE, OPERATOR_PROMPT, operatorPrompt } from "../../policy";
 import { callTool, MAX_RESULT_CHARS } from "../index";
 import { toolsFor } from "../registry";
 import { CASH_LINES_MAX } from "../tools/read/get-cash-friday";
@@ -84,9 +84,9 @@ describe("get_cash_friday", () => {
 
   it("adds its prompt lines only while it is offered, so the switched-off prompt is unchanged", () => {
     const off = toolsFor("operator").map((t) => t.name);
-    expect(operatorPrompt(off, false)).toBe(OPERATOR_PROMPT);
+    expect(operatorPrompt(off, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
     flags.cashFridayEnabled = true;
     const on = toolsFor("operator").map((t) => t.name);
-    expect(operatorPrompt(on, false)).toBe(`${OPERATOR_PROMPT}\n${CASH_PROMPT}`);
+    expect(operatorPrompt(on, false)).toBe(`${OPERATOR_PROMPT}\n${CASH_PROMPT}\n${CHECKLIST_RULE}`);
   });
 });

@@ -2,12 +2,14 @@ import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { flags } from "../../../config/flags";
 import { callTool } from "../gateway";
 import { FakeDb } from "../gateway/__tests__/fake-db";
+import type { Checklist } from "../checklist";
 import type { StepView } from "../view";
 import { ALWAYS_LOADED } from "../gateway/loading";
 import { toolsFor } from "../gateway/registry";
 import { planDb, blueRidgePlan } from "../gateway/__tests__/plan-db";
 import { sampleArgs } from "../gateway/__tests__/sample-args";
 import {
+  CHECKLIST_RULE,
   COLLECTIONS_RULE,
   LOOP_TEXT,
   MEMORY_PROMPT,
@@ -65,6 +67,8 @@ function memoryStore() {
   // The same proposal already on record and decided by a person (rejected, expired, done, failed).
   const decided = new Map<string, { id: string; status: string }>();
   const flagged: string[] = [];
+  const checklists: Checklist[] = [];
+  const notes = new Map<string, string>();
   let finished: Finish | null = null;
   const store: Store = {
     async startStep(_turnId, s) {
@@ -82,6 +86,7 @@ function memoryStore() {
       return { id: step.id, seq: step.seq, kind: step.kind, label: step.label, state: step.state };
     },
     async finishStep(_turnId, stepId, f) {
+      if (f.reasoningNote) notes.set(stepId, f.reasoningNote);
       const step = steps.find((s) => s.id === stepId)!;
       step.state = f.state;
       step.detail = { ...step.detail, ...(f.detail ?? {}) };
@@ -103,11 +108,14 @@ function memoryStore() {
       flagged.push(inputId);
       return 0;
     },
+    async setChecklist(_turnId, list) {
+      checklists.push(list);
+    },
     async finishTurn(_turnId, f) {
       finished = f;
     },
   };
-  return { store, steps, proposals, decided, flagged, finished: () => finished };
+  return { store, steps, proposals, decided, flagged, checklists, notes, finished: () => finished };
 }
 
 function result(partial: Partial<Result>): Result {
@@ -632,6 +640,251 @@ describe("runTurn", () => {
   });
 });
 
+// The answer's checklist (design-agents-101 3.1): kept and shown as the model sets it, not a
+// counted step the first time in a response, ticked at the end, and the stop summary.
+describe("runTurn with a checklist", () => {
+  type Items = { text: string; state?: string }[];
+  const list = (id: string, items: Items) => call(id, "set_checklist", { items });
+  const listOutcome = (c: Call): Outcome => {
+    const items = (JSON.parse(c.argumentsJson) as { items: Items }).items;
+    return allowed(
+      "set_checklist",
+      { set: true, itemCount: items.length },
+      { checklist: { items: items.map((i) => ({ text: i.text, state: (i.state ?? "todo") as "todo" })) } },
+    );
+  };
+  const gateway = (body: Record<string, unknown>) => (c: Call) => (c.name === "set_checklist" ? listOutcome(c) : allowed(c.name, body));
+  const states = (l: Checklist | undefined) => l?.items.map((i) => i.state);
+
+  it("keeps the list as it is set, shows each change, and ticks the item in hand when the answer finishes", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [list("l1", [{ text: "Read Rosa's week", state: "doing" }, { text: "Check her pay" }]), call("c1", "get_pay_items")] }),
+        result({ toolCalls: [list("l2", [{ text: "Read Rosa's week", state: "done" }, { text: "Check her pay", state: "doing" }]), call("c2", "get_pay_items")] }),
+        result({ text: "Her pay is right." }),
+      ],
+      gateway({ totalCents: 150_000 }),
+    );
+    const out = await h.run();
+    expect(out).toMatchObject({ status: "done", text: "Her pay is right.", modelCallCount: 3 });
+    expect(h.checklists.map(states)).toEqual([
+      ["doing", "todo"],
+      ["done", "doing"],
+    ]);
+    expect(h.checklists[0]).toEqual({
+      v: 1,
+      by: "model",
+      items: [
+        { key: "m1", text: "Read Rosa's week", state: "doing" },
+        { key: "m2", text: "Check her pay", state: "todo" },
+      ],
+    });
+    // The item in hand when the answer finished is done; the stored and shown lists say so.
+    expect(states(h.finished()?.checklist)).toEqual(["done", "done"]);
+    const shown = h.events.filter((e) => (e as { event: string }).event === "checklist").map((e) => (e as { data: Checklist }).data);
+    expect(shown.map(states)).toEqual([
+      ["doing", "todo"],
+      ["done", "doing"],
+      ["done", "done"],
+    ]);
+    // The first write is "Made a checklist", the next "Updated the checklist"; each is a tool step.
+    expect(h.steps.filter((s) => s.kind === "tool").map((s) => s.label)).toEqual([
+      "Made a checklist",
+      "Reading pay items",
+      "Updated the checklist",
+      "Reading pay items",
+    ]);
+  });
+
+  it("does not spend the step cap on the first checklist write of a response, and counts a second one", async () => {
+    const reads = (n: number, from = 0) => Array.from({ length: n }, (_, i) => call(`r${from + i}`, "get_pay_items"));
+    const free = harness(
+      [result({ toolCalls: [list("l1", [{ text: "Read the week", state: "doing" }]), ...reads(6)] }), result({ text: "Done." })],
+      gateway({}),
+    );
+    expect(await free.run()).toMatchObject({ status: "done" });
+    expect(free.calls.filter((c) => c.name === "get_pay_items")).toHaveLength(6);
+
+    const twice = harness(
+      [
+        result({
+          toolCalls: [list("l1", [{ text: "Read the week", state: "doing" }]), list("l2", [{ text: "Read the week", state: "doing" }]), ...reads(6)],
+        }),
+      ],
+      gateway({}),
+    );
+    expect(await twice.run()).toMatchObject({ status: "partial", endedReason: "steps" });
+    expect(twice.calls.filter((c) => c.name === "get_pay_items")).toHaveLength(5);
+    // The model-call cap is unchanged: four responses, at most one free write each.
+    const capped = harness(
+      Array.from({ length: 5 }, (_, i) => result({ toolCalls: [list(`l${i}`, [{ text: "Read the week", state: "doing" }]), call(`c${i}`, "get_pay_items")] })),
+      gateway({}),
+    );
+    expect(await capped.run()).toMatchObject({ status: "partial", endedReason: "model_calls", modelCallCount: 4 });
+  });
+
+  it("says what was done and what is left when a cap stops the answer, then what it found", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [list("l1", [{ text: "Read Rosa's week", state: "doing" }, { text: "Check her pay" }, { text: "Draft a fix" }]), call("c1", "get_pay_items")] }),
+        result({ toolCalls: [list("l2", [{ text: "Read Rosa's week", state: "done" }, { text: "Check her pay", state: "doing" }, { text: "Draft a fix" }]), call("c2", "get_pay_items")] }),
+        result({ toolCalls: [call("c3", "get_pay_items")] }),
+        result({ text: "Two loads are short.", toolCalls: [call("c4", "get_pay_items")] }),
+      ],
+      gateway({}),
+    );
+    const out = await h.run();
+    expect(out.status).toBe("partial");
+    expect(out.endedReason).toBe("model_calls");
+    // The count is the four reads, not the four model calls and two checklist writes beside them;
+    // the turn's own step count still holds every step.
+    expect(out.stepCount).toBe(10);
+    expect(out.text).toBe(
+      "I stopped after 4 steps. Done: Read Rosa's week. Not done: Check her pay; Draft a fix. Nothing was paid or sent.\n\nTwo loads are short.",
+    );
+    expect(out.text).not.toContain(LOOP_TEXT.stopped);
+    expect(states(h.finished()?.checklist)).toEqual(["done", "not_done", "not_done"]);
+    expect(h.finished()?.text).toBe(out.text);
+  });
+
+  it("leaves the item in hand not finished when a call after the last list was refused or made no card", async () => {
+    const propose = (id: string) => call(id, "propose_advance", { amountCents: 20_000 });
+    const card = () => allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT, refs: [{ table: "drivers", id: TYPED }] });
+    // Over the engine's limit: the gateway blocks it and says the limit.
+    const overLimit = (): Outcome => ({
+      decision: "blocked",
+      decisionId: "d-propose-over",
+      tool: "propose_advance",
+      reason: "amount_over_limit",
+      result: { error: "amount_over_limit" },
+      limitCents: 15_000 as Extract<Outcome, { decision: "blocked" }>["limitCents"],
+      latencyMs: 1,
+    });
+    const plan = (first: string, second: string) =>
+      list(`l-${first}-${second}`, [
+        { text: "Read Rosa's week", state: first },
+        { text: "Propose the advance", state: second },
+      ]);
+    const answer = (gw: (c: Call) => Outcome, replies: Result[]) => {
+      const h = harness(replies, gw);
+      return h.run().then((out) => ({ out, h, final: states(h.finished()?.checklist) }));
+    };
+    const withPropose = (outcome: () => Outcome) => (c: Call) =>
+      c.name === "set_checklist" ? listOutcome(c) : c.name === "propose_advance" ? outcome() : allowed(c.name, {});
+    const proposeTurn = (calls: Call[]) => [
+      result({ toolCalls: [plan("doing", "todo"), call("c1", "get_pay_items")] }),
+      result({ toolCalls: calls }),
+      result({ text: "I could not propose that." }),
+    ];
+
+    // Blocked by the gateway: the answer finished, the proposal item is not finished.
+    const refused = await answer(withPropose(overLimit), proposeTurn([plan("done", "doing"), propose("p1")]));
+    expect(refused.out).toMatchObject({ status: "done", text: "I could not propose that." });
+    expect(refused.final).toEqual(["done", "not_done"]);
+    expect(refused.h.proposals.size).toBe(0);
+    // Allowed, but the same proposal was already decided: no card, so not finished either.
+    const decided = harness(proposeTurn([plan("done", "doing"), propose("p1")]), withPropose(card));
+    decided.decided.set(`advance_payout:${DRIVER}:${JSON.stringify(ADVANCE_DRAFT.args)}`, { id: "proposal-old", status: "rejected" });
+    expect(await decided.run()).toMatchObject({ status: "done" });
+    expect(states(decided.finished()?.checklist)).toEqual(["done", "not_done"]);
+    // A list sent in the same response after the refused call was written without knowing it.
+    const after = await answer(withPropose(overLimit), proposeTurn([propose("p1"), plan("done", "doing")]));
+    expect(after.final).toEqual(["done", "not_done"]);
+  });
+
+  it("still ticks the item in hand when the card was made, and when a list came after an earlier refusal", async () => {
+    const card = () => allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT, refs: [{ table: "drivers", id: TYPED }] });
+    const denied: Outcome = { decision: "denied", decisionId: "d-no", tool: "get_pay_items", reason: "unknown_record", result: { error: "unknown_record" }, latencyMs: 1 };
+    let firstRead = true;
+    const gw = (c: Call): Outcome => {
+      if (c.name === "set_checklist") return listOutcome(c);
+      if (c.name === "propose_advance") return card();
+      // The first read is refused; the model sees it and sends the list again with the card.
+      if (firstRead) {
+        firstRead = false;
+        return denied;
+      }
+      return allowed(c.name, {});
+    };
+    const h = harness(
+      [
+        result({ toolCalls: [list("l1", [{ text: "Read Rosa's week", state: "doing" }, { text: "Propose the advance" }]), call("c1", "get_pay_items")] }),
+        result({ toolCalls: [list("l2", [{ text: "Read Rosa's week", state: "done" }, { text: "Propose the advance", state: "doing" }]), call("p1", "propose_advance")] }),
+        result({ text: "Proposed the advance." }),
+      ],
+      gw,
+    );
+    expect(await h.run()).toMatchObject({ status: "done", text: "Proposed the advance." });
+    expect(h.proposals.size).toBe(1);
+    expect(states(h.finished()?.checklist)).toEqual(["done", "done"]);
+  });
+
+  it("keeps today's stop line and stores no list when the answer set none", async () => {
+    const many = Array.from({ length: 7 }, (_, i) => call(`c${i}`, "get_pay_items"));
+    const h = harness([result({ toolCalls: many })], gateway({}));
+    const out = await h.run();
+    expect(out.text).toBe(LOOP_TEXT.stopped);
+    expect(h.checklists).toEqual([]);
+    expect(h.finished()).not.toHaveProperty("checklist");
+  });
+
+  it("withholds a figure no record gave in an item, and lets one a tool returned through", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [list("l1", [{ text: "Pay Sam $612.34 back", state: "doing" }]), call("c1", "get_pay_items")] }),
+        result({ toolCalls: [list("l2", [{ text: "Check the $1,500.00 week", state: "doing" }]), call("c2", "get_pay_items")] }),
+        result({ text: "Done." }),
+      ],
+      gateway({ grossCents: 150_000 }),
+    );
+    await h.run();
+    expect(h.checklists[0].items[0].text).toBe(`Pay Sam ${WITHHELD} back`);
+    expect(h.checklists[1].items[0].text).toBe("Check the $1,500.00 week");
+    expect(JSON.stringify(h.events)).not.toContain("612.34");
+  });
+
+  it("tells the model a refused list and moves on: never Muse Wonder, never the end of the answer", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [call("l1", "set_checklist", { items: [] }), call("c1", "get_pay_items")] }),
+        result({ toolCalls: [call("l2", "set_checklist", { items: [] })] }),
+        result({ toolCalls: [call("l3", "set_checklist", { items: [] })] }),
+        result({ text: "Her pay is right." }),
+      ],
+      (c) => (c.name === "set_checklist" ? invalid("set_checklist") : allowed(c.name, {})),
+    );
+    const out = await h.run();
+    expect(out).toMatchObject({ status: "done", text: "Her pay is right." });
+    expect(h.requests.every((r) => r.target === "spark")).toBe(true);
+    expect(h.steps.some((s) => s.kind === "escalation")).toBe(false);
+    expect(h.checklists).toEqual([]);
+  });
+
+  it("stops at max turns when it is tighter than the model call cap, with its own reason", async () => {
+    const h = harness(
+      Array.from({ length: 4 }, (_, i) => result({ toolCalls: [call(`c${i}`, "get_pay_items")] })),
+      gateway({}),
+    );
+    h.deps.limits = { ...LIMITS, maxTurns: 2 };
+    const out = await h.run();
+    expect(out).toMatchObject({ status: "partial", endedReason: "max_turns", modelCallCount: 2, text: LOOP_TEXT.stopped });
+  });
+
+  it("keeps a model step's own note with figures masked, and nothing when none came back", async () => {
+    const h = harness(
+      [
+        result({ reasoningSummary: "Rosa may be owed $612.34; read her week.", toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "Done." }),
+      ],
+      gateway({}),
+    );
+    await h.run();
+    const models = h.steps.filter((s) => s.kind === "model");
+    expect(h.notes.get(models[0].id)).toBe(`Rosa may be owed ${WITHHELD}; read her week.`);
+    expect(h.notes.has(models[1].id)).toBe(false);
+  });
+});
+
 // Tool search and the prompt cache: the same scripted answers give the same turn either way, and
 // the shared part of the request (the static prompt and the tools) carries nothing of a tenant.
 describe("runTurn with tool search and the prompt cache", () => {
@@ -688,7 +941,7 @@ describe("runTurn with tool search and the prompt cache", () => {
     for (const { request } of h.requests) {
       expect(request).not.toHaveProperty("toolSearch");
       expect(request).not.toHaveProperty("cache");
-      expect(request.messages[0]).toEqual({ role: "system", content: `${OPERATOR_PROMPT}\n${REPORT_PROMPT}` });
+      expect(request.messages[0]).toEqual({ role: "system", content: `${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${REPORT_PROMPT}` });
       for (const m of request.messages) expect(m).not.toHaveProperty("placement");
       expect(JSON.stringify(request.tools)).toBe(JSON.stringify(tools));
       for (const t of request.tools ?? []) expect(t).not.toHaveProperty("deferLoading");
@@ -697,15 +950,17 @@ describe("runTurn with tool search and the prompt cache", () => {
 
   it("adds the collections line only while get_collections is offered", () => {
     expect(flags.collectionsEnabled).toBe(false);
-    expect(operatorPrompt(toolsFor("operator").map((t) => t.name), false)).toBe(OPERATOR_PROMPT);
+    expect(operatorPrompt(toolsFor("operator").map((t) => t.name), false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
     flags.collectionsEnabled = true;
     onTestFinished(() => {
       flags.collectionsEnabled = false;
     });
     const names = toolsFor("operator").map((t) => t.name);
     expect(names).toContain("get_collections");
-    expect(operatorPrompt(names, false)).toBe(`${OPERATOR_PROMPT}\n${COLLECTIONS_RULE}`);
-    expect(operatorPrompt(names, true)).toBe(`${OPERATOR_PROMPT}\n${TOOL_SEARCH_RULE}\n${COLLECTIONS_RULE}`);
+    expect(operatorPrompt(names, false)).toBe(`${OPERATOR_PROMPT}\n${COLLECTIONS_RULE}\n${CHECKLIST_RULE}`);
+    expect(operatorPrompt(names, true)).toBe(
+      `${OPERATOR_PROMPT}\n${TOOL_SEARCH_RULE}\n${COLLECTIONS_RULE}\n${CHECKLIST_RULE}`,
+    );
     expect(COLLECTIONS_RULE).toContain("get_collections");
   });
 

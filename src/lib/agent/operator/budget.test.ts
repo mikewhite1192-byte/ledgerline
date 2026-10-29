@@ -50,4 +50,26 @@ describe("TurnBudget", () => {
     expect(b.costNanocents).toBe(0);
     expect(b.modelCalls).toBe(3);
   });
+
+  it("stops at the smaller of max turns and the model call cap, and never loosens either", () => {
+    const tight = new TurnBudget({ ...LIMITS, maxModelCalls: 4, maxTurns: 2 }, 0, () => 0);
+    tight.addModelCall(1);
+    expect(tight.beforeModelCall()).toBeNull();
+    tight.addModelCall(1);
+    expect(tight.beforeModelCall()).toBe("max_turns");
+    // With the chat's own cap the tighter one, max turns never changes when it stops.
+    const chat = new TurnBudget({ ...LIMITS, maxModelCalls: 2, maxTurns: 30 }, 0, () => 0);
+    chat.addModelCall(1);
+    chat.addModelCall(1);
+    expect(chat.beforeModelCall()).toBe("model_calls");
+    // Equal: the existing cap names the stop.
+    const equal = new TurnBudget({ ...LIMITS, maxModelCalls: 2, maxTurns: 2 }, 0, () => 0);
+    equal.addModelCall(1);
+    equal.addModelCall(1);
+    expect(equal.beforeModelCall()).toBe("model_calls");
+    // Absent: today's caps only.
+    const none = new TurnBudget(LIMITS, 0, () => 0);
+    none.addModelCall(1);
+    expect(none.beforeModelCall()).toBeNull();
+  });
 });

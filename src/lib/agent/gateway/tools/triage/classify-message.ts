@@ -1,9 +1,15 @@
 import { z } from "zod";
 import { defineTool, type GatewayRef } from "../../types";
-import { idField } from "../../validate";
+import { dateField, idField } from "../../validate";
 
 // Pure: records the triage model's classification as a validated decision. No row is read or
-// written by the tool itself (the ref check confirms the ids exist).
+// written by the tool itself (the ref check confirms the ids exist). The amount and the dates are
+// what the message says, read by a model: a hint for the person and the agent, never a number
+// anything pays or books.
+
+// Under $1,000,000, the same bound as inbound_messages.triage_amount_cents (0037).
+export const MAX_TRIAGE_AMOUNT_CENTS = 99_999_999;
+export const MAX_TRIAGE_DATES = 3;
 
 export const MESSAGE_CATEGORIES = [
   "advance_request",
@@ -18,8 +24,8 @@ export const MESSAGE_CATEGORIES = [
 export const classifyMessage = defineTool({
   name: "classify_message",
   description:
-    "Classify one screened outside message: its category, how urgent it is, and the driver it " +
-    "is from when known.",
+    "Classify one screened outside message: its category, how urgent it is, the driver it is " +
+    "from when known, and the dollar amount (in cents) and dates (YYYY-MM-DD) it names, if any.",
   tier: "read",
   roles: ["triage"],
   label: "Sorting the message",
@@ -28,6 +34,8 @@ export const classifyMessage = defineTool({
     category: z.enum(MESSAGE_CATEGORIES),
     urgency: z.enum(["low", "normal", "high"]),
     driverId: idField().optional(),
+    amountCents: z.number().int().min(0).max(MAX_TRIAGE_AMOUNT_CENTS).optional(),
+    dates: z.array(dateField()).max(MAX_TRIAGE_DATES).optional(),
   }),
   refs: (a): GatewayRef[] => [
     { table: "untrusted_inputs", id: a.inputId },
@@ -39,6 +47,8 @@ export const classifyMessage = defineTool({
       category: a.category,
       urgency: a.urgency,
       driverId: a.driverId ?? null,
+      amountCents: a.amountCents ?? null,
+      dates: a.dates ?? [],
     },
   }),
 });

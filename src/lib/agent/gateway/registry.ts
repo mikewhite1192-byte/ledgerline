@@ -35,6 +35,7 @@ import { reportCashNeeded } from "./tools/read/report-cash-needed";
 import { reportDriverPaySummary } from "./tools/read/report-driver-pay-summary";
 import { reportMarginPerLoad } from "./tools/read/report-margin-per-load";
 import { runChecks } from "./tools/read/run-checks";
+import { setChecklist } from "./tools/note/set-checklist";
 import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
@@ -99,6 +100,7 @@ const TOOLS: readonly AnyToolDef[] = [
   getPortalEvidence,
   classifyMessage,
   getCashFriday,
+  setChecklist,
   rememberNote,
 ];
 

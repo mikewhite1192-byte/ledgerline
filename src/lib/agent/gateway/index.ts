@@ -323,6 +323,7 @@ async function dispatch(
     result: capped.result,
     refs,
     ...(ran.draft ? { draft: ran.draft } : {}),
+    ...(ran.checklist ? { checklist: ran.checklist } : {}),
     ...(flagged && screen ? { flaggedInputId: screen.inputId } : {}),
     latencyMs: 0,
   };

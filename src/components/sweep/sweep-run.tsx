@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { proposalCardFrom } from "@/components/agent/proposal-card-from";
+import { Checklist } from "@/components/app/checklist";
 import { PageHeader } from "@/components/app/page-header";
 import { ProposalCard } from "@/components/app/proposal-card";
 import { StatCard } from "@/components/app/stat-card";
@@ -19,7 +20,8 @@ import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
 import { batchFor, type HeldBatch } from "./batch-id";
 import { WeekChecks } from "./week-checks";
 
-// A sweep run's page (design 3.10): the run's counts, how the week was checked a second time when
+// A sweep run's page (design 3.10): the run's checklist of phases, ticked as it moves (agents-101
+// 3.1), the run's counts, how the week was checked a second time when
 // the run did that (week-checks.tsx), then Clean fixes (each card keeps its own
 // Approve and Reject, plus one "Approve all clean" bar), Needs a look, Needs a person, and the
 // fixed, declined and expired ones folded away. While the run is running the page carries it on
@@ -375,6 +377,7 @@ export function SweepRun({
         description={banner(page)}
         actions={<StatusBadge status={page.run.status === "running" ? "executing" : page.run.status} label={codeToWords(page.run.status)} />}
       />
+      {page.run.checklist ? <Checklist list={page.run.checklist} /> : null}
       <section aria-label="Counts" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label="Found" value={page.counts.found} />
         <StatCard label="Fixes drafted" value={page.counts.fixes_drafted} />
