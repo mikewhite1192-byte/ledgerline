@@ -16,7 +16,7 @@ import {
   type VerdictWrite,
 } from "./audit";
 import { findProposalConflict, flagTurnProposals, persistProposal } from "./proposals";
-import { finishStep, finishTurn, openTurn, startStep, type OpenTurnInput } from "./turns";
+import { finishStep, finishTurn, openTurn, setChecklist, startStep, type OpenTurnInput } from "./turns";
 import type { OpenTurnRefusal, OpenedTurn, TurnStore } from "./types";
 import { readModelWeek, readTurnTrace, readTurnTraceInRun } from "./trace";
 import { readRecentTurnViews, readTurnView } from "./views";
@@ -53,6 +53,7 @@ export function dbTurnStore(session: Session, deps: StoreDeps = {}): TurnStore {
       }
     },
     flagTurnProposals: (turnId, inputId) => tx((q) => flagTurnProposals(q, turnId, inputId, clock())),
+    setChecklist: (turnId, checklist) => tx((q) => setChecklist(q, turnId, checklist)),
     finishTurn: (turnId, finish) => tx((q) => finishTurn(q, turnId, finish, clock())),
   };
 }

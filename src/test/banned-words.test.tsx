@@ -82,6 +82,7 @@ import { DEMO_CARRIERS } from "@/lib/seed/carriers";
 import { buildCarrierPlan } from "@/lib/seed/plan";
 import { EXCEPTION_LABELS, LEG_LABELS, PARK_LABELS, SETTLEMENT_OUTCOMES } from "@/lib/settlements/labels";
 import type { SettlementRecordView } from "@/lib/settlements/views";
+import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
 import { SAMPLE_PROPOSAL_ID, SAMPLE_TURN_ID, sampleTrace } from "@/lib/trace/sample";
 import { VOICE_STATUS_WORDS } from "@/lib/voice/words";
 import * as fx from "./page-fixtures";
@@ -1418,8 +1419,14 @@ const PAGES: PageCase[] = [
         setup: () =>
           (state.fx.sweepPage = {
             ...fx.SWEEP_PAGE,
+            run: { ...fx.SWEEP_RUN, checklist: endSweep(tickSweep(sweepChecklist(true), "draft"), "done") },
             fanout: { ...fx.SWEEP_FANOUT, status: "skipped_daily_cap", checks: [], reconcile: { counts: null, summary: null, disagreements: [], turnId: null } },
           }),
+        load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
+      },
+      {
+        name: "stopped by its budget, its checklist not finished",
+        setup: () => (state.fx.sweepPage = { ...fx.SWEEP_PAGE, run: fx.SWEEP_RUN_STOPPED }),
         load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
       },
       {
@@ -1927,6 +1934,7 @@ describe("no internal word in a chat answer or its trace", () => {
         ...Object.values(TOOL_REGISTRY).map((t) => t.label),
         "Asking Muse Wonder to form the proposal",
         "Preparing a proposal card",
+        "Updated the checklist",
       ]),
     ];
     const turn: TurnView = {
@@ -1970,6 +1978,22 @@ describe("no internal word in a chat answer or its trace", () => {
     // The repeated step shows once in the first answer's list.
     const first = screen.getAllByRole("list", { name: "What the agent did" })[0];
     expect(first.textContent?.match(/Thinking it through/g)).toHaveLength(1);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("a checklist in every state, and an answer stopped at its step budget with its plain summary", () => {
+    const messages = toMessages(fx.CHECKLIST_TURNS, {}, {}, undefined, { on: true, checking: {}, timezone: fx.TENANT.timezone });
+    const { container } = render(<ChatThread messages={messages} composer={{}} />);
+    const lists = screen.getAllByRole("list", { name: "Checklist" });
+    expect(lists).toHaveLength(2);
+    for (const word of ["to do", "working on it", "done", "skipped", "not finished"]) {
+      expect(lists[0].textContent).toContain(`, ${word}`);
+    }
+    expect(lists[0].textContent).toContain("Skipped");
+    expect(lists[0].textContent).toContain("Not finished");
+    const text = container.textContent ?? "";
+    expect(text).toContain("I stopped after 6 steps. Done: Read Rosa's loads this week. Not done:");
+    expect(text).toContain("Nothing was paid or sent.");
     expect(scan(container)).toEqual([]);
   });
 

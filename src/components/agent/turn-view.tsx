@@ -112,6 +112,7 @@ export function toMessages(
         : t.status === "running"
           ? [{ id: `${t.id}:wait`, label: "Reading your question", state: "running" as const }]
           : [];
+    if (t.checklist) parts.push({ kind: "checklist", checklist: t.checklist });
     if (steps.length > 0) parts.push({ kind: "steps", steps });
     for (const f of t.flags) {
       parts.push({
@@ -399,6 +400,10 @@ export function AgentChat({
           heard = true;
           if (e.event === "start") setConversationId(e.data.conversationId);
           else if (e.event === "step") upsertStep(turnId, e.data);
+          else if (e.event === "checklist") {
+            const list = e.data;
+            patch(turnId, (t) => ({ ...t, checklist: list }));
+          }
           else if (e.event === "done") {
             const turn = await refresh(turnId);
             if (turn) finish(turn);

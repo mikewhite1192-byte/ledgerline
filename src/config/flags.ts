@@ -17,7 +17,8 @@ export type Flags = {
   aiJobHourlyCapCents: number;
   // The model connection check on the home page; on only to prove a deploy.
   aiProofRoute: boolean;
-  // Which model triages inbound email: "meta" (Muse Spark) until Baseten credits land.
+  // Which model sorts driver messages and voice notes: "baseten" (Muse Spark Open, the open-weights
+  // model) or "meta" (Muse Spark).
   triageProvider: "meta" | "baseten";
   // Muse Spark Open's standby host. "off": a call Baseten cannot serve fails as it always has.
   // "fireworks": when Baseten fails for a reason that is Baseten's (no key, 429, 401/403, 402, a
@@ -55,6 +56,13 @@ export type Flags = {
   // How the chat follows a running turn: server-sent events, or polling the turn every 1.5 s.
   // The client falls back to polling on its own when no event arrives within 3 seconds.
   agentStreamMode: "sse" | "poll";
+  // One ceiling over every agent run (design-agents-101 3.3): a turn is one plan, act, observe
+  // round of the run's own loop (a chat answer: one model call). A cap, never a switch: the
+  // tighter cap that already exists still wins (the effective limit is the smaller one), and
+  // FLAGS_LOCAL_OVERRIDES cannot touch it.
+  runLimits: {
+    maxTurns: number;
+  };
   // Hard caps on one turn. Reaching any of them ends the turn with what it found so far.
   agentTurnLimits: {
     maxToolSteps: number;
@@ -178,6 +186,19 @@ export type Flags = {
   // Driver voice notes: upload, transcribe (Muse Voice Transcribe), screen, translate (Muse
   // Spark), sort (the triage model) and hand to the agent. Off means every voice route refuses
   // with disabled before reading the upload or calling a model.
+  // Driver messages can be pasted (and, with the mail switch, emailed) into the Inbox, sorted by
+  // the triage model and handed to the agent. Off means every Inbox route refuses with disabled
+  // before reading the body, and nothing is screened, sorted or stored.
+  inboxEnabled: boolean;
+  inboxLimits: {
+    // Messages one carrier can add in one of its local days, failed and held ones too.
+    messagesPerDay: number;
+    // Longest message text kept, in characters, after trimming.
+    maxChars: number;
+    // Sorting tries per message (the first one included); after the last a failed message stays
+    // failed. Also the attempts CHECK in migration 0037: raise both together.
+    maxAttempts: number;
+  };
   voiceIntakeEnabled: boolean;
   voiceLimits: {
     // The 16 kHz mono WAV sent for transcription: about 62 seconds.
@@ -443,7 +464,7 @@ export const flags: Flags = {
   aiEnabled: false,
   aiJobHourlyCapCents: 1000,
   aiProofRoute: false,
-  triageProvider: "meta",
+  triageProvider: "baseten",
   sparkOpenFallback: "off",
   payoutsEnabled: false,
   paymentProvider: "mock",
@@ -458,6 +479,9 @@ export const flags: Flags = {
   },
   agentEnabled: false,
   agentStreamMode: "sse",
+  runLimits: {
+    maxTurns: 30,
+  },
   agentTurnLimits: {
     maxToolSteps: 6,
     maxModelCalls: 4,
@@ -499,6 +523,8 @@ export const flags: Flags = {
     readMaxCostCents: 10,
     perTenantPerDay: 20,
   },
+  inboxEnabled: false,
+  inboxLimits: { messagesPerDay: 50, maxChars: 20_000, maxAttempts: 3 },
   voiceIntakeEnabled: false,
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
   detentionEnabled: false,

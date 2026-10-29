@@ -1,6 +1,8 @@
 import type { AdvanceListRow, AdvanceRecord, DriverAdvance, DriverOption } from "@/lib/advances/read";
 import type { DriverIdentity } from "@/lib/advances/identity";
+import type { Checklist } from "@/lib/agent/checklist";
 import { reasonSentence } from "@/lib/agent/reasons";
+import { stopSummary } from "@/lib/agent/stop-summary";
 import type { ProposalView, RuleChangeView, TurnView } from "@/lib/agent/view";
 import type { CallRow, Spend } from "@/lib/ai/spend";
 import type { DaySpend, SpendAlert } from "@/lib/ai/watch";
@@ -49,6 +51,7 @@ import type {
 } from "@/lib/settlements/views";
 import type { FanoutTree } from "@/lib/sweep/fanout/tree";
 import type { SweepCounts } from "@/lib/sweep/run";
+import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
 import type { SweepHome, SweepItemView, SweepPage, SweepRunView } from "@/lib/sweep/view";
 import { summarizeModelWeek, type ModelWeek } from "@/lib/trace/week";
 import type { VoiceDetail, VoiceListRow } from "@/lib/voice/read";
@@ -185,6 +188,43 @@ export const TURNS: TurnView[] = [
   },
 ];
 
+// An answer's checklist with an item in every state, and an answer a cap stopped: its text is the
+// plain stop summary, then what it found.
+export const CHECKLIST_EVERY_STATE: Checklist = {
+  v: 1,
+  by: "model",
+  items: [
+    { key: "m1", text: "Read Rosa's loads this week", state: "done" },
+    { key: "m2", text: "Check her fuel advance limit", state: "doing" },
+    { key: "m3", text: "Draft the advance for you to approve", state: "todo" },
+    { key: "m4", text: "Compare with last week", state: "skipped" },
+    { key: "m5", text: "Check her escrow balance", state: "not_done" },
+  ],
+};
+
+const STOPPED_CHECKLIST: Checklist = {
+  v: 1,
+  by: "model",
+  items: [
+    { key: "m1", text: "Read Rosa's loads this week", state: "done" },
+    { key: "m2", text: "Check her fuel advance limit", state: "not_done" },
+    { key: "m3", text: "Draft the advance for you to approve", state: "not_done" },
+  ],
+};
+
+export const CHECKLIST_TURNS: TurnView[] = [
+  { ...TURNS[0], id: id(340), status: "running", text: "", proposals: [], checklist: CHECKLIST_EVERY_STATE },
+  {
+    ...TURNS[0],
+    id: id(341),
+    status: "partial",
+    endedReason: "max_turns",
+    text: `${stopSummary(STOPPED_CHECKLIST, { steps: 6 })}\n\nRosa Delgado ran 4 loads this week.`,
+    proposals: [],
+    checklist: STOPPED_CHECKLIST,
+  },
+];
+
 export const SPEND: Spend = {
   spentNanocents: 124_000_000_000,
   reservedNanocents: 2_000_000_000,
@@ -304,6 +344,21 @@ export const SWEEP_RUN: SweepRunView = {
   startedAt: "2026-10-28T15:00:00.000Z",
   finishedAt: "2026-10-28T15:03:00.000Z",
   approved: 1,
+  checklist: endSweep(tickSweep(tickSweep(tickSweep(tickSweep(sweepChecklist(true), "plan"), "check"), "draft"), "audit"), "done"),
+};
+
+// A run its budget stopped while drafting, and a run that skipped the second look.
+export const SWEEP_RUN_STOPPED: SweepRunView = {
+  ...SWEEP_RUN,
+  truncatedReason: "cap",
+  checklist: endSweep(tickSweep(sweepChecklist(true), "draft"), "stopped"),
+};
+export const SWEEP_RUN_RUNNING: SweepRunView = {
+  ...SWEEP_RUN,
+  status: "running",
+  phase: "check",
+  finishedAt: null,
+  checklist: tickSweep(tickSweep(sweepChecklist(true), "plan"), "check"),
 };
 
 export const SWEEP_HOME: SweepHome = {
