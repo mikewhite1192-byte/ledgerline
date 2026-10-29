@@ -264,6 +264,14 @@ describe("the sweep's second opinion", () => {
     const trace = await readSweepTurnTrace(SESSION, runId, rows[0].turn_id as string, { db: app });
     expect(trace?.steps.map((s) => s.kind)).toEqual(["model", "tool", "model"]);
     expect(await readSweepTurnTrace(SESSION, randomUUID(), rows[0].turn_id as string, { db: app })).toBeNull();
+    // The run's checklist lists the second look and ticks it with the rest.
+    expect(page?.run.checklist?.items.map((i) => `${i.key}:${i.state}`)).toEqual([
+      "find:done",
+      "plan:done",
+      "check:done",
+      "draft:done",
+      "audit:done",
+    ]);
   });
 
   it("keeps one needs-a-person item per record across two runs of the week", async () => {
@@ -290,6 +298,14 @@ describe("the sweep's second opinion", () => {
     expect(explain).toHaveBeenCalled();
     const page = await readSweepPage(SESSION, runId, { db: app });
     expect(page?.fanout?.status).toBe("skipped_daily_cap");
+    // The second look was skipped as a whole; the rest of the run finished.
+    expect(page?.run.checklist?.items.map((i) => `${i.key}:${i.state}`)).toEqual([
+      "find:done",
+      "plan:skipped",
+      "check:skipped",
+      "draft:done",
+      "audit:done",
+    ]);
   });
 
   it("runs a plain sweep when the switch is off", async () => {

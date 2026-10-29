@@ -56,6 +56,13 @@ export type Flags = {
   // How the chat follows a running turn: server-sent events, or polling the turn every 1.5 s.
   // The client falls back to polling on its own when no event arrives within 3 seconds.
   agentStreamMode: "sse" | "poll";
+  // One ceiling over every agent run (design-agents-101 3.3): a turn is one plan, act, observe
+  // round of the run's own loop (a chat answer: one model call). A cap, never a switch: the
+  // tighter cap that already exists still wins (the effective limit is the smaller one), and
+  // FLAGS_LOCAL_OVERRIDES cannot touch it.
+  runLimits: {
+    maxTurns: number;
+  };
   // Hard caps on one turn. Reaching any of them ends the turn with what it found so far.
   agentTurnLimits: {
     maxToolSteps: number;
@@ -446,6 +453,9 @@ export const flags: Flags = {
   },
   agentEnabled: false,
   agentStreamMode: "sse",
+  runLimits: {
+    maxTurns: 30,
+  },
   agentTurnLimits: {
     maxToolSteps: 6,
     maxModelCalls: 4,

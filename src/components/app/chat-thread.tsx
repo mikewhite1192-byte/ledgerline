@@ -4,9 +4,11 @@ import { Check, X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { Mark } from "@/components/brand/mark";
 import { HowWorkedOut, type TraceLoader } from "@/components/trace/how-worked-out";
+import type { Checklist as ChecklistData } from "@/lib/agent/checklist";
 import { cn } from "@/lib/cn";
 import { recordHref, type HrefFor } from "@/lib/records/href";
 import { AnswerText } from "./answer-text";
+import { Checklist } from "./checklist";
 import { cardAnchor } from "@/lib/home/card-anchor";
 import { Composer, type ComposerProps } from "./composer";
 import { DataTable, type DataTableProps } from "./data-table";
@@ -20,6 +22,8 @@ export type Part =
   // warning: outside text the person should read with care; shown in a marked quote block.
   | { kind: "text"; text: string; warning?: string }
   | { kind: "steps"; steps: Step[] }
+  // The plan the answer set and ticks as it goes; it sits above the steps.
+  | { kind: "checklist"; checklist: ChecklistData }
   | { kind: "proposal"; proposal: Omit<ProposalCardProps, "hrefFor"> }
   // onVisible, when set, is called once the table first scrolls into view (a report reads its
   // rows then, not at page load).
@@ -200,6 +204,8 @@ export function ChatThread({
                         );
                       case "steps":
                         return <Steps key={i} steps={p.steps} />;
+                      case "checklist":
+                        return <Checklist key="checklist" list={p.checklist} />;
                       case "proposal":
                         // Keyed by the proposal, not its place, so an open confirm row stays with it.
                         // The anchor (card-<id>) is where Home's "Needs you" link lands.

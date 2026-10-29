@@ -265,9 +265,11 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
   const toolCalls: AiToolCall[] = [];
   const replay: AiReplayItem[] = [];
   let toolSearches = 0;
+  const summaries: string[] = [];
   const computerCalls: (ComputerCall | null)[] = [];
   for (const raw of asArray(body.output)) {
     const item = asRecord(raw);
+    if (item?.type === "reasoning") summaries.push(...summaryTextsOf(item.summary));
     if (item?.type === "message") {
       for (const part of asArray(item.content)) {
         const p = asRecord(part);
@@ -303,12 +305,31 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
     return { kind: "unknown", category: "unknown", httpStatus };
   }
   const computerCall = computerCalls[0];
+  const reasoningSummary = summaries.join("\n").trim();
   return {
     kind: "answered",
     status,
     httpStatus,
     upstreamId: upstreamIdFrom(body.id),
     metered: { unit: "tokens", usage },
-    value: { text: parts.join(""), toolCalls, replay, toolSearches, ...(computerCall ? { computerCall } : {}) },
+    value: {
+      text: parts.join(""),
+      toolCalls,
+      replay,
+      toolSearches,
+      ...(reasoningSummary ? { reasoningSummary } : {}),
+      ...(computerCall ? { computerCall } : {}),
+    },
   };
+}
+
+// The plain text parts of a reasoning item's summary (summary_text entries only); anything else
+// is left out.
+function summaryTextsOf(summary: unknown): string[] {
+  const out: string[] = [];
+  for (const part of asArray(summary)) {
+    const p = asRecord(part);
+    if (p?.type === "summary_text" && typeof p.text === "string" && p.text.trim()) out.push(p.text.trim());
+  }
+  return out;
 }

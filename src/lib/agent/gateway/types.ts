@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { AiResult, AiTextTarget, AiRequest } from "../../ai";
 import type { Session } from "../../auth/claims";
+import type { ChecklistDraft } from "../checklist";
 import type { Queryable, TenantDb } from "../../db";
 import { TABLES, type Cents, type TableName } from "../../rules-engine";
 
@@ -167,7 +168,8 @@ export type ProposalDraft = {
   sources: GatewayRef[];
 };
 
-export type ToolResult = { result: Record<string, unknown>; draft?: ProposalDraft };
+// checklist: set only by set_checklist, kept by the operator loop (the gateway writes nothing).
+export type ToolResult = { result: Record<string, unknown>; draft?: ProposalDraft; checklist?: ChecklistDraft };
 
 export interface ToolDef<A> {
   name: string;
@@ -211,6 +213,7 @@ export type GatewayOutcome =
       result: Record<string, unknown>;
       refs: GatewayRef[];
       draft?: ProposalDraft;
+      checklist?: ChecklistDraft;
       flaggedInputId?: string;
       latencyMs: number;
     }

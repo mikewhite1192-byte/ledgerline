@@ -1,3 +1,4 @@
+import type { Checklist } from "../../checklist";
 import type { StepKind, StepView } from "../../view";
 import type { ProposalDraft } from "../types";
 
@@ -28,6 +29,8 @@ export type StepFinish = {
   gatewayDecisionId?: string | null;
   proposalId?: string | null;
   detail?: Record<string, unknown>;
+  // A model step's own short note, when one came back (figures already masked).
+  reasoningNote?: string | null;
 };
 
 export type PersistInput = {
@@ -58,6 +61,8 @@ export type TurnFinish = {
   stepCount: number;
   modelCallCount: number;
   costNanocents: number;
+  // The checklist as the answer ended (absent: the stored one stays as it is).
+  checklist?: Checklist;
 };
 
 export interface TurnStore {
@@ -66,5 +71,7 @@ export interface TurnStore {
   persistProposal(input: PersistInput): Promise<PersistResult>;
   // Marks this turn's unflagged waiting proposals with a flagged input read later in the turn.
   flagTurnProposals(turnId: string, inputId: string): Promise<number>;
+  // Replaces the turn's checklist while it runs (set_checklist; the loop masks it first).
+  setChecklist(turnId: string, checklist: Checklist): Promise<void>;
   finishTurn(turnId: string, finish: TurnFinish): Promise<void>;
 }

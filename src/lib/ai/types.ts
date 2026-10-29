@@ -112,6 +112,9 @@ export type AiResult = {
   replay: AiReplayItem[];
   // How many hosted tool searches the model ran inside this answer.
   toolSearches: number;
+  // The model's own short summary of its reasoning, when its reasoning items carried one in
+  // plain text. Model text: the caller masks figures before keeping it. Never logged.
+  reasoningSummary?: string;
 };
 
 // --- Computer use (a Meta model driving a browser, https://dev.meta.ai/docs/computer-use) ---
@@ -323,6 +326,8 @@ export type TextAnswer = {
   toolCalls: AiToolCall[];
   replay: AiReplayItem[];
   toolSearches: number;
+  // Plain summary text from the answer's reasoning items, when any came back.
+  reasoningSummary?: string;
   // Set only when the request offered the computer tool and the model asked for an action.
   computerCall?: ComputerCall;
 };
