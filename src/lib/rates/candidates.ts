@@ -1,12 +1,12 @@
 // Grounding a rate lookup (GROUNDED-RATES design 4.2, adapted to what the API returns). The model's
 // sentence is never the rate. It names a figure; our code takes that figure only when the same
 // digits appear whole in the title or snippet of a page the search itself returned (the wrapper's
-// searchResults, never a page the model only typed). Measured on Muse Spark on Oct 27, 2026: the
-// answer's url_citation annotations came back empty and every result snippet was "", so a figure
-// can be matched in a result's title, and the cited set is the annotations plus any address the
-// answer text names that equals a returned result's address as a whole string. Anything short of a
-// match is "unconfirmed" (a returned page to open, no figure) or a failure with a category; it is
-// never a rate.
+// searchResults, never a page the model only typed) and the answer cited. Measured on Muse Spark
+// on Oct 27, 2026: the answer's url_citation annotations came back empty and every result snippet
+// was "", so a figure can be matched in a result's title, and the cited set is the annotations plus
+// any address the answer text names that equals a returned result's address as a whole string.
+// Anything short of a match is "unconfirmed" (a cited page to open, no figure) or a failure with a
+// category; it is never a rate.
 
 export const RATE_KINDS = ["diesel_index", "ifta_rate"] as const;
 export type RateKind = (typeof RATE_KINDS)[number];
@@ -179,8 +179,11 @@ export function groundAnswer(kind: RateKind, web: WebAnswer): Grounded {
 
   const figure = statedFigure(kind, web.answerText);
   if (figure !== null) {
-    const matches = pages.filter((p) => containsWhole(p.snippet, figure) || containsWhole(p.title, figure));
-    const page = matches.find((p) => cited.has(p.url)) ?? matches[0];
+    // Only a cited page grounds a figure: a returned page nothing cited (another state's table, a
+    // news page the answer never named) is never taken as the source, even when it holds the digits.
+    const page = pages.find(
+      (p) => cited.has(p.url) && (containsWhole(p.snippet, figure) || containsWhole(p.title, figure)),
+    );
     if (page) {
       const text = containsWhole(page.snippet, figure) ? page.snippet : page.title;
       const quote = quoteAround(text, figure);

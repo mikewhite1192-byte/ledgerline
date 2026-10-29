@@ -1,10 +1,10 @@
 -- Pinned fuel and tax rates: the weekly diesel price a carrier's fuel surcharge follows and each
 -- state's fuel tax rate, each one a person's choice from a linked source. A person presses "Look
 -- up"; a web search suggests a figure with the page it came from (a 'suggested' row, or an
--- 'unconfirmed' one when the figure could not be matched to a page the search returned). Only an
--- admin pins: a pinned row is the only kind anything may read as a rate, and it never changes; a
--- correction is a new pin, which retires the one before it. Nothing here recalculates, bills or
--- pays anything; the agent reads pins and never writes this table.
+-- 'unconfirmed' one when the figure could not be matched to a cited page the search returned).
+-- Only an admin pins: a pinned row is the only kind anything may read as a rate, and it never
+-- changes; a correction is a new pin, which retires the one before it. Nothing here recalculates,
+-- bills or pays anything; the agent reads pins and never writes this table.
 --
 -- Additive only. Not in demo_reset_clear(): the table is a seeded table (the seed pins nothing),
 -- so the seed's replace empties it through the app role's DELETE.
@@ -89,8 +89,9 @@ BEGIN
       RAISE EXCEPTION 'pinned_rates: a pin is only ever retired, once' USING ERRCODE = 'check_violation';
     END IF;
   ELSIF OLD.status = 'suggested' THEN
-    IF NEW.status <> 'pinned' THEN
-      RAISE EXCEPTION 'pinned_rates: a suggestion only becomes a pin' USING ERRCODE = 'check_violation';
+    -- It becomes a live pin: never pinned and retired in the same update.
+    IF NEW.status <> 'pinned' OR NEW.retired_at IS NOT NULL THEN
+      RAISE EXCEPTION 'pinned_rates: a suggestion only becomes a live pin' USING ERRCODE = 'check_violation';
     END IF;
   ELSE
     RAISE EXCEPTION 'pinned_rates: an unconfirmed suggestion never changes' USING ERRCODE = 'check_violation';

@@ -32,7 +32,7 @@ export const RATES_WORDS = {
   pageBad: "Paste the page's full address, starting with https://.",
   fromLabel: "Use it from",
   fromHint: "Your rate rules use the pinned rate from this day.",
-  fromBad: "Pick a day from a year back to a month ahead.",
+  fromBad: "Pick a day from a year back up to today.",
   review: "Review the pin",
 } as const;
 

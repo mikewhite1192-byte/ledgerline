@@ -71,17 +71,17 @@ function PinnedLine({ view }: { view: RateView }) {
 
 function DayField({ id, today, value, onChange }: { id: string; today: string; value: string; onChange: (v: string) => void }) {
   const min = addDays(today, -366);
-  const max = addDays(today, 31);
-  const bad = value === "" || value < min || value > max;
+  const bad = !dayOk(value, today);
   return (
     <Field id={id} label={W.fromLabel} hint={W.fromHint} error={bad ? W.fromBad : undefined}>
-      {(p) => <Input {...p} type="date" min={min} max={max} value={value} onChange={(e) => onChange(e.target.value)} />}
+      {(p) => <Input {...p} type="date" min={min} max={today} value={value} onChange={(e) => onChange(e.target.value)} />}
     </Field>
   );
 }
 
+// The same days the pin routes take (effectiveDayOk): a year back up to today, never later.
 function dayOk(value: string, today: string): boolean {
-  return value !== "" && value >= addDays(today, -366) && value <= addDays(today, 31);
+  return value !== "" && value >= addDays(today, -366) && value <= today;
 }
 
 // A lookup's result, waiting for an admin: the figure and the words it was matched in, or, when

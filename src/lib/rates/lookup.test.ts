@@ -178,6 +178,14 @@ describe("lookupRate", () => {
     expect(inserted[0].slice(3, 9)).toEqual(["unconfirmed", null, DIESEL, FOUND.searchResults[0].title, null, null]);
   });
 
+  it("never keeps a figure from a page the answer did not cite", async () => {
+    const { db, steps } = fakeDb();
+    const call = fakeComplete(answer({ ...FOUND, answerText: "3.712 dollars a gallon for the week of October 26, 2026." }));
+    const out = await lookupRate(SESSION, { kind: "diesel_index" }, { db, complete: call.fn, clock: () => NOW });
+    expect(out).toEqual({ ok: false, failed: "no_source" });
+    expect(steps).not.toContain("insert");
+  });
+
   it("asks for a state's fuel tax rate by the state's name", async () => {
     const { db } = fakeDb();
     const call = fakeComplete(answer(undefined));

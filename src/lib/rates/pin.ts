@@ -66,20 +66,32 @@ async function run(session: Session, deps: PinDeps, fn: (q: Queryable, now: Date
 export type PinSuggestionInput = { id: unknown; effectiveFrom: unknown };
 
 // Pin a looked-up suggestion as it is. An unconfirmed one carries no figure and cannot be pinned;
-// a row that is no longer a suggestion (already pinned) is "changed".
+// a row that is no longer a suggestion (already pinned) is "changed", and so is one the page no
+// longer shows: a newer lookup for the same kind and state, or a pin made since it was looked up
+// (the same rule readRatesPage uses to pick the suggestion it shows).
 export async function pinSuggestion(session: Session, input: PinSuggestionInput, deps: PinDeps = {}): Promise<PinOutcome> {
   if (!flags.groundedRatesEnabled) return { ok: false, refused: "off" };
   if (!isUuid(input.id)) return { ok: false, refused: "bad_request" };
   const id = input.id;
   return run(session, deps, async (q, now) => {
     const { member, effectiveFrom } = await adminGate(q, session, input.effectiveFrom, now);
-    const rows = await q.query<{ kind: string; state: string | null; status: string }>(
-      "SELECT kind, state, status FROM pinned_rates WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+    const rows = await q.query<{ kind: string; state: string | null; status: string; newer: number | string }>(
+      `SELECT p.kind, p.state, p.status,
+              (SELECT count(*) FROM pinned_rates o
+                WHERE o.tenant_id = p.tenant_id AND o.kind = p.kind
+                  AND COALESCE(o.state, '--') = COALESCE(p.state, '--') AND o.id <> p.id
+                  AND ((o.source = 'lookup' AND (o.created_at, o.id) > (p.created_at, p.id))
+                    OR (o.status = 'pinned' AND o.pinned_at >= p.created_at))) AS newer
+         FROM pinned_rates p
+        WHERE p.tenant_id = current_tenant_id() AND p.id = CAST($1 AS uuid)`,
       [id],
     );
     if (rows.length !== 1) throw new Refused("not_found");
     const [row] = rows;
     if (row.status !== "suggested") throw new Refused("changed");
+    const newer = Number(row.newer);
+    if (!Number.isSafeInteger(newer) || newer < 0) throw new Error("unreadable newer count");
+    if (newer > 0) throw new Refused("changed");
     await retireLive(q, row.kind, row.state);
     const n = await q.execute(
       `UPDATE pinned_rates SET status = 'pinned', pinned_by = CAST($2 AS uuid), pinned_at = now(),

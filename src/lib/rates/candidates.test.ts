@@ -130,6 +130,30 @@ describe("groundAnswer", () => {
     expect(g).toEqual({ status: "unconfirmed", sourceUrl: DIESEL, sourceTitle: "Diesel averaged $3.712 for the week of Oct. 26, 2026" });
   });
 
+  it("never grounds a figure on a page nothing cited: unconfirmed on the cited page, or failed with none", () => {
+    const GA = "https://rates.example/fuel-tax/georgia";
+    const TX = "https://rates.example/fuel-tax/texas";
+    const searchResults = [
+      { url: GA, title: "Georgia diesel tax 0.3500 per gallon", snippet: "" },
+      { url: TX, title: "Texas motor fuel taxes", snippet: "" },
+    ];
+    // A Texas lookup whose figure stands only on Georgia's page, which nothing cited.
+    expect(groundAnswer("ifta_rate", { answerText: `0.3500 per gallon, from ${TX}`, citations: [], searchResults })).toEqual({
+      status: "unconfirmed",
+      sourceUrl: TX,
+      sourceTitle: "Texas motor fuel taxes",
+    });
+    expect(groundAnswer("ifta_rate", { answerText: "0.3500 per gallon.", citations: [], searchResults })).toEqual({
+      status: "failed",
+      category: "not_matched",
+    });
+    // The digits on a returned page are not enough when the answer cites no page at all.
+    expect(groundAnswer("diesel_index", web({ answerText: "3.712 dollars a gallon." }))).toEqual({
+      status: "failed",
+      category: "not_matched",
+    });
+  });
+
   it("never takes a near figure: 3.71 in the answer does not confirm 3.712 on the page", () => {
     const g = groundAnswer("diesel_index", web({ answerText: `3.7100 dollars, from ${DIESEL}` }));
     expect(g.status).toBe("unconfirmed");
@@ -155,7 +179,7 @@ describe("groundAnswer", () => {
   it("keeps a state's fuel tax rate to four decimals", () => {
     const g = groundAnswer("ifta_rate", {
       answerText: "0.4540 per gallon for the fourth quarter.",
-      citations: [],
+      citations: [{ url: "https://rates.example/tax" }],
       searchResults: [{ url: "https://rates.example/tax", title: "Diesel tax 0.4540 per gallon", snippet: "" }],
     });
     expect(g).toMatchObject({ status: "suggested", valueMcents: 45_400 });

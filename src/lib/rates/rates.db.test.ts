@@ -16,7 +16,8 @@ import { lookupsInDay, readPinnedRates, readRatesPage } from "./read";
 // sees only its own rates; one live pin per kind and state, and a new pin retires the one before
 // it in the same transaction; a pinned rate and its source never change (the guard trigger, and
 // the app role may update only the pin and retire columns); only an admin pins; a suggestion
-// pinned twice is "changed"; the day's lookups count from the model ledger, failed ones included;
+// pinned twice is "changed", and so is one a newer lookup or a later pin has passed; a pin never
+// starts after today; the day's lookups count from the model ledger, failed ones included;
 // and the agent's read returns pins only. Only this file's tenants are made, and they are removed
 // after.
 
@@ -177,6 +178,61 @@ describe("pinned rates (database)", () => {
     ).toEqual([]);
   });
 
+  it("never pins from a later day, so the live pin keeps today covered", async () => {
+    const typed = { kind: "diesel_index", rate: "3.657", sourceUrl: DIESEL, effectiveFrom: "2026-10-20" };
+    const live = await pinTyped(adminA, typed, { db: app, clock });
+    if (!live.ok) throw new Error("typed pin failed");
+    expect(await pinTyped(adminA, { ...typed, rate: "3.712", effectiveFrom: "2026-10-28" }, { db: app, clock })).toEqual({
+      ok: false,
+      refused: "bad_request",
+    });
+    const looked = await lookupRate(A.session, { kind: "diesel_index" }, deps());
+    if (!looked.ok) throw new Error("lookup failed");
+    expect(await pinSuggestion(adminA, { id: looked.id, effectiveFrom: "2026-10-28" }, { db: app, clock })).toEqual({
+      ok: false,
+      refused: "bad_request",
+    });
+    // The refused starts retired nothing: today still reads the pin from Oct 20.
+    const today = await app.withTenant(A.tenantId, (q) => readPinnedRates(q, "diesel_index", null, "2026-10-27", "America/Chicago"));
+    expect(today).toMatchObject([{ id: live.id, perGallon: "$3.657", effectiveFrom: "2026-10-20" }]);
+    // Today itself is a day a pin may start.
+    expect(await pinSuggestion(adminA, { id: looked.id, effectiveFrom: "2026-10-27" }, { db: app, clock })).toEqual({
+      ok: true,
+      id: looked.id,
+      already: false,
+    });
+  });
+
+  it("refuses a suggestion the page no longer shows: a newer lookup, or a pin made since", async () => {
+    const older = await lookupRate(A.session, { kind: "diesel_index" }, deps());
+    const newer = await lookupRate(A.session, { kind: "diesel_index" }, deps());
+    if (!older.ok || !newer.ok) throw new Error("lookup failed");
+    expect(await pinSuggestion(adminA, { id: older.id, effectiveFrom: "2026-10-26" }, { db: app, clock })).toEqual({
+      ok: false,
+      refused: "changed",
+    });
+    const typed = await pinTyped(adminA, { kind: "diesel_index", rate: "3.700", sourceUrl: DIESEL, effectiveFrom: "2026-10-26" }, { db: app, clock });
+    if (!typed.ok) throw new Error("typed pin failed");
+    expect(await pinSuggestion(adminA, { id: newer.id, effectiveFrom: "2026-10-26" }, { db: app, clock })).toEqual({
+      ok: false,
+      refused: "changed",
+    });
+    // A lookup after that pin is the one the page shows, and it pins.
+    const fresh = await lookupRate(A.session, { kind: "diesel_index" }, deps());
+    if (!fresh.ok) throw new Error("lookup failed");
+    const page = await app.withTenant(A.tenantId, (q) => readRatesPage(q, A.session.sub, NOW));
+    expect(page?.diesel.suggestion?.id).toBe(fresh.id);
+    expect(await pinSuggestion(adminA, { id: fresh.id, effectiveFrom: "2026-10-26" }, { db: app, clock })).toEqual({
+      ok: true,
+      id: fresh.id,
+      already: false,
+    });
+    expect((await ratesOf(A)).filter((r) => r.status === "pinned").map((r) => [r.id, r.retired])).toEqual([
+      [typed.id, true],
+      [fresh.id, false],
+    ]);
+  });
+
   it("never pins an unconfirmed lookup, and never reads a suggestion as a rate", async () => {
     const unconfirmed = await lookupRate(A.session, { kind: "diesel_index" }, deps({ ...FOUND, answerText: `3.719, from ${DIESEL}` }));
     if (!unconfirmed.ok) throw new Error("lookup failed");
@@ -250,8 +306,16 @@ describe("pinned rates (database)", () => {
     expect(await update("value_mcents = 1")).toBe("42501");
     expect(await update("source_url = 'https://rates.example/other'")).toBe("42501");
     expect(await update("quote = 'x'")).toBe("42501");
-    // A suggestion becomes only a pin, through the columns the app may write.
+    // A suggestion becomes only a live pin, through the columns the app may write: never pinned and
+    // retired in one update.
     expect(await update("status = 'unconfirmed'")).toBe("23514");
+    expect(
+      await update(
+        `status = 'pinned', pinned_by = CAST('${adminAId}' AS uuid), pinned_at = now(),
+         effective_from = CAST('2026-10-26' AS date), retired_at = now()`,
+      ),
+    ).toBe("23514");
+    expect((await ratesOf(A)).map((r) => [r.status, r.retired])).toEqual([["suggested", false]]);
   });
 
   it("keeps each carrier's rates to itself", async () => {

@@ -51,9 +51,11 @@ export async function lookupsInDay(q: Queryable, now: Date): Promise<number> {
   return n;
 }
 
-// A day an admin may pin a rate from: up to a year back, up to a month ahead.
+// A day an admin may pin a rate from: up to a year back, and never after today. A new pin retires
+// the live one at once, so a later start would leave the days before it with no rate at all (pins
+// that start later are not in this release).
 export function effectiveDayOk(day: unknown, today: string): day is string {
-  return isLocalDate(day) && day >= addDays(today, -366) && day <= addDays(today, 31);
+  return isLocalDate(day) && day >= addDays(today, -366) && day <= today;
 }
 
 type RateRow = {
