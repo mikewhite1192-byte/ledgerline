@@ -46,6 +46,8 @@ const RELEASED_ON = [
   "profitBriefEnabled",
   "carrierMemoryEnabled",
   "fuelAnomalyEnabled",
+  // Writes no money and only reads QuickBooks; its reads and model cents are capped below.
+  "cardRecon.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -63,8 +65,6 @@ const KEPT_OFF = [
   "sweepScheduleEnabled",
   // No runner is wired on the hosted site: the page's only action would always refuse.
   "portalRunnerEnabled",
-  // As merged: the card check writes no money, but it reads three systems and spends model cents.
-  "cardRecon.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -208,7 +208,8 @@ describe("flags", () => {
     expect(note).not.toMatch(/switching on never/);
   });
 
-  it("keeps the card check's window, read-backs and model spend small", () => {
+  it("releases the card check, with its window, read-backs and model spend small", () => {
+    expect(flags.cardRecon.enabled).toBe(true);
     expect(flags.cardRecon.limits).toEqual({
       windowDays: 14,
       maxBreaks: 50,
@@ -645,7 +646,7 @@ describe("local overrides for the demo-path test", () => {
       { sparkOpenFallback: "fireworks" },
       { inboundEmailEnabled: false },
       { sweepScheduleEnabled: false },
-      // Not on the demo path: its tools stay out of the replay's tool list.
+      // Off-only, and not on the demo path: its tools stay out of the replay's tool list.
       { cardRecon: { enabled: true } },
       { "cardRecon.enabled": true },
     ]) {

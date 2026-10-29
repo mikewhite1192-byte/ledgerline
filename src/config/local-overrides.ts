@@ -43,6 +43,7 @@ export const LOCAL_OFF_ONLY = [
   "profitBriefEnabled",
   "carrierMemoryEnabled",
   "fuelAnomalyEnabled",
+  "cardRecon.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];
@@ -99,6 +100,8 @@ export function applyLocalOverrides(target: Flags, env: LocalModeEnv = process.e
       target.advanceTakeback = { ...target.advanceTakeback, enabled: value };
     } else if (key === "agentPromptCache.enabled") {
       target.agentPromptCache = { ...target.agentPromptCache, enabled: value };
+    } else if (key === "cardRecon.enabled") {
+      target.cardRecon = { ...target.cardRecon, enabled: value };
     } else {
       target[key] = value;
     }

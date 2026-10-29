@@ -615,7 +615,7 @@ export const flags: Flags = {
     comparesPerTenantPerDay: 20,
   },
   cardRecon: {
-    enabled: false,
+    enabled: true,
     limits: {
       windowDays: 14,
       maxBreaks: 50,
