@@ -2,7 +2,9 @@
 // decisions and proposal checks behind one answer. The gateway's store reads it from model_calls,
 // turn_steps, gateway_decisions and proposals (store/trace.ts); format.ts turns it into fixed
 // sentences. Ids, enum codes, whole numbers and cents only: no model text, no arguments, no
-// upstream messages. Codes are never shown as they are; every one goes through a fixed table.
+// upstream messages. Codes are never shown as they are; every one goes through a fixed table. The
+// one piece of text is a carrier note's short label (who it is about and its first words), which
+// the office wrote and every member of the carrier already sees on the Memory page.
 
 export type TraceRef = { table: string; id: string };
 
@@ -72,7 +74,14 @@ export type TraceProposal = {
   auditorCall: TraceCall | null;
   flagged: boolean;
   exceptions: string[];
+  // The carrier notes the second check saw on this card. Absent or empty when it saw none, or while
+  // carrierMemoryEnabled is off.
+  auditorNotes?: TraceNote[];
 };
+
+// A carrier note the turn's summary held, or the second check saw (carrierMemoryEnabled). label is
+// null for a note removed since: only ids are kept, so a removed note has nothing left to name.
+export type TraceNote = { id: string; label: string | null };
 
 export type TurnTrace = {
   turnId: string;
@@ -80,6 +89,8 @@ export type TurnTrace = {
   steps: TraceStep[];
   extraCalls: TraceExtraCall[];
   proposals: TraceProposal[];
+  // Absent or empty when the turn held no notes, or while carrierMemoryEnabled is off.
+  notesUsed?: TraceNote[];
 };
 
 // The Meta models page: this carrier's week, grouped in SQL, summed in week.ts. The token sums

@@ -184,6 +184,13 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     const answer = await finishedAnswer(page, ADVANCE_QUESTION);
     const card = answer.getByRole("article").first();
     await expect(card).toBeVisible();
+    // Replay only: the recorded answer set its checklist beside the first reads and ticked it to
+    // the card, so the list shows with nothing left unfinished. A live model may word or skip it.
+    if (REPLAYED) {
+      const checklist = answer.getByRole("list", { name: "Checklist" });
+      await expect(checklist).toBeVisible();
+      await expect(checklist.getByText("Not finished")).toHaveCount(0);
+    }
     // The auditor's line settles first (its check starts once the card shows), then the replay
     // misses are read, then what the card says.
     const auditLine = card.getByText(new RegExp(`^(${AUDIT_LINES.join("|")})$`));
@@ -195,7 +202,7 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     await expect(card.getByText("Why", { exact: true })).toBeVisible();
     await expect(card.locator("ul > li").first()).not.toBeEmpty();
     await expect(card.getByRole("button", { name: "Reject" })).toBeVisible();
-    // A card the auditor blocked offers "Override and approve" instead of Approve.
+    // A card the auditor blocked offers "Approve anyway" (once "Override and approve") instead of Approve.
     await expect(card.getByRole("button", { name: /^(Approve|Override and approve)/ })).toBeVisible();
     const shown = (await auditLine.first().innerText()).trim();
     const audit = checkAuditLine(shown, { auditorOn: on.auditor, deployed: DEPLOYED });

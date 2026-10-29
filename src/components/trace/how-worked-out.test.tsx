@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SAMPLE_PROPOSAL_ID, SAMPLE_TURN_ID, sampleTrace } from "@/lib/trace/sample";
 import { HowWorkedOut, fetchTrace, type TraceLoad } from "./how-worked-out";
@@ -54,17 +54,49 @@ describe("HowWorkedOut", () => {
     await act(async () => pending.resolve({ trace: sampleTrace() }));
   });
 
-  it("lists each step with its model, effort, time and cost, and links its records", async () => {
+  it("lists each step with its model, time and cost, and links its records", async () => {
     render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace: sampleTrace() })} />);
     fireEvent.click(screen.getByRole("button", { name: ANSWER }));
     const list = await screen.findByRole("list", { name: "Steps, in order" });
     expect(list.querySelectorAll(":scope > li")).toHaveLength(9);
-    expect(screen.getAllByText("low effort, 1.8 s, 0.7 cents")).toHaveLength(1);
+    expect(screen.getAllByText("1.8 s, 0.7 cents")).toHaveLength(1);
+    // Effort is a detail: it sits under Details, not on the step.
+    expect(within(list).queryByText(/effort/)).toBeNull();
     expect(screen.getByText("Checking advance eligibility: blocked, the amount is over the eligible limit ($412.00)")).toBeTruthy();
     expect(screen.getByText("Blocked")).toBeTruthy();
     expect(screen.getByText("5 model calls, 2.6 cents in all, 7.4 s of model time")).toBeTruthy();
     const links = screen.getAllByRole("link", { name: "Pay item" });
     expect(links[0].getAttribute("href")).toMatch(/^\/records\/pay_items\//);
+  });
+
+  it("links each carrier note it remembered to its row on Memory, by its label", async () => {
+    const id = "77777777-7777-4777-8777-000000000001";
+    const trace = { ...sampleTrace(), notesUsed: [{ id, label: "Harbor Foods: Pays about 45 days after due" }, { id: "77777777-7777-4777-8777-000000000002", label: null }] };
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace })} />);
+    fireEvent.click(screen.getByRole("button", { name: ANSWER }));
+    const notes = await screen.findByRole("list", { name: "Notes it read" });
+    const link = screen.getByRole("link", { name: "Harbor Foods: Pays about 45 days after due" });
+    expect(notes.contains(link)).toBe(true);
+    expect(link.getAttribute("href")).toBe(`/memory#note-${id}`);
+    expect(screen.getByText("Remembered 2 notes from the office; 1 has since been removed")).toBeTruthy();
+  });
+
+  it("links the notes a card's second check saw to Memory, under that card", async () => {
+    const id = "77777777-7777-4777-8777-000000000003";
+    const base = sampleTrace();
+    const trace = {
+      ...base,
+      proposals: base.proposals.map((p) =>
+        p.id === SAMPLE_PROPOSAL_ID ? { ...p, auditorNotes: [{ id, label: "Driver T-104: Prefers a text before a call" }] } : p,
+      ),
+    };
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} proposalId={SAMPLE_PROPOSAL_ID} load={async () => ({ trace })} />);
+    fireEvent.click(screen.getByRole("button", { name: CARD }));
+    const notes = await screen.findByRole("list", { name: "Notes it read" });
+    const link = screen.getByRole("link", { name: "Driver T-104: Prefers a text before a call" });
+    expect(notes.contains(link)).toBe(true);
+    expect(link.getAttribute("href")).toBe(`/memory#note-${id}`);
+    expect(screen.getByText("Notes the second check saw: 1 note from the office")).toBeTruthy();
   });
 
   it("shows the prompt cache line under a model call that has its counts", async () => {
@@ -73,8 +105,31 @@ describe("HowWorkedOut", () => {
     trace.steps[0] = { ...trace.steps[0], call: { ...call, inputTokens: 2_480, cachedTokens: 1_912, savedNanocents: 1_912 * 110_000 } };
     render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace })} />);
     fireEvent.click(screen.getByRole("button", { name: ANSWER }));
-    expect(await screen.findByText("1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price")).toBeTruthy();
+    const cached = await screen.findByText("1,912 of 2,480 input tokens from cache, saved 0.2 cents at list price");
     expect(screen.queryAllByText(/input tokens from cache/)).toHaveLength(1);
+    // Under the collapsed Details, named by its step, never on the step itself.
+    const details = cached.closest("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(within(details).getByText("Step 1, Muse Spark 1.3")).toBeTruthy();
+    expect(within(screen.getByRole("list", { name: "Steps, in order" })).queryByText(/from cache/)).toBeNull();
+  });
+
+  it("groups the trace into the steps, the models used, and Details", async () => {
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace: sampleTrace() })} />);
+    fireEvent.click(screen.getByRole("button", { name: ANSWER }));
+    await screen.findByRole("list", { name: "Steps, in order" });
+    expect(screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Steps", "Models used"]);
+    const models = screen.getByRole("list", { name: "Models used" });
+    const rows = [...models.querySelectorAll(":scope > li")].map((li) => li.textContent);
+    expect(rows).toEqual([
+      "Muse Spark 1.3Answers and cards4 calls, 7.0 s, 2.5 cents",
+      "Muse Spark OpenScreens outside text1 call, 0.4 s, 0.1 cents",
+    ]);
+    const summary = screen.getByText("Details", { selector: "summary" });
+    fireEvent.click(summary);
+    const perStep = screen.getByRole("list", { name: "Details for each step" });
+    expect(within(perStep).getByText("Step 1, Muse Spark 1.3")).toBeTruthy();
+    expect(within(perStep).getAllByText("Asked for low effort").length).toBeGreaterThan(0);
   });
 
   it("shows only the card's steps and the auditor's verdict under a card", async () => {

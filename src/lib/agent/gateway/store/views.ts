@@ -1,18 +1,23 @@
 import type { Queryable } from "../../../db";
+import { billDeferArgsSchema, chaseArgsSchema, factoringArgsSchema } from "../../../cash/args";
 import { chargeArgsSchema } from "../../../data/detention-charge";
+import { changeArgsSchema } from "../../../pay-rules/change";
 import { isUuid } from "../../../uuid";
 import { argStrings, parseReportArgs } from "../../../reports/args";
 import { isReportName } from "../../../reports/types";
 import { cardLabel } from "../../../advances/cards";
+import { finalChecklist, parseChecklist } from "../../checklist";
 import { reasonSentence } from "../../reasons";
 import {
   turnErrorFor,
   type CardStatus,
+  type CashCardView,
   type DetentionView,
   type FlagView,
   type ProposalView,
   type RefView,
   type ReportView,
+  type RuleChangeView,
   type StepView,
   type TurnStatus,
   type TurnView,
@@ -32,6 +37,7 @@ type TurnRow = {
   status: string;
   ended_reason: string | null;
   assistant_text: string;
+  checklist: string | null;
 };
 type StepRow = {
   id: string;
@@ -70,7 +76,8 @@ type ProposalRow = {
 type FlagRow = { input_id: string; body_text: string; categories: string | null };
 
 const TURN_COLUMNS =
-  "t.id, t.conversation_id, t.seq, t.user_text, t.status, t.ended_reason, t.assistant_text";
+  "t.id, t.conversation_id, t.seq, t.user_text, t.status, t.ended_reason, t.assistant_text, " +
+  "CAST(t.checklist AS text) AS checklist";
 
 // What the card shows, from the proposal and its ledger row. approved with no ledger row stays
 // approved, not unknown: the ledger reserves its row before any outside call, so no row means no
@@ -177,8 +184,135 @@ export function advanceLoadOf(args: string | null): NonNullable<ProposalView["lo
   return { number, capCents, leftAfterCents };
 }
 
+// A card match's lines from its stored args: the card by its last four digits, its pool name, the
+// day and state of the purchase, the driver picked and the other drivers code ranked. Null when the
+// args do not read back whole; a value outside its shape is never shown.
+const DRIVER_CODE = /^[A-Za-z0-9._-]{1,40}$/;
+const PORTAL_NAME = /^[A-Z0-9 -]{2,40}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+export function cardMatchOf(args: string | null): NonNullable<ProposalView["cardMatch"]> | null {
+  if (typeof args !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  const { last4, portalName, postedOn, state, driverCode, candidates } = a;
+  if (typeof last4 !== "string" || !LAST4.test(last4)) return null;
+  if (typeof portalName !== "string" || !PORTAL_NAME.test(portalName)) return null;
+  if (typeof postedOn !== "string" || !DAY.test(postedOn)) return null;
+  if (state !== null && (typeof state !== "string" || !/^[A-Z]{2}$/.test(state))) return null;
+  if (typeof driverCode !== "string" || !DRIVER_CODE.test(driverCode)) return null;
+  const others: string[] = [];
+  if (Array.isArray(candidates)) {
+    for (const c of candidates) {
+      const code = c && typeof c === "object" ? (c as Record<string, unknown>).code : null;
+      if (typeof code === "string" && DRIVER_CODE.test(code) && code !== driverCode && !others.includes(code)) {
+        others.push(code);
+      }
+    }
+  }
+  return { last4, portalName, postedOn, state: state as string | null, driverCode, others: others.slice(0, 5) };
+}
+
 // An exception the gateway attached that the card states, after the reasons.
-const SHOWN_EXCEPTIONS: ReadonlySet<string> = new Set(["capped_to_eligible", "card_not_drivers"]);
+const SHOWN_EXCEPTIONS: ReadonlySet<string> = new Set(["capped_to_eligible", "card_not_drivers", "driver_not_candidate"]);
+
+const CASH_KINDS: ReadonlySet<string> = new Set(["factoring_request", "bill_defer", "collections_chase"]);
+
+// A Cash Friday card's figures from its stored args, every field checked; null when they do not
+// read back whole (the card then shows the title, the amount and the reasons only).
+function cashOf(r: ProposalRow): CashCardView | null {
+  if (!CASH_KINDS.has(r.kind) || typeof r.args !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(r.args);
+  } catch {
+    return null;
+  }
+  if (r.kind === "factoring_request") {
+    const p = factoringArgsSchema.safeParse(raw);
+    if (!p.success) return null;
+    return {
+      kind: "factoring_request",
+      shortCents: p.data.shortCents,
+      advanceBps: p.data.advanceBps,
+      feeBps: p.data.feeBps,
+      invoices: p.data.invoices.map((i) => ({
+        invoiceId: i.invoiceId,
+        invoiceNumber: i.invoiceNumber,
+        balanceCents: i.balanceCents,
+        advanceCents: i.advanceCents,
+        feeCents: i.feeCents,
+        netCents: i.netCents,
+        reserveCents: i.reserveCents,
+      })),
+    };
+  }
+  if (r.kind === "bill_defer") {
+    const p = billDeferArgsSchema.safeParse(raw);
+    if (!p.success) return null;
+    const { billId, billRef, amountCents, dueOn, deferredTo, shortCents } = p.data;
+    return { kind: "bill_defer", billId, billRef, amountCents, dueOn, deferredTo, shortCents };
+  }
+  const p = chaseArgsSchema.safeParse(raw);
+  if (!p.success) return null;
+  return {
+    kind: "collections_chase",
+    overdueInvoices: p.data.overdueInvoices,
+    invoices: p.data.invoices.map((i) => ({
+      invoiceId: i.invoiceId,
+      invoiceNumber: i.invoiceNumber,
+      balanceCents: i.balanceCents,
+      dueOn: i.dueOn,
+    })),
+  };
+}
+
+// A pay rule change's figures from its stored args, every field checked; null when they do not
+// read back whole (the card then shows the title and amount only).
+function ruleChangeOf(r: ProposalRow): RuleChangeView | null {
+  if (r.kind !== "pay_rule_change" || typeof r.args !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(r.args);
+  } catch {
+    return null;
+  }
+  const parsed = changeArgsSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const a = parsed.data;
+  return {
+    ruleKey: a.ruleKey,
+    oldValue: a.oldValue,
+    newValue: a.newValue,
+    askedFrom: a.askedFrom,
+    effectiveFrom: a.effectiveFrom,
+    snapped: a.snapped,
+    applied: a.applied,
+    appliesTo: a.appliesTo,
+    impact: {
+      basis: a.impact.basis,
+      periodId: a.impact.periodId,
+      periodStart: a.impact.periodStart,
+      periodEnd: a.impact.periodEnd,
+      driversCompared: a.impact.driversCompared,
+      driversChanged: a.impact.driversChanged,
+      netDeltaCents: a.impact.netDeltaCents,
+      ownerOperatorsOnly: a.impact.ownerOperatorsOnly,
+      top: a.impact.top.map((t) => ({
+        driverId: t.driverId,
+        code: t.code,
+        deltaCents: t.deltaCents,
+        settlementId: t.settlementId,
+      })),
+    },
+  };
+}
 
 function proposalView(r: ProposalRow): ProposalView {
   const reasons = parseArray(r.reasons).flatMap((x) => {
@@ -214,6 +348,9 @@ function proposalView(r: ProposalRow): ProposalView {
     destination: destinationOf(r),
     ...(r.kind === "detention_charge" ? { detention: detentionOf(r) } : {}),
     ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args) } : {}),
+    ...(r.kind === "card_match" ? { cardMatch: cardMatchOf(r.args) } : {}),
+    ...(CASH_KINDS.has(r.kind) ? { cash: cashOf(r) } : {}),
+    ...(r.kind === "pay_rule_change" ? { ruleChange: ruleChangeOf(r) } : {}),
   };
 }
 
@@ -245,6 +382,14 @@ const PROPOSAL_SQL = `
              SELECT cp.payment_ref FROM payment_applications a
                JOIN customer_payments cp ON cp.tenant_id = a.tenant_id AND cp.id = a.payment_id
               WHERE a.tenant_id = p.tenant_id AND a.id = p.subject_id)
+           WHEN 'card_transactions' THEN (SELECT 'card ending ' || t.card_last4 FROM card_transactions t
+                                           WHERE t.tenant_id = p.tenant_id AND t.id = p.subject_id)
+           WHEN 'vendor_bills' THEN (SELECT b.bill_ref FROM vendor_bills b
+                                      WHERE b.tenant_id = p.tenant_id AND b.id = p.subject_id)
+           WHEN 'customers' THEN (SELECT c.code FROM customers c
+                                   WHERE c.tenant_id = p.tenant_id AND c.id = p.subject_id)
+           WHEN 'pay_configs' THEN (SELECT CAST(c.effective_from AS text) FROM pay_configs c
+                                     WHERE c.tenant_id = p.tenant_id AND c.id = p.subject_id)
          END AS subject_label,
          p.amount_cents, p.direction, p.title,
          CAST(p.reasons AS text) AS reasons, CAST(p.sources AS text) AS sources, p.status,
@@ -273,7 +418,9 @@ const PROPOSAL_SQL = `
                  WHERE a.tenant_id = p.tenant_id AND a.proposal_id = p.id AND a.driver_id = p.subject_id)
            END
          END AS card_last4,
-         CASE WHEN p.kind IN ('detention_charge', 'advance_payout') THEN CAST(p.args AS text) END AS args,
+         CASE WHEN p.kind IN ('detention_charge', 'advance_payout', 'card_match', 'factoring_request', 'bill_defer',
+                             'collections_chase', 'pay_rule_change')
+              THEN CAST(p.args AS text) END AS args,
          CAST(p.exceptions AS text) AS exceptions
     FROM proposals p`;
 
@@ -311,6 +458,10 @@ async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
     [t.id],
   );
   const status = t.status as TurnStatus;
+  // A turn that ended without the loop's own last write (a failed store write, a lost request)
+  // still reads with no item left in hand.
+  const list = parseChecklist(t.checklist);
+  const checklist = list && status !== "running" ? finalChecklist(list, status) : list;
   return {
     id: t.id,
     conversationId: t.conversation_id,
@@ -338,6 +489,7 @@ async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
       }),
     ),
     error: turnErrorFor(status, t.ended_reason),
+    checklist,
   };
 }
 
@@ -380,6 +532,18 @@ export async function readRecentTurnViews(q: Queryable, sub: string): Promise<Tu
   const out: TurnView[] = [];
   for (const r of rows.reverse()) out.push(await viewOf(q, r));
   return out;
+}
+
+// Every waiting pay rule change of the carrier, from any chat, oldest first: the Pay rules page's
+// "Waiting for you". Any staff member sees them, as the approve gate allows.
+export async function readWaitingRuleChangeViews(q: Queryable): Promise<ProposalView[]> {
+  const rows = await q.query<ProposalRow>(
+    `${PROPOSAL_SQL}
+      WHERE p.tenant_id = current_tenant_id() AND p.kind = 'pay_rule_change'
+        AND p.status IN ('proposed', 'approved', 'executing')
+      ORDER BY p.created_at, p.id LIMIT 50`,
+  );
+  return rows.map(proposalView);
 }
 
 // The cards the rules engine made for one kind (the invoice queue), still waiting or running, for

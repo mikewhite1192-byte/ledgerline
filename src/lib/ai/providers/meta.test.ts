@@ -260,6 +260,8 @@ describe("parseMeta", () => {
           },
         ],
         toolSearches: 0,
+        // The summary's plain text, for the model step's own note.
+        reasoningSummary: "thinking",
       },
     });
   });

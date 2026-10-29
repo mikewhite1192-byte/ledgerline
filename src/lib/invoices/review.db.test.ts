@@ -5,6 +5,7 @@ import { checkEmail } from "../adapters/accounting/qbo/entities";
 import type { AccountingAdapter, InvoiceEmailStatus, ReadBack, SendOutcome } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import { createPgDb } from "../db/pg";
+import { refreshPlannerStats } from "../db/test-stats";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param, Queryable, TenantDb } from "../db/types";
 import { EXECUTORS, executeProposal } from "../proposals/execute";
@@ -230,7 +231,10 @@ const withAccounting = async <T>(fn: () => Promise<T>): Promise<T> => {
 // Only an invoice the invoice queue made posts from the record page (a seeded invoice is history
 // and never goes out), so every post below starts there: a press of the queue, then one card
 // approved while posting is off, which writes the invoice unposted. The card is for a customer
-// that needs no delivery document, so the new invoice reads needs review and nothing else.
+// that needs no delivery document and has no other invoice of the same amount (that would read as
+// a possible duplicate), so the new invoice reads needs review and nothing else. Every card is made
+// at the same fixed instant and card ids are random, so the seeded load id picks the card, the
+// same one on every run.
 async function queueInvoice(t: Carrier): Promise<string> {
   expect(await proposeInvoices(app, t.session, clock())).toMatchObject({ ok: true });
   const [card] = await adminRows<{ id: string; subject_id: string }>(
@@ -240,7 +244,10 @@ async function queueInvoice(t: Carrier): Promise<string> {
        JOIN customers c ON c.tenant_id = l.tenant_id AND c.id = l.customer_id
       WHERE p.tenant_id = $1 AND p.kind = 'invoice_post' AND p.subject_table = 'loads'
         AND p.status = 'proposed' AND NOT c.pod_required
-      ORDER BY p.created_at, p.id LIMIT 1`,
+        AND NOT EXISTS (SELECT 1 FROM invoices i
+                         WHERE i.tenant_id = p.tenant_id AND i.customer_id = c.id
+                           AND i.amount_cents = p.amount_cents AND i.status <> 'void')
+      ORDER BY p.created_at, l.id LIMIT 1`,
     [t.id],
   );
   if (!card) throw new Error("the invoice queue has no card left for a customer without a document rule");
@@ -288,6 +295,8 @@ describe("invoice review against a seeded database", () => {
       });
       await replaceTenantData(app, t.id, t.plan);
     }
+    // Plans fit these rows, not counts an earlier file's cleanup left behind (see test-stats.ts).
+    await refreshPlannerStats(admin);
     flags.invoicesEnabled = true;
     flags.invoiceReviewEnabled = true;
     flags.accountingEnabled = false;
@@ -496,7 +505,7 @@ describe("invoice review against a seeded database", () => {
       const [card] = await adminRows<{ id: string; subject_id: string }>(
         PW,
         `SELECT id, subject_id FROM proposals WHERE tenant_id = $1 AND kind = 'invoice_post' AND status = 'proposed'
-          ORDER BY created_at, id LIMIT 1`,
+          ORDER BY created_at, subject_id, id LIMIT 1`,
         [PW.id],
       );
       const [load] = await adminRows<{ customer_id: string }>(

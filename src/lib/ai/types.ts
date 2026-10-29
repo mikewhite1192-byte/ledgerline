@@ -137,6 +137,9 @@ export type AiResult = {
   toolSearches: number;
   // Set only when the request offered web search (empty lists and zero when none ran).
   web?: AiWebAnswer;
+  // The model's own short summary of its reasoning, when its reasoning items carried one in
+  // plain text. Model text: the caller masks figures before keeping it. Never logged.
+  reasoningSummary?: string;
 };
 
 // --- Computer use (a Meta model driving a browser, https://dev.meta.ai/docs/computer-use) ---
@@ -351,6 +354,8 @@ export type TextAnswer = {
   toolSearches: number;
   // Set only when the answer carried a web search call or a citation.
   web?: AiWebAnswer;
+  // Plain summary text from the answer's reasoning items, when any came back.
+  reasoningSummary?: string;
   // Set only when the request offered the computer tool and the model asked for an action.
   computerCall?: ComputerCall;
 };

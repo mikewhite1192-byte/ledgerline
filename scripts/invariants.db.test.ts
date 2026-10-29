@@ -215,13 +215,16 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "money_actions",
     "model_calls",
     "driver_notes",
+    "collection_drafts",
     "screenings",
+    "briefs",
     "qbo_connections",
     "qbo_entity_ids",
     "qbo_oauth_states",
     "spend_alerts",
     "voice_notes",
     "voice_note_audio",
+    "inbound_messages",
     "documents",
     "portal_runs",
     "portal_sessions",
@@ -234,12 +237,16 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "sweep_fanout",
     "sweep_fanout_checks",
     "approval_batches",
+    "cash_checks",
     // Seeded, but filled here as a person writes them too (0027), so the probe also reads rows the
     // app role wrote.
     "driver_arm_events",
     "driver_identities",
+    "pay_rule_changes",
     "fuel_check_runs",
     "fuel_findings",
+    "card_recon_runs",
+    "card_recon_breaks",
     "pinned_rates",
   ];
 
@@ -312,10 +319,25 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
              'drafting', CAST($5 AS uuid))`,
           [note, c.settlement.id, c.settlement.driver, c.settlement.period, randomUUID()],
         );
+        // A reminder reserved for a late invoice (0041), as the drafting path writes it.
+        await q.execute(
+          `INSERT INTO collection_drafts (id, tenant_id, invoice_id, customer_id, stage, tone, status, figures, trace_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), '30', 'friendly',
+             'drafting', CAST('{}' AS jsonb), CAST($4 AS uuid))`,
+          [randomUUID(), c.invoice.id, c.invoice.customer, randomUUID()],
+        );
         await q.execute(
           `INSERT INTO screenings (id, tenant_id, input_id, content_hash, verdict, via, latency_ms)
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'clean', 'pattern', 1)`,
           [randomUUID(), c.input, randomBytes(32).toString("hex")],
+        );
+        // A profit brief reserved before its model call (0042).
+        await q.execute(
+          `INSERT INTO briefs (id, tenant_id, kind, period_start, period_end, as_of, status, figures, model, trace_id,
+             created_by)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'profit_week', DATE '2026-10-05', DATE '2026-10-11',
+             DATE '2026-10-14', 'drafting', CAST('[]' AS jsonb), 'spark', CAST($2 AS uuid), 'invariants-test')`,
+          [randomUUID(), randomUUID()],
         );
         await q.execute(
           `INSERT INTO qbo_connections (tenant_id, realm_id, access_token_enc, refresh_token_enc, access_expires_at,
@@ -351,6 +373,13 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           `INSERT INTO voice_note_audio (tenant_id, voice_note_id, audio, audio_mime, audio_bytes)
            VALUES (current_tenant_id(), CAST($1 AS uuid), decode($2, 'hex'), 'audio/wav', 4)`,
           [voiceNote, "52494646"],
+        );
+        // A pasted Inbox message, not sorted yet (0037).
+        await q.execute(
+          `INSERT INTO inbound_messages (id, tenant_id, channel, received_at, status, created_by, trace_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'paste', now(), 'received', 'invariants-test',
+             CAST($2 AS uuid))`,
+          [randomUUID(), randomUUID()],
         );
         // An uploaded receipt not read yet (0013).
         await q.execute(
@@ -449,6 +478,27 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'tms', 'invariants-test', 'ui')`,
           [randomUUID(), c.driver],
         );
+        // A Cash Friday check of the open week that came out covered, its explanation refused (0029).
+        await q.execute(
+          `INSERT INTO cash_checks (id, tenant_id, period_id, as_of, pay_day, figures, gap_cents, pay_run_source,
+             explain_category, created_by)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), DATE '2026-11-02', DATE '2026-11-06',
+             CAST('{"gapCents":0}' AS jsonb), 0, 'preview', 'disabled', 'invariants-test')`,
+          [randomUUID(), c.settlement.period],
+        );
+        // A saved pay rule change on the carrier's first rules version, its proposal long gone
+        // (0030).
+        await q.execute(
+          `INSERT INTO pay_rule_changes (id, tenant_id, pay_config_id, proposal_id, rule_key, old_value, new_value,
+             asked_from, effective_from, applied, decided_by)
+           SELECT CAST($1 AS uuid), current_tenant_id(), pc.id, NULL, 'insurance_per_day_cents', '1100', '1200',
+             pc.effective_from, pc.effective_from, 'edited_version', 'invariants-test'
+             FROM pay_configs pc
+            WHERE pc.tenant_id = current_tenant_id()
+            ORDER BY pc.effective_from
+            LIMIT 1`,
+          [randomUUID()],
+        );
         // A finished fuel check with one finding left for a person, on one of the carrier's own
         // fill-ups (0031).
         const fuelRun = randomUUID();
@@ -472,6 +522,27 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           [randomUUID(), fuelRun],
         );
         expect(fuelFound).toBe(1);
+        // A finished card check with one difference left for a person, on one of the carrier's own
+        // statement rows (0046).
+        const cardRun = randomUUID();
+        await q.execute(
+          `INSERT INTO card_recon_runs (id, tenant_id, membership_id, status, phase, window_from, window_to,
+             finished_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'done', 'done',
+             CAST('2026-10-14' AS date), CAST('2026-10-28' AS date), now())`,
+          [cardRun, c.membership],
+        );
+        const cardFound = await q.execute(
+          `INSERT INTO card_recon_breaks (id, tenant_id, fingerprint, category, severity, outside_system,
+             card_transaction_id, outside_cents, fix_kind, first_seen_run_id, last_seen_run_id)
+           SELECT CAST($1 AS uuid), current_tenant_id(), $2, 'card_unknown', 'high', 'fuel_card_sim', t.id,
+             t.amount_cents, 'by_hand', CAST($3 AS uuid), CAST($3 AS uuid)
+             FROM card_transactions t
+            ORDER BY t.provider_ref
+            LIMIT 1`,
+          [randomUUID(), randomBytes(32).toString("hex"), cardRun],
+        );
+        expect(cardFound).toBe(1);
         // A diesel price an admin typed from a page they linked (0053).
         await q.execute(
           `INSERT INTO pinned_rates (id, tenant_id, kind, status, value_mcents, source, source_url, effective_from,

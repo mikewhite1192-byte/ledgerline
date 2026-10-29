@@ -1,6 +1,8 @@
+import { flags } from "../../../../config/flags";
 import type { Session } from "../../../auth/claims";
 import { DbError, getDb, type Queryable, type TenantDb } from "../../../db";
 import type { TurnTrace } from "../../../trace/types";
+import { relevantNotes, type NoteRow } from "../../../memory/notes";
 import { summarizeModelWeek, type ModelWeek } from "../../../trace/week";
 import type { TurnView } from "../../view";
 import { withAgentTenant } from "../tenant";
@@ -14,7 +16,7 @@ import {
   type VerdictWrite,
 } from "./audit";
 import { findProposalConflict, flagTurnProposals, persistProposal } from "./proposals";
-import { finishStep, finishTurn, openTurn, startStep, type OpenTurnInput } from "./turns";
+import { finishStep, finishTurn, openTurn, setChecklist, startStep, type OpenTurnInput } from "./turns";
 import type { OpenTurnRefusal, OpenedTurn, TurnStore } from "./types";
 import { readModelWeek, readTurnTrace, readTurnTraceInRun } from "./trace";
 import { readRecentTurnViews, readTurnView } from "./views";
@@ -26,7 +28,7 @@ import { readRecentTurnViews, readTurnView } from "./views";
 export type { OpenedTurn, OpenTurnRefusal, PersistResult, StepFinish, TurnStore } from "./types";
 export { assembleSummary } from "./summary";
 export { PROPOSAL_TITLES, canonicalJson, dedupeKey, impactOf } from "./proposals";
-export { cardStatusOf, readEngineProposalViews } from "./views";
+export { cardStatusOf, readEngineProposalViews, readWaitingRuleChangeViews } from "./views";
 export type { AuditLease, AuditState, VerdictWrite } from "./audit";
 
 export type StoreDeps = { db?: TenantDb; clock?: () => Date };
@@ -51,17 +53,47 @@ export function dbTurnStore(session: Session, deps: StoreDeps = {}): TurnStore {
       }
     },
     flagTurnProposals: (turnId, inputId) => tx((q) => flagTurnProposals(q, turnId, inputId, clock())),
+    setChecklist: (turnId, checklist) => tx((q) => setChecklist(q, turnId, checklist)),
     finishTurn: (turnId, finish) => tx((q) => finishTurn(q, turnId, finish, clock())),
   };
 }
 
+// What a caller of openAgentTurn passes: the turn, and readNotes for one of the operator's own
+// questions (the chat, the advance desk, a voice note's hand-off), whose model reads the summary.
+// Only those read the carrier notes; a sweep or fan-out check turn leaves it out and gets no notes
+// section and no extra transaction.
+export type AgentTurnInput = Omit<OpenTurnInput, "notes"> & { readNotes?: boolean };
+
+// The carrier notes for a turn, in their own short read-only transaction before the turn opens:
+// a failed read inside the turn's transaction would end it, and a notes problem must never stop a
+// question. Off (carrierMemoryEnabled), nothing is read. A read that fails gives no notes and one
+// log line with the turn id only.
+async function readTurnNotes(
+  db: TenantDb,
+  session: Session,
+  input: Omit<OpenTurnInput, "notes">,
+): Promise<readonly NoteRow[] | undefined> {
+  if (!flags.carrierMemoryEnabled) return undefined;
+  try {
+    return await withAgentTenant(db, session, (q) =>
+      relevantNotes(q, { conversationId: input.conversationId, sub: session.sub }, flags.carrierMemoryLimits),
+    );
+  } catch {
+    console.error(`memory: notes unreadable for turn ${input.turnId}`);
+    return [];
+  }
+}
+
 export async function openAgentTurn(
   session: Session,
-  input: OpenTurnInput,
+  input: AgentTurnInput,
   deps: StoreDeps = {},
 ): Promise<OpenedTurn | { refused: OpenTurnRefusal }> {
+  const db = deps.db ?? getDb();
+  const { readNotes, ...turn } = input;
+  const notes = readNotes === true ? await readTurnNotes(db, session, turn) : undefined;
   try {
-    return await withAgentTenant(deps.db ?? getDb(), session, (q) => openTurn(q, session, input));
+    return await withAgentTenant(db, session, (q) => openTurn(q, session, { ...turn, notes }));
   } catch (err) {
     // Two submits raced for the same turn id or the same next seq.
     if (err instanceof DbError && err.sqlState === UNIQUE_VIOLATION) return { refused: "busy" };

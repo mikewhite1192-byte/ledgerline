@@ -1,4 +1,5 @@
 import { CLEAN_SQL } from "../agent/proposals/clean";
+import { parseChecklist, type Checklist } from "../agent/checklist";
 import { readProposalViews } from "../agent/gateway/store/views";
 import type { ProposalView } from "../agent/view";
 import type { Session } from "../auth/claims";
@@ -6,6 +7,7 @@ import { getDb, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
 import { isUuid } from "../uuid";
 import { readFanoutTree, type FanoutTree } from "./fanout/tree";
+import { endSweep } from "./checklist";
 import { countItems, type SweepCounts } from "./run";
 
 // What the sweep pages show: rows only, every number from the database, no model text except an
@@ -29,6 +31,8 @@ export type SweepRunView = {
   finishedAt: string | null;
   // This run's fixes that are done (approved and written).
   approved: number;
+  // The run's phases as a checklist, ticked as it moves; null for a run started without one.
+  checklist?: Checklist | null;
 };
 
 export type SweepItemView = {
@@ -88,6 +92,7 @@ type RunRow = {
   started_at: string;
   finished_at: string | null;
   approved: number | string;
+  checklist: string | null;
 };
 
 const RUN_SELECT = `
@@ -95,6 +100,7 @@ const RUN_SELECT = `
          CAST(sp.period_end AS text) AS period_end, r.trigger, r.status, r.phase, r.cap_cents,
          r.spent_cents, CAST(r.counts AS text) AS counts, r.truncated_reason, r.failure_category,
          r.conversation_id, ${TS("r.started_at")} AS started_at, ${TS("r.finished_at")} AS finished_at,
+         CAST(r.checklist AS text) AS checklist,
          (SELECT count(DISTINCT p.id) FROM sweep_items i JOIN proposals p ON p.id = i.proposal_id
            WHERE i.seen_run_id = r.id AND p.status = 'done') AS approved
     FROM sweep_runs r JOIN settlement_periods sp ON sp.id = r.period_id`;
@@ -107,6 +113,9 @@ function runOf(r: RunRow): SweepRunView {
   } catch {
     // stays empty
   }
+  // A run given up while nobody held it ends without its last write: what it left is not finished.
+  const list = parseChecklist(r.checklist);
+  const checklist = list && r.status === "failed" ? endSweep(list, "failed") : list;
   return {
     id: r.id,
     periodId: r.period_id,
@@ -124,6 +133,7 @@ function runOf(r: RunRow): SweepRunView {
     startedAt: r.started_at,
     finishedAt: r.finished_at,
     approved: Number(r.approved),
+    checklist,
   };
 }
 

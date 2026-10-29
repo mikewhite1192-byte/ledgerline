@@ -336,6 +336,7 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
   const toolCalls: AiToolCall[] = [];
   const replay: AiReplayItem[] = [];
   let toolSearches = 0;
+  const summaries: string[] = [];
   const computerCalls: (ComputerCall | null)[] = [];
   const answerParts: string[] = [];
   const citations: AiCitation[] = [];
@@ -346,6 +347,7 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
   let textLength = 0;
   for (const raw of asArray(body.output)) {
     const item = asRecord(raw);
+    if (item?.type === "reasoning") summaries.push(...summaryTextsOf(item.summary));
     if (item?.type === "message") {
       for (const part of asArray(item.content)) {
         const p = asRecord(part);
@@ -398,6 +400,7 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
   const computerCall = computerCalls[0];
   // Only an answer that searched or cited carries the web part and a search count to bill.
   const searched = searchCalls > 0 || citations.length > 0;
+  const reasoningSummary = summaries.join("\n").trim();
   return {
     kind: "answered",
     status,
@@ -412,7 +415,19 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
       ...(searched
         ? { web: { answerText: answerParts.join(""), citations, searchResults, searchCalls } }
         : {}),
+      ...(reasoningSummary ? { reasoningSummary } : {}),
       ...(computerCall ? { computerCall } : {}),
     },
   };
+}
+
+// The plain text parts of a reasoning item's summary (summary_text entries only); anything else
+// is left out.
+function summaryTextsOf(summary: unknown): string[] {
+  const out: string[] = [];
+  for (const part of asArray(summary)) {
+    const p = asRecord(part);
+    if (p?.type === "summary_text" && typeof p.text === "string" && p.text.trim()) out.push(p.text.trim());
+  }
+  return out;
 }

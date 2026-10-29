@@ -17,6 +17,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const detentionLoad = plan.planted.detentionLoadIds[0];
   const delivered = rows.loads.find((l) => l.status === "delivered") ?? rows.loads[0];
   const refs = [{ table: "drivers", id: hero.id }];
+  // The statement's planted card that is on no driver's file, and the driver code ranks first.
+  const unknownCard = plan.planted.cardRecon;
   return {
     get_driver: { driverId: hero.id },
     get_loads: { driverId: hero.id, from: paid.period_start, to: open.period_end },
@@ -58,6 +60,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     get_invoice_review_queue: { status: "needs_review" },
     get_ar_aging: { asOf: open.period_end, minBucket: "1_30" },
     get_payments_in: { from: paid.period_start, to: open.period_end },
+    get_collections: { customerId: plan.planted.collections[0].customerId },
     propose_payment_reapply: {
       paymentId: wrong.paymentId,
       applicationId: wrong.applicationId,
@@ -80,6 +83,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       sourceRefs: [{ table: "loads", id: detentionLoad }],
     },
     get_portal_evidence: { loadId: delivered.id },
+    get_cash_friday: {},
     get_pinned_rates: { kind: "ifta_rate", state: "IL", day: "2026-10-27" },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     report_ar_aging: { asOf: "2026-11-02" },
@@ -93,7 +97,27 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     },
     get_driver_identity: { driverId: hero.id },
     get_advance_headroom: { driverId: hero.id, amountCents: 10_000 },
+    get_card_breaks: { status: "open", limit: 10 },
+    propose_card_match: {
+      transactionId: unknownCard.cardUnknownId,
+      driverId: unknownCard.candidateDriverId ?? hero.id,
+    },
+    // The hero's owner-operator insurance, $11.00 to $12.00 a day, from the first week a change may
+    // start at the fixed clock; the figures need only parse here.
+    preview_rule_change: { ruleKey: "insurance_per_day_cents", newValue: 1_200, askedFrom: "2026-11-09" },
+    propose_rule_change: {
+      ruleKey: "insurance_per_day_cents",
+      newValue: 1_200,
+      askedFrom: "2026-11-09",
+      effectiveFrom: "2026-11-09",
+      oldValue: 1_100,
+      impactCents: -600,
+      sourceRefs: [{ table: "pay_configs", id: rows.pay_configs[0].id }],
+    },
+    get_profit_brief: { periodStart: paid.period_start },
     // Proposals are not in a seed plan; any well-formed id parses.
     get_proposal: { proposalId: "6a1f0c2e-9d3b-4c5a-8e7f-1b2c3d4e5f60" },
+    set_checklist: { items: [{ text: "Read the driver's week", state: "doing" }, { text: "Check the pay" }] },
+    remember_note: { subject: "driver", subjectId: hero.id, text: "Prefers a text before a call", sourceRefs: refs },
   };
 }

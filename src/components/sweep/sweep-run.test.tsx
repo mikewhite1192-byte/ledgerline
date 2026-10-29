@@ -2,6 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CardStatus, ProposalView } from "@/lib/agent/view";
+import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
 import type { SweepCounts } from "@/lib/sweep/run";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
 import { SweepRun } from "./sweep-run";
@@ -112,6 +113,25 @@ const titles = (el: HTMLElement) =>
 const folded = (summary: RegExp) => screen.getByText(summary).closest("details") as HTMLElement;
 
 describe("SweepRun", () => {
+  it("shows the run's checklist under the header, with what a stopped run did not finish", () => {
+    const stopped = endSweep(tickSweep(sweepChecklist(false), "draft"), "stopped");
+    render(<SweepRun initial={{ ...page, run: { ...page.run, truncatedReason: "cap", checklist: stopped } }} auditorOn={false} />);
+    const list = screen.getByRole("list", { name: "Checklist" });
+    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Find every pay problem in the open week, done",
+      "Draft a fix for each problemNot finished, not finished",
+      "Run the second check on every draftNot finished, not finished",
+    ]);
+    // Above the counts.
+    const counts = screen.getByRole("region", { name: "Counts" });
+    expect(list.compareDocumentPosition(counts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("shows no checklist for a run started without one", () => {
+    render(<SweepRun initial={page} auditorOn={false} />);
+    expect(screen.queryByRole("list", { name: "Checklist" })).toBeNull();
+  });
+
   it("lists only rejected and failed fixes as declined, and keeps approved, running and unknown ones under Needs a look", () => {
     render(<SweepRun initial={page} auditorOn />);
     expect(titles(folded(/^Declined \(/))).toEqual(["Pay correction for D-rejected", "Pay correction for D-failed"]);
@@ -154,6 +174,14 @@ function approveCard(driver: string) {
   if (approve) fireEvent.click(approve);
   fireEvent.click(within(cardOf(driver)).getByRole("button", { name: "Confirm" }));
 }
+// Reject asks once; a question still open from a failed try is answered again.
+function rejectCard(driver: string) {
+  const card = cardOf(driver);
+  if (!within(card).queryByRole("group", { name: "Confirm rejection" })) {
+    fireEvent.click(within(card).getByRole("button", { name: "Reject" }));
+  }
+  fireEvent.click(within(within(card).getByRole("group", { name: "Confirm rejection" })).getByRole("button", { name: "Reject" }));
+}
 // The notice under a card (beside it, not inside it).
 const noticeOf = (driver: string) =>
   cardOf(driver).parentElement?.querySelector(":scope > p[role=status]")?.textContent ?? null;
@@ -190,7 +218,7 @@ describe("SweepRun answers", () => {
       "The answer did not come back, so this may or may not have been rejected. Check the card's status before trying again.";
     const answers = [unknown, unknown, "The rejection did not go through. Try again."];
     for (const [n, expected] of answers.entries()) {
-      fireEvent.click(within(cardOf("D-proposed")).getByRole("button", { name: "Reject" }));
+      rejectCard("D-proposed");
       await waitFor(() => expect(sent).toHaveLength(n + 1));
       await settled("D-proposed", "Reject");
       expect(noticeOf("D-proposed")).toBe(expected);

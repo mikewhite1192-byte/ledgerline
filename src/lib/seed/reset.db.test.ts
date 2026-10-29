@@ -279,10 +279,11 @@ describe("the demo reset", () => {
   // Everything a demo leaves behind on a carrier: an advance an approval created, paid and booked
   // (two settled ledger rows naming its proposal); a failed payout on a seeded advance; a detention
   // charge an approval billed (an accessorial naming its proposal); a flagged proposal no ledger
-  // row names; a driver note being drafted; an uploaded document and a voice note with its
-  // recording, each naming a seeded inbound message; a dock clip being redacted; a finished portal
-  // run with its session (the two name each other), a step, an approved check and what it found;
-  // and a model charge.
+  // row names; a driver note being drafted; a Memory note added and a seeded one changed; an
+  // uploaded document and a voice note with its recording, each naming a seeded inbound message; a
+  // dock clip being redacted; a finished portal run with its session (the two name each other), a
+  // step, an approved check and what it found; a vendor bill an approved card moved and a stored
+  // cash check; and a model charge.
   const dress = async (tenantId: string, plan: CarrierPlan, outsideTag: string) => {
     const session = await member(tenantId, "dress");
     const [driver, other] = plan.rows.drivers;
@@ -383,6 +384,23 @@ describe("the demo reset", () => {
         [randomUUID(), other.id],
       );
     });
+    // A note a person added on the Memory page and a seeded note they changed (0040): the replace
+    // removes the first and writes the seeded words back.
+    await app.withTenant(tenantId, async (q) => {
+      await q.execute(
+        `INSERT INTO carrier_notes (id, tenant_id, subject_kind, subject_id, text, status, source_kind,
+           created_by_kind, created_by_sub)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'driver', CAST($2 AS uuid), 'Asks for advances on Thursdays',
+           'active', 'person', 'person', $3)`,
+        [randomUUID(), other.id, session.sub],
+      );
+      expect(
+        await q.execute(
+          "UPDATE carrier_notes SET text = 'Changed during the demo', updated_by_sub = $2 WHERE id = CAST($1 AS uuid)",
+          [plan.rows.carrier_notes[0].id, session.sub],
+        ),
+      ).toBe(1);
+    });
 
     await agentChain(
       tenantId,
@@ -391,6 +409,35 @@ describe("the demo reset", () => {
       await seededInput(tenantId),
     );
 
+    // Cash Friday (0029): a flexible bill an approved bill_defer card moved (the bill names the
+    // proposal) and a stored check naming a seeded pay week. The function's proposal delete clears
+    // the bill's link, then the replace deletes the check before the weeks and rewrites the bill.
+    const bill = plan.rows.vendor_bills.find((b) => b.status === "open" && b.urgency === "flexible");
+    if (!bill) throw new Error("the plan has no flexible open bill");
+    const deferral = await agentChain(
+      tenantId,
+      session,
+      { kind: "bill_defer", table: "vendor_bills", id: bill.id, amountCents: bill.amount_cents },
+      null,
+    );
+    await app.withTenant(tenantId, async (q) => {
+      expect(
+        await q.execute(
+          `UPDATE vendor_bills
+              SET status = 'deferred', deferred_to = due_on + 7, proposal_id = CAST($2 AS uuid)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [bill.id, deferral],
+        ),
+      ).toBe(1);
+      await q.execute(
+        `INSERT INTO cash_checks (id, tenant_id, period_id, as_of, pay_day, figures, gap_cents, pay_run_source,
+           explain_category, created_by)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), DATE '2026-11-02', DATE '2026-11-06',
+           CAST('{"gapCents":-680000}' AS jsonb), -680000, 'preview', 'disabled', $3)`,
+        [randomUUID(), plan.rows.settlements[0].period_id, session.sub],
+      );
+    });
+
     const settlement = plan.rows.settlements[0];
     await app.withTenant(tenantId, (q) =>
       q.execute(
@@ -398,6 +445,17 @@ describe("the demo reset", () => {
          VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid),
            'en', 'drafting', CAST($5 AS uuid))`,
         [randomUUID(), settlement.id, settlement.driver_id, settlement.period_id, randomUUID()],
+      ),
+    );
+    // A profit brief the owner had written (0042): a seeded table with none planted, so the replace
+    // removes it.
+    await app.withTenant(tenantId, (q) =>
+      q.execute(
+        `INSERT INTO briefs (id, tenant_id, kind, period_start, period_end, as_of, status, figures, model, trace_id,
+           created_by)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'profit_week', DATE '2026-10-05', DATE '2026-10-11',
+           DATE '2026-10-14', 'drafting', CAST('[]' AS jsonb), 'spark', CAST($2 AS uuid), 'reset-test')`,
+        [randomUUID(), randomUUID()],
       ),
     );
 
@@ -451,6 +509,16 @@ describe("the demo reset", () => {
         batch,
         detention,
       ]);
+      // A saved pay rule change (0030): it names a proposal that goes and a rules version the
+      // replace rewrites, so the clear must take it before either.
+      const version = plan.rows.pay_configs[0];
+      await q.execute(
+        `INSERT INTO pay_rule_changes (id, tenant_id, pay_config_id, proposal_id, rule_key, old_value, new_value,
+           asked_from, effective_from, applied, decided_by)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'insurance_per_day_cents',
+           '1100', '1200', CAST($4 AS date), CAST($4 AS date), 'edited_version', $5)`,
+        [randomUUID(), version.id, detention, version.effective_from, session.sub],
+      );
     });
 
     // A fuel check whose finding names a seeded fill-up, its load, one of the driver's pay lines and
@@ -520,6 +588,17 @@ describe("the demo reset", () => {
         `INSERT INTO voice_note_audio (tenant_id, voice_note_id, audio, audio_mime, audio_bytes)
          VALUES (current_tenant_id(), CAST($1 AS uuid), decode('52494646', 'hex'), 'audio/wav', 4)`,
         [voiceNote],
+      );
+      // An Inbox message handed to the agent: it names the input, the driver and a conversation
+      // that all go or are rewritten.
+      await q.execute(
+        `INSERT INTO inbound_messages (id, tenant_id, channel, input_id, driver_id, received_at, status,
+           triage_category, triage_urgency, conversation_id, created_by, trace_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'paste', CAST($2 AS uuid), CAST($3 AS uuid), now(),
+           'handed_off', 'advance_request', 'normal',
+           (SELECT c.id FROM conversations c WHERE c.tenant_id = current_tenant_id() ORDER BY c.id LIMIT 1),
+           $4, CAST($5 AS uuid))`,
+        [randomUUID(), input, driver.id, session.sub, randomUUID()],
       );
       await q.execute(
         `INSERT INTO evidence_clips (id, tenant_id, load_id, stop, uploaded_by, filename, raw_hash, raw_byte_length,
@@ -609,7 +688,7 @@ describe("the demo reset", () => {
       };
       expect(before.keptA.memberships.n).toBe(1);
       expect(before.keptA.model_calls.n).toBe(1);
-      expect(before.keptA.gateway_decisions.n).toBe(3);
+      expect(before.keptA.gateway_decisions.n).toBe(4);
       expect(before.keptA.portal_accounts.n).toBe(1);
       expect(before.c.proposals.n).toBe(1);
 
@@ -625,10 +704,11 @@ describe("the demo reset", () => {
         portal_sessions: 1,
         portal_runs: 1,
         portal_loads: portalA.loads.length,
+        inbound_messages: 1,
         voice_note_audio: 1,
         voice_notes: 1,
         driver_notes: 1,
-        turn_steps: 3,
+        turn_steps: 4,
         sweep_fanout_checks: 1,
         sweep_fanout: 1,
         sweep_items: 1,
@@ -636,14 +716,19 @@ describe("the demo reset", () => {
         fuel_findings: 1,
         fuel_check_runs: 1,
         approval_batches: 1,
-        proposals: 3,
-        turns: 3,
-        conversations: 3,
+        pay_rule_changes: 1,
+        proposals: 4,
+        turns: 4,
+        conversations: 4,
       });
       expect(preview.current.advances).toBe(planA.rows.advances.length + 1);
       expect(preview.current.load_accessorials).toBe(planA.rows.load_accessorials.length + 1);
       expect(preview.current.driver_arm_events).toBe(planA.rows.driver_arm_events.length + 1);
       expect(preview.current.driver_identities).toBe(planA.rows.driver_identities.length + 1);
+      expect(preview.current.briefs).toBe(planA.rows.briefs.length + 1);
+      expect(preview.current.cash_checks).toBe(1);
+      expect(planA.rows.cash_checks).toEqual([]);
+      expect(preview.current.carrier_notes).toBe(planA.rows.carrier_notes.length + 1);
 
       const report = await resetDemoTenant(app, A, planA);
       expect(report.slug).toBe("blue-ridge");
@@ -659,10 +744,11 @@ describe("the demo reset", () => {
         portal_sessions: 1,
         portal_runs: 1,
         portal_loads: portalA.loads.length,
+        inbound_messages: 1,
         voice_note_audio: 1,
         voice_notes: 1,
         driver_notes: 1,
-        turn_steps: 3,
+        turn_steps: 4,
         sweep_fanout_checks: 1,
         sweep_fanout: 1,
         sweep_items: 1,
@@ -670,10 +756,11 @@ describe("the demo reset", () => {
         fuel_findings: 1,
         fuel_check_runs: 1,
         approval_batches: 1,
+        pay_rule_changes: 1,
         advances: 1,
-        proposals: 3,
-        turns: 3,
-        conversations: 3,
+        proposals: 4,
+        turns: 4,
+        conversations: 4,
       });
       expect(report.heroNetCents).toBe(HERO_OPEN_WEEK.netCents);
       expect(report.replaced.inserted).toEqual(countRows(planA.rows));

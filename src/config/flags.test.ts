@@ -13,7 +13,9 @@ describe("flags", () => {
     expect(flags.payoutsEnabled).toBe(false);
     expect(flags.inboundEmailEnabled).toBe(false);
     expect(flags.paymentProvider).toBe("mock");
-    expect(flags.triageProvider).toBe("meta");
+    // Driver messages are sorted by Muse Spark Open, the open-weights model, unless the owner flips it.
+    expect(flags.triageProvider).toBe("baseten");
+    expect(flags.inboxEnabled).toBe(false);
     expect(flags.agentEnabled).toBe(false);
     expect(flags.documentsEnabled).toBe(false);
     expect(flags.documentCrop).toBe(false);
@@ -24,6 +26,9 @@ describe("flags", () => {
     expect(flags.detentionEnabled).toBe(false);
     // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
     expect(flags.demoResetEnabled).toBe(false);
+    // The card check writes no money, but it reads three systems and spends model cents.
+    expect(flags.cardRecon.enabled).toBe(false);
+    expect(flags.rulesByTalkingEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
     expect(flags.groundedRatesEnabled).toBe(false);
   });
@@ -32,6 +37,15 @@ describe("flags", () => {
     expect(flags.ratesLimits).toEqual({ lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 });
     // The demo path turns every local override on; the read tool must stay out of its tool list.
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("groundedRatesEnabled");
+  });
+
+  it("keeps carrier memory dark, with the agent's suggestions and the second check's notes few", () => {
+    expect(flags.carrierMemoryEnabled).toBe(false);
+    expect(flags.carrierMemoryAgentLimits).toEqual({ maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 });
+    for (const v of Object.values(flags.carrierMemoryAgentLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.carrierMemoryAgentLimits.maxSuggestionsWaiting).toBeLessThan(flags.carrierMemoryLimits.maxNotesPerCarrier);
   });
 
   it("starts fuel checks on a fixed date and keeps the receipt compare and corrections small", () => {
@@ -61,6 +75,23 @@ describe("flags", () => {
     expect(note).not.toMatch(/switching on never/);
   });
 
+  it("keeps the card check's window, read-backs and model spend small", () => {
+    expect(flags.cardRecon.limits).toEqual({
+      windowDays: 14,
+      maxBreaks: 50,
+      maxReadBacksPerSystem: 40,
+      readBackTimeoutMs: 5_000,
+      maxExplainCents: 3,
+      matchMaxCents: 3,
+      maxRunCents: 100,
+      sliceMs: 20_000,
+    });
+    for (const v of Object.values(flags.cardRecon.limits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.cardRecon.limits.sliceMs).toBeLessThan(25_000);
+  });
+
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
     expect(flags.clipLimits).toEqual({
       bytes: 700_000,
@@ -78,6 +109,7 @@ describe("flags", () => {
       payCorrectionMaxCents: 50_000,
       invoiceFixMaxCents: 250_000,
       detentionChargeMaxCents: 100_000,
+      ruleChangeImpactMaxCents: 500_000,
     });
     for (const v of Object.values(flags.gatewayLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
@@ -97,6 +129,9 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(flags.agentTurnLimits.wallClockMs).toBeLessThan(30_000);
+    // One ceiling over every run; the tighter caps above still win.
+    expect(flags.runLimits).toEqual({ maxTurns: 30 });
+    expect(flags.runLimits.maxTurns).toBeGreaterThanOrEqual(flags.agentTurnLimits.maxModelCalls);
     expect(flags.proposalMaxAgeDays).toBe(7);
     expect(flags.auditorEnabled).toBe(false);
     expect(flags.auditorRequired).toBe(true);
@@ -153,6 +188,30 @@ describe("flags", () => {
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 
+  it("keeps collections dark, with no email address allowed, no send date and small caps", () => {
+    expect(flags.collectionsEnabled).toBe(false);
+    expect(flags.collectionsEmailEnabled).toBe(false);
+    expect(flags.collectionsEmailAllowlist).toEqual([]);
+    // Not a whole date, so every email is refused until a release PR sets one.
+    expect(flags.collectionsEmailFrom).toBe("");
+    expect(isLocalDate(flags.collectionsEmailFrom)).toBe(false);
+    expect(flags.collectionsLimits).toEqual({
+      maxDraftCents: 2,
+      maxRunCents: 40,
+      maxOutputTokens: 500,
+      maxDraftsPerRun: 12,
+      minDaysLate: 30,
+    });
+    for (const v of Object.values(flags.collectionsLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.collectionsLimits.maxDraftCents).toBeLessThan(flags.collectionsLimits.maxRunCents);
+    // A local override can never turn collections on: its tool is not on the recorded demo path.
+    for (const key of ["collectionsEnabled", "collectionsEmailEnabled"]) {
+      expect((LOCAL_OVERRIDABLE as readonly string[]).includes(key)).toBe(false);
+    }
+  });
+
   it("keeps the sweep off, its schedule off, its fixes unable to run and its caps small", () => {
     expect(flags.sweepEnabled).toBe(false);
     expect(flags.sweepScheduleEnabled).toBe(false);
@@ -167,6 +226,23 @@ describe("flags", () => {
     // One slice answers inside the 30 second route limit with room for the last write.
     expect(flags.sweepLimits.sliceMs).toBeLessThan(25_000);
     expect(flags.approveAllLimits).toEqual({ maxItems: 25 });
+  });
+
+  it("ships Cash Friday dark, with its explanation and option counts capped", () => {
+    expect(flags.cashFridayEnabled).toBe(false);
+    expect(flags.cashFridayLimits).toEqual({
+      maxExplainCents: 8,
+      maxExplainChars: 600,
+      maxFactorInvoices: 3,
+      maxChaseCustomers: 2,
+      graceDays: 14,
+      factoringMaxAgeDays: 45,
+    });
+    for (const v of Object.values(flags.cashFridayLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The explanation fits the cash_checks.explanation CHECK in migration 0029.
+    expect(flags.cashFridayLimits.maxExplainChars).toBeLessThanOrEqual(600);
   });
 
   it("keeps the sweep's second opinion off, with every cap inside the run's own", () => {
@@ -243,6 +319,16 @@ describe("flags", () => {
     expect(flags.voiceLimits.maxDurationMs).toBeLessThanOrEqual(Math.floor((flags.voiceLimits.maxWavBytes - 44) / 32));
   });
 
+  it("ships the Inbox dark, with its daily count, message size and sorting tries capped", () => {
+    expect(flags.inboxEnabled).toBe(false);
+    expect(flags.inboxLimits).toEqual({ messagesPerDay: 50, maxChars: 20_000, maxAttempts: 3 });
+    for (const v of Object.values(flags.inboxLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The attempts CHECK in migration 0037 holds 0 to 3.
+    expect(flags.inboxLimits.maxAttempts).toBeLessThanOrEqual(3);
+  });
+
   it("stops any one model job at $10 in an hour", () => {
     expect(flags.aiJobHourlyCapCents).toBe(1000);
     expect(Number.isSafeInteger(flags.aiJobHourlyCapCents)).toBe(true);
@@ -263,6 +349,15 @@ describe("flags", () => {
     }
     // The batch cap fits approval_batches.total_cents.
     expect(flags.batchLimits.maxTotalCents).toBeLessThan(1_000_000_000);
+  });
+
+  it("ships the profit brief dark, at most 6 cents a brief, and never switched on by local mode", () => {
+    expect(flags.profitBriefEnabled).toBe(false);
+    expect(flags.profitBriefLimits).toEqual({ maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 });
+    for (const v of Object.values(flags.profitBriefLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("profitBriefEnabled");
   });
 });
 
@@ -298,7 +393,7 @@ describe("local overrides for the demo-path test", () => {
     const keys = applyLocalOverrides(target, { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: ALL_ON });
     expect(keys).toEqual([...LOCAL_OVERRIDABLE]);
     expect(target.aiEnabled && target.agentEnabled && target.auditorEnabled).toBe(true);
-    expect(target.reportsEnabled && target.driverNotesEnabled).toBe(true);
+    expect(target.reportsEnabled && target.driverNotesEnabled && target.inboxEnabled).toBe(true);
     expect(target.advancesEnabled && target.payoutsEnabled && target.advancePayouts.armed).toBe(true);
     // Everything else, every cap and limit among it, is exactly as shipped.
     expect({ ...target, advancePayouts: { ...target.advancePayouts, armed: false } }).toEqual({
@@ -308,6 +403,7 @@ describe("local overrides for the demo-path test", () => {
       auditorEnabled: true,
       reportsEnabled: true,
       driverNotesEnabled: true,
+      inboxEnabled: true,
       advancesEnabled: true,
       payoutsEnabled: true,
     });
@@ -357,18 +453,24 @@ describe("local overrides for the demo-path test", () => {
       { "advancePayouts.capCents": 10_000_000 },
       { advancePayouts: { armed: true, capCents: 10_000_000, startDate: "2020-01-01" } },
       { "advancePayouts.startDate": "2020-01-01" },
+      { "inboxLimits.messagesPerDay": 1000 },
       { gatewayLimits: { payCorrectionMaxCents: 1, invoiceFixMaxCents: 1 } },
       { approverRole: { adminAboveCents: 1 } },
       { driverNoteLimits: { maxNoteCents: 1000, maxBatchCents: 1000, maxOutputTokens: 1 } },
       { advancesLimits: { proposalsPerDay: 1000 } },
       { paymentProvider: "stripe" },
-      { triageProvider: "baseten" },
+      { triageProvider: "meta" },
       { auditorStart: "2020-01-01T00:00:00Z" },
       { accountingEnabled: true },
       { driverNotesEmailEnabled: true },
       { agentEnabled: true, "agentTurnLimits.maxToolSteps": 99 },
+      { runLimits: { maxTurns: 1000 } },
+      { "runLimits.maxTurns": 1000 },
       // Not on the demo path yet: adding it is detention's own change, with a re-recorded replay.
       { detentionEnabled: true },
+      // Not on the demo path: its tools stay out of the replay's tool list.
+      { cardRecon: { enabled: true } },
+      { "cardRecon.enabled": true },
     ]) {
       const target = copy();
       const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify(bad) };

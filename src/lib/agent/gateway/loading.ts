@@ -10,4 +10,6 @@ export const ALWAYS_LOADED: readonly string[] = Object.freeze([
   "get_advances",
   "explain_paystub",
   "run_checks",
+  // The answer's checklist is set in the first step, before any search could load it.
+  "set_checklist",
 ]);

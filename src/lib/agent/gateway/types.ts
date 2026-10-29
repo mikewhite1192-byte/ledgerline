@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { AiResult, AiTextTarget, AiRequest } from "../../ai";
 import type { Session } from "../../auth/claims";
+import type { ChecklistDraft } from "../checklist";
 import type { Queryable, TenantDb } from "../../db";
 import { TABLES, type Cents, type TableName } from "../../rules-engine";
 
@@ -38,6 +39,10 @@ export const REASON_CATEGORIES = [
   "capped_to_eligible",
   // A proposal exception: the advance names a card that is not one of the driver's active cards.
   "card_not_drivers",
+  // A proposal exception: a card match names a driver the candidates for that card do not include.
+  "driver_not_candidate",
+  // A pay rule change's weekly impact, computed by the rules engine on the newest settled week.
+  "rule_change_sized_by_engine",
 ] as const;
 export type ReasonCategory = (typeof REASON_CATEGORIES)[number];
 
@@ -85,6 +90,13 @@ export type GatewayContext = {
   deadlineAt: number;
   // The tenant's IANA zone; dates in tool args are read in it.
   timeZone: string;
+  // The sentence the person typed this turn, for a tool that must find a value in it (a pay rule
+  // change's new value). Null or absent outside a turn, which such a tool refuses.
+  userText?: string | null;
+  // The flagged outside text this turn already read, once the turn's loop has seen one. A tool
+  // that must not act on a flagged turn (remember_note) refuses on it without reading the
+  // decision log, and still reads the log when it is absent.
+  flaggedInputId?: string | null;
 };
 
 // A model call, as the screener needs it. The default is complete() from src/lib/ai.
@@ -123,11 +135,13 @@ export type ScreenVerdict = {
   screenerVersion: 1;
 };
 
-// What a tool's run receives beyond its args: the screen verdict (for a tool that screens) and
-// the limit result (for a propose tool).
+// What a tool's run receives beyond its args: the screen verdict (for a tool that screens), the
+// limit result (for a propose tool) and the model call that asked for this tool (a uuid, or null
+// when the caller named none), which a record tool stores as the note's writer.
 export type RunExtras = {
   screen: ScreenVerdict | null;
   limit: Extract<LimitResult, { ok: true }> | null;
+  modelCallId?: string | null;
 };
 
 // The one list of proposal kinds. src/lib/proposals/execute.ts imports it from here (the ledger
@@ -142,6 +156,11 @@ export const PROPOSAL_KINDS = [
   "payment_reapply",
   "detention_charge",
   "settlement_approve",
+  "card_match",
+  "factoring_request",
+  "bill_defer",
+  "collections_chase",
+  "pay_rule_change",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 
@@ -158,7 +177,8 @@ export type ProposalDraft = {
   sources: GatewayRef[];
 };
 
-export type ToolResult = { result: Record<string, unknown>; draft?: ProposalDraft };
+// checklist: set only by set_checklist, kept by the operator loop (the gateway writes nothing).
+export type ToolResult = { result: Record<string, unknown>; draft?: ProposalDraft; checklist?: ChecklistDraft };
 
 export interface ToolDef<A> {
   name: string;
@@ -202,6 +222,7 @@ export type GatewayOutcome =
       result: Record<string, unknown>;
       refs: GatewayRef[];
       draft?: ProposalDraft;
+      checklist?: ChecklistDraft;
       flaggedInputId?: string;
       latencyMs: number;
     }

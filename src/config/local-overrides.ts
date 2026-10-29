@@ -9,6 +9,7 @@ export const LOCAL_OVERRIDABLE = [
   "auditorEnabled",
   "reportsEnabled",
   "driverNotesEnabled",
+  "inboxEnabled",
   "advancesEnabled",
   "payoutsEnabled",
   "advancePayouts.armed",

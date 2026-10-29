@@ -10,11 +10,19 @@
 #      automatic review.
 #   4. Batch every fix from a round into ONE commit and one push, wait about a minute, then
 #      comment "@coderabbitai review" (a push right after the request cancels it).
-#   5. Two rounds per PR, three only when round two flagged something Major or Critical. The
-#      reviewer answers any request comment, so the cap is enforced where requests start (the
-#      pipeline's re-review call, a local hook), never here.
-# Docs and Markdown are not reviewed (path_filters below): they cost per file and drew most of
-# the wording nitpicks. Lockfiles are already excluded by the reviewer's defaults.
+#   5. Rounds by tier. A PR in a danger zone (rules engine, ledger, money, agent tools and
+#      gateway, migrations and RLS, auth, infra) gets up to two rounds, a third only when round
+#      two flagged something Major or Critical. A PR that touches only UI, copy, docs, tests or
+#      seed data gets ONE round and is never re-requested. The reviewer answers any request
+#      comment, so the cap is enforced where requests start (a local hook), never here.
+#   6. Low-risk PRs skip this reviewer. A PR that touches only UI, copy, docs, tests or seed
+#      data carries "[skip-cr]" in its title, and the author requests a GitHub Copilot review on
+#      it instead (billed per request, not per file). Never on a PR that touches a danger zone, a
+#      migration, auth, secrets or env, CI workflows, or billing or payments code: those always
+#      get this review. Nothing here can enforce that, so the author checks the diff before tagging.
+# Not reviewed (path_filters below), since each file costs and these drew most of the nitpicks:
+# docs and Markdown, the lockfile, tests and test helpers, e2e, fixtures, snapshots, seed data
+# files and generated files. Seed CODE stays reviewed: the demo reset runs on production.
 language: "en-US"
 
 reviews:
@@ -27,11 +35,28 @@ reviews:
     drafts: false
     auto_incremental_review: false
     base_branches: ["main"]
+    ignore_title_keywords: ["[skip-cr]"]   # low-risk PRs only (cadence step 6)
   path_filters:
     - "!node_modules/**"
     - "!**/*.local.*"
     - "!docs/**"
     - "!**/*.md"
+    - "!package-lock.json"
+    - "!**/*.test.*"
+    - "!**/__tests__/**"
+    - "!e2e/**"
+    - "!scripts/test-db-fresh.ts"
+    - "!scripts/e2e-seed.ts"
+    - "!scripts/lib/fresh-seeded-db.ts"
+    - "!src/test/**"
+    - "!**/test-fixtures.*"
+    - "!**/fixtures/**"
+    - "!**/__snapshots__/**"
+    - "!**/*.snap"
+    - "!src/lib/seed/golden.json"
+    - "!src/lib/seed/docs/manifest.json"
+    - "!src/lib/seed/**/*.expected.json"
+    - "!**/*.generated.*"
   path_instructions:
     # Fallback for EVERY source file, so a new file can never land with only generic review.
     - path: "{src,scripts}/**"

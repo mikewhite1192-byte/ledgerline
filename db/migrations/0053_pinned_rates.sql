@@ -108,3 +108,15 @@ CREATE POLICY tenant_isolation ON pinned_rates
 -- DELETE is for the seed's replace only (the seed pins nothing); the app never deletes a rate.
 GRANT SELECT, INSERT, DELETE ON pinned_rates TO payday_app;
 GRANT UPDATE (status, effective_from, pinned_by, pinned_at, retired_at) ON pinned_rates TO payday_app;
+
+-- A pinned rate is a cited table like the others, so a proposal may name one as its subject. The
+-- list is 0046's (card_transactions) plus this one; 0046 runs before this file in number order
+-- and in production.
+ALTER TABLE proposals DROP CONSTRAINT proposals_subject_table_check;
+ALTER TABLE proposals ADD CONSTRAINT proposals_subject_table_check
+  CHECK (subject_table IN ('customers', 'drivers', 'loads', 'load_state_miles', 'load_accessorials',
+                           'driver_days', 'fuel_purchases', 'pay_configs', 'deduction_schedules',
+                           'pay_items', 'advances', 'settlement_periods', 'settlements',
+                           'settlement_lines', 'invoices', 'customer_payments',
+                           'payment_applications', 'vendor_bills', 'card_transactions',
+                           'pinned_rates'));

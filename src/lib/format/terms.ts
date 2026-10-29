@@ -21,6 +21,7 @@ export const TERMS = {
   "company-driver": "A driver in a company truck, paid per mile.",
   escrow: "Money held back from an owner-operator's pay and returned when the lease ends.",
   "truck-lease": "The weekly payment an owner-operator makes on the truck.",
+  insurance: "A daily charge for insurance coverage, taken for each day the driver drove.",
   "carried-shortfall": "When deductions were more than pay one week, the rest is taken next week.",
   advance: "Pay given early, against work already done; it is taken back from the next paystub.",
   "advance-repaid": "The part of an earlier advance taken back on this paystub.",
@@ -34,6 +35,9 @@ export const TERMS = {
   "credit-on-account": "Money a customer paid that is not yet matched to an invoice.",
   "second-check": "A separate model re-read this against your records before anyone approves.",
   "test-payout": "A simulated payment; no real money moves in this demo.",
+  margin: "What is left of the revenue after driver pay.",
+  "days-to-pay":
+    "The average days from an invoice's date to the day it was paid, over invoices paid in the 180 days before the week ended.",
   "diesel-index": "The weekly average diesel price many customers tie the fuel surcharge to.",
   "fuel-tax-rate": "What each state charges per gallon of diesel burned on its roads; settled every quarter.",
 } as const;

@@ -77,16 +77,19 @@ export default async function LoadRecord({ params }: { params: Promise<{ id: str
       ) : (
         <InlineAlert tone="warning">Cannot be invoiced: {QUEUE_REASON_LABELS[l.engine.reason]}.</InlineAlert>
       )}
-      <DataTable
-        caption="Extra charges"
-        rows={l.accessorials}
-        rowKey={(r) => r.id}
-        empty={{ title: "No extra charges on this load" }}
-        columns={[
-          { key: "kind", header: <Term id="extra-charges">Charge</Term>, cell: (r) => lineKindLabel(r.kind) },
-          { key: "amount", header: "Amount", align: "right", cell: (r) => <Money cents={r.amountCents} tone="plain" /> },
-        ]}
-      />
+      {/* A paystub's extra-pay line links here (through /records/load_accessorials/[id]). */}
+      <div id="extra-charges" className="scroll-mt-20">
+        <DataTable
+          caption="Extra charges"
+          rows={l.accessorials}
+          rowKey={(r) => r.id}
+          empty={{ title: "No extra charges on this load" }}
+          columns={[
+            { key: "kind", header: <Term id="extra-charges">Charge</Term>, cell: (r) => lineKindLabel(r.kind) },
+            { key: "amount", header: "Amount", align: "right", cell: (r) => <Money cents={r.amountCents} tone="plain" /> },
+          ]}
+        />
+      </div>
       <DataTable
         caption="Miles by state"
         rows={l.stateMiles}

@@ -40,6 +40,11 @@ const SENTENCES: Readonly<Record<string, string>> = {
     "The payment matches another open invoice for the same customer exactly, and overpays the one it is on.",
   driver_not_armed: "The driver is not armed to receive money. An admin can arm them on the driver page.",
   over_load_cap: "The amount is over what is left under the per-load cap for this load.",
+  // propose_rule_change
+  rule_change_sized_by_engine: "Sized on last week's pay with the same math that pays drivers.",
+  // a pay rule change refused: escrow per week while a driver's escrow schedule runs
+  escrow_on_driver_schedules:
+    "Each driver's escrow schedule sets what is held back each week, so changing the carrier's escrow per week would not change anyone's pay. Nothing was changed.",
   // the fuel checks (engine proposals)
   state_not_on_route: "The company card bought fuel in a state this load did not drive through.",
   gallons_over_tank: "The fill-up was more fuel than the truck's tank holds.",
@@ -63,6 +68,32 @@ const SENTENCES: Readonly<Record<string, string>> = {
   source_changed: "A load behind a pay line is no longer delivered in this week.",
   advance_overrecovered: "An advance would be taken back for more than the driver owes.",
   schedule_inactive: "A deduction schedule on this paystub is no longer active this week.",
+  // the card check's driver pick for a card on no driver's file
+  on_load_in_state: "The driver was on a load in that state that day or the day next to it.",
+  worked_that_day: "The driver worked that day or the day next to it.",
+  holds_pool_card: "The driver already holds another card with the same pool name.",
+  only_candidate: "No other driver worked near that day.",
+  driver_not_candidate: "This driver was not among the drivers who worked near that day. Check before approving.",
+  // the card check's differences
+  fuel_amount_differs: "The card provider's amount for this fuel purchase is not the amount on file.",
+  purchase_not_recorded: "The card provider shows a fuel purchase on a driver's card that is not on file.",
+  card_unknown: "The card provider shows a fuel purchase on a card that is not on any driver's file.",
+  load_not_in_ledger: "The card provider shows money loaded to a card with no payment record for it.",
+  load_amount_differs: "The card provider loaded a different amount than the payment record says.",
+  missing_outside: "A payment record says confirmed, but its own system has no record of it.",
+  reversed_outside: "A payment record says confirmed, but its own system shows it failed or canceled.",
+  amount_differs_outside: "A payment record's amount is not the amount its own system shows.",
+  pending_outside: "Its own system still shows this payment as pending.",
+  not_confirmed: "This payment is not confirmed yet. Check pending reads it back.",
+  // Cash Friday (engine cards)
+  covers_short: "On its own, this covers Friday's short.",
+  narrows_short: "This makes Friday's short smaller but does not close it on its own.",
+  factoring_test_mode: "Test mode: approving records your decision. Nothing is sent to a factoring partner.",
+  bill_flexible: "The vendor accepts a later date on this bill.",
+  due_before_pay_day: "The bill is due on or before pay day.",
+  repeat_late_payer: "This customer usually pays late.",
+  past_due_balance: "These invoices are past their due date.",
+  collections_test_mode: "Test mode: approving records your decision. No message goes to the customer.",
 };
 
 const GENERIC = "A rule check found this.";

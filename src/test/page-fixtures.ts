@@ -1,12 +1,19 @@
 import type { AdvanceListRow, AdvanceRecord, DriverAdvance, DriverOption } from "@/lib/advances/read";
 import type { DriverIdentity } from "@/lib/advances/identity";
+import type { Checklist } from "@/lib/agent/checklist";
 import { reasonSentence } from "@/lib/agent/reasons";
-import type { ProposalView, TurnView } from "@/lib/agent/view";
+import { stopSummary } from "@/lib/agent/stop-summary";
+import type { ProposalView, RuleChangeView, TurnView } from "@/lib/agent/view";
 import type { CallRow, Spend } from "@/lib/ai/spend";
 import type { DaySpend, SpendAlert } from "@/lib/ai/watch";
+import type { CashCheckView, CashHome, CashView, VendorBillView } from "@/lib/cash/view";
 import type { ClipView } from "@/lib/clips/types";
+import type { BreakView, RunView as CardRunView } from "@/lib/data/card-recon";
+import type { CollectionsView, LateInvoice, ReminderCard } from "@/lib/collections/view";
 import type { DocumentView } from "@/lib/documents/types";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
+import { figureValueText, profitWeek, type ClosedWeek } from "@/lib/briefs/figures";
+import type { BriefRecord, ProfitView } from "@/lib/briefs/view";
 import { fuelSentence, type SentenceInput } from "@/lib/fuel/help";
 import type { FuelPage, FuelRowView, FuelRunView } from "@/lib/fuel/view";
 import type {
@@ -20,14 +27,20 @@ import type {
 } from "@/lib/invoices/views";
 import { REVIEW_REASON_LABELS, REVIEW_STATUS_LABELS, reviewReasonSentence } from "@/lib/invoices/labels";
 import type { InvoiceReviewView, ReviewQueue } from "@/lib/invoices/review-read";
+import { noteLabel, type NoteRow, type NoteSubject } from "@/lib/memory/notes";
+import type { PayRulesPage } from "@/lib/pay-rules/read";
+import { RULES as RULE_SPECS, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
+import type { CardHome, HandPick } from "@/lib/recon/view";
 import type { RatesPage, RateView } from "@/lib/rates/read";
 import type { RunSummary, RunView } from "@/lib/portal/views";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "@/lib/rules-engine";
+import type { DriverDayView, PayItemView, ScheduleView } from "@/lib/records/views";
 import type { Cents, PayLine } from "@/lib/rules-engine/types";
 import { DEMO_ANCHOR } from "@/lib/seed/anchor";
 import { DEMO_CARRIERS } from "@/lib/seed/carriers";
 import { buildCarrierPlan } from "@/lib/seed/plan";
+import type { MarginLine } from "@/lib/reports/margin-per-load";
 import { RESET_TABLES, type DemoResetPreview } from "@/lib/seed/reset";
 import { exceptionLabel, parkLabel } from "@/lib/settlements/labels";
 import type {
@@ -39,6 +52,7 @@ import type {
 } from "@/lib/settlements/views";
 import type { FanoutTree } from "@/lib/sweep/fanout/tree";
 import type { SweepCounts } from "@/lib/sweep/run";
+import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
 import type { SweepHome, SweepItemView, SweepPage, SweepRunView } from "@/lib/sweep/view";
 import { summarizeModelWeek, type ModelWeek } from "@/lib/trace/week";
 import type { VoiceDetail, VoiceListRow } from "@/lib/voice/read";
@@ -175,6 +189,43 @@ export const TURNS: TurnView[] = [
   },
 ];
 
+// An answer's checklist with an item in every state, and an answer a cap stopped: its text is the
+// plain stop summary, then what it found.
+export const CHECKLIST_EVERY_STATE: Checklist = {
+  v: 1,
+  by: "model",
+  items: [
+    { key: "m1", text: "Read Rosa's loads this week", state: "done" },
+    { key: "m2", text: "Check her fuel advance limit", state: "doing" },
+    { key: "m3", text: "Draft the advance for you to approve", state: "todo" },
+    { key: "m4", text: "Compare with last week", state: "skipped" },
+    { key: "m5", text: "Check her escrow balance", state: "not_done" },
+  ],
+};
+
+const STOPPED_CHECKLIST: Checklist = {
+  v: 1,
+  by: "model",
+  items: [
+    { key: "m1", text: "Read Rosa's loads this week", state: "done" },
+    { key: "m2", text: "Check her fuel advance limit", state: "not_done" },
+    { key: "m3", text: "Draft the advance for you to approve", state: "not_done" },
+  ],
+};
+
+export const CHECKLIST_TURNS: TurnView[] = [
+  { ...TURNS[0], id: id(340), status: "running", text: "", proposals: [], checklist: CHECKLIST_EVERY_STATE },
+  {
+    ...TURNS[0],
+    id: id(341),
+    status: "partial",
+    endedReason: "max_turns",
+    text: `${stopSummary(STOPPED_CHECKLIST, { steps: 6 })}\n\nRosa Delgado ran 4 loads this week.`,
+    proposals: [],
+    checklist: STOPPED_CHECKLIST,
+  },
+];
+
 export const SPEND: Spend = {
   spentNanocents: 124_000_000_000,
   reservedNanocents: 2_000_000_000,
@@ -294,6 +345,21 @@ export const SWEEP_RUN: SweepRunView = {
   startedAt: "2026-10-28T15:00:00.000Z",
   finishedAt: "2026-10-28T15:03:00.000Z",
   approved: 1,
+  checklist: endSweep(tickSweep(tickSweep(tickSweep(tickSweep(sweepChecklist(true), "plan"), "check"), "draft"), "audit"), "done"),
+};
+
+// A run its budget stopped while drafting, and a run that skipped the second look.
+export const SWEEP_RUN_STOPPED: SweepRunView = {
+  ...SWEEP_RUN,
+  truncatedReason: "cap",
+  checklist: endSweep(tickSweep(sweepChecklist(true), "draft"), "stopped"),
+};
+export const SWEEP_RUN_RUNNING: SweepRunView = {
+  ...SWEEP_RUN,
+  status: "running",
+  phase: "check",
+  finishedAt: null,
+  checklist: tickSweep(tickSweep(sweepChecklist(true), "plan"), "check"),
 };
 
 export const SWEEP_HOME: SweepHome = {
@@ -1243,6 +1309,360 @@ export const REVIEW_QUEUE: ReviewQueue = {
   ],
 };
 
+// The collections page: late invoices with no reminder yet (more than the list names, so "and N
+// more" shows) and a reminder in every state, approved both ways. A refused reminder has no draft.
+const lateInvoice = (n: number, over: Partial<LateInvoice> = {}): LateInvoice => ({
+  invoiceId: id(200 + n),
+  customerId: CUSTOMER_ID,
+  customerName: "Tanglewood Grocery Supply",
+  invoiceNumber: `BR-INV-102${String(n).padStart(2, "0")}`,
+  daysLate: 31 + n,
+  balanceCents: 182_500,
+  dueOn: "2026-09-25",
+  stage: "30",
+  tone: "friendly",
+  ...over,
+});
+
+export const reminderCard = (n: number, over: Partial<ReminderCard> = {}): ReminderCard => ({
+  id: id(250 + n),
+  invoiceId: id(230 + n),
+  customerId: CUSTOMER_ID,
+  customerName: "Tanglewood Grocery Supply",
+  invoiceNumber: `BR-INV-103${String(n).padStart(2, "0")}`,
+  stage: "60",
+  tone: "direct",
+  status: "drafted",
+  daysLate: 64,
+  balanceCents: 245_000,
+  dueOn: "2026-08-24",
+  subject: `Invoice BR-INV-103${String(n).padStart(2, "0")} is 64 days past due`,
+  body: "Hello,\n\nInvoice BR-INV-10301 for $2,450.00 was due on Aug 24, 2026 and is now 64 days past due. Please send payment or reply with a date we can expect it.\n\nThank you,\nBlue Ridge Freight",
+  refusalCategory: null,
+  channel: null,
+  sentAt: null,
+  ...over,
+});
+
+export const COLLECTIONS_VIEW: CollectionsView = {
+  asOf: "2026-10-27",
+  timezone: TENANT.timezone,
+  pastDueCount: 12,
+  pastDueCents: 2_604_000,
+  waiting: 3,
+  approvedLastWeek: 2,
+  toDraft: [
+    lateInvoice(1),
+    lateInvoice(2, { customerName: "Harbor Point Lumber", tone: "direct" }),
+    lateInvoice(3, { stage: "60", daysLate: 61, tone: "firm" }),
+    lateInvoice(4, { stage: "90", daysLate: 95 }),
+    lateInvoice(5),
+    lateInvoice(6),
+  ],
+  cards: [
+    reminderCard(1),
+    reminderCard(2, { tone: "friendly", stage: "30", daysLate: 33 }),
+    reminderCard(3, { tone: "firm", stage: "90", daysLate: 97 }),
+    reminderCard(4, { status: "drafting", subject: null, body: null }),
+    reminderCard(5, { status: "over_cap", subject: null, body: null }),
+    reminderCard(6, { status: "refused", subject: null, body: null, refusalCategory: "number_mismatch" }),
+    reminderCard(7, { status: "approved", channel: "logged" }),
+    reminderCard(8, { status: "approved", channel: "email", sentAt: "2026-10-27T15:05:00.000Z" }),
+    reminderCard(9, { status: "approved", channel: "email" }),
+    reminderCard(10, { status: "rejected" }),
+  ],
+};
+
+// ---- The profit brief: one closed week priced by the real engine, and its brief in each state ----
+
+const PROFIT_PERIOD = { start: "2026-10-19", end: "2026-10-25" };
+const PIEDMONT_ID = id(401);
+const marginLine = (n: number, over: Partial<MarginLine>): MarginLine => ({
+  loadId: id(410 + n),
+  loadNumber: `BR-L1024${n}`,
+  deliveredOn: "2026-10-22",
+  customerId: CUSTOMER_ID,
+  customerName: "Tanglewood Grocery Supply",
+  driverId: DRIVER_ID,
+  driverName: "Rosa Delgado (BR-D07)",
+  lane: { originCity: "Roanoke", originState: "VA", destCity: "Charlotte", destState: "NC" },
+  loadedMiles: 290,
+  revenueCents: 185_000,
+  driverPayCents: 116_000,
+  marginCents: 69_000,
+  marginBps: 3730,
+  note: null,
+  ...over,
+});
+const PROFIT_LINES: MarginLine[] = [
+  marginLine(1, {}),
+  marginLine(2, {
+    lane: { originCity: "Charlotte", originState: "NC", destCity: "Atlanta", destState: "GA" },
+    loadedMiles: 245,
+    revenueCents: 142_000,
+    driverPayCents: 98_000,
+    marginCents: 44_000,
+    marginBps: 3099,
+  }),
+  marginLine(3, { customerId: PIEDMONT_ID, customerName: "Piedmont Paper Co", revenueCents: 176_000, driverPayCents: 121_000, marginCents: 55_000, marginBps: 3125 }),
+  // Delivered with no rate: counted and listed, never priced.
+  marginLine(4, { customerId: PIEDMONT_ID, customerName: "Piedmont Paper Co", revenueCents: null, driverPayCents: null, marginCents: null, marginBps: null, note: "No rate on the load" }),
+];
+const priced = profitWeek(
+  { lines: PROFIT_LINES, receivables: { invoices: [], payments: [], applications: [], asOf: PROFIT_PERIOD.end } },
+  PROFIT_PERIOD,
+  { maxLanes: 10, maxCustomers: 12 },
+);
+// How each customer pays, set by hand so the table shows a mean and every habit word.
+export const PROFIT_WEEK = {
+  ...priced,
+  customers: priced.customers.map((c, i) => (i === 0 ? { ...c, meanDays: 31, paidCount: 6, habit: "repeat_late" as const } : c)),
+};
+const PROFIT_WEEKS: ClosedWeek[] = [
+  { id: id(402), ...PROFIT_PERIOD },
+  { id: id(403), start: "2026-10-12", end: "2026-10-18" },
+];
+
+// The brief's words, built from the figures so the number check passes and every number links.
+const cite = (label: string): string => {
+  const figure = PROFIT_WEEK.figures.find((f) => f.label === label);
+  if (!figure) throw new Error(`no figure ${label}`);
+  return `${figureValueText(figure)} [${figure.key}]`;
+};
+export const PROFIT_BRIEF_TEXT =
+  `Revenue was ${cite("Revenue")} against driver pay of ${cite("Driver pay")}, a margin of ${cite("Margin")} or ` +
+  `${cite("Margin percent")}. Tanglewood Grocery Supply gave the most margin at ${cite("Customer Tanglewood Grocery Supply: margin")}.`;
+
+export const PROFIT_BRIEF: BriefRecord = {
+  id: id(404),
+  status: "drafted",
+  periodStart: PROFIT_PERIOD.start,
+  periodEnd: PROFIT_PERIOD.end,
+  asOf: "2026-10-27",
+  figures: PROFIT_WEEK.figures,
+  text: PROFIT_BRIEF_TEXT,
+  category: null,
+  updatedAt: "2026-10-27T15:00:00.000Z",
+};
+
+export const profitView = (brief: ProfitView["brief"], over: Partial<ProfitView> = {}): ProfitView => ({
+  weeks: PROFIT_WEEKS,
+  week: PROFIT_WEEKS[0],
+  profit: PROFIT_WEEK,
+  brief,
+  ...over,
+});
+
+export const PROFIT_VIEW = profitView({ kind: "none" });
+
+// ---- Cash Friday: a short week with all three moves, every receipt and bill status ----
+
+const BILL_ID = id(60);
+const LATE_CUSTOMER_ID = id(61);
+const reason = (category: string, source?: { table: string; id: string }) => ({ category, text: reasonSentence(category), source: source ?? null });
+
+export const VENDOR_BILL: VendorBillView = {
+  id: BILL_ID,
+  billRef: "BR-NTB-2229",
+  vendorName: "Northline Tire and Brake",
+  category: "maintenance",
+  amountCents: 888_424,
+  dueOn: "2026-11-06",
+  urgency: "flexible",
+  status: "open",
+  deferredTo: null,
+  paidOn: null,
+};
+
+export const VENDOR_BILLS: VendorBillView[] = [
+  VENDOR_BILL,
+  { ...VENDOR_BILL, id: id(62), billRef: "BR-SFI-1107", vendorName: "Summit Fleet Insurance", category: "insurance", amountCents: 1_240_000, urgency: "fixed" },
+  { ...VENDOR_BILL, id: id(63), billRef: "BR-RTL-0412", vendorName: "Ridgeline Truck Leasing", category: "lease", status: "deferred", deferredTo: "2026-11-20" },
+  { ...VENDOR_BILL, id: id(64), billRef: "BR-ORT-0388", vendorName: "Open Road Tolls", category: "tolls", amountCents: 41_250, status: "paid", paidOn: "2026-10-30" },
+];
+
+export const CASH_CHECK: CashCheckView = {
+  id: id(65),
+  asOf: "2026-11-02",
+  payDay: "2026-11-06",
+  createdAt: "2026-11-02T14:00:00.000Z",
+  payRunSource: "preview",
+  figures: {
+    bankBalanceCents: 1_449_362,
+    balanceAsOf: "2026-11-01",
+    cashOnHandCents: 1_449_362,
+    expectedReceiptsCents: 8_813_237,
+    payRunCents: 2_713_852,
+    fuelLoadsCents: 0,
+    vendorBillsDueCents: 8_228_747,
+    gapCents: -680_000,
+  },
+  lines: (["counted", "after_pay_day", "stalled"] as const).map((status, n) => ({
+    invoiceId: id(66 + n),
+    invoiceNumber: `BR-INV-1026${n}`,
+    customerId: n === 2 ? LATE_CUSTOMER_ID : CUSTOMER_ID,
+    customerName: n === 2 ? "Harbor Point Foods" : "Tanglewood Grocery Supply",
+    balanceCents: 182_500,
+    dueOn: "2026-10-30",
+    expectedOn: "2026-11-04",
+    onTimeBps: [9_250, 6_000, 2_500][n],
+    label: (["reliable", "mixed", "repeat_late"] as const)[n],
+    status,
+    expectedCents: status === "counted" ? 168_812 : 0,
+  })),
+  explanation:
+    "Cash on hand of $14,493.62 and $88,132.37 expected by Friday do not cover the $27,138.52 pay run and $82,287.47 of bills due, so Friday is short by $6,800.00. Delaying the $8,884.24 tire bill covers it on its own; factoring narrows it.",
+  explainCategory: null,
+};
+
+const cashCard = (over: Partial<ProposalView>): ProposalView =>
+  proposal({ direction: "in", destination: null, auditorVerdict: "pass", ...over });
+
+export const CASH_CARDS: ProposalView[] = [
+  cashCard({
+    id: id(70),
+    kind: "factoring_request",
+    subjectTable: "settlement_periods",
+    subjectId: PERIOD_ID,
+    subjectLabel: null,
+    amountCents: 184_701,
+    title: "Factor invoices (Test mode)",
+    reasons: [reason("narrows_short"), reason("factoring_test_mode")],
+    sources: [{ table: "invoices", id: INVOICE_ID }],
+    cash: {
+      kind: "factoring_request",
+      shortCents: 680_000,
+      advanceBps: 9_000,
+      feeBps: 300,
+      invoices: [
+        { invoiceId: INVOICE_ID, invoiceNumber: "BR-INV-10244", balanceCents: 212_300, advanceCents: 191_070, feeCents: 6_369, netCents: 184_701, reserveCents: 21_230 },
+      ],
+    },
+  }),
+  cashCard({
+    id: id(71),
+    kind: "bill_defer",
+    subjectTable: "vendor_bills",
+    subjectId: BILL_ID,
+    subjectLabel: "BR-NTB-2229",
+    amountCents: 888_424,
+    direction: "none",
+    title: "Delay a vendor bill",
+    reasons: [reason("bill_flexible", { table: "vendor_bills", id: BILL_ID }), reason("due_before_pay_day"), reason("covers_short")],
+    sources: [{ table: "vendor_bills", id: BILL_ID }],
+    cash: { kind: "bill_defer", billId: BILL_ID, billRef: "BR-NTB-2229", amountCents: 888_424, dueOn: "2026-11-06", deferredTo: "2026-11-20", shortCents: 680_000 },
+  }),
+  cashCard({
+    id: id(72),
+    kind: "collections_chase",
+    subjectTable: "customers",
+    subjectId: LATE_CUSTOMER_ID,
+    subjectLabel: "Harbor Point Foods",
+    amountCents: 2_607_400,
+    title: "Chase a late payer (Test mode)",
+    reasons: [reason("repeat_late_payer"), reason("past_due_balance"), reason("collections_test_mode")],
+    sources: [{ table: "customers", id: LATE_CUSTOMER_ID }],
+    cash: {
+      kind: "collections_chase",
+      overdueInvoices: 3,
+      invoices: [
+        { invoiceId: id(68), invoiceNumber: "BR-INV-10262", balanceCents: 182_500, dueOn: "2026-10-02" },
+        { invoiceId: id(69), invoiceNumber: "BR-INV-10263", balanceCents: 2_424_900, dueOn: "2026-10-09" },
+      ],
+    },
+  }),
+  // A chase already approved in test mode: its amount line says no money moved.
+  cashCard({
+    id: id(73),
+    kind: "collections_chase",
+    subjectTable: "customers",
+    subjectId: CUSTOMER_ID,
+    subjectLabel: "Tanglewood Grocery Supply",
+    amountCents: 182_500,
+    status: "done",
+    title: "Chase a late payer (Test mode)",
+    reasons: [reason("past_due_balance"), reason("collections_test_mode")],
+    sources: [{ table: "customers", id: CUSTOMER_ID }],
+    cash: {
+      kind: "collections_chase",
+      overdueInvoices: 1,
+      invoices: [{ invoiceId: id(66), invoiceNumber: "BR-INV-10260", balanceCents: 182_500, dueOn: "2026-10-30" }],
+    },
+  }),
+];
+
+export const CASH_VIEW: CashView = { check: CASH_CHECK, bills: VENDOR_BILLS, cards: CASH_CARDS };
+
+export const CASH_HOME: CashHome = { payDay: CASH_CHECK.payDay, gapCents: CASH_CHECK.figures.gapCents, createdAt: CASH_CHECK.createdAt };
+// The Memory page: a note about a customer, one about a driver, one about the whole carrier from a
+// person, one whose customer is no longer on file, and a suggestion from the chat waiting for Keep.
+const memoryNote = (n: number, over: Partial<NoteRow>): NoteRow => ({
+  id: id(n),
+  subjectKind: "customer",
+  subjectId: CUSTOMER_ID,
+  subjectName: "Tanglewood Grocery Supply",
+  subjectCode: "BR-C01",
+  text: "Pays about 45 days after due; send the reminder a week early",
+  status: "active",
+  sourceKind: "seed",
+  sourceTurnId: null,
+  createdByKind: "seed",
+  createdByEmail: null,
+  createdAt: "2026-10-20T17:00:00.000Z",
+  updatedAt: "2026-10-20T17:00:00.000Z",
+  ...over,
+});
+
+export const NOTE_SUBJECTS: NoteSubject[] = [
+  { kind: "customer", id: CUSTOMER_ID, name: "Tanglewood Grocery Supply", code: "BR-C01" },
+  { kind: "driver", id: DRIVER_ID, name: "Rosa Delgado", code: "BR-D07" },
+  { kind: "driver", id: id(21), name: "Marcus Hale", code: "BR-D12" },
+];
+
+export const MEMORY_NOTES: NoteRow[] = [
+  memoryNote(141, {}),
+  memoryNote(142, {
+    subjectKind: "driver",
+    subjectId: DRIVER_ID,
+    subjectName: "Rosa Delgado",
+    subjectCode: "BR-D07",
+    text: "Takes the Charlotte runs; ask before a weekend dispatch",
+    createdByKind: "person",
+    createdByEmail: EMAIL,
+  }),
+  memoryNote(143, {
+    subjectKind: "carrier",
+    subjectId: null,
+    subjectName: null,
+    subjectCode: null,
+    text: "Bill every detention charge the same week it happens",
+    createdByKind: "person",
+    createdByEmail: null,
+    createdAt: "2026-10-22T14:30:00.000Z",
+  }),
+  memoryNote(144, { subjectName: null, subjectCode: null, text: "Wants the paperwork by fax, not email" }),
+  memoryNote(145, {
+    subjectKind: "driver",
+    subjectId: id(21),
+    subjectName: "Marcus Hale",
+    subjectCode: "BR-D12",
+    text: "Prefers a text over a call",
+    status: "suggested",
+    sourceKind: "chat",
+    sourceTurnId: id(146),
+    createdByKind: "agent",
+    createdAt: "2026-10-27T15:10:00.000Z",
+  }),
+];
+
+// The notes a trace says the agent read: two still on file (named as the trace names them) and one
+// removed since, which the trace counts but cannot link.
+export const NOTES_USED = [
+  { id: MEMORY_NOTES[0].id, label: noteLabel(MEMORY_NOTES[0]) },
+  { id: MEMORY_NOTES[2].id, label: noteLabel(MEMORY_NOTES[2]) },
+  { id: id(147), label: null },
+];
+
 // The fuel checks page: every problem, every row status (a sent row with its card, a carried-out
 // card that reads Corrected, a dismissed and a cleared row), and a duplicate whose two photos were
 // compared. Each sentence comes from the page's own template, so its words are the ones a person reads.
@@ -1364,6 +1784,439 @@ export const FUEL_PAGE: FuelPage = {
   rows: FUEL_ROWS,
 };
 
+// ---- The card check: one check, every kind of difference, and a match card ----
+
+const CARD_TXN_ID = id(300);
+
+export const CARD_RUN: CardRunView = {
+  id: id(301),
+  status: "done",
+  phase: "done",
+  failCategory: null,
+  windowFrom: "2026-10-16",
+  windowTo: "2026-10-29",
+  counts: { statement: 168, records: 42, recordsClean: 31, needsYou: 10, notConfirmed: 1 },
+  unchecked: [
+    { system: "stripe_test", category: "not_connected" },
+    { system: "accounting", category: "timeout" },
+    { system: "payment_records", category: "too_many_records" },
+    { system: "fuel_card_sim", category: "read_failed" },
+  ],
+  modelCents: 2,
+  startedAt: "2026-10-29T15:00:00.000Z",
+  finishedAt: "2026-10-29T15:00:20.000Z",
+};
+
+const fuelTxn = (n: number, over: Partial<NonNullable<BreakView["transaction"]>> = {}): NonNullable<BreakView["transaction"]> => ({
+  id: id(310 + n),
+  kind: "fuel",
+  last4: "4417",
+  portalName: "TEST FUEL STOP 12",
+  postedOn: "2026-10-27",
+  state: "OK",
+  gallonsMilli: 112_400,
+  amountCents: 21_250,
+  ...over,
+});
+
+const cardBreak = (n: number, over: Partial<BreakView>): BreakView => ({
+  id: id(330 + n),
+  category: "fuel_amount_differs",
+  severity: "medium",
+  outsideSystem: "fuel_card_sim",
+  fixKind: "by_hand",
+  status: "open",
+  dismissCategory: null,
+  ourCents: null,
+  outsideCents: null,
+  explanation: null,
+  proposalId: null,
+  transaction: null,
+  record: null,
+  purchaseId: null,
+  driver: null,
+  firstSeenAt: "2026-10-29T15:00:10.000Z",
+  updatedAt: "2026-10-29T15:00:10.000Z",
+  ...over,
+});
+
+const moneyRecord = (n: number, kind: string, subjectTable: string, subjectId: string, state = "confirmed") => ({
+  id: id(350 + n),
+  kind,
+  subjectTable,
+  subjectId,
+  state,
+});
+
+export const CARD_BREAKS: BreakView[] = [
+  cardBreak(1, {
+    category: "card_unknown",
+    severity: "high",
+    fixKind: "card_match",
+    proposalId: id(360),
+    outsideCents: 18_040,
+    transaction: { ...fuelTxn(1, { last4: "7781", amountCents: 18_040 }), id: CARD_TXN_ID },
+  }),
+  cardBreak(2, {
+    category: "card_unknown",
+    severity: "high",
+    fixKind: "card_match",
+    outsideCents: 9_900,
+    transaction: fuelTxn(2, { last4: "7790", portalName: "POOL CARD 4", state: "TX", amountCents: 9_900 }),
+  }),
+  cardBreak(3, {
+    category: "fuel_amount_differs",
+    ourCents: 21_240,
+    outsideCents: 21_250,
+    explanation: "The card provider shows $212.50 for fuel on Oct 27, 2026; the fuel purchase on file is $212.40.",
+    transaction: fuelTxn(3),
+    purchaseId: id(370),
+    driver: { id: DRIVER_ID, code: "BR-D07" },
+  }),
+  cardBreak(4, {
+    category: "purchase_not_recorded",
+    outsideCents: 15_675,
+    transaction: fuelTxn(4, { amountCents: 15_675, gallonsMilli: null, state: null }),
+    driver: { id: DRIVER_ID, code: "BR-D07" },
+  }),
+  cardBreak(5, {
+    category: "load_not_in_ledger",
+    severity: "high",
+    outsideCents: 10_000,
+    transaction: fuelTxn(5, { kind: "load", amountCents: 10_000, gallonsMilli: null }),
+    driver: { id: DRIVER_ID, code: "BR-D07" },
+  }),
+  cardBreak(6, {
+    category: "load_amount_differs",
+    severity: "high",
+    ourCents: 10_000,
+    outsideCents: 15_000,
+    transaction: fuelTxn(6, { kind: "load", amountCents: 15_000, gallonsMilli: null }),
+    record: moneyRecord(1, "advance_payout", "advances", id(380)),
+    driver: { id: DRIVER_ID, code: "BR-D07" },
+  }),
+  cardBreak(7, {
+    category: "missing_outside",
+    severity: "high",
+    outsideSystem: "stripe_test",
+    fixKind: "retry",
+    ourCents: 96_975,
+    record: moneyRecord(2, "settlement_payout", "settlements", id(381)),
+  }),
+  cardBreak(8, {
+    category: "reversed_outside",
+    severity: "high",
+    fixKind: "by_hand",
+    ourCents: 25_000,
+    outsideCents: 25_000,
+    record: moneyRecord(3, "advance_payout", "advances", id(382)),
+  }),
+  cardBreak(9, {
+    category: "amount_differs_outside",
+    severity: "high",
+    outsideSystem: "qbo_sandbox",
+    ourCents: 182_500,
+    outsideCents: 180_000,
+    record: moneyRecord(4, "invoice", "invoices", INVOICE_ID),
+  }),
+  cardBreak(10, {
+    category: "pending_outside",
+    severity: "low",
+    outsideSystem: "qbo_sandbox",
+    fixKind: "check_pending",
+    ourCents: 50_000,
+    record: moneyRecord(5, "customer_payment", "customer_payments", PAYMENT_ID),
+  }),
+  cardBreak(11, {
+    category: "not_confirmed",
+    severity: "medium",
+    outsideSystem: null,
+    fixKind: "check_pending",
+    ourCents: 10_000,
+    record: moneyRecord(6, "settlement_bill", "settlements", id(383), "unknown"),
+  }),
+];
+
+export const CARD_HOME: CardHome = { run: CARD_RUN, breaks: CARD_BREAKS, open: { needsYou: 10, notConfirmed: 1 } };
+
+// The match card the first difference waits on.
+export const CARD_MATCH_PROPOSAL: ProposalView = proposal({
+  id: id(360),
+  kind: "card_match",
+  subjectTable: "card_transactions",
+  subjectId: CARD_TXN_ID,
+  subjectLabel: "card ending 7781",
+  amountCents: 18_040,
+  direction: "none",
+  title: "Match a card to a driver",
+  reasons: [
+    { category: "on_load_in_state", text: "The driver was on a load in that state that day or the day next to it.", source: { table: "loads", id: LOAD_ID } },
+    { category: "holds_pool_card", text: "The driver already holds another card with the same pool name.", source: null },
+  ],
+  sources: [
+    { table: "card_transactions", id: CARD_TXN_ID },
+    { table: "drivers", id: DRIVER_ID },
+    { table: "loads", id: LOAD_ID },
+  ],
+  operatorVerdict: "match_picked",
+  destination: null,
+  cardMatch: { last4: "7781", portalName: "TEST FUEL STOP 12", postedOn: "2026-10-27", state: "OK", driverCode: "BR-D07", others: ["BR-D12"] },
+});
+
+// The list a card on no driver's file shows when no match card was made: two drivers tied at the
+// top on a load through the card's state, and a third who only worked that day.
+export const CARD_HAND_PICK: HandPick = {
+  why: "tied",
+  candidates: [
+    {
+      driverId: DRIVER_ID,
+      code: "BR-D07",
+      score: 3,
+      reasons: ["on_load_in_state"],
+      evidence: [
+        { day: "2026-10-26", loadId: LOAD_ID },
+        { day: "2026-10-27", loadId: LOAD_ID },
+      ],
+    },
+    { driverId: id(391), code: "BR-D12", score: 3, reasons: ["on_load_in_state"], evidence: [{ day: "2026-10-27", loadId: id(392) }] },
+    { driverId: id(393), code: "BR-D15", score: 2, reasons: ["worked_that_day"], evidence: [{ day: "2026-10-28", loadId: null }] },
+  ],
+};
+
+// The Pay rules page: the seed's versions, a later one saved from a chat, and one replaced before
+// its first week began (it never ran), with the cards waiting to be saved: one checked, one with a
+// question, one not checked yet, one the check stopped, one from a flagged message, one being
+// saved, and one over the admin amount. The notes are written the way a save writes them.
+export const NEXT_START = "2026-11-02";
+const ruleNote = (key: "insurance_per_day_cents" | "net_pay_floor_cents", from: number, to: number) =>
+  `${labelFor(key, "owner_operator")} to ${formatValue(RULE_SPECS[key], to)} (from ${formatValue(RULE_SPECS[key], from)})`;
+const seedVersions = plan.rows.pay_configs;
+const newestSeed = seedVersions[seedVersions.length - 1];
+const SAVED_VERSION = id(400);
+export const PAY_RULES_PAGE: PayRulesPage = {
+  timeZone: TENANT.timezone,
+  nextStart: NEXT_START,
+  versions: [
+    ...seedVersions.map((v, n) => ({ ...v, weeksPaid: n === 0 ? 2 : 1, firstWeek: v.effective_from })),
+    {
+      ...newestSeed,
+      id: id(401),
+      effective_from: "2026-10-28",
+      note: ruleNote("net_pay_floor_cents", newestSeed.net_pay_floor_cents, 35_000),
+      source: "ui",
+      net_pay_floor_cents: 35_000,
+      weeksPaid: 0,
+      firstWeek: null,
+    },
+    {
+      ...newestSeed,
+      id: SAVED_VERSION,
+      effective_from: "2026-10-26",
+      note: ruleNote("insurance_per_day_cents", newestSeed.insurance_per_day_cents, 1_200),
+      source: "proposal",
+      insurance_per_day_cents: 1_200,
+      weeksPaid: 0,
+      firstWeek: "2026-10-26",
+    },
+  ],
+  currentId: SAVED_VERSION,
+  role: "admin",
+};
+
+const ruleChange = (over: Partial<RuleChangeView> = {}): RuleChangeView => ({
+  ruleKey: "insurance_per_day_cents",
+  oldValue: 1_100,
+  newValue: 1_200,
+  askedFrom: "2026-11-04",
+  effectiveFrom: "2026-11-09",
+  snapped: true,
+  applied: "new_version",
+  appliesTo: "owner_operator",
+  impact: {
+    basis: "settled_week",
+    periodId: settled.period.id,
+    periodStart: "2026-10-19",
+    periodEnd: "2026-10-25",
+    driversCompared: 25,
+    driversChanged: 4,
+    netDeltaCents: -2_400,
+    ownerOperatorsOnly: true,
+    top: [
+      { driverId: DRIVER_ID, code: "BR-D07", deltaCents: -700, settlementId: id(410) },
+      { driverId: id(21), code: "BR-D12", deltaCents: -600, settlementId: id(411) },
+    ],
+  },
+  ...over,
+});
+
+const ruleCard = (n: number, over: Partial<ProposalView>): ProposalView =>
+  proposal({
+    id: id(420 + n),
+    kind: "pay_rule_change",
+    subjectTable: "pay_configs",
+    subjectId: SAVED_VERSION,
+    subjectLabel: "2026-10-26",
+    amountCents: 2_400,
+    direction: "none",
+    title: "Change a pay rule",
+    reasons: [{ category: "rule_change_sized_by_engine", text: reasonSentence("rule_change_sized_by_engine"), source: null }],
+    sources: [],
+    destination: null,
+    ruleChange: ruleChange(),
+    ...over,
+  });
+
+export const RULE_CHANGES: ProposalView[] = [
+  ruleCard(1, {}),
+  ruleCard(2, { auditorVerdict: "concerns", auditorConcerns: ["amount_high"] }),
+  ruleCard(3, {
+    auditorVerdict: null,
+    auditorCheckedAt: null,
+    ruleChange: ruleChange({ ruleKey: "net_pay_floor_cents", oldValue: 30_000, newValue: 35_000, snapped: false, askedFrom: "2026-11-09", impact: { ...ruleChange().impact, ownerOperatorsOnly: false, driversChanged: 1, netDeltaCents: 4_100, top: [{ driverId: DRIVER_ID, code: "BR-D07", deltaCents: 4_100, settlementId: id(410) }] } }),
+  }),
+  ruleCard(4, { auditorVerdict: "block", auditorConcerns: ["evidence_missing"] }),
+  ruleCard(5, { flagged: true, flagCategories: ["instruction_like"] }),
+  ruleCard(6, {
+    status: "approved",
+    ruleChange: ruleChange({ ruleKey: "advance_fee_cents", oldValue: 500, newValue: 0, appliesTo: "owner_operator", impact: { ...ruleChange().impact, basis: "advances_only", periodId: null, periodStart: null, periodEnd: null, driversChanged: 0, netDeltaCents: 0, top: [] } }),
+  }),
+  ruleCard(7, {
+    amountCents: 250_000,
+    ruleChange: ruleChange({ ruleKey: "insurance_applies_to", oldValue: "owner_operator", newValue: "all", impact: { ...ruleChange().impact, ownerOperatorsOnly: false, driversChanged: 21, netDeltaCents: -250_000 } }),
+  }),
+];
+
+// The same change in every state a card can end in, for the chat, which shows decided cards too,
+// and one that cannot be read back whole (its title and amount only), and one with no paid week.
+export const RULE_CHANGES_DECIDED: ProposalView[] = [
+  ruleCard(10, { status: "executing" }),
+  ruleCard(11, { status: "done" }),
+  ruleCard(12, { status: "failed" }),
+  ruleCard(13, { status: "rejected" }),
+  ruleCard(14, { status: "expired" }),
+  ruleCard(15, { status: "unknown" }),
+  ruleCard(16, { ruleChange: null }),
+  ruleCard(17, { status: "done", ruleChange: null }),
+  ruleCard(18, {
+    ruleChange: ruleChange({ impact: { ...ruleChange().impact, basis: "no_settled_week", periodId: null, periodStart: null, periodEnd: null, driversChanged: 0, netDeltaCents: 0, top: [] } }),
+  }),
+  ruleCard(19, { ruleChange: ruleChange({ impact: { ...ruleChange().impact, driversChanged: 0, netDeltaCents: 0, top: [] } }) }),
+];
+
+// ---- The record pages a paystub line links to: a pay item, a day driven, a weekly deduction ----
+
+const PAYSTUB_REF = { id: id(400), periodStart: "2026-10-19", periodEnd: "2026-10-25" };
+const DRIVER_REF = { id: DRIVER_ID, name: "Monique Vasquez", code: "BR-D07" };
+const LOAD_REF = { table: "loads", id: LOAD_ID, label: "Load BR-L10247" };
+
+const payItem = (over: Partial<PayItemView>): PayItemView => ({
+  id: ID,
+  kind: "reimbursement",
+  subkind: "toll",
+  amountCents: 4_500,
+  itemDate: "2026-10-26",
+  description: "Tolls",
+  correction: false,
+  driver: DRIVER_REF,
+  for: { kind: "load", load: LOAD_REF },
+  paidOn: null,
+  ...over,
+});
+
+// Every kind a pay item can be, and every thing it can be for.
+export const PAY_ITEM_CASES: [string, PayItemView][] = [
+  ["tolls on a load, not paid yet", payItem({})],
+  [
+    "a lumper the driver paid, on a paystub",
+    payItem({
+      subkind: "lumper",
+      amountCents: 22_500,
+      description: "Lumper paid by driver",
+      for: { kind: "extra_charge", load: LOAD_REF, chargeId: id(401), chargeKind: "lumper" },
+      paidOn: PAYSTUB_REF,
+    }),
+  ],
+  [
+    "fuel on the company card",
+    payItem({
+      kind: "fuel",
+      subkind: "fuel",
+      amountCents: 31_996,
+      description: "Fuel, company card",
+      for: { kind: "fuel_purchase", purchasedOn: "2026-10-27", state: "MD", amountCents: 31_996 },
+      paidOn: PAYSTUB_REF,
+    }),
+  ],
+  [
+    "a shortfall carried from last week",
+    payItem({ kind: "carried_shortfall", subkind: "shortfall", amountCents: 12_000, description: "", for: { kind: "paystub", paystub: PAYSTUB_REF } }),
+  ],
+  [
+    "a pay correction",
+    payItem({ kind: "other_deduction", subkind: "correction", amountCents: 20_000, description: "Advance logged twice", correction: true, for: { kind: "correction" } }),
+  ],
+  [
+    "a deduction tied to nothing, driver not found",
+    payItem({ kind: "other_deduction", subkind: "eld_fee", amountCents: 3_500, description: "ELD subscription", driver: null, for: { kind: "none" } }),
+  ],
+];
+
+const RULES: NonNullable<DriverDayView["rules"]> = { effectiveFrom: "2026-10-19", note: "Insurance rate raised", perDayCents: 1_100, appliesTo: "owner_operator" };
+const driverDay = (over: Partial<DriverDayView>): DriverDayView => ({
+  id: ID,
+  day: "2026-10-26",
+  source: "load",
+  driver: DRIVER_REF,
+  workerType: "owner_operator",
+  ownInsurance: false,
+  load: LOAD_REF,
+  rules: RULES,
+  ...over,
+});
+
+// Each answer the "Charged to this driver" line can give, with the words it must show.
+const NOT_KNOWN = "Not known: the driver's record could not be read";
+export const DRIVER_DAY_CASES: [string, DriverDayView, string][] = [
+  ["a load day, charged", driverDay({}), "Yes, once for this day"],
+  ["a dispatch day with no load", driverDay({ source: "dispatch", load: null, rules: { ...RULES, note: null } }), "Yes, once for this day"],
+  ["a company driver, owner-operators only", driverDay({ workerType: "company" }), "No, this carrier charges insurance to owner-operators only"],
+  ["the driver carries their own insurance", driverDay({ ownInsurance: true }), "No, the driver carries their own insurance"],
+  ["no pay rules cover the week", driverDay({ rules: null }), "No pay rules cover this week"],
+  ["the driver could not be read", driverDay({ driver: null, workerType: null, rules: { ...RULES, appliesTo: "all" } }), NOT_KNOWN],
+  [
+    "the driver could not be read, owner-operators only",
+    driverDay({ driver: null, workerType: null, rules: { ...RULES, appliesTo: "owner_operator" } }),
+    NOT_KNOWN,
+  ],
+];
+
+const schedule = (over: Partial<ScheduleView>): ScheduleView => ({
+  id: ID,
+  kind: "escrow",
+  amountCents: 10_000,
+  description: "Escrow",
+  activeFrom: "2026-09-07",
+  activeTo: null,
+  driver: DRIVER_REF,
+  escrow: { balanceCents: 80_000, targetCents: 200_000 },
+  ...over,
+});
+
+// Escrow (building, reached, not known), a truck lease that ends, and another weekly deduction.
+export const SCHEDULE_CASES: [string, ScheduleView][] = [
+  ["escrow building to its target", schedule({})],
+  ["escrow at its target", schedule({ escrow: { balanceCents: 200_000, targetCents: 200_000 } })],
+  ["escrow, balance and target not known", schedule({ driver: null, escrow: { balanceCents: null, targetCents: null } })],
+  [
+    "a truck lease with an end date",
+    schedule({ kind: "lease", amountCents: 45_000, description: "Truck lease-purchase payment", activeTo: "2027-09-06", escrow: null }),
+  ],
+  ["another weekly deduction", schedule({ kind: "other", amountCents: 2_500, description: "Cell phone plan", escrow: null })],
+];
+
+// The help page's link to the worked week's driver: her draft paystub, or her driver page.
+export const HERO_LINK_DRAFT = { href: `/records/settlements/${PAYSTUB_REF.id}`, draft: true };
+export const HERO_LINK_DRIVER = { href: `/records/drivers/${DRIVER_ID}`, draft: false };
 // The Fuel and tax rates page: a pinned diesel price with a newer lookup waiting, one state pinned
 // by hand, one state whose lookup could not match its number, and one not pinned yet. Synthetic
 // pages only (rates.example).

@@ -8,6 +8,9 @@ import { findUnbilledDetentionTool } from "./tools/read/find-unbilled-detention"
 import { getAdvanceHeadroom } from "./tools/read/get-advance-headroom";
 import { getAdvances } from "./tools/read/get-advances";
 import { getArAging } from "./tools/read/get-ar-aging";
+import { getCardBreaks } from "./tools/read/get-card-breaks";
+import { getCashFriday } from "./tools/read/get-cash-friday";
+import { getCollections } from "./tools/read/get-collections";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
@@ -19,6 +22,7 @@ import { getInvoiceReviewQueue } from "./tools/read/get-invoice-review-queue";
 import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
+import { getProfitBrief } from "./tools/read/get-profit-brief";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
 import { getSettlements } from "./tools/read/get-settlements";
@@ -33,12 +37,17 @@ import { reportCashNeeded } from "./tools/read/report-cash-needed";
 import { reportDriverPaySummary } from "./tools/read/report-driver-pay-summary";
 import { reportMarginPerLoad } from "./tools/read/report-margin-per-load";
 import { runChecks } from "./tools/read/run-checks";
+import { setChecklist } from "./tools/note/set-checklist";
 import { proposeAdvance } from "./tools/propose/propose-advance";
+import { proposeCardMatch } from "./tools/propose/propose-card-match";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
+import { proposeRuleChange } from "./tools/propose/propose-rule-change";
+import { previewRuleChange } from "./tools/read/preview-rule-change";
+import { rememberNote } from "./tools/record/remember-note";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, type AgentRole, type AnyToolDef } from "./types";
 import { aiToolOf } from "./validate";
 
@@ -75,21 +84,30 @@ const TOOLS: readonly AnyToolDef[] = [
   getInvoiceReviewQueue,
   getArAging,
   getPaymentsIn,
+  getCollections,
   getVoiceNote,
   getProposal,
   getDocument,
   findUnbilledDetentionTool,
   getDriverIdentity,
   getAdvanceHeadroom,
+  getProfitBrief,
   proposeAdvance,
   proposePayCorrection,
   proposeInvoiceFix,
   proposePaymentReapply,
   proposeLoadRate,
   proposeDetentionCharge,
+  getCardBreaks,
+  proposeCardMatch,
+  previewRuleChange,
+  proposeRuleChange,
   getPortalEvidence,
   getPinnedRates,
   classifyMessage,
+  getCashFriday,
+  setChecklist,
+  rememberNote,
 ];
 
 function build(): Readonly<Record<string, AnyToolDef>> {

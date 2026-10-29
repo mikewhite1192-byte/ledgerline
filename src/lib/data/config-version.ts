@@ -1,5 +1,5 @@
 import { compareText, ConfigError } from "../rules-engine";
-import { assertLocalDate, dayOfWeek, periodContaining, type LocalDate } from "../time/local-date";
+import { addDays, assertLocalDate, dayOfWeek, periodContaining, type LocalDate } from "../time/local-date";
 import type { PayConfigRow, SettlementPeriodRow } from "./rows";
 
 // A tenant's pay rules are versioned by effective date (pay_configs, one row per version). A
@@ -36,6 +36,16 @@ export function configFor<T extends Version>(versions: readonly T[], periodStart
   const found = sorted.filter((v) => v.effective_from <= periodStart).pop();
   if (!found) throw new ConfigError("no_config_for_period");
   return found;
+}
+
+// The first period a version runs under: the first period that starts on or after its date, as
+// configFor picks it. Null when a later version dated on or before that start replaces it first,
+// so it never runs. A version dated mid-period shows the next period start, never its own date.
+export function firstPeriodOf<T extends Version & { id: string }>(versions: readonly T[], version: T): LocalDate | null {
+  const sorted = sortVersions(versions);
+  const holding = periodContaining(assertLocalDate(version.effective_from, "effective_from"), sorted[0].week_start_dow);
+  const start = holding.start === version.effective_from ? holding.start : addDays(holding.start, 7);
+  return configFor(sorted, start).id === version.id ? start : null;
 }
 
 // The version for one day: the version of the period that holds it. An advance asked for on a

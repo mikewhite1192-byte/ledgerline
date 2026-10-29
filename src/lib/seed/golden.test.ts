@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { HERO_OPEN_WEEK } from "./assert-plan";
-import { DEMO_CARRIERS } from "./carriers";
+import { flags } from "../../config/flags";
+import { cashPositionOf, PLANTED_GAP_CENTS } from "./cash-plan";
+import { DEMO_CARRIERS, type DemoCarrier } from "./carriers";
 import golden from "./golden.json";
 import { buildCarrierPlan } from "./plan";
 import { summarizePlan } from "./summary";
@@ -35,5 +37,30 @@ describe("golden.json", () => {
     ]);
     const sum = hero?.lines.reduce((n, l) => n + l.amountCents, 0);
     expect(sum).toBe(HERO_OPEN_WEEK.netCents);
+  });
+
+  // Cash Friday's demo (design 4.9): Blue Ridge is short with money in the bank and all three ways
+  // out on the page; Prairie Wind is covered and gets none.
+  it("plants a short Friday with every option for Blue Ridge and a covered one for Prairie Wind", () => {
+    const br = golden.carriers["blue-ridge"].cashFriday;
+    expect(br.gapCents).toBe(PLANTED_GAP_CENTS["blue-ridge"]);
+    expect(br.bankBalanceCents).toBeGreaterThan(0);
+    expect(br.factoringInvoices).toBe(3);
+    expect(br.deferBillRef).toMatch(/^BR-NTB-\d{4}$/);
+    expect(br.chaseCustomers).toBe(2);
+    const pw = golden.carriers["prairie-wind"].cashFriday;
+    expect(pw.gapCents).toBe(PLANTED_GAP_CENTS["prairie-wind"]);
+    expect(pw.bankBalanceCents).toBeGreaterThan(0);
+    expect([pw.factoringInvoices, pw.deferBillRef, pw.chaseCustomers]).toEqual([0, null, 0]);
+  });
+
+  // Some database tests seed a demo carrier under another slug: that copy has no planted gap, so
+  // its balance covers Friday exactly and it gets no cards.
+  it("covers Friday exactly for a demo carrier copied under another slug", () => {
+    const copy = { ...DEMO_CARRIERS[0], slug: "cash-copy-test" } as unknown as DemoCarrier;
+    const plan = buildCarrierPlan(copy, golden.anchor);
+    const r = cashPositionOf(plan.rows, copy, golden.anchor, flags.cashFridayLimits);
+    expect(Number.isSafeInteger(plan.rows.cash_settings[0].bank_balance_cents)).toBe(true);
+    expect([r.figures.gapCents, r.options]).toEqual([0, []]);
   });
 });

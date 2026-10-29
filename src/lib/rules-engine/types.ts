@@ -109,6 +109,8 @@ export const TABLES = [
   "invoices",
   "customer_payments",
   "payment_applications",
+  "vendor_bills",
+  "card_transactions",
   "pinned_rates",
 ] as const;
 export type TableName = (typeof TABLES)[number];
@@ -711,3 +713,212 @@ export type PaymentProfile = {
   openPast30: number;
   label: PaymentLabel;
 };
+
+// ---- Cash Friday: can the bank cover Friday's pay run ----
+
+export const VENDOR_BILL_CATEGORIES = [
+  "fuel_supplier",
+  "insurance",
+  "maintenance",
+  "tolls",
+  "software",
+  "lease",
+  "other",
+] as const;
+export type VendorBillCategory = (typeof VENDOR_BILL_CATEGORIES)[number];
+export const VENDOR_BILL_STATUSES = ["open", "deferred", "paid"] as const;
+export type VendorBillStatus = (typeof VENDOR_BILL_STATUSES)[number];
+export const BILL_URGENCIES = ["fixed", "flexible"] as const;
+export type BillUrgency = (typeof BILL_URGENCIES)[number];
+
+// A bill the carrier owes a vendor. Flexible means the vendor accepts a later date.
+export type VendorBillRecord = {
+  id: string;
+  billRef: string;
+  vendorName: string;
+  category: VendorBillCategory;
+  amountCents: Cents;
+  dueOn: LocalDate;
+  urgency: BillUrgency;
+  status: VendorBillStatus;
+  // Set exactly when status is deferred: the bill is due on this date instead.
+  deferredTo: LocalDate | null;
+  paidOn: LocalDate | null;
+};
+
+// The carrier's bank position as of a date, and its factoring terms.
+export type CashSettingsRecord = {
+  id: string;
+  bankBalanceCents: Cents;
+  balanceAsOf: LocalDate;
+  // 0 is Sunday; pay day is the first such day after the open week ends.
+  payDayDow: number;
+  factoringAdvanceBps: number;
+  factoringFeeBps: number;
+};
+
+export type CashFridayLimits = {
+  // Days past a customer's usual lateness before an invoice is no longer expected.
+  graceDays: number;
+  // Only invoices issued within this many days can be factored.
+  factoringMaxAgeDays: number;
+  maxFactorInvoices: number;
+  maxChaseCustomers: number;
+};
+
+// A record that left the bank on a tenant-local date (the caller converts the instant).
+export type PaidOn = { paidOn: LocalDate | null };
+
+export type CashFridayInput = {
+  settings: CashSettingsRecord | null;
+  periods: SettlementPeriodRecord[];
+  settlements: (SettlementRecord & PaidOn)[];
+  // One input per driver active in the one open week, under the version that week runs on;
+  // null when they could not be built (the pay run is then unknown, never zero).
+  previews: SettlementInput[] | null;
+  advances: (AdvanceRecord & PaidOn)[];
+  invoices: InvoiceRecord[];
+  payments: CustomerPaymentRecord[];
+  applications: PaymentApplicationRecord[];
+  bills: VendorBillRecord[];
+  limits: CashFridayLimits;
+};
+
+export const CASH_REFUSALS = [
+  "balance_missing",
+  "balance_in_future",
+  "no_open_period",
+  "more_than_one_open_period",
+  "pay_run_unknown",
+] as const;
+export type CashRefusal = (typeof CASH_REFUSALS)[number];
+
+export const RECEIPT_STATUSES = ["counted", "after_pay_day", "stalled"] as const;
+export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
+
+// One open invoice and what the engine expects of it by pay day.
+export type ReceiptLine = {
+  invoiceId: string;
+  invoiceNumber: string;
+  customerId: string;
+  balanceCents: Cents;
+  dueOn: LocalDate;
+  // max(asOf, dueOn + typicalDaysLate).
+  expectedOn: LocalDate;
+  typicalDaysLate: number;
+  // The customer's on-time share; 5000 with nothing paid yet.
+  onTimeBps: number;
+  label: PaymentLabel;
+  status: ReceiptStatus;
+  // mulBps(balance, onTimeBps) when counted, else 0; less any part of the customer's payments
+  // received since the balance date that is not applied to an invoice (already in cash on hand),
+  // taken from its counted lines in order, never below 0.
+  expectedCents: Cents;
+  sources: SourceRef[];
+};
+
+export type CashFigures = {
+  bankBalanceCents: Cents;
+  balanceAsOf: LocalDate;
+  paymentsSinceCents: Cents;
+  advancesPaidSinceCents: Cents;
+  settlementsPaidSinceCents: Cents;
+  billsPaidSinceCents: Cents;
+  // bank balance + payments since - advances, settlements and bills paid since.
+  cashOnHandCents: Cents;
+  expectedReceiptsCents: Cents;
+  payRunCents: Cents;
+  fuelLoadsCents: Cents;
+  vendorBillsDueCents: Cents;
+  // cash on hand + expected - pay run - fuel loads - bills due; below zero is a short.
+  gapCents: Cents;
+};
+
+export type FactoringLine = {
+  invoiceId: string;
+  invoiceNumber: string;
+  customerId: string;
+  balanceCents: Cents;
+  advanceCents: Cents;
+  feeCents: Cents;
+  netCents: Cents;
+  reserveCents: Cents;
+};
+
+export type ChaseLine = {
+  invoiceId: string;
+  invoiceNumber: string;
+  balanceCents: Cents;
+  dueOn: LocalDate;
+  daysLate: number;
+};
+
+export type FactoringOption = {
+  kind: "factoring_request";
+  subjectTable: "settlement_periods";
+  subjectId: string;
+  direction: "in";
+  // The net the carrier would receive now: the sum of each invoice's advance less its fee.
+  amountCents: Cents;
+  advanceBps: number;
+  feeBps: number;
+  invoices: FactoringLine[];
+  balanceCents: Cents;
+  advanceCents: Cents;
+  feeCents: Cents;
+  reserveCents: Cents;
+  coversShort: boolean;
+  sources: SourceRef[];
+};
+
+export type BillDeferOption = {
+  kind: "bill_defer";
+  subjectTable: "vendor_bills";
+  subjectId: string;
+  direction: "none";
+  amountCents: Cents;
+  billRef: string;
+  dueOn: LocalDate;
+  deferredTo: LocalDate;
+  coversShort: boolean;
+  sources: SourceRef[];
+};
+
+export type ChaseOption = {
+  kind: "collections_chase";
+  subjectTable: "customers";
+  subjectId: string;
+  direction: "in";
+  // Every past-due open balance of the customer.
+  amountCents: Cents;
+  // The part of amountCents the position does not already count: those balances less what the
+  // engine expects from them by pay day and less this customer's payments since the balance date
+  // not yet applied (already cash on hand). Never below zero.
+  newCashCents: Cents;
+  // newCashCents alone closes the short.
+  coversShort: boolean;
+  label: PaymentLabel;
+  overdueInvoices: number;
+  // The latest first, at most eight.
+  invoices: ChaseLine[];
+  sources: SourceRef[];
+};
+
+export type CashOption = FactoringOption | BillDeferOption | ChaseOption;
+
+export type CashPosition = {
+  ok: true;
+  asOf: LocalDate;
+  payDay: LocalDate;
+  periodId: string;
+  period: Period;
+  payRunSource: "stored" | "preview";
+  figures: CashFigures;
+  // Every open invoice with a balance: counted first, then after pay day, then stalled.
+  lines: ReceiptLine[];
+  // Empty unless the gap is below zero.
+  options: CashOption[];
+  sources: SourceRef[];
+};
+
+export type CashFridayResult = CashPosition | { ok: false; refusal: CashRefusal };

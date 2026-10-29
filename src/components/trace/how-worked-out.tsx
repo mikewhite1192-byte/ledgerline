@@ -6,16 +6,20 @@ import { EmptyState, ErrorState, LoadingState } from "@/components/app/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { VisuallyHidden } from "@/components/ui/visually-hidden";
-import { traceLines, traceTotals, type TraceLine } from "@/lib/trace/format";
+import { isNotesLine, traceLines, traceModels, traceTotals, type TraceLine, type TraceModel } from "@/lib/trace/format";
 import type { TurnTrace } from "@/lib/trace/types";
 import { cn } from "@/lib/cn";
 import { recordNamer } from "@/lib/format/labels";
+import { NOTE_REF_TABLE, noteHref } from "@/lib/memory/links";
 import { hrefOrNull, recordHref, type HrefFor } from "@/lib/records/href";
 
 // "How this was worked out": under an answer (the whole turn) or a proposal card (that card's
 // steps and checks). Closed by default and read only when first opened, so a thread of answers
 // costs no reads until someone looks. The anchor id (trace-<proposal or turn id>) opens it from a
-// link, such as an auditor footnote pointing at #trace-<proposal id>.
+// link, such as an auditor footnote pointing at #trace-<proposal id>. Opened, it reads in three
+// groups: the steps in order (who did each, its time and cost, what happened), the models used
+// (each model's job, calls, time and cost), and a closed Details with each call's effort and
+// prompt cache figures, for the reader who wants them.
 
 export type TraceLoad = { trace: TurnTrace } | { missing: true } | { error: string };
 export type TraceLoader = (turnId: string) => Promise<TraceLoad>;
@@ -57,10 +61,24 @@ export function traceAnchor(turnId: string, proposalId?: string): string {
   return `trace-${proposalId ?? turnId}`;
 }
 
-function Line({ line, hrefFor, name }: { line: TraceLine; hrefFor: HrefFor; name: ReturnType<typeof recordNamer> }) {
+function Line({
+  line,
+  step,
+  hrefFor,
+  name,
+}: {
+  line: TraceLine;
+  step: number;
+  hrefFor: HrefFor;
+  name: ReturnType<typeof recordNamer>;
+}) {
   return (
     <li className="grid gap-1 border-l-2 border-border pl-3">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        {/* The list's own order tells a screen reader the number; Details names rows by it. */}
+        <span aria-hidden className="text-small text-muted-foreground tabular-nums">
+          {step}.
+        </span>
         <span className="text-small font-semibold text-foreground">{line.who}</span>
         {line.meta.length > 0 ? (
           <span className="text-small text-muted-foreground tabular-nums">{line.meta.join(", ")}</span>
@@ -68,12 +86,12 @@ function Line({ line, hrefFor, name }: { line: TraceLine; hrefFor: HrefFor; name
         {line.badge ? <Badge tone={line.badge.tone}>{line.badge.label}</Badge> : null}
       </div>
       <p className="text-body text-foreground-2">{line.text}</p>
-      {line.cache ? <p className="text-small text-muted-foreground tabular-nums">{line.cache}</p> : null}
       {line.refs.length > 0 ? (
-        <ul className="flex flex-wrap gap-x-3 gap-y-1" aria-label="Records it read">
+        <ul className="flex flex-wrap gap-x-3 gap-y-1" aria-label={isNotesLine(line) ? "Notes it read" : "Records it read"}>
           {line.refs.map((ref) => {
-            const href = hrefOrNull(hrefFor, ref);
-            const label = name(ref);
+            // A carrier note links to its row on the Memory page, never to a record page.
+            const href = ref.table === NOTE_REF_TABLE ? noteHref(ref.id) : hrefOrNull(hrefFor, ref);
+            const label = ref.label ?? name(ref);
             return (
               <li key={`${ref.table}:${ref.id}`} className="text-small">
                 {href ? (
@@ -219,16 +237,66 @@ function Body({
     );
   }
   const totals = traceTotals(state.trace, proposalId);
+  const models = traceModels(state.trace, proposalId);
+  const details = lines.flatMap((line, i) => (line.effort || line.cache ? [{ line, step: i + 1 }] : []));
   // One name per record across every step, so a record read twice reads the same both times.
   const name = recordNamer(lines.flatMap((l) => l.refs));
   return (
-    <div className="grid gap-3">
-      <ol className="grid gap-3" aria-label="Steps, in order">
-        {lines.map((line) => (
-          <Line key={line.key} line={line} hrefFor={hrefFor} name={name} />
-        ))}
-      </ol>
+    <div className="grid gap-4">
+      <div className="grid gap-2">
+        <GroupTitle>Steps</GroupTitle>
+        <ol className="grid gap-3" aria-label="Steps, in order">
+          {lines.map((line, i) => (
+            <Line key={line.key} line={line} step={i + 1} hrefFor={hrefFor} name={name} />
+          ))}
+        </ol>
+      </div>
+      {models.length > 0 ? <ModelsUsed models={models} /> : null}
       {totals ? <p className="border-t border-border pt-2 text-small text-muted-foreground tabular-nums">{totals}</p> : null}
+      {details.length > 0 ? (
+        <details className="text-small">
+          <summary className="w-fit cursor-pointer rounded-sm text-link underline-offset-4 hover:underline">Details</summary>
+          <ul className="mt-2 grid gap-2" aria-label="Details for each step">
+            {details.map(({ line, step }) => (
+              <li key={line.key} className="grid gap-0.5">
+                <span className="font-semibold text-foreground">
+                  Step {step}, {line.who}
+                </span>
+                {line.effort ? <span className="text-muted-foreground">Asked for {line.effort}</span> : null}
+                {line.cache ? <span className="text-muted-foreground tabular-nums">{capitalize(line.cache)}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function GroupTitle({ children }: { children: string }) {
+  return <h3 className="text-small font-semibold text-foreground">{children}</h3>;
+}
+
+const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+// Each model behind these steps, once: its job in a few words, then its calls, time and cost.
+function ModelsUsed({ models }: { models: TraceModel[] }) {
+  return (
+    <div className="grid gap-2">
+      <GroupTitle>Models used</GroupTitle>
+      <ul className="grid gap-2" aria-label="Models used">
+        {models.map((m) => (
+          <li key={m.key} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 border-l-2 border-border pl-3">
+            <span className="grid">
+              <span className="text-small font-semibold text-foreground">{m.name}</span>
+              <span className="text-small text-foreground-2">{m.job}</span>
+            </span>
+            <span className="text-small text-muted-foreground tabular-nums">
+              {[m.calls, m.time, m.cost].filter(Boolean).join(", ")}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

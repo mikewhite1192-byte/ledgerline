@@ -857,6 +857,7 @@ export async function complete(
           },
         }
       : {}),
+    ...(answer.value.reasoningSummary ? { reasoningSummary: answer.value.reasoningSummary } : {}),
   };
 }
 
