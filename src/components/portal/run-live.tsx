@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,13 +74,15 @@ function ApprovalCard({ view, onDecided }: { view: RunView; onDecided: () => voi
       const body = (await res.json().catch(() => ({}))) as { error?: string; reason?: string };
       if (!res.ok) {
         setProblem(
-          body.error === "approval_expired"
-            ? "This check waited more than 30 minutes, so the run stopped."
-            : body.error === "session_expired"
-              ? "The portal session ended, so the run stopped."
-              : body.reason === "disabled"
-                ? "No runner is set up here, so the run cannot go on."
-                : "Could not record the decision. Try again.",
+          body.error === "judge"
+            ? STAFF_ONLY_NOTE
+            : body.error === "approval_expired"
+              ? "This check waited more than 30 minutes, so the run stopped."
+              : body.error === "session_expired"
+                ? "The portal session ended, so the run stopped."
+                : body.reason === "disabled"
+                  ? "No runner is set up here, so the run cannot go on."
+                  : "Could not record the decision. Try again.",
         );
       }
     } catch {

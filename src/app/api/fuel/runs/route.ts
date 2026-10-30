@@ -1,5 +1,6 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { readTenant } from "@/lib/data/read";
 import { runFuelCheck } from "@/lib/fuel/run";
 import { isCrossSite } from "@/lib/http/same-site";
@@ -20,6 +21,8 @@ export async function POST(request: Request) {
   if (!flags.fuelAnomalyEnabled) return refused("disabled");
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   try {
     // The checks list fill-ups from one shared start date, the first day of the seeded demo weeks,
     // so they run for the demo carriers only: any other carrier is refused as if the switch were

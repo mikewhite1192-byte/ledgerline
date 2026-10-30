@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { postJson } from "@/components/invoices/post-json";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
@@ -20,6 +21,7 @@ const NOTICE: Readonly<Record<string, string>> = {
   disabled: "The card check is switched off right now. Nothing changed.",
   unauthenticated: "Your sign-in ended. Sign in again, then dismiss it.",
   forbidden: "You cannot change this carrier's card check.",
+  judge: STAFF_ONLY_NOTE,
   not_found: "This difference is already closed.",
   bad_request: "Pick a reason. Nothing changed.",
 };

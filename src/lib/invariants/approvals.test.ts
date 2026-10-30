@@ -24,6 +24,7 @@ function clean(): ApprovalRows {
       },
     ],
     proposalLinks: [{ linked_proposals: 2, unread: 0, linked_early: 0, action_missing: 0 }],
+    judgeApprovals: [{ approvals: 5, by_judge: 0 }],
   };
 }
 
@@ -53,6 +54,7 @@ describe("judgeApprovals", () => {
       [(r) => (r.paymentRows[0].mismatch = 1), { proposal_mismatch: 1 }],
       [(r) => (r.proposalLinks[0].linked_early = 1), { proposal_linked_early: 1 }],
       [(r) => (r.proposalLinks[0].action_missing = 1), { proposal_action_missing: 1 }],
+      [(r) => (r.judgeApprovals[0].by_judge = "1"), { approved_by_judge: 1 }],
     ];
     for (const [change, expected] of cases) {
       const rows = clean();
@@ -77,6 +79,9 @@ describe("judgeApprovals", () => {
       [(r) => r.settlements.push(r.settlements[0]), "settlements_unread"],
       [(r) => (r.paymentRows = []), "payment_rows_unread"],
       [(r) => (r.proposalLinks = []), "proposal_links_unread"],
+      [(r) => (r.judgeApprovals = []), "judge_approvals_unread"],
+      [(r) => (r.judgeApprovals[0].by_judge = null), "not_whole"],
+      [(r) => (r.judgeApprovals[0].approvals = -1), "not_whole"],
     ];
     for (const [change, category] of bad) {
       const rows = clean();

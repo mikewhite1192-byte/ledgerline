@@ -6,6 +6,7 @@ import { ErrorState, FeatureOff } from "@/components/app/states";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Session } from "@/lib/auth/claims";
+import { isRole, type Role } from "@/lib/auth/role";
 import type { Queryable } from "@/lib/db";
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -13,7 +14,7 @@ import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 // The signed-in carrier for the portal run pages, read the way the other pages read it, plus the
 // page's own reads in the same transaction. Signed out: withRequestTenant redirects to /sign-in.
 
-export type Carrier = { name: string; timezone: string; email: string; session: Session };
+export type Carrier = { name: string; timezone: string; email: string; role: Role; session: Session };
 export type CarrierRead<T> = { carrier: Carrier; data: T } | { problem: "forbidden" | "unreadable" };
 
 export async function readCarrier<T>(fn: (q: Queryable, session: Session) => Promise<T>): Promise<CarrierRead<T>> {
@@ -22,12 +23,15 @@ export async function readCarrier<T>(fn: (q: Queryable, session: Session) => Pro
       const tenants = await q.query<{ name: string; timezone: string }>(
         "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
       );
-      const members = await q.query<{ email: string }>(
-        "SELECT email FROM memberships WHERE cognito_sub = $1 AND tenant_id = current_tenant_id()",
+      const members = await q.query<{ email: string; role: unknown }>(
+        "SELECT email, role FROM memberships WHERE cognito_sub = $1 AND tenant_id = current_tenant_id()",
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
-      const carrier = { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email, session };
+      // A role this code does not know is refused, never shown as staff.
+      const role = members[0].role;
+      if (!isRole(role)) throw new ForbiddenError();
+      const carrier = { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email, role, session };
       return { carrier, data: await fn(q, session) };
     });
   } catch (err) {
@@ -68,7 +72,7 @@ export async function PortalRunsOffPage({ title, description }: { title: string;
   const { carrier } = read;
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/portal-runs")}
       title={title}
       signOut={signOut}

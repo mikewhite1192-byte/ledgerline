@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { quickBooksStanding } from "./labels";
+import { STAFF_ONLY_NOTE } from "../../components/app/staff-only";
+import { OUTCOME_FALLBACK, outcomeLabel, quickBooksStanding, reviewWriteLabel } from "./labels";
 
 describe("quickBooksStanding", () => {
   it("names the QuickBooks record when one is stored, whatever the attempts say", () => {
@@ -31,5 +32,15 @@ describe("quickBooksStanding", () => {
 
   it("says not sent yet only when nothing was ever tried", () => {
     expect(quickBooksStanding(null, [])).toBe("Not sent yet");
+  });
+});
+
+// A demo visitor's press on a staff-only invoice or payment button: the staff check answers 403
+// "judge", and every invoice screen says the button is for the carrier's staff, never the fallback.
+describe("the judge refusal on invoice buttons", () => {
+  it("reads as the staff-only line on the outcome and review buttons alike", () => {
+    expect(outcomeLabel("judge")).toBe(STAFF_ONLY_NOTE);
+    expect(reviewWriteLabel("judge")).toBe(STAFF_ONLY_NOTE);
+    expect(outcomeLabel("judge")).not.toBe(OUTCOME_FALLBACK);
   });
 });

@@ -1,5 +1,6 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
 import { approveClean, parseApproveClean } from "@/lib/sweep/approve-clean";
 import { isUuid } from "@/lib/uuid";
@@ -19,6 +20,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!flags.sweepEnabled) return refused("disabled");
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id } = await params;
   if (!isUuid(id)) return refused("bad_request");
   const input = parseApproveClean(await objectBody(request, 8_000));

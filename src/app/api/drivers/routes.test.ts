@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here every caller is staff.
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/advances/arming", () => ({ armDriver: mocks.armDriver }));
 vi.mock("@/lib/advances/identity", () => ({
   addIdentity: mocks.addIdentity,

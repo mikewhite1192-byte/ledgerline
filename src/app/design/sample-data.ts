@@ -24,6 +24,8 @@ export const SAMPLE_TENANT = {
   name: "Sample Freight Co",
   email: "ops@samplefreight.example",
   timezone: "America/Chicago",
+  // The review shows the staff view: every confirm as a carrier's staff member sees it.
+  role: "staff" as const,
 };
 
 export const DRIVER = { name: "Dana Whitfield", code: "SF-D07", workerType: "company" as const };

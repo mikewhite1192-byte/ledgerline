@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { runCashCheck } from "@/lib/cash/check";
 import { isCrossSite } from "@/lib/http/same-site";
 
@@ -32,6 +33,8 @@ export async function POST(request: Request) {
   if (!flags.cashFridayEnabled) return reply({ error: "disabled" }, STATUS.disabled);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   try {
     const result = await runCashCheck(session, new Date());
     if (!result.ok) return reply({ error: result.category }, STATUS[result.category] ?? 409);

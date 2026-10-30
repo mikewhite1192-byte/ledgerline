@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
@@ -16,6 +17,7 @@ type Access = { carrierNumber: string; code: string; expiresAt: string; signInPa
 const START_ERRORS: Record<string, string> = {
   disabled: "Portal runs cannot start here: no runner is set up for this environment.",
   no_portal_load: "The portal has no record of that load.",
+  judge: STAFF_ONLY_NOTE,
   unavailable: "Could not start the run. Try again in a moment.",
 };
 
@@ -54,6 +56,10 @@ export function PortalRunActions({ choices }: { choices: LoadChoice[] }) {
     setProblem(null);
     try {
       const res = await fetch("/api/portal-access", { method: "POST" });
+      if (res.status === 403) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (body.error === "judge") return setProblem(STAFF_ONLY_NOTE);
+      }
       if (!res.ok) throw new Error("access");
       setAccess((await res.json()) as Access);
     } catch {

@@ -1,5 +1,6 @@
 import { createQboConnect } from "@/lib/adapters/accounting/qbo/connect";
 import { requireSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { DbError } from "@/lib/db";
 import { ForbiddenError } from "@/lib/tenant/context";
 import { tenantRun, toSettings } from "../respond";
@@ -14,6 +15,8 @@ const qbo = createQboConnect();
 // Signed out: to /sign-in.
 export async function GET(request: Request) {
   const session = await requireSession();
+  const notStaff = await staffGate(session);
+  if (notStaff) return toSettings(notStaff.status === 403 ? "forbidden" : "failed");
   const params = new URL(request.url).searchParams;
   try {
     const result = await qbo.finish(tenantRun(session), session.sub, {

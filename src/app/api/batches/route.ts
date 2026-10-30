@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { getDb } from "@/lib/db";
 import { isCrossSite } from "@/lib/http/same-site";
 import { confirmBatch, parseBatchRequest } from "@/lib/settlements/batch";
@@ -29,6 +30,8 @@ export async function POST(request: Request) {
   if (!flags.settlementsEnabled || !flags.batchApproveEnabled) return reply({ error: "disabled" }, 404);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   let body: unknown;
   try {
     body = await request.json();

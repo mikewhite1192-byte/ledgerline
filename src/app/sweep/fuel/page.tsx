@@ -30,7 +30,7 @@ export default async function FuelChecksPage() {
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/sweep")}
       title={FUEL_PAGE_WORDS.title}
       signOut={<SignOut />}

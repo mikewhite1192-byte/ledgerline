@@ -80,7 +80,7 @@ export default async function DocumentsPage() {
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/documents")}
       title="Documents"
       signOut={<SignOut />}

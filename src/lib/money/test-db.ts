@@ -78,6 +78,20 @@ export async function makeTenant(admin: Db, slug: string): Promise<Fixture> {
   };
 }
 
+// A demo visitor's login (the judge role, 0043) in the fixture's tenant, as a session. It goes with
+// the tenant in dropTenant.
+export async function addJudge(admin: Db, f: Fixture): Promise<Session> {
+  const sub = `judge-${f.tenantId}`;
+  await admin.withTenant(f.tenantId, (q) =>
+    q.execute(
+      `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+       VALUES (current_tenant_id(), $1, $2, 'judge')`,
+      [sub, `judge-${f.tenantId.slice(0, 8)}@example.test`],
+    ),
+  );
+  return { sub, email: "", tenantId: f.tenantId };
+}
+
 // A synthetic card: a random token of the provider's shape and random last four digits. Each
 // fixture driver's first card is their default.
 const CARD_INSERT = `INSERT INTO driver_cards (id, tenant_id, driver_id, provider, provider_token, last4,
