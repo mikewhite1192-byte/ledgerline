@@ -507,8 +507,10 @@ export type Flags = {
   // The demo carrier's visitor sign-in (the judge role, migration 0043). A judge reads, asks the
   // agent and proposes, and never approves or pays: every write route outside
   // src/lib/auth/judge-allowlist.ts refuses the role whatever this says. Off means a judge login's
-  // password sign-in is refused before any cookie (src/app/sign-in/actions.ts); the visitor
-  // sign-in card and the visit limits below come with a later change and do nothing yet.
+  // password sign-in is refused before any cookie (src/app/sign-in/actions.ts), the sign-in card
+  // does not render, its action refuses, and a judge's model calls are refused (no visit, no
+  // budget). On, the visit limits below hold in the sign-in (src/app/sign-in/try-demo-action.ts),
+  // the spend ledger (src/lib/ai/spend.ts) and the agent turn (src/lib/auth/demo-visit.ts).
   judgeAccess: {
     enabled: boolean;
     // One visit's model spend, in cents (spent plus reserved, demo_sessions).
@@ -517,8 +519,11 @@ export type Flags = {
     turnsPerSession: number;
     // Every visit created in one UTC day, together, in cents.
     dayCapCents: number;
-    // New visits from one address in an hour, and from everyone in a day.
+    // New visits from one address in an hour (best-effort: the client can set the address it is
+    // counted by, src/lib/auth/demo-visit.ts ipHashOf), from everyone in a rolling hour, and from
+    // everyone in a day.
     sessionsPerIpPerHour: number;
+    sessionsPerHour: number;
     sessionsPerDay: number;
     // How long the visit's sign-in cookie lasts.
     cookieHours: number;
@@ -762,6 +767,7 @@ export const flags: Flags = {
     turnsPerSession: 25,
     dayCapCents: 800,
     sessionsPerIpPerHour: 5,
+    sessionsPerHour: 40,
     sessionsPerDay: 150,
     cookieHours: 2,
   },

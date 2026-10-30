@@ -122,14 +122,18 @@ export async function readAgentTurn(
   turnId: string,
   deps: StoreDeps = {},
 ): Promise<TurnView | null> {
-  return withAgentTenant(deps.db ?? getDb(), session, (q) => readTurnView(q, session.sub, turnId));
+  return withAgentTenant(deps.db ?? getDb(), session, (q) =>
+    readTurnView(q, session.sub, turnId, session.demoSessionId ?? null),
+  );
 }
 
 export async function readRecentAgentTurns(
   session: Session,
   deps: StoreDeps = {},
 ): Promise<TurnView[]> {
-  return withAgentTenant(deps.db ?? getDb(), session, (q) => readRecentTurnViews(q, session.sub));
+  return withAgentTenant(deps.db ?? getDb(), session, (q) =>
+    readRecentTurnViews(q, session.sub, session.demoSessionId ?? null),
+  );
 }
 
 // The auditor's door to its rows on a proposal (design 4.2 step 4). Each call is its own tenant
@@ -166,7 +170,9 @@ export async function readAgentTurnTrace(
   turnId: string,
   deps: StoreDeps = {},
 ): Promise<TurnTrace | null> {
-  return withAgentTenant(deps.db ?? getDb(), session, (q) => readTurnTrace(q, session.sub, turnId));
+  return withAgentTenant(deps.db ?? getDb(), session, (q) =>
+    readTurnTrace(q, session.sub, turnId, session.demoSessionId ?? null),
+  );
 }
 
 // How one turn of a sweep run's second opinion was worked out: any member of the carrier may read

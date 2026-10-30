@@ -19,6 +19,9 @@ export function GET() {
       advances: flags.advancesEnabled,
       payouts: flags.payoutsEnabled,
       accounting: flags.accountingEnabled,
+      // The demo carrier's visitor sign-in, and the demo reset.
+      judgeAccess: flags.judgeAccess.enabled,
+      demoReset: flags.demoResetEnabled,
     },
   });
 }

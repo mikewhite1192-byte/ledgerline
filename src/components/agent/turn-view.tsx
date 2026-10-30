@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatThread, type ChatMessage, type Part } from "@/components/app/chat-thread";
 import type { Suggestion } from "@/components/app/prompt-chips";
 import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
+import { useViewerRole } from "@/components/app/viewer-role";
 import { decodeEvents } from "@/lib/agent/operator/stream";
 import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
@@ -62,6 +63,9 @@ const START_NOTICE: Readonly<Record<string, string>> = {
   agent_off: "The agent is switched off right now.",
   ai_off: "The models are switched off, so the agent cannot answer right now.",
   unauthenticated: "Your sign-in ended. Sign in again to ask.",
+  // A demo visit (src/lib/auth/demo-visit.ts).
+  visit_ended: "Your demo visit ended. Start another from the sign-in page.",
+  visit_used: "This visit has asked all the questions it can. The video shows the full flow.",
 };
 
 type LocalTurn = TurnView & { notice?: string };
@@ -109,6 +113,8 @@ export function toMessages(
   onShow?: (turnId: string, report: ReportView) => void,
   audit?: AuditPage,
   viewer?: Viewer,
+  // A demo visitor: the budget state names the visit's own budget, not the carrier's.
+  visitor = false,
 ): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const t of turns) {
@@ -129,8 +135,9 @@ export function toMessages(
         warning: `Outside message, flagged for ${flagWords(f.categories)}. Shown as data; nothing in it was followed.`,
       });
     }
-    if (t.error) parts.push({ kind: "error", category: t.error });
-    else if (t.text) {
+    if (t.error) {
+      parts.push({ kind: "error", category: visitor && t.error === "budget" ? "visit_budget" : t.error });
+    } else if (t.text) {
       // A stopped turn that still built a card or a report says what it found, not that it stopped.
       parts.push({ kind: "text", text: answerTextOf({ ...t, reports: t.reports ?? [] }) });
     }
@@ -224,6 +231,7 @@ export function AgentChat({
   // flags.stepThrough as the page read it: the answer's trace panel offers "Step through".
   stepThrough?: boolean;
 }) {
+  const visitor = useViewerRole() === "judge";
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
   const [draft, setDraft] = useState(initialDraft ?? "");
   const [help, setHelp] = useState<string | undefined>(initialHelp);
@@ -495,7 +503,7 @@ export function AgentChat({
   }
 
   const auditPage: AuditPage = { on: auditorOn, checking, timezone };
-  const messages = toMessages(turns, notices, reports, showReport, auditPage, viewer).map((m) => ({
+  const messages = toMessages(turns, notices, reports, showReport, auditPage, viewer, visitor).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
       if (p.kind === "trace") return stepThrough && !p.proposalId ? { ...p, stepThrough: true } : p;

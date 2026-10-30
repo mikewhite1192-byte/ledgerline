@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth/cookie";
+import { DEMO_COOKIE, SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth/cookie";
 
-// Clears the session cookie and sends the browser to the sign-in page. A relative Location, so
+// Clears the session cookie (and a demo visit's pc_demo cookie; the visit's row keeps its spend)
+// and sends the browser to the sign-in page. A relative Location, so
 // the redirect never depends on how the host reports its own URL.
 //
 // A cross-site POST is refused with no cookie change: the response clears the cookie even when
@@ -13,5 +14,6 @@ export function POST(request: Request) {
   if (site !== null && site !== "same-origin") return new NextResponse(null, { status: 403 });
   const response = new NextResponse(null, { status: 303, headers: { Location: "/sign-in" } });
   response.cookies.set(SESSION_COOKIE, "", { ...sessionCookieOptions(), maxAge: 0 });
+  response.cookies.set(DEMO_COOKIE, "", { ...sessionCookieOptions(), maxAge: 0 });
   return response;
 }
