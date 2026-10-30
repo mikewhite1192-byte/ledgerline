@@ -25,6 +25,7 @@ const SESSION = "src/lib/auth/session.ts";
 const GATED_HELPERS: Readonly<Record<string, readonly string[]>> = {
   "src/lib/advances/http.ts": ["advanceAction", "bodyAction"],
   "src/lib/inbound/http.ts": ["inboxAction"],
+  "src/lib/money-codes/http.ts": ["codeAction"],
   "src/lib/portal/http.ts": ["decideRoute"],
   "src/lib/voice/http.ts": ["voiceStaffAction"],
 };

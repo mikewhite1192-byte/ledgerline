@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import type { Session } from "../auth/claims";
 import { getSession } from "../auth/session";
+import { staffGate } from "../auth/staff-gate";
 import { refuse, reply } from "../advances/http";
 import { isCrossSite } from "../http/same-site";
 import { isUuid } from "../uuid";
 import { moneyCodesOn } from "./switches";
 
 // The money-code buttons' shared shape, the advance routes' own: same-site POST, the money codes
-// switch first, a signed-in member, a well-formed id, categories only in the reply (never outside
-// text), never cached.
+// switch first, a signed-in member, the staff check (a demo visitor, the judge role, is refused
+// before any work), a well-formed id, categories only in the reply (never outside text), never
+// cached.
 
 type Outcome = { ok: true } | { ok: false; category: string; retryable: boolean };
 
@@ -21,6 +23,8 @@ export async function codeAction<T extends Outcome>(
   if (!moneyCodesOn()) return refuse("disabled");
   const session = await getSession();
   if (!session) return refuse("unauthenticated");
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id } = await params;
   if (!isUuid(id)) return refuse("bad_request");
   try {
