@@ -131,6 +131,7 @@ describe("a judge on every staff-only route", () => {
       "POST /api/money-codes",
       "POST /api/money-codes/[id]/check",
       "POST /api/money-codes/[id]/reveal",
+      "POST /api/desk/wake",
     ]) {
       expect(keys).toContain(k);
     }
@@ -150,6 +151,9 @@ describe("a judge on every staff-only route", () => {
       "POST /api/voice-notes/[id]/prepare",
       "POST /api/voice-notes/[id]/hand-off",
       "POST /api/voice-notes/[id]/reply",
+      "POST /api/pay-rules/policy",
+      "POST /api/pay-rules/policy/sample",
+      "POST /api/pay-rules/policy/[turnId]",
     ]) {
       expect(keys).toContain(k);
     }

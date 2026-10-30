@@ -174,6 +174,32 @@ export type ApprovalRows = {
   judgeApprovals: JudgeApprovalRow[];
 };
 
+// Every payment-channel ledger row's judgment, tallied into v; returns how many rows were read.
+function judgePaymentRows(rows: PaymentRow[], v: Record<string, number>): number {
+  const m = onlyRow(rows, "payment_rows_unread");
+  const paymentRows = countOf(m.payment_rows);
+  refuseUnread(m.unread, "not_boolean");
+  tally(v, "approver_missing", countOf(m.approver_missing));
+  tally(v, "agent_payout_without_proposal", countOf(m.agent_without_proposal));
+  tally(v, "proposer_unknown", countOf(m.proposer_unknown));
+  tally(v, "proposal_missing", countOf(m.proposal_missing));
+  tally(v, "proposal_not_approved", countOf(m.not_approved));
+  tally(v, "proposal_undecided", countOf(m.undecided));
+  tally(v, "sent_before_decision", countOf(m.sent_before_decision));
+  tally(v, "proposal_mismatch", countOf(m.mismatch));
+  return paymentRows;
+}
+
+// Every proposal that names a ledger row, judged into v; returns how many were read.
+function judgeProposalLinks(rows: ProposalLinkRow[], v: Record<string, number>): number {
+  const p = onlyRow(rows, "proposal_links_unread");
+  const linkedProposals = countOf(p.linked_proposals);
+  refuseUnread(p.unread, "not_boolean");
+  tally(v, "proposal_linked_early", countOf(p.linked_early));
+  tally(v, "proposal_action_missing", countOf(p.action_missing));
+  return linkedProposals;
+}
+
 export function judgeApprovals(rows: ApprovalRows): InvariantResult {
   const v: Record<string, number> = {};
 
@@ -192,23 +218,8 @@ export function judgeApprovals(rows: ApprovalRows): InvariantResult {
   tally(v, "settlement_payout_unmarked", countOf(s.payout_unmarked));
   tally(v, "settlement_paid_without_payout", countOf(s.paid_without_payout));
 
-  const m = onlyRow(rows.paymentRows, "payment_rows_unread");
-  const paymentRows = countOf(m.payment_rows);
-  refuseUnread(m.unread, "not_boolean");
-  tally(v, "approver_missing", countOf(m.approver_missing));
-  tally(v, "agent_payout_without_proposal", countOf(m.agent_without_proposal));
-  tally(v, "proposer_unknown", countOf(m.proposer_unknown));
-  tally(v, "proposal_missing", countOf(m.proposal_missing));
-  tally(v, "proposal_not_approved", countOf(m.not_approved));
-  tally(v, "proposal_undecided", countOf(m.undecided));
-  tally(v, "sent_before_decision", countOf(m.sent_before_decision));
-  tally(v, "proposal_mismatch", countOf(m.mismatch));
-
-  const p = onlyRow(rows.proposalLinks, "proposal_links_unread");
-  const linkedProposals = countOf(p.linked_proposals);
-  refuseUnread(p.unread, "not_boolean");
-  tally(v, "proposal_linked_early", countOf(p.linked_early));
-  tally(v, "proposal_action_missing", countOf(p.action_missing));
+  const paymentRows = judgePaymentRows(rows.paymentRows, v);
+  const linkedProposals = judgeProposalLinks(rows.proposalLinks, v);
 
   const j = onlyRow(rows.judgeApprovals, "judge_approvals_unread");
   countOf(j.approvals);
@@ -235,6 +246,19 @@ export async function readApprovals(q: ReadQuery): Promise<ApprovalRows> {
     proposalLinks: await q.query<ProposalLinkRow>(PROPOSAL_LINKS_SQL),
     judgeApprovals: await q.query<JudgeApprovalRow>(JUDGE_APPROVALS_SQL),
   };
+}
+
+// One carrier's approval breaks, for the desk panel: the payment rows and the proposal links,
+// read under the carrier's own session (RLS) and judged exactly as I3 judges them, and the sum of
+// I3's tallies over them. It counts breaks, not payments or ledger rows: one row can break more
+// than one rule (each counts), and a row is reserved before its call, so a break need not mean
+// money went out. Any read that does not come back whole throws (InvariantReadError or the
+// database's error), so the caller shows "not read", never 0.
+export async function countApprovalBreaks(q: ReadQuery): Promise<number> {
+  const v: Record<string, number> = {};
+  judgePaymentRows(await q.query<PaymentRow>(PAYMENT_ROWS_SQL), v);
+  judgeProposalLinks(await q.query<ProposalLinkRow>(PROPOSAL_LINKS_SQL), v);
+  return Object.values(v).reduce((sum, n) => sum + n, 0);
 }
 
 export async function checkApprovals(admin: Db): Promise<InvariantResult> {

@@ -93,6 +93,11 @@ export type Flags = {
   // On: a proposal needs the auditor's verdict before a person can approve it. While this is on
   // and auditorEnabled is off, nothing can be approved: the release flips both together.
   auditorRequired: boolean;
+  // On: a waiting proposal whose numbers the rules engine's own recompute did not match to the cent
+  // (0045's engine_check) needs a person's written reason to approve, like a block, and the card
+  // says it is held. A narrowing only: off, the mismatch is still shown and still keeps the
+  // proposal out of Approve all clean.
+  verifyEngineMismatchBlocks: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
   // Document upload and the one Muse Spark read of each file. Off means the routes answer 404,
@@ -265,6 +270,24 @@ export type Flags = {
   // page. Off means neither tool is offered or runs, an approval is refused before anything is
   // written, and the page shows the switched-off state.
   rulesByTalkingEnabled: boolean;
+  // Pay rules from a policy document: a staff member uploads the carrier's driver pay policy (or
+  // a sample), Muse Spark reads it into numbered sections and finds each pay rule with the
+  // sentence it comes from, code checks every number against that sentence, and one card proposes
+  // a new dated version for a person to approve. Off means the routes refuse before anything is
+  // stored or read and an approval is refused before anything is written.
+  policyOnboardEnabled: boolean;
+  // Per run: the file's bytes and PDF pages, each call's cost bound in cents (the wrapper's own
+  // spend cap still applies), runs per carrier in any rolling 24 hours, and each call's timeout,
+  // short enough that one stage fits in one request.
+  policyLimits: {
+    maxBytes: number;
+    maxPdfPages: number;
+    readMaxCostCents: number;
+    proposeMaxCostCents: number;
+    perTenantPerDay: number;
+    readTimeoutMs: number;
+    proposeTimeoutMs: number;
+  };
   // The pay sweep: checks one open week for every driver, drafts a pay correction for each
   // finding it can fix and lists the rest for a person. It only proposes; a person approves.
   // Off means the Sweep page shows its reason text and the routes refuse before any work.
@@ -569,6 +592,35 @@ export type Flags = {
       sliceMs: number;
     };
   };
+  // The desk loop: one loop per carrier, woken every 15 minutes by the kicker (or "Wake now"),
+  // that finds new work in our own tables and hands each piece to the agent that already does it,
+  // writing every step to an insert-only log it resumes from. Off: the internal route refuses
+  // before reading the key and the wake button refuses. On and not armed: it wakes, finds work and
+  // writes "would hand on" lines, and runs nothing. Armed: each handler runs, under its own switch
+  // and caps. It never moves money and makes no model call of its own.
+  deskLoop: {
+    enabled: boolean;
+    armed: boolean;
+    // Rows created before this day (the carrier's local midnight) are never seen, so history is not
+    // worked again.
+    startDate: string;
+    limits: {
+      // How long one wake works before it answers "more" and the kicker asks again.
+      sliceMs: number;
+      // How long one wake holds the carrier's loop; longer than the route's own 30 s limit.
+      leaseMs: number;
+      // Pieces of work one wake looks at.
+      eventsPerWake: number;
+      // Pieces of work one carrier's loop looks at in 24 hours.
+      eventsPerDay: number;
+      // Tries at one piece of work before it is given up as abandoned.
+      maxAttempts: number;
+      // Model spend by this carrier since the wake started, in cents; past it the wake stops.
+      wakeCents: number;
+      // Model spend by this carrier in the last 24 hours, in cents; past it the wake stops.
+      dayCents: number;
+    };
+  };
   // Factoring (Test mode): invoices sold to a simulated factoring partner for cash now, the rest
   // held back until the customer pays. enabled: the Factoring page, its menu item, the agent's
   // three tools and approving a "Factor these invoices" card through the partner; off, the page
@@ -613,6 +665,12 @@ export type Flags = {
     // Web searches one lookup may run (each is billed on top of the tokens).
     maxSearchCalls: 1 | 2 | 3;
   };
+  // Verification made explicit (design-agents-102): the sweep checks the checklist it starts with
+  // against the steps every run must list (a run whose list differs fails checklist_invalid before
+  // any item is written) and records how much of the week its checks covered, with the second
+  // opinion's drivers when it ran. Off means today's start and today's updates exactly: nothing
+  // reads or writes sweep_runs.coverage. It moves no money, sends nothing and makes no model call.
+  verification: { enabled: boolean };
 };
 
 export const flags: Flags = {
@@ -649,6 +707,7 @@ export const flags: Flags = {
   auditorEnabled: true,
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
+  verifyEngineMismatchBlocks: true,
   approverRole: { adminAboveCents: 200_000 },
   documentsEnabled: true,
   documentCrop: false,
@@ -690,6 +749,16 @@ export const flags: Flags = {
   detentionEnabled: true,
   demoResetEnabled: true,
   rulesByTalkingEnabled: true,
+  policyOnboardEnabled: false,
+  policyLimits: {
+    maxBytes: 700_000,
+    maxPdfPages: 3,
+    readMaxCostCents: 10,
+    proposeMaxCostCents: 6,
+    perTenantPerDay: 5,
+    readTimeoutMs: 25_000,
+    proposeTimeoutMs: 20_000,
+  },
   sweepEnabled: true,
   sweepScheduleEnabled: false,
   payCorrectionsEnabled: true,
@@ -785,11 +854,26 @@ export const flags: Flags = {
       sliceMs: 20_000,
     },
   },
+  deskLoop: {
+    enabled: false,
+    armed: false,
+    startDate: "2026-10-31",
+    limits: {
+      sliceMs: 20_000,
+      leaseMs: 55_000,
+      eventsPerWake: 20,
+      eventsPerDay: 300,
+      maxAttempts: 3,
+      wakeCents: 60,
+      dayCents: 400,
+    },
+  },
   factoring: { enabled: false, armed: false, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
   evalCardEnabled: false,
   evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
   groundedRatesEnabled: false,
   ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
+  verification: { enabled: false },
 };
 
 applyLocalOverrides(flags);

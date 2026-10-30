@@ -11,6 +11,11 @@ export const DOCUMENT_KINDS = [
 ] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
+// The kinds a stored row may hold: the six a receipt read answers, plus a carrier's pay policy,
+// which only the policy upload stores (src/lib/policy-onboard) and the receipt read never answers.
+export const STORED_DOCUMENT_KINDS = [...DOCUMENT_KINDS, "pay_policy"] as const;
+export type StoredDocumentKind = (typeof STORED_DOCUMENT_KINDS)[number];
+
 export const DOCUMENT_MIMES = ["image/jpeg", "image/png", "image/webp", "application/pdf"] as const;
 export type DocumentMime = (typeof DOCUMENT_MIMES)[number];
 
@@ -176,7 +181,7 @@ export type DocumentView = {
   byteLength: number;
   pageCount: number;
   readStatus: ReadStatus;
-  kind: DocumentKind | null;
+  kind: StoredDocumentKind | null;
   read: DocumentRead | null;
   match: MatchResult | null;
   inputId: string | null;

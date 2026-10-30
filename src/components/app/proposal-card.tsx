@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { OVERRIDE_REASON, overrideReasonOf } from "@/lib/agent/auditor/words";
+import { VERIFY_PILL, type VerificationState } from "@/lib/agent/verify";
 import { STAFF_ONLY_BODY, STAFF_ONLY_NOTE, STAFF_ONLY_TITLE } from "./staff-only";
 import { cn } from "@/lib/cn";
 import { recordNamer } from "@/lib/format/labels";
@@ -36,6 +37,16 @@ export type ProposalStatus =
 export type ProposalAudit = {
   state: "checking" | "pass" | "concerns" | "block" | "unknown" | "off" | "budget";
   text?: string;
+  override?: { reason: string; byLabel: string; at: string };
+};
+
+// Both checks as one label (src/lib/agent/verify.ts), shown above the second check's line: the
+// pill, its fixed line, held when approving needs a person's reason (the numbers did not match),
+// and that reason once given, with who (a role label) and when.
+export type ProposalVerification = {
+  state: VerificationState;
+  line: string;
+  held: boolean;
   override?: { reason: string; byLabel: string; at: string };
 };
 
@@ -66,7 +77,9 @@ export type ProposalCardProps = {
   // A warning shown above the buttons, e.g. why this proposal needs a second look.
   flagNote?: string;
   audit?: ProposalAudit;
-  // overrideReason is set only when the person approves over a block, with their trimmed reason.
+  verification?: ProposalVerification;
+  // overrideReason is set only when the person approves over a block or a held mismatch, with
+  // their trimmed reason.
   // Resume calls it too, with no reason.
   onApprove?: (id: string, overrideReason?: string) => void;
   // An approved proposal whose run stopped before it finished: the card offers Resume, which asks
@@ -150,6 +163,34 @@ const AUDIT_BADGE: Record<Exclude<ProposalAudit["state"], "checking">, { tone: B
 const BUDGET_TEXT = "The second check could not run on this request. Your data is unchanged.";
 
 const CONFIRM_ROW = "grid gap-3 border-t border-border bg-secondary px-4 py-3 sm:px-5";
+
+const VERIFY_TONE: Record<VerificationState, BadgeTone> = {
+  verified: "success",
+  unverified: "warning",
+  mismatch: "destructive",
+};
+
+// The pill and its line, one element each, so no part of it reads as a second-check line.
+function VerifyLine({ verification }: { verification: ProposalVerification }) {
+  const { state, line, override } = verification;
+  return (
+    <div className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={VERIFY_TONE[state]}>
+          <Term id={state === "verified" ? "verified" : "unverified"}>{VERIFY_PILL[state]}</Term>
+        </Badge>
+        <span className={cn("text-small", state === "mismatch" ? "font-semibold text-destructive" : "text-foreground-2")}>
+          {line}
+        </span>
+      </div>
+      {override ? (
+        <p className="text-small text-foreground-2">
+          Overridden by {override.byLabel} on {override.at}: {override.reason}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 function AuditLine({
   audit,
@@ -236,8 +277,9 @@ function StaffOnlyActions({ lead, actions }: { lead?: string; actions: { label: 
 
 // What the agent wants to do, what it costs, and why, with each reason one click from its record.
 // Nothing happens on one tap: Approve asks once more and only Confirm fires; Reject asks once and
-// only its second Reject fires. A card the second check blocked has no plain Approve: the person
-// writes why, then confirms "Approve anyway".
+// only its second Reject fires. A card the second check blocked, or one held because its numbers
+// did not match the pay rules, has no plain Approve: the person writes why, then confirms "Approve
+// anyway".
 export function ProposalCard({
   id,
   title,
@@ -253,6 +295,7 @@ export function ProposalCard({
   references,
   flagNote,
   audit,
+  verification,
   onApprove,
   onReject,
   canResume = false,
@@ -272,7 +315,8 @@ export function ProposalCard({
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const [overriding, setOverriding] = useState(false);
-  const blocked = audit?.state === "block" && !audit.override;
+  const auditBlocked = audit?.state === "block" && !audit.override;
+  const blocked = auditBlocked || verification?.held === true;
   const validReason = overrideReasonOf(reason);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const approveRef = useRef<HTMLButtonElement>(null);
@@ -394,6 +438,8 @@ export function ProposalCard({
         ) : null}
       </div>
 
+      {verification ? <VerifyLine verification={verification} /> : null}
+
       {audit ? <AuditLine audit={audit} words={auditWords} /> : null}
 
       {flagNote ? (
@@ -449,7 +495,9 @@ export function ProposalCard({
             <div className="grid gap-1">
               <p className="text-body font-semibold text-foreground">
                 {overriding
-                  ? "Approve even though the second check did not pass?"
+                  ? auditBlocked
+                    ? "Approve even though the second check did not pass?"
+                    : "Approve even though the numbers did not match your pay rules?"
                   : (confirmQuestion ?? wording?.question ?? `Approve this ${confirmNoun}?`)}
               </p>
               <p className="text-body text-foreground">

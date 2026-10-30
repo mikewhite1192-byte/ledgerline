@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
-import { runAudit } from "@/lib/agent/auditor/run";
+import { runAudit, runEngineCheck } from "@/lib/agent/auditor/run";
 import { getSession } from "@/lib/auth/session";
 import { isCrossSite } from "@/lib/http/same-site";
 import { isUuid } from "@/lib/uuid";
 
 // POST: the card asks the auditor to check a proposal (design 4.2). One Muse Wonder call per
 // proposal at most; a stored verdict is read back. Categories only in the reply; the raw error
-// goes to the server log as its name only.
+// goes to the server log as its name only. When the auditor did not run on it (switched off, made
+// before it started, or checked before the engine check existed), the engine check runs alone, in
+// code, with no model call (design 3.6); it never changes the reply.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -30,6 +32,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!isUuid(id)) return reply({ error: "bad_request" }, 400);
   try {
     const result = await runAudit(session, id);
+    // Not while another caller holds the lease (it stores the check itself), and not for a card
+    // that is not here. Stored once; a card that has one is left as it is.
+    if (result.state !== "in_progress" && result.state !== "not_found") await runEngineCheck(session, id);
     if (result.state === "done") return reply(result, 200);
     const status = STATUS[result.state] ?? 409;
     return status >= 400 ? reply({ error: result.state }, status) : reply(result, status);

@@ -71,6 +71,29 @@ describe("toMessages", () => {
     expect(a.parts[1]).toEqual({ kind: "error", category: "budget" });
   });
 
+  it("puts the answer's header above the answer once it finished, and none while it runs or failed", () => {
+    const verifiedTurn: TurnView = {
+      ...turn,
+      flags: [],
+      withheldFigures: 0,
+      proposals: [
+        { ...turn.proposals[0], flagged: false, flagCategories: [], engineCheck: "matched", engineHeld: false, auditorVerdict: "pass" },
+      ],
+    };
+    const page = { on: true, checking: {} };
+    const [, a] = toMessages([verifiedTurn], {}, {}, undefined, page);
+    expect(a.parts.map((p) => p.kind)).toEqual(["steps", "verify", "text", "trace", "proposal", "trace"]);
+    expect(a.parts[1]).toEqual({ kind: "verify", state: "verified", pill: "Verified answer", reason: null, help: "verified" });
+    const [, withheld] = toMessages([{ ...verifiedTurn, withheldFigures: 1 }], {}, {}, undefined, page);
+    expect(withheld.parts[1]).toMatchObject({ kind: "verify", state: "unverified", reason: "Some figures did not come from a record and were left out." });
+    for (const status of ["running", "failed"] as const) {
+      const [, other] = toMessages([{ ...verifiedTurn, status }], {}, {}, undefined, page);
+      expect(other.parts.map((p) => p.kind), status).not.toContain("verify");
+    }
+    const [, errored] = toMessages([{ ...verifiedTurn, error: "unknown" }], {}, {}, undefined, page);
+    expect(errored.parts.map((p) => p.kind)).not.toContain("verify");
+  });
+
   it("names the visit's own budget for a demo visitor, and leaves every other error alone", () => {
     const spent = { ...turn, status: "failed" as const, error: "budget" as const, proposals: [], flags: [] };
     const [, a] = toMessages([spent], {}, {}, undefined, undefined, undefined, true);
@@ -567,6 +590,43 @@ describe("AgentChat with the auditor", () => {
     render(<AgentChat initialTurns={[unflagged]} streamMode="poll" />);
     expect(screen.getByText("Second check is off")).toBeTruthy();
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("sends a waiting card with no engine check once while the auditor is off, with no checking line", async () => {
+    const unchecked: TurnView = { ...unflagged, proposals: [{ ...unflagged.proposals[0], engineCheck: null, engineHeld: false }] };
+    const fetchFn = stubFetch({ ...unchecked, proposals: [{ ...unchecked.proposals[0], engineCheck: "matched" }] });
+    render(<AgentChat initialTurns={[unchecked]} streamMode="poll" />);
+    expect(screen.queryByText("Running the second check...")).toBeNull();
+    await waitFor(() => expect(screen.getByText("Pay rules matched. Second check is off")).toBeTruthy());
+    const audits = fetchFn.mock.calls.filter(([url]) => url.endsWith("/audit"));
+    expect(audits).toEqual([["/api/proposals/p-1/audit", expect.objectContaining({ method: "POST" })]]);
+  });
+
+  it("sends a card with a stored verdict but no engine check once, then shows it Verified", async () => {
+    const passed = checked("pass");
+    const unchecked: TurnView = { ...passed, proposals: [{ ...passed.proposals[0], engineCheck: null, engineHeld: false }] };
+    const fetchFn = stubFetch({ ...unchecked, proposals: [{ ...unchecked.proposals[0], engineCheck: "matched" }] });
+    render(<AgentChat initialTurns={[unchecked]} streamMode="poll" auditorOn />);
+    expect(screen.queryByText("Running the second check...")).toBeNull();
+    await waitFor(() => expect(screen.getByText("Your pay rules recomputed it and a second check agreed.")).toBeTruthy());
+    expect(screen.getByText("Verified")).toBeTruthy();
+    expect(fetchFn.mock.calls.filter(([url]) => url.endsWith("/audit"))).toHaveLength(1);
+  });
+
+  it("asks for a reason before approving over a mismatch, and sends it", async () => {
+    const passed = checked("pass");
+    const held: TurnView = { ...passed, proposals: [{ ...passed.proposals[0], engineCheck: "mismatch", engineHeld: true }] };
+    const fetchFn = stubFetch(held);
+    render(<AgentChat initialTurns={[held]} streamMode="poll" auditorOn />);
+    expect(screen.getByText("Numbers did not match your pay rules; held for a person.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/Why approve it anyway/), { target: { value: "The rate sheet changed this week" } });
+    fireEvent.click(screen.getByRole("button", { name: "Approve anyway" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(fetchFn.mock.calls.some(([url]) => url.endsWith("/approve"))).toBe(true));
+    const [, init] = fetchFn.mock.calls.find(([url]) => url.endsWith("/approve"))!;
+    // A pass needs no second confirm at the gate; the reason is what a held mismatch needs.
+    expect(JSON.parse(String(init?.body))).toMatchObject({ confirmed: false, overrideReason: "The rate sheet changed this week" });
+    expect(fetchFn.mock.calls.some(([url]) => url.endsWith("/audit"))).toBe(false);
   });
 
   it("sends a block's override with its reason and the verdict instant the card showed", async () => {

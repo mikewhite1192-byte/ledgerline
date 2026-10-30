@@ -8,7 +8,8 @@ import { isUuid } from "@/lib/uuid";
 
 // POST: a person approves a proposal from its card. The gate and the per-kind executor live in
 // src/lib/proposals/execute.ts, outside the agent tree. The body is { confirmed?, overrideReason?,
-// auditedAt? } (./approve-body.ts); the reason is never logged. Categories only in the reply.
+// auditedAt?, edits? } (./approve-body.ts); the reason is never logged. Categories only in the
+// reply.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 

@@ -15,7 +15,8 @@ const app = new App();
 // deploy with fewer on purpose, set MONEY_SETTINGS=none: exactly the ones exported reach the branch
 // and the rest are removed from it. PaydayCopilotSweep reads SWEEP_APP_URL (the app's https origin)
 // and SWEEP_TENANT_IDS (comma-separated carrier ids) from the same shell; unset, its kicker calls
-// nothing, and its schedule ships disabled either way.
+// nothing, and its nightly schedule ships disabled either way. Its desk loop schedule is disabled
+// unless the shell exports DESK_SCHEDULE_STATE=ENABLED (anything but ENABLED or DISABLED refuses).
 addStacks(
   app,
   { account: process.env.CDK_DEFAULT_ACCOUNT, region: "us-east-2" },

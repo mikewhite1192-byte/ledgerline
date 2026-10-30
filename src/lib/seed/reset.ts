@@ -99,6 +99,13 @@ export const DEMO_RESET_KEPT = {
   qbo_connections: "the QuickBooks sandbox link",
   qbo_oauth_states: "short-lived sign-in states for the sandbox link",
   qbo_entity_ids: "the sandbox entity map, still valid because the seed's ids are the same at the same anchor",
+  desk_loops:
+    "the desk loop's own row per carrier (running since, lease, watermarks), kept so its running-since " +
+    "date survives a reset; it names only the carrier",
+  desk_log:
+    "the desk loop's insert-only log, kept so the events it handled survive a reset; its subject ids " +
+    "have no foreign key, so it names nothing the reset deletes, and a day's sweep whose run the " +
+    "reset deletes is found again as that day's next go (src/lib/desk/discover.ts)",
   demo_sessions:
     "each demo visitor's sign-in with its spend and turn counts (0043); it names only the carrier, " +
     "the app login cannot delete it, and a reset must not hand a visitor a fresh budget",

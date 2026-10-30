@@ -77,6 +77,8 @@ const KEPT_OFF = [
   "stepThrough.staff",
   // The demo visitor sign-in ships dark with its own merge; the owner turns it on in its own PR.
   "judgeAccess.enabled",
+  // Pay rules from a policy document ship dark with their own merge; the owner turns them on in their own PR.
+  "policyOnboardEnabled",
   // Factoring ships dark and unarmed with its own merge; the owner turns it on in its own PR.
   "factoring.enabled",
   "factoring.armed",
@@ -86,10 +88,16 @@ const KEPT_OFF = [
   "groundedRatesEnabled",
   // Pay cards ship dark with their own merge; the owner turns them on in their own PR.
   "payCardsEnabled",
+  // The sweep's checklist check and coverage figure ship dark with their own merge; the owner
+  // turns them on in their own PR.
+  "verification.enabled",
   // The models page's eval card waits on a recorded run; the owner turns it on in its own PR.
   "evalCardEnabled",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
+  // The desk loop ships dark and unarmed with its own merge; the owner turns it on in its own PR.
+  "deskLoop.enabled",
+  "deskLoop.armed",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -110,13 +118,22 @@ describe("flags", () => {
     const switches = Object.fromEntries(booleanSwitches(flags));
     for (const name of RELEASED_ON) expect(switches[name], name).toBe(true);
     for (const name of KEPT_OFF) expect(switches[name], name).toBe(false);
-    // auditorRequired ships on with the auditor: a proposal waits for its verdict. Advance payouts
-    // ship unarmed: arming is its own one-line PR. Step through ships on for development and test
-    // runs only, as it merged; the release does not set it.
+    // auditorRequired ships on with the auditor: a proposal waits for its verdict, and
+    // verifyEngineMismatchBlocks ships on with the pay rules check: a mismatch waits for a person.
+    // Advance payouts ship unarmed: arming is its own one-line PR. Step through ships on for
+    // development and test runs only, as it merged; the release does not set it.
     expect(Object.keys(switches).sort()).toEqual(
-      [...RELEASED_ON, ...KEPT_OFF, "auditorRequired", "advancePayouts.armed", "stepThrough.dev"].sort(),
+      [
+        ...RELEASED_ON,
+        ...KEPT_OFF,
+        "auditorRequired",
+        "verifyEngineMismatchBlocks",
+        "advancePayouts.armed",
+        "stepThrough.dev",
+      ].sort(),
     );
     expect(flags.auditorRequired).toBe(true);
+    expect(flags.verifyEngineMismatchBlocks).toBe(true);
     expect(flags.advancePayouts.armed).toBe(false);
     expect(flags.stepThrough.dev).toBe(true);
   });
@@ -138,10 +155,15 @@ describe("flags", () => {
     expect(flags.driverNotesEmailEnabled).toBe(false);
     expect(flags.collectionsEmailEnabled).toBe(false);
     expect(flags.sweepScheduleEnabled).toBe(false);
+    // Pay rules from a policy document: two Muse Spark calls a run and a new version on approval.
+    expect(flags.policyOnboardEnabled).toBe(false);
     // Spark Open's standby host stays dark: Baseten serves screening and sorting alone.
     expect(flags.sparkOpenFallback).toBe("off");
     // Driver messages and voice notes are sorted by Muse Spark Open, the open-weights model.
     expect(flags.triageProvider).toBe("baseten");
+    // The desk loop hands work to the agents on its own: dark and unarmed until the owner's go.
+    expect(flags.deskLoop.enabled).toBe(false);
+    expect(flags.deskLoop.armed).toBe(false);
     // The demo visitor sign-in: dark until the owner's one-line release PR.
     expect(flags.judgeAccess.enabled).toBe(false);
     // Factoring submits to the simulated partner only, dark and unarmed until the owner's go.
@@ -248,13 +270,19 @@ describe("flags", () => {
     expect(isLocalDate(flags.collectionsEmailFrom)).toBe(false);
   });
 
+  it("ships the sweep's checklist check and coverage figure off, with nothing else in the switch", () => {
+    expect(flags.verification).toEqual({ enabled: false });
+  });
+
   it("pins every switch that ships on for the demo-path run, on or off as its replay was recorded", () => {
     const local = [...LOCAL_OVERRIDABLE, ...LOCAL_OFF_ONLY] as readonly string[];
     // The two lists never share a switch.
     expect(LOCAL_OVERRIDABLE.filter((k) => (LOCAL_OFF_ONLY as readonly string[]).includes(k))).toEqual([]);
-    // stepThrough.dev reads NODE_ENV, not local mode, and local mode may never set it.
+    // stepThrough.dev reads NODE_ENV, not local mode, and local mode may never set it. The two
+    // guards that hold a proposal for a person stay on in every run, so local mode never sets them.
+    const guards = ["auditorRequired", "verifyEngineMismatchBlocks", "stepThrough.dev"];
     for (const [name, on] of booleanSwitches(flags)) {
-      if (on && name !== "auditorRequired" && name !== "stepThrough.dev") expect(local, name).toContain(name);
+      if (on && !guards.includes(name)) expect(local, name).toContain(name);
     }
     // Nothing that stays off can be switched by local mode at all.
     for (const name of KEPT_OFF) expect(local).not.toContain(name);
@@ -318,6 +346,31 @@ describe("flags", () => {
     expect(flags.cardRecon.limits.sliceMs).toBeLessThan(25_000);
   });
 
+  it("starts the desk loop on a fixed date and keeps its wakes short and its spend small", () => {
+    expect(flags.deskLoop).toEqual({
+      enabled: false,
+      armed: false,
+      startDate: "2026-10-31",
+      limits: {
+        sliceMs: 20_000,
+        leaseMs: 55_000,
+        eventsPerWake: 20,
+        eventsPerDay: 300,
+        maxAttempts: 3,
+        wakeCents: 60,
+        dayCents: 400,
+      },
+    });
+    expect(isLocalDate(flags.deskLoop.startDate)).toBe(true);
+    for (const v of Object.values(flags.deskLoop.limits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // One wake ends inside the route's 30 s, and its lease outlives the route.
+    expect(flags.deskLoop.limits.sliceMs).toBeLessThan(25_000);
+    expect(flags.deskLoop.limits.leaseMs).toBeGreaterThan(30_000);
+    expect(flags.deskLoop.limits.wakeCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
+  });
+
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
     expect(flags.clipLimits).toEqual({
       bytes: 700_000,
@@ -362,6 +415,8 @@ describe("flags", () => {
     // The auditor and its requirement go on together, so a proposal can be approved at all.
     expect(flags.auditorEnabled).toBe(true);
     expect(flags.auditorRequired).toBe(true);
+    // A mismatch with the rules engine's recompute is held for a person's reason.
+    expect(flags.verifyEngineMismatchBlocks).toBe(true);
     expect(Number.isNaN(Date.parse(flags.auditorStart))).toBe(false);
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
   });
@@ -376,6 +431,27 @@ describe("flags", () => {
     for (const v of Object.values(flags.documentLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
+  });
+
+  it("keeps a policy run small: one file of three pages, two calls under 16 cents, five runs a day", () => {
+    expect(flags.policyLimits).toEqual({
+      maxBytes: 700_000,
+      maxPdfPages: 3,
+      readMaxCostCents: 10,
+      proposeMaxCostCents: 6,
+      perTenantPerDay: 5,
+      readTimeoutMs: 25_000,
+      proposeTimeoutMs: 20_000,
+    });
+    for (const v of Object.values(flags.policyLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // One stage runs in one request, under the hosting request limit of about 30 seconds.
+    expect(flags.policyLimits.readTimeoutMs).toBeLessThan(28_000);
+    expect(flags.policyLimits.proposeTimeoutMs).toBeLessThan(28_000);
+    // The table's own limits (0013): 700,000 bytes and 3 pages.
+    expect(flags.policyLimits.maxBytes).toBeLessThanOrEqual(700_000);
+    expect(flags.policyLimits.maxPdfPages).toBeLessThanOrEqual(3);
   });
 
   it("keeps the marked copy small: two cents an edit, four a check, ten a day, the upload size cap", () => {
@@ -804,6 +880,10 @@ describe("local overrides for the demo-path test", () => {
       // Off-only, and not on the demo path: its tools stay out of the replay's tool list.
       { cardRecon: { enabled: true } },
       { "cardRecon.enabled": true },
+      // The desk loop is the owner's release, like the sweep.
+      { deskLoop: { enabled: true, armed: true } },
+      { "deskLoop.enabled": true },
+      { "deskLoop.armed": true },
     ]) {
       const target = copy();
       const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify(bad) };

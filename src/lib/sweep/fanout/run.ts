@@ -5,6 +5,7 @@ import { NANOCENTS_PER_CENT } from "../../ai/prices";
 import type { OpenedTurn, OpenTurnRefusal, TurnStore } from "../../agent/gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../../agent/gateway/types";
 import { reasonSentence } from "../../agent/reasons";
+import { fanoutCoverage } from "../../agent/verify/required";
 import type { Session } from "../../auth/claims";
 import { DbError, type Queryable } from "../../db";
 import { nextSweepChecklist } from "../checklist";
@@ -786,6 +787,16 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
           WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()`,
         [fx.runId, JSON.stringify(counts)],
       );
+      // With verification on, the run's coverage gains the second opinion's part, from these
+      // counts, in the same transaction that stores them (design-agents-102 3.3). A run whose find
+      // phase wrote no coverage keeps none.
+      if (flags.verification.enabled) {
+        await q.execute(
+          `UPDATE sweep_runs SET coverage = coverage || jsonb_build_object('fanout', CAST($2 AS jsonb))
+            WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND coverage IS NOT NULL`,
+          [fx.runId, JSON.stringify(fanoutCoverage(counts))],
+        );
+      }
     }
     const attempts = Number(f.reconcile_attempts);
     // Nothing for the comparison to say, two tries spent, or the switch went off: the counts stand
