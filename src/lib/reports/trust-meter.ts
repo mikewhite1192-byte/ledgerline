@@ -19,7 +19,7 @@ export const TRUST_MIN_RATE_SAMPLE = 20;
 export const TRUST_MIN_PASSED = 200;
 export const TRUST_MAX_MISSED_BPS = 200;
 // The Wilson score bound's z. 1.96 is the upper end of the two-sided 95% interval, which is the
-// stricter one-sided 97.5% bound, so "at most X% at 95% confidence" never overstates the record.
+// one-sided 97.5% upper bound, so the note says 97.5% confidence.
 export const TRUST_Z = 1.96;
 // The week start when no pay rules are on file: Monday.
 export const TRUST_FALLBACK_WEEK_START = 1;
@@ -180,7 +180,7 @@ const DEFINITION_NOTE =
 
 // What the verdict lines mean, said once.
 const VERDICT_NOTE =
-  "The percent after an action type is the most its missed rate could be at 95% confidence. Cards " +
+  "The percent after an action type is the most its missed rate could be at 97.5% confidence. Cards " +
   "declined for other reasons and cards approved over a flag are not counted as errors.";
 
 const MONDAY_NOTE = "No pay rules are on file, so the weeks run Monday to Sunday.";

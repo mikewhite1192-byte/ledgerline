@@ -353,7 +353,7 @@ describe("trust_meter: the notes", () => {
   it("explains the percent and what is not counted as an error, once", () => {
     const r = run(many(3));
     expect(r.notes?.[2]).toBe(
-      "The percent after an action type is the most its missed rate could be at 95% confidence. Cards declined for " +
+      "The percent after an action type is the most its missed rate could be at 97.5% confidence. Cards declined for " +
         "other reasons and cards approved over a flag are not counted as errors.",
     );
   });
