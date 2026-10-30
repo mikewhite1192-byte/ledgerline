@@ -266,7 +266,7 @@ describe("home's order and cards", () => {
       expect(within(card).getByRole("link", { name: "Open the Cash page" }).getAttribute("href")).toBe("/cash");
       expect(region("Today")).toBeTruthy();
       // Only the error's name reaches the log.
-      expect(log.mock.calls).toContainEqual(["cash home read failed:", "DbError"]);
+      expect(log.mock.calls).toContainEqual(["home card read failed:", "cash home", "DbError"]);
       cleanup();
       flags.cashFridayEnabled = false;
       render(await Home({ searchParams: Promise.resolve({}) }));
@@ -275,6 +275,12 @@ describe("home's order and cards", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  it("lets a non-database failure of Friday's pay run read go on to the framework, never as an unavailable card", async () => {
+    flags.cashFridayEnabled = true;
+    mocks.readCashHome.mockRejectedValue(new TypeError("boom"));
+    await expect(Home({ searchParams: Promise.resolve({}) })).rejects.toThrow("boom");
   });
 
   it("lets any other failure go on to the framework, never as an empty card", async () => {

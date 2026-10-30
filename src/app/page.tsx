@@ -199,29 +199,19 @@ export default async function Home({
     needsYou = { rows: cards ? [cards, ...rows] : rows, unread };
   }
 
-  // The last sweep, for the Today card while the sweep is on. A failed read says so on the card.
-  let lastSweep: Loaded<SweepRunView | null> | null = null;
-  if (carrier && flags.sweepEnabled) {
-    try {
-      lastSweep = { ok: true, value: (await readSweepHome(carrier.session)).runs[0] ?? null };
-    } catch (err) {
-      lastSweep = { ok: false };
-      console.error("sweep home read failed:", err instanceof Error ? err.name : "unknown");
-    }
-  }
+  // The last sweep, for the Today card while the sweep is on. A failed database or membership read
+  // says so on the card; any other error goes on to Next.
+  const lastSweep: Loaded<SweepRunView | null> | null =
+    carrier && flags.sweepEnabled
+      ? await loaded("sweep home", async () => (await readSweepHome(carrier.session)).runs[0] ?? null)
+      : null;
 
   // Friday's pay run, when Cash Friday is on: the latest check's verdict, that it is out of date
   // (its pay day has passed), or that there is none.
-  // A failed read says so on the card, never "not checked".
-  let cashHome: Loaded<CashHome | null> | null = null;
-  if (carrier && flags.cashFridayEnabled) {
-    try {
-      cashHome = { ok: true, value: await readCashHome(carrier.session) };
-    } catch (err) {
-      cashHome = { ok: false };
-      console.error("cash home read failed:", err instanceof Error ? err.name : "unknown");
-    }
-  }
+  // A failed database or membership read says so on the card, never "not checked"; any other error
+  // goes on to Next.
+  const cashHome: Loaded<CashHome | null> | null =
+    carrier && flags.cashFridayEnabled ? await loaded("cash home", () => readCashHome(carrier.session)) : null;
 
   // Home's cards, each in its own carrier transaction and only while its page is on, so one failed
   // read shows that card as unavailable and leaves the rest of the page alone.
