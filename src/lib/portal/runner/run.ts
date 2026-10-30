@@ -208,8 +208,26 @@ export async function runPortalRun(
     // A run a person approved resumes at a step that has not run, so it never takes this path.
     let carriedFrom: StoredStep | null = null;
     let checks: Awaited<ReturnType<RunStore["checks"]>> = [];
+    // Model calls a stop took with it whose stored step gives back their cost.
+    let recoveredCalls = 0;
     if (resuming) {
       stored = await store.steps(run.id);
+      // A stop between storing a step and the run's progress write leaves that step's call, cost
+      // and count off the run. Each progress write sets all three together, so the stored steps
+      // past the run's own step count, in order, are exactly the ones missing from all three: each
+      // is added once, and a later resume reads the counters this one writes and adds nothing. A
+      // cost that does not read back as a whole number of nanocents is unknown, and fails closed.
+      const missing = stored
+        .filter((s) => s.seq > 0)
+        .sort((a, b) => a.seq - b.seq)
+        .slice(run.stepCount);
+      if (missing.some((s) => !Number.isSafeInteger(s.costNanocents) || s.costNanocents < 0)) {
+        return await end("failed", "not_resumable");
+      }
+      for (const s of missing) state.cost += s.costNanocents;
+      state.calls += missing.length;
+      state.steps += missing.length;
+      recoveredCalls = missing.length;
       checks = await store.checks(run.id);
       for (const c of checks) {
         if (c.status !== "approved") continue;
@@ -223,10 +241,9 @@ export async function runPortalRun(
       }
     }
     if (carriedFrom) {
-      // The step count and the page follow the stored steps, which a stop between storing a step
-      // and the run's progress write leaves ahead of the run's own. The browser reopens on the
-      // page the last executed step left, the page of the last screenshot in the history.
-      state.steps = Math.max(state.steps, stored.filter((s) => s.seq > 0).length);
+      // The page follows the stored steps, which a stop between storing a step and the run's
+      // progress write leaves ahead of the run's own. The browser reopens on the page the last
+      // executed step left, the page of the last screenshot in the history.
       state.lastUrl = carriedFrom.urlAfter;
     } else if (resuming) {
       paused = stored.find((s) => s.seq === run.resumeStep && !s.executed && s.callItem !== null) ?? null;
@@ -401,9 +418,10 @@ export async function runPortalRun(
     // The step limit under the one ceiling over every run (flags.runLimits.maxTurns).
     const maxSteps = clampToMaxTurns(limits.maxSteps);
     // Each stop may have taken one model call with it whose cost never reached the run: the
-    // budget counts each such call at the per-call cap. Never stored, so the run's cost stays what
-    // was read back.
-    const lostCalls = run.resumeAttempts;
+    // budget counts each such call at the per-call cap. A stop whose call was recovered from its
+    // stored step above took no other call, so only the stops left are counted. Never stored, so
+    // the run's cost stays what was read back plus what was recovered.
+    const lostCalls = Math.max(0, run.resumeAttempts - recoveredCalls);
     const lostNanocents = lostCalls * limits.maxCallCents * 1_000_000_000;
     let retried = false;
     for (;;) {

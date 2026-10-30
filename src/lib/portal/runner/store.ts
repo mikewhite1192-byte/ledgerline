@@ -42,6 +42,8 @@ export type StoredStep = {
   executed: boolean;
   urlAfter: string | null;
   pendingCheckCount: number;
+  // What the step's model call cost, as stored with the step.
+  costNanocents: number;
 };
 
 export type StoredCheck = {
@@ -295,8 +297,9 @@ export function dbRunStore(tenantId: string, db: TenantDb = getDb()): RunStore {
           executed: boolean;
           url_after: string | null;
           pending_check_count: number;
+          cost_nanocents: number | string;
         }>(
-          "SELECT id, seq, call_item, upstream_call_id, executed, url_after, pending_check_count" +
+          "SELECT id, seq, call_item, upstream_call_id, executed, url_after, pending_check_count, cost_nanocents" +
             " FROM portal_run_steps WHERE tenant_id = current_tenant_id() AND run_id = CAST($1 AS uuid)" +
             " ORDER BY seq",
           [runId],
@@ -309,6 +312,7 @@ export function dbRunStore(tenantId: string, db: TenantDb = getDb()): RunStore {
           executed: r.executed,
           urlAfter: r.url_after,
           pendingCheckCount: Number(r.pending_check_count),
+          costNanocents: Number(r.cost_nanocents),
         }));
       }),
 

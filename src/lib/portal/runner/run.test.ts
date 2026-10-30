@@ -486,9 +486,9 @@ describe("runPortalRun, safety checks", () => {
       pending_safety_checks: [CHECK_A, { ...CHECK_B, extra: "kept as received" }],
     };
     const steps: StoredStep[] = [
-      { id: "step-0", seq: 0, callItem: null, upstreamCallId: null, executed: true, urlAfter: `${ORIGIN}/portal/loads`, pendingCheckCount: 0 },
-      { id: "step-1", seq: 1, callItem: step1, upstreamCallId: "call_s1", executed: true, urlAfter: DETAIL, pendingCheckCount: 0 },
-      { id: "step-2", seq: 2, callItem: step2, upstreamCallId: "call_s2", executed: false, urlAfter: null, pendingCheckCount: 2 },
+      { id: "step-0", seq: 0, callItem: null, upstreamCallId: null, executed: true, urlAfter: `${ORIGIN}/portal/loads`, pendingCheckCount: 0, costNanocents: 0 },
+      { id: "step-1", seq: 1, callItem: step1, upstreamCallId: "call_s1", executed: true, urlAfter: DETAIL, pendingCheckCount: 0, costNanocents: 2 * CENT },
+      { id: "step-2", seq: 2, callItem: step2, upstreamCallId: "call_s2", executed: false, urlAfter: null, pendingCheckCount: 2, costNanocents: 2 * CENT },
     ];
     const checks: StoredCheck[] = [CHECK_A, CHECK_B].map((c, i) => ({
       id: `row-${i}`,
@@ -582,6 +582,7 @@ describe("runPortalRun, safety checks", () => {
       executed: st.executed,
       urlAfter: st.urlAfter,
       pendingCheckCount: st.pendingCheckCount,
+      costNanocents: st.costNanocents,
     }));
     const checks: StoredCheck[] = pause.checks.map((c) => ({
       id: `row-${c.id}`,
@@ -701,9 +702,9 @@ describe("runPortalRun, carrying on after a stop", () => {
   function stoppedRun(extra: Partial<RunRow> = {}) {
     const raw = (n: number) => ({ type: "computer_call", call_id: `call_old_${n}`, actions: [click(n, n)], pending_safety_checks: [], status: "completed" });
     const steps: StoredStep[] = [
-      { id: "step-0", seq: 0, callItem: null, upstreamCallId: null, executed: true, urlAfter: `${ORIGIN}/portal/loads`, pendingCheckCount: 0 },
-      { id: "step-1", seq: 1, callItem: raw(1), upstreamCallId: "call_old_1", executed: true, urlAfter: DETAIL, pendingCheckCount: 0 },
-      { id: "step-2", seq: 2, callItem: raw(2), upstreamCallId: "call_old_2", executed: true, urlAfter: DETAIL, pendingCheckCount: 0 },
+      { id: "step-0", seq: 0, callItem: null, upstreamCallId: null, executed: true, urlAfter: `${ORIGIN}/portal/loads`, pendingCheckCount: 0, costNanocents: 0 },
+      { id: "step-1", seq: 1, callItem: raw(1), upstreamCallId: "call_old_1", executed: true, urlAfter: DETAIL, pendingCheckCount: 0, costNanocents: 2 * CENT },
+      { id: "step-2", seq: 2, callItem: raw(2), upstreamCallId: "call_old_2", executed: true, urlAfter: DETAIL, pendingCheckCount: 0, costNanocents: 2 * CENT },
     ];
     const run = runRow({
       sessionId: "sess-1",
@@ -744,11 +745,34 @@ describe("runPortalRun, carrying on after a stop", () => {
 
   it("reopens on the page its last executed step left when the stop came before the run's progress write", async () => {
     // The stop stored step 2 but not the progress after it: the run still holds the page before.
-    const s = fakeStore(stoppedRun({ lastUrl: `${ORIGIN}/portal/loads`, stepCount: 1 }));
+    const s = fakeStore(stoppedRun({ lastUrl: `${ORIGIN}/portal/loads`, stepCount: 1, modelCallCount: 1, costNanocents: 2 * CENT }));
     const d = fakeDriver();
     await runPortalRun(PAYLOAD, deps(s.store, d.driver, scripted([answerResult()]).step));
     expect(d.state.opened.map((o) => o.url)).toEqual([DETAIL]);
-    expect(s.finished[0].progress).toMatchObject({ lastUrl: DETAIL, stepCount: 3 });
+    // Step 2's call and cost come back from its stored row, once, next to the answer's.
+    expect(s.finished[0].progress).toEqual({ lastUrl: DETAIL, stepCount: 3, modelCallCount: 3, costNanocents: 6 * CENT });
+  });
+
+  it("gives back the stop's reserved call once that call is recovered from its stored step", async () => {
+    // Two stored calls at 2 cents each leave 3 cents, and the one stop took step 2's call.
+    flags.portalRunLimits = { ...LIMITS, maxRunCents: 4 + 3 };
+    const s = fakeStore(stoppedRun({ stepCount: 1, modelCallCount: 1, costNanocents: 2 * CENT }));
+    const m = scripted([answerResult()]);
+    await runPortalRun(PAYLOAD, deps(s.store, fakeDriver().driver, m.step));
+    expect(m.requests[0].maxCostCents).toBe(3);
+  });
+
+  it("is not resumable when a step missing from the run's counters has a cost that does not read back", async () => {
+    const stopped = stoppedRun({ stepCount: 1, modelCallCount: 1, costNanocents: 2 * CENT });
+    stopped.steps[2] = { ...stopped.steps[2], costNanocents: Number.NaN };
+    const s = fakeStore(stopped);
+    const d = fakeDriver();
+    const none = scripted([]);
+    const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, none.step));
+    expect(out).toEqual({ kind: "ended", status: "failed", reason: "not_resumable" });
+    expect(s.finished[0].progress).toMatchObject({ modelCallCount: 1, costNanocents: 2 * CENT, stepCount: 1 });
+    expect(d.state.opened).toEqual([]);
+    expect(none.step).not.toHaveBeenCalled();
   });
 
   it("is not resumable when its last executed step holds no page, and opens nothing", async () => {
@@ -809,6 +833,7 @@ describe("runPortalRun, carrying on after a stop", () => {
         executed: st.executed,
         urlAfter: st.urlAfter,
         pendingCheckCount: st.pendingCheckCount,
+        costNanocents: st.costNanocents,
       })),
       checks: pause.checks.map((c) => ({ id: `row-${c.id}`, stepId: pause.stepId, checkId: c.id, status: "approved", createdAt: new Date(T0 - 60_000).toISOString() })),
       screenshots: new Map(s0.inserted.filter((st) => st.screenshot).map((st) => [st.seq, st.screenshot!] as const)),

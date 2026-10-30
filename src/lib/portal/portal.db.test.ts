@@ -13,7 +13,7 @@ import { decideCheck } from "./decide";
 import { findPortalLoads, portalLoadByReference, portalPod } from "./read";
 import type { CapturedPod, PortalCredentials, PortalDriver } from "./runner/driver";
 import { runPortalRun, type RunDeps, type StepFn } from "./runner/run";
-import { dbRunStore, LostClaimError } from "./runner/store";
+import { dbRunStore, LostClaimError, type RunStore } from "./runner/store";
 import { cookieValue, mintSession, SIGN_IN_FAILURE_LIMIT, signIn } from "./session";
 import { iso } from "./sql";
 import { createRunIn } from "./start";
@@ -785,6 +785,87 @@ describe("the portal tables", () => {
     // The shared clock stays where it was: later tests sign in with a session this jump would end.
   });
 
+  it("counts the call and cost of a step stored just before a stop exactly once across two resumes", async () => {
+    const podA = (await asApp(A, (q) => portalPod(q, REF_TIMES)))!;
+    // A clock of this test's own, past every run an earlier test left on this load; the shared
+    // clock stays where it was, as above.
+    let local = clock + 2 * STALLED_AFTER_MS;
+    const now = () => new Date((local += 1_000));
+    const real = dbRunStore(A, app);
+    // A worker that stops at its nth progress write: before the write, or just after it.
+    const stopsAt = (n: number, when: "before" | "after") => {
+      let writes = 0;
+      const store: RunStore = {
+        ...real,
+        async progress(id, token, p) {
+          writes += 1;
+          if (writes === n && when === "before") throw new LostClaimError();
+          await real.progress(id, token, p);
+          if (writes === n) throw new LostClaimError();
+        },
+      };
+      return store;
+    };
+    const ask = () => asApp(A, (q) => createRunIn(q, memberA, { loadId: setup[A].timesLoad, refresh: true, turnId: null }, now()));
+    const asked = await ask();
+    expect(asked.kind).toBe("queued");
+    const runId = (asked as { runId: string }).runId;
+    const run = (store: RunStore, driver: PortalDriver, step: StepFn) =>
+      runPortalRun({ tenantId: A, runId }, { ...deps(driver, step), store, now });
+    const counters = () =>
+      asApp(A, (q) =>
+        q.query<{ cost: string; calls: number; steps: number; step_cost: string; step_calls: string; attempts: number }>(
+          "SELECT r.cost_nanocents AS cost, r.model_call_count AS calls, r.step_count AS steps, r.resume_attempts AS attempts," +
+            " (SELECT sum(s.cost_nanocents) FROM portal_run_steps s WHERE s.run_id = r.id) AS step_cost," +
+            " (SELECT count(*) FROM portal_run_steps s WHERE s.run_id = r.id AND s.seq > 0) AS step_calls" +
+            " FROM portal_runs r WHERE r.id = CAST($1 AS uuid)",
+          [runId],
+        ),
+      ).then((r) => ({
+        cost: Number(r[0].cost),
+        calls: Number(r[0].calls),
+        steps: Number(r[0].steps),
+        stepCost: Number(r[0].step_cost),
+        stepCalls: Number(r[0].step_calls),
+        attempts: Number(r[0].attempts),
+      }));
+    const CALL = 2_000_000_000;
+    const click = (n: number) => callResult(n, [{ type: "click", x: 100, y: 200, button: "left" }]);
+
+    // First worker: a search, then a click whose step is stored, then it stops before the progress write.
+    const d1 = fakeDriver(podA, async (typed) => (await asApp(A, (q) => signIn(q, { ...typed, now: now() }))) !== null);
+    const first = scripted([callResult(1, [{ type: "type", text: REF_TIMES }, { type: "keypress", keys: ["Enter"] }]), click(2)]);
+    expect(await run(stopsAt(2, "before"), d1.driver, first.step)).toEqual({ kind: "lost" });
+    // Step 2's call and cost never reached the run.
+    expect(await counters()).toEqual({ cost: CALL, calls: 1, steps: 1, stepCost: 2 * CALL, stepCalls: 2, attempts: 0 });
+
+    // Stalled: back in the queue. The second worker takes step 2's call back from its row, stores
+    // one more step and its progress, then stops just after that write.
+    local += STALLED_AFTER_MS + 60_000;
+    expect(await ask()).toEqual({ kind: "queued", runId });
+    expect(await run(stopsAt(1, "after"), fakeDriver(podA).driver, scripted([click(3)]).step)).toEqual({ kind: "lost" });
+    expect(await counters()).toEqual({ cost: 3 * CALL, calls: 3, steps: 3, stepCost: 3 * CALL, stepCalls: 3, attempts: 1 });
+
+    // Stalled again: the third worker finds nothing missing, adds nothing for step 2 again, and
+    // finishes with a POD and the answer.
+    local += STALLED_AFTER_MS + 60_000;
+    expect(await ask()).toEqual({ kind: "queued", runId });
+    const answer = {
+      found: true,
+      reference: REF_TIMES,
+      deliveryCheckedIn: "2026-10-20 09:05",
+      deliveryCheckedOut: "2026-10-20 11:10",
+      timeZoneLabel: "CT",
+      podDownloaded: true,
+      podSignedBy: "Dana Reyes",
+      notes: "",
+    };
+    const third = scripted([click(4), answerResult(JSON.stringify(answer))]);
+    expect(await run(real, fakeDriver(podA).driver, third.step)).toEqual({ kind: "ended", status: "done", reason: "ok" });
+    // Every stored call counted once: the run's cost and calls are the sums of its steps.
+    expect(await counters()).toEqual({ cost: 5 * CALL, calls: 5, steps: 5, stepCost: 5 * CALL, stepCalls: 5, attempts: 2 });
+  });
+
   it("refuses every sign-in after ten misses in a minute, for that tenant only", async () => {
     // Past any minute an earlier test's miss opened.
     clock += 120_000;
@@ -866,8 +947,8 @@ describe("the portal tables", () => {
 
   it("clears one tenant's portal rows in an order the keys allow, then seeds them again", async () => {
     const before = await asApp(B, (q) => q.query<{ n: number }>("SELECT CAST(count(*) AS integer) AS n FROM portal_loads"));
-    // Evidence 3, checks 3, steps 10, sessions 2, runs 4, loads 2, account 1.
-    expect(await clearTenantPortal(admin, A)).toBe(25);
+    // Evidence 4, checks 3, steps 16, sessions 3, runs 5, loads 2, account 1.
+    expect(await clearTenantPortal(admin, A)).toBe(34);
     for (const table of PORTAL_TABLES) {
       const left = await asApp(A, (q) => q.query<{ n: number }>(`SELECT CAST(count(*) AS integer) AS n FROM ${table}`));
       expect(left[0].n, table).toBe(0);
