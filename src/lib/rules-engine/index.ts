@@ -148,6 +148,7 @@ export {
 export {
   customerPaying,
   FIGURE_KINDS,
+  FIGURE_SECTIONS,
   marginBpsOf,
   profitFigures,
   profitTotals,
@@ -160,12 +161,24 @@ export type {
   CustomerPaying,
   CustomerRollup,
   FigureKind,
+  FigureSection,
   FigureSource,
   LaneRollup,
   ProfitFigureLimits,
   ProfitLine,
   ProfitTotals,
 } from "./profit";
+export { fixWords, QUARTER_CUSTOMERS, QUARTER_DRIVERS, quarterFigures, quarterOf } from "./quarter";
+export type {
+  Quarter,
+  QuarterCustomer,
+  QuarterDetentionCharge,
+  QuarterDriver,
+  QuarterFixes,
+  QuarterInput,
+  QuarterPayRun,
+  QuarterProposal,
+} from "./quarter";
 export {
   compareFactoringLines,
   FACTORING_REFUSALS,

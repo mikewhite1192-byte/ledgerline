@@ -15,6 +15,8 @@ import type { RequestDetail, RequestSummary } from "@/lib/factoring/read";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
 import { figureValueText, profitWeek, type ClosedWeek } from "@/lib/briefs/figures";
 import type { BriefRecord, ProfitView } from "@/lib/briefs/view";
+import type { QuarterBody, QuarterRecord, QuarterState, QuarterView } from "@/lib/briefs/quarter-review";
+import { quarterOf, type Quarter, type QuarterInput } from "@/lib/rules-engine";
 import { fuelSentence, type SentenceInput } from "@/lib/fuel/help";
 import type { FuelPage, FuelRowView, FuelRunView } from "@/lib/fuel/view";
 import type {
@@ -1816,6 +1818,167 @@ export const NOTES_USED = [
   { id: MEMORY_NOTES[2].id, label: noteLabel(MEMORY_NOTES[2]) },
   { id: id(147), label: null },
 ];
+
+// ---- The quarter review: a quarter so far counted by the real engine, and its review in each state ----
+
+const QUARTER_PERIOD = { start: "2026-10-01", end: "2026-12-31" };
+const QUARTER_AS_OF = "2026-11-02";
+const SECOND_DRIVER_ID = id(472);
+const quarterCustomer = (cid: string, code: string, name: string) => ({
+  id: cid,
+  code,
+  name,
+  termsDays: 30,
+  city: "Roanoke",
+  state: "VA",
+  detentionFreeMinutes: 120,
+  detentionHourlyCents: 7_500 as Cents,
+});
+const quarterStub = (n: number, periodId: string, driverId: string, netCents: number, exceptionCount = 0) => ({
+  id: id(n),
+  periodId,
+  driverId,
+  status: "paid" as const,
+  grossCents: (netCents + 30_000) as Cents,
+  deductionsCents: 30_000 as Cents,
+  netCents: netCents as Cents,
+  carryForwardCents: 0 as Cents,
+  exceptionCount,
+  paidAt: null,
+});
+const quarterInvoice = (n: number, customerId: string, amountCents: number, issuedOn: string, status: "open" | "paid") => ({
+  id: id(n),
+  source: "load" as const,
+  loadId: id(n - 62),
+  customerId,
+  invoiceNumber: `BR-INV-10${n}`,
+  amountCents: amountCents as Cents,
+  issuedOn,
+  dueOn: "2026-11-30",
+  status,
+  paidOn: status === "paid" ? "2026-10-28" : null,
+  qboId: null,
+});
+const QUARTER_INPUT: QuarterInput = {
+  periods: [
+    { id: id(460), periodStart: "2026-10-05", periodEnd: "2026-10-11", status: "paid" },
+    { id: id(461), periodStart: "2026-10-12", periodEnd: "2026-10-18", status: "paid" },
+    { id: id(462), periodStart: "2026-10-19", periodEnd: "2026-10-25", status: "approved" },
+    { id: id(463), periodStart: "2026-10-26", periodEnd: "2026-11-01", status: "open" },
+  ],
+  settlements: [
+    quarterStub(464, id(460), DRIVER_ID, 182_500),
+    quarterStub(465, id(460), SECOND_DRIVER_ID, 154_000, 1),
+    quarterStub(466, id(461), DRIVER_ID, 176_250),
+    quarterStub(467, id(461), SECOND_DRIVER_ID, 149_800),
+    quarterStub(468, id(462), DRIVER_ID, 171_000, 2),
+    quarterStub(469, id(462), SECOND_DRIVER_ID, 158_300),
+    quarterStub(470, id(463), DRIVER_ID, 120_000),
+  ],
+  // An advance taken back from pay: a deduction, written below zero.
+  lines: [{ settlementId: id(464), kind: "advance_recovery", amountCents: -10_000 }],
+  drivers: [
+    { id: DRIVER_ID, name: "Rosa Delgado" },
+    { id: SECOND_DRIVER_ID, name: "Tom Avery" },
+  ],
+  customers: [
+    quarterCustomer(CUSTOMER_ID, "TGS", "Tanglewood Grocery Supply"),
+    quarterCustomer(PIEDMONT_ID, "PPC", "Piedmont Paper Co"),
+  ],
+  margin: PROFIT_LINES.map((l) => ({ ...l, deliveredOn: "2026-10-22" })),
+  receivables: {
+    invoices: [
+      quarterInvoice(473, CUSTOMER_ID, 185_000, "2026-10-06", "paid"),
+      quarterInvoice(474, CUSTOMER_ID, 142_000, "2026-10-13", "open"),
+      quarterInvoice(475, PIEDMONT_ID, 176_000, "2026-09-20", "open"),
+    ],
+    payments: [
+      {
+        id: id(476),
+        customerId: CUSTOMER_ID,
+        receivedOn: "2026-10-28",
+        amountCents: 185_000 as Cents,
+        method: "ach",
+        paymentRef: "ACH-55120",
+        source: "seed",
+        memo: null,
+        qboId: null,
+      },
+    ],
+    applications: [{ id: id(478), paymentId: id(476), invoiceId: id(473), amountCents: 185_000 as Cents }],
+    asOf: QUARTER_AS_OF,
+  },
+  loads: [],
+  accessorials: [],
+  proposals: [
+    { id: id(479), kind: "pay_correction", status: "done", direction: "in", amountCents: 2_500, createdOn: "2026-10-19", decidedOn: "2026-10-20" },
+    { id: id(480), kind: "detention_charge", status: "done", direction: "in", amountCents: 18_750, createdOn: "2026-10-14", decidedOn: "2026-10-15" },
+    { id: id(481), kind: "advance_payout", status: "proposed", direction: "out", amountCents: 10_000, createdOn: "2026-10-31", decidedOn: null },
+    { id: id(482), kind: "invoice_fix", status: "rejected", direction: "in", amountCents: 100, createdOn: "2026-10-21", decidedOn: "2026-10-21" },
+  ],
+  detention: [
+    { id: id(483), loadId: id(411), amountCents: 18_750, proposalId: id(480), proposalStatus: "done", decidedOn: "2026-10-15" },
+  ],
+};
+export const QUARTER: Quarter = quarterOf(QUARTER_INPUT, QUARTER_PERIOD, QUARTER_AS_OF);
+// Nothing happened yet this quarter: no pay run, load, invoice or payment.
+export const QUARTER_EMPTY: Quarter = quarterOf(
+  {
+    ...QUARTER_INPUT,
+    periods: [],
+    settlements: [],
+    lines: [],
+    margin: [],
+    receivables: { invoices: [], payments: [], applications: [], asOf: QUARTER_AS_OF },
+    proposals: [],
+    detention: [],
+  },
+  QUARTER_PERIOD,
+  QUARTER_AS_OF,
+);
+
+// The review's lists, built from the figures so the number check passes and every number links.
+const quote = (label: string): string => {
+  const figure = QUARTER.figures.find((f) => f.label === label);
+  if (!figure) throw new Error(`no figure ${label}`);
+  return `${figureValueText(figure)} [${figure.key}]`;
+};
+export const QUARTER_BODY: QuarterBody = {
+  went_well: [
+    `Margin on priced loads was ${quote("Margin on priced loads")}, or ${quote("Margin as a share of revenue")} of revenue.`,
+    `Payments received so far came to ${quote("Payments received")}.`,
+  ],
+  problems: [`Paystubs with a problem so far: ${quote("Paystubs with a problem")}.`],
+  recovered: [
+    `Detention recovered came to ${quote("Detention recovered")}, and advances recovered from pay to ${quote("Advances recovered from pay")}.`,
+  ],
+  change: [
+    `Collect the open receivables past due, ${quote("Open receivables past due")}.`,
+    `Decide the fixes waiting for a decision: ${quote("Fixes waiting for a decision")}.`,
+    `Ask Piedmont Paper Co about its open balance of ${quote("Customer Piedmont Paper Co: open balance")}.`,
+  ],
+};
+
+export const QUARTER_REVIEW: QuarterRecord = {
+  id: id(484),
+  status: "drafted",
+  quarterStart: QUARTER_PERIOD.start,
+  quarterEnd: QUARTER_PERIOD.end,
+  asOf: QUARTER_AS_OF,
+  figures: QUARTER.figures,
+  body: QUARTER_BODY,
+  category: null,
+  updatedAt: "2026-11-02T15:00:00.000Z",
+};
+
+export const quarterView = (review: QuarterState, over: Partial<QuarterView> = {}): QuarterView => ({
+  quarter: QUARTER,
+  packed: QUARTER.figures,
+  review,
+  ...over,
+});
+
+export const QUARTER_VIEW = quarterView({ kind: "none" });
 
 // The fuel checks page: every problem, every row status (a sent row with its card, a carried-out
 // card that reads Corrected, a dismissed and a cleared row), and a duplicate whose two photos were

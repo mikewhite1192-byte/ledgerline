@@ -18,9 +18,9 @@ const TOOLS = Object.values(TOOL_REGISTRY);
 const call = (name: string, args: unknown) => ({ id: "c", name, argumentsJson: JSON.stringify(args) });
 
 // Every tool's switch on (detention, reports, invoicing, invoice review, customer payments, the card check, collections,
-// Cash Friday, factoring, the profit brief, pay rule changes, money codes and carrier memory), so each test below
-// reaches every registered tool. The detention switch's own cases are in detention-tools.test.ts; the last test here
-// checks the report switch-off path.
+// Cash Friday, factoring, the profit brief, the quarter review, pay rule changes, money codes and carrier memory), so
+// each test below reaches every registered tool. The detention switch's own cases are in detention-tools.test.ts; the
+// last test here checks the report switch-off path.
 beforeEach(() => {
   flags.detentionEnabled = true;
   flags.reportsEnabled = true;
@@ -35,6 +35,7 @@ beforeEach(() => {
   flags.rulesByTalkingEnabled = true;
   flags.carrierMemoryEnabled = true;
   flags.factoring.enabled = true;
+  flags.quarterReviewEnabled = true;
 });
 
 afterEach(() => {
@@ -51,6 +52,7 @@ afterEach(() => {
   flags.rulesByTalkingEnabled = false;
   flags.carrierMemoryEnabled = false;
   flags.factoring.enabled = false;
+  flags.quarterReviewEnabled = false;
   vi.restoreAllMocks();
 });
 

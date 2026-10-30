@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isLocalDate } from "../lib/time/local-date";
-import { flags, type Flags } from "./flags";
+import { flags, stepThroughShown, type Flags } from "./flags";
 import { applyLocalOverrides, LOCAL_OVERRIDABLE } from "./local-overrides";
 
 describe("flags", () => {
@@ -385,6 +385,33 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("profitBriefEnabled");
+  });
+
+  it("ships the quarter review dark, at most 30 cents a review, and never switched on by local mode", () => {
+    expect(flags.quarterReviewEnabled).toBe(false);
+    expect(flags.quarterReviewLimits).toEqual({ maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 });
+    for (const v of Object.values(flags.quarterReviewLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The wrapper refuses an output budget over 8192 tokens.
+    expect(flags.quarterReviewLimits.maxOutputTokens).toBeLessThanOrEqual(8192);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewEnabled");
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewLimits");
+  });
+});
+
+describe("step through", () => {
+  it("is on in development and tests only, and off elsewhere until the owner turns it on for staff", () => {
+    expect(flags.stepThrough).toEqual({ dev: true, staff: false });
+    expect(stepThroughShown(flags, { NODE_ENV: "production" })).toBe(false);
+    expect(stepThroughShown(flags, { NODE_ENV: "test" })).toBe(true);
+    expect(stepThroughShown(flags, { NODE_ENV: "development" })).toBe(true);
+    // Unset or unknown reads as production.
+    expect(stepThroughShown(flags, {})).toBe(false);
+    expect(stepThroughShown(flags, { NODE_ENV: "staging" })).toBe(false);
+    expect(stepThroughShown({ stepThrough: { dev: true, staff: true } }, { NODE_ENV: "production" })).toBe(true);
+    expect(stepThroughShown({ stepThrough: { dev: false, staff: false } }, { NODE_ENV: "development" })).toBe(false);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("stepThrough");
   });
 });
 
