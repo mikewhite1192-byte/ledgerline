@@ -101,6 +101,15 @@ export const YEAR_END_PROMPT = [
   "  form1099 and say to confirm it for the tax year; when it is unknown, say so and never say yes or no.",
 ].join("\n");
 
+// Added after the year-end lines only while report_trust_meter is offered (flags.reportsEnabled and
+// flags.trustMeterEnabled), so a turn with the trust meter switch off sends exactly today's prompt.
+export const TRUST_PROMPT = [
+  "- report_trust_meter: \"could we review only the exceptions for this kind of card\": per action",
+  "  type, how often a card a person caught as wrong had passed the checks. Quote each type's counts",
+  "  from its subtotal and its verdict from the notes; never turn a rate into dollars, and never",
+  "  say the approval rule changed: every money action still needs a person's approval.",
+].join("\n");
+
 // Added to the prompt only while get_cash_friday is offered (flags.cashFridayEnabled), so a turn
 // with the switch off sends exactly today's prompt.
 export const CASH_PROMPT = [
@@ -201,7 +210,8 @@ export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean
   const withReports = reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
   const withIfta = toolNames.includes("report_ifta_quarter") ? `${withReports}\n${IFTA_PROMPT}` : withReports;
   const withYearEnd = toolNames.includes("report_year_end_contractors") ? `${withIfta}\n${YEAR_END_PROMPT}` : withIfta;
-  const withCodes = toolNames.includes("propose_money_code") ? `${withYearEnd}\n${MONEY_CODE_PROMPT}` : withYearEnd;
+  const withTrust = toolNames.includes("report_trust_meter") ? `${withYearEnd}\n${TRUST_PROMPT}` : withYearEnd;
+  const withCodes = toolNames.includes("propose_money_code") ? `${withTrust}\n${MONEY_CODE_PROMPT}` : withTrust;
   const withEscrow = toolNames.includes("propose_escrow_release") ? `${withCodes}\n${ESCROW_RELEASE_PROMPT}` : withCodes;
   return toolNames.includes("remember_note") ? `${withEscrow}\n${MEMORY_PROMPT}` : withEscrow;
 }

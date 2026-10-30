@@ -77,6 +77,7 @@ function argsFor(plan: CarrierPlan): Record<ReportName, Record<string, string>> 
     margin_per_load: { periodStart: "2026-10-05", periodEnd: "2026-11-01" },
     ifta_quarter: { asOf: ANCHOR },
     year_end_contractors: { year: ANCHOR.slice(0, 4) },
+    trust_meter: { asOf: ANCHOR },
   };
 }
 
@@ -174,12 +175,14 @@ describe("reports on a seeded database", () => {
     flags.reportsEnabled = true;
     flags.iftaEnabled = true;
     flags.yearEndEnabled = true;
+    flags.trustMeterEnabled = true;
   });
 
   afterAll(async () => {
     flags.reportsEnabled = false;
     flags.iftaEnabled = false;
     flags.yearEndEnabled = false;
+    flags.trustMeterEnabled = false;
     // Only what this file made: the two tenants (their rows, memberships, decisions and turns go
     // with them, by cascade).
     for (const t of tenants) {

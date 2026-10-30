@@ -41,6 +41,7 @@ beforeEach(() => {
   flags.iftaEnabled = true;
   flags.escrowRelease.enabled = true;
   flags.yearEndEnabled = true;
+  flags.trustMeterEnabled = true;
 });
 
 afterEach(() => {
@@ -62,6 +63,7 @@ afterEach(() => {
   flags.iftaEnabled = false;
   flags.escrowRelease.enabled = false;
   flags.yearEndEnabled = false;
+  flags.trustMeterEnabled = false;
   vi.restoreAllMocks();
 });
 
@@ -141,9 +143,9 @@ describe("reachability", () => {
   it("(e) with the report switch off, refuses and logs every report tool as unknown, for every role", async () => {
     flags.reportsEnabled = false;
     const reports = TOOLS.filter((t) => t.name.startsWith("report_"));
-    // The five reports, the IFTA quarter and the year-end 1099, whose own switches are on here:
-    // the report switch wins.
-    expect(reports).toHaveLength(7);
+    // The five reports, the IFTA quarter, the year-end 1099 and the trust meter, whose own switches
+    // are on here: the report switch wins.
+    expect(reports).toHaveLength(8);
     for (const role of AGENT_ROLES) {
       expect(toolsFor(role).map((t) => t.name).filter((n) => n.startsWith("report_")), role).toEqual([]);
       for (const tool of reports) {

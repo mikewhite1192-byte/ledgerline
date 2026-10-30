@@ -1,4 +1,4 @@
-// The seven reports: their names, titles, columns and result shape. Plain data with no imports, so
+// The eight reports: their names, titles, columns and result shape. Plain data with no imports, so
 // the chat, the turn view and the download route can all use it without reaching the records or
 // the rules engine. The numbers themselves are computed in the files next to this one, from the
 // records and the engine's own functions; a model only picks a report and fills its typed args.
@@ -11,6 +11,7 @@ export const REPORT_NAMES = [
   "margin_per_load",
   "ifta_quarter",
   "year_end_contractors",
+  "trust_meter",
 ] as const;
 export type ReportName = (typeof REPORT_NAMES)[number];
 
@@ -38,6 +39,7 @@ export const REPORT_TITLES: Readonly<Record<ReportName, string>> = {
   margin_per_load: "Margin per load",
   ifta_quarter: "IFTA quarter summary (SAMPLE rates)",
   year_end_contractors: "Year-end 1099 contractor totals (not a filing)",
+  trust_meter: "Review trust meter: checks versus people, by week",
 };
 
 // cents: integer cents. int: a count. pct: basis points (1234 is 12.34%). milli: thousandths
@@ -83,6 +85,19 @@ export type ReportResult = {
   // when the code does not know it), how many contractors meet it (null when unknown) and how
   // many could not be classified. Kept beside the rows for the same reason.
   form1099?: { taxYear: number; thresholdCents: number | null; meeting: number | null; unclassified: number };
+  // The trust meter only: one verdict per action type over the window. Kept beside the rows for
+  // the same reason.
+  trust?: TrustVerdict[];
+};
+
+// One action type's verdict over the trust meter's window, in the same order as the subtotals,
+// which hold its counts: the upper bound of missed over passed in basis points (null when none
+// passed) and whether the record meets the readiness bar. Kept this small so every action type
+// fits one tool result. Counts, never money.
+export type TrustVerdict = {
+  kind: string;
+  upperBps: number | null;
+  ready: boolean;
 };
 
 // Every cents column key ends in "Cents", so the agent's figure check accepts what a report says.
@@ -150,6 +165,17 @@ export const REPORT_COLUMNS: Readonly<Record<ReportName, readonly ReportColumn[]
     { key: "meetsThreshold", header: "Meets 1099-NEC threshold", kind: "text" },
     { key: "firstPaidOn", header: "First paid", kind: "date" },
     { key: "lastPaidOn", header: "Last paid", kind: "date" },
+  ],
+  trust_meter: [
+    { key: "actionType", header: "Action type", kind: "text" },
+    { key: "weekStart", header: "Week of", kind: "date" },
+    { key: "decided", header: "Decided", kind: "int" },
+    { key: "checked", header: "Checked", kind: "int" },
+    { key: "flagged", header: "Flagged", kind: "int" },
+    { key: "passed", header: "Passed the checks", kind: "int" },
+    { key: "wrong", header: "Wrong", kind: "int" },
+    { key: "missed", header: "Missed by the checks", kind: "int" },
+    { key: "missedBps", header: "Missed rate", kind: "pct" },
   ],
 };
 

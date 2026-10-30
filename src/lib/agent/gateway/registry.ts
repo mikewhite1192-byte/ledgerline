@@ -43,6 +43,7 @@ import { reportCashNeeded } from "./tools/read/report-cash-needed";
 import { reportDriverPaySummary } from "./tools/read/report-driver-pay-summary";
 import { reportIftaQuarter } from "./tools/read/report-ifta-quarter";
 import { reportMarginPerLoad } from "./tools/read/report-margin-per-load";
+import { reportTrustMeter } from "./tools/read/report-trust-meter";
 import { reportYearEndContractors } from "./tools/read/report-year-end-contractors";
 import { runChecks } from "./tools/read/run-checks";
 import { setChecklist } from "./tools/note/set-checklist";
@@ -91,6 +92,7 @@ const TOOLS: readonly AnyToolDef[] = [
   reportMarginPerLoad,
   reportIftaQuarter,
   reportYearEndContractors,
+  reportTrustMeter,
   getInboundMessage,
   getInvoiceQueue,
   getInvoiceReview,

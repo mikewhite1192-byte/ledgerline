@@ -29,6 +29,16 @@ describe("report args", () => {
     expect(reportOfTool("report_ifta_quarter")).toBe("ifta_quarter");
   });
 
+  it("takes the trust meter with or without a day, and refuses a bad day or any other key", () => {
+    expect(parseReportArgs("trust_meter", {})?.args).toEqual({});
+    expect(parseReportArgs("trust_meter", { asOf: "2026-11-02" })?.args).toEqual({ asOf: "2026-11-02" });
+    expect(parseReportArgs("trust_meter", { asOf: "2026-02-30" })).toBeNull();
+    expect(parseReportArgs("trust_meter", { asOf: "11/02/2026" })).toBeNull();
+    expect(parseReportArgs("trust_meter", { asOf: "2026-11-02", weeks: "52" })).toBeNull();
+    expect(parseReportArgs("trust_meter", { kind: "advance_payout" })).toBeNull();
+    expect(reportOfTool("report_trust_meter")).toBe("trust_meter");
+  });
+
   it("takes the year-end 1099 for a four-digit year from 2000 to 2100, and refuses anything else", () => {
     expect(parseReportArgs("year_end_contractors", {})?.args).toEqual({});
     expect(parseReportArgs("year_end_contractors", { year: "2026" })?.args).toEqual({ year: "2026" });

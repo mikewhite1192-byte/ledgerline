@@ -421,13 +421,14 @@ describe("callTool dispatch order", () => {
 
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
-    // the afterEach above; the report, IFTA quarter, year-end 1099, invoicing, invoice review, customer payments,
+    // the afterEach above; the report, IFTA quarter, year-end 1099, trust meter, invoicing, invoice review, customer payments,
     // collections, Cash Friday, factoring, profit brief, quarter review, pay rule change, money code,
     // carrier memory, fuel rates and escrow release switches after this test. remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.iftaEnabled = true;
     flags.yearEndEnabled = true;
+    flags.trustMeterEnabled = true;
     flags.invoicesEnabled = true;
     flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
@@ -446,6 +447,7 @@ describe("callTool dispatch order", () => {
       flags.reportsEnabled = false;
       flags.iftaEnabled = false;
       flags.yearEndEnabled = false;
+      flags.trustMeterEnabled = false;
       flags.invoicesEnabled = false;
       flags.invoiceReviewEnabled = false;
       flags.customerPaymentsEnabled = false;

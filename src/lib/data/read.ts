@@ -602,6 +602,71 @@ export async function readLoadNumbers(
   throw new ReadLimitError();
 }
 
+// ---- Trust meter ----
+
+// Rows per statement and statements per read for the trust meter's decisions. A row is a few short
+// words and two flags, so a page of 1,000 stays far under the Data API's 1 MiB response cap; the
+// bound (100,000 decisions in 26 weeks) stops a runaway read, and a read stopped there fails whole.
+export const TRUST_PAGING: Paging = { pageSize: 1000, maxPages: 100 };
+
+// The decided proposals in one window of instants ($1 included, $2 not), their stored values only:
+// the override reasons are read as present or not, never as text, and no amount, subject or decider
+// is read. Exported so a test's fake database can match these statements whole; each page adds its
+// LIMIT. The key and the order are proposals.id, the uuid, as for the load numbers.
+const TRUST_DECISIONS =
+  "SELECT CAST(id AS text) AS id, kind, status, " +
+  `to_char(decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS decided_at, decision_note, ` +
+  "auditor_verdict, engine_check, auditor_override_reason IS NOT NULL AS auditor_overridden, " +
+  "engine_override_reason IS NOT NULL AS engine_overridden FROM proposals " +
+  "WHERE tenant_id = current_tenant_id() AND decided_at IS NOT NULL AND status <> 'expired' " +
+  "AND decided_at >= CAST($1 AS timestamptz) AND decided_at < CAST($2 AS timestamptz)";
+export const TRUST_DECISIONS_FIRST = `${TRUST_DECISIONS} ORDER BY proposals.id`;
+export const TRUST_DECISIONS_NEXT = `${TRUST_DECISIONS} AND proposals.id > CAST($3 AS uuid) ORDER BY proposals.id`;
+
+export type TrustRow = {
+  id: string;
+  kind: string;
+  status: string;
+  decided_at: string;
+  decision_note: string | null;
+  auditor_verdict: string | null;
+  engine_check: string | null;
+  auditor_overridden: boolean;
+  engine_overridden: boolean;
+};
+
+// Every decided proposal of the tenant in the window once, in pages keyed on the uuid id. A page
+// shorter than the page size ends the read, so an exact multiple ends with one empty page.
+export async function readTrustInput(
+  q: Queryable,
+  window: { start: Instant; end: Instant },
+  paging: Paging = TRUST_PAGING,
+): Promise<TrustRow[]> {
+  const { pageSize, maxPages } = paging;
+  for (const n of [pageSize, maxPages]) {
+    if (!Number.isSafeInteger(n) || n < 1) throw new RangeError("paging is not a positive count");
+  }
+  const start = parseInstant(window.start);
+  const end = parseInstant(window.end);
+  if (end <= start) throw new RangeError("window ends before it starts");
+  const p: Param[] = [new Date(start).toISOString(), new Date(end).toISOString()];
+  const out: TrustRow[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const rows: TrustRow[] =
+      cursor === null
+        ? await q.query<TrustRow>(`${TRUST_DECISIONS_FIRST} LIMIT ${pageSize}`, p)
+        : await q.query<TrustRow>(`${TRUST_DECISIONS_NEXT} LIMIT ${pageSize}`, [...p, cursor]);
+    if (rows.length > pageSize) throw new Error("a page is larger than its page size");
+    out.push(...rows);
+    if (rows.length < pageSize) return out;
+    const last: unknown = rows[rows.length - 1].id;
+    if (!isUuid(last)) throw new Error("a page key is not a uuid");
+    cursor = last;
+  }
+  throw new ReadLimitError();
+}
+
 // ---- Money codes (MONEY-CODE) ----
 
 // What a money code is asked for: the driver, the load, the purpose and amount as asked, and the

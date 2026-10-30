@@ -1,7 +1,7 @@
 import { IFTA_SAMPLE_RATES } from "../../config/ifta-sample-rates";
 import type { Queryable } from "../db";
 import { configForDay } from "../data/config-version";
-import { readIftaInput, readPaidBetween, readReportInput } from "../data/read";
+import { readIftaInput, readPaidBetween, readReportInput, readTrustInput } from "../data/read";
 import {
   advanceOf,
   customerOf,
@@ -24,14 +24,15 @@ import { computeDriverPaySummary } from "./driver-pay-summary";
 import { computeIftaQuarter } from "./ifta-quarter";
 import { computeMarginPerLoad } from "./margin-per-load";
 import { ReportsOffError, reportSwitchOn } from "./switch";
+import { bucketWeeks, computeTrustMeter, TRUST_FALLBACK_WEEK_START, trustReadWindow } from "./trust-meter";
 import type { ReportResult } from "./types";
 import { computeYearEnd1099, yearEndWindow } from "./year-end";
 
 // One report for the current tenant: read the tables it needs (whole, SELECT only, inside the
-// caller's tenant transaction; the IFTA quarter and the year-end 1099 in pages, by their dates),
-// map them to the engine's records, compute. The same function serves the chat tool and the
-// download route, so both show the same numbers, and it refuses a report whose switch is off, so a
-// caller that skipped the route's or the registry's check still fails closed.
+// caller's tenant transaction; the IFTA quarter, the year-end 1099 and the trust meter in pages, by
+// their dates), map them to the engine's records, compute. The same function serves the chat tool
+// and the download route, so both show the same numbers, and it refuses a report whose switch is
+// off, so a caller that skipped the route's or the registry's check still fails closed.
 
 export type ReportClock = { now: Date; timeZone: string };
 
@@ -168,6 +169,33 @@ export async function computeReport(
         },
         { ...request.args, year },
         today,
+        clock.timeZone,
+      );
+    }
+    case "trust_meter": {
+      // The pay weeks come from the rules in force on asOf; with none on file the weeks run Monday
+      // to Sunday and the report says so. The decisions are read in pages over the window's
+      // instants and placed by their own date in the carrier's time zone.
+      const asOf = request.args.asOf ?? today;
+      const rows = await readReportInput(q, ["pay_configs"]);
+      const weekStartDow = payConfigOn(rows.pay_configs)(asOf)?.weekStartDow ?? null;
+      const weeks = bucketWeeks(asOf, weekStartDow ?? TRUST_FALLBACK_WEEK_START);
+      const decisions = await readTrustInput(q, trustReadWindow(weeks));
+      return computeTrustMeter(
+        {
+          decisions: decisions.map((d) => ({
+            kind: d.kind,
+            status: d.status,
+            decidedAt: d.decided_at,
+            decisionNote: d.decision_note,
+            auditorVerdict: d.auditor_verdict,
+            engineCheck: d.engine_check,
+            auditorOverridden: d.auditor_overridden,
+            engineOverridden: d.engine_overridden,
+          })),
+          weekStartDow,
+        },
+        asOf,
         clock.timeZone,
       );
     }
