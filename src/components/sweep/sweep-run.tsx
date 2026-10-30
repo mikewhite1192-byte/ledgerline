@@ -91,7 +91,8 @@ function refusedLines(value: unknown): { proposalId: string; category: string | 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 // Why the run stopped with work left, in counts only: its model budget, the first problems
-// only, or its turn ceiling, which says what was done and what the next sweep takes.
+// only, or its turn ceiling, which says what was done and what the next sweep takes. The ceiling
+// counts turns taken, not problems (an item taken again counts again), so it is named as turns.
 function stopNote(page: SweepPage): string {
   if (page.run.truncatedReason === "cap") {
     return "The sweep stopped early: its model budget for this run ran out. Run it again to carry on.";
@@ -100,7 +101,7 @@ function stopNote(page: SweepPage): string {
     const c = page.counts;
     const taken = page.run.turnsUsed ?? 0;
     return (
-      `Stopped after ${plural(taken, "problem", "problems")}: ${plural(c.fixes_drafted, "fix", "fixes")} drafted, ` +
+      `Stopped after ${plural(taken, "turn", "turns")}: ${plural(c.fixes_drafted, "fix", "fixes")} drafted, ` +
       `${c.needs_person} ${c.needs_person === 1 ? "needs" : "need"} a person, ${c.left} left for the next sweep. Nothing was paid.`
     );
   }

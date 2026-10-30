@@ -430,7 +430,8 @@ describe("a sweep of the open week", () => {
     const page = await readSweepPage(SESSION, first, { db: app });
     expect(page?.counts).toMatchObject({ fixes_drafted: 3, left: 2 });
     expect(page?.run.turnsUsed).toBe(3);
-    expect(await ticks(first)).toEqual({ find: "done", draft: "done", audit: "not_done" });
+    // The drafted three were audited before the run ended, so its second check is done.
+    expect(await ticks(first)).toEqual({ find: "done", draft: "done", audit: "done" });
 
     const second = await start();
     expect(await runToEnd(second)).toMatchObject({ status: "done", truncatedReason: null });

@@ -1133,7 +1133,8 @@ export async function countItems(q: Queryable, runId: string): Promise<SweepCoun
 // The checklist ends with the run: "cap" stopped it with work left, and so did "max_items" (the
 // find phase took the first findings only, read here from the run row) and "max_turns" (the
 // draft step reached the run's turn ceiling); the audit step switched off is skipped rather than
-// done.
+// done. At the turn ceiling the run still went on to audit what it drafted, so unless that step
+// was switched off, the audit is done and only the findings left wait for the next run.
 async function finishRun(ctx: Ctx, truncated: string | null, opts: { skipped?: "audit" } = {}): Promise<void> {
   const now = ctx.clock().toISOString();
   const counts = await leased(ctx, async (q) => {
@@ -1144,7 +1145,12 @@ async function finishRun(ctx: Ctx, truncated: string | null, opts: { skipped?: "
     );
     const reason = truncated ?? cut[0]?.truncated_reason ?? null;
     const stopped = reason === "cap" || reason === "max_items" || reason === "max_turns";
-    const ending: SweepChecklistChange = { ended: stopped ? "stopped" : "done", ...opts };
+    const audited = reason === "max_turns" && truncated === null && !opts.skipped;
+    const ending: SweepChecklistChange = {
+      ended: stopped ? "stopped" : "done",
+      ...opts,
+      ...(audited ? { stoppedAfter: "audit" as const } : {}),
+    };
     await q.execute(
       `UPDATE sweep_runs
           SET status = 'done', phase = 'done', counts = CAST($2 AS jsonb),

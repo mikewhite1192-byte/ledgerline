@@ -1514,7 +1514,7 @@ const PAGES: PageCase[] = [
         setup: () =>
           (state.fx.sweepPage = { ...fx.SWEEP_PAGE, run: fx.SWEEP_RUN_MAX_TURNS, counts: { ...fx.SWEEP_PAGE.counts, left: 5 } }),
         load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
-        shows: "Stopped after 30 problems: 2 fixes drafted, 1 needs a person, 5 left for the next sweep. Nothing was paid.",
+        shows: "Stopped after 30 turns: 2 fixes drafted, 1 needs a person, 5 left for the next sweep. Nothing was paid.",
       },
       {
         name: "second check stopped",

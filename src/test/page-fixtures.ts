@@ -357,12 +357,13 @@ export const SWEEP_RUN_STOPPED: SweepRunView = {
   truncatedReason: "cap",
   checklist: endSweep(tickSweep(sweepChecklist(true), "draft"), "stopped"),
 };
-// A run that reached its turn ceiling while drafting: the rest wait for the next sweep.
+// A run that reached its turn ceiling while drafting: what it drafted was audited, and the rest
+// wait for the next sweep.
 export const SWEEP_RUN_MAX_TURNS: SweepRunView = {
   ...SWEEP_RUN,
   truncatedReason: "max_turns",
   turnsUsed: 30,
-  checklist: endSweep(tickSweep(tickSweep(sweepChecklist(false), "draft"), "audit"), "stopped"),
+  checklist: endSweep(tickSweep(tickSweep(sweepChecklist(false), "draft"), "audit"), "stopped", { stoppedAfter: "audit" }),
 };
 export const SWEEP_RUN_RUNNING: SweepRunView = {
   ...SWEEP_RUN,
