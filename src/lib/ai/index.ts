@@ -145,12 +145,16 @@ export type {
 // attempt's duration and the time a standby attempt has left; tests inject a fake one. now is the
 // instant a reservation is stamped with and the job spend watch measures its hour back from;
 // unset (production) means the database's own clock, and tests inject a fixed instant.
+// reserveCheck is a caller's own limit, run inside each attempt's reservation transaction before
+// the spend counter is locked (spend.ts reserve): a throw from it refuses the call with nothing
+// reserved and nothing sent, and reaches the caller as thrown. Only the rate lookup sets it.
 export type AiDeps = {
   fetch?: FetchFn;
   db?: TenantDb;
   secrets?: SecretsClient;
   clock?: () => number;
   now?: () => Date;
+  reserveCheck?: (q: Queryable) => Promise<void>;
 };
 
 const PURPOSE = /^[a-z][a-z0-9_]{2,39}$/;
@@ -372,7 +376,7 @@ async function send<T, U extends Price["unit"]>(
       wonderCapNanocents: ctx.wonderCap,
       jobCapNanocents: ctx.jobCap,
       at: ctx.deps.now ? ctx.deps.now().toISOString() : null,
-    });
+    }, ctx.deps.reserveCheck);
   } catch (err) {
     if (err instanceof AiError && err.category === "job_cap") {
       console.error(`${where} refused: the job is over its hourly allowance${trace}`);

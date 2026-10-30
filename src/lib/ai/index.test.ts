@@ -2944,3 +2944,40 @@ describe("complete with web search", () => {
     }
   });
 });
+
+describe("a caller's own check at the reservation", () => {
+  it("runs inside the reservation, after the membership and before the counter is locked", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps);
+    const reserveCheck = vi.fn<(q: Queryable) => Promise<void>>(async () => {
+      ledger.steps.push("check");
+    });
+    const result = await complete("spark", REQUEST, SESSION, { fetch: fetchFn, db: ledger.db, reserveCheck });
+    expect(ledger.steps.slice(0, 4)).toEqual(["tx tenant", "membership", "check", "lock counter"]);
+    expect(reserveCheck).toHaveBeenCalledTimes(1);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(ledger.rows.get(result.callId)?.status).toBe("ok");
+  });
+
+  it("refuses the call with nothing reserved or sent when it throws, and hands back what it threw", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps);
+    const limit = new Error("the day is used up");
+    const err = await complete("spark", REQUEST, SESSION, {
+      fetch: fetchFn,
+      db: ledger.db,
+      reserveCheck: async () => {
+        ledger.steps.push("check");
+        throw limit;
+      },
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBe(limit);
+    expect(ledger.steps).toEqual(["tx tenant", "membership", "check"]);
+    expect(ledger.rows.size).toBe(0);
+    expect(ledger.counter.reserved).toBe(0);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});

@@ -16,7 +16,15 @@ import { formatLocalDate } from "@/lib/format/dates";
 import type { RateKind } from "@/lib/rates/candidates";
 import { parseRate, perGallonText } from "@/lib/rates/format";
 import type { RateSlot, RatesPage, RateView } from "@/lib/rates/read";
-import { lookupNotice, lookupsLeftLine, pinNext, pinNotice, pinQuestion, RATES_WORDS as W } from "@/lib/rates/words";
+import {
+  lookupNotice,
+  lookupsLeftLine,
+  pinnedFromLine,
+  pinNext,
+  pinNotice,
+  pinQuestion,
+  RATES_WORDS as W,
+} from "@/lib/rates/words";
 import { addDays } from "@/lib/time/local-date";
 import { Fuel } from "lucide-react";
 
@@ -64,7 +72,7 @@ function PinnedLine({ view }: { view: RateView }) {
         </p>
         <Badge tone={view.typed ? "neutral" : "success"}>{view.typed ? `Typed by ${who}` : "Confirmed from the source"}</Badge>
       </div>
-      <p className="text-small text-foreground-2">Your rate rules use it from {day(view.effectiveFrom)}.</p>
+      <p className="text-small text-foreground-2">{pinnedFromLine(day(view.effectiveFrom))}</p>
     </div>
   );
 }
@@ -256,7 +264,10 @@ export function RatesBoard({ page }: { page: RatesPage }) {
     router.refresh();
   }
 
+  // A pin never starts while a lookup or another pin is out: busy holds one action, and the one
+  // already out would clear it on finishing, letting this pin be sent a second time.
   async function pinSuggested(view: RateView, from: string) {
+    if (busy !== null) return;
     const at = slotKey(view.kind, view.state);
     setBusy(`pin:${at}`);
     setNotice(null);
@@ -267,6 +278,7 @@ export function RatesBoard({ page }: { page: RatesPage }) {
   }
 
   async function pinTyped(kind: RateKind, state: string | null, rate: string, sourceUrl: string, from: string) {
+    if (busy !== null) return;
     const at = slotKey(kind, state);
     setBusy(`pin:${at}`);
     setNotice(null);
@@ -329,7 +341,7 @@ export function RatesBoard({ page }: { page: RatesPage }) {
           <div className="grid max-w-[60ch] gap-1">
             <h2 className="text-h3 text-foreground">{W.dieselTitle}</h2>
             <p className="text-body text-foreground-2">
-              The weekly <Term id="diesel-index">diesel index</Term> your <Term id="fuel-surcharge">fuel surcharge</Term>{" "}
+              The weekly <Term id="diesel-index">diesel index</Term> a <Term id="fuel-surcharge">fuel surcharge</Term>{" "}
               follows.
             </p>
           </div>

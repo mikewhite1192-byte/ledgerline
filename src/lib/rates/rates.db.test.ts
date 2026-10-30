@@ -1,12 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import type { AiResult, AiWebAnswer } from "../ai";
+import type { FetchFn } from "../ai/providers/http";
+import { readSpend } from "../ai/spend";
 import type { Session } from "../auth/claims";
 import type { Queryable } from "../db";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, TenantDb } from "../db/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { lookupRate, type LookupComplete } from "./lookup";
 import { pinSuggestion, pinTyped } from "./pin";
@@ -17,8 +19,9 @@ import { lookupsInDay, readPinnedRates, readRatesPage } from "./read";
 // it in the same transaction; a pinned rate and its source never change (the guard trigger, and
 // the app role may update only the pin and retire columns); only an admin pins; a suggestion
 // pinned twice is "changed", and so is one a newer lookup or a later pin has passed; a pin never
-// starts after today; the day's lookups count from the model ledger, failed ones included;
-// and the agent's read returns pins only. Only this file's tenants are made, and they are removed
+// starts after today; the day's lookups count from the model ledger, failed ones included, and
+// two lookups started together at the last one left give exactly one lookup; and the agent's
+// read returns pins only. Only this file's tenants are made, and they are removed
 // after.
 
 const saved = { ...flags, ratesLimits: { ...flags.ratesLimits } };
@@ -372,6 +375,89 @@ describe("pinned rates (database)", () => {
     expect(out).toEqual({ ok: false, refused: "limit" });
     expect(called).toBe(false);
     expect(await ratesOf(A)).toEqual([]);
+  });
+
+  it("gives two lookups started together at the day's last one exactly one call, through the real model wrapper", async () => {
+    flags.ratesLimits.lookupsPerTenantPerDay = 3;
+    await ledgerRow(A.tenantId, new Date(NOW.getTime() - 3_600_000));
+    await ledgerRow(A.tenantId, new Date(NOW.getTime() - 7_200_000));
+    // The counter is global: put it back as it was found.
+    const before = await admin.withoutTenant(readSpend);
+    flags.aiEnabled = true;
+    vi.stubEnv("DB_CLUSTER_ARN", "");
+    vi.stubEnv("META_MODEL_SPARK", "muse-spark-1.3");
+    vi.stubEnv("META_CONTRIBUTOR_MODE", undefined);
+    vi.stubEnv("META_API_KEY", "test-key-abcdefghijklmnop");
+    vi.stubEnv("AI_SPEND_CAP_CENTS", "40000");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // One answer in Meta's shape: the search, its page, and a line that cites it.
+    const fetch = vi.fn<FetchFn>(async () =>
+      Response.json({
+        id: "resp_rates1",
+        status: "completed",
+        output: [
+          {
+            type: "web_search_call",
+            id: "ws_1",
+            status: "completed",
+            action: { type: "search", query: "weekly diesel price" },
+            results: [{ type: "text_result", title: FOUND.searchResults[0].title, url: DIESEL, snippet: "" }],
+          },
+          { type: "message", role: "assistant", content: [{ type: "output_text", text: FOUND.answerText, annotations: [] }] },
+        ],
+        usage: {
+          input_tokens: 15,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens: 64,
+          output_tokens_details: { reasoning_tokens: 50 },
+        },
+      }),
+    );
+    // Each lookup's early count (its first transaction) waits until both have made it, so both
+    // pass it with one lookup left before either reaches its reservation: no timer, no clock.
+    let counted = 0;
+    let release = () => {};
+    const bothCounted = new Promise<void>((resolve) => (release = resolve));
+    const gated = (): TenantDb => {
+      let first = true;
+      return {
+        async withTenant(tenantId, fn) {
+          const out = await app.withTenant(tenantId, fn);
+          if (first) {
+            first = false;
+            counted += 1;
+            if (counted === 2) release();
+            await bothCounted;
+          }
+          return out;
+        },
+      };
+    };
+    const lookup = () =>
+      lookupRate(A.session, { kind: "diesel_index" }, { db: gated(), clock, ai: { db: app, fetch, now: clock } });
+    try {
+      const outs = await Promise.all([lookup(), lookup()]);
+      expect(counted).toBe(2);
+      expect(outs.filter((o) => o.ok)).toEqual([expect.objectContaining({ ok: true, status: "suggested" })]);
+      expect(outs.filter((o) => !o.ok)).toEqual([{ ok: false, refused: "limit" }]);
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(await app.withTenant(A.tenantId, (q) => lookupsInDay(q, NOW))).toBe(3);
+      expect((await ratesOf(A)).map((r) => r.status)).toEqual(["suggested"]);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.restoreAllMocks();
+      await admin.withoutTenant((q) =>
+        q.execute(
+          `UPDATE ops.ai_spend
+              SET spent_nanocents = CAST($1 AS bigint), reserved_nanocents = CAST($2 AS bigint),
+                  calls = CAST($3 AS bigint), wonder_spent_nanocents = CAST($4 AS bigint),
+                  wonder_reserved_nanocents = CAST($5 AS bigint)
+            WHERE id = 1`,
+          [before.spentNanocents, before.reservedNanocents, before.calls, before.wonderSpentNanocents, before.wonderReservedNanocents],
+        ),
+      );
+    }
   });
 
   it("shows the page: pins, newer suggestions, the lookups left and who may pin", async () => {

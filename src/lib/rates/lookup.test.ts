@@ -138,6 +138,43 @@ describe("lookupRate", () => {
     expect(call.fn).not.toHaveBeenCalled();
   });
 
+  it("counts the day again inside the call's reservation, under the lock, and refuses there at the limit", async () => {
+    // The gate saw 19; by the reservation another lookup has taken the 20th.
+    const gate = fakeDb({ used: 19 });
+    const atReserve = fakeDb({ used: 20 });
+    const sent = vi.fn();
+    const call = vi.fn<LookupComplete>(async (_target, _request, session, reserveCheck) => {
+      await atReserve.db.withTenant(session.tenantId, reserveCheck);
+      sent();
+      return answer(FOUND);
+    });
+    expect(await lookupRate(SESSION, { kind: "diesel_index" }, { db: gate.db, complete: call, clock: () => NOW })).toEqual({
+      ok: false,
+      refused: "limit",
+    });
+    expect(atReserve.steps).toEqual(["tenant ok", "lock", "count"]);
+    expect(sent).not.toHaveBeenCalled();
+    expect(gate.steps).not.toContain("insert");
+
+    // A count that cannot be read refuses too, as a failure, never as room.
+    const unreadable = fakeDb({ used: Number.NaN });
+    const blind = vi.fn<LookupComplete>(async (_target, _request, session, reserveCheck) => {
+      await unreadable.db.withTenant(session.tenantId, reserveCheck);
+      return answer(FOUND);
+    });
+    const failed = await lookupRate(SESSION, { kind: "diesel_index" }, { db: fakeDb({ used: 19 }).db, complete: blind, clock: () => NOW });
+    expect(failed).toEqual({ ok: false, failed: "failed" });
+
+    // With room left at the reservation, the same check lets the call through.
+    const room = fakeDb({ used: 19 });
+    const through = vi.fn<LookupComplete>(async (_target, _request, session, reserveCheck) => {
+      await room.db.withTenant(session.tenantId, reserveCheck);
+      return answer(FOUND);
+    });
+    const kept = await lookupRate(SESSION, { kind: "diesel_index" }, { db: fakeDb({ used: 19 }).db, complete: through, clock: () => NOW });
+    expect(kept).toMatchObject({ ok: true, status: "suggested" });
+  });
+
   it("asks for one capped Muse Spark answer with web search, then keeps a suggestion with its page", async () => {
     const { db, steps, inserted } = fakeDb({ used: 19 });
     const call = fakeComplete(answer(FOUND));

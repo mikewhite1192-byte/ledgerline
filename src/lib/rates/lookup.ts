@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import { AiError, complete, type AiDeps, type AiErrorCategory, type AiRequest, type AiResult } from "../ai";
 import type { Session } from "../auth/claims";
-import { getDb, type TenantDb } from "../db";
+import { getDb, type Queryable, type TenantDb } from "../db";
 import { tenantLock } from "../invoices/number";
 import { groundAnswer, RATE_KINDS, type RateKind } from "./candidates";
 import { LOOKUP_PURPOSE, lookupsInDay, memberOf } from "./read";
@@ -48,7 +48,13 @@ export type LookupOutcome =
   | { ok: false; refused: LookupRefusal }
   | { ok: false; failed: LookupFailure };
 
-export type LookupComplete = (target: "spark", request: AiRequest, session: Session) => Promise<AiResult>;
+// reserveCheck runs inside the call's reservation transaction (AiDeps.reserveCheck).
+export type LookupComplete = (
+  target: "spark",
+  request: AiRequest,
+  session: Session,
+  reserveCheck: (q: Queryable) => Promise<void>,
+) => Promise<AiResult>;
 export type LookupDeps = { db?: TenantDb; clock?: () => Date; complete?: LookupComplete; ai?: AiDeps };
 
 // Every wrapper category is placed, so a new one does not compile until it is.
@@ -71,6 +77,10 @@ const ON_ERROR: Readonly<Record<AiErrorCategory, "budget" | "failed">> = {
 
 export type LookupInput = { kind: unknown; state?: unknown };
 
+// Thrown by the count made inside the reservation when the day's lookups are used up: the wrapper
+// writes nothing and sends nothing, and the person reads "limit".
+class DayUsedUp extends Error {}
+
 function parseInput(input: LookupInput): { kind: RateKind; state: string | null } | null {
   if (typeof input.kind !== "string" || !(RATE_KINDS as readonly string[]).includes(input.kind)) return null;
   const kind = input.kind as RateKind;
@@ -87,9 +97,8 @@ export async function lookupRate(session: Session, input: LookupInput, deps: Loo
   const now = (deps.clock ?? (() => new Date()))();
 
   // Who is asking and how many lookups this carrier started in the last day, under the carrier's
-  // rate lock. The lock ends with this transaction, before the call: two lookups started at the
-  // same moment can both pass, so the day can run over by the number started together (each still
-  // under its own cost cap and the spend cap).
+  // rate lock. This lock ends with this transaction, before the call, so this count only answers
+  // early: the one that holds is made again inside the reservation (reserveCheck below).
   const gate = await db.withTenant(
     session.tenantId,
     async (q): Promise<{ ok: true; memberId: string } | { ok: false; refused: LookupRefusal }> => {
@@ -103,6 +112,15 @@ export async function lookupRate(session: Session, input: LookupInput, deps: Loo
   if (!gate.ok) return gate;
   // The switch again, right before the outside call.
   if (!flags.groundedRatesEnabled) return { ok: false, refused: "off" };
+
+  // The day's count again, under the same lock, in the transaction that writes this call's row in
+  // the model ledger (the row the count reads). Two lookups started together take the lock in turn
+  // and the second sees the first's row, so the day never runs over. A count that cannot be read
+  // throws, and the call is refused with nothing reserved.
+  const reserveCheck = async (q: Queryable): Promise<void> => {
+    await tenantLock(q, "rate_pin");
+    if ((await lookupsInDay(q, now)) >= flags.ratesLimits.lookupsPerTenantPerDay) throw new DayUsedUp();
+  };
 
   const traceId = randomUUID();
   const request: AiRequest = {
@@ -118,9 +136,10 @@ export async function lookupRate(session: Session, input: LookupInput, deps: Loo
   let result: AiResult;
   try {
     result = deps.complete
-      ? await deps.complete("spark", request, session)
-      : await complete("spark", request, session, deps.ai ?? { db });
+      ? await deps.complete("spark", request, session, reserveCheck)
+      : await complete("spark", request, session, { ...(deps.ai ?? { db }), reserveCheck });
   } catch (err) {
+    if (err instanceof DayUsedUp) return { ok: false, refused: "limit" };
     const category = err instanceof AiError ? ON_ERROR[err.category] ?? "failed" : "failed";
     console.error(`rates: lookup ${kind} failed ${err instanceof AiError ? err.category : "error"}`);
     return { ok: false, failed: category };

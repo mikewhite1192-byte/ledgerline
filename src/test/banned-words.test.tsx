@@ -72,7 +72,7 @@ import {
 import { SUBJECT_STATUSES } from "@/lib/money/types";
 import { RULE_KEYS, RULES, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import * as payWords from "@/lib/pay-rules/words";
-import { lookupNotice, lookupsLeftLine, pinNext, pinNotice, pinQuestion, RATES_WORDS } from "@/lib/rates/words";
+import { lookupNotice, lookupsLeftLine, pinnedFromLine, pinNext, pinNotice, pinQuestion, RATES_WORDS } from "@/lib/rates/words";
 import { INVOICE_REVIEW_STATUSES } from "@/lib/rules-engine";
 import { FUEL_CHECK_NAMES, NO_SUGGESTION_REASONS } from "@/lib/rules-engine/fuel";
 import type { HandPick } from "@/lib/recon/view";
@@ -2753,6 +2753,7 @@ describe("no internal word on the rates page's notes and forms", () => {
       ...categories.flatMap((c) => [lookupNotice(c).text, pinNotice(c).text]),
       pinQuestion("$3.657"),
       pinNext("Oct 26, 2026"),
+      pinnedFromLine("Oct 19, 2026"),
       ...[0, 1, 20].map(lookupsLeftLine),
     ];
     const { container } = render(

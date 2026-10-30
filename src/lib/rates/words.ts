@@ -4,7 +4,7 @@
 export const RATES_WORDS = {
   title: "Fuel and tax rates",
   subtitle:
-    "The diesel price your fuel surcharge follows and the fuel tax rate for each state. The assistant looks them up and shows the source; only an admin can pin one, and pinning recalculates nothing.",
+    "The weekly diesel price and the fuel tax rate for each state. The assistant looks them up and shows the source; only an admin can pin one. A pin records the rate: no rate rule uses it yet, and pinning recalculates nothing.",
   lookUpDiesel: "Look up this week's diesel price",
   lookUpState: "Look up",
   lookingUp: "Looking it up",
@@ -31,7 +31,7 @@ export const RATES_WORDS = {
   pageHint: "The https address you read the rate on.",
   pageBad: "Paste the page's full address, starting with https://.",
   fromLabel: "Use it from",
-  fromHint: "Your rate rules use the pinned rate from this day.",
+  fromHint: "The day the pinned rate is recorded as starting. No rate rule uses it yet.",
   fromBad: "Pick a day from a year back up to today.",
   review: "Review the pin",
 } as const;
@@ -41,9 +41,15 @@ export function pinQuestion(perGallon: string): string {
   return `Pin ${perGallon} per gallon?`;
 }
 
-// "Your rate rules use it from Oct 26, 2026. Nothing is recalculated, billed or sent."
+// "It is recorded as starting Oct 26, 2026. No rate rule uses it yet, and nothing is
+// recalculated, billed or sent."
 export function pinNext(fromDay: string): string {
-  return `Your rate rules use it from ${fromDay}. Nothing is recalculated, billed or sent.`;
+  return `It is recorded as starting ${fromDay}. No rate rule uses it yet, and nothing is recalculated, billed or sent.`;
+}
+
+// Under a pinned rate: "Recorded as starting Oct 19, 2026. No rate rule uses it yet."
+export function pinnedFromLine(fromDay: string): string {
+  return `Recorded as starting ${fromDay}. No rate rule uses it yet.`;
 }
 
 export function lookupsLeftLine(n: number): string {

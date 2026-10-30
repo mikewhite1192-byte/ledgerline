@@ -38,13 +38,14 @@ export async function carrierToday(q: Queryable, now: Date): Promise<{ zone: str
 }
 
 // Lookups this carrier started in the rolling day before now, from the spend ledger by purpose,
-// so a call that never answered still counts.
+// so a call that never answered still counts. A row stamped after now counts too: another lookup's
+// reservation, stamped by the database's clock a moment after this request read its own, is never
+// left out.
 export async function lookupsInDay(q: Queryable, now: Date): Promise<number> {
   const rows = await q.query<{ n: number | string }>(
     `SELECT count(*) AS n FROM model_calls
-      WHERE tenant_id = current_tenant_id() AND purpose = $1
-        AND created_at > CAST($2 AS timestamptz) AND created_at <= CAST($3 AS timestamptz)`,
-    [LOOKUP_PURPOSE, new Date(now.getTime() - DAY_MS).toISOString(), now.toISOString()],
+      WHERE tenant_id = current_tenant_id() AND purpose = $1 AND created_at > CAST($2 AS timestamptz)`,
+    [LOOKUP_PURPOSE, new Date(now.getTime() - DAY_MS).toISOString()],
   );
   const n = Number(rows[0]?.n);
   if (rows.length !== 1 || !Number.isSafeInteger(n) || n < 0) throw new Error("unreadable lookup count");
