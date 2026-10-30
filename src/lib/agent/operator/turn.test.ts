@@ -1469,6 +1469,40 @@ describe("runTurn with verification on", () => {
     expect(match.steps.find((s) => s.kind === "proposal")!.detail).toMatchObject({ attempt: 1, accepted: true });
   });
 
+  it("refuses a draft whose recompute is still running when the turn's time runs out, and ends the turn then", async () => {
+    // Fake timers move the injected clock and the recompute's timer together; nothing waits.
+    vi.useFakeTimers({ now: 1_000_000 });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const h = on(harness([result({ toolCalls: [propose("p1")] }), result({ text: "Not now." })], () => card()));
+    h.deps.clock = () => Date.now();
+    let reached!: () => void;
+    const called = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    h.store.checkDraft = () => {
+      reached();
+      return new Promise<never>(() => {});
+    };
+    let settled = false;
+    const turn = h.run().then((out) => {
+      settled = true;
+      return out;
+    });
+    await called;
+    await vi.advanceTimersByTimeAsync(LIMITS.wallClockMs - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const out = await turn;
+    expect(out).toMatchObject({ status: "partial", endedReason: "clock" });
+    expect(Date.now() - 1_000_000).toBe(LIMITS.wallClockMs);
+    expect(h.proposals.size).toBe(0);
+    expect(h.steps.some((s) => s.kind === "proposal")).toBe(false);
+    expect(toolSteps(h)[0].detail).toMatchObject({ attempt: 1, refusal: "limit_unavailable" });
+    expect(h.requests).toHaveLength(1);
+  });
+
   it("does not count a switched-off tool, and starts the count again after a card", async () => {
     const disabled = (): Outcome => ({
       decision: "blocked",

@@ -67,7 +67,9 @@ class InvalidTraceId extends Error {
   }
 }
 
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+// Rejects with GatewayTimeout if work has not settled within ms. The operator bounds its draft
+// recompute with it too, so no read runs past the turn's clock.
+export function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new GatewayTimeout()), Math.max(0, ms));

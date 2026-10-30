@@ -2457,7 +2457,7 @@ describe("no internal word in a chat answer or its trace", () => {
     const { container } = render(
       <>
         <ChatThread messages={messages} composer={{}} />
-        <NeedsYou view={{ rows: [escalatedRow(2, "88888888-8888-4888-8888-888888888888")!], unread: false }} />
+        <NeedsYou view={{ rows: [escalatedRow(2)!], unread: false }} />
         <ul>
           {Object.values(PROPOSAL_CHECK_WORDS).map((w) => (
             <li key={w}>{w}</li>

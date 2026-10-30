@@ -8,7 +8,7 @@ import type { Db } from "@/lib/db/types";
 import { readNeedsYou } from "./needs-you";
 
 // Home's escalated row against a real database, as the app's role: it counts the turns in this
-// person's own chat that ended with a person in the last 7 days, links to the newest, and counts
+// person's own chat that ended with a person in the last 7 days, links to the chat's page, and counts
 // nothing for another person, a demo visit or an older turn. The turns are opened and finished
 // through the agent's own store. One tenant, removed after.
 
@@ -53,8 +53,6 @@ const home = (sub: string, now: Date, visitId: string | null = null) =>
   );
 
 describe("Home's escalated row", () => {
-  let newest = "";
-
   beforeAll(async () => {
     admin = createPgDb({ connectionString: adminUrl() });
     app = createPgDb({ connectionString: appUrl() });
@@ -74,7 +72,7 @@ describe("Home's escalated row", () => {
     // person's escalated turn.
     await turnEnding(ME, new Date(NOW.getTime() - 9 * 86_400_000), "escalated");
     await turnEnding(ME, new Date(NOW.getTime() - 3_600_000), "escalated");
-    newest = await turnEnding(ME, new Date(NOW.getTime() - 60_000), "escalated");
+    await turnEnding(ME, new Date(NOW.getTime() - 60_000), "escalated");
     await turnEnding(ME, new Date(NOW.getTime() - 30_000), null);
     await turnEnding(OTHER, new Date(NOW.getTime() - 10_000), "escalated");
   });
@@ -85,7 +83,7 @@ describe("Home's escalated row", () => {
     await admin?.close();
   });
 
-  it("counts this person's escalated turns from the last 7 days and links to the newest", async () => {
+  it("counts this person's escalated turns from the last 7 days and links to the chat's page", async () => {
     expect(await home(ME.sub, NOW)).toEqual([
       {
         key: "escalated",
@@ -93,8 +91,8 @@ describe("Home's escalated row", () => {
         atLeast: false,
         what: "requests in your chat escalated to a person",
         amounts: [],
-        href: `#turn-${newest}`,
-        linkLabel: "Go to the newest one",
+        href: "/",
+        linkLabel: "Open your chat",
       },
     ]);
   });

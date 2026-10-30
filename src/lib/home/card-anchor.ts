@@ -3,8 +3,3 @@
 export function cardAnchor(proposalId: string): string {
   return `card-${proposalId}`;
 }
-
-// Where a turn sits in the chat thread, for the "Needs you" row of requests escalated to a person.
-export function turnAnchor(turnId: string): string {
-  return `turn-${turnId}`;
-}

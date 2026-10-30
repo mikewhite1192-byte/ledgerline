@@ -177,25 +177,22 @@ describe("readNeedsYou", () => {
 });
 
 describe("the escalated row", () => {
-  const TURN = "88888888-8888-4888-8888-888888888888";
-
-  it("counts requests that went to a person, links to the newest turn, and carries no amount", () => {
-    expect(escalatedRow(2, TURN)).toEqual({
+  it("counts requests that went to a person, links to the chat's page with no fragment, and carries no amount", () => {
+    expect(escalatedRow(2)).toEqual({
       key: "escalated",
       count: 2,
       atLeast: false,
       what: "requests in your chat escalated to a person",
       amounts: [],
-      href: `#turn-${TURN}`,
-      linkLabel: "Go to the newest one",
+      href: "/",
+      linkLabel: "Open your chat",
     });
-    expect(escalatedRow(1, TURN)?.what).toBe("request in your chat escalated to a person");
+    expect(escalatedRow(1)?.what).toBe("request in your chat escalated to a person");
   });
 
-  it("is left out with none, an unreadable count or no turn to link to", () => {
-    expect(escalatedRow(0, TURN)).toBeNull();
-    expect(escalatedRow(Number.NaN, TURN)).toBeNull();
-    expect(escalatedRow(3, null)).toBeNull();
+  it("is left out with none or an unreadable count", () => {
+    expect(escalatedRow(0)).toBeNull();
+    expect(escalatedRow(Number.NaN)).toBeNull();
   });
 
   it("is read only when Home asks, in this person's own chat and visit, over the last 7 days", async () => {
@@ -203,7 +200,7 @@ describe("the escalated row", () => {
     const q = {
       query: async (sql: string, params: unknown[]) => {
         asked.push({ sql, params });
-        return [{ n: "2", newest: TURN }];
+        return [{ n: "2" }];
       },
     } as unknown as Queryable;
     const base = { today: "2026-10-29" as const, settlements: false, advances: false, invoices: false };
@@ -211,7 +208,7 @@ describe("the escalated row", () => {
     expect(asked).toEqual([]);
     const now = new Date("2026-10-29T12:00:00Z");
     const rows = await readNeedsYou(q, { ...base, escalations: { now, sub: "sub-1", visitId: null } });
-    expect(rows.map((r) => [r.key, r.count, r.href])).toEqual([["escalated", 2, `#turn-${TURN}`]]);
+    expect(rows.map((r) => [r.key, r.count, r.href])).toEqual([["escalated", 2, "/"]]);
     expect(asked).toHaveLength(1);
     expect(asked[0].params).toEqual(["sub-1", null, "2026-10-29T12:00:00.000Z"]);
     expect(asked[0].sql).toContain("t.ended_reason = 'escalated'");

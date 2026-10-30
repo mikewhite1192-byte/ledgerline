@@ -2,7 +2,7 @@ import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import { AiError, complete, type AiMessage, type AiReplayItem, type AiResult, type AiTool } from "../../ai";
 import { finalChecklist, modelChecklist, sameChecklist, type Checklist, type ChecklistDraft } from "../checklist";
-import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY } from "../gateway";
+import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY, withTimeout } from "../gateway";
 import { dbTurnStore, engineCompares, type OpenedTurn, type StepFinish, type TurnStore } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
 import {
@@ -388,7 +388,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // The two checks before the insert, while verification is on (design-agents-102 3.2): at least
   // one citation is from the case record, and a kind the engine compares recomputes to the cent.
   // A kind it never compares skips the recompute and is not refused for it. No time left, a read
-  // error, an engine refusal or no figure is unknown, and unknown refuses the draft.
+  // error, an engine refusal or no figure is unknown, and unknown refuses the draft. The recompute
+  // gets only the turn's time left, as every gateway read does: one still running then is unknown.
   const checkDraft = async (
     outcome: Extract<GatewayOutcome, { decision: "allowed" }>,
     model: "spark" | "wonder",
@@ -405,9 +406,10 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     }
     if (!engineCompares(draft.kind)) return { sources, refusal: null, verification: persistVerification(null, false) };
     let result: Awaited<ReturnType<TurnStore["checkDraft"]>> = null;
-    if (budget.remainingMs() > 0) {
+    const left = budget.remainingMs();
+    if (left > 0) {
       try {
-        result = await deps.store.checkDraft(draft, ctxFor(model));
+        result = await withTimeout(deps.store.checkDraft(draft, ctxFor(model)), left);
       } catch {
         result = null;
       }
