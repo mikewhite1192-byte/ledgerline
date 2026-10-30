@@ -15,6 +15,7 @@ import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from
 import { executeDetentionCharge } from "./executors/detention-charge";
 import { loadRateFill } from "./executors/load-rate-fill";
 import { payCorrectionExecutor } from "./executors/pay-correction";
+import { payPolicySetupExecutor } from "./executors/pay-policy-setup";
 import { executePayRuleChange } from "./executors/pay-rule-change";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
@@ -62,12 +63,18 @@ export type ProposalRow = {
 
 // confirmed: the person's second confirm, on a flagged proposal (owner decision 2) or on any
 // auditor verdict other than pass. overrideReason: their reason for approving over a block or a
-// held mismatch (the gate trims it and checks its length again; one reason covers both). auditedAt: the auditor's checked_at the card showed,
-// so an override always refers to the one verdict the person read.
+// held mismatch (the gate trims it and checks its length again; one reason covers both).
+// auditedAt: the auditor's checked_at the card showed, so an override always refers to the one
+// verdict the person read. edits: the person's own values for rules on a pay_policy_setup card
+// (rule key to stored value text); only that executor reads them, checks each with the rule's own
+// parser, and takes them only with confirmed. The gate stores them with the approval
+// (approved_edits) and that executor plans from the stored copy only: a resume that sends other
+// edits is refused, one that sends none uses the stored ones.
 export type ApproveOptions = {
   confirmed: boolean;
   overrideReason?: string | null;
   auditedAt?: string | null;
+  edits?: Readonly<Record<string, string>>;
 };
 
 export type ProposalRefusal =
@@ -101,8 +108,15 @@ export type ExecuteDeps = {
 // A refusal (or a throw) rolls that transaction back, so the proposal stays proposed, undecided,
 // with its Approve button, and nothing is written. Reads only. It never replaces the executor's
 // own checks: the executor asks them again after the approval, because a switch can change in
-// between. It is not asked on a resume (the row is already approved).
-export type Precheck = (q: Queryable, proposal: ProposalRow, now: Date) => Promise<ProposalRefused | null>;
+// between. It is not asked on a resume (the row is already approved). ctx: who is approving and
+// what they sent, for a precheck that depends on it (pay_policy_setup's edits and role).
+export type PrecheckContext = { session: Session; opts: ApproveOptions };
+export type Precheck = (
+  q: Queryable,
+  proposal: ProposalRow,
+  now: Date,
+  ctx?: PrecheckContext,
+) => Promise<ProposalRefused | null>;
 
 // An executor's contract: it runs only on a row the gate already moved to approved (or one already
 // executing, on a resume), never on a proposed one, and it never sets approved itself. On a resume
@@ -188,9 +202,19 @@ export const EXECUTORS: ExecutorRegistry = {
   get money_code() {
     return flags.moneyCodes.enabled ? moneyCodeExecutor : undefined;
   },
+  // Pay rules from a policy document (src/lib/proposals/executors/pay-policy-setup.ts): one new
+  // dated version, read through policyOnboardEnabled on every approval, with a precheck that
+  // refuses a card that still needs a choice, a bad edit, a start that no longer holds, or a
+  // member whose role does not cover it, before anything is approved.
+  get pay_policy_setup() {
+    return flags.policyOnboardEnabled ? payPolicySetupExecutor : undefined;
+  },
 };
 
 const DAY_MS = 86_400_000;
+
+// The kinds whose executor reads the person's own values: the gate stores them with the approval.
+const EDITS_KINDS: ReadonlySet<string> = new Set<ProposalKind>(["pay_policy_setup"]);
 
 // auditorStart as an instant, or null when it does not read as one. Null counts every proposal as
 // made before it: the auditor itself never checks a proposal against an unreadable start.
@@ -341,15 +365,20 @@ async function gate(
   if (!executor) return { result: refused("not_executable") };
   // The executor's own early refusal, before anything is approved (see Precheck).
   if (executor.precheck) {
-    const stop = await executor.precheck(q, p, now);
+    const stop = await executor.precheck(q, p, now, { session, opts });
     if (stop) throw new Prechecked(stop);
   }
   // Lock the approval in while the row is still locked. Exactly one row must move; anything else
   // means it is no longer waiting, and nothing runs. A block's override is stored in the same
   // statement, only for the verdict the card showed and only if none is stored yet, and a
   // mismatch's the same way, only on the stored mismatch, so the approval and its reason land
-  // together or not at all. One fixed statement per case; the same reason fills both.
+  // together or not at all. One fixed statement per case; the same reason fills both. On a kind
+  // whose executor reads the person's own values (EDITS_KINDS), the exact edits the precheck just
+  // validated ({} for none) are stored in the same statement too (0063), always the last
+  // parameter, and that executor plans only from them, so a resume can never write values other
+  // than the approved ones.
   const nowIso = now.toISOString();
+  const approvedEdits = EDITS_KINDS.has(p.kind) ? JSON.stringify(opts.edits ?? {}) : null;
   const params = reason === null ? [p.id, session.sub, nowIso] : [p.id, session.sub, nowIso, reason];
   const approved = await q.execute(
     block && mismatch
@@ -358,7 +387,7 @@ async function gate(
                 updated_at = CAST($3 AS timestamptz), auditor_override_reason = $4,
                 auditor_override_by = $2, auditor_override_at = CAST($3 AS timestamptz),
                 engine_override_reason = $4, engine_override_by = $2,
-                engine_override_at = CAST($3 AS timestamptz)
+                engine_override_at = CAST($3 AS timestamptz), approved_edits = CAST($6 AS jsonb)
           WHERE id = CAST($1 AS uuid) AND status = 'proposed' AND auditor_verdict = 'block'
             AND auditor_override_reason IS NULL
             AND date_trunc('milliseconds', auditor_checked_at) = CAST($5 AS timestamptz)
@@ -367,7 +396,8 @@ async function gate(
         ? `UPDATE proposals
               SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
                   updated_at = CAST($3 AS timestamptz), auditor_override_reason = $4,
-                  auditor_override_by = $2, auditor_override_at = CAST($3 AS timestamptz)
+                  auditor_override_by = $2, auditor_override_at = CAST($3 AS timestamptz),
+                  approved_edits = CAST($6 AS jsonb)
             WHERE id = CAST($1 AS uuid) AND status = 'proposed' AND auditor_verdict = 'block'
               AND auditor_override_reason IS NULL
               AND date_trunc('milliseconds', auditor_checked_at) = CAST($5 AS timestamptz)`
@@ -375,14 +405,15 @@ async function gate(
           ? `UPDATE proposals
                 SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
                     updated_at = CAST($3 AS timestamptz), engine_override_reason = $4,
-                    engine_override_by = $2, engine_override_at = CAST($3 AS timestamptz)
+                    engine_override_by = $2, engine_override_at = CAST($3 AS timestamptz),
+                    approved_edits = CAST($5 AS jsonb)
               WHERE id = CAST($1 AS uuid) AND status = 'proposed'
                 AND engine_check = 'mismatch' AND engine_override_reason IS NULL`
           : `UPDATE proposals
                 SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
-                    updated_at = CAST($3 AS timestamptz)
+                    updated_at = CAST($3 AS timestamptz), approved_edits = CAST($4 AS jsonb)
               WHERE id = CAST($1 AS uuid) AND status = 'proposed'`,
-    block ? [...params, rows[0].auditor_checked_at] : params,
+    [...(block ? [...params, rows[0].auditor_checked_at] : params), approvedEdits],
   );
   if (approved !== 1) return { result: refused("already_decided") };
   // Never the reason itself: its length only.

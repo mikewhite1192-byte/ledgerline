@@ -5,6 +5,9 @@ import type { Queryable } from "../../../../db";
 import { readCandidateFacts, readMatchFacts } from "../../../../data/card-recon";
 import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionChargeRows } from "../../../../data/detention-charge";
 import { changeArgsSchema, changeMatches, readRuleChangeRows, ruleChangeOf } from "../../../../pay-rules/change";
+import { RULE_KEYS } from "../../../../pay-rules/rules";
+import { parsePolicyArgs, stateCounts } from "../../../../policy-onboard/args";
+import { checkStart, planVersion, type FieldPlan, type PlanRows } from "../../../../policy-onboard/plan";
 import { loadsOf } from "../../../../data/records";
 import {
   readAdvanceInput,
@@ -13,6 +16,8 @@ import {
   readMoneyCodeInput,
   readReceivablesInput,
   readRowsWhereId,
+  readTable,
+  readTenant,
 } from "../../../../data/read";
 import { TENANT_TABLES, type TenantTable } from "../../../../data/tables";
 import { packetGaps, packetsOf } from "../../../../factoring/packet";
@@ -534,6 +539,61 @@ async function ruleChangeEngine(q: Queryable, ctx: GatewayContext, p: ProposalRo
   };
 }
 
+// A version of pay rules from a policy document, checked the way its executor checks its plan:
+// the start is still a week start after this week with no later version and no approved or paid
+// pay on or after it, its base is still the version in force, and the Found values set over the
+// base make a version the engine takes. A rule that needs a person's choice is left at the base
+// here (the choice is checked at approval). The quotes are never read: the executor checks them
+// word for word against the screened transcript at approval. A refusal is a mismatch, never a yes.
+async function policySetupEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow): Promise<Engine> {
+  if (p.subject_table !== "pay_configs" || !isUuid(p.subject_id)) return UNAVAILABLE;
+  const a = parsePolicyArgs(parseJson(p.args));
+  if (!a || a.baseVersionId !== p.subject_id) return UNAVAILABLE;
+  const tenant = await readTenant(q);
+  if (!tenant) return UNAVAILABLE;
+  const rows: PlanRows = {
+    timezone: tenant.timezone,
+    pay_configs: await readTable(q, "pay_configs"),
+    settlement_periods: await readTable(q, "settlement_periods"),
+    settlements: await readTable(q, "settlements"),
+    deduction_schedules: await readTable(q, "deduction_schedules"),
+  };
+  const base = { ok: true, check: "pay_policy_setup", proposedCents: Number(p.amount_cents) };
+  const placed = checkStart(rows, a.effectiveFrom, a.baseVersionId, ctx.now);
+  if (!placed.ok) return { ...base, engine: { ok: false, reason: placed.reason } };
+  const needsYou = RULE_KEYS.filter((k) => a.fields[k].state === "needs_you");
+  const found = Object.fromEntries(
+    RULE_KEYS.map((k): [string, FieldPlan] => {
+      const f = a.fields[k];
+      return [k, f.state === "needs_you" ? { value: f.value, state: "not_in_document" } : f];
+    }),
+  ) as Record<(typeof RULE_KEYS)[number], FieldPlan>;
+  const plan = planVersion(placed.base, found, {});
+  // Nothing Found differs from the base: the card is still one to make when a rule needs a choice.
+  const unchanged = !plan.ok && plan.reason === "no_change" && needsYou.length > 0;
+  if (!plan.ok && !unchanged) return { ...base, engine: { ok: false, reason: plan.reason } };
+  const changes = plan.ok ? plan.changes : [];
+  const counts = stateCounts(a.fields);
+  return {
+    ...base,
+    engine: {
+      ok: true,
+      amountCents: 0,
+      figures: {
+        effectiveFrom: a.effectiveFrom,
+        baseVersionId: placed.base.id,
+        changes: changes.map((c) => ({ key: c.key, oldValue: c.oldValue, newValue: c.newValue })),
+        needsYou,
+        found: counts.found,
+        notInDocument: counts.notInDocument,
+        adminRequired: plan.ok ? plan.adminRequired : false,
+      },
+      matchesProposal: Number(p.amount_cents) === 0,
+      sources: [{ table: "pay_configs", id: placed.base.id }],
+    },
+  };
+}
+
 // A payment move (payment_reapply), checked the way its executor checks it: the payment is not in
 // QuickBooks yet and has no post reserved, sent or not yet known (the executor's own rule), the
 // application is where the card says, and the engine's payment_on_wrong_invoice finding still
@@ -736,6 +796,8 @@ export async function engineOrThrow(
     return await cashEngine(q, ctx, p, raw);
   }
   if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
+  // The fields are objects, which safeArgs leaves out; the stored args are parsed whole.
+  if (p.kind === "pay_policy_setup") return await policySetupEngine(q, ctx, p);
   // The stored evidence ids are read as stored; the engine runs again as of now.
   if (p.kind === "money_code") return await moneyCodeEngine(q, ctx, p, raw);
   return UNAVAILABLE;

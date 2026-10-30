@@ -165,6 +165,7 @@ export const PROPOSAL_KINDS = [
   "collections_chase",
   "pay_rule_change",
   "money_code",
+  "pay_policy_setup",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 

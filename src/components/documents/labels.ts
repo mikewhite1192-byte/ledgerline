@@ -2,7 +2,6 @@ import type { BadgeTone } from "@/components/ui/badge";
 import { formatCents } from "@/lib/format/money";
 import type {
   ConfidenceField,
-  DocumentKind,
   DocumentRead,
   DocumentView,
   FieldStatus,
@@ -11,21 +10,23 @@ import type {
   MatchedTable,
   MarkupView,
   ReadStatus,
+  StoredDocumentKind,
 } from "@/lib/documents/types";
 
 // Plain-English words for a document's codes. Every sentence is fixed: nothing a model read is
 // ever shown as an instruction, only as a value in a table cell.
 
-const KIND_LABELS: Record<DocumentKind, string> = {
+const KIND_LABELS: Record<StoredDocumentKind, string> = {
   lumper_receipt: "Lumper receipt",
   toll_receipt: "Toll receipt",
   fuel_receipt: "Fuel receipt",
   rate_confirmation: "Rate confirmation",
   bill_of_lading: "Bill of lading",
   other: "Other document",
+  pay_policy: "Pay policy",
 };
 
-export function kindLabel(kind: DocumentKind | null): string {
+export function kindLabel(kind: StoredDocumentKind | null): string {
   return kind && Object.hasOwn(KIND_LABELS, kind) ? KIND_LABELS[kind] : "Not read yet";
 }
 
@@ -134,12 +135,12 @@ const NOTE_SENTENCES: Record<MatchNote, string> = {
 };
 
 // The arithmetic each kind checks, named so the sentence says which numbers were multiplied.
-const ARITHMETIC: Partial<Record<DocumentKind, string>> = {
+const ARITHMETIC: Partial<Record<StoredDocumentKind, string>> = {
   rate_confirmation: "rate per mile times loaded miles against the linehaul",
   fuel_receipt: "price per gallon times gallons against the total",
 };
 
-export function noteSentence(note: MatchNote, kind: DocumentKind | null): string | null {
+export function noteSentence(note: MatchNote, kind: StoredDocumentKind | null): string | null {
   if (!Object.hasOwn(NOTE_SENTENCES, note)) return null;
   const what = kind ? ARITHMETIC[kind] : undefined;
   if (what && (note === "arithmetic_checks" || note === "arithmetic_off")) {
@@ -156,8 +157,8 @@ const NONE_SENTENCES: Record<MatchNone["reason"], string> = {
   ambiguous: "More than one record could match, so nothing was picked.",
 };
 
-export function noneSentence(reason: MatchNone["reason"], kind: DocumentKind | null): string {
-  if (kind === "other") return "This kind of document is not compared with the records.";
+export function noneSentence(reason: MatchNone["reason"], kind: StoredDocumentKind | null): string {
+  if (kind === "other" || kind === "pay_policy") return "This kind of document is not compared with the records.";
   return Object.hasOwn(NONE_SENTENCES, reason) ? NONE_SENTENCES[reason] : "Nothing was compared.";
 }
 
