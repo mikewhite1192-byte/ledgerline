@@ -50,12 +50,13 @@ const RELEASED_ON = [
   // Writes no money and only reads QuickBooks; its reads and model cents are capped below.
   "cardRecon.enabled",
   // Every finished feature, on for the owner's walk-through (D-056, 2026-10-30). Payments stay in
-  // Stripe test mode and accounting in the QuickBooks sandbox; every cap is as it was. The arm
-  // switches that let money move stay off: each arming is its own one-line PR.
+  // Stripe test mode and accounting in the QuickBooks sandbox; every cap is as it was. Each switch
+  // that lets money move is armed in a one-line PR of its own.
   "inboundEmailEnabled",
   "documentCrop",
   "documentMarkupEnabled",
   "sweepScheduleEnabled",
+  "advancePayouts.armed",
   "moneyCodes.enabled",
   "quarterReviewEnabled",
   "iftaEnabled",
@@ -116,21 +117,14 @@ describe("flags", () => {
     for (const name of KEPT_OFF) expect(switches[name], name).toBe(false);
     // auditorRequired ships on with the auditor: a proposal waits for its verdict, and
     // verifyEngineMismatchBlocks ships on with the pay rules check: a mismatch waits for a person.
-    // Advance payouts ship unarmed: arming is its own one-line PR. Step through ships on for
-    // development and test runs, as it merged; the release does not set dev.
+    // Step through ships on for development and test runs, as it merged; the release does not set
+    // dev.
     expect(Object.keys(switches).sort()).toEqual(
-      [
-        ...RELEASED_ON,
-        ...KEPT_OFF,
-        "auditorRequired",
-        "verifyEngineMismatchBlocks",
-        "advancePayouts.armed",
-        "stepThrough.dev",
-      ].sort(),
+      [...RELEASED_ON, ...KEPT_OFF, "auditorRequired", "verifyEngineMismatchBlocks", "stepThrough.dev"].sort(),
     );
     expect(flags.auditorRequired).toBe(true);
     expect(flags.verifyEngineMismatchBlocks).toBe(true);
-    expect(flags.advancePayouts.armed).toBe(false);
+    expect(flags.advancePayouts.armed).toBe(true);
     expect(flags.stepThrough.dev).toBe(true);
   });
 
@@ -503,9 +497,9 @@ describe("flags", () => {
     expect(flags.markupLimits.maxBytes).toBeLessThanOrEqual(flags.documentLimits.maxBytes);
   });
 
-  it("releases the advance flow with payouts unarmed, its cap kept and dated from the release", () => {
+  it("releases the advance flow with payouts armed, its cap kept and dated from the release", () => {
     expect(flags.advancesEnabled).toBe(true);
-    expect(flags.advancePayouts).toEqual({ armed: false, capCents: 50_000, startDate: "2026-10-29" });
+    expect(flags.advancePayouts).toEqual({ armed: true, capCents: 50_000, startDate: "2026-10-29" });
     expect(isLocalDate(flags.advancePayouts.startDate)).toBe(true);
     expect(flags.advancesLimits).toEqual({
       proposalsPerDay: 30,
@@ -859,8 +853,7 @@ describe("local overrides for the demo-path test", () => {
     expect(keys).toEqual([...LOCAL_OVERRIDABLE, ...LOCAL_OFF_ONLY]);
     for (const name of LOCAL_OVERRIDABLE) expect(Object.fromEntries(booleanSwitches(target))[name], name).toBe(true);
     for (const name of LOCAL_OFF_ONLY) expect(Object.fromEntries(booleanSwitches(target))[name], name).toBe(false);
-    // Caps, limits, dates, providers and every kept-off switch are exactly as shipped. Advance
-    // payouts ship unarmed, so local mode is what arms them for the run.
+    // Caps, limits, dates, providers and every kept-off switch are exactly as shipped.
     const on = LOCAL_OVERRIDABLE.reduce((f, k) => withSwitch(f, k, true), copy());
     const expected = [...LOCAL_OFF_ONLY].reduce((f, k) => withSwitch(f, k, false), on);
     expect(target).toEqual(expected);
