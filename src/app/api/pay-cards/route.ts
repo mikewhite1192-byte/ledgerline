@@ -2,14 +2,16 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
 import { checkPayCard, type CheckRefusal } from "@/lib/pay-cards/check";
 
 // POST { settlementId, traceId, image }: check one pay card picture the cards page drew. image is
 // the PNG as base64; traceId is the page's run, for the run's spending limit. The server works the
 // card's figures out again from the settlement and keeps the picture only when a read-back matches
-// every one; nothing is sent anywhere. Off unless payCardsEnabled and aiEnabled are on; the check
-// re-checks both.
+// every one; nothing is sent anywhere. Staff only: a demo visitor (the judge role) is refused before
+// the body is read, since a check spends model cents and keeps a row. Off unless payCardsEnabled
+// and aiEnabled are on; the check re-checks both.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -75,6 +77,8 @@ export async function POST(request: Request) {
   if (!flags.aiEnabled) return reply({ error: "ai_off" }, 409);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
 
   const text = await readCapped(request, MAX_BODY_BYTES);
   if (text === null) return reply({ error: "bad_image" }, 413);
