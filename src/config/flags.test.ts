@@ -118,7 +118,7 @@ describe("flags", () => {
     // auditorRequired ships on with the auditor: a proposal waits for its verdict, and
     // verifyEngineMismatchBlocks ships on with the pay rules check: a mismatch waits for a person.
     // Step through ships on for development and test runs, as it merged; the release does not set
-    // dev. The page focus ships off until the panel that sends it lands; local mode turns it on.
+    // dev. The page focus ships off until the panel that sends it lands; local mode can turn it on.
     expect(Object.keys(switches).sort()).toEqual(
       [
         ...RELEASED_ON,

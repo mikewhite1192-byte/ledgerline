@@ -49,10 +49,11 @@ export type OpenTurnInput = {
 // (src/lib/ai/spend.ts reserve).
 //
 // A page focus is checked right after the conversation ownership check, so another person's
-// conversation is not_found whatever the focus, and before the first write (the abandoned turn
-// sweep, the visit count, the conversation): with agentFocusEnabled off, or for a record that is
-// not a row of this tenant on the ref check's list, the turn is refused bad_focus and nothing is
-// written.
+// conversation is not_found whatever well-formed focus it carries (the route refuses a malformed
+// focus by its shape alone, before any read, so that refusal depends on nothing stored), and before
+// the first write (the abandoned turn sweep, the visit count, the conversation): with
+// agentFocusEnabled off, or for a record that is not a row of this tenant on the ref check's list,
+// the turn is refused bad_focus and nothing is written.
 export async function openTurn(
   q: Queryable,
   session: Session,
