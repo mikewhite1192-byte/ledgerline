@@ -180,11 +180,13 @@ export function ChatThread({
     const el = scroller.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
+  // The panel has its own h2 ("Agent"), so there the title sits one level under it.
+  const Title = compact ? "h3" : "h2";
   const thread =
     messages.length === 0 ? (
       <div className={cn("grid gap-4", compact ? "pt-2" : "pt-6 sm:pt-12")}>
         <div className="grid gap-1.5">
-          <h2 className={cn("text-foreground", compact ? "text-h2" : "text-h1")}>{title}</h2>
+          <Title className={cn("text-foreground", compact ? "text-h2" : "text-h1")}>{title}</Title>
           {intro ? (
             <p className={cn("max-w-[60ch] text-foreground-2", compact ? "text-body" : "text-lead")}>{intro}</p>
           ) : null}
@@ -290,7 +292,14 @@ export function ChatThread({
   if (compact) {
     return (
       <div className={cn("flex min-h-0 flex-1 flex-col", className)}>
-        <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+        {/* Focusable, so a keyboard can scroll the thread too. */}
+        <div
+          ref={scroller}
+          tabIndex={0}
+          role="region"
+          aria-label="Messages"
+          className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
+        >
           {thread}
         </div>
         {announcer}

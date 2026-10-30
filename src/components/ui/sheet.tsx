@@ -56,6 +56,8 @@ export function Sheet({
       }}
       onKeyDown={(e) => {
         if (modal || e.key !== "Escape" || e.defaultPrevented) return;
+        // Esc that only cancels a half-typed word (an input method) stays in the box.
+        if (e.nativeEvent.isComposing) return;
         e.preventDefault();
         e.currentTarget.close();
       }}

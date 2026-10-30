@@ -103,6 +103,14 @@ describe("Sheet beside the page", () => {
     expect((screen.queryByRole("dialog", { name: "Menu" }) as HTMLDialogElement | null)?.open ?? false).toBe(false);
   });
 
+  it("stays open on an Esc that only cancels a half-typed word", () => {
+    const onClose = vi.fn();
+    render(<Harness onClose={onClose} modal={false} />);
+    fireEvent.keyDown(screen.getByText("Inside"), { key: "Escape", isComposing: true });
+    expect(onClose).not.toHaveBeenCalled();
+    expect((screen.getByRole("dialog", { name: "Menu" }) as HTMLDialogElement).open).toBe(true);
+  });
+
   it("names its close button as asked and slides in from the right", () => {
     render(
       <Sheet open onClose={() => undefined} label="Agent" side="right" modal={false} closeLabel="Close the agent">

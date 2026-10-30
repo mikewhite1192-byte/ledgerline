@@ -26,10 +26,13 @@ export type AgentPanelConfig = {
 
 export const PANEL_ID = "agent-panel";
 
-// The conversation the panel shows, kept for this browser tab so the next page picks it up. An
-// empty value means the person started a new one, so the next page does not bring the old one
-// back. Storage can be blocked or full; then each page simply reads the newest conversation.
+// The conversation the panel shows, kept for this browser tab. "New conversation" stores
+// "left:<id>" for the one that was showing: the next page starts empty only while the newest
+// conversation is still that one, so a newer one (asked on Home, say) shows as usual. A new id
+// replaces the marker. Storage can be blocked or full; then each page simply reads the newest
+// conversation.
 const STORE_KEY = "pc-conversation";
+const LEFT = "left:";
 
 function readStored(): string | null {
   try {
@@ -37,6 +40,13 @@ function readStored(): string | null {
   } catch {
     return null;
   }
+}
+
+// The conversation the person left with "New conversation", or null.
+function leftConversation(): string | null {
+  const stored = readStored();
+  if (stored === null || !stored.startsWith(LEFT) || stored.length === LEFT.length) return null;
+  return stored.slice(LEFT.length);
 }
 
 function writeStored(value: string) {
@@ -99,13 +109,19 @@ export function AgentPanel({
   const body = useRef<HTMLDivElement>(null);
   const loading = useRef(false);
   const focused = useRef("");
+  // The conversation the thread shows, as the chat last told it (loaded turns or a new question).
+  const shown = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open || loading.current) return;
     loading.current = true;
-    const turns = readStored() === "" ? Promise.resolve([]) : readRecent();
-    // "New conversation" pressed while the read ran wins over the read.
-    void turns.then((t) => setThread((now) => now ?? { key: 0, turns: t }));
+    const left = leftConversation();
+    void readRecent().then((t) => {
+      const newest = t.at(-1)?.conversationId ?? null;
+      const turns = left !== null && newest === left ? [] : t;
+      // "New conversation" pressed while the read ran wins over the read.
+      setThread((now) => now ?? { key: 0, turns });
+    });
   }, [open]);
 
   useEffect(() => {
@@ -121,9 +137,15 @@ export function AgentPanel({
   const about = focus && focusKey !== dropped ? focus : null;
 
   function startOver() {
-    writeStored("");
+    // With nothing showing, any marker already stored stays as it is.
+    if (shown.current !== null) writeStored(`${LEFT}${shown.current}`);
     setThread((now) => ({ key: (now?.key ?? 0) + 1, turns: [] }));
     setNudge((n) => n + 1);
+  }
+
+  function onConversation(conversationId: string) {
+    shown.current = conversationId;
+    writeStored(conversationId);
   }
 
   return (
@@ -178,7 +200,7 @@ export function AgentPanel({
               disabledReason={config.disabledReason}
               intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
               focus={about ? { table: about.table, id: about.id } : null}
-              onConversation={writeStored}
+              onConversation={onConversation}
             />
           ) : (
             <LoadingState label="Opening your conversation" className="px-4 py-4" />

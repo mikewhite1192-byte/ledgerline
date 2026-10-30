@@ -228,13 +228,15 @@ describe("the agent launcher", () => {
 
   it("starts empty, never on an error, when the recent read is refused", async () => {
     vi.stubGlobal("sessionStorage", memoryStorage());
-    const { asked } = stubServer({ status: 409, body: { error: "agent_off" } });
+    // A refusal that still carries turns: only a clean 200 is ever shown.
+    const { asked } = stubServer({ status: 409, body: { conversationId: "c-1", turns: [EARLIER] } });
     page();
     fireEvent.click(launcher());
     await questionBox();
     expect(asked).toEqual(["/api/agent/recent"]);
     expect(within(panel()).queryByRole("alert")).toBeNull();
     expect(within(panel()).queryByRole("list", { name: "Conversation" })).toBeNull();
+    expect(within(panel()).queryByText(EARLIER.userText)).toBeNull();
     expect(within(panel()).getByRole("heading", { name: "What do you want to know?" })).toBeTruthy();
   });
 
@@ -250,21 +252,44 @@ describe("the agent launcher", () => {
 
     fireEvent.click(within(panel()).getByRole("button", { name: "New conversation" }));
     expect(within(panel()).queryByRole("list", { name: "Conversation" })).toBeNull();
-    expect(storage.getItem("pc-conversation")).toBe("");
+    expect(storage.getItem("pc-conversation")).toBe("left:c-1");
 
-    // The next page, after the person started over: the old thread is not read or brought back.
+    // The next page, while the newest conversation is still the one left: it is not brought back.
     first.unmount();
     asked.length = 0;
     page();
     fireEvent.click(launcher());
     await questionBox();
-    expect(asked).toEqual([]);
+    expect(asked).toEqual(["/api/agent/recent"]);
     expect(within(panel()).queryByRole("list", { name: "Conversation" })).toBeNull();
+    expect(within(panel()).queryByText(EARLIER.userText)).toBeNull();
     await ask("Start fresh");
     await waitFor(() => expect(posted).toHaveLength(1));
     expect(posted[0]).not.toHaveProperty("conversationId");
     // The new conversation is the one the next page picks up.
     await waitFor(() => expect(storage.getItem("pc-conversation")).toBe("c-2"));
+  });
+
+  it("shows a newer conversation asked on Home after New conversation in the panel", async () => {
+    const storage = memoryStorage();
+    vi.stubGlobal("sessionStorage", storage);
+    const recent = { status: 200, body: { conversationId: "c-1", turns: [EARLIER] } as unknown };
+    stubServer(recent);
+    const first = page();
+    fireEvent.click(launcher());
+    await within(panel()).findByRole("list", { name: "Conversation" });
+    fireEvent.click(within(panel()).getByRole("button", { name: "New conversation" }));
+    expect(storage.getItem("pc-conversation")).toBe("left:c-1");
+    first.unmount();
+
+    // On Home the person asks again, so the newest conversation is no longer the one left.
+    const fromHome: TurnView = { ...EARLIER, id: "t-3", conversationId: "c-3", userText: "Who is behind on loads?" };
+    recent.body = { conversationId: "c-3", turns: [fromHome] };
+    page(FOCUS);
+    fireEvent.click(launcher());
+    const thread = await within(panel()).findByRole("list", { name: "Conversation" });
+    expect(within(thread).getByText(fromHome.userText)).toBeTruthy();
+    expect(storage.getItem("pc-conversation")).toBe("c-3");
   });
 
   it("still opens and asks when the browser refuses its storage", async () => {
