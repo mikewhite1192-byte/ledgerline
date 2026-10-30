@@ -139,6 +139,11 @@ async function clearSettled(
       if (flow > 0) blocked.push(flowAdvanceBlock(flow));
     }
     if (blocked.length > 0) throw new Error(`${blocked.join("; ")} (nothing was cleared)`);
+    // An escrow release names its payout row (a foreign key with no delete action), so the
+    // releases go first; the app role cannot delete them.
+    if (channel === "payment") {
+      await q.execute("DELETE FROM escrow_releases WHERE tenant_id = CAST($1 AS uuid)", [tenantId]);
+    }
     return q.execute(
       `DELETE FROM money_actions
         WHERE tenant_id = CAST($1 AS uuid) AND channel = $2 AND state IN ('confirmed', 'failed')

@@ -28,6 +28,8 @@ import { matchDocument, RATE_FILL_STATUSES } from "../../documents/match";
 import { isWithin, localDateOf } from "../../time/local-date";
 import { readDocumentForInput } from "./store/document-reads";
 import { optionReasons } from "../../cash/args";
+import { liveReleaseOf, readDriverEscrow, readDriverReleases, releaseFactRefusal } from "../../escrow/read";
+import { escrowReleaseGate } from "../../escrow/switches";
 import { factoringProposalOf } from "../../factoring/propose";
 import type { GatewayContext, GatewayRef, LimitResult, ReasonCategory } from "./types";
 
@@ -522,4 +524,55 @@ export async function factoringLimit(
   } catch {
     return unavailable(null);
   }
+}
+
+// ---- Escrow releases ----
+
+export type EscrowReleaseLimitArgs = { driverId: string; amountCents: number; balanceAsOf: string };
+
+// A terminated driver's escrow release: the whole release gate on the carrier's local date of
+// this call (the cap is the limit, and an amount over it is amount_over_limit), the balance read
+// as of today (balanceAsOf must be today, so the card says which day's balance it sends), then the
+// driver's facts as of now: terminated, no live release, a balance above zero and exactly this
+// amount. Every other refusal is engine_refused with its fixed category word.
+export async function escrowReleaseLimit(
+  q: Queryable,
+  ctx: GatewayContext,
+  args: EscrowReleaseLimitArgs,
+): Promise<LimitResult> {
+  const e = flags.escrowRelease;
+  if (e?.enabled !== true || !Number.isSafeInteger(e.capCents) || e.capCents <= 0) {
+    return unavailable(args.amountCents);
+  }
+  const named = (category: string): LimitResult => {
+    const r = refused("engine_refused", e.capCents, args.amountCents);
+    return r.ok ? r : { ...r, category };
+  };
+  let today: string;
+  try {
+    today = localDateOf(ctx.now.toISOString(), ctx.timeZone);
+  } catch {
+    return unavailable(args.amountCents);
+  }
+  const gate = escrowReleaseGate(args.amountCents, today);
+  if (gate === "over_escrow_cap") return refused("amount_over_limit", e.capCents, args.amountCents);
+  if (gate) return named(gate);
+  if (args.balanceAsOf !== today) return named("balance_date_mismatch");
+  let fact: ReturnType<typeof releaseFactRefusal>;
+  try {
+    const driver = await readDriverEscrow(q, args.driverId);
+    const live = driver ? liveReleaseOf(await readDriverReleases(q, args.driverId)) : null;
+    fact = releaseFactRefusal(driver, live, args.amountCents, today);
+  } catch {
+    return unavailable(args.amountCents);
+  }
+  if (fact) return named(fact);
+  return {
+    ok: true,
+    limitCents: cents(Math.min(args.amountCents, e.capCents)),
+    requestedCents: cents(args.amountCents),
+    exceptions: [],
+    reasons: [],
+    sources: [{ table: "drivers", id: args.driverId }],
+  };
 }

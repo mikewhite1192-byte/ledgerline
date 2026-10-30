@@ -19,8 +19,10 @@ import { describe, expect, it } from "vitest";
 //   P2. Nothing reachable from any agent file, the gateway included, is a money write or a
 //       payment or accounting adapter: under money/ only read, types, keys and format, under
 //       money-codes/ only read, words and switches (never the issue, the reveal or the request
-//       form), under adapters/ only types and tms/*, and under factoring/ only read, packet, words
-//       and propose (never the executor that submits to the factoring partner, or its switches).
+//       form), under adapters/ only types and tms/*, under factoring/ only read, packet, words
+//       and propose (never the executor that submits to the factoring partner, or its switches),
+//       and under escrow/ only read, statement, due and switches (never the release executor or
+//       its reconcile pass).
 //   P3. Nothing reachable from any agent file uploads, stores or reads a document with the model:
 //       under documents/ only types, schema, match and candidates, and under ratecon/ only schema,
 //       check, args and candidates (never the read, the store or the service).
@@ -54,6 +56,7 @@ const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/i;
 const MONEY_CODES_OK = /^src\/lib\/money-codes\/(read|words|switches)\.[cm]?[jt]sx?$/i;
 const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/i;
 const FACTORING_OK = /^src\/lib\/factoring\/(read|packet|words|propose)\.[cm]?[jt]sx?$/i;
+const ESCROW_OK = /^src\/lib\/escrow\/(read|statement|due|switches)\.[cm]?[jt]sx?$/i;
 const DOCUMENTS_OK = /^src\/lib\/documents\/(types|schema|match|candidates)\.[cm]?[jt]sx?$/i;
 const RATECON_OK = /^src\/lib\/ratecon\/(schema|check|args|candidates)\.[cm]?[jt]sx?$/i;
 // Every name that loads a module with no import line; eslint.config.mjs bans the same set. Regexes,
@@ -251,7 +254,8 @@ function ledgerViolations(root: string, agentFiles: string[], graph: Graph): str
     const codes = /^src\/lib\/money-codes(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !MONEY_CODES_OK.test(rel);
     const adapter = /(^|\/)adapters(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !ADAPTERS_OK.test(rel);
     const factoring = /^src\/lib\/factoring(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !FACTORING_OK.test(rel);
-    if (!money && !codes && !adapter && !factoring) continue;
+    const escrow = /^src\/lib\/escrow(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !ESCROW_OK.test(rel);
+    if (!money && !codes && !adapter && !factoring && !escrow) continue;
     out.push(chainTo(root, parent, file));
   }
   return out;
@@ -387,6 +391,27 @@ describe("the walker itself, on fixture trees", () => {
     });
     expect(out.problems).toEqual([]);
     expect(out.ledger).toEqual(["src/lib/agent/gateway/bad.ts -> src/lib/factoring/execute.ts"]);
+  });
+
+  it("lets the gateway read escrow statements and the due list, never reach the release executor", () => {
+    const out = run({
+      "src/lib/agent/gateway/escrow.ts":
+        'import { r } from "../../escrow/read";\nimport "../../escrow/statement";\n' +
+        'import "../../escrow/due";\nimport "../../escrow/switches";',
+      "src/lib/escrow/read.ts": "",
+      "src/lib/escrow/statement.ts": 'import "./read";',
+      "src/lib/escrow/due.ts": 'import "./switches";',
+      "src/lib/escrow/switches.ts": "",
+      "src/lib/agent/gateway/bad.ts": 'export { escrowReleaseExecutor } from "@/lib/escrow/execute";',
+      "src/lib/agent/gateway/check.ts": 'import "../../escrow/reconcile";',
+      "src/lib/escrow/execute.ts": "export const escrowReleaseExecutor = 1;",
+      "src/lib/escrow/reconcile.ts": "",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.ledger.sort()).toEqual([
+      "src/lib/agent/gateway/bad.ts -> src/lib/escrow/execute.ts",
+      "src/lib/agent/gateway/check.ts -> src/lib/escrow/reconcile.ts",
+    ]);
   });
 
   it("lets the gateway read money codes, never issue, reveal or request one", () => {

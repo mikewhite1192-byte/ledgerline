@@ -839,6 +839,8 @@ export async function engineOrThrow(
   if (p.kind === "money_code") return await moneyCodeEngine(q, ctx, p, raw);
   // The card's charge lines are objects, which safeArgs leaves out; the stored args are parsed whole.
   if (p.kind === "load_create") return await loadCreateEngine(q, ctx, p);
+  // An escrow release has no engine number: the amount is the driver's stored balance, which the
+  // precheck reads again before any approval, so the card reads unavailable.
   return UNAVAILABLE;
 }
 

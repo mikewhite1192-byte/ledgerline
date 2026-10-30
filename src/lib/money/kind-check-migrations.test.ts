@@ -9,7 +9,9 @@ import { KIND_SHAPES, MONEY_ACTION_KINDS, OUTSIDE_SYSTEMS } from "./types";
 // and production applies migrations in merge order while a fresh database applies them in number
 // order, so whichever runs last decides the constraints. The rule that keeps both orders equal:
 // every re-creation lists the full union the code knows. A value missing there would be refused by
-// the database (23514) after the code had shipped.
+// the database (23514) after the code had shipped. 0069 (ESCROW-RELEASE) adds the escrow kind and
+// its subject after both had run everywhere, so for the kind, subject and channel checks the newest
+// re-creation is the full union and each earlier one lists only values the code still knows.
 
 const DIR = path.join(process.cwd(), "db/migrations");
 const FILE = /^(\d{4})_[a-z0-9_]+\.sql$/;
@@ -49,6 +51,16 @@ function listings(readable: RegExp, every: RegExp): Listing[] {
 }
 
 const sorted = (values: readonly string[]) => [...values].sort();
+
+// The newest re-creation (number order) lists exactly the code's union; each earlier one is part
+// of it, so no value the code dropped is still allowed.
+function newestIsTheUnion(found: Listing[], union: readonly string[]): string {
+  expect(found.length).toBeGreaterThan(0);
+  const newest = found[found.length - 1];
+  expect(sorted(newest.values), newest.version).toEqual(sorted(union));
+  for (const l of found) for (const v of l.values) expect(union, `${l.version}: ${v}`).toContain(v);
+  return newest.version;
+}
 const kindsWhere = (pick: (k: keyof typeof KIND_SHAPES) => boolean) => MONEY_ACTION_KINDS.filter(pick);
 const SUBJECT_TABLES = [...new Set(MONEY_ACTION_KINDS.map((k) => KIND_SHAPES[k].subjectTable))];
 
@@ -60,7 +72,7 @@ describe("the money ledger checks in the migration texts", () => {
     );
     expect(found.map((l) => l.version)).toContain("0048");
     expect(found.map((l) => l.version)).toContain("0060");
-    for (const l of found) expect(sorted(l.values), l.version).toEqual(sorted(MONEY_ACTION_KINDS));
+    expect(newestIsTheUnion(found, MONEY_ACTION_KINDS)).toBe("0069");
   });
 
   it("lists every subject table in each subject check re-creation", () => {
@@ -68,8 +80,7 @@ describe("the money ledger checks in the migration texts", () => {
       /ADD\s+CONSTRAINT\s+money_actions_subject_table_check\s+CHECK\s*\(\s*subject_table\s+IN\s*\(([^)]*)\)/gi,
       /ADD\s+CONSTRAINT\s+money_actions_subject_table_check\b/gi,
     );
-    expect(found.length).toBeGreaterThan(0);
-    for (const l of found) expect(sorted(l.values), l.version).toEqual(sorted(SUBJECT_TABLES));
+    expect(newestIsTheUnion(found, SUBJECT_TABLES)).toBe("0069");
   });
 
   it("lists every outside system in each re-creation from the money-code block on", () => {
@@ -96,9 +107,7 @@ describe("the money ledger checks in the migration texts", () => {
       /ADD\s+CONSTRAINT\s+money_actions_counterparty_pairing\b/gi,
     );
     for (const found of [channel, invoice, counterparty]) expect(found.length).toBeGreaterThan(0);
-    for (const l of channel) {
-      expect(sorted(l.values), l.version).toEqual(sorted(kindsWhere((k) => KIND_SHAPES[k].channel === "payment")));
-    }
+    expect(newestIsTheUnion(channel, kindsWhere((k) => KIND_SHAPES[k].channel === "payment"))).toBe("0069");
     for (const l of invoice) {
       // The list, then the subject it pairs with: "(kind IN (...)) = (subject_table = 'invoices')".
       expect(sorted(l.values), l.version).toEqual(
@@ -131,10 +140,17 @@ describe("the money ledger checks in the migration texts", () => {
     expect(at).toContain("0048");
     expect(KIND_SHAPES.money_code_issue.subjectTable).toBe("money_codes");
   });
+
+  it("pairs the escrow release kind with its own subject", () => {
+    const re = /ADD\s+CONSTRAINT\s+money_actions_escrow_subject_pairing\s+CHECK\s*\(\s*\(\s*kind\s*=\s*'escrow_release'\s*\)\s*=\s*\(\s*subject_table\s*=\s*'escrow_releases'\s*\)\s*\)/i;
+    const at = MIGRATIONS.filter((m) => re.test(m.sql)).map((m) => m.version);
+    expect(at).toEqual(["0069"]);
+    expect(KIND_SHAPES.escrow_release.subjectTable).toBe("escrow_releases");
+  });
 });
 
 // Kinds added by a later re-creation of the proposal check, which lists 0048's fourteen first.
-const AFTER_0048 = ["pay_policy_setup", "load_create"];
+const AFTER_0048 = ["pay_policy_setup", "load_create", "escrow_release"];
 
 describe("0048's proposal kind check", () => {
   it("lists the 14-kind union, which holds every kind the code knew then", () => {

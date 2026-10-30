@@ -129,6 +129,15 @@ export const MONEY_CODE_PROMPT = [
   "  on the driver's paystub and net to zero. Never read or repeat a code: only the page shows it.",
 ].join("\n");
 
+// Added to the prompt only while propose_escrow_release is offered (flags.escrowRelease.enabled),
+// so a turn with the switch off sends exactly today's prompt.
+export const ESCROW_RELEASE_PROMPT = [
+  "",
+  "Escrow releases:",
+  "- A terminated driver's escrow goes back once a person approves it: read get_escrow_statement",
+  "  first, then call propose_escrow_release with exactly the balance and the statement's asOf date.",
+].join("\n");
+
 // Carrier memory (carrierMemoryEnabled): appended only while remember_note is offered, so the
 // prompt is unchanged with the switch off.
 export const MEMORY_PROMPT = [
@@ -179,9 +188,9 @@ export function verifyAttempts(configured: number): number {
 // is on (it is one of the rules), the collections rule while get_collections is offered, the Cash
 // Friday line while get_cash_friday is offered, the checklist rule while set_checklist is offered,
 // then the verification rule while verify is on, then the report section while the report tools
-// are offered, then the money code section while propose_money_code is offered, then the memory
-// section while remember_note is. With search and verify off and none of those offered it is the
-// prompt above.
+// are offered, then the money code section while propose_money_code is offered, then the escrow
+// release section while propose_escrow_release is, then the memory section while remember_note
+// is. With search and verify off and none of those offered it is the prompt above.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean, verify = false): string {
   const searched = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
   const collections = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
@@ -193,7 +202,8 @@ export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean
   const withIfta = toolNames.includes("report_ifta_quarter") ? `${withReports}\n${IFTA_PROMPT}` : withReports;
   const withYearEnd = toolNames.includes("report_year_end_contractors") ? `${withIfta}\n${YEAR_END_PROMPT}` : withIfta;
   const withCodes = toolNames.includes("propose_money_code") ? `${withYearEnd}\n${MONEY_CODE_PROMPT}` : withYearEnd;
-  return toolNames.includes("remember_note") ? `${withCodes}\n${MEMORY_PROMPT}` : withCodes;
+  const withEscrow = toolNames.includes("propose_escrow_release") ? `${withCodes}\n${ESCROW_RELEASE_PROMPT}` : withCodes;
+  return toolNames.includes("remember_note") ? `${withEscrow}\n${MEMORY_PROMPT}` : withEscrow;
 }
 
 export const STATE_HEADER = "Current state (from the database, for this turn only):";

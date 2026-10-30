@@ -265,6 +265,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "calls",
     "call_segments",
     "call_turns",
+    // A terminated driver's escrow release (0069): no seed, an approval writes it.
+    "escrow_releases",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -517,6 +519,14 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'repair', 4099,
              'form', CAST($4 AS uuid), 'failed')`,
           [randomUUID(), c.driver, load.id, c.membership],
+        );
+        // An escrow release that ended failed before any ledger row was reserved: no ledger row
+        // names it, so the payout check has nothing to compare (0069).
+        await q.execute(
+          `INSERT INTO escrow_releases (id, tenant_id, driver_id, proposal_id, opening_balance_cents, amount_cents,
+             status)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 2500, 2500, 'failed')`,
+          [randomUUID(), c.driver, proposal],
         );
         // A person arming the driver for advances, and the id the carrier's TMS knows them by (0027).
         await q.execute(

@@ -108,6 +108,9 @@ const KEPT_OFF = [
   "ratecon.enabled",
   // The phone line ships dark with its own merge; the owner turns it on in its own PR.
   "phoneLineEnabled",
+  // Escrow releases ship dark and unarmed with their own merge; the owner turns them on in their own PR.
+  "escrowRelease.enabled",
+  "escrowRelease.armed",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -312,6 +315,11 @@ describe("flags", () => {
     expect(limits.maxSegmentsPerCall).toBeLessThanOrEqual(1000);
     expect(limits.maxCallMs).toBeLessThanOrEqual(3_600_000);
     expect(limits.maxHandOffsPerCall).toBeLessThanOrEqual(100);
+  });
+
+  it("ships escrow releases off and unarmed, with a $5,000 cap and a start date", () => {
+    expect(flags.escrowRelease).toEqual({ enabled: false, armed: false, capCents: 500_000, startDate: "2026-11-02" });
+    expect(isLocalDate(flags.escrowRelease.startDate)).toBe(true);
   });
 
   it("pins every switch that ships on for the demo-path run, on or off as its replay was recorded", () => {

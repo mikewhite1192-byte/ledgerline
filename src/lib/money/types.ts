@@ -17,6 +17,9 @@ export const MONEY_ACTION_KINDS = [
   // A one-time money code from the simulated card provider (MONEY-CODE, 0048). Payment channel,
   // no rail: the caller sends through its own hook.
   "money_code_issue",
+  // A terminated driver's escrow balance paid back (ESCROW-RELEASE, 0069). Payment channel, bank
+  // rail: the same payment adapter and test connected account as a settlement payout.
+  "escrow_release",
 ] as const;
 export type MoneyActionKind = (typeof MONEY_ACTION_KINDS)[number];
 
@@ -55,20 +58,25 @@ export const OUTSIDE_SYSTEMS = [
 export type OutsideSystem = (typeof OUTSIDE_SYSTEMS)[number];
 
 // Where a payout lands. Fixed per kind in code, never chosen per row: an advance loads the
-// driver's fuel card, a weekly settlement goes to the driver's bank. No rail column exists on
+// driver's fuel card, a weekly settlement and an escrow release go to the driver's bank. No rail column exists on
 // money_actions, because the kind already says it; outside_system says which provider answered.
 export const PAYOUT_RAILS = ["fuel_card", "bank"] as const;
 export type PayoutRail = (typeof PAYOUT_RAILS)[number];
 
-export const RAIL_OF_KIND: Readonly<Record<"advance_payout" | "settlement_payout", PayoutRail>> = {
+export const RAIL_OF_KIND: Readonly<
+  Record<"advance_payout" | "settlement_payout" | "escrow_release", PayoutRail>
+> = {
   advance_payout: "fuel_card",
   settlement_payout: "bank",
+  escrow_release: "bank",
 };
 
 // The rail a kind pays on, or null for a kind with no payout rail: an accounting post, or a
 // payment kind the caller sends through its own hook (factoring_advance, money_code_issue).
 export function railOf(kind: unknown): PayoutRail | null {
-  if (kind === "advance_payout" || kind === "settlement_payout") return RAIL_OF_KIND[kind];
+  if (kind === "advance_payout" || kind === "settlement_payout" || kind === "escrow_release") {
+    return RAIL_OF_KIND[kind];
+  }
   return null;
 }
 
@@ -83,7 +91,8 @@ export type SubjectTable =
   | "settlements"
   | "invoices"
   | "customer_payments"
-  | "money_codes";
+  | "money_codes"
+  | "escrow_releases";
 export type CounterpartyTable = "drivers" | "customers";
 export type SettledVia = "response" | "read_back" | "refused";
 export const PROPOSERS = ["agent", "person"] as const;
@@ -130,17 +139,25 @@ export const KIND_SHAPES: Readonly<Record<MoneyActionKind, KindShape>> = {
     subjectTable: "money_codes",
     counterpartyTable: "drivers",
   },
+  escrow_release: {
+    channel: "payment",
+    subjectTable: "escrow_releases",
+    counterpartyTable: "drivers",
+  },
 };
 
 // The statuses each subject table allows (0005). customer_payments has none. money_codes lists
 // only the statuses a money action may start from (0048): a code being issued, or one whose last
-// try is not confirmed yet.
+// try is not confirmed yet. escrow_releases only from a release being sent (0069): its one try is
+// replayed, never a second, and an 'unknown' release is a confirmed payout whose balance had moved,
+// which a person settles by hand.
 export const SUBJECT_STATUSES = {
   advances: ["requested", "approved", "paid", "rejected", "cancelled"],
   settlements: ["draft", "approved", "paid"],
   invoices: ["open", "partially_paid", "paid", "void"],
   customer_payments: [],
   money_codes: ["issuing", "unknown"],
+  escrow_releases: ["issuing"],
 } as const satisfies Record<SubjectTable, readonly string[]>;
 export type SubjectStatus<T extends SubjectTable> = (typeof SUBJECT_STATUSES)[T][number];
 

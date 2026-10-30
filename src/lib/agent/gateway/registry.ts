@@ -25,6 +25,8 @@ import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
 import { getMoneyCodes } from "./tools/read/get-money-codes";
+import { getEscrowStatement } from "./tools/read/get-escrow-statement";
+import { listEscrowReleasesDue } from "./tools/read/list-escrow-releases-due";
 import { getProfitBrief } from "./tools/read/get-profit-brief";
 import { getProposal } from "./tools/read/get-proposal";
 import { getQuarterReview } from "./tools/read/get-quarter-review";
@@ -51,6 +53,7 @@ import { proposeFactoring } from "./tools/propose/propose-factoring";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposeMoneyCode } from "./tools/propose/propose-money-code";
+import { proposeEscrowRelease } from "./tools/propose/propose-escrow-release";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
 import { proposeRuleChange } from "./tools/propose/propose-rule-change";
@@ -125,6 +128,10 @@ const TOOLS: readonly AnyToolDef[] = [
   getFactoringPacket,
   getFactoringRequests,
   proposeFactoring,
+  // Offered only while flags.escrowRelease.enabled is on (each tool's enabled switch).
+  listEscrowReleasesDue,
+  getEscrowStatement,
+  proposeEscrowRelease,
 ];
 
 function build(): Readonly<Record<string, AnyToolDef>> {

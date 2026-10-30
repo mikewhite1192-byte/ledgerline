@@ -13,6 +13,9 @@ import {
   QUEUE_CHILDREN,
   QUEUE_LOADS,
 } from "../../../data/read";
+import { DUE_SQL as ESCROW_DUE_SQL } from "../../../escrow/due";
+import { DRIVER_ESCROW_SQL, DRIVER_RELEASES_SQL } from "../../../escrow/read";
+import { STATEMENT_WEEKS_SQL } from "../../../escrow/statement";
 import { PACKET_DOCUMENTS_SQL, PACKET_INVOICES_SQL, PACKET_PODS_SQL } from "../../../factoring/packet";
 import { SUMMARY_SQL as FACTORING_REQUESTS_SQL } from "../../../factoring/read";
 import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
@@ -140,6 +143,36 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     if (LEDGER_BY_KIND.test(sql)) {
       return (tables.money_actions ?? []).filter((r) => r.kind === params[0]).map((r) => ({ ...r }));
     }
+    // The escrow release reads (escrow/read.ts, due.ts, statement.ts): the plan's drivers and paid
+    // weeks, and releases from an escrow_releases list a test adds (the plan holds none).
+    if (sql === DRIVER_ESCROW_SQL) {
+      return plan.rows.drivers
+        .filter((d) => d.id === params[0])
+        .map((d) => ({
+          id: d.id,
+          code: d.code,
+          active_from: d.active_from,
+          active_to: d.active_to,
+          escrow_balance_cents: d.escrow_balance_cents,
+        }));
+    }
+    if (sql === DRIVER_RELEASES_SQL) {
+      return (tables.escrow_releases ?? []).filter((r) => r.driver_id === params[0]).map((r) => ({ ...r }));
+    }
+    if (sql === ESCROW_DUE_SQL) {
+      const held = new Set(
+        (tables.escrow_releases ?? [])
+          .filter((r) => ["issuing", "released", "unknown"].includes(String(r.status)))
+          .map((r) => r.driver_id),
+      );
+      return plan.rows.drivers
+        .filter((d) => d.active_to !== null && d.active_to <= String(params[0]))
+        .filter((d) => d.escrow_balance_cents > 0 && !held.has(d.id))
+        .sort((x, y) => (x.active_to === y.active_to ? (x.code < y.code ? -1 : 1) : x.active_to! < y.active_to! ? -1 : 1))
+        .slice(0, Number(params[1]))
+        .map((d) => ({ id: d.id, code: d.code, active_to: d.active_to, escrow_balance_cents: d.escrow_balance_cents }));
+    }
+    if (sql === STATEMENT_WEEKS_SQL) return [];
     // The factoring papers: the named invoices' loads, then the uploaded papers and the portal's
     // proof of delivery, from lists a test adds (the plan holds neither), or none.
     if (sql === PACKET_INVOICES_SQL) {
