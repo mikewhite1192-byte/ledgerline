@@ -99,6 +99,9 @@ const KEPT_OFF = [
   // The desk loop ships dark and unarmed with its own merge; the owner turns it on in its own PR.
   "deskLoop.enabled",
   "deskLoop.armed",
+  // Rate confirmations into proposed loads ship dark with their own merge; the owner turns them on
+  // in their own PR.
+  "ratecon.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -273,6 +276,11 @@ describe("flags", () => {
 
   it("ships the sweep's checks and the chat loop's checks off, with three attempts before a person", () => {
     expect(flags.verification).toEqual({ enabled: false, maxAttempts: 3 });
+  });
+
+  it("ships rate confirmations into loads off, with a start date, a per-read cap and a daily limit", () => {
+    expect(flags.ratecon).toEqual({ enabled: false, startDate: "2026-11-02", readMaxCostCents: 8, perTenantPerDay: 20 });
+    expect(isLocalDate(flags.ratecon.startDate)).toBe(true);
   });
 
   it("pins every switch that ships on for the demo-path run, on or off as its replay was recorded", () => {

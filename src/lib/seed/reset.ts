@@ -18,7 +18,7 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      the flow advances, in one transaction, so no ledger row can outlive the advance it names;
 //   3. demo_reset_clear() (migration 0025, re-created whole by later migrations: 0033, then 0034 to
 //      empty the fuel checks too, then 0036 to empty the pay rule changes, then 0038 with the Inbox
-//      messages), the one security-definer function, which checks the same things again under the
+//      messages, then 0066 with the rate confirmation readings), the one security-definer function, which checks the same things again under the
 //      tenant row lock and deletes the settled ledger rows, the agent's records and the fictional
 //      broker portal's loads (the app role has no DELETE on them); the portal's loads come back
 //      only with npm run seed, since the app cannot write them;
@@ -40,6 +40,9 @@ export const DEMO_RESET_CLEARED = {
   money_actions:
     "settled ledger rows, keyed kind:subject:attempt: against the re-created subjects they would " +
     "replay an old outcome or block a subject for good",
+  ratecon_reads:
+    "each rate confirmation's second reading and the load id it holds (0066); it names a document " +
+    "that goes and an inbound message the replace deletes",
   documents: "uploaded paperwork and its reading; each names an inbound message the replace deletes",
   evidence_clips: "uploaded dock clips and their readings; each names a load the replace deletes",
   portal_evidence: "what each portal run found; it names a run that goes and a load the replace deletes",
@@ -123,6 +126,7 @@ export const RESET_TABLES: readonly ResetTable[] = [...TENANT_TABLES, ...CLEARED
 // (they name a proposal; the replace rewrites the rest of advances).
 export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "money_actions",
+  "ratecon_reads",
   "documents",
   "evidence_clips",
   "portal_evidence",
@@ -184,6 +188,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   carrier_notes: "Memory notes",
   pinned_rates: "Pinned fuel and tax rates",
   money_actions: "Settled payouts and bookings (test mode)",
+  ratecon_reads: "Rate confirmation readings",
   documents: "Uploaded documents",
   evidence_clips: "Dock clips",
   portal_evidence: "Broker portal findings",

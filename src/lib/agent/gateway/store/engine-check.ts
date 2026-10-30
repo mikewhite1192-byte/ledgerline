@@ -15,7 +15,8 @@ import { impactOf, PROPOSAL_TITLES } from "./proposals";
 // again. Reads only; the store writes the result once (audit.ts, writeEngineCheck).
 //
 // Kinds merged after the design (the three Cash Friday kinds, the pay rule change, the money code
-// and the card match) have no comparison yet and read unavailable.
+// and the card match) have no comparison yet and read unavailable. A load from a rate confirmation
+// (load_create) is compared: the checks run again on the stored reading.
 
 export type EngineCheck = "matched" | "mismatch" | "unavailable";
 export type EngineCheckResult = { check: EngineCheck; engineCents: number | null };
@@ -31,6 +32,7 @@ const COMPARED: ReadonlySet<string> = new Set([
   "payment_reapply",
   "detention_charge",
   "settlement_approve",
+  "load_create",
 ]);
 
 // Whether the engine compares this kind at all. A kind with no comparison here (the card match,
@@ -106,6 +108,14 @@ export function compareEngine(kind: string, amountCents: number, engine: Record<
       const matches = objectOf(engine.matches);
       if (engine.found !== true || engine.status !== "draft" || inner?.ok !== true || !matches) return ENGINE_UNAVAILABLE;
       return verdictOf(matches.cardEqualsStored === true && matches.storedEqualsEngine === true, inner.netCents);
+    }
+    case "load_create": {
+      // The deterministic checks run again on the stored reading: they must still take the card's
+      // exact values, and the document's own total must be the card's amount.
+      if (typeof engine.holds !== "boolean") return ENGINE_UNAVAILABLE;
+      const total = centsOf(engine.totalCents);
+      if (total === null) return ENGINE_UNAVAILABLE;
+      return verdictOf(engine.holds && total === amountCents, total);
     }
     default:
       return ENGINE_UNAVAILABLE;
