@@ -29,11 +29,24 @@ import { figuresText } from "./figures";
 // More of the agent's fixes than this in one quarter stops the read rather than count part of them.
 export const MAX_QUARTER_PROPOSALS = 5_000;
 
+// More recovery lines, or more detention charges, than this in one quarter stops the read rather
+// than count part of them. A detention row, the wider of the two, is about 250 bytes as JSON, so a
+// full read stays near 500 KB, under the Data API's 1 MiB response cap.
+export const MAX_QUARTER_ROWS = 2_000;
+
 // Exported so a test's fake database can match these statements whole.
-// Only the recovery lines: the one kind the review sums, so the read stays small.
-export const QUARTER_RECOVERY_SQL = `SELECT CAST(settlement_id AS text) AS settlement_id, kind, amount_cents
-   FROM settlement_lines
-  WHERE tenant_id = current_tenant_id() AND kind = 'advance_recovery'`;
+// Only the recovery lines, the one kind the review sums, and only on the pay runs the engine counts:
+// a run ending inside the quarter ($1 to $2) that started by asOf ($3), so a run that began in the
+// last quarter's final days still counts. The carrier's older history is never read.
+export const QUARTER_RECOVERY_SQL = `SELECT CAST(l.settlement_id AS text) AS settlement_id, l.kind, l.amount_cents
+   FROM settlement_lines l
+   JOIN settlements s ON s.tenant_id = l.tenant_id AND s.id = l.settlement_id
+   JOIN settlement_periods p ON p.tenant_id = s.tenant_id AND p.id = s.period_id
+  WHERE l.tenant_id = current_tenant_id() AND l.kind = 'advance_recovery'
+    AND p.period_end BETWEEN CAST($1 AS date) AND CAST($2 AS date)
+    AND p.period_start <= CAST($3 AS date)
+  ORDER BY l.id
+  LIMIT ${MAX_QUARTER_ROWS + 1}`;
 
 // The agent's fixes made or decided from just before the quarter's first day (a day either side
 // covers any zone), with UTC instants the caller turns into the carrier's dates.
@@ -46,14 +59,18 @@ export const QUARTER_PROPOSALS_SQL = `SELECT CAST(id AS text) AS id, kind, statu
   ORDER BY id
   LIMIT ${MAX_QUARTER_PROPOSALS + 1}`;
 
-// Detention charges the agent found, each with its fix's status and when it was decided.
+// Detention charges the agent found, each with its fix's status and when it was decided, for fixes
+// decided on the carrier's own dates, in its named zone ($1), from the quarter's first day ($2) to
+// asOf ($3): the days the engine counts, whatever the server's zone.
 export const QUARTER_DETENTION_SQL = `SELECT CAST(a.id AS text) AS id, CAST(a.load_id AS text) AS load_id, a.amount_cents,
         CAST(p.id AS text) AS proposal_id, p.status AS proposal_status,
         to_char(p.decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS decided_at
    FROM load_accessorials a
    JOIN proposals p ON p.tenant_id = a.tenant_id AND p.id = a.proposal_id
   WHERE a.tenant_id = current_tenant_id() AND a.kind = 'detention' AND a.proposal_id IS NOT NULL
-  ORDER BY a.id`;
+    AND CAST(p.decided_at AT TIME ZONE CAST($1 AS text) AS date) BETWEEN CAST($2 AS date) AND CAST($3 AS date)
+  ORDER BY a.id
+  LIMIT ${MAX_QUARTER_ROWS + 1}`;
 
 type ProposalRow = {
   id: string;
@@ -103,11 +120,14 @@ export async function readQuarterInput(
   ]);
   const lines = await q.query<{ settlement_id: string; kind: string; amount_cents: number | string }>(
     QUARTER_RECOVERY_SQL,
+    [quarter.start, quarter.end, asOf],
   );
+  if (lines.length > MAX_QUARTER_ROWS) throw new ReadLimitError();
   const since = `${addDays(quarter.start, -2)}T00:00:00.000Z`;
   const proposalRows = await q.query<ProposalRow>(QUARTER_PROPOSALS_SQL, [since]);
   if (proposalRows.length > MAX_QUARTER_PROPOSALS) throw new ReadLimitError();
-  const detentionRows = await q.query<DetentionRow>(QUARTER_DETENTION_SQL);
+  const detentionRows = await q.query<DetentionRow>(QUARTER_DETENTION_SQL, [timezone, quarter.start, asOf]);
+  if (detentionRows.length > MAX_QUARTER_ROWS) throw new ReadLimitError();
   const day = (instant: string | null) => (instant === null ? null : localDateOf(instant, timezone));
 
   const proposals: QuarterProposal[] = proposalRows.map((r) => ({
