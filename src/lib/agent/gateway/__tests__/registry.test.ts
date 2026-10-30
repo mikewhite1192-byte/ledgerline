@@ -227,21 +227,21 @@ describe("tool registry", () => {
     // Off by default: the default lists, and so the replayed demo's tool fingerprints, are unchanged.
     expect(flags.factoring.enabled).toBe(false);
     for (const role of AGENT_ROLES) for (const n of FACTORING_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(20);
+    expect(toolsFor("operator")).toHaveLength(21);
     expect(toolsFor("auditor")).toHaveLength(12);
     flags.factoring.enabled = true;
     for (const n of FACTORING_TOOLS) expect(names("operator"), n).toContain(n);
     expect(names("auditor")).toEqual(expect.arrayContaining(["get_factoring_packet", "get_factoring_requests"]));
     expect(names("auditor")).not.toContain("propose_factoring");
     for (const n of FACTORING_TOOLS) expect(names("triage"), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(23);
+    expect(toolsFor("operator")).toHaveLength(24);
     expect(toolsFor("auditor")).toHaveLength(14);
     for (const n of FACTORING_TOOLS) {
       expect(ALWAYS_LOADED, n).not.toContain(n);
       expect(toolsFor("operator", { defer: true }).find((t) => t.name === n)?.deferLoading, n).toBe(true);
     }
     flags.factoring.enabled = false;
-    expect(toolsFor("operator")).toHaveLength(20);
+    expect(toolsFor("operator")).toHaveLength(21);
     expect(toolsFor("auditor")).toHaveLength(12);
   });
 
