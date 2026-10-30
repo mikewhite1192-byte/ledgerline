@@ -187,6 +187,26 @@ model reads it; this table holds the English text only after that screen passed.
   agent clear deletes voice notes (and with them their recordings) through the admin login first,
   before the conversations and the inputs they name.
 
+## The judge role and demo visits (`memberships.role`, `demo_sessions`, 0043)
+
+A judge is a demo visitor's login: it reads what staff read, asks the agent and proposes, and never
+approves, pays, posts, sends or changes a setting. Every write route and server action refuses it
+unless `src/lib/auth/judge-allowlist.ts` names it, and `src/lib/auth/judge-allowlist.test.ts`
+fails CI for any write that neither checks nor is listed.
+
+- `memberships_role_check` keeps its name and allows `admin`, `staff` and `judge`.
+- `demo_sessions` is one visit: the judge login's subject, when it ends, and what its model calls
+  cost (spent and reserved, in nanocents) with its turn count. The one tenant policy (ENABLE and
+  FORCE), `tenant_id` with `ON DELETE CASCADE`. The app role gets `SELECT, INSERT` and `UPDATE` of
+  `last_seen_at` and the three counters only; no `DELETE`. The address is never stored, only an
+  optional salted SHA-256.
+- The demo reset keeps `demo_sessions` (`DEMO_RESET_KEPT`), so a reset never refills a visit's
+  budget; `demo_reset_clear()` does not change. `conversations.demo_session_id` names the visit a
+  conversation belongs to, with no foreign key, since the reset clears conversations; its index
+  holds only a visit's conversations (`WHERE demo_session_id IS NOT NULL`).
+- The nightly invariants fail on a ledger row a judge membership approved (I3) and on a visit whose
+  spent plus reserved is over `flags.judgeAccess.sessionCapCents` (I4).
+
 ## The one security-definer function (`demo_reset_clear()`, 0025)
 
 Every other function runs as its caller. This one runs as its owner, the migrating admin, on

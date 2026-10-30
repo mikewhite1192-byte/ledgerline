@@ -5,7 +5,7 @@ import { AppShell } from "./app-shell";
 
 afterEach(cleanup);
 
-const TENANT = { name: "Test Carrier", email: "office@example.test", timezone: "America/Chicago" };
+const TENANT = { name: "Test Carrier", email: "office@example.test", timezone: "America/Chicago", role: "staff" as const };
 const NAV = [
   { group: "Today", href: "/", label: "Home", icon: null },
   { group: "Pay", href: "/advances", label: "Advances", icon: null },

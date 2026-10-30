@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
+import { STAFF_ONLY_NOTE } from "../../components/app/staff-only";
 import { doneNote } from "../../components/settlements/action-button";
 import { reasonSentence } from "../agent/reasons";
 import type { MoneyAction } from "../money/types";
@@ -151,6 +152,9 @@ describe("the batch checks", () => {
     expect(legsToReserve()).toEqual(["settlement_payout"]);
     flags.accountingEnabled = true;
     expect(legsToReserve()).toEqual(["settlement_payout", "settlement_bill", "settlement_bill_payment"]);
+    // Payouts off for this carrier (Stripe test mode, not a demo carrier): nothing, as with the
+    // switch off, since a bill never goes out before its payout.
+    expect(legsToReserve(false)).toEqual([]);
   });
 });
 
@@ -414,6 +418,10 @@ describe("the pay run's words", () => {
     expect(exceptionLabel("toString")).toBe("Needs a look");
     expect(settlementOutcome("no_payout")).toContain("net pay is $0");
     expect(settlementOutcome("hasOwnProperty")).toBe(SETTLEMENT_OUTCOME_FALLBACK);
+  });
+
+  it("answers a demo visitor's refused press (403 judge) with the staff-only line, never the fallback", () => {
+    expect(settlementOutcome("judge")).toBe(STAFF_ONLY_NOTE);
   });
 
   it("never says nothing changed when the outcome is not known, and words every Retry payout refusal", () => {

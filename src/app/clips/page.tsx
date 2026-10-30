@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
+import { isRole, type Role } from "@/lib/auth/role";
 import { listClips } from "@/lib/clips/service";
 import type { ClipView } from "@/lib/clips/types";
 import { DbError } from "@/lib/db";
@@ -18,7 +19,7 @@ import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 // the stored stop times. Behind clipsEnabled; off, the page says so and reads nothing else.
 export const dynamic = "force-dynamic";
 
-type Carrier = { name: string; timezone: string; email: string; session: Session; loads: LoadOption[] };
+type Carrier = { name: string; timezone: string; email: string; role: Role; session: Session; loads: LoadOption[] };
 
 const LOAD_LIMIT = 100;
 
@@ -30,11 +31,14 @@ export default async function ClipsPage() {
       const tenants = await q.query<{ name: string; timezone: string }>(
         "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
       );
-      const members = await q.query<{ email: string }>(
-        "SELECT email FROM memberships WHERE cognito_sub = $1 AND tenant_id = current_tenant_id()",
+      const members = await q.query<{ email: string; role: unknown }>(
+        "SELECT email, role FROM memberships WHERE cognito_sub = $1 AND tenant_id = current_tenant_id()",
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
+      // A role this code does not know is refused, never shown as staff.
+      const role = members[0].role;
+      if (!isRole(role)) throw new ForbiddenError();
       const loads = flags.clipsEnabled
         ? await q.query<{ id: string; load_number: string; dest_city: string; dest_state: string }>(
             `SELECT id, load_number, dest_city, dest_state FROM loads
@@ -46,6 +50,7 @@ export default async function ClipsPage() {
         name: tenants[0].name,
         timezone: tenants[0].timezone,
         email: members[0].email,
+        role,
         session,
         loads: loads.map((l) => ({
           id: l.id,
@@ -96,7 +101,7 @@ export default async function ClipsPage() {
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/clips")}
       title="Dock clips"
       signOut={signOut}

@@ -6,10 +6,11 @@ import type { PaymentAdapter, PayoutRequest, SendContext } from "../adapters/typ
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Queryable } from "../db/types";
+import { ForbiddenError } from "../tenant/context";
 import { executeMoneyAction, type MoneyDeps, type MoneyHooks } from "./execute";
 import { readBySubject } from "./read";
 import { reconcileMoneyActions } from "./reconcile";
-import { addAdvance, clearLedger, dropTenant, makeTenant, type Fixture } from "./test-db";
+import { addAdvance, addJudge, clearLedger, dropTenant, makeTenant, type Fixture } from "./test-db";
 import type { MoneyAction, MoneyDraft } from "./types";
 
 // The executor against the real database and trigger: two approvals of one advance at the same
@@ -212,5 +213,38 @@ describe("a send that hangs", () => {
     expect(rows).toEqual([]);
     expect(payment.sends).toBe(0);
     expect(await advanceRow(advance)).toEqual({ status: "requested", paid: false });
+  });
+});
+
+describe("a demo visitor's login (the judge role)", () => {
+  it("is refused before the ledger row: no row, no send, the advance untouched", async () => {
+    const judge = await addJudge(admin, A);
+    const advance = await addAdvance(admin, A);
+    const mock = createMockPaymentAdapter({ log: () => {} });
+    const payment = counting(mock);
+    const err = await executeMoneyAction(first, judge, draft(advance), hooks, depsFor(payment)).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(ForbiddenError);
+    expect(await first.withTenant(A.tenantId, (q) => readBySubject(q, "advances", advance))).toEqual([]);
+    expect(payment.sends).toBe(0);
+    expect(await advanceRow(advance)).toEqual({ status: "requested", paid: false });
+
+    // An unknown row a staff approval left: the visitor's reconcile pass is refused before any read-back.
+    mock.hangNext();
+    const staff = await executeMoneyAction(first, A.session, draft(advance), hooks, depsFor(payment, { timeoutMs: 50 }));
+    expect(staff.action.state).toBe("unknown");
+    const refused = await reconcileMoneyActions(
+      second,
+      judge,
+      { hooks: { advance_payout: { onConfirmed: hooks.onConfirmed! } } },
+      depsFor(payment),
+    ).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(ForbiddenError);
+    expect(payment.readBacks).toBe(0);
+    const rows = await first.withTenant(A.tenantId, (q) => readBySubject(q, "advances", advance));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ state: "unknown", checkCount: 0 });
+    expect(payment.sends).toBe(1);
   });
 });

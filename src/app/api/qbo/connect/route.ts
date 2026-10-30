@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createQboConnect } from "@/lib/adapters/accounting/qbo/connect";
 import { requireSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { DbError } from "@/lib/db";
 import { ForbiddenError } from "@/lib/tenant/context";
 import { tenantRun, toSettings } from "../respond";
@@ -18,6 +19,8 @@ export async function GET(request: Request) {
   const site = request.headers.get("sec-fetch-site");
   if (site !== "same-origin" && site !== "none") return new NextResponse(null, { status: 403 });
   const session = await requireSession();
+  const notStaff = await staffGate(session);
+  if (notStaff) return toSettings(notStaff.status === 403 ? "forbidden" : "failed");
   try {
     const result = await qbo.start(tenantRun(session), session.sub);
     if (!result.ok) return toSettings(result.reason);

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
+import { DEMO_CARRIERS } from "@/lib/seed/carriers";
 import { POST as dismiss } from "./findings/[id]/dismiss/route";
 import { POST as propose } from "./findings/[id]/propose/route";
 import { POST as run } from "./runs/route";
@@ -19,10 +20,26 @@ const mocks = vi.hoisted(() => ({
   runFuelCheck: vi.fn(),
   proposeFuelCorrection: vi.fn(),
   dismissFuelFinding: vi.fn(),
+  // The signed-in carrier's tenant row, as readTenant reads it.
+  tenant: { current: null as { id: string; slug: string; name: string; timezone: string } | null },
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here every caller is staff.
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/db", () => ({ getDb: () => ({}) }));
+vi.mock("@/lib/tenant/context", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tenant/context")>()),
+  withSessionTenant: async <T,>(_s: Session, fn: (q: unknown) => Promise<T>) =>
+    fn({
+      query: async (sql: string) => {
+        if (sql !== "SELECT id, slug, name, timezone FROM tenants WHERE id = current_tenant_id()") {
+          throw new Error("unexpected read");
+        }
+        return mocks.tenant.current ? [mocks.tenant.current] : [];
+      },
+    }),
+}));
 vi.mock("@/lib/fuel/run", () => ({ runFuelCheck: mocks.runFuelCheck }));
 vi.mock("@/lib/fuel/propose", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/fuel/propose")>()),
@@ -41,8 +58,12 @@ function post(path: string, body?: unknown, headers: Record<string, string> = {}
 }
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
+const DEMO = DEMO_CARRIERS[0];
+const demoRow = { id: TENANT, slug: DEMO.slug, name: DEMO.name, timezone: DEMO.timezone };
+
 beforeEach(() => {
   flags.fuelAnomalyEnabled = true;
+  mocks.tenant.current = demoRow;
   mocks.getSession.mockResolvedValue(SESSION);
   mocks.runFuelCheck.mockResolvedValue({ ok: true, runId: FINDING, checked: 464, needYou: 4 });
   mocks.proposeFuelCorrection.mockResolvedValue({ ok: true, proposalId: CARD, existing: false });
@@ -78,6 +99,22 @@ describe("POST /api/fuel/runs", () => {
   it("answers 401 with no session", async () => {
     mocks.getSession.mockResolvedValue(null);
     expect((await run(post("/api/fuel/runs"))).status).toBe(401);
+    expect(mocks.runFuelCheck).not.toHaveBeenCalled();
+  });
+
+  it("refuses any carrier that is not a demo carrier as switched off, before any work", async () => {
+    for (const tenant of [
+      { id: TENANT, slug: "other-freight", name: "Other Freight", timezone: DEMO.timezone },
+      // A carrier that only took a demo slug is not that carrier.
+      { ...demoRow, name: "Other Freight" },
+      { ...demoRow, timezone: "America/Denver" },
+      null,
+    ]) {
+      mocks.tenant.current = tenant;
+      const res = await run(post("/api/fuel/runs"));
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ error: "disabled", retryable: false });
+    }
     expect(mocks.runFuelCheck).not.toHaveBeenCalled();
   });
 

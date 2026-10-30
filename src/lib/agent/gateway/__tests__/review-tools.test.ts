@@ -27,9 +27,10 @@ const on = () => {
 const writes = (db: ReturnType<typeof planDb>) =>
   db.statements.filter((s) => /^\s*(INSERT|UPDATE|DELETE)\b/i.test(s.sql) && !/INTO gateway_decisions/.test(s.sql));
 
+const shipped = { invoicesEnabled: flags.invoicesEnabled, invoiceReviewEnabled: flags.invoiceReviewEnabled };
+
 afterEach(() => {
-  flags.invoicesEnabled = false;
-  flags.invoiceReviewEnabled = false;
+  Object.assign(flags, shipped);
 });
 
 describe("invoice review tools switched off", () => {
@@ -38,6 +39,7 @@ describe("invoice review tools switched off", () => {
     ["get_invoice_review_queue", {}],
   ])("%s refuses as disabled while the review switch is off, reading no record", async (name, args) => {
     flags.invoicesEnabled = true;
+    flags.invoiceReviewEnabled = false;
     const { out, db } = await run(name, args);
     expect(out).toMatchObject({ decision: "blocked", reason: "disabled" });
     for (const st of db.statements) expect(st.sql).not.toMatch(/FROM (invoices|customers|loads|money_actions)\b/);

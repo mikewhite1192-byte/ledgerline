@@ -34,7 +34,7 @@ export default async function SweepRunPage({ params }: { params: Promise<{ id: s
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/sweep")}
       title="Sweep"
       signOut={<SignOut />}

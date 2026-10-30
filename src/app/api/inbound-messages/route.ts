@@ -1,6 +1,10 @@
+import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
+import { isCrossSite } from "@/lib/http/same-site";
 import {
   answer,
   failed,
+  inboxOn,
   inboxReply,
   inboxRefuse,
   inboxSession,
@@ -22,9 +26,14 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function POST(request: Request) {
-  const checked = await inboxSession(request);
-  if (!checked.ok) return checked.response;
-  const session = checked.session;
+  // inboxSession's checks, written out so the staff check comes after guards only: pasting a
+  // message is staff work, and a demo visitor (the judge role) is refused before any work.
+  if (isCrossSite(request)) return inboxRefuse("forbidden");
+  if (!inboxOn()) return inboxRefuse("disabled");
+  const session = await getSession();
+  if (!session) return inboxRefuse("unauthenticated");
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const read = await readCappedJson(request, pasteBodyBytes());
   if (!read.ok) return inboxRefuse(read.category);
   const parsed = PasteBody.safeParse(read.body);

@@ -32,7 +32,7 @@ export default async function MemoryPage() {
 
   return (
     <AppShell
-      tenant={{ name: shell.name, email: shell.email, timezone: shell.timezone }}
+      tenant={{ name: shell.name, email: shell.email, timezone: shell.timezone, role: shell.role }}
       nav={appNav("/memory")}
       title="Memory"
       signOut={<SignOutForm />}

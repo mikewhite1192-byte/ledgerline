@@ -27,7 +27,10 @@ export type Flags = {
   // reads it at the moment of that decision; callers never do.
   sparkOpenFallback: "off" | "fireworks";
   // Any payout through the payment adapter, mock included. Off means the money executor refuses
-  // before reserving a ledger row, and the adapter refuses again at send.
+  // before reserving a ledger row, and the adapter refuses again at send. With paymentProvider
+  // stripe_test, a weekly pay payout (the bank rail) runs only for the two demo carriers, because
+  // Stripe test mode sends every transfer to the one test account the environment names: any other
+  // carrier is refused as if this were off, before a ledger row is reserved and again at the send.
   payoutsEnabled: boolean;
   // Payouts: the mock card-load adapter unless Stripe test mode is switched on.
   paymentProvider: "mock" | "stripe_test";
@@ -63,6 +66,13 @@ export type Flags = {
   runLimits: {
     maxTurns: number;
   };
+  // Who sees "Step through" in the trace panel under an answer (design-agents-101 3.4): one model
+  // call at a time, with what it saw, its note, what it did and what came back. Display only: it
+  // reads the stored trace and never pauses a run. dev is a development or test run (a laptop,
+  // the tests); staff is the carrier's own people on production. A judge's default (on)
+  // waits for the judge sign-in to put the demo session on the token. Flipping staff is the
+  // owner's call, in its own one-line PR.
+  stepThrough: { dev: boolean; staff: boolean };
   // Hard caps on one turn. Reaching any of them ends the turn with what it found so far.
   agentTurnLimits: {
     maxToolSteps: number;
@@ -335,7 +345,8 @@ export type Flags = {
   approveAllLimits: { maxItems: number };
   // The portal runner: the agent opens the fictional broker portal in a browser and reads a
   // load's delivery stamps and POD. Off gates the portal pages, the run routes, the gateway tool
-  // and the worker, which re-checks it when it claims a run. aiEnabled must also be on.
+  // and the worker, which re-checks it when it claims a run. aiEnabled must also be on. Ships off:
+  // no runner is wired on the hosted site, so the page's only action would always refuse.
   portalRunnerEnabled: boolean;
   // The model that drives the browser, and the only one a computer step may call. Muse Spark is
   // the default: Muse Wonder answered 400 "Unsupported tool type: 'computer'" when the runner was
@@ -450,16 +461,35 @@ export type Flags = {
     // Notes the second check sees on one request.
     maxAuditorNotes: number;
   };
+  // The Quarter review at /quarter: the calendar quarter so far (the carrier's own dates), from its
+  // pay runs, invoices, payments, the agent's fixes and the detention it found, and "Write the
+  // quarter review", which asks Muse Wonder to word those figures in four lists (a button press,
+  // never a schedule). Off: the page shows its off state, the route answers 409 and the agent's read
+  // tool is not offered. aiEnabled must also be on for the button to reach a model.
+  quarterReviewEnabled: boolean;
+  quarterReviewLimits: {
+    // One review's worst case, checked by the wrapper before the request goes out. The Wonder cap
+    // (AI_WONDER_CAP_CENTS) applies on top.
+    maxReviewCents: number;
+    // The review's output budget, reasoning included.
+    maxOutputTokens: number;
+    // The figure list the model is given stops here, cut from the bottom (per-driver rows go first).
+    maxInputChars: number;
+  };
   // Fuel checks: every fill-up held against the truck's tank, the load's route and the driver's
   // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
   // and proposes; a person approves a pay correction on its card. Off means the Fuel checks page
   // is not found, its link is hidden, the routes and the service refuse before any work, no
-  // receipt compare is called, and the agent's run_checks leaves fuel findings out.
+  // receipt compare is called, and the agent's run_checks leaves fuel findings out. On, a check
+  // runs only for the two demo carriers: the run route refuses any other carrier as disabled and
+  // run_checks leaves its fuel findings out, because the start date below is the demo weeks'.
   fuelAnomalyEnabled: boolean;
   fuelAnomalyLimits: {
-    // Tenant-local date: fill-ups before it are never listed. The release PR that turns
-    // fuelAnomalyEnabled on also sets this to its go-live date; left as it is, the first run lists
-    // every fill-up from this date up to go-live.
+    // Tenant-local date: fill-ups before it are never listed. The release for the demo carriers set
+    // it to the first day of the earlier seeded open week (Prairie Wind's, Sunday 2026-10-25), so
+    // every planted fill-up lists again after a demo reset; fuel checks only list and propose, and
+    // nothing goes outside. It is one date for every carrier, which is why only the demo carriers
+    // run the checks; a carrier with real history needs its own go-live date before it can.
     from: string;
     // Two fill-ups with the same gallons, amount and state this close together are one fill-up
     // turned in twice.
@@ -473,6 +503,25 @@ export type Flags = {
     // Receipt compares one run may make, and one carrier may make in a day.
     comparesPerRun: number;
     comparesPerTenantPerDay: number;
+  };
+  // The demo carrier's visitor sign-in (the judge role, migration 0043). A judge reads, asks the
+  // agent and proposes, and never approves or pays: every write route outside
+  // src/lib/auth/judge-allowlist.ts refuses the role whatever this says. Off means a judge login's
+  // password sign-in is refused before any cookie (src/app/sign-in/actions.ts); the visitor
+  // sign-in card and the visit limits below come with a later change and do nothing yet.
+  judgeAccess: {
+    enabled: boolean;
+    // One visit's model spend, in cents (spent plus reserved, demo_sessions).
+    sessionCapCents: number;
+    // Agent turns one visit may ask.
+    turnsPerSession: number;
+    // Every visit created in one UTC day, together, in cents.
+    dayCapCents: number;
+    // New visits from one address in an hour, and from everyone in a day.
+    sessionsPerIpPerHour: number;
+    sessionsPerDay: number;
+    // How long the visit's sign-in cookie lasts.
+    cookieHours: number;
   };
   // Money codes (Test mode): a one-time code from the simulated fuel-card provider that a driver
   // gives a lumper or a repair shop, charged to the driver's week and reimbursed by the receipt.
@@ -518,14 +567,14 @@ export type Flags = {
 };
 
 export const flags: Flags = {
-  aiEnabled: false,
+  aiEnabled: true,
   aiJobHourlyCapCents: 1000,
   aiProofRoute: false,
   triageProvider: "baseten",
   sparkOpenFallback: "off",
-  payoutsEnabled: false,
-  paymentProvider: "mock",
-  accountingEnabled: false,
+  payoutsEnabled: true,
+  paymentProvider: "stripe_test",
+  accountingEnabled: true,
   inboundEmailEnabled: false,
   screenOutputMode: "text",
   gatewayLimits: {
@@ -534,11 +583,12 @@ export const flags: Flags = {
     detentionChargeMaxCents: 100_000,
     ruleChangeImpactMaxCents: 500_000,
   },
-  agentEnabled: false,
+  agentEnabled: true,
   agentStreamMode: "sse",
   runLimits: {
     maxTurns: 30,
   },
+  stepThrough: { dev: true, staff: false },
   agentTurnLimits: {
     maxToolSteps: 6,
     maxModelCalls: 4,
@@ -547,35 +597,35 @@ export const flags: Flags = {
     summaryChars: 10_000,
   },
   proposalMaxAgeDays: 7,
-  auditorEnabled: false,
+  auditorEnabled: true,
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
   approverRole: { adminAboveCents: 200_000 },
-  documentsEnabled: false,
+  documentsEnabled: true,
   documentCrop: false,
   documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
   documentMarkupEnabled: false,
   markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
-  advancesEnabled: false,
-  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-27" },
+  advancesEnabled: true,
+  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-29" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
-  advanceTakeback: { enabled: false, maxCents: 100_000 },
-  agentToolSearch: false,
-  agentPromptCache: { enabled: false, retention: "in_memory" },
-  driverNotesEnabled: false,
+  advanceTakeback: { enabled: true, maxCents: 100_000 },
+  agentToolSearch: true,
+  agentPromptCache: { enabled: true, retention: "in_memory" },
+  driverNotesEnabled: true,
   driverNotesEmailEnabled: false,
   driverNotesEmailAllowlist: [],
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
   payCardsEnabled: false,
   payCardLimits: { checkMaxCostCents: 3, maxBatchCents: 40, cardsPerTenantPerDay: 100, maxPngBytes: 400_000 },
-  reportsEnabled: false,
-  invoicesEnabled: false,
+  reportsEnabled: true,
+  invoicesEnabled: true,
   invoicesStart: "2026-10-05",
   invoiceLimits: { proposalsPerRun: 50, maxPostAttempts: 3 },
-  customerPaymentsEnabled: false,
+  customerPaymentsEnabled: true,
   customerPaymentLimits: { perDay: 50, maxCents: 5_000_000 },
-  clipsEnabled: false,
+  clipsEnabled: true,
   clipLimits: {
     bytes: 700_000,
     durationMs: 20_000,
@@ -584,18 +634,18 @@ export const flags: Flags = {
     readMaxCostCents: 10,
     perTenantPerDay: 20,
   },
-  inboxEnabled: false,
+  inboxEnabled: true,
   inboxLimits: { messagesPerDay: 50, maxChars: 20_000, maxAttempts: 3 },
-  voiceIntakeEnabled: false,
+  voiceIntakeEnabled: true,
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
-  detentionEnabled: false,
-  demoResetEnabled: false,
-  rulesByTalkingEnabled: false,
-  sweepEnabled: false,
+  detentionEnabled: true,
+  demoResetEnabled: true,
+  rulesByTalkingEnabled: true,
+  sweepEnabled: true,
   sweepScheduleEnabled: false,
-  payCorrectionsEnabled: false,
+  payCorrectionsEnabled: true,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
-  fanoutEnabled: false,
+  fanoutEnabled: true,
   fanoutLimits: {
     maxDrivers: 30,
     parallel: 6,
@@ -611,7 +661,7 @@ export const flags: Flags = {
     runCapCents: 450,
   },
   approveAllLimits: { maxItems: 25 },
-  cashFridayEnabled: false,
+  cashFridayEnabled: true,
   cashFridayLimits: {
     maxExplainCents: 8,
     maxExplainChars: 600,
@@ -634,25 +684,27 @@ export const flags: Flags = {
     podMaxBytes: 300_000,
     approvalWaitMinutes: 30,
   },
-  settlementsEnabled: false,
+  settlementsEnabled: true,
   settlementsStart: "2026-10-05",
   settlementLimits: { driversPerRun: 200, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
-  batchApproveEnabled: false,
+  batchApproveEnabled: true,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
-  invoiceReviewEnabled: false,
-  collectionsEnabled: false,
+  invoiceReviewEnabled: true,
+  collectionsEnabled: true,
   collectionsEmailEnabled: false,
   collectionsEmailAllowlist: [],
   collectionsEmailFrom: "",
   collectionsLimits: { maxDraftCents: 2, maxRunCents: 40, maxOutputTokens: 500, maxDraftsPerRun: 12, minDaysLate: 30 },
-  profitBriefEnabled: false,
+  profitBriefEnabled: true,
   profitBriefLimits: { maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 },
-  carrierMemoryEnabled: false,
+  carrierMemoryEnabled: true,
   carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
   carrierMemoryAgentLimits: { maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 },
-  fuelAnomalyEnabled: false,
+  quarterReviewEnabled: false,
+  quarterReviewLimits: { maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 },
+  fuelAnomalyEnabled: true,
   fuelAnomalyLimits: {
-    from: "2026-10-27",
+    from: "2026-10-25",
     duplicateWindowMinutes: 60,
     chargebackMaxCents: 50_000,
     compareMaxCostCents: 5,
@@ -660,9 +712,18 @@ export const flags: Flags = {
     comparesPerRun: 10,
     comparesPerTenantPerDay: 20,
   },
+  judgeAccess: {
+    enabled: false,
+    sessionCapCents: 100,
+    turnsPerSession: 25,
+    dayCapCents: 800,
+    sessionsPerIpPerHour: 5,
+    sessionsPerDay: 150,
+    cookieHours: 2,
+  },
   moneyCodes: { enabled: false, armed: false, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
   cardRecon: {
-    enabled: false,
+    enabled: true,
     limits: {
       windowDays: 14,
       maxBreaks: 50,
@@ -677,3 +738,14 @@ export const flags: Flags = {
 };
 
 applyLocalOverrides(flags);
+
+// Whether the trace panel offers "Step through", read on the server and handed to the page: in a
+// development or test run while dev is on, and anywhere else (production) only once staff is on.
+// An unset or unknown NODE_ENV counts as production.
+export function stepThroughShown(
+  f: Pick<Flags, "stepThrough"> = flags,
+  env: { NODE_ENV?: string } = process.env,
+): boolean {
+  const dev = env.NODE_ENV === "development" || env.NODE_ENV === "test";
+  return f.stepThrough.staff || (f.stepThrough.dev && dev);
+}

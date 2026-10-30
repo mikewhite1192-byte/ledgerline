@@ -1,5 +1,6 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
 import { asMember, failure, reply } from "@/lib/portal/http";
 import { mintSession } from "@/lib/portal/session";
@@ -14,6 +15,8 @@ export async function POST(request: Request) {
   if (isCrossSite(request)) return reply({ error: "forbidden" }, 403);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   try {
     const out = await asMember(session, async (q) => {
       const accounts = await q.query<{ carrier_number: string }>(

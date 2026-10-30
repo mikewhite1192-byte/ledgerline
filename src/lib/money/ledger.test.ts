@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
-import { isOutsideRecord, switchOn, validateDraft } from "./ledger";
+import { DEMO_CARRIERS } from "../seed/carriers";
+import { demoCarriersOnly, isOutsideRecord, payoutSwitchOn, switchOn, validateDraft } from "./ledger";
 import { payoutDraft } from "./test-fakes";
 import type { MoneyDraft } from "./types";
 
@@ -65,6 +66,32 @@ describe("switchOn", () => {
     flags.payoutsEnabled = true;
     expect(switchOn("payment")).toBe(true);
     expect(switchOn("accounting")).toBe(false);
+  });
+});
+
+describe("payoutSwitchOn", () => {
+  const [demo] = DEMO_CARRIERS;
+  const row = { slug: demo.slug, name: demo.name, timezone: demo.timezone };
+
+  it("runs a bank payout in Stripe test mode for the demo carriers only, and leaves every other payout as it was", () => {
+    expect(demoCarriersOnly("settlement_payout", "stripe_test")).toBe(true);
+    expect(demoCarriersOnly("settlement_payout", "mock")).toBe(false);
+    expect(demoCarriersOnly("advance_payout", "stripe_test")).toBe(false);
+    expect(demoCarriersOnly("advance_payout", "fuel_card_sim")).toBe(false);
+    flags.payoutsEnabled = true;
+    expect(payoutSwitchOn("settlement_payout", "stripe_test", row)).toBe(true);
+    // Another carrier, one that only took a demo slug, and no tenant row at all read as off.
+    expect(payoutSwitchOn("settlement_payout", "stripe_test", { ...row, slug: "another-carrier" })).toBe(false);
+    expect(payoutSwitchOn("settlement_payout", "stripe_test", { ...row, name: "Another Carrier" })).toBe(false);
+    expect(payoutSwitchOn("settlement_payout", "stripe_test", { ...row, timezone: "UTC" })).toBe(false);
+    expect(payoutSwitchOn("settlement_payout", "stripe_test", null)).toBe(false);
+    // The mock and the card rail do not depend on the carrier.
+    expect(payoutSwitchOn("settlement_payout", "mock", null)).toBe(true);
+    expect(payoutSwitchOn("advance_payout", "fuel_card_sim", null)).toBe(true);
+    // Off is off for everyone, demo carriers included.
+    flags.payoutsEnabled = false;
+    expect(payoutSwitchOn("settlement_payout", "stripe_test", row)).toBe(false);
+    expect(payoutSwitchOn("settlement_payout", "mock", null)).toBe(false);
   });
 });
 

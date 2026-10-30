@@ -3,7 +3,7 @@ import { NoCarrierPage, SignedInPage } from "@/components/app/signed-in-page";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
-import { connectionSummary, membershipOf } from "@/lib/adapters/accounting/qbo/store";
+import { connectionSummary } from "@/lib/adapters/accounting/qbo/store";
 import { DbError } from "@/lib/db";
 import { formatInstant } from "@/lib/format/dates";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -50,11 +50,10 @@ export default async function AccountingSettings({
   try {
     view = await withRequestTenant(async (q, session): Promise<View> => {
       const shell = await readShell(q, session);
-      const member = await membershipOf(q, session.sub);
-      if (!member) throw new ForbiddenError();
+      // The shell's role: a demo visitor reads this page too; only an admin sees the connect button.
       return {
         shell,
-        admin: member.role === "admin",
+        admin: shell.role === "admin",
         connection: await connectionSummary(q),
       };
     });

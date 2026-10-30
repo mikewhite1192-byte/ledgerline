@@ -163,6 +163,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   flags.sweepEnabled = true;
+  // The second opinion ships on; these runs are the sweep alone (fanout.db.test.ts runs it).
+  flags.fanoutEnabled = false;
   await clearTenantAgent(admin, T);
   explain.mockClear();
   explain.mockImplementation(explainOk);
