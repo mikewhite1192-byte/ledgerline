@@ -93,6 +93,11 @@ export type Flags = {
   // On: a proposal needs the auditor's verdict before a person can approve it. While this is on
   // and auditorEnabled is off, nothing can be approved: the release flips both together.
   auditorRequired: boolean;
+  // On: a waiting proposal whose numbers the rules engine's own recompute did not match to the cent
+  // (0045's engine_check) needs a person's written reason to approve, like a block, and the card
+  // says it is held. A narrowing only: off, the mismatch is still shown and still keeps the
+  // proposal out of Approve all clean.
+  verifyEngineMismatchBlocks: boolean;
   // Any member approves a proposal up to adminAboveCents; above it, only an admin.
   approverRole: { adminAboveCents: number };
   // Document upload and the one Muse Spark read of each file. Off means the routes answer 404,
@@ -667,6 +672,7 @@ export const flags: Flags = {
   auditorEnabled: true,
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
+  verifyEngineMismatchBlocks: true,
   approverRole: { adminAboveCents: 200_000 },
   documentsEnabled: true,
   documentCrop: false,

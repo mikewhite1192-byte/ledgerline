@@ -134,6 +134,12 @@ export type ProposalView = {
   auditorCheckedAt: string | null;
   // A person's override of a block: their words, a role label (never the sub or email), when.
   auditorOverride: { reason: string; byLabel: string; at: string } | null;
+  // The rules engine's own recompute, compared in code to the cent (0045): null until it ran.
+  // engineHeld: a mismatch on a waiting proposal that needs a person's reason to approve
+  // (verifyEngineMismatchBlocks); engineOverride: that reason, a role label and when.
+  engineCheck?: "matched" | "mismatch" | "unavailable" | null;
+  engineHeld?: boolean;
+  engineOverride?: { reason: string; byLabel: string; at: string } | null;
   // Where an advance lands, read at render, never stored: "fuel card ···· 4417" (last4 set) or
   // "no fuel card on file" (last4 null, only while proposed or approved). A done proposal names the
   // card its advance recorded. Null for a kind that pays no card, a done proposal with no recorded
@@ -188,6 +194,9 @@ export type TurnView = {
   error: TurnError | null;
   // The answer's checklist, when it set one: live while it runs, final once it ended.
   checklist?: Checklist | null;
+  // Figures held back from the answer as not coming from a record, summed over its finished model
+  // steps; null when a step did not record it (unknown, never zero).
+  withheldFigures?: number | null;
 };
 
 // The server-sent events of one turn. The client reads the full turn back when done arrives.

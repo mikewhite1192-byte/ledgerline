@@ -226,7 +226,7 @@ async function sourceRow(q: Queryable, ref: Ref): Promise<Record<string, unknown
   return { table: ref.table, id: ref.id, ...picked(ref.table, row as Record<string, unknown>) };
 }
 
-type ProposalRow = {
+export type ProposalRow = {
   id: string;
   kind: string;
   title: string;
@@ -767,6 +767,42 @@ async function cashEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow, raw
   };
 }
 
+// The engine's own number for the proposal, or the error itself when a read or the engine threw.
+// The code-side engine check (../../store/engine-check.ts) reads this one, so a failed read there
+// is no check at all (nothing stored, tried again later), never unavailable.
+export async function engineOrThrow(
+  q: Queryable,
+  ctx: GatewayContext,
+  p: ProposalRow,
+  args: Record<string, unknown>,
+  raw: Record<string, unknown>,
+): Promise<Engine> {
+  const amount = Number(p.amount_cents);
+  if (p.kind === "advance_payout") return await advanceEngine(q, ctx, p, amount, args);
+  if (p.kind === "pay_correction") return await payCorrectionEngine(q, args);
+  if (p.kind === "invoice_fix") return await invoiceEngine(q, p, args);
+  if (p.kind === "load_rate_fill") return await rateFillEngine(q, ctx, p, args);
+  // The card's lines are objects, which safeArgs leaves out; this check reads them as stored.
+  if (p.kind === "invoice_post") return await invoicePostEngine(q, p, raw);
+  if (p.kind === "payment_reapply") return await paymentReapplyEngine(q, ctx, p, args);
+  if (p.kind === "detention_charge") return await detentionEngine(q, p);
+  // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
+  if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
+  if (p.kind === "card_match") return await cardMatchEngine(p, q, args);
+  // The cards' invoice lists are objects, which safeArgs leaves out; compared as stored.
+  // With factoring on, a factoring card is checked on exactly its own invoices, as the approval does.
+  if (p.kind === "factoring_request" && flags.factoring?.enabled === true) return await factoringEngine(q, ctx, p, raw);
+  if (p.kind === "factoring_request" || p.kind === "bill_defer" || p.kind === "collections_chase") {
+    return await cashEngine(q, ctx, p, raw);
+  }
+  if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
+  // The fields are objects, which safeArgs leaves out; the stored args are parsed whole.
+  if (p.kind === "pay_policy_setup") return await policySetupEngine(q, ctx, p);
+  // The stored evidence ids are read as stored; the engine runs again as of now.
+  if (p.kind === "money_code") return await moneyCodeEngine(q, ctx, p, raw);
+  return UNAVAILABLE;
+}
+
 // A factoring card with factoring on, checked the way the approval checks it (design 4.4): the
 // engine runs on exactly the card's invoices today, at the card's own short and pay day, and the
 // stored args must equal its args as a whole value. Each invoice's papers come with it: which of
@@ -813,7 +849,8 @@ async function factoringEngine(
   };
 }
 
-// The engine's own number for the proposal. A read or engine error is unavailable, never zero.
+// The engine's own number for the auditor's pack. A read or engine error is unavailable, never
+// zero.
 async function engineFor(
   q: Queryable,
   ctx: GatewayContext,
@@ -822,34 +859,23 @@ async function engineFor(
   raw: Record<string, unknown>,
 ): Promise<Engine> {
   try {
-    const amount = Number(p.amount_cents);
-    if (p.kind === "advance_payout") return await advanceEngine(q, ctx, p, amount, args);
-    if (p.kind === "pay_correction") return await payCorrectionEngine(q, args);
-    if (p.kind === "invoice_fix") return await invoiceEngine(q, p, args);
-    if (p.kind === "load_rate_fill") return await rateFillEngine(q, ctx, p, args);
-    // The card's lines are objects, which safeArgs leaves out; this check reads them as stored.
-    if (p.kind === "invoice_post") return await invoicePostEngine(q, p, raw);
-    if (p.kind === "payment_reapply") return await paymentReapplyEngine(q, ctx, p, args);
-    if (p.kind === "detention_charge") return await detentionEngine(q, p);
-    // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
-    if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
-    if (p.kind === "card_match") return await cardMatchEngine(p, q, args);
-    // The cards' invoice lists are objects, which safeArgs leaves out; compared as stored.
-    // With factoring on, a factoring card is checked on exactly its own invoices, as the approval does.
-    if (p.kind === "factoring_request" && flags.factoring?.enabled === true) return await factoringEngine(q, ctx, p, raw);
-    if (p.kind === "factoring_request" || p.kind === "bill_defer" || p.kind === "collections_chase") {
-      return await cashEngine(q, ctx, p, raw);
-    }
-    if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
-    // The fields are objects, which safeArgs leaves out; the stored args are parsed whole.
-    if (p.kind === "pay_policy_setup") return await policySetupEngine(q, ctx, p);
-    // The stored evidence ids are read as stored; the engine runs again as of now.
-    if (p.kind === "money_code") return await moneyCodeEngine(q, ctx, p, raw);
-    return UNAVAILABLE;
+    return await engineOrThrow(q, ctx, p, args, raw);
   } catch {
     console.warn("gateway: the auditor's engine check could not be computed");
     return UNAVAILABLE;
   }
+}
+
+export type StoredProposal = { row: ProposalRow; raw: Record<string, unknown>; args: Record<string, unknown> };
+
+// The proposal as stored on this carrier, its args parsed whole (raw) and cut to scalars (args);
+// null when it is not readable. The pack and the code-side engine check read it the same way.
+export async function readStoredProposal(q: Queryable, proposalId: string): Promise<StoredProposal | null> {
+  const [row] = await q.query<ProposalRow>(PROPOSAL_SQL, [proposalId]);
+  if (!row) return null;
+  const parsed = parseJson(row.args);
+  const raw = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  return { row, raw, args: safeArgs(raw) };
 }
 
 type Pack = { proposal: Record<string, unknown>; engine: Engine; notes?: SubjectNote[] };
@@ -886,11 +912,9 @@ export const getProposal = defineTool({
   args: z.strictObject({ proposalId: idField() }),
   refs: (a) => [{ table: "proposals", id: a.proposalId }],
   run: async (q, ctx, a) => {
-    const [p] = await q.query<ProposalRow>(PROPOSAL_SQL, [a.proposalId]);
-    if (!p) throw new Error("the proposal is not readable");
-    const parsed = parseJson(p.args);
-    const raw = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
-    const args = safeArgs(raw);
+    const stored = await readStoredProposal(q, a.proposalId);
+    if (!stored) throw new Error("the proposal is not readable");
+    const { row: p, raw, args } = stored;
     const refs = refsOf(p.sources).slice(0, MAX_SOURCES);
     const sources: Record<string, unknown>[] = [];
     for (const ref of refs) sources.push(await sourceRow(q, ref));

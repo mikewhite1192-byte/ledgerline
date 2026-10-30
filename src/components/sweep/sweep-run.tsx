@@ -49,6 +49,7 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   role: "An admin must approve an amount this size.",
   auditor_required: "This waits for the second check before anyone can approve it.",
   override_required: "The second check did not pass this. Write why you approve it anyway, then confirm.",
+  engine_override_required: "The numbers did not match your pay rules. Write why you approve it anyway, then confirm.",
   stale: "The records changed since this was drafted, so it was not applied. Reject it if it still waits, then run the sweep again.",
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That fix is not here.",

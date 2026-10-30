@@ -4,7 +4,7 @@ import type { Session } from "../../auth/claims";
 import type { AuditState, AuditStore, VerdictWrite } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
 import { AUDITOR_NOTES_RULE, AUDITOR_PROMPT } from "./policy";
-import { AiError, runAudit, type AuditDeps, type AuditResult } from "./run";
+import { AiError, runAudit, runEngineCheck, type AuditDeps, type AuditResult } from "./run";
 
 // runAudit with a fake store, a fake gateway and a fake model (design 4.2 step 4): one Wonder call
 // per proposal, the 90-second lease, the verdict written once, and the evidence never carrying
@@ -42,7 +42,7 @@ function fakeStore(over: Partial<AuditState> = {}, missing = false, attempts = 0
     timeZone: "America/New_York",
     ...over,
   };
-  const log = { leases: 0, releases: 0, attempts, writes: [] as VerdictWrite[] };
+  const log = { leases: 0, releases: 0, attempts, writes: [] as VerdictWrite[], engineChecks: [] as string[], order: [] as string[] };
   const store: AuditStore = {
     read: async () => (missing ? null : { ...state, concerns: [...state.concerns] }),
     lease: async (_id, now, ms, trace) => {
@@ -63,9 +63,16 @@ function fakeStore(over: Partial<AuditState> = {}, missing = false, attempts = 0
       if (state.verdict !== null || state.status !== "proposed") return false;
       if (state.startedAt !== startedAt.toISOString()) return false;
       log.writes.push(v);
+      log.order.push("verdict");
       state.verdict = v.verdict;
       state.concerns = [...v.concerns];
       state.checkedAt = now.toISOString();
+      return true;
+    },
+    // The code-side engine check: recorded with the trace it ran under, in call order.
+    checkEngine: async (_id, ctx) => {
+      log.engineChecks.push(ctx.traceId);
+      log.order.push("engine");
       return true;
     },
   };
@@ -498,6 +505,114 @@ describe("runAudit", () => {
       expect(keys.has(key), key).toBe(false);
     }
     expect(model.mock.calls[0][1].messages[0]).toMatchObject({ role: "system" });
+  });
+});
+
+// The code-side engine check (design 3.6): stored on the audit's own trace before the evidence
+// read and the model call, so it lands whatever the call does, and never changes the verdict.
+describe("runAudit and the engine check", () => {
+  it("stores the engine check before the model call, on the audit's trace", async () => {
+    const { store, log } = fakeStore();
+    const tool = fakeTool();
+    const model = fakeModel(() => {
+      expect(log.engineChecks).toHaveLength(1);
+      return okResult(verdictText());
+    });
+    const out = await runAudit(SESSION, PROPOSAL, deps({ store, callTool: tool.fn, complete: model }));
+    expect(out).toMatchObject({ state: "done", verdict: "pass" });
+    expect(log.order).toEqual(["engine", "verdict"]);
+    expect(log.engineChecks).toEqual([tool.calls[0].ctx.traceId]);
+  });
+
+  it("stores the engine check when the call fails, the evidence read fails, or the call is refused", async () => {
+    const failed: GatewayOutcome = {
+      decision: "failed",
+      decisionId: "d-3",
+      tool: "get_proposal",
+      reason: "tool_failed",
+      result: { error: "tool_failed" },
+      latencyMs: 1,
+    };
+    const cases: [string, Partial<AuditDeps>][] = [
+      ["timeout", { complete: fakeModel(() => Promise.reject(new AiError("timeout"))) }],
+      ["cap", { complete: fakeModel(() => Promise.reject(new AiError("cap"))) }],
+      ["evidence", { callTool: fakeTool(failed).fn }],
+    ];
+    for (const [name, over] of cases) {
+      const { store, log } = fakeStore();
+      await runAudit(SESSION, PROPOSAL, deps({ store, ...over }));
+      expect(log.engineChecks, name).toHaveLength(1);
+    }
+  });
+
+  it("gives the evidence read its own full deadline after a slow engine check", async () => {
+    let at = NOW.getTime();
+    const { store } = fakeStore();
+    store.checkEngine = async () => {
+      at += 9_000;
+      return true;
+    };
+    const tool = fakeTool();
+    const out = await runAudit(SESSION, PROPOSAL, deps({ store, callTool: tool.fn, clock: () => new Date(at) }));
+    expect(out).toMatchObject({ state: "done", verdict: "pass" });
+    expect(tool.calls[0].ctx.deadlineAt).toBe(NOW.getTime() + 9_000 + 8_000);
+  });
+
+  it("keeps the verdict as it was when storing the engine check throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { store, log } = fakeStore();
+    store.checkEngine = async () => {
+      throw Object.assign(new Error("connection reset for tenant 7"), { name: "DbError" });
+    };
+    const out = await runAudit(SESSION, PROPOSAL, deps({ store }));
+    expect(out).toMatchObject({ state: "done", verdict: "pass" });
+    expect(log.writes).toHaveLength(1);
+    // The error's name only, never its message.
+    expect(warn.mock.calls.flat().join(" ")).toContain("DbError");
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("tenant 7");
+  });
+
+  it("runs no engine check with no lease: off, a stored verdict, or another caller checking", async () => {
+    flags.auditorEnabled = false;
+    const off = fakeStore();
+    await runAudit(SESSION, PROPOSAL, deps({ store: off.store }));
+    expect(off.log.engineChecks).toEqual([]);
+    flags.auditorEnabled = true;
+    const stored = fakeStore({ verdict: "pass", checkedAt: NOW.toISOString() });
+    await runAudit(SESSION, PROPOSAL, deps({ store: stored.store }));
+    expect(stored.log.engineChecks).toEqual([]);
+    const held = fakeStore({ startedAt: NOW.toISOString() });
+    expect(await runAudit(SESSION, PROPOSAL, deps({ store: held.store }))).toEqual({ state: "in_progress" });
+    expect(held.log.engineChecks).toEqual([]);
+  });
+});
+
+describe("runEngineCheck", () => {
+  it("checks a waiting proposal alone, with no lease and no model call, whatever the switch", async () => {
+    flags.auditorEnabled = false;
+    const { store, log } = fakeStore();
+    const model = fakeModel(() => okResult(verdictText()));
+    await runEngineCheck(SESSION, PROPOSAL, deps({ store, complete: model }));
+    expect(log.engineChecks).toHaveLength(1);
+    expect(log.leases).toBe(0);
+    expect(model).not.toHaveBeenCalled();
+  });
+
+  it("leaves a decided or missing proposal alone and never throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const decided = fakeStore({ status: "approved" });
+    await runEngineCheck(SESSION, PROPOSAL, deps({ store: decided.store }));
+    expect(decided.log.engineChecks).toEqual([]);
+    const missing = fakeStore({}, true);
+    await runEngineCheck(SESSION, PROPOSAL, deps({ store: missing.store }));
+    expect(missing.log.engineChecks).toEqual([]);
+    const broken = fakeStore();
+    broken.store.read = async () => {
+      throw Object.assign(new Error("boom"), { name: "DbError" });
+    };
+    await expect(runEngineCheck(SESSION, PROPOSAL, deps({ store: broken.store }))).resolves.toBeUndefined();
+    expect(broken.log.engineChecks).toEqual([]);
+    expect(warn).toHaveBeenCalled();
   });
 });
 
