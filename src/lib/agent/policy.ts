@@ -97,6 +97,19 @@ export const COLLECTIONS_RULE = [
   "  sent only on the Collections page; never write one in chat or say one was sent.",
 ].join("\n");
 
+// Added to the prompt only while propose_money_code is offered (flags.moneyCodes.enabled), so a
+// turn with the switch off sends exactly today's prompt.
+export const MONEY_CODE_PROMPT = [
+  "",
+  "Money codes:",
+  "- A driver at a dock may need a one-time money code for a lumper or a repair. Read the receipt",
+  "  (get_document) or the voice note (get_voice_note) first, then call propose_money_code with",
+  "  exactly the total it shows, in integer cents, on the driver's load that is on the road or",
+  "  delivered in the last three days. Pass that input's id as inputId.",
+  "- A person approves the card before any code is issued; the charge and the reimbursement land",
+  "  on the driver's paystub and net to zero. Never read or repeat a code: only the page shows it.",
+].join("\n");
+
 // Carrier memory (carrierMemoryEnabled): appended only while remember_note is offered, so the
 // prompt is unchanged with the switch off.
 export const MEMORY_PROMPT = [
@@ -126,8 +139,9 @@ export const CHECKLIST_TOOL = "set_checklist";
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
 // is on (it is one of the rules), the collections rule while get_collections is offered, the Cash
 // Friday line while get_cash_friday is offered, the checklist rule while set_checklist is offered,
-// then the report section while the report tools are offered, then the memory section while
-// remember_note is. With search off and none of those offered it is the prompt above.
+// then the report section while the report tools are offered, then the money code section while
+// propose_money_code is offered, then the memory section while remember_note is. With search off
+// and none of those offered it is the prompt above.
 export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
   const searched = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
   const collections = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
@@ -135,7 +149,8 @@ export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean
   const prompt = toolNames.includes(CHECKLIST_TOOL) ? `${cash}\n${CHECKLIST_RULE}` : cash;
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
   const withReports = reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
-  return toolNames.includes("remember_note") ? `${withReports}\n${MEMORY_PROMPT}` : withReports;
+  const withCodes = toolNames.includes("propose_money_code") ? `${withReports}\n${MONEY_CODE_PROMPT}` : withReports;
+  return toolNames.includes("remember_note") ? `${withCodes}\n${MEMORY_PROMPT}` : withCodes;
 }
 
 export const STATE_HEADER = "Current state (from the database, for this turn only):";

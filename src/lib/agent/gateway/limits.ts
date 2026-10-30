@@ -5,6 +5,7 @@ import { loadsOf } from "../../data/records";
 import { readActiveCardById } from "../../advances/cards";
 import {
   readAdvanceInput,
+  readMoneyCodeInput,
   readReceivablesInput,
   readRowsWhereId,
   readSettlementInput,
@@ -15,9 +16,12 @@ import { paymentPostedOutside } from "../../invoices/posted-outside";
 import {
   advanceEligibility,
   cents,
+  checkMoneyCode,
   findPaymentOnWrongInvoice,
   invoiceAmount,
   type AdvanceDecision,
+  type MoneyCodePurpose,
+  type MoneyCodeSource,
 } from "../../rules-engine";
 import { loadCandidates } from "../../documents/candidates";
 import { matchDocument, RATE_FILL_STATUSES } from "../../documents/match";
@@ -366,6 +370,74 @@ export async function detentionChargeLimit(
   } catch {
     return unavailable(args.amountCents);
   }
+}
+
+// ---- Money codes ----
+
+export type MoneyCodeLimitArgs = {
+  driverId: string;
+  loadId: string;
+  amountCents: number;
+  purpose: MoneyCodePurpose;
+  source: MoneyCodeSource;
+  documentId: string | null;
+  voiceNoteId: string | null;
+  // The outside input the evidence came through, cited as the proposal's source.
+  inputId: string | null;
+};
+
+// A money code only for the amount the rules engine allows on that load as of now: the receipt's
+// total (or an amount the driver said), at or under moneyCodes.capCents. Every refusal carries the
+// engine's first refusal word, so the agent can ask for what is missing; one that is only over the
+// cap is amount_over_limit. The switch is read here too.
+export async function moneyCodeLimit(
+  q: Queryable,
+  ctx: GatewayContext,
+  args: MoneyCodeLimitArgs,
+): Promise<LimitResult> {
+  const { enabled, capCents, perDriverPerDay } = flags.moneyCodes;
+  if (enabled !== true || !Number.isSafeInteger(capCents) || capCents <= 0) {
+    return unavailable(args.amountCents);
+  }
+  let decision: ReturnType<typeof checkMoneyCode>;
+  try {
+    const input = await readMoneyCodeInput(
+      q,
+      {
+        driverId: args.driverId,
+        loadId: args.loadId,
+        purpose: args.purpose,
+        amountCents: args.amountCents,
+        source: args.source,
+        documentId: args.documentId,
+        voiceNoteId: args.voiceNoteId,
+        capCents,
+        perDriverPerDay,
+      },
+      ctx.now.toISOString(),
+    );
+    decision = checkMoneyCode(input);
+  } catch {
+    return unavailable(args.amountCents);
+  }
+  if (!decision.ok) {
+    const overOnly = decision.refusals.every((r) => r === "over_code_cap");
+    const r = refused(overOnly ? "amount_over_limit" : "engine_refused", capCents, args.amountCents);
+    return r.ok ? r : { ...r, category: decision.category };
+  }
+  const sources: GatewayRef[] = [
+    { table: "drivers", id: args.driverId },
+    { table: "loads", id: args.loadId },
+    ...(args.inputId ? [{ table: "untrusted_inputs" as const, id: args.inputId }] : []),
+  ];
+  return {
+    ok: true,
+    limitCents: cents(capCents),
+    requestedCents: cents(args.amountCents),
+    exceptions: [],
+    reasons: [...decision.reasons],
+    sources,
+  };
 }
 
 export type RuleChangeLimitArgs = {

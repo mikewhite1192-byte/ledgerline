@@ -9,6 +9,7 @@ import {
   AiError,
   complete,
   computerStep,
+  editImage,
   generateImage,
   segment,
   segmentVideo,
@@ -131,6 +132,9 @@ function answerFor(url: string): Response {
   }
   if (url.endsWith("/v1/images/generations")) {
     return Response.json({ output_format: "png", data: [{ b64_json: B64_PNG }] });
+  }
+  if (url.endsWith("/v1/images/edits")) {
+    return Response.json({ created: 1, data: [{ b64_json: B64_PNG }] });
   }
   if (url.includes("baseten")) return Response.json(basetenAnswer());
   return Response.json(metaAnswer());
@@ -1345,6 +1349,90 @@ describe("complete, one call", () => {
       );
       expect(logged.join("\n")).not.toContain("Hello, money desk.");
     }
+  });
+});
+
+describe("editImage", () => {
+  const EDIT = {
+    purpose: "document_markup",
+    prompt: "On this photo draw one red oval around the printed line that reads exactly: Total $175.00.",
+    image: { mime: "image/png" as const, bytes: PNG_BYTES },
+    traceId: TRACE,
+  };
+
+  it("sends one picture as a data URL to the edits endpoint, reserves one image, and reads the type from the bytes", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps);
+    const result = await editImage(EDIT, SESSION, { fetch: fetchFn, db: ledger.db });
+    const [url, init] = fetchFn.mock.calls[0];
+    expect(url).toBe("https://api.meta.ai/v1/images/edits");
+    expect(JSON.parse(String(init.body))).toEqual({
+      model: "muse-image-1.0",
+      prompt: EDIT.prompt,
+      images: [{ image_url: `data:image/png;base64,${B64_PNG}` }],
+      n: 1,
+      response_format: "b64_json",
+    });
+    expect(ledger.rows.get(result.callId)).toMatchObject({
+      target: "image",
+      kind: "image",
+      trace: TRACE,
+      reserved: NANOCENTS_PER_CENT,
+      status: "ok",
+      cost: NANOCENTS_PER_CENT,
+      units: 1,
+    });
+    expect(result.images).toEqual([{ bytes: new Uint8Array(PNG_BYTES), mime: "image/png" }]);
+    expect(logged.join("\n")).not.toContain("175");
+  });
+
+  it("refuses a malformed edit as bad_request before any call", async () => {
+    const big = new Uint8Array(5 * 1024 * 1024 + 1);
+    big.set(PNG_BYTES);
+    const cases: object[] = [
+      { prompt: "" },
+      { prompt: "   " },
+      { prompt: "x".repeat(4_001) },
+      { image: { mime: "image/gif", bytes: PNG_BYTES } },
+      { image: { mime: "image/jpeg", bytes: PNG_BYTES } },
+      { image: { mime: "image/png", bytes: new Uint8Array(0) } },
+      { image: { mime: "image/png", bytes: big } },
+      { image: { mime: "image/png", bytes: "not bytes" } },
+      { image: null },
+    ];
+    for (const over of cases) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps);
+      const err = await refusal(editImage({ ...EDIT, ...over } as never, SESSION, { fetch: fetchFn, db: ledger.db }));
+      expect(err.category, JSON.stringify(over).slice(0, 80)).toBe("bad_request");
+      expect(fetchFn).not.toHaveBeenCalled();
+      expect(ledger.steps).toEqual([]);
+    }
+  });
+
+  it("treats an answer that is not one picture as unknown and keeps the reservation", async () => {
+    for (const answer of [
+      { data: [{ b64_json: B64_PNG }, { b64_json: B64_PNG }] },
+      { images: [{ b64_json: B64_PNG }] },
+      { data: "x" },
+    ]) {
+      const ledger = fakeLedger();
+      const fetchFn = fakeFetch(ledger.steps, () => Response.json(answer));
+      expect((await refusal(editImage(EDIT, SESSION, { fetch: fetchFn, db: ledger.db }))).category).toBe("unknown");
+      const [row] = [...ledger.rows.values()];
+      expect(row).toMatchObject({ status: "unknown", reserved: NANOCENTS_PER_CENT, cost: null });
+      expect(ledger.counter).toMatchObject({ spent: 0, reserved: NANOCENTS_PER_CENT, calls: 1 });
+    }
+  });
+
+  it("charges an entry it cannot use and hands back no picture for it", async () => {
+    const ledger = fakeLedger();
+    const fetchFn = fakeFetch(ledger.steps, () =>
+      Response.json({ data: [{ b64_json: Buffer.from("not a picture").toString("base64") }] }),
+    );
+    const result = await editImage(EDIT, SESSION, { fetch: fetchFn, db: ledger.db });
+    expect(result.images).toEqual([]);
+    expect(ledger.rows.get(result.callId)).toMatchObject({ status: "ok", cost: NANOCENTS_PER_CENT, units: 1 });
   });
 });
 

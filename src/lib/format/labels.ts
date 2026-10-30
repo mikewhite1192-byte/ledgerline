@@ -50,6 +50,10 @@ const STATUS_LABELS: Record<string, string> = {
   duplicate_warning: "Duplicate warning",
   needs_review: "Needs review",
   ready_to_send: "Ready to send",
+  // money codes (the same words as the Money codes page; failed and unknown are above)
+  issuing: "Processing",
+  issued: "Issued",
+  voided: "Called off",
   // vendor bills (Cash Friday): a bill moved to a later date
   deferred: "Moved",
   // Cash Friday's expected customer payments

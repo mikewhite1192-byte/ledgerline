@@ -16,6 +16,8 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   // The first planted unbilled detention: 41,250 cents in October.
   const detentionLoad = plan.planted.detentionLoadIds[0];
   const delivered = rows.loads.find((l) => l.status === "delivered") ?? rows.loads[0];
+  // A load on the road and its own driver: the only kind of load a money code is for.
+  const onRoad = rows.loads.find((l) => l.status === "in_transit")!;
   const refs = [{ table: "drivers", id: hero.id }];
   // The statement's planted card that is on no driver's file, and the driver code ranks first.
   const unknownCard = plan.planted.cardRecon;
@@ -83,6 +85,13 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       sourceRefs: [{ table: "loads", id: detentionLoad }],
     },
     get_portal_evidence: { loadId: delivered.id },
+    get_money_codes: { driverId: hero.id },
+    propose_money_code: {
+      driverId: onRoad.driver_id,
+      loadId: onRoad.id,
+      amountCents: 15_000,
+      purpose: "lumper",
+    },
     get_cash_friday: {},
     get_pinned_rates: { kind: "ifta_rate", state: "IL", day: "2026-10-27" },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },

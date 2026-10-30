@@ -22,6 +22,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   bill_defer: "Delay a vendor bill",
   collections_chase: "Chase a late payer (Test mode)",
   pay_rule_change: "Change a pay rule",
+  money_code: "Issue a money code",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;

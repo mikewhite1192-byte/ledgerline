@@ -238,6 +238,14 @@ export type ImageRequest = AiCallOptions & {
   reasoningStrength?: "low" | "high";
 };
 
+// One edit of one picture (Muse Image's edit endpoint). The result is an ImageResult.
+export type ImageEditRequest = AiCallOptions & {
+  // Sent, never stored or logged. 1 to 4,000 characters.
+  prompt: string;
+  // The picture to edit: at most 5 MiB, bytes that look like the declared type.
+  image: { mime: "image/png" | "image/jpeg" | "image/webp"; bytes: Uint8Array };
+};
+
 export type ImageResult = {
   callId: string;
   images: { bytes: Uint8Array; mime: "image/png" | "image/jpeg" | "image/webp" }[];
