@@ -11,21 +11,28 @@ import { assertMembership } from "../tenant/context";
 import { localDateOf } from "../time/local-date";
 import type { LoadCreateArgs } from "./args";
 import { rateConCandidates } from "./candidates";
-import { checkRateCon } from "./check";
+import { checkRateCon, type RateConRefusal } from "./check";
 import { readRateCon, type RateConReadDeps, type RateConReadOutcome } from "./read";
-import { rawOfRateCon, rateConTranscriptOf } from "./schema";
+import { parseRateCon, rawOfRateCon, rateConTranscriptOf, type RateConReading } from "./schema";
 import {
   claimRateConTry,
+  countRateConCards,
   countRecentRateCons,
+  endRateConCard,
   finishRateCon,
   insertRateConBeforeStart,
   insertRateConRow,
   insertRateConTranscript,
   lockTenantRateCons,
   RATECON_ATTEMPTS_MAX,
+  RATECON_CARDS_MAX,
+  readCardStatus,
   readRateConRow,
+  readTranscriptRow,
+  relinkRateConCard,
   type RateConFinish,
   type RateConRow,
+  type RateConRowEnd,
   type RateConStatus,
 } from "./store";
 
@@ -36,10 +43,15 @@ import {
 // never inside one (it can take 25 seconds).
 //
 // Step 1, under the tenant's rate confirmation lock: the document is this tenant's PDF, read, a
-// rate confirmation, and its first read found no record for it. Its row is taken: a card already
-// made is returned as it is (no second read, no second charge); one that ended with no card gets
-// another try while tries are left; a pending one younger than two minutes is in progress, an
-// older one's request went away and is taken with a lease. A new row for a document stored before
+// rate confirmation, and its first read found no record for it. Its row is taken: a card still
+// live (or the load it made) is returned as it is (no second read, no second charge); a card that
+// expired or failed is followed by a new one, in this step with no model call, from the stored
+// reading (its transcript must still hash to it, every check runs again, the reserved load id is
+// again the subject, at most RATECON_CARDS_MAX cards per document); a card a person rejected ends
+// the row refused with no tries left, so the same file never brings it back (a corrected file is
+// its own document). A row that ended with no card gets another try while tries are left; a
+// pending one younger than two minutes is in progress, an older one's request went away and is
+// taken with a lease. A new row for a document stored before
 // the start date is inserted refused (before_start) with no tries left, so it is never read; any
 // other is refused past the daily count, then inserted pending with the load id reserved. Step 2,
 // the read. Step 3, under the same lock with the row still pending at the same count: the
@@ -49,7 +61,8 @@ import {
 //
 // Dedupe keys, named: the file is documents (tenant_id, content_hash) (uploadDocument); the read is
 // ratecon_reads (tenant_id, document_id); the card is proposals.dedupe_key
-// load_create:<load_id>:<sha256(args)> plus one live card per (kind, subject); the load is
+// load_create:<load_id>:<sha256(args)> (args.revision, the load id's cards that ended expired or
+// failed, sets each new card's key apart) plus one live card per (kind, subject); the load is
 // loads.id = the reserved load_id plus loads (tenant_id, load_number) (the executor).
 
 export const RATECON_STALLED_MS = 2 * 60 * 1000;
@@ -114,11 +127,106 @@ async function beforeStart(q: Queryable, createdAt: string): Promise<boolean> {
   return localDateOf(createdAt, tenant.timezone) < flags.ratecon.startDate;
 }
 
+export type CardFate = "live" | "dead" | "rejected";
+
+// What a proposed row's card leaves it: waiting, approved, running or done is live (the row is
+// returned as it is); expired or failed is dead (a new card may follow); rejected ends the row.
+// Any other status, or no card read, is live: unknown is not dead, so nothing is made from it.
+export function cardFateOf(status: string | null): CardFate {
+  if (status === "expired" || status === "failed") return "dead";
+  if (status === "rejected") return "rejected";
+  return "live";
+}
+
+type Carded = { ok: true; proposalId: string } | { ok: false; category: RateConRefusal };
+
+// The card a reading makes, inside the caller's transaction under the tenant's lock: the records
+// read, every check run, and the card persisted with the reserved load id as its subject. A first
+// read's finish and a dead card's follow-up both come here, so the two cannot drift.
+async function cardFromReading(
+  q: Queryable,
+  session: Session,
+  ids: { loadId: string; documentId: string; inputId: string },
+  reading: RateConReading,
+  documentCreatedAt: string,
+  now: Date,
+): Promise<Carded> {
+  const candidates = await rateConCandidates(q, reading, ids.loadId);
+  const checked = checkRateCon(reading, candidates, { now, documentCreatedAt, startDate: flags.ratecon.startDate });
+  if (!checked.ok) return { ok: false, category: checked.category };
+  const args: LoadCreateArgs = {
+    v: 1,
+    loadId: ids.loadId,
+    documentId: ids.documentId,
+    inputId: ids.inputId,
+    readingHash: untrustedContentHash("document", rateConTranscriptOf(reading)),
+    ...checked.draft,
+  };
+  const persisted = await persistEngineProposal(
+    q,
+    {
+      kind: "load_create",
+      subjectTable: "loads",
+      subjectId: ids.loadId,
+      amountCents: checked.draft.totalCents,
+      args,
+      exceptions: [],
+      reasons: ["rate_confirmation"],
+      sources: [
+        { table: "customers", id: checked.draft.customerId },
+        { table: "untrusted_inputs", id: ids.inputId },
+      ],
+    },
+    session,
+    now,
+  );
+  if (persisted.kind !== "created" && persisted.kind !== "duplicate") return { ok: false, category: "card_exists" };
+  return { ok: true, proposalId: persisted.proposalId };
+}
+
+// A proposed row whose card is dead or rejected, inside the step 1 transaction (the tenant's lock
+// held, the row locked), with no model call. A rejected card ends the row with no tries left. An
+// expired or failed one is followed by a new card from the stored reading, only while the stored
+// transcript is exactly that reading's text and hashes to it (any miss is not_executable, never a
+// card), the load id has had fewer than RATECON_CARDS_MAX cards (card_limit, no tries left), and
+// every check takes it again (a refusal keeps its tries, so a later request may read again).
+async function followDeadCard(
+  q: Queryable,
+  session: Session,
+  row: RateConRow,
+  cardId: string,
+  fate: Exclude<CardFate, "live">,
+  documentCreatedAt: string,
+  now: Date,
+): Promise<void> {
+  const nowIso = now.toISOString();
+  const end = async (category: RateConRefusal | RateConRowEnd | "not_executable"): Promise<void> => {
+    if ((await endRateConCard(q, row.id, cardId, category, nowIso)) !== 1) {
+      throw new Error("rate confirmation row could not be ended");
+    }
+  };
+  if (fate === "rejected") return end("rejected");
+  const reading = row.reading === null ? null : parseRateCon(row.reading);
+  const stored = row.input_id === null ? null : await readTranscriptRow(q, row.input_id);
+  if (!reading || !stored || row.input_id === null) return end("not_executable");
+  const transcript = rateConTranscriptOf(reading);
+  if (stored.body_text !== transcript || stored.content_hash !== untrustedContentHash("document", transcript)) {
+    return end("not_executable");
+  }
+  if ((await countRateConCards(q, row.load_id)) >= RATECON_CARDS_MAX) return end("card_limit");
+  const ids = { loadId: row.load_id, documentId: row.document_id, inputId: row.input_id };
+  const made = await cardFromReading(q, session, ids, reading, documentCreatedAt, now);
+  if (!made.ok) return end(made.category);
+  if ((await relinkRateConCard(q, row.id, cardId, made.proposalId, nowIso)) !== 1) {
+    throw new Error("rate confirmation row could not take its new card");
+  }
+}
+
 type Claimed =
   | { done: LoadCardOutcome }
   | { row: Pick<RateConRow, "id" | "attempts" | "load_id">; bytes: Uint8Array; traceId: string; createdAt: string };
 
-async function claim(q: Queryable, documentId: string, now: Date): Promise<Claimed> {
+async function claim(q: Queryable, session: Session, documentId: string, now: Date): Promise<Claimed> {
   const nowIso = now.toISOString();
   await lockTenantRateCons(q);
   const doc = await readDocumentMeta(q, documentId);
@@ -130,6 +238,19 @@ async function claim(q: Queryable, documentId: string, now: Date): Promise<Claim
 
   let row = await readRateConRow(q, documentId, { lock: true });
   if (row) {
+    if (row.status === "proposed" && row.proposal_id !== null) {
+      const fate = cardFateOf(await readCardStatus(q, row.proposal_id));
+      if (fate !== "live") {
+        await followDeadCard(q, session, row, row.proposal_id, fate, doc.created_at, now);
+        const after = await readRateConRow(q, documentId);
+        if (!after) throw new Error("rate confirmation row vanished");
+        // The same line a read writes, so a new card or a row ended here shows in the logs; no read, no cost.
+        console.info(
+          `ratecon: document ${documentId} status=${after.status} category=${after.category ?? "none"} cost=0 card=${fate}`,
+        );
+        return { done: { ok: true, view: viewOf(after) } };
+      }
+    }
     if (row.status === "proposed" || row.status === "created") return { done: { ok: true, view: viewOf(row) } };
     const cutoff = new Date(now.getTime() - RATECON_STALLED_MS).toISOString();
     if (row.status === "pending" && row.updated_at >= cutoff) return { done: { ok: false, error: "in_progress" } };
@@ -182,46 +303,10 @@ async function finishFor(
   const transcript = rateConTranscriptOf(outcome.reading);
   const inputId = await insertRateConTranscript(q, transcript, nowIso);
   const reading = rawOfRateCon(outcome.reading);
-  const loadId = claimed.row.load_id;
-  const candidates = await rateConCandidates(q, outcome.reading, loadId);
-  const checked = checkRateCon(outcome.reading, candidates, {
-    now,
-    documentCreatedAt: claimed.createdAt,
-    startDate: flags.ratecon.startDate,
-  });
-  if (!checked.ok) {
-    return { status: "refused", category: checked.category, reading, inputId, callId: outcome.callId };
-  }
-  const args: LoadCreateArgs = {
-    v: 1,
-    loadId,
-    documentId,
-    inputId,
-    readingHash: untrustedContentHash("document", transcript),
-    ...checked.draft,
-  };
-  const persisted = await persistEngineProposal(
-    q,
-    {
-      kind: "load_create",
-      subjectTable: "loads",
-      subjectId: loadId,
-      amountCents: checked.draft.totalCents,
-      args,
-      exceptions: [],
-      reasons: ["rate_confirmation"],
-      sources: [
-        { table: "customers", id: checked.draft.customerId },
-        { table: "untrusted_inputs", id: inputId },
-      ],
-    },
-    session,
-    now,
-  );
-  if (persisted.kind !== "created" && persisted.kind !== "duplicate") {
-    return { status: "refused", category: "card_exists", reading, inputId, callId: outcome.callId };
-  }
-  return { status: "proposed", reading, inputId, callId: outcome.callId, proposalId: persisted.proposalId };
+  const ids = { loadId: claimed.row.load_id, documentId, inputId };
+  const made = await cardFromReading(q, session, ids, outcome.reading, claimed.createdAt, now);
+  if (!made.ok) return { status: "refused", category: made.category, reading, inputId, callId: outcome.callId };
+  return { status: "proposed", reading, inputId, callId: outcome.callId, proposalId: made.proposalId };
 }
 
 export async function createLoadCard(
@@ -232,7 +317,7 @@ export async function createLoadCard(
   if (!flags.documentsEnabled || !flags.ratecon.enabled) return { ok: false, error: "disabled" };
   const db = deps.db ?? getDb();
   const clock = deps.now ?? (() => new Date());
-  const claimed = await tx(db, session, (q) => claim(q, documentId, clock()));
+  const claimed = await tx(db, session, (q) => claim(q, session, documentId, clock()));
   if ("done" in claimed) return claimed.done;
 
   const outcome = await readRateCon({ documentId, bytes: claimed.bytes, traceId: claimed.traceId }, session, deps.read);

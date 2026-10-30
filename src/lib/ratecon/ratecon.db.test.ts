@@ -17,6 +17,7 @@ import { CONFIDENCE_FIELDS } from "../documents/types";
 import { addJudge, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { loadCreateExecutor } from "../proposals/executors/load-create";
 import { EXECUTORS, executeProposal, type ExecuteDeps, type Executor, type ProposalRow } from "../proposals/execute";
+import { rejectProposal } from "../proposals/reject";
 import { runAllChecks } from "../rules-engine";
 import { ForbiddenError } from "../tenant/context";
 import { countLoadsWithNumber } from "./candidates";
@@ -641,5 +642,260 @@ describe("rate confirmations in the database", () => {
     expect(await app.withTenant(A.tenantId, (q) => countLoadsWithNumber(q, "RC-7101", randomUUID(), pages))).toBe(2);
     expect(await app.withTenant(A.tenantId, (q) => countLoadsWithNumber(q, "RC-7101", ids[0], pages))).toBe(1);
     expect(await app.withTenant(B.tenantId, (q) => countLoadsWithNumber(q, "RC-7101", randomUUID(), pages))).toBe(0);
+  });
+
+  // A card that expired or failed is followed by a new one from the stored reading, with no model
+  // call; a card a person rejected ends its row. Each card is expired through the real gate, by an
+  // approval a week and a day after the card was made (the fixture's pickup stays in the window).
+  describe("a dead load card", () => {
+    // The card made after the first card for RC-8001 expired, approved in a later test.
+    let followed: { documentId: string; loadId: string; deadId: string; proposalId: string };
+
+    const DAY = 24 * 60 * MINUTE;
+    const onDay = (days: number) => () => new Date(RATECON_NOW + days * DAY);
+    const approveOn = (session: Session, id: string, days: number) =>
+      executeProposal(session, id, { confirmed: true }, { db: app, clock: onDay(days) });
+
+    // A new file for this number and its first card, both on RATECON_NOW.
+    async function firstCard(loadNumber: string): Promise<{ documentId: string; proposalId: string; loadId: string }> {
+      const doc = await upload(loadNumber);
+      const out = await card(A.session, doc.id, model(rateConText({ loadNumber })));
+      if (!out.ok || !out.view.proposalId) throw new Error("no card");
+      const [row] = await readRows(doc.id);
+      return { documentId: doc.id, proposalId: out.view.proposalId, loadId: row.load_id };
+    }
+
+    // The card made on this day, approved a week and a day later: the gate expires it.
+    async function expire(id: string, madeOnDay: number): Promise<void> {
+      expect(await approveOn(A.session, id, madeOnDay + flags.proposalMaxAgeDays + 1)).toEqual({
+        ok: false,
+        category: "expired",
+        retryable: false,
+      });
+      expect((await proposal(id)).status).toBe("expired");
+    }
+
+    // Every load_create card for the load id, oldest revision first.
+    async function cardsFor(loadId: string) {
+      return admin.withTenant(A.tenantId, (q) =>
+        q.query<{ id: string; status: string; args: string; dedupe_key: string; decision_note: string | null }>(
+          `SELECT CAST(id AS text) AS id, status, CAST(args AS text) AS args, dedupe_key, decision_note FROM proposals
+            WHERE tenant_id = current_tenant_id() AND kind = 'load_create' AND subject_id = CAST($1 AS uuid)
+            ORDER BY CAST(args ->> 'revision' AS integer), created_at`,
+          [loadId],
+        ),
+      );
+    }
+
+    async function keyInByHand(id: string, loadNumber: string): Promise<void> {
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO loads (id, tenant_id, load_number, customer_id, status, origin_city, origin_state, dest_city,
+             dest_state, pickup_on, loaded_miles)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid), 'planned', 'Dallas', 'TX',
+             'Memphis', 'TN', CAST('2026-11-05' AS date), 450)`,
+          [id, loadNumber, A.customerId],
+        ),
+      );
+    }
+
+    it("makes one new card from the stored reading after the first expires, with no model call", async () => {
+      const made = await firstCard("RC-8001");
+      const [before] = await readRows(made.documentId);
+      await expire(made.proposalId, 0);
+      const complete = model();
+      const out = await card(A.session, made.documentId, complete, onDay(8));
+      if (!out.ok || !out.view.proposalId) throw new Error("no new card");
+      expect(complete).not.toHaveBeenCalled();
+      expect(out.view).toMatchObject({ documentId: made.documentId, status: "proposed", category: null, attemptsLeft: 2 });
+      expect(out.view.proposalId).not.toBe(made.proposalId);
+      // The same row, the same reading, transcript, call and tries; only the card it names moved.
+      expect(await readRows(made.documentId)).toEqual([{ ...before, proposal_id: out.view.proposalId }]);
+      const cards = await cardsFor(made.loadId);
+      expect(cards.map((c) => [c.id, c.status])).toEqual([
+        [made.proposalId, "expired"],
+        [out.view.proposalId, "proposed"],
+      ]);
+      const [was, next] = cards.map((c) => JSON.parse(c.args) as Record<string, unknown>);
+      expect(was.revision).toBe(0);
+      // The same content, a new revision, so a new dedupe key.
+      expect(next).toEqual({ ...was, revision: 1 });
+      expect(cards[1].dedupe_key).not.toBe(cards[0].dedupe_key);
+      followed = { documentId: made.documentId, loadId: made.loadId, deadId: made.proposalId, proposalId: out.view.proposalId };
+    });
+
+    it("makes a new card after an approval fails because the number was taken, once the taker is gone", async () => {
+      const made = await firstCard("RC-8101");
+      // The approval is recorded and stops before the load is written (the precheck refuses a taken
+      // number while the card is still waiting), then someone keys the load in by hand, and the
+      // resumed approval fails the card.
+      const crash: Executor = Object.assign(
+        async () => {
+          throw new Error("stopped");
+        },
+        { precheck: loadCreateExecutor.precheck },
+      );
+      await expect(approve(A.session, made.proposalId, { executors: { load_create: crash } })).rejects.toThrow("stopped");
+      const byHand = randomUUID();
+      await keyInByHand(byHand, "RC-8101");
+      expect(await approve(A.session, made.proposalId)).toEqual({ ok: false, category: "load_exists", retryable: false });
+      expect(await proposal(made.proposalId)).toMatchObject({ status: "failed", decision_note: "load_exists" });
+
+      // While the hand load holds the number, the new card is refused, with no read.
+      const held = model();
+      expect(await card(A.session, made.documentId, held)).toEqual({
+        ok: true,
+        view: { documentId: made.documentId, status: "refused", category: "load_exists", proposalId: null, attemptsLeft: 2 },
+      });
+      expect(held).not.toHaveBeenCalled();
+      expect(await cardsFor(made.loadId)).toHaveLength(1);
+
+      // The hand load goes; the next request spends one read, as any refused row's does, and makes a card.
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute("DELETE FROM loads WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [byHand]),
+      );
+      const again = model(rateConText({ loadNumber: "RC-8101" }));
+      const out = await card(A.session, made.documentId, again);
+      if (!out.ok) throw new Error(`refused: ${out.error}`);
+      expect(again).toHaveBeenCalledTimes(1);
+      expect(out.view).toMatchObject({ status: "proposed", category: null, attemptsLeft: 1 });
+      const cards = await cardsFor(made.loadId);
+      expect(cards.map((c) => [c.id, c.status])).toEqual([
+        [made.proposalId, "failed"],
+        [out.view.proposalId, "proposed"],
+      ]);
+      expect(JSON.parse(cards[1].args)).toMatchObject({ loadId: made.loadId, revision: 1 });
+    });
+
+    it("ends the row when a person rejected the card and never reads or cards it again", async () => {
+      const made = await firstCard("RC-8201");
+      expect(await rejectProposal(A.session, made.proposalId, "wrong_record", { db: app, clock })).toEqual({ ok: true });
+      const complete = model();
+      expect(await card(A.session, made.documentId, complete)).toEqual({
+        ok: true,
+        view: { documentId: made.documentId, status: "refused", category: "rejected", proposalId: null, attemptsLeft: 0 },
+      });
+      const [row] = await readRows(made.documentId);
+      // The reading and its transcript stay; the card is unlinked and no tries are left.
+      expect(row).toMatchObject({ status: "refused", category: "rejected", attempts: 3, proposal_id: null });
+      expect(row.reading).not.toBeNull();
+      expect(row.input_id).not.toBeNull();
+      expect(await card(A.session, made.documentId, complete, onDay(1))).toEqual({ ok: false, error: "attempt_limit" });
+      expect(complete).not.toHaveBeenCalled();
+      expect((await cardsFor(made.loadId)).map((c) => c.status)).toEqual(["rejected"]);
+    });
+
+    it("makes exactly one new card when two requests come at once for one expired card", async () => {
+      const made = await firstCard("RC-8301");
+      await expire(made.proposalId, 0);
+      const complete = model();
+      const [a, b] = await Promise.all([
+        card(A.session, made.documentId, complete, onDay(8)),
+        card(A.session, made.documentId, complete, onDay(8)),
+      ]);
+      if (!a.ok || !b.ok || !a.view.proposalId) throw new Error("refused");
+      expect(a.view.proposalId).not.toBe(made.proposalId);
+      expect(b.view.proposalId).toBe(a.view.proposalId);
+      expect(complete).not.toHaveBeenCalled();
+      expect(
+        await countIn(
+          A.tenantId,
+          `SELECT count(*) AS n FROM proposals WHERE tenant_id = current_tenant_id() AND kind = 'load_create'
+             AND subject_id = CAST($1 AS uuid) AND status IN ('proposed', 'approved', 'executing')`,
+          [made.loadId],
+        ),
+      ).toBe(1);
+      expect((await cardsFor(made.loadId)).map((c) => c.status)).toEqual(["expired", "proposed"]);
+    });
+
+    it("creates nothing on a late approval of the dead card, and the reserved load on the new card's", async () => {
+      expect(await approveOn(A.session, followed.deadId, 8)).toEqual({ ok: false, category: "already_decided", retryable: false });
+      const dead = { id: followed.deadId, kind: "load_create" } as ProposalRow;
+      expect(await loadCreateExecutor(app, A.session, dead, { confirmed: true }, { clock: onDay(8) })).toEqual({
+        ok: false,
+        category: "already_decided",
+        retryable: false,
+      });
+      expect(await loadsNumbered("RC-8001")).toEqual([]);
+
+      expect(await approveOn(A.session, followed.proposalId, 8)).toEqual({
+        ok: true,
+        proposalId: followed.proposalId,
+        status: "done",
+        moneyActionId: null,
+      });
+      expect((await loadsNumbered("RC-8001")).map((l) => l.id)).toEqual([followed.loadId]);
+      expect(await linesOfLoad(followed.loadId)).toHaveLength(2);
+      expect(await readRows(followed.documentId)).toMatchObject([{ status: "created", proposal_id: followed.proposalId }]);
+      // The dead card stays dead, and approving it again still writes nothing more.
+      expect(await approveOn(A.session, followed.deadId, 9)).toMatchObject({ ok: false, category: "already_decided" });
+      expect((await proposal(followed.deadId)).status).toBe("expired");
+      expect(await loadsNumbered("RC-8001")).toHaveLength(1);
+    });
+
+    it("stops at three cards for one document", async () => {
+      const made = await firstCard("RC-8401");
+      const complete = model();
+      let id = made.proposalId;
+      for (const day of [0, 8]) {
+        await expire(id, day);
+        const next = await card(A.session, made.documentId, complete, onDay(day + 8));
+        if (!next.ok || !next.view.proposalId) throw new Error("no next card");
+        id = next.view.proposalId;
+      }
+      await expire(id, 16);
+      expect(await card(A.session, made.documentId, complete, onDay(24))).toEqual({
+        ok: true,
+        view: { documentId: made.documentId, status: "refused", category: "card_limit", proposalId: null, attemptsLeft: 0 },
+      });
+      expect(complete).not.toHaveBeenCalled();
+      const cards = await cardsFor(made.loadId);
+      expect(cards.map((c) => [c.status, (JSON.parse(c.args) as { revision: number }).revision])).toEqual([
+        ["expired", 0],
+        ["expired", 1],
+        ["expired", 2],
+      ]);
+      expect(await card(A.session, made.documentId, complete, onDay(25))).toEqual({ ok: false, error: "attempt_limit" });
+      expect(complete).not.toHaveBeenCalled();
+    });
+
+    it("fails closed on a stored reading that no longer hashes to its transcript", async () => {
+      const made = await firstCard("RC-8501");
+      const [row] = await readRows(made.documentId);
+      // One character of the stored transcript changes; its stored hash does not.
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE untrusted_inputs SET body_text = 'X' || substr(body_text, 2)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [row.input_id],
+        ),
+      );
+      await expire(made.proposalId, 0);
+      const complete = model();
+      expect(await card(A.session, made.documentId, complete, onDay(8))).toEqual({
+        ok: true,
+        view: { documentId: made.documentId, status: "refused", category: "not_executable", proposalId: null, attemptsLeft: 2 },
+      });
+      expect(complete).not.toHaveBeenCalled();
+      expect((await cardsFor(made.loadId)).map((c) => c.status)).toEqual(["expired"]);
+      expect(await readRows(made.documentId)).toMatchObject([
+        { status: "refused", category: "not_executable", attempts: 1, proposal_id: null, input_id: row.input_id },
+      ]);
+    });
+
+    it("refuses a demo visitor and the switch off before following a dead card", async () => {
+      const made = await firstCard("RC-8601");
+      await expire(made.proposalId, 0);
+      const before = await readRows(made.documentId);
+      const complete = model();
+      const err = await card(judge, made.documentId, complete, onDay(8)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForbiddenError);
+      expect((err as ForbiddenError).reason).toBe("judge");
+      flags.ratecon = { ...flags.ratecon, enabled: false };
+      expect(await card(A.session, made.documentId, complete, onDay(8))).toEqual({ ok: false, error: "disabled" });
+      expect(complete).not.toHaveBeenCalled();
+      expect(await readRows(made.documentId)).toEqual(before);
+      expect((await cardsFor(made.loadId)).map((c) => c.status)).toEqual(["expired"]);
+    });
   });
 });
