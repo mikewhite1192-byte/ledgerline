@@ -128,7 +128,7 @@ describe("runArm", () => {
   const armRun = (cases: EvalCase[], run: (c: EvalCase, d: CaseDeps) => Promise<CaseScore>) => {
     const cacheDir = mkdtempSync(path.join(os.tmpdir(), "eval-run-test-"));
     dirs.push(cacheDir);
-    return { arm: "spark" as const, cases, sessions, deps, anchor: DEMO_ANCHOR, modelId: "m", auditorModelId: "a", cacheDir, fresh: false, run };
+    return { arm: "spark" as const, cases, sessions, deps, anchor: DEMO_ANCHOR, modelId: "m", auditorModelId: "a", screenModelId: "s", cacheDir, fresh: false, run };
   };
 
   it("a skipped case is not run, and the spend stop counts the rest over the cap", async () => {

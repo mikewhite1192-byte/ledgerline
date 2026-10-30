@@ -113,7 +113,7 @@ async function runArmProcess(
   arm: Arm,
   args: EvalArgs,
   leftCents: number,
-  models: { modelId: string; auditorModelId: string },
+  models: { modelId: string; auditorModelId: string; screenModelId: string },
 ): Promise<{ out: ArmOutput | null; spent: number; carried: boolean }> {
   const name = `payday_eval_${Date.now().toString(36)}_${randomBytes(3).toString("hex")}_${arm}`;
   const dir = mkdtempSync(path.join(tmpdir(), "payday-eval-"));
@@ -132,6 +132,7 @@ async function runArmProcess(
       sessions: await sessionsOf(url),
       modelId: models.modelId,
       auditorModelId: models.auditorModelId,
+      screenModelId: models.screenModelId,
       sparkOpen: arm === "spark_open",
       outFile: path.join(dir, "out.json"),
     };
@@ -208,7 +209,7 @@ async function run(args: EvalArgs): Promise<number> {
       continue;
     }
     console.log(`eval: ${arm} arm, up to ${leftCents} cents`);
-    const r = await runArmProcess(server, arm, args, leftCents, { modelId: modelId ?? "", auditorModelId });
+    const r = await runArmProcess(server, arm, args, leftCents, { modelId: modelId ?? "", auditorModelId, screenModelId });
     spent += r.spent;
     carryFailed ||= !r.carried;
     if (r.out) {

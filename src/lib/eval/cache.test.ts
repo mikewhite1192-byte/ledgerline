@@ -10,6 +10,8 @@ const base: CacheKeyInput = {
   arm: "spark",
   modelId: "spark-test-model",
   auditorModelId: "wonder-test-model",
+  screenModelId: "spark-open-test-model",
+  screenOutputMode: "text",
   caseKey: "blue-ridge:missing_reimbursement",
   prompt: "Is the pay right this week?",
   systemPrompt: "You are the operator.",
@@ -41,6 +43,9 @@ describe("eval cache", () => {
       { toolNames: [...base.toolNames, "propose_advance"] },
       { modelId: "spark-test-model-2" },
       { auditorModelId: null },
+      // A changed screener model or output mode never reuses an old score.
+      { screenModelId: "spark-open-test-model-2" },
+      { screenOutputMode: "tool" },
       { arm: "wonder" as const },
       { caseKey: "blue-ridge:duplicate_advance" },
       { prompt: "Is the pay right this week? " },
@@ -73,6 +78,21 @@ describe("eval cache", () => {
     expect(third.cached).toBe(false);
     expect(run).toHaveBeenCalledTimes(2);
     expect(readdirSync(dir)).toEqual([`${key}.json`]);
+  });
+
+  it("a failed cache write still returns the scored case", async () => {
+    // A file where the cache folder should be, so the write cannot make it.
+    const blocker = path.join(tempDir(), "not-a-folder");
+    writeFileSync(blocker, "");
+    const dir = path.join(blocker, "cache");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const out = await cachedRun(dir, cacheKey(base), false, async () => score());
+      expect(out).toEqual({ score: score(), cached: false });
+      expect(logged).toHaveBeenCalledTimes(1);
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   it("only a scored case is kept", async () => {

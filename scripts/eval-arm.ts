@@ -25,6 +25,7 @@ export type ArmInput = {
   sessions: Record<string, Session>;
   modelId: string | null;
   auditorModelId: string | null;
+  screenModelId: string | null;
   sparkOpen: boolean;
   outFile: string;
 };
@@ -81,6 +82,7 @@ async function main(): Promise<number> {
     anchor: input.anchor,
     modelId: input.modelId,
     auditorModelId: input.auditorModelId,
+    screenModelId: input.screenModelId,
     cacheDir: input.cacheDir,
     fresh: input.fresh,
   });

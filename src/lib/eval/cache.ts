@@ -20,6 +20,10 @@ export type CacheKeyInput = {
   // check's. Null when unset (such a run is refused before any case starts).
   modelId: string | null;
   auditorModelId: string | null;
+  // The env's model id for the screener (Muse Spark Open) and the screen's output mode
+  // (flags.screenOutputMode): a changed screener never reuses an old score.
+  screenModelId: string | null;
+  screenOutputMode: string;
   caseKey: string;
   // The case's sentence and the operator's system prompt, hashed here and never stored.
   prompt: string;
@@ -47,6 +51,8 @@ export function cacheKey(i: CacheKeyInput, promptVersion: number = EVAL_PROMPT_V
     arm: i.arm,
     modelId: i.modelId,
     auditorModelId: i.auditorModelId,
+    screenModelId: i.screenModelId,
+    screenOutputMode: i.screenOutputMode,
     caseKey: i.caseKey,
     promptVersion,
     prompt: sha256(i.prompt),
@@ -92,7 +98,8 @@ export function writeCached(dir: string, key: string, score: CaseScore): void {
 }
 
 // A hit skips the run. Only a scored case is kept: an unknown or cut case runs again next time.
-// fresh ignores what is there (and replaces it).
+// fresh ignores what is there (and replaces it). A failed write only loses the saving: the score,
+// already paid for, is still returned.
 export async function cachedRun(
   dir: string,
   key: string,
@@ -104,6 +111,12 @@ export async function cachedRun(
     if (hit) return { score: hit, cached: true };
   }
   const score = await run();
-  if (score.status === "scored") writeCached(dir, key, score);
+  if (score.status === "scored") {
+    try {
+      writeCached(dir, key, score);
+    } catch (err) {
+      console.error(`eval: a scored case could not be cached: ${err instanceof Error ? err.name : "unknown"}`);
+    }
+  }
   return { score, cached: false };
 }

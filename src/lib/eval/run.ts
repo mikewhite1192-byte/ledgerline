@@ -375,6 +375,7 @@ export type ArmRun = {
   anchor: string;
   modelId: string | null;
   auditorModelId: string | null;
+  screenModelId: string | null;
   cacheDir: string;
   fresh: boolean;
   // Runs one case; the default is runCase. The tests pass their own.
@@ -410,6 +411,8 @@ export async function runArm(a: ArmRun): Promise<{ results: CaseResult[]; stoppe
       arm: a.arm,
       modelId: a.modelId,
       auditorModelId: a.auditorModelId,
+      screenModelId: a.screenModelId,
+      screenOutputMode: flags.screenOutputMode,
       caseKey: c.key,
       prompt: c.prompt,
       systemPrompt,

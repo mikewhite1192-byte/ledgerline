@@ -236,6 +236,7 @@ describe("an eval case on the real tables", () => {
       anchor: ANCHOR,
       modelId: "spark-test-model",
       auditorModelId: "wonder-test-model",
+      screenModelId: "spark-open-test-model",
       cacheDir,
       fresh: false,
     };
