@@ -114,6 +114,8 @@ describe("the top bar", () => {
         <textarea aria-label="Why approve it anyway?" />
         <Composer onSubmit={() => undefined} />
       </div>,
+      // Home renders the shell without the panel, so Ask goes to its own question box.
+      { agentPanel: false },
     );
     fireEvent.click(screen.getByRole("link", { name: "Search or ask anything" }));
     const question = screen.getByRole("textbox", { name: "Your question" });

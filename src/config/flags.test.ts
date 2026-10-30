@@ -78,6 +78,7 @@ const RELEASED_ON = [
   "phoneLineEnabled",
   "escrowRelease.enabled",
   "escrowRelease.armed",
+  "agentFocusEnabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -116,22 +117,15 @@ describe("flags", () => {
     // auditorRequired ships on with the auditor: a proposal waits for its verdict, and
     // verifyEngineMismatchBlocks ships on with the pay rules check: a mismatch waits for a person.
     // Step through ships on for development and test runs, as it merged; the release does not set
-    // dev. The page focus ships off until the panel that sends it lands; local mode can turn it on.
+    // dev.
     expect(Object.keys(switches).sort()).toEqual(
-      [
-        ...RELEASED_ON,
-        ...KEPT_OFF,
-        "auditorRequired",
-        "verifyEngineMismatchBlocks",
-        "stepThrough.dev",
-        "agentFocusEnabled",
-      ].sort(),
+      [...RELEASED_ON, ...KEPT_OFF, "auditorRequired", "verifyEngineMismatchBlocks", "stepThrough.dev"].sort(),
     );
     expect(flags.auditorRequired).toBe(true);
     expect(flags.verifyEngineMismatchBlocks).toBe(true);
     expect(flags.advancePayouts.armed).toBe(true);
     expect(flags.stepThrough.dev).toBe(true);
-    expect(flags.agentFocusEnabled).toBe(false);
+    expect(flags.agentFocusEnabled).toBe(true);
   });
 
   it("keeps the email sends, the proof route and the standby host off, and the test-mode writes capped", () => {
@@ -732,20 +726,20 @@ describe("flags", () => {
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("profitBriefEnabled");
   });
 
-  it("ships the page focus dark in production, and lets local mode turn it on for the demo-path run", () => {
-    expect(flags.agentFocusEnabled).toBe(false);
+  it("ships the page focus on, and lets local mode set it either way", () => {
+    expect(flags.agentFocusEnabled).toBe(true);
     expect(LOCAL_OVERRIDABLE as readonly string[]).toContain("agentFocusEnabled");
     expect(LOCAL_OFF_ONLY as readonly string[]).not.toContain("agentFocusEnabled");
     const quiet = [vi.spyOn(console, "log").mockImplementation(() => {}), vi.spyOn(console, "error").mockImplementation(() => {})];
     try {
       const target = structuredClone(flags);
-      const vars = { NODE_ENV: "test", FLAGS_LOCAL_OVERRIDES: JSON.stringify({ agentFocusEnabled: true }) };
+      const vars = { NODE_ENV: "test", FLAGS_LOCAL_OVERRIDES: JSON.stringify({ agentFocusEnabled: false }) };
       expect(applyLocalOverrides(target, env(vars))).toEqual(["agentFocusEnabled"]);
-      expect(target.agentFocusEnabled).toBe(true);
+      expect(target.agentFocusEnabled).toBe(false);
       // Outside local mode the override is ignored and the switch stays as it ships.
       const prod = structuredClone(flags);
       expect(applyLocalOverrides(prod, env({ ...vars, NODE_ENV: "production" }))).toEqual([]);
-      expect(prod.agentFocusEnabled).toBe(false);
+      expect(prod.agentFocusEnabled).toBe(true);
     } finally {
       for (const spy of quiet) spy.mockRestore();
     }
