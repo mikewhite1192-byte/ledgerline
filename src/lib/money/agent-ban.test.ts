@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 
 // The agent proposes; it never moves money. The lint rule in eslint.config.mjs is the wall, and
 // this test keeps it standing: each forbidden import is reported, each allowed one is not. The
-// ledger's allowlist (money/read, types, keys and format; adapters/types and adapters/tms) is the
+// ledger's allowlist (money/read, types, keys and format; adapters/types and adapters/tms;
+// money-codes/read, words and switches) is the
 // gateway's rule, so the probe sits in src/lib/agent/gateway. Agent code outside the gateway may
 // import none of money/ or adapters/ (src/lib/agent/__tests__/agent-ban.test.ts proves that); here
 // it only has to refuse every forbidden case too.
@@ -29,6 +30,14 @@ const FORBIDDEN_IMPORTS = [
   'import { createStripeTestAdapter } from "../adapters/payment/stripe-test";',
   'import { moneySecret } from "../adapters/secrets";',
   'import { assertMoneyEnvSafe } from "../money/guard";',
+  // The money code's executor, reveal and request form, and the code issuer.
+  'import { moneyCodeExecutor } from "../money-codes/execute";',
+  'import { revealMoneyCode } from "@/lib/money-codes/execute";',
+  'import { requestMoneyCode } from "../money-codes/request";',
+  'import { createMoneyCodeIssuer } from "../adapters/payment/fuel-card-sim";',
+  'import { moneyCodeExecutor } from "../money-codes";',
+  'import { moneyCodeExecutor } from "../money-codes/read/../execute";',
+  'import { moneyCodeExecutor } from "../Money-Codes/Execute";',
   // Odd spellings of the same paths, and any other module under money/ or adapters/.
   'import { executeMoneyAction } from "../money/./execute";',
   'import { executeMoneyAction } from "../money//execute";',
@@ -67,6 +76,10 @@ const ALLOWED = [
   'import { idempotencyKey } from "@/lib/money/keys";',
   'import { dbTmsAdapter } from "../adapters/tms/db";',
   'import type { TmsAdapter } from "../adapters/types";',
+  // The money codes' readers, words and switches.
+  'import { listMoneyCodes } from "../money-codes/read";',
+  'import { moneyCodeSentence } from "@/lib/money-codes/words";',
+  'import { moneyCodesOn } from "../money-codes/switches";',
   // Names that only start like a banned one.
   'export const schema = { required: ["driverId"] };',
 ];

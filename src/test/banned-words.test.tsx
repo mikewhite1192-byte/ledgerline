@@ -14,6 +14,7 @@ import { Paystub } from "@/components/app/paystub";
 import { ProposalCard, type ProposalAudit, type ProposalStatus } from "@/components/app/proposal-card";
 import { EmptyState, ERROR_CATEGORIES, ErrorState, FeatureOff, LoadingState, PageNotFound } from "@/components/app/states";
 import { BADGE_STATUSES, StatusBadge } from "@/components/app/status-badge";
+import { ViewerRoleProvider } from "@/components/app/viewer-role";
 import { ToastProvider } from "@/components/app/toast";
 import { ApproveAll } from "@/components/settlements/approve-all";
 import { ContinueBatch } from "@/components/settlements/continue-batch";
@@ -23,6 +24,7 @@ import { FuelChecks } from "@/components/fuel/fuel-checks";
 import { RuleChangeCards, type RuleChangeCard } from "@/components/pay-rules/rule-change-cards";
 import { HowWorkedOut } from "@/components/trace/how-worked-out";
 import { WriteBrief } from "@/components/profit/write-brief";
+import { WriteReview } from "@/components/quarter/write-review";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { NotesBoard } from "@/app/memory/notes-board";
 import { flags } from "@/config/flags";
@@ -31,6 +33,7 @@ import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/li
 import type { Session } from "@/lib/auth/claims";
 import { reasonSentence } from "@/lib/agent/reasons";
 import { refusalWords as briefRefusalWords, writeOutcome } from "@/lib/briefs/words";
+import { reviewOutcome, reviewRefusalWords } from "@/lib/briefs/quarter-words";
 import {
   BILL_CATEGORY_WORDS,
   BILL_STATUS_WORDS,
@@ -84,6 +87,7 @@ import { EXCEPTION_LABELS, LEG_LABELS, PARK_LABELS, SETTLEMENT_OUTCOMES } from "
 import type { SettlementRecordView } from "@/lib/settlements/views";
 import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
 import { SAMPLE_PROPOSAL_ID, SAMPLE_TURN_ID, sampleTrace } from "@/lib/trace/sample";
+import { NOTE_NOT_KEPT } from "@/lib/trace/steps";
 import { VOICE_STATUS_WORDS } from "@/lib/voice/words";
 import * as fx from "./page-fixtures";
 
@@ -380,6 +384,15 @@ vi.mock("@/lib/invoices/review-read", async (importOriginal) => ({
   readInvoiceReview: async () => get("invoiceReview"),
   readMemberRoles: async () => new Map([[fx.MEMBER_ID, "staff"]]),
 }));
+vi.mock("@/lib/money-codes/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/money-codes/read")>()),
+  listMoneyCodes: async () => get("moneyCodes"),
+  readMoneyCode: async () => get("moneyCode"),
+}));
+vi.mock("@/lib/money-codes/request", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/money-codes/request")>()),
+  readRequestChoices: async () => get("codeChoices"),
+}));
 vi.mock("@/lib/briefs/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/briefs/view")>()),
   readProfitView: async () => get("profitView"),
@@ -403,6 +416,10 @@ const noteActions = vi.hoisted(() => ({
   removeNoteAction: vi.fn(),
 }));
 vi.mock("@/app/memory/actions", () => noteActions);
+vi.mock("@/lib/briefs/quarter-review", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/briefs/quarter-review")>()),
+  readQuarterView: async () => get("quarterView"),
+}));
 vi.mock("@/lib/voice/read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/voice/read")>()),
   readVoiceList: async () => get("voiceList"),
@@ -464,6 +481,9 @@ function defaults(): Record<string, unknown> {
     paystubAsk: null,
     reviewQueue: fx.REVIEW_QUEUE,
     invoiceReview: fx.INVOICE_REVIEW,
+    moneyCodes: fx.MONEY_CODES,
+    moneyCode: fx.MONEY_CODE_DETAIL,
+    codeChoices: fx.CODE_CHOICES,
     cardHome: fx.CARD_HOME,
     cardBreak: fx.CARD_BREAKS[0],
     cardHandPick: fx.CARD_HAND_PICK,
@@ -481,18 +501,23 @@ function defaults(): Record<string, unknown> {
     cashHome: null,
     memoryNotes: fx.MEMORY_NOTES,
     noteSubjects: fx.NOTE_SUBJECTS,
+    quarterView: fx.QUARTER_VIEW,
   };
 }
 
-// Every switch on, so each page shows its working state, not the off page.
+// Every switch on, so each page shows its working state, not the off page. Money codes is a switch
+// with settings, so only its own enabled is turned on.
 const SWITCHES = Object.keys(flags).filter((k) => typeof (flags as Record<string, unknown>)[k] === "boolean");
 const saved = Object.fromEntries(SWITCHES.map((k) => [k, (flags as Record<string, unknown>)[k]]));
+const savedCodes = { ...flags.moneyCodes };
 beforeAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = true;
+  flags.moneyCodes = { ...savedCodes, enabled: true };
   vi.stubGlobal("fetch", () => new Promise(() => {}));
 });
 afterAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = saved[k];
+  flags.moneyCodes = { ...savedCodes };
   vi.unstubAllGlobals();
 });
 beforeEach(() => {
@@ -980,11 +1005,18 @@ const PAGES: PageCase[] = [
   },
   {
     file: "documents/[id]/page.tsx",
-    variants: fx.DOCUMENTS.map((d) => ({
-      name: d.readStatus,
-      setup: () => (state.fx.document = d),
-      load: async () => (await import("@/app/documents/[id]/page")).default({ params: p({ id: d.id }) }),
-    })),
+    variants: [
+      ...fx.DOCUMENTS.map((d) => ({
+        name: d.readStatus,
+        setup: () => (state.fx.document = d),
+        load: async () => (await import("@/app/documents/[id]/page")).default({ params: p({ id: d.id }) }),
+      })),
+      ...fx.MARKUP_DOCUMENTS.map(({ name, view }) => ({
+        name: `marked copy ${name}`,
+        setup: () => (state.fx.document = view),
+        load: async () => (await import("@/app/documents/[id]/page")).default({ params: p({ id: view.id }) }),
+      })),
+    ],
   },
   {
     file: "driver-notes/page.tsx",
@@ -1070,6 +1102,50 @@ const PAGES: PageCase[] = [
           }
         },
         shows: ["How the models score", "Right amount", "When the operator and the second check agreed"],
+      },
+    ],
+  },
+  {
+    file: "money-codes/page.tsx",
+    variants: [
+      { name: "codes", load: async () => (await import("@/app/money-codes/page")).default() },
+      {
+        name: "with a request waiting",
+        setup: () => (state.fx.invoiceProposals = fx.CODE_PROPOSALS),
+        load: async () => (await import("@/app/money-codes/page")).default(),
+      },
+      { name: "empty", setup: () => (state.fx.moneyCodes = []), load: async () => (await import("@/app/money-codes/page")).default() },
+    ],
+  },
+  {
+    file: "money-codes/[id]/page.tsx",
+    variants: [
+      { name: "issued", load: async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }) },
+      {
+        name: "expired",
+        setup: () => (state.fx.moneyCode = { ...fx.MONEY_CODE_DETAIL, code: fx.MONEY_CODES[4] }),
+        load: async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }),
+      },
+      {
+        name: "not confirmed",
+        setup: () => (state.fx.moneyCode = fx.MONEY_CODE_UNKNOWN),
+        load: async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }),
+      },
+      {
+        name: "declined",
+        setup: () => (state.fx.moneyCode = fx.MONEY_CODE_FAILED),
+        load: async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }),
+      },
+    ],
+  },
+  {
+    file: "money-codes/new/page.tsx",
+    variants: [
+      { name: "form", load: async () => (await import("@/app/money-codes/new/page")).default() },
+      {
+        name: "nothing to pick",
+        setup: () => (state.fx.codeChoices = { loads: [], receipts: [] }),
+        load: async () => (await import("@/app/money-codes/new/page")).default(),
       },
     ],
   },
@@ -1169,6 +1245,54 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.profitView = fx.profitView({ kind: "none" }, { weeks: [], week: null, profit: null })),
         load: async () => (await import("@/app/profit/page")).default(sp()),
         shows: "The first brief appears",
+      },
+    ],
+  },
+  {
+    file: "quarter/page.tsx",
+    variants: [
+      { name: "no review yet", load: async () => (await import("@/app/quarter/page")).default(), shows: "No review yet" },
+      {
+        name: "being written",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "writing" })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "The review is being written",
+      },
+      {
+        name: "written",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "drafted", review: fx.QUARTER_REVIEW, changed: false })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "checked against them.",
+      },
+      {
+        name: "written, figures changed since",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "drafted", review: fx.QUARTER_REVIEW, changed: true })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "changed after this review was written on",
+      },
+      {
+        name: "did not pass its number check",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "refused", category: "number_mismatch" })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "Write the quarter review again",
+      },
+      {
+        name: "timed out",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "refused", category: "timeout" })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "The review did not finish",
+      },
+      {
+        name: "written, but no longer reads back",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "unreadable" })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "could not be read back",
+      },
+      {
+        name: "nothing happened yet this quarter",
+        setup: () => (state.fx.quarterView = fx.quarterView({ kind: "none" }, { quarter: fx.QUARTER_EMPTY, packed: [] })),
+        load: async () => (await import("@/app/quarter/page")).default(),
+        shows: "appear after its first pay run or invoice",
       },
     ],
   },
@@ -1534,6 +1658,7 @@ const PAGES: PageCase[] = [
   loading("models/loading.tsx", () => import("@/app/models/loading")),
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
   loading("profit/loading.tsx", () => import("@/app/profit/loading")),
+  loading("quarter/loading.tsx", () => import("@/app/quarter/loading")),
   loading("records/loading.tsx", () => import("@/app/records/loading")),
   loading("settings/pay-rules/loading.tsx", () => import("@/app/settings/pay-rules/loading")),
   loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
@@ -1725,6 +1850,21 @@ describe("no internal word on a card", () => {
         }
       });
     }
+    it(`${name} card seen by a demo visitor, every status and second-check state`, async () => {
+      for (const status of STATUSES) {
+        for (const audit of AUDITS) {
+          for (const confirming of [false, true]) {
+            const { container, unmount } = render(
+              <ViewerRoleProvider role="judge">
+                <ProposalCard {...sample} status={status} audit={audit} onApprove={() => {}} onReject={() => {}} canResume initialConfirming={confirming} />
+              </ViewerRoleProvider>,
+            );
+            expect(scan(container)).toEqual([]);
+            unmount();
+          }
+        }
+      }
+    });
   }
 });
 
@@ -2040,6 +2180,46 @@ describe("no internal word in a chat answer or its trace", () => {
     expect(scan(body)).toEqual([]);
   });
 
+  it("the step-through, on every turn, with the summary's parts and its own text opened", async () => {
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} stepThrough load={async () => ({ trace: { ...sampleTrace(), notesUsed: fx.NOTES_USED } })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /How this was worked out/i }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Step through" }));
+    const view = screen.getByRole("region", { name: "Step through" });
+    const next = within(view).getByRole("button", { name: "Next" }) as HTMLButtonElement;
+    let turns = 0;
+    for (;;) {
+      turns += 1;
+      for (const summary of within(view).queryAllByText("Details", { selector: "summary" })) fireEvent.click(summary);
+      expect(scan(document.body)).toEqual([]);
+      if (next.disabled) break;
+      fireEvent.click(next);
+    }
+    expect(turns).toBe(4);
+    expect(within(view).getByRole("list", { name: "Parts of the summary" })).toBeTruthy();
+    // The summary's own text is the model's input word for word (ids, dates, its own section
+    // titles), shown as plain text only when a person opens it. Everything around it is scanned.
+    fireEvent.click(within(view).getByRole("button", { name: "Show the summary" }));
+    const verbatim = view.querySelector("[data-verbatim='summary']");
+    expect(verbatim?.textContent).toBe(sampleTrace().contextSummary);
+    const rest = document.body.cloneNode(true) as HTMLElement;
+    for (const el of Array.from(rest.querySelectorAll("[data-verbatim]"))) el.remove();
+    expect(rest.querySelector("[data-verbatim]")).toBeNull();
+    expect(scan(rest)).toEqual([]);
+  });
+
+  it("the step-through, for an answer whose summary and notes were not kept", async () => {
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} stepThrough load={async () => ({ trace: { ...sampleTrace(), contextSummary: undefined } })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /How this was worked out/i }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Step through" }));
+    const view = screen.getByRole("region", { name: "Step through" });
+    expect(within(view).getByText(NOTE_NOT_KEPT)).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
+  });
+
   it("the trace's note links, for an answer that read the office's notes", async () => {
     render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace: { ...sampleTrace(), notesUsed: fx.NOTES_USED } })} />);
     await act(async () => {
@@ -2245,6 +2425,84 @@ describe("no internal word on the profit brief, in every state", () => {
       expect(scan(container)).toEqual([]);
     } finally {
       switches.profitBriefEnabled = was;
+    }
+  });
+});
+
+describe("no internal word on the quarter review, in every state", () => {
+  const show = async () => renderPage(async () => (await import("@/app/quarter/page")).default());
+
+  it("the written review, with each number a link to where it came from", async () => {
+    state.fx.quarterView = fx.quarterView({ kind: "drafted", review: fx.QUARTER_REVIEW, changed: false });
+    const container = await show();
+    const recovered = screen.getByRole("region", { name: "Money recovered" });
+    expect(within(recovered).getAllByRole("link").map((a) => a.getAttribute("title"))).toEqual([
+      "Detention recovered",
+      "Advances recovered from pay",
+    ]);
+    expect(within(recovered).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual([
+      "#quarter-recovered",
+      "#quarter-recovered",
+    ]);
+    const change = screen.getByRole("region", { name: "Three things to change" });
+    expect(within(change).getAllByRole("listitem")).toHaveLength(3);
+    expect(container.textContent).not.toMatch(/\[f\d+\]/);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the confirm before the agent writes, opened", async () => {
+    const container = await show();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Write the quarter review" }));
+    });
+    expect(screen.getByRole("button", { name: "Write the review" })).toBeTruthy();
+    expect(container.textContent).toMatch(/costs at most \$0\.30/);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("every sentence a press of the button or a stored refusal can show", () => {
+    const categories = ["format", "unknown_tag", "number_mismatch", "untagged", "timeout", "interrupted", "incomplete", "cap", "too_expensive", "job_cap", "disabled", "not_configured", "error", "rate_limited", "unavailable"];
+    const errors = ["exists", "in_progress", "no_activity", "not_found", "review_off", "disabled", "ai_off", "ai_disabled", "forbidden", "unauthenticated", "unknown", "network"];
+    const sentences = [
+      ...categories.map(reviewRefusalWords),
+      ...errors.map((error) => reviewOutcome({ ok: false, error, data: {} })),
+      ...["drafted", "refused", "over_cap", "drafting"].flatMap((status) =>
+        categories.map((category) => reviewOutcome({ ok: true, error: null, data: { status, category } })),
+      ),
+    ];
+    const { container } = render(
+      <ul>
+        {[...new Set(sentences)].map((t) => (
+          <li key={t}>{t}</li>
+        ))}
+      </ul>,
+    );
+    expect(sentences.every((t) => t.length > 0)).toBe(true);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the button to write it again, after a try that did not pass", () => {
+    const { container } = render(
+      <ToastProvider>
+        <WriteReview again maxCents={30} />
+      </ToastProvider>,
+    );
+    expect(screen.getByRole("button", { name: "Write the quarter review again" })).toBeTruthy();
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the page with Quarter review switched off", async () => {
+    const switches = flags as Record<string, unknown>;
+    const was = switches.quarterReviewEnabled;
+    switches.quarterReviewEnabled = false;
+    try {
+      const container = await show();
+      expect(container.textContent).toMatch(/Quarter review/);
+      expect(container.textContent).toMatch(/off for this carrier/);
+      expect(container.querySelector("table")).toBeNull();
+      expect(scan(container)).toEqual([]);
+    } finally {
+      switches.quarterReviewEnabled = was;
     }
   });
 });
@@ -2647,6 +2905,15 @@ describe("the advances pages read by driver and date", () => {
     await renderPage(async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }));
     expect(screen.getByRole("link", { name: "Advance of $100.00, ADV-1040" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Advance of $100.00, ADV-1041" })).toBeTruthy();
+  });
+});
+
+describe("the money code record page", () => {
+  it("describes the receipt by what it is, never as a photo or an image", async () => {
+    await renderPage(async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }));
+    const alt = screen.getByRole("img", { name: /receipt/ }).getAttribute("alt");
+    expect(alt).toBe(`The receipt, ${fx.MONEY_CODE_DETAIL.receipt?.filename}`);
+    expect(alt).not.toMatch(/photo|image|picture/i);
   });
 });
 

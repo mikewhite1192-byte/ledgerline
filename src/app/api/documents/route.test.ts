@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
 import { GET as FILE } from "./[id]/file/route";
+import { POST as MARK } from "./[id]/markup/route";
+import { GET as MARKUP_FILE } from "./[id]/markup/file/route";
 import { POST as READ_AGAIN } from "./[id]/read/route";
 import { GET, POST } from "./route";
 
@@ -23,14 +25,22 @@ const mocks = vi.hoisted(() => ({
   listDocuments: vi.fn(),
   readDocumentFile: vi.fn(),
   readAgain: vi.fn(),
+  markDocument: vi.fn(),
+  readMarkupFile: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here every caller is staff.
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/documents/service", () => ({
   uploadDocument: mocks.uploadDocument,
   listDocuments: mocks.listDocuments,
   readDocumentFile: mocks.readDocumentFile,
   readAgain: mocks.readAgain,
+}));
+vi.mock("@/lib/documents/markup", () => ({
+  markDocument: mocks.markDocument,
+  readMarkupFile: mocks.readMarkupFile,
 }));
 
 async function upload(opts: { site?: string; files?: File[]; extra?: Record<string, string>; length?: string } = {}) {
@@ -56,8 +66,12 @@ const VIEW = {
 };
 
 const saved = flags.documentsEnabled;
+const savedMarkup = flags.documentMarkupEnabled;
 beforeEach(() => {
   flags.documentsEnabled = true;
+  flags.documentMarkupEnabled = true;
+  mocks.markDocument.mockReset();
+  mocks.readMarkupFile.mockReset();
   mocks.getSession.mockReset().mockResolvedValue(SESSION);
   mocks.uploadDocument.mockReset().mockResolvedValue({ ok: true, view: VIEW, duplicate: false });
   mocks.listDocuments.mockReset().mockResolvedValue([]);
@@ -67,6 +81,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   flags.documentsEnabled = saved;
+  flags.documentMarkupEnabled = savedMarkup;
   vi.restoreAllMocks();
 });
 
@@ -217,5 +232,99 @@ describe("POST /api/documents/:id/read", () => {
     const res = await post("same-origin");
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ error: "attempt_limit" });
+  });
+});
+
+describe("POST /api/documents/:id/markup", () => {
+  const post = (opts: { site?: string; id?: string } = {}) =>
+    MARK(
+      new Request(`https://app.example/api/documents/${opts.id ?? ID}/markup`, {
+        method: "POST",
+        headers: opts.site ? { "Sec-Fetch-Site": opts.site } : undefined,
+      }),
+      { params: Promise.resolve({ id: opts.id ?? ID }) },
+    );
+
+  it("refuses a cross-site post, a signed-out request, either switch off and a bad id, before the service", async () => {
+    expect((await post({ site: "cross-site" })).status).toBe(403);
+    mocks.getSession.mockResolvedValueOnce(null);
+    expect((await post()).status).toBe(401);
+    flags.documentMarkupEnabled = false;
+    expect((await post()).status).toBe(404);
+    flags.documentMarkupEnabled = true;
+    flags.documentsEnabled = false;
+    expect((await post()).status).toBe(404);
+    flags.documentsEnabled = true;
+    expect((await post({ id: "not-a-uuid" })).status).toBe(400);
+    expect(mocks.markDocument).not.toHaveBeenCalled();
+  });
+
+  it("refuses a login outside the carrier with 403, never the reason", async () => {
+    mocks.markDocument.mockRejectedValue(Object.assign(new Error("no membership for sub-test"), { name: "ForbiddenError" }));
+    const res = await post();
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "forbidden" });
+  });
+
+  it.each([
+    ["not_image", 422],
+    ["no_anchor_line", 422],
+    ["not_read", 409],
+    ["agrees", 409],
+    ["already_checked", 409],
+    ["in_progress", 409],
+    ["attempt_limit", 429],
+    ["limit", 429],
+    ["budget", 503],
+    ["not_found", 404],
+  ])("maps %s to %i with its category", async (error, status) => {
+    mocks.markDocument.mockResolvedValue({ ok: false, error });
+    const res = await post({ site: "same-origin" });
+    expect(res.status).toBe(status);
+    expect(await res.json()).toEqual({ error });
+  });
+
+  it("answers the document's view, and a thrown error as unavailable with only its name logged", async () => {
+    mocks.markDocument.mockResolvedValue({ ok: true, view: VIEW });
+    const ok = await post();
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ document: VIEW });
+    expect(mocks.markDocument).toHaveBeenCalledWith(SESSION, ID);
+    mocks.markDocument.mockRejectedValue(new Error("upstream said: secret detail"));
+    const res = await post();
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: "unavailable" });
+    expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("secret detail");
+  });
+});
+
+describe("GET /api/documents/:id/markup/file", () => {
+  const get = (id = ID) =>
+    MARKUP_FILE(new Request(`https://app.example/api/documents/${id}/markup/file`), { params: Promise.resolve({ id }) });
+  const WEBP = new Uint8Array([...new TextEncoder().encode("RIFF"), 1, 0, 0, 0, ...new TextEncoder().encode("WEBPVP8 ")]);
+
+  it("refuses signed out, the switch off, a bad id and a document with no kept copy", async () => {
+    mocks.getSession.mockResolvedValueOnce(null);
+    expect((await get()).status).toBe(401);
+    flags.documentMarkupEnabled = false;
+    expect((await get()).status).toBe(404);
+    flags.documentMarkupEnabled = true;
+    expect((await get("not-a-uuid")).status).toBe(400);
+    mocks.readMarkupFile.mockResolvedValue(null);
+    expect((await get()).status).toBe(404);
+    mocks.readMarkupFile.mockRejectedValue(Object.assign(new Error("x"), { name: "ForbiddenError" }));
+    expect((await get()).status).toBe(403);
+  });
+
+  it("serves the kept copy inline with no caching, no sniffing and a sandbox", async () => {
+    mocks.readMarkupFile.mockResolvedValue({ mime: "image/webp", bytes: WEBP });
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/webp");
+    expect(res.headers.get("content-length")).toBe(String(WEBP.byteLength));
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(WEBP);
   });
 });

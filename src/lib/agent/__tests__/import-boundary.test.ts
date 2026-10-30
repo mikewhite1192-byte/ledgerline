@@ -12,12 +12,14 @@ import { describe, expect, it } from "vitest";
 // agent folders, so a re-export from a helper elsewhere cannot carry a forbidden module in.
 //
 //   P1. Outside src/lib/agent/gateway, agent code reaches the database, the record readers, the
-//       rules engine, the model wrapper, money/ and adapters/ only through the gateway. The two
+//       rules engine, the model wrapper, money/, money-codes/ and adapters/ only through the
+//       gateway. The two
 //       exceptions are the operator turn and the auditor run, which call the model wrapper
 //       directly.
 //   P2. Nothing reachable from any agent file, the gateway included, is a money write or a
-//       payment or accounting adapter: under money/ only read, types, keys and format, and under
-//       adapters/ only types and tms/*.
+//       payment or accounting adapter: under money/ only read, types, keys and format, under
+//       money-codes/ only read, words and switches (never the issue, the reveal or the request
+//       form), and under adapters/ only types and tms/*.
 //   P3. Nothing reachable from any agent file uploads, stores or reads a document with the model:
 //       under documents/ only types, schema, match and candidates.
 //
@@ -47,6 +49,7 @@ const MODEL_CALLERS: ReadonlySet<string> = new Set([
 ]);
 // Every area match ignores case: on a case-insensitive file system "../../Money/execute" resolves.
 const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/i;
+const MONEY_CODES_OK = /^src\/lib\/money-codes\/(read|words|switches)\.[cm]?[jt]sx?$/i;
 const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/i;
 const DOCUMENTS_OK = /^src\/lib\/documents\/(types|schema|match|candidates)\.[cm]?[jt]sx?$/i;
 // Every name that loads a module with no import line; eslint.config.mjs bans the same set. Regexes,
@@ -177,7 +180,7 @@ function buildGraph(root: string, entries: string[], host: Host): Graph {
 }
 
 function restrictedArea(rel: string): string | null {
-  const m = /^src\/lib\/(db|data|rules-engine|money|ai|adapters)(\/|\.|$)/i.exec(rel);
+  const m = /^src\/lib\/(db|data|rules-engine|money-codes|money|ai|adapters)(\/|\.|$)/i.exec(rel);
   if (m) return m[1].toLowerCase();
   return /(^|\/)adapters(\/|\.|$)/i.test(rel) ? "adapters" : null;
 }
@@ -241,8 +244,9 @@ function ledgerViolations(root: string, agentFiles: string[], graph: Graph): str
     const rel = relTo(root, file);
     // money/ is the ledger's folder (src/lib/rules-engine/money.ts is the engine's cents math).
     const money = /^src\/lib\/money(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !MONEY_OK.test(rel);
+    const codes = /^src\/lib\/money-codes(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !MONEY_CODES_OK.test(rel);
     const adapter = /(^|\/)adapters(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !ADAPTERS_OK.test(rel);
-    if (!money && !adapter) continue;
+    if (!money && !codes && !adapter) continue;
     out.push(chainTo(root, parent, file));
   }
   return out;
@@ -360,6 +364,26 @@ describe("the walker itself, on fixture trees", () => {
     expect(out.ledger).toEqual([
       "src/lib/agent/operator/plan.ts -> src/lib/seed/helpers.ts -> src/lib/money/execute.ts",
     ]);
+  });
+
+  it("lets the gateway read money codes, never issue, reveal or request one", () => {
+    const out = run({
+      "src/lib/agent/gateway/codes.ts":
+        'import { list } from "../../money-codes/read";\nimport { words } from "@/lib/money-codes/words";\n' +
+        'import { on } from "../../money-codes/switches";\nimport { issue } from "../../money-codes/execute";',
+      "src/lib/agent/operator/codes.ts": 'import { ask } from "@/lib/money-codes/request";',
+      "src/lib/money-codes/read.ts": "",
+      "src/lib/money-codes/words.ts": "",
+      "src/lib/money-codes/switches.ts": "",
+      "src/lib/money-codes/execute.ts": "",
+      "src/lib/money-codes/request.ts": "",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.ledger.sort()).toEqual([
+      "src/lib/agent/gateway/codes.ts -> src/lib/money-codes/execute.ts",
+      "src/lib/agent/operator/codes.ts -> src/lib/money-codes/request.ts",
+    ]);
+    expect(out.boundary).toEqual(["src/lib/agent/operator/codes.ts -> src/lib/money-codes/request.ts"]);
   });
 
   it("catches a dynamic import and a require in the gateway itself", () => {

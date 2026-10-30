@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatThread, type ChatMessage, type Part } from "@/components/app/chat-thread";
 import type { Suggestion } from "@/components/app/prompt-chips";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { decodeEvents } from "@/lib/agent/operator/stream";
 import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
+import { MONEY_CODE_APPROVE_NOTICE } from "@/lib/money-codes/words";
 import { answerTextOf, type ReportView, type StepView, type TurnView } from "@/lib/agent/view";
 import { stepLabel } from "@/lib/format/labels";
 import { NOT_NOW_FAILED, SAVE_FAILED, SAVE_NOTICES } from "@/lib/pay-rules/words";
@@ -25,8 +27,10 @@ const POLL_LIMIT = 40;
 const AUDIT_RETRY_MS = 90_000;
 
 // What the card's row says when an approval does not go through. Fixed sentences per category;
-// the advance executor's own refusals come from its closed list.
+// the advance executor's and the money code executor's own refusals come from their closed
+// lists, which share no word (src/lib/money-codes/words.test.ts).
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
+  ...MONEY_CODE_APPROVE_NOTICE,
   ...ADVANCE_APPROVE_NOTICE,
   not_executable: "This type of card cannot be approved yet. Nothing changed.",
   already_decided: "This card was already decided.",
@@ -40,6 +44,8 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   bad_request: "The reason must be 10 to 240 characters. Nothing changed.",
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That card, or the record it names, is not here.",
+  // A demo visitor: the staff check refused the press before any work.
+  judge: STAFF_ONLY_NOTE,
 };
 const APPROVE_FALLBACK = "The approval did not go through. Nothing changed.";
 const REJECT_FAILED = "The rejection did not go through. Try again.";
@@ -195,6 +201,7 @@ export function AgentChat({
   initialHelp,
   viewer,
   timezone,
+  stepThrough = false,
 }: {
   initialTurns: TurnView[];
   streamMode: "sse" | "poll";
@@ -212,6 +219,8 @@ export function AgentChat({
   viewer?: Viewer;
   // The carrier's time zone, for times shown on a card (an override's time).
   timezone?: string;
+  // flags.stepThrough as the page read it: the answer's trace panel offers "Step through".
+  stepThrough?: boolean;
 }) {
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
   const [draft, setDraft] = useState(initialDraft ?? "");
@@ -487,6 +496,7 @@ export function AgentChat({
   const messages = toMessages(turns, notices, reports, showReport, auditPage, viewer).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
+      if (p.kind === "trace") return stepThrough && !p.proposalId ? { ...p, stepThrough: true } : p;
       if (p.kind !== "proposal") return p;
       const o = owner.get(p.proposal.id);
       if (!o) return p;

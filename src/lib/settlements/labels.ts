@@ -1,3 +1,4 @@
+import { STAFF_ONLY_NOTE } from "../../components/app/staff-only";
 import type { ParkReason } from "./reconcile";
 
 // Fixed words for the pay run screens. Categories reach a page; these turn them into text.
@@ -75,6 +76,8 @@ export const SETTLEMENT_OUTCOMES: Readonly<Record<string, string>> = {
   not_open: "That week is not open for a pay run.",
   before_start: "Pay runs here start with a later week.",
   forbidden: "You do not have access to this carrier.",
+  // A demo visitor pressed a staff-only button; the staff check refused it before any work.
+  judge: STAFF_ONLY_NOTE,
 };
 
 export function settlementOutcome(category: string | null | undefined): string {

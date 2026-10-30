@@ -96,12 +96,7 @@ export function actionOf(r: ActionRow): MoneyAction {
     tenantId: uuid(r.tenant_id),
     kind: oneOf(r.kind, MONEY_ACTION_KINDS),
     channel: oneOf(r.channel, ["payment", "accounting"] as const),
-    subjectTable: oneOf(r.subject_table, [
-      "advances",
-      "settlements",
-      "invoices",
-      "customer_payments",
-    ] as const),
+    subjectTable: oneOf(r.subject_table, SUBJECT_TABLES),
     subjectId: uuid(r.subject_id),
     attempt: int(r.attempt),
     idempotencyKey: text(r.idempotency_key),
@@ -151,14 +146,23 @@ export function readActionByKey(q: Queryable, key: string): Promise<MoneyAction 
   return one(q, "idempotency_key = $1", [key]);
 }
 
-// Every row for one subject, oldest first: the ledger card for an advance, settlement, invoice
-// or payment.
+// Every table a ledger row's subject can live in (money_actions_subject_table_check).
+const SUBJECT_TABLES: readonly SubjectTable[] = [
+  "advances",
+  "settlements",
+  "invoices",
+  "customer_payments",
+  "money_codes",
+];
+
+// Every row for one subject, oldest first: the ledger card for an advance, settlement, invoice,
+// payment or money code.
 export function readBySubject(
   q: Queryable,
   table: SubjectTable,
   subjectId: string,
 ): Promise<MoneyAction[]> {
-  oneOf(table, ["advances", "settlements", "invoices", "customer_payments"] as const);
+  oneOf(table, SUBJECT_TABLES);
   if (!isCanonicalUuid(subjectId)) throw new RangeError("subject id is not a lowercase UUID");
   return many(
     q,
@@ -204,7 +208,6 @@ export function readSentInWindow(
 
 // One record whose ledger rows a pending read is limited to.
 export type PendingSubject = { table: SubjectTable; id: string };
-const SUBJECT_TABLES: readonly SubjectTable[] = ["advances", "settlements", "invoices", "customer_payments"];
 
 // A subject checked whole: a known table and a lowercase UUID, or a RangeError.
 export function assertPendingSubject(subject: PendingSubject): void {

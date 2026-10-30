@@ -48,7 +48,7 @@ async function main(): Promise<void> {
   const admin = createPgDb({ connectionString: e2eUrl, max: 1 });
   try {
     for (const t of E2E_TENANTS) {
-      await ensureRows(admin, t, t.tenantId, t.sub);
+      await ensureRows(admin, t, t.tenantId, { sub: t.sub, email: t.email, role: "admin" });
       console.log(`e2e:seed: tenant ${t.slug} and its login ready`);
     }
   } finally {

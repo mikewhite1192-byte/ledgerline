@@ -53,7 +53,11 @@ export async function freshSeededDatabase(adminUrl: URL, name: string): Promise<
   try {
     for (const c of DEMO_CARRIERS) {
       const carrier = { slug: c.slug, name: c.name, timezone: c.timezone, email: `ops@${c.emailDomain}` };
-      await ensureRows(admin, carrier, randomUUID(), `invariants-${c.slug}`);
+      await ensureRows(admin, carrier, randomUUID(), {
+        sub: `invariants-${c.slug}`,
+        email: carrier.email,
+        role: "admin",
+      });
     }
   } finally {
     await admin.close();

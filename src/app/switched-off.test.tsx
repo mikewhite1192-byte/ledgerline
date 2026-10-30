@@ -4,18 +4,22 @@ import { isValidElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
-import type { Queryable } from "@/lib/db";
+import { DbError, type Queryable } from "@/lib/db";
 
 // A switched-off page reads only the carrier chip (the tenant's name and zone, the member's email)
-// and shows the shared off state inside the shell. Any other read fails this test.
-const reads = vi.hoisted(() => ({ sql: [] as string[] }));
+// and shows the shared off state inside the shell. Any other read fails this test. The same pages
+// (and the two with no switch-off page) also hand the member's role to the shell, and refuse a role
+// this code does not know.
+const reads = vi.hoisted(() => ({ sql: [] as string[], role: "admin" as string, lenient: false }));
 const SESSION: Session = { sub: "sub-test-1", email: "office@example.test", tenantId: "00000000-0000-4000-8000-000000000001" };
 
 const fakeQ = {
   async query(sql: string) {
     reads.sql.push(sql);
     if (/FROM tenants/.test(sql)) return [{ name: "Test Carrier", timezone: "America/Chicago" }];
-    if (/FROM memberships/.test(sql)) return [{ email: SESSION.email }];
+    if (/FROM memberships/.test(sql)) return [{ email: SESSION.email, role: reads.role }];
+    // A page with no switch-off page reads more; those reads fail as a database outage would.
+    if (reads.lenient) throw new DbError("unavailable");
     throw new Error(`unexpected read: ${sql}`);
   },
 } as unknown as Queryable;
@@ -28,6 +32,28 @@ vi.mock("@/lib/tenant/context", async (importOriginal) => {
     withSessionTenant: async <T,>(_s: Session, fn: (q: Queryable) => Promise<T>) => fn(fakeQ),
   };
 });
+
+// The role the shell hands its page, as an attribute the test can read.
+vi.mock("@/components/app/viewer-role", () => ({
+  ViewerRoleProvider: ({ role, children }: { role: string; children: ReactNode }) => (
+    <div data-viewer-role={role}>{children}</div>
+  ),
+  useViewerRole: () => "staff",
+}));
+
+// The two pages with no switch-off page read more than the chip; their own reads fail here.
+vi.mock("@/lib/fuel/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/fuel/view")>()),
+  readFuelPage: async () => {
+    throw new DbError("unavailable");
+  },
+}));
+vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/agent/gateway/store")>()),
+  readAgentModelWeek: async () => {
+    throw new DbError("unavailable");
+  },
+}));
 
 const SWITCHES = [
   "voiceIntakeEnabled",
@@ -42,11 +68,14 @@ const SWITCHES = [
   "collectionsEnabled",
   "profitBriefEnabled",
   "carrierMemoryEnabled",
+  "quarterReviewEnabled",
 ] as const;
 const saved = Object.fromEntries(SWITCHES.map((s) => [s, flags[s]])) as Record<(typeof SWITCHES)[number], boolean>;
 
 beforeEach(() => {
   reads.sql = [];
+  reads.role = "admin";
+  reads.lenient = false;
   for (const s of SWITCHES) flags[s] = false;
 });
 afterEach(() => {
@@ -207,6 +236,12 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
     off: "Memory is off for this carrier",
     title: "Memory",
   },
+  {
+    route: "/quarter",
+    load: async () => (await import("./quarter/page")).default(),
+    off: "Quarter review is off for this carrier",
+    title: "Quarter review",
+  },
 ];
 
 describe("a switched-off page", () => {
@@ -222,5 +257,39 @@ describe("a switched-off page", () => {
     expect(document.body.textContent).not.toMatch(/404|could not be found/);
     expect(reads.sql.every((sql) => /FROM (tenants|memberships)/.test(sql))).toBe(true);
     expect(reads.sql.length).toBeGreaterThan(0);
+  });
+});
+
+// Every signed-in page reads the member's role with the carrier chip and hands it to the shell, so a
+// demo visitor's cards show the staff-only line; a role this code does not know is refused (the
+// page shows the no-carrier state), never shown as staff.
+const ROLE_CASES: { route: string; load: () => Promise<ReactNode> }[] = [
+  ...CASES.map(({ route, load }) => ({ route, load })),
+  { route: "/sweep/fuel", load: async () => (await import("./sweep/fuel/page")).default() },
+  { route: "/models", load: async () => (await import("./models/page")).default() },
+];
+
+describe("the member's role on every page", () => {
+  const savedFuel = flags.fuelAnomalyEnabled;
+  beforeEach(() => {
+    reads.lenient = true;
+    flags.fuelAnomalyEnabled = true;
+  });
+  afterEach(() => {
+    flags.fuelAnomalyEnabled = savedFuel;
+  });
+
+  it.each(ROLE_CASES)("$route hands a demo visitor's role to the shell", async ({ load }) => {
+    reads.role = "judge";
+    render(<>{await resolve(await load())}</>);
+    const roles = Array.from(document.querySelectorAll("[data-viewer-role]")).map((el) => el.getAttribute("data-viewer-role"));
+    expect(roles).toEqual(["judge"]);
+  });
+
+  it.each(ROLE_CASES)("$route refuses a role it does not know, never shows it as staff", async ({ load }) => {
+    reads.role = "owner";
+    render(<>{await resolve(await load())}</>);
+    expect(screen.getByText("This login is not linked to a carrier")).toBeTruthy();
+    expect(document.querySelector("[data-viewer-role]")).toBeNull();
   });
 });

@@ -22,11 +22,11 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      tenant row lock and deletes the settled ledger rows, the agent's records and the fictional
 //      broker portal's loads (the app role has no DELETE on them); the portal's loads come back
 //      only with npm run seed, since the app cannot write them;
-//   4. the seed's replace of the 31 seeded tables (TENANT_TABLES, with Cash Friday's checks and the
-//      card check's runs and differences, which the seed leaves empty), as the app role, under
-//      row-level security (the arming log, which the app role may add to but never delete from,
-//      goes with its drivers through the foreign key's cascade, and the plan's log is written
-//      again);
+//   4. the seed's replace of the 32 seeded tables (TENANT_TABLES, with Cash Friday's checks, the
+//      money codes and the card check's runs and differences, which the seed leaves empty), as the
+//      app role, under row-level security (the arming log, which the app role may add to but never
+//      delete from, goes with its drivers through the foreign key's cascade, and the plan's log is
+//      written again);
 //   5. the read-back: every seeded table equals the plan, every cleared table is empty, and the
 //      hero's open-week net is the worked example.
 // Any failure rolls the whole transaction back, so a carrier is either reset or left as it was.
@@ -85,7 +85,7 @@ export const DEMO_RESET_KEPT = {
   tenants:
     "the carrier itself, with its document key (0015), so the invoice and payment numbers it " +
     "sends keep the same key",
-  memberships: "the staff and admin logins, so nobody is signed out of the carrier",
+  memberships: "the staff, admin and demo visitor logins, so nobody is signed out of the carrier",
   model_calls: "the record of every model charge",
   portal_accounts:
     "the carrier's sign-in account on the fictional broker portal; it names only the carrier, and " +
@@ -99,6 +99,9 @@ export const DEMO_RESET_KEPT = {
   qbo_connections: "the QuickBooks sandbox link",
   qbo_oauth_states: "short-lived sign-in states for the sandbox link",
   qbo_entity_ids: "the sandbox entity map, still valid because the seed's ids are the same at the same anchor",
+  demo_sessions:
+    "each demo visitor's sign-in with its spend and turn counts (0043); it names only the carrier, " +
+    "the app login cannot delete it, and a reset must not hand a visitor a fresh budget",
   schema_migrations: "the migration record, not tenant data",
   "ops.ai_spend": "the one model credit every tenant shares",
 } as const;
@@ -159,6 +162,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   settlements: "Settlements",
   settlement_lines: "Settlement lines",
   pay_items: "Pay items",
+  money_codes: "Money codes (test mode)",
   advances: "Advances",
   invoices: "Invoices",
   customer_payments: "Customer payments",

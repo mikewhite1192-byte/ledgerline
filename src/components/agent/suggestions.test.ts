@@ -82,6 +82,7 @@ describe("every suggestion says why", () => {
       ...homeSuggestions(false, { profitOn: true }),
       ...homeSuggestions(false, { cashFridayOn: true }),
       ...homeSuggestions(false, { collections: true }),
+      ...homeSuggestions(false, { quarterOn: true }),
       DETENTION_SUGGESTION,
       ruleChangeSuggestion("2026-11-02"),
       ...withPaystubSuggestion(homeSuggestions(true), paystub),
@@ -115,6 +116,20 @@ describe("ruleChangeSuggestion", () => {
       "Say the rule, the new amount and the date it starts. Example: 'From Nov 16, the net pay floor is $350 a week.'",
     );
     expect(s.help).not.toContain("Nov 9");
+  });
+});
+
+describe("homeSuggestions with the quarter review", () => {
+  it("asks how the quarter is going in that place while the quarter review is on, ahead of last week", () => {
+    for (const reportsOn of [false, true]) {
+      for (const profitOn of [false, true]) {
+        const out = homeSuggestions(reportsOn, { profitOn, quarterOn: true });
+        expect(out.map((s) => s.id)).toEqual(["paystub-problems", "past-60", "pay-run-cost", "quarter-review"]);
+        expect(out[3].label).toBe("How is the quarter going?");
+      }
+    }
+    expect(homeSuggestions(false, { quarterOn: false })).toEqual(homeSuggestions(false));
+    expect(homeSuggestions(true, { profitOn: true, quarterOn: false })).toEqual(homeSuggestions(true, { profitOn: true }));
   });
 });
 

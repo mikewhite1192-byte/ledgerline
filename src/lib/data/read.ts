@@ -1,13 +1,24 @@
 import type { Param, Queryable } from "../db";
+import { parseRead } from "../documents/schema";
 import {
   cents,
   driverPayOnLoad,
+  MONEY_CODE_PURPOSES,
+  MONEY_CODE_STATUSES,
   type AdvanceInput,
   type CashFridayInput,
   type CashFridayLimits,
   type CheckInput,
   type CustomerRecord,
   type LoadRecord,
+  type LoadStatus,
+  type MoneyCodeInput,
+  type MoneyCodePurpose,
+  type MoneyCodeReceipt,
+  type MoneyCodeRecord,
+  type MoneyCodeSource,
+  type MoneyCodeStatus,
+  type MoneyCodeVoice,
   type ReceivablesInput,
   type SettlementInput,
 } from "../rules-engine";
@@ -19,6 +30,7 @@ import {
   type Period,
 } from "../time/local-date";
 import { isUuid } from "../uuid";
+import { extractAmountsCents } from "../voice/amount";
 import { configFor, configForDay, sortVersions } from "./config-version";
 import {
   cashFridayInputOf,
@@ -450,5 +462,189 @@ export async function readDeliveredBetween(
     load_state_miles: await readWherePaged(q, "load_state_miles", DELIVERED_LOADS, p, paging),
     load_accessorials: await readWherePaged(q, "load_accessorials", DELIVERED_LOADS, p, paging),
     invoices: await readWherePaged(q, "invoices", DELIVERED_LOADS, p, paging),
+  };
+}
+
+// ---- Money codes (MONEY-CODE) ----
+
+// What a money code is asked for: the driver, the load, the purpose and amount as asked, and the
+// evidence it cites (a document or a voice note by its own id; none for chat or the form). The
+// caps come from the caller, which reads the switches.
+export type MoneyCodeAsk = {
+  driverId: string;
+  loadId: string;
+  purpose: MoneyCodePurpose;
+  amountCents: unknown;
+  source: MoneyCodeSource;
+  documentId?: string | null;
+  voiceNoteId?: string | null;
+  capCents: number;
+  perDriverPerDay: number;
+};
+
+// The codes a check counts: this driver's or this load's, made in the last few days (the duplicate
+// window is 24 hours and the daily limit is one tenant-local day), and every code citing the same
+// document ($4) or voice note ($5), however old (null cites none). More than the bound is a
+// refusal to read, never a short list.
+const MONEY_CODE_ROWS_MAX = 200;
+export const MONEY_CODES_SQL =
+  "SELECT CAST(id AS text) AS id, CAST(driver_id AS text) AS driver_id, CAST(load_id AS text) AS load_id," +
+  " purpose, amount_cents, status," +
+  " to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS created_at," +
+  " CAST(document_id AS text) AS document_id, CAST(voice_note_id AS text) AS voice_note_id" +
+  " FROM money_codes WHERE tenant_id = current_tenant_id()" +
+  " AND (((driver_id = CAST($1 AS uuid) OR load_id = CAST($2 AS uuid))" +
+  " AND created_at > CAST($3 AS timestamptz) - interval '3 days')" +
+  " OR document_id = CAST($4 AS uuid) OR voice_note_id = CAST($5 AS uuid))" +
+  ` ORDER BY created_at, id LIMIT ${MONEY_CODE_ROWS_MAX + 1}`;
+
+export const MONEY_CODE_LOAD_SQL =
+  "SELECT CAST(id AS text) AS id, CAST(driver_id AS text) AS driver_id, status, load_number," +
+  " to_char(delivered_on, 'YYYY-MM-DD') AS delivered_on" +
+  " FROM loads WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
+
+export const MONEY_CODE_DRIVER_SQL =
+  "SELECT money_armed FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
+
+const MONEY_CODE_DOCUMENT_SQL =
+  "SELECT read_status, document_kind, CAST(reading AS text) AS reading FROM documents" +
+  " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
+
+// A note counts only once it is past the screen and in English.
+const MONEY_CODE_VOICE_SQL =
+  "SELECT CAST(driver_id AS text) AS driver_id, english_text FROM voice_notes" +
+  " WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)" +
+  " AND status IN ('ready', 'handed_off', 'replied')";
+
+const READ_STATUSES: readonly MoneyCodeReceipt["readStatus"][] = ["pending", "read", "unreadable", "budget"];
+
+async function moneyCodeReceipt(q: Queryable, documentId: string): Promise<MoneyCodeReceipt | null> {
+  const rows = await q.query<{ read_status: string; document_kind: string | null; reading: string | null }>(
+    MONEY_CODE_DOCUMENT_SQL,
+    [assertUuid(documentId, "documentId")],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  if (!(READ_STATUSES as readonly string[]).includes(row.read_status)) throw new Error("unknown read status");
+  // The reading back through the strict schema; anything that does not parse reads as nothing
+  // read, and the engine refuses it as unreadable.
+  const read = row.read_status === "read" && typeof row.reading === "string" ? parseRead(row.reading) : null;
+  return {
+    readStatus: row.read_status as MoneyCodeReceipt["readStatus"],
+    kind: read ? read.kind : null,
+    totalCents: read ? read.fields.totalCents : null,
+    loadNumber: read ? read.fields.loadNumber : null,
+    kindConfidence: read ? read.confidence.document_kind : null,
+    totalConfidence: read ? read.confidence.total_cents : null,
+    loadNumberConfidence: read ? read.confidence.load_number : null,
+  };
+}
+
+async function moneyCodeVoice(q: Queryable, voiceNoteId: string): Promise<MoneyCodeVoice | null> {
+  const rows = await q.query<{ driver_id: string | null; english_text: string | null }>(MONEY_CODE_VOICE_SQL, [
+    assertUuid(voiceNoteId, "voiceNoteId"),
+  ]);
+  const row = rows[0];
+  if (!row || row.english_text === null) return null;
+  return { driverId: row.driver_id, amountsCents: extractAmountsCents(row.english_text) };
+}
+
+function moneyCodeRecordOf(
+  r: {
+    id: string;
+    driver_id: string;
+    load_id: string;
+    purpose: string;
+    amount_cents: number | string;
+    status: string;
+    created_at: string;
+    document_id: string | null;
+    voice_note_id: string | null;
+  },
+  zone: string,
+): MoneyCodeRecord {
+  const amount = Number(r.amount_cents);
+  if (!Number.isSafeInteger(amount)) throw new Error("a money code amount is not whole cents");
+  if (!(MONEY_CODE_PURPOSES as readonly string[]).includes(r.purpose)) throw new Error("unknown purpose");
+  if (!(MONEY_CODE_STATUSES as readonly string[]).includes(r.status)) throw new Error("unknown code status");
+  return {
+    id: r.id,
+    driverId: r.driver_id,
+    loadId: r.load_id,
+    purpose: r.purpose as MoneyCodePurpose,
+    amountCents: amount,
+    status: r.status as MoneyCodeStatus,
+    createdAt: r.created_at,
+    createdOn: localDateOf(r.created_at, zone),
+    documentId: r.document_id,
+    voiceNoteId: r.voice_note_id,
+  };
+}
+
+// Everything checkMoneyCode reads, as of now, in the tenant's own zone. Reads only. The cited
+// document or voice note must be this tenant's (the statement names the tenant); one not found
+// reads as null and the engine refuses it as evidence_missing.
+export async function readMoneyCodeInput(q: Queryable, ask: MoneyCodeAsk, now: Instant): Promise<MoneyCodeInput> {
+  const tenant = await readTenant(q);
+  if (!tenant) throw new Error("no tenant is set");
+  const driverId = assertUuid(ask.driverId, "driverId");
+  const loadId = assertUuid(ask.loadId, "loadId");
+  const armed = await q.query<{ money_armed: boolean }>(MONEY_CODE_DRIVER_SQL, [driverId]);
+  const loads = await q.query<{
+    id: string;
+    driver_id: string | null;
+    status: string;
+    load_number: string;
+    delivered_on: string | null;
+  }>(MONEY_CODE_LOAD_SQL, [loadId]);
+  const row = loads[0];
+  const load = row
+    ? {
+        id: row.id,
+        driverId: row.driver_id,
+        status: row.status as LoadStatus,
+        loadNumber: row.load_number,
+        deliveredOn: row.delivered_on === null ? null : assertLocalDate(row.delivered_on, "delivered_on"),
+      }
+    : null;
+  // The evidence cited by its own id, lower case, as the database writes a uuid as text.
+  const documentId =
+    ask.source === "document" && typeof ask.documentId === "string"
+      ? assertUuid(ask.documentId, "documentId").toLowerCase()
+      : null;
+  const voiceNoteId =
+    ask.source === "voice_note" && typeof ask.voiceNoteId === "string"
+      ? assertUuid(ask.voiceNoteId, "voiceNoteId").toLowerCase()
+      : null;
+  const receipt = documentId !== null ? await moneyCodeReceipt(q, documentId) : null;
+  const voice = voiceNoteId !== null ? await moneyCodeVoice(q, voiceNoteId) : null;
+  const codeRows = await q.query<{
+    id: string;
+    driver_id: string;
+    load_id: string;
+    purpose: string;
+    amount_cents: number | string;
+    status: string;
+    created_at: string;
+    document_id: string | null;
+    voice_note_id: string | null;
+  }>(MONEY_CODES_SQL, [driverId, loadId, now, documentId, voiceNoteId]);
+  if (codeRows.length > MONEY_CODE_ROWS_MAX) throw new ReadLimitError();
+  return {
+    driverId,
+    driverArmed: armed.length === 1 && armed[0].money_armed === true,
+    load,
+    purpose: ask.purpose,
+    amountCents: ask.amountCents,
+    capCents: ask.capCents,
+    perDriverPerDay: ask.perDriverPerDay,
+    now,
+    today: localDateOf(now, tenant.timezone),
+    source: ask.source,
+    receipt,
+    voice,
+    documentId,
+    voiceNoteId,
+    codes: codeRows.map((r) => moneyCodeRecordOf(r, tenant.timezone)),
   };
 }

@@ -14,6 +14,8 @@ import type { DocumentView } from "@/lib/documents/types";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
 import { figureValueText, profitWeek, type ClosedWeek } from "@/lib/briefs/figures";
 import type { BriefRecord, ProfitView } from "@/lib/briefs/view";
+import type { QuarterBody, QuarterRecord, QuarterState, QuarterView } from "@/lib/briefs/quarter-review";
+import { quarterOf, type Quarter, type QuarterInput } from "@/lib/rules-engine";
 import { fuelSentence, type SentenceInput } from "@/lib/fuel/help";
 import type { FuelPage, FuelRowView, FuelRunView } from "@/lib/fuel/view";
 import type {
@@ -27,6 +29,9 @@ import type {
 } from "@/lib/invoices/views";
 import { REVIEW_REASON_LABELS, REVIEW_STATUS_LABELS, reviewReasonSentence } from "@/lib/invoices/labels";
 import type { InvoiceReviewView, ReviewQueue } from "@/lib/invoices/review-read";
+import type { MoneyCodeDetail, MoneyCodeRow } from "@/lib/money-codes/read";
+import type { RequestChoices } from "@/lib/money-codes/request";
+import type { MoneyAction } from "@/lib/money/types";
 import { noteLabel, type NoteRow, type NoteSubject } from "@/lib/memory/notes";
 import type { PayRulesPage } from "@/lib/pay-rules/read";
 import { RULES as RULE_SPECS, formatValue, labelFor } from "@/lib/pay-rules/rules";
@@ -798,6 +803,7 @@ const document = (over: Partial<DocumentView>): DocumentView => ({
   createdAt: "2026-10-28T15:00:00.000Z",
   stalled: false,
   readAttempts: 1,
+  markup: { status: "none", attemptsLeft: 3, category: null, at: null, stalled: false, eligibility: "eligible" },
   ...over,
 });
 
@@ -806,6 +812,30 @@ export const DOCUMENTS: DocumentView[] = [
   document({ id: id(111), filename: "rate-con.pdf", mime: "application/pdf", readStatus: "pending", kind: null, read: null, match: null, readCallId: null }),
   document({ id: id(112), filename: "blurry.png", mime: "image/png", readStatus: "unreadable", kind: null, read: null, match: { found: false, reason: "unreadable" }, readAttempts: 3 }),
   document({ id: id(113), filename: "late.webp", mime: "image/webp", readStatus: "budget", kind: null, read: null, match: null }),
+];
+
+// The document page's marked copy block, one per state the block shows.
+const markup = (over: Partial<DocumentView["markup"]>): DocumentView["markup"] => ({
+  status: "none",
+  attemptsLeft: 3,
+  category: null,
+  at: null,
+  stalled: false,
+  eligibility: "eligible",
+  ...over,
+});
+
+export const MARKUP_DOCUMENTS: { name: string; view: DocumentView }[] = [
+  { name: "eligible", view: document({}) },
+  { name: "marking", view: document({ markup: markup({ status: "marking", attemptsLeft: 2, at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "checked", view: document({ markup: markup({ status: "checked", attemptsLeft: 2, at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "mismatch", view: document({ markup: markup({ status: "mismatch", attemptsLeft: 2, category: "callout_wrong", at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "mismatch, no tries left", view: document({ markup: markup({ status: "mismatch", attemptsLeft: 0, category: "extra_amount", at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "waiting for budget", view: document({ markup: markup({ status: "unavailable", category: "budget" }) }) },
+  { name: "timed out", view: document({ markup: markup({ status: "unavailable", attemptsLeft: 1, category: "timeout", at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "agrees", view: document({ markup: markup({ eligibility: "agrees" }) }) },
+  { name: "no line to circle", view: document({ markup: markup({ eligibility: "no_anchor_line" }) }) },
+  { name: "pdf", view: document({ id: id(114), filename: "rate-con.pdf", mime: "application/pdf", markup: markup({ eligibility: "not_image" }) }) },
 ];
 
 export const CLIPS: ClipView[] = [
@@ -1308,6 +1338,132 @@ export const REVIEW_QUEUE: ReviewQueue = {
   ],
 };
 
+// Money codes: one of each state a person can see, the detail of an issued lumper code (its two
+// paystub lines and the invoice line), the request form's choices and a request waiting for
+// approval. The live code expires far in the future so the page shows Show code, not "expired".
+const codeRow = (n: number, over: Partial<MoneyCodeRow>): MoneyCodeRow => ({
+  id: id(300 + n),
+  driverId: DRIVER_ID,
+  driverName: "Rosa Delgado",
+  driverCode: "BR-D07",
+  loadId: LOAD_ID,
+  loadNumber: "BR-L10247",
+  purpose: "lumper",
+  amountCents: 15_000,
+  sourceKind: "document",
+  documentId: id(320),
+  voiceNoteId: null,
+  receiptTotalCents: 15_000,
+  proposalId: id(321),
+  moneyActionId: id(322),
+  status: "issued",
+  codeLast4: "4821",
+  accessorialId: id(323),
+  chargeItemId: id(324),
+  reimbursementItemId: id(325),
+  issuedAt: "2026-10-28T15:10:00.000Z",
+  expiresAt: "2099-10-30T15:10:00.000Z",
+  createdAt: "2026-10-28T15:00:00.000Z",
+  ...over,
+});
+
+export const MONEY_CODES: MoneyCodeRow[] = [
+  codeRow(1, {}),
+  codeRow(2, { purpose: "repair", amountCents: 42_099, status: "failed", codeLast4: null, accessorialId: null, chargeItemId: null, reimbursementItemId: null, issuedAt: null, expiresAt: null }),
+  codeRow(3, { purpose: "other", amountCents: 9_998, status: "unknown", codeLast4: null, accessorialId: null, chargeItemId: null, reimbursementItemId: null, issuedAt: null, expiresAt: null, sourceKind: "form", documentId: null, receiptTotalCents: null }),
+  codeRow(4, { status: "issuing", codeLast4: null, accessorialId: null, chargeItemId: null, reimbursementItemId: null, issuedAt: null, expiresAt: null }),
+  codeRow(5, { status: "issued", expiresAt: "2026-10-30T15:10:00.000Z" }),
+];
+
+const codeAction = (over: Partial<MoneyAction>): MoneyAction => ({
+  id: id(322),
+  tenantId: ID,
+  kind: "money_code_issue",
+  channel: "payment",
+  subjectTable: "money_codes",
+  subjectId: id(301),
+  attempt: 1,
+  idempotencyKey: "money_code_issue:test:1",
+  requestId: id(326),
+  amountCents: 15_000,
+  counterpartyTable: "drivers",
+  counterpartyId: DRIVER_ID,
+  state: "confirmed",
+  failureCategory: null,
+  settledVia: "response",
+  outsideSystem: "fuel_card_sim",
+  outsideType: "money_code",
+  // The simulated card provider's reference shape: fcs_code_ and 24 hex.
+  outsideId: "fcs_code_7c41e2a9b30d5f18a6e4c2b9",
+  outsideRef: null,
+  outsideAmountCents: 15_000,
+  proposedBy: "agent",
+  proposalId: id(321),
+  traceId: null,
+  approverMembershipId: MEMBER_ID,
+  batchId: null,
+  checkCount: 0,
+  createdAt: "2026-10-28T15:09:00.000Z",
+  sentAt: "2026-10-28T15:09:01.000Z",
+  settledAt: "2026-10-28T15:10:00.000Z",
+  lastCheckedAt: null,
+  sentSecondsAgo: 60,
+  ...over,
+});
+
+export const MONEY_CODE_DETAIL: MoneyCodeDetail = {
+  code: MONEY_CODES[0],
+  // As stored: the charge is an other_deduction pay item of +$150.00, the reimbursement +$150.00.
+  charge: { id: id(324), label: "Charge", amountCents: 15_000, itemDate: "2026-10-28" },
+  reimbursement: { id: id(325), label: "Reimbursement", amountCents: 15_000, itemDate: "2026-10-28" },
+  accessorial: { id: id(323), amountCents: 15_000, description: "Lumper" },
+  receipt: { id: id(320), filename: "lumper-receipt.webp", isImage: true },
+  settlementId: id(327),
+  actions: [codeAction({})],
+};
+
+export const MONEY_CODE_UNKNOWN: MoneyCodeDetail = {
+  code: MONEY_CODES[2],
+  charge: null,
+  reimbursement: null,
+  accessorial: null,
+  receipt: null,
+  settlementId: null,
+  actions: [codeAction({ id: id(328), subjectId: id(303), amountCents: 9_998, state: "unknown", failureCategory: "timeout", settledVia: null, outsideId: null, outsideAmountCents: null, settledAt: null })],
+};
+
+export const MONEY_CODE_FAILED: MoneyCodeDetail = {
+  code: MONEY_CODES[1],
+  charge: null,
+  reimbursement: null,
+  accessorial: null,
+  receipt: { id: id(329), filename: "repair-invoice.pdf", isImage: false },
+  settlementId: null,
+  actions: [codeAction({ id: id(340), subjectId: id(302), amountCents: 42_099, state: "failed", failureCategory: "declined", settledVia: "response", outsideId: null, outsideAmountCents: null })],
+};
+
+export const CODE_CHOICES: RequestChoices = {
+  loads: [
+    { id: LOAD_ID, loadNumber: "BR-L10247", driverCode: "BR-D07", driverName: "Rosa Delgado", status: "in_transit" },
+    { id: id(341), loadNumber: "BR-L10251", driverCode: "BR-D12", driverName: "Marcus Hale", status: "delivered" },
+  ],
+  receipts: [{ id: id(320), filename: "lumper-receipt.webp", kind: "lumper_receipt" }],
+};
+
+export const CODE_PROPOSALS: ProposalView[] = [
+  proposal({
+    id: id(342),
+    kind: "money_code",
+    subjectTable: "loads",
+    subjectId: LOAD_ID,
+    subjectLabel: "BR-L10247",
+    amountCents: 15_000,
+    direction: "out",
+    title: "Lumper code for Rosa Delgado on BR-L10247",
+    destination: null,
+  }),
+];
+
 // The collections page: late invoices with no reminder yet (more than the list names, so "and N
 // more" shows) and a reminder in every state, approved both ways. A refused reminder has no draft.
 const lateInvoice = (n: number, over: Partial<LateInvoice> = {}): LateInvoice => ({
@@ -1661,6 +1817,167 @@ export const NOTES_USED = [
   { id: MEMORY_NOTES[2].id, label: noteLabel(MEMORY_NOTES[2]) },
   { id: id(147), label: null },
 ];
+
+// ---- The quarter review: a quarter so far counted by the real engine, and its review in each state ----
+
+const QUARTER_PERIOD = { start: "2026-10-01", end: "2026-12-31" };
+const QUARTER_AS_OF = "2026-11-02";
+const SECOND_DRIVER_ID = id(472);
+const quarterCustomer = (cid: string, code: string, name: string) => ({
+  id: cid,
+  code,
+  name,
+  termsDays: 30,
+  city: "Roanoke",
+  state: "VA",
+  detentionFreeMinutes: 120,
+  detentionHourlyCents: 7_500 as Cents,
+});
+const quarterStub = (n: number, periodId: string, driverId: string, netCents: number, exceptionCount = 0) => ({
+  id: id(n),
+  periodId,
+  driverId,
+  status: "paid" as const,
+  grossCents: (netCents + 30_000) as Cents,
+  deductionsCents: 30_000 as Cents,
+  netCents: netCents as Cents,
+  carryForwardCents: 0 as Cents,
+  exceptionCount,
+  paidAt: null,
+});
+const quarterInvoice = (n: number, customerId: string, amountCents: number, issuedOn: string, status: "open" | "paid") => ({
+  id: id(n),
+  source: "load" as const,
+  loadId: id(n - 62),
+  customerId,
+  invoiceNumber: `BR-INV-10${n}`,
+  amountCents: amountCents as Cents,
+  issuedOn,
+  dueOn: "2026-11-30",
+  status,
+  paidOn: status === "paid" ? "2026-10-28" : null,
+  qboId: null,
+});
+const QUARTER_INPUT: QuarterInput = {
+  periods: [
+    { id: id(460), periodStart: "2026-10-05", periodEnd: "2026-10-11", status: "paid" },
+    { id: id(461), periodStart: "2026-10-12", periodEnd: "2026-10-18", status: "paid" },
+    { id: id(462), periodStart: "2026-10-19", periodEnd: "2026-10-25", status: "approved" },
+    { id: id(463), periodStart: "2026-10-26", periodEnd: "2026-11-01", status: "open" },
+  ],
+  settlements: [
+    quarterStub(464, id(460), DRIVER_ID, 182_500),
+    quarterStub(465, id(460), SECOND_DRIVER_ID, 154_000, 1),
+    quarterStub(466, id(461), DRIVER_ID, 176_250),
+    quarterStub(467, id(461), SECOND_DRIVER_ID, 149_800),
+    quarterStub(468, id(462), DRIVER_ID, 171_000, 2),
+    quarterStub(469, id(462), SECOND_DRIVER_ID, 158_300),
+    quarterStub(470, id(463), DRIVER_ID, 120_000),
+  ],
+  // An advance taken back from pay: a deduction, written below zero.
+  lines: [{ settlementId: id(464), kind: "advance_recovery", amountCents: -10_000 }],
+  drivers: [
+    { id: DRIVER_ID, name: "Rosa Delgado" },
+    { id: SECOND_DRIVER_ID, name: "Tom Avery" },
+  ],
+  customers: [
+    quarterCustomer(CUSTOMER_ID, "TGS", "Tanglewood Grocery Supply"),
+    quarterCustomer(PIEDMONT_ID, "PPC", "Piedmont Paper Co"),
+  ],
+  margin: PROFIT_LINES.map((l) => ({ ...l, deliveredOn: "2026-10-22" })),
+  receivables: {
+    invoices: [
+      quarterInvoice(473, CUSTOMER_ID, 185_000, "2026-10-06", "paid"),
+      quarterInvoice(474, CUSTOMER_ID, 142_000, "2026-10-13", "open"),
+      quarterInvoice(475, PIEDMONT_ID, 176_000, "2026-09-20", "open"),
+    ],
+    payments: [
+      {
+        id: id(476),
+        customerId: CUSTOMER_ID,
+        receivedOn: "2026-10-28",
+        amountCents: 185_000 as Cents,
+        method: "ach",
+        paymentRef: "ACH-55120",
+        source: "seed",
+        memo: null,
+        qboId: null,
+      },
+    ],
+    applications: [{ id: id(478), paymentId: id(476), invoiceId: id(473), amountCents: 185_000 as Cents }],
+    asOf: QUARTER_AS_OF,
+  },
+  loads: [],
+  accessorials: [],
+  proposals: [
+    { id: id(479), kind: "pay_correction", status: "done", direction: "in", amountCents: 2_500, createdOn: "2026-10-19", decidedOn: "2026-10-20" },
+    { id: id(480), kind: "detention_charge", status: "done", direction: "in", amountCents: 18_750, createdOn: "2026-10-14", decidedOn: "2026-10-15" },
+    { id: id(481), kind: "advance_payout", status: "proposed", direction: "out", amountCents: 10_000, createdOn: "2026-10-31", decidedOn: null },
+    { id: id(482), kind: "invoice_fix", status: "rejected", direction: "in", amountCents: 100, createdOn: "2026-10-21", decidedOn: "2026-10-21" },
+  ],
+  detention: [
+    { id: id(483), loadId: id(411), amountCents: 18_750, proposalId: id(480), proposalStatus: "done", decidedOn: "2026-10-15" },
+  ],
+};
+export const QUARTER: Quarter = quarterOf(QUARTER_INPUT, QUARTER_PERIOD, QUARTER_AS_OF);
+// Nothing happened yet this quarter: no pay run, load, invoice or payment.
+export const QUARTER_EMPTY: Quarter = quarterOf(
+  {
+    ...QUARTER_INPUT,
+    periods: [],
+    settlements: [],
+    lines: [],
+    margin: [],
+    receivables: { invoices: [], payments: [], applications: [], asOf: QUARTER_AS_OF },
+    proposals: [],
+    detention: [],
+  },
+  QUARTER_PERIOD,
+  QUARTER_AS_OF,
+);
+
+// The review's lists, built from the figures so the number check passes and every number links.
+const quote = (label: string): string => {
+  const figure = QUARTER.figures.find((f) => f.label === label);
+  if (!figure) throw new Error(`no figure ${label}`);
+  return `${figureValueText(figure)} [${figure.key}]`;
+};
+export const QUARTER_BODY: QuarterBody = {
+  went_well: [
+    `Margin on priced loads was ${quote("Margin on priced loads")}, or ${quote("Margin as a share of revenue")} of revenue.`,
+    `Payments received so far came to ${quote("Payments received")}.`,
+  ],
+  problems: [`Paystubs with a problem so far: ${quote("Paystubs with a problem")}.`],
+  recovered: [
+    `Detention recovered came to ${quote("Detention recovered")}, and advances recovered from pay to ${quote("Advances recovered from pay")}.`,
+  ],
+  change: [
+    `Collect the open receivables past due, ${quote("Open receivables past due")}.`,
+    `Decide the fixes waiting for a decision: ${quote("Fixes waiting for a decision")}.`,
+    `Ask Piedmont Paper Co about its open balance of ${quote("Customer Piedmont Paper Co: open balance")}.`,
+  ],
+};
+
+export const QUARTER_REVIEW: QuarterRecord = {
+  id: id(484),
+  status: "drafted",
+  quarterStart: QUARTER_PERIOD.start,
+  quarterEnd: QUARTER_PERIOD.end,
+  asOf: QUARTER_AS_OF,
+  figures: QUARTER.figures,
+  body: QUARTER_BODY,
+  category: null,
+  updatedAt: "2026-11-02T15:00:00.000Z",
+};
+
+export const quarterView = (review: QuarterState, over: Partial<QuarterView> = {}): QuarterView => ({
+  quarter: QUARTER,
+  packed: QUARTER.figures,
+  review,
+  ...over,
+});
+
+export const QUARTER_VIEW = quarterView({ kind: "none" });
 
 // The fuel checks page: every problem, every row status (a sent row with its card, a carried-out
 // card that reads Corrected, a dismissed and a cleared row), and a duplicate whose two photos were

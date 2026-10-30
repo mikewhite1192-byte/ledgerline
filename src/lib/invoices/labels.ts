@@ -1,3 +1,4 @@
+import { STAFF_ONLY_NOTE } from "../../components/app/staff-only";
 import { dollars } from "../money/format";
 import type { MoneyActionState } from "../money/types";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "../rules-engine/invoice-review";
@@ -33,6 +34,8 @@ export const OUTCOME_LABELS: Readonly<Record<string, string>> = {
   applications_changed: "This payment's invoices changed while it was being posted. Nothing was sent. Refresh the page and post again.",
   history: "Only invoices made from the invoice queue post from here. This one came from earlier records.",
   no_billing_address: "This customer has no billing address on file, so it was not posted.",
+  // A demo visitor pressed a staff-only button; the staff check refused it before any work.
+  judge: STAFF_ONLY_NOTE,
   // The reply was lost or could not be read, or the service was down: the work may have happened,
   // so these never say nothing changed.
   unknown: "The outcome is not known yet. Refresh the page to see where it stands before trying again.",

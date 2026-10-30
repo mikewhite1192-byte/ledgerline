@@ -122,6 +122,7 @@ const CONCERN = /^[a-z_]{2,40}$/;
 function overrideLabel(role: string | null): string {
   if (role === "admin") return "an admin";
   if (role === "staff") return "a staff member";
+  if (role === "judge") return "a demo visitor";
   return "a member";
 }
 

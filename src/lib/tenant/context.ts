@@ -2,11 +2,17 @@ import type { Session } from "../auth/claims";
 import { requireSession } from "../auth/session";
 import { getDb, type Queryable } from "../db";
 
-// The token's tenant has no membership row for this user: refused, and the transaction rolls back.
+// Why a request was refused: "membership" when the token's tenant has no membership row for this
+// user, "judge" when a demo visitor's login asks for a staff-only write (src/lib/auth/role.ts).
+export type ForbiddenReason = "membership" | "judge";
+
+// Refused, and the transaction rolls back.
 export class ForbiddenError extends Error {
-  constructor() {
-    super("no membership in this tenant");
+  readonly reason: ForbiddenReason;
+  constructor(reason: ForbiddenReason = "membership") {
+    super(reason === "judge" ? "staff only" : "no membership in this tenant");
     this.name = "ForbiddenError";
+    this.reason = reason;
   }
 }
 

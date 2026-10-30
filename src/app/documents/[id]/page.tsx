@@ -6,6 +6,7 @@ import { DataTable, type Column } from "@/components/app/data-table";
 import { PageHeader } from "@/components/app/page-header";
 import { ErrorState, FeatureOff } from "@/components/app/states";
 import {
+  canTryMarkup,
   claimRows,
   fieldLabel,
   fieldStatusBadge,
@@ -17,6 +18,7 @@ import {
   readStatusBadge,
   type ClaimRow,
 } from "@/components/documents/labels";
+import { MarkupBlock } from "@/components/documents/markup-block";
 import { ReadAgainButton } from "@/components/documents/read-again";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -117,6 +119,18 @@ function Comparison({ view, match }: { view: DocumentView; match: MatchFound }) 
   );
 }
 
+// The day a marked copy was checked, as the carrier reads it ("Oct 27, 2026").
+function dayOf(iso: string | null, timeZone: string): string | null {
+  if (iso === null || Number.isNaN(new Date(iso).getTime())) return null;
+  return new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "short", day: "numeric" }).format(
+    new Date(iso),
+  );
+}
+
+// While a marked copy can be made, that is the page's main button and asking the agent is the
+// outline one.
+const markupOffered = (view: DocumentView) => flags.documentMarkupEnabled && canTryMarkup(view.markup);
+
 function ReadResult({ view }: { view: DocumentView }) {
   if (view.readStatus === "budget") {
     return (
@@ -201,7 +215,10 @@ function ReadResult({ view }: { view: DocumentView }) {
       )}
       {view.inputId ? (
         <div>
-          <Link href={`/?document=${view.inputId}`} className={buttonVariants({ variant: "primary" })}>
+          <Link
+            href={`/?document=${view.inputId}`}
+            className={buttonVariants({ variant: markupOffered(view) ? "outline" : "primary" })}
+          >
             Ask the agent about this document
           </Link>
         </div>
@@ -275,6 +292,14 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
           </div>
           <div className="grid min-w-0 gap-4">
             <ReadResult view={view} />
+            {flags.documentMarkupEnabled && view.readStatus === "read" ? (
+              <MarkupBlock
+                documentId={view.id}
+                filename={view.filename}
+                markup={view.markup}
+                checkedOn={view.markup.status === "checked" ? dayOf(view.markup.at, carrier.timezone) : null}
+              />
+            ) : null}
             {view.readStatus === "read" || view.readCallId !== null ? (
               <div className="grid gap-1 text-caption text-muted-foreground">
                 <p>Read by the document model.</p>
@@ -294,7 +319,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/documents")}
       title="Documents"
       signOut={<SignOut />}

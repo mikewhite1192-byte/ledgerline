@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import type { z } from "zod";
 import type { Session } from "../auth/claims";
 import { getSession } from "../auth/session";
+import { staffGate } from "../auth/staff-gate";
 import { isCrossSite } from "../http/same-site";
 import { isUuid } from "../uuid";
 import { advancesOn } from "./switches";
 
 // The advance routes' shared shape: same-site POST, a signed-in member, a well-formed id, the
 // advances switch first, categories only in the reply (never upstream text), never cached.
+// advanceAction and bodyAction are staff-only presses: a judge is refused before anything runs
+// (the request desk and its suggestion are their own routes, on the judge allowlist).
 
 export const ADVANCE_STATUS: Readonly<Record<string, number>> = {
   bad_request: 400,
@@ -39,6 +42,8 @@ export async function advanceAction<T extends Outcome>(
   if (!advancesOn()) return refuse("disabled");
   const session = await getSession();
   if (!session) return refuse("unauthenticated");
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id } = await params;
   if (!isUuid(id)) return refuse("bad_request");
   try {
@@ -64,6 +69,8 @@ export async function bodyAction<P extends Record<string, string>, B, T extends 
   if (!advancesOn()) return refuse("disabled");
   const session = await getSession();
   if (!session) return refuse("unauthenticated");
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const raw = await params;
   const ids = {} as Record<string, string>;
   for (const [key, value] of Object.entries(raw)) {

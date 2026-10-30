@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isLocalDate } from "../lib/time/local-date";
-import { flags, type Flags } from "./flags";
+import { flags, stepThroughShown, type Flags } from "./flags";
 import { applyLocalOverrides, LOCAL_OVERRIDABLE } from "./local-overrides";
 
 describe("flags", () => {
@@ -19,6 +19,7 @@ describe("flags", () => {
     expect(flags.agentEnabled).toBe(false);
     expect(flags.documentsEnabled).toBe(false);
     expect(flags.documentCrop).toBe(false);
+    expect(flags.documentMarkupEnabled).toBe(false);
     expect(flags.reportsEnabled).toBe(false);
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
@@ -26,13 +27,39 @@ describe("flags", () => {
     expect(flags.detentionEnabled).toBe(false);
     // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
     expect(flags.demoResetEnabled).toBe(false);
+    // Money codes issue through the simulated provider only, dark and unarmed until the owner's go.
+    expect(flags.moneyCodes).toEqual({
+      enabled: false,
+      armed: false,
+      capCents: 50_000,
+      perDriverPerDay: 2,
+      startDate: "2026-10-28",
+    });
+    expect(isLocalDate(flags.moneyCodes.startDate)).toBe(true);
     // The card check writes no money, but it reads three systems and spends model cents.
     expect(flags.cardRecon.enabled).toBe(false);
     expect(flags.rulesByTalkingEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
+    // The demo visitor sign-in: dark until the owner's one-line release PR.
+    expect(flags.judgeAccess.enabled).toBe(false);
     // The models page's eval card and the eval script that spends model cents.
     expect(flags.evalCardEnabled).toBe(false);
     expect(flags.evalRun).toEqual({ enabled: false, maxRunCents: 1_500, reserveCents: 4_000 });
+  });
+
+  it("keeps a demo visit small: a dollar of model time, 25 turns, $8.00 a day across every visit", () => {
+    expect(flags.judgeAccess).toEqual({
+      enabled: false,
+      sessionCapCents: 100,
+      turnsPerSession: 25,
+      dayCapCents: 800,
+      sessionsPerIpPerHour: 5,
+      sessionsPerDay: 150,
+      cookieHours: 2,
+    });
+    // Five judging days at the day cap fit the $40.00 reserve with nothing else drawing on it.
+    expect(flags.judgeAccess.dayCapCents * 5).toBeLessThanOrEqual(4_000);
+    expect(flags.judgeAccess.sessionCapCents).toBeLessThanOrEqual(flags.judgeAccess.dayCapCents);
   });
 
   it("keeps carrier memory dark, with the agent's suggestions and the second check's notes few", () => {
@@ -145,6 +172,21 @@ describe("flags", () => {
     for (const v of Object.values(flags.documentLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
+  });
+
+  it("keeps the marked copy small: two cents an edit, four a check, ten a day, the upload size cap", () => {
+    expect(flags.markupLimits).toEqual({
+      editMaxCostCents: 2,
+      checkMaxCostCents: 4,
+      perTenantPerDay: 10,
+      maxBytes: 700_000,
+    });
+    for (const v of Object.values(flags.markupLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // A marked copy is never larger than the largest upload, so reading it alone stays under the
+    // database's answer limit exactly as an upload does.
+    expect(flags.markupLimits.maxBytes).toBeLessThanOrEqual(flags.documentLimits.maxBytes);
   });
 
   it("ships the advance flow dark, disarmed, capped and dated", () => {
@@ -354,6 +396,33 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("profitBriefEnabled");
+  });
+
+  it("ships the quarter review dark, at most 30 cents a review, and never switched on by local mode", () => {
+    expect(flags.quarterReviewEnabled).toBe(false);
+    expect(flags.quarterReviewLimits).toEqual({ maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 });
+    for (const v of Object.values(flags.quarterReviewLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The wrapper refuses an output budget over 8192 tokens.
+    expect(flags.quarterReviewLimits.maxOutputTokens).toBeLessThanOrEqual(8192);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewEnabled");
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewLimits");
+  });
+});
+
+describe("step through", () => {
+  it("is on in development and tests only, and off elsewhere until the owner turns it on for staff", () => {
+    expect(flags.stepThrough).toEqual({ dev: true, staff: false });
+    expect(stepThroughShown(flags, { NODE_ENV: "production" })).toBe(false);
+    expect(stepThroughShown(flags, { NODE_ENV: "test" })).toBe(true);
+    expect(stepThroughShown(flags, { NODE_ENV: "development" })).toBe(true);
+    // Unset or unknown reads as production.
+    expect(stepThroughShown(flags, {})).toBe(false);
+    expect(stepThroughShown(flags, { NODE_ENV: "staging" })).toBe(false);
+    expect(stepThroughShown({ stepThrough: { dev: true, staff: true } }, { NODE_ENV: "production" })).toBe(true);
+    expect(stepThroughShown({ stepThrough: { dev: false, staff: false } }, { NODE_ENV: "development" })).toBe(false);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("stepThrough");
   });
 });
 

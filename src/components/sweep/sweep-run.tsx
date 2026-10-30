@@ -8,7 +8,10 @@ import { PageHeader } from "@/components/app/page-header";
 import { ProposalCard } from "@/components/app/proposal-card";
 import { StatCard } from "@/components/app/stat-card";
 import { EmptyState, ErrorState } from "@/components/app/states";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
+import { StaffOnlyLine } from "@/components/app/staff-only-line";
 import { StatusBadge } from "@/components/app/status-badge";
+import { useViewerRole } from "@/components/app/viewer-role";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ProposalView } from "@/lib/agent/view";
@@ -50,6 +53,8 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That fix is not here.",
   not_executable: "Pay corrections are switched off, so this fix was not applied. Nothing changed.",
+  // A demo visitor: the staff check refused the press before any work.
+  judge: STAFF_ONLY_NOTE,
 };
 // The card statuses listed under Needs a look: still waiting, or approved and not finished.
 const LOOK_STATUSES: ReadonlySet<string> = new Set(["proposed", "approved", "executing", "unknown"]);
@@ -138,6 +143,7 @@ export function SweepRun({
   const [confirmAll, setConfirmAll] = useState(false);
   const [allNotice, setAllNotice] = useState("");
   const [batch, setBatch] = useState<HeldBatch | null>(null);
+  const judge = useViewerRole() === "judge";
   const alive = useRef(true);
   const runId = page.run.id;
 
@@ -162,10 +168,12 @@ export function SweepRun({
     }
   }, [runId]);
 
-  // Carry a running run on, one slice per request, a bounded number of times per page view.
+  // Carry a running run on, one slice per request, a bounded number of times per page view. A demo
+  // visitor (the judge role) only reads it: carrying a run on is for the carrier's staff, so the
+  // page never asks (the route would refuse a judge anyway).
   const running = page.run.status === "running";
   useEffect(() => {
-    if (!running) return;
+    if (!running || judge) return;
     let stop = false;
     let calls = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -191,7 +199,7 @@ export function SweepRun({
       stop = true;
       if (timer) clearTimeout(timer);
     };
-  }, [running, runId, refresh]);
+  }, [running, judge, runId, refresh]);
 
   async function approve(p: ProposalView, overrideReason?: string) {
     setBusy(p.id);
@@ -278,6 +286,8 @@ export function SweepRun({
           setAllNotice(`The clean list changed: it now has ${n} ${n === 1 ? "fix" : "fixes"}, ${total} total. Check them and approve again. Nothing was approved.`);
         } else if (error === "role") {
           setAllNotice("An admin must approve a batch this size. Nothing was approved.");
+        } else if (error === "judge") {
+          setAllNotice(STAFF_ONLY_NOTE);
         } else if (error === "batch_reused" || error === "batch_taken") {
           // This id can never be ours again: the next try takes a new one.
           setAllNotice("The approval did not go through. Nothing was approved.");
@@ -393,6 +403,7 @@ export function SweepRun({
       ) : null}
       {page.fanout ? <WeekChecks tree={page.fanout} runId={runId} running={running} /> : null}
       {readFailed ? <ErrorState category="unreadable" title="Could not read the sweep" /> : null}
+      {running && judge ? <StaffOnlyLine /> : null}
       {stalled ? (
         <p role="status" className="text-small text-foreground-2">
           Still running. Reload the page to carry it on.

@@ -63,6 +63,13 @@ export type Flags = {
   runLimits: {
     maxTurns: number;
   };
+  // Who sees "Step through" in the trace panel under an answer (design-agents-101 3.4): one model
+  // call at a time, with what it saw, its note, what it did and what came back. Display only: it
+  // reads the stored trace and never pauses a run. dev is a development or test run (a laptop,
+  // the tests); staff is the carrier's own people on production. A judge's default (on)
+  // waits for the judge sign-in to put the demo session on the token. Flipping staff is the
+  // owner's call, in its own one-line PR.
+  stepThrough: { dev: boolean; staff: boolean };
   // Hard caps on one turn. Reaching any of them ends the turn with what it found so far.
   agentTurnLimits: {
     maxToolSteps: number;
@@ -98,6 +105,19 @@ export type Flags = {
     maxPdfPages: number;
     readMaxCostCents: number;
     perTenantPerDay: number;
+  };
+  // The marked copy of a document photo: the image model circles the line in question and writes
+  // what the records say beside it, then a second read checks the copy before it is kept. On top
+  // of documentsEnabled. Off: the block is hidden and the route refuses before any call.
+  documentMarkupEnabled: boolean;
+  // Per try: the edit's and the check's cost bounds in cents (the wrapper's spend cap still
+  // applies), marked copies started per carrier per day, and the largest copy kept, in bytes
+  // (also the markup_length CHECK in migration 0055: raise both together).
+  markupLimits: {
+    editMaxCostCents: number;
+    checkMaxCostCents: number;
+    perTenantPerDay: number;
+    maxBytes: number;
   };
   // The advance flow: approving an advance proposal, Retry, Check pending, Post to QuickBooks and
   // the request desk. Off means each refuses with disabled before any write. The agent can still
@@ -419,6 +439,21 @@ export type Flags = {
     // Notes the second check sees on one request.
     maxAuditorNotes: number;
   };
+  // The Quarter review at /quarter: the calendar quarter so far (the carrier's own dates), from its
+  // pay runs, invoices, payments, the agent's fixes and the detention it found, and "Write the
+  // quarter review", which asks Muse Wonder to word those figures in four lists (a button press,
+  // never a schedule). Off: the page shows its off state, the route answers 409 and the agent's read
+  // tool is not offered. aiEnabled must also be on for the button to reach a model.
+  quarterReviewEnabled: boolean;
+  quarterReviewLimits: {
+    // One review's worst case, checked by the wrapper before the request goes out. The Wonder cap
+    // (AI_WONDER_CAP_CENTS) applies on top.
+    maxReviewCents: number;
+    // The review's output budget, reasoning included.
+    maxOutputTokens: number;
+    // The figure list the model is given stops here, cut from the bottom (per-driver rows go first).
+    maxInputChars: number;
+  };
   // Fuel checks: every fill-up held against the truck's tank, the load's route and the driver's
   // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
   // and proposes; a person approves a pay correction on its card. Off means the Fuel checks page
@@ -442,6 +477,40 @@ export type Flags = {
     // Receipt compares one run may make, and one carrier may make in a day.
     comparesPerRun: number;
     comparesPerTenantPerDay: number;
+  };
+  // The demo carrier's visitor sign-in (the judge role, migration 0043). A judge reads, asks the
+  // agent and proposes, and never approves or pays: every write route outside
+  // src/lib/auth/judge-allowlist.ts refuses the role whatever this says. Off means a judge login's
+  // password sign-in is refused before any cookie (src/app/sign-in/actions.ts); the visitor
+  // sign-in card and the visit limits below come with a later change and do nothing yet.
+  judgeAccess: {
+    enabled: boolean;
+    // One visit's model spend, in cents (spent plus reserved, demo_sessions).
+    sessionCapCents: number;
+    // Agent turns one visit may ask.
+    turnsPerSession: number;
+    // Every visit created in one UTC day, together, in cents.
+    dayCapCents: number;
+    // New visits from one address in an hour, and from everyone in a day.
+    sessionsPerIpPerHour: number;
+    sessionsPerDay: number;
+    // How long the visit's sign-in cookie lasts.
+    cookieHours: number;
+  };
+  // Money codes (Test mode): a one-time code from the simulated fuel-card provider that a driver
+  // gives a lumper or a repair shop, charged to the driver's week and reimbursed by the receipt.
+  // enabled: the Money codes page, its menu item, the agent's two tools and approving a code; off,
+  // the page shows the feature as off, the routes answer 404, the tools are not offered and the
+  // kind has no executor. armed, capCents (inclusive: the most one code may be), perDriverPerDay
+  // and startDate (YYYY-MM-DD, tenant-local; it gates issuing, never proposing) are asked again on
+  // every approval, before the ledger reserves a row and by the issuer itself at the call, on top
+  // of payoutsEnabled.
+  moneyCodes: {
+    enabled: boolean;
+    armed: boolean;
+    capCents: number;
+    perDriverPerDay: number;
+    startDate: string;
   };
   // Card check: compares the card provider's statement (Test mode: seeded rows), the bank and the
   // books with our own payment records, lists each difference with a plain sentence and a fix,
@@ -505,6 +574,7 @@ export const flags: Flags = {
   runLimits: {
     maxTurns: 30,
   },
+  stepThrough: { dev: true, staff: false },
   agentTurnLimits: {
     maxToolSteps: 6,
     maxModelCalls: 4,
@@ -520,6 +590,8 @@ export const flags: Flags = {
   documentsEnabled: false,
   documentCrop: false,
   documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
+  documentMarkupEnabled: false,
+  markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
   advancesEnabled: false,
   advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-27" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
@@ -612,6 +684,8 @@ export const flags: Flags = {
   carrierMemoryEnabled: false,
   carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
   carrierMemoryAgentLimits: { maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 },
+  quarterReviewEnabled: false,
+  quarterReviewLimits: { maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 },
   fuelAnomalyEnabled: false,
   fuelAnomalyLimits: {
     from: "2026-10-27",
@@ -622,6 +696,16 @@ export const flags: Flags = {
     comparesPerRun: 10,
     comparesPerTenantPerDay: 20,
   },
+  judgeAccess: {
+    enabled: false,
+    sessionCapCents: 100,
+    turnsPerSession: 25,
+    dayCapCents: 800,
+    sessionsPerIpPerHour: 5,
+    sessionsPerDay: 150,
+    cookieHours: 2,
+  },
+  moneyCodes: { enabled: false, armed: false, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
   cardRecon: {
     enabled: false,
     limits: {
@@ -640,3 +724,14 @@ export const flags: Flags = {
 };
 
 applyLocalOverrides(flags);
+
+// Whether the trace panel offers "Step through", read on the server and handed to the page: in a
+// development or test run while dev is on, and anywhere else (production) only once staff is on.
+// An unset or unknown NODE_ENV counts as production.
+export function stepThroughShown(
+  f: Pick<Flags, "stepThrough"> = flags,
+  env: { NODE_ENV?: string } = process.env,
+): boolean {
+  const dev = env.NODE_ENV === "development" || env.NODE_ENV === "test";
+  return f.stepThrough.staff || (f.stepThrough.dev && dev);
+}

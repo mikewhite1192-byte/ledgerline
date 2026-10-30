@@ -16,7 +16,7 @@ const fakeQ = {
     state.sql.push(sql);
     if (state.fail) throw new Error("connection reset by 10.0.0.12");
     if (/FROM tenants/.test(sql)) return [{ name: "Test Carrier", timezone: "America/Chicago" }];
-    if (/FROM memberships/.test(sql)) return [{ email: SESSION.email }];
+    if (/FROM memberships/.test(sql)) return [{ email: SESSION.email, role: "staff" }];
     if (/FROM drivers/.test(sql)) return [];
     throw new Error(`unexpected read: ${sql.slice(0, 80)}`);
   },

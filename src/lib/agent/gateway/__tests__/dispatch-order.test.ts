@@ -422,8 +422,8 @@ describe("callTool dispatch order", () => {
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, invoicing, invoice review, customer payments, collections,
-    // Cash Friday, profit brief, pay rule change and carrier memory switches after this test. remember_note
-    // outside a chat turn writes nothing and says so.
+    // Cash Friday, profit brief, quarter review, pay rule change, money code and carrier memory switches
+    // after this test. remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.invoicesEnabled = true;
@@ -432,9 +432,11 @@ describe("callTool dispatch order", () => {
     flags.cardRecon.enabled = true;
     flags.cashFridayEnabled = true;
     flags.collectionsEnabled = true;
+    flags.moneyCodes.enabled = true;
     flags.profitBriefEnabled = true;
     flags.rulesByTalkingEnabled = true;
     flags.carrierMemoryEnabled = true;
+    flags.quarterReviewEnabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;
       flags.invoicesEnabled = false;
@@ -443,9 +445,11 @@ describe("callTool dispatch order", () => {
       flags.cardRecon.enabled = false;
       flags.cashFridayEnabled = false;
       flags.collectionsEnabled = false;
+      flags.moneyCodes.enabled = false;
       flags.profitBriefEnabled = false;
       flags.rulesByTalkingEnabled = false;
       flags.carrierMemoryEnabled = false;
+      flags.quarterReviewEnabled = false;
     });
     // The second check's read of the office's notes about the driver: none on file.
     const store: Handler = (sql, params) =>

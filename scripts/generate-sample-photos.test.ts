@@ -244,10 +244,10 @@ describe("the sample photo run", () => {
     expect(out).toEqual({ docs: [], spentNanocents: 0, stopped: null });
     expect(existsSync(io.publicDir) || existsSync(io.manifestPath)).toBe(false);
     // A retake makes no call of its own, so it has no prompt and is left out of the estimate.
-    expect(printed.filter((l) => /prompt=\d+ chars/.test(l))).toHaveLength(7);
+    expect(printed.filter((l) => /prompt=\d+ chars/.test(l))).toHaveLength(8);
     expect(printed).toContain(`  ${RETAKE_ID} fuel_receipt retake of ${FIRST_ID}, no call`);
     expect(printed.find((l) => l.startsWith("estimate:"))).toBe(
-      "estimate: about 15 cents (1 cent per image, under 1 cent per read), at most 60 cents (run cap 60)",
+      "estimate: about 17 cents (1 cent per image, under 1 cent per read), at most 60 cents (run cap 60)",
     );
   });
 
@@ -312,7 +312,7 @@ describe("the sample photo run", () => {
     );
     expect(out.docs.find((d) => d.id === DOC_ID)?.attempts).toBe(1);
     // The retake is made from its photo's pixels: no image or read of its own.
-    expect(counts.read).toBe(1 + 6 * 3);
+    expect(counts.read).toBe(1 + 7 * 3);
     for (const d of out.docs) {
       const doc = entry(written(), d.id);
       const file = readFileSync(join(io.publicDir, doc.file));
@@ -465,7 +465,7 @@ describe("the sample photo run", () => {
     expect(parseCap(undefined)).toBe(DEFAULT_CAP_CENTS);
     expect(parseCap("25")).toBe(25);
     for (const bad of ["0", "-1", "2.5", "abc", "501"]) expect(() => parseCap(bad)).toThrow();
-    expect(photosToRun(MANIFEST, null)).toHaveLength(8);
+    expect(photosToRun(MANIFEST, null)).toHaveLength(9);
     expect(photosToRun(MANIFEST, DOC_ID).map((d) => d.id)).toEqual([DOC_ID]);
     expect(() => photosToRun(MANIFEST, "br-l10259-ratecon")).toThrow();
     expect(() => photosToRun(MANIFEST, "nope")).toThrow();

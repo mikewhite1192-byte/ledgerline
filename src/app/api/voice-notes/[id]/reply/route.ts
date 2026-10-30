@@ -1,4 +1,4 @@
-import { voiceAction } from "@/lib/voice/http";
+import { voiceStaffAction } from "@/lib/voice/http";
 import { draftVoiceReply } from "@/lib/voice/pipeline";
 
 // POST: draft the reply to the driver from the proposal's outcome, in Spanish for a Spanish note.
@@ -8,5 +8,5 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  return voiceAction(request, params, "reply", (session, id) => draftVoiceReply(session, id));
+  return voiceStaffAction(request, params, "reply", (session, id) => draftVoiceReply(session, id));
 }

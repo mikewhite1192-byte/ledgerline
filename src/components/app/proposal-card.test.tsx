@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { STAFF_ONLY_NOTE } from "./staff-only";
 import {
   CONFIRM_NEXT,
   ProposalCard,
@@ -9,6 +10,7 @@ import {
   type ProposalCardProps,
   type ProposalStatus,
 } from "./proposal-card";
+import { ViewerRoleProvider } from "./viewer-role";
 
 afterEach(cleanup);
 
@@ -470,6 +472,65 @@ describe("ProposalCard with the auditor's check", () => {
     expect(screen.getByText("Overridden by an admin on Oct 28, 2026, 3:00 PM UTC: Driver showed the receipt")).toBeTruthy();
     // The only button left is the help on the second check's words; no Approve, Reject or Confirm.
     expect(screen.queryAllByRole("button").map((b) => b.textContent)).toEqual(["Second check did not pass"]);
+  });
+});
+
+// A demo visitor (the judge role) sees the same buttons, and each opens the staff-only line; no
+// handler runs, so nothing reaches the server.
+describe("ProposalCard for a demo visitor", () => {
+  const asJudge = (props: Partial<ProposalCardProps> = {}) => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    render(
+      <ViewerRoleProvider role="judge">
+        <ProposalCard {...card} onApprove={onApprove} onReject={onReject} {...props} />
+      </ViewerRoleProvider>,
+    );
+    return { onApprove, onReject };
+  };
+  const note = () => screen.queryByText(/nothing is paid without a person at the carrier/);
+
+  it("keeps Approve and Reject, and each opens the staff-only line instead of the confirm", () => {
+    const { onApprove, onReject } = asJudge();
+    expect(note()).toBeNull();
+    expect(button("Approve $200.00")?.getAttribute("title")).toBe(STAFF_ONLY_NOTE);
+    fireEvent.click(button("Approve $200.00")!);
+    expect(screen.getByRole("status").textContent).toBe(STAFF_ONLY_NOTE);
+    expect(button("Confirm")).toBeNull();
+    fireEvent.click(button("Reject")!);
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(onReject).not.toHaveBeenCalled();
+  });
+
+  it("never opens the confirm row, even when the page asks for it open", () => {
+    asJudge({ initialConfirming: true });
+    expect(button("Confirm")).toBeNull();
+    expect(button("Approve $200.00")).toBeTruthy();
+  });
+
+  it("shows the override button on a blocked card without the reason box, and it only explains", () => {
+    const { onApprove } = asJudge({
+      audit: { state: "block", text: "The amount does not match the load." },
+    });
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.click(button("Approve anyway")!);
+    expect(note()).toBeTruthy();
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("explains Resume too, and staff still get the confirm", () => {
+    const { onApprove } = asJudge({ status: "approved", canResume: true });
+    fireEvent.click(button("Resume")!);
+    expect(note()).toBeTruthy();
+    expect(onApprove).not.toHaveBeenCalled();
+    cleanup();
+    render(
+      <ViewerRoleProvider role="staff">
+        <ProposalCard {...card} />
+      </ViewerRoleProvider>,
+    );
+    fireEvent.click(button("Approve $200.00")!);
+    expect(button("Confirm")).toBeTruthy();
   });
 });
 

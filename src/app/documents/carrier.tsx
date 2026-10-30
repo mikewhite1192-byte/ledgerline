@@ -3,13 +3,14 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Session } from "@/lib/auth/claims";
+import { isRole, type Role } from "@/lib/auth/role";
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 
 // The documents pages' shell data: the carrier on the verified token and the signed-in member.
 // Signed out: withRequestTenant redirects to /sign-in.
 
-export type Carrier = { name: string; timezone: string; email: string; session: Session };
+export type Carrier = { name: string; timezone: string; email: string; role: Role; session: Session };
 
 export async function readCarrier(): Promise<
   { carrier: Carrier; problem: null } | { carrier: null; problem: "forbidden" | "unreadable" }
@@ -19,12 +20,15 @@ export async function readCarrier(): Promise<
       const tenants = await q.query<{ name: string; timezone: string }>(
         "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
       );
-      const members = await q.query<{ email: string }>(
-        "SELECT email FROM memberships WHERE cognito_sub = $1 AND tenant_id = current_tenant_id()",
+      const members = await q.query<{ email: string; role: unknown }>(
+        "SELECT email, role FROM memberships WHERE cognito_sub = $1 AND tenant_id = current_tenant_id()",
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
-      return { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email, session };
+      // A role this code does not know is refused, never shown as staff.
+      const role = members[0].role;
+      if (!isRole(role)) throw new ForbiddenError();
+      return { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email, role, session };
     });
     return { carrier, problem: null };
   } catch (err) {

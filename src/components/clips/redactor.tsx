@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import { StaffOnlyLine } from "@/components/app/staff-only-line";
+import { useViewerRole } from "@/components/app/viewer-role";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
@@ -13,7 +15,8 @@ import { readClip, sendRedacted, uploadRaw } from "./api";
 
 // Upload a dock clip: the server finds faces and plates, this browser blurs them and sends back
 // the blurred file, then the server reads it. The chosen file never leaves this page except in
-// the one upload request; nothing here keeps it or shows it.
+// the one upload request; nothing here keeps it or shows it. Uploading is staff work: a demo
+// visitor (the judge role) sees the staff-only line instead of the form.
 
 export type LoadOption = { id: string; loadNumber: string; label: string };
 
@@ -34,6 +37,7 @@ const timingOf = (clip: ClipView): ClipTiming => ({
 });
 
 export function ClipUploader({ loads, onDone }: { loads: LoadOption[]; onDone: (clipId: string) => void }) {
+  const judge = useViewerRole() === "judge";
   const [loadId, setLoadId] = useState(loads[0]?.id ?? "");
   const [stop, setStop] = useState("delivery");
   const [file, setFile] = useState<File | null>(null);
@@ -111,6 +115,7 @@ export function ClipUploader({ loads, onDone }: { loads: LoadOption[]; onDone: (
     else if (phase.retry === "read") void read(held.clipId);
   }
 
+  if (judge) return <StaffOnlyLine />;
   return (
     <form onSubmit={start} className="grid gap-4">
       <div className="grid gap-4 sm:grid-cols-2">
