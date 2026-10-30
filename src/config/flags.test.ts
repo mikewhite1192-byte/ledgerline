@@ -105,13 +105,22 @@ describe("flags", () => {
     const switches = Object.fromEntries(booleanSwitches(flags));
     for (const name of RELEASED_ON) expect(switches[name], name).toBe(true);
     for (const name of KEPT_OFF) expect(switches[name], name).toBe(false);
-    // auditorRequired ships on with the auditor: a proposal waits for its verdict. Advance payouts
-    // ship unarmed: arming is its own one-line PR. Step through ships on for development and test
-    // runs only, as it merged; the release does not set it.
+    // auditorRequired ships on with the auditor: a proposal waits for its verdict, and
+    // verifyEngineMismatchBlocks ships on with the pay rules check: a mismatch waits for a person.
+    // Advance payouts ship unarmed: arming is its own one-line PR. Step through ships on for
+    // development and test runs only, as it merged; the release does not set it.
     expect(Object.keys(switches).sort()).toEqual(
-      [...RELEASED_ON, ...KEPT_OFF, "auditorRequired", "advancePayouts.armed", "stepThrough.dev"].sort(),
+      [
+        ...RELEASED_ON,
+        ...KEPT_OFF,
+        "auditorRequired",
+        "verifyEngineMismatchBlocks",
+        "advancePayouts.armed",
+        "stepThrough.dev",
+      ].sort(),
     );
     expect(flags.auditorRequired).toBe(true);
+    expect(flags.verifyEngineMismatchBlocks).toBe(true);
     expect(flags.advancePayouts.armed).toBe(false);
     expect(flags.stepThrough.dev).toBe(true);
   });
@@ -235,9 +244,11 @@ describe("flags", () => {
     const local = [...LOCAL_OVERRIDABLE, ...LOCAL_OFF_ONLY] as readonly string[];
     // The two lists never share a switch.
     expect(LOCAL_OVERRIDABLE.filter((k) => (LOCAL_OFF_ONLY as readonly string[]).includes(k))).toEqual([]);
-    // stepThrough.dev reads NODE_ENV, not local mode, and local mode may never set it.
+    // stepThrough.dev reads NODE_ENV, not local mode, and local mode may never set it. The two
+    // guards that hold a proposal for a person stay on in every run, so local mode never sets them.
+    const guards = ["auditorRequired", "verifyEngineMismatchBlocks", "stepThrough.dev"];
     for (const [name, on] of booleanSwitches(flags)) {
-      if (on && name !== "auditorRequired" && name !== "stepThrough.dev") expect(local, name).toContain(name);
+      if (on && !guards.includes(name)) expect(local, name).toContain(name);
     }
     // Nothing that stays off can be switched by local mode at all.
     for (const name of KEPT_OFF) expect(local).not.toContain(name);
