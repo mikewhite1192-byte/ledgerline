@@ -7,7 +7,8 @@ import type { LocalDate } from "@/lib/time/local-date";
 // why a person would ask it. With the reports on, the advance-limit question gives its place to
 // margin per load; "past 60 days" and "Friday's pay run" are then answered by the aging and cash
 // needed reports. With the profit brief on, that last place asks how last week went instead
-// (get_profit_brief answers it); with collections on and the profit brief off, it asks who needs a
+// (get_profit_brief answers it); with the quarter review on, it asks how the quarter is going
+// (get_quarter_review answers it); with collections on and both of those off, it asks who needs a
 // payment reminder. With Cash Friday on, the pay run's cost gives its place to whether there is cash
 // to make it (get_cash_friday). The labels are sent to the agent as written, so a change to one is a
 // change to the question, not only to the screen.
@@ -48,9 +49,15 @@ const CASH: Suggestion = {
   reason: "Weighs cash on hand and payments due by Friday against the pay run and bills.",
 };
 
+const QUARTER: Suggestion = {
+  id: "quarter-review",
+  label: "How is the quarter going?",
+  reason: "The quarter so far: what went well, what went wrong and what was recovered.",
+};
+
 // With collections on, the fourth question asks who needs a payment reminder (get_collections
-// answers it), in place of the advance limit or margin per load. The profit brief keeps that place
-// when both are on.
+// answers it), in place of the advance limit or margin per load. The quarter review and the profit
+// brief keep that place when either is on.
 const REMINDER: Suggestion = {
   id: "payment-reminder",
   label: "Who needs a payment reminder?",
@@ -59,12 +66,18 @@ const REMINDER: Suggestion = {
 
 // Switches past the reports one come by name, so two switches can never be passed in each
 // other's place.
-export type SuggestionSwitches = { profitOn?: boolean; collections?: boolean; cashFridayOn?: boolean };
+export type SuggestionSwitches = {
+  profitOn?: boolean;
+  quarterOn?: boolean;
+  collections?: boolean;
+  cashFridayOn?: boolean;
+};
 
 export function homeSuggestions(reportsOn: boolean, on: SuggestionSwitches = {}): Suggestion[] {
   return BASE.map((s) => {
     if (s.id === "pay-run-cost") return on.cashFridayOn ? { ...CASH } : { ...s };
     if (s.id !== "advance-limit") return { ...s };
+    if (on.quarterOn) return { ...QUARTER };
     if (on.profitOn) return { ...PROFIT };
     if (on.collections) return { ...REMINDER };
     return reportsOn ? { ...MARGIN } : { ...s };

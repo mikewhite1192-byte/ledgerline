@@ -19,6 +19,7 @@ export { moneyCodes } from "./money-codes";
 export { payRules } from "./pay-rules";
 export { portalRuns } from "./portal-runs";
 export { profitBrief } from "./profit-brief";
+export { quarterReview } from "./quarter-review";
 export { rates } from "./rates";
 export { settlements } from "./settlements";
 export { sweep } from "./sweep";

@@ -422,7 +422,7 @@ describe("callTool dispatch order", () => {
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, invoicing, invoice review, customer payments, collections,
-    // Cash Friday, profit brief, pay rule change, money code, carrier memory and fuel rates switches
+    // Cash Friday, profit brief, quarter review, pay rule change, money code, carrier memory and fuel rates switches
     // after this test. remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
@@ -437,6 +437,7 @@ describe("callTool dispatch order", () => {
     flags.rulesByTalkingEnabled = true;
     flags.carrierMemoryEnabled = true;
     flags.groundedRatesEnabled = true;
+    flags.quarterReviewEnabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;
       flags.invoicesEnabled = false;
@@ -450,6 +451,7 @@ describe("callTool dispatch order", () => {
       flags.rulesByTalkingEnabled = false;
       flags.carrierMemoryEnabled = false;
       flags.groundedRatesEnabled = false;
+      flags.quarterReviewEnabled = false;
     });
     // The second check's read of the office's notes about the driver: none on file.
     const store: Handler = (sql, params) =>

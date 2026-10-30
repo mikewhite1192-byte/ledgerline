@@ -52,6 +52,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   set_checklist: { tier: "read", roles: ["operator"] },
   remember_note: { tier: "record", roles: ["operator"] },
   get_pinned_rates: { tier: "read", roles: ["operator", "auditor"] },
+  get_quarter_review: { tier: "read", roles: ["operator"] },
 };
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
@@ -85,6 +86,7 @@ afterEach(() => {
   flags.profitBriefEnabled = false;
   flags.carrierMemoryEnabled = false;
   flags.groundedRatesEnabled = false;
+  flags.quarterReviewEnabled = false;
 });
 
 describe("tool registry", () => {
@@ -328,9 +330,10 @@ describe("tool registry", () => {
     flags.profitBriefEnabled = true;
     flags.carrierMemoryEnabled = true;
     flags.groundedRatesEnabled = true;
+    flags.quarterReviewEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 44,
+      operator: 45,
       auditor: 18,
       triage: 2,
     });
@@ -443,6 +446,23 @@ describe("deferred loading for tool search", () => {
     flags.carrierMemoryEnabled = true;
     expect(toolsFor("operator", { defer: true }).find((t) => t.name === "remember_note")?.deferLoading).toBe(true);
     expect(toolsFor("operator").find((t) => t.name === "remember_note")).not.toHaveProperty("deferLoading");
+  });
+
+  it("offers the quarter review read to the operator only while its switch is on, deferred, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    expect(flags.quarterReviewEnabled).toBe(false);
+    // Off by default: the operator's list, and so the recorded replays, are unchanged.
+    expect(names("operator")).not.toContain("get_quarter_review");
+    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolNamed("get_quarter_review")).not.toBeNull();
+    flags.quarterReviewEnabled = true;
+    expect(names("operator")).toContain("get_quarter_review");
+    expect(toolsFor("operator")).toHaveLength(22);
+    for (const role of ["auditor", "triage"] as const) expect(names(role)).not.toContain("get_quarter_review");
+    expect(ALWAYS_LOADED).not.toContain("get_quarter_review");
+    expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_quarter_review")?.deferLoading).toBe(true);
+    flags.quarterReviewEnabled = false;
+    expect(names("operator")).not.toContain("get_quarter_review");
   });
 
   it("defers the portal evidence tool, which few questions need", () => {

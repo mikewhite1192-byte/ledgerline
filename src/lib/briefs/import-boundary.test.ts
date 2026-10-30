@@ -4,22 +4,37 @@ import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
-// The profit brief reaches a model in one place and moves no money anywhere. Each file's own module
-// names (imports, re-exports, dynamic imports and require calls) are read from the source:
-//   1. Only src/lib/briefs/write.ts names the model wrapper (src/lib/ai).
-//   2. Only the POST route names write.ts: the page and the agent's read tool only read.
+// The profit brief and the quarter review each reach a model in one place and move no money
+// anywhere. Each file's own module names (imports, re-exports, dynamic imports and require calls)
+// are read from the source:
+//   1. Only src/lib/briefs/write.ts and write-quarter.ts name the model wrapper (src/lib/ai).
+//   2. Only each one's POST route names it: the pages and the agent's read tools only read.
 //   3. No brief file names money/ or adapters/: a brief is words about figures, never a payment.
 // The limit: this reads each file's direct names, not the whole graph, so a helper elsewhere that
 // re-exported the wrapper would get past it; review covers that.
 
 const ROOT = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
-const DIRS = ["src/lib/briefs", "src/app/api/briefs", "src/app/profit", "src/components/profit"];
-const FILES = ["src/lib/agent/gateway/tools/read/get-profit-brief.ts", "src/components/app/nav/items/profit-brief.tsx"];
+const DIRS = [
+  "src/lib/briefs",
+  "src/app/api/briefs",
+  "src/app/profit",
+  "src/components/profit",
+  "src/app/quarter",
+  "src/components/quarter",
+];
+const FILES = [
+  "src/lib/agent/gateway/tools/read/get-profit-brief.ts",
+  "src/components/app/nav/items/profit-brief.tsx",
+  "src/lib/agent/gateway/tools/read/get-quarter-review.ts",
+  "src/components/app/nav/items/quarter-review.tsx",
+];
 const SOURCE = /\.[cm]?[jt]sx?$/;
 // Tests are not app code: a test may name the wrapper's types and errors to fake a model.
 const TEST = /\.test\.[cm]?[jt]sx?$/;
 const MODEL_OK = "src/lib/briefs/write.ts";
+const QUARTER_MODEL_OK = "src/lib/briefs/write-quarter.ts";
 const WRITE_OK = "src/app/api/briefs/profit/route.ts";
+const QUARTER_WRITE_OK = "src/app/api/briefs/quarter/route.ts";
 
 function filesUnder(dir: string): string[] {
   const out: string[] = [];
@@ -60,7 +75,7 @@ function naming(files: readonly string[], area: (t: string) => boolean): string[
   );
 }
 
-describe("the profit brief import boundary", () => {
+describe("the profit brief and quarter review import boundary", () => {
   const files = [...DIRS.flatMap(filesUnder), ...FILES].map((f) => f.split(sep).join("/"));
 
   it("finds the brief files", () => {
@@ -69,14 +84,19 @@ describe("the profit brief import boundary", () => {
     expect(files).toContain("src/lib/briefs/verify.ts");
     expect(files).toContain("src/app/profit/page.tsx");
     expect(files).toContain("src/components/profit/write-brief.tsx");
+    expect(files).toContain(QUARTER_MODEL_OK);
+    expect(files).toContain(QUARTER_WRITE_OK);
+    expect(files).toContain("src/app/quarter/page.tsx");
+    expect(files).toContain("src/components/quarter/write-review.tsx");
   });
 
-  it("lets only write.ts name the model wrapper", () => {
-    expect(naming(files, (t) => under(t, "src/lib/ai"))).toEqual([MODEL_OK]);
+  it("lets only write.ts and write-quarter.ts name the model wrapper", () => {
+    expect(naming(files, (t) => under(t, "src/lib/ai")).sort()).toEqual([MODEL_OK, QUARTER_MODEL_OK].sort());
   });
 
-  it("lets only the POST route name write.ts", () => {
+  it("lets only each POST route name its writer", () => {
     expect(naming(files, (t) => under(t, "src/lib/briefs/write"))).toEqual([WRITE_OK]);
+    expect(naming(files, (t) => under(t, "src/lib/briefs/write-quarter"))).toEqual([QUARTER_WRITE_OK]);
   });
 
   it("names nothing under money or adapters", () => {

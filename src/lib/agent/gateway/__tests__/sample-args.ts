@@ -124,6 +124,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       sourceRefs: [{ table: "pay_configs", id: rows.pay_configs[0].id }],
     },
     get_profit_brief: { periodStart: paid.period_start },
+    get_quarter_review: {},
     // Proposals are not in a seed plan; any well-formed id parses.
     get_proposal: { proposalId: "6a1f0c2e-9d3b-4c5a-8e7f-1b2c3d4e5f60" },
     set_checklist: { items: [{ text: "Read the driver's week", state: "doing" }, { text: "Check the pay" }] },
