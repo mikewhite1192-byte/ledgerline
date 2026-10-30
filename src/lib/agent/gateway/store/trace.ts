@@ -1,7 +1,7 @@
 // The saving is priced from the wrapper's one price table; prices.ts is a pure table that makes no model call.
 import { priceFor, savedByCache } from "../../../ai/prices";
 import type { AiProvider, AiTarget } from "../../../ai/types";
-import { flags } from "../../../../config/flags";
+import { flags, stepThroughShown } from "../../../../config/flags";
 import { sortVersions } from "../../../data/config-version";
 import { readTable, readTenant } from "../../../data/read";
 import type { Queryable } from "../../../db";
@@ -64,6 +64,8 @@ type StepRow = CallCols & {
   g_limit: number | string | null;
   g_issued_by: string | null;
   g_refs: string | null;
+  g_result_chars: number | string | null;
+  reasoning_note: string | null;
 };
 
 type ProposalRow = CallCols & {
@@ -159,6 +161,7 @@ function refsOf(text: string | null): TraceRef[] {
 
 function decisionOf(r: StepRow): TraceDecision | null {
   if (!r.g_id || !r.g_tool || !r.g_decision || !r.g_reason) return null;
+  const resultChars = wholeOrNull(r.g_result_chars);
   return {
     id: r.g_id,
     tool: r.g_tool,
@@ -167,12 +170,19 @@ function decisionOf(r: StepRow): TraceDecision | null {
     limitCents: wholeOrNull(r.g_limit),
     issuedBy: r.g_issued_by,
     refs: refsOf(r.g_refs),
+    ...(resultChars !== null && resultChars >= 0 ? { resultChars } : {}),
   };
 }
 
-function stepOf(r: StepRow): TraceStep {
+// A stored text column as it was kept, or nothing for an empty or missing one.
+const textOrNone = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
+
+function stepOf(r: StepRow, shown: boolean): TraceStep {
   const attempts = r.attempts !== null && COUNT.test(r.attempts) ? Number(r.attempts) : null;
   const finishedBy = codeOrNull(r.finished_by);
+  // Only a model step keeps a note (migration 0044); any other step's is never read. Off
+  // (stepThroughShown), no note is sent.
+  const note = shown && r.kind === "model" ? textOrNone(r.reasoning_note) : null;
   return {
     seq: Number(r.seq),
     kind: r.kind,
@@ -187,6 +197,7 @@ function stepOf(r: StepRow): TraceStep {
     toolSearches: r.tool_searches !== null && COUNT.test(r.tool_searches) ? Number(r.tool_searches) : null,
     incomplete: r.call_status === "incomplete",
     escalation: r.kind === "escalation" ? { attempts: attempts ?? 2, finishedBy: finishedBy ?? "none" } : null,
+    ...(note !== null ? { reasoningNote: note } : {}),
   };
 }
 
@@ -264,7 +275,7 @@ async function readNoteLabels(q: Queryable, ids: readonly string[]): Promise<Map
 
 export async function readTurnTrace(q: Queryable, sub: string, turnId: string): Promise<TurnTrace | null> {
   const turns = await q.query<TurnRow>(
-    `SELECT t.id, t.status, t.trace_id, CAST(t.notes_used AS text) AS notes_used
+    `SELECT t.id, t.status, t.trace_id, CAST(t.notes_used AS text) AS notes_used, t.context_summary
        FROM turns t
        JOIN conversations c ON c.id = t.conversation_id AND c.tenant_id = t.tenant_id
       WHERE t.id = CAST($1 AS uuid) AND c.created_by = $2 AND t.tenant_id = current_tenant_id()`,
@@ -280,7 +291,7 @@ export async function readTurnTrace(q: Queryable, sub: string, turnId: string): 
 // not found.
 export async function readTurnTraceInRun(q: Queryable, runId: string, turnId: string): Promise<TurnTrace | null> {
   const turns = await q.query<TurnRow>(
-    `SELECT t.id, t.status, t.trace_id, CAST(t.notes_used AS text) AS notes_used
+    `SELECT t.id, t.status, t.trace_id, CAST(t.notes_used AS text) AS notes_used, t.context_summary
        FROM turns t
       WHERE t.id = CAST($1 AS uuid) AND t.tenant_id = current_tenant_id()
         AND (EXISTS (SELECT 1 FROM sweep_fanout f
@@ -294,18 +305,30 @@ export async function readTurnTraceInRun(q: Queryable, runId: string, turnId: st
   return traceOfTurn(q, turns[0]);
 }
 
-type TurnRow = { id: string; status: string; trace_id: string; notes_used: string | null };
+type TurnRow = {
+  id: string;
+  status: string;
+  trace_id: string;
+  notes_used: string | null;
+  context_summary: string | null;
+};
 
 async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
+  // The summary the turn started from and each model step's note leave the server only while the
+  // trace panel may step through them (stepThroughShown, as the page reads it); off, the trace
+  // carries neither.
+  const shown = stepThroughShown();
   const steps = await q.query<StepRow>(
     `SELECT s.seq, s.kind, s.label, s.state, s.proposal_id,
             s.detail->>'category' AS category, s.detail->>'result' AS result,
             s.detail->>'toolCalls' AS tool_calls, s.detail->>'toolSearches' AS tool_searches,
             s.detail->>'status' AS call_status,
             s.detail->>'attempts' AS attempts, s.detail->>'finishedBy' AS finished_by,
+            s.reasoning_note,
             ${CALL_SELECT("m")},
             g.id AS g_id, g.tool AS g_tool, g.decision AS g_decision, g.reason AS g_reason,
-            g.limit_cents AS g_limit, g.model_call_id AS g_issued_by, CAST(g.refs AS text) AS g_refs
+            g.limit_cents AS g_limit, g.model_call_id AS g_issued_by, CAST(g.refs AS text) AS g_refs,
+            g.result_chars AS g_result_chars
        FROM turn_steps s
        LEFT JOIN model_calls m ON m.id = s.model_call_id AND m.tenant_id = s.tenant_id
        LEFT JOIN gateway_decisions g ON g.id = s.gateway_decision_id AND g.tenant_id = s.tenant_id
@@ -356,12 +379,14 @@ async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
 
   const notesUsed = await readTraceNotes(q, turn.notes_used);
   const auditorNotes = await readAuditorNotes(q, proposals);
+  const contextSummary = shown ? textOrNone(turn.context_summary) : null;
 
   return {
     turnId: turn.id,
     status: turn.status,
     ...(notesUsed.length > 0 ? { notesUsed } : {}),
-    steps: steps.map(stepOf),
+    ...(contextSummary !== null ? { contextSummary } : {}),
+    steps: steps.map((r) => stepOf(r, shown)),
     extraCalls: extras.flatMap((r): TraceExtraCall[] => {
       const call = callOf(r);
       if (!call) return [];

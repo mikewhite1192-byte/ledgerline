@@ -33,7 +33,7 @@ export type Part =
   | { kind: "link"; href: string; label: string }
   | { kind: "error"; category: string }
   // "How this was worked out" for the turn, or for one proposal card when proposalId is set.
-  | { kind: "trace"; turnId: string; proposalId?: string; load?: TraceLoader };
+  | { kind: "trace"; turnId: string; proposalId?: string; load?: TraceLoader; stepThrough?: boolean };
 
 export type ChatMessage = { id: string; role: "user" | "agent"; at?: string; parts: Part[] };
 
@@ -245,6 +245,7 @@ export function ChatThread({
                             proposalId={p.proposalId}
                             load={p.load}
                             hrefFor={hrefFor}
+                            stepThrough={p.stepThrough}
                           />
                         );
                     }

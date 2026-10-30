@@ -198,6 +198,7 @@ export function AgentChat({
   initialHelp,
   viewer,
   timezone,
+  stepThrough = false,
 }: {
   initialTurns: TurnView[];
   streamMode: "sse" | "poll";
@@ -215,6 +216,8 @@ export function AgentChat({
   viewer?: Viewer;
   // The carrier's time zone, for times shown on a card (an override's time).
   timezone?: string;
+  // flags.stepThrough as the page read it: the answer's trace panel offers "Step through".
+  stepThrough?: boolean;
 }) {
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
   const [draft, setDraft] = useState(initialDraft ?? "");
@@ -490,6 +493,7 @@ export function AgentChat({
   const messages = toMessages(turns, notices, reports, showReport, auditPage, viewer).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
+      if (p.kind === "trace") return stepThrough && !p.proposalId ? { ...p, stepThrough: true } : p;
       if (p.kind !== "proposal") return p;
       const o = owner.get(p.proposal.id);
       if (!o) return p;

@@ -6,7 +6,7 @@ import { assertMoneyEnvSafe, MoneyEnvRefused } from "../lib/money/guard";
 import { payoutSwitchOn } from "../lib/money/ledger";
 import { DEMO_CARRIERS } from "../lib/seed/carriers";
 import { isLocalDate } from "../lib/time/local-date";
-import { flags, type Flags } from "./flags";
+import { flags, stepThroughShown, type Flags } from "./flags";
 import { LOCAL_SWITCHES } from "../../e2e/env.local-mode";
 import { applyLocalOverrides, LOCAL_OFF_ONLY, LOCAL_OVERRIDABLE } from "./local-overrides";
 
@@ -71,6 +71,10 @@ const KEPT_OFF = [
   // Money codes ship with their own merge, dark and unarmed; the owner turns them on in their own PR.
   "moneyCodes.enabled",
   "moneyCodes.armed",
+  // The quarter review ships dark with its own merge; the owner turns it on in its own PR.
+  "quarterReviewEnabled",
+  // Step through for staff on production is the owner's call, in its own one-line PR.
+  "stepThrough.staff",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -92,12 +96,14 @@ describe("flags", () => {
     for (const name of RELEASED_ON) expect(switches[name], name).toBe(true);
     for (const name of KEPT_OFF) expect(switches[name], name).toBe(false);
     // auditorRequired ships on with the auditor: a proposal waits for its verdict. Advance payouts
-    // ship unarmed: arming is its own one-line PR.
+    // ship unarmed: arming is its own one-line PR. Step through ships on for development and test
+    // runs only, as it merged; the release does not set it.
     expect(Object.keys(switches).sort()).toEqual(
-      [...RELEASED_ON, ...KEPT_OFF, "auditorRequired", "advancePayouts.armed"].sort(),
+      [...RELEASED_ON, ...KEPT_OFF, "auditorRequired", "advancePayouts.armed", "stepThrough.dev"].sort(),
     );
     expect(flags.auditorRequired).toBe(true);
     expect(flags.advancePayouts.armed).toBe(false);
+    expect(flags.stepThrough.dev).toBe(true);
   });
 
   it("keeps every outside send and the standby host off", () => {
@@ -192,8 +198,9 @@ describe("flags", () => {
     const local = [...LOCAL_OVERRIDABLE, ...LOCAL_OFF_ONLY] as readonly string[];
     // The two lists never share a switch.
     expect(LOCAL_OVERRIDABLE.filter((k) => (LOCAL_OFF_ONLY as readonly string[]).includes(k))).toEqual([]);
+    // stepThrough.dev reads NODE_ENV, not local mode, and local mode may never set it.
     for (const [name, on] of booleanSwitches(flags)) {
-      if (on && name !== "auditorRequired") expect(local, name).toContain(name);
+      if (on && name !== "auditorRequired" && name !== "stepThrough.dev") expect(local, name).toContain(name);
     }
     // Nothing that stays off can be switched by local mode at all.
     for (const name of KEPT_OFF) expect(local).not.toContain(name);
@@ -541,6 +548,33 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("profitBriefEnabled");
+  });
+
+  it("ships the quarter review dark, at most 30 cents a review, and never switched on by local mode", () => {
+    expect(flags.quarterReviewEnabled).toBe(false);
+    expect(flags.quarterReviewLimits).toEqual({ maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 });
+    for (const v of Object.values(flags.quarterReviewLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // The wrapper refuses an output budget over 8192 tokens.
+    expect(flags.quarterReviewLimits.maxOutputTokens).toBeLessThanOrEqual(8192);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewEnabled");
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewLimits");
+  });
+});
+
+describe("step through", () => {
+  it("is on in development and tests only, and off elsewhere until the owner turns it on for staff", () => {
+    expect(flags.stepThrough).toEqual({ dev: true, staff: false });
+    expect(stepThroughShown(flags, { NODE_ENV: "production" })).toBe(false);
+    expect(stepThroughShown(flags, { NODE_ENV: "test" })).toBe(true);
+    expect(stepThroughShown(flags, { NODE_ENV: "development" })).toBe(true);
+    // Unset or unknown reads as production.
+    expect(stepThroughShown(flags, {})).toBe(false);
+    expect(stepThroughShown(flags, { NODE_ENV: "staging" })).toBe(false);
+    expect(stepThroughShown({ stepThrough: { dev: true, staff: true } }, { NODE_ENV: "production" })).toBe(true);
+    expect(stepThroughShown({ stepThrough: { dev: false, staff: false } }, { NODE_ENV: "development" })).toBe(false);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("stepThrough");
   });
 });
 

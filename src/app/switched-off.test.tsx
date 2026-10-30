@@ -42,6 +42,7 @@ const SWITCHES = [
   "collectionsEnabled",
   "profitBriefEnabled",
   "carrierMemoryEnabled",
+  "quarterReviewEnabled",
 ] as const;
 const saved = Object.fromEntries(SWITCHES.map((s) => [s, flags[s]])) as Record<(typeof SWITCHES)[number], boolean>;
 // The card check's switch sits inside its own object.
@@ -210,6 +211,12 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
     load: async () => (await import("./memory/page")).default(),
     off: "Memory is off for this carrier",
     title: "Memory",
+  },
+  {
+    route: "/quarter",
+    load: async () => (await import("./quarter/page")).default(),
+    off: "Quarter review is off for this carrier",
+    title: "Quarter review",
   },
 ];
 
