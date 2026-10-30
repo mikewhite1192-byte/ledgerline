@@ -67,6 +67,10 @@ Muse Spark Open screening (`meta-models/muse-spark-open-1026`): 12 of 12 inputs 
 Muse Spark Open triage (`meta-models/muse-spark-open-1026`): category 25 of 26, amount 24 of 24, dates 14 of 14, driver 14 of 14.
 <!-- eval:end -->
 
+The cents columns cover the scored cases only. The whole run cost 614.37 cents: Muse Spark's 4 cases
+that ran out of time kept 52.98 cents of reserved spend, and Muse Spark Open's screening and triage
+calls added 11.55 cents.
+
 In the app, every pay sweep prints the live version: how many drivers were checked a second time
 and how many of the engine's problems the second check also found.
 
