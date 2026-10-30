@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { PageFocus } from "@/components/agent/page-focus";
 import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -23,22 +24,32 @@ export type HelpLinkTarget = { href: string; label: string };
 export const HOW_PAY_WORKS: HelpLinkTarget = { href: "/help/how-pay-works", label: "How trucking pay works" };
 
 // A signed-in page inside the shell, with the app's nav, the carrier chip and the help link (null
-// leaves it off, as on the help page itself).
+// leaves it off, as on the help page itself). A record's page passes `focus`, the record it read
+// under the carrier, so the agent panel can ask about it; list pages pass none.
 export function SignedInPage({
   tenant,
   current,
   title,
   help = HOW_PAY_WORKS,
+  focus,
   children,
 }: {
   tenant: TenantInfo;
   current: NavKey;
   title: string;
   help?: HelpLinkTarget | null;
+  focus?: PageFocus;
   children: ReactNode;
 }) {
   return (
-    <AppShell tenant={tenant} nav={appNav(current)} title={title} help={help ?? undefined} signOut={<SignOutForm />}>
+    <AppShell
+      tenant={tenant}
+      nav={appNav(current)}
+      title={title}
+      help={help ?? undefined}
+      signOut={<SignOutForm />}
+      focus={focus}
+    >
       <div className="mx-auto grid w-full max-w-[960px] min-w-0 gap-6">{children}</div>
     </AppShell>
   );

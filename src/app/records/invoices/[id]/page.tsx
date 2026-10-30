@@ -45,7 +45,12 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
   const actions = invoiceRecordActions(page.record);
   const factored = page.record.factored;
   return (
-    <SignedInPage tenant={page.shell} current="/invoices" title={`Invoice ${inv.invoiceNumber}`}>
+    <SignedInPage
+      tenant={page.shell}
+      current="/invoices"
+      title={`Invoice ${inv.invoiceNumber}`}
+      focus={{ table: "invoices", id: inv.id, label: `Invoice ${inv.invoiceNumber}` }}
+    >
       <PageHeader
         title={inv.invoiceNumber}
         description={<RecordLink table="customers" id={inv.customerId}>{inv.customerName}</RecordLink>}

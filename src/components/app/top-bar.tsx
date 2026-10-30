@@ -3,6 +3,7 @@
 import { Bell, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, type MouseEvent, type ReactNode } from "react";
+import { useAgentPanel } from "@/components/agent/panel-context";
 import { cn } from "@/lib/cn";
 import { ASK_ANCHOR, NEEDS_YOU_ANCHOR } from "./anchors";
 import { HideAmounts } from "./hide-amounts";
@@ -21,27 +22,38 @@ function focusComposer(box: HTMLTextAreaElement) {
   box.focus({ preventScroll: true });
 }
 
-// "Ask" goes to the agent on Home. Already on Home, it puts the cursor in the question box instead
-// of reloading; a click with a modifier key still opens a new tab. The wait lets the phone menu
-// close and hand focus back before the box takes it.
-function onAsk(e: MouseEvent<HTMLAnchorElement>) {
-  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  const box = composer();
-  if (!box) return;
-  e.preventDefault();
-  window.setTimeout(() => focusComposer(box), 0);
+function plainClick(e: MouseEvent<HTMLAnchorElement>): boolean {
+  return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
 }
 
+// "Ask" goes to the agent. On a page with the agent panel it opens the panel; on Home it puts the
+// cursor in the question box instead of reloading; anywhere else it goes to Home's box. A click
+// with a modifier key still opens a new tab. The wait lets the phone menu close and hand focus
+// back before the box takes it.
 export function AskLink({ className, children }: { className?: string; children: ReactNode }) {
+  const panel = useAgentPanel();
+  function onAsk(e: MouseEvent<HTMLAnchorElement>) {
+    if (!plainClick(e)) return;
+    if (panel) {
+      e.preventDefault();
+      window.setTimeout(() => panel.open(), 0);
+      return;
+    }
+    const box = composer();
+    if (!box) return;
+    e.preventDefault();
+    window.setTimeout(() => focusComposer(box), 0);
+  }
   return (
-    <Link href={ASK_HREF} onClick={onAsk} className={className}>
+    <Link href={ASK_HREF} onClick={onAsk} aria-haspopup={panel ? "dialog" : undefined} className={className}>
       {children}
     </Link>
   );
 }
 
 // The wide box in the top bar. It is the agent, not a separate search: it reads like a field and
-// takes you to the question box. Arriving on Home from another page with #ask, it focuses the box.
+// opens the agent panel, or takes you to Home's question box. Arriving on Home from another page
+// with #ask, it focuses the box.
 function AskBox() {
   useEffect(() => {
     const wait = window.setTimeout(() => {

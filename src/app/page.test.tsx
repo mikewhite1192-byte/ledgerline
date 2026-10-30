@@ -61,7 +61,7 @@ const q: Queryable = {
   },
 };
 
-const SWITCHES = ["rulesByTalkingEnabled", "agentEnabled", "aiEnabled"] as const;
+const SWITCHES = ["rulesByTalkingEnabled", "agentEnabled", "agentFocusEnabled", "aiEnabled"] as const;
 // The switches whose reads the fake transaction above does not answer (the needs-you rows of the
 // pay run, advances, invoices and the chat loop's escalations, the sweep's line, Friday's cash
 // card): off, so the page reads only what this test fakes.
@@ -106,5 +106,11 @@ describe("home, ?rule=1", () => {
     expect(screen.getByTestId("draft").textContent).toBe("");
     expect(screen.getByTestId("help").textContent).toBe("");
     expect(mocks.readNextWeekStart).not.toHaveBeenCalled();
+  });
+
+  it("shows no agent launcher with the panel switches on: its chat is inline", async () => {
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    expect(screen.queryByRole("button", { name: "Ask the agent" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Agent" })).toBeNull();
   });
 });

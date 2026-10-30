@@ -198,6 +198,14 @@ async function readReport(report: ReportView): Promise<ReportLoad> {
   }
 }
 
+// The record a question is about: a table and an id, nothing a person wrote.
+export type ChatFocus = { table: string; id: string };
+
+// A question from the panel while it is about a record carries {table, id}, never the label.
+function withFocus(body: Record<string, unknown>, focus: ChatFocus | null): Record<string, unknown> {
+  return focus ? { ...body, focus: { table: focus.table, id: focus.id } } : body;
+}
+
 async function errorOf(res: Response): Promise<unknown> {
   try {
     return ((await res.json()) as { error?: unknown }).error;
@@ -218,6 +226,9 @@ export function AgentChat({
   viewer,
   timezone,
   stepThrough = false,
+  compact = false,
+  focus = null,
+  onConversation,
 }: {
   initialTurns: TurnView[];
   streamMode: "sse" | "poll";
@@ -237,6 +248,13 @@ export function AgentChat({
   timezone?: string;
   // flags.stepThrough as the page read it: the answer's trace panel offers "Step through".
   stepThrough?: boolean;
+  // The agent panel's layout (ChatThread compact); Home leaves it off.
+  compact?: boolean;
+  // The record the panel's question is about, sent as {table, id} only: the server checks it under
+  // the carrier and names it itself. Home sends none, so its request is the same as before.
+  focus?: ChatFocus | null;
+  // Told each time the thread's conversation changes, so the panel can keep it across pages.
+  onConversation?: (conversationId: string) => void;
 }) {
   const visitor = useViewerRole() === "judge";
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
@@ -254,6 +272,13 @@ export function AgentChat({
   const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const alive = useRef(true);
   const asked = useRef(new Set<string>());
+  const told = useRef(onConversation);
+  useEffect(() => {
+    told.current = onConversation;
+  });
+  useEffect(() => {
+    if (conversationId) told.current?.(conversationId);
+  }, [conversationId]);
 
   useEffect(() => {
     alive.current = true;
@@ -392,7 +417,7 @@ export function AgentChat({
       res = await fetch("/api/agent/turn", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(conversationId ? { conversationId, turnId, text } : { turnId, text }),
+        body: JSON.stringify(withFocus(conversationId ? { conversationId, turnId, text } : { turnId, text }, focus)),
       });
     } catch {
       // The request may or may not have reached the server: read the turn back before saying.
@@ -552,6 +577,7 @@ export function AgentChat({
             }
       }
       intro={intro}
+      compact={compact}
       composer={{
         disabled: Boolean(disabledReason),
         disabledReason,

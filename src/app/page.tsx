@@ -238,6 +238,8 @@ export default async function Home({
       help={HOW_PAY_WORKS}
       title="Home"
       signOut={signOut}
+      // Home's chat is inline, so it has no launcher or panel.
+      agentPanel={false}
       // The bell's dot counts only a read that came back; an unread list never reads as zero.
       needsYouCount={needsYou && !needsYou.unread ? needsYou.rows.length : undefined}
     >

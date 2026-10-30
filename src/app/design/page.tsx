@@ -218,6 +218,8 @@ export default function DesignPage() {
       tenant={SAMPLE_TENANT}
       title="Design review"
       homeHref="/design"
+      // A public specimen with no session: no agent panel, so it asks nothing of the server.
+      agentPanel={false}
       nav={SECTIONS.map((s) => ({ href: `#${s.id}`, label: s.label, icon: s.icon }))}
       signOut={
         <Button variant="ghost" disabled className="w-full justify-start">

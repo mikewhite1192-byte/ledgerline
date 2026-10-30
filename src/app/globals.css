@@ -212,6 +212,7 @@
   --animate-pulse-dot: pc-pulse 1.4s ease-in-out infinite;
   --animate-rise: pc-rise 180ms ease-out;
   --animate-sheet-in: pc-sheet-in 200ms ease-out;
+  --animate-sheet-in-right: pc-sheet-in-right 200ms ease-out;
 }
 
 @layer base {
@@ -270,6 +271,17 @@
     filter: blur(0.35em);
     user-select: none;
     pointer-events: none;
+  }
+
+  /*
+    The agent panel open beside the page (components/agent/agent-launcher.tsx puts the attribute on
+    <html>). On a wide screen the page makes room for it, so nothing the person reads sits under
+    it; narrower, the panel lies over the page's right edge and the rest stays usable.
+  */
+  @media (min-width: 80rem) {
+    [data-agent-panel="open"] body {
+      padding-right: 420px;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -336,6 +348,15 @@
 @keyframes pc-sheet-in {
   from {
     transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes pc-sheet-in-right {
+  from {
+    transform: translateX(100%);
   }
   to {
     transform: translateX(0);

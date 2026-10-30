@@ -45,7 +45,7 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
   }
   const { record: d, advanceLinks, money } = page.record;
   return (
-    <SignedInPage tenant={page.shell} current="none" title={d.name}>
+    <SignedInPage tenant={page.shell} current="none" title={d.name} focus={{ table: "drivers", id: d.id, label: d.name }}>
       <PageHeader
         title={d.name}
         description={d.code}
