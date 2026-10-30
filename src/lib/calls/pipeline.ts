@@ -16,6 +16,7 @@ import { handOffVoiceNote, MIN_CALL_MS, STEP_BUDGET_MS, type HandOffResult, type
 import {
   CALL_UPDATE_FORMAT,
   CALL_UPDATE_SYSTEM,
+  capChars,
   HAND_OFF_KINDS,
   MAX_TURNS,
   parseUpdates,
@@ -43,7 +44,14 @@ import {
 // stored (owner decision 2).
 
 export const SEGMENT_TRANSCRIBE = { purpose: "call_segment_transcribe", maxCostCents: 1, timeoutMs: 15_000 } as const;
-export const SEGMENT_UPDATE = { purpose: "call_segment_update", timeoutMs: 12_000, maxOutputTokens: 700 } as const;
+// Reasoning counts against the output budget, so the update reasons at the least effort and an
+// English turn's copy is left empty for the parser to fill from the turn's own words.
+export const SEGMENT_UPDATE = {
+  purpose: "call_segment_update",
+  timeoutMs: 12_000,
+  maxOutputTokens: 700,
+  reasoningEffort: "minimal",
+} as const;
 
 // The words a segment listens for: the voice note's six, the trucking words a pay call uses, and
 // the driver's code.
@@ -388,7 +396,6 @@ export type BuiltTurn = {
 };
 
 const TURN_TEXT_CHARS = 4000;
-const capChars = (text: string, max: number) => Array.from(text).slice(0, max).join("");
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 // The transcription's turns as rows: empty ones dropped, in time order, at most MAX_TURNS (the
@@ -688,6 +695,7 @@ export async function receiveSegment(session: Session, input: SegmentInput, deps
           timeoutMs: Math.min(SEGMENT_UPDATE.timeoutMs, Math.floor(remaining())),
           traceId,
           maxOutputTokens: SEGMENT_UPDATE.maxOutputTokens,
+          reasoningEffort: SEGMENT_UPDATE.reasoningEffort,
           format: CALL_UPDATE_FORMAT,
           messages: [
             { role: "system", content: CALL_UPDATE_SYSTEM },
@@ -722,9 +730,10 @@ export async function receiveSegment(session: Session, input: SegmentInput, deps
       }),
     );
 
-    // The agent's turn runs inside this request only when a whole turn fits in what is left of it;
-    // otherwise the note waits, 'ready', for the hand-off route.
-    if (handOff && remaining() >= flags.agentTurnLimits.wallClockMs) {
+    // The agent's turn runs inside this request only when a whole turn fits in what is left of it,
+    // with MIN_CALL_MS more for the writes the turn makes after its own deadline; otherwise the
+    // note waits, 'ready', for the hand-off route.
+    if (handOff && remaining() >= flags.agentTurnLimits.wallClockMs + MIN_CALL_MS) {
       await runHandOff(session, segment.id, handOff, { db, clock, deps });
     }
     return await answerFrom("done");

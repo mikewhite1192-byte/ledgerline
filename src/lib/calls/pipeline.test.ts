@@ -5,7 +5,7 @@ import type { ScreenOutcome } from "../agent/gateway/screen";
 import { UNTRUSTED_WARNING } from "../agent/gateway/tools/read/get-inbound-message";
 import type { CompleteFn } from "../agent/gateway/types";
 import type { Param, Queryable, TenantDb } from "../db";
-import type { HandOffResult } from "../voice/pipeline";
+import { MIN_CALL_MS, STEP_BUDGET_MS, type HandOffResult } from "../voice/pipeline";
 import { encodeWav } from "../voice/wav-encode";
 import * as P from "./pipeline";
 import { CALL_UPDATE_FORMAT, MAX_TURNS } from "./update";
@@ -18,8 +18,9 @@ import { CALL_UPDATE_FORMAT, MAX_TURNS } from "./update";
 
 const saved = structuredClone(flags);
 const T0 = Date.UTC(2026, 10, 2, 16, 0, 0);
-// The hand-off runs inline only while a whole agent turn fits in the 27 second step budget.
-const STEP_LEFT_FOR_TURN = 27_000 - saved.agentTurnLimits.wallClockMs;
+// The hand-off runs inline only while a whole agent turn, and MIN_CALL_MS for the writes after it,
+// fit in the 27 second step budget.
+const STEP_LEFT_FOR_TURN = STEP_BUDGET_MS - saved.agentTurnLimits.wallClockMs - MIN_CALL_MS;
 const session = { sub: "sub-1", email: "staff@example.test", tenantId: "11111111-1111-4111-8111-111111111111" };
 const CALL = "22222222-2222-4222-8222-222222222222";
 const DRIVER = "33333333-3333-4333-8333-333333333333";
@@ -755,6 +756,35 @@ describe("receiveSegment", () => {
     // A second press answers with the same conversation and runs nothing.
     expect(await P.finishHandOff(session, CALL, 0, h.deps)).toEqual(finished);
     expect(h.handOff).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [22_000, false],
+    [24_999, false],
+    [25_000, true],
+    [27_000, true],
+  ])("with %i ms left after the update, runs the agent's turn inline: %s", async (left, inline) => {
+    const h = harness();
+    h.complete.mockImplementation(async () => {
+      now.t += STEP_BUDGET_MS - left;
+      return aiAnswer(updates(0));
+    });
+    const result = await h.send(0);
+    expect(result).toMatchObject({ ok: true, status: "done" });
+    expect(h.handOff).toHaveBeenCalledTimes(inline ? 1 : 0);
+    expect(result.ok && result.turns[1]).toMatchObject({ voiceNoteId: expect.any(String), conversationId: inline ? CONVERSATION : null });
+    // A turn not run inline waits, its note 'ready', for the hand-off route, which runs it once.
+    const finished = await P.finishHandOff(session, CALL, 0, h.deps);
+    expect(finished.ok && finished.turns[1].conversationId).toBe(CONVERSATION);
+    expect(h.handOff).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the updates at the least reasoning effort, inside the same output budget", async () => {
+    const h = harness();
+    await h.send(0);
+    const [, ask] = h.complete.mock.calls[0];
+    expect(ask).toMatchObject({ reasoningEffort: "minimal", maxOutputTokens: 700 });
+    expect(P.SEGMENT_UPDATE).toMatchObject({ reasoningEffort: "minimal", maxOutputTokens: 700 });
   });
 
   it("keeps a segment done when the hand-off is refused or fails, for the hand-off route to finish", async () => {

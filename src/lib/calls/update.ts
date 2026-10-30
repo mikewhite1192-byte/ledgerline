@@ -34,8 +34,8 @@ export const CALL_UPDATE_SYSTEM = [
   "  wrong, 'promise' when someone commits to do something, 'note' for anything else the office",
   "  should know, 'none' for small talk.",
   "- language: 'en' for English, 'es' for Spanish, 'other' for anything else.",
-  "- english_text: a faithful English translation of the turn. Keep every number, amount and code",
-  "  exactly as spoken. Add nothing.",
+  "- english_text: an empty string when language is 'en'. Otherwise a faithful English translation",
+  "  of the turn. Keep every number, amount and code exactly as spoken. Add nothing.",
   "- amount_cents: the dollar amount the turn states, in cents, or null. Never guess one.",
   "- summary: one short plain sentence saying what the turn means for the office.",
 ].join("\n");
@@ -99,10 +99,14 @@ export type TurnUpdate = {
 
 const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
 
+// The first max characters of a text, counted as Postgres counts them (code points), so a cut
+// never splits a surrogate pair and leaves a lone half the database refuses.
+export const capChars = (text: string, max: number) => Array.from(text).slice(0, max).join("");
+
 // The words a turn is read as: whitespace folded to single spaces, so a turn is always one line
 // and its words can never start a line of their own.
 export function lineText(text: string): string {
-  return oneLine(text).slice(0, LINE_TEXT_CHARS);
+  return capChars(oneLine(text), LINE_TEXT_CHARS);
 }
 
 // The turns as lines, in the order given: the transcript the screen and the model read. The same
@@ -134,7 +138,7 @@ export function parseUpdates(answer: string, turns: readonly LineTurn[]): TurnUp
     seen.add(u.turn);
     const stated = extractAmountsCents(lineText(turn.text));
     const amountCents = u.amount_cents !== null && stated.includes(u.amount_cents) ? u.amount_cents : null;
-    const englishText = u.language === "en" ? lineText(turn.text).slice(0, ENGLISH_TEXT_CHARS) : oneLine(u.english_text);
+    const englishText = u.language === "en" ? capChars(lineText(turn.text), ENGLISH_TEXT_CHARS) : oneLine(u.english_text);
     out.push({
       turnKey: u.turn,
       kind: u.kind,

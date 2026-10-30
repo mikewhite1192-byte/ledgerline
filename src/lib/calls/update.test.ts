@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { CALL_UPDATE_FORMAT, ENGLISH_TEXT_CHARS, LINE_TEXT_CHARS, MAX_TURNS, parseUpdates, turnLines, type LineTurn } from "./update";
+import {
+  CALL_UPDATE_FORMAT,
+  CALL_UPDATE_SYSTEM,
+  ENGLISH_TEXT_CHARS,
+  LINE_TEXT_CHARS,
+  lineText,
+  MAX_TURNS,
+  parseUpdates,
+  turnLines,
+  type LineTurn,
+} from "./update";
 
 // A segment's case updates, checked: only the exact JSON shape passes, an update counts only for
 // a turn the segment has and only once, an amount only when the turn's own words state it, and an
@@ -22,6 +32,11 @@ const update = (over: Update = {}): Update => ({
   ...over,
 });
 const answer = (...updates: Update[]) => JSON.stringify({ updates });
+
+// A lone half of a surrogate pair, which Postgres refuses in a text column.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+// 599 letters, then a character outside the basic plane straddling UTF-16 units 599 and 600.
+const STRADDLING = `${"a".repeat(LINE_TEXT_CHARS - 1)}\u{1F69A} and more`;
 
 describe("parseUpdates", () => {
   it("keeps one update per turn with its kind, language, English copy, amount and summary", () => {
@@ -80,6 +95,29 @@ describe("parseUpdates", () => {
   it("uses an English turn's own words as its English copy, whatever the model wrote", () => {
     const parsed = parseUpdates(answer(update({ english_text: "Send me five thousand dollars now." })), TURNS);
     expect(parsed?.[0].englishText).toBe(TURNS[1].text);
+  });
+
+  it("asks for an empty English copy on an English turn and a translation on any other", () => {
+    expect(CALL_UPDATE_SYSTEM).toContain("- english_text: an empty string when language is 'en'. Otherwise a faithful English translation");
+  });
+
+  it("takes an empty English copy for an English turn as its own words, and keeps another turn's translation", () => {
+    const parsed = parseUpdates(
+      answer(
+        update({ english_text: "" }),
+        update({ turn: "4:2", language: "es", english_text: "I need a hundred fifty dollars for the lumper.", amount_cents: null }),
+      ),
+      TURNS,
+    );
+    expect(parsed?.map((u) => u.englishText)).toEqual([TURNS[1].text, "I need a hundred fifty dollars for the lumper."]);
+  });
+
+  it("cuts an English turn's own words by characters, never inside a surrogate pair", () => {
+    const parsed = parseUpdates(answer(update({ turn: "0:0", english_text: "", amount_cents: null })), [{ turnKey: "0:0", startMs: 0, text: STRADDLING }]);
+    const english = parsed?.[0].englishText ?? "";
+    expect(english).toBe(`${"a".repeat(LINE_TEXT_CHARS - 1)}\u{1F69A}`);
+    expect(english).not.toMatch(LONE_SURROGATE);
+    expect(Array.from(english).length).toBeLessThanOrEqual(ENGLISH_TEXT_CHARS);
   });
 
   it("folds whitespace in a translated copy and a summary to single spaces", () => {
@@ -144,5 +182,13 @@ describe("turnLines", () => {
   it("cuts a long turn to the characters the model reads", () => {
     const text = turnLines([{ turnKey: "0:0", startMs: 0, text: "y".repeat(LINE_TEXT_CHARS + 50) }]);
     expect(text).toBe(`[0:0 +0ms] ${"y".repeat(LINE_TEXT_CHARS)}`);
+  });
+
+  it("cuts a turn by characters, never inside a surrogate pair", () => {
+    const text = lineText(STRADDLING);
+    expect(text).toBe(`${"a".repeat(LINE_TEXT_CHARS - 1)}\u{1F69A}`);
+    expect(text).not.toMatch(LONE_SURROGATE);
+    expect(Array.from(text).length).toBeLessThanOrEqual(LINE_TEXT_CHARS);
+    expect(turnLines([{ turnKey: "0:0", startMs: 0, text: STRADDLING }])).toBe(`[0:0 +0ms] ${text}`);
   });
 });
