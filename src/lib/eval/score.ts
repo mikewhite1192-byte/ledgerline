@@ -189,6 +189,7 @@ export function scoreCase(c: EvalCase, turn: TurnRead): CaseScore {
     proposalKinds: [...new Set(turn.proposals.map((p) => p.kind))].sort(),
     auditorVerdict: auditor.verdict,
     auditorAgrees: auditor.agrees,
+    endedReason: turn.endedReason,
     costNanocents: turn.costNanocents,
     auditorNanocents: turn.auditorNanocents,
     latencyMs: turn.latencyMs,

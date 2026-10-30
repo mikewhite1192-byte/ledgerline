@@ -322,8 +322,9 @@ function capsFor(target: AiTarget): { cap: number | null; wonderCap: number | nu
 // Builds one attempt for one host: validates the call's own input and builds its body (plan),
 // reads the host's key, and checks the reserve against the call's maxCostCents and the job's
 // hourly allowance. A call that alone is over the allowance would be refused job_cap again right
-// after every clear, so it is refused here, before any reservation or alert. Null, with one log
-// line naming the host, when the host's key is missing or unreadable: nothing was sent.
+// after every clear, so it is refused here, before any reservation or alert, with one log line of
+// numbers (the reserve and the limit it is over), never the request. Null, with one log line
+// naming the host, when the host's key is missing or unreadable: nothing was sent.
 async function prepare<T, U extends Price["unit"]>(
   ctx: CallContext<T, U>,
   provider: AiProvider,
@@ -336,7 +337,13 @@ async function prepare<T, U extends Price["unit"]>(
     console.error(`ai: ${ctx.target} ${label}not configured (no ${provider} key)`);
     return null;
   }
-  if (overCallCost(p.reserveNanocents, ctx.c) || p.reserveNanocents > ctx.jobCap) {
+  const overCall = overCallCost(p.reserveNanocents, ctx.c);
+  if (overCall || p.reserveNanocents > ctx.jobCap) {
+    const limit = overCall ? `cap=${ctx.c.maxCostCents}c` : `job_cap=${centsToDisplay(ctx.jobCap)}c`;
+    console.error(
+      `ai: ${ctx.target} ${configured.model} ${TARGETS[ctx.target].kind} ${ctx.c.purpose} ${label}refused too_expensive` +
+        ` reserve=${centsToDisplay(p.reserveNanocents)}c ${limit}${ctx.trace}`,
+    );
     throw new AiError("too_expensive");
   }
   return { provider, model: configured.model, price: configured.price, p, key };

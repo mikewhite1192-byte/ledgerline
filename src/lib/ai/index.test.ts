@@ -747,6 +747,15 @@ describe("every call, refusals before any reservation", () => {
     );
     expect(err.category).toBe("too_expensive");
     expect(ledger.steps).toEqual([]);
+    // Each refusal is one line of numbers: its purpose, its reserve and the cap it is over, never
+    // the prompt or the key.
+    expect(logged).toEqual([
+      expect.stringMatching(/^ai: spark muse-spark-1\.3 text proof refused too_expensive reserve=3\.\d{4}c cap=3c$/),
+      expect.stringMatching(/^ai: wonder muse-wonder-1\.0 text proof refused too_expensive reserve=16\.\d{4}c cap=16c$/),
+      "ai: image muse-image-1.0 image demo_art refused too_expensive reserve=4.0000c cap=3c",
+    ]);
+    expect(logged.join("\n")).not.toContain(PROMPT);
+    expect(logged.join("\n")).not.toContain(KEY);
   });
 
   it("refuses at the cap with nothing written and no call made", async () => {
@@ -891,6 +900,10 @@ describe("the job's hourly allowance", () => {
       expect(ledger.steps).toEqual([]);
       expect(ledger.alerts).toEqual([]);
       expect(fetchFn).not.toHaveBeenCalled();
+      // Logged with the allowance it is over, as the call's own cap is not.
+      expect(logged).toEqual([
+        expect.stringMatching(new RegExp(`^ai: spark muse-spark-1\\.3 text proof refused too_expensive reserve=3\\.\\d{4}c job_cap=3\\.0000c trace=${TRACE}$`)),
+      ]);
 
       flags.aiJobHourlyCapCents = 4;
       const fits = fakeLedger();

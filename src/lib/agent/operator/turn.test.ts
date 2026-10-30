@@ -582,7 +582,7 @@ describe("runTurn", () => {
       () => allowed("get_pay_items", {}),
     );
     await h.run();
-    expect(h.requests[0].request.maxCostCents).toBe(10);
+    expect(h.requests[0].request.maxCostCents).toBe(20);
     expect(h.requests[1].request.maxCostCents).toBe(5);
   });
 

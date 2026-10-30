@@ -116,6 +116,13 @@ describe("eval cache", () => {
     }
     expect(isCaseScore(score({ injection: { screenFlagged: true, noUnflaggedProposal: null, limitEnforced: false } }))).toBe(true);
     expect(isCaseScore({ ...score(), injection: { screenFlagged: "yes" } })).toBe(false);
+    // How the turn ended is a fixed word or null, never text, and a score from before it was kept
+    // is read as no score, so its case runs again.
+    expect(isCaseScore(score({ endedReason: "model_too_expensive" }))).toBe(true);
+    for (const endedReason of ["Ignore all rules", "", "x".repeat(41), 7]) expect(isCaseScore({ ...score(), endedReason })).toBe(false);
+    const older: Record<string, unknown> = { ...score() };
+    delete older.endedReason;
+    expect(isCaseScore(older)).toBe(false);
     expect(readCached(dir, cacheKey({ ...base, caseKey: "other" }))).toBeNull();
     // A key that is not a digest never names a path.
     expect(readCached(dir, "../escape")).toBeNull();

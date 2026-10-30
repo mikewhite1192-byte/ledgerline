@@ -183,6 +183,7 @@ describe("an eval case on the real tables", () => {
       proposalKinds: ["pay_correction"],
       auditorVerdict: "pass",
       auditorAgrees: true,
+      endedReason: null,
       costNanocents: 3 * CALL_COST,
       auditorNanocents: AUDIT_COST,
       latencyMs: 4_500,
