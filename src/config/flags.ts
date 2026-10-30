@@ -564,6 +564,21 @@ export type Flags = {
       sliceMs: number;
     };
   };
+  // Fuel and tax rates: a person looks up this week's diesel price or a state's fuel tax rate (one
+  // Muse Spark call with web search) and an admin pins one from its linked source. The agent only
+  // reads pinned rates (get_pinned_rates); it never looks one up or pins one, and nothing is
+  // recalculated, billed or paid from a pin in this release. Off means the Fuel and tax rates page
+  // is not found, its link is hidden, the routes and the services refuse before any work, and the
+  // read tool is not offered. Not a local override: the demo path's tool list must not change.
+  groundedRatesEnabled: boolean;
+  ratesLimits: {
+    // The cap on one lookup call, in cents.
+    lookupMaxCostCents: number;
+    // Lookups one carrier may start in a rolling day (failed ones count).
+    lookupsPerTenantPerDay: number;
+    // Web searches one lookup may run (each is billed on top of the tokens).
+    maxSearchCalls: 1 | 2 | 3;
+  };
 };
 
 export const flags: Flags = {
@@ -735,6 +750,8 @@ export const flags: Flags = {
       sliceMs: 20_000,
     },
   },
+  groundedRatesEnabled: false,
+  ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
 };
 
 applyLocalOverrides(flags);

@@ -46,6 +46,8 @@ export const TERMS = {
   margin: "What is left of the revenue after driver pay.",
   "days-to-pay":
     "The average days from an invoice's date to the day it was paid, over invoices paid in the 180 days before the week ended.",
+  "diesel-index": "The weekly average diesel price many customers tie the fuel surcharge to.",
+  "fuel-tax-rate": "What each state charges per gallon of diesel burned on its roads; settled every quarter.",
 } as const;
 
 export type TermId = keyof typeof TERMS;

@@ -77,6 +77,8 @@ const KEPT_OFF = [
   "stepThrough.staff",
   // The demo visitor sign-in ships dark with its own merge; the owner turns it on in its own PR.
   "judgeAccess.enabled",
+  // Fuel and tax rate lookups ship dark with their own merge; the owner turns them on in their own PR.
+  "groundedRatesEnabled",
   // Pay cards ship dark with their own merge; the owner turns them on in their own PR.
   "payCardsEnabled",
 ] as const;
@@ -133,6 +135,13 @@ describe("flags", () => {
     expect(flags.triageProvider).toBe("baseten");
     // The demo visitor sign-in: dark until the owner's one-line release PR.
     expect(flags.judgeAccess.enabled).toBe(false);
+    expect(flags.groundedRatesEnabled).toBe(false);
+  });
+
+  it("keeps a rate lookup small and its switch out of the local overrides", () => {
+    expect(flags.ratesLimits).toEqual({ lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 });
+    // The demo path turns every local override on; the read tool must stay out of its tool list.
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("groundedRatesEnabled");
   });
 
   it("keeps a demo visit small: a dollar of model time, 25 turns, $8.00 a day across every visit", () => {

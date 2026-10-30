@@ -554,6 +554,28 @@ export type CarrierNoteRow = {
   updated_by_sub: string | null;
 };
 
+// A fuel or tax rate (0053): a lookup's suggestion, or a pin an admin chose. Thousandths of a cent
+// per gallon ($3.657 is 365700); null on an unconfirmed suggestion.
+export type PinnedRateRow = {
+  id: string;
+  kind: "diesel_index" | "ifta_rate";
+  state: string | null;
+  status: "suggested" | "unconfirmed" | "pinned";
+  value_mcents: number | null;
+  source: "lookup" | "typed";
+  source_url: string;
+  source_title: string | null;
+  quote: string | null;
+  as_of: string | null;
+  effective_from: string | null;
+  lookup_call_id: string | null;
+  trace_id: string | null;
+  created_by: string;
+  pinned_by: string | null;
+  pinned_at: string | null;
+  retired_at: string | null;
+};
+
 export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
@@ -588,6 +610,7 @@ export type TenantRows = {
   cash_settings: CashSettingsRow[];
   cash_checks: CashCheckRow[];
   carrier_notes: CarrierNoteRow[];
+  pinned_rates: PinnedRateRow[];
 };
 
 // Compile-time proof that TenantRows has exactly one key per table.

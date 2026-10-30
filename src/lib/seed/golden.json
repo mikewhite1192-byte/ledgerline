@@ -35,6 +35,7 @@
         "vendor_bills": 6,
         "cash_settings": 1,
         "cash_checks": 0,
+        "pinned_rates": 0,
         "carrier_notes": 4
       },
       "linehaulCents": 30165000,
@@ -398,6 +399,7 @@
         "vendor_bills": 6,
         "cash_settings": 1,
         "cash_checks": 0,
+        "pinned_rates": 0,
         "carrier_notes": 4
       },
       "linehaulCents": 23376800,

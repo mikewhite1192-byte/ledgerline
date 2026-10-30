@@ -76,6 +76,7 @@ import {
 import { SUBJECT_STATUSES } from "@/lib/money/types";
 import { RULE_KEYS, RULES, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import * as payWords from "@/lib/pay-rules/words";
+import { lookupNotice, lookupsLeftLine, pinnedFromLine, pinNext, pinNotice, pinQuestion, RATES_WORDS } from "@/lib/rates/words";
 import { CARD_ERROR_FALLBACK, CARD_ERROR_WORDS, CARD_PILL_WORDS, CARD_REASON_WORDS, CARD_WORDS } from "@/lib/pay-cards/words";
 import { INVOICE_REVIEW_STATUSES } from "@/lib/rules-engine";
 import { FUEL_CHECK_NAMES, NO_SUGGESTION_REASONS } from "@/lib/rules-engine/fuel";
@@ -351,6 +352,10 @@ vi.mock("@/lib/pay-rules/read", async (importOriginal) => ({
   },
   readNextWeekStart: async () => get("nextStart"),
 }));
+vi.mock("@/lib/rates/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rates/read")>()),
+  readRatesPage: async () => get("ratesPage"),
+}));
 vi.mock("@/lib/portal/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/portal/views")>()),
   runView: async () => get("runView"),
@@ -476,6 +481,7 @@ function defaults(): Record<string, unknown> {
     sweepHome: fx.SWEEP_HOME,
     sweepPage: fx.SWEEP_PAGE,
     fuelPage: fx.FUEL_PAGE,
+    ratesPage: fx.RATES_PAGE,
     runView: fx.RUN_VIEW,
     runs: fx.RUNS,
     runChoices: fx.RUN_CHOICES,
@@ -1652,6 +1658,28 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "settings/rates/page.tsx",
+    variants: [
+      {
+        name: "pinned, with a newer lookup and a state not matched",
+        load: async () => (await import("@/app/settings/rates/page")).default(),
+        shows: RATES_WORDS.notMatched,
+      },
+      {
+        name: "nothing pinned yet",
+        setup: () => (state.fx.ratesPage = fx.RATES_EMPTY),
+        load: async () => (await import("@/app/settings/rates/page")).default(),
+        shows: RATES_WORDS.emptyTitle,
+      },
+      {
+        name: "a staff member, who cannot pin",
+        setup: () => (state.fx.ratesPage = { ...fx.RATES_PAGE, canPin: false, lookupsLeft: 0 }),
+        load: async () => (await import("@/app/settings/rates/page")).default(),
+        shows: RATES_WORDS.onlyAdmin,
+      },
+    ],
+  },
+  {
     file: "voice-notes/page.tsx",
     variants: [
       { name: "list", load: async () => (await import("@/app/voice-notes/page")).default() },
@@ -1706,6 +1734,7 @@ const PAGES: PageCase[] = [
   loading("settings/pay-rules/loading.tsx", () => import("@/app/settings/pay-rules/loading")),
   loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
   loading("sweep/fuel/loading.tsx", () => import("@/app/sweep/fuel/loading")),
+  loading("settings/rates/loading.tsx", () => import("@/app/settings/rates/loading")),
 ];
 
 // Route files this test does not render as a page, each with the reason. Keep it short: a new page
@@ -2948,6 +2977,46 @@ describe("the advances pages read by driver and date", () => {
     await renderPage(async () => (await import("@/app/records/advances/[id]/page")).default({ params: p({ id: ID }) }));
     expect(screen.getByRole("link", { name: "Advance of $100.00, ADV-1040" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Advance of $100.00, ADV-1041" })).toBeTruthy();
+  });
+});
+
+// The Fuel and tax rates page's words that show only after a click (a lookup's or a pin's note, the
+// typed form, the confirm), each read once, every category included.
+describe("no internal word on the rates page's notes and forms", () => {
+  it("every fixed line, note and confirm", () => {
+    const categories = [
+      "suggested",
+      "unconfirmed",
+      "no_source",
+      "limit",
+      "budget",
+      "forbidden",
+      "disabled",
+      "unknown",
+      "failed",
+      "pinned",
+      "already",
+      "changed",
+      "not_found",
+      "bad_request",
+      "unavailable",
+    ];
+    const words = [
+      ...Object.values(RATES_WORDS),
+      ...categories.flatMap((c) => [lookupNotice(c).text, pinNotice(c).text]),
+      pinQuestion("$3.657"),
+      pinNext("Oct 26, 2026"),
+      pinnedFromLine("Oct 19, 2026"),
+      ...[0, 1, 20].map(lookupsLeftLine),
+    ];
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
   });
 });
 

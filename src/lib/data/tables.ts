@@ -7,7 +7,8 @@
 // empty), the owner's briefs from 0042 (none planted), Cash Friday's bills, bank position and
 // checks from 0029 (the seed leaves cash_checks empty; the replace, and so the demo reset, clears
 // it before the weeks a check names), the pay cards from 0052 (none planted; their image bytes are
-// never listed, so no table read carries them), and the carrier notes from 0040 (last: a note names
+// never listed, so no table read carries them), the pinned fuel and tax rates from 0053 (the seed
+// pins none, so its replace only empties them), and the carrier notes from 0040 (last: a note names
 // its customer or driver by a soft reference), in an order where every table comes after the tables
 // it references (insert in this order, delete in reverse). Each column says how it travels: the
 // Data API sends strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the
@@ -55,6 +56,7 @@ export const TENANT_TABLES = [
   "vendor_bills",
   "cash_settings",
   "cash_checks",
+  "pinned_rates",
   "carrier_notes",
 ] as const;
 export type TenantTable = (typeof TENANT_TABLES)[number];
@@ -630,6 +632,28 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["created_by_sub", "text"],
       ["created_by_model_call_id", "uuid"],
       ["updated_by_sub", "text"],
+    ],
+  },
+  pinned_rates: {
+    table: "pinned_rates",
+    columns: [
+      ["id", "uuid"],
+      ["kind", "text"],
+      ["state", "text"],
+      ["status", "text"],
+      ["value_mcents", "int"],
+      ["source", "text"],
+      ["source_url", "text"],
+      ["source_title", "text"],
+      ["quote", "text"],
+      ["as_of", "date"],
+      ["effective_from", "date"],
+      ["lookup_call_id", "uuid"],
+      ["trace_id", "uuid"],
+      ["created_by", "uuid"],
+      ["pinned_by", "uuid"],
+      ["pinned_at", "timestamptz"],
+      ["retired_at", "timestamptz"],
     ],
   },
 };

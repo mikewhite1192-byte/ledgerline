@@ -252,6 +252,7 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "demo_sessions",
     "card_recon_runs",
     "card_recon_breaks",
+    "pinned_rates",
     "pay_cards",
   ];
 
@@ -562,6 +563,14 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           [randomUUID(), randomBytes(32).toString("hex"), cardRun],
         );
         expect(cardFound).toBe(1);
+        // A diesel price an admin typed from a page they linked (0053).
+        await q.execute(
+          `INSERT INTO pinned_rates (id, tenant_id, kind, status, value_mcents, source, source_url, effective_from,
+             created_by, pinned_by, pinned_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'diesel_index', 'pinned', 365700, 'typed',
+             'https://rates.example/diesel', CAST('2026-10-26' AS date), CAST($2 AS uuid), CAST($2 AS uuid), now())`,
+          [randomUUID(), c.membership],
+        );
         // A pay card reserved for its check on one of the carrier's own settlements, the row the
         // app writes before the model call (0052).
         const cardReserved = await q.execute(

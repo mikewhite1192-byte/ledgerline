@@ -111,6 +111,7 @@ export const TABLES = [
   "payment_applications",
   "vendor_bills",
   "card_transactions",
+  "pinned_rates",
 ] as const;
 export type TableName = (typeof TABLES)[number];
 
