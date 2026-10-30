@@ -446,15 +446,24 @@ describe("ifta_quarter", () => {
   });
 
   it("defaults to the quarter holding the carrier's today, in its own zone", async () => {
-    // 03:00 UTC on Oct 1 is still Sep 30 in New York, so the default quarter is Q3, which has none.
+    // 03:00 UTC on Oct 1 is still Sep 30 in New York, so the default quarter is Q3. Its only
+    // miles are the departed driver's three July loads (seed terminated-plan.ts), with no fuel.
     const early = { now: new Date(Date.UTC(2026, 9, 1, 3, 0, 0)), timeZone: plan.carrier.timezone };
     expect(plan.carrier.timezone).toBe("America/New_York");
     const r = await planDb(plan).withTenant(TENANT, (q) => computeReport(q, request("ifta_quarter"), early));
     expect(r.asOf).toBe("2026-09-30");
     expect(r.period).toEqual({ start: "2026-07-01", end: "2026-09-30" });
-    expect(r.rows).toEqual([]);
-    expect(r.emptyReason).toBe("no_rows");
-    expect(r.notes).toBeUndefined();
+    const gone = plan.rows.drivers.filter((d) => d.active_to !== null).map((d) => d.id);
+    const july = new Set(plan.rows.loads.filter((l) => gone.includes(l.driver_id ?? "")).map((l) => l.id));
+    const miles = new Map<string, number>();
+    for (const m of plan.rows.load_state_miles) {
+      if (july.has(m.load_id)) miles.set(m.state, (miles.get(m.state) ?? 0) + m.miles);
+    }
+    expect(r.rows.map((x) => [x.state, x.miles])).toEqual([...miles].sort(([a], [b]) => (a < b ? -1 : 1)));
+    // No fuel in the quarter, so the miles show and the tax stays unknown, never zero.
+    expect(r.rows.every((x) => x.taxPaidGallonsMilli === 0 && x.taxDueCents === null)).toBe(true);
+    expect(r.emptyReason).toBeUndefined();
+    expect(r.notes?.some((n) => n.startsWith("Fleet MPG unknown"))).toBe(true);
     const today = await run("ifta_quarter");
     expect(today.asOf).toBe("2026-11-02");
     expect(today.period).toEqual(Q4);

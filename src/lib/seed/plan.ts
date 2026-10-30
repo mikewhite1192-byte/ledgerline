@@ -54,6 +54,7 @@ import {
   type ParityPlanted,
 } from "./parity-plan";
 import { planInvoiceReview, type ReviewPlant } from "./review-plan";
+import { appendDeparted, departedStart } from "./terminated-plan";
 import { buildUntrustedInputs } from "./untrusted-inputs";
 
 // buildCarrierPlan(carrier, anchor): every row the seed writes for one demo carrier, built in
@@ -252,11 +253,13 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   const lanes = LANES[prefix];
   const periods = planPeriods(anchor, carrier.payConfigs[0].week_start_dow);
   const openWeek = periods[3];
-  // The pay rules versions, dated by the week each starts; ids are made with the other rows.
+  // The pay rules versions, dated by the week each starts; ids are made with the other rows. The
+  // opening version reaches back to the departed driver's first old week (terminated-plan.ts), so
+  // those weeks settle under it; its knobs and its place in the id stream stay as they were.
   const versions = carrier.payConfigs.map(({ from_week, note, ...knobs }) => {
     const week = periods[from_week];
     if (!week) throw new Error("a pay rules version starts outside the four weeks");
-    return { ...knobs, effective_from: week.start, note };
+    return { ...knobs, effective_from: from_week === 0 ? departedStart(periods) : week.start, note };
   });
   // The open week's version: escrow terms and schedules come from it.
   const config = configFor(versions, openWeek.start);
@@ -1209,6 +1212,9 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   rows.carrier_notes = buildCarrierNotes({ slug, anchor, customers: rows.customers, drivers: rows.drivers });
   // Cash Friday's bills and bank position, last: the balance is planted from everything above.
   Object.assign(rows, buildCashRows({ carrier, anchor, openWeek, rows, limits: flags.cashFridayLimits }));
+  // The departed driver and their three old paid weeks, after everything else and from their own
+  // stream, so no row above sees them and no other id or pick moves (terminated-plan.ts).
+  appendDeparted({ carrier, seed, periods, rows, firstName: firsts[drivers.length], lastName: lasts[drivers.length] });
 
   const plan: CarrierPlan = {
     carrier,

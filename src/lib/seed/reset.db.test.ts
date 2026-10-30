@@ -13,6 +13,7 @@ import { markSent, reserve, settle, type OutsideRecord, type Settlement } from "
 import type { MoneyDraft } from "../money/types";
 import type { Handlers } from "../desk/handlers";
 import { DESK_SOURCES } from "../desk/keys";
+import { listReleasesDue } from "../escrow/due";
 import { wakeDesk } from "../desk/loop";
 import { startSweep } from "../sweep/run";
 import { serviceSession, serviceSub } from "../sweep/service-session";
@@ -670,13 +671,16 @@ describe("the demo reset", () => {
          VALUES (current_tenant_id(), 'meta', 'reset-test-model', 'reset_test', 'reserved', 0, 'spark')`,
       ),
     );
-    // A failed escrow release naming the flow's proposal: the app role cannot delete it, so only
-    // the function clears it.
+    // The departed driver's escrow sent back (seed terminated-plan.ts), naming the flow's proposal:
+    // a released row takes them off the due list, the app role cannot delete it, so only the
+    // function clears it, and the reset leaves them due again.
+    const departed = plan.rows.drivers.find((d) => d.active_to !== null)!;
     await app.withTenant(tenantId, (q) =>
       q.execute(
-        `INSERT INTO escrow_releases (id, tenant_id, driver_id, proposal_id, opening_balance_cents, amount_cents, status)
-         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 2500, 2500, 'failed')`,
-        [randomUUID(), driver.id, flowProposal],
+        `INSERT INTO escrow_releases (id, tenant_id, driver_id, proposal_id, opening_balance_cents, amount_cents, status, released_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS bigint),
+           CAST($4 AS bigint), 'released', now())`,
+        [randomUUID(), departed.id, flowProposal, departed.escrow_balance_cents],
       ),
     );
     return session;
@@ -699,6 +703,9 @@ describe("the demo reset", () => {
     await withMoneySwitches(async () => {
       await dress(A, planA, "a");
       await dress(B, planB, "b");
+      // The departed driver's release went out, so nobody is due before the reset.
+      const departedA = planA.rows.drivers.find((d) => d.active_to !== null)!;
+      expect((await app.withTenant(A, (q) => listReleasesDue(q, DEMO_ANCHOR))).drivers).toEqual([]);
       const otherSession = await member(C, "other");
       await agentChain(C, otherSession, { kind: "invoice_fix", table: "customers", id: randomUUID(), amountCents: 100 }, null);
 
@@ -795,8 +802,12 @@ describe("the demo reset", () => {
         Object.fromEntries(CLEARED_TABLES.map((t) => [t, 0])),
       );
 
-      // A is its seeded week again, row for row.
+      // A is its seeded week again, row for row, and the departed driver is due again.
       expect(await rowsOf(A)).toEqual(sorted(planA.rows));
+      const due = await app.withTenant(A, (q) => listReleasesDue(q, DEMO_ANCHOR));
+      expect(due.drivers.map((d) => [d.driverId, d.balanceCents])).toEqual([
+        [departedA.id, departedA.escrow_balance_cents],
+      ]);
       // A's logins, model charges, audit log and sandbox link are kept; the audit log's rows only
       // lost the turn they named.
       expect(pick(await printOf(A, { gateway_decisions: "turn_id" }), KEPT_WITH_TENANT)).toEqual(before.keptA);

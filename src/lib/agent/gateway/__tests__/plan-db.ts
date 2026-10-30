@@ -172,7 +172,26 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
         .slice(0, Number(params[1]))
         .map((d) => ({ id: d.id, code: d.code, active_to: d.active_to, escrow_balance_cents: d.escrow_balance_cents }));
     }
-    if (sql === STATEMENT_WEEKS_SQL) return [];
+    // The statement's weeks: the driver's paid settlements that withheld or charged escrow, by
+    // week then id, as the query orders them.
+    if (sql === STATEMENT_WEEKS_SQL) {
+      const periods = new Map(plan.rows.settlement_periods.map((p) => [p.id, p]));
+      return plan.rows.settlements
+        .filter((s) => s.driver_id === params[0] && s.status === "paid")
+        .filter((s) => s.escrow_withheld_cents > 0 || s.escrow_charges_cents > 0)
+        .map((s) => ({ s, p: periods.get(s.period_id)! }))
+        .sort((a, b) =>
+          a.p.period_start === b.p.period_start ? (a.s.id < b.s.id ? -1 : 1) : a.p.period_start < b.p.period_start ? -1 : 1,
+        )
+        .slice(0, Number(params[1]))
+        .map(({ s, p }) => ({
+          id: s.id,
+          period_start: p.period_start,
+          period_end: p.period_end,
+          escrow_withheld_cents: s.escrow_withheld_cents,
+          escrow_charges_cents: s.escrow_charges_cents,
+        }));
+    }
     // The factoring papers: the named invoices' loads, then the uploaded papers and the portal's
     // proof of delivery, from lists a test adds (the plan holds neither), or none.
     if (sql === PACKET_INVOICES_SQL) {
