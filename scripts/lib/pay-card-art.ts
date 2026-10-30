@@ -104,12 +104,21 @@ export type ArtResult = { kept: PayCardArt[]; spentNanocents: number; stopped: b
 const NANO_PER_CENT = NANOCENTS_PER_CENT;
 
 // Errors that will not go away by trying again: the run stops.
-const FATAL: readonly AiErrorCategory[] = ["disabled", "not_configured", "cap", "too_expensive", "auth", "billing", "bad_request"];
+const FATAL: readonly AiErrorCategory[] = ["disabled", "not_configured", "cap", "job_cap", "too_expensive", "auth", "billing", "bad_request"];
 
 class StopRun extends Error {
   constructor(readonly category: string) {
     super(category);
   }
+}
+
+// Refused here before any call went out: nothing was spent upstream.
+const LOCAL_REFUSAL: readonly AiErrorCategory[] = ["disabled", "not_configured", "cap", "job_cap", "too_expensive"];
+
+// What a failed call may have cost: its reserve, unless the wrapper refused it locally.
+function failCost(err: unknown, maxCents: number): number {
+  if (err instanceof AiError && LOCAL_REFUSAL.includes(err.category)) return 0;
+  return maxCents * NANO_PER_CENT;
 }
 
 function category(err: unknown): string {
@@ -173,7 +182,7 @@ export async function runArt(
           io.log(`${art} attempt ${attempt}: picture made (${(out.costNanocents / NANO_PER_CENT).toFixed(3)} cents)`);
           image = out.images[0].bytes;
         } catch (err) {
-          spent += IMAGE_MAX_CENTS * NANO_PER_CENT;
+          spent += failCost(err, IMAGE_MAX_CENTS);
           io.log(`${art} attempt ${attempt}: picture call failed (${category(err)})`);
           continue;
         }
@@ -203,7 +212,7 @@ export async function runArt(
           if (out.status === "ok") read = parseArtRead(out.text);
           io.log(`${art} attempt ${attempt}: read ${out.status} (${(out.costNanocents / NANO_PER_CENT).toFixed(3)} cents)`);
         } catch (err) {
-          spent += READ_MAX_CENTS * NANO_PER_CENT;
+          spent += failCost(err, READ_MAX_CENTS);
           io.log(`${art} attempt ${attempt}: read failed (${category(err)})`);
           continue;
         }
@@ -211,9 +220,15 @@ export async function runArt(
           io.log(`${art} attempt ${attempt}: not kept (${read ? "text or digits seen" : "read off schema"})`);
           continue;
         }
-        const file = await encodeArt(image);
-        mkdirSync(io.outDir, { recursive: true });
-        writeFileSync(join(io.outDir, `${art}.webp`), file);
+        let file: Buffer;
+        try {
+          file = await encodeArt(image);
+          mkdirSync(io.outDir, { recursive: true });
+          writeFileSync(join(io.outDir, `${art}.webp`), file);
+        } catch {
+          io.log(`${art} attempt ${attempt}: picture could not be saved`);
+          continue;
+        }
         const sha = createHash("sha256").update(file).digest("hex");
         io.log(`${art}: kept, ${file.length} bytes, sha256 ${sha}`);
         kept.push(art);

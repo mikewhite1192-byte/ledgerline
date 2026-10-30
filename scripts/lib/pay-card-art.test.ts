@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
@@ -38,13 +38,13 @@ const ENV: Record<string, string | undefined> = {
 };
 const CLEAN: ArtRead = { has_text: false, digits: [] };
 
-function fakeLedger(): TenantDb {
+function fakeLedger(job: Record<string, unknown> = QUIET_JOB): TenantDb {
   const counter = { spent: 0, reserved: 0, calls: 0 };
   const rows = new Map<string, { reserved: number; status: string }>();
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
       if (sql.includes("FROM memberships")) return [{ ok: 1 }] as T[];
-      if (sql.includes("FROM spend_alerts")) return [QUIET_JOB] as T[];
+      if (sql.includes("FROM spend_alerts")) return [job] as T[];
       if (sql.includes("FROM ops.ai_spend")) {
         return [
           {
@@ -220,6 +220,26 @@ describe("the art run", () => {
     expect(out).toMatchObject({ kept: ["art-01"], stopped: true });
     expect(counts.image).toBe(1);
     expect(printed).toContain("art-02: run cap reached");
+  });
+
+  it("stops on a job cap refusal and counts nothing spent, since no call went out", async () => {
+    const { fetch, counts } = provider({});
+    const ledger = fakeLedger({ ...QUIET_JOB, open_alerts: 1 });
+    const out = await runArt({ mode: "go", capCents: 20 }, io, { session: SESSION, ai: { fetch, db: ledger } });
+    expect(out).toMatchObject({ kept: [], spentNanocents: 0, stopped: true });
+    expect(counts.image).toBe(0);
+    expect(printed).toContain("run stopped (job_cap)");
+  });
+
+  it("logs a failed save and goes on to the next attempt instead of crashing", async () => {
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "x");
+    const bad: ArtIo = { outDir: join(blocker, "out"), log: io.log };
+    const { fetch } = provider({});
+    const out = await runArt({ mode: "go", capCents: 40 }, bad, { session: SESSION, ai: { fetch, db: fakeLedger() } });
+    expect(out.kept).toEqual([]);
+    expect(printed).toContain("art-01 attempt 1: picture could not be saved");
+    expect(printed.some((l) => l.includes("sha256"))).toBe(false);
   });
 
   it("stops the run on an error that will not go away", async () => {

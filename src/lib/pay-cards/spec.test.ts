@@ -82,7 +82,7 @@ describe("cardSpec", () => {
       change: "Up $77.50 from last week",
       topChange: "Biggest change: Load pay, up $112.00",
       carried: null,
-      status: "Approved, pays Friday",
+      status: "Approved",
       testMode: "Test mode",
     });
   });
@@ -157,7 +157,7 @@ describe("cardSpec", () => {
       work: "2 cargas · 1,950 millas",
       change: "$77.50 más que la semana pasada",
       topChange: "Mayor cambio: Pago por cargas, sube $112.00",
-      status: "Aprobado, se paga el viernes",
+      status: "Aprobado",
       testMode: "Modo de prueba",
     });
   });
