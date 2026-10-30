@@ -52,8 +52,9 @@ export const CHECK_NOTICE: Readonly<Record<string, string>> = {
   unavailable: "The factoring partner could not be checked just now. Nothing was sent. Try again.",
 };
 
-// What a Check pending press found, in one sentence: anything confirmed or declined first, then
-// a send too new to read back, then still waiting. Counts come from the check's own summary.
+// What a Check pending press found, in one sentence (two when a read-back did not finish): anything
+// confirmed or declined first, then a send too new to read back, then still waiting. Counts come
+// from the check's own summary.
 export const CHECK_RESULT = {
   confirmed: "Confirmed by the factoring partner. Test mode.",
   declined: "The factoring partner did not take an invoice. See the invoices below.",
@@ -64,8 +65,9 @@ export const CHECK_RESULT = {
   lost: "The check's answer did not come back. The page below shows what is on file.",
 } as const;
 
-// errors: read-backs that did not finish (the summary's own count); with nothing else to say, the
-// press says so instead of "nothing is waiting".
+// errors: read-backs that did not finish (the summary's own count). They are never hidden: after
+// any other news the press adds the errors sentence, and with nothing else to say it says that
+// alone instead of "nothing is waiting".
 export function checkResultSentence(r: {
   confirmed: number;
   failed: number;
@@ -74,12 +76,18 @@ export function checkResultSentence(r: {
   stillUnknown: number;
   errors: number;
 }): string {
-  if (r.confirmed > 0) return CHECK_RESULT.confirmed;
-  if (r.failed > 0) return CHECK_RESULT.declined;
-  if (r.tooNew > 0) return CHECK_RESULT.tooNew;
-  if (r.stillWaiting > 0 || r.stillUnknown > 0) return CHECK_RESULT.waiting;
-  if (r.errors > 0) return CHECK_RESULT.errors;
-  return CHECK_RESULT.nothing;
+  const news =
+    r.confirmed > 0
+      ? CHECK_RESULT.confirmed
+      : r.failed > 0
+        ? CHECK_RESULT.declined
+        : r.tooNew > 0
+          ? CHECK_RESULT.tooNew
+          : r.stillWaiting > 0 || r.stillUnknown > 0
+            ? CHECK_RESULT.waiting
+            : null;
+  if (r.errors > 0) return news === null ? CHECK_RESULT.errors : `${news} ${CHECK_RESULT.errors}`;
+  return news ?? CHECK_RESULT.nothing;
 }
 
 export function factoringSentence(category: string): string {

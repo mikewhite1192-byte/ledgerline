@@ -395,17 +395,29 @@ export function proposalCardFrom(
     ...(references ? { references } : {}),
     flagNote: p.flagged ? flagNoteFor(p.flagCategories) : undefined,
     ...(audit ? { audit: auditFor(p, audit) } : {}),
-    // An advance, a pay correction, a money code and a card match have executors that resume an
-    // approval left approved by a stop before its run finished (the correction's pay item is keyed
-    // by the proposal, a money code is one row per proposal, and the match's card and purchase by
-    // its statement row, so a resume never writes a second). An executing one is already running
-    // (an advance's page and a code's page check it; a correction or a match never stays
-    // executing, since its run is one transaction).
+    // An advance, a pay correction, a money code, a card match and a factoring card have executors
+    // that resume an approval left approved by a stop before its run finished (the correction's pay
+    // item is keyed by the proposal, a money code is one row per proposal, the match's card and
+    // purchase by its statement row, and a factoring request by the proposal, so a resume never
+    // writes a second). An executing one is already running (an advance's page and a code's page
+    // check it; a correction or a match never stays executing, since its run is one transaction).
     ...((p.kind === "advance_payout" ||
       p.kind === "pay_correction" ||
       p.kind === "money_code" ||
-      p.kind === "card_match") &&
+      p.kind === "card_match" ||
+      p.kind === "factoring_request") &&
       p.status === "approved"
+      ? { canResume: true }
+      : {}),
+    // A factoring card stays executing when its run stopped before every invoice was sent. Resume
+    // sends only an invoice still waiting to go: each invoice's ledger row is keyed by the invoice
+    // and its attempt, only the caller that claims a reserved row sends it, a row already sent is
+    // never sent again, and every switch is asked again first. Offered only while the request reads
+    // submitted; one waiting on the partner's answer is Check pending's, on the Factoring page.
+    ...(p.kind === "factoring_request" &&
+    p.status === "executing" &&
+    p.cash?.kind === "factoring_request" &&
+    p.cash.requestStatus === "submitted"
       ? { canResume: true }
       : {}),
   };

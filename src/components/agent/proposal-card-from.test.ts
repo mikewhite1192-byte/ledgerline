@@ -477,4 +477,23 @@ describe("a factoring card", () => {
       for (const t of [...card.reasons.map((r) => r.text), card.impact.label ?? ""]) expect(t, String(s)).not.toMatch(/you receive/i);
     }
   });
+
+  it("lets a person resume a card left approved, or left executing with an invoice not sent yet", () => {
+    const resume = (status: ProposalView["status"], requestStatus: string | null) =>
+      proposalCardFrom({ ...withStatus(requestStatus), status }).canResume;
+    // Stopped after the approval, before the request was written.
+    expect(resume("approved", null)).toBe(true);
+    // Stopped after the request was written, before every invoice went out.
+    expect(resume("executing", "submitted")).toBe(true);
+    // Waiting on the partner's answer: Check pending on the Factoring page, not Resume.
+    expect(resume("executing", "unknown")).toBeUndefined();
+    expect(resume("executing", null)).toBeUndefined();
+    for (const status of ["proposed", "done", "failed", "unknown", "rejected", "expired"] as const) {
+      expect(resume(status, "submitted"), status).toBeUndefined();
+    }
+    // No other kind resumes from executing.
+    for (const kind of ["advance_payout", "pay_correction", "money_code", "card_match", "collections_chase"] as const) {
+      expect(proposalCardFrom({ ...withStatus("submitted"), kind, status: "executing" }).canResume, kind).toBeUndefined();
+    }
+  });
 });

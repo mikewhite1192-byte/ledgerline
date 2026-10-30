@@ -1,16 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
-import { factoringBehavior } from "../adapters/factoring/sim";
+import { createFactoringSim, factoringBehavior } from "../adapters/factoring/sim";
+import type { FactoringAdapter } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import { runCashCheck } from "../cash/check";
 import { factoringArgsSchema, type FactoringArgs } from "../cash/args";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db, Queryable } from "../db/types";
+import type { Db, Queryable, TenantDb } from "../db/types";
 import { readCashFridayInput } from "../data/read";
 import { readTenantZone } from "../money/read";
-import { EXECUTORS, executeProposal } from "../proposals/execute";
+import { EXECUTORS, executeProposal, type ExecutorRegistry, type ProposalResult } from "../proposals/execute";
 import { persistEngineProposal } from "../proposals/engine";
 import { computeCashFriday } from "../rules-engine";
 import { factoringFor } from "../rules-engine/factoring";
@@ -19,7 +20,7 @@ import { DEMO_CARRIERS } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { localDateOf } from "../time/local-date";
-import { checkPendingFactoring, type FactoringDeps } from "./execute";
+import { checkPendingFactoring, precheckFactoring, type FactoringDeps } from "./execute";
 import { factoringProposalOf } from "./propose";
 import { listRequests, readFactoredLine, readFactoringInput, readRequest } from "./read";
 
@@ -29,7 +30,9 @@ import { listRequests, readFactoredLine, readFactoringInput, readRequest } from 
 // approving it again (or twice at once) writes nothing more. A card with one 99 invoice ends
 // partly funded; a 98 invoice stays unknown until Check pending reads it back. A card naming an
 // invoice already factored, or any switch off, is refused before anything is written. A card whose
-// request write hits a unique index ends failed, so approving it again repeats nothing. Another
+// request write hits a unique index ends failed, so approving it again repeats nothing. A card
+// whose run stopped after the approval, or while executing, resumes and sends each invoice once
+// (two resumes at once too); with a switch off a resume refuses and writes nothing. Another
 // carrier reads and changes nothing. Both demo carriers are seeded from their plans; the two
 // tenants are removed after.
 
@@ -210,6 +213,59 @@ async function cardFor(invoiceIds: string[]): Promise<{ id: string; args: Factor
   await storePass(A, made.id);
   return made;
 }
+
+// Invoices the engine would factor today that the simulated partner funds, n of them.
+async function fundable(n: number): Promise<string[]> {
+  const picked = (await factorable()).filter((c) => factoringBehavior(c.balance) === "funded").slice(0, n);
+  if (picked.length < n) throw new Error(`only ${picked.length} invoices left to factor`);
+  return picked.map((c) => c.id);
+}
+
+// The gate's real precheck and approve write, then the run stops before the executor's first
+// transaction (the process went away): the card is left approved with nothing else written.
+const STOPPED = "stopped after the approval";
+const stopsAfterApproval: ExecutorRegistry = {
+  factoring_request: Object.assign(
+    async (): Promise<ProposalResult> => {
+      throw new Error(STOPPED);
+    },
+    { precheck: precheckFactoring },
+  ),
+};
+
+async function approveThenStop(id: string): Promise<void> {
+  await expect(
+    executeProposal(ADMIN_A, id, { confirmed: false }, { db: app, clock, executors: stopsAfterApproval }),
+  ).rejects.toThrow(STOPPED);
+  expect((await proposal(id)).status).toBe("approved");
+  expect(await requestFor(id)).toBeNull();
+}
+
+// The simulated partner, noting every invoice offered to it.
+function countingPartner(): { adapter: FactoringAdapter; sent: string[] } {
+  const sim = createFactoringSim({ log: () => undefined });
+  const sent: string[] = [];
+  return {
+    sent,
+    adapter: {
+      system: sim.system,
+      ready: () => sim.ready(),
+      submitInvoice: (r, ctx) => {
+        sent.push(r.invoiceNumber);
+        return sim.submitInvoice(r, ctx);
+      },
+      readBack: (ref, ctx) => sim.readBack(ref, ctx),
+    },
+  };
+}
+
+// Resume is the same approve request again (the card's Resume button sends it).
+function resume(id: string, adapter: FactoringAdapter, db: TenantDb = app): Promise<ProposalResult> {
+  const deps: FactoringDeps = { db, clock, executors: EXECUTORS, adapter };
+  return executeProposal(ADMIN_A, id, { confirmed: false }, deps);
+}
+
+const ledgerFor = async (ids: readonly string[]) => (await moneyRows()).filter((m) => ids.includes(m.subject_id));
 
 beforeAll(async () => {
   admin = createPgDb({ connectionString: adminUrl() });
@@ -478,6 +534,118 @@ describe("factoring on the real database", { timeout: 60_000 }, () => {
     const second = await checkPendingFactoring(ADMIN_A, request.id, { db: app, clock });
     expect(second).toMatchObject({ ok: true, status: "funded" });
     if (second.ok) expect(second.summary.checked).toBe(0);
+  });
+
+  it("resumes a card whose run stopped right after the approval, and sends each invoice once", async () => {
+    switchesOn();
+    const ids = await fundable(1);
+    const card = await cardFor(ids);
+    await approveThenStop(card.id);
+    const partner = countingPartner();
+    expect(await resume(card.id, partner.adapter)).toMatchObject({ ok: true, status: "done" });
+    expect(partner.sent).toEqual([card.args.invoices[0].invoiceNumber]);
+    const request = await requestFor(card.id);
+    expect(request?.status).toBe("funded");
+    expect((await linesOf(request?.id ?? "")).map((l) => l.status)).toEqual(["funded"]);
+    const rows = await ledgerFor(ids);
+    expect(rows.map((m) => m.state)).toEqual(["confirmed"]);
+    expect((await proposal(card.id)).money_action_id).toBe(rows[0].id);
+    // Pressed again: the card is decided, and nothing more is sent or written.
+    expect(await resume(card.id, partner.adapter)).toMatchObject({ ok: false, category: "already_decided" });
+    expect(partner.sent).toHaveLength(1);
+    expect(await ledgerFor(ids)).toHaveLength(1);
+  });
+
+  it("sends each invoice once when two resumes of a stopped card run at once", async () => {
+    switchesOn();
+    const ids = await fundable(2);
+    const card = await cardFor(ids);
+    await approveThenStop(card.id);
+    const partner = countingPartner();
+    const results = await Promise.all([resume(card.id, partner.adapter), resume(card.id, partner.adapter)]);
+    for (const r of results) expect(r.ok ? r.status : r.category).toMatch(/^(done|already_decided)$/);
+    expect(results.some((r) => r.ok && r.status === "done")).toBe(true);
+    expect([...partner.sent].sort()).toEqual(card.args.invoices.map((i) => i.invoiceNumber).sort());
+    const rows = await ledgerFor(ids);
+    expect(rows).toHaveLength(2);
+    expect(rows.every((m) => m.state === "confirmed")).toBe(true);
+    expect((await requestFor(card.id))?.status).toBe("funded");
+    expect((await proposal(card.id)).status).toBe("done");
+  });
+
+  it("resumes a card whose run stopped while executing, sending only what had not gone out, and leaves it while factoring is off", async () => {
+    switchesOn();
+    const ids = await fundable(2);
+    const card = await cardFor(ids);
+    // The database goes away after the executor's first transaction: the request and its lines are
+    // written and the card is executing, but no invoice has gone out.
+    let calls = 0;
+    const fading: TenantDb = {
+      withTenant: <T>(tenantId: string, fn: (q: Queryable) => Promise<T>): Promise<T> =>
+        calls++ < 2 ? app.withTenant(tenantId, fn) : Promise.reject(new Error("connection lost")),
+    };
+    const lost = countingPartner();
+    expect(await resume(card.id, lost.adapter, fading)).toMatchObject({ ok: false, category: "factoring_pending" });
+    expect(lost.sent).toEqual([]);
+    expect((await proposal(card.id)).status).toBe("executing");
+    const request = await requestFor(card.id);
+    if (!request) throw new Error("no factoring request");
+    expect(request.status).toBe("submitted");
+    expect((await linesOf(request.id)).map((l) => [l.status, l.money_action_id])).toEqual([
+      ["submitted", null],
+      ["submitted", null],
+    ]);
+    expect(await ledgerFor(ids)).toEqual([]);
+
+    // Factoring switched off with Cash Friday on: the card is not closed as test mode over a
+    // request that went to the partner. Nothing is written.
+    flags.factoring.enabled = false;
+    const partner = countingPartner();
+    expect(await resume(card.id, partner.adapter)).toMatchObject({ ok: false, category: "factoring_off" });
+    expect((await proposal(card.id)).status).toBe("executing");
+    expect(await ledgerFor(ids)).toEqual([]);
+
+    switchesOn();
+    expect(await resume(card.id, partner.adapter)).toMatchObject({ ok: true, status: "done" });
+    expect([...partner.sent].sort()).toEqual(card.args.invoices.map((i) => i.invoiceNumber).sort());
+    expect((await linesOf(request.id)).map((l) => l.status)).toEqual(["funded", "funded"]);
+    expect((await ledgerFor(ids)).map((m) => m.state)).toEqual(["confirmed", "confirmed"]);
+    expect((await requestFor(card.id))?.status).toBe("funded");
+    expect(await resume(card.id, partner.adapter)).toMatchObject({ ok: false, category: "already_decided" });
+    expect(partner.sent).toHaveLength(2);
+  });
+
+  it("refuses to resume a stopped card with any switch off, and writes nothing", async () => {
+    switchesOn();
+    const ids = await fundable(1);
+    const card = await cardFor(ids);
+    await approveThenStop(card.id);
+    const partner = countingPartner();
+    const tables = ["factoring_requests", "factoring_request_invoices", "money_actions"] as const;
+    const counts = () => Promise.all(tables.map((t) => countRows(A, t)));
+    const before = await counts();
+    for (const [flip, category] of [
+      [() => (flags.factoring.armed = false), "factoring_not_armed"],
+      [() => (flags.payoutsEnabled = false), "factoring_payouts_off"],
+      [() => (flags.factoring.maxNetCents = card.args.amountCents - 1), "over_factoring_cap"],
+      [() => (flags.factoring.startDate = "2026-11-03"), "factoring_before_start"],
+      [
+        () => {
+          flags.factoring.enabled = false;
+          flags.cashFridayEnabled = false;
+        },
+        "not_executable",
+      ],
+    ] as const) {
+      switchesOn();
+      flags.factoring.maxNetCents = saved.factoring.maxNetCents;
+      flags.factoring.startDate = saved.factoring.startDate;
+      flip();
+      expect(await resume(card.id, partner.adapter)).toMatchObject({ ok: false, category });
+    }
+    expect(await counts()).toEqual(before);
+    expect(partner.sent).toEqual([]);
+    expect((await proposal(card.id)).status).toBe("approved");
   });
 
   it("shows and changes nothing for another carrier", async () => {

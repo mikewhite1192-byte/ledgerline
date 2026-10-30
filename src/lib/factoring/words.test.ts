@@ -110,9 +110,18 @@ describe("factoring words", () => {
     expect(checkResultSentence({ ...none, errors: 1 })).toBe(CHECK_RESULT.errors);
     expect(CHECK_RESULT.errors).toMatch(/could not be checked/);
     expect(CHECK_RESULT.errors).toMatch(/Try again\.$/);
-    // Firmer news still comes first.
-    expect(checkResultSentence({ ...none, errors: 1, confirmed: 1 })).toBe(CHECK_RESULT.confirmed);
-    expect(checkResultSentence({ ...none, errors: 1, stillUnknown: 1 })).toBe(CHECK_RESULT.waiting);
+    // Firmer news still comes first, and the error follows it instead of being dropped.
+    expect(checkResultSentence({ ...none, errors: 1, stillUnknown: 1 })).toBe(`${CHECK_RESULT.waiting} ${CHECK_RESULT.errors}`);
+    expect(checkResultSentence({ ...none, errors: 1, failed: 1 })).toBe(`${CHECK_RESULT.declined} ${CHECK_RESULT.errors}`);
+  });
+
+  it("says both when a check confirms one invoice and could not read another back", () => {
+    const none = { confirmed: 0, failed: 0, tooNew: 0, stillWaiting: 0, stillUnknown: 0, errors: 0 };
+    const mixed = checkResultSentence({ ...none, confirmed: 1, errors: 1 });
+    expect(mixed).toBe(`${CHECK_RESULT.confirmed} ${CHECK_RESULT.errors}`);
+    expect(mixed).toMatch(/could not be checked/);
+    // With no error, the confirmed sentence alone.
+    expect(checkResultSentence({ ...none, confirmed: 1 })).toBe(CHECK_RESULT.confirmed);
   });
 
   it("names the Test mode convention the simulated partner follows", () => {

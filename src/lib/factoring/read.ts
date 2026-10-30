@@ -35,7 +35,8 @@ export type RequestSummary = {
   feeCents: number;
   netCents: number;
   reserveCents: number;
-  // The sum of the funded invoices' own net: what came in. netCents is what was planned.
+  // The sum of the funded invoices' own net: what came in. netCents, feeCents and reserveCents are
+  // what was planned (they still count a declined or unconfirmed invoice).
   cameInCents: number;
   status: string;
   fundedAt: string | null;
