@@ -1,3 +1,4 @@
+import { STAFF_ONLY_NOTE } from "../../components/app/staff-only";
 import type { MoneyCodePurpose, MoneyCodeRefusal, MoneyCodeStatus } from "../rules-engine/money-codes";
 
 // Every sentence a person sees about a money code, fixed text per category (client-safe: types
@@ -92,6 +93,7 @@ const REQUEST_SENTENCES: Readonly<Record<string, string>> = {
   bad_request: "Pick a load, then fill in the amount and the purpose.",
   unauthenticated: "Your sign-in ended. Sign in again, then send the request.",
   forbidden: "This login cannot act for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   codes_off: OUTCOME_SENTENCES.codes_off,
 };
 
@@ -117,6 +119,7 @@ const ACTION_SENTENCES: Readonly<Record<string, string>> = {
   not_found: "That code is not here.",
   unauthenticated: "Your sign-in ended. Sign in again, then try again.",
   forbidden: "This login cannot act for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   bad_request: "That code is not here.",
   unavailable: "The server could not be reached. Nothing changed; try again in a minute.",
 };

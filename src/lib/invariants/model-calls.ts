@@ -1,4 +1,5 @@
 import { InvariantReadError, readAll, resultOf, tally, unreadable, whole, type InvariantResult, type ReadQuery } from "./types";
+import { flags } from "../../config/flags";
 import type { Db } from "../db/types";
 
 // I4: every model call is logged with its cost, and the spend counters agree with the log.
@@ -8,9 +9,16 @@ import type { Db } from "../db/types";
 // - ops.ai_spend equals the log: spent is every settled cost, reserved is the reservations still
 //   held (rows reserved, and unknown rows, whose reservation stays counted for good), calls is
 //   every settled row; the auditor's counters likewise over its own rows.
+// - Every demo visit's spent plus reserved is at or under the per-visit cap (demo_sessions, 0043):
+//   the cap is flags.judgeAccess.sessionCapCents in nanocents, written into the statement as a
+//   whole-number literal, never input.
 // One statement, so the counters and the rows are read at the same instant.
 
 export const STALE_RESERVED_MINUTES = 10;
+
+// One cent is 1,000,000,000 nanocents. BigInt refuses a cap that is not a whole number of cents,
+// so a bad flag stops the module from loading instead of comparing against a wrong cap.
+export const DEMO_SESSION_CAP_NANOCENTS = BigInt(flags.judgeAccess.sessionCapCents) * 1_000_000_000n;
 
 export const MODEL_CALLS_SQL = `SELECT
        (SELECT count(*) FROM ops.ai_spend) AS counter_rows,
@@ -19,6 +27,8 @@ export const MODEL_CALLS_SQL = `SELECT
        (SELECT calls FROM ops.ai_spend WHERE id = 1) AS counter_calls,
        (SELECT wonder_spent_nanocents FROM ops.ai_spend WHERE id = 1) AS counter_wonder_spent,
        (SELECT wonder_reserved_nanocents FROM ops.ai_spend WHERE id = 1) AS counter_wonder_reserved,
+       (SELECT count(*) FROM demo_sessions
+         WHERE spent_nanocents + reserved_nanocents > ${DEMO_SESSION_CAP_NANOCENTS}) AS demo_over_cap,
        count(*) AS calls_logged,
        count(*) FILTER (WHERE status IN ('ok', 'incomplete') AND cost_nanocents IS NULL) AS answered_without_cost,
        count(*) FILTER (WHERE status IN ('ok', 'incomplete') AND kind = 'text'
@@ -41,6 +51,7 @@ export type ModelCallsRow = Record<
   | "counter_calls"
   | "counter_wonder_spent"
   | "counter_wonder_reserved"
+  | "demo_over_cap"
   | "calls_logged"
   | "answered_without_cost"
   | "text_without_tokens"
@@ -61,6 +72,7 @@ export function judgeModelCalls(rows: ModelCallsRow[]): InvariantResult {
   tally(v, "answered_without_cost", whole(r.answered_without_cost));
   tally(v, "text_without_tokens", whole(r.text_without_tokens));
   tally(v, "stale_reserved", whole(r.stale_reserved));
+  tally(v, "demo_session_over_cap", whole(r.demo_over_cap));
   if (whole(r.counter_spent) !== whole(r.spent)) tally(v, "counter_off:spent");
   if (whole(r.counter_reserved) !== whole(r.reserved)) tally(v, "counter_off:reserved");
   if (whole(r.counter_calls) !== whole(r.settled)) tally(v, "counter_off:calls");

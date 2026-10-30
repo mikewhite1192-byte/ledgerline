@@ -1,5 +1,6 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
 import { advanceSweep, startSweep } from "@/lib/sweep/run";
 import { isUuid } from "@/lib/uuid";
@@ -18,6 +19,8 @@ export async function POST(request: Request) {
   if (!flags.sweepEnabled) return refused("disabled");
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const body = await objectBody(request);
   const periodId = body?.periodId ?? null;
   if (!body || !isUuid(body.runId) || (periodId !== null && !isUuid(periodId))) return refused("bad_request");

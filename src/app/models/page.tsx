@@ -14,6 +14,7 @@ import { capNanocents, wonderCapNanocents } from "@/lib/ai/prices";
 import { readSpend } from "@/lib/ai/spend";
 import { jobCapNanocents, readDaySpend, readSpendAlerts } from "@/lib/ai/watch";
 import type { Session } from "@/lib/auth/claims";
+import { isRole, type Role } from "@/lib/auth/role";
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { ClearAlertForm } from "./clear-alert-form";
@@ -25,7 +26,7 @@ import { ClearAlertForm } from "./clear-alert-form";
 // withRequestTenant redirects to /sign-in.
 export const dynamic = "force-dynamic";
 
-type Carrier = { name: string; timezone: string; email: string; admin: boolean; session: Session };
+type Carrier = { name: string; timezone: string; email: string; role: Role; admin: boolean; session: Session };
 
 type Spend = Omit<SpendCardProps, "timeZone" | "clear">;
 
@@ -40,16 +41,20 @@ export default async function ModelsPage() {
       const tenants = await q.query<{ name: string; timezone: string }>(
         "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
       );
-      const members = await q.query<{ email: string; role: string }>(
+      const members = await q.query<{ email: string; role: unknown }>(
         "SELECT email, role FROM memberships WHERE cognito_sub = $1 AND tenant_id = current_tenant_id()",
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
+      // A role this code does not know is refused, never shown as staff.
+      const role = members[0].role;
+      if (!isRole(role)) throw new ForbiddenError();
       return {
         name: tenants[0].name,
         timezone: tenants[0].timezone,
         email: members[0].email,
-        admin: members[0].role === "admin",
+        role,
+        admin: role === "admin",
         session,
       };
     });
@@ -119,7 +124,7 @@ export default async function ModelsPage() {
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/models")}
       title="Models and spend"
       signOut={signOut}

@@ -59,7 +59,8 @@ export class FakeDb implements TenantDb {
 
   private answer(tenantId: string, sql: string, params: Param[]): Row[] | number {
     this.statements.push({ tenantId, sql, params });
-    if (sql.includes("FROM memberships")) return this.member ? [{ ok: 1 }] : [];
+    // A member reads as staff, for the shell's role read (a judge has its own tests).
+    if (sql.includes("FROM memberships")) return this.member ? [{ ok: 1, role: "staff" }] : [];
     if (sql.startsWith("INSERT INTO gateway_decisions")) {
       if (this.failDecisionInsert) throw new Error("insert refused");
       this.decisions.push(decisionOf(params));

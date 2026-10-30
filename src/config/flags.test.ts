@@ -40,6 +40,23 @@ describe("flags", () => {
     expect(flags.cardRecon.enabled).toBe(false);
     expect(flags.rulesByTalkingEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
+    // The demo visitor sign-in: dark until the owner's one-line release PR.
+    expect(flags.judgeAccess.enabled).toBe(false);
+  });
+
+  it("keeps a demo visit small: a dollar of model time, 25 turns, $8.00 a day across every visit", () => {
+    expect(flags.judgeAccess).toEqual({
+      enabled: false,
+      sessionCapCents: 100,
+      turnsPerSession: 25,
+      dayCapCents: 800,
+      sessionsPerIpPerHour: 5,
+      sessionsPerDay: 150,
+      cookieHours: 2,
+    });
+    // Five judging days at the day cap fit the $40.00 reserve with nothing else drawing on it.
+    expect(flags.judgeAccess.dayCapCents * 5).toBeLessThanOrEqual(4_000);
+    expect(flags.judgeAccess.sessionCapCents).toBeLessThanOrEqual(flags.judgeAccess.dayCapCents);
   });
 
   it("keeps carrier memory dark, with the agent's suggestions and the second check's notes few", () => {

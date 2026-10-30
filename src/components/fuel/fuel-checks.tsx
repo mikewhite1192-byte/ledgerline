@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { proposalCardFrom } from "@/components/agent/proposal-card-from";
 import { DataTable } from "@/components/app/data-table";
 import { ProposalCard } from "@/components/app/proposal-card";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { StatusBadge } from "@/components/app/status-badge";
 import { postJson } from "@/components/invoices/post-json";
 import { Button } from "@/components/ui/button";
@@ -57,6 +58,8 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That correction is not here.",
   not_executable: "Pay corrections are switched off, so nothing was applied.",
+  // A demo visitor: the staff check refused the press before any work.
+  judge: STAFF_ONLY_NOTE,
 };
 const APPROVE_FALLBACK = "The approval did not go through. Nothing changed.";
 const APPROVE_UNKNOWN =

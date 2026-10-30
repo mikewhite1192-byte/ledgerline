@@ -319,7 +319,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/documents")}
       title="Documents"
       signOut={<SignOut />}

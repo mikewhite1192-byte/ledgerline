@@ -30,15 +30,22 @@ vi.mock("@/lib/db", async (importOriginal) => ({
 }));
 
 // taken: a write meets words already on file, either written nothing (an add) or refused by the
-// table's key (an edit, or an add that raced another).
-type Carrier = { member?: boolean; found?: boolean; failing?: boolean; taken?: "nothing" | "refused" };
+// table's key (an edit, or an add that raced another). role: the membership's role, as the staff
+// check reads it (a judge is a demo visitor).
+type Carrier = {
+  member?: boolean;
+  role?: "admin" | "staff" | "judge";
+  found?: boolean;
+  failing?: boolean;
+  taken?: "nothing" | "refused";
+};
 
-function carrier({ member = true, found = true, failing = false, taken }: Carrier = {}) {
+function carrier({ member = true, role = "staff", found = true, failing = false, taken }: Carrier = {}) {
   const writes: { sql: string; params: Param[] }[] = [];
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
       if (failing) throw new DbError("unavailable");
-      if (sql.includes("FROM memberships")) return (member ? [{ ok: 1 }] : []) as T[];
+      if (sql.includes("FROM memberships")) return (member ? [{ ok: 1, role }] : []) as T[];
       if (sql.startsWith("SELECT 1 AS ok FROM customers")) return (found ? [{ ok: 1 }] : []) as T[];
       if (sql.includes("pg_advisory_xact_lock")) return [{ ok: 1 }] as T[];
       if (sql.includes("count(*)")) return [{ n: "4" }] as T[];
@@ -161,6 +168,16 @@ describe("the Memory page's actions", () => {
     const writes = carrier({ member: false });
     expect(await addNoteAction("carrier", "Bill weekly")).toEqual({ ok: false, category: "forbidden" });
     expect(await removeNoteAction(NOTE)).toEqual({ ok: false, category: "forbidden" });
+    expect(writes).toEqual([]);
+  });
+
+  it("refuse a demo visitor (the judge role) on every write, writing nothing", async () => {
+    const writes = carrier({ role: "judge" });
+    const refused = { ok: false, category: "forbidden" };
+    expect(await addNoteAction("carrier", "Bill weekly")).toEqual(refused);
+    expect(await editNoteAction(NOTE, "Bill weekly")).toEqual(refused);
+    expect(await keepNoteAction(NOTE)).toEqual(refused);
+    expect(await removeNoteAction(NOTE)).toEqual(refused);
     expect(writes).toEqual([]);
   });
 

@@ -3,6 +3,7 @@ import { flags } from "../../config/flags";
 import { ADVANCE_STATUS } from "../advances/http";
 import type { Session } from "../auth/claims";
 import { getSession } from "../auth/session";
+import { staffGate } from "../auth/staff-gate";
 import { isCrossSite } from "../http/same-site";
 import { isUuid } from "../uuid";
 
@@ -42,17 +43,31 @@ export function failed(err: unknown, what: string): NextResponse {
   return voiceRefuse("unavailable", true);
 }
 
-// One button press on a voice note's page: run it and answer with its category.
-export async function voiceAction<T extends Outcome>(
+type Press<T> = (session: Session, voiceNoteId: string) => Promise<T>;
+
+// One button press on a voice note's page (prepare, hand-off, the reply draft): run it and answer
+// with its category. Every step is staff work, so a judge is refused before anything runs.
+export async function voiceStaffAction<T extends Outcome>(
   request: Request,
   params: Promise<{ id: string }>,
   what: string,
-  run: (session: Session, voiceNoteId: string) => Promise<T>,
+  run: Press<T>,
 ): Promise<NextResponse> {
   if (isCrossSite(request)) return voiceRefuse("forbidden");
   if (!voiceOn()) return voiceRefuse("disabled");
   const session = await getSession();
   if (!session) return voiceRefuse("unauthenticated");
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
+  return pressNote(session, params, what, run);
+}
+
+async function pressNote<T extends Outcome>(
+  session: Session,
+  params: Promise<{ id: string }>,
+  what: string,
+  run: Press<T>,
+): Promise<NextResponse> {
   const { id } = await params;
   if (!isUuid(id)) return voiceRefuse("bad_request");
   try {

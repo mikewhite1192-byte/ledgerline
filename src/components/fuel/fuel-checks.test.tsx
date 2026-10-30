@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import type { ProposalView } from "@/lib/agent/view";
 import type { FuelPage, FuelRowView } from "@/lib/fuel/view";
 import { FuelChecks } from "./fuel-checks";
@@ -216,6 +217,16 @@ describe("FuelChecks", () => {
     const confirm = screen.queryByRole("button", { name: /^Confirm/ });
     if (confirm) fireEvent.click(confirm);
     await waitFor(() => expect(urls()).toEqual([`/api/proposals/${CARD_ID}/approve`]));
+  });
+
+  it("answers a demo visitor's refused approval (403 judge) with the staff-only line", async () => {
+    fetchMock.mockImplementation(async () => reply(403, { error: "judge", retryable: false }));
+    show(page(ROWS));
+    fireEvent.click(screen.getByRole("button", { name: /^See details: Fuel bought off the route, Sam Ortiz/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Approve/ }));
+    const confirm = screen.queryByRole("button", { name: /^Confirm/ });
+    if (confirm) fireEvent.click(confirm);
+    expect(await screen.findByText(STAFF_ONLY_NOTE)).toBeTruthy();
   });
 
   it("reads a sent row's status from its card: a carried-out correction says Corrected", () => {

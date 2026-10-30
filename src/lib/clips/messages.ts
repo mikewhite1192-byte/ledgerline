@@ -1,3 +1,4 @@
+import { STAFF_ONLY_NOTE } from "../../components/app/staff-only";
 import { AGREEMENT_TOLERANCE_MINUTES, type Agreement } from "./agreement";
 import type { ClipStatus } from "./types";
 
@@ -26,6 +27,7 @@ const MESSAGES: Readonly<Record<string, string>> = {
   decode: "Your browser could not play this file to blur it.",
   encode: "Your browser could not write the blurred clip.",
   forbidden: "You do not have access to this carrier.",
+  judge: STAFF_ONLY_NOTE,
   unauthenticated: "Your session ended. Sign in again.",
   bad_request: "That request was not complete. Pick the load, the stop and the file again.",
   unavailable: "Something went wrong on our side. Try again.",

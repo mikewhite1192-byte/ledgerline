@@ -7,6 +7,8 @@ const SESSION: Session = { sub: "sub-1", email: "", tenantId: "11111111-1111-411
 
 const mocks = vi.hoisted(() => ({ getSession: vi.fn(), writeQuarterReview: vi.fn() }));
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here every caller is staff.
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/briefs/write-quarter", () => ({ writeQuarterReview: mocks.writeQuarterReview }));
 
 const saved = { review: flags.quarterReviewEnabled, ai: flags.aiEnabled };
