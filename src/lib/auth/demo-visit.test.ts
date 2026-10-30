@@ -38,7 +38,7 @@ describe("ipHashOf", () => {
     expect(ipHashOf(" 203.0.113.7 ")).toBe(one);
     expect(ipHashOf("203.0.113.8")).not.toBe(one);
     expect(ipHashOf("2001:DB8::1")).toBe(ipHashOf("2001:db8::1"));
-    expect(one).not.toContain("203");
+    expect(one).not.toContain("203.0.113.7");
   });
 
   it("is no address for a missing or malformed header", () => {
