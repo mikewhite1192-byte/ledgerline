@@ -20,6 +20,15 @@ describe("report args", () => {
     expect(parseReportArgs("advances_outstanding", { asOf: 20261102 })).toBeNull();
   });
 
+  it("takes the IFTA quarter with or without a day in it, and refuses a bad day or any other key", () => {
+    expect(parseReportArgs("ifta_quarter", {})?.args).toEqual({});
+    expect(parseReportArgs("ifta_quarter", { asOf: "2026-11-02" })?.args).toEqual({ asOf: "2026-11-02" });
+    expect(parseReportArgs("ifta_quarter", { asOf: "2026-02-30" })).toBeNull();
+    expect(parseReportArgs("ifta_quarter", { asOf: "2026-11-02", quarter: "Q4" })).toBeNull();
+    expect(parseReportArgs("ifta_quarter", { periodStart: "2026-10-01", periodEnd: "2026-12-31" })).toBeNull();
+    expect(reportOfTool("report_ifta_quarter")).toBe("ifta_quarter");
+  });
+
   it("lowercases ids and keeps only string values", () => {
     const parsed = parseReportArgs("driver_pay_summary", { driverId: ID });
     expect(parsed?.args).toEqual({ driverId: ID.toLowerCase() });

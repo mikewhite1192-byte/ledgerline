@@ -1,12 +1,12 @@
 import type { z } from "zod";
-import { flags } from "../../../../../config/flags";
 import { REPORT_ARGS, type ReportRequest } from "../../../../reports/args";
 import { computeReport } from "../../../../reports/run";
+import { reportSwitchOn } from "../../../../reports/switch";
 import { REPORT_ROW_CAP, reportToolName, type ReportName, type ReportResult } from "../../../../reports/types";
 import { defineTool, type AnyToolDef, type GatewayRef } from "../../types";
 import { OPERATOR } from "../shared";
 
-// The five report tools share one shape: the model picks the report and fills its typed args;
+// The six report tools share one shape: the model picks the report and fills its typed args;
 // the code reads the records and the rules engine computes every number. The result carries at
 // most 50 rows (the download has them all), and fewer when 50 would not fit the gateway's
 // character cap, so the gateway never cuts it and rowsTotal stays the report's own row count.
@@ -14,7 +14,7 @@ import { OPERATOR } from "../shared";
 // The gateway's MAX_RESULT_CHARS (a test holds them equal; the gateway index imports this file).
 export const REPORT_RESULT_CHARS = 8_000;
 
-// Thrown when the report switch is off, so a call that got past the registry still fails closed.
+// Thrown when a report's switch is off, so a call that got past the registry still fails closed.
 export class ReportsOffError extends Error {
   constructor() {
     super("reports are switched off");
@@ -59,8 +59,10 @@ export function reportTool(name: ReportName, text: { description: string; label:
     // Each report's own strict schema; its fields are all optional or required strings.
     args: REPORT_ARGS[name] as z.ZodType<ReportArgsShape>,
     refs: refsOf,
+    // Read on every offer and call, so the offer list, the disabled block and toolNamed agree.
+    enabled: () => reportSwitchOn(name),
     run: async (q, ctx, a) => {
-      if (!flags.reportsEnabled) throw new ReportsOffError();
+      if (!reportSwitchOn(name)) throw new ReportsOffError();
       const request = { name, args: a } as ReportRequest;
       return { result: fitResult(await computeReport(q, request, { now: ctx.now, timeZone: ctx.timeZone })) };
     },

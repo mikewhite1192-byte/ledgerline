@@ -466,6 +466,32 @@ export async function readDeliveredBetween(
   };
 }
 
+// ---- IFTA quarter ----
+
+// The IFTA quarter's inputs (design-ifta 3): the loads delivered in the quarter with their state
+// miles, and the fuel bought in it, by its stored tenant-local purchase date. Each table is read in
+// pages through the same bound as a month's loads, so a quarter of fuel never reaches the Data
+// API's 1 MiB cap, and a read past the bound fails whole with ReadLimitError.
+export const PURCHASED_BETWEEN = "purchased_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)";
+
+export type IftaRows = Pick<TenantRows, "loads" | "load_state_miles" | "fuel_purchases">;
+
+export async function readIftaInput(
+  q: Queryable,
+  quarter: Period,
+  paging: Paging = DELIVERED_PAGING,
+): Promise<IftaRows> {
+  const start = assertLocalDate(quarter.start, "quarter start");
+  const end = assertLocalDate(quarter.end, "quarter end");
+  if (end < start) throw new RangeError("quarter ends before it starts");
+  const p = [start, end];
+  return {
+    loads: await readWherePaged(q, "loads", DELIVERED_BETWEEN, p, paging),
+    load_state_miles: await readWherePaged(q, "load_state_miles", DELIVERED_LOADS, p, paging),
+    fuel_purchases: await readWherePaged(q, "fuel_purchases", PURCHASED_BETWEEN, p, paging),
+  };
+}
+
 // ---- Load numbers ----
 
 // Rows per statement and statements per read for the load numbers. A row is an id and a load

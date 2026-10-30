@@ -1,9 +1,10 @@
 import { isRefCell, type ReportCell, type ReportColumn, type ReportResult } from "./types";
 
 // A report as CSV (RFC 4180: comma separated, CRLF line ends, a field quoted when it holds a
-// comma, a quote or a line break, quotes doubled). Every row, then subtotal and total rows.
-// Cents are written as dollars with two decimals from the integer (123456 is 1234.56), basis
-// points as a percent with two decimals, dates as YYYY-MM-DD, a record as its label plus its id.
+// comma, a quote or a line break, quotes doubled). Every row, then subtotal and total rows, then
+// the report's notes, one per line. Cents are written as dollars with two decimals from the
+// integer (123456 is 1234.56), basis points as a percent with two decimals, thousandths with
+// three (450500 is 450.500), dates as YYYY-MM-DD, a record as its label plus its id.
 //
 // Spreadsheet formula guard: a text field (a header, a label, a name, a note) that starts with
 // =, +, -, @, a tab or a carriage return gets a leading single quote, so a spreadsheet shows it
@@ -27,6 +28,12 @@ function fixed2(n: number): string {
   return `${n < 0 ? "-" : ""}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}`;
 }
 
+function fixed3(n: number): string {
+  if (!Number.isSafeInteger(n)) throw new Error("a report number is not a whole number");
+  const abs = Math.abs(n);
+  return `${n < 0 ? "-" : ""}${Math.floor(abs / 1000)}.${String(abs % 1000).padStart(3, "0")}`;
+}
+
 function numberField(text: string): string {
   if (!NUMBER.test(text)) throw new Error("a report number did not format as a number");
   return text;
@@ -46,6 +53,7 @@ function fieldsOf(column: ReportColumn, value: ReportCell | undefined): string[]
     if (column.kind === "cents") return [numberField(fixed2(value))];
     if (column.kind === "pct") return [numberField(`${fixed2(value)}%`)];
     if (column.kind === "int") return [numberField(String(value))];
+    if (column.kind === "milli") return [numberField(fixed3(value))];
   }
   return [guardText(String(value))];
 }
@@ -67,11 +75,16 @@ function sumRow(columns: readonly ReportColumn[], label: string, totals: Record<
 }
 
 export function reportCsv(result: ReportResult): string {
-  const lines: string[][] = [headerOf(result.columns).map(guardText)];
+  const header = headerOf(result.columns);
+  const lines: string[][] = [header.map(guardText)];
   for (const row of result.rows) lines.push(result.columns.flatMap((c) => fieldsOf(c, row[c.key])));
   if (result.rows.length > 0) {
     for (const s of result.subtotals ?? []) lines.push(sumRow(result.columns, s.label, s.totals));
     if (result.totals) lines.push(sumRow(result.columns, "Total", result.totals));
+  }
+  // A note in the first field, the rest left empty so every line has the header's width.
+  for (const note of result.notes ?? []) {
+    lines.push([guardText(note), ...Array<string>(header.length - 1).fill("")]);
   }
   return lines.map((fields) => fields.map(quote).join(",")).join("\r\n") + "\r\n";
 }

@@ -347,6 +347,116 @@ describe("margin_per_load", () => {
   });
 });
 
+describe("ifta_quarter", () => {
+  const Q4 = { start: "2026-10-01", end: "2026-12-31" };
+  const inQ4 = (day: string | null) => day !== null && Q4.start <= day && day <= Q4.end;
+  // Thousandths written with three decimals ("-59.724") and cents with two ("-21.68"), as integers.
+  const scaled = (text: string, places: number) => {
+    const m = /^(-?)(\d+)\.(\d+)$/.exec(text);
+    if (!m || m[3].length !== places) throw new Error(`not a ${places}-place number: ${text}`);
+    return (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 10 ** places + Number(m[3]));
+  };
+  // n / d rounded half up, on non-negative integers, worked here apart from the engine.
+  const halfUp = (n: number, d: number) => {
+    const q = Math.floor(n / d);
+    return 2 * (n - q * d) >= d ? q + 1 : q;
+  };
+
+  it("sums the quarter's delivered miles and the fuel bought in it, at a SAMPLE rate for every state", async () => {
+    const r = await run("ifta_quarter", { asOf: "2026-11-02" });
+    expect(r.period).toEqual(Q4);
+    expect(r.args).toEqual({ asOf: "2026-11-02" });
+    const delivered = plan.rows.loads.filter((l) => ["delivered", "invoiced"].includes(l.status) && inQ4(l.delivered_on));
+    expect(delivered.length).toBeGreaterThan(0);
+    const fuel = plan.rows.fuel_purchases.filter((f) => inQ4(f.purchased_on));
+    expect(fuel.length).toBeGreaterThan(0);
+    expect(r.totals?.miles).toBe(total(delivered.map((l) => l.loaded_miles + l.empty_miles)));
+    expect(r.totals?.taxPaidGallonsMilli).toBe(total(fuel.map((f) => f.gallons_milli)));
+    for (const key of ["miles", "taxPaidGallonsMilli", "taxableGallonsMilli", "netGallonsMilli", "taxDueCents"]) {
+      expect(total(column(r.rows, key)), key).toBe(r.totals?.[key]);
+    }
+    expect(r.rows.length).toBeGreaterThan(0);
+    for (const row of r.rows) {
+      expect(row.sampleRate, String(row.state)).toMatch(/^\$0\.\d{4}$/);
+      expect(typeof row.taxDueCents, String(row.state)).toBe("number");
+    }
+    expect(r.rows.map((row) => row.state)).toEqual(r.rows.map((row) => row.state).sort());
+  });
+
+  it("says SAMPLE in the title, the tax header and the first note, and that it found no gaps", async () => {
+    const r = await run("ifta_quarter", { asOf: "2026-11-02" });
+    expect(r.title).toContain("SAMPLE");
+    expect(r.columns.find((c) => c.key === "taxDueCents")?.header).toContain("SAMPLE");
+    expect(r.columns.find((c) => c.key === "sampleRate")?.header).toContain("SAMPLE");
+    const notes = r.notes ?? [];
+    expect(notes[0]).toMatch(/^SAMPLE rates: .*not official or current IFTA rates\. The numbers are not for filing\.$/);
+    expect(notes[1]).toMatch(/^Fleet MPG \d+\.\d{3}: [\d,]+ miles \/ [\d,]+\.\d{3} gallons, /);
+    expect(notes.at(-1)).toBe("No data gaps: every load has a state split that adds up and every fuel purchase has a state.");
+    // The largest tax due names the row with the largest positive tax.
+    const due = r.rows.filter((row) => typeof row.taxDueCents === "number" && row.taxDueCents > 0);
+    if (due.length > 0) {
+      const top = due.reduce((a, b) => ((b.taxDueCents as number) > (a.taxDueCents as number) ? b : a));
+      expect(notes.some((n) => n.startsWith(`Largest tax due: ${String(top.state)}, $`))).toBe(true);
+    }
+  });
+
+  it("can be reproduced from its CSV: taxable from miles and the fleet MPG, tax from net gallons and the rate", async () => {
+    const r = await run("ifta_quarter", { asOf: "2026-11-02" });
+    const csv = reportCsv(r);
+    const lines = csv.split("\r\n");
+    expect(lines[0]).toBe("State,Miles,Tax-paid gallons,Taxable gallons,Net gallons,SAMPLE rate per gallon,Tax due at SAMPLE rates");
+    const mpgMatch = /Fleet MPG (\d+\.\d{3}): ([\d,]+) miles \/ ([\d,]+\.\d{3}) gallons/.exec(csv);
+    if (!mpgMatch) throw new Error("no fleet MPG note in the CSV");
+    const mpg = scaled(mpgMatch[1], 3);
+    const miles = Number(mpgMatch[2].replace(/,/g, ""));
+    const gallons = scaled(mpgMatch[3].replace(/,/g, ""), 3);
+    expect(mpg).toBe(halfUp(miles * 1_000_000, gallons));
+    let taxable = 0;
+    for (const line of lines.slice(1, 1 + r.rows.length)) {
+      const [state, m, paid, tax, net, rate, due] = line.split(",");
+      expect(state).toMatch(/^[A-Z]{2}$/);
+      const taxableMilli = scaled(tax, 3);
+      expect(taxableMilli, state).toBe(halfUp(Number(m) * 1_000_000, mpg));
+      expect(scaled(net, 3), state).toBe(taxableMilli - scaled(paid, 3));
+      const netMilli = scaled(net, 3);
+      // "$0.2200" is dollars to four places, 2200 hundredths of a cent, 22000 thousandths.
+      expect(rate, state).toMatch(/^\$\d+\.\d{4}$/);
+      const rateMcents = scaled(rate.slice(1), 4) * 10;
+      const cents = halfUp(Math.abs(netMilli) * rateMcents, 1_000_000);
+      expect(scaled(due, 2), state).toBe(netMilli < 0 ? -cents : cents);
+      taxable += taxableMilli;
+    }
+    const totalLine = lines[1 + r.rows.length].split(",");
+    expect(totalLine[0]).toBe("Total");
+    expect(scaled(totalLine[3], 3)).toBe(taxable);
+    // Every note follows the Total row, one per line.
+    expect(lines.slice(2 + r.rows.length, -1)).toHaveLength(r.notes?.length ?? 0);
+  });
+
+  it("defaults to the quarter holding the carrier's today, in its own zone", async () => {
+    // 03:00 UTC on Oct 1 is still Sep 30 in New York, so the default quarter is Q3, which has none.
+    const early = { now: new Date(Date.UTC(2026, 9, 1, 3, 0, 0)), timeZone: plan.carrier.timezone };
+    expect(plan.carrier.timezone).toBe("America/New_York");
+    const r = await planDb(plan).withTenant(TENANT, (q) => computeReport(q, request("ifta_quarter"), early));
+    expect(r.asOf).toBe("2026-09-30");
+    expect(r.period).toEqual({ start: "2026-07-01", end: "2026-09-30" });
+    expect(r.rows).toEqual([]);
+    expect(r.emptyReason).toBe("no_rows");
+    expect(r.notes).toBeUndefined();
+    const today = await run("ifta_quarter");
+    expect(today.asOf).toBe("2026-11-02");
+    expect(today.period).toEqual(Q4);
+  });
+
+  it("is empty for a quarter with no loads or fuel", async () => {
+    const r = await run("ifta_quarter", { asOf: "2025-05-15" });
+    expect(r.period).toEqual({ start: "2025-04-01", end: "2025-06-30" });
+    expect(r.rows).toEqual([]);
+    expect(r.totals).toBeUndefined();
+    expect(r.emptyReason).toBe("no_rows");
+  });
+});
+
 describe("every report", () => {
   it.each(REPORT_NAMES)("%s names each money column so the figure check reads it as cents", (name) => {
     for (const c of REPORT_COLUMNS[name]) {

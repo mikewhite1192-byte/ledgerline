@@ -191,9 +191,13 @@ export type Flags = {
     // At most 400,000: the byte_length CHECK in migration 0052 refuses a larger card.
     maxPngBytes: number;
   };
-  // The five report tools in the chat and the report download route. Off: the agent is not
+  // The six report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
+  // The IFTA quarter report (report_ifta_quarter and /api/reports/ifta_quarter): per-state miles
+  // and gallons, fleet MPG and tax at SAMPLE rates. Off: the tool is not offered and a call is
+  // refused as unknown, the route answers 404. reportsEnabled must also be on.
+  iftaEnabled: boolean;
   // The invoice queue: Refresh turns each delivered, rated load into an invoice card, and an
   // approval records the invoice here. Posting it to the books still needs accountingEnabled.
   invoicesEnabled: boolean;
@@ -741,6 +745,7 @@ export const flags: Flags = {
   payCardsEnabled: false,
   payCardLimits: { checkMaxCostCents: 3, maxBatchCents: 40, cardsPerTenantPerDay: 100, maxPngBytes: 400_000 },
   reportsEnabled: true,
+  iftaEnabled: false,
   invoicesEnabled: true,
   invoicesStart: "2026-10-05",
   invoiceLimits: { proposalsPerRun: 50, maxPostAttempts: 3 },

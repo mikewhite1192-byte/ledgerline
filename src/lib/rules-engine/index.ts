@@ -206,3 +206,20 @@ export {
 export type { FuelCategory, FuelCheckName, FuelFinding, FuelLimits, NoSuggestionReason } from "./fuel";
 export { PINNED_RATE_KINDS, rateOn } from "./rates";
 export type { PinnedRate, PinnedRateKind } from "./rates";
+export {
+  fleetMpgMilliOf,
+  IFTA_RATE_MAX_MCENTS,
+  IFTA_RATE_MIN_MCENTS,
+  iftaQuarter,
+  taxableMilliOf,
+  taxCentsOf,
+} from "./ifta";
+export type {
+  IftaGap,
+  IftaGapKind,
+  IftaInput,
+  IftaQuarter,
+  IftaRate,
+  IftaState,
+  IftaTotals,
+} from "./ifta";

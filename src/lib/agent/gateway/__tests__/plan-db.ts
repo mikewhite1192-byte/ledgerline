@@ -8,6 +8,7 @@ import {
   MONEY_CODE_DRIVER_SQL,
   MONEY_CODE_LOAD_SQL,
   MONEY_CODES_SQL,
+  PURCHASED_BETWEEN,
   QUEUE_CHILDREN,
   QUEUE_LOADS,
 } from "../../../data/read";
@@ -289,6 +290,10 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
       return all.filter((r) => customerIds.has(r.id as string));
     }
     return all.filter((r) => loadIds.has(r.load_id as string));
+  }
+  if (where === PURCHASED_BETWEEN) {
+    const [start, end] = params as string[];
+    return all.filter((r) => typeof r.purchased_on === "string" && r.purchased_on >= start && r.purchased_on <= end);
   }
   throw new Error(`unexpected where clause: ${where.slice(0, 60)}`);
 }

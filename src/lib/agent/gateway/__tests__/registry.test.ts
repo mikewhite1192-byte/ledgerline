@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import { ALWAYS_LOADED } from "../loading";
-import { REDACT_ENUMS, STRICT_TOOL_SCHEMAS, TOOL_NAME, TOOL_REGISTRY, toolNamed, toolsFor } from "../registry";
+import { isToolEnabled, REDACT_ENUMS, STRICT_TOOL_SCHEMAS, TOOL_NAME, TOOL_REGISTRY, toolNamed, toolsFor } from "../registry";
 import { AGENT_ROLES, RESERVED_TOOL_NAMES, TIERS, type AgentRole } from "../types";
 
 const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
@@ -35,6 +35,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   report_advances_outstanding: { tier: "read", roles: ["operator"] },
   report_cash_needed: { tier: "read", roles: ["operator"] },
   report_margin_per_load: { tier: "read", roles: ["operator"] },
+  report_ifta_quarter: { tier: "read", roles: ["operator"] },
   get_proposal: { tier: "read", roles: ["auditor"] },
   find_unbilled_detention: { tier: "read", roles: ["operator", "auditor"] },
   propose_detention_charge: { tier: "propose", roles: ["operator"] },
@@ -65,7 +66,9 @@ const FACTORING_TOOLS = ["get_factoring_packet", "get_factoring_requests", "prop
 const DETENTION_TOOLS = ["find_unbilled_detention", "propose_detention_charge"];
 // The tools behind the money codes switch, likewise.
 const MONEY_CODE_TOOLS = ["get_money_codes", "propose_money_code"];
-const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_"));
+// The IFTA quarter report also needs its own switch, so it is kept apart from the other reports.
+const IFTA_TOOL = "report_ifta_quarter";
+const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_") && n !== IFTA_TOOL);
 // The card check's tools, behind its switch.
 const CARD_TOOLS = ["get_card_breaks", "propose_card_match"];
 // The tools behind the invoicing and customer payments switches, likewise.
@@ -80,6 +83,7 @@ const COLLECTIONS_TOOLS = ["get_collections"];
 
 afterEach(() => {
   flags.reportsEnabled = false;
+  flags.iftaEnabled = false;
   flags.detentionEnabled = false;
   flags.moneyCodes.enabled = false;
   flags.cardRecon.enabled = false;
@@ -327,6 +331,33 @@ describe("tool registry", () => {
     expect(toolsFor("operator")).toHaveLength(21);
   });
 
+  it("offers and finds the IFTA quarter report only while the reports and its own switch are both on", () => {
+    const names = () => toolsFor("operator").map((t) => t.name);
+    expect(flags.iftaEnabled).toBe(false);
+    flags.reportsEnabled = true;
+    // Reports on, IFTA off: the five reports as before, and the IFTA tool neither offered nor found.
+    expect(toolsFor("operator")).toHaveLength(26);
+    expect(names()).not.toContain(IFTA_TOOL);
+    expect(toolNamed(IFTA_TOOL)).toBeNull();
+    expect(isToolEnabled(TOOL_REGISTRY[IFTA_TOOL])).toBe(false);
+
+    flags.iftaEnabled = true;
+    expect(toolsFor("operator")).toHaveLength(27);
+    expect(names()).toContain(IFTA_TOOL);
+    expect(toolNamed(IFTA_TOOL)?.tier).toBe("read");
+    expect(toolNamed(IFTA_TOOL)?.roles).toEqual(["operator"]);
+    expect(isToolEnabled(TOOL_REGISTRY[IFTA_TOOL])).toBe(true);
+    for (const role of ["auditor", "triage"] as const) {
+      expect(toolsFor(role).map((t) => t.name), role).not.toContain(IFTA_TOOL);
+    }
+
+    // The IFTA switch alone does not open it.
+    flags.reportsEnabled = false;
+    expect(names()).not.toContain(IFTA_TOOL);
+    expect(toolNamed(IFTA_TOOL)).toBeNull();
+    flags.iftaEnabled = false;
+  });
+
   it("offers the note suggestion tool to the operator only while carrier memory is on, read on every offer", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
     expect(flags.carrierMemoryEnabled).toBe(false);
@@ -362,9 +393,10 @@ describe("tool registry", () => {
     flags.factoring.enabled = true;
     flags.groundedRatesEnabled = true;
     flags.quarterReviewEnabled = true;
+    flags.iftaEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 48,
+      operator: 49,
       auditor: 20,
       triage: 2,
     });

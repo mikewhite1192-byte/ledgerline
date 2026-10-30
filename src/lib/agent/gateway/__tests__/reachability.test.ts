@@ -17,7 +17,7 @@ const ARGS = sampleArgs(plan);
 const TOOLS = Object.values(TOOL_REGISTRY);
 const call = (name: string, args: unknown) => ({ id: "c", name, argumentsJson: JSON.stringify(args) });
 
-// Every tool's switch on (detention, reports, invoicing, invoice review, customer payments, the card check, collections,
+// Every tool's switch on (detention, reports and the IFTA quarter, invoicing, invoice review, customer payments, the card check, collections,
 // Cash Friday, factoring, the profit brief, the quarter review, pay rule changes, money codes, carrier memory and
 // fuel rates), so each test below reaches every registered tool. The detention switch's own cases are in
 // detention-tools.test.ts; the last test here checks the report switch-off path.
@@ -37,6 +37,7 @@ beforeEach(() => {
   flags.factoring.enabled = true;
   flags.groundedRatesEnabled = true;
   flags.quarterReviewEnabled = true;
+  flags.iftaEnabled = true;
 });
 
 afterEach(() => {
@@ -55,6 +56,7 @@ afterEach(() => {
   flags.factoring.enabled = false;
   flags.groundedRatesEnabled = false;
   flags.quarterReviewEnabled = false;
+  flags.iftaEnabled = false;
   vi.restoreAllMocks();
 });
 
@@ -134,7 +136,8 @@ describe("reachability", () => {
   it("(e) with the report switch off, refuses and logs every report tool as unknown, for every role", async () => {
     flags.reportsEnabled = false;
     const reports = TOOLS.filter((t) => t.name.startsWith("report_"));
-    expect(reports).toHaveLength(5);
+    // The five reports and the IFTA quarter, whose own switch is on here: the report switch wins.
+    expect(reports).toHaveLength(6);
     for (const role of AGENT_ROLES) {
       expect(toolsFor(role).map((t) => t.name).filter((n) => n.startsWith("report_")), role).toEqual([]);
       for (const tool of reports) {

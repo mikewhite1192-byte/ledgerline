@@ -5,7 +5,9 @@ import {
   LOAD_NUMBERS_FIRST,
   LOAD_NUMBERS_NEXT,
   ReadLimitError,
+  PURCHASED_BETWEEN,
   readDeliveredBetween,
+  readIftaInput,
   readLoadNumbers,
   type LoadNumberRow,
 } from "./read";
@@ -113,6 +115,50 @@ describe("readDeliveredBetween in pages", () => {
     ]) {
       await expect(readDeliveredBetween(q, OCTOBER, paging)).rejects.toBeInstanceOf(RangeError);
     }
+    expect(calls).toHaveLength(0);
+  });
+});
+
+// The IFTA quarter reader: the same pages over the quarter's loads, their state miles and the fuel
+// bought in it, every statement in the tenant and carrying the quarter's two dates.
+const Q4 = { start: "2026-10-01", end: "2026-12-31" };
+
+describe("readIftaInput in pages", () => {
+  it("pages the three tables, each statement in the tenant, the fuel by its purchase date", async () => {
+    const { q, calls } = fakeDb({ loads: loads(3), load_state_miles: loads(5), fuel_purchases: loads(4) });
+    const out = await readIftaInput(q, Q4, { pageSize: 2, maxPages: 4 });
+    expect(out.loads.map((r) => r.id)).toEqual([id(1), id(2), id(3)]);
+    expect(out.load_state_miles.map((r) => r.id)).toEqual([id(1), id(2), id(3), id(4), id(5)]);
+    expect(out.fuel_purchases.map((r) => r.id)).toEqual([id(1), id(2), id(3), id(4)]);
+    expect(Object.keys(out).sort()).toEqual(["fuel_purchases", "load_state_miles", "loads"]);
+    expect(new Set(calls.map((c) => c.table))).toEqual(new Set(["loads", "load_state_miles", "fuel_purchases"]));
+    for (const c of calls) {
+      expect(c.sql).toContain("tenant_id = current_tenant_id()");
+      expect(c.sql).toMatch(/ ORDER BY id LIMIT 2$/);
+      expect(c.params.slice(0, 2)).toEqual([Q4.start, Q4.end]);
+    }
+    for (const c of of(calls, "fuel_purchases")) {
+      expect(c.sql).toContain(PURCHASED_BETWEEN);
+      expect(c.sql).not.toContain("delivered_on");
+    }
+    for (const c of [...of(calls, "loads"), ...of(calls, "load_state_miles")]) {
+      expect(c.sql).toContain("delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)");
+    }
+    // Four fuel rows at two a page: two full pages and one empty one.
+    expect(of(calls, "fuel_purchases").map((c) => c.params.at(-1))).toEqual([Q4.end, id(2), id(4)]);
+  });
+
+  it("throws at the page bound instead of returning part of the quarter's fuel", async () => {
+    const { q } = fakeDb({ loads: loads(1), fuel_purchases: loads(5) });
+    const read = readIftaInput(q, Q4, { pageSize: 2, maxPages: 2 });
+    await expect(read).rejects.toBeInstanceOf(ReadLimitError);
+    await expect(read).rejects.toMatchObject({ category: "too_many_rows" });
+  });
+
+  it("refuses a quarter that is not two dates in order before reading anything", async () => {
+    const { q, calls } = fakeDb({});
+    await expect(readIftaInput(q, { start: "2026-12-31", end: "2026-10-01" })).rejects.toBeInstanceOf(RangeError);
+    await expect(readIftaInput(q, { start: "2026-10-01", end: "2026-13-01" })).rejects.toBeInstanceOf(RangeError);
     expect(calls).toHaveLength(0);
   });
 });

@@ -1,4 +1,4 @@
-// The five reports: their names, titles, columns and result shape. Plain data with no imports, so
+// The six reports: their names, titles, columns and result shape. Plain data with no imports, so
 // the chat, the turn view and the download route can all use it without reaching the records or
 // the rules engine. The numbers themselves are computed in the files next to this one, from the
 // records and the engine's own functions; a model only picks a report and fills its typed args.
@@ -9,6 +9,7 @@ export const REPORT_NAMES = [
   "advances_outstanding",
   "cash_needed",
   "margin_per_load",
+  "ifta_quarter",
 ] as const;
 export type ReportName = (typeof REPORT_NAMES)[number];
 
@@ -34,11 +35,13 @@ export const REPORT_TITLES: Readonly<Record<ReportName, string>> = {
   advances_outstanding: "Advances outstanding",
   cash_needed: "Cash needed for the pay run",
   margin_per_load: "Margin per load",
+  ifta_quarter: "IFTA quarter summary (SAMPLE rates)",
 };
 
-// cents: integer cents. int: a count. pct: basis points (1234 is 12.34%). date: YYYY-MM-DD in the
-// carrier's time zone. ref: a record ({ table, id, label }). text: fixed words.
-export type ColumnKind = "text" | "cents" | "int" | "pct" | "date" | "ref";
+// cents: integer cents. int: a count. pct: basis points (1234 is 12.34%). milli: thousandths
+// (450500 is 450.500 gallons). date: YYYY-MM-DD in the carrier's time zone. ref: a record
+// ({ table, id, label }). text: fixed words.
+export type ColumnKind = "text" | "cents" | "int" | "pct" | "milli" | "date" | "ref";
 export type ReportColumn = { key: string; header: string; kind: ColumnKind };
 
 export type RefCell = { table: string; id: string; label: string };
@@ -68,6 +71,9 @@ export type ReportResult = {
   truncated: boolean;
   rowsTotal: number;
   emptyReason?: EmptyReason;
+  // Fixed sentences the report code writes from its own numbers (never model text): how a figure
+  // was worked out and what the totals leave out. Shown under the table and after the CSV total.
+  notes?: string[];
 };
 
 // Every cents column key ends in "Cents", so the agent's figure check accepts what a report says.
@@ -115,6 +121,15 @@ export const REPORT_COLUMNS: Readonly<Record<ReportName, readonly ReportColumn[]
     { key: "marginCents", header: "Margin", kind: "cents" },
     { key: "marginBps", header: "Margin %", kind: "pct" },
     { key: "note", header: "Note", kind: "text" },
+  ],
+  ifta_quarter: [
+    { key: "state", header: "State", kind: "text" },
+    { key: "miles", header: "Miles", kind: "int" },
+    { key: "taxPaidGallonsMilli", header: "Tax-paid gallons", kind: "milli" },
+    { key: "taxableGallonsMilli", header: "Taxable gallons", kind: "milli" },
+    { key: "netGallonsMilli", header: "Net gallons", kind: "milli" },
+    { key: "sampleRate", header: "SAMPLE rate per gallon", kind: "text" },
+    { key: "taxDueCents", header: "Tax due at SAMPLE rates", kind: "cents" },
   ],
 };
 

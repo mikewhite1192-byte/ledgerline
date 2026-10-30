@@ -33,6 +33,8 @@ export const REPORT_ARGS = {
   advances_outstanding: z.strictObject({ asOf: dateArg().optional() }),
   cash_needed: z.strictObject({ periodStart: dateArg().optional() }),
   margin_per_load: marginArgs,
+  // Any date inside the quarter wanted; default today in the carrier's time zone.
+  ifta_quarter: z.strictObject({ asOf: dateArg().optional() }),
 } as const satisfies Record<ReportName, z.ZodType>;
 
 export type ReportArgs = { [K in ReportName]: z.infer<(typeof REPORT_ARGS)[K]> };

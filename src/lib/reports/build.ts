@@ -22,6 +22,7 @@ export function reportOf(
     totals?: Record<string, number>;
     subtotals?: ReportSubtotal[];
     emptyReason?: EmptyReason;
+    notes?: readonly string[];
   },
 ): ReportResult {
   const { rows } = parts;
@@ -38,6 +39,7 @@ export function reportOf(
     truncated: false,
     rowsTotal: rows.length,
     ...(rows.length === 0 ? { emptyReason: parts.emptyReason ?? "no_rows" } : {}),
+    ...(parts.notes && parts.notes.length > 0 ? { notes: [...parts.notes] } : {}),
   };
 }
 

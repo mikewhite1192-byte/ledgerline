@@ -73,6 +73,8 @@ const KEPT_OFF = [
   "moneyCodes.armed",
   // The quarter review ships dark with its own merge; the owner turns it on in its own PR.
   "quarterReviewEnabled",
+  // The IFTA quarter report ships dark with its own merge; the owner turns it on in its own PR.
+  "iftaEnabled",
   // Step through for staff on production is the owner's call, in its own one-line PR.
   "stepThrough.staff",
   // The demo visitor sign-in ships dark with its own merge; the owner turns it on in its own PR.
@@ -716,6 +718,11 @@ describe("flags", () => {
     expect(flags.quarterReviewLimits.maxOutputTokens).toBeLessThanOrEqual(8192);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewEnabled");
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewLimits");
+  });
+
+  it("ships the IFTA quarter report dark, and never switched on by local mode", () => {
+    expect(flags.iftaEnabled).toBe(false);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("iftaEnabled");
   });
 });
 
