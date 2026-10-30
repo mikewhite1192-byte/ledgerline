@@ -27,7 +27,10 @@ export type Flags = {
   // reads it at the moment of that decision; callers never do.
   sparkOpenFallback: "off" | "fireworks";
   // Any payout through the payment adapter, mock included. Off means the money executor refuses
-  // before reserving a ledger row, and the adapter refuses again at send.
+  // before reserving a ledger row, and the adapter refuses again at send. With paymentProvider
+  // stripe_test, a weekly pay payout (the bank rail) runs only for the two demo carriers, because
+  // Stripe test mode sends every transfer to the one test account the environment names: any other
+  // carrier is refused as if this were off, before a ledger row is reserved and again at the send.
   payoutsEnabled: boolean;
   // Payouts: the mock card-load adapter unless Stripe test mode is switched on.
   paymentProvider: "mock" | "stripe_test";

@@ -151,6 +151,9 @@ describe("the batch checks", () => {
     expect(legsToReserve()).toEqual(["settlement_payout"]);
     flags.accountingEnabled = true;
     expect(legsToReserve()).toEqual(["settlement_payout", "settlement_bill", "settlement_bill_payment"]);
+    // Payouts off for this carrier (Stripe test mode, not a demo carrier): nothing, as with the
+    // switch off, since a bill never goes out before its payout.
+    expect(legsToReserve(false)).toEqual([]);
   });
 });
 

@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isTestKey } from "../lib/adapters/payment/stripe-test";
 import { assertMoneyEnvSafe, MoneyEnvRefused } from "../lib/money/guard";
+import { payoutSwitchOn } from "../lib/money/ledger";
+import { DEMO_CARRIERS } from "../lib/seed/carriers";
 import { isLocalDate } from "../lib/time/local-date";
 import { flags, type Flags } from "./flags";
 import { LOCAL_SWITCHES } from "../../e2e/env.local-mode";
@@ -129,6 +131,16 @@ describe("flags", () => {
       expect(() => assertMoneyEnvSafe(env({ STRIPE_SECRET_KEY: live }), flags)).toThrow(MoneyEnvRefused);
     }
     expect(isTestKey(key("sk", "test", "0".repeat(24)))).toBe(true);
+    // Stripe test mode sends every transfer to the one test account, so weekly pay goes out there
+    // only for the two demo carriers; any other carrier is held as if payouts were off.
+    for (const c of DEMO_CARRIERS) {
+      expect(payoutSwitchOn("settlement_payout", "stripe_test", c)).toBe(true);
+    }
+    const other = { slug: "another-carrier", name: "Another Carrier", timezone: "America/Chicago" };
+    expect(payoutSwitchOn("settlement_payout", "stripe_test", other)).toBe(false);
+    expect(readFileSync(join(__dirname, "flags.ts"), "utf8")).toMatch(
+      /a weekly pay payout \(the bank rail\) runs only for the two demo carriers[^;]*payoutsEnabled: boolean;/,
+    );
   });
 
   it("books to the QuickBooks sandbox only, and the start-up check refuses anything else", () => {
