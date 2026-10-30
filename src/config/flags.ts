@@ -501,8 +501,11 @@ export type Flags = {
     turnsPerSession: number;
     // Every visit created in one UTC day, together, in cents.
     dayCapCents: number;
-    // New visits from one address in an hour, and from everyone in a day.
+    // New visits from one address in an hour (best-effort: the client can set the address it is
+    // counted by, src/lib/auth/demo-visit.ts ipHashOf), from everyone in a rolling hour, and from
+    // everyone in a day.
     sessionsPerIpPerHour: number;
+    sessionsPerHour: number;
     sessionsPerDay: number;
     // How long the visit's sign-in cookie lasts.
     cookieHours: number;
@@ -700,6 +703,7 @@ export const flags: Flags = {
     turnsPerSession: 25,
     dayCapCents: 800,
     sessionsPerIpPerHour: 5,
+    sessionsPerHour: 40,
     sessionsPerDay: 150,
     cookieHours: 2,
   },

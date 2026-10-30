@@ -135,8 +135,7 @@ export function toMessages(
     }
     if (t.error) {
       parts.push({ kind: "error", category: visitor && t.error === "budget" ? "visit_budget" : t.error });
-    }
-    else if (t.text) {
+    } else if (t.text) {
       // A stopped turn that still built a card or a report says what it found, not that it stopped.
       parts.push({ kind: "text", text: answerTextOf({ ...t, reports: t.reports ?? [] }) });
     }

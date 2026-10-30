@@ -39,18 +39,28 @@ export type OpenTurnInput = {
 // since every judge shares one login, and each turn it opens counts against the visit's
 // turnsPerSession limit (src/lib/auth/demo-visit.ts) after the other checks, so a refused turn
 // counts nothing. A visit that ended, or any visit while flags.judgeAccess is off, opens nothing.
+// A judge with no visit (the switch went off mid-visit, or a judge token without pc_demo) opens
+// nothing either, refused before any row is written; its model calls would be refused anyway
+// (src/lib/ai/spend.ts reserve).
 export async function openTurn(
   q: Queryable,
   session: Session,
   input: OpenTurnInput,
 ): Promise<OpenedTurn | { refused: OpenTurnRefusal }> {
   const nowIso = input.now.toISOString();
+  const visitId = session.demoSessionId ?? null;
+  if (visitId === null) {
+    const member = await q.query<{ role: unknown }>(
+      "SELECT role FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
+      [session.sub],
+    );
+    if (member.some((m) => m.role === "judge")) return { refused: "visit_ended" };
+  }
   const taken = await q.query<{ id: string }>("SELECT id FROM turns WHERE id = CAST($1 AS uuid)", [
     input.turnId,
   ]);
   if (taken.length > 0) return { refused: "duplicate" };
 
-  const visitId = session.demoSessionId ?? null;
   let conversationId = input.conversationId;
   if (conversationId) {
     const own = await q.query<{ id: string }>(

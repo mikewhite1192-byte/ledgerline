@@ -7,23 +7,26 @@ import { signIn } from "@/lib/auth/cognito";
 import { DEMO_COOKIE, SESSION_COOKIE, visitCookieOptions } from "@/lib/auth/cookie";
 import { ipHashOf, startVisit, type StartedVisit } from "@/lib/auth/demo-visit";
 import { forgetJudgeLogin, judgeLogin } from "@/lib/auth/judge-login";
+import { takeJudgeSignIn } from "@/lib/auth/judge-throttle";
 import { readRole } from "@/lib/auth/role";
 import { verifyIdToken } from "@/lib/auth/verify";
 import { getDb } from "@/lib/db";
 
 // "Try the demo carrier" (the sign-in page's second card, shown only while flags.judgeAccess is
-// on). A POST from the page, so Next's origin check applies. The server signs the visitor in as
-// the demo carrier's one judge login (src/lib/auth/judge-login.ts, read from Secrets Manager; no
+// on). A POST from the page, so Next's origin check applies. Past this process's own brake on
+// sign-ins per minute (src/lib/auth/judge-throttle.ts), the server signs the visitor in as the
+// demo carrier's one judge login (src/lib/auth/judge-login.ts, read from Secrets Manager; no
 // credential is in any tracked file) through the normal password sign-in, then checks, in the
 // token's tenant, that the login really is a judge (anything else, a missing membership or a role
 // this code does not know is refused, so a wrong secret never hands strangers an admin) and starts
 // or reuses the visit (src/lib/auth/demo-visit.ts: the day's spend, a live pc_demo visit, then the
-// new-visit limits per address and per day). Only then are pc_session and pc_demo set, both for
-// flags.judgeAccess.cookieHours. Every refusal goes back to the sign-in page with one friendly
-// line; the log gets the category, never the login, the token or the upstream's words.
+// new-visit limits per address, per day and per hour). Only then are pc_session and pc_demo set,
+// both for flags.judgeAccess.cookieHours. Every refusal goes back to the sign-in page with one
+// friendly line; the log gets the category, never the login, the token or the upstream's words.
 
 type Category =
   | "disabled"
+  | "pace"
   | "secret"
   | "credentials"
   | "cognito"
@@ -32,7 +35,8 @@ type Category =
   | "unavailable"
   | "day_cap"
   | "ip_limit"
-  | "day_limit";
+  | "day_limit"
+  | "hour_limit";
 
 const REFUSED = "/sign-in?demo=unavailable";
 
@@ -45,6 +49,8 @@ async function visit(): Promise<string> {
   if (!flags.judgeAccess.enabled) return refused("disabled");
   const options = visitCookieOptions(flags.judgeAccess.cookieHours);
   if (options.maxAge <= 0) return refused("disabled");
+  // Before the secret read and the Cognito call, so a click loop reaches neither.
+  if (!takeJudgeSignIn()) return refused("pace");
 
   const login = await judgeLogin();
   if (!login) return refused("secret");

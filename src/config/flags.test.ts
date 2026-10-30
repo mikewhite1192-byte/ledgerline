@@ -140,12 +140,15 @@ describe("flags", () => {
       turnsPerSession: 25,
       dayCapCents: 800,
       sessionsPerIpPerHour: 5,
+      sessionsPerHour: 40,
       sessionsPerDay: 150,
       cookieHours: 2,
     });
     // Five judging days at the day cap fit the $40.00 reserve with nothing else drawing on it.
     expect(flags.judgeAccess.dayCapCents * 5).toBeLessThanOrEqual(4_000);
     expect(flags.judgeAccess.sessionCapCents).toBeLessThanOrEqual(flags.judgeAccess.dayCapCents);
+    // The hour's limit across every address never lets more in than the day's.
+    expect(flags.judgeAccess.sessionsPerHour).toBeLessThanOrEqual(flags.judgeAccess.sessionsPerDay);
   });
 
   it("pays through Stripe test mode only, and the start-up check still refuses a live key", () => {

@@ -24,9 +24,11 @@ const AT = (p: string) => `COALESCE(CAST(${p} AS timestamptz), now())`;
 
 // The visitor's address, hashed with a salt made fresh in each server process, so the raw address
 // is never stored and a stored hash cannot be matched back to an address. Approximate across
-// instances (each has its own salt), which is enough to stop one script. The first address in
-// X-Forwarded-For is the client's as CloudFront saw it; anything that does not look like an IPv4
-// or IPv6 address is no address (null, and every null shares one bucket).
+// instances (each has its own salt). The hash is of the first X-Forwarded-For entry, which the
+// client can set (CloudFront adds the address it saw after any value the client sent), so the
+// per-address limit is best-effort: a script that sends a fresh value on each click passes it, and
+// meets the limits across every address (sessionsPerHour, sessionsPerDay) instead. Anything that
+// does not look like an IPv4 or IPv6 address is no address (null, and every null shares one bucket).
 const SALT = randomBytes(32);
 const ADDRESS = /^[0-9A-Fa-f:.]{2,45}$/;
 
@@ -45,15 +47,17 @@ export type StartVisitInput = {
   at?: string | null;
 };
 
-export type VisitRefusal = "day_cap" | "ip_limit" | "day_limit";
+export type VisitRefusal = "day_cap" | "ip_limit" | "day_limit" | "hour_limit";
 
 export type StartedVisit = { ok: true; id: string; reused: boolean } | { ok: false; reason: VisitRefusal };
 
 // The visit a sign-in uses. In order: the day's spend across every visit (no room means no visit,
 // new or kept, since no model call could run), a live visit the browser already holds (a second
-// click or a new tab shares it, and its budget), the new-visit limits per address per hour and
-// per day, then a new row. Two sign-ins racing past a count can both get in; the counts are a
-// brake on scripts, not a ledger (the spend caps are enforced under the spend lock).
+// click or a new tab shares it, and its budget), the new-visit limits per address per hour, per
+// day and per rolling hour across every address, then a new row. Two sign-ins racing past a count
+// can both get in; the counts are a brake on scripts, not a ledger (the spend caps are enforced
+// under the spend lock). The day bucket keys on each visit's created_at, so a visit started just
+// before midnight UTC counts in the day it started, its spend included.
 export async function startVisit(q: Queryable, input: StartVisitInput): Promise<StartedVisit> {
   const at = input.at ?? null;
   const { limits } = input;
@@ -93,6 +97,16 @@ export async function startVisit(q: Queryable, input: StartVisitInput): Promise<
   if (!today || !Number.isSafeInteger(today.n)) throw new DbError("unknown");
   if (today.n >= limits.sessionsPerDay) return { ok: false, reason: "day_limit" };
 
+  // Every address together, in the rolling hour: no header is read, so a fresh X-Forwarded-For on
+  // each click does not get past it.
+  const [hour] = await q.query<{ n: number }>(
+    `SELECT CAST(COUNT(*) AS integer) AS n FROM demo_sessions
+      WHERE tenant_id = current_tenant_id() AND created_at > ${AT("$1")} - interval '1 hour'`,
+    [at],
+  );
+  if (!hour || !Number.isSafeInteger(hour.n)) throw new DbError("unknown");
+  if (hour.n >= limits.sessionsPerHour) return { ok: false, reason: "hour_limit" };
+
   const seconds = Math.floor(limits.cookieHours * 60 * 60);
   if (!Number.isSafeInteger(seconds) || seconds <= 0) throw new DbError("unknown");
   const id = randomUUID();
@@ -128,7 +142,10 @@ export async function readVisit(q: Queryable, sub: string, visitId: string): Pro
 
 // Inside the spend ledger's lock (src/lib/ai/spend.ts reserve): adds the reservation to the
 // visit's reserved amount only while the visit is live, the visit stays within its own cap, and
-// every visit created today stays within the day's cap. False means nothing was written.
+// every visit created today stays within the day's cap. False means nothing was written. The day
+// bucket keys on each visit's created_at, as in startVisit: a visit started just before midnight
+// UTC stays in the day it started, so what it spends after midnight adds to that day's total (each
+// call still within the visit's own cap and the new day's check).
 export async function chargeVisit(
   q: Queryable,
   input: { visitId: string; sub: string; nanocents: number; limits: VisitLimits; at: string | null },

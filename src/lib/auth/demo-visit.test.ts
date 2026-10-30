@@ -10,6 +10,7 @@ const LIMITS = {
   turnsPerSession: 25,
   dayCapCents: 800,
   sessionsPerIpPerHour: 5,
+  sessionsPerHour: 40,
   sessionsPerDay: 150,
   cookieHours: 2,
 };

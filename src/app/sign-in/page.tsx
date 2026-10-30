@@ -77,6 +77,9 @@ export default async function SignIn({
                   A fictional carrier with made-up drivers and loads. You can ask the agent and watch
                   every check. Nothing is paid or sent.
                 </p>
+                <p className="text-body text-foreground-2">
+                  The data is made up, so please do not upload real documents.
+                </p>
               </div>
             ) : null}
             {demoMessage ? <InlineAlert tone="neutral">{demoMessage}</InlineAlert> : null}

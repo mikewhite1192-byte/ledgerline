@@ -17,10 +17,11 @@ import {
   type VisitLimits,
 } from "./demo-visit";
 
-// A demo visit against a real database, as the app's role: the new-visit limits per address and
-// per day, a kept visit, the day's cap, the visit read getSession() makes, the turn count, a
-// visit's conversations walled off from every other visit, and the visit's spend inside the
-// spend ledger's lock (its own cap, the day's cap across visits, settles). Every instant is fixed
+// A demo visit against a real database, as the app's role: the new-visit limits per address, per
+// day and per hour across every address, a kept visit, the day's cap, the visit read getSession()
+// makes, the turn count, a visit's conversations walled off from every other visit and a judge
+// without a visit refused before any write, and the visit's spend inside the spend ledger's lock
+// (its own cap, the day's cap across visits, settles). Every instant is fixed
 // (the visit read is the one exception: it uses the database clock, so its live visit is made
 // now and its ended one years ago). Each area has its own tenant, so their counts never meet.
 // The spend counter is global, so this file puts it back as it found it.
@@ -42,12 +43,14 @@ const LIMITS: VisitLimits = {
   turnsPerSession: 2,
   dayCapCents: 2,
   sessionsPerIpPerHour: 2,
+  sessionsPerHour: 6,
   sessionsPerDay: 6,
   cookieHours: 2,
 };
 const DAY1 = Date.UTC(2026, 10, 2, 15, 0, 0);
 const DAY2 = Date.UTC(2026, 10, 3, 15, 0, 0);
 const DAY3 = Date.UTC(2026, 10, 4, 15, 0, 0);
+const DAY4 = Date.UTC(2026, 10, 6, 15, 0, 0);
 const iso = (ms: number) => new Date(ms).toISOString();
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
@@ -92,7 +95,7 @@ function start(
 }
 
 async function visitId(tenantId: string, at: number | null, ipHash: string | null = H3): Promise<string> {
-  const started = await start(tenantId, at, { ipHash, limits: { ...LIMITS, sessionsPerIpPerHour: 100, sessionsPerDay: 100 } });
+  const started = await start(tenantId, at, { ipHash, limits: { ...LIMITS, sessionsPerIpPerHour: 100, sessionsPerHour: 100, sessionsPerDay: 100 } });
   if (!started.ok) throw new Error(`no visit: ${started.reason}`);
   return started.id;
 }
@@ -215,6 +218,20 @@ describe("starting a demo visit", () => {
     expect(await start(V, day + MIN, { ipHash: H3 })).toEqual({ ok: false, reason: "day_cap" });
     expect(await start(V, day + MIN, { reuseId: full.id })).toEqual({ ok: false, reason: "day_cap" });
   });
+
+  it("holds new visits per rolling hour across every address, whatever address each one sends", async () => {
+    const limits = { ...LIMITS, sessionsPerIpPerHour: 100, sessionsPerHour: 40, sessionsPerDay: 100 };
+    const fresh = (i: number) => i.toString(16).padStart(64, "0");
+    for (let i = 0; i < 40; i++) {
+      expect(await start(V, DAY4 + i * MIN, { ipHash: fresh(i), limits })).toMatchObject({ ok: true });
+    }
+    // The 41st in the hour is refused, with an address no visit has used, and with none.
+    expect(await start(V, DAY4 + 40 * MIN, { ipHash: fresh(40), limits })).toEqual({ ok: false, reason: "hour_limit" });
+    expect(await start(V, DAY4 + 40 * MIN, { ipHash: null, limits })).toEqual({ ok: false, reason: "hour_limit" });
+    // Once the first has left the hour, one more may start.
+    expect(await start(V, DAY4 + HOUR + MIN / 2, { ipHash: fresh(41), limits })).toMatchObject({ ok: true });
+    expect(await start(V, DAY4 + HOUR + MIN / 2, { ipHash: fresh(42), limits })).toEqual({ ok: false, reason: "hour_limit" });
+  });
 });
 
 describe("reading a demo visit for the session", () => {
@@ -275,7 +292,8 @@ describe("a demo visit's agent turns", () => {
     expect(await conversationsOf(a)).toBe(1);
 
     expect(await open(judge(b), opened.conversationId, T0 + MIN)).toEqual({ refused: "not_found" });
-    expect(await open(judge(), opened.conversationId, T0 + MIN)).toEqual({ refused: "not_found" });
+    // The login without a visit is refused before the conversation is even looked up.
+    expect(await open(judge(), opened.conversationId, T0 + MIN)).toEqual({ refused: "visit_ended" });
     expect(await readAgentTurn(judge(b), opened.turnId, { db: app })).toBeNull();
     expect(await readAgentTurn(judge(), opened.turnId, { db: app })).toBeNull();
     expect((await readRecentAgentTurns(judge(b), { db: app })).map((t) => t.id)).not.toContain(opened.turnId);
@@ -300,6 +318,27 @@ describe("a demo visit's agent turns", () => {
     expect(await open(judge(id), null, T0 + 2 * MIN)).toEqual({ refused: "visit_ended" });
     expect(await conversationsOf(id)).toBe(1);
     expect(await visitRow(T, id)).toMatchObject({ turns: 1 });
+  });
+
+  it("refuses a judge with no visit before writing anything, with the switch on or off", async () => {
+    const rows = () =>
+      admin.withTenant(T, async (q) => {
+        const [row] = await q.query<{ conversations: number; turns: number }>(
+          `SELECT (SELECT CAST(COUNT(*) AS integer) FROM conversations WHERE tenant_id = current_tenant_id()) AS conversations,
+                  (SELECT CAST(COUNT(*) AS integer) FROM turns WHERE tenant_id = current_tenant_id()) AS turns`,
+        );
+        return row;
+      });
+    const before = await rows();
+    for (const enabled of [true, false]) {
+      flags.judgeAccess.enabled = enabled;
+      expect(await open(judge(), null, T0 + 3 * MIN)).toEqual({ refused: "visit_ended" });
+    }
+    expect(await rows()).toEqual(before);
+    // An admin, who never has a visit, opens a turn as before.
+    const admitted = await open({ sub: ADMIN(T), email: "", tenantId: T }, null, T0 + 3 * MIN);
+    expect("refused" in admitted).toBe(false);
+    expect(await rows()).toEqual({ conversations: before.conversations + 1, turns: before.turns + 1 });
   });
 });
 

@@ -1489,7 +1489,7 @@ const PAGES: PageCase[] = [
             flags.judgeAccess.enabled = false;
           }
         },
-        shows: ["Try the demo carrier", "Nothing is paid or sent."],
+        shows: ["Try the demo carrier", "Nothing is paid or sent.", "The data is made up, so please do not upload real documents."],
       },
       {
         name: "demo sign-in unavailable",

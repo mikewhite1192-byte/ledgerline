@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Queryable } from "@/lib/db";
 import type { Session } from "@/lib/auth/claims";
+import { JUDGE_SIGN_INS_PER_MINUTE, resetJudgeSignIns } from "@/lib/auth/judge-throttle";
 
-// Every branch of "Try the demo carrier": the switch, the stored login, the password sign-in, the
-// token, the role (only a judge gets in; a missing or unknown role fails closed) and the visit's
-// limits. The login, Cognito, the token check, the cookie jar and the database are fakes; the role
+// Every branch of "Try the demo carrier": the switch, the process's brake on sign-ins, the stored
+// login, the password sign-in, the token, the role (only a judge gets in; a missing or unknown role
+// fails closed) and the visit's limits. The login, Cognito, the token check, the cookie jar and the database are fakes; the role
 // read (src/lib/auth/role.ts) and the visit (src/lib/auth/demo-visit.ts) are the real ones, reading
 // the scripted rows. A refusal never sets a cookie and never writes.
 
@@ -26,6 +27,7 @@ const state = vi.hoisted(() => ({
   used: 0,
   live: [] as unknown[],
   perAddress: 0,
+  perHour: 0,
   perDay: 0,
   dbFail: null as Error | null,
   cookies: {} as Record<string, string>,
@@ -34,6 +36,7 @@ const state = vi.hoisted(() => ({
   queries: [] as { tenant: string; sql: string; params: unknown[] }[],
   writes: [] as { sql: string; params: unknown[] }[],
   signInCalls: [] as string[][],
+  loginReads: 0,
   forgot: 0,
 }));
 
@@ -50,7 +53,10 @@ vi.mock("next/navigation", () => ({
   },
 }));
 vi.mock("@/lib/auth/judge-login", () => ({
-  judgeLogin: async () => state.login,
+  judgeLogin: async () => {
+    state.loginReads += 1;
+    return state.login;
+  },
   forgetJudgeLogin: () => {
     state.forgot += 1;
   },
@@ -76,6 +82,7 @@ vi.mock("@/lib/db", async (importOriginal) => ({
           if (sql.includes("SUM(spent_nanocents")) return [{ used: state.used }];
           if (sql.startsWith("SELECT id FROM demo_sessions")) return state.live;
           if (sql.includes("ip_hash IS NOT DISTINCT FROM")) return [{ n: state.perAddress }];
+          if (sql.includes("interval '1 hour'")) return [{ n: state.perHour }];
           if (sql.includes("COUNT(*)")) return [{ n: state.perDay }];
           throw new Error(`unexpected read: ${sql}`);
         },
@@ -104,6 +111,7 @@ beforeEach(() => {
     used: 0,
     live: [],
     perAddress: 0,
+    perHour: 0,
     perDay: 0,
     dbFail: null,
     cookies: {},
@@ -112,8 +120,10 @@ beforeEach(() => {
     queries: [],
     writes: [],
     signInCalls: [],
+    loginReads: 0,
     forgot: 0,
   });
+  resetJudgeSignIns();
   flags.judgeAccess.enabled = true;
   info = vi.spyOn(console, "info").mockImplementation(() => {});
   error = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -163,6 +173,24 @@ describe("tryDemoAction refusals", () => {
       await expectRefused("disabled");
     }
     expect(state.signInCalls).toEqual([]);
+  });
+
+  it("is refused past the process's sign-ins for the minute, with no secret read and no Cognito call", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.UTC(2026, 10, 2, 15, 0, 0));
+    try {
+      for (let i = 0; i < JUDGE_SIGN_INS_PER_MINUTE; i++) expect(await run()).toBe("/");
+      Object.assign(state, { set: [], writes: [], signInCalls: [], loginReads: 0 });
+      await expectRefused("pace");
+      expect(state.loginReads).toBe(0);
+      expect(state.signInCalls).toEqual([]);
+      // A minute on, the next click signs in again.
+      vi.setSystemTime(Date.UTC(2026, 10, 2, 15, 1, 0));
+      expect(await run()).toBe("/");
+      expect(state.signInCalls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("is refused when the stored login is missing or unreadable", async () => {
@@ -233,6 +261,11 @@ describe("tryDemoAction refusals", () => {
     await expectRefused("day_limit");
   });
 
+  it("is refused at the limit of new visits for the hour across every address", async () => {
+    state.perHour = flags.judgeAccess.sessionsPerHour;
+    await expectRefused("hour_limit");
+  });
+
   it("is unavailable when the database fails, logging the error's name only", async () => {
     state.dbFail = Object.assign(new Error(`text with ${LOGIN.email}`), { name: "DbError" });
     await expectRefused("unavailable");
@@ -267,6 +300,7 @@ describe("tryDemoAction sign-in", () => {
     state.live = [{ id: KEPT }];
     // At the new-visit limits, a kept visit still gets in: it is not a new visit.
     state.perAddress = flags.judgeAccess.sessionsPerIpPerHour;
+    state.perHour = flags.judgeAccess.sessionsPerHour;
     state.perDay = flags.judgeAccess.sessionsPerDay;
     expect(await run()).toBe("/");
     expect(state.writes).toEqual([]);
