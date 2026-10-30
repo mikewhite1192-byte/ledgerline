@@ -23,6 +23,10 @@ export const SWEEP_INTERNAL_KEY_SECRET_NAME = "payday-copilot/sweep-internal-key
 // The inbound mail poster's key (PaydayCopilotInbound generates it); the app checks the poster's
 // header against it. Read by name, like the others.
 export const INBOUND_INTERNAL_KEY_SECRET_NAME = "payday-copilot/inbound-internal-key";
+// The demo visitor's login, JSON { email, password } (scripts/create-demo-users.ts --judge writes
+// it). Only the visitor sign-in reads it (src/lib/auth/judge-login.ts); the admin logins'
+// demo-logins secret is never granted to the server.
+export const JUDGE_LOGIN_SECRET_NAME = "payday-copilot/judge-login";
 // The QuickBooks API minor version the adapter asks for (Intuit retired those below 75).
 export const QBO_MINOR_VERSION = "75";
 // The highest a spend cap may be set, in cents ($400). The $150 Meta credit is spent first and the
@@ -76,6 +80,7 @@ export const BRANCH_ENV_NAMES = [
   "STRIPE_SECRET_KEY_SECRET_NAME",
   "SWEEP_INTERNAL_KEY_SECRET_NAME",
   "INBOUND_INTERNAL_KEY_SECRET_NAME",
+  "JUDGE_LOGIN_SECRET_NAME",
   ...OPTIONAL_BRANCH_ENV_NAMES,
 ];
 
@@ -261,11 +266,12 @@ export class HostingStack extends Stack {
       iamServiceRole: serviceRole.roleArn,
     });
 
-    // The model API keys and the money adapters' secrets, by exact name. fromSecretNameV2 gives the ARN without the suffix
-    // Secrets Manager appends to every secret ARN ("-" and six random characters), so "-??????"
-    // (exactly six, one per "?") is the narrowest pattern that matches the named secret and no
-    // other. It is what grantRead would use, but inline and with GetSecretValue only.
-    // A grant on a secret that does not exist yet is valid IAM; each waits for its value.
+    // The model API keys, the money adapters' secrets, the sweep key and the demo visitor's login,
+    // by exact name. fromSecretNameV2 gives the ARN without the suffix Secrets Manager appends to
+    // every secret ARN ("-" and six random characters), so "-??????" (exactly six, one per "?") is
+    // the narrowest pattern that matches the named secret and no other. It is what grantRead would
+    // use, but inline and with GetSecretValue only. A grant on a secret that does not exist yet is
+    // valid IAM; each waits for its value.
     const keyArns = [
       Secret.fromSecretNameV2(this, "MetaApiKey", META_API_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "BasetenApiKey", BASETEN_API_KEY_SECRET_NAME),
@@ -275,11 +281,13 @@ export class HostingStack extends Stack {
       Secret.fromSecretNameV2(this, "StripeTestKey", STRIPE_SECRET_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "SweepInternalKey", SWEEP_INTERNAL_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "InboundInternalKey", INBOUND_INTERNAL_KEY_SECRET_NAME),
+      Secret.fromSecretNameV2(this, "JudgeLogin", JUDGE_LOGIN_SECRET_NAME),
     ].map((secret) => `${secret.secretArn}-??????`);
 
     // The SSR runtime's credentials: the Data API on this cluster, the app's own database login,
-    // the three model API keys, the three money secrets and the two internal keys, nothing else. No Cognito permission
-    // is needed (sign-in is an unauthenticated API). Set on the branch, not the app, as Amplify recommends for a public
+    // the three model API keys, the three money secrets, the two internal keys and the demo
+    // visitor's login, nothing else. No Cognito permission is needed (sign-in is an
+    // unauthenticated API). Set on the branch, not the app, as Amplify recommends for a public
     // repository. Amplify may assume it only for this account and this app's main branch; the
     // app does not refer to this role, so naming the app here is no cycle.
     const branchName = "main";
@@ -330,6 +338,7 @@ export class HostingStack extends Stack {
       STRIPE_SECRET_KEY_SECRET_NAME,
       SWEEP_INTERNAL_KEY_SECRET_NAME,
       INBOUND_INTERNAL_KEY_SECRET_NAME,
+      JUDGE_LOGIN_SECRET_NAME,
       ...money,
     };
 

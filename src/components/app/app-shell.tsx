@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { Wordmark } from "@/components/brand/wordmark";
+import { flags } from "@/config/flags";
+import { DemoBanner } from "./demo-banner";
 import { MobileNav } from "./mobile-nav";
 import { NavList, type NavItem } from "./nav-list";
 import { TenantSwitcher, type TenantInfo } from "./tenant-switcher";
@@ -19,7 +21,8 @@ function HelpLink({ help }: { help: { href: string; label: string } }) {
 // Every signed-in page: a sidebar at laptop width (a sheet behind the menu button under it), a top
 // bar with the current menu group ("Pay", nothing on a page with no item) and the carrier chip at
 // the right, and the page itself in <main id="main">. The page's own PageHeader carries its one
-// visible title (the h1); `title` names the main region for a screen reader.
+// visible title (the h1); `title` names the main region for a screen reader. A demo visitor (the
+// judge role) also gets the demo banner above the top bar.
 export function AppShell({
   tenant,
   nav,
@@ -63,6 +66,9 @@ export function AppShell({
         ) : null}
       </aside>
       <div className="lg:pl-60">
+        {tenant.role === "judge" ? (
+          <DemoBanner carrier={tenant.name} visitCapCents={flags.judgeAccess.sessionCapCents} />
+        ) : null}
         <header className="sticky top-0 z-20 flex h-14 items-center gap-3 border-b border-border bg-background/90 px-4 backdrop-blur-sm md:px-6">
           <MobileNav homeHref={homeHref} help={help ? <HelpLink help={help} /> : null}>
             {list}

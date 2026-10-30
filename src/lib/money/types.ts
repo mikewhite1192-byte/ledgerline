@@ -11,7 +11,7 @@ export const MONEY_ACTION_KINDS = [
   "settlement_bill_payment",
   "invoice",
   "customer_payment",
-  // A simulated factoring partner's advance on one invoice (FACTORING, 0047). Payment channel, no
+  // A simulated factoring partner's advance on one invoice (FACTORING, 0060). Payment channel, no
   // rail: the caller sends through its own hook.
   "factoring_advance",
   // A one-time money code from the simulated card provider (MONEY-CODE, 0048). Payment channel,
@@ -44,7 +44,7 @@ export const MONEY_FAILURES = [
 ] as const;
 export type MoneyFailure = (typeof MONEY_FAILURES)[number];
 
-// The same list as money_actions_outside_system_check (0017, widened by 0047 and 0048).
+// The same list as money_actions_outside_system_check (0017, widened by 0048 and 0060).
 export const OUTSIDE_SYSTEMS = [
   "mock",
   "stripe_test",

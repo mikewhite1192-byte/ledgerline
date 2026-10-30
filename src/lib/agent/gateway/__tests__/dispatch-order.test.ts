@@ -422,8 +422,8 @@ describe("callTool dispatch order", () => {
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, invoicing, invoice review, customer payments, collections,
-    // Cash Friday, profit brief, quarter review, pay rule change, money code and carrier memory switches
-    // after this test. remember_note outside a chat turn writes nothing and says so.
+    // Cash Friday, factoring, profit brief, quarter review, pay rule change, money code, carrier memory and
+    // fuel rates switches after this test. remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.invoicesEnabled = true;
@@ -436,6 +436,8 @@ describe("callTool dispatch order", () => {
     flags.profitBriefEnabled = true;
     flags.rulesByTalkingEnabled = true;
     flags.carrierMemoryEnabled = true;
+    flags.factoring.enabled = true;
+    flags.groundedRatesEnabled = true;
     flags.quarterReviewEnabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;
@@ -449,6 +451,8 @@ describe("callTool dispatch order", () => {
       flags.profitBriefEnabled = false;
       flags.rulesByTalkingEnabled = false;
       flags.carrierMemoryEnabled = false;
+      flags.factoring.enabled = false;
+      flags.groundedRatesEnabled = false;
       flags.quarterReviewEnabled = false;
     });
     // The second check's read of the office's notes about the driver: none on file.
@@ -483,6 +487,12 @@ describe("callTool dispatch order", () => {
       // propose_rule_change runs outside a turn, so there is no sentence to find the new value in:
       // the engine's grounding refuses it before a draft.
       if (name === "propose_rule_change") {
+        expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
+        continue;
+      }
+      // propose_factoring: two days before the anchor the bank balance is dated after today, so Cash
+      // Friday finds no short to name and the engine refuses (factoring-tools.test.ts runs it on the anchor).
+      if (name === "propose_factoring") {
         expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
         continue;
       }

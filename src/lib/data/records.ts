@@ -396,13 +396,16 @@ export type CashFridayRows = Pick<
   | "payment_applications"
   | "vendor_bills"
   | "cash_settings"
+  | "factoring_request_invoices"
 >;
 
 // Everything Cash Friday reads (design 4.2). Paid instants become dates in the tenant's zone here,
 // so the engine sees only dates. The pay run preview is one settlement input per driver active in
 // the one open week; when the week is not exactly one, or a driver's input cannot be built (no
 // pay rules version for the week, a record that does not fit), previews are null and the engine
-// refuses the pay run as unknown rather than counting it as zero.
+// refuses the pay run as unknown rather than counting it as zero. An invoice with a live factoring
+// line (any status but declined or failed: submitted, unknown and funded all mean the partner may
+// hold it) is marked factored, so the engine neither counts its receipt nor offers it again.
 export function cashFridayInputOf(
   rows: CashFridayRows,
   zone: string,
@@ -410,18 +413,24 @@ export function cashFridayInputOf(
 ): CashFridayInput {
   if (rows.cash_settings.length > 1) throw new Error("more than one cash settings row");
   const paidOn = (at: string | null): LocalDate | null => (at === null ? null : localDateOf(at, zone));
+  const factored = factoredInvoiceIds(rows.factoring_request_invoices);
   return {
     settings: rows.cash_settings.length === 1 ? cashSettingsOf(rows.cash_settings[0]) : null,
     periods: rows.settlement_periods.map(periodOf),
     settlements: rows.settlements.map((r) => ({ ...settlementOf(r), paidOn: paidOn(r.paid_at) })),
     previews: previewsOf(rows),
     advances: rows.advances.map((r) => ({ ...advanceOf(r), paidOn: paidOn(r.paid_at) })),
-    invoices: rows.invoices.map(invoiceOf),
+    invoices: rows.invoices.map((r) => (factored.has(r.id) ? { ...invoiceOf(r), factored: true } : invoiceOf(r))),
     payments: rows.customer_payments.map(paymentOf),
     applications: rows.payment_applications.map(applicationOf),
     bills: rows.vendor_bills.map(vendorBillOf),
     limits,
   };
+}
+
+// The invoices a factoring line still holds: every line but a declined or failed one.
+export function factoredInvoiceIds(lines: readonly { invoice_id: string; status: string }[]): Set<string> {
+  return new Set(lines.filter((l) => l.status !== "declined" && l.status !== "failed").map((l) => l.invoice_id));
 }
 
 function previewsOf(rows: CashFridayRows): SettlementInput[] | null {

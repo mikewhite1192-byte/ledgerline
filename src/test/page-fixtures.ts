@@ -11,6 +11,7 @@ import type { ClipView } from "@/lib/clips/types";
 import type { BreakView, RunView as CardRunView } from "@/lib/data/card-recon";
 import type { CollectionsView, LateInvoice, ReminderCard } from "@/lib/collections/view";
 import type { DocumentView } from "@/lib/documents/types";
+import type { RequestDetail, RequestSummary } from "@/lib/factoring/read";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
 import { figureValueText, profitWeek, type ClosedWeek } from "@/lib/briefs/figures";
 import type { BriefRecord, ProfitView } from "@/lib/briefs/view";
@@ -39,6 +40,7 @@ import { cardSpec, type CardSpec } from "@/lib/pay-cards/spec";
 import { RULES as RULE_SPECS, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
 import type { CardHome, HandPick } from "@/lib/recon/view";
+import type { RatesPage, RateView } from "@/lib/rates/read";
 import type { RunSummary, RunView } from "@/lib/portal/views";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "@/lib/rules-engine";
 import type { DriverDayView, PayItemView, ScheduleView } from "@/lib/records/views";
@@ -332,6 +334,7 @@ const counts: SweepCounts = {
   mismatch: 0,
   audit_pending: 0,
   over_cap: 0,
+  left: 0,
 };
 
 export const SWEEP_RUN: SweepRunView = {
@@ -359,6 +362,14 @@ export const SWEEP_RUN_STOPPED: SweepRunView = {
   ...SWEEP_RUN,
   truncatedReason: "cap",
   checklist: endSweep(tickSweep(sweepChecklist(true), "draft"), "stopped"),
+};
+// A run that reached its turn ceiling while drafting: what it drafted was audited, and the rest
+// wait for the next sweep.
+export const SWEEP_RUN_MAX_TURNS: SweepRunView = {
+  ...SWEEP_RUN,
+  truncatedReason: "max_turns",
+  turnsUsed: 30,
+  checklist: endSweep(tickSweep(tickSweep(sweepChecklist(false), "draft"), "audit"), "stopped", { stoppedAfter: "audit" }),
 };
 export const SWEEP_RUN_RUNNING: SweepRunView = {
   ...SWEEP_RUN,
@@ -906,6 +917,8 @@ const runSummary: RunSummary = {
   finishedAt: "2026-10-28T15:04:00.000Z",
   requestedBy: EMAIL,
   stalled: false,
+  resumeAttempts: 0,
+  resumed: null,
 };
 
 export const RUNS: RunSummary[] = [
@@ -2637,3 +2650,198 @@ export const SCHEDULE_CASES: [string, ScheduleView][] = [
 // The help page's link to the worked week's driver: her draft paystub, or her driver page.
 export const HERO_LINK_DRAFT = { href: `/records/settlements/${PAYSTUB_REF.id}`, draft: true };
 export const HERO_LINK_DRIVER = { href: `/records/drivers/${DRIVER_ID}`, draft: false };
+// ---- Factoring (Test mode) ----
+
+const FACTORING_REQUEST_ID = id(530);
+const FACTORING_DOC_RC = id(531);
+const FACTORING_DOC_BOL = id(532);
+
+const factoringRequest = (over: Partial<RequestSummary>): RequestSummary => ({
+  id: FACTORING_REQUEST_ID,
+  createdAt: "2026-11-02T15:20:00.000Z",
+  invoiceCount: 3,
+  balanceCents: 645_000,
+  advanceCents: 580_500,
+  feeCents: 19_350,
+  netCents: 561_150,
+  reserveCents: 64_500,
+  // The one funded invoice below; the request's own totals are what was planned.
+  cameInCents: 187_050,
+  status: "partly_funded",
+  fundedAt: "2026-11-02T15:20:04.000Z",
+  proposalId: id(533),
+  advanceBps: 9_000,
+  feeBps: 300,
+  ...over,
+});
+
+export const FACTORING_REQUESTS: RequestSummary[] = [
+  factoringRequest({}),
+  factoringRequest({ id: id(534), createdAt: "2026-10-30T14:00:00.000Z", invoiceCount: 1, status: "unknown", fundedAt: null, cameInCents: 0 }),
+  factoringRequest({ id: id(535), createdAt: "2026-10-23T14:00:00.000Z", invoiceCount: 2, status: "funded", cameInCents: 561_150 }),
+  factoringRequest({ id: id(536), createdAt: "2026-10-16T14:00:00.000Z", invoiceCount: 1, status: "declined", fundedAt: null, cameInCents: 0 }),
+];
+
+export const FACTORING_REQUEST: RequestDetail = {
+  ...factoringRequest({}),
+  lines: [
+    {
+      id: id(537),
+      invoiceId: INVOICE_ID,
+      invoiceNumber: "BR-INV-10231",
+      customerId: CUSTOMER_ID,
+      customerName: "Tanglewood Grocery Supply",
+      attempt: 1,
+      balanceCents: 215_000,
+      advanceCents: 193_500,
+      feeCents: 6_450,
+      netCents: 187_050,
+      reserveCents: 21_500,
+      status: "funded",
+      providerRef: "fsim_adv_3f2a9c1d7e5b4a0c9d8e7f6a",
+      moneyActionId: id(538),
+      settledAt: "2026-11-02T15:20:04.000Z",
+      packet: {
+        invoice: true,
+        rateConfirmation: { onFile: true, documentId: FACTORING_DOC_RC },
+        billOfLading: { onFile: true, documentId: FACTORING_DOC_BOL },
+        pod: { onFile: true, portalRunId: RUN_ID },
+      },
+    },
+    {
+      id: id(539),
+      invoiceId: id(540),
+      invoiceNumber: "BR-INV-10236",
+      customerId: CUSTOMER_ID,
+      customerName: "Tanglewood Grocery Supply",
+      attempt: 1,
+      balanceCents: 214_998,
+      advanceCents: 193_498,
+      feeCents: 6_450,
+      netCents: 187_048,
+      reserveCents: 21_500,
+      status: "unknown",
+      providerRef: null,
+      moneyActionId: id(541),
+      settledAt: null,
+      packet: {
+        invoice: true,
+        rateConfirmation: { onFile: true, documentId: FACTORING_DOC_RC },
+        billOfLading: { onFile: false, documentId: null },
+        pod: { onFile: false, portalRunId: null },
+      },
+    },
+    {
+      id: id(542),
+      invoiceId: id(543),
+      invoiceNumber: "BR-INV-10238",
+      customerId: CUSTOMER_ID,
+      customerName: "Tanglewood Grocery Supply",
+      attempt: 1,
+      balanceCents: 215_002,
+      advanceCents: 193_502,
+      feeCents: 6_450,
+      netCents: 187_052,
+      reserveCents: 21_500,
+      status: "declined",
+      providerRef: null,
+      moneyActionId: id(544),
+      settledAt: "2026-11-02T15:20:03.000Z",
+      packet: {
+        invoice: true,
+        rateConfirmation: { onFile: false, documentId: null },
+        billOfLading: { onFile: false, documentId: null },
+        pod: { onFile: false, portalRunId: null },
+      },
+    },
+  ],
+};
+
+export const FACTORED_LINE = { requestId: FACTORING_REQUEST_ID, status: "funded", at: "2026-11-02T15:20:04.000Z" };
+
+// The Fuel and tax rates page: a pinned diesel price with a newer lookup waiting, one state pinned
+// by hand, one state whose lookup could not match its number, and one not pinned yet. Synthetic
+// pages only (rates.example).
+const RATE_BASE: RateView = {
+  id: "5a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  kind: "diesel_index",
+  state: null,
+  status: "pinned",
+  valueMcents: 365_700,
+  perGallon: "$3.657",
+  sourceUrl: "https://rates.example/diesel/weekly",
+  sourceTitle: "Weekly diesel prices, all regions",
+  sourceHost: "rates.example",
+  quote: null,
+  asOf: null,
+  effectiveFrom: "2026-10-19",
+  pinnedAt: "2026-10-20T14:00:00.000Z",
+  pinnedOn: "2026-10-20",
+  byYou: true,
+  typed: false,
+  createdAt: "2026-10-20T13:58:00.000Z",
+};
+export const RATE_PINNED: RateView = RATE_BASE;
+export const RATE_SUGGESTED: RateView = {
+  ...RATE_BASE,
+  id: "6b2e3d4c-5f6a-4b7c-9d8e-0f1a2b3c4d5e",
+  status: "suggested",
+  valueMcents: 371_200,
+  perGallon: "$3.712",
+  quote: "U.S. on-highway diesel averaged 3.712 dollars a gallon for the week of October 26, 2026.",
+  asOf: "2026-10-26",
+  effectiveFrom: null,
+  pinnedAt: null,
+  pinnedOn: null,
+  createdAt: "2026-10-27T15:00:00.000Z",
+};
+export const RATE_UNCONFIRMED: RateView = {
+  ...RATE_BASE,
+  id: "7c3f4e5d-6a7b-4c8d-8e9f-1a2b3c4d5e6f",
+  kind: "ifta_rate",
+  state: "IL",
+  status: "unconfirmed",
+  valueMcents: null,
+  perGallon: null,
+  sourceUrl: "https://rates.example/fuel-tax/illinois",
+  sourceTitle: "Illinois motor fuel tax",
+  quote: null,
+  asOf: null,
+  effectiveFrom: null,
+  pinnedAt: null,
+  pinnedOn: null,
+  byYou: false,
+  createdAt: "2026-10-27T15:05:00.000Z",
+};
+export const RATES_PAGE: RatesPage = {
+  today: "2026-10-27",
+  canPin: true,
+  lookupsLeft: 17,
+  diesel: { pinned: RATE_PINNED, suggestion: RATE_SUGGESTED },
+  states: [
+    { code: "IL", name: "Illinois", pinned: null, suggestion: RATE_UNCONFIRMED },
+    {
+      code: "IN",
+      name: "Indiana",
+      pinned: {
+        ...RATE_BASE,
+        id: "8d4a5f6e-7b8c-4d9e-9f0a-2b3c4d5e6f7a",
+        kind: "ifta_rate",
+        state: "IN",
+        valueMcents: 61_000,
+        perGallon: "$0.6100",
+        sourceUrl: "https://rates.example/fuel-tax/indiana",
+        sourceTitle: "Indiana fuel tax rates",
+        byYou: false,
+        typed: true,
+      },
+      suggestion: null,
+    },
+    { code: "OH", name: "Ohio", pinned: null, suggestion: null },
+  ],
+};
+export const RATES_EMPTY: RatesPage = {
+  ...RATES_PAGE,
+  diesel: { pinned: null, suggestion: null },
+  states: RATES_PAGE.states.map((s) => ({ ...s, pinned: null, suggestion: null })),
+};

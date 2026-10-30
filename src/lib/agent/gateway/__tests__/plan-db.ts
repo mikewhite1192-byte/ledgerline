@@ -9,6 +9,8 @@ import {
   QUEUE_CHILDREN,
   QUEUE_LOADS,
 } from "../../../data/read";
+import { PACKET_DOCUMENTS_SQL, PACKET_INVOICES_SQL, PACKET_PODS_SQL } from "../../../factoring/packet";
+import { SUMMARY_SQL as FACTORING_REQUESTS_SQL } from "../../../factoring/read";
 import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
@@ -30,6 +32,8 @@ const BY_DRIVER_LOADS =
   "load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid))";
 
 const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)";
+const PINNED_RATES =
+  /^SELECT .+ FROM pinned_rates\s+WHERE tenant_id = current_tenant_id\(\) AND status = 'pinned' AND retired_at IS NULL AND kind = \$1\s+ORDER BY /s;
 const DELIVERED_LOADS = `load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
 const DELIVERED_CUSTOMERS = `id IN (SELECT customer_id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
 
@@ -131,6 +135,17 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     if (LEDGER_BY_KIND.test(sql)) {
       return (tables.money_actions ?? []).filter((r) => r.kind === params[0]).map((r) => ({ ...r }));
     }
+    // The factoring papers: the named invoices' loads, then the uploaded papers and the portal's
+    // proof of delivery, from lists a test adds (the plan holds neither), or none.
+    if (sql === PACKET_INVOICES_SQL) {
+      const ids = new Set(JSON.parse(String(params[0])) as string[]);
+      return plan.rows.invoices
+        .filter((i) => ids.has(i.id))
+        .map((i) => ({ id: i.id, load_id: i.load_id ?? null }));
+    }
+    if (sql === PACKET_DOCUMENTS_SQL || sql === PACKET_PODS_SQL) return [];
+    // The factoring request list: the plan holds no requests.
+    if (sql.startsWith(FACTORING_REQUESTS_SQL)) return [];
     // The loads an approved invoice card wrote an invoice for. The plan holds no cards, so this
     // answers from a proposals list a test adds, or none: every seeded invoice is history.
     if (sql === QUEUE_CARD_LOADS_SQL) {
@@ -143,6 +158,13 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
           (params[0] === null || r.subject_id === params[0]),
       );
       return [...new Set(cards.map((r) => String(r.subject_id)))].map((load_id) => ({ load_id }));
+    }
+    // get_pinned_rates: the live pins of one kind. A seed plan pins none, so this answers from rows
+    // a test adds, or none.
+    if (PINNED_RATES.test(sql)) {
+      return (tables.pinned_rates ?? [])
+        .filter((r) => r.status === "pinned" && r.retired_at === null && r.kind === params[0])
+        .map((r) => ({ ...r }));
     }
     // The quarter review's own reads (briefs/quarter-figures.ts). A seed plan holds no proposals,
     // so the fixes and the detention they billed answer from a proposals list a test adds, or none.

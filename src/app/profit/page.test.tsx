@@ -112,6 +112,18 @@ describe("/profit", () => {
     expect(document.body.textContent).not.toMatch(/proposal|tenant|rules engine|verdict|\blane|\u2014/i);
   });
 
+  it("links the revenue to its loads file with a plain download link the router never prefetches", async () => {
+    flags.reportsEnabled = true;
+    await show();
+    const link = screen.getByRole("link", { name: "Download the loads behind it" });
+    expect(link.getAttribute("href")).toMatch(/^\/api\/reports\/margin_per_load\?format=csv&periodEnd=\d{4}-\d{2}-\d{2}&periodStart=\d{4}-\d{2}-\d{2}$/);
+    expect(link.hasAttribute("download")).toBe(true);
+    // The week tabs stay page links.
+    for (const tab of within(screen.getByRole("navigation", { name: "Pay weeks" })).getAllByRole("link")) {
+      expect(tab.hasAttribute("download")).toBe(false);
+    }
+  });
+
   it("opens the week asked for, and offers no button with the agent off", async () => {
     const weeks = await db.withTenant(TENANT, (q) => closedWeeks(q, PLAN_ANCHOR));
     const older = weeks.at(-1);

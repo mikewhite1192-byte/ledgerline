@@ -1,6 +1,8 @@
 import { isUuid } from "../uuid";
 
-export type Session = { sub: string; email: string; tenantId: string };
+// demoSessionId is set only by getSession() (./session.ts), for a judge with a live demo visit
+// (the pc_demo cookie); a token alone never carries it.
+export type Session = { sub: string; email: string; tenantId: string; demoSessionId?: string };
 
 // The signed-in user from a verified ID token. The tenant is the immutable custom:tenant_id
 // attribute; a token without a UUID there, or without a subject, is no session at all.

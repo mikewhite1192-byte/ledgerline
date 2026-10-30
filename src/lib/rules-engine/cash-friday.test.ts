@@ -476,6 +476,44 @@ describe("computeCashFriday option limits", () => {
   });
 });
 
+// An invoice on a live factoring line belongs to the factoring partner to collect.
+describe("an invoice already factored", () => {
+  const withFactored = (ids: readonly string[]) =>
+    golden({
+      invoices: [
+        ...HISTORY.map((h) => h.invoice),
+        ...OPEN_INVOICES.map((i) => (ids.includes(i.id) ? { ...i, factored: true } : i)),
+      ],
+    });
+
+  it("is never counted by pay day, chased or offered for factoring again", () => {
+    const result = position(withFactored(["M2", "N1"]));
+    const listed = result.lines.map((l) => l.invoiceId);
+    expect(listed).not.toContain("M2");
+    expect(listed).not.toContain("N1");
+    // N1's 15,000 is no longer expected from the customer, so the short grows by that much.
+    expect(result.figures.expectedReceiptsCents).toBe(160_001);
+    expect(result.figures.gapCents).toBe(-65_000);
+    const factoring = result.options[0];
+    if (factoring.kind !== "factoring_request") throw new Error("not factoring");
+    // M2 is gone, so the next two recent invoices not expected by pay day cover the short.
+    expect(factoring.invoices.map((i) => [i.invoiceId, i.netCents])).toEqual([
+      ["R2", 43_500],
+      ["L2", 21_750],
+    ]);
+    expect(factoring.coversShort).toBe(true);
+    expect(result.options.filter((o) => o.kind === "collections_chase").map((o) => o.subjectId)).toEqual(["cust-l"]);
+  });
+
+  it("changes nothing for the invoices that are not factored", () => {
+    const before = position(golden());
+    const after = position(withFactored(["R3"]));
+    expect(after.figures).toEqual(before.figures);
+    expect(after.options).toEqual(before.options);
+    expect(after.lines.map((l) => l.invoiceId)).toEqual(before.lines.map((l) => l.invoiceId).filter((id) => id !== "R3"));
+  });
+});
+
 describe("computeCashFriday refusals", () => {
   it("refuses without a bank balance", () => {
     expect(computeCashFriday(golden({ settings: null }), AS_OF)).toEqual({ ok: false, refusal: "balance_missing" });

@@ -1,6 +1,8 @@
+import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
+import { chargeVisit, settleVisit } from "../auth/demo-visit";
 import { DbError, type Queryable, type TenantDb } from "../db";
-import { assertMembership } from "../tenant/context";
+import { ForbiddenError } from "../tenant/context";
 import {
   AiError,
   type AiCallKind,
@@ -93,12 +95,38 @@ export function overCap(spend: Spend, r: CapCheck): boolean {
 // AiError("job_cap") with nothing written to the ledger (the job's one alert row commits first),
 // AiError("not_configured") for a wonder reservation without a Wonder cap, the tenant module's
 // ForbiddenError when the session has no membership, or DbError when the job's spend cannot be
-// read (fail closed).
-export async function reserve(db: TenantDb, session: Session, r: Reservation): Promise<void> {
+// read (fail closed). check, when given, is the caller's own limit, run in this same transaction
+// right after the membership check and before the counter's row is locked (so any lock it takes
+// comes first): the row this reservation writes uses up what it counted, and the next check made
+// after this commits sees it. Whatever it throws, nothing is written. Only the rate lookup passes
+// one.
+//
+// A judge (the demo visitor, migration 0043) spends only from a live demo visit
+// (session.demoSessionId, src/lib/auth/session.ts) and only while flags.judgeAccess is on: last,
+// under the same lock, the reservation is added to the visit, within the visit's cap and the day's
+// cap across every visit (src/lib/auth/demo-visit.ts). A judge with no visit, a visit that ended
+// or is over a cap gets AiError("cap") with no call row and no change to the global counter.
+// Admin and staff sessions have no visit and never meet this check.
+export async function reserve(
+  db: TenantDb,
+  session: Session,
+  r: Reservation,
+  check?: (q: Queryable) => Promise<void>,
+): Promise<void> {
   const wonder = r.target === "wonder";
   if (wonder && r.wonderCapNanocents === null) throw new AiError("not_configured");
-  const verdict = await db.withTenant(session.tenantId, async (q): Promise<JobVerdict> => {
-    await assertMembership(q, session);
+  const visitId = session.demoSessionId ?? null;
+  type Verdict = JobVerdict | "visit_cap";
+  const verdict = await db.withTenant(session.tenantId, async (q): Promise<Verdict> => {
+    // The membership check (src/lib/tenant/context.ts assertMembership) and the role in one read.
+    const member = await q.query<{ ok: number; role?: unknown }>(
+      "SELECT 1 AS ok, role FROM memberships WHERE cognito_sub = $1",
+      [session.sub],
+    );
+    if (!session.sub || member.length !== 1) throw new ForbiddenError();
+    const visitor = visitId !== null || member[0].role === "judge";
+    if (visitor && (visitId === null || !flags.judgeAccess.enabled)) throw new AiError("cap");
+    if (check) await check(q);
     const counter = checked(
       (
         await q.query<Counter>(
@@ -116,6 +144,17 @@ export async function reserve(db: TenantDb, session: Session, r: Reservation): P
       reserveNanocents: r.reserveNanocents,
     });
     if (job === "job_cap") return "job_cap";
+    if (visitor && visitId !== null) {
+      const charged = await chargeVisit(q, {
+        visitId,
+        sub: session.sub,
+        nanocents: r.reserveNanocents,
+        limits: flags.judgeAccess,
+        at: r.at,
+      });
+      // Returned like the job's cap, so the alert the watch may have written stays.
+      if (!charged) return "visit_cap";
+    }
     const inserted = await q.execute(
       `INSERT INTO model_calls (id, tenant_id, target, provider, model, kind, purpose,
                                 reasoning_effort, trace_id, status, reserved_nanocents, created_at)
@@ -146,6 +185,7 @@ export async function reserve(db: TenantDb, session: Session, r: Reservation): P
     return "ok";
   });
   if (verdict === "job_cap") throw new AiError("job_cap");
+  if (verdict === "visit_cap") throw new AiError("cap");
 }
 
 // answered: the provider reported what the price needs, so the reservation is released and the
@@ -172,7 +212,9 @@ export type Settlement = { durationMs: number } & (
 // settled, so a second settle of the same call changes nothing and returns false. The amount
 // released is the one the row recorded, not one the caller passes, and the Wonder counters move
 // only for a row whose target is wonder. No membership check: the call already happened, and
-// refusing to record it would only leave its reservation counted.
+// refusing to record it would only leave its reservation counted. A demo visit's call (reserve
+// charged it to session.demoSessionId) moves the visit's amounts the same way; if the visit's row
+// cannot take it, nothing is settled and the call stays reserved everywhere (fail closed).
 export async function settle(
   db: TenantDb,
   session: Session,
@@ -229,6 +271,10 @@ export async function settle(
       [release, spent, wonder ? release : 0, wonder ? spent : 0],
     );
     if (counted !== 1) throw new DbError("unknown");
+    const visitId = session.demoSessionId ?? null;
+    if (visitId !== null && (release !== 0 || spent !== 0)) {
+      await settleVisit(q, { visitId, releaseNanocents: release, spentNanocents: spent });
+    }
     return true;
   });
 }

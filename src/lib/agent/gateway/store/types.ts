@@ -19,7 +19,8 @@ export type OpenedTurn = {
   summaryCents: number[];
 };
 
-export type OpenTurnRefusal = "not_found" | "busy" | "duplicate";
+// visit_ended and visit_used come only from a demo visit (src/lib/auth/demo-visit.ts).
+export type OpenTurnRefusal = "not_found" | "busy" | "duplicate" | "visit_ended" | "visit_used";
 
 export type StepStart = { kind: StepKind; label: string; detail?: Record<string, unknown> };
 

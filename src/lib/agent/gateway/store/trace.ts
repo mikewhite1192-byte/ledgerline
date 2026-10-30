@@ -273,13 +273,20 @@ async function readNoteLabels(q: Queryable, ids: readonly string[]): Promise<Map
   );
 }
 
-export async function readTurnTrace(q: Queryable, sub: string, turnId: string): Promise<TurnTrace | null> {
+// A demo visit (visitId) reads only its own visit's turns, as readTurnView does.
+export async function readTurnTrace(
+  q: Queryable,
+  sub: string,
+  turnId: string,
+  visitId: string | null = null,
+): Promise<TurnTrace | null> {
   const turns = await q.query<TurnRow>(
     `SELECT t.id, t.status, t.trace_id, CAST(t.notes_used AS text) AS notes_used, t.context_summary
        FROM turns t
        JOIN conversations c ON c.id = t.conversation_id AND c.tenant_id = t.tenant_id
-      WHERE t.id = CAST($1 AS uuid) AND c.created_by = $2 AND t.tenant_id = current_tenant_id()`,
-    [turnId, sub],
+      WHERE t.id = CAST($1 AS uuid) AND c.created_by = $2 AND t.tenant_id = current_tenant_id()
+        AND c.demo_session_id IS NOT DISTINCT FROM CAST($3 AS uuid)`,
+    [turnId, sub, visitId],
   );
   if (turns.length !== 1) return null;
   return traceOfTurn(q, turns[0]);
