@@ -73,6 +73,7 @@ const RELEASED_ON = [
   "verification.enabled",
   "evalCardEnabled",
   "deskLoop.enabled",
+  "deskLoop.armed",
   "ratecon.enabled",
   "phoneLineEnabled",
   "escrowRelease.enabled",
@@ -92,8 +93,6 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The desk loop ships on and unarmed: its arming is the owner's call, in its own one-line PR.
-  "deskLoop.armed",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -158,10 +157,9 @@ describe("flags", () => {
     expect(flags.sparkOpenFallback).toBe("off");
     // Driver messages and voice notes are sorted by Muse Spark Open, the open-weights model.
     expect(flags.triageProvider).toBe("baseten");
-    // The desk loop hands work to the agents on its own, each under its own switch and caps, once
-    // the owner arms it.
+    // The desk loop hands work to the agents on its own, each under its own switch and caps.
     expect(flags.deskLoop.enabled).toBe(true);
-    expect(flags.deskLoop.armed).toBe(false);
+    expect(flags.deskLoop.armed).toBe(true);
     // The demo visitor sign-in, inside the visit limits below.
     expect(flags.judgeAccess.enabled).toBe(true);
     // Factoring submits to the simulated partner only, released with its cap, packet rule and date kept.
@@ -387,7 +385,7 @@ describe("flags", () => {
   it("starts the desk loop on a fixed date and keeps its wakes short and its spend small", () => {
     expect(flags.deskLoop).toEqual({
       enabled: true,
-      armed: false,
+      armed: true,
       startDate: "2026-10-30",
       limits: {
         sliceMs: 20_000,

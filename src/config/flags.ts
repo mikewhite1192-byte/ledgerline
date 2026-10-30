@@ -935,7 +935,7 @@ export const flags: Flags = {
   },
   deskLoop: {
     enabled: true,
-    armed: false,
+    armed: true,
     startDate: "2026-10-30",
     limits: {
       sliceMs: 20_000,
