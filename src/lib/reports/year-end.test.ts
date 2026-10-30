@@ -20,6 +20,7 @@ import {
   necThresholdCents,
   thresholdCentsIn,
   yearEndWindow,
+  type YearEndCorrection,
   type YearEndInput,
   type YearEndLine,
 } from "./year-end";
@@ -49,7 +50,12 @@ function settlement(over: Partial<SettlementRecord> & { id: string; driverId: st
   };
 }
 
-const line = (settlementId: string, kind: string, amountCents: number): YearEndLine => ({ settlementId, kind, amountCents });
+const line = (
+  settlementId: string,
+  kind: string,
+  amountCents: number,
+  sources: YearEndLine["sources"] = [],
+): YearEndLine => ({ settlementId, kind, amountCents, sources });
 
 // One paid settlement per [driver, load pay] pair, paid in June of the year, with one load pay line.
 function paidOnce(pairs: readonly [string, number][], year = "2026"): YearEndInput {
@@ -57,7 +63,7 @@ function paidOnce(pairs: readonly [string, number][], year = "2026"): YearEndInp
     settlement({ id: `st-${i}`, driverId, paidAt: `${year}-06-12T14:00:00.000Z` }),
   );
   const lines = pairs.map(([, amount], i) => line(`st-${i}`, "load_pay", amount));
-  return { settlements, lines, drivers: [A, B, CO] };
+  return { settlements, lines, drivers: [A, B, CO], corrections: [] };
 }
 
 const run = (input: YearEndInput, args: { year: string; driverId?: string } = { year: "2026" }, today = TODAY) =>
@@ -84,6 +90,7 @@ describe("year_end_contractors: what counts", () => {
       settlements: [settlement({ id: "st-late", driverId: A.id, paidAt: late }), settlement({ id: "st-early", driverId: A.id, paidAt: early })],
       lines: [line("st-late", "load_pay", 10_000), line("st-early", "load_pay", 20_000)],
       drivers: [A],
+      corrections: [],
     };
     const y2026 = run(input);
     expect(y2026.rows).toHaveLength(1);
@@ -116,15 +123,17 @@ describe("year_end_contractors: what counts", () => {
       settlements: [settlement({ id: "st-1", driverId: A.id })],
       lines: [line("st-1", "load_pay", 150_000), line("st-1", "accessorial_pay", 7_500), line("st-1", "reimbursement", 4_200)],
       drivers: [A],
+      corrections: [],
     };
     expect(run(input).rows[0]).toMatchObject({ compensationCents: 157_500, reimbursementsCents: 4_200 });
   });
 
-  it("counts a negative pay-correction line, which lowers compensation", () => {
+  it("counts a negative load pay or accessorial pay line as stored, which lowers compensation", () => {
     const input: YearEndInput = {
       settlements: [settlement({ id: "st-1", driverId: A.id })],
       lines: [line("st-1", "load_pay", 100_000), line("st-1", "accessorial_pay", -2_500), line("st-1", "load_pay", -1_000)],
       drivers: [A],
+      corrections: [],
     };
     expect(run(input).rows[0]).toMatchObject({ compensationCents: 96_500 });
   });
@@ -147,6 +156,7 @@ describe("year_end_contractors: what counts", () => {
         line("st-approved-2", "load_pay", 999_999),
       ],
       drivers: [A, B],
+      corrections: [],
     };
     const r = run(input);
     expect(r.rows).toHaveLength(1);
@@ -158,6 +168,7 @@ describe("year_end_contractors: what counts", () => {
       settlements: [settlement({ id: "st-1", driverId: A.id })],
       lines: [line("st-1", "reimbursement", 80_000)],
       drivers: [A],
+      corrections: [],
     };
     expect(run(input).rows[0]).toMatchObject({ compensationCents: 0, reimbursementsCents: 80_000, meetsThreshold: "no" });
   });
@@ -185,16 +196,17 @@ describe("year_end_contractors: what counts", () => {
       settlementsPaid: sumOf("settlementsPaid"),
       compensationCents: sumOf("compensationCents"),
       reimbursementsCents: sumOf("reimbursementsCents"),
+      correctionsCents: sumOf("correctionsCents"),
     });
-    expect(r.totals).toEqual({ settlementsPaid: 3, compensationCents: 145_000, reimbursementsCents: 1_300 });
+    expect(r.totals).toEqual({ settlementsPaid: 3, compensationCents: 145_000, reimbursementsCents: 1_300, correctionsCents: 0 });
     expect(r.period).toEqual({ start: "2026-01-01", end: "2026-12-31" });
     expect(r.asOf).toBe(TODAY);
   });
 
   it("refuses a paid settlement with no paid time, a driver not on file and a year that is not four digits", () => {
-    const noTime: YearEndInput = { settlements: [settlement({ id: "st-1", driverId: A.id, paidAt: null })], lines: [], drivers: [A] };
+    const noTime: YearEndInput = { settlements: [settlement({ id: "st-1", driverId: A.id, paidAt: null })], lines: [], drivers: [A], corrections: [] };
     expect(() => run(noTime)).toThrow(/no paid time/);
-    const noDriver: YearEndInput = { settlements: [settlement({ id: "st-1", driverId: "drv-gone" })], lines: [], drivers: [A] };
+    const noDriver: YearEndInput = { settlements: [settlement({ id: "st-1", driverId: "drv-gone" })], lines: [], drivers: [A], corrections: [] };
     expect(() => run(noDriver)).toThrow(/not on file/);
     expect(() => run(paidOnce([]), { year: "26" })).toThrow(RangeError);
     expect(() => run(paidOnce([]), { year: "2101" })).toThrow(RangeError);
@@ -313,6 +325,197 @@ describe("year_end_contractors: the threshold by payment year", () => {
   });
 });
 
+// An approved pay correction settled on a settlement, and the paystub line the engine makes from
+// it: a reimbursement for a positive delta, a deduction for a negative one, citing the item.
+function corrected(settlementId: string, driverId: string, itemId: string, deltaCents: number) {
+  const kind = deltaCents > 0 ? "reimbursement" : "other_deduction";
+  const item: YearEndCorrection = { id: itemId, driverId, settlementId, kind, amountCents: Math.abs(deltaCents) };
+  return { item, line: line(settlementId, kind, deltaCents, [{ table: "pay_items", id: itemId }]) };
+}
+
+// One settlement paid in June 2026 for a driver: its load pay and the corrections given.
+function withCorrections(loadPayCents: number, deltas: readonly number[], driverId = A.id, st = "st-1"): YearEndInput {
+  const made = deltas.map((d, i) => corrected(st, driverId, `pi-${st}-${i}`, d));
+  return {
+    settlements: [settlement({ id: st, driverId })],
+    lines: [line(st, "load_pay", loadPayCents), ...made.map((m) => m.line)],
+    drivers: [A, B, CO],
+    corrections: made.map((m) => m.item),
+  };
+}
+
+const CORRECTIONS_NOTE =
+  "Pay corrections are shown apart and not counted as compensation, because a correction can be pay, a " +
+  "reimbursement or a refunded charge. A contractor whose threshold answer depends on them reads unknown, " +
+  "and a person decides.";
+
+describe("year_end_contractors: approved pay corrections", () => {
+  it("reads unknown when a negative correction could take a contractor under the threshold", () => {
+    const r = run(withCorrections(200_500, [-1_000]));
+    expect(r.rows[0]).toMatchObject({
+      compensationCents: 200_500,
+      reimbursementsCents: 0,
+      correctionsCents: -1_000,
+      meetsThreshold: "unknown",
+    });
+    expect(r.form1099).toEqual({ taxYear: 2026, thresholdCents: 200_000, meeting: 0, unclassified: 1 });
+    expect(r.notes).toContain(
+      "1099-NEC threshold for payments made in 2026: $2,000.00 (confirm for the tax year). 0 of 1 contractor " +
+        "meet it and 1 reads unknown.",
+    );
+    expect(r.notes).toContain(CORRECTIONS_NOTE);
+    expect(JSON.stringify(r)).not.toMatch(/"meetsThreshold":"(yes|no)"/);
+  });
+
+  it("still reads yes when a negative correction cannot change the answer, to the cent", () => {
+    for (const [pay, delta] of [
+      [300_000, -1_000],
+      [201_000, -1_000],
+    ]) {
+      const r = run(withCorrections(pay, [delta]));
+      expect(r.rows[0], `${pay} ${delta}`).toMatchObject({ compensationCents: pay, correctionsCents: delta, meetsThreshold: "yes" });
+      expect(r.form1099, `${pay} ${delta}`).toEqual({ taxYear: 2026, thresholdCents: 200_000, meeting: 1, unclassified: 0 });
+    }
+    // One cent less and the correction decides it.
+    expect(run(withCorrections(200_999, [-1_000])).rows[0].meetsThreshold).toBe("unknown");
+  });
+
+  it("reads unknown, never yes, when a positive correction would lift a contractor over", () => {
+    for (const [pay, delta] of [
+      [199_000, 5_000],
+      [199_000, 1_000],
+    ]) {
+      const r = run(withCorrections(pay, [delta]));
+      expect(r.rows[0], `${pay} ${delta}`).toMatchObject({ compensationCents: pay, correctionsCents: delta, meetsThreshold: "unknown" });
+      expect(r.form1099?.meeting).toBe(0);
+      expect(r.form1099?.unclassified).toBe(1);
+    }
+    // Short of the threshold even with the correction counted: no. Over it without: yes.
+    expect(run(withCorrections(190_000, [9_999])).rows[0].meetsThreshold).toBe("no");
+    expect(run(withCorrections(200_000, [5_000])).rows[0].meetsThreshold).toBe("yes");
+    // Both signs: under with the deduction taken off, over with the reimbursement added.
+    const both = run(withCorrections(200_000, [3_000, -500]));
+    expect(both.rows[0]).toMatchObject({ compensationCents: 200_000, correctionsCents: 2_500, meetsThreshold: "unknown" });
+  });
+
+  it("keeps a positive correction out of the reimbursement column, which holds only real reimbursements", () => {
+    const base = withCorrections(50_000, [2_500]);
+    const input: YearEndInput = {
+      ...base,
+      lines: [...base.lines, line("st-1", "reimbursement", 4_200, [{ table: "pay_items", id: "pi-lumper" }])],
+    };
+    const r = run(input);
+    expect(r.rows[0]).toMatchObject({ compensationCents: 50_000, reimbursementsCents: 4_200, correctionsCents: 2_500 });
+    expect(r.totals).toEqual({ settlementsPaid: 1, compensationCents: 50_000, reimbursementsCents: 4_200, correctionsCents: 2_500 });
+  });
+
+  it("sums the corrections from the rows, signed, and the CSV writes them as numbers", () => {
+    const a = withCorrections(150_000, [2_500, -700], A.id, "st-a");
+    const b = withCorrections(90_000, [-1_200], B.id, "st-b");
+    const input: YearEndInput = {
+      settlements: [...a.settlements, ...b.settlements],
+      lines: [...a.lines, ...b.lines],
+      drivers: [A, B],
+      corrections: [...a.corrections, ...b.corrections],
+    };
+    const r = run(input);
+    expect(rowOf(r, A.id)?.correctionsCents).toBe(1_800);
+    expect(rowOf(r, B.id)?.correctionsCents).toBe(-1_200);
+    const sumOf = (key: string) => r.rows.reduce((n, row) => n + (row[key] as number), 0);
+    expect(r.totals?.correctionsCents).toBe(sumOf("correctionsCents"));
+    expect(r.totals).toEqual({ settlementsPaid: 2, compensationCents: 240_000, reimbursementsCents: 0, correctionsCents: 600 });
+    const csv = reportCsv(r).split("\r\n");
+    expect(csv[0]).toContain(",Reimbursements (not counted),Pay corrections (not counted),");
+    expect(csv).toContain("Blake Ostrander (T-B),drv-b,Owner-operator,1,900.00,0.00,-12.00,no,2026-06-12,2026-06-12");
+    expect(csv).toContain("Total,,,2,2400.00,0.00,6.00,,,");
+  });
+
+  it("refuses the report when a correction on a kept settlement has no line, or two, or a line that says otherwise", () => {
+    const good = withCorrections(150_000, [2_500]);
+    expect(() => run(good)).not.toThrow();
+    // The item with no line.
+    expect(() => run({ ...good, lines: good.lines.filter((l) => l.kind !== "reimbursement") })).toThrow(
+      /exactly one paystub line/,
+    );
+    // Two lines made from one item.
+    expect(() => run({ ...good, lines: [...good.lines, good.lines[1]] })).toThrow(/exactly one paystub line/);
+    const cites = [{ table: "pay_items", id: "pi-st-1-0" }];
+    // A line that names the item but disagrees with it: another amount, another kind, another
+    // settlement, or more than one source.
+    const two = { ...good, settlements: [...good.settlements, settlement({ id: "st-2", driverId: A.id })] };
+    for (const wrong of [
+      line("st-1", "reimbursement", 2_400, cites),
+      line("st-1", "other_deduction", -2_500, cites),
+      line("st-2", "reimbursement", 2_500, cites),
+      line("st-1", "reimbursement", 2_500, [...cites, { table: "loads", id: "load-1" }]),
+    ]) {
+      expect(() => run({ ...two, lines: [good.lines[0], wrong] }), JSON.stringify(wrong)).toThrow(/does not match/);
+    }
+    // An item on another driver's settlement cited from this one.
+    const theirs: YearEndCorrection = { ...good.corrections[0], driverId: B.id };
+    expect(() => run({ ...good, corrections: [theirs] })).toThrow(/does not match/);
+    // An item whose kind is neither a reimbursement nor a deduction, or whose amount is not positive.
+    const fuel = { ...good, corrections: [{ ...good.corrections[0], kind: "fuel" }] };
+    expect(() => run(fuel)).toThrow(/does not match/);
+    expect(() => run({ ...fuel, lines: [good.lines[0], line("st-1", "fuel", 2_500, cites)] })).toThrow();
+    expect(() => run({ ...good, corrections: [{ ...good.corrections[0], amountCents: -2_500 }] })).toThrow();
+    expect(() => run({ ...good, corrections: [good.corrections[0], good.corrections[0]] })).toThrow(/share an id/);
+  });
+
+  it("leaves alone a correction on a settlement the report does not keep", () => {
+    const input = paidOnce([[A.id, 250_000], [CO.id, 90_000]]);
+    // Settled with the company driver's pay, and one not settled at all; neither has a kept line.
+    const corrections: YearEndCorrection[] = [
+      { id: "pi-co", driverId: CO.id, settlementId: "st-1", kind: "reimbursement", amountCents: 5_000 },
+      { id: "pi-open", driverId: A.id, settlementId: null, kind: "other_deduction", amountCents: 5_000 },
+    ];
+    expect(run({ ...input, corrections })).toEqual(run(input));
+    // The year asked for keeps none of A's 2025 settlements, so its correction there is not checked.
+    const old = withCorrections(100_000, [5_000]);
+    expect(run({ ...old, lines: [old.lines[0]] }, { year: "2025" }).rows).toEqual([]);
+  });
+
+  it("never reads a correction from a part of an id or another table: only a source naming the item whole", () => {
+    const good = withCorrections(150_000, [2_500]);
+    const id = good.corrections[0].id;
+    for (const sources of [
+      [{ table: "fuel_purchases", id }],
+      [{ table: "pay_items", id: id.slice(0, -1) }],
+      [{ table: "pay_items", id: `${id}0` }],
+      [{ table: "pay_items", id: id.toUpperCase() }],
+      [],
+    ]) {
+      // The real line is there, so the item matches; the extra reimbursement line is a reimbursement.
+      const r = run({ ...good, lines: [...good.lines, line("st-1", "reimbursement", 900, sources)] });
+      expect(r.rows[0], JSON.stringify(sources)).toMatchObject({ reimbursementsCents: 900, correctionsCents: 2_500 });
+    }
+  });
+
+  it("gives exactly the old figures, notes and summary with no corrections", () => {
+    for (const [pay, year, today] of [
+      [199_999, "2026", TODAY],
+      [200_000, "2026", TODAY],
+      [59_999, "2025", TODAY],
+      [60_000, "2025", TODAY],
+      [900_000, "2027", "2027-03-01"],
+    ] as const) {
+      const r = run(paidOnce([[A.id, pay]], year), { year }, today);
+      const threshold = necThresholdCents(Number(year));
+      const old = threshold === null ? "unknown" : pay >= threshold ? "yes" : "no";
+      expect(r.rows[0], `${year} ${pay}`).toMatchObject({ compensationCents: pay, correctionsCents: 0, meetsThreshold: old });
+      expect(r.form1099).toEqual({
+        taxYear: Number(year),
+        thresholdCents: threshold,
+        meeting: threshold === null ? null : old === "yes" ? 1 : 0,
+        unclassified: threshold === null ? 1 : 0,
+      });
+      expect(r.notes).not.toContain(CORRECTIONS_NOTE);
+      expect(r.notes?.some((n) => n.includes("reads unknown"))).toBe(false);
+      expect(r.totals?.correctionsCents).toBe(0);
+    }
+  });
+});
+
 describe("year_end_contractors: the download and the tool result", () => {
   it("guards a name that starts with = in the CSV and writes no email column or address", () => {
     const evil = driver({ id: "drv-evil", code: "T-E", firstName: "=HYPERLINK(\"x\")", lastName: "Doe", email: "evil@test.example" });
@@ -320,15 +523,16 @@ describe("year_end_contractors: the download and the tool result", () => {
       settlements: [settlement({ id: "st-1", driverId: evil.id }), settlement({ id: "st-2", driverId: A.id })],
       lines: [line("st-1", "load_pay", 250_000), line("st-2", "load_pay", 1_000)],
       drivers: [evil, A],
+      corrections: [],
     };
     const r = run(input);
     const csv = reportCsv(r);
     const lines = csv.split("\r\n");
     expect(lines[0]).toBe(
       "Contractor,Contractor id,Type,Settlements paid,Nonemployee compensation,Reimbursements (not counted)," +
-        "Meets 1099-NEC threshold,First paid,Last paid",
+        "Pay corrections (not counted),Meets 1099-NEC threshold,First paid,Last paid",
     );
-    expect(lines[1]).toBe(`"'=HYPERLINK(""x"") Doe (T-E)",drv-evil,Owner-operator,1,2500.00,0.00,yes,2026-06-12,2026-06-12`);
+    expect(lines[1]).toBe(`"'=HYPERLINK(""x"") Doe (T-E)",drv-evil,Owner-operator,1,2500.00,0.00,0.00,yes,2026-06-12,2026-06-12`);
     for (const field of csv.split(/[,\r\n]/)) expect(field.startsWith("=")).toBe(false);
     expect(csv.toLowerCase()).not.toContain("email");
     expect(csv).not.toContain("@test.example");
@@ -344,6 +548,7 @@ describe("year_end_contractors: the download and the tool result", () => {
       settlements: drivers.map((d, i) => settlement({ id: `st-${i}`, driverId: d.id })),
       lines: drivers.map((_, i) => line(`st-${i}`, "load_pay", 150_000 + i * 1_000)),
       drivers,
+      corrections: [],
     };
     const full = run(input);
     expect(full.rows).toHaveLength(60);
@@ -379,12 +584,18 @@ function planSums(plan: CarrierPlan, year: string) {
     (s) => s.status === "paid" && s.paid_at !== null && localDateOf(s.paid_at, zone).startsWith(year) && contractors.has(s.driver_id),
   );
   const ids = new Set(kept.map((s) => s.id));
+  // A line made from an approved pay correction's item is a correction, whatever its kind.
+  const corrections = new Set(plan.rows.pay_items.filter((i) => i.ref_table === "proposals").map((i) => i.id));
+  const isCorrection = (l: (typeof plan.rows.settlement_lines)[number]) =>
+    l.sources.some((src) => src.table === "pay_items" && corrections.has(src.id));
   const lines = plan.rows.settlement_lines.filter((l) => ids.has(l.settlement_id));
-  const total = (kinds: string[]) => lines.filter((l) => kinds.includes(l.kind)).reduce((n, l) => n + l.amount_cents, 0);
+  const total = (kinds: string[]) =>
+    lines.filter((l) => kinds.includes(l.kind) && !isCorrection(l)).reduce((n, l) => n + l.amount_cents, 0);
   return {
     settlementsPaid: kept.length,
     compensationCents: total(["load_pay", "accessorial_pay"]),
     reimbursementsCents: total(["reimbursement"]),
+    correctionsCents: lines.filter(isCorrection).reduce((n, l) => n + l.amount_cents, 0),
     contractors: new Set(kept.map((s) => s.driver_id)).size,
   };
 }
@@ -415,6 +626,7 @@ describe("year_end_contractors on the Blue Ridge seed plan", () => {
       settlementsPaid: want.settlementsPaid,
       compensationCents: want.compensationCents,
       reimbursementsCents: want.reimbursementsCents,
+      correctionsCents: want.correctionsCents,
     });
     expect(r.rowsTotal).toBe(want.contractors);
     expect(r.rows.every((row) => row.workerType === "Owner-operator")).toBe(true);
@@ -433,6 +645,76 @@ describe("year_end_contractors on the Blue Ridge seed plan", () => {
     expect(lastNight.args).toEqual({ year: "2026" });
     expect(lastNight.asOf).toBe("2026-12-31");
     expect(lastNight.totals).toEqual(today.totals);
+  });
+
+  it("reads a correction by its approved item through the real reader, never by a line's label", async () => {
+    const zone = plan.carrier.timezone;
+    const contractors = new Set(plan.rows.drivers.filter((d) => d.worker_type === "owner_operator").map((d) => d.id));
+    const st = plan.rows.settlements.find(
+      (s) => s.status === "paid" && s.paid_at !== null && localDateOf(s.paid_at, zone).startsWith("2026") && contractors.has(s.driver_id),
+    );
+    if (!st) throw new Error("the plan pays no contractor in 2026");
+    const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+    const item = (id: string, kind: "reimbursement" | "other_deduction", amount: number, approved: boolean) => ({
+      id,
+      driver_id: st.driver_id,
+      kind,
+      subkind: "correction",
+      amount_cents: amount,
+      item_date: "2026-06-01",
+      ref_table: approved ? ("proposals" as const) : null,
+      ref_id: approved ? uuid(99) : null,
+      item_ref: approved ? `correction:${uuid(99)}` : `decoy:${id}`,
+      description: "Pay correction",
+      settlement_id: st.id,
+    });
+    const stub = (n: number, kind: string, label: string, amount: number, sources: { table: string; id: string }[]) => ({
+      id: uuid(n),
+      settlement_id: st.id,
+      seq: 900 + n,
+      kind,
+      label,
+      amount_cents: amount,
+      sources,
+      meta: null,
+    });
+    const changed: CarrierPlan = {
+      ...plan,
+      rows: {
+        ...plan.rows,
+        pay_items: [
+          ...plan.rows.pay_items,
+          item(uuid(1), "other_deduction", 1_500, true),
+          item(uuid(2), "reimbursement", 700, false),
+        ],
+        settlement_lines: [
+          ...plan.rows.settlement_lines,
+          // The approved correction's line.
+          stub(11, "other_deduction", "Deduction (correction)", -1_500, [{ table: "pay_items", id: uuid(1) }]),
+          // Labeled as corrections but made from no approved correction: a reimbursement counts as
+          // one, and a deduction is not read at all.
+          stub(12, "reimbursement", "Reimbursement (correction)", 700, [{ table: "pay_items", id: uuid(2) }]),
+          stub(13, "other_deduction", "Deduction (correction)", -400, []),
+        ],
+      },
+    };
+    const before = await report({ year: "2026" });
+    const after = await planDb(changed).withTenant(TENANT, (q) => computeReport(q, request({ year: "2026" }), CLOCK));
+    const was = rowOf(before, st.driver_id);
+    const now = rowOf(after, st.driver_id);
+    expect(was?.correctionsCents).toBe(0);
+    expect(now).toMatchObject({
+      compensationCents: was?.compensationCents,
+      reimbursementsCents: (was?.reimbursementsCents as number) + 700,
+      correctionsCents: -1_500,
+    });
+    expect(after.totals).toEqual({
+      ...before.totals,
+      reimbursementsCents: (before.totals?.reimbursementsCents ?? 0) + 700,
+      correctionsCents: -1_500,
+    });
+    expect(after.notes).toContain(CORRECTIONS_NOTE);
+    expect(before.notes).not.toContain(CORRECTIONS_NOTE);
   });
 
   it("is refused by computeReport itself while its own switch is off, even with the reports on", async () => {

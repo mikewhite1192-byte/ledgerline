@@ -146,6 +146,7 @@ export const REPORT_COLUMNS: Readonly<Record<ReportName, readonly ReportColumn[]
     { key: "settlementsPaid", header: "Settlements paid", kind: "int" },
     { key: "compensationCents", header: "Nonemployee compensation", kind: "cents" },
     { key: "reimbursementsCents", header: "Reimbursements (not counted)", kind: "cents" },
+    { key: "correctionsCents", header: "Pay corrections (not counted)", kind: "cents" },
     { key: "meetsThreshold", header: "Meets 1099-NEC threshold", kind: "text" },
     { key: "firstPaidOn", header: "First paid", kind: "date" },
     { key: "lastPaidOn", header: "Last paid", kind: "date" },

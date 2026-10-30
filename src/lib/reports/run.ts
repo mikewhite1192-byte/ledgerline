@@ -141,9 +141,10 @@ export async function computeReport(
       );
     }
     case "year_end_contractors": {
-      // The calendar year the settlements were paid in, in the carrier's own dates.
+      // The calendar year the settlements were paid in, in the carrier's own dates; one contractor
+      // asked for is read alone.
       const year = request.args.year ?? today.slice(0, 4);
-      const rows = await readPaidBetween(q, yearEndWindow(Number(year)));
+      const rows = await readPaidBetween(q, { ...yearEndWindow(Number(year)), driverId: request.args.driverId });
       return computeYearEnd1099(
         {
           settlements: rows.settlements.map(settlementOf),
@@ -151,8 +152,19 @@ export async function computeReport(
             settlementId: l.settlement_id,
             kind: l.kind,
             amountCents: l.amount_cents,
+            sources: l.sources,
           })),
           drivers: rows.drivers.map(driverOf),
+          corrections: rows.pay_items.map((i) => {
+            if (i.ref_table !== "proposals") throw new Error("a pay item read as a correction is not one");
+            return {
+              id: i.id,
+              driverId: i.driver_id,
+              settlementId: i.settlement_id,
+              kind: i.kind,
+              amountCents: i.amount_cents,
+            };
+          }),
         },
         { ...request.args, year },
         today,

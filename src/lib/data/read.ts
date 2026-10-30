@@ -496,33 +496,64 @@ export async function readIftaInput(
 // ---- Year-end 1099 ----
 
 // The year-end 1099's inputs: the settlements paid inside one window of instants (start included,
-// end not), their earning lines, and the drivers they pay. The report keeps only the settlements
-// paid on a date inside its year in the carrier's time zone, so the window it asks for may run
-// wider. Each table is read in pages through the same bound as a month's loads, and a read past
-// the bound fails whole with ReadLimitError, never a short total.
+// end not), their earning lines, the drivers they pay, and the approved pay corrections settled on
+// them with the lines made from those. The report keeps only the settlements paid on a date inside
+// its year in the carrier's time zone, so the window it asks for may run wider. With a driver id,
+// every statement and subquery reads that driver's rows alone, so another driver's rows never count
+// toward the bound. Each table is read in pages through the same bound as a month's loads, and a
+// read past the bound fails whole with ReadLimitError, never a short total.
 export const PAID_BETWEEN =
   "status = 'paid' AND paid_at >= CAST($1 AS timestamptz) AND paid_at < CAST($2 AS timestamptz)";
-export const PAID_EARNING_LINES =
-  "kind IN ('load_pay', 'accessorial_pay', 'reimbursement') AND settlement_id IN (SELECT id FROM settlements" +
-  ` WHERE tenant_id = current_tenant_id() AND ${PAID_BETWEEN})`;
-export const PAID_DRIVERS =
-  "id IN (SELECT driver_id FROM settlements" + ` WHERE tenant_id = current_tenant_id() AND ${PAID_BETWEEN})`;
 
-export type PaidRows = Pick<TenantRows, "settlements" | "settlement_lines" | "drivers">;
+export type PaidWhere = Record<"settlements" | "settlement_lines" | "drivers" | "pay_items", string>;
+
+// The four filters, for every driver or for the one driver in $3. A pay correction is a pay item
+// that names its proposal (ref_table 'proposals'); a deduction line is read as one only when its
+// source is such an item, by the item's whole id, never by its label.
+function paidWhere(oneDriver: boolean): PaidWhere {
+  const settlements = oneDriver ? `${PAID_BETWEEN} AND driver_id = CAST($3 AS uuid)` : PAID_BETWEEN;
+  const paid = `SELECT id FROM settlements WHERE tenant_id = current_tenant_id() AND ${settlements}`;
+  const payItems =
+    `ref_table = 'proposals' AND settlement_id IN (${paid})` + (oneDriver ? " AND driver_id = CAST($3 AS uuid)" : "");
+  const corrections = `SELECT CAST(id AS text) FROM pay_items WHERE tenant_id = current_tenant_id() AND ${payItems}`;
+  return {
+    settlements,
+    settlement_lines:
+      `settlement_id IN (${paid}) AND (kind IN ('load_pay', 'accessorial_pay', 'reimbursement')` +
+      ` OR (kind = 'other_deduction' AND sources->0->>'table' = 'pay_items' AND sources->0->>'id' IN (${corrections})))`,
+    drivers:
+      `id IN (SELECT driver_id FROM settlements WHERE tenant_id = current_tenant_id() AND ${settlements})` +
+      (oneDriver ? " AND id = CAST($3 AS uuid)" : ""),
+    pay_items: payItems,
+  };
+}
+
+// Exported so a test's fake database can match these statements whole.
+export const PAID_WHERE: { all: PaidWhere; oneDriver: PaidWhere } = {
+  all: paidWhere(false),
+  oneDriver: paidWhere(true),
+};
+
+export type PaidRows = Pick<TenantRows, "settlements" | "settlement_lines" | "drivers" | "pay_items">;
 
 export async function readPaidBetween(
   q: Queryable,
-  window: { start: Instant; end: Instant },
+  scope: { start: Instant; end: Instant; driverId?: string },
   paging: Paging = DELIVERED_PAGING,
 ): Promise<PaidRows> {
-  const start = parseInstant(window.start);
-  const end = parseInstant(window.end);
+  const start = parseInstant(scope.start);
+  const end = parseInstant(scope.end);
   if (end <= start) throw new RangeError("window ends before it starts");
-  const p = [new Date(start).toISOString(), new Date(end).toISOString()];
+  const { driverId } = scope;
+  if (driverId !== undefined && !isUuid(driverId)) throw new RangeError("the driver id is not a uuid");
+  const p: Param[] = [new Date(start).toISOString(), new Date(end).toISOString()];
+  if (driverId !== undefined) p.push(driverId.toLowerCase());
+  const where = driverId === undefined ? PAID_WHERE.all : PAID_WHERE.oneDriver;
   return {
-    settlements: await readWherePaged(q, "settlements", PAID_BETWEEN, p, paging),
-    settlement_lines: await readWherePaged(q, "settlement_lines", PAID_EARNING_LINES, p, paging),
-    drivers: await readWherePaged(q, "drivers", PAID_DRIVERS, p, paging),
+    settlements: await readWherePaged(q, "settlements", where.settlements, p, paging),
+    settlement_lines: await readWherePaged(q, "settlement_lines", where.settlement_lines, p, paging),
+    drivers: await readWherePaged(q, "drivers", where.drivers, p, paging),
+    pay_items: await readWherePaged(q, "pay_items", where.pay_items, p, paging),
   };
 }
 

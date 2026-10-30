@@ -6,6 +6,7 @@ import {
   LOAD_NUMBERS_NEXT,
   ReadLimitError,
   PAID_BETWEEN,
+  PAID_WHERE,
   PURCHASED_BETWEEN,
   readDeliveredBetween,
   readIftaInput,
@@ -30,7 +31,9 @@ function fakeDb(tables: Record<string, Record<string, unknown>[]>) {
       const table = /FROM (\w+) WHERE/.exec(sql)?.[1] ?? "";
       calls.push({ table, sql, params });
       const limit = Number(/ LIMIT (\d+)$/.exec(sql)?.[1]);
-      const after = sql.includes("id > CAST($3 AS uuid)") ? String(params[2]) : null;
+      // The page key is the statement's last parameter: $3, or $4 after a driver id.
+      const key = / id > CAST\(\$(\d+) AS uuid\)/.exec(sql);
+      const after = key ? String(params[Number(key[1]) - 1]) : null;
       const rows = [...(tables[table] ?? [])]
         .sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))
         .filter((r) => after === null || String(r.id) > after)
@@ -168,26 +171,87 @@ describe("readIftaInput in pages", () => {
 // The year-end 1099's window: a day either side of 2026 in UTC.
 const YEAR = { start: "2025-12-31T00:00:00.000Z", end: "2027-01-02T00:00:00.000Z" };
 
+// Every table a statement reads (the outer one and each subquery's) is named with its tenant.
+function everyFromInTenant(sql: string): void {
+  const froms = sql.match(/FROM \w+/g) ?? [];
+  expect(froms.length).toBeGreaterThan(0);
+  expect(sql.match(/FROM \w+ WHERE tenant_id = current_tenant_id\(\)/g)?.length).toBe(froms.length);
+}
+
+const countOf = (text: string, part: string) => text.split(part).length - 1;
+
 describe("readPaidBetween in pages", () => {
-  it("pages the three tables, each statement in the tenant, every one through the paid window", async () => {
-    const { q, calls } = fakeDb({ settlements: loads(3), settlement_lines: loads(5), drivers: loads(2) });
+  it("pages the four tables, each statement in the tenant, every one through the paid window", async () => {
+    const { q, calls } = fakeDb({ settlements: loads(3), settlement_lines: loads(5), drivers: loads(2), pay_items: loads(1) });
     const out = await readPaidBetween(q, YEAR, { pageSize: 2, maxPages: 4 });
     expect(out.settlements.map((r) => r.id)).toEqual([id(1), id(2), id(3)]);
     expect(out.settlement_lines.map((r) => r.id)).toEqual([id(1), id(2), id(3), id(4), id(5)]);
     expect(out.drivers.map((r) => r.id)).toEqual([id(1), id(2)]);
-    expect(Object.keys(out).sort()).toEqual(["drivers", "settlement_lines", "settlements"]);
-    expect(new Set(calls.map((c) => c.table))).toEqual(new Set(["settlements", "settlement_lines", "drivers"]));
+    expect(out.pay_items.map((r) => r.id)).toEqual([id(1)]);
+    expect(Object.keys(out).sort()).toEqual(["drivers", "pay_items", "settlement_lines", "settlements"]);
+    expect(new Set(calls.map((c) => c.table))).toEqual(new Set(["settlements", "settlement_lines", "drivers", "pay_items"]));
     for (const c of calls) {
       expect(c.sql).toContain("tenant_id = current_tenant_id()");
+      everyFromInTenant(c.sql);
       expect(c.sql).toContain(PAID_BETWEEN);
       expect(c.sql).toMatch(/ ORDER BY id LIMIT 2$/);
       expect(c.params.slice(0, 2)).toEqual([YEAR.start, YEAR.end]);
+      // No driver filter on a read of every driver.
+      expect(c.sql).not.toContain("driver_id = CAST($3 AS uuid)");
     }
     for (const c of of(calls, "settlement_lines")) {
       expect(c.sql).toContain("kind IN ('load_pay', 'accessorial_pay', 'reimbursement')");
+      // A deduction line only when its source is a correction's pay item, by the whole id; never its label.
+      expect(c.sql).toContain(
+        "OR (kind = 'other_deduction' AND sources->0->>'table' = 'pay_items' AND sources->0->>'id' IN " +
+          "(SELECT CAST(id AS text) FROM pay_items WHERE tenant_id = current_tenant_id() AND ref_table = 'proposals'",
+      );
+      expect(c.sql.slice(c.sql.indexOf(" WHERE "))).not.toContain("label");
+    }
+    for (const c of of(calls, "pay_items")) {
+      expect(c.sql).toContain(`(${PAID_WHERE.all.pay_items})`);
+      expect(c.sql).toContain("ref_table = 'proposals' AND settlement_id IN (SELECT id FROM settlements");
     }
     // Two drivers at two a page: one full page and one empty one.
     expect(of(calls, "drivers").map((c) => c.params.at(-1))).toEqual([YEAR.end, id(2)]);
+  });
+
+  it("reads one driver's rows alone: the driver in $3 in every statement and subquery, the page key after it", async () => {
+    const driver = id(7);
+    const { q, calls } = fakeDb({ settlements: loads(3), settlement_lines: loads(1), drivers: loads(1), pay_items: loads(2) });
+    const out = await readPaidBetween(q, { ...YEAR, driverId: driver.toUpperCase() }, { pageSize: 2, maxPages: 4 });
+    expect(out.settlements.map((r) => r.id)).toEqual([id(1), id(2), id(3)]);
+    expect(out.pay_items.map((r) => r.id)).toEqual([id(1), id(2)]);
+    expect(new Set(calls.map((c) => c.table))).toEqual(new Set(["settlements", "settlement_lines", "drivers", "pay_items"]));
+    for (const c of calls) {
+      everyFromInTenant(c.sql);
+      expect(c.sql).toContain(`${PAID_BETWEEN} AND driver_id = CAST($3 AS uuid)`);
+      // The driver id goes lowercased, and the page key after it.
+      expect(c.params.slice(0, 3)).toEqual([YEAR.start, YEAR.end, driver]);
+      expect(c.sql).not.toContain("CAST($3 AS uuid) ORDER BY");
+    }
+    // Each settlements subquery names the driver, and so does each read of pay items or drivers itself.
+    const where = (table: string) => of(calls, table)[0].sql;
+    expect(countOf(where("settlements"), "driver_id = CAST($3 AS uuid)")).toBe(1);
+    expect(countOf(where("settlement_lines"), "driver_id = CAST($3 AS uuid)")).toBe(3);
+    expect(countOf(where("pay_items"), "driver_id = CAST($3 AS uuid)")).toBe(2);
+    expect(where("drivers")).toContain(") AND id = CAST($3 AS uuid))");
+    expect(where("pay_items")).toContain(`(${PAID_WHERE.oneDriver.pay_items})`);
+    // Three settlements at two a page: the second page goes after the first page's last key, in $4.
+    expect(of(calls, "settlements").map((c) => c.params)).toEqual([
+      [YEAR.start, YEAR.end, driver],
+      [YEAR.start, YEAR.end, driver, id(2)],
+    ]);
+    expect(of(calls, "settlements")[1].sql).toContain(" AND id > CAST($4 AS uuid) ORDER BY id LIMIT 2");
+    expect(of(calls, "pay_items").map((c) => c.params.at(-1))).toEqual([driver, id(2)]);
+  });
+
+  it("refuses a driver id that is not a uuid before reading anything", async () => {
+    const { q, calls } = fakeDb({});
+    for (const driverId of ["", "drv-1", `${id(1)} OR 1=1`, id(1).slice(0, 35)]) {
+      await expect(readPaidBetween(q, { ...YEAR, driverId })).rejects.toBeInstanceOf(RangeError);
+    }
+    expect(calls).toHaveLength(0);
   });
 
   it("sends the window as UTC instants whatever offset it was written with", async () => {
