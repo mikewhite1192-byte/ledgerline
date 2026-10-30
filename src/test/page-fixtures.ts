@@ -817,6 +817,7 @@ const document = (over: Partial<DocumentView>): DocumentView => ({
   stalled: false,
   readAttempts: 1,
   markup: { status: "none", attemptsLeft: 3, category: null, at: null, stalled: false, eligibility: "eligible" },
+  crop: { status: "none", method: null, category: null, confidence: null, quad: null, box: null, at: null },
   ...over,
 });
 

@@ -186,7 +186,8 @@ const IMAGE_FORMATS: readonly string[] = ["png", "jpeg", "webp"];
 
 // Our limits, well under Meta's: a request body stays small and a reserve under the per-call cap.
 const MAX_ATTACHMENTS = 8;
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+// Exported so a caller can check an image it builds before a call refuses it.
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
 // The evidence clip cap, the same as the table's CHECK: 933,336 base64 characters inline, well
 // under the 1 MiB request body Meta accepts.

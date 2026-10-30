@@ -173,6 +173,64 @@ export type MarkupView = {
   eligibility: MarkupEligibility | null;
 };
 
+// A photo's crop to the paper (migration 0067). none: never tried (a PDF, or the switch was off).
+// cropping: a try is running. cropped: kept; the only state with a file, and the image every read
+// after it uses. skipped: a definite no (nothing found, unsure, or our own processing could not
+// use the answer); final. unavailable: no answer this time (a timeout, budget, an error); Read
+// again may try once more.
+export type CropStatus = "none" | "cropping" | "cropped" | "skipped" | "unavailable";
+
+// Why a try kept no crop: a fixed word, never upstream text. The first eight end skipped, the
+// rest unavailable.
+export const CROP_SKIPPED_CATEGORIES = [
+  "no_match",
+  "low_confidence",
+  "too_small",
+  "already_flat",
+  "size_mismatch",
+  "too_large",
+  "bad_image",
+  "decode_error",
+] as const;
+export const CROP_UNAVAILABLE_CATEGORIES = [
+  "timeout",
+  "unavailable",
+  "network",
+  "rate_limited",
+  "unknown",
+  "budget",
+  "no_library",
+  "stalled",
+] as const;
+export const CROP_CATEGORIES = [...CROP_SKIPPED_CATEGORIES, ...CROP_UNAVAILABLE_CATEGORIES] as const;
+export type CropSkippedCategory = (typeof CROP_SKIPPED_CATEGORIES)[number];
+export type CropUnavailableCategory = (typeof CROP_UNAVAILABLE_CATEGORIES)[number];
+export type CropCategory = (typeof CROP_CATEGORIES)[number];
+
+// Tries a photo gets in all: the upload's, then one more from Read again after unavailable.
+export const CROP_ATTEMPTS_MAX = 2;
+
+// quad: the mask's four corners warped flat. box: the box cut out with a small margin.
+export type CropMethod = "quad" | "box";
+
+// Pixels of the normalized frame the segmenter saw (EXIF orientation applied, longest side at
+// most 2,000), which width and height give, so a later page can scale them to any display.
+export type CropPoint = { x: number; y: number };
+export type CropBox = { x1: number; y1: number; x2: number; y2: number; width: number; height: number };
+
+export type CropView = {
+  status: CropStatus;
+  method: CropMethod | null;
+  category: CropCategory | null;
+  // The chosen match's confidence in thousandths, or null (none sent, or no match).
+  confidence: number | null;
+  // The four source corners, top left, top right, bottom right, bottom left; null on a box crop.
+  quad: CropPoint[] | null;
+  box: CropBox | null;
+  // When the last try started, or null.
+  at: string | null;
+};
+
 // A document as the pages and the routes show it. Never the bytes, never the uploader.
 export type DocumentView = {
   id: string;
@@ -195,4 +253,6 @@ export type DocumentView = {
   readAttempts: number;
   // The marked copy (never its bytes).
   markup: MarkupView;
+  // The crop to the paper (never its bytes).
+  crop: CropView;
 };

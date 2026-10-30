@@ -3,8 +3,16 @@ import type { Queryable } from "../db";
 import { untrustedContentHash } from "../data/content-hash";
 import { transcriptionOf } from "./schema";
 import {
+  CROP_ATTEMPTS_MAX,
   MARKUP_ATTEMPTS_MAX,
   READ_ATTEMPTS_MAX,
+  type CropBox,
+  type CropCategory,
+  type CropMethod,
+  type CropPoint,
+  type CropSkippedCategory,
+  type CropStatus,
+  type CropUnavailableCategory,
   type DocumentKind,
   type DocumentMime,
   type StoredDocumentKind,
@@ -16,9 +24,9 @@ import {
 
 // The documents table, inside a tenant transaction the caller opened (row-level security scopes
 // every statement, and each one also names the tenant). Bytes travel as base64 both ways; no
-// statement here but readDocumentBytes ever selects them, and none but readMarkupBytes selects
-// the marked copy's: a statement names one bytea column at most, so one answer stays under the
-// Data API's 1 MiB limit (store.test.ts pins it).
+// statement here but readDocumentBytes ever selects them, none but readMarkupBytes selects the
+// marked copy's and none but readCropBytes the crop's: a statement names one bytea column at
+// most, so one answer stays under the Data API's 1 MiB limit (store.test.ts pins it).
 
 export type DocumentMetaRow = {
   id: string;
@@ -40,6 +48,15 @@ export type DocumentMetaRow = {
   markup_attempts: number;
   markup_category: MarkupCategory | null;
   markup_at: string | null;
+  crop_status: CropStatus;
+  crop_attempts: number;
+  crop_method: CropMethod | null;
+  crop_category: CropCategory | null;
+  crop_confidence: number | null;
+  // JSON text, parsed by the view.
+  crop_quad: string | null;
+  crop_box: string | null;
+  crop_at: string | null;
 };
 
 const utc = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
@@ -51,9 +68,12 @@ const columns = (reading: string) =>
   ` ${utc("created_at")} AS created_at,` +
   ` ${utc("updated_at")} AS updated_at,` +
   " markup_status, markup_attempts, markup_category," +
-  ` ${utc("markup_at")} AS markup_at`;
+  ` ${utc("markup_at")} AS markup_at,` +
+  " crop_status, crop_attempts, crop_method, crop_category, crop_confidence," +
+  " CAST(crop_quad AS text) AS crop_quad, CAST(crop_box AS text) AS crop_box," +
+  ` ${utc("crop_at")} AS crop_at`;
 
-const META_COLUMNS = columns("CAST(reading AS text)");
+export const META_COLUMNS = columns("CAST(reading AS text)");
 
 // The list leaves out the transcription (up to 80 lines of 160 characters a row): 50 full
 // readings could near the Data API's 1 MiB answer limit. An empty list keeps the strict shape.
@@ -358,4 +378,134 @@ export async function readDriverLanguage(q: Queryable, driverId: string): Promis
   );
   const lang = rows[0]?.preferred_language;
   return lang === "es" ? "es" : lang === "en" ? "en" : null;
+}
+
+// --- The crop to the paper (migration 0067) ---
+
+// A try marked running since before the cutoff lost its request: it ends unavailable (stalled),
+// so Read again may claim the row's last try. 1 when one was ended.
+export async function reclaimStalledCrop(q: Queryable, id: string, cutoffIso: string): Promise<number> {
+  return q.execute(
+    `UPDATE documents SET crop_status = 'unavailable', crop_category = 'stalled'
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+        AND crop_status = 'cropping' AND crop_at < CAST($2 AS timestamptz)`,
+    [id, cutoffIso],
+  );
+}
+
+// The one place a try starts: a photo never tried, or one whose last try had no answer, with
+// tries left. Marks the try (status, count, time) and clears the last try's result, in one
+// statement, so one row gets one segment call a try. The new try count when taken, else null.
+// The count and the time are the lease every later write names.
+export async function claimCrop(q: Queryable, id: string, nowIso: string): Promise<number | null> {
+  const rows = await q.query<{ crop_attempts: number | string }>(
+    `UPDATE documents
+        SET crop_status = 'cropping', crop_attempts = crop_attempts + 1, crop_at = CAST($2 AS timestamptz),
+            crop_category = NULL, crop_quad = NULL, crop_box = NULL, crop_confidence = NULL,
+            crop_call_id = NULL
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+        AND mime IN ('image/jpeg', 'image/png', 'image/webp')
+        AND crop_status IN ('none', 'unavailable') AND crop_attempts < $3
+      RETURNING crop_attempts`,
+    [id, nowIso, CROP_ATTEMPTS_MAX],
+  );
+  if (rows.length === 0) return null;
+  const n = Number(rows[0].crop_attempts);
+  if (!Number.isSafeInteger(n)) throw new Error("attempts is not a number");
+  return n;
+}
+
+export type CropLease = { attempt: number; atIso: string };
+
+const CROP_LEASE = `tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND crop_status = 'cropping'
+        AND crop_attempts = $2 AND crop_at = CAST($3 AS timestamptz)`;
+
+export type CropEnding =
+  | {
+      status: "cropped";
+      method: CropMethod;
+      bytesBase64: string;
+      byteLength: number;
+      hash: string;
+      quad: CropPoint[] | null;
+      box: CropBox;
+      confidence: number | null;
+      callId: string;
+    }
+  | {
+      status: "skipped";
+      category: CropSkippedCategory;
+      box: CropBox | null;
+      confidence: number | null;
+      callId: string | null;
+      // A frame over the segmenter's input limit: given back as below.
+      refund?: true;
+    }
+  // refund: no request went out, so the try is given back (the count drops by one) while the
+  // row still says why it has no crop.
+  | { status: "unavailable"; category: CropUnavailableCategory; refund: boolean };
+
+// Ends this try, once (the lease). The only write of crop_bytes. 1 when this call ended it.
+export async function finishCrop(q: Queryable, id: string, lease: CropLease, e: CropEnding): Promise<number> {
+  if (e.status === "cropped") {
+    return q.execute(
+      `UPDATE documents
+          SET crop_status = 'cropped', crop_category = NULL, crop_method = $4, crop_mime = 'image/jpeg',
+              crop_length = $5, crop_bytes = decode($6, 'base64'), crop_hash = $7,
+              crop_quad = CAST($8 AS jsonb), crop_box = CAST($9 AS jsonb), crop_confidence = $10,
+              crop_call_id = CAST($11 AS uuid)
+        WHERE ${CROP_LEASE}`,
+      [
+        id,
+        lease.attempt,
+        lease.atIso,
+        e.method,
+        e.byteLength,
+        e.bytesBase64,
+        e.hash,
+        e.quad === null ? null : JSON.stringify(e.quad),
+        JSON.stringify(e.box),
+        e.confidence,
+        e.callId,
+      ],
+    );
+  }
+  const skipped = e.status === "skipped" ? e : null;
+  const refund = e.refund === true;
+  return q.execute(
+    `UPDATE documents
+        SET crop_status = $4, crop_category = $5, crop_box = CAST($6 AS jsonb), crop_confidence = $7,
+            crop_call_id = CAST($8 AS uuid), crop_attempts = crop_attempts - $9
+      WHERE ${CROP_LEASE}`,
+    [
+      id,
+      lease.attempt,
+      lease.atIso,
+      e.status,
+      e.category,
+      skipped?.box ? JSON.stringify(skipped.box) : null,
+      skipped?.confidence ?? null,
+      skipped?.callId ?? null,
+      refund ? 1 : 0,
+    ],
+  );
+}
+
+// The switch went off after the claim and no call ran: the try is given back. 1 when written.
+export async function releaseCrop(q: Queryable, id: string, lease: CropLease): Promise<number> {
+  return q.execute(
+    `UPDATE documents SET crop_status = 'none', crop_attempts = crop_attempts - 1, crop_at = NULL
+      WHERE ${CROP_LEASE}`,
+    [id, lease.attempt, lease.atIso],
+  );
+}
+
+// The kept crop's file, or null when there is none (only a cropped row holds one).
+export async function readCropBytes(q: Queryable, id: string): Promise<{ mime: "image/jpeg"; base64: string } | null> {
+  const rows = await q.query<{ mime: "image/jpeg"; base64: string }>(
+    `SELECT crop_mime AS mime, encode(crop_bytes, 'base64') AS base64 FROM documents
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND crop_status = 'cropped'`,
+    [id],
+  );
+  return rows[0] ?? null;
 }

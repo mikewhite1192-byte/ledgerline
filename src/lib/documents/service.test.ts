@@ -4,7 +4,21 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import type { TenantDb } from "../db";
-import { checkUpload, MARKUP_STALLED_MS, readAgain, safeFilename, STALLED_MS, uploadDocument, viewOf } from "./service";
+import { CROP_TIMEOUT_MS } from "./crop";
+import { READ_TIMEOUT_MS } from "./read";
+import {
+  checkUpload,
+  FINISH_RESERVE_MS,
+  MARKUP_STALLED_MS,
+  MIN_READ_MS,
+  readAgain,
+  readTimeoutFor,
+  REQUEST_BUDGET_MS,
+  safeFilename,
+  STALLED_MS,
+  uploadDocument,
+  viewOf,
+} from "./service";
 import type { DocumentMetaRow } from "./store";
 import { CONFIDENCE_FIELDS } from "./types";
 
@@ -141,6 +155,14 @@ describe("viewOf", () => {
     markup_attempts: 0,
     markup_category: null,
     markup_at: null,
+    crop_status: "none",
+    crop_attempts: 0,
+    crop_method: null,
+    crop_category: null,
+    crop_confidence: null,
+    crop_quad: null,
+    crop_box: null,
+    crop_at: null,
     ...over,
   });
 
@@ -224,6 +246,63 @@ describe("viewOf", () => {
       expect(viewOf(readRow({ markup_status: "unavailable", markup_at: at(MARKUP_STALLED_MS * 2) }), NOW).markup.stalled).toBe(false);
     });
   });
+
+  describe("crop", () => {
+    const quad = [
+      { x: 10, y: 12 },
+      { x: 90, y: 10 },
+      { x: 92, y: 80 },
+      { x: 8, y: 82 },
+    ];
+    const box = { x1: 8, y1: 10, x2: 92, y2: 82, width: 100, height: 100 };
+
+    it("shows a photo never cropped as none, with nothing else", () => {
+      expect(viewOf(row(), NOW).crop).toEqual({
+        status: "none",
+        method: null,
+        category: null,
+        confidence: null,
+        quad: null,
+        box: null,
+        at: null,
+      });
+    });
+
+    it("carries a kept crop's corners, box and confidence, never its bytes", () => {
+      const view = viewOf(
+        row({
+          crop_status: "cropped",
+          crop_attempts: 1,
+          crop_method: "quad",
+          crop_confidence: 930,
+          crop_quad: JSON.stringify(quad),
+          crop_box: JSON.stringify(box),
+          crop_at: "2026-10-24T14:00:00.000Z",
+        }),
+        NOW,
+      );
+      expect(view.crop).toEqual({
+        status: "cropped",
+        method: "quad",
+        category: null,
+        confidence: 930,
+        quad,
+        box,
+        at: "2026-10-24T14:00:00.000Z",
+      });
+      expect(JSON.stringify(view)).not.toContain("crop_bytes");
+    });
+
+    it("reads a malformed corner list or box as none rather than guessing", () => {
+      const crop = (over: Partial<DocumentMetaRow>) => viewOf(row({ crop_status: "skipped", crop_category: "too_small", ...over }), NOW).crop;
+      expect(crop({ crop_quad: JSON.stringify(quad.slice(0, 3)) }).quad).toBeNull();
+      expect(crop({ crop_quad: JSON.stringify([...quad.slice(0, 3), { x: "1", y: 2 }]) }).quad).toBeNull();
+      expect(crop({ crop_quad: "not json" }).quad).toBeNull();
+      expect(crop({ crop_box: JSON.stringify({ ...box, height: null }) }).box).toBeNull();
+      expect(crop({ crop_box: JSON.stringify([1, 2, 3, 4]) }).box).toBeNull();
+      expect(crop({ crop_box: JSON.stringify(box) })).toMatchObject({ status: "skipped", category: "too_small", box });
+    });
+  });
 });
 
 describe("refusals before anything is stored", () => {
@@ -243,5 +322,33 @@ describe("refusals before anything is stored", () => {
       ok: false,
       error: "too_many_pages",
     });
+  });
+});
+
+describe("the read's share of the request", () => {
+  it("keeps the full read with nothing spent, and gives a read after a crop only what is left", () => {
+    expect(readTimeoutFor(0)).toBe(READ_TIMEOUT_MS);
+    expect(readTimeoutFor(0.4)).toBe(READ_TIMEOUT_MS);
+    expect(readTimeoutFor(-3_000)).toBe(READ_TIMEOUT_MS);
+    expect(readTimeoutFor(9_000)).toBe(16_000);
+    expect(readTimeoutFor(15_000)).toBe(MIN_READ_MS);
+    expect(readTimeoutFor(15_001)).toBeNull();
+    expect(readTimeoutFor(Number.NaN)).toBeNull();
+    expect(readTimeoutFor(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it("never gives the read more than 25 seconds, and always leaves the finish its reserve", () => {
+    for (let ms = -1_000; ms <= 30_000; ms += 250) {
+      const timeout = readTimeoutFor(ms);
+      if (timeout === null) continue;
+      expect(timeout).toBeLessThanOrEqual(READ_TIMEOUT_MS);
+      expect(Math.max(0, ms) + timeout + FINISH_RESERVE_MS).toBeLessThanOrEqual(REQUEST_BUDGET_MS);
+    }
+    expect(READ_TIMEOUT_MS).toBe(25_000);
+  });
+
+  it("fits a crop that runs to its timeout and the shortest read inside the request's 30 seconds", () => {
+    expect(CROP_TIMEOUT_MS + MIN_READ_MS + FINISH_RESERVE_MS).toBeLessThanOrEqual(REQUEST_BUDGET_MS);
+    expect(REQUEST_BUDGET_MS).toBeLessThan(30_000);
   });
 });

@@ -1,7 +1,6 @@
 import { flags } from "../../config/flags";
 import { AiError, complete, type AiAttachment, type AiDeps, type AiRequest, type AiResult } from "../ai";
 import type { Session } from "../auth/claims";
-import { prepareImage } from "./prepare";
 import { DOCUMENT_FORMAT, DOCUMENT_PROMPT, parseRead } from "./schema";
 import type { DocumentMime, DocumentRead } from "./types";
 
@@ -48,7 +47,15 @@ export type ReadInput = {
   bytes: Uint8Array;
   mime: DocumentMime;
   traceId: string;
+  // What the request has left for this read; held to 1 ms to READ_TIMEOUT_MS, which is also the
+  // default.
+  timeoutMs?: number;
 };
+
+function timeoutOf(ms: number | undefined): number {
+  if (ms === undefined || !Number.isFinite(ms)) return READ_TIMEOUT_MS;
+  return Math.min(READ_TIMEOUT_MS, Math.max(1, Math.floor(ms)));
+}
 
 const BUDGET: readonly string[] = ["cap", "too_expensive", "billing"];
 // Not known (the provider may have answered) or likely to pass later: never a final state.
@@ -69,13 +76,6 @@ export async function readDocument(
     return { ok: false, status: "unreadable", category: "disabled", callId: null };
   }
   const call: ReadComplete = deps.complete ?? ((t, r, s) => complete(t, r, s, deps.ai ?? {}));
-  let bytes = input.bytes;
-  let mime = input.mime;
-  if (flags.documentCrop && mime !== "application/pdf") {
-    const prepared = await prepareImage(bytes, mime);
-    bytes = prepared.bytes;
-    mime = prepared.mime;
-  }
   let result: AiResult;
   try {
     result = await call(
@@ -83,14 +83,14 @@ export async function readDocument(
       {
         messages: [
           { role: "system", content: DOCUMENT_PROMPT },
-          { role: "user", content: "Read this document.", attachments: [attachmentOf(bytes, mime)] },
+          { role: "user", content: "Read this document.", attachments: [attachmentOf(input.bytes, input.mime)] },
         ],
         format: DOCUMENT_FORMAT,
         maxOutputTokens: READ_MAX_OUTPUT_TOKENS,
         reasoningEffort: "low",
         purpose: "document_read",
         maxCostCents: flags.documentLimits.readMaxCostCents,
-        timeoutMs: READ_TIMEOUT_MS,
+        timeoutMs: timeoutOf(input.timeoutMs),
         traceId: input.traceId,
       },
       session,
