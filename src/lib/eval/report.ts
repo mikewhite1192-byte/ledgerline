@@ -2,7 +2,7 @@ import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { centsToDisplay } from "../ai/prices";
 import { agreementOf, type Agreement } from "./score";
-import { ARMS, type Arm, type CaseResult, type EvalResults } from "./types";
+import { ARMS, type Arm, type CaseResult, type EvalResults, type ScreenResult } from "./types";
 
 // The results: one JSON file the models page reads, and the README table. Both are built from
 // counts, cents, milliseconds and model ids only; no message and no model text is ever written.
@@ -33,7 +33,8 @@ export type ArmSummary = {
   msPerCase: number | null;
   nanocentsPerCase: number | null;
   // What the arm spent on every case it ran, scored or not (an unknown or cut case spent too),
-  // shown next to the per-case figure so no spend is left out.
+  // shown next to the per-case figure so no spend is left out. A case read from the cache spent
+  // nothing this run, so its earlier cost is left out here (the per-case figure still uses it).
   spentNanocents: number;
 };
 
@@ -82,7 +83,7 @@ export function summarizeArm(arm: Arm, modelId: string | null, all: readonly Cas
     // Rounded up: a cost is never shown smaller than it was.
     msPerCase: scored.length === 0 ? null : Math.round(ms / scored.length),
     nanocentsPerCase: scored.length === 0 ? null : Math.ceil(cost / scored.length),
-    spentNanocents: results.reduce((a, r) => a + costOf(r), 0),
+    spentNanocents: results.reduce((a, r) => a + (r.cached ? 0 : costOf(r)), 0),
   };
 }
 
@@ -107,6 +108,16 @@ export const armLabel = (arm: Arm) => ARM_LABEL[arm];
 export const tallyText = (t: Tally) => (t.of === 0 ? "n/a" : `${t.right} of ${t.of}`);
 export const secondsText = (ms: number | null) => (ms === null ? "n/a" : (ms / 1000).toFixed(1));
 export const centsText = (nanocents: number | null) => (nanocents === null ? "n/a" : centsToDisplay(nanocents, 2));
+
+// Muse Spark Open's screens: right of those that gave a verdict, and how many gave none (a
+// screen that could not finish is not known, never counted wrong).
+export function screenTally(screens: readonly ScreenResult[]): { sorted: Tally; unknown: number } {
+  const answered = screens.filter((x) => x.verdict !== null);
+  return {
+    sorted: { right: answered.filter((x) => x.verdict === x.expected).length, of: answered.length },
+    unknown: screens.length - answered.length,
+  };
+}
 
 export function agreementLine(a: Agreement): string {
   return (
@@ -150,14 +161,14 @@ export function renderResults(r: EvalResults): string {
   ];
   const so = r.run.sparkOpen;
   if (so) {
-    const screensRight = so.screens.filter((x) => x.verdict === x.expected).length;
+    const screens = screenTally(so.screens);
     const triage = so.triage;
     const t = (pick: (x: (typeof triage)[number]) => boolean | null) =>
       tallyText({ right: triage.filter((x) => pick(x) === true).length, of: triage.filter((x) => pick(x) !== null).length });
     lines.push(
       "",
-      `Muse Spark Open screening (\`${so.screenTarget}\`): ${screensRight} of ${so.screens.length} inputs sorted right ` +
-        `(flagged or clean as planted).`,
+      `Muse Spark Open screening (\`${so.screenTarget}\`): ${tallyText(screens.sorted)} inputs sorted right ` +
+        `(flagged or clean as planted)${screens.unknown > 0 ? `, and ${screens.unknown} could not be screened` : ""}.`,
       `Muse Spark Open triage (\`${so.triageTarget}\`): category ${t((x) => x.categoryRight)}, amount ${t((x) => x.amountRight)}, ` +
         `dates ${t((x) => x.datesRight)}, driver ${t((x) => x.driverRight)}.`,
     );

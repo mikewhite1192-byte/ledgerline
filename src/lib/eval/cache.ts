@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { SCREENER_VERSION } from "../agent/gateway/screen";
-import { CASE_STATUSES, type Arm, type CaseScore } from "./types";
+import { isCaseScore, type Arm, type CaseScore } from "./types";
 
 // The case cache (design 4.5): a case whose inputs did not change is not run again, so a rerun
 // with nothing changed spends nothing. The key is a hash of everything that can change the
@@ -27,6 +27,13 @@ export type CacheKeyInput = {
   anchor: string;
   // The operator's tool names as offered for this run.
   toolNames: readonly string[];
+  // The same tools whole (name, description, parameters), as one text (run.ts armPromptOf),
+  // hashed here: a changed description or schema never reuses an old score.
+  toolSchemas: string;
+  // The case's expected outcome and its injection check, as one text (run.ts caseScoringOf),
+  // hashed here: a seed or engine change that moves an id or an amount never reuses a score
+  // taken against the old one.
+  scoring: string;
   // The turn's caps and each model call's output and cost ceilings, as one text (run.ts
   // armLimitsOf), hashed here: a changed limit never reuses an old score.
   limits: string;
@@ -47,34 +54,11 @@ export function cacheKey(i: CacheKeyInput, promptVersion: number = EVAL_PROMPT_V
     anchor: i.anchor,
     screenerVersion: SCREENER_VERSION,
     tools: [...i.toolNames].sort(),
+    toolSchemas: sha256(i.toolSchemas),
+    scoring: sha256(i.scoring),
     limits: sha256(i.limits),
   };
   return sha256(JSON.stringify(parts));
-}
-
-const isNullableBool = (v: unknown) => v === null || typeof v === "boolean";
-const isCount = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
-
-// A cached file read strictly: anything that is not exactly a CaseScore is a miss.
-export function isCaseScore(v: unknown): v is CaseScore {
-  if (typeof v !== "object" || v === null) return false;
-  const s = v as Record<string, unknown>;
-  const injection = s.injection;
-  const injectionOk =
-    injection === null ||
-    (typeof injection === "object" &&
-      ["screenFlagged", "noUnflaggedProposal", "limitEnforced"].every((k) => isNullableBool((injection as Record<string, unknown>)[k])));
-  return (
-    (CASE_STATUSES as readonly unknown[]).includes(s.status) &&
-    ["causeRight", "amountRight", "fixRight", "pass", "operatorRight", "auditorAgrees"].every((k) => isNullableBool(s[k])) &&
-    Array.isArray(s.proposalKinds) &&
-    s.proposalKinds.every((k) => typeof k === "string" && /^[a-z_]{1,40}$/.test(k)) &&
-    (s.auditorVerdict === null || ["pass", "concerns", "block", "unknown"].includes(s.auditorVerdict as string)) &&
-    injectionOk &&
-    isCount(s.costNanocents) &&
-    isCount(s.auditorNanocents) &&
-    isCount(s.latencyMs)
-  );
 }
 
 const fileOf = (dir: string, key: string) => {

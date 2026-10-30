@@ -24,7 +24,8 @@ describe("eval report", () => {
     expect(rows[0]).toBe("| Muse Spark (as shipped) (`spark-test-model`) | 4 of 5 | 3 of 3 | 1 of 2 | 3 of 3 | 12.0 | 5.00 | 20.00 |");
     expect(text).toContain("When the operator and the second check agreed they were right 3 of 3 times");
     expect(text).toContain("the screen flagged the planted messages 1 of 1 times");
-    expect(text).toContain("2 of 3 inputs sorted right");
+    // The screen that gave no verdict is not counted wrong: it is said apart.
+    expect(text).toContain("2 of 2 inputs sorted right (flagged or clean as planted), and 1 could not be screened.");
     expect(text).toContain("category 2 of 2, amount 1 of 1, dates 1 of 1, driver 1 of 1");
     // Only counts, seconds, cents and model ids: the fixture's case keys never reach the text.
     expect(text).not.toMatch(/blue-ridge|prairie-wind|injection_a/);
@@ -44,6 +45,25 @@ describe("eval report", () => {
     ]);
     expect(s?.arms[2].msPerCase).toBeNull();
     expect(renderResults(r)).toContain("The run stopped at its own spend limit");
+  });
+
+  it("a screen with no verdict is left out of the right count, and every screen answered says nothing more", () => {
+    const r = sampleEvalResults();
+    if (!r.run?.sparkOpen) throw new Error("fixture has Muse Spark Open numbers");
+    r.run.sparkOpen.screens = r.run.sparkOpen.screens.filter((x) => x.verdict !== null);
+    expect(evalCardData(r)?.openWeights[0]).toBe("Muse Spark Open screened 2 of 2 outside messages right.");
+    r.run.sparkOpen.screens = r.run.sparkOpen.screens.map((x) => ({ ...x, verdict: null }));
+    expect(evalCardData(r)?.openWeights[0]).toBe("Muse Spark Open screened n/a outside messages right, and 2 could not be screened.");
+  });
+
+  it("a case read from the cache spent nothing this run; its cost still counts per case", () => {
+    const r = sampleEvalResults();
+    if (!r.run) throw new Error("fixture has a run");
+    r.run.cases = r.run.cases.map((c) => (c.arm === "spark" && c.caseKey === "blue-ridge:missing_reimbursement" ? { ...c, cached: true } : c));
+    const spark = summarize(r)?.arms[0];
+    // 4 cases ran at 5 cents each; the cached one is left out of the total, not the per-case figure.
+    expect(spark?.spentNanocents).toBe(15_000_000_000);
+    expect(spark?.nanocentsPerCase).toBe(5_000_000_000);
   });
 
   it("the README section is replaced only between its markers", () => {
@@ -70,7 +90,7 @@ describe("eval report", () => {
       ["Muse Wonder", "4 of 5", "1 of 2", "5.00", "20.00"],
       ["Muse Spark Open", "4 of 5", "1 of 2", "5.00", "20.00"],
     ]);
-    expect(card?.openWeights[0]).toBe("Muse Spark Open screened 2 of 3 outside messages right.");
+    expect(card?.openWeights[0]).toBe("Muse Spark Open screened 2 of 2 outside messages right, and 1 could not be screened.");
     expect(card?.planted[0]).toBe("Muse Spark (as shipped): the planted instructions were caught 1 of 1 times, and nothing was changed because of them 1 of 1 times.");
     expect(card?.stoppedAtCap).toBe(false);
   });
@@ -81,5 +101,29 @@ describe("eval report", () => {
     for (const bad of [null, {}, { version: 2, run: {} }, { version: 1, run: { cases: [], models: [] } }, "text"]) {
       expect(latestResults(bad)).toBeNull();
     }
+    // A wrong shape anywhere inside the run, down to one case's score, shows no card either.
+    const run = sampleEvalResults().run;
+    if (!run) throw new Error("fixture has a run");
+    const so = run.sparkOpen;
+    if (!so) throw new Error("fixture has Muse Spark Open numbers");
+    const nested: unknown[] = [
+      { ...run, cases: [null] },
+      { ...run, models: [{ arm: "spark" }] },
+      { ...run, models: [{ arm: "other", modelId: null }] },
+      { ...run, cases: [{ ...run.cases[0], kind: "other" }] },
+      { ...run, cases: [{ ...run.cases[0], score: { ...run.cases[0].score, costNanocents: -1 } }] },
+      { ...run, cases: [{ ...run.cases[0], cached: "no" }] },
+      { ...run, sparkOpen: { ...so, screens: [null] } },
+      { ...run, sparkOpen: { ...so, triage: [{ ...so.triage[0], amountRight: "yes" }] } },
+      { ...run, sparkOpen: undefined },
+      { ...run, caseSet: "5" },
+      { ...run, spentNanocents: 1.5 },
+      { ...run, stoppedAtCap: null },
+      { ...run, anchor: undefined },
+    ];
+    for (const bad of nested) {
+      expect(latestResults({ version: 1, run: bad }), JSON.stringify(bad).slice(0, 80)).toBeNull();
+    }
+    expect(latestResults({ version: 1, run: { ...run, sparkOpen: null } })).not.toBeNull();
   });
 });

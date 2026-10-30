@@ -2,8 +2,9 @@ import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cachedRun, cacheKey, EVAL_PROMPT_VERSION, isCaseScore, readCached, writeCached, type CacheKeyInput } from "./cache";
+import { cachedRun, cacheKey, EVAL_PROMPT_VERSION, readCached, writeCached, type CacheKeyInput } from "./cache";
 import { score } from "./test-fixtures";
+import { isCaseScore } from "./types";
 
 const base: CacheKeyInput = {
   arm: "spark",
@@ -14,6 +15,8 @@ const base: CacheKeyInput = {
   systemPrompt: "You are the operator.",
   anchor: "2026-11-02",
   toolNames: ["run_checks", "propose_pay_correction"],
+  toolSchemas: JSON.stringify([{ name: "propose_pay_correction", description: "Propose a correction.", parameters: { type: "object" } }]),
+  scoring: JSON.stringify({ expected: { sourceId: "a", cents: 1_500 }, injection: null }),
   limits: JSON.stringify({ turn: { maxTurnCents: 40 }, operator: { maxOutputTokens: 1200, maxCostCents: 10 } }),
 };
 
@@ -29,7 +32,7 @@ afterEach(() => {
 });
 
 describe("eval cache", () => {
-  it("the key changes with the tool list, model id, limits and prompt version", () => {
+  it("the key changes with the tool list and schemas, model id, expected outcome, limits and prompt version", () => {
     const k = cacheKey(base);
     expect(k).toMatch(/^[0-9a-f]{64}$/);
     // The same inputs, tools in another order: the same key.
@@ -43,6 +46,9 @@ describe("eval cache", () => {
       { prompt: "Is the pay right this week? " },
       { systemPrompt: "You are the operator!" },
       { anchor: "2026-11-09" },
+      // A changed tool description or schema, or a moved expected id or amount, never reuses an old score.
+      { toolSchemas: JSON.stringify([{ name: "propose_pay_correction", description: "Propose a fix.", parameters: { type: "object" } }]) },
+      { scoring: JSON.stringify({ expected: { sourceId: "a", cents: 1_600 }, injection: null }) },
       // A changed turn cap or a call's output or cost ceiling never reuses an old score.
       { limits: JSON.stringify({ turn: { maxTurnCents: 40 }, operator: { maxOutputTokens: 1201, maxCostCents: 10 } }) },
     ]) {

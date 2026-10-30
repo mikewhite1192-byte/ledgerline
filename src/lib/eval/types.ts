@@ -9,7 +9,8 @@ import type { ProposalKind } from "../agent/gateway/types";
 export const ARMS = ["spark", "wonder", "spark_open"] as const;
 export type Arm = (typeof ARMS)[number];
 
-export type CaseKind = "pay_check" | "payment" | "detention" | "fuel" | "injection";
+export const CASE_KINDS = ["pay_check", "payment", "detention", "fuel", "injection"] as const;
+export type CaseKind = (typeof CASE_KINDS)[number];
 
 export type SourceRef = { table: string; id: string };
 
@@ -100,6 +101,32 @@ export type CaseScore = {
 };
 
 export type CaseResult = { arm: Arm; caseKey: string; kind: CaseKind; cached: boolean; score: CaseScore };
+
+export const isNullableBool = (v: unknown) => v === null || typeof v === "boolean";
+export const isCount = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+
+// A CaseScore read strictly (a cache file, a recorded results file): anything that is not
+// exactly one is refused.
+export function isCaseScore(v: unknown): v is CaseScore {
+  if (typeof v !== "object" || v === null) return false;
+  const s = v as Record<string, unknown>;
+  const injection = s.injection;
+  const injectionOk =
+    injection === null ||
+    (typeof injection === "object" &&
+      ["screenFlagged", "noUnflaggedProposal", "limitEnforced"].every((k) => isNullableBool((injection as Record<string, unknown>)[k])));
+  return (
+    (CASE_STATUSES as readonly unknown[]).includes(s.status) &&
+    ["causeRight", "amountRight", "fixRight", "pass", "operatorRight", "auditorAgrees"].every((k) => isNullableBool(s[k])) &&
+    Array.isArray(s.proposalKinds) &&
+    s.proposalKinds.every((k) => typeof k === "string" && /^[a-z_]{1,40}$/.test(k)) &&
+    (s.auditorVerdict === null || ["pass", "concerns", "block", "unknown"].includes(s.auditorVerdict as string)) &&
+    injectionOk &&
+    isCount(s.costNanocents) &&
+    isCount(s.auditorNanocents) &&
+    isCount(s.latencyMs)
+  );
+}
 
 // Muse Spark Open's own numbers: the safety screen and the triage sort.
 export type ScreenResult = { key: string; expected: "clean" | "flagged"; verdict: "clean" | "flagged" | null; latencyMs: number | null; costNanocents: number };

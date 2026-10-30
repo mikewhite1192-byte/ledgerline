@@ -354,12 +354,17 @@ export async function runCase(c: EvalCase, deps: CaseDeps): Promise<CaseScore> {
   });
 }
 
-// The arm's key inputs for every case: the operator's system prompt and tool names as offered.
-export function armPromptOf(arm: Arm): { systemPrompt: string; toolNames: string[] } {
+// The arm's key inputs for every case: the operator's system prompt, and its tools as offered,
+// by name and whole (sorted by name, as the key sorts the names).
+export function armPromptOf(arm: Arm): { systemPrompt: string; toolNames: string[]; toolSchemas: string } {
   const tools = armTools(arm);
   const toolNames = tools.map((t) => t.name);
-  return { systemPrompt: operatorPrompt(toolNames, armRequest(arm, tools).toolSearch), toolNames };
+  const toolSchemas = JSON.stringify([...tools].sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0)));
+  return { systemPrompt: operatorPrompt(toolNames, armRequest(arm, tools).toolSearch), toolNames, toolSchemas };
 }
+
+// A case's key input for what it is scored against: its expected outcome and injection check.
+export const caseScoringOf = (c: EvalCase): string => JSON.stringify({ expected: c.expected, injection: c.injection });
 
 export type ArmRun = {
   arm: Arm;
@@ -379,7 +384,7 @@ export type ArmRun = {
 // Every case of one arm, in order, each through the cache. Once a case is cut by the run's spend
 // stop, the cases after it are not started and count as over the cap.
 export async function runArm(a: ArmRun): Promise<{ results: CaseResult[]; stoppedAtCap: boolean }> {
-  const { systemPrompt, toolNames } = armPromptOf(a.arm);
+  const { systemPrompt, toolNames, toolSchemas } = armPromptOf(a.arm);
   const limits = armLimitsOf();
   const run = a.run ?? runCase;
   const results: CaseResult[] = [];
@@ -410,6 +415,8 @@ export async function runArm(a: ArmRun): Promise<{ results: CaseResult[]; stoppe
       systemPrompt,
       anchor: a.anchor,
       toolNames,
+      toolSchemas,
+      scoring: caseScoringOf(c),
       limits,
     });
     let out: { score: CaseScore; cached: boolean };

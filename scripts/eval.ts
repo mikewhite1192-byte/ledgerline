@@ -138,7 +138,8 @@ async function runArmProcess(
     const inputFile = path.join(dir, "in.json");
     writeFileSync(inputFile, JSON.stringify(input));
     const cents = String(leftCents);
-    const child = spawnSync("npx", ["tsx", "scripts/eval-arm.ts"], {
+    // Node itself, not npx and a shell, so the time limit's signal reaches the arm's own process.
+    const child = spawnSync(process.execPath, ["--import", "tsx", "scripts/eval-arm.ts"], {
       stdio: ["ignore", "inherit", "inherit"],
       timeout: ARM_TIMEOUT_MS,
       env: {
