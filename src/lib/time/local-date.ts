@@ -75,6 +75,17 @@ export function periodContaining(date: LocalDate, weekStartDow: number): Period 
   return { start, end: addDays(start, 6) };
 }
 
+// The calendar quarter holding `date`: January to March, April to June, July to September or
+// October to December, first day to last. The caller passes the tenant's own date.
+export function quarterContaining(date: LocalDate): Period {
+  const t = utc(assertLocalDate(date, "date"));
+  const first = Math.floor(t.getUTCMonth() / 3) * 3;
+  return {
+    start: format(new Date(Date.UTC(t.getUTCFullYear(), first, 1))),
+    end: format(new Date(Date.UTC(t.getUTCFullYear(), first + 3, 0))),
+  };
+}
+
 // Every date from start to end, both included.
 export function datesBetween(start: LocalDate, end: LocalDate): LocalDate[] {
   assertLocalDate(start, "start");

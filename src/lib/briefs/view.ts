@@ -1,7 +1,14 @@
 import type { Queryable } from "../db";
 import { readTable } from "../data/read";
 import type { BriefRow } from "../data/rows";
-import { compareText, FIGURE_KINDS, type BriefFigure, type FigureSource } from "../rules-engine";
+import {
+  compareText,
+  FIGURE_KINDS,
+  FIGURE_SECTIONS,
+  type BriefFigure,
+  type FigureSection,
+  type FigureSource,
+} from "../rules-engine";
 import { isLocalDate, type LocalDate } from "../time/local-date";
 import { closedWeeks, figuresText, profitWeek, readProfitInput, type ClosedWeek, type ProfitWeek } from "./figures";
 
@@ -26,25 +33,22 @@ export type BriefRecord = {
   updatedAt: string;
 };
 
-const SOURCE_TABLES = new Set(["customers"]);
-const SOURCE_REPORTS = new Set(["margin_per_load"]);
-
 function sourceOf(raw: unknown): FigureSource | null {
   if (typeof raw !== "object" || raw === null) return null;
   const s = raw as Record<string, unknown>;
-  if (typeof s.table === "string" && typeof s.id === "string" && SOURCE_TABLES.has(s.table)) {
-    return { table: "customers", id: s.id };
+  if ((s.table === "customers" || s.table === "drivers") && typeof s.id === "string") {
+    return { table: s.table, id: s.id };
   }
-  if (typeof s.report === "string" && SOURCE_REPORTS.has(s.report) && typeof s.args === "object" && s.args !== null) {
-    const args = s.args as Record<string, unknown>;
-    if (
-      typeof args.periodStart === "string" &&
-      typeof args.periodEnd === "string" &&
-      isLocalDate(args.periodStart) &&
-      isLocalDate(args.periodEnd)
-    ) {
-      return { report: "margin_per_load", args: { periodStart: args.periodStart, periodEnd: args.periodEnd } };
-    }
+  if (typeof s.section === "string" && (FIGURE_SECTIONS as readonly string[]).includes(s.section)) {
+    return { section: s.section as FigureSection };
+  }
+  if (typeof s.args !== "object" || s.args === null) return null;
+  const args = s.args as Record<string, unknown>;
+  if (s.report === "margin_per_load" && isLocalDate(args.periodStart) && isLocalDate(args.periodEnd)) {
+    return { report: "margin_per_load", args: { periodStart: args.periodStart, periodEnd: args.periodEnd } };
+  }
+  if (s.report === "ar_aging" && isLocalDate(args.asOf)) {
+    return { report: "ar_aging", args: { asOf: args.asOf } };
   }
   return null;
 }
