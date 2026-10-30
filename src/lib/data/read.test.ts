@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { Param, Queryable } from "../db";
-import { ReadLimitError, readDeliveredBetween } from "./read";
+import {
+  LOAD_NUMBER_PAGING,
+  LOAD_NUMBERS_FIRST,
+  LOAD_NUMBERS_NEXT,
+  ReadLimitError,
+  readDeliveredBetween,
+  readLoadNumbers,
+  type LoadNumberRow,
+} from "./read";
 
 // The month reader in pages, against a fake that answers each statement the way the database
 // would: the named table's rows in id order, after the key parameter when the statement has one,
@@ -106,5 +114,104 @@ describe("readDeliveredBetween in pages", () => {
       await expect(readDeliveredBetween(q, OCTOBER, paging)).rejects.toBeInstanceOf(RangeError);
     }
     expect(calls).toHaveLength(0);
+  });
+});
+
+// The load number reader, against a fake that serves its pages from rows sorted by id: after the
+// key parameter when the statement has one, up to its LIMIT. Every load is seen once, and a read
+// that reaches its bound fails closed.
+
+function fakeLoadNumbers(rows: LoadNumberRow[]): { q: Queryable; calls: { sql: string; params: Param[] }[] } {
+  const sorted = [...rows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const calls: { sql: string; params: Param[] }[] = [];
+  const q: Queryable = {
+    async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
+      calls.push({ sql, params });
+      const limit = Number(/ LIMIT (\d+)$/.exec(sql)?.[1]);
+      const after = params.length === 1 ? String(params[0]) : null;
+      return sorted.filter((r) => after === null || r.id > after).slice(0, limit).map((r) => ({ ...r })) as T[];
+    },
+    async execute() {
+      throw new Error("the reader never writes");
+    },
+  };
+  return { q, calls };
+}
+
+const numbered = (ids: number[]) => ids.map((i) => ({ id: id(i), load_number: `L-${i}` }));
+
+describe("readLoadNumbers in pages", () => {
+  it("returns every load once, in key order, as its id and load number", async () => {
+    const { q, calls } = fakeLoadNumbers([...numbered([5, 3, 1]), { id: id(4), load_number: null }, ...numbered([2])]);
+    const out = await readLoadNumbers(q, { pageSize: 2, maxPages: 10 });
+    expect(out).toEqual([...numbered([1, 2, 3]), { id: id(4), load_number: null }, ...numbered([5])]);
+    // Three pages: the first without a key, then after the last id of each full page.
+    expect(calls.map((c) => c.params)).toEqual([[], [id(2)], [id(4)]]);
+  });
+
+  it("orders by the uuid id and keys each next page on it, never on the text alias", async () => {
+    const { q, calls } = fakeLoadNumbers(numbered([1, 2, 3]));
+    await readLoadNumbers(q, { pageSize: 2, maxPages: 10 });
+    expect(calls.map((c) => c.sql)).toEqual([`${LOAD_NUMBERS_FIRST} LIMIT 2`, `${LOAD_NUMBERS_NEXT} LIMIT 2`]);
+    expect(LOAD_NUMBERS_FIRST).toMatch(/ ORDER BY loads\.id$/);
+    expect(LOAD_NUMBERS_FIRST).not.toContain("$1");
+    expect(LOAD_NUMBERS_NEXT).toMatch(/ AND loads\.id > CAST\(\$1 AS uuid\) ORDER BY loads\.id$/);
+    for (const sql of [LOAD_NUMBERS_FIRST, LOAD_NUMBERS_NEXT]) {
+      expect(sql.startsWith("SELECT CAST(id AS text) AS id, load_number FROM loads WHERE tenant_id = current_tenant_id()")).toBe(
+        true,
+      );
+    }
+  });
+
+  it("ends cleanly on an exact multiple of the page size, with one empty page", async () => {
+    const { q, calls } = fakeLoadNumbers(numbered([1, 2, 3, 4]));
+    expect((await readLoadNumbers(q, { pageSize: 2, maxPages: 3 })).map((r) => r.id)).toEqual([id(1), id(2), id(3), id(4)]);
+    expect(calls.map((c) => c.params)).toEqual([[], [id(2)], [id(4)]]);
+    // No loads at all is one empty page.
+    const none = fakeLoadNumbers([]);
+    expect(await readLoadNumbers(none.q, { pageSize: 2, maxPages: 1 })).toEqual([]);
+    expect(none.calls).toHaveLength(1);
+  });
+
+  it("throws at the page bound instead of returning part of the loads", async () => {
+    const { q, calls } = fakeLoadNumbers(numbered([1, 2, 3, 4, 5]));
+    const read = readLoadNumbers(q, { pageSize: 2, maxPages: 2 });
+    await expect(read).rejects.toBeInstanceOf(ReadLimitError);
+    await expect(read).rejects.toMatchObject({ category: "too_many_rows" });
+    // Two pages were read and the read stopped there.
+    expect(calls).toHaveLength(2);
+  });
+
+  it("fails closed on a page larger than asked or a key that is not a uuid", async () => {
+    const big: Queryable = {
+      query: async <T>() => numbered([1, 2, 3]) as T[],
+      execute: async () => 0,
+    };
+    await expect(readLoadNumbers(big, { pageSize: 2, maxPages: 5 })).rejects.toThrow("a page is larger than its page size");
+    const badKey = fakeLoadNumbers([
+      { id: "load-a", load_number: "L-1" },
+      { id: "load-b", load_number: "L-2" },
+    ]);
+    await expect(readLoadNumbers(badKey.q, { pageSize: 2, maxPages: 5 })).rejects.toThrow("a page key is not a uuid");
+    expect(badKey.calls).toHaveLength(1);
+  });
+
+  it("refuses a page size or bound that is not a positive count", async () => {
+    const { q, calls } = fakeLoadNumbers(numbered([1]));
+    for (const paging of [
+      { pageSize: 0, maxPages: 1 },
+      { pageSize: 2, maxPages: 0 },
+      { pageSize: 1.5, maxPages: 1 },
+      { pageSize: 2, maxPages: 1.5 },
+    ]) {
+      await expect(readLoadNumbers(q, paging)).rejects.toBeInstanceOf(RangeError);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("keeps a page of ids and load numbers far under the 1 MiB answer cap", () => {
+    // About 150 bytes of Data API JSON a row, generously: 1,000 rows is about 150 KB.
+    expect(LOAD_NUMBER_PAGING.pageSize * 150).toBeLessThan(1024 * 1024 / 4);
+    expect(LOAD_NUMBER_PAGING.pageSize * LOAD_NUMBER_PAGING.maxPages).toBe(200_000);
   });
 });

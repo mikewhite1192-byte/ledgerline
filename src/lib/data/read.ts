@@ -466,6 +466,51 @@ export async function readDeliveredBetween(
   };
 }
 
+// ---- Load numbers ----
+
+// Rows per statement and statements per read for the load numbers. A row is an id and a load
+// number, so a page of 1,000 stays far under the Data API's 1 MiB response cap; the bound (200,000
+// loads) stops a runaway read, and a read stopped there fails closed.
+export const LOAD_NUMBER_PAGING: Paging = { pageSize: 1000, maxPages: 200 };
+
+// Exported so a test's fake database can match these statements whole; each page adds its LIMIT.
+// The key and the order are loads.id, the uuid: a bare id in ORDER BY binds to the text alias,
+// whose order is not the key's.
+const LOAD_NUMBERS = "SELECT CAST(id AS text) AS id, load_number FROM loads WHERE tenant_id = current_tenant_id()";
+export const LOAD_NUMBERS_FIRST = `${LOAD_NUMBERS} ORDER BY loads.id`;
+export const LOAD_NUMBERS_NEXT = `${LOAD_NUMBERS} AND loads.id > CAST($1 AS uuid) ORDER BY loads.id`;
+
+export type LoadNumberRow = { id: string; load_number: string | null };
+
+// Every load of the tenant once, as its id and load number only, in pages keyed on the uuid id.
+// For a caller that finds a load by its whole normalized number: its normalizer has no identical
+// SQL form, so the compare runs on these rows, never on a part of a string. A page shorter than
+// the page size ends the read, so an exact multiple ends with one empty page.
+export async function readLoadNumbers(
+  q: Queryable,
+  paging: Paging = LOAD_NUMBER_PAGING,
+): Promise<LoadNumberRow[]> {
+  const { pageSize, maxPages } = paging;
+  for (const n of [pageSize, maxPages]) {
+    if (!Number.isSafeInteger(n) || n < 1) throw new RangeError("paging is not a positive count");
+  }
+  const out: LoadNumberRow[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const rows: LoadNumberRow[] =
+      cursor === null
+        ? await q.query<LoadNumberRow>(`${LOAD_NUMBERS_FIRST} LIMIT ${pageSize}`)
+        : await q.query<LoadNumberRow>(`${LOAD_NUMBERS_NEXT} LIMIT ${pageSize}`, [cursor]);
+    if (rows.length > pageSize) throw new Error("a page is larger than its page size");
+    out.push(...rows);
+    if (rows.length < pageSize) return out;
+    const last: unknown = rows[rows.length - 1].id;
+    if (!isUuid(last)) throw new Error("a page key is not a uuid");
+    cursor = last;
+  }
+  throw new ReadLimitError();
+}
+
 // ---- Money codes (MONEY-CODE) ----
 
 // What a money code is asked for: the driver, the load, the purpose and amount as asked, and the

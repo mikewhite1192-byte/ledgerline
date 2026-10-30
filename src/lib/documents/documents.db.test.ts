@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import { AiError, type AiResult } from "../ai";
+import { LOAD_NUMBERS_FIRST, LOAD_NUMBERS_NEXT } from "../data/read";
+import type { Param, Queryable } from "../db";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
@@ -9,10 +11,11 @@ import { callTool } from "../agent/gateway";
 import type { GatewayContext } from "../agent/gateway/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal } from "../proposals/execute";
+import { loadCandidates } from "./candidates";
 import type { ReadComplete } from "./read";
 import { getDocument, listDocuments, readAgain, readDocumentFile, uploadDocument, type UploadFile } from "./service";
 import { listDocumentRows } from "./store";
-import { CONFIDENCE_FIELDS, READ_ATTEMPTS_MAX } from "./types";
+import { CONFIDENCE_FIELDS, READ_ATTEMPTS_MAX, type DocumentRead } from "./types";
 
 // Documents against the real database, as the app's role, with a fake model call (no network, no
 // model). A document stays inside its carrier, bytes included; the same file twice is one row read
@@ -459,5 +462,79 @@ describe("documents in the database", () => {
     const unchanged = await loadRate(moved);
     expect(unchanged.linehaul_cents).toBeNull();
     expect(Number(unchanged.fuel_surcharge_cents)).toBe(9_000);
+  });
+
+  it("finds its own carrier's load by number in pages of one, as the app, never another carrier's", async () => {
+    const own = await addLoad("DOC-P1", 0);
+    const theirs = randomUUID();
+    for (const [id, number] of [
+      [theirs, "DOC-P1"],
+      [randomUUID(), "DOC-P2"],
+    ]) {
+      await admin.withTenant(B.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO loads (id, tenant_id, load_number, customer_id, status, origin_city, origin_state, dest_city,
+             dest_state, pickup_on, loaded_miles)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid), 'planned', 'Dallas', 'TX',
+             'Memphis', 'TN', CAST('2026-11-05' AS date), 450)`,
+          [id, number, B.customerId],
+        ),
+      );
+    }
+    const readingOf = (loadNumber: string): DocumentRead => ({
+      kind: "rate_confirmation",
+      fields: {
+        sampleWord: true,
+        vendor: null,
+        date: null,
+        totalCents: null,
+        loadNumber,
+        truckUnit: null,
+        gallonsMilli: null,
+        priceCents: null,
+        loadedMiles: MILES,
+        ratePerMileCents: 245,
+        linehaulCents: 245 * MILES,
+        fuelSurchargeCents: FUEL,
+        customerName: "Test Shipper",
+        stops: [],
+      },
+      textLines: [],
+      confidence: Object.fromEntries(CONFIDENCE_FIELDS.map((f) => [f, "high"])) as DocumentRead["confidence"],
+    });
+    // Counts the number pages each read sends, so the test sees it page through every load.
+    let pages = 0;
+    const counted = (q: Queryable): Queryable => ({
+      query: <T>(sql: string, params?: Param[]) => {
+        if (sql.startsWith(`${LOAD_NUMBERS_FIRST} LIMIT`) || sql.startsWith(`${LOAD_NUMBERS_NEXT} LIMIT`)) pages += 1;
+        return q.query<T>(sql, params);
+      },
+      execute: (sql: string, params?: Param[]) => q.execute(sql, params),
+    });
+    const ofOne = { pageSize: 1, maxPages: 10_000 };
+    const loadsOf = async (tenantId: string) =>
+      (
+        await admin.withTenant(tenantId, (q) =>
+          q.query<{ n: number }>("SELECT count(*)::int AS n FROM loads WHERE tenant_id = current_tenant_id()"),
+        )
+      )[0].n;
+
+    const a = await app.withTenant(A.tenantId, (q) => loadCandidates(counted(q), readingOf(" doc-p1"), ofOne));
+    expect(a.loadMatches).toBe(1);
+    expect(a.load).toMatchObject({ id: own, load_number: "DOC-P1", customer_id: A.customerId });
+    expect(a.customer?.id).toBe(A.customerId);
+    // Pages of one end with one empty page, so every load of the carrier was read once.
+    expect(pages).toBe((await loadsOf(A.tenantId)) + 1);
+
+    pages = 0;
+    const b = await app.withTenant(B.tenantId, (q) => loadCandidates(counted(q), readingOf("DOC-P1"), ofOne));
+    expect(b.loadMatches).toBe(1);
+    expect(b.load).toMatchObject({ id: theirs, customer_id: B.customerId });
+    expect(pages).toBe((await loadsOf(B.tenantId)) + 1);
+
+    // A number only the other carrier holds is no match here.
+    const none = await app.withTenant(A.tenantId, (q) => loadCandidates(q, readingOf("DOC-P2"), ofOne));
+    expect(none.loadMatches).toBe(0);
+    expect(none.load).toBeNull();
   });
 });
