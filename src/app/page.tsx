@@ -261,6 +261,7 @@ export default async function Home({
 // Shown before the agent can answer; they light up when it can.
 const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, {
   profitOn: flags.profitBriefEnabled,
+  quarterOn: flags.quarterReviewEnabled,
   collections: flags.collectionsEnabled,
   cashFridayOn: flags.cashFridayEnabled,
 });

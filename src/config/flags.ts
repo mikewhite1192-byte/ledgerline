@@ -439,6 +439,21 @@ export type Flags = {
     // Notes the second check sees on one request.
     maxAuditorNotes: number;
   };
+  // The Quarter review at /quarter: the calendar quarter so far (the carrier's own dates), from its
+  // pay runs, invoices, payments, the agent's fixes and the detention it found, and "Write the
+  // quarter review", which asks Muse Wonder to word those figures in four lists (a button press,
+  // never a schedule). Off: the page shows its off state, the route answers 409 and the agent's read
+  // tool is not offered. aiEnabled must also be on for the button to reach a model.
+  quarterReviewEnabled: boolean;
+  quarterReviewLimits: {
+    // One review's worst case, checked by the wrapper before the request goes out. The Wonder cap
+    // (AI_WONDER_CAP_CENTS) applies on top.
+    maxReviewCents: number;
+    // The review's output budget, reasoning included.
+    maxOutputTokens: number;
+    // The figure list the model is given stops here, cut from the bottom (per-driver rows go first).
+    maxInputChars: number;
+  };
   // Fuel checks: every fill-up held against the truck's tank, the load's route and the driver's
   // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
   // and proposes; a person approves a pay correction on its card. Off means the Fuel checks page
@@ -638,6 +653,8 @@ export const flags: Flags = {
   carrierMemoryEnabled: false,
   carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
   carrierMemoryAgentLimits: { maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 },
+  quarterReviewEnabled: false,
+  quarterReviewLimits: { maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 },
   fuelAnomalyEnabled: false,
   fuelAnomalyLimits: {
     from: "2026-10-27",
