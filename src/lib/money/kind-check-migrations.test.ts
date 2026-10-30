@@ -5,7 +5,7 @@ import { PROPOSAL_KINDS } from "../agent/gateway/types";
 import { KIND_SHAPES, MONEY_ACTION_KINDS, OUTSIDE_SYSTEMS } from "./types";
 
 // The ledger's kind, subject, system and pairing checks, read from the migration texts, no
-// database. 0047 (FACTORING) and 0048 (MONEY-CODE) each re-create them with one identical block,
+// database. 0048 (MONEY-CODE) and 0060 (FACTORING) each re-create them with one identical block,
 // and production applies migrations in merge order while a fresh database applies them in number
 // order, so whichever runs last decides the constraints. The rule that keeps both orders equal:
 // every re-creation lists the full union the code knows. A value missing there would be refused by
@@ -59,6 +59,7 @@ describe("the money ledger checks in the migration texts", () => {
       /ADD\s+CONSTRAINT\s+money_actions_kind_check\b/gi,
     );
     expect(found.map((l) => l.version)).toContain("0048");
+    expect(found.map((l) => l.version)).toContain("0060");
     for (const l of found) expect(sorted(l.values), l.version).toEqual(sorted(MONEY_ACTION_KINDS));
   });
 
@@ -76,7 +77,7 @@ describe("the money ledger checks in the migration texts", () => {
       /ADD\s+CONSTRAINT\s+money_actions_outside_system_check\s+CHECK\s*\(\s*outside_system\s+IN\s*\(([^)]*)\)/gi,
       /ADD\s+CONSTRAINT\s+money_actions_outside_system_check\b/gi,
     );
-    const union = found.filter((l) => l.version >= "0047");
+    const union = found.filter((l) => l.version >= "0048");
     expect(union.length).toBeGreaterThan(0);
     for (const l of union) expect(sorted(l.values), l.version).toEqual(sorted(OUTSIDE_SYSTEMS));
   });

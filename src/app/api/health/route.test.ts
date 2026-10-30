@@ -15,7 +15,9 @@ function switchesOff() {
     advancesEnabled: false,
     payoutsEnabled: false,
     accountingEnabled: false,
+    demoResetEnabled: false,
   });
+  flags.judgeAccess.enabled = false;
 }
 
 afterEach(() => {
@@ -39,6 +41,8 @@ describe("GET /api/health", () => {
         advances: false,
         payouts: false,
         accounting: false,
+        judgeAccess: false,
+        demoReset: false,
       },
     });
   });
@@ -55,6 +59,8 @@ describe("GET /api/health", () => {
     flags.payoutsEnabled = true;
     flags.accountingEnabled = true;
     flags.driverNotesEnabled = true;
+    flags.judgeAccess.enabled = true;
+    flags.demoResetEnabled = true;
     expect((await GET().json()).features).toEqual({
       agent: true,
       auditor: true,
@@ -63,6 +69,8 @@ describe("GET /api/health", () => {
       advances: true,
       payouts: true,
       accounting: true,
+      judgeAccess: true,
+      demoReset: true,
     });
   });
 

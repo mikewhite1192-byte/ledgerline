@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { flags } from "@/config/flags";
 import { readAgentTurnTrace } from "@/lib/agent/gateway/store";
-import { getSession } from "@/lib/auth/session";
+import { getSession } from "@/lib/agent/gateway/session";
 import { isUuid } from "@/lib/uuid";
 
 // GET: how a turn was worked out (the model calls, gateway decisions and proposal checks behind

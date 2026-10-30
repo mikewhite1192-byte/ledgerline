@@ -71,7 +71,8 @@ export type ProposalCardProps = {
   onApprove?: (id: string, overrideReason?: string) => void;
   // An approved proposal whose run stopped before it finished: the card offers Resume, which asks
   // the same approve request again (the server treats it as a resume and pays at most once). Only
-  // honored while the status is approved; Reject is never offered on an approved card.
+  // honored while the status is approved or executing (the caller sets it on executing for a
+  // factoring card alone); Reject is never offered on either.
   canResume?: boolean;
   onReject?: (id: string) => void;
   pending?: boolean;
@@ -536,9 +537,9 @@ export function ProposalCard({
             </Button>
           </div>
         )
-      ) : canResume && status === "approved" && judge ? (
+      ) : canResume && (status === "approved" || status === "executing") && judge ? (
         <StaffOnlyActions lead={RESUME_NOTE} actions={[{ label: "Resume" }]} />
-      ) : canResume && status === "approved" ? (
+      ) : canResume && (status === "approved" || status === "executing") ? (
         // The approval already stands (it passed its confirm when it was given), so Resume is one
         // click: it carries on the same approval and never asks for a new decision.
         <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">

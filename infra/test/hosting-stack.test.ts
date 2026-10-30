@@ -13,6 +13,7 @@ import {
   FIREWORKS_API_KEY_SECRET_NAME,
   GITHUB_TOKEN_SECRET_NAME,
   HostingStack,
+  JUDGE_LOGIN_SECRET_NAME,
   META_API_KEY_SECRET_NAME,
   moneyEnv,
   OPTIONAL_BRANCH_ENV_NAMES,
@@ -22,6 +23,7 @@ import {
   STRIPE_SECRET_KEY_SECRET_NAME,
   SWEEP_INTERNAL_KEY_SECRET_NAME,
 } from "../lib/hosting-stack";
+import { JUDGE_SECRET_NAME } from "../../scripts/lib/demo-logins";
 import { asArray, joined, policyStatements, synthAll } from "./synth";
 
 type Resource = { Type: string; Properties: Record<string, unknown> };
@@ -151,7 +153,7 @@ describe("HostingStack", () => {
     expect(secret.Action).toBe("secretsmanager:GetSecretValue");
     // The policy minimizer orders resources, so they are matched by content, not position.
     const resources = asArray(secret.Resource);
-    expect(resources).toHaveLength(8);
+    expect(resources).toHaveLength(9);
     const appSecret = resources.filter((r) =>
       JSON.stringify(r).includes("PublishOutputRefAppSecret"),
     );
@@ -173,8 +175,13 @@ describe("HostingStack", () => {
         `${secretArn}${QBO_TOKEN_KEY_SECRET_NAME}-??????`,
         `${secretArn}${STRIPE_SECRET_KEY_SECRET_NAME}-??????`,
         `${secretArn}${SWEEP_INTERNAL_KEY_SECRET_NAME}-??????`,
+        `${secretArn}${JUDGE_LOGIN_SECRET_NAME}-??????`,
       ].sort(),
     );
+    // The demo visitor's login, the one the user script writes, and never the admin logins'.
+    expect(JUDGE_LOGIN_SECRET_NAME).toBe("payday-copilot/judge-login");
+    expect(JUDGE_LOGIN_SECRET_NAME).toBe(JUDGE_SECRET_NAME);
+    expect(JSON.stringify(secret.Resource)).not.toContain("demo-logins");
     for (const arn of modelKeys) expect(arn).not.toContain("*");
   });
 
@@ -185,7 +192,7 @@ describe("HostingStack", () => {
     }
   });
 
-  it("sets the compute role and the twenty-three fixed server settings on the main branch", () => {
+  it("sets the compute role and the twenty-four fixed server settings on the main branch", () => {
     const [computeId] = role("ComputeRole");
     const branches = Object.values(template.findResources("AWS::Amplify::Branch"));
     expect(branches).toHaveLength(1);
@@ -197,8 +204,8 @@ describe("HostingStack", () => {
     expect(vars.map((e) => e.Name)).toEqual(
       BRANCH_ENV_NAMES.filter((n) => !OPTIONAL_BRANCH_ENV_NAMES.includes(n)),
     );
-    expect(BRANCH_ENV_NAMES).toHaveLength(27);
-    expect(vars).toHaveLength(23);
+    expect(BRANCH_ENV_NAMES).toHaveLength(28);
+    expect(vars).toHaveLength(24);
 
     // Each value, followed to the stack that exports it, is the resource it names: the cluster,
     // the app's own database login (never the admin secret), the user pool and its client.
@@ -231,6 +238,7 @@ describe("HostingStack", () => {
       QBO_TOKEN_KEY_SECRET_NAME,
       STRIPE_SECRET_KEY_SECRET_NAME,
       SWEEP_INTERNAL_KEY_SECRET_NAME,
+      JUDGE_LOGIN_SECRET_NAME,
     });
     expect(FIREWORKS_API_KEY_SECRET_NAME).toBe("payday-copilot/fireworks-api-key");
     // Names only: no variable carries a key, a token or a secret; the *_SECRET_NAME and
@@ -246,6 +254,7 @@ describe("HostingStack", () => {
       "BASETEN_API_KEY",
       "FIREWORKS_API_KEY",
       "SWEEP_INTERNAL_KEY",
+      "JUDGE_LOGIN_PASSWORD",
     ]) {
       expect(BRANCH_ENV_NAMES).not.toContain(raw);
     }

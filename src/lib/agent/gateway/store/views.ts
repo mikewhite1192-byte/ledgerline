@@ -72,6 +72,8 @@ type ProposalRow = {
   card_last4: string | null;
   args: string | null;
   exceptions: string | null;
+  // A factoring card's request (0060), once its approval wrote one.
+  factoring_status?: string | null;
 };
 type FlagRow = { input_id: string; body_text: string; categories: string | null };
 
@@ -240,6 +242,7 @@ function cashOf(r: ProposalRow): CashCardView | null {
     if (!p.success) return null;
     return {
       kind: "factoring_request",
+      requestStatus: typeof r.factoring_status === "string" ? r.factoring_status : null,
       shortCents: p.data.shortCents,
       advanceBps: p.data.advanceBps,
       feeBps: p.data.feeBps,
@@ -422,7 +425,10 @@ const PROPOSAL_SQL = `
          CASE WHEN p.kind IN ('detention_charge', 'advance_payout', 'card_match', 'factoring_request', 'bill_defer',
                              'collections_chase', 'pay_rule_change')
               THEN CAST(p.args AS text) END AS args,
-         CAST(p.exceptions AS text) AS exceptions
+         CAST(p.exceptions AS text) AS exceptions,
+         CASE WHEN p.kind = 'factoring_request' THEN
+           (SELECT fr.status FROM factoring_requests fr WHERE fr.tenant_id = p.tenant_id AND fr.proposal_id = p.id)
+         END AS factoring_status
     FROM proposals p`;
 
 // Proposals by id, for the sweep's run page (any staff member of the carrier sees a run's drafts,
@@ -511,24 +517,39 @@ function reportView(s: StepRow): ReportView[] {
   return parsed ? [{ stepId: s.id, name, args: argStrings(parsed.args) }] : [];
 }
 
-// One turn, only if it is in a conversation this person started.
-export async function readTurnView(q: Queryable, sub: string, turnId: string): Promise<TurnView | null> {
+// One turn, only if it is in a conversation this person started. A demo visit (visitId, the
+// session's demoSessionId) sees only its own visit's conversations, since every judge shares one
+// login; everyone else's are the ones with no visit.
+export async function readTurnView(
+  q: Queryable,
+  sub: string,
+  turnId: string,
+  visitId: string | null = null,
+): Promise<TurnView | null> {
   const rows = await q.query<TurnRow>(
     `SELECT ${TURN_COLUMNS} FROM turns t JOIN conversations c ON c.id = t.conversation_id
-      WHERE t.id = CAST($1 AS uuid) AND c.created_by = $2`,
-    [turnId, sub],
+      WHERE t.id = CAST($1 AS uuid) AND c.created_by = $2
+        AND c.demo_session_id IS NOT DISTINCT FROM CAST($3 AS uuid)`,
+    [turnId, sub, visitId],
   );
   return rows.length === 1 ? viewOf(q, rows[0]) : null;
 }
 
-// This person's latest conversation, its last turns oldest first, for a page reload.
-export async function readRecentTurnViews(q: Queryable, sub: string): Promise<TurnView[]> {
+// This person's latest conversation (a demo visit's: its own latest), its last turns oldest
+// first, for a page reload.
+export async function readRecentTurnViews(
+  q: Queryable,
+  sub: string,
+  visitId: string | null = null,
+): Promise<TurnView[]> {
   const rows = await q.query<TurnRow>(
     `SELECT ${TURN_COLUMNS} FROM turns t
-      WHERE t.conversation_id = (SELECT c.id FROM conversations c WHERE c.created_by = $1
+      WHERE t.conversation_id = (SELECT c.id FROM conversations c
+                                  WHERE c.created_by = $1
+                                    AND c.demo_session_id IS NOT DISTINCT FROM CAST($2 AS uuid)
                                   ORDER BY c.updated_at DESC, c.id LIMIT 1)
       ORDER BY t.seq DESC LIMIT ${RECENT_TURNS}`,
-    [sub],
+    [sub, visitId],
   );
   const out: TurnView[] = [];
   for (const r of rows.reverse()) out.push(await viewOf(q, r));

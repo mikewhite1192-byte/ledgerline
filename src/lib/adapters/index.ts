@@ -1,11 +1,12 @@
 import { flags } from "../../config/flags";
 import type { PayoutRail } from "../money/types";
 import { createQboAdapter } from "./accounting/qbo/adapter";
+import { createFactoringSim } from "./factoring/sim";
 import { createFuelCardSimAdapter, createMoneyCodeIssuer } from "./payment/fuel-card-sim";
 import { createMockPaymentAdapter, type MockPaymentAdapter } from "./payment/mock";
 import { createStripeTestAdapter } from "./payment/stripe-test";
 import { dbTmsAdapter } from "./tms/db";
-import type { AccountingAdapter, MoneyCodeIssuer, PaymentAdapter, TmsAdapter } from "./types";
+import type { AccountingAdapter, FactoringAdapter, MoneyCodeIssuer, PaymentAdapter, TmsAdapter } from "./types";
 
 export type * from "./types";
 
@@ -17,6 +18,7 @@ let stripe: PaymentAdapter | undefined;
 let fuelCard: PaymentAdapter | undefined;
 let moneyCodes: MoneyCodeIssuer | undefined;
 let qbo: AccountingAdapter | undefined;
+let factoring: FactoringAdapter | undefined;
 
 // Each adapter checks its own switch, settings and secrets on every call, so choosing one here
 // sends nothing: with payoutsEnabled or accountingEnabled off, every write refuses "disabled".
@@ -27,6 +29,13 @@ export function paymentAdapter(rail: PayoutRail): PaymentAdapter {
   if (rail === "fuel_card") return (fuelCard ??= createFuelCardSimAdapter());
   if (flags.paymentProvider === "stripe_test") return (stripe ??= createStripeTestAdapter());
   return (mock ??= createMockPaymentAdapter());
+}
+
+// The factoring partner is the simulated one (Test mode), the only one until a real partner is
+// connected. Its calls re-check payoutsEnabled and the factoring switches, so choosing it here
+// submits nothing.
+export function factoringAdapter(): FactoringAdapter {
+  return (factoring ??= createFactoringSim());
 }
 
 // One-time money codes come from the same simulated card provider. Its calls re-check

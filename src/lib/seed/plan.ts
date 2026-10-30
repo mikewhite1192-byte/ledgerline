@@ -1182,6 +1182,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     vendor_bills: [],
     cash_settings: [],
     cash_checks: [],
+    factoring_requests: [],
+    factoring_request_invoices: [],
     carrier_notes: [],
     pinned_rates: [],
   };

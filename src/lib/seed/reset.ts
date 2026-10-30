@@ -204,6 +204,8 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   vendor_bills: "Vendor bills",
   cash_settings: "Bank balance and cash settings",
   cash_checks: "Cash checks",
+  factoring_requests: "Factoring requests (test mode)",
+  factoring_request_invoices: "Factored invoices (test mode)",
 };
 
 // The SQLSTATEs demo_reset_clear() raises (0025).

@@ -4,7 +4,7 @@ import type { Session } from "./claims";
 import { requireStaff } from "./role";
 
 // The route form of requireStaff: one short tenant transaction before the route does any work.
-// null means go on; otherwise the answer to send. A judge gets 403 "judge" (the page shows "Approving
+// null means go on; otherwise the answer to send. A judge gets 403 "judge" (the page shows "This step
 // is for the carrier's staff"); no membership gets 403 "forbidden"; anything else is unknown, so the
 // route refuses (503, retryable) rather than guessing. Only the error's name reaches the log.
 export async function staffGate(session: Session): Promise<NextResponse | null> {

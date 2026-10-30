@@ -5,7 +5,7 @@ import { MONEY_FAILURES, OUTSIDE_SYSTEMS, SIM_BEHAVIORS } from "./types";
 
 // The lists the code and the newest migration holding each list must be the same, value for
 // value: a value only one side knows is a row the database refuses, or a category the code cannot
-// name. 0017 holds all three first; 0047 and 0048 widen the outside systems.
+// name. 0017 holds all three first; 0048 and 0060 widen the outside systems.
 const DIR = path.join(process.cwd(), "db/migrations");
 const FILES = readdirSync(DIR)
   .filter((f) => /^\d{4}_.*\.sql$/.test(f))
