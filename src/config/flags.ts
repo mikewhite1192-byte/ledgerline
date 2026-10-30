@@ -939,7 +939,7 @@ export const flags: Flags = {
       dayCents: 400,
     },
   },
-  factoring: { enabled: true, armed: false, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
+  factoring: { enabled: true, armed: true, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
   evalCardEnabled: true,
   evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
   groundedRatesEnabled: true,

@@ -67,6 +67,7 @@ const RELEASED_ON = [
   "judgeAccess.enabled",
   "policyOnboardEnabled",
   "factoring.enabled",
+  "factoring.armed",
   "groundedRatesEnabled",
   "payCardsEnabled",
   "verification.enabled",
@@ -90,9 +91,8 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // Factoring, the desk loop and escrow releases ship on and unarmed: each arming is the owner's
-  // call, in its own one-line PR.
-  "factoring.armed",
+  // The desk loop and escrow releases ship on and unarmed: each arming is the owner's call, in its
+  // own one-line PR.
   "deskLoop.armed",
   "escrowRelease.armed",
 ] as const;
@@ -157,11 +157,10 @@ describe("flags", () => {
     expect(flags.deskLoop.armed).toBe(false);
     // The demo visitor sign-in, inside the visit limits below.
     expect(flags.judgeAccess.enabled).toBe(true);
-    // Factoring submits to the simulated partner only, released unarmed with its cap, packet rule and
-    // date kept.
+    // Factoring submits to the simulated partner only, released with its cap, packet rule and date kept.
     expect(flags.factoring).toEqual({
       enabled: true,
-      armed: false,
+      armed: true,
       maxNetCents: 2_500_000,
       requirePacket: false,
       startDate: "2026-10-28",
