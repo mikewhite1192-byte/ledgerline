@@ -36,7 +36,25 @@ export default async function SignIn({
         : null;
 
   return (
-    <main className="flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
+    <main className="relative isolate flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
+      {/* A photo behind the cards, decoration only. The wash fades from the page color at the top so the
+          wordmark reads in either theme; the cards stay solid. Anchored low and right to keep the truck.
+          Two pre-sized WebP files and srcSet do what the image optimizer would, with no server work. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/sign-in/background-1614.webp"
+        srcSet="/sign-in/background-960.webp 960w, /sign-in/background-1614.webp 1614w"
+        sizes="100vw"
+        alt=""
+        aria-hidden="true"
+        decoding="async"
+        fetchPriority="high"
+        className="absolute inset-0 -z-10 h-full w-full object-cover object-[70%_100%]"
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 -z-10 bg-linear-to-b from-background/75 via-background/25 to-background/10"
+      />
       <div className="grid w-full max-w-[400px] gap-6">
         <Wordmark size="lg" className="justify-self-center" />
         <Card className="grid gap-5 p-6 sm:p-8">
@@ -92,7 +110,7 @@ export default async function SignIn({
             ) : null}
           </Card>
         ) : null}
-        <p className="text-center text-body text-foreground-2">
+        <p className="justify-self-center rounded-full bg-card/90 px-4 py-2 text-center text-body text-foreground-2 shadow-sm">
           New to trucking pay?{" "}
           <Link href="/help/how-pay-works" className="text-link underline-offset-4 hover:underline">
             How trucking pay works
