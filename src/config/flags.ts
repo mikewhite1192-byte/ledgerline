@@ -783,7 +783,7 @@ export const flags: Flags = {
   documentMarkupEnabled: true,
   markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
   advancesEnabled: true,
-  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-29" },
+  advancePayouts: { armed: true, capCents: 50_000, startDate: "2026-10-29" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
   advanceTakeback: { enabled: true, maxCents: 100_000 },
   agentToolSearch: true,
