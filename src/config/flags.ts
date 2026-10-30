@@ -506,7 +506,8 @@ export type Flags = {
   deskLoop: {
     enabled: boolean;
     armed: boolean;
-    // Rows created before this day (UTC midnight) are never seen, so history is not worked again.
+    // Rows created before this day (the carrier's local midnight) are never seen, so history is not
+    // worked again.
     startDate: string;
     limits: {
       // How long one wake works before it answers "more" and the kicker asks again.

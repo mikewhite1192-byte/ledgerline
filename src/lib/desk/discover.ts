@@ -12,7 +12,7 @@ export type Watermarks = { card_transactions: string; customer_payments: string 
 export type DiscoverInput = {
   wakeId: string;
   by: WakeBy;
-  // The loop's start: UTC midnight of flags.deskLoop.startDate, as an ISO instant.
+  // The loop's start: the carrier's local midnight on flags.deskLoop.startDate, as an ISO instant.
   startInstant: string;
   nowIso: string;
   nowLocal: LocalNow;

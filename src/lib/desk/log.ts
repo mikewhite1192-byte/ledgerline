@@ -3,8 +3,9 @@ import { isUuid } from "../uuid";
 import { isDeskSource, parseEventKey, SUBJECT_TABLES, type DeskSource } from "./keys";
 
 // The desk log: one insert-only line per step (0063). The loop's whole state is read back from it:
-// an event's state is its latest line, an attempt is a claimed line, a run it carries on is named
-// by its latest carried line. Nothing here updates or deletes a line (the app login cannot).
+// an event's state is its latest line (closed for good once it has a terminal line), an attempt is
+// a claimed line, a run it carries on is named by its latest carried line. Nothing here updates or
+// deletes a line (the app login cannot).
 
 export const LINE_KINDS = ["wake", "seen", "claimed", "carried", "done", "failed", "skipped", "sleep"] as const;
 export type LineKind = (typeof LINE_KINDS)[number];
@@ -125,7 +126,9 @@ const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-D
 
 // The latest line per event decides its state. Two lines at the same instant are ordered by the
 // lifecycle (seen, claimed, carried, then a terminal line), which is the only order they are
-// written in, so a fixed clock reads back the same.
+// written in, so a fixed clock reads back the same. A terminal line is final: an event with one is
+// never open again, whatever a late wake writes after it (a wake frozen at the route's limit that
+// thaws later and records its old try).
 const RANK = `CASE kind WHEN 'seen' THEN 0 WHEN 'claimed' THEN 1 WHEN 'carried' THEN 2 ELSE 3 END`;
 
 export const OPEN_EVENTS_SQL = `WITH lines AS (
@@ -149,6 +152,9 @@ SELECT l.event_key, l.kind, l.source, CAST(l.subject_id AS text) AS subject_id, 
   FROM latest l JOIN tally t ON t.event_key = l.event_key
   LEFT JOIN carried c ON c.event_key = l.event_key
  WHERE l.kind IN ('seen', 'claimed', 'carried')
+   AND NOT EXISTS (SELECT 1 FROM desk_log f
+                    WHERE f.tenant_id = current_tenant_id() AND f.event_key = l.event_key
+                      AND f.kind IN ('done', 'failed', 'skipped'))
  ORDER BY t.first_at, l.event_key
  LIMIT $2`;
 

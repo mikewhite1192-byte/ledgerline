@@ -96,7 +96,7 @@ export class SweepStack extends Stack {
       removalPolicy: RemovalPolicy.DESTROY,
     });
     this.kicker = new LambdaFunction(this, "Kicker", {
-      description: "Starts and carries on the nightly pay sweep for each listed carrier",
+      description: "Starts and carries on the nightly pay sweep, and wakes the desk loop, for each listed carrier",
       runtime: Runtime.NODEJS_22_X,
       architecture: Architecture.ARM_64,
       handler: "index.handler",

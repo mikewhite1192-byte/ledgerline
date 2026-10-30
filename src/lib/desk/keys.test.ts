@@ -5,6 +5,7 @@ import {
   dueToday,
   eventKey,
   isoWeekOf,
+  localMidnightOf,
   localNowOf,
   parseEventKey,
   periodKey,
@@ -125,5 +126,26 @@ describe("the carrier's wall clock", () => {
     expect(duePeriodKeys(localNowOf("2026-10-30T23:30:00.000Z", "Asia/Kolkata"), "2026-10-31")).toEqual([
       { source: "sweep", key: "sweep:2026-10-31" },
     ]);
+  });
+});
+
+describe("localMidnightOf", () => {
+  it("gives the carrier's own midnight, on either side of a daylight change", () => {
+    // Chicago: CDT (UTC-5) on Oct 31, back to CST (UTC-6) at 02:00 on Nov 1.
+    expect(localMidnightOf("2026-10-31", "America/Chicago")).toBe("2026-10-31T05:00:00.000Z");
+    expect(localMidnightOf("2026-11-01", "America/Chicago")).toBe("2026-11-01T05:00:00.000Z");
+    expect(localMidnightOf("2026-11-02", "America/Chicago")).toBe("2026-11-02T06:00:00.000Z");
+    expect(localMidnightOf("2026-10-31", "UTC")).toBe("2026-10-31T00:00:00.000Z");
+    expect(localMidnightOf("2026-10-31", "Asia/Tokyo")).toBe("2026-10-30T15:00:00.000Z");
+  });
+
+  it("starts a day whose clocks skip midnight at the change", () => {
+    // Santiago springs forward at midnight on Sep 6, 2026: the day starts at 01:00 local.
+    expect(localMidnightOf("2026-09-06", "America/Santiago")).toBe("2026-09-06T04:00:00.000Z");
+  });
+
+  it("refuses a date that is not a calendar date", () => {
+    expect(() => localMidnightOf("2026-02-30", "America/Chicago")).toThrow(RangeError);
+    expect(() => localMidnightOf("Oct 31", "America/Chicago")).toThrow(RangeError);
   });
 });

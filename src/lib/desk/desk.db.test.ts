@@ -8,9 +8,9 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { serviceSession } from "../sweep/service-session";
-import type { Handler, Handlers } from "./handlers";
+import { deskHandlers, type Handler, type Handlers } from "./handlers";
 import { DESK_SOURCES, eventKey, type DeskSource } from "./keys";
-import { appendLine, type Line, type OpenEvent } from "./log";
+import { appendLine, readState, type Line, type OpenEvent } from "./log";
 import { MOVE_WATERMARK_SQL } from "./discover";
 import { wakeDesk } from "./loop";
 import { readDeskLog, readDeskPanel, readMoneyCount } from "./view";
@@ -210,6 +210,26 @@ describe("one wake", () => {
     const skipped = (await linesOf(c)).filter((l) => l.kind === "skipped");
     expect(skipped.map((l) => l.detail)).toEqual([{ category: "unarmed" }, { category: "unarmed" }]);
   });
+
+  it("starts at the carrier's own midnight on the start date, not UTC's", async () => {
+    // Chicago's midnight on Jan 5 is 06:00 UTC.
+    const c = await carrier("desk-midnight");
+    await payment(c, "2026-01-05T03:00:00.000Z");
+    const after = await payment(c, "2026-01-05T07:00:00.000Z");
+    const calls: Call[] = [];
+    now = Date.parse("2026-01-05T05:00:00.000Z");
+    const early = await wake(c, recording(calls));
+    expect(early.ok && early.counts.seen).toBe(0);
+    expect(calls).toEqual([]);
+    expect((await loopRow(c)).running_since).toBeNull();
+
+    now = T0;
+    await wake(c, recording(calls));
+    expect(calls.map((x) => x.key).filter((k) => k.startsWith("customer_payment:"))).toEqual([
+      eventKey("customer_payment", after),
+    ]);
+    expect((await loopRow(c)).running_since).toBe("2026-01-06T15:00:00.000Z");
+  });
 });
 
 describe("the lease", () => {
@@ -259,6 +279,28 @@ describe("done once", () => {
     expect(lines.map((l) => l.kind)).toEqual(["seen", "claimed", "claimed", "done"]);
   });
 
+  it("keeps a piece of work closed once it is done, whatever a late wake writes after it", async () => {
+    const c = await carrier("desk-closed");
+    const key = "sweep:2026-01-06";
+    const at = (ms: number) => new Date(T0 - ms).toISOString();
+    await app.withTenant(c.fixture.tenantId, async (q) => {
+      await appendLine(q, line({ kind: "seen", eventKey: key, source: "sweep", at: at(3_600_000) }));
+      await appendLine(q, line({ kind: "claimed", eventKey: key, source: "sweep", at: at(3_600_000) }));
+      await appendLine(q, line({ kind: "done", eventKey: key, source: "sweep", at: at(3_000_000) }));
+      // A wake frozen at the route's limit thaws and records its old try as still running.
+      await appendLine(q, line({ kind: "carried", eventKey: key, source: "sweep", at: at(60_000), detail: { runId: randomUUID() } }));
+    });
+    const open = await app.withTenant(c.fixture.tenantId, (q) =>
+      readState(q, { sinceStart: "2026-01-05T06:00:00.000Z", limit: 50 }),
+    );
+    expect(open.map((e) => e.eventKey)).not.toContain(key);
+    const calls: Call[] = [];
+    await wake(c, recording(calls));
+    expect(calls.filter((x) => x.key === key)).toEqual([]);
+    const lines = (await linesOf(c)).filter((l) => l.event_key === key);
+    expect(lines.map((l) => l.kind)).toEqual(["seen", "claimed", "done", "carried"]);
+  });
+
   it("refuses a second done line for the same piece of work", async () => {
     const c = await carrier("desk-dedupe");
     const key = eventKey("customer_payment", c.fixture.paymentId);
@@ -276,6 +318,67 @@ describe("done once", () => {
     );
     expect(await sqlStateOf(raw)).toBe("23505");
     expect((await linesOf(c)).filter((l) => l.kind === "done")).toHaveLength(1);
+  });
+});
+
+describe("the cash check", () => {
+  it("answers with a check stored since the week's event was first seen, and stores no second one", async () => {
+    const c = await carrier("desk-cash");
+    const t = c.fixture.tenantId;
+    const periodId = randomUUID();
+    await admin.withTenant(t, (q) =>
+      q.execute(
+        `INSERT INTO settlement_periods (id, tenant_id, period_start, period_end, status)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), DATE '2025-12-29', DATE '2026-01-04', 'open')`,
+        [periodId],
+      ),
+    );
+    const check = (id: string, at: string, options: string) =>
+      admin.withTenant(t, (q) =>
+        q.execute(
+          `INSERT INTO cash_checks (id, tenant_id, period_id, as_of, pay_day, figures, options, gap_cents, pay_run_source,
+             created_by, created_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), DATE '2026-01-09', DATE '2026-01-09',
+             CAST('{"gapCents":-680000}' AS jsonb), CAST($3 AS jsonb), -680000, 'preview', 'desk-test', CAST($4 AS timestamptz))`,
+          [id, periodId, options, at],
+        ),
+      );
+    const countChecks = async () =>
+      (await admin.withTenant(t, (q) =>
+        q.query<{ n: number }>("SELECT CAST(count(*) AS integer) AS n FROM cash_checks WHERE tenant_id = current_tenant_id()"),
+      ))[0].n;
+    const firstAt = "2026-01-09T12:00:00.000Z";
+    const event: OpenEvent = {
+      eventKey: "cash_check:2026-W02",
+      source: "cash_check",
+      subjectId: null,
+      state: "claimed",
+      attempts: 2,
+      carries: 0,
+      runId: null,
+      found: null,
+      firstAt,
+    };
+    const handler = deskHandlers({ db: app }).cash_check;
+    const ctx = { deadlineMs: now + 14_000, clock };
+    const was = flags.cashFridayEnabled;
+    try {
+      // A check from before the event was first seen does not cover it: the handler goes on to the
+      // check itself, which (switched off here) answers without storing a row.
+      await check(randomUUID(), "2026-01-09T11:00:00.000Z", '[{"n":1}]');
+      flags.cashFridayEnabled = false;
+      expect(await handler.run(c.service, event, ctx)).toEqual({ outcome: "skipped", detail: { category: "switched_off" } });
+      expect(await countChecks()).toBe(1);
+
+      // One stored since (an earlier try whose done line was never written) covers it.
+      const stored = randomUUID();
+      await check(stored, "2026-01-09T12:05:00.000Z", '[{"n":1},{"n":2}]');
+      flags.cashFridayEnabled = true;
+      expect(await handler.run(c.service, event, ctx)).toEqual({ outcome: "done", detail: { runId: stored, found: 2 } });
+      expect(await countChecks()).toBe(2);
+    } finally {
+      flags.cashFridayEnabled = was;
+    }
   });
 });
 

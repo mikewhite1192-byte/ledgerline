@@ -5,7 +5,7 @@ import { countApprovalBreaks } from "../invariants/approvals";
 import { READ_ONLY_SQL, readOnly } from "../invariants/types";
 import { serviceSub } from "../sweep/service-session";
 import { assertMembership } from "../tenant/context";
-import { isDeskSource, type DeskSource } from "./keys";
+import { isDeskSource, localMidnightOf, type DeskSource } from "./keys";
 import { LINE_KINDS, readState, type LineKind } from "./log";
 import { STATE_LIMIT } from "./loop";
 
@@ -43,6 +43,8 @@ function wholeOrThrow(n: unknown): number {
 }
 
 const PANEL_SQL = `SELECT ${ts("l.running_since")} AS running_since FROM desk_loops l WHERE l.tenant_id = current_tenant_id()`;
+
+const ZONE_SQL = `SELECT t.timezone AS zone FROM tenants t WHERE t.id = current_tenant_id()`;
 
 // Done lines since the loop started, and what they found.
 const HANDLED_SQL = `SELECT CAST(count(*) AS integer) AS handled,
@@ -84,9 +86,12 @@ export type ViewDeps = { db?: TenantDb };
 // a count that fails cannot take the other numbers with it.
 export async function readDeskPanel(session: Session, deps: ViewDeps = {}): Promise<DeskPanel> {
   const db = deps.db ?? getDb();
-  const startInstant = `${flags.deskLoop.startDate}T00:00:00.000Z`;
   const panel = await db.withTenant(session.tenantId, async (q: Queryable) => {
     await assertMembership(q, session);
+    // The same start the loop reads from: the carrier's own midnight on the start date.
+    const [tenant] = await q.query<{ zone: unknown }>(ZONE_SQL);
+    if (!tenant || typeof tenant.zone !== "string" || tenant.zone.length === 0) throw new DbError("unknown");
+    const startInstant = localMidnightOf(flags.deskLoop.startDate, tenant.zone);
     const [loop] = await q.query<{ running_since: string | null }>(PANEL_SQL);
     const runningSince = loop?.running_since ?? null;
     let eventsHandled = 0;

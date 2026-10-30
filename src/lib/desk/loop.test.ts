@@ -20,8 +20,10 @@ const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0
 const cardKey = (n: number) => eventKey("card_transaction", uuid(9000 + n));
 
 const RANK: Record<string, number> = { seen: 0, claimed: 1, carried: 2 };
+const TERMINAL = ["done", "failed", "skipped"];
 
-// The log read back as the real readState does: an event's latest line decides its state.
+// The log read back as the real readState does: an event's latest line decides its state, and an
+// event with a terminal line is never open again.
 function openEvents(lines: Line[]): OpenEvent[] {
   const byKey = new Map<string, Line[]>();
   for (const l of lines) {
@@ -31,7 +33,7 @@ function openEvents(lines: Line[]): OpenEvent[] {
   const out: OpenEvent[] = [];
   for (const [key, ls] of byKey) {
     const latest = ls[ls.length - 1];
-    if (!(latest.kind in RANK)) continue;
+    if (!(latest.kind in RANK) || ls.some((l) => TERMINAL.includes(l.kind))) continue;
     const carried = ls.filter((l) => l.kind === "carried");
     const last = carried[carried.length - 1];
     out.push({
@@ -57,6 +59,8 @@ type Fake = DeskStore & {
   seenToday: number;
   spent: { wakeNanocents: number; dayNanocents: number };
   failState: boolean;
+  clockStarts: string[];
+  stateSince: string[];
 };
 
 function fakeStore(): Fake {
@@ -68,13 +72,16 @@ function fakeStore(): Fake {
     seenToday: 0,
     spent: { wakeNanocents: 0, dayNanocents: 0 },
     failState: false,
+    clockStarts: [],
+    stateSince: [],
     async claim(input) {
       if (fake.lease && fake.lease.until >= input.nowIso) return null;
       fake.lease = { token: input.token, until: input.leaseUntilIso };
-      return {
-        zone: "America/Chicago",
-        watermarks: { card_transactions: input.startInstant, customer_payments: input.startInstant },
-      };
+      // A row no wake has moved yet: no watermarks.
+      return { zone: "America/Chicago", watermarks: { card_transactions: null, customer_payments: null } };
+    },
+    async startClock(input) {
+      if (fake.lease?.token === input.token) fake.clockStarts.push(input.nowIso);
     },
     async release(input) {
       if (fake.lease?.token === input.token) fake.lease = null;
@@ -95,7 +102,8 @@ function fakeStore(): Fake {
       }
       return n;
     },
-    async state() {
+    async state(sinceStart) {
+      fake.stateSince.push(sinceStart);
       if (fake.failState) throw new Error("connection reset by 10.0.0.12");
       return openEvents(fake.lines);
     },
@@ -176,14 +184,30 @@ describe("wakeDesk", () => {
   });
 
   it("starts the panel's clock only on an armed wake on or after the start date", async () => {
-    const claim = vi.spyOn(store, "claim");
     await wake(handlersWith(async () => done()));
     flags.deskLoop.armed = false;
     await wake(handlersWith(async () => done()), uuid(8001));
     flags.deskLoop.armed = true;
     flags.deskLoop.startDate = "2026-11-03";
     await wake(handlersWith(async () => done()), uuid(8002));
-    expect(claim.mock.calls.map(([input]) => input.startsClock)).toEqual([true, false, false]);
+    expect(store.clockStarts).toEqual([new Date(START).toISOString()]);
+  });
+
+  it("starts the loop at the carrier's own midnight on the start date, not UTC's", async () => {
+    // Chicago is on CST from Nov 1, so its midnight on Nov 2 is 06:00 UTC.
+    flags.deskLoop.startDate = "2026-11-02";
+    now = Date.parse("2026-11-02T03:00:00.000Z");
+    await wake(handlersWith(async () => done()));
+    expect(store.clockStarts).toEqual([]);
+    const start = "2026-11-02T06:00:00.000Z";
+    expect(store.discovered[0]).toMatchObject({
+      startInstant: start,
+      watermarks: { card_transactions: start, customer_payments: start },
+    });
+    expect(store.stateSince).toEqual([start]);
+    now = Date.parse(start);
+    await wake(handlersWith(async () => done()), uuid(8001));
+    expect(store.clockStarts).toEqual([start]);
   });
 
   it("answers busy under another wake's live lease, and writes nothing", async () => {
@@ -279,8 +303,10 @@ describe("wakeDesk", () => {
       throw new TypeError("card 4111 failed for driver Ana");
     });
     for (let i = 0; i < 3; i++) {
+      // A try that threw does not ask for another wake now: the next one is a later wake's.
       const out = await wake(handlersWith(run), uuid(100 + i));
-      expect(out).toMatchObject({ ok: true, status: "more" });
+      expect(out).toMatchObject({ ok: true, status: "done", reason: "no_work" });
+      expect(out.ok && out.counts.left).toBe(0);
       now += 60_000;
     }
     expect(run).toHaveBeenCalledTimes(3);
@@ -292,6 +318,39 @@ describe("wakeDesk", () => {
     // The error's name reaches the process log; its text reaches neither the log nor a line.
     expect(logs).toContain(`desk handler tenant=${TENANT} wake=${uuid(100)} source=card_transaction error=typeerror`);
     expect(JSON.stringify(store.lines) + logs.join("\n")).not.toMatch(/4111|Ana/);
+  });
+
+  it("still asks for another wake for other work left after a try that threw", async () => {
+    flags.deskLoop.limits.eventsPerWake = 2;
+    store.pending = [1, 2, 3].map((n) => ({ eventKey: cardKey(n), source: "card_transaction" as const }));
+    const run = vi
+      .fn<Run>()
+      .mockImplementationOnce(async () => {
+        throw new Error("boom");
+      })
+      .mockImplementation(async () => done());
+    const out = await wake(handlersWith(run));
+    expect(run).toHaveBeenCalledTimes(2);
+    // The third card is not found yet, so the wake asks for another; the one that threw is not left.
+    expect(out).toMatchObject({ ok: true, status: "more", reason: "events_per_wake" });
+    expect(out.ok && out.counts.left).toBe(0);
+  });
+
+  it("keeps an event closed once it is done, whatever a late wake writes after it", async () => {
+    const key = "sweep:2026-11-02";
+    const base = { wakeId: uuid(1), eventKey: key, source: "sweep" as const, subjectId: null, by: "schedule" as const };
+    const at = (ms: number) => new Date(START - ms).toISOString();
+    store.lines.push({ ...base, id: uuid(2), at: at(3_600_000), kind: "seen", detail: {} });
+    store.lines.push({ ...base, id: uuid(3), at: at(3_600_000), kind: "claimed", detail: {} });
+    store.lines.push({ ...base, id: uuid(4), at: at(3_000_000), kind: "done", detail: { runId: uuid(4444) } });
+    // A wake that froze at the route's limit thaws and records its old try as still running.
+    store.lines.push({ ...base, id: uuid(5), wakeId: uuid(6), at: at(60_000), kind: "carried", detail: { runId: uuid(4444) } });
+    ids = 100;
+    const run = vi.fn(async () => done());
+    const out = await wake(handlersWith(run));
+    expect(run).not.toHaveBeenCalled();
+    expect(out).toMatchObject({ ok: true, status: "done", reason: "no_work" });
+    expect(out.ok && out.counts).toMatchObject({ claimed: 0, done: 0, failed: 0, left: 0 });
   });
 
   it("gives up a piece of work carried through too many wakes", async () => {

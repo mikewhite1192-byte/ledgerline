@@ -75,6 +75,28 @@ export function localNowOf(instant: Instant, zone: string): LocalNow {
   return { date: localDateOf(instant, zone), hour: localTimeOf(instant, zone).hour };
 }
 
+// The wall clock an instant shows in the zone, read as if it were UTC, in ms.
+function wallClockAt(t: number, zone: string): number {
+  const iso = new Date(t).toISOString();
+  const [y, m, d] = localDateOf(iso, zone).split("-").map(Number);
+  const time = localTimeOf(iso, zone);
+  return Date.UTC(y, m - 1, d, time.hour, time.minute, time.second);
+}
+
+// The first instant of the carrier's local day `date` (its midnight in `zone`), as an ISO instant
+// (UTC, milliseconds, Z): the loop's start. The zone's offset is read at a first guess and again
+// at the instant that guess gives, so a change near midnight lands on the right side; on a day
+// whose clocks skip midnight, the day starts at the change. Throws when neither guess is that day.
+export function localMidnightOf(date: LocalDate, zone: string): Instant {
+  const [y, m, d] = assertLocalDate(date, "date").split("-").map(Number);
+  const midnight = Date.UTC(y, m - 1, d);
+  const first = midnight - (wallClockAt(midnight, zone) - midnight);
+  const second = midnight - (wallClockAt(first, zone) - first);
+  const onDate = [first, second].filter((t) => localDateOf(new Date(t).toISOString(), zone) === date);
+  if (onDate.length === 0) throw new RangeError("no start for that day in that zone");
+  return new Date(Math.min(...onDate)).toISOString();
+}
+
 // Whether a period's work is due now: the sweep from 05:00 local each day, collections from 06:00
 // local each day, the cash check from 06:00 local on Fridays.
 export function dueToday(source: PeriodSource, now: LocalNow): boolean {

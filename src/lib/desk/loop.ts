@@ -17,7 +17,7 @@ import {
   type Watermarks,
 } from "./discover";
 import { deskHandlers, type Handlers } from "./handlers";
-import { localNowOf, type DeskSource } from "./keys";
+import { localMidnightOf, localNowOf, type DeskSource } from "./keys";
 import { appendLine, categoryWord, readSeenSince, readState, type Line, type LineDetail, type OpenEvent, type WakeBy } from "./log";
 
 // One wake of one carrier's desk loop (design 3): claim the loop's lease, write a wake line, find
@@ -41,7 +41,7 @@ export type WakeCounts = {
   carried: number;
   skipped: number;
   failed: number;
-  // Open events left for the next wake.
+  // Open events left for another wake now (not those whose try this wake did not come back).
   left: number;
 };
 
@@ -49,14 +49,17 @@ export type WakeResult =
   | { ok: true; wakeId: string; status: "done" | "more" | "busy"; reason: SleepReason | null; counts: WakeCounts }
   | { ok: false; category: "disabled" | "bad_request" | "not_configured" | "unavailable" };
 
-export type Claimed = { watermarks: Watermarks; zone: string };
+// The lease's row as stored: the carrier's zone, and the watermarks as written (read into their
+// one form by the loop, once it knows the carrier's start).
+export type Claimed = { watermarks: Record<keyof Watermarks, unknown>; zone: string };
 
 export type Caps = { seenToday: number; wakeNanocents: number; dayNanocents: number };
 
 // What the loop reads and writes, so it can run on fakes in tests. dbDeskStore is the real one.
 export type DeskStore = {
-  // startsClock: this wake may set running_since (armed, on or after the start date).
-  claim(input: { token: string; nowIso: string; leaseUntilIso: string; startsClock: boolean; startInstant: string }): Promise<Claimed | null>;
+  claim(input: { token: string; nowIso: string; leaseUntilIso: string }): Promise<Claimed | null>;
+  // Sets running_since once, only while this wake holds the lease (armed, on or after the start).
+  startClock(input: { token: string; nowIso: string }): Promise<void>;
   release(input: { token: string; nowIso: string }): Promise<void>;
   append(line: Line): Promise<boolean>;
   discover(input: DiscoverInput & { token: string }): Promise<number>;
@@ -88,12 +91,14 @@ VALUES (current_tenant_id(), CAST($1 AS timestamptz)) ON CONFLICT (tenant_id) DO
 // The lease: taken only when free or lapsed, by the clock's instant (not the database's), so the
 // wake and its lease read the same time.
 const CLAIM_LEASE_SQL = `UPDATE desk_loops
-    SET lease_token = CAST($2 AS uuid), lease_until = CAST($3 AS timestamptz), updated_at = CAST($1 AS timestamptz),
-        running_since = CASE WHEN CAST($4 AS boolean) THEN COALESCE(running_since, CAST($1 AS timestamptz))
-                             ELSE running_since END
+    SET lease_token = CAST($2 AS uuid), lease_until = CAST($3 AS timestamptz), updated_at = CAST($1 AS timestamptz)
   WHERE tenant_id = current_tenant_id() AND (lease_until IS NULL OR lease_until < CAST($1 AS timestamptz))
   RETURNING watermarks->>'card_transactions' AS card_transactions, watermarks->>'customer_payments' AS customer_payments,
             (SELECT t.timezone FROM tenants t WHERE t.id = current_tenant_id()) AS zone`;
+
+// The panel's "running since": set once, by the lease holder only.
+const START_CLOCK_SQL = `UPDATE desk_loops SET running_since = CAST($2 AS timestamptz)
+  WHERE tenant_id = current_tenant_id() AND lease_token = CAST($1 AS uuid) AND running_since IS NULL`;
 
 const RELEASE_SQL = `UPDATE desk_loops
     SET lease_token = NULL, lease_until = NULL, last_wake_at = CAST($2 AS timestamptz), updated_at = CAST($2 AS timestamptz)
@@ -111,19 +116,19 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
         await q.execute(CLAIM_ROW_SQL, [input.nowIso]);
         const rows = await q.query<{ card_transactions: unknown; customer_payments: unknown; zone: unknown }>(
           CLAIM_LEASE_SQL,
-          [input.nowIso, input.token, input.leaseUntilIso, input.startsClock],
+          [input.nowIso, input.token, input.leaseUntilIso],
         );
         if (rows.length === 0) return null;
         const r = rows[0];
         if (typeof r.zone !== "string" || r.zone.length === 0) throw new DbError("unknown");
         return {
           zone: r.zone,
-          watermarks: {
-            card_transactions: watermarkOf(r.card_transactions, input.startInstant),
-            customer_payments: watermarkOf(r.customer_payments, input.startInstant),
-          },
+          watermarks: { card_transactions: r.card_transactions, customer_payments: r.customer_payments },
         };
       }),
+    startClock: async (input) => {
+      await inTenant((q) => q.execute(START_CLOCK_SQL, [input.token, input.nowIso]));
+    },
     release: async (input) => {
       await db.withTenant(session.tenantId, (q) => q.execute(RELEASE_SQL, [input.token, input.nowIso]));
     },
@@ -198,7 +203,6 @@ export async function wakeDesk(
   const handlers = deps.handlers ?? deskHandlers({ db: deps.db, newId });
   const log = deps.log ?? ((line: string) => console.log(line));
   const wakeId = input.wakeId.toLowerCase();
-  const startInstant = `${flags.deskLoop.startDate}T00:00:00.000Z`;
   const startedAt = clock();
   const wakeStartIso = startedAt.toISOString();
   const deadlineMs = Math.min(input.deadlineMs, startedAt.getTime() + limits.sliceMs);
@@ -211,9 +215,6 @@ export async function wakeDesk(
       token,
       nowIso: wakeStartIso,
       leaseUntilIso: new Date(startedAt.getTime() + limits.leaseMs).toISOString(),
-      // The panel's "running since" starts with the first armed wake on or after the start date.
-      startsClock: armed && wakeStartIso >= startInstant,
-      startInstant,
     });
   } catch (err) {
     log(`desk wake tenant=${session.tenantId} wake=${wakeId} claim_failed=${errorName(err)}`);
@@ -237,6 +238,15 @@ export async function wakeDesk(
   try {
     await line("wake", null, armed ? {} : { category: "unarmed" });
 
+    // The loop's start: the carrier's own midnight on the start date, not UTC's.
+    const startInstant = localMidnightOf(flags.deskLoop.startDate, claimed.zone);
+    // The panel's "running since" starts with the first armed wake on or after the start.
+    if (armed && wakeStartIso >= startInstant) await store.startClock({ token, nowIso: wakeStartIso });
+    const watermarks: Watermarks = {
+      card_transactions: watermarkOf(claimed.watermarks.card_transactions, startInstant),
+      customer_payments: watermarkOf(claimed.watermarks.customer_payments, startInstant),
+    };
+
     // Discovery, inside the day's share.
     const seenToday = await store.seenSince(new Date(startedAt.getTime() - 86_400_000).toISOString());
     const dayLeft = Math.max(0, limits.eventsPerDay - seenToday);
@@ -249,7 +259,7 @@ export async function wakeDesk(
         nowIso: clock().toISOString(),
         nowLocal: localNowOf(clock().toISOString(), claimed.zone),
         startDate: flags.deskLoop.startDate,
-        watermarks: claimed.watermarks,
+        watermarks,
         budget,
         newId,
         token,
@@ -263,6 +273,8 @@ export async function wakeDesk(
     let reason: SleepReason | null = null;
     let picks = 0;
     let started = 0;
+    // Pieces of work whose try this wake did not come back.
+    let unanswered = 0;
     for (const event of open) {
       // Bookkeeping first: a piece of work out of tries, or carried too long, is given up.
       if (event.state === "claimed" && event.attempts >= limits.maxAttempts) {
@@ -323,9 +335,11 @@ export async function wakeDesk(
       try {
         outcome = await handler.run(session, event, { deadlineMs, clock });
       } catch (err) {
-        // Not known: the claimed line stays the latest, and the next wake tries again (or gives up
-        // at maxAttempts). The name goes to the log, never into a line.
+        // Not known: the claimed line stays the latest, and a later wake tries again (or gives up at
+        // maxAttempts). It alone does not ask for another wake now. The name goes to the log, never
+        // into a line.
         log(`desk handler tenant=${session.tenantId} wake=${wakeId} source=${event.source} error=${errorName(err)}`);
+        unanswered += 1;
         continue;
       }
       const kind = OUTCOME_LINES[outcome.outcome];
@@ -334,9 +348,10 @@ export async function wakeDesk(
     }
 
     if (reason === null) reason = dayCapped ? "events_per_day" : wakeCapped ? "events_per_wake" : "no_work";
-    // What is still open for the next wake: the events not reached, those carried on, and those
-    // whose try did not come back.
-    counts.left = Math.max(0, open.length - (counts.done + counts.skipped + counts.failed));
+    // What is still open for another wake now: the events not reached and those carried on. One
+    // whose try did not come back is not counted, so a try that keeps throwing does not spend its
+    // attempts in one kick's run of wakes by itself.
+    counts.left = Math.max(0, open.length - (counts.done + counts.skipped + counts.failed + unanswered));
     await line("sleep", null, { found: counts.done, category: reason });
     // Spent caps stop until the next scheduled wake. Otherwise, work left (or more to find) asks
     // for another wake now.

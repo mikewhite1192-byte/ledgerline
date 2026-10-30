@@ -72,6 +72,12 @@ const COVERING_CHECK_SQL = `SELECT CAST(r.id AS text) AS id FROM card_recon_runs
                           WHERE t.tenant_id = current_tenant_id() AND t.id = CAST($1 AS uuid))
   ORDER BY r.started_at DESC LIMIT 1`;
 
+// The carrier's newest cash check stored at or after an instant, and how many options it made.
+const STORED_CHECK_SQL = `SELECT CAST(c.id AS text) AS id, CAST(jsonb_array_length(c.options) AS integer) AS options
+  FROM cash_checks c
+ WHERE c.tenant_id = current_tenant_id() AND c.created_at >= CAST($1 AS timestamptz)
+ ORDER BY c.created_at DESC, c.id DESC LIMIT 1`;
+
 export function deskHandlers(deps: HandlerDeps = {}): Handlers {
   const db = () => deps.db ?? getDb();
   const newId = deps.newId ?? randomUUID;
@@ -213,11 +219,18 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     run: collectionsRun("after_payment"),
   };
 
-  // Friday's cash check: the gap and the options, each a card a person decides.
+  // Friday's cash check: the gap and the options, each a card a person decides. A check stored
+  // since the week's event was first seen (an earlier try whose done line was never written, or a
+  // person's press) already covers it: no second check row.
   const cashCheck: Handler = {
     switchOn: () => flags.cashFridayEnabled === true,
     needsMs: 14_000,
-    async run(session, _event, ctx) {
+    async run(session, event, ctx) {
+      const stored = await db().withTenant(session.tenantId, async (q) => {
+        await assertMembership(q, session);
+        return q.query<{ id: string; options: unknown }>(STORED_CHECK_SQL, [event.firstAt]);
+      });
+      if (stored[0]) return done({ runId: stored[0].id, found: whole(stored[0].options) });
       const r = await runCashCheck(session, ctx.clock(), { db: db() });
       if (!r.ok) return r.category === "disabled" ? skipped(SWITCHED_OFF) : failed(r.category);
       return done({ runId: r.checkId, found: r.options.length });
