@@ -159,6 +159,8 @@ describe("scoreCase", () => {
     expect(statusOf({ status: "failed", endedReason: "budget" })).toBe("over_cap");
     // The turn's own caps are the model's outcome and are scored.
     expect(statusOf({ status: "partial", endedReason: "steps" })).toBe("scored");
+    expect(statusOf({ status: "partial", endedReason: "model_calls" })).toBe("scored");
+    expect(statusOf({ status: "partial", endedReason: "model_timeout" })).toBe("unknown");
   });
 
   it("a pay correction taking money back is a negative amount", () => {

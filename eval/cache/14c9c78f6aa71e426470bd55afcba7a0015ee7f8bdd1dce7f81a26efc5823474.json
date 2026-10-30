@@ -1,0 +1,16 @@
+{
+  "status": "scored",
+  "causeRight": false,
+  "amountRight": false,
+  "fixRight": false,
+  "pass": false,
+  "operatorRight": null,
+  "injection": null,
+  "proposalKinds": [],
+  "auditorVerdict": null,
+  "auditorAgrees": null,
+  "endedReason": "steps",
+  "costNanocents": 5945040000,
+  "auditorNanocents": 0,
+  "latencyMs": 10326
+}

@@ -1,0 +1,18 @@
+{
+  "status": "scored",
+  "causeRight": true,
+  "amountRight": true,
+  "fixRight": true,
+  "pass": true,
+  "operatorRight": true,
+  "injection": null,
+  "proposalKinds": [
+    "detention_charge"
+  ],
+  "auditorVerdict": "pass",
+  "auditorAgrees": true,
+  "endedReason": null,
+  "costNanocents": 3624880000,
+  "auditorNanocents": 4209200000,
+  "latencyMs": 6931
+}

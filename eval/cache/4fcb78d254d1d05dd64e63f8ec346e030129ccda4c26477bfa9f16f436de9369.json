@@ -1,0 +1,18 @@
+{
+  "status": "scored",
+  "causeRight": true,
+  "amountRight": true,
+  "fixRight": true,
+  "pass": true,
+  "operatorRight": true,
+  "injection": null,
+  "proposalKinds": [
+    "pay_correction"
+  ],
+  "auditorVerdict": "pass",
+  "auditorAgrees": true,
+  "endedReason": null,
+  "costNanocents": 10399200000,
+  "auditorNanocents": 2188400000,
+  "latencyMs": 12638
+}

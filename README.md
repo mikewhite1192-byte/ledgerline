@@ -33,17 +33,44 @@ twice. A demo login for judges and visitors, one that can propose but not approv
 
 ## Built on open weights
 
-Muse Spark Open, served through Baseten (Fireworks standby), runs the jobs that see every untrusted
+Muse Spark Open, served through Baseten, runs the jobs that see every untrusted
 byte first: input screening on every message, document and voice note the agent reads, and the
-broker portal's answer screen. Inbound email triage runs on Muse Spark today; one switch moves it to
-Muse Spark Open. It is cheap, fast, and can run on a carrier's own hardware, which matters for a
-shop that will not send its pay data to a cloud model. [EVAL: Muse Spark Open screens n of m
-injection attempts and triages n of m messages correctly; cost per correct answer $x.]
+broker portal's answer screen. Triage runs on it too: it sorts every driver message and voice note
+into a case (one switch moves triage back to Muse Spark). It is cheap, fast, and can run on a
+carrier's own hardware, which matters for a shop that will not send its pay data to a cloud model.
+Its screening and triage scores are in the next section.
 
-## How often the models agree, and who is right
+## How the models score
 
-[EVAL: when the operator (Muse Spark) and the auditor (Muse Wonder) agree on a proposal, they are
-right n of m times against the planted answer; when they disagree, the auditor was right n of m.]
+Each operator model takes the same 30 cases: 28 planted pay, payment, fuel and detention problems
+on the two invented carriers, plus 2 planted injection attempts. Each model gets its own freshly
+seeded database; every case runs through the real operator turn and the real second check, and is
+scored from the tables by fixed rules. `npm run eval` writes `src/lib/eval/results/latest.json`;
+`npm run eval:readme` copies it here.
+
+<!-- eval:start -->
+Run on the seed of 2026-11-02, every case. The second check runs on `muse-wonder-1.0` in every row.
+
+| Operator model | Cases scored | Right answer | Right amount | Right fix | Seconds per case | Cents per case | Cents in all |
+|---|---|---|---|---|---|---|---|
+| Muse Spark (as shipped) (`muse-spark-1.3`) | 26 of 30 | 15 of 24 | 12 of 16 | 20 of 24 | 13.5 | 7.51 | 225.27 |
+| Muse Wonder (`muse-wonder-1.0`) | 30 of 30 | 17 of 28 | 13 of 20 | 21 of 28 | 9.3 | 8.03 | 240.80 |
+| Muse Spark Open (`meta-models/muse-spark-open-1026`) | 30 of 30 | 12 of 28 | 10 of 20 | 19 of 28 | 9.2 | 2.80 | 83.78 |
+
+When the operator and the second check agreed they were right 30 of 31 times; when they disagreed the second check was right 0 of 0 times.
+
+Muse Spark (as shipped): the screen flagged the planted messages 2 of 2 times; no change was proposed from them 2 of 2 times.
+Muse Wonder: the screen flagged the planted messages 2 of 2 times; no change was proposed from them 2 of 2 times.
+Muse Spark Open: the screen flagged the planted messages 2 of 2 times; no change was proposed from them 2 of 2 times.
+
+Muse Spark Open screening (`meta-models/muse-spark-open-1026`): 12 of 12 inputs sorted right (flagged or clean as planted).
+Muse Spark Open triage (`meta-models/muse-spark-open-1026`): category 25 of 26, amount 24 of 24, dates 14 of 14, driver 14 of 14.
+<!-- eval:end -->
+
+The cents columns cover the scored cases only. The whole run cost 614.37 cents: Muse Spark's 4 cases
+that ran out of time kept 52.98 cents of reserved spend, and Muse Spark Open's screening and triage
+calls added 11.55 cents.
+
 In the app, every pay sweep prints the live version: how many drivers were checked a second time
 and how many of the engine's problems the second check also found.
 
@@ -58,12 +85,11 @@ model is being built into.
 | **Muse Spark 1.3** | The operator agent: calls tools over drivers, loads, pay items and the rules engine, returns structured proposals, and reads receipts, bills of lading and rate confirmations from photos and PDFs |
 | **Muse Wonder** | The auditor: independently re-checks every money proposal before a person can approve it |
 | **Muse Voice Transcribe** | Turns driver voice notes, in English or Spanish, into requests the agent can act on |
-| **Muse Spark Open** (open weights, via Baseten, with Fireworks as a standby host behind a switch) | Triages every inbound email, text and voice note into a case |
+| **Muse Spark Open** (open weights, via Baseten) | Triages every inbound email, text and voice note into a case |
 | **SAM 3.1** | Cuts the document out of a cab photo before it is read |
 | **Muse Image** | Will generate the synthetic sample documents for the demo data |
 
-Planned: every answer will show which model did each step, with latency and cost, and an
-evaluation will compare Muse Spark, Muse Spark Open and Muse Wonder on planted pay problems.
+Planned: every answer will show which model did each step, with latency and cost.
 
 ## How it is built
 
