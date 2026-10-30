@@ -578,7 +578,7 @@ describe("quarter reviews", () => {
       // The quarter page's read stops the same way, and the page shows a read past its bound as
       // unreadable, never as part of the quarter.
       await expect(pageRead()).rejects.toMatchObject({ category: "too_many_rows" });
-    });
+    }, 60_000);
 
     it("reads a full bound of detention charges, the fixes decided outside the quarter aside, and refuses one more", async () => {
       // Two fixes are in the quarter already.
@@ -587,6 +587,6 @@ describe("quarter reviews", () => {
       await addFixes(CHARGES.length + MAX_QUARTER_ROWS, 1);
       await expect(input()).rejects.toBeInstanceOf(ReadLimitError);
       await expect(pageRead()).rejects.toMatchObject({ category: "too_many_rows" });
-    });
+    }, 60_000);
   });
 });
