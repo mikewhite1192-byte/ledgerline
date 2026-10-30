@@ -136,17 +136,39 @@ export const CHECKLIST_RULE = [
 
 export const CHECKLIST_TOOL = "set_checklist";
 
+// The verification rule (design-agents-102 3.2), added while flags.verification is on, after the
+// checklist rule. For a refused proposal it takes the place of the retry rule above, so a turn with
+// the switch off sends exactly the prompt it sent before.
+export const VERIFY_RULE = [
+  "- Every proposal is checked before it is saved: the records it names, the pay rules' limit, its",
+  "  citations from the case record, and the pay rules' own recomputed number. If a propose_* call",
+  "  is refused, do not retry a refused call unchanged; revise it or explain. The refusal's note",
+  "  names the checks that failed and the attempt; after the last refused attempt the request goes",
+  "  to a person, so say so plainly.",
+].join("\n");
+
+// Refused tries at one card before the turn ends and goes to a person: flags.verification's
+// maxAttempts, clamped to 1..3 and never above. Three tries are three model calls, inside the
+// turn's maxModelCalls of 4, so a third accepted try still leaves a call for the answer.
+export const MAX_VERIFY_ATTEMPTS = 3;
+export function verifyAttempts(configured: number): number {
+  if (!Number.isSafeInteger(configured)) return MAX_VERIFY_ATTEMPTS;
+  return Math.min(MAX_VERIFY_ATTEMPTS, Math.max(1, configured));
+}
+
 // The operator's system prompt for the tools this turn offers: the tool search rule while search
 // is on (it is one of the rules), the collections rule while get_collections is offered, the Cash
 // Friday line while get_cash_friday is offered, the checklist rule while set_checklist is offered,
-// then the report section while the report tools are offered, then the money code section while
-// propose_money_code is offered, then the memory section while remember_note is. With search off
-// and none of those offered it is the prompt above.
-export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean): string {
+// then the verification rule while verify is on, then the report section while the report tools
+// are offered, then the money code section while propose_money_code is offered, then the memory
+// section while remember_note is. With search and verify off and none of those offered it is the
+// prompt above.
+export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean, verify = false): string {
   const searched = withToolSearchRule(OPERATOR_PROMPT, toolSearch);
   const collections = toolNames.includes("get_collections") ? `${searched}\n${COLLECTIONS_RULE}` : searched;
   const cash = toolNames.includes("get_cash_friday") ? `${collections}\n${CASH_PROMPT}` : collections;
-  const prompt = toolNames.includes(CHECKLIST_TOOL) ? `${cash}\n${CHECKLIST_RULE}` : cash;
+  const listed = toolNames.includes(CHECKLIST_TOOL) ? `${cash}\n${CHECKLIST_RULE}` : cash;
+  const prompt = verify ? `${listed}\n${VERIFY_RULE}` : listed;
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
   const withReports = reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
   const withCodes = toolNames.includes("propose_money_code") ? `${withReports}\n${MONEY_CODE_PROMPT}` : withReports;
@@ -193,7 +215,18 @@ export const LOOP_TEXT = {
     "This job used more than its hourly allowance and was stopped. An admin can clear it on the Meta models page; your data is unchanged.",
   failed: "I could not finish that. Nothing was changed.",
   empty: "I have no answer for that yet.",
+  // The last refused try at a card (design-agents-102 3.2). Followed by the stop summary when the
+  // answer kept a checklist.
+  escalated:
+    "I tried three times and could not make a card that passed the checks. A person needs to look at this; the attempts are shown below.",
 } as const;
+
+// The escalation line for the tries actually made, so a smaller maxAttempts never says three.
+export function escalatedText(attempts: number): string {
+  if (attempts === 1) return LOOP_TEXT.escalated.replace("I tried three times", "I tried once");
+  if (attempts === 2) return LOOP_TEXT.escalated.replace("I tried three times", "I tried twice");
+  return LOOP_TEXT.escalated;
+}
 
 // A short, fixed note fed back to the model after an invalid tool call: the field paths and codes
 // the gateway returned, never the raw arguments.

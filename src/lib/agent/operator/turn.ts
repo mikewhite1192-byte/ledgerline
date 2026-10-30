@@ -2,22 +2,26 @@ import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import { AiError, complete, type AiMessage, type AiReplayItem, type AiResult, type AiTool } from "../../ai";
 import { finalChecklist, modelChecklist, sameChecklist, type Checklist, type ChecklistDraft } from "../checklist";
-import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY } from "../gateway";
-import { dbTurnStore, type OpenedTurn, type StepFinish, type TurnStore } from "../gateway/store";
+import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY, withTimeout } from "../gateway";
+import { dbTurnStore, engineCompares, type OpenedTurn, type StepFinish, type TurnStore } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
 import {
   CALL_MARGIN_MS,
   CHECKLIST_TOOL,
   ESCALATE_AFTER_INVALID,
   ESCALATION_CALL,
+  escalatedText,
   LOOP_TEXT,
   OPERATOR_CALL,
   operatorPrompt,
   TURN_SUMMARY_CHARS,
   invalidArgsNote,
   operatorCacheKey,
+  verifyAttempts,
 } from "../policy";
 import { stopSummary } from "../stop-summary";
+import { verificationNote } from "../verify/note";
+import { gatewayVerification, persistVerification, type PersistRefusal, type ProposalVerification } from "../verify/required";
 import type { StepView } from "../view";
 import { TurnBudget, type CapReason, type TurnLimits } from "./budget";
 import { idsIn, validateRefs } from "./citations";
@@ -52,6 +56,9 @@ export type TurnDeps = {
   emit?: TurnEmitter;
   // Absent means both off.
   request?: TurnRequest;
+  // The checks inside the submit (flags.verification, design-agents-102 3.2). Absent or off is
+  // today's loop exactly.
+  verification?: { enabled: boolean; maxAttempts: number };
 };
 
 export type TurnInput = { session: Session; turn: OpenedTurn; text: string; startedAt: number };
@@ -68,6 +75,7 @@ export type TurnOutcome = {
 // The flags are read here, once per turn.
 export function defaultTurnDeps(session: Session, emit?: TurnEmitter): TurnDeps {
   const tools = toolsFor("operator", { defer: flags.agentToolSearch });
+  const verification = { enabled: flags.verification.enabled, maxAttempts: flags.verification.maxAttempts };
   return {
     complete: (target, request, s) => complete(target, request, s),
     callTool: (ctx, call) => callTool(ctx, call),
@@ -77,23 +85,26 @@ export function defaultTurnDeps(session: Session, emit?: TurnEmitter): TurnDeps 
     // The one ceiling over every run rides with the turn's own caps; the smaller one stops it.
     limits: { ...flags.agentTurnLimits, maxTurns: flags.runLimits.maxTurns },
     emit,
-    request: turnRequest(tools, flags.agentToolSearch, flags.agentPromptCache),
+    request: turnRequest(tools, flags.agentToolSearch, flags.agentPromptCache, verification.enabled),
+    verification,
   };
 }
 
 // Search only when a tool is actually deferred (the API refuses it otherwise), and a cache key
-// built from the static prompt and the tools as they will be sent.
+// built from the static prompt (with the verification rule when verify is on) and the tools as
+// they will be sent.
 export function turnRequest(
   tools: readonly AiTool[],
   toolSearch: boolean,
   cache: { enabled: boolean; retention: "in_memory" | "24h" },
+  verify = false,
 ): TurnRequest {
   const search = toolSearch && tools.some((t) => t.deferLoading === true);
   return {
     toolSearch: search,
     cache: cache.enabled
       ? {
-          key: operatorCacheKey(operatorPrompt(tools.map((t) => t.name), search), tools),
+          key: operatorCacheKey(operatorPrompt(tools.map((t) => t.name), search, verify), tools),
           retention: cache.retention,
         }
       : null,
@@ -103,6 +114,7 @@ export function turnRequest(
 const MODEL_LABEL = "Thinking it through";
 const ESCALATION_LABEL = "Asking Muse Wonder to form the proposal";
 const PROPOSAL_LABEL = "Preparing a proposal card";
+const PERSON_LABEL = "Escalated to a person";
 const UNKNOWN_TOOL_LABEL = "Checking a tool";
 const CHECKLIST_UPDATED_LABEL = "Updated the checklist";
 
@@ -114,6 +126,27 @@ function labelFor(name: string): string {
 
 function toolNameFor(name: string): string {
   return Object.prototype.hasOwnProperty.call(TOOL_REGISTRY, name) ? name : "unknown";
+}
+
+// A propose-tier tool by the registry's own entry, switched on or not: only these are verified.
+function isProposeTool(name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(TOOL_REGISTRY, name) && TOOL_REGISTRY[name].tier === "propose";
+}
+
+const CODE = /^[a-z_]{2,40}$/;
+
+// What the model is told for a refused proposal while verification is on: the gateway's codes and
+// limit by name, and the fixed note. Any other field a result carries is left out, so no upstream
+// text reaches the model through a refusal.
+function refusedBody(result: Record<string, unknown>, note: string): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (result.blocked === true) body.blocked = true;
+  if (result.proposed === false) body.proposed = false;
+  if (typeof result.reason === "string" && CODE.test(result.reason)) body.reason = result.reason;
+  if (typeof result.limitCents === "number" && Number.isSafeInteger(result.limitCents)) body.limitCents = result.limitCents;
+  if (typeof result.category === "string" && CODE.test(result.category)) body.category = result.category;
+  body.note = note;
+  return body;
 }
 
 function summaryLine(text: string): string {
@@ -137,10 +170,16 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   const { session, turn } = input;
   const request = deps.request ?? PLAIN_REQUEST;
   const budget = new TurnBudget(deps.limits, input.startedAt, deps.clock);
+  // The checks inside the submit, when on: tries per propose tool at the card in hand (a card made
+  // starts the count again for the next one), and the try that sends the request to a person.
+  const verify = deps.verification?.enabled === true;
+  const maxAttempts = verifyAttempts(deps.verification?.maxAttempts ?? 0);
+  const attempts = new Map<string, number>();
+  let toPerson = null as { toolName: string; attempts: number } | null;
   // With the cache on, the state summary (this tenant's data) goes in input after the static
   // prompt, so the prompt and the tools stay one prefix every tenant shares.
   const messages: AiMessage[] = [
-    { role: "system", content: operatorPrompt(deps.tools.map((t) => t.name), request.toolSearch) },
+    { role: "system", content: operatorPrompt(deps.tools.map((t) => t.name), request.toolSearch, verify) },
     request.cache
       ? { role: "system", content: turn.summary, placement: "input" }
       : { role: "system", content: turn.summary },
@@ -267,7 +306,24 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     } else if (typeof outcome.limitCents === "number") {
       allowedCents.add(Math.abs(outcome.limitCents));
     }
-    await finish(step, outcome.decision === "allowed" ? "done" : "failed", {
+    // With verification on, a propose tool's call that passed the schema is one try at the card:
+    // a gateway refusal, or an allowed draft checked here against the case record and the engine
+    // before its step is finished and before anything is saved. A switched-off tool never ran a
+    // check, so it is no try.
+    const tried =
+      verify &&
+      isProposeTool(call.name) &&
+      (outcome.decision === "allowed" ? Boolean(outcome.draft) : outcome.decision === "blocked" && outcome.reason !== "disabled");
+    const attempt = tried ? (attempts.get(call.name) ?? 0) + 1 : 0;
+    if (tried) attempts.set(call.name, attempt);
+    const checked = tried && outcome.decision === "allowed" ? await checkDraft(outcome, model) : null;
+    const verification: ProposalVerification | null = !tried
+      ? null
+      : checked
+        ? checked.verification
+        : gatewayVerification(outcome.reason);
+    const refused = tried && (outcome.decision !== "allowed" || checked?.refusal != null);
+    await finish(step, outcome.decision === "allowed" && !refused ? "done" : "failed", {
       gatewayDecisionId: outcome.decisionId || null,
       detail: {
         tool: toolNameFor(call.name),
@@ -278,15 +334,96 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
           : {}),
         // A report's name and typed args (dates and ids), so the chat can show its table again.
         ...(report ? { report } : {}),
+        // The try and its checks, as fixed codes (design-agents-102 3.2).
+        ...(verification
+          ? { attempt, layer: "checks", verification, ...(checked?.refusal ? { refusal: checked.refusal } : {}) }
+          : {}),
       },
     });
+    if (refused) settle(call.name, attempt, true);
     if (outcome.decision === "allowed" && outcome.draft) {
-      const result = await persist(outcome);
+      if (checked?.refusal) {
+        refusedResponse = response;
+        const note = verificationNote(attempt, maxAttempts, [checked.refusal]);
+        return { ...outcome, result: refusedBody({ proposed: false, reason: checked.refusal }, note) };
+      }
+      const result = await persist(outcome, checked ? { sources: checked.sources, engine: checked.engine, attempt } : undefined);
       if (result.proposed === false) refusedResponse = response;
+      // A try the store did not card (a live card already, decided, or the store failed) is a
+      // refused try too, so the count never passes the limit.
+      if (tried) settle(call.name, attempt, result.proposed === false);
       return { ...outcome, result };
     }
     if (outcome.decision !== "allowed" && call.name !== CHECKLIST_TOOL) refusedResponse = response;
+    if (tried && outcome.decision !== "allowed") {
+      const note = verificationNote(attempt, maxAttempts, [outcome.reason], outcome.limitCents);
+      return { ...outcome, result: refusedBody(outcome.result, note) };
+    }
     return outcome;
+  };
+
+  // A try that ended in a card starts the count again for the next card, so an attempt number is
+  // always a try at the card in hand (1 to the limit); a refused try at the limit sends the
+  // request to a person.
+  const settle = (name: string, attempt: number, refused: boolean) => {
+    if (!refused) attempts.delete(name);
+    else if (attempt >= maxAttempts) toPerson = { toolName: toolNameFor(name), attempts: attempt };
+  };
+
+  // The draft's citations the turn can stand behind: the engine's own sources are trusted; the
+  // model's sourceRefs only if a tool returned them.
+  const citedSources = (outcome: Extract<GatewayOutcome, { decision: "allowed" }>) => {
+    const draft = outcome.draft!;
+    const modelRefs = new Set(
+      outcome.refs.map((r) => `${r.table}:${r.id.toLowerCase()}`),
+    );
+    const engineIds = new Set(
+      draft.sources
+        .filter((r) => !modelRefs.has(`${r.table}:${r.id.toLowerCase()}`))
+        .map((r) => r.id.toLowerCase()),
+    );
+    return validateRefs(draft.sources, new Set([...trusted, ...engineIds, draft.subjectId.toLowerCase()]));
+  };
+
+  // The two checks before the insert, while verification is on (design-agents-102 3.2): at least
+  // one citation is from the case record, and a kind the engine compares recomputes to the cent.
+  // A kind it never compares skips the recompute and is not refused for it. No time left, a read
+  // error, an engine refusal or no figure is unknown, and unknown refuses the draft. The recompute
+  // gets only the turn's time left, as every gateway read does: one still running then is unknown.
+  const checkDraft = async (
+    outcome: Extract<GatewayOutcome, { decision: "allowed" }>,
+    model: "spark" | "wonder",
+  ): Promise<{
+    sources: ReturnType<typeof validateRefs>;
+    engine?: { check: "matched"; engineCents: number | null };
+    refusal: PersistRefusal | null;
+    verification: ProposalVerification;
+  }> => {
+    const draft = outcome.draft!;
+    const sources = citedSources(outcome);
+    if (sources.length === 0) {
+      return { sources, refusal: "citation_not_in_record", verification: persistVerification("citation_not_in_record", false) };
+    }
+    if (!engineCompares(draft.kind)) return { sources, refusal: null, verification: persistVerification(null, false) };
+    let result: Awaited<ReturnType<TurnStore["checkDraft"]>> = null;
+    const left = budget.remainingMs();
+    if (left > 0) {
+      try {
+        result = await withTimeout(deps.store.checkDraft(draft, ctxFor(model)), left);
+      } catch {
+        result = null;
+      }
+    }
+    if (result?.check === "matched") {
+      return {
+        sources,
+        engine: { check: "matched", engineCents: result.engineCents },
+        refusal: null,
+        verification: persistVerification(null, true),
+      };
+    }
+    const refusal: PersistRefusal = result?.check === "mismatch" ? "engine_mismatch" : "limit_unavailable";
+    return { sources, refusal, verification: persistVerification(refusal, false) };
   };
 
   // The checklist set_checklist returned: figures the records did not give are withheld, as in an
@@ -302,21 +439,19 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // The card for an allowed propose_* outcome. What the model is told back replaces the tool's
   // result: created, the same card again, or refused because one is already waiting or the same
   // proposal was already decided. Only created and a live duplicate say proposed.
+  // checked: the verified try (flags.verification on), with the citations and the engine's match
+  // already worked out; the insert stores the match. Absent is today's card exactly.
   const persist = async (
     outcome: Extract<GatewayOutcome, { decision: "allowed" }>,
+    checked?: {
+      sources: ReturnType<typeof validateRefs>;
+      engine?: { check: "matched"; engineCents: number | null };
+      attempt: number;
+    },
   ): Promise<Record<string, unknown>> => {
     const draft = outcome.draft!;
     const step = await start("proposal", PROPOSAL_LABEL);
-    const modelRefs = new Set(
-      outcome.refs.map((r) => `${r.table}:${r.id.toLowerCase()}`),
-    );
-    // The engine's own sources are trusted; the model's sourceRefs only if a tool returned them.
-    const engineIds = new Set(
-      draft.sources
-        .filter((r) => !modelRefs.has(`${r.table}:${r.id.toLowerCase()}`))
-        .map((r) => r.id.toLowerCase()),
-    );
-    const sources = validateRefs(draft.sources, new Set([...trusted, ...engineIds, draft.subjectId.toLowerCase()]));
+    const sources = checked ? checked.sources : citedSources(outcome);
     try {
       const saved = await deps.store.persistProposal({
         turnId: turn.turnId,
@@ -325,6 +460,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         draft: { ...draft, sources: sources as typeof draft.sources },
         gatewayDecisionId: outcome.decisionId,
         flaggedInputId,
+        ...(checked?.engine ? { engine: checked.engine } : {}),
       });
       const carded = saved.kind === "created" || saved.kind === "duplicate";
       await finish(step, carded ? "done" : "failed", {
@@ -333,6 +469,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
           result: saved.kind,
           droppedRefs: draft.sources.length - sources.length,
           ...(saved.kind === "already_decided" ? { status: saved.status } : {}),
+          ...(checked ? { attempt: checked.attempt, ...(carded ? { accepted: true } : {}) } : {}),
         },
       });
       if (saved.kind === "live_exists") {
@@ -349,7 +486,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         ...(saved.flagged ? { flagged: true } : {}),
       };
     } catch {
-      await finish(step, "failed", { detail: { result: "store_failed" } });
+      await finish(step, "failed", { detail: { result: "store_failed", ...(checked ? { attempt: checked.attempt } : {}) } });
       return { proposed: false, reason: "tool_failed" };
     }
   };
@@ -382,6 +519,16 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       : { status: "failed", endedReason: reason, text: LOOP_TEXT.failed };
   };
   const schemaEnd = (): Ending => ({ status: "partial", endedReason: "schema", text: LOOP_TEXT.schema });
+
+  // The last refused try at a card (design-agents-102 3.2): one escalation step for a person, then
+  // the turn ends with no further model call. No card exists for the request.
+  const personEnd = async (e: { toolName: string; attempts: number }): Promise<Ending> => {
+    const step = await start("escalation", PERSON_LABEL);
+    await finish(step, "failed", {
+      detail: { reason: "verification_failed", attempts: e.attempts, finishedBy: "person", toolName: e.toolName },
+    });
+    return { status: "partial", endedReason: "escalated", text: escalatedText(e.attempts) };
+  };
 
   // The one escalation: Muse Wonder gets the same messages and only the tool that failed. The
   // turn's caps hold here too: no Wonder call without a model call and a tool step left for it,
@@ -483,6 +630,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         if (stepCap) return stopped(stepCap);
         const outcome = await dispatch({ ...call, modelCallId: result.callId }, "spark", !free);
         messages.push(toolMessage(call, outcome));
+        // The rest of this response's calls are not run: the request goes to a person.
+        if (toPerson) return await personEnd(toPerson);
         if (outcome.decision !== "invalid_args") continue;
         // A checklist the schema refused is told back to the model and left there: it never
         // escalates to Muse Wonder and never ends the answer.
@@ -501,7 +650,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
               content: JSON.stringify({ skipped: true }),
             });
           }
-          if ((await escalate(name)) === "failed") return schemaEnd();
+          const formed = await escalate(name);
+          if (toPerson) return await personEnd(toPerson);
+          if (formed === "failed") return schemaEnd();
           break;
         }
       }
@@ -518,10 +669,13 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // tool steps the step cap counted, not the model calls.
   const unsettled = refusedResponse > 0 && refusedResponse >= listResponse;
   const finalList = checklist ? finalChecklist(checklist, ended.status === "done" && unsettled ? "partial" : ended.status) : null;
+  // An escalation to a person keeps its own line, followed by the same summary.
   const ending: Ending =
     finalList && ended.status === "partial" && ended.text.startsWith(LOOP_TEXT.stopped)
       ? { ...ended, text: `${stopSummary(finalList, { steps: budget.toolSteps })}${ended.text.slice(LOOP_TEXT.stopped.length)}` }
-      : ended;
+      : finalList && ended.endedReason === "escalated"
+        ? { ...ended, text: `${ended.text}\n\n${stopSummary(finalList, { steps: budget.toolSteps })}` }
+        : ended;
   if (finalList && !sameChecklist(finalList, checklist)) deps.emit?.({ event: "checklist", data: finalList });
   await deps.store.finishTurn(turn.turnId, {
     status: ending.status,

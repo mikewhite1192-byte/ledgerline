@@ -19,7 +19,7 @@ import {
   type AuditState,
   type VerdictWrite,
 } from "./audit";
-import { engineCheck } from "./engine-check";
+import { engineCheck, engineCheckDraft } from "./engine-check";
 import { findProposalConflict, flagTurnProposals, persistProposal } from "./proposals";
 import { finishStep, finishTurn, openTurn, setChecklist, startStep, type OpenTurnInput } from "./turns";
 import type { OpenTurnRefusal, OpenedTurn, TurnStore } from "./types";
@@ -35,7 +35,7 @@ export { assembleSummary } from "./summary";
 export { PROPOSAL_TITLES, canonicalJson, dedupeKey, impactOf } from "./proposals";
 export { cardStatusOf, readEngineProposalViews, readWaitingRuleChangeViews } from "./views";
 export type { AuditLease, AuditState, EngineCheckWrite, VerdictWrite } from "./audit";
-export { compareEngine, comparePayCorrection, type EngineCheck, type EngineCheckResult } from "./engine-check";
+export { compareEngine, comparePayCorrection, engineCompares, type EngineCheck, type EngineCheckResult } from "./engine-check";
 
 export type StoreDeps = { db?: TenantDb; clock?: () => Date };
 
@@ -56,6 +56,15 @@ export function dbTurnStore(session: Session, deps: StoreDeps = {}): TurnStore {
         const found = await tx((q) => findProposalConflict(q, input));
         if (!found) throw err;
         return found;
+      }
+    },
+    checkDraft: async (draft, ctx) => {
+      try {
+        return await tx((q) => engineCheckDraft(q, ctx, draft));
+      } catch (err) {
+        // The transaction itself failed (the membership check, the connection): unknown.
+        console.warn("gateway: the draft check could not run:", err instanceof Error ? err.name : "unknown");
+        return null;
       }
     },
     flagTurnProposals: (turnId, inputId) => tx((q) => flagTurnProposals(q, turnId, inputId, clock())),

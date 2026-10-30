@@ -14,7 +14,7 @@ import { cardAnchor } from "./card-anchor";
 
 export type NeedsYouAmount = { cents: number; label: string };
 export type NeedsYouRow = {
-  key: "cards" | "paystubs" | "advances" | "invoice_cards" | "past_due";
+  key: "cards" | "escalated" | "paystubs" | "advances" | "invoice_cards" | "past_due";
   count: number;
   // The count was cut off at the read's limit, so there may be more.
   atLeast: boolean;
@@ -57,6 +57,47 @@ export function cardsRow(turns: readonly TurnView[]): NeedsYouRow | null {
     href: `#${cardAnchor(cards[cards.length - 1].id)}`,
     linkLabel: "Go to the newest card",
   };
+}
+
+// Requests in this person's chat the agent could not make a card for that passed the checks, so
+// they went to a person (design-agents-102 3.2, D2). The count is the last 7 days; the link opens
+// the chat's page, since nothing in the thread marks a turn to land on. No amount: no card exists
+// for an escalated request.
+export function escalatedRow(count: number): NeedsYouRow | null {
+  if (!Number.isSafeInteger(count) || count <= 0) return null;
+  return {
+    key: "escalated",
+    count,
+    atLeast: false,
+    what: `${plural(count, "request", "requests")} in your chat escalated to a person`,
+    amounts: [],
+    href: "/",
+    linkLabel: "Open your chat",
+  };
+}
+
+// How far back the escalated row counts.
+export const ESCALATED_DAYS = 7;
+
+type EscalatedCount = { n: number | string };
+
+// This person's escalated turns (a demo visit: its own visit's), the same scope the chat and the
+// trace read with, since a turn is only readable by the person whose chat it is in.
+async function readEscalated(
+  q: Queryable,
+  e: { now: Date; sub: string; visitId: string | null },
+): Promise<NeedsYouRow | null> {
+  const [row] = await q.query<EscalatedCount>(
+    `SELECT count(*) AS n
+       FROM turns t
+       JOIN conversations c ON c.id = t.conversation_id AND c.tenant_id = t.tenant_id
+      WHERE t.tenant_id = current_tenant_id() AND t.ended_reason = 'escalated'
+        AND c.created_by = $1
+        AND c.demo_session_id IS NOT DISTINCT FROM CAST($2 AS uuid)
+        AND t.finished_at > CAST($3 AS timestamptz) - make_interval(days => ${ESCALATED_DAYS})`,
+    [e.sub, e.visitId, e.now.toISOString()],
+  );
+  return row ? escalatedRow(Number(row.n)) : null;
 }
 
 // This pay week's paystubs whose card waits for approval.
@@ -125,9 +166,18 @@ export function pastDueRow(rows: readonly InvoiceListRow[]): NeedsYouRow | null 
 export async function readNeedsYou(
   q: Queryable,
   // today is the carrier's own date in its named timezone (carrierToday), for the aging buckets.
-  opts: { today: LocalDate; settlements: boolean; advances: boolean; invoices: boolean },
+  // escalations: only while verification and the agent are on (the caller decides), the person's
+  // own chat to count in.
+  opts: {
+    today: LocalDate;
+    settlements: boolean;
+    advances: boolean;
+    invoices: boolean;
+    escalations?: { now: Date; sub: string; visitId: string | null };
+  },
 ): Promise<NeedsYouRow[]> {
   const rows: (NeedsYouRow | null)[] = [];
+  if (opts.escalations) rows.push(await readEscalated(q, opts.escalations));
   if (opts.settlements) rows.push(paystubsRow((await readSettlementsView(q, null)).rows));
   if (opts.advances) rows.push(advancesRow(await readAdvanceList(q, "requested")));
   if (opts.invoices) {

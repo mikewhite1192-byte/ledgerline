@@ -162,6 +162,15 @@ export default async function Home({
           settlements: flags.settlementsEnabled,
           advances: flags.advancesEnabled,
           invoices: flags.invoicesEnabled,
+          ...(flags.verification.enabled && flags.agentEnabled
+            ? {
+                escalations: {
+                  now: new Date(),
+                  sub: carrier.session.sub,
+                  visitId: carrier.session.demoSessionId ?? null,
+                },
+              }
+            : {}),
         }),
       );
     } catch (err) {

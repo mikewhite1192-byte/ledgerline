@@ -670,7 +670,12 @@ export type Flags = {
   // any item is written) and records how much of the week its checks covered, with the second
   // opinion's drivers when it ran. Off means today's start and today's updates exactly: nothing
   // reads or writes sweep_runs.coverage. It moves no money, sends nothing and makes no model call.
-  verification: { enabled: boolean };
+  // The same switch runs the chat loop's checks inside the submit (design-agents-102 3.2): a card
+  // whose citations are not in the record, or whose figure the engine does not recompute to the
+  // cent, is refused before it is saved and the agent may revise it; after maxAttempts refused
+  // tries of one propose tool (clamped to 1..3) the turn ends and goes to a person. Off means
+  // today's prompt, today's loop and today's insert exactly.
+  verification: { enabled: boolean; maxAttempts: number };
 };
 
 export const flags: Flags = {
@@ -873,7 +878,7 @@ export const flags: Flags = {
   evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
   groundedRatesEnabled: false,
   ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
-  verification: { enabled: false },
+  verification: { enabled: false, maxAttempts: 3 },
 };
 
 applyLocalOverrides(flags);

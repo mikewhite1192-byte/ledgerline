@@ -6,6 +6,7 @@ import type { Queryable } from "../../../db";
 import { notesSection, type NoteRow } from "../../../memory/notes";
 import { dollars } from "../../../money/format";
 import { localDateOf, periodContaining } from "../../../time/local-date";
+import { isAuditConcern } from "../../auditor/words";
 import { STATE_HEADER } from "../../policy";
 
 // The compact state summary (design 2.3, tip 5): Muse Spark never sees the chat history, only
@@ -68,9 +69,33 @@ type ProposalRow = {
   status: string;
   flagged: boolean;
   auditor_verdict: string | null;
+  auditor_concerns?: string | null;
 };
 type BlockRow = { tool: string; reason: string; limit_cents: number | string | null };
 type SubjectRow = { subject_table: string | null; subject_id: string | null };
+
+// One card's line in the state summary. While verification is on, the auditor's concerns ride
+// beside its verdict as their fixed codes (design-agents-102 3.2, D1: a block holds the card and the
+// next turn sees why, so the agent can revise when asked). A stored value that is not one of the
+// auditor's words is left out. Off, it is today's line exactly.
+export function proposalLine(p: ProposalRow, money: (cents: number) => string, concerns: boolean): string {
+  const line =
+    `- ${p.id} ${p.kind} ${p.subject_label ?? "record"} ${money(Number(p.amount_cents))} ` +
+    `${p.status}, flagged ${p.flagged ? "yes" : "no"}, auditor ${p.auditor_verdict ?? "none"}`;
+  if (!concerns) return line;
+  const codes = concernCodes(p.auditor_concerns ?? null);
+  return codes.length > 0 ? `${line} (concerns ${codes.join(", ")})` : line;
+}
+
+function concernCodes(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? [...new Set(parsed.filter(isAuditConcern))].slice(0, 8) : [];
+  } catch {
+    return [];
+  }
+}
 
 const LABEL_SQL = `CASE p.subject_table
     WHEN 'drivers' THEN (SELECT d.code FROM drivers d WHERE d.id = p.subject_id)
@@ -206,7 +231,8 @@ export async function buildStateSummary(
 
   const proposals = await q.query<ProposalRow>(
     `SELECT p.id, p.kind, ${LABEL_SQL} AS subject_label, p.amount_cents, p.status,
-            (p.flagged_input_id IS NOT NULL) AS flagged, p.auditor_verdict
+            (p.flagged_input_id IS NOT NULL) AS flagged, p.auditor_verdict,
+            CAST(p.auditor_concerns AS text) AS auditor_concerns
        FROM proposals p
       WHERE p.conversation_id = CAST($1 AS uuid)
       ORDER BY p.created_at DESC, p.id LIMIT 10`,
@@ -214,11 +240,7 @@ export async function buildStateSummary(
   );
   sections.push({
     title: "Proposals in this conversation",
-    lines: proposals.map(
-      (p) =>
-        `- ${p.id} ${p.kind} ${p.subject_label ?? "record"} ${money(Number(p.amount_cents))} ` +
-        `${p.status}, flagged ${p.flagged ? "yes" : "no"}, auditor ${p.auditor_verdict ?? "none"}`,
-    ),
+    lines: proposals.map((p) => proposalLine(p, money, flags.verification.enabled)),
     maxChars: 1600,
   });
 
