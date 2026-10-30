@@ -75,6 +75,8 @@ const KEPT_OFF = [
   "quarterReviewEnabled",
   // Step through for staff on production is the owner's call, in its own one-line PR.
   "stepThrough.staff",
+  // The demo visitor sign-in ships dark with its own merge; the owner turns it on in its own PR.
+  "judgeAccess.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
