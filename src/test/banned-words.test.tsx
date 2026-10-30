@@ -94,6 +94,10 @@ import type { SettlementRecordView } from "@/lib/settlements/views";
 import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
 import { SAMPLE_PROPOSAL_ID, SAMPLE_TURN_ID, sampleTrace } from "@/lib/trace/sample";
 import { NOTE_NOT_KEPT } from "@/lib/trace/steps";
+import { NeedsYou } from "@/components/app/needs-you";
+import { escalatedText } from "@/lib/agent/policy";
+import { PROPOSAL_CHECK_WORDS } from "@/lib/agent/verify/required";
+import { escalatedRow } from "@/lib/home/needs-you";
 import { VOICE_STATUS_WORDS } from "@/lib/voice/words";
 import * as fx from "./page-fixtures";
 
@@ -2432,6 +2436,39 @@ describe("no internal word in a chat answer or its trace", () => {
     const text = container.textContent ?? "";
     expect(text).toContain("I stopped after 6 steps. Done: Read Rosa's loads this week. Not done:");
     expect(text).toContain("Nothing was paid or sent.");
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("a request that went to a person after its refused tries, the checks' words, and its Needs you row", () => {
+    const escalated: TurnView = {
+      ...fx.TURNS[0],
+      id: "turn-escalated",
+      status: "partial",
+      endedReason: "escalated",
+      text: escalatedText(3),
+      proposals: [],
+      steps: [
+        { id: "esc-1", seq: 1, kind: "tool", label: "Checking advance eligibility", state: "failed" },
+        { id: "esc-2", seq: 2, kind: "escalation", label: "Escalated to a person", state: "failed" },
+      ],
+    };
+    const fewer = [1, 2].map((n): TurnView => ({ ...escalated, id: `turn-escalated-${n}`, text: escalatedText(n) }));
+    const messages = toMessages([escalated, ...fewer], {}, {}, undefined, { on: true, checking: {}, timezone: fx.TENANT.timezone });
+    const { container } = render(
+      <>
+        <ChatThread messages={messages} composer={{}} />
+        <NeedsYou view={{ rows: [escalatedRow(2, "88888888-8888-4888-8888-888888888888")!], unread: false }} />
+        <ul>
+          {Object.values(PROPOSAL_CHECK_WORDS).map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      </>,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("I tried three times and could not make a card that passed the checks.");
+    expect(text).toContain("I tried twice");
+    expect(text).toContain("requests in your chat escalated to a person");
     expect(scan(container)).toEqual([]);
   });
 

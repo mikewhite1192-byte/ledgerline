@@ -6,7 +6,7 @@ import type { InvoiceListRow } from "@/lib/invoices/views";
 import type { SettlementListRow } from "@/lib/settlements/views";
 import { carrierToday } from "@/lib/tenant/shell";
 import * as fx from "@/test/page-fixtures";
-import { advancesRow, cardsRow, invoiceCardsRow, pastDueRow, paystubsRow, readNeedsYou } from "./needs-you";
+import { advancesRow, cardsRow, escalatedRow, invoiceCardsRow, pastDueRow, paystubsRow, readNeedsYou } from "./needs-you";
 
 // The reads the strip makes, answered from fixture rows, with what each was asked for.
 const reads = vi.hoisted(() => ({
@@ -173,5 +173,50 @@ describe("readNeedsYou", () => {
     });
     expect(reads.asked).toEqual(["settlements:null", "advances:requested", "cards:invoice_post:200", "invoices:2026-10-29"]);
     expect(rows.map((r) => r.key)).toEqual(["paystubs", "advances", "invoice_cards", "past_due"]);
+  });
+});
+
+describe("the escalated row", () => {
+  const TURN = "88888888-8888-4888-8888-888888888888";
+
+  it("counts requests that went to a person, links to the newest turn, and carries no amount", () => {
+    expect(escalatedRow(2, TURN)).toEqual({
+      key: "escalated",
+      count: 2,
+      atLeast: false,
+      what: "requests in your chat escalated to a person",
+      amounts: [],
+      href: `#turn-${TURN}`,
+      linkLabel: "Go to the newest one",
+    });
+    expect(escalatedRow(1, TURN)?.what).toBe("request in your chat escalated to a person");
+  });
+
+  it("is left out with none, an unreadable count or no turn to link to", () => {
+    expect(escalatedRow(0, TURN)).toBeNull();
+    expect(escalatedRow(Number.NaN, TURN)).toBeNull();
+    expect(escalatedRow(3, null)).toBeNull();
+  });
+
+  it("is read only when Home asks, in this person's own chat and visit, over the last 7 days", async () => {
+    const asked: { sql: string; params: unknown[] }[] = [];
+    const q = {
+      query: async (sql: string, params: unknown[]) => {
+        asked.push({ sql, params });
+        return [{ n: "2", newest: TURN }];
+      },
+    } as unknown as Queryable;
+    const base = { today: "2026-10-29" as const, settlements: false, advances: false, invoices: false };
+    expect(await readNeedsYou(q, base)).toEqual([]);
+    expect(asked).toEqual([]);
+    const now = new Date("2026-10-29T12:00:00Z");
+    const rows = await readNeedsYou(q, { ...base, escalations: { now, sub: "sub-1", visitId: null } });
+    expect(rows.map((r) => [r.key, r.count, r.href])).toEqual([["escalated", 2, `#turn-${TURN}`]]);
+    expect(asked).toHaveLength(1);
+    expect(asked[0].params).toEqual(["sub-1", null, "2026-10-29T12:00:00.000Z"]);
+    expect(asked[0].sql).toContain("t.ended_reason = 'escalated'");
+    expect(asked[0].sql).toContain("c.created_by = $1");
+    expect(asked[0].sql).toContain("c.demo_session_id IS NOT DISTINCT FROM CAST($2 AS uuid)");
+    expect(asked[0].sql).toContain("make_interval(days => 7)");
   });
 });

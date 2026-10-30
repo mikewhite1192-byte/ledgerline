@@ -43,6 +43,10 @@ export const REASON_CATEGORIES = [
   "driver_not_candidate",
   // A pay rule change's weekly impact, computed by the rules engine on the newest settled week.
   "rule_change_sized_by_engine",
+  // Refusals at persist, before the insert (design-agents-102 3.2): no citation on the card is from
+  // the case record, or the rules engine does not recompute the card's figure to the cent.
+  "citation_not_in_record",
+  "engine_mismatch",
 ] as const;
 export type ReasonCategory = (typeof REASON_CATEGORIES)[number];
 

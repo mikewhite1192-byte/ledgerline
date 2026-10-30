@@ -168,15 +168,21 @@ export async function persistProposal(
     typeof draft.args.operatorVerdict === "string" && CATEGORY.test(draft.args.operatorVerdict)
       ? draft.args.operatorVerdict
       : "not_given";
+  // The engine's match, when the loop checked the draft first, rides the same INSERT (the guard
+  // trigger restricts updates only); otherwise the three columns stay null.
+  const engine = input.engine?.check === "matched" ? input.engine : null;
   await q.execute(
     `INSERT INTO proposals
        (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id, amount_cents,
         direction, title, reasons, sources, args, exceptions, operator_verdict, flagged_input_id,
-        gateway_decision_id, dedupe_key, trace_id, created_at, updated_at)
+        gateway_decision_id, dedupe_key, trace_id, created_at, updated_at,
+        engine_check, engine_cents, engine_checked_at)
      VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), $4, $5,
              CAST($6 AS uuid), $7, $8, $9, CAST($10 AS jsonb), CAST($11 AS jsonb),
              CAST($12 AS jsonb), CAST($13 AS jsonb), $14, CAST($15 AS uuid), CAST($16 AS uuid), $17,
-             $18, CAST($19 AS timestamptz), CAST($19 AS timestamptz))`,
+             $18, CAST($19 AS timestamptz), CAST($19 AS timestamptz),
+             CAST($20 AS text), CAST($21 AS bigint),
+             CASE WHEN CAST($20 AS text) IS NULL THEN NULL ELSE CAST($19 AS timestamptz) END)`,
     [
       id,
       input.conversationId,
@@ -197,6 +203,8 @@ export async function persistProposal(
       key,
       input.traceId,
       nowIso,
+      engine ? "matched" : null,
+      engine && engine.engineCents !== null ? engine.engineCents : null,
     ],
   );
   return { kind: "created", proposalId: id, flagged: flag !== null };

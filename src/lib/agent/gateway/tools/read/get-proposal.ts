@@ -158,8 +158,8 @@ function refOf(v: unknown): Ref | null {
 }
 
 // The proposal's args as the gateway validated them, with anything that is not a safe scalar, a
-// list of them, or a record reference left out.
-function safeArgs(args: Record<string, unknown>): Record<string, unknown> {
+// list of them, or a record reference left out. Exported for the engine check on a draft.
+export function safeArgs(args: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args)) {
     if (!ARG_KEY.test(key)) continue;
