@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
@@ -15,12 +16,16 @@ const SESSION: Session = { sub: "sub-test", email: "ops@example.test", tenantId:
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
+  staffGate: vi.fn(),
   lookupRate: vi.fn(),
   pinSuggestion: vi.fn(),
   pinTyped: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here a caller is staff
+// unless a test says it is a demo visitor (the judge role).
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: mocks.staffGate }));
 vi.mock("@/lib/rates/lookup", () => ({ lookupRate: mocks.lookupRate }));
 vi.mock("@/lib/rates/pin", () => ({ pinSuggestion: mocks.pinSuggestion, pinTyped: mocks.pinTyped }));
 
@@ -38,6 +43,7 @@ const params = (id: string) => ({ params: Promise.resolve({ id }) });
 beforeEach(() => {
   flags.groundedRatesEnabled = true;
   mocks.getSession.mockResolvedValue(SESSION);
+  mocks.staffGate.mockResolvedValue(null);
   mocks.lookupRate.mockResolvedValue({ ok: true, status: "suggested", id: RATE });
   mocks.pinSuggestion.mockResolvedValue({ ok: true, id: RATE });
   mocks.pinTyped.mockResolvedValue({ ok: true, id: RATE, already: false });
@@ -163,5 +169,44 @@ describe("POST /api/rates/pin", () => {
     const res = await pinTyped(post("/api/rates/pin", { kind: "diesel_index", rate: "abc" }));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: "bad_request", retryable: false });
+  });
+});
+
+// A demo visitor reads the rates page but starts no lookup (it keeps a suggestion and spends the
+// carrier's lookups for the day) and pins nothing: each route answers the judge refusal from the
+// staff check before it reads the body or reaches a service.
+describe("a demo visitor (the judge role) on the rates routes", () => {
+  const judge = () =>
+    mocks.staffGate.mockResolvedValue(NextResponse.json({ error: "judge", retryable: false }, { status: 403 }));
+
+  const calls: [string, () => Request, (r: Request) => Promise<Response>][] = [
+    ["POST /api/rates/lookup", () => post("/api/rates/lookup", { kind: "diesel_index" }), (r) => lookup(r)],
+    ["POST /api/rates/[id]/pin", () => post(`/api/rates/${RATE}/pin`, { effectiveFrom: "2026-10-26" }), (r) => pinOne(r, params(RATE))],
+    [
+      "POST /api/rates/pin",
+      () => post("/api/rates/pin", { kind: "diesel_index", rate: "3.657", sourceUrl: "https://rates.example/x", effectiveFrom: "2026-10-26" }),
+      (r) => pinTyped(r),
+    ],
+  ];
+
+  it.each(calls)("%s refuses a judge before any work", async (_key, make, call) => {
+    judge();
+    const request = make();
+    const res = await call(request);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "judge", retryable: false });
+    expect(mocks.staffGate).toHaveBeenCalledTimes(1);
+    expect(mocks.staffGate).toHaveBeenCalledWith(SESSION);
+    expect(request.bodyUsed).toBe(false);
+    expect(mocks.lookupRate).not.toHaveBeenCalled();
+    expect(mocks.pinSuggestion).not.toHaveBeenCalled();
+    expect(mocks.pinTyped).not.toHaveBeenCalled();
+  });
+
+  it("runs the staff check only after the session, so a signed-out caller still reads 401", async () => {
+    judge();
+    mocks.getSession.mockResolvedValueOnce(null);
+    expect((await lookup(post("/api/rates/lookup", { kind: "diesel_index" }))).status).toBe(401);
+    expect(mocks.staffGate).not.toHaveBeenCalled();
   });
 });

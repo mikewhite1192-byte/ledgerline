@@ -1,5 +1,6 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
 import { pinSuggestion } from "@/lib/rates/pin";
 import { isUuid } from "@/lib/uuid";
@@ -17,6 +18,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!flags.groundedRatesEnabled) return refused("disabled");
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id } = await params;
   const body = await objectBody(request);
   if (!isUuid(id) || !body) return refused("bad_request");
