@@ -3,8 +3,10 @@
 import { Check, X } from "lucide-react";
 import { useEffect, useRef, type ReactNode } from "react";
 import { Mark } from "@/components/brand/mark";
+import { Badge } from "@/components/ui/badge";
 import { HowWorkedOut, type TraceLoader } from "@/components/trace/how-worked-out";
 import type { Checklist as ChecklistData } from "@/lib/agent/checklist";
+import type { TermId } from "@/lib/format/terms";
 import { cn } from "@/lib/cn";
 import { recordHref, type HrefFor } from "@/lib/records/href";
 import { AnswerText } from "./answer-text";
@@ -15,6 +17,7 @@ import { DataTable, type DataTableProps } from "./data-table";
 import { ProposalCard, type ProposalCardProps } from "./proposal-card";
 import { PromptChips, type Suggestion } from "./prompt-chips";
 import { ErrorState } from "./states";
+import { Term } from "./term";
 
 export type Step = { id: string; label: string; state: "running" | "done" | "failed" };
 
@@ -24,6 +27,9 @@ export type Part =
   | { kind: "steps"; steps: Step[] }
   // The plan the answer set and ticks as it goes; it sits above the steps.
   | { kind: "checklist"; checklist: ChecklistData }
+  // The answer's header (src/lib/agent/verify.ts): a pill with its hover help, and for Unverified
+  // the reason. Fixed words only.
+  | { kind: "verify"; state: "verified" | "unverified"; pill: string; reason: string | null; help: TermId }
   | { kind: "proposal"; proposal: Omit<ProposalCardProps, "hrefFor"> }
   // onVisible, when set, is called once the table first scrolls into view (a report reads its
   // rows then, not at page load).
@@ -206,6 +212,15 @@ export function ChatThread({
                         return <Steps key={i} steps={p.steps} />;
                       case "checklist":
                         return <Checklist key="checklist" list={p.checklist} />;
+                      case "verify":
+                        return (
+                          <div key="verify" className="flex flex-wrap items-center gap-2">
+                            <Badge tone={p.state === "verified" ? "success" : "warning"}>
+                              <Term id={p.help}>{p.pill}</Term>
+                            </Badge>
+                            {p.reason ? <span className="text-small text-foreground-2">{p.reason}</span> : null}
+                          </div>
+                        );
                       case "proposal":
                         // Keyed by the proposal, not its place, so an open confirm row stays with it.
                         // The anchor (card-<id>) is where Home's "Needs you" link lands.

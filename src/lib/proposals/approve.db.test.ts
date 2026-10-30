@@ -593,4 +593,166 @@ describe("approving and rejecting a proposal", () => {
       expect(ran).toEqual([p.id, p.id, p.id]);
     });
   });
+
+  // The rules engine's own recompute, stored on the proposal (0045). A mismatch is held for a
+  // person's reason while verifyEngineMismatchBlocks is on; nothing else about the gate changes.
+  describe("the engine check at the gate", () => {
+    const BLOCK: Audit = { verdict: "block", concerns: ["amount_wrong"] };
+    const REASON = "The rate sheet changed this week";
+
+    afterEach(() => {
+      ran.length = 0;
+    });
+
+    // Stored the way the store writes it: once, while the proposal waits.
+    const setEngine = (id: string, check: "matched" | "mismatch" | "unavailable", cents: number | null = 24_999) =>
+      admin.withTenant(A.tenantId, (q) =>
+        one(
+          q,
+          `UPDATE proposals SET engine_check = $2, engine_cents = $3, engine_checked_at = CAST($4 AS timestamptz)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [id, check, cents, CHECKED_AT],
+        ),
+      );
+
+    type EngineRow = { check: string | null; reason: string | null; by: string | null; at: string | null };
+    const engineRow = async (id: string) =>
+      (
+        await admin.withTenant(A.tenantId, (q) =>
+          q.query<EngineRow>(
+            `SELECT engine_check AS check, engine_override_reason AS reason, engine_override_by AS by,
+                    to_char(engine_override_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at
+               FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+            [id],
+          ),
+        )
+      )[0];
+
+    // A write as the app login, the way the store and the gate run. A table CHECK is named by its
+    // constraint; the guard trigger's refusal carries its error code only.
+    const asApp = async (sql: string, params: Param[]) => {
+      const err = await app.withTenant(A.tenantId, (q) => q.execute(sql, params)).then(
+        () => undefined,
+        (e: unknown) => e as { sqlState?: string; constraint?: string },
+      );
+      return err === undefined ? "no error" : (err.constraint ?? err.sqlState);
+    };
+    const DECIDE = "decided_by = 'someone', decided_at = now()";
+
+    it("refuses a mismatch without a valid reason, even on a pass, and stores nothing", async () => {
+      const p = await addProposal();
+      await setEngine(p.id, "mismatch");
+      for (const overrideReason of [undefined, null, "", "          ", "a".repeat(9), "a".repeat(241)]) {
+        expect(await approveWith(p.id, { confirmed: true, overrideReason }), String(overrideReason?.length)).toMatchObject({
+          ok: false,
+          category: "engine_override_required",
+        });
+      }
+      expect(ran).toEqual([]);
+      expect(await proposalRow(p.id)).toMatchObject({ status: "proposed", decided_by: null });
+      expect(await engineRow(p.id)).toMatchObject({ check: "mismatch", reason: null, by: null, at: null });
+      // The card reads it held, with no reason yet.
+      const view = await readAgentTurn(A.session, p.turnId, { db: app });
+      expect(view?.proposals[0]).toMatchObject({ engineCheck: "mismatch", engineHeld: true, engineOverride: null });
+    });
+
+    it("stores the reason with who and when in the approval itself, on one click for a pass, and logs its length only", async () => {
+      const info = vi.spyOn(console, "info").mockImplementation(() => {});
+      const p = await addProposal();
+      await setEngine(p.id, "mismatch");
+      expect(await approveWith(p.id, { confirmed: false, overrideReason: `  ${REASON}  ` })).toMatchObject({ ok: true, proposalId: p.id });
+      expect(ran).toEqual([p.id]);
+      const at = new Date(NOW).toISOString();
+      expect(await engineRow(p.id)).toEqual({ check: "mismatch", reason: REASON, by: A.session.sub, at });
+      // The second check's override columns stay for a block only.
+      expect(await overrideRow(p.id)).toMatchObject({ reason: null, by: null, at: null });
+      const lines = info.mock.calls.map((c) => c.join(" "));
+      expect(lines).toContain(`proposal ${p.id} engine_override=stored len=${REASON.length}`);
+      expect(lines).not.toContain(`proposal ${p.id} override=stored len=${REASON.length}`);
+      expect(lines.join("\n")).not.toContain("rate sheet");
+      const view = await readAgentTurn(A.session, p.turnId, { db: app });
+      expect(view?.proposals[0]).toMatchObject({
+        engineCheck: "mismatch",
+        engineHeld: false,
+        engineOverride: { reason: REASON, byLabel: "a staff member", at },
+      });
+    });
+
+    it("stores one reason for a block and a mismatch together, for the verdict the card showed", async () => {
+      vi.spyOn(console, "info").mockImplementation(() => {});
+      const p = await addProposal({ audit: BLOCK });
+      await setEngine(p.id, "mismatch");
+      expect(await approveWith(p.id, { confirmed: true, overrideReason: REASON })).toMatchObject({ ok: false, category: "stale" });
+      expect(ran).toEqual([]);
+      expect(await approveWith(p.id, { confirmed: true, overrideReason: REASON, auditedAt: CHECKED_AT })).toMatchObject({ ok: true });
+      expect(await engineRow(p.id)).toMatchObject({ reason: REASON, by: A.session.sub });
+      expect(await overrideRow(p.id)).toMatchObject({ reason: REASON, by: A.session.sub });
+    });
+
+    it("holds no match, no unavailable or unchecked card, and no mismatch with the switch off", async () => {
+      for (const check of ["matched", "unavailable"] as const) {
+        const p = await addProposal();
+        await setEngine(p.id, check, check === "matched" ? 25_000 : null);
+        expect(await approveWith(p.id, { confirmed: false }), check).toMatchObject({ ok: true });
+        const view = await readAgentTurn(A.session, p.turnId, { db: app });
+        expect(view?.proposals[0], check).toMatchObject({ engineCheck: check, engineHeld: false });
+      }
+      flags.verifyEngineMismatchBlocks = false;
+      const off = await addProposal();
+      await setEngine(off.id, "mismatch");
+      const view = await readAgentTurn(A.session, off.turnId, { db: app });
+      expect(view?.proposals[0]).toMatchObject({ engineCheck: "mismatch", engineHeld: false });
+      expect(await approveWith(off.id, { confirmed: false })).toMatchObject({ ok: true });
+      expect(await engineRow(off.id)).toMatchObject({ reason: null, by: null, at: null });
+    });
+
+    it("never changes a stored check, and sets one only while the proposal waits", async () => {
+      const p = await addProposal();
+      await setEngine(p.id, "matched", 25_000);
+      const where = "WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
+      expect(await asApp(`UPDATE proposals SET engine_check = 'mismatch' ${where}`, [p.id])).toBe("23514");
+      expect(await asApp(`UPDATE proposals SET engine_cents = 1 ${where}`, [p.id])).toBe("23514");
+      expect(await asApp(`UPDATE proposals SET engine_checked_at = now() ${where}`, [p.id])).toBe("23514");
+      // A check with no time, or cents with no check, is refused by the table itself.
+      const bare = await addProposal();
+      expect(await asApp(`UPDATE proposals SET engine_check = 'matched' ${where}`, [bare.id])).toBe("proposals_engine_check_whole");
+      expect(await asApp(`UPDATE proposals SET engine_cents = 5 ${where}`, [bare.id])).toBe("proposals_engine_cents_with_check");
+      // Decided first, then checked: refused.
+      expect(await approveWith(bare.id, { confirmed: false })).toMatchObject({ ok: true });
+      expect(
+        await asApp(`UPDATE proposals SET engine_check = 'matched', engine_checked_at = now() ${where}`, [bare.id]),
+      ).toBe("23514");
+      // Checked in the statement that decides it: refused.
+      const deciding = await addProposal();
+      expect(
+        await asApp(
+          `UPDATE proposals SET status = 'rejected', ${DECIDE}, engine_check = 'matched', engine_checked_at = now() ${where}`,
+          [deciding.id],
+        ),
+      ).toBe("23514");
+      expect(await engineRow(deciding.id)).toMatchObject({ check: null });
+    });
+
+    it("sets an override only with the approval and only on a mismatch, and never changes it", async () => {
+      const where = "WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
+      const set = `engine_override_reason = '${REASON}', engine_override_by = 'someone', engine_override_at = now()`;
+      const waiting = await addProposal();
+      await setEngine(waiting.id, "mismatch");
+      expect(await asApp(`UPDATE proposals SET ${set} ${where}`, [waiting.id])).toBe("23514");
+      const matched = await addProposal();
+      await setEngine(matched.id, "matched", 25_000);
+      expect(await asApp(`UPDATE proposals SET status = 'approved', ${DECIDE}, ${set} ${where}`, [matched.id])).toBe(
+        "proposals_engine_override_only_mismatch",
+      );
+      expect(await engineRow(matched.id)).toMatchObject({ reason: null });
+      vi.spyOn(console, "info").mockImplementation(() => {});
+      expect(await approveWith(waiting.id, { confirmed: false, overrideReason: REASON })).toMatchObject({ ok: true });
+      expect(await asApp(`UPDATE proposals SET engine_override_reason = 'A different reason entirely' ${where}`, [waiting.id])).toBe(
+        "23514",
+      );
+      const cleared = "engine_override_reason = NULL, engine_override_by = NULL, engine_override_at = NULL";
+      expect(await asApp(`UPDATE proposals SET ${cleared} ${where}`, [waiting.id])).toBe("23514");
+      expect(await engineRow(waiting.id)).toMatchObject({ reason: REASON });
+    });
+  });
 });

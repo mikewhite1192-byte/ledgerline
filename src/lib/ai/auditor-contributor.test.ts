@@ -105,6 +105,7 @@ function store(): AuditStore {
       state.checkedAt = now.toISOString();
       return true;
     },
+    checkEngine: async () => true,
   };
 }
 

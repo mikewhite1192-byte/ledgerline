@@ -1,6 +1,7 @@
-import type { ProposalAudit, ProposalCardProps } from "@/components/app/proposal-card";
+import type { ProposalAudit, ProposalCardProps, ProposalVerification } from "@/components/app/proposal-card";
 import { auditConfirmQuestion, sentences } from "@/lib/agent/auditor/words";
 import { flagWords } from "@/lib/agent/reasons";
+import { verification } from "@/lib/agent/verify";
 import type { ProposalView } from "@/lib/agent/view";
 import { plannedLine, requestStatusWords } from "@/lib/factoring/words";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
@@ -46,15 +47,27 @@ export function flagNoteFor(categories: readonly string[]): string {
 // override (UTC only when the page does not know it).
 export type AuditContext = { on: boolean; checking: boolean; timezone?: string };
 
-function overrideOf(p: ProposalView, timezone: string): ProposalAudit["override"] {
-  if (!p.auditorOverride) return undefined;
-  let at = p.auditorOverride.at;
+function overrideAt(o: { reason: string; byLabel: string; at: string }, timezone: string) {
+  let at = o.at;
   try {
-    at = formatInstant(p.auditorOverride.at, timezone);
+    at = formatInstant(o.at, timezone);
   } catch {
     // shown as stored
   }
-  return { reason: p.auditorOverride.reason, byLabel: p.auditorOverride.byLabel, at };
+  return { reason: o.reason, byLabel: o.byLabel, at };
+}
+
+function overrideOf(p: ProposalView, timezone: string): ProposalAudit["override"] {
+  return p.auditorOverride ? overrideAt(p.auditorOverride, timezone) : undefined;
+}
+
+// Both checks as one label (src/lib/agent/verify.ts), with a person's reason for approving over a
+// mismatch. Nothing when the page did not read the engine check.
+export function verificationFor(p: ProposalView, ctx?: AuditContext): ProposalVerification | undefined {
+  const v = verification(p, ctx?.on ?? false);
+  if (!v) return undefined;
+  const override = p.engineOverride ? overrideAt(p.engineOverride, ctx?.timezone ?? "UTC") : undefined;
+  return override ? { ...v, override } : v;
 }
 
 // The auditor's line on the card, from the stored verdict. Concerns are fixed sentences per
@@ -369,6 +382,7 @@ export function proposalCardFrom(
   else confirmQuestion = copy.ask?.(p, formatCents(Math.abs(p.amountCents)));
   const confirmNext = copy.next?.(p);
   const references = referencesFor(p);
+  const verify = verificationFor(p, audit);
   const detention =
     p.kind === "detention_charge" && p.detention
       ? detentionLines(p.detention, p.amountCents).map((text) => ({ text }))
@@ -395,6 +409,7 @@ export function proposalCardFrom(
     ...(references ? { references } : {}),
     flagNote: p.flagged ? flagNoteFor(p.flagCategories) : undefined,
     ...(audit ? { audit: auditFor(p, audit) } : {}),
+    ...(verify ? { verification: verify } : {}),
     // An advance, a pay correction, a money code, a card match and a factoring card have executors
     // that resume an approval left approved by a stop before its run finished (the correction's pay
     // item is keyed by the proposal, a money code is one row per proposal, the match's card and
