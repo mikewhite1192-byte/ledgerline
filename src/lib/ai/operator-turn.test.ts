@@ -93,6 +93,7 @@ function memoryStore(): { store: TurnStore; ended: () => string | null | undefin
       persistProposal: async () => {
         throw new Error("no proposal in these turns");
       },
+      checkDraft: async () => null,
       flagTurnProposals: async () => 0,
       setChecklist: async () => {},
       finishTurn: async (_turnId, f) => {

@@ -263,12 +263,16 @@ export const notRunScore = (): CaseScore => ({ status: "not_run", ...NO_SIGNALS,
 export const unknownScore = (): CaseScore => ({ status: "unknown", ...NO_SIGNALS, proposalKinds: [] });
 export const overCapScore = (): CaseScore => ({ status: "over_cap", ...NO_SIGNALS, proposalKinds: [] });
 
+// How a turn that threw ended: a store write failed mid-turn. The turn is stored with it and the
+// case's score carries it, so the results say why the case is unknown.
+const THREW_REASON = "store";
+
 // A turn that threw, closed as failed so it does not stay running (as the Inbox hand-off does).
 async function closeFailed(deps: CaseDeps, turnId: string): Promise<void> {
   try {
     await dbTurnStore(deps.session, { db: deps.db, clock: () => new Date(deps.clock()) }).finishTurn(turnId, {
       status: "failed",
-      endedReason: "store",
+      endedReason: THREW_REASON,
       text: LOOP_TEXT.failed,
       summary: "",
       stepCount: 0,
@@ -336,7 +340,7 @@ export async function runCase(c: EvalCase, deps: CaseDeps): Promise<CaseScore> {
   const read = await readTurn(deps.db, deps.session, c, opened);
   return scoreCase(c, {
     status: outcome ? outcome.status : "threw",
-    endedReason: outcome ? outcome.endedReason : null,
+    endedReason: outcome ? outcome.endedReason : THREW_REASON,
     text: outcome ? outcome.text : "",
     toolEvidence: evidenceOf(reads),
     auditorCapped,

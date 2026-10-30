@@ -11,7 +11,7 @@ import type { Session } from "../auth/claims";
 import { checkInputOf } from "../data/records";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, Param, TenantDb } from "../db/types";
 import { runAllChecks } from "../rules-engine";
 import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
@@ -246,5 +246,36 @@ describe("an eval case on the real tables", () => {
       expect(out.results.map((r) => [r.score.status, r.cached])).toEqual([["unknown", false]]);
       expect(out.stoppedAtCap).toBe(false);
     }
+  });
+
+  it("a turn whose store write throws is stored failed and scored unknown with the store as its reason", async () => {
+    turnOn();
+    // The app's database, refusing every step insert: the turn store throws, so the turn itself
+    // throws. Every other query (opening the turn, closing it failed, the reads) goes through.
+    const stepsRefused: TenantDb = {
+      withTenant: (tenantId, fn) =>
+        app.withTenant(tenantId, (q) =>
+          fn({
+            async query<R>(sql: string, params?: Param[]): Promise<R[]> {
+              if (sql.includes("INSERT INTO turn_steps")) throw new Error("step insert refused");
+              return q.query<R>(sql, params);
+            },
+            execute: (sql, params) => q.execute(sql, params),
+          }),
+        ),
+    };
+    const complete = vi.fn(recorded([]));
+    const audit = vi.fn(auditPass);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const s = await runCase(theCase, { ...deps(complete, audit), db: stepsRefused });
+      expect(s).toMatchObject({ status: "unknown", pass: null, operatorRight: null, proposalKinds: [], endedReason: "store" });
+      expect(complete).not.toHaveBeenCalled();
+      expect(audit).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+    const turns = await admin.withTenant(T, (q) => q.query<{ status: string; ended_reason: string | null }>("SELECT status, ended_reason FROM turns"));
+    expect(turns).toEqual([{ status: "failed", ended_reason: "store" }]);
   });
 });
