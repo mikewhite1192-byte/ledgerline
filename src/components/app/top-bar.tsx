@@ -9,9 +9,10 @@ import { HideAmounts } from "./hide-amounts";
 
 const ASK_HREF = `/#${ASK_ANCHOR}`;
 
-// Home's question box, when it is on the page and can take a question.
+// Home's question box, when it is on the page and can take a question. It is picked by its own
+// mark, because a blocked card's "Why approve it anyway?" box sits above it in the thread.
 function composer(): HTMLTextAreaElement | null {
-  const box = document.getElementById(ASK_ANCHOR)?.querySelector("textarea");
+  const box = document.getElementById(ASK_ANCHOR)?.querySelector<HTMLTextAreaElement>("textarea[data-composer]");
   return box && !box.readOnly ? box : null;
 }
 

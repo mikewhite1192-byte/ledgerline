@@ -74,6 +74,7 @@ export function Composer({
         <textarea
           ref={ref}
           id={`${reasonId}-box`}
+          data-composer=""
           rows={1}
           value={text}
           readOnly={off}

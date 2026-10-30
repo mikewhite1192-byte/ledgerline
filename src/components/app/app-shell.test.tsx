@@ -4,7 +4,9 @@ import path from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
+import { ASK_ANCHOR } from "./anchors";
 import { AppShell, type NavItem } from "./app-shell";
+import { Composer } from "./composer";
 import { AMOUNTS_KEY } from "./hide-amounts";
 import { MASKED_AMOUNT, Money } from "./money";
 import { TEST_MODE_LINE, testModeOnly } from "./test-mode-banner";
@@ -95,6 +97,20 @@ describe("the top bar", () => {
     shell("/advances");
     expect(screen.queryByRole("link", { name: "Search or ask anything" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Ask" })).toBeNull();
+  });
+
+  it("puts the cursor in the question box, never in a blocked card's reason box above it", async () => {
+    flags.agentEnabled = true;
+    shell(
+      "/",
+      <div id={ASK_ANCHOR}>
+        <textarea aria-label="Why approve it anyway?" />
+        <Composer onSubmit={() => undefined} />
+      </div>,
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Search or ask anything" }));
+    const question = screen.getByRole("textbox", { name: "Your question" });
+    await waitFor(() => expect(document.activeElement).toBe(question));
   });
 
   it("prints no group line, and the bell counts what waits only when the page passed a count", () => {
