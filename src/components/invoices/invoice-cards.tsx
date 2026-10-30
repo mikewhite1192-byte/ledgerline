@@ -34,8 +34,8 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   not_found: "That card is not here.",
 };
 
-// A page may say some outcomes in its own words (the Cash page's cards name its button); the rest
-// are the shared sentences.
+// A page may say some outcomes in its own words (the Cash page's cards name its button, the Money
+// codes page's cards a code's categories); the rest are the shared sentences.
 function noticeFor(category: string | null, own?: Readonly<Record<string, string>>): string {
   if (category && own && Object.hasOwn(own, category)) return own[category];
   return category && Object.hasOwn(APPROVE_NOTICE, category) ? APPROVE_NOTICE[category] : outcomeLabel(category);
@@ -45,7 +45,8 @@ function noticeFor(category: string | null, own?: Readonly<Record<string, string
 // waiting card nobody has checked is sent to it once per mount. Approve runs the approve route (the
 // gate, then the invoice_post executor) and sends the second confirm whenever the card asked its
 // question: a flag, or any verdict but a pass. An override over a block carries the verdict instant
-// the card showed. Reject records the decision. Either way the page reads itself back.
+// the card showed. Reject records the decision. Either way the page reads itself back. Another
+// page's engine cards (the Cash and Money codes pages) pass their own list name and sentences.
 export function InvoiceCards({
   cards,
   auditorOn = false,

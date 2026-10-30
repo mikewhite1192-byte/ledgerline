@@ -114,6 +114,8 @@ export function capResult(result: Record<string, unknown>): {
 const ERROR_NAME = /^[A-Za-z][\w.]{0,63}$/;
 const ERROR_CATEGORY = /^[a-z_]{1,32}$/;
 const ERROR_CODE = /^[A-Z0-9_]{1,32}$/;
+// A limit's refusal word passes to the model only in this shape.
+const CATEGORY_WORD = /^[a-z_]{2,40}$/;
 function errorText(err: unknown): string {
   if (!(err instanceof Error)) return "error";
   const e = err as { category?: unknown; sqlState?: unknown; code?: unknown };
@@ -283,7 +285,12 @@ async function dispatch(
       return refuse(
         "blocked",
         limit.reason,
-        { blocked: true, reason: limit.reason, limitCents: limit.limitCents },
+        {
+          blocked: true,
+          reason: limit.reason,
+          limitCents: limit.limitCents,
+          ...(limit.category !== undefined && CATEGORY_WORD.test(limit.category) ? { category: limit.category } : {}),
+        },
         limit.limitCents === null ? {} : { limitCents: limit.limitCents },
       );
     }

@@ -6,6 +6,7 @@ import type { Suggestion } from "@/components/app/prompt-chips";
 import { decodeEvents } from "@/lib/agent/operator/stream";
 import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
+import { MONEY_CODE_APPROVE_NOTICE } from "@/lib/money-codes/words";
 import { answerTextOf, type ReportView, type StepView, type TurnView } from "@/lib/agent/view";
 import { stepLabel } from "@/lib/format/labels";
 import { NOT_NOW_FAILED, SAVE_FAILED, SAVE_NOTICES } from "@/lib/pay-rules/words";
@@ -25,8 +26,10 @@ const POLL_LIMIT = 40;
 const AUDIT_RETRY_MS = 90_000;
 
 // What the card's row says when an approval does not go through. Fixed sentences per category;
-// the advance executor's own refusals come from its closed list.
+// the advance executor's and the money code executor's own refusals come from their closed
+// lists, which share no word (src/lib/money-codes/words.test.ts).
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
+  ...MONEY_CODE_APPROVE_NOTICE,
   ...ADVANCE_APPROVE_NOTICE,
   not_executable: "This type of card cannot be approved yet. Nothing changed.",
   already_decided: "This card was already decided.",

@@ -15,6 +15,14 @@ export const REFUSAL_STATUS: Readonly<Record<string, number>> = {
   already_read: 409,
   in_progress: 409,
   attempt_limit: 429,
+  // The marked copy (markup route).
+  not_image: 422,
+  not_read: 409,
+  not_matched: 409,
+  agrees: 409,
+  no_anchor_line: 422,
+  already_checked: 409,
+  budget: 503,
 };
 
 // A thrown error as a reply: a non-member gets forbidden, anything else unavailable. Only the

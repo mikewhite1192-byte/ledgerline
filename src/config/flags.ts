@@ -106,6 +106,19 @@ export type Flags = {
     readMaxCostCents: number;
     perTenantPerDay: number;
   };
+  // The marked copy of a document photo: the image model circles the line in question and writes
+  // what the records say beside it, then a second read checks the copy before it is kept. On top
+  // of documentsEnabled. Off: the block is hidden and the route refuses before any call.
+  documentMarkupEnabled: boolean;
+  // Per try: the edit's and the check's cost bounds in cents (the wrapper's spend cap still
+  // applies), marked copies started per carrier per day, and the largest copy kept, in bytes
+  // (also the markup_length CHECK in migration 0055: raise both together).
+  markupLimits: {
+    editMaxCostCents: number;
+    checkMaxCostCents: number;
+    perTenantPerDay: number;
+    maxBytes: number;
+  };
   // The advance flow: approving an advance proposal, Retry, Check pending, Post to QuickBooks and
   // the request desk. Off means each refuses with disabled before any write. The agent can still
   // propose an advance (that writes only our own tables).
@@ -450,6 +463,21 @@ export type Flags = {
     comparesPerRun: number;
     comparesPerTenantPerDay: number;
   };
+  // Money codes (Test mode): a one-time code from the simulated fuel-card provider that a driver
+  // gives a lumper or a repair shop, charged to the driver's week and reimbursed by the receipt.
+  // enabled: the Money codes page, its menu item, the agent's two tools and approving a code; off,
+  // the page shows the feature as off, the routes answer 404, the tools are not offered and the
+  // kind has no executor. armed, capCents (inclusive: the most one code may be), perDriverPerDay
+  // and startDate (YYYY-MM-DD, tenant-local; it gates issuing, never proposing) are asked again on
+  // every approval, before the ledger reserves a row and by the issuer itself at the call, on top
+  // of payoutsEnabled.
+  moneyCodes: {
+    enabled: boolean;
+    armed: boolean;
+    capCents: number;
+    perDriverPerDay: number;
+    startDate: string;
+  };
   // Card check: compares the card provider's statement (Test mode: seeded rows), the bank and the
   // books with our own payment records, lists each difference with a plain sentence and a fix,
   // and drafts a card that matches an unknown card to a driver. Off: the page and menu item are
@@ -516,6 +544,8 @@ export const flags: Flags = {
   documentsEnabled: false,
   documentCrop: false,
   documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
+  documentMarkupEnabled: false,
+  markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
   advancesEnabled: false,
   advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-27" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
@@ -618,6 +648,7 @@ export const flags: Flags = {
     comparesPerRun: 10,
     comparesPerTenantPerDay: 20,
   },
+  moneyCodes: { enabled: false, armed: false, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
   cardRecon: {
     enabled: false,
     limits: {
