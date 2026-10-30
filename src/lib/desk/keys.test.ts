@@ -5,9 +5,13 @@ import {
   dueToday,
   eventKey,
   isoWeekOf,
+  isRerunSource,
   localMidnightOf,
   localNowOf,
+  MAX_PERIOD_GO,
   parseEventKey,
+  periodGoKey,
+  periodGoOf,
   periodKey,
   SUBJECT_TABLES,
 } from "./keys";
@@ -28,7 +32,18 @@ describe("event keys", () => {
     expect(parseEventKey("sweep:2026-10-31")).toEqual({ source: "sweep", subjectId: null });
     expect(parseEventKey("collections:2026-11-02")).toEqual({ source: "collections", subjectId: null });
     expect(parseEventKey("cash_check:2026-W44")).toEqual({ source: "cash_check", subjectId: null });
+    expect(parseEventKey("sweep:2026-10-31.2")).toEqual({ source: "sweep", subjectId: null });
+    expect(parseEventKey("sweep:2026-10-31.99")).toEqual({ source: "sweep", subjectId: null });
     for (const bad of [
+      "sweep:2026-10-31.1",
+      "sweep:2026-10-31.0",
+      "sweep:2026-10-31.02",
+      "sweep:2026-10-31.100",
+      "sweep:2026-10-31.",
+      "sweep:2026-10-31.2.2",
+      "collections:2026-11-02.2",
+      "cash_check:2026-W44.2",
+      `voice_note:${id}.2`,
       `voice_note:${ID}`,
       "voice_note:acme",
       "sweep:2026-W44",
@@ -44,6 +59,24 @@ describe("event keys", () => {
       42,
     ]) {
       expect(parseEventKey(bad)).toBeNull();
+    }
+  });
+
+  it("numbers a period's later goes, only for a source whose run the demo reset can remove", () => {
+    expect(isRerunSource("sweep")).toBe(true);
+    expect(isRerunSource("collections")).toBe(false);
+    expect(isRerunSource("cash_check")).toBe(false);
+    expect(periodGoKey("sweep:2026-10-31", 1)).toBe("sweep:2026-10-31");
+    expect(periodGoKey("sweep:2026-10-31", 2)).toBe("sweep:2026-10-31.2");
+    expect(periodGoKey("sweep:2026-10-31", MAX_PERIOD_GO)).toBe("sweep:2026-10-31.99");
+    for (const bad of [0, MAX_PERIOD_GO + 1, 1.5, Number.NaN]) {
+      expect(() => periodGoKey("sweep:2026-10-31", bad)).toThrow(RangeError);
+    }
+    expect(periodGoOf("sweep:2026-10-31", "sweep:2026-10-31")).toBe(1);
+    expect(periodGoOf("sweep:2026-10-31.2", "sweep:2026-10-31")).toBe(2);
+    expect(periodGoOf("sweep:2026-10-31.42", "sweep:2026-10-31")).toBe(42);
+    for (const bad of ["sweep:2026-10-31.1", "sweep:2026-10-31.02", "sweep:2026-10-311", "sweep:2026-10-30.2", null, 7]) {
+      expect(periodGoOf(bad, "sweep:2026-10-31")).toBeNull();
     }
   });
 

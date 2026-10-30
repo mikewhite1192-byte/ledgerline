@@ -104,7 +104,8 @@ export const DEMO_RESET_KEPT = {
     "date survives a reset; it names only the carrier",
   desk_log:
     "the desk loop's insert-only log, kept so the events it handled survive a reset; its subject ids " +
-    "have no foreign key, so it names nothing the reset deletes",
+    "have no foreign key, so it names nothing the reset deletes, and a day's sweep whose run the " +
+    "reset deletes is found again as that day's next go (src/lib/desk/discover.ts)",
   demo_sessions:
     "each demo visitor's sign-in with its spend and turn counts (0043); it names only the carrier, " +
     "the app login cannot delete it, and a reset must not hand a visitor a fresh budget",

@@ -119,15 +119,54 @@ export function duePeriodKeys(now: LocalNow, startDate: LocalDate): { source: Pe
   return PERIOD_SOURCES.filter((s) => dueToday(s, now)).map((source) => ({ source, key: periodKey(source, now.date) }));
 }
 
+// A period source whose finished work is one row of its own table, which only the demo reset ever
+// removes (the app login has no DELETE on it). When the reset removes the row a period's terminal
+// line names, that period's work is gone, so discovery finds it again as the period's next go.
+export const PERIOD_RUN_TABLES = { sweep: "sweep_runs" } as const;
+export type RerunSource = keyof typeof PERIOD_RUN_TABLES;
+
+export function isRerunSource(value: unknown): value is RerunSource {
+  return typeof value === "string" && Object.prototype.hasOwnProperty.call(PERIOD_RUN_TABLES, value);
+}
+
+// The most goes one period may have; past it, the period stays closed.
+export const MAX_PERIOD_GO = 99;
+
+// A go number after the first: 2 to 99, no leading zero.
+const GO = /^([2-9]|[1-9]\d)$/;
+
+// The key of a period's go: the period's own key for the first, `sweep:2026-10-31.2` for the second.
+export function periodGoKey(base: string, go: number): string {
+  if (!Number.isSafeInteger(go) || go < 1 || go > MAX_PERIOD_GO) throw new RangeError("not a go number");
+  return go === 1 ? base : `${base}.${go}`;
+}
+
+// Which go of the period `base` a key is (1 for the period's own key), or null when it is not one.
+export function periodGoOf(key: unknown, base: string): number | null {
+  if (typeof key !== "string") return null;
+  if (key === base) return 1;
+  if (!key.startsWith(`${base}.`)) return null;
+  const rest = key.slice(base.length + 1);
+  return GO.test(rest) ? Number(rest) : null;
+}
+
 // The parts of a key, or null when it is not one this loop writes.
 export function parseEventKey(key: unknown): { source: DeskSource; subjectId: string | null } | null {
   if (typeof key !== "string" || key.length < 1 || key.length > 120) return null;
   const at = key.indexOf(":");
   if (at <= 0) return null;
   const source = key.slice(0, at);
-  const rest = key.slice(at + 1);
+  let rest = key.slice(at + 1);
   if (isSubjectSource(source)) {
     return isUuid(rest) && rest === rest.toLowerCase() ? { source, subjectId: rest } : null;
+  }
+  // A later go of a rerun source's period: the period's own key and its go number.
+  if (isRerunSource(source)) {
+    const dot = rest.lastIndexOf(".");
+    if (dot >= 0) {
+      if (!GO.test(rest.slice(dot + 1))) return null;
+      rest = rest.slice(0, dot);
+    }
   }
   if (source === "cash_check") return /^\d{4}-W(0[1-9]|[1-4]\d|5[0-3])$/.test(rest) ? { source, subjectId: null } : null;
   if (isPeriodSource(source)) return /^\d{4}-\d{2}-\d{2}$/.test(rest) ? { source, subjectId: null } : null;
