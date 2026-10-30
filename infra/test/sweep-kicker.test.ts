@@ -166,6 +166,32 @@ describe("sweep kicker", () => {
       }
     });
 
+    it("waits longer than the desk route's 30 s limit for a wake, keeps room for that wait, and leaves the sweep's call as it was", async () => {
+      const timeouts = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => new AbortController().signal);
+      fetchMock.mockResolvedValueOnce(answer(200, { wakeId: WAKE, status: "done" }));
+      await expect(handler({ job: "desk" }, { getRemainingTimeInMillis: () => 290_000 })).resolves.toEqual({
+        ok: true,
+        outcomes: { [TENANT]: "done" },
+      });
+      expect(timeouts.mock.calls).toEqual([[35_000]]);
+      // 38 s left is short of one more desk call and its margin, but not of a sweep call.
+      timeouts.mockClear();
+      fetchMock.mockReset();
+      await expect(handler({ job: "desk" }, { getRemainingTimeInMillis: () => 38_000 })).resolves.toEqual({
+        ok: false,
+        outcomes: { [TENANT]: "left_open" },
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+      fetchMock
+        .mockResolvedValueOnce(answer(200, { runId: RUN, existing: false }))
+        .mockResolvedValueOnce(answer(200, { runId: RUN, status: "done" }));
+      await expect(handler({}, { getRemainingTimeInMillis: () => 38_000 })).resolves.toEqual({
+        ok: true,
+        outcomes: { [TENANT]: "done" },
+      });
+      expect(timeouts.mock.calls).toEqual([[25_000], [25_000]]);
+    });
+
     it("stops after twelve wakes or when time runs short, leaving the rest to the next tick", async () => {
       fetchMock.mockImplementation(async () => answer(200, { wakeId: WAKE, status: "more" }));
       await expect(handler({ job: "desk" }, { getRemainingTimeInMillis: () => 290_000 })).resolves.toEqual({

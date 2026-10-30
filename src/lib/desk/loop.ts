@@ -18,7 +18,7 @@ import {
 } from "./discover";
 import { deskHandlers, type Handlers } from "./handlers";
 import { localMidnightOf, localNowOf, type DeskSource } from "./keys";
-import { appendLine, categoryWord, readSeenSince, readState, type Line, type LineDetail, type OpenEvent, type WakeBy } from "./log";
+import { appendLine, categoryWord, readSeenSince, readState, THREW, type Line, type LineDetail, type OpenEvent, type WakeBy } from "./log";
 
 // One wake of one carrier's desk loop (design 3): claim the loop's lease, write a wake line, find
 // new work, then pick, claim, run and record one piece of work at a time until the deadline, a cap
@@ -41,7 +41,8 @@ export type WakeCounts = {
   carried: number;
   skipped: number;
   failed: number;
-  // Open events left for another wake now (not those whose try this wake did not come back).
+  // Open events left for a later wake: carried on, or not reached (not those whose try this wake
+  // did not come back).
   left: number;
 };
 
@@ -282,7 +283,8 @@ export async function wakeDesk(
         counts.failed += 1;
         continue;
       }
-      if (event.state === "carried" && event.carries >= MAX_CARRIES) {
+      // A carried piece whose tries keep throwing is given up at maxAttempts of them.
+      if (event.state === "carried" && (event.carries >= MAX_CARRIES || event.threw >= limits.maxAttempts)) {
         await line("failed", event, { runId: event.runId ?? undefined, category: "abandoned" });
         counts.failed += 1;
         continue;
@@ -340,6 +342,11 @@ export async function wakeDesk(
         // into a line.
         log(`desk handler tenant=${session.tenantId} wake=${wakeId} source=${event.source} error=${errorName(err)}`);
         unanswered += 1;
+        // A carried piece has no claimed line to count its tries: a carried line that says this try
+        // threw keeps its run and what it found so far, and counts toward maxAttempts.
+        if (event.state === "carried") {
+          await line("carried", event, { runId: event.runId ?? undefined, found: event.found ?? undefined, category: THREW });
+        }
         continue;
       }
       const kind = OUTCOME_LINES[outcome.outcome];
@@ -348,17 +355,16 @@ export async function wakeDesk(
     }
 
     if (reason === null) reason = dayCapped ? "events_per_day" : wakeCapped ? "events_per_wake" : "no_work";
-    // What is still open for another wake now: the events not reached and those carried on. One
-    // whose try did not come back is not counted, so a try that keeps throwing does not spend its
-    // attempts in one kick's run of wakes by itself.
+    // What is still open for a later wake: the events not reached and those carried on. One whose
+    // try did not come back is not counted.
     counts.left = Math.max(0, open.length - (counts.done + counts.skipped + counts.failed + unanswered));
     await line("sleep", null, { found: counts.done, category: reason });
-    // Spent caps stop until the next scheduled wake. Otherwise, work left (or more to find) asks
-    // for another wake now.
-    const more =
-      reason !== "wake_cents" &&
-      reason !== "day_cents" &&
-      (counts.left > 0 || reason === "events_per_wake" || reason === "deadline");
+    // Another wake now only for work this wake could do now and stopped short of (its deadline, or
+    // its share of events), and only after a wake that found or closed something. Work carried on,
+    // a try that threw, and spent caps wait for the next scheduled wake, so a piece that keeps
+    // coming back running (a model that is down) does not spend its carries in one kick's run.
+    const progressed = counts.seen + counts.done + counts.skipped + counts.failed > 0;
+    const more = progressed && (reason === "events_per_wake" || reason === "deadline");
     return { ok: true, wakeId, status: more ? "more" : "done", reason, counts };
   } catch (err) {
     log(`desk wake tenant=${session.tenantId} wake=${wakeId} failed=${errorName(err)}`);

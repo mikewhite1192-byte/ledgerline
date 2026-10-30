@@ -4,8 +4,9 @@ import { isDeskSource, parseEventKey, SUBJECT_TABLES, type DeskSource } from "./
 
 // The desk log: one insert-only line per step (0063). The loop's whole state is read back from it:
 // an event's state is its latest line (closed for good once it has a terminal line), an attempt is
-// a claimed line, a run it carries on is named by its latest carried line. Nothing here updates or
-// deletes a line (the app login cannot).
+// a claimed line, a run it carries on is named by its latest carried line, and a carried line with
+// the category THREW is a carried try that threw. Nothing here updates or deletes a line (the app
+// login cannot).
 
 export const LINE_KINDS = ["wake", "seen", "claimed", "carried", "done", "failed", "skipped", "sleep"] as const;
 export type LineKind = (typeof LINE_KINDS)[number];
@@ -34,6 +35,9 @@ export type Line = {
 };
 
 const CATEGORY = /^[a-z][a-z0-9_]{0,39}$/;
+
+// The loop's own category word on a carried line whose try threw (no handler writes it).
+export const THREW = "threw";
 
 export function isCategory(value: unknown): value is string {
   return typeof value === "string" && CATEGORY.test(value);
@@ -116,6 +120,8 @@ export type OpenEvent = {
   attempts: number;
   // Carried lines: wakes it was carried on through.
   carries: number;
+  // Carried lines whose try threw (category THREW): a carried piece's failed tries.
+  threw: number;
   // From the latest carried line: the run it carries on, and what it found so far.
   runId: string | null;
   found: number | null;
@@ -144,10 +150,11 @@ export const OPEN_EVENTS_SQL = `WITH lines AS (
 ), tally AS (
   SELECT event_key, min(at) AS first_at,
          CAST(count(*) FILTER (WHERE kind = 'claimed') AS integer) AS attempts,
-         CAST(count(*) FILTER (WHERE kind = 'carried') AS integer) AS carries
+         CAST(count(*) FILTER (WHERE kind = 'carried') AS integer) AS carries,
+         CAST(count(*) FILTER (WHERE kind = 'carried' AND detail->>'category' = '${THREW}') AS integer) AS threw
     FROM lines GROUP BY event_key
 )
-SELECT l.event_key, l.kind, l.source, CAST(l.subject_id AS text) AS subject_id, t.attempts, t.carries,
+SELECT l.event_key, l.kind, l.source, CAST(l.subject_id AS text) AS subject_id, t.attempts, t.carries, t.threw,
        c.run_id, c.found, ${ts("t.first_at")} AS first_at
   FROM latest l JOIN tally t ON t.event_key = l.event_key
   LEFT JOIN carried c ON c.event_key = l.event_key
@@ -165,6 +172,7 @@ type OpenRow = {
   subject_id: string | null;
   attempts: number;
   carries: number;
+  threw: number;
   run_id: string | null;
   found: string | null;
   first_at: string;
@@ -184,6 +192,7 @@ export async function readState(q: Queryable, opts: { sinceStart: string; limit:
       (state !== "seen" && state !== "claimed" && state !== "carried") ||
       !count(r.attempts) ||
       !count(r.carries) ||
+      !count(r.threw) ||
       typeof r.first_at !== "string"
     ) {
       throw new DbError("unknown");
@@ -196,6 +205,7 @@ export async function readState(q: Queryable, opts: { sinceStart: string; limit:
       state,
       attempts: r.attempts,
       carries: r.carries,
+      threw: r.threw,
       runId: isUuid(r.run_id) ? r.run_id.toLowerCase() : null,
       found: found !== null && count(found) ? found : null,
       firstAt: r.first_at,

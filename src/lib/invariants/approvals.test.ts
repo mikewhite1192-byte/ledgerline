@@ -100,14 +100,14 @@ describe("countApprovalBreaks", () => {
     };
   }
 
-  it("counts no money moved without approval when every payment row and link is clean", async () => {
+  it("counts no approval breaks when every payment row and link is clean", async () => {
     const seen: string[] = [];
     expect(await countApprovalBreaks(answering(clean(), seen))).toBe(0);
     // Only the payment rows and the proposal links are read: the carrier's own session.
     expect(seen).toEqual([PAYMENT_ROWS_SQL, PROPOSAL_LINKS_SQL]);
   });
 
-  it("adds every way money could move without approval, as I3 names them", async () => {
+  it("adds every approval break as I3 names them, so one row that breaks several rules counts once for each", async () => {
     const rows = clean();
     rows.paymentRows[0].approver_missing = 1;
     rows.paymentRows[0].sent_before_decision = "2";
@@ -115,6 +115,14 @@ describe("countApprovalBreaks", () => {
     // The advance and settlement checks are not this count's: a bad one there changes nothing.
     rows.advances[0].paid_twice = 5;
     expect(await countApprovalBreaks(answering(rows))).toBe(4);
+    // One payment row on an undecided proposal that was already sent: three of the row's breaks,
+    // and its proposal's early link a fourth. The count is of breaks, not of payments.
+    const one = clean();
+    one.paymentRows[0].not_approved = 1;
+    one.paymentRows[0].undecided = 1;
+    one.paymentRows[0].sent_before_decision = 1;
+    one.proposalLinks[0].linked_early = 1;
+    expect(await countApprovalBreaks(answering(one))).toBe(4);
   });
 
   it("throws, never answers 0, when a read is not whole", async () => {

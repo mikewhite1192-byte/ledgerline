@@ -18,8 +18,9 @@ export type DeskPanel = {
   toolCalls: number;
   problemsFound: number;
   proposalsWaiting: number;
-  // Null: the count did not read back, and the panel says "not read".
-  moneyMovedWithoutApproval: number | null;
+  // I3's approval breaks over the carrier's payment rows and proposal links (breaks, not
+  // payments). Null: the count did not read back, and the panel says "not read".
+  approvalBreaks: number | null;
   lastWake: { at: string; handled: number; skipped: number } | null;
   // Open events for the next wake.
   left: number;
@@ -82,8 +83,8 @@ const LOG_SQL = `SELECT ${ts("at")} AS at, kind, source,
 
 export type ViewDeps = { db?: TenantDb };
 
-// The panel's numbers, in one read transaction, and the money count in its own read-only one, so
-// a count that fails cannot take the other numbers with it.
+// The panel's numbers, in one read transaction, and the approval breaks in their own read-only
+// one, so a count that fails cannot take the other numbers with it.
 export async function readDeskPanel(session: Session, deps: ViewDeps = {}): Promise<DeskPanel> {
   const db = deps.db ?? getDb();
   const panel = await db.withTenant(session.tenantId, async (q: Queryable) => {
@@ -120,11 +121,12 @@ export async function readDeskPanel(session: Session, deps: ViewDeps = {}): Prom
       left: open.length,
     };
   });
-  return { ...panel, moneyMovedWithoutApproval: await readMoneyCount(db, session) };
+  return { ...panel, approvalBreaks: await readApprovalBreaks(db, session) };
 }
 
-// I3's payment rows and proposal links for this carrier, or null when the read fails in any way.
-export async function readMoneyCount(db: TenantDb, session: Session): Promise<number | null> {
+// I3's approval breaks over this carrier's payment rows and proposal links, or null when the read
+// fails in any way.
+export async function readApprovalBreaks(db: TenantDb, session: Session): Promise<number | null> {
   try {
     return await db.withTenant(session.tenantId, async (q) => {
       await assertMembership(q, session);

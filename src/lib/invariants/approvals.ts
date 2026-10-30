@@ -233,10 +233,12 @@ export async function readApprovals(q: ReadQuery): Promise<ApprovalRows> {
   };
 }
 
-// One carrier's count of money moved without a person's approval, for the desk panel: the
-// payment rows and the proposal links, read under the carrier's own session (RLS) and judged
-// exactly as I3 judges them. Any read that does not come back whole throws (InvariantReadError
-// or the database's error), so the caller shows "not read", never 0.
+// One carrier's approval breaks, for the desk panel: the payment rows and the proposal links,
+// read under the carrier's own session (RLS) and judged exactly as I3 judges them, and the sum of
+// I3's tallies over them. It counts breaks, not payments or ledger rows: one row can break more
+// than one rule (each counts), and a row is reserved before its call, so a break need not mean
+// money went out. Any read that does not come back whole throws (InvariantReadError or the
+// database's error), so the caller shows "not read", never 0.
 export async function countApprovalBreaks(q: ReadQuery): Promise<number> {
   const v: Record<string, number> = {};
   judgePaymentRows(await q.query<PaymentRow>(PAYMENT_ROWS_SQL), v);

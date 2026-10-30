@@ -13,7 +13,7 @@ import { DESK_SOURCES, eventKey, type DeskSource } from "./keys";
 import { appendLine, readState, type Line, type OpenEvent } from "./log";
 import { MOVE_WATERMARK_SQL } from "./discover";
 import { wakeDesk } from "./loop";
-import { readDeskLog, readDeskPanel, readMoneyCount } from "./view";
+import { readApprovalBreaks, readDeskLog, readDeskPanel } from "./view";
 
 // The desk loop against the real database, as the app's role, with stand-in handlers and a fixed
 // clock: one wake at a time per carrier (a live lease answers busy, a lapsed one is taken); each
@@ -301,6 +301,40 @@ describe("done once", () => {
     expect(lines.map((l) => l.kind)).toEqual(["seen", "claimed", "done", "carried"]);
   });
 
+  it("gives up a carried piece of work whose tries keep throwing at maxAttempts, keeping its run", async () => {
+    const c = await carrier("desk-threw");
+    const key = "sweep:2026-01-06";
+    const runId = randomUUID();
+    await app.withTenant(c.fixture.tenantId, async (q) => {
+      await appendLine(q, line({ kind: "seen", eventKey: key, source: "sweep" }));
+      await appendLine(q, line({ kind: "claimed", eventKey: key, source: "sweep" }));
+      await appendLine(q, line({ kind: "carried", eventKey: key, source: "sweep", detail: { runId, found: 2 } }));
+    });
+    const calls: Call[] = [];
+    const throwing = recording(calls, async () => {
+      throw new TypeError("run failed for driver Ana");
+    });
+    const readKey = async () =>
+      (await app.withTenant(c.fixture.tenantId, (q) => readState(q, { sinceStart: "2026-01-05T06:00:00.000Z", limit: 50 }))).find(
+        (e) => e.eventKey === key,
+      );
+    for (let i = 0; i < flags.deskLoop.limits.maxAttempts; i++) {
+      await wake(c, throwing);
+      expect(await readKey()).toMatchObject({ state: "carried", runId, found: 2, attempts: 1, carries: 2 + i, threw: 1 + i });
+      now += 15 * 60_000;
+    }
+    await wake(c, throwing);
+    expect(calls.filter((x) => x.key === key)).toHaveLength(flags.deskLoop.limits.maxAttempts);
+    expect(await readKey()).toBeUndefined();
+    const lines = (await linesOf(c)).filter((l) => l.event_key === key);
+    expect(lines.map((l) => l.kind)).toEqual(["seen", "claimed", "carried", "carried", "carried", "carried", "failed"]);
+    expect(lines.slice(3, 6).map((l) => l.detail)).toEqual(
+      Array.from({ length: 3 }, () => ({ runId: runId.toLowerCase(), found: 2, category: "threw" })),
+    );
+    expect(lines[6].detail).toEqual({ runId: runId.toLowerCase(), category: "abandoned" });
+    expect(JSON.stringify(lines)).not.toContain("Ana");
+  });
+
   it("refuses a second done line for the same piece of work", async () => {
     const c = await carrier("desk-dedupe");
     const key = eventKey("customer_payment", c.fixture.paymentId);
@@ -355,6 +389,7 @@ describe("the cash check", () => {
       state: "claimed",
       attempts: 2,
       carries: 0,
+      threw: 0,
       runId: null,
       found: null,
       firstAt,
@@ -434,7 +469,7 @@ describe("the log", () => {
 });
 
 describe("the panel", () => {
-  it("counts what the loop did since it started, and says not read when the money count fails", async () => {
+  it("counts what the loop did since it started, and says not read when the approval breaks fail to read", async () => {
     const c = await carrier("desk-panel");
     await payment(c, "2026-01-06T12:00:00.000Z");
     await wake(c, recording([]));
@@ -445,7 +480,7 @@ describe("the panel", () => {
       problemsFound: 3,
       toolCalls: 0,
       proposalsWaiting: 0,
-      moneyMovedWithoutApproval: 0,
+      approvalBreaks: 0,
       left: 0,
     });
     expect(panel.lastWake).toMatchObject({ at: "2026-01-06T15:00:00.000Z", handled: 3, skipped: 0 });
@@ -458,7 +493,7 @@ describe("the panel", () => {
         throw new Error("connection reset");
       },
     };
-    expect(await readMoneyCount(broken, c.service)).toBeNull();
-    expect(await readMoneyCount(app, c.service)).toBe(0);
+    expect(await readApprovalBreaks(broken, c.service)).toBeNull();
+    expect(await readApprovalBreaks(app, c.service)).toBe(0);
   });
 });

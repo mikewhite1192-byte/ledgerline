@@ -43,6 +43,7 @@ function openEvents(lines: Line[]): OpenEvent[] {
       state: latest.kind as OpenEvent["state"],
       attempts: ls.filter((l) => l.kind === "claimed").length,
       carries: carried.length,
+      threw: carried.filter((l) => l.detail.category === "threw").length,
       runId: last?.detail.runId ?? null,
       found: last?.detail.found ?? null,
       firstAt: ls[0].at,
@@ -271,7 +272,7 @@ describe("wakeDesk", () => {
     expect(ofKind("skipped").map((l) => l.detail)).toEqual([{ category: "switched_off" }]);
   });
 
-  it("carries a piece of work that is still running to the next wake without a new try", async () => {
+  it("carries a piece of work that is still running to the next scheduled wake without a new try", async () => {
     store.pending = [{ eventKey: "sweep:2026-11-02", source: "sweep" }];
     const RUN = uuid(5555);
     const seen: OpenEvent[] = [];
@@ -286,8 +287,9 @@ describe("wakeDesk", () => {
         return { outcome: "done", detail: { runId: RUN, found: 3 } };
       });
     const first = await wake(handlersWith(run));
-    expect(first).toMatchObject({ ok: true, status: "more" });
-    expect(first.ok && first.counts.carried).toBe(1);
+    // Work carried on does not ask for another wake now: it waits for the next scheduled one.
+    expect(first).toMatchObject({ ok: true, status: "done", reason: "no_work" });
+    expect(first.ok && first.counts).toMatchObject({ carried: 1, left: 1 });
     now += 60_000;
     const second = await wake(handlersWith(run), uuid(8888));
     expect(second).toMatchObject({ ok: true, status: "done" });
@@ -351,6 +353,64 @@ describe("wakeDesk", () => {
     expect(run).not.toHaveBeenCalled();
     expect(out).toMatchObject({ ok: true, status: "done", reason: "no_work" });
     expect(out.ok && out.counts).toMatchObject({ claimed: 0, done: 0, failed: 0, left: 0 });
+  });
+
+  it("asks for no other wake now after a wake that only carried work on, even with work behind it", async () => {
+    const key = "sweep:2026-11-02";
+    const at = new Date(START - 3_600_000).toISOString();
+    const base = { wakeId: uuid(1), at, eventKey: key, source: "sweep" as const, subjectId: null, by: "schedule" as const };
+    store.lines.push({ ...base, id: uuid(2), kind: "seen", detail: {} });
+    store.lines.push({ ...base, id: uuid(3), kind: "claimed", detail: {} });
+    store.lines.push({ ...base, id: uuid(4), kind: "carried", detail: { runId: uuid(4444) } });
+    store.lines.push({ ...base, id: uuid(5), eventKey: cardKey(1), source: "card_transaction", kind: "seen", detail: {} });
+    ids = 100;
+    // The carried piece comes back running after the whole slice (a model that is down), so the
+    // card behind it is not reached.
+    const run = vi.fn<Run>(async () => {
+      now += 25_000;
+      return { outcome: "running", detail: { runId: uuid(4444) } };
+    });
+    const out = await wake(handlersWith(run));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ ok: true, status: "done", reason: "deadline" });
+    expect(out.ok && out.counts).toMatchObject({ seen: 0, done: 0, carried: 1, left: 2 });
+  });
+
+  it("gives up a carried piece of work whose tries keep throwing, at maxAttempts, keeping its run", async () => {
+    const key = "sweep:2026-11-02";
+    const at = new Date(START - 3_600_000).toISOString();
+    const base = { wakeId: uuid(1), at, eventKey: key, source: "sweep" as const, subjectId: null, by: "schedule" as const };
+    store.lines.push({ ...base, id: uuid(2), kind: "seen", detail: {} });
+    store.lines.push({ ...base, id: uuid(3), kind: "claimed", detail: {} });
+    store.lines.push({ ...base, id: uuid(4), kind: "carried", detail: { runId: uuid(4444), found: 2 } });
+    ids = 100;
+    const seen: OpenEvent[] = [];
+    const run = vi.fn<Run>(async (_s, e) => {
+      seen.push(structuredClone(e));
+      throw new TypeError("run 4444 failed for driver Ana");
+    });
+    for (let i = 0; i < flags.deskLoop.limits.maxAttempts; i++) {
+      const out = await wake(handlersWith(run), uuid(300 + i));
+      expect(out).toMatchObject({ ok: true, status: "done", reason: "no_work" });
+      expect(out.ok && out.counts).toMatchObject({ carried: 0, failed: 0, left: 0 });
+      now += 15 * 60_000;
+    }
+    // Each try went on with the same run and what it had found, never a new try.
+    expect(seen.map((e) => [e.state, e.runId, e.found, e.attempts, e.threw])).toEqual([
+      ["carried", uuid(4444), 2, 1, 0],
+      ["carried", uuid(4444), 2, 1, 1],
+      ["carried", uuid(4444), 2, 1, 2],
+    ]);
+    const last = await wake(handlersWith(run), uuid(400));
+    expect(run).toHaveBeenCalledTimes(3);
+    expect(last).toMatchObject({ ok: true, status: "done" });
+    expect(ofKind("claimed")).toHaveLength(1);
+    expect(ofKind("carried").map((l) => l.detail)).toEqual([
+      { runId: uuid(4444), found: 2 },
+      ...Array.from({ length: 3 }, () => ({ runId: uuid(4444), found: 2, category: "threw" })),
+    ]);
+    expect(ofKind("failed").map((l) => l.detail)).toEqual([{ runId: uuid(4444), category: "abandoned" }]);
+    expect(JSON.stringify(store.lines) + logs.join("\n")).not.toMatch(/Ana/);
   });
 
   it("gives up a piece of work carried through too many wakes", async () => {
