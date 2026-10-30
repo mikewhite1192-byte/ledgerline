@@ -253,6 +253,8 @@
     amount inside data-amounts="shown" never is: a number a person must approve stays in plain view.
     The digits keep their place, so nothing moves; the blurred copy comes from the span's own
     data-money. The selector is MASKED_AMOUNT in components/app/money.tsx (a test keeps them equal).
+    A browser that cannot give generated content its own spoken text draws the words instead, so it
+    never reads an amount aloud.
   */
   [data-amounts="hidden"] [data-money]:not([data-amounts="shown"] *) {
     position: relative;
@@ -260,7 +262,7 @@
   }
 
   [data-amounts="hidden"] [data-money]:not([data-amounts="shown"] *)::after {
-    content: attr(data-money);
+    content: "Amount hidden";
     content: attr(data-money) / "Amount hidden";
     position: absolute;
     inset: 0;
