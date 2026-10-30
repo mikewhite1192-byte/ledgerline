@@ -21,7 +21,7 @@ import { DbError } from "@/lib/db";
 import { formatInstant, formatPeriod } from "@/lib/format/dates";
 import { paymentHabitLabel } from "@/lib/format/labels";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
-import { reportPath } from "@/lib/reports/types";
+import { isReportPath, reportPath } from "@/lib/reports/types";
 import { InputError, type FigureSection, type Quarter, type QuarterCustomer, type QuarterFixes, type QuarterPayRun } from "@/lib/rules-engine";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday, readShell, type ShellTenant } from "@/lib/tenant/shell";
@@ -29,6 +29,8 @@ import { carrierToday, readShell, type ShellTenant } from "@/lib/tenant/shell";
 export const dynamic = "force-dynamic";
 
 type View = { shell: ShellTenant; quarter: QuarterView | null };
+
+const FIGURE_LINK = "text-link underline decoration-border underline-offset-4 hover:decoration-current";
 
 // Where each part of the page sits, so a number in the review can point at the table that shows it.
 const ANCHORS: Readonly<Record<FigureSection, string>> = {
@@ -206,14 +208,15 @@ function ReviewCard({ state, timezone, action }: { state: QuarterState; timezone
                         ? briefPlainText(item)
                         : briefLinks(item, state.review.figures, hrefFor).map((piece, j) =>
                             piece.href ? (
-                              <Link
-                                key={j}
-                                href={piece.href}
-                                title={piece.label}
-                                className="text-link underline decoration-border underline-offset-4 hover:decoration-current"
-                              >
-                                {piece.text}
-                              </Link>
+                              isReportPath(piece.href) ? (
+                                <a key={j} href={piece.href} download title={piece.label} className={FIGURE_LINK}>
+                                  {piece.text}
+                                </a>
+                              ) : (
+                                <Link key={j} href={piece.href} title={piece.label} className={FIGURE_LINK}>
+                                  {piece.text}
+                                </Link>
+                              )
                             ) : (
                               <span key={j}>{piece.text}</span>
                             ),

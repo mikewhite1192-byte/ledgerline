@@ -21,7 +21,7 @@ import { DbError } from "@/lib/db";
 import { formatInstant, formatPeriod } from "@/lib/format/dates";
 import { paymentHabitLabel } from "@/lib/format/labels";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
-import { reportPath } from "@/lib/reports/types";
+import { isReportPath, reportPath } from "@/lib/reports/types";
 import type { LaneRollup } from "@/lib/rules-engine";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday, readShell, type ShellTenant } from "@/lib/tenant/shell";
@@ -29,6 +29,8 @@ import { carrierToday, readShell, type ShellTenant } from "@/lib/tenant/shell";
 export const dynamic = "force-dynamic";
 
 type View = { shell: ShellTenant; profit: ProfitView | null };
+
+const FIGURE_LINK = "text-link underline decoration-border underline-offset-4 hover:decoration-current";
 
 // Where a figure in the brief links: a customer to its record page, a week's totals to the margin
 // report's file (only while reports are on; otherwise the number shows as plain text).
@@ -204,14 +206,15 @@ function BriefCard({
             <p className="max-w-[72ch] text-body text-foreground">
               {briefLinks(state.brief.text ?? "", state.brief.figures, hrefFor).map((piece, i) =>
                 piece.href ? (
-                  <Link
-                    key={i}
-                    href={piece.href}
-                    title={piece.label}
-                    className="text-link underline decoration-border underline-offset-4 hover:decoration-current"
-                  >
-                    {piece.text}
-                  </Link>
+                  isReportPath(piece.href) ? (
+                    <a key={i} href={piece.href} download title={piece.label} className={FIGURE_LINK}>
+                      {piece.text}
+                    </a>
+                  ) : (
+                    <Link key={i} href={piece.href} title={piece.label} className={FIGURE_LINK}>
+                      {piece.text}
+                    </Link>
+                  )
                 ) : (
                   <span key={i}>{piece.text}</span>
                 ),
