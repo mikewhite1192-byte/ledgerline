@@ -965,7 +965,7 @@ export const flags: Flags = {
     maxUpdateCents: 3,
     idleEndMs: 600_000,
   },
-  escrowRelease: { enabled: true, armed: false, capCents: 500_000, startDate: "2026-10-30" },
+  escrowRelease: { enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" },
 };
 
 applyLocalOverrides(flags);

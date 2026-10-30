@@ -92,10 +92,12 @@ describe("escrowReleaseGate", () => {
     expect(escrowReleaseGate(120_000, "2026-11-02")).toBe("escrow_before_start");
   });
 
-  it("ships on and unarmed with its cap and start date: every release refuses until its own arming", () => {
-    expect(saved).toEqual({ enabled: true, armed: false, capCents: 500_000, startDate: "2026-10-30" });
+  it("ships on and armed with its cap and start date: a release at or under the cap from the start date opens", () => {
+    expect(saved).toEqual({ enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" });
     expect(escrowReleaseOn()).toBe(true);
-    expect(escrowReleaseGate(120_000, "2026-11-02")).toBe("escrow_not_armed");
+    expect(escrowReleaseGate(120_000, "2026-11-02")).toBeNull();
+    expect(escrowReleaseGate(120_000, "2026-10-29")).toBe("escrow_before_start");
+    expect(escrowReleaseGate(500_001, "2026-11-02")).toBe("over_escrow_cap");
     flags.escrowRelease.enabled = false;
     expect(escrowReleaseOn()).toBe(false);
   });
