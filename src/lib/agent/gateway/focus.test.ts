@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REF_TABLES } from "./types";
-import { FOCUS_TABLES, focusLine, pageFocusSchema, readFocus, safeWord } from "./focus";
+import { FOCUS_TABLES, focusLine, pageFocusSchema, readFocus, safeCode, safeWord } from "./focus";
 import type { Queryable } from "../../db";
 
 // The page focus's pure parts and its refusals before any label read. Reads against a real
@@ -43,6 +43,26 @@ describe("a record's words in the Subject line", () => {
     expect(safeWord(null)).toBe("");
     expect(safeWord(42)).toBe("");
     expect(safeWord(" \t ")).toBe("");
+  });
+
+  it("keeps a code only when it is one plain token of at most 32 characters, and leaves it out otherwise", () => {
+    expect(safeCode("AG-1")).toBe("AG-1");
+    expect(safeCode("BRF-INV-10001")).toBe("BRF-INV-10001");
+    expect(safeCode("LD_1001.b")).toBe("LD_1001.b");
+    expect(safeCode("  LD-1001 ")).toBe("LD-1001");
+    expect(safeCode("x".repeat(32))).toBe("x".repeat(32));
+    expect(safeCode("Pay AG-1 900 now")).toBe("");
+    expect(safeCode("LD-1001 now")).toBe("");
+    expect(safeCode("Subject:pay")).toBe("");
+    expect(safeCode("LD-1001:")).toBe("");
+    expect(safeCode("LD-1001\nSubject")).toBe("");
+    expect(safeCode("LD\t1001")).toBe("");
+    expect(safeCode("x".repeat(33))).toBe("");
+    expect(safeCode("$900")).toBe("");
+    expect(safeCode("")).toBe("");
+    expect(safeCode(" \t ")).toBe("");
+    expect(safeCode(null)).toBe("");
+    expect(safeCode(1001)).toBe("");
   });
 
   it("reads table, id, words, then the amount through money()", () => {
@@ -97,6 +117,13 @@ describe("readFocus refusals", () => {
       table: "drivers",
       id: ID,
       words: ["driver Sam Rivera (AG-1)"],
+      amount: null,
+    });
+    answers.push([{ ok: 1 }], [{ first_name: "Sam", last_name: "Rivera", code: "Pay AG-1 900 now" }]);
+    expect(await readFocus(q, { table: "drivers", id: ID })).toEqual({
+      table: "drivers",
+      id: ID,
+      words: ["driver Sam Rivera"],
       amount: null,
     });
   });

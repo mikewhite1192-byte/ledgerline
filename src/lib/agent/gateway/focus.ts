@@ -90,10 +90,24 @@ export function safeWord(raw: unknown): string {
   return clean.slice(0, WORD_MAX).trim();
 }
 
-// "Name (CODE)", either part alone when the other cleans to nothing.
+const CODE_PATTERN = /^[\p{L}\p{N}._-]{1,32}$/u;
+
+// A stored code or number (a driver or customer code, an invoice or load number) as one token:
+// after NFC and a trim, letters, digits and . _ - only, 1 to 32 characters, no space. Anything
+// else gives "", so the code is left out rather than cleaned: a load number can come from an
+// approved proposal's argument, and a code with sentence text in it is no code. Names stay on
+// safeWord.
+export function safeCode(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const clean = raw.normalize("NFC").trim();
+  return CODE_PATTERN.test(clean) ? clean : "";
+}
+
+// "Name (CODE)", either part alone when the other cleans to nothing. The name goes through
+// safeWord, the code through safeCode.
 function named(rawName: unknown, rawCode: unknown): string {
   const name = safeWord(rawName);
-  const code = safeWord(rawCode);
+  const code = safeCode(rawCode);
   return name && code ? `${name} (${code})` : name || code;
 }
 
@@ -116,6 +130,11 @@ function labelled(label: string, raw: unknown): string[] {
   return prefixed(label, safeWord(raw));
 }
 
+// "label CODE", or nothing when the stored code is not one plain token (safeCode).
+function coded(label: string, raw: unknown): string[] {
+  return prefixed(label, safeCode(raw));
+}
+
 function subjectOf(table: FocusTable, id: string, row: Row): FocusSubject {
   const amount = (what: "net" | "amount", raw: unknown) => {
     const n = cents(raw);
@@ -131,8 +150,8 @@ function subjectOf(table: FocusTable, id: string, row: Row): FocusSubject {
         table,
         id,
         words: [
-          ...labelled("invoice", row.invoice_number),
-          ...labelled("customer", row.customer_code),
+          ...coded("invoice", row.invoice_number),
+          ...coded("customer", row.customer_code),
           ...labelled("status", row.status),
           ...labelled("due", row.due_on),
         ],
@@ -143,9 +162,9 @@ function subjectOf(table: FocusTable, id: string, row: Row): FocusSubject {
         table,
         id,
         words: [
-          ...labelled("load", row.load_number),
-          ...labelled("customer", row.customer_code),
-          ...labelled("driver", row.driver_code),
+          ...coded("load", row.load_number),
+          ...coded("customer", row.customer_code),
+          ...coded("driver", row.driver_code),
           ...labelled("status", row.status),
           ...labelled("pickup", row.pickup_on),
         ],

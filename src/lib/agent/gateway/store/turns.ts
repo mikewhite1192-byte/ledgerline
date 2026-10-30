@@ -48,10 +48,11 @@ export type OpenTurnInput = {
 // nothing either, refused before any row is written; its model calls would be refused anyway
 // (src/lib/ai/spend.ts reserve).
 //
-// A page focus is checked right after the duplicate check, before the first write (the abandoned
-// turn sweep, the visit count, the conversation): with agentFocusEnabled off, or for a record that
-// is not a row of this tenant on the ref check's list, the turn is refused bad_focus and nothing
-// is written.
+// A page focus is checked right after the conversation ownership check, so another person's
+// conversation is not_found whatever the focus, and before the first write (the abandoned turn
+// sweep, the visit count, the conversation): with agentFocusEnabled off, or for a record that is
+// not a row of this tenant on the ref check's list, the turn is refused bad_focus and nothing is
+// written.
 export async function openTurn(
   q: Queryable,
   session: Session,
@@ -71,13 +72,6 @@ export async function openTurn(
   ]);
   if (taken.length > 0) return { refused: "duplicate" };
 
-  let focus: FocusSubject | null = null;
-  if (input.focus !== undefined && input.focus !== null) {
-    if (!flags.agentFocusEnabled) return { refused: "bad_focus" };
-    focus = await readFocus(q, input.focus);
-    if (focus === null) return { refused: "bad_focus" };
-  }
-
   let conversationId = input.conversationId;
   if (conversationId) {
     const own = await q.query<{ id: string }>(
@@ -87,6 +81,16 @@ export async function openTurn(
       [conversationId, session.sub, visitId],
     );
     if (own.length !== 1) return { refused: "not_found" };
+  }
+
+  let focus: FocusSubject | null = null;
+  if (input.focus !== undefined && input.focus !== null) {
+    if (!flags.agentFocusEnabled) return { refused: "bad_focus" };
+    focus = await readFocus(q, input.focus);
+    if (focus === null) return { refused: "bad_focus" };
+  }
+
+  if (conversationId) {
     await q.execute(
       `UPDATE turns SET status = 'failed', ended_reason = 'abandoned',
               finished_at = CAST($2 AS timestamptz)
