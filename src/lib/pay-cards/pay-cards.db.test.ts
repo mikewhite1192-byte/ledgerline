@@ -26,8 +26,8 @@ import type { CardSpec } from "./spec";
 // Pay cards against the real tables, as the app role, with a fake model. A card is kept, with its
 // image, only when what the model read matches every figure the server works out from the
 // settlement; any other answer keeps no image. Each settlement gets at most three attempts, the
-// fourth refused by the table itself; a call turned down before any request, or a full budget,
-// uses none. The run's cap and the day's count stop the next card before its call. A finished card
+// fourth refused by the table itself; a call turned down before any request, a full budget, or a
+// second click while a card is still checking, uses none. The run's cap and the day's count stop the next card before its call. A finished card
 // never changes, a stale reservation is closed, the lists never read an image, the card page's
 // batched read works out the same card as the check, and another carrier sees none of it. Only
 // this file's tenants are made, and they are removed after.
@@ -455,12 +455,13 @@ describe("pay cards", () => {
     answers = [{ text: JSON.stringify(readOf(await specOf(A, s2))) }];
     expect(await check(s2, randomUUID())).toMatchObject({ ok: true, status: "checked" });
 
-    // A card of the run still checking counts at its worst: two of them hold 6 cents, and the next
-    // card's 3 would pass an 8-cent cap.
+    // A card of the run still checking counts at its worst: two of them (on another paystub, which
+    // they hold) hold 6 cents, and the next card's 3 would pass an 8-cent cap.
     const held = randomUUID();
+    const spec2 = await specOf(A, s2);
     await app.withTenant(A.tenantId, async (q) => {
       for (let i = 0; i < 2; i++) {
-        await reserveCard(q, { id: randomUUID(), settlementId: s1, art: spec.art, spec, traceId: held, createdBy: A.memberId });
+        await reserveCard(q, { id: randomUUID(), settlementId: s2, art: spec2.art, spec: spec2, traceId: held, createdBy: A.memberId });
       }
     });
     flags.payCardLimits = { ...savedLimits, maxBatchCents: 8 };
@@ -523,6 +524,33 @@ describe("pay cards", () => {
     answers = [{ text: JSON.stringify(readOf(spec)) }];
     expect(await check(s1, randomUUID(), cardPng(), deps({ db: down }))).toEqual({ ok: false, category: "unknown" });
     expect((await cardsOf(A, s1)).map((c) => [c.status, c.has_bytes])).toEqual([["checking", false]]);
+  });
+
+  it("refuses a second check while a card for the paystub is still checking, using no attempt and making no call", async () => {
+    const spec = await specOf(A, s1);
+    // The first check waits inside its model call; a second click comes in meanwhile.
+    let release: () => void = () => {};
+    let entered: () => void = () => {};
+    const inCall = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const slow: CheckDeps["complete"] = async (request, session) => {
+      entered();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return fakeComplete(request, session);
+    };
+    answers = [{ text: JSON.stringify(readOf(spec)) }, { text: JSON.stringify(readOf(spec)) }];
+    const first = check(s1, randomUUID(), cardPng(), deps({ complete: slow }));
+    await inCall;
+    expect(await check(s1)).toEqual({ ok: false, category: "busy" });
+    expect(sent).toHaveLength(0);
+    expect((await cardsOf(A, s1)).map((c) => [c.attempt, c.status])).toEqual([[1, "checking"]]);
+    release();
+    expect(await first).toMatchObject({ ok: true, attempt: 1, status: "checked" });
+    expect(sent).toHaveLength(1);
+    expect((await cardsOf(A, s1)).map((c) => [c.attempt, c.status])).toEqual([[1, "checked"]]);
   });
 
   it("closes a card left checking past its lease as could not check, and that attempt stays used", async () => {

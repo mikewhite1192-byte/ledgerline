@@ -135,8 +135,17 @@ export function compareCard(spec: CardSpec, read: CardRead): "number_mismatch" |
   // A null on either side alone is a difference: the card left out a figure it should show, or
   // shows one it should not.
   for (const [seen, want] of printed) if (seen !== want) return "number_mismatch";
+  // Both ways, whole values: every other amount read is one the card prints, and every amount the
+  // card prints was read somewhere, so a card missing a line (a carried shortfall, the biggest
+  // change) is a difference too.
   const amounts = new Set(spec.amountsCents);
   if (!read.other_amounts_cents.every((a) => amounts.has(Math.abs(a)))) return "number_mismatch";
+  const seenAmounts = new Set(
+    [read.net_pay_cents, read.earned_cents, read.taken_out_cents, read.change_cents, ...read.other_amounts_cents]
+      .filter((a): a is number => a !== null)
+      .map((a) => Math.abs(a)),
+  );
+  if (!spec.amountsCents.every((a) => seenAmounts.has(a))) return "number_mismatch";
   if (read.any_other_digits) return "number_mismatch";
   if (read.first_name === null || normText(read.first_name) !== normText(spec.firstName)) return "text_mismatch";
   if (read.week_text === null || normText(read.week_text) !== normText(spec.weekText)) return "text_mismatch";
@@ -169,7 +178,11 @@ export async function checkPayCard(
     if (!read.spec) return refuse("not_approved");
     const spec = read.spec;
     await expireStaleCards(q, input.settlementId);
-    if (currentChecked(await readSettlementCards(q, input.settlementId), spec)) return refuse("already_checked");
+    // A card still checking inside its lease holds the paystub: a second click or another tab is
+    // refused before it takes an attempt or makes a call of its own.
+    const cards = await readSettlementCards(q, input.settlementId);
+    if (cards.some((c) => c.status === "checking")) return refuse("busy");
+    if (currentChecked(cards, spec)) return refuse("already_checked");
 
     // The wrapper's own spend checks first, read without a lock: a call they would refuse now is
     // never made, and uses no attempt.
@@ -195,7 +208,8 @@ export async function checkPayCard(
     if (attempt === null) return refuse("attempts");
     return { cardId, attempt, spec };
   }).catch((err: unknown): CheckResult => {
-    // 23505: another request reserved the same attempt number first.
+    // 23505: another request reserved the same attempt number first. The lock and the busy check
+    // above keep that from happening; the unique key is only the backstop.
     if (err instanceof DbError && err.sqlState === "23505") return refuse("busy");
     throw err;
   });

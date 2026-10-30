@@ -173,6 +173,7 @@ export type Flags = {
     // Cards one carrier may check in 24 hours, every outcome counted.
     cardsPerTenantPerDay: number;
     // The largest card picture the check takes, in bytes.
+    // At most 400,000: the byte_length CHECK in migration 0052 refuses a larger card.
     maxPngBytes: number;
   };
   // The five report tools in the chat and the report download route. Off: the agent is not

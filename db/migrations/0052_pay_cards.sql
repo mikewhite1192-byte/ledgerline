@@ -19,8 +19,9 @@
 --   unavailable  the model call failed or timed out; category says which; the attempt is used
 --
 -- At most three attempts per settlement: attempt is 1 to 3 and (tenant, settlement, attempt) is
--- unique, so a fourth insert is refused by the table itself and a second click racing the first
--- for the same attempt number is refused by the key. spec is what the server computed from the
+-- unique, so a fourth insert is refused by the table itself. A second click while a card is still
+-- checking is refused by the app under the carrier's pay card lock, before it reserves an attempt;
+-- the unique key is only the backstop. spec is what the server computed from the
 -- settlement when it checked (the card's printed figures and words); it never changes. trace_id
 -- groups one run of the cards page, so its spend can be summed from model_calls.
 CREATE TABLE pay_cards (

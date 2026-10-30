@@ -218,6 +218,9 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(flags.payCardLimits.checkMaxCostCents).toBeLessThan(flags.payCardLimits.maxBatchCents);
+    // The byte_length CHECK in migration 0052 holds 1 to 400,000 bytes: a larger limit would pass
+    // the check and then fail at the save.
+    expect(flags.payCardLimits.maxPngBytes).toBeLessThanOrEqual(400_000);
   });
 
   it("keeps collections dark, with no email address allowed, no send date and small caps", () => {

@@ -50,7 +50,15 @@ describe("compareCard", () => {
     expect(compareCard(spec, good)).toBeNull();
     // Another amount the card prints may be read with a sign.
     expect(compareCard(spec, { ...good, other_amounts_cents: [-11_200] })).toBeNull();
-    expect(compareCard(spec, { ...good, other_amounts_cents: [] })).toBeNull();
+  });
+
+  it("wants every amount the card prints in the read, so a missing line is a difference", () => {
+    // The biggest change line left out.
+    expect(compareCard(spec, { ...good, other_amounts_cents: [] })).toBe("number_mismatch");
+    // A carried shortfall the card prints, read without it, then with it.
+    const carried = { ...spec, carriedCents: -5_000, amountsCents: [...spec.amountsCents, 5_000] };
+    expect(compareCard(carried, good)).toBe("number_mismatch");
+    expect(compareCard(carried, { ...good, other_amounts_cents: [11_200, 5_000] })).toBeNull();
   });
 
   it.each<[string, Partial<CardRead>]>([
@@ -91,7 +99,8 @@ describe("compareCard", () => {
   });
 
   it("wants a printed miles figure null when the card prints none, and a first week's change null", () => {
-    const noMiles = { ...spec, miles: null, changeCents: null };
+    // A first week prints no change, so its amount is not among the card's amounts either.
+    const noMiles = { ...spec, miles: null, changeCents: null, amountsCents: spec.amountsCents.filter((a) => a !== 7_750) };
     expect(compareCard(noMiles, { ...good, miles: null, change_cents: null })).toBeNull();
     expect(compareCard(noMiles, { ...good, miles: 1_050, change_cents: null })).toBe("number_mismatch");
     expect(compareCard(noMiles, { ...good, miles: null, change_cents: 0 })).toBe("number_mismatch");
