@@ -9,7 +9,9 @@ import { ProposalCard } from "@/components/app/proposal-card";
 import { StatCard } from "@/components/app/stat-card";
 import { EmptyState, ErrorState } from "@/components/app/states";
 import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
+import { StaffOnlyLine } from "@/components/app/staff-only-line";
 import { StatusBadge } from "@/components/app/status-badge";
+import { useViewerRole } from "@/components/app/viewer-role";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ProposalView } from "@/lib/agent/view";
@@ -141,6 +143,7 @@ export function SweepRun({
   const [confirmAll, setConfirmAll] = useState(false);
   const [allNotice, setAllNotice] = useState("");
   const [batch, setBatch] = useState<HeldBatch | null>(null);
+  const judge = useViewerRole() === "judge";
   const alive = useRef(true);
   const runId = page.run.id;
 
@@ -165,10 +168,12 @@ export function SweepRun({
     }
   }, [runId]);
 
-  // Carry a running run on, one slice per request, a bounded number of times per page view.
+  // Carry a running run on, one slice per request, a bounded number of times per page view. A demo
+  // visitor (the judge role) only reads it: carrying a run on is for the carrier's staff, so the
+  // page never asks (the route would refuse a judge anyway).
   const running = page.run.status === "running";
   useEffect(() => {
-    if (!running) return;
+    if (!running || judge) return;
     let stop = false;
     let calls = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -194,7 +199,7 @@ export function SweepRun({
       stop = true;
       if (timer) clearTimeout(timer);
     };
-  }, [running, runId, refresh]);
+  }, [running, judge, runId, refresh]);
 
   async function approve(p: ProposalView, overrideReason?: string) {
     setBusy(p.id);
@@ -398,6 +403,7 @@ export function SweepRun({
       ) : null}
       {page.fanout ? <WeekChecks tree={page.fanout} runId={runId} running={running} /> : null}
       {readFailed ? <ErrorState category="unreadable" title="Could not read the sweep" /> : null}
+      {running && judge ? <StaffOnlyLine /> : null}
       {stalled ? (
         <p role="status" className="text-small text-foreground-2">
           Still running. Reload the page to carry it on.

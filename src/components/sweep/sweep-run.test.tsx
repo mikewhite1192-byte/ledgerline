@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
+import { STAFF_ONLY_BODY, STAFF_ONLY_NOTE } from "@/components/app/staff-only";
+import { ViewerRoleProvider } from "@/components/app/viewer-role";
 import type { CardStatus, ProposalView } from "@/lib/agent/view";
 import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
 import type { SweepCounts } from "@/lib/sweep/run";
@@ -188,6 +189,52 @@ const noticeOf = (driver: string) =>
   cardOf(driver).parentElement?.querySelector(":scope > p[role=status]")?.textContent ?? null;
 const settled = (driver: string, name: string) =>
   waitFor(() => expect(within(cardOf(driver)).getByRole("button", { name })).toHaveProperty("disabled", false));
+
+// A running run: staff carry it on from the page; a demo visitor (the judge role) only reads it.
+describe("SweepRun while the run is running", () => {
+  const runningPage: SweepPage = {
+    ...page,
+    run: { ...page.run, status: "running", phase: "check", finishedAt: null },
+    items: [],
+    proposals: {},
+  };
+  const advanceUrl = `/api/sweeps/${page.run.id}/advance`;
+  // An advance answers 200 and the next read shows the run finished, so the loop ends.
+  function serveRun() {
+    let advanced = false;
+    const fetchMock = vi.fn(async (url: string, init?: { method?: string }) => {
+      if (init?.method === "POST") advanced = true;
+      const body = init?.method ? { ok: true } : { ...page, items: [], proposals: {}, run: advanced ? page.run : runningPage.run };
+      return { ok: true, status: 200, json: async () => body } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("never asks the staff-only advance route for a judge, and shows the staff-only line instead", async () => {
+    const fetchMock = serveRun();
+    render(
+      <ViewerRoleProvider role="judge">
+        <SweepRun initial={runningPage} auditorOn={false} />
+      </ViewerRoleProvider>,
+    );
+    expect(await screen.findByText(STAFF_ONLY_BODY, { exact: false })).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Reload the page/)).toBeNull();
+  });
+
+  it("still carries the run on for staff", async () => {
+    const fetchMock = serveRun();
+    render(
+      <ViewerRoleProvider role="staff">
+        <SweepRun initial={runningPage} auditorOn={false} />
+      </ViewerRoleProvider>,
+    );
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(advanceUrl, { method: "POST" }));
+    await waitFor(() => expect(screen.getByText(/LedgerLine checked the week/)).toBeTruthy());
+    expect(screen.queryByText(STAFF_ONLY_BODY, { exact: false })).toBeNull();
+  });
+});
 
 describe("SweepRun answers", () => {
   it("says an approval's outcome is unknown when the answer is lost, and keeps a refusal definite", async () => {
