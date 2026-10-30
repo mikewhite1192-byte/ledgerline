@@ -63,7 +63,8 @@ export function statusOf(
   if (turn.status === "threw") return "unknown";
   const reason = turn.endedReason ?? "";
   if (reason === "budget") return "over_cap";
-  if (reason.startsWith("model_") || UNKNOWN_ENDINGS.has(reason)) return "unknown";
+  // model_calls is the turn's own cap on model calls, not a failed call, so it is scored like steps.
+  if ((reason.startsWith("model_") && reason !== "model_calls") || UNKNOWN_ENDINGS.has(reason)) return "unknown";
   // A proposal the second check left with no verdict (its check failed) is not known.
   if ((turn.proposals ?? []).some((p) => p.auditorVerdict === null)) return "unknown";
   return "scored";
