@@ -93,6 +93,26 @@ function refusedLines(value: unknown): { proposalId: string; category: string | 
   });
 }
 
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+// Why the run stopped with work left, in counts only: its model budget, the first problems
+// only, or its turn ceiling, which says what was done and what the next sweep takes. The ceiling
+// counts turns taken, not problems (an item taken again counts again), so it is named as turns.
+function stopNote(page: SweepPage): string {
+  if (page.run.truncatedReason === "cap") {
+    return "The sweep stopped early: its model budget for this run ran out. Run it again to carry on.";
+  }
+  if (page.run.truncatedReason === "max_turns") {
+    const c = page.counts;
+    const taken = page.run.turnsUsed ?? 0;
+    return (
+      `Stopped after ${plural(taken, "turn", "turns")}: ${plural(c.fixes_drafted, "fix", "fixes")} drafted, ` +
+      `${c.needs_person} ${c.needs_person === 1 ? "needs" : "need"} a person, ${c.left} left for the next sweep. Nothing was paid.`
+    );
+  }
+  return "The sweep took the first problems only. Run it again after these are handled.";
+}
+
 function notDrafted(item: SweepItemView): string {
   if (item.status === "refused") return `Not drafted: ${codeToWords(item.refusalCategory ?? "unknown").toLowerCase()}.`;
   return NOT_DRAFTED[item.status] ?? "Needs a look.";
@@ -396,9 +416,7 @@ export function SweepRun({
       </section>
       {page.run.truncatedReason ? (
         <p role="note" className="rounded-md border border-warning bg-warning-soft px-3 py-2 text-small text-foreground">
-          {page.run.truncatedReason === "cap"
-            ? "The sweep stopped early: its model budget for this run ran out. Run it again to carry on."
-            : "The sweep took the first problems only. Run it again after these are handled."}
+          {stopNote(page)}
         </p>
       ) : null}
       {page.fanout ? <WeekChecks tree={page.fanout} runId={runId} running={running} /> : null}

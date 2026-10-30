@@ -33,6 +33,8 @@ export type SweepRunView = {
   approved: number;
   // The run's phases as a checklist, ticked as it moves; null for a run started without one.
   checklist?: Checklist | null;
+  // The findings this run took to draft, each one of its turns (flags.runLimits.maxTurns).
+  turnsUsed?: number;
 };
 
 export type SweepItemView = {
@@ -93,6 +95,7 @@ type RunRow = {
   finished_at: string | null;
   approved: number | string;
   checklist: string | null;
+  turns_used: number | string;
 };
 
 const RUN_SELECT = `
@@ -100,7 +103,7 @@ const RUN_SELECT = `
          CAST(sp.period_end AS text) AS period_end, r.trigger, r.status, r.phase, r.cap_cents,
          r.spent_cents, CAST(r.counts AS text) AS counts, r.truncated_reason, r.failure_category,
          r.conversation_id, ${TS("r.started_at")} AS started_at, ${TS("r.finished_at")} AS finished_at,
-         CAST(r.checklist AS text) AS checklist,
+         CAST(r.checklist AS text) AS checklist, r.turns_used,
          (SELECT count(DISTINCT p.id) FROM sweep_items i JOIN proposals p ON p.id = i.proposal_id
            WHERE i.seen_run_id = r.id AND p.status = 'done') AS approved
     FROM sweep_runs r JOIN settlement_periods sp ON sp.id = r.period_id`;
@@ -134,6 +137,7 @@ function runOf(r: RunRow): SweepRunView {
     finishedAt: r.finished_at,
     approved: Number(r.approved),
     checklist,
+    turnsUsed: Number(r.turns_used),
   };
 }
 

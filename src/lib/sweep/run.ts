@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import { runAudit as auditorRun, type AuditResult } from "../agent/auditor/run";
 import { callTool as gatewayCallTool, toolsFor } from "../agent/gateway";
-import { dbTurnStore, openAgentTurn, type OpenedTurn, type OpenTurnRefusal, type TurnStore } from "../agent/gateway/store";
+import {
+  dbTurnStore,
+  openAgentTurn,
+  openAgentTurnIn,
+  type OpenedTurn,
+  type OpenTurnRefusal,
+  type TurnStore,
+} from "../agent/gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../agent/gateway/types";
 import { CLEAN_SQL } from "../agent/proposals/clean";
 import { codeToWords } from "../format/labels";
@@ -14,6 +21,7 @@ import { readCheckInput, readReceivablesInput, readRowsWhereId } from "../data/r
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { findPaymentOnWrongInvoice, runAllChecks, type Finding } from "../rules-engine";
 import { assertMembership } from "../tenant/context";
+import { clampToMaxTurns } from "../agent/run-limits";
 import { localDateOf } from "../time/local-date";
 import { isUuid } from "../uuid";
 import {
@@ -27,7 +35,7 @@ import {
   type SettlementException,
 } from "./plan";
 import { fanoutLimits, fanoutOn, lockTenantDay } from "./fanout/limits";
-import { checkPhase, planPhase, reconcilePhase, type FanoutCtx } from "./fanout/run";
+import { checkPhase, planPhase, reconcilePhase, type FanoutCtx, type FanoutDeps } from "./fanout/run";
 import { nextSweepChecklist, sweepChecklist, type SweepChecklistChange } from "./checklist";
 import { serviceSession } from "./service-session";
 
@@ -47,7 +55,9 @@ import { serviceSession } from "./service-session";
 //          refused for a passing reason (TRANSIENT_REFUSALS) is tried again by a later run, at
 //          most MAX_DRAFT_ATTEMPTS times in all; a lasting refusal is never tried again. An item
 //          held back by another open proposal for the driver is tried again by a later run once
-//          that proposal is no longer open;
+//          that proposal is no longer open. Each item taken is one of the run's turns: at
+//          flags.runLimits.maxTurns the run moves on to audit and the rest wait, found, for the
+//          next run;
 //   audit  ONE auditor run per slice, first thing (an audit can outlast the draft lease, so this
 //          phase's lease is 45 s);
 //   done   counts, and the run is closed.
@@ -66,7 +76,9 @@ export type SweepCounts = Record<
   | "blocked_live"
   | "mismatch"
   | "audit_pending"
-  | "over_cap",
+  | "over_cap"
+  // Fixes still found: the run reached its turn ceiling first, so the next run drafts them.
+  | "left",
   number
 >;
 
@@ -95,6 +107,8 @@ export type SweepDeps = {
     session: Session,
     input: { conversationId: string | null; turnId: string; text: string; now: Date; summaryChars: number },
   ) => Promise<OpenedTurn | { refused: OpenTurnRefusal }>;
+  // The second opinion's turns open inside the run's leased transaction, with their ids.
+  openTurnIn?: FanoutDeps["openTurnIn"];
   store?: (session: Session) => Pick<TurnStore, "persistProposal" | "finishTurn">;
   explain?: (session: Session, input: ExplainInput) => Promise<Explained>;
   runAudit?: (session: Session, proposalId: string) => Promise<AuditResult>;
@@ -125,6 +139,8 @@ const ABANDONED_MS = 10 * 60_000;
 export const TRANSIENT_REFUSALS = ["turn_unavailable", "limit_unavailable", "screen_error", "tool_failed", "budget"] as const;
 // Draft tries per item across runs, the first included.
 export const MAX_DRAFT_ATTEMPTS = 3;
+// sweep_runs.turns_used's own bound (its CHECK); flags.runLimits.maxTurns clamps it lower.
+const MAX_RUN_TURNS = 1000;
 const CATEGORY = /^[a-z_]{2,40}$/;
 
 const categoryOf = (value: unknown, fallback: string) =>
@@ -203,6 +219,7 @@ function defaults(db: TenantDb, clock: () => Date, deps: SweepDeps): Ctx["deps"]
   return {
     callTool: deps.callTool ?? ((ctx, call) => gatewayCallTool(ctx, call, { db })),
     openTurn: deps.openTurn ?? ((s, input) => openAgentTurn(s, input, { db, clock })),
+    openTurnIn: deps.openTurnIn ?? openAgentTurnIn,
     store: deps.store ?? ((s) => dbTurnStore(s, { db, clock })),
     explain: deps.explain ?? ((s, input) => explainFix(s, input, { ai: { db } })),
     runAudit: deps.runAudit ?? ((s, id) => auditorRun(s, id, { db, clock })),
@@ -396,7 +413,7 @@ function fanoutCtx(ctx: Ctx): FanoutCtx {
     deps: {
       complete: ctx.deps.complete,
       callTool: ctx.deps.callTool,
-      openTurn: ctx.deps.openTurn,
+      openTurnIn: ctx.deps.openTurnIn,
       steps: ctx.deps.steps,
       tools: ctx.deps.tools,
     },
@@ -425,7 +442,9 @@ async function slice(ctx: Ctx, run: Run): Promise<void> {
     while (timeLeft(ctx)) {
       const step = await draftNext(ctx);
       if (step === "cap") return finishRun(ctx, "cap");
-      if (step === "none") {
+      // At the run's turn ceiling the rest stay found for the next run, and what was drafted
+      // still gets its second check.
+      if (step === "none" || step === "max_turns") {
         await setPhase(ctx, "audit");
         // The audit phase needs its longer lease: the next slice takes it.
         return;
@@ -652,13 +671,13 @@ type Item = {
   status: string;
 };
 
-type Step = "done" | "none" | "cap";
+type Step = "done" | "none" | "cap" | "max_turns";
 
 type DraftItem = Item & { period_id: string; period_start: string; period_end: string; conversation_id: string | null };
 
 async function draftNext(ctx: Ctx): Promise<Step> {
-  const next = await leased(ctx, (q) =>
-    q.query<DraftItem>(
+  const next = await leased(ctx, async (q) => {
+    const rows = await q.query<DraftItem>(
       `SELECT i.id, i.check_name, i.category, i.driver_id, d.code AS driver_code, i.expected_cents,
               CAST(i.plan AS text) AS plan, i.explanation, i.status, i.period_id,
               CAST(sp.period_start AS text) AS period_start, CAST(sp.period_end AS text) AS period_end,
@@ -672,8 +691,11 @@ async function draftNext(ctx: Ctx): Promise<Step> {
         ORDER BY fc.priority NULLS LAST, d.code NULLS LAST, i.check_name, i.leg, i.finding_key
         LIMIT 1`,
       [ctx.runId],
-    ),
-  );
+    );
+    if (rows.length === 0 || (await takeTurn(q, ctx.runId))) return rows;
+    return "max_turns" as const;
+  });
+  if (next === "max_turns") return "max_turns";
   const item = next[0];
   if (!item) return "none";
   const code = item.driver_code ?? "a driver";
@@ -697,6 +719,25 @@ async function draftNext(ctx: Ctx): Promise<Step> {
     await writeStatus(ctx, item.id, { status: "refused", refusal: "tool_failed" });
     return "done";
   }
+}
+
+// One turn of the run's ceiling, taken in the same transaction that picks the item. It counts
+// as the item is taken, before its draft, so an item a cut-off slice dropped still counts and a
+// crash never lifts the ceiling. At the ceiling the run is marked (unless the find step already
+// took the first findings only, which says the same thing: run it again for the rest).
+async function takeTurn(q: Queryable, runId: string): Promise<boolean> {
+  const took = await q.query<{ turns_used: number }>(
+    `UPDATE sweep_runs SET turns_used = turns_used + 1
+      WHERE id = CAST($1 AS uuid) AND turns_used < $2
+      RETURNING turns_used`,
+    [runId, clampToMaxTurns(MAX_RUN_TURNS)],
+  );
+  if (took.length === 1) return true;
+  await q.execute(
+    "UPDATE sweep_runs SET truncated_reason = COALESCE(truncated_reason, 'max_turns') WHERE id = CAST($1 AS uuid)",
+    [runId],
+  );
+  return false;
 }
 
 async function finishItemTurn(
@@ -1048,8 +1089,15 @@ async function failRun(q: Queryable, ctx: Ctx, category: string, now: string): P
 }
 
 export async function countItems(q: Queryable, runId: string): Promise<SweepCounts> {
-  const rows = await q.query<{ status: string; n: string | number; drafted: string | number; clean: string | number }>(
+  const rows = await q.query<{
+    status: string;
+    n: string | number;
+    drafted: string | number;
+    clean: string | number;
+    left_fixes: string | number;
+  }>(
     `SELECT i.status, COUNT(*) AS n,
+            COUNT(*) FILTER (WHERE i.kind = 'fix' AND i.status = 'found') AS left_fixes,
             COUNT(*) FILTER (WHERE i.proposal_id IS NOT NULL AND i.status IN ('drafted', 'mismatch', 'audit_pending', 'over_cap')) AS drafted,
             COUNT(*) FILTER (WHERE p.id IS NOT NULL AND i.status = 'drafted' AND ${CLEAN_SQL}) AS clean
        FROM sweep_items i LEFT JOIN proposals p ON p.id = i.proposal_id
@@ -1070,9 +1118,11 @@ export async function countItems(q: Queryable, runId: string): Promise<SweepCoun
     mismatch: 0,
     audit_pending: 0,
     over_cap: 0,
+    left: 0,
   };
   for (const r of rows) {
     counts.found += Number(r.n);
+    counts.left += Number(r.left_fixes);
     counts.fixes_drafted += Number(r.drafted);
     counts.clean += Number(r.clean);
     if (r.status in counts && r.status !== "found") counts[r.status as keyof SweepCounts] += Number(r.n);
@@ -1081,8 +1131,10 @@ export async function countItems(q: Queryable, runId: string): Promise<SweepCoun
 }
 
 // The checklist ends with the run: "cap" stopped it with work left, and so did "max_items" (the
-// find phase took the first findings only, read here from the run row); the audit step switched
-// off is skipped rather than done.
+// find phase took the first findings only, read here from the run row) and "max_turns" (the
+// draft step reached the run's turn ceiling); the audit step switched off is skipped rather than
+// done. At the turn ceiling the run still went on to audit what it drafted, so unless that step
+// was switched off, the audit is done and only the findings left wait for the next run.
 async function finishRun(ctx: Ctx, truncated: string | null, opts: { skipped?: "audit" } = {}): Promise<void> {
   const now = ctx.clock().toISOString();
   const counts = await leased(ctx, async (q) => {
@@ -1092,7 +1144,13 @@ async function finishRun(ctx: Ctx, truncated: string | null, opts: { skipped?: "
       [ctx.runId],
     );
     const reason = truncated ?? cut[0]?.truncated_reason ?? null;
-    const ending: SweepChecklistChange = { ended: reason === "cap" || reason === "max_items" ? "stopped" : "done", ...opts };
+    const stopped = reason === "cap" || reason === "max_items" || reason === "max_turns";
+    const audited = reason === "max_turns" && truncated === null && !opts.skipped;
+    const ending: SweepChecklistChange = {
+      ended: stopped ? "stopped" : "done",
+      ...opts,
+      ...(audited ? { stoppedAfter: "audit" as const } : {}),
+    };
     await q.execute(
       `UPDATE sweep_runs
           SET status = 'done', phase = 'done', counts = CAST($2 AS jsonb),

@@ -79,6 +79,10 @@ const KEPT_OFF = [
   "judgeAccess.enabled",
   // Pay rules from a policy document ship dark with their own merge; the owner turns them on in their own PR.
   "policyOnboardEnabled",
+  // Fuel and tax rate lookups ship dark with their own merge; the owner turns them on in their own PR.
+  "groundedRatesEnabled",
+  // Pay cards ship dark with their own merge; the owner turns them on in their own PR.
+  "payCardsEnabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -135,6 +139,13 @@ describe("flags", () => {
     expect(flags.triageProvider).toBe("baseten");
     // The demo visitor sign-in: dark until the owner's one-line release PR.
     expect(flags.judgeAccess.enabled).toBe(false);
+    expect(flags.groundedRatesEnabled).toBe(false);
+  });
+
+  it("keeps a rate lookup small and its switch out of the local overrides", () => {
+    expect(flags.ratesLimits).toEqual({ lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 });
+    // The demo path turns every local override on; the read tool must stay out of its tool list.
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("groundedRatesEnabled");
   });
 
   it("keeps a demo visit small: a dollar of model time, 25 turns, $8.00 a day across every visit", () => {
@@ -419,6 +430,23 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
+  });
+
+  it("keeps pay cards dark, with small caps and a picture size limit", () => {
+    expect(flags.payCardsEnabled).toBe(false);
+    expect(flags.payCardLimits).toEqual({
+      checkMaxCostCents: 3,
+      maxBatchCents: 40,
+      cardsPerTenantPerDay: 100,
+      maxPngBytes: 400_000,
+    });
+    for (const v of Object.values(flags.payCardLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    expect(flags.payCardLimits.checkMaxCostCents).toBeLessThan(flags.payCardLimits.maxBatchCents);
+    // The byte_length CHECK in migration 0052 holds 1 to 400,000 bytes: a larger limit would pass
+    // the check and then fail at the save.
+    expect(flags.payCardLimits.maxPngBytes).toBeLessThanOrEqual(400_000);
   });
 
   it("releases collections with their email off, no email address allowed, no send date and small caps", () => {
@@ -756,6 +784,8 @@ describe("local overrides for the demo-path test", () => {
       { gatewayLimits: { payCorrectionMaxCents: 1, invoiceFixMaxCents: 1 } },
       { approverRole: { adminAboveCents: 1 } },
       { driverNoteLimits: { maxNoteCents: 1000, maxBatchCents: 1000, maxOutputTokens: 1 } },
+      { payCardLimits: { checkMaxCostCents: 1000, maxBatchCents: 100_000 } },
+      { payCardsEnabled: true },
       { advancesLimits: { proposalsPerDay: 1000 } },
       { paymentProvider: "stripe" },
       { triageProvider: "meta" },
