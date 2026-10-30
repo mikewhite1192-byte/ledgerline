@@ -51,6 +51,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_profit_brief: { tier: "read", roles: ["operator"] },
   set_checklist: { tier: "read", roles: ["operator"] },
   remember_note: { tier: "record", roles: ["operator"] },
+  get_pinned_rates: { tier: "read", roles: ["operator", "auditor"] },
   get_quarter_review: { tier: "read", roles: ["operator"] },
 };
 
@@ -84,6 +85,7 @@ afterEach(() => {
   flags.collectionsEnabled = false;
   flags.profitBriefEnabled = false;
   flags.carrierMemoryEnabled = false;
+  flags.groundedRatesEnabled = false;
   flags.quarterReviewEnabled = false;
 });
 
@@ -327,11 +329,12 @@ describe("tool registry", () => {
     flags.collectionsEnabled = true;
     flags.profitBriefEnabled = true;
     flags.carrierMemoryEnabled = true;
+    flags.groundedRatesEnabled = true;
     flags.quarterReviewEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 44,
-      auditor: 17,
+      operator: 45,
+      auditor: 18,
       triage: 2,
     });
     for (const role of AGENT_ROLES) {

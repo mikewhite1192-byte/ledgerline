@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../../config/flags";
 import type { AuditResult } from "../../agent/auditor/run";
-import { readSweepTurnTrace } from "../../agent/gateway/store";
+import { openAgentTurnIn, readSweepTurnTrace } from "../../agent/gateway/store";
 import { reasonSentence } from "../../agent/reasons";
 import type { Explained } from "../../agent/sweep/explain";
 import { AiError, type AiRequest, type AiResult, type AiToolCall } from "../../ai";
@@ -346,6 +346,55 @@ describe("the sweep's second opinion", () => {
     expect(after.filter((c) => c.driver_id !== rows[0].driver_id && c.driver_id !== rows[1].driver_id).every((c) => c.attempts === 1)).toBe(true);
     expect(JSON.parse((await fanoutRow(runId)).counts ?? "{}")).toMatchObject({ drivers_unchecked: 1 });
     expect((await runRow(runId)).reserved_cents).toBe(0);
+  });
+
+  it("leaves no turn running when a slice dies between a turn's open and its id write, for the plan, a check and the comparison", async () => {
+    // A slice killed right after each kind of turn opens, once each, before its id is written.
+    const phaseOf = (text: string) =>
+      text.startsWith("Second opinion: order") ? "plan" : text.startsWith("Second opinion: check ") ? "check" : text.startsWith("Second opinion: compare") ? "reconcile" : null;
+    const killed: string[] = [];
+    const killing: NonNullable<SweepDeps["openTurnIn"]> = async (q, session, input) => {
+      const opened = await openAgentTurnIn(q, session, input);
+      const phase = phaseOf(input.text);
+      if (phase && !killed.includes(phase)) {
+        killed.push(phase);
+        throw new Error("slice_killed");
+      }
+      return opened;
+    };
+    // The clock moves past a check's lease after each kill, so the next slice takes it again.
+    let at = NOW.getTime();
+    const d = deps({ clock: () => new Date(at), openTurnIn: killing });
+    const runId = await start();
+    let status = "running";
+    for (let i = 0; i < 60 && status === "running"; i++) {
+      try {
+        const s = await advanceSweep(SESSION, runId, at + SLICE, d);
+        if (!s.ok) throw new Error(`advance refused: ${s.category}`);
+        status = s.status;
+        at += 1_000;
+      } catch (err) {
+        if (!(err instanceof Error) || err.message !== "slice_killed") throw err;
+        at += 31_000;
+      }
+    }
+    expect(killed).toEqual(["plan", "check", "reconcile"]);
+    expect(status).toBe("done");
+    const running = await read<{ n: number }>("SELECT CAST(count(*) AS integer) AS n FROM turns WHERE status = 'running'");
+    expect(running[0].n).toBe(0);
+    // Every fan-out turn (each alone in its conversation) is the one its row points at.
+    const unpointed = await read<{ n: number }>(
+      `SELECT CAST(count(*) AS integer) AS n FROM turns t
+        WHERE t.conversation_id IS DISTINCT FROM (SELECT conversation_id FROM sweep_runs WHERE id = CAST($1 AS uuid))
+          AND NOT EXISTS (SELECT 1 FROM sweep_fanout f WHERE f.run_id = CAST($1 AS uuid) AND t.id IN (f.plan_turn_id, f.reconcile_turn_id))
+          AND NOT EXISTS (SELECT 1 FROM sweep_fanout_checks c WHERE c.run_id = CAST($1 AS uuid) AND c.turn_id = t.id)`,
+      [runId],
+    );
+    expect(unpointed[0].n).toBe(0);
+    const f = await fanoutRow(runId);
+    expect(f.plan_turn_id).not.toBeNull();
+    expect(f.reconcile_turn_id).not.toBeNull();
+    expect((await checks(runId)).every((c) => c.status === "done" && c.turn_id !== null)).toBe(true);
   });
 
   it("holds cents against the cap so two slices at once cannot pass it", async () => {

@@ -63,6 +63,16 @@ describe("the sweep's checklist", () => {
     });
   });
 
+  it("marks the second check done when the turn ceiling stopped the run after it ran", () => {
+    const auditing = tickSweep(tickSweep(sweepChecklist(false), "draft"), "audit");
+    expect(states(endSweep(auditing, "stopped", { stoppedAfter: "audit" }))).toEqual({ find: "done", draft: "done", audit: "done" });
+    // Only a stop ticks it: a failure still leaves it not finished.
+    expect(states(endSweep(auditing, "failed", { stoppedAfter: "audit" }))).toEqual({ find: "done", draft: "done", audit: "not_done" });
+    // A stop while drafting ticks nothing past the item in hand.
+    const drafting = tickSweep(sweepChecklist(false), "draft");
+    expect(states(endSweep(drafting, "stopped", { stoppedAfter: "draft" }))).toEqual({ find: "done", draft: "done", audit: "not_done" });
+  });
+
   it("marks the second check skipped, not done, when it was switched off", () => {
     const auditing = tickSweep(tickSweep(sweepChecklist(false), "draft"), "audit");
     expect(states(endSweep(auditing, "done", { skipped: "audit" }))).toEqual({ find: "done", draft: "done", audit: "skipped" });

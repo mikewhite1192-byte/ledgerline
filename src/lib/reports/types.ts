@@ -154,3 +154,10 @@ export function reportPath(name: ReportName, args: Record<string, string>, forma
   }
   return `/api/reports/${name}?${params.toString()}`;
 }
+
+// A report path is a file from the download route, not a page: link to it with a plain <a>, never
+// the router's Link. The router prefetches a Link and adds its own query key to the request, which
+// the route's strict args refuse with a 400.
+export function isReportPath(href: string): boolean {
+  return href.startsWith("/api/reports/");
+}

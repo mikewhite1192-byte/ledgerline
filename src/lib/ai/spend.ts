@@ -95,7 +95,11 @@ export function overCap(spend: Spend, r: CapCheck): boolean {
 // AiError("job_cap") with nothing written to the ledger (the job's one alert row commits first),
 // AiError("not_configured") for a wonder reservation without a Wonder cap, the tenant module's
 // ForbiddenError when the session has no membership, or DbError when the job's spend cannot be
-// read (fail closed).
+// read (fail closed). check, when given, is the caller's own limit, run in this same transaction
+// right after the membership check and before the counter's row is locked (so any lock it takes
+// comes first): the row this reservation writes uses up what it counted, and the next check made
+// after this commits sees it. Whatever it throws, nothing is written. Only the rate lookup passes
+// one.
 //
 // A judge (the demo visitor, migration 0043) spends only from a live demo visit
 // (session.demoSessionId, src/lib/auth/session.ts) and only while flags.judgeAccess is on: last,
@@ -103,7 +107,12 @@ export function overCap(spend: Spend, r: CapCheck): boolean {
 // cap across every visit (src/lib/auth/demo-visit.ts). A judge with no visit, a visit that ended
 // or is over a cap gets AiError("cap") with no call row and no change to the global counter.
 // Admin and staff sessions have no visit and never meet this check.
-export async function reserve(db: TenantDb, session: Session, r: Reservation): Promise<void> {
+export async function reserve(
+  db: TenantDb,
+  session: Session,
+  r: Reservation,
+  check?: (q: Queryable) => Promise<void>,
+): Promise<void> {
   const wonder = r.target === "wonder";
   if (wonder && r.wonderCapNanocents === null) throw new AiError("not_configured");
   const visitId = session.demoSessionId ?? null;
@@ -117,6 +126,7 @@ export async function reserve(db: TenantDb, session: Session, r: Reservation): P
     if (!session.sub || member.length !== 1) throw new ForbiddenError();
     const visitor = visitId !== null || member[0].role === "judge";
     if (visitor && (visitId === null || !flags.judgeAccess.enabled)) throw new AiError("cap");
+    if (check) await check(q);
     const counter = checked(
       (
         await q.query<Counter>(

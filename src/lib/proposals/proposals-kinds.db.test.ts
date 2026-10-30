@@ -122,7 +122,7 @@ describe("proposal kinds and origins on a fresh database", () => {
     expect(listed).toEqual(union);
   });
 
-  it("lists vendor bills (0029) and card statement rows (0046) as subject tables, after the seventeen of 0009", async () => {
+  it("lists vendor bills (0029), card statement rows (0046) and pinned rates (0053) as subject tables, after the seventeen of 0009", async () => {
     const [def] = await admin.withoutTenant((q) =>
       q.query<{ def: string }>(
         `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
@@ -130,8 +130,8 @@ describe("proposal kinds and origins on a fresh database", () => {
       ),
     );
     const listed = [...def.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
-    expect(listed).toHaveLength(19);
-    expect(listed.slice(17)).toEqual(["vendor_bills", "card_transactions"]);
+    expect(listed).toHaveLength(20);
+    expect(listed.slice(17)).toEqual(["vendor_bills", "card_transactions", "pinned_rates"]);
   });
 
   it("keeps the dedupe key the engine computes inside the table's pattern", () => {

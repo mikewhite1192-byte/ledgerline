@@ -168,6 +168,24 @@ export type Flags = {
   // Caps on note drafting: one note's worst case, the spend of one period's notes, and the
   // output budget of one note.
   driverNoteLimits: { maxNoteCents: number; maxBatchCents: number; maxOutputTokens: number };
+  // Pay cards: a picture of a driver's approved week (take-home pay, earned, taken out, loads,
+  // change from last week) drawn in the browser from the settlement's own engine figures, read
+  // back by Muse Spark and kept only when every figure matches, for the clerk to save and send
+  // from their phone. Off means the cards page shows the switched-off state, its link is hidden,
+  // the routes refuse before any work and the driver view shows no card. aiEnabled must also be on
+  // for a check to reach a model. Nothing is ever sent by the app.
+  payCardsEnabled: boolean;
+  payCardLimits: {
+    // The cap on one read-back call, in cents.
+    checkMaxCostCents: number;
+    // The spend of one run of the cards page, in cents.
+    maxBatchCents: number;
+    // Cards one carrier may check in 24 hours, every outcome counted.
+    cardsPerTenantPerDay: number;
+    // The largest card picture the check takes, in bytes.
+    // At most 400,000: the byte_length CHECK in migration 0052 refuses a larger card.
+    maxPngBytes: number;
+  };
   // The five report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
@@ -551,6 +569,33 @@ export type Flags = {
       sliceMs: number;
     };
   };
+  // The "How the models score" card on /models, read from src/lib/eval/results/latest.json. Off
+  // until the owner's one-line flip after a real run is recorded.
+  evalCardEnabled: boolean;
+  // The model eval script (npm run eval). It runs every case on a fresh local database that it
+  // drops after, and only spends model cents on the developer's own ledger, never production's.
+  evalRun: {
+    enabled: boolean;
+    // The most one run may spend, in cents, unless --max-cents asks for less.
+    maxRunCents: number;
+    // Cents the ledger must still have free after the run's own limit before a run starts.
+    reserveCents: number;
+  };
+  // Fuel and tax rates: a person looks up this week's diesel price or a state's fuel tax rate (one
+  // Muse Spark call with web search) and an admin pins one from its linked source. The agent only
+  // reads pinned rates (get_pinned_rates); it never looks one up or pins one, and nothing is
+  // recalculated, billed or paid from a pin in this release. Off means the Fuel and tax rates page
+  // is not found, its link is hidden, the routes and the services refuse before any work, and the
+  // read tool is not offered. Not a local override: the demo path's tool list must not change.
+  groundedRatesEnabled: boolean;
+  ratesLimits: {
+    // The cap on one lookup call, in cents.
+    lookupMaxCostCents: number;
+    // Lookups one carrier may start in a rolling day (failed ones count).
+    lookupsPerTenantPerDay: number;
+    // Web searches one lookup may run (each is billed on top of the tokens).
+    maxSearchCalls: 1 | 2 | 3;
+  };
 };
 
 export const flags: Flags = {
@@ -604,6 +649,8 @@ export const flags: Flags = {
   driverNotesEmailAllowlist: [],
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
+  payCardsEnabled: false,
+  payCardLimits: { checkMaxCostCents: 3, maxBatchCents: 40, cardsPerTenantPerDay: 100, maxPngBytes: 400_000 },
   reportsEnabled: true,
   invoicesEnabled: true,
   invoicesStart: "2026-10-05",
@@ -721,6 +768,10 @@ export const flags: Flags = {
       sliceMs: 20_000,
     },
   },
+  evalCardEnabled: false,
+  evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
+  groundedRatesEnabled: false,
+  ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
 };
 
 applyLocalOverrides(flags);

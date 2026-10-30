@@ -25,6 +25,8 @@ export type RunRow = {
   lastUrl: string | null;
   sessionId: string | null;
   resumeStep: number | null;
+  // Times the run was put back in the queue after its worker stopped mid-run (start.ts).
+  resumeAttempts: number;
 };
 
 export type ClaimResult =
@@ -40,6 +42,8 @@ export type StoredStep = {
   executed: boolean;
   urlAfter: string | null;
   pendingCheckCount: number;
+  // What the step's model call cost, as stored with the step.
+  costNanocents: number;
 };
 
 export type StoredCheck = {
@@ -154,7 +158,7 @@ const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
 const RUN_COLUMNS =
   "id, load_id, reference, requested_by, turn_id, trace_id, model, step_count, model_call_count," +
-  " cost_nanocents, last_url, session_id, resume_step";
+  " cost_nanocents, last_url, session_id, resume_step, resume_attempts";
 
 type RawRun = {
   id: string;
@@ -170,6 +174,7 @@ type RawRun = {
   last_url: string | null;
   session_id: string | null;
   resume_step: number | null;
+  resume_attempts: number;
 };
 
 const runOf = (r: RawRun): RunRow => ({
@@ -186,6 +191,7 @@ const runOf = (r: RawRun): RunRow => ({
   lastUrl: r.last_url,
   sessionId: r.session_id,
   resumeStep: r.resume_step === null ? null : Number(r.resume_step),
+  resumeAttempts: Number(r.resume_attempts),
 });
 
 const GUARD = "tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND claim_token = CAST($2 AS uuid) AND status = 'running'";
@@ -291,8 +297,9 @@ export function dbRunStore(tenantId: string, db: TenantDb = getDb()): RunStore {
           executed: boolean;
           url_after: string | null;
           pending_check_count: number;
+          cost_nanocents: number | string;
         }>(
-          "SELECT id, seq, call_item, upstream_call_id, executed, url_after, pending_check_count" +
+          "SELECT id, seq, call_item, upstream_call_id, executed, url_after, pending_check_count, cost_nanocents" +
             " FROM portal_run_steps WHERE tenant_id = current_tenant_id() AND run_id = CAST($1 AS uuid)" +
             " ORDER BY seq",
           [runId],
@@ -305,6 +312,7 @@ export function dbRunStore(tenantId: string, db: TenantDb = getDb()): RunStore {
           executed: r.executed,
           urlAfter: r.url_after,
           pendingCheckCount: Number(r.pending_check_count),
+          costNanocents: Number(r.cost_nanocents),
         }));
       }),
 

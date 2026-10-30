@@ -28,6 +28,7 @@ const SWITCHES = [
   "rulesByTalkingEnabled",
   "profitBriefEnabled",
   "carrierMemoryEnabled",
+  "groundedRatesEnabled",
   "quarterReviewEnabled",
 ] as const;
 type Switch = (typeof SWITCHES)[number];
@@ -72,6 +73,7 @@ describe("appNav", () => {
       ["Settings", "/models", "Models and spend", false],
       ["Settings", "/portal-runs", "Portal runs", false],
       ["Settings", "/settings/demo", "Demo", false],
+      ["Settings", "/settings/rates", "Fuel and tax rates", false],
       ["Settings", "/memory", "Memory", false],
     ]);
   });
@@ -103,6 +105,7 @@ describe("appNav", () => {
       rulesByTalkingEnabled: "/settings/pay-rules",
       profitBriefEnabled: "/profit",
       carrierMemoryEnabled: "/memory",
+      groundedRatesEnabled: "/settings/rates",
       quarterReviewEnabled: "/quarter",
     };
     for (const s of SWITCHES) {
@@ -199,7 +202,8 @@ describe("NavList", () => {
 
 // Every page a person can open from the app is either a menu item or linked from one, so a page
 // never goes missing from the menu. Record pages ([id]) are reached from the lists and answers;
-// /sign-in, /design and the stand-in broker portal are not part of the signed-in app.
+// /sign-in, /design and the stand-in broker portal are not part of the signed-in app; /help shows
+// nothing of its own and only sends on to the help page under the menu.
 describe("every signed-in page is reachable", () => {
   const appDir = path.join(process.cwd(), "src", "app");
 
@@ -218,7 +222,7 @@ describe("every signed-in page is reachable", () => {
 
   const routes = pages(appDir)
     .map(routeOf)
-    .filter((r) => r !== "/sign-in" && r !== "/design" && r !== "/portal" && !r.startsWith("/portal/"))
+    .filter((r) => r !== "/sign-in" && r !== "/design" && r !== "/help" && r !== "/portal" && !r.startsWith("/portal/"))
     .filter((r) => !r.includes("["));
 
   const itemPage = (href: string) => {
