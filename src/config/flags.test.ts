@@ -76,6 +76,7 @@ const RELEASED_ON = [
   "ratecon.enabled",
   "phoneLineEnabled",
   "escrowRelease.enabled",
+  "escrowRelease.armed",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -91,10 +92,8 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The desk loop and escrow releases ship on and unarmed: each arming is the owner's call, in its
-  // own one-line PR.
+  // The desk loop ships on and unarmed: its arming is the owner's call, in its own one-line PR.
   "deskLoop.armed",
-  "escrowRelease.armed",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -303,8 +302,8 @@ describe("flags", () => {
     expect(limits.maxHandOffsPerCall).toBeLessThanOrEqual(100);
   });
 
-  it("ships escrow releases on and unarmed, with a $5,000 cap and a start date", () => {
-    expect(flags.escrowRelease).toEqual({ enabled: true, armed: false, capCents: 500_000, startDate: "2026-10-30" });
+  it("ships escrow releases on and armed, with a $5,000 cap and a start date", () => {
+    expect(flags.escrowRelease).toEqual({ enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" });
     expect(isLocalDate(flags.escrowRelease.startDate)).toBe(true);
   });
 
