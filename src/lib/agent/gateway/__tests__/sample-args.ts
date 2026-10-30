@@ -1,3 +1,4 @@
+import { addDays } from "../../../time/local-date";
 import type { CarrierPlan } from "../../../seed/plan";
 
 // One well-formed argument object per registered tool, built from a seed plan's own rows, so a
@@ -21,6 +22,18 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const refs = [{ table: "drivers", id: hero.id }];
   // The statement's planted card that is on no driver's file, and the driver code ranks first.
   const unknownCard = plan.planted.cardRecon;
+  // A load invoice the engine lets be factored on the anchor (the day the plan's bank balance is
+  // as of): open, issued in the 45 days before. The newest such invoice.
+  const factorBy = plan.anchor;
+  const factorable = rows.invoices
+    .filter(
+      (i) =>
+        i.source === "load" &&
+        i.status === "open" &&
+        i.issued_on <= factorBy &&
+        i.issued_on >= addDays(factorBy, -45),
+    )
+    .sort((a, b) => (a.issued_on === b.issued_on ? (a.id < b.id ? 1 : -1) : a.issued_on < b.issued_on ? 1 : -1))[0];
   return {
     get_driver: { driverId: hero.id },
     get_loads: { driverId: hero.id, from: paid.period_start, to: open.period_end },
@@ -93,6 +106,9 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
       purpose: "lumper",
     },
     get_cash_friday: {},
+    get_factoring_packet: { invoiceIds: [invoice.id, factorable.id] },
+    get_factoring_requests: {},
+    propose_factoring: { invoiceIds: [factorable.id], sourceRefs: [] },
     get_pinned_rates: { kind: "ifta_rate", state: "IL", day: "2026-10-27" },
     classify_message: { inputId: input.id, category: "pay_question", urgency: "normal" },
     report_ar_aging: { asOf: "2026-11-02" },

@@ -53,6 +53,9 @@ export type DetentionView = {
 export type CashCardView =
   | {
       kind: "factoring_request";
+      // The factoring request the approval wrote (src/lib/factoring/execute.ts), by its status;
+      // null or absent before an approval sent one (or when factoring was off and only recorded it).
+      requestStatus?: string | null;
       shortCents: number;
       advanceBps: number;
       feeBps: number;

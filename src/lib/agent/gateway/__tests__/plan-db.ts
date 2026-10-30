@@ -9,6 +9,8 @@ import {
   QUEUE_CHILDREN,
   QUEUE_LOADS,
 } from "../../../data/read";
+import { PACKET_DOCUMENTS_SQL, PACKET_INVOICES_SQL, PACKET_PODS_SQL } from "../../../factoring/packet";
+import { SUMMARY_SQL as FACTORING_REQUESTS_SQL } from "../../../factoring/read";
 import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
@@ -133,6 +135,17 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     if (LEDGER_BY_KIND.test(sql)) {
       return (tables.money_actions ?? []).filter((r) => r.kind === params[0]).map((r) => ({ ...r }));
     }
+    // The factoring papers: the named invoices' loads, then the uploaded papers and the portal's
+    // proof of delivery, from lists a test adds (the plan holds neither), or none.
+    if (sql === PACKET_INVOICES_SQL) {
+      const ids = new Set(JSON.parse(String(params[0])) as string[]);
+      return plan.rows.invoices
+        .filter((i) => ids.has(i.id))
+        .map((i) => ({ id: i.id, load_id: i.load_id ?? null }));
+    }
+    if (sql === PACKET_DOCUMENTS_SQL || sql === PACKET_PODS_SQL) return [];
+    // The factoring request list: the plan holds no requests.
+    if (sql.startsWith(FACTORING_REQUESTS_SQL)) return [];
     // The loads an approved invoice card wrote an invoice for. The plan holds no cards, so this
     // answers from a proposals list a test adds, or none: every seeded invoice is history.
     if (sql === QUEUE_CARD_LOADS_SQL) {

@@ -53,11 +53,21 @@ describe("ProposalCard", () => {
     expect(onReject).not.toHaveBeenCalled();
   });
 
-  it("offers no Resume without canResume, and none on any status but approved", () => {
-    const { unmount } = render(<ProposalCard {...card} status="approved" />);
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
-    unmount();
-    const others: ProposalStatus[] = ["executing", "rejected", "done", "failed", "unknown"];
+  it("offers one Resume on an executing card when the caller says it may resume (a factoring card)", () => {
+    const onApprove = vi.fn();
+    render(<ProposalCard {...card} status="executing" canResume onApprove={onApprove} />);
+    expect(screen.queryAllByRole("button").map((b) => b.textContent)).toEqual(["Resume"]);
+    fireEvent.click(button("Resume")!);
+    expect(onApprove).toHaveBeenCalledWith("p-1");
+  });
+
+  it("offers no Resume without canResume, and none on any status but approved or executing", () => {
+    for (const status of ["approved", "executing"] as const) {
+      const { unmount } = render(<ProposalCard {...card} status={status} />);
+      expect(screen.queryAllByRole("button"), status).toHaveLength(0);
+      unmount();
+    }
+    const others: ProposalStatus[] = ["rejected", "done", "failed", "unknown"];
     for (const status of others) {
       const view = render(<ProposalCard {...card} status={status} canResume />);
       expect(screen.queryAllByRole("button"), status).toHaveLength(0);

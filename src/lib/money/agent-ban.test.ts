@@ -52,6 +52,13 @@ const FORBIDDEN_IMPORTS = [
   'import { createMockPaymentAdapter } from "../adapters/./payment/mock";',
   'import { createMockPaymentAdapter } from "../adapters//payment/mock";',
   'import { createMockPaymentAdapter } from "../adapters/tms/../payment/mock";',
+  // The factoring executor, its switches and the simulated partner.
+  'import { factoringRequestExecutor } from "../factoring/execute";',
+  'import { checkPendingFactoring } from "@/lib/factoring/execute";',
+  'import { submitGate } from "../factoring/switches";',
+  'import { createFactoringSim } from "../adapters/factoring/sim";',
+  'import { readRequest } from "../factoring/read/../execute";',
+  'import { factoringRequestExecutor } from "../factoring";',
   // createRequire, imported.
   'import { createRequire } from "node:module";',
   'import { createRequire as load } from "module";',
@@ -76,6 +83,11 @@ const ALLOWED = [
   'import { idempotencyKey } from "@/lib/money/keys";',
   'import { dbTmsAdapter } from "../adapters/tms/db";',
   'import type { TmsAdapter } from "../adapters/types";',
+  'import { readRequest } from "../factoring/read";',
+  'import { packetsOf } from "@/lib/factoring/packet";',
+  'import { packetLine } from "../factoring/words";',
+  'import { factoringProposalOf } from "../factoring/propose";',
+  'import { factoringFor } from "../rules-engine/factoring";',
   // The money codes' readers, words and switches.
   'import { listMoneyCodes } from "../money-codes/read";',
   'import { moneyCodeSentence } from "@/lib/money-codes/words";',
