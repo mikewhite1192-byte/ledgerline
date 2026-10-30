@@ -43,6 +43,9 @@ const PAIRS: [string, string, number][] = [
   ["foreground", "accent-soft", 4.5],
   // The test-mode banner: page-colored text on the dark band.
   ["background", "foreground", 4.5],
+  // Home's money chart bars on their card.
+  ["chart-in", "card", 3],
+  ["chart-out", "card", 3],
 ];
 
 describe("contrastRatio", () => {

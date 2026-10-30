@@ -184,7 +184,8 @@ export function ChatThread({
   const Title = compact ? "h3" : "h2";
   const thread =
     messages.length === 0 ? (
-      <div className={cn("grid gap-4", compact ? "pt-2" : "pt-6 sm:pt-12")}>
+      // On Home the page's own spacing sits above it, so only the panel adds room at the top.
+      <div className={cn("grid gap-4", compact && "pt-2")}>
         <div className="grid gap-1.5">
           <Title className={cn("text-foreground", compact ? "text-h2" : "text-h1")}>{title}</Title>
           {intro ? (
@@ -307,8 +308,9 @@ export function ChatThread({
       </div>
     );
   }
+  // Home: a readable width, starting at the same left edge as the cards around it.
   return (
-    <div className={cn("mx-auto flex w-full max-w-[720px] flex-col gap-6", className)}>
+    <div className={cn("flex w-full max-w-[720px] flex-col gap-6", className)}>
       {thread}
       {announcer}
       <Composer {...composer} />

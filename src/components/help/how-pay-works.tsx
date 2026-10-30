@@ -207,10 +207,11 @@ export function HowPayWorks({ paystub, signedIn }: { paystub: HeroPaystubLink; s
   );
 }
 
-// The one line on Home that points a first-time reader at the page above.
+// The one line on Home that points a first-time reader at the page above. It starts at the same
+// left edge as Home's cards.
 export function NewHereLine() {
   return (
-    <p className="mx-auto w-full max-w-[720px] text-body text-foreground-2">
+    <p className="text-body text-foreground-2">
       New here?{" "}
       <Link href="/help/how-pay-works" className="text-link underline-offset-4 hover:underline">
         How trucking pay works
