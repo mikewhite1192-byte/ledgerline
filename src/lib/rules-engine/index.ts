@@ -80,6 +80,7 @@ export {
   findInsuranceDaysNotDriven,
   findMissingReimbursements,
   findOverAdvanceLimit,
+  RUN_ALL_CHECKS,
   runAllChecks,
 } from "./checks";
 export {

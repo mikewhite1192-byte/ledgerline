@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SWEEP_ENGINE_CHECKS, SWEEP_REQUIRED_CHECKS } from "../agent/verify/required";
 import { checkInputOf } from "../data/records";
-import { runAllChecks } from "../rules-engine";
+import { RUN_ALL_CHECKS, runAllChecks } from "../rules-engine";
 import { CHECK_NAMES } from "../rules-engine/types";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
@@ -15,12 +15,16 @@ describe("the sweep's required checks against the engine", () => {
     }
   });
 
-  it("names every check the engine's pay pass reports on the demo week", () => {
+  it("names exactly the checks the engine's pay pass is built from, in its order", () => {
+    expect([...SWEEP_ENGINE_CHECKS]).toEqual([...RUN_ALL_CHECKS]);
+  });
+
+  it("reports nothing on the demo week from a check outside the pay pass's list", () => {
     for (const carrier of DEMO_CARRIERS) {
       const plan = buildCarrierPlan(carrier, "2026-11-02");
       const seen = new Set(runAllChecks(checkInputOf(plan.rows)).map((f) => f.check));
       expect(seen.size).toBeGreaterThan(0);
-      for (const c of seen) expect(SWEEP_ENGINE_CHECKS as readonly string[], c).toContain(c);
+      for (const c of seen) expect(RUN_ALL_CHECKS as readonly string[], c).toContain(c);
     }
   });
 });

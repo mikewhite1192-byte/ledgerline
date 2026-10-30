@@ -20,7 +20,7 @@ import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import type { Checklist } from "../agent/checklist";
 import { fixPlanFor, type FixLeg } from "./plan";
 import { advanceSweep, MAX_DRAFT_ATTEMPTS, startSweep, type SweepDeps } from "./run";
-import { readSweepPage } from "./view";
+import { readSweepHome, readSweepPage } from "./view";
 
 // The sweep against the real database, as the app's role, with the real gateway, turn store and
 // pay correction checks. Only the two model calls are stand-ins: the explanation and the auditor
@@ -779,9 +779,16 @@ describe("the sweep's coverage and its starting checklist (verification on)", ()
     const runId = await start();
     await runToEnd(runId);
     expect((await runRow(runId)).coverage).not.toBeNull();
+    expect(await readSweepPage(SESSION, runId, { db: app })).toHaveProperty("run.coverage");
     flags.verification = { ...flags.verification, enabled: false };
+    // Off, the run view is the one from before 0064: no coverage key at all, on either page.
     const page = await readSweepPage(SESSION, runId, { db: app });
-    expect(page?.run.coverage).toBeNull();
+    expect(page?.run).toBeDefined();
+    expect(page?.run).not.toHaveProperty("coverage");
+    const home = await readSweepHome(SESSION, { db: app });
+    const listed = home.runs.find((r) => r.id === runId);
+    expect(listed).toBeDefined();
+    expect(listed).not.toHaveProperty("coverage");
   });
 
   it("fails a run whose starting checklist is not the required one checklist_invalid, before any item is written", async () => {

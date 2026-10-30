@@ -38,8 +38,8 @@ export type SweepRunView = {
   // The findings this run took to draft, each one of its turns (flags.runLimits.maxTurns).
   turnsUsed?: number;
   // How much of the week the run's checks covered (design-agents-102 3.3); null for a run that
-  // kept none (its find phase ran before the column existed or with verification off), and
-  // always null while verification is off. Nothing renders it yet.
+  // kept none (its find phase ran before the column existed or with verification off). Absent
+  // while verification is off. Nothing renders it yet.
   coverage?: SweepCoverage | null;
 };
 
@@ -102,19 +102,19 @@ type RunRow = {
   approved: number | string;
   checklist: string | null;
   turns_used: number | string;
-  coverage: string | null;
+  coverage?: string | null;
 };
 
-// With verification off no statement names sweep_runs.coverage, so this read runs the same
-// before and after 0064.
-const coverageColumn = () => (flags.verification.enabled ? "CAST(r.coverage AS text)" : "CAST(NULL AS text)");
+// With verification off the select is the one from before 0064: it never names
+// sweep_runs.coverage, so it runs the same before and after the migration.
+const coverageColumn = () => (flags.verification.enabled ? " CAST(r.coverage AS text) AS coverage," : "");
 
 const runSelect = () => `
   SELECT r.id, r.period_id, CAST(sp.period_start AS text) AS period_start,
          CAST(sp.period_end AS text) AS period_end, r.trigger, r.status, r.phase, r.cap_cents,
          r.spent_cents, CAST(r.counts AS text) AS counts, r.truncated_reason, r.failure_category,
          r.conversation_id, ${TS("r.started_at")} AS started_at, ${TS("r.finished_at")} AS finished_at,
-         CAST(r.checklist AS text) AS checklist, r.turns_used, ${coverageColumn()} AS coverage,
+         CAST(r.checklist AS text) AS checklist, r.turns_used,${coverageColumn()}
          (SELECT count(DISTINCT p.id) FROM sweep_items i JOIN proposals p ON p.id = i.proposal_id
            WHERE i.seen_run_id = r.id AND p.status = 'done') AS approved
     FROM sweep_runs r JOIN settlement_periods sp ON sp.id = r.period_id`;
@@ -130,7 +130,7 @@ function runOf(r: RunRow): SweepRunView {
   // A run given up while nobody held it ends without its last write: what it left is not finished.
   const list = parseChecklist(r.checklist);
   const checklist = list && r.status === "failed" ? endSweep(list, "failed") : list;
-  return {
+  const view: SweepRunView = {
     id: r.id,
     periodId: r.period_id,
     periodStart: r.period_start,
@@ -149,8 +149,10 @@ function runOf(r: RunRow): SweepRunView {
     approved: Number(r.approved),
     checklist,
     turnsUsed: Number(r.turns_used),
-    coverage: parseSweepCoverage(r.coverage),
   };
+  // Only a read made with verification on carries the key; off, the view is as before 0064.
+  if (flags.verification.enabled) view.coverage = parseSweepCoverage(r.coverage ?? null);
+  return view;
 }
 
 type ItemRow = {
