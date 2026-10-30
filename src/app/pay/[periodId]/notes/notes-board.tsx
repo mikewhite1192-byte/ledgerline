@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { lineDescription } from "@/components/app/paystub";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { StatusBadge } from "@/components/app/status-badge";
 import { useToast } from "@/components/app/toast";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +27,7 @@ const DRAFT_ERRORS: Record<string, string> = {
   ai_off: "The models are switched off.",
   not_found: "This pay period is not here.",
   forbidden: "This login cannot draft notes for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   unauthenticated: "Your session ended. Sign in again.",
 };
 
@@ -35,6 +37,7 @@ const DECIDE_ERRORS: Record<string, string> = {
   not_found: "This note is not here.",
   notes_off: "Driver notes are switched off.",
   forbidden: "This login cannot decide notes for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   unauthenticated: "Your session ended. Sign in again.",
 };
 

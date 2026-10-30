@@ -45,23 +45,8 @@ export function failed(err: unknown, what: string): NextResponse {
 
 type Press<T> = (session: Session, voiceNoteId: string) => Promise<T>;
 
-// One button press on a voice note's page: run it and answer with its category. A judge may press
-// these (prepare and hand-off, on the judge allowlist).
-export async function voiceAction<T extends Outcome>(
-  request: Request,
-  params: Promise<{ id: string }>,
-  what: string,
-  run: Press<T>,
-): Promise<NextResponse> {
-  if (isCrossSite(request)) return voiceRefuse("forbidden");
-  if (!voiceOn()) return voiceRefuse("disabled");
-  const session = await getSession();
-  if (!session) return voiceRefuse("unauthenticated");
-  return pressNote(session, params, what, run);
-}
-
-// The same press for a staff-only step (the reply draft to the driver): a judge is refused before
-// anything runs.
+// One button press on a voice note's page (prepare, hand-off, the reply draft): run it and answer
+// with its category. Every step is staff work, so a judge is refused before anything runs.
 export async function voiceStaffAction<T extends Outcome>(
   request: Request,
   params: Promise<{ id: string }>,

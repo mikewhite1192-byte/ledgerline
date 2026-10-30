@@ -441,7 +441,7 @@ describe("judge allowlist reachability", () => {
 // The walker itself, on made-up sources: it must fail closed on every shape it cannot prove.
 describe("judge allowlist walker", () => {
   const FILE = "src/app/api/x/route.ts";
-  const head = `import { getSession } from "@/lib/auth/session";\nimport { staffGate } from "@/lib/auth/staff-gate";\nimport { requireStaff } from "@/lib/auth/role";\nimport { withRequestTenant } from "@/lib/tenant/context";\nimport { advanceAction } from "@/lib/advances/http";\nimport { voiceAction } from "@/lib/voice/http";\n`;
+  const head = `import { getSession } from "@/lib/auth/session";\nimport { staffGate } from "@/lib/auth/staff-gate";\nimport { requireStaff } from "@/lib/auth/role";\nimport { withRequestTenant } from "@/lib/tenant/context";\nimport { advanceAction } from "@/lib/advances/http";\nimport { openAction } from "@/lib/x/http";\n`;
   const one = (body: string) => routeHandlers(FILE, head + body, []);
 
   it("accepts the gate after guards and the session read", () => {
@@ -534,7 +534,7 @@ describe("judge allowlist walker", () => {
 
   it("accepts a gated helper and refuses an ungated one", () => {
     const gated = one(`export async function POST(r: Request, c: C) { return advanceAction(r, c.params, run); }`);
-    const open = one(`export async function POST(r: Request, c: C) { return voiceAction(r, c.params, "x", run); }`);
+    const open = one(`export async function POST(r: Request, c: C) { return openAction(r, c.params, "x", run); }`);
     const late = one(`export async function POST(r: Request, c: C) { await write(); return advanceAction(r, c.params, run); }`);
     expect([gated[0].gated, open[0].gated, late[0].gated]).toEqual([true, false, false]);
   });

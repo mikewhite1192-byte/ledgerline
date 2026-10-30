@@ -131,4 +131,22 @@ describe("a judge on every staff-only route", () => {
       expect(keys).toContain(k);
     }
   });
+
+  // A judge uploads nothing of its own and runs no step that follows an upload.
+  it("covers the uploads and the steps that follow them", () => {
+    const keys = cases.map((c) => c.key);
+    for (const k of [
+      "POST /api/documents",
+      "POST /api/documents/[id]/read",
+      "POST /api/clips",
+      "PUT /api/clips/[id]/redacted",
+      "POST /api/clips/[id]/read",
+      "POST /api/voice-notes",
+      "POST /api/voice-notes/[id]/prepare",
+      "POST /api/voice-notes/[id]/hand-off",
+      "POST /api/voice-notes/[id]/reply",
+    ]) {
+      expect(keys).toContain(k);
+    }
+  });
 });

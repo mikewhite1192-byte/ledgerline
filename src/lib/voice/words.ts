@@ -1,3 +1,4 @@
+import { STAFF_ONLY_NOTE } from "../../components/app/staff-only";
 import type { BadgeTone } from "../../components/ui/badge";
 import { centsToDisplay } from "../ai/prices";
 import { codeToWords } from "../format/labels";
@@ -31,6 +32,7 @@ const NOTICES: Readonly<Record<string, string>> = {
   bad_request: "Pick a driver and a clip, then try again.",
   unauthenticated: "Your sign-in ended. Sign in again, then retry.",
   forbidden: "This login cannot add voice notes for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   not_found: "That driver or note is not on file for your carrier.",
   too_large: "That clip is too big. Keep it under about 60 seconds and 700 KB.",
   too_long: "That clip is too long. Keep it under 60 seconds.",

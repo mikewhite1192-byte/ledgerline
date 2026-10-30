@@ -1,12 +1,14 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { listDocuments, uploadDocument } from "@/lib/documents/service";
 import { isCrossSite } from "@/lib/http/same-site";
 import { failure, REFUSAL_STATUS, reply } from "./reply";
 
 // POST: upload one document (multipart, one field named "file") and read it once with Muse
-// Spark. GET: this carrier's latest 50 documents. Both behind flags.documentsEnabled. Replies
-// carry categories only; never the bytes, never the uploader.
+// Spark; staff only, so a demo visitor (the judge role) is refused before the body is read. GET:
+// this carrier's latest 50 documents. Both behind flags.documentsEnabled. Replies carry categories
+// only; never the bytes, never the uploader.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -18,6 +20,8 @@ export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
   if (!flags.documentsEnabled) return reply({ error: "disabled" }, 404);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const length = Number(request.headers.get("content-length"));
   if (!Number.isSafeInteger(length) || length <= 0) return reply({ error: "bad_request" }, 400);
   if (length > flags.documentLimits.maxBytes + FORM_OVERHEAD_BYTES) return reply({ error: "too_large" }, 413);
