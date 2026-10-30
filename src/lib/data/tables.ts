@@ -6,14 +6,15 @@
 // the replace, and so the demo reset, clears them), the collection reminders from 0041 (seeded
 // empty), the owner's briefs from 0042 (none planted), Cash Friday's bills, bank position and
 // checks from 0029 (the seed leaves cash_checks empty; the replace, and so the demo reset, clears
-// it before the weeks a check names), the pinned fuel and tax rates from 0053 (the seed pins none,
-// so its replace only empties them), and the carrier notes from 0040 (last: a note names its
-// customer or driver by a soft reference), in an order where every table comes after the tables it
-// references (insert in this order, delete in reverse). Each column says how it travels: the Data
-// API sends strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the way
-// in, and reads turn timestamptz into one ISO form and jsonb into text so both drivers return the
-// same values. tenant_id and created_at are never listed: tenant_id is always current_tenant_id()
-// and created_at is the database's own (a note's updated_at too).
+// it before the weeks a check names), the pay cards from 0052 (none planted; their image bytes are
+// never listed, so no table read carries them), the pinned fuel and tax rates from 0053 (the seed
+// pins none, so its replace only empties them), and the carrier notes from 0040 (last: a note names
+// its customer or driver by a soft reference), in an order where every table comes after the tables
+// it references (insert in this order, delete in reverse). Each column says how it travels: the
+// Data API sends strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the
+// way in, and reads turn timestamptz into one ISO form and jsonb into text so both drivers return
+// the same values. tenant_id and created_at are never listed: tenant_id is always
+// current_tenant_id() and created_at is the database's own (a note's updated_at too).
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
 
@@ -39,6 +40,7 @@ export const TENANT_TABLES = [
   "settlement_periods",
   "settlements",
   "settlement_lines",
+  "pay_cards",
   "pay_items",
   "money_codes",
   "advances",
@@ -314,6 +316,26 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["amount_cents", "int"],
       ["sources", "jsonb"],
       ["meta", "jsonb"],
+    ],
+  },
+  pay_cards: {
+    table: "pay_cards",
+    columns: [
+      ["id", "uuid"],
+      ["settlement_id", "uuid"],
+      ["attempt", "int"],
+      ["status", "text"],
+      ["art", "text"],
+      ["spec", "jsonb"],
+      ["check_read", "jsonb"],
+      ["category", "text"],
+      ["mime", "text"],
+      ["byte_length", "int"],
+      ["content_hash", "text"],
+      ["check_call_id", "uuid"],
+      ["trace_id", "uuid"],
+      ["created_by", "uuid"],
+      ["checked_at", "timestamptz"],
     ],
   },
   pay_items: {

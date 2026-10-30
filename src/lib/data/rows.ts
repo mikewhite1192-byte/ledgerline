@@ -237,6 +237,26 @@ export type SettlementLineRow = {
   meta: Record<string, string | number | boolean | null> | null;
 };
 
+// A pay card (0052) as the tables read it: never its image bytes, which only the one checked
+// card's file route reads.
+export type PayCardRow = {
+  id: string;
+  settlement_id: string;
+  attempt: number;
+  status: "checking" | "checked" | "mismatch" | "unavailable";
+  art: string;
+  spec: Record<string, unknown>;
+  check_read: Record<string, unknown> | null;
+  category: string | null;
+  mime: string | null;
+  byte_length: number | null;
+  content_hash: string | null;
+  check_call_id: string | null;
+  trace_id: string;
+  created_by: string;
+  checked_at: string | null;
+};
+
 export type PayItemRow = {
   id: string;
   driver_id: string;
@@ -573,6 +593,7 @@ export type TenantRows = {
   settlement_periods: SettlementPeriodRow[];
   settlements: SettlementRow[];
   settlement_lines: SettlementLineRow[];
+  pay_cards: PayCardRow[];
   pay_items: PayItemRow[];
   money_codes: MoneyCodeRow[];
   advances: AdvanceRow[];

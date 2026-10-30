@@ -253,6 +253,7 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "card_recon_runs",
     "card_recon_breaks",
     "pinned_rates",
+    "pay_cards",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -570,6 +571,18 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
              'https://rates.example/diesel', CAST('2026-10-26' AS date), CAST($2 AS uuid), CAST($2 AS uuid), now())`,
           [randomUUID(), c.membership],
         );
+        // A pay card reserved for its check on one of the carrier's own settlements, the row the
+        // app writes before the model call (0052).
+        const cardReserved = await q.execute(
+          `INSERT INTO pay_cards (id, tenant_id, settlement_id, attempt, status, art, spec, trace_id, created_by)
+           SELECT CAST($1 AS uuid), current_tenant_id(), s.id, 1, 'checking', 'art-01', CAST('{"version":1}' AS jsonb),
+             CAST($2 AS uuid), CAST($3 AS uuid)
+             FROM settlements s
+            ORDER BY s.id
+            LIMIT 1`,
+          [randomUUID(), randomUUID(), c.membership],
+        );
+        expect(cardReserved).toBe(1);
       });
       ids.proposals.push(proposal);
       ids.accountingRows.push(action);
