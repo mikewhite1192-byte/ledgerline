@@ -333,6 +333,7 @@ const counts: SweepCounts = {
   mismatch: 0,
   audit_pending: 0,
   over_cap: 0,
+  left: 0,
 };
 
 export const SWEEP_RUN: SweepRunView = {
@@ -360,6 +361,14 @@ export const SWEEP_RUN_STOPPED: SweepRunView = {
   ...SWEEP_RUN,
   truncatedReason: "cap",
   checklist: endSweep(tickSweep(sweepChecklist(true), "draft"), "stopped"),
+};
+// A run that reached its turn ceiling while drafting: what it drafted was audited, and the rest
+// wait for the next sweep.
+export const SWEEP_RUN_MAX_TURNS: SweepRunView = {
+  ...SWEEP_RUN,
+  truncatedReason: "max_turns",
+  turnsUsed: 30,
+  checklist: endSweep(tickSweep(tickSweep(sweepChecklist(false), "draft"), "audit"), "stopped", { stoppedAfter: "audit" }),
 };
 export const SWEEP_RUN_RUNNING: SweepRunView = {
   ...SWEEP_RUN,
@@ -907,6 +916,8 @@ const runSummary: RunSummary = {
   finishedAt: "2026-10-28T15:04:00.000Z",
   requestedBy: EMAIL,
   stalled: false,
+  resumeAttempts: 0,
+  resumed: null,
 };
 
 export const RUNS: RunSummary[] = [

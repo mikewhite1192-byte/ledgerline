@@ -1206,7 +1206,20 @@ const PAGES: PageCase[] = [
   },
   {
     file: "portal-runs/[id]/page.tsx",
-    variants: [{ name: "run", load: async () => (await import("@/app/portal-runs/[id]/page")).default({ params: p({ id: ID }) }) }],
+    variants: [
+      { name: "run", load: async () => (await import("@/app/portal-runs/[id]/page")).default({ params: p({ id: ID }) }) },
+      {
+        name: "put back in the queue after a stop",
+        setup: () =>
+          (state.fx.runView = {
+            ...fx.RUN_VIEW,
+            run: { ...fx.RUN_VIEW.run, status: "running", endedReason: null, finishedAt: null, resumeAttempts: 2, resumed: "Resumed after a stop (attempt 2 of 2)" },
+            evidence: null,
+          }),
+        load: async () => (await import("@/app/portal-runs/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: ["Resumed", "Resumed after a stop (attempt 2 of 2)."],
+      },
+    ],
   },
   {
     file: "portal/page.tsx",
@@ -1619,6 +1632,13 @@ const PAGES: PageCase[] = [
         name: "stopped by its budget, its checklist not finished",
         setup: () => (state.fx.sweepPage = { ...fx.SWEEP_PAGE, run: fx.SWEEP_RUN_STOPPED }),
         load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
+      },
+      {
+        name: "stopped at its turn ceiling, the rest left for the next sweep",
+        setup: () =>
+          (state.fx.sweepPage = { ...fx.SWEEP_PAGE, run: fx.SWEEP_RUN_MAX_TURNS, counts: { ...fx.SWEEP_PAGE.counts, left: 5 } }),
+        load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Stopped after 30 turns: 2 fixes drafted, 1 needs a person, 5 left for the next sweep. Nothing was paid.",
       },
       {
         name: "second check stopped",
