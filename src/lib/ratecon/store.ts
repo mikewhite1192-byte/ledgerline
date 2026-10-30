@@ -10,8 +10,18 @@ import { untrustedContentHash } from "../data/content-hash";
 export const RATECON_STATUSES = ["pending", "proposed", "created", "refused", "unreadable", "budget"] as const;
 export type RateConStatus = (typeof RATECON_STATUSES)[number];
 
+// Where a row ends, past the checks' own categories, when its card is dead and no new card
+// follows: a person rejected the card, or the document has had RATECON_CARDS_MAX cards. Both leave
+// no tries, so no read or card follows for that document.
+export const RATECON_ROW_ENDS = ["rejected", "card_limit"] as const;
+export type RateConRowEnd = (typeof RATECON_ROW_ENDS)[number];
+
 // Model reads one rate confirmation may start: the first, then two more tries.
 export const RATECON_ATTEMPTS_MAX = 3;
+
+// Load cards one rate confirmation may get, counted by its load id: the first, then a new one
+// each time the last expired or failed.
+export const RATECON_CARDS_MAX = 3;
 
 export type RateConRow = {
   id: string;
@@ -173,6 +183,71 @@ export async function markRateConCreated(
       WHERE tenant_id = current_tenant_id() AND load_id = CAST($1 AS uuid)
         AND proposal_id = CAST($2 AS uuid) AND status = 'proposed'`,
     [loadId, proposalId, nowIso],
+  );
+}
+
+// The status of the card a row names, or null when no load_create card has the id. A plain read,
+// not a lock: the only statuses the row acts on (expired, failed, rejected) are final (0009's
+// proposals_guard), and the executor locks its card before the tenant's rate confirmation lock, so
+// locking the card here, under that lock, could deadlock with an approval in flight.
+export async function readCardStatus(q: Queryable, proposalId: string): Promise<string | null> {
+  const rows = await q.query<{ status: string }>(
+    `SELECT status FROM proposals
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind = 'load_create'`,
+    [proposalId],
+  );
+  return rows[0]?.status ?? null;
+}
+
+// Every load_create card ever made for this load id, whatever its status. Read under
+// lockTenantRateCons, so no card for the id is made while it is counted.
+export async function countRateConCards(q: Queryable, loadId: string): Promise<number> {
+  const rows = await q.query<{ n: number | string }>(
+    `SELECT count(*) AS n FROM proposals
+      WHERE tenant_id = current_tenant_id() AND kind = 'load_create' AND subject_id = CAST($1 AS uuid)`,
+    [loadId],
+  );
+  const n = Number(rows[0]?.n);
+  if (!Number.isSafeInteger(n)) throw new Error("count is not a number");
+  return n;
+}
+
+// A row whose card expired or failed takes the new card made from its stored reading: guarded on
+// the row still proposed with the dead card, so it moves once. 1 when this call moved it.
+export async function relinkRateConCard(
+  q: Queryable,
+  rowId: string,
+  oldProposalId: string,
+  newProposalId: string,
+  nowIso: string,
+): Promise<number> {
+  return q.execute(
+    `UPDATE ratecon_reads SET proposal_id = CAST($3 AS uuid), updated_at = CAST($4 AS timestamptz)
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+        AND status = 'proposed' AND proposal_id = CAST($2 AS uuid)`,
+    [rowId, oldProposalId, newProposalId, nowIso],
+  );
+}
+
+// A row whose card is dead, ended with no new card: refused as the category, the card unlinked,
+// the reading, its transcript and its call id kept. A RATECON_ROW_ENDS category leaves no tries; any
+// other (a check's refusal) leaves the tries there were, as a refused read does. Guarded as
+// relinkRateConCard is. 1 when this call ended it.
+export async function endRateConCard(
+  q: Queryable,
+  rowId: string,
+  oldProposalId: string,
+  category: string,
+  nowIso: string,
+): Promise<number> {
+  const attempts = (RATECON_ROW_ENDS as readonly string[]).includes(category) ? RATECON_ATTEMPTS_MAX : null;
+  return q.execute(
+    `UPDATE ratecon_reads
+        SET status = 'refused', category = $3, proposal_id = NULL,
+            attempts = COALESCE(CAST($4 AS smallint), attempts), updated_at = CAST($5 AS timestamptz)
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+        AND status = 'proposed' AND proposal_id = CAST($2 AS uuid)`,
+    [rowId, oldProposalId, category, attempts, nowIso],
   );
 }
 
