@@ -26,9 +26,19 @@ function assertReportYear(year: number): number {
   return year;
 }
 
+// The threshold in a table for a year: the entry with the earliest throughYear on or after it,
+// whatever order the table is in. The table is read and never sorted.
+export function thresholdCentsIn(table: readonly (typeof NEC_THRESHOLDS)[number][], year: number): number | null {
+  let pick: (typeof NEC_THRESHOLDS)[number] | undefined;
+  for (const t of table) {
+    if (year <= t.throughYear && (pick === undefined || t.throughYear < pick.throughYear)) pick = t;
+  }
+  return pick?.cents ?? null;
+}
+
 export function necThresholdCents(year: number): number | null {
   if (!Number.isSafeInteger(year)) throw new RangeError("the year is not a whole number");
-  return NEC_THRESHOLDS.find((t) => year <= t.throughYear)?.cents ?? null;
+  return thresholdCentsIn(NEC_THRESHOLDS, year);
 }
 
 // The instants a carrier-local calendar year can fall in, a day either side so any time zone is
@@ -125,15 +135,19 @@ export function computeYearEnd1099(
     reimbursementsCents: sum(rows.map((r) => r.reimbursementsCents as number)),
   };
   const meeting = rows.filter((r) => r.meetsThreshold === "yes").length;
+  const definition =
+    "Nonemployee compensation = load pay + accessorial pay on settlements marked paid, counted by the " +
+    `date each was paid in the carrier's time zone (${timeZone}). Reimbursements are shown apart and ` +
+    "not counted. Company drivers are not listed.";
+  const notFiling = "Not a filing: no form is made or sent, and the app holds no tax id or address for any driver.";
+  // An empty result keeps the definition, so an empty list never reads as a driver paid nothing.
   const notes =
     rows.length === 0
-      ? []
+      ? [definition, notFiling]
       : [
-          "Nonemployee compensation = load pay + accessorial pay on settlements marked paid, counted by the " +
-            `date each was paid in the carrier's time zone (${timeZone}). Reimbursements are shown apart and ` +
-            "not counted. Company drivers are not listed.",
+          definition,
           thresholdNote(year, thresholdCents, meeting, rows.length),
-          "Not a filing: no form is made or sent, and the app holds no tax id or address for any driver.",
+          notFiling,
           ...(year === today.slice(0, 4) ? [`${year} is not over: the totals run through ${today}.`] : []),
         ];
   const result = reportOf("year_end_contractors", {

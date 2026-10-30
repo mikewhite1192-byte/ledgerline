@@ -18,6 +18,7 @@ import {
   computeYearEnd1099,
   NEC_THRESHOLDS,
   necThresholdCents,
+  thresholdCentsIn,
   yearEndWindow,
   type YearEndInput,
   type YearEndLine,
@@ -214,6 +215,29 @@ describe("year_end_contractors: the threshold by payment year", () => {
     expect(() => necThresholdCents(2026.5)).toThrow(RangeError);
   });
 
+  it("finds the same threshold whatever order the table is in, and sorts no table", () => {
+    const reversed = [...NEC_THRESHOLDS].reverse();
+    for (const year of [2000, 2024, 2025, 2026, 2027, 2100]) {
+      expect(thresholdCentsIn(reversed, year), String(year)).toBe(necThresholdCents(year));
+      expect(thresholdCentsIn(NEC_THRESHOLDS, year), String(year)).toBe(necThresholdCents(year));
+    }
+    expect(thresholdCentsIn(reversed, 2000)).toBe(60_000);
+    expect(thresholdCentsIn(reversed, 2025)).toBe(60_000);
+    expect(thresholdCentsIn(reversed, 2026)).toBe(200_000);
+    expect(thresholdCentsIn(reversed, 2027)).toBeNull();
+    // A shuffled table picks the earliest year on or after the one asked for.
+    const shuffled = [
+      { throughYear: 2030, cents: 3 },
+      { throughYear: 2010, cents: 1 },
+      { throughYear: 2020, cents: 2 },
+    ];
+    expect([2005, 2010, 2015, 2020, 2025, 2030, 2031].map((y) => thresholdCentsIn(shuffled, y))).toEqual([1, 1, 2, 2, 3, 3, null]);
+    // Neither the copy nor the shared table is reordered.
+    expect(reversed.map((t) => t.throughYear)).toEqual([2026, 2025]);
+    expect(shuffled.map((t) => t.throughYear)).toEqual([2030, 2010, 2020]);
+    expect(NEC_THRESHOLDS.map((t) => t.throughYear)).toEqual([2025, 2026]);
+  });
+
   it("2025: 59,999 cents does not meet it and 60,000 does", () => {
     const r = run(paidOnce([[A.id, 59_999], [B.id, 60_000]], "2025"), { year: "2025" });
     expect(rowOf(r, A.id)?.meetsThreshold).toBe("no");
@@ -256,8 +280,36 @@ describe("year_end_contractors: the threshold by payment year", () => {
         "Company drivers are not listed.",
     );
     expect(r.notes).toContain("Not a filing: no form is made or sent, and the app holds no tax id or address for any driver.");
-    // An empty year has nothing to explain.
-    expect(run(paidOnce([])).notes).toBeUndefined();
+    // An empty year keeps these two notes and no threshold note.
+    expect(run(paidOnce([])).notes).toEqual([r.notes?.[0], r.notes?.[2]]);
+  });
+
+  it("keeps the definition and the not-a-filing notes on an empty result, with no threshold note", () => {
+    const definition =
+      "Nonemployee compensation = load pay + accessorial pay on settlements marked paid, counted by the date each " +
+      "was paid in the carrier's time zone (America/New_York). Reimbursements are shown apart and not counted. " +
+      "Company drivers are not listed.";
+    const notFiling = "Not a filing: no form is made or sent, and the app holds no tax id or address for any driver.";
+    const emptyYear = run(paidOnce([]));
+    expect(emptyYear.rows).toEqual([]);
+    expect(emptyYear.emptyReason).toBe("no_rows");
+    expect(emptyYear.notes).toEqual([definition, notFiling]);
+    // One driver asked for by id, a company driver paid in the year: the notes say company drivers are not listed.
+    const company = run(paidOnce([[A.id, 250_000], [CO.id, 90_000]]), { year: "2026", driverId: CO.id });
+    expect(company.rows).toEqual([]);
+    expect(company.emptyReason).toBe("no_rows");
+    expect(company.notes).toEqual([definition, notFiling]);
+    for (const r of [emptyYear, company]) {
+      expect(r.notes?.some((n) => n.startsWith("1099-NEC threshold"))).toBe(false);
+      expect(r.notes?.some((n) => n.includes("is not over"))).toBe(false);
+    }
+    // A result with rows keeps all four notes, in their order.
+    expect(run(paidOnce([[A.id, 250_000], [CO.id, 90_000]])).notes).toEqual([
+      definition,
+      "1099-NEC threshold for payments made in 2026: $2,000.00 (confirm for the tax year). 1 of 1 contractor meets it.",
+      notFiling,
+      `2026 is not over: the totals run through ${TODAY}.`,
+    ]);
   });
 });
 
