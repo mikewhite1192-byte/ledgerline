@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createQboAdapter } from "./accounting/qbo/adapter";
+import { createFactoringSim } from "./factoring/sim";
 import { createFuelCardSimAdapter } from "./payment/fuel-card-sim";
 import { createMockPaymentAdapter } from "./payment/mock";
 import { createStripeTestAdapter } from "./payment/stripe-test";
@@ -66,6 +67,17 @@ describe("adapter surface: nothing can send an invoice or an email", () => {
       expect(methods, name).toContain("sendPayout");
       expect(methods.filter(forbidden), name).toEqual([]);
     }
+  });
+
+  it("the factoring partner declares and has no send or email member", () => {
+    const names = declared("FactoringAdapter");
+    expect(names).toContain("submitInvoice");
+    expect(names.filter(forbidden)).toEqual([]);
+    const methods = [...membersOf(createFactoringSim({ log: () => {} }))]
+      .filter(([, v]) => typeof v === "function")
+      .map(([k]) => k);
+    expect(methods).toContain("submitInvoice");
+    expect(methods.filter(forbidden)).toEqual([]);
   });
 
   it("the rule itself catches the names it is meant to", () => {

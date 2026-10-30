@@ -22,6 +22,13 @@ const LEDGER_FORBIDDEN = [
   'export { executeMoneyAction } from "../money/./execute";',
   'import { executeMoneyAction } from "../money";',
   'import { createMockPaymentAdapter } from "../adapters/tms/../payment/mock";',
+  // The factoring executor, its switches and the simulated partner.
+  'import { factoringRequestExecutor } from "../factoring/execute";',
+  'import { checkPendingFactoring } from "@/lib/factoring/execute";',
+  'import { submitGate } from "../factoring/switches";',
+  'import { createFactoringSim } from "../adapters/factoring/sim";',
+  'import { readRequest } from "../factoring/read/../execute";',
+  'import { factoringRequestExecutor } from "../factoring";',
   'import { moneyCodeExecutor } from "../money-codes/execute";',
   'import { requestMoneyCode } from "@/lib/money-codes/request";',
   'import { moneyCodeExecutor } from "../money-codes";',
@@ -34,6 +41,11 @@ const LEDGER_READS = [
   'import { idempotencyKey } from "@/lib/money/keys";',
   'import { dbTmsAdapter } from "../adapters/tms/db";',
   'import type { TmsAdapter } from "../adapters/types";',
+  // The factoring reads the gateway may use: requests, papers, words and the card's sizing.
+  'import { readRequest } from "../factoring/read";',
+  'import { packetsOf } from "@/lib/factoring/packet";',
+  'import { packetLine } from "../factoring/words";',
+  'import { factoringProposalOf } from "../../factoring/propose";',
   'import { listMoneyCodes } from "../money-codes/read";',
   'import { moneyCodeSentence } from "@/lib/money-codes/words";',
   'import { moneyCodesOn } from "../money-codes/switches";',
@@ -47,6 +59,8 @@ const GATEWAY_MODULES = [
   // The engine's cents math, not the ledger's money/.
   'import { cents } from "../../rules-engine/money";',
   'import { cents } from "@/lib/rules-engine/money";',
+  // The engine's factoring math, not the factoring executor.
+  'import { factoringFor } from "../../rules-engine/factoring";',
 ];
 // A connection of its own: a database driver, the AWS SDK, a process, a socket or a file. Agent
 // code outside the gateway may open none; the gateway holds the database and may.

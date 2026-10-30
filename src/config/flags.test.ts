@@ -79,10 +79,19 @@ const KEPT_OFF = [
   "judgeAccess.enabled",
   // Pay rules from a policy document ship dark with their own merge; the owner turns them on in their own PR.
   "policyOnboardEnabled",
+  // Factoring ships dark and unarmed with its own merge; the owner turns it on in its own PR.
+  "factoring.enabled",
+  "factoring.armed",
+  // Off until the owner asks for the rate confirmation, bill of lading and POD on every approval.
+  "factoring.requirePacket",
   // Fuel and tax rate lookups ship dark with their own merge; the owner turns them on in their own PR.
   "groundedRatesEnabled",
   // Pay cards ship dark with their own merge; the owner turns them on in their own PR.
   "payCardsEnabled",
+  // The models page's eval card waits on a recorded run; the owner turns it on in its own PR.
+  "evalCardEnabled",
+  // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
+  "evalRun.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -139,6 +148,18 @@ describe("flags", () => {
     expect(flags.triageProvider).toBe("baseten");
     // The demo visitor sign-in: dark until the owner's one-line release PR.
     expect(flags.judgeAccess.enabled).toBe(false);
+    // Factoring submits to the simulated partner only, dark and unarmed until the owner's go.
+    expect(flags.factoring).toEqual({
+      enabled: false,
+      armed: false,
+      maxNetCents: 2_500_000,
+      requirePacket: false,
+      startDate: "2026-10-28",
+    });
+    expect(isLocalDate(flags.factoring.startDate)).toBe(true);
+    // The models page's eval card and the eval script that spends model cents.
+    expect(flags.evalCardEnabled).toBe(false);
+    expect(flags.evalRun).toEqual({ enabled: false, maxRunCents: 1_500, reserveCents: 4_000 });
     expect(flags.groundedRatesEnabled).toBe(false);
   });
 
@@ -155,12 +176,15 @@ describe("flags", () => {
       turnsPerSession: 25,
       dayCapCents: 800,
       sessionsPerIpPerHour: 5,
+      sessionsPerHour: 40,
       sessionsPerDay: 150,
       cookieHours: 2,
     });
     // Five judging days at the day cap fit the $40.00 reserve with nothing else drawing on it.
     expect(flags.judgeAccess.dayCapCents * 5).toBeLessThanOrEqual(4_000);
     expect(flags.judgeAccess.sessionCapCents).toBeLessThanOrEqual(flags.judgeAccess.dayCapCents);
+    // The hour's limit across every address never lets more in than the day's.
+    expect(flags.judgeAccess.sessionsPerHour).toBeLessThanOrEqual(flags.judgeAccess.sessionsPerDay);
   });
 
   it("pays through Stripe test mode only, and the start-up check still refuses a live key", () => {

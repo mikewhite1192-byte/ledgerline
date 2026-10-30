@@ -3,12 +3,14 @@ import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
 import { ErrorState } from "@/components/app/states";
 import { Wordmark } from "@/components/brand/wordmark";
+import { EvalCard } from "@/components/trace/eval-card";
 import { ModelWeekView } from "@/components/trace/model-week";
 import { jobWords, SpendCard, type SpendCardProps } from "@/components/trace/spend-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { flags } from "@/config/flags";
 import { readAgentModelWeek } from "@/lib/agent/gateway/store";
+import { evalCardData, latestResults } from "@/lib/eval/latest";
 import type { ModelWeek } from "@/lib/trace/week";
 import { capNanocents, wonderCapNanocents } from "@/lib/ai/prices";
 import { readSpend } from "@/lib/ai/spend";
@@ -23,7 +25,8 @@ import { ClearAlertForm } from "./clear-alert-form";
 // watch stopped, which an admin can clear), then this carrier's model calls for the pay week, per
 // model, with the gateway and screening totals. Row security limits every read to the carrier on
 // the verified token; the only write is an admin's Clear (./clear-alert-action.ts). Signed out:
-// withRequestTenant redirects to /sign-in.
+// withRequestTenant redirects to /sign-in. With flags.evalCardEnabled on, the recorded model eval
+// (src/lib/eval/results/latest.json, no database read) follows as "How the models score".
 export const dynamic = "force-dynamic";
 
 type Carrier = { name: string; timezone: string; email: string; role: Role; admin: boolean; session: Session };
@@ -122,6 +125,9 @@ export default async function ModelsPage() {
     console.error("spend read failed:", err.name);
   }
 
+  // The recorded eval run, shown only with its switch on and a run in the results file.
+  const evalCard = flags.evalCardEnabled ? evalCardData(latestResults()) : null;
+
   return (
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
@@ -167,6 +173,7 @@ export default async function ModelsPage() {
             />
           </Card>
         )}
+        {evalCard ? <EvalCard {...evalCard} /> : null}
       </div>
     </AppShell>
   );

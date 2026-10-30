@@ -10,6 +10,7 @@ import { reportTable, type ReportLoad } from "@/components/agent/report-table";
 import { toMessages } from "@/components/agent/turn-view";
 import { ChatThread } from "@/components/app/chat-thread";
 import { DataTable } from "@/components/app/data-table";
+import { DemoBanner } from "@/components/app/demo-banner";
 import { Paystub } from "@/components/app/paystub";
 import { ProposalCard, type ProposalAudit, type ProposalStatus } from "@/components/app/proposal-card";
 import { EmptyState, ERROR_CATEGORIES, ErrorState, FeatureOff, LoadingState, PageNotFound } from "@/components/app/states";
@@ -62,6 +63,7 @@ import {
 import type { BreakView } from "@/lib/data/card-recon";
 import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
+import * as factoringWords from "@/lib/factoring/words";
 import { TERMS } from "@/lib/format/terms";
 import {
   compareLine,
@@ -251,6 +253,7 @@ vi.mock("next/navigation", async (importOriginal) => {
   };
 });
 vi.mock("@/app/sign-in/actions", () => ({ signInAction: async () => {} }));
+vi.mock("@/app/sign-in/try-demo-action", () => ({ tryDemoAction: async () => {} }));
 vi.mock("@/app/ai-proof-action", () => ({ proofCallAction: async () => ({ kind: "idle" }) }));
 vi.mock("@/app/settings/demo/reset-action", () => ({ resetDemoAction: async () => {} }));
 vi.mock("@/app/models/clear-alert-action", () => ({ clearAlertAction: async () => {} }));
@@ -323,6 +326,11 @@ vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
   readRecentAgentTurns: async () => get("turns"),
   readWaitingRuleChangeViews: async () => get("ruleChanges"),
 }));
+// A recorded eval run, so the models page's eval card has rows to show when its switch is on.
+vi.mock("@/lib/eval/latest", async (importOriginal) => {
+  const { sampleEvalResults } = await import("@/lib/eval/test-fixtures");
+  return { ...(await importOriginal<typeof import("@/lib/eval/latest")>()), latestResults: () => sampleEvalResults() };
+});
 vi.mock("@/lib/ai/spend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/ai/spend")>()),
   readSpend: async () => get("spend"),
@@ -430,6 +438,12 @@ const noteActions = vi.hoisted(() => ({
   removeNoteAction: vi.fn(),
 }));
 vi.mock("@/app/memory/actions", () => noteActions);
+vi.mock("@/lib/factoring/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/factoring/read")>()),
+  listRequests: async () => get("factoringRequests"),
+  readRequest: async () => get("factoringRequest"),
+  readFactoredLine: async () => get("factoredLine"),
+}));
 vi.mock("@/lib/briefs/quarter-review", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/briefs/quarter-review")>()),
   readQuarterView: async () => get("quarterView"),
@@ -518,6 +532,9 @@ function defaults(): Record<string, unknown> {
     cashHome: null,
     memoryNotes: fx.MEMORY_NOTES,
     noteSubjects: fx.NOTE_SUBJECTS,
+    factoringRequests: fx.FACTORING_REQUESTS,
+    factoringRequest: fx.FACTORING_REQUEST,
+    factoredLine: null,
     quarterView: fx.QUARTER_VIEW,
   };
 }
@@ -526,14 +543,18 @@ function defaults(): Record<string, unknown> {
 // with settings, so only its own enabled is turned on.
 const SWITCHES = Object.keys(flags).filter((k) => typeof (flags as Record<string, unknown>)[k] === "boolean");
 const saved = Object.fromEntries(SWITCHES.map((k) => [k, (flags as Record<string, unknown>)[k]]));
+// Factoring's switch is a field of its own settings object, so it is turned on beside the others.
+const savedFactoring = flags.factoring.enabled;
 const savedCodes = { ...flags.moneyCodes };
 beforeAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = true;
+  flags.factoring.enabled = true;
   flags.moneyCodes = { ...savedCodes, enabled: true };
   vi.stubGlobal("fetch", () => new Promise(() => {}));
 });
 afterAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = saved[k];
+  flags.factoring.enabled = savedFactoring;
   flags.moneyCodes = { ...savedCodes };
   vi.unstubAllGlobals();
 });
@@ -1064,6 +1085,40 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "factoring/page.tsx",
+    variants: [
+      { name: "requests", load: async () => (await import("@/app/factoring/page")).default(), shows: "Partly funded" },
+      {
+        name: "none yet",
+        setup: () => (state.fx.factoringRequests = []),
+        load: async () => (await import("@/app/factoring/page")).default(),
+        shows: "No invoices factored yet",
+      },
+    ],
+  },
+  {
+    file: "factoring/[id]/page.tsx",
+    variants: [
+      {
+        name: "partly funded, one invoice not confirmed yet",
+        load: async () => (await import("@/app/factoring/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Check pending",
+      },
+      {
+        name: "funded",
+        setup: () =>
+          (state.fx.factoringRequest = {
+            ...fx.FACTORING_REQUEST,
+            status: "funded",
+            cameInCents: fx.FACTORING_REQUEST.lines.reduce((t, l) => t + l.netCents, 0),
+            lines: fx.FACTORING_REQUEST.lines.map((l) => ({ ...l, status: "funded" })),
+          }),
+        load: async () => (await import("@/app/factoring/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Funded",
+      },
+    ],
+  },
+  {
     file: "pay/[periodId]/notes/page.tsx",
     variants: [
       {
@@ -1151,7 +1206,21 @@ const PAGES: PageCase[] = [
   },
   {
     file: "models/page.tsx",
-    variants: [{ name: "models", load: async () => (await import("@/app/models/page")).default() }],
+    variants: [
+      { name: "models", load: async () => (await import("@/app/models/page")).default() },
+      {
+        name: "models with the eval card",
+        load: async () => {
+          flags.evalCardEnabled = true;
+          try {
+            return await (await import("@/app/models/page")).default();
+          } finally {
+            flags.evalCardEnabled = false;
+          }
+        },
+        shows: ["How the models score", "Right amount", "When the operator and the second check agreed"],
+      },
+    ],
   },
   {
     file: "money-codes/page.tsx",
@@ -1395,6 +1464,18 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.invoiceReview = view),
         load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
       })),
+      {
+        name: "factored",
+        setup: () => (state.fx.factoredLine = fx.FACTORED_LINE),
+        load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Factored (Test mode)",
+      },
+      {
+        name: "sent to factoring, not confirmed yet",
+        setup: () => (state.fx.factoredLine = { ...fx.FACTORED_LINE, status: "unknown" }),
+        load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Sent, not confirmed yet (Test mode)",
+      },
     ],
   },
   {
@@ -1557,6 +1638,35 @@ const PAGES: PageCase[] = [
       { name: "form", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({}) }) },
       { name: "invalid", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "invalid" }) }) },
       { name: "unavailable", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "unavailable" }) }) },
+      {
+        name: "demo carrier card",
+        load: async () => {
+          flags.judgeAccess.enabled = true;
+          try {
+            return await (await import("@/app/sign-in/page")).default({ searchParams: p({}) });
+          } finally {
+            flags.judgeAccess.enabled = false;
+          }
+        },
+        shows: ["Try the demo carrier", "Nothing is paid or sent.", "The data is made up, so please do not upload real documents."],
+      },
+      {
+        name: "demo sign-in unavailable",
+        load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ demo: "unavailable" }) }),
+        shows: "The demo sign-in is not available right now. The video shows the full flow.",
+      },
+      {
+        name: "demo visit ended",
+        load: async () => {
+          flags.judgeAccess.enabled = true;
+          try {
+            return await (await import("@/app/sign-in/page")).default({ searchParams: p({ demo: "expired" }) });
+          } finally {
+            flags.judgeAccess.enabled = false;
+          }
+        },
+        shows: ["Your demo visit ended. Start another any time.", "Try the demo carrier"],
+      },
     ],
   },
   {
@@ -1764,6 +1874,8 @@ const LISTED: Readonly<Record<string, string>> = {
     "The document around every page: it puts each one in the html shell and the toast holder and shows no words on the page. Its tab title and description are scanned below.",
   "records/settlement_periods/[id]/page.tsx":
     "Shows nothing of its own: it only sends a pay week's link on to that week on the Settlements page, which is rendered above.",
+  "help/page.tsx":
+    "Shows nothing of its own: it only sends the bare help address on to How trucking pay works, which is rendered above.",
   "design/page.tsx":
     "The builders' design reference: it shows status codes, token names and sample states on purpose, and no carrier or driver reaches it from the app's menu.",
 };
@@ -2600,7 +2712,7 @@ describe("no internal word on the quarter review, in every state", () => {
 });
 
 describe("no internal word in a shared state", () => {
-  it("every error, the empty, loading, off and not found states", () => {
+  it("every error, the empty, loading, off and not found states, and the demo visit line", () => {
     const { container } = render(
       <>
         {ERROR_CATEGORIES.map((c) => (
@@ -2611,6 +2723,7 @@ describe("no internal word in a shared state", () => {
         <FeatureOff name="Advances" plural />
         <FeatureOff name="Pay sweep" />
         <PageNotFound />
+        <DemoBanner carrier="Blue Ridge Freight" visitCapCents={flags.judgeAccess.sessionCapCents} />
       </>,
     );
     expect(scan(container)).toEqual([]);
@@ -2693,6 +2806,35 @@ describe("no internal word in the Cash page's notes and words", () => {
       <ul>
         {words.map((w, n) => (
           <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("no internal word in factoring's words", () => {
+  it("every refusal, check result, status, planned and came-in line", () => {
+    const w = factoringWords;
+    const statuses = ["submitted", "unknown", "funded", "partly_funded", "declined", "failed"];
+    const none = { confirmed: 0, failed: 0, tooNew: 0, stillWaiting: 0, stillUnknown: 0, errors: 0 };
+    const words = [
+      ...Object.values(w.FACTORING_APPROVE_NOTICE),
+      ...Object.values(w.FACTORING_REFUSAL_SENTENCES),
+      ...Object.values(w.CHECK_NOTICE),
+      ...Object.values(w.CHECK_RESULT),
+      ...Object.values(w.REQUEST_STATUS_WORDS),
+      w.checkResultSentence({ ...none, errors: 1 }),
+      w.PLANNED_LABEL,
+      w.plannedLine("$5,611.50", "$645.00", "$193.50"),
+      ...statuses.flatMap((s) => [w.cameInLabel(s), w.cameInLine(s, "$1,870.50")]),
+      w.TEST_MODE_HELP,
+    ];
+    expect(words.every((x) => x.length > 0)).toBe(true);
+    const { container } = render(
+      <ul>
+        {words.map((x, n) => (
+          <li key={n}>{x}</li>
         ))}
       </ul>,
     );

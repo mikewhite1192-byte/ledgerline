@@ -35,6 +35,8 @@
         "vendor_bills": 6,
         "cash_settings": 1,
         "cash_checks": 0,
+        "factoring_requests": 0,
+        "factoring_request_invoices": 0,
         "pinned_rates": 0,
         "carrier_notes": 4
       },
@@ -399,6 +401,8 @@
         "vendor_bills": 6,
         "cash_settings": 1,
         "cash_checks": 0,
+        "factoring_requests": 0,
+        "factoring_request_invoices": 0,
         "pinned_rates": 0,
         "carrier_notes": 4
       },

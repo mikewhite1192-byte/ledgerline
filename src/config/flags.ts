@@ -525,8 +525,10 @@ export type Flags = {
   // The demo carrier's visitor sign-in (the judge role, migration 0043). A judge reads, asks the
   // agent and proposes, and never approves or pays: every write route outside
   // src/lib/auth/judge-allowlist.ts refuses the role whatever this says. Off means a judge login's
-  // password sign-in is refused before any cookie (src/app/sign-in/actions.ts); the visitor
-  // sign-in card and the visit limits below come with a later change and do nothing yet.
+  // password sign-in is refused before any cookie (src/app/sign-in/actions.ts), the sign-in card
+  // does not render, its action refuses, and a judge's model calls are refused (no visit, no
+  // budget). On, the visit limits below hold in the sign-in (src/app/sign-in/try-demo-action.ts),
+  // the spend ledger (src/lib/ai/spend.ts) and the agent turn (src/lib/auth/demo-visit.ts).
   judgeAccess: {
     enabled: boolean;
     // One visit's model spend, in cents (spent plus reserved, demo_sessions).
@@ -535,8 +537,11 @@ export type Flags = {
     turnsPerSession: number;
     // Every visit created in one UTC day, together, in cents.
     dayCapCents: number;
-    // New visits from one address in an hour, and from everyone in a day.
+    // New visits from one address in an hour (best-effort: the client can set the address it is
+    // counted by, src/lib/auth/demo-visit.ts ipHashOf), from everyone in a rolling hour, and from
+    // everyone in a day.
     sessionsPerIpPerHour: number;
+    sessionsPerHour: number;
     sessionsPerDay: number;
     // How long the visit's sign-in cookie lasts.
     cookieHours: number;
@@ -581,6 +586,35 @@ export type Flags = {
       // How long one request works before it answers "still checking" and the page asks again.
       sliceMs: number;
     };
+  };
+  // Factoring (Test mode): invoices sold to a simulated factoring partner for cash now, the rest
+  // held back until the customer pays. enabled: the Factoring page, its menu item, the agent's
+  // three tools and approving a "Factor these invoices" card through the partner; off, the page
+  // shows the feature as off, the check route answers 404, the tools are not offered and the card
+  // keeps Cash Friday's record-only behavior. armed, maxNetCents (inclusive: the most one request
+  // may pay out), requirePacket (refuse an invoice whose rate confirmation, bill of lading or POD
+  // is missing) and startDate (YYYY-MM-DD, tenant-local; it gates submitting, never proposing) are
+  // asked again on every approval, before the ledger reserves a row, on top of payoutsEnabled. The
+  // partner adapter asks enabled, armed, maxNetCents (against the one invoice it is sent) and
+  // startDate again itself at each call; it is sent no papers, so requirePacket is the approval's.
+  factoring: {
+    enabled: boolean;
+    armed: boolean;
+    maxNetCents: number;
+    requirePacket: boolean;
+    startDate: string;
+  };
+  // The "How the models score" card on /models, read from src/lib/eval/results/latest.json. Off
+  // until the owner's one-line flip after a real run is recorded.
+  evalCardEnabled: boolean;
+  // The model eval script (npm run eval). It runs every case on a fresh local database that it
+  // drops after, and only spends model cents on the developer's own ledger, never production's.
+  evalRun: {
+    enabled: boolean;
+    // The most one run may spend, in cents, unless --max-cents asks for less.
+    maxRunCents: number;
+    // Cents the ledger must still have free after the run's own limit before a run starts.
+    reserveCents: number;
   };
   // Fuel and tax rates: a person looks up this week's diesel price or a state's fuel tax rate (one
   // Muse Spark call with web search) and an admin pins one from its linked source. The agent only
@@ -761,6 +795,7 @@ export const flags: Flags = {
     turnsPerSession: 25,
     dayCapCents: 800,
     sessionsPerIpPerHour: 5,
+    sessionsPerHour: 40,
     sessionsPerDay: 150,
     cookieHours: 2,
   },
@@ -778,6 +813,9 @@ export const flags: Flags = {
       sliceMs: 20_000,
     },
   },
+  factoring: { enabled: false, armed: false, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
+  evalCardEnabled: false,
+  evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
   groundedRatesEnabled: false,
   ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
 };

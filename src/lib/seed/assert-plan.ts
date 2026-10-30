@@ -642,6 +642,9 @@ function cashFriday(plan: CarrierPlan): void {
   const { rows, carrier, anchor } = plan;
   if (rows.cash_settings.length !== 1) fail("a carrier needs one cash settings row");
   if (rows.cash_checks.length !== 0) fail("the seed writes no cash checks");
+  if (rows.factoring_requests.length !== 0 || rows.factoring_request_invoices.length !== 0) {
+    fail("the seed factors no invoices");
+  }
   if (rows.vendor_bills.length !== 6) fail("a carrier needs six vendor bills");
   const r = cashPositionOf(rows, carrier, anchor, flags.cashFridayLimits);
   if (r.figures.gapCents !== plantedGapCents(carrier.slug)) fail("the cash gap is not the planted one");

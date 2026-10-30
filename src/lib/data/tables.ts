@@ -8,13 +8,15 @@
 // checks from 0029 (the seed leaves cash_checks empty; the replace, and so the demo reset, clears
 // it before the weeks a check names), the pay cards from 0052 (none planted; their image bytes are
 // never listed, so no table read carries them), the pinned fuel and tax rates from 0053 (the seed
-// pins none, so its replace only empties them), and the carrier notes from 0040 (last: a note names
-// its customer or driver by a soft reference), in an order where every table comes after the tables
-// it references (insert in this order, delete in reverse). Each column says how it travels: the
-// Data API sends strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the
-// way in, and reads turn timestamptz into one ISO form and jsonb into text so both drivers return
-// the same values. tenant_id and created_at are never listed: tenant_id is always
-// current_tenant_id() and created_at is the database's own (a note's updated_at too).
+// pins none, so its replace only empties them), the factoring requests and their invoice lines from
+// 0060 (the seed leaves both empty; the replace clears them first, before the invoices and weeks
+// they name), and the carrier notes from 0040 (last: a note names its customer or driver by a soft
+// reference), in an order where every table comes after the tables it references (insert in this
+// order, delete in reverse). Each column says how it travels: the Data API sends strings as text,
+// so uuid, date, timestamptz and jsonb columns need a CAST on the way in, and reads turn
+// timestamptz into one ISO form and jsonb into text so both drivers return the same values.
+// tenant_id and created_at are never listed: tenant_id is always current_tenant_id() and
+// created_at is the database's own (a note's updated_at too).
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
 
@@ -56,6 +58,8 @@ export const TENANT_TABLES = [
   "vendor_bills",
   "cash_settings",
   "cash_checks",
+  "factoring_requests",
+  "factoring_request_invoices",
   "pinned_rates",
   "carrier_notes",
 ] as const;
@@ -632,6 +636,44 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["created_by_sub", "text"],
       ["created_by_model_call_id", "uuid"],
       ["updated_by_sub", "text"],
+    ],
+  },
+  factoring_requests: {
+    table: "factoring_requests",
+    columns: [
+      ["id", "uuid"],
+      ["period_id", "uuid"],
+      ["proposal_id", "uuid"],
+      ["membership_id", "uuid"],
+      ["provider", "text"],
+      ["advance_bps", "int"],
+      ["fee_bps", "int"],
+      ["balance_cents", "int"],
+      ["advance_cents", "int"],
+      ["fee_cents", "int"],
+      ["net_cents", "int"],
+      ["reserve_cents", "int"],
+      ["status", "text"],
+      ["funded_at", "timestamptz"],
+    ],
+  },
+  factoring_request_invoices: {
+    table: "factoring_request_invoices",
+    columns: [
+      ["id", "uuid"],
+      ["request_id", "uuid"],
+      ["invoice_id", "uuid"],
+      ["attempt", "int"],
+      ["balance_cents", "int"],
+      ["advance_cents", "int"],
+      ["fee_cents", "int"],
+      ["net_cents", "int"],
+      ["reserve_cents", "int"],
+      ["money_action_id", "uuid"],
+      ["provider_ref", "text"],
+      ["status", "text"],
+      ["packet", "jsonb"],
+      ["settled_at", "timestamptz"],
     ],
   },
   pinned_rates: {
