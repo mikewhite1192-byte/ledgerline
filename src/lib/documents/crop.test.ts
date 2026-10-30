@@ -41,6 +41,19 @@ const TRACE = "44444444-4444-4444-8444-444444444444";
 const CALL = "55555555-5555-4555-8555-555555555555";
 const saved = flags.documentCrop;
 
+// The segmenter's input limit, lowered by one test to stand in for a frame too large to send (a
+// 2,000 px frame of seeded noise normalizes to about 2.8 MB, under the real 5 MiB).
+const frameLimit = vi.hoisted(() => ({ bytes: null as number | null }));
+vi.mock("../ai", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../ai")>();
+  return {
+    ...real,
+    get MAX_IMAGE_BYTES() {
+      return frameLimit.bytes ?? real.MAX_IMAGE_BYTES;
+    },
+  };
+});
+
 const B85 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~";
 
 // Python's b85encode, unpadded: four bytes to five characters, a short last group one more
@@ -144,6 +157,7 @@ const whiteShare = async (bytes: Uint8Array) => {
 
 beforeEach(() => {
   flags.documentCrop = true;
+  frameLimit.bytes = null;
   vi.restoreAllMocks();
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -485,6 +499,30 @@ describe("cropDocument", () => {
     expect(segment).toHaveBeenCalledTimes(1);
     expect(out).toMatchObject({ status: "skipped", category: "too_large", callId: CALL });
     expect(CROP_MAX_BYTES).toBe(700_000);
+  });
+
+  it("skips a frame over the segmenter's input limit without any call, and gives the try back", async () => {
+    const image = await gray(400, 300);
+    const sent = fakeSegment(answer([], null, null));
+    await cropDocument(input(image), SESSION, { segment: sent });
+    const frameBytes = sent.mock.calls[0][0].image.bytes.byteLength;
+    // At the limit the frame is sent; one byte over, it is not.
+    frameLimit.bytes = frameBytes;
+    const at = fakeSegment(answer([], null, null));
+    expect(await cropDocument(input(image), SESSION, { segment: at })).toMatchObject({ status: "skipped", category: "no_match" });
+    expect(at).toHaveBeenCalledTimes(1);
+    frameLimit.bytes = frameBytes - 1;
+    const over = fakeSegment(answer([], null, null));
+    expect(await cropDocument(input(image), SESSION, { segment: over })).toEqual({
+      status: "skipped",
+      category: "too_large",
+      box: null,
+      confidence: null,
+      callId: null,
+      refund: true,
+    });
+    expect(over).not.toHaveBeenCalled();
+    expect(vi.mocked(console.error)).toHaveBeenCalledWith("documents: crop d1 failed category=too_large");
   });
 
   it("skips a file it cannot decode without any call", async () => {

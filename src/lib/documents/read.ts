@@ -47,7 +47,15 @@ export type ReadInput = {
   bytes: Uint8Array;
   mime: DocumentMime;
   traceId: string;
+  // What the request has left for this read; held to 1 ms to READ_TIMEOUT_MS, which is also the
+  // default.
+  timeoutMs?: number;
 };
+
+function timeoutOf(ms: number | undefined): number {
+  if (ms === undefined || !Number.isFinite(ms)) return READ_TIMEOUT_MS;
+  return Math.min(READ_TIMEOUT_MS, Math.max(1, Math.floor(ms)));
+}
 
 const BUDGET: readonly string[] = ["cap", "too_expensive", "billing"];
 // Not known (the provider may have answered) or likely to pass later: never a final state.
@@ -82,7 +90,7 @@ export async function readDocument(
         reasoningEffort: "low",
         purpose: "document_read",
         maxCostCents: flags.documentLimits.readMaxCostCents,
-        timeoutMs: READ_TIMEOUT_MS,
+        timeoutMs: timeoutOf(input.timeoutMs),
         traceId: input.traceId,
       },
       session,

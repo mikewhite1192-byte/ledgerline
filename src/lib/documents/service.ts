@@ -8,7 +8,7 @@ import { loadCandidates } from "./candidates";
 import { cropDocument, type CropDeps, type CropOutcome } from "./crop";
 import { matchDocument } from "./match";
 import { planMarkup } from "./markup-text";
-import { readDocument, type ReadDeps, type ReadOutcome } from "./read";
+import { READ_TIMEOUT_MS, readDocument, type ReadDeps, type ReadOutcome } from "./read";
 import { parseRead, rawOf } from "./schema";
 import {
   claimCrop,
@@ -66,7 +66,21 @@ export const STALLED_MS = 2 * 60 * 1000;
 // running for longer than this lost its request, so another try may start.
 export const MARKUP_STALLED_MS = 3 * 60 * 1000;
 
-export type ServiceDeps = { db?: TenantDb; now?: () => Date; read?: ReadDeps; crop?: CropDeps };
+// The hosting server ends a request at 30 seconds, so the crop and the read share 27 of them,
+// with 2 kept for the finish transaction. A read is not started with under 10 seconds left: the
+// row stays pending for Read again, which reads a kept crop with no second segment call.
+export const REQUEST_BUDGET_MS = 27_000;
+export const FINISH_RESERVE_MS = 2_000;
+export const MIN_READ_MS = 10_000;
+
+export type ServiceDeps = {
+  db?: TenantDb;
+  now?: () => Date;
+  read?: ReadDeps;
+  crop?: CropDeps;
+  // A monotonic clock for the request's time budget.
+  steady?: () => number;
+};
 
 export type UploadFile = { name: string; type: string; bytes: Uint8Array };
 
@@ -328,6 +342,16 @@ async function prepareForRead(
   }
 }
 
+// The read's timeout once elapsedMs of the request has gone: READ_TIMEOUT_MS with none gone (the
+// crop off), else what the budget has left less the finish's reserve. Null when that is under
+// MIN_READ_MS, or the clock gave no number.
+export function readTimeoutFor(elapsedMs: number): number | null {
+  if (!Number.isFinite(elapsedMs)) return null;
+  const left = REQUEST_BUDGET_MS - Math.max(0, Math.floor(elapsedMs)) - FINISH_RESERVE_MS;
+  const timeoutMs = Math.min(READ_TIMEOUT_MS, left);
+  return timeoutMs >= MIN_READ_MS ? timeoutMs : null;
+}
+
 async function readAndFinish(
   session: Session,
   doc: { id: string; bytes: Uint8Array; mime: DocumentMime; traceId: string },
@@ -335,12 +359,23 @@ async function readAndFinish(
 ): Promise<DocumentView> {
   const db = deps.db ?? getDb();
   const clock = deps.now ?? (() => new Date());
+  const steady = deps.steady ?? (() => performance.now());
+  const started = steady();
   const image = await prepareForRead(session, doc, deps);
-  const outcome = await readDocument(
-    { documentId: doc.id, bytes: image.bytes, mime: image.mime, traceId: doc.traceId },
-    session,
-    deps.read,
-  );
+  const elapsed = steady() - started;
+  const timeoutMs = readTimeoutFor(elapsed);
+  let outcome: ReadOutcome;
+  if (timeoutMs === null) {
+    // Too little of the request is left: no read, and the outcome a timeout would have.
+    console.error(`documents: read ${doc.id} not started category=deadline elapsed=${Math.round(elapsed)}`);
+    outcome = { ok: false, status: "retry", category: "model_error", callId: null };
+  } else {
+    outcome = await readDocument(
+      { documentId: doc.id, bytes: image.bytes, mime: image.mime, traceId: doc.traceId, timeoutMs },
+      session,
+      deps.read,
+    );
+  }
   const now = clock();
   const view = await tx(db, session, async (q) => {
     const row = await readDocumentMeta(q, doc.id, { lock: true });

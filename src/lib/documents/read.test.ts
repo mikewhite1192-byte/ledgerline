@@ -6,7 +6,7 @@ import type { FetchFn } from "../ai/providers/http";
 import { QUIET_JOB } from "../ai/test-fixtures";
 import type { Session } from "../auth/claims";
 import type { Param, Queryable, TenantDb } from "../db";
-import { readDocument, READ_MAX_OUTPUT_TOKENS, type ReadComplete } from "./read";
+import { readDocument, READ_MAX_OUTPUT_TOKENS, READ_TIMEOUT_MS, type ReadComplete } from "./read";
 import { MAX_STOPS, MAX_TEXT_LINES, MAX_LINE_CHARS } from "./schema";
 import { CONFIDENCE_FIELDS } from "./types";
 
@@ -95,6 +95,18 @@ describe("readDocument", () => {
     expect(req.purpose).toBe("document_read");
     const user = req.messages.find((m) => m.role === "user");
     expect(user?.attachments).toEqual([{ kind: "image", mime: "image/png", bytes: PNG }]);
+  });
+
+  it("holds the wrapper's timeout to 1 ms to 25 seconds, whatever the caller asks", async () => {
+    const seen: (number | undefined)[] = [];
+    const complete: ReadComplete = async (_t, request) => {
+      seen.push(request.timeoutMs);
+      return result();
+    };
+    const asked = [undefined, 25_000, 60_000, 25_001, 16_000, 9_999.7, 0, -5, Number.NaN, Number.POSITIVE_INFINITY];
+    for (const timeoutMs of asked) await readDocument({ ...INPUT, timeoutMs }, SESSION, { complete });
+    expect(seen).toEqual([25_000, 25_000, 25_000, 25_000, 16_000, 9_999, 1, 1, 25_000, 25_000]);
+    expect(READ_TIMEOUT_MS).toBe(25_000);
   });
 
   it("attaches a PDF as a PDF", async () => {

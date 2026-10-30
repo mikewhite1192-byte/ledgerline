@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { flags } from "../../config/flags";
-import { AiError, segment, type AiDeps, type SegmentMatch, type SegmentResult } from "../ai";
+import { AiError, MAX_IMAGE_BYTES, segment, type AiDeps, type SegmentMatch, type SegmentResult } from "../ai";
 import type { Session } from "../auth/claims";
 import type { CropBox, CropMethod, CropPoint, CropSkippedCategory, CropUnavailableCategory } from "./types";
 
@@ -17,7 +17,8 @@ export const CROP_PROMPT = "paper document";
 export const CROP_MIN_CONFIDENCE = 0.5;
 // The wrapper's smallest bound; one image costs 0.25 cents, matched or not.
 export const CROP_MAX_COST_CENTS = 1;
-export const CROP_TIMEOUT_MS = 15_000;
+// Short, so the read after it still fits the request's 30 seconds (service.ts REQUEST_BUDGET_MS).
+export const CROP_TIMEOUT_MS = 8_000;
 // The same cap as an upload (0013), which crop_length checks.
 export const CROP_MAX_BYTES = 700_000;
 
@@ -62,6 +63,8 @@ export type CropOutcome =
       box: CropBox | null;
       confidence: number | null;
       callId: string | null;
+      // A frame over the segmenter's input limit: no request went out, so the try is given back.
+      refund?: true;
     }
   // refund: no request went out (a refusal before the call), so the try is given back.
   | { status: "unavailable"; category: CropUnavailableCategory; refund: boolean };
@@ -488,6 +491,12 @@ export async function cropDocument(input: CropInput, session: Session, deps: Cro
   } catch (err) {
     console.error(`documents: crop ${id} failed category=bad_image error=${errorName(err)}`);
     return { status: "skipped", category: "bad_image", box: null, confidence: null, callId: null };
+  }
+  // The wrapper would refuse this frame before any request, so no call is made and the try is
+  // given back: crop_attempts counts only tries that reached the model.
+  if (frame.jpeg.byteLength > MAX_IMAGE_BYTES) {
+    console.error(`documents: crop ${id} failed category=too_large`);
+    return { status: "skipped", category: "too_large", box: null, confidence: null, callId: null, refund: true };
   }
   const size = { width: frame.raster.width, height: frame.raster.height };
   let answer: SegmentResult;

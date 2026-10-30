@@ -4,7 +4,21 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import type { TenantDb } from "../db";
-import { checkUpload, MARKUP_STALLED_MS, readAgain, safeFilename, STALLED_MS, uploadDocument, viewOf } from "./service";
+import { CROP_TIMEOUT_MS } from "./crop";
+import { READ_TIMEOUT_MS } from "./read";
+import {
+  checkUpload,
+  FINISH_RESERVE_MS,
+  MARKUP_STALLED_MS,
+  MIN_READ_MS,
+  readAgain,
+  readTimeoutFor,
+  REQUEST_BUDGET_MS,
+  safeFilename,
+  STALLED_MS,
+  uploadDocument,
+  viewOf,
+} from "./service";
 import type { DocumentMetaRow } from "./store";
 import { CONFIDENCE_FIELDS } from "./types";
 
@@ -308,5 +322,33 @@ describe("refusals before anything is stored", () => {
       ok: false,
       error: "too_many_pages",
     });
+  });
+});
+
+describe("the read's share of the request", () => {
+  it("keeps the full read with nothing spent, and gives a read after a crop only what is left", () => {
+    expect(readTimeoutFor(0)).toBe(READ_TIMEOUT_MS);
+    expect(readTimeoutFor(0.4)).toBe(READ_TIMEOUT_MS);
+    expect(readTimeoutFor(-3_000)).toBe(READ_TIMEOUT_MS);
+    expect(readTimeoutFor(9_000)).toBe(16_000);
+    expect(readTimeoutFor(15_000)).toBe(MIN_READ_MS);
+    expect(readTimeoutFor(15_001)).toBeNull();
+    expect(readTimeoutFor(Number.NaN)).toBeNull();
+    expect(readTimeoutFor(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it("never gives the read more than 25 seconds, and always leaves the finish its reserve", () => {
+    for (let ms = -1_000; ms <= 30_000; ms += 250) {
+      const timeout = readTimeoutFor(ms);
+      if (timeout === null) continue;
+      expect(timeout).toBeLessThanOrEqual(READ_TIMEOUT_MS);
+      expect(Math.max(0, ms) + timeout + FINISH_RESERVE_MS).toBeLessThanOrEqual(REQUEST_BUDGET_MS);
+    }
+    expect(READ_TIMEOUT_MS).toBe(25_000);
+  });
+
+  it("fits a crop that runs to its timeout and the shortest read inside the request's 30 seconds", () => {
+    expect(CROP_TIMEOUT_MS + MIN_READ_MS + FINISH_RESERVE_MS).toBeLessThanOrEqual(REQUEST_BUDGET_MS);
+    expect(REQUEST_BUDGET_MS).toBeLessThan(30_000);
   });
 });

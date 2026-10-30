@@ -16,7 +16,7 @@ import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-
 import { executeProposal } from "../proposals/execute";
 import { loadCandidates } from "./candidates";
 import type { CropDeps } from "./crop";
-import type { ReadComplete } from "./read";
+import { READ_TIMEOUT_MS, type ReadComplete } from "./read";
 import {
   getDocument,
   listDocuments,
@@ -40,6 +40,19 @@ const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
 const HOUR = 3_600_000;
 const clock = () => new Date(NOW);
 const saved = { enabled: flags.documentsEnabled, crop: flags.documentCrop, auditor: flags.auditorRequired };
+
+// The segmenter's input limit, lowered by one test to stand in for a photo too large to send
+// (no upload under the 700,000 byte cap normalizes to a frame near the real 5 MiB).
+const frameLimit = vi.hoisted(() => ({ bytes: null as number | null }));
+vi.mock("../ai", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../ai")>();
+  return {
+    ...real,
+    get MAX_IMAGE_BYTES() {
+      return frameLimit.bytes ?? real.MAX_IMAGE_BYTES;
+    },
+  };
+});
 
 let admin: Db;
 let app: Db;
@@ -603,6 +616,17 @@ const slowRead = () =>
     throw new AiError("timeout");
   });
 
+// A request clock that moves only when a fake call says so.
+function steadyClock() {
+  let ms = 0;
+  return {
+    steady: () => ms,
+    pass: (by: number) => {
+      ms += by;
+    },
+  };
+}
+
 // The image the read was sent on its n-th call.
 function sentImage(read: Mock<ReadComplete>, n = 0): { mime: string; bytes: Uint8Array } {
   const user = read.mock.calls[n][1].messages.find((m): m is Extract<AiMessage, { role: "user" }> => m.role === "user");
@@ -643,6 +667,7 @@ describe("a photo cropped to the paper before its read", () => {
     flags.documentsEnabled = true;
     flags.documentCrop = true;
     flags.auditorRequired = false;
+    frameLimit.bytes = null;
     vi.restoreAllMocks();
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
@@ -652,6 +677,7 @@ describe("a photo cropped to the paper before its read", () => {
     flags.documentsEnabled = saved.enabled;
     flags.documentCrop = saved.crop;
     flags.auditorRequired = saved.auditor;
+    frameLimit.bytes = null;
     vi.restoreAllMocks();
     if (admin) {
       await dropTenant(admin, C);
@@ -809,6 +835,110 @@ describe("a photo cropped to the paper before its read", () => {
     expect(segment).toHaveBeenCalledTimes(1);
     expect(sentImage(good).mime).toBe("image/jpeg");
     expect(await cropRow(id)).toMatchObject({ crop_status: "cropped", crop_category: null, crop_attempts: 1 });
+  });
+
+  it("skips a photo too large for the segmenter with no call, and gives the try back", async () => {
+    const segment = slowSegment();
+    const out = await uploadDocument(C.session, await photo(), {
+      db: app,
+      now: at(0),
+      read: { complete: slowRead() },
+      crop: { segment },
+    });
+    if (!out.ok) throw new Error("upload refused");
+    const id = out.view.id;
+    // The upload's try reached the model and timed out: one try spent.
+    expect(await cropRow(id)).toMatchObject({ crop_status: "unavailable", crop_category: "timeout", crop_attempts: 1 });
+
+    // Read again's frame is over the limit: no call, a final skip, and the count back at one.
+    frameLimit.bytes = 1_000;
+    const paper = paperSegment();
+    const good = fakeModel(rateReading());
+    const again = await readAgain(C.session, id, { db: app, now: at(3), read: { complete: good }, crop: { segment: paper } });
+    expect(again).toMatchObject({
+      ok: true,
+      view: { readStatus: "read", crop: { status: "skipped", category: "too_large", box: null, confidence: null } },
+    });
+    expect(paper).not.toHaveBeenCalled();
+    expect(segment).toHaveBeenCalledTimes(1);
+    expect(await cropRow(id)).toMatchObject({
+      crop_status: "skipped",
+      crop_category: "too_large",
+      crop_attempts: 1,
+      crop_hash: null,
+      crop_length: null,
+    });
+    expect(sentImage(good).mime).toBe("image/webp");
+  });
+
+  it("gives the read its full 25 seconds while the crop is off", async () => {
+    flags.documentCrop = false;
+    const read = fakeModel(rateReading());
+    const out = await uploadDocument(C.session, await photo(), {
+      db: app,
+      now: clock,
+      read: { complete: read },
+      steady: steadyClock().steady,
+    });
+    expect(out).toMatchObject({ ok: true, view: { readStatus: "read" } });
+    expect(read.mock.calls[0][1].timeoutMs).toBe(READ_TIMEOUT_MS);
+    expect(READ_TIMEOUT_MS).toBe(25_000);
+  });
+
+  it("gives the read only what a 9 second crop leaves of the request", async () => {
+    const { steady, pass } = steadyClock();
+    const segment = vi.fn<NonNullable<CropDeps["segment"]>>(async () => {
+      pass(9_000);
+      return paperAnswer();
+    });
+    const read = fakeModel(rateReading());
+    const out = await uploadDocument(C.session, await photo(), {
+      db: app,
+      now: clock,
+      read: { complete: read },
+      crop: { segment },
+      steady,
+    });
+    expect(out).toMatchObject({ ok: true, view: { readStatus: "read", crop: { status: "cropped" } } });
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls[0][1].timeoutMs).toBe(16_000);
+    expect(sentImage(read).mime).toBe("image/jpeg");
+  });
+
+  it("starts no read when the crop leaves under 10 seconds, and Read again reads the kept crop in full time", async () => {
+    const { steady, pass } = steadyClock();
+    const segment = vi.fn<NonNullable<CropDeps["segment"]>>(async () => {
+      pass(15_001);
+      return paperAnswer();
+    });
+    const read = fakeModel(rateReading());
+    const out = await uploadDocument(C.session, await photo(), {
+      db: app,
+      now: clock,
+      read: { complete: read },
+      crop: { segment },
+      steady,
+    });
+    if (!out.ok) throw new Error("upload refused");
+    const id = out.view.id;
+    // No read call: the row stays pending with its crop kept, and the log names a fixed category.
+    expect(read).not.toHaveBeenCalled();
+    expect(out.view).toMatchObject({ readStatus: "pending", crop: { status: "cropped" } });
+    expect(await cropRow(id)).toMatchObject({ crop_status: "cropped", crop_attempts: 1 });
+    expect(vi.mocked(console.error)).toHaveBeenCalledWith(`documents: read ${id} not started category=deadline elapsed=15001`);
+
+    const again = await readAgain(C.session, id, {
+      db: app,
+      now: at(3),
+      read: { complete: read },
+      crop: { segment },
+      steady: steadyClock().steady,
+    });
+    expect(again).toMatchObject({ ok: true, view: { readStatus: "read", crop: { status: "cropped" } } });
+    expect(segment).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls[0][1].timeoutMs).toBe(READ_TIMEOUT_MS);
+    expect(sentImage(read).mime).toBe("image/jpeg");
   });
 
   it("gives a try back only under that try's own lease, never a newer one", async () => {
