@@ -77,6 +77,8 @@ const KEPT_OFF = [
   "iftaEnabled",
   // The year-end 1099 report ships dark with its own merge; the owner turns it on in its own PR.
   "yearEndEnabled",
+  // The review trust meter ships dark with its own merge; the owner turns it on in its own PR.
+  "trustMeterEnabled",
   // Step through for staff on production is the owner's call, in its own one-line PR.
   "stepThrough.staff",
   // The demo visitor sign-in ships dark with its own merge; the owner turns it on in its own PR.
@@ -766,6 +768,12 @@ describe("flags", () => {
     expect(flags.yearEndEnabled).toBe(false);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("yearEndEnabled");
     expect(LOCAL_OFF_ONLY as readonly string[]).not.toContain("yearEndEnabled");
+  });
+
+  it("ships the review trust meter dark, and never switched on by local mode", () => {
+    expect(flags.trustMeterEnabled).toBe(false);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("trustMeterEnabled");
+    expect(LOCAL_OFF_ONLY as readonly string[]).not.toContain("trustMeterEnabled");
   });
 });
 

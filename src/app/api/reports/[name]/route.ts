@@ -10,8 +10,8 @@ import { capRows, isReportName } from "@/lib/reports/types";
 // GET: one report for the signed-in person's carrier, recomputed from the records with the same
 // typed args the chat tool takes. format=csv (the default) downloads every row; format=json is the
 // chat's table, capped at 50 rows like the tool result. Never cached. Off while the report switch
-// is off, and a report with its own switch (the IFTA quarter, the year-end 1099) is off while that
-// one is.
+// is off, and a report with its own switch (the IFTA quarter, the year-end 1099, the trust meter)
+// is off while that one is.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 

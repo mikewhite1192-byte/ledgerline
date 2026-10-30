@@ -64,6 +64,7 @@ afterEach(() => {
   flags.reportsEnabled = false;
   flags.iftaEnabled = false;
   flags.yearEndEnabled = false;
+  flags.trustMeterEnabled = false;
   vi.restoreAllMocks();
 });
 
@@ -124,6 +125,34 @@ describe("GET /api/reports/:name", () => {
     // With reports off, its own switch alone does not open it.
     flags.reportsEnabled = false;
     expect((await get("year_end_contractors")).status).toBe(404);
+  });
+
+  it("is not there for the trust meter while its own switch is off, though the others answer", async () => {
+    flags.trustMeterEnabled = false;
+    const off = await get("trust_meter", "?asOf=2026-11-02");
+    expect(off.status).toBe(404);
+    expect(off.headers.get("cache-control")).toBe("no-store");
+    expect(await off.json()).toEqual({ error: "not_found" });
+    expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(mocks.reportForSession).not.toHaveBeenCalled();
+    expect((await get("ar_aging")).status).toBe(200);
+    // Another report's own switch does not open it.
+    flags.iftaEnabled = true;
+    flags.yearEndEnabled = true;
+    expect((await get("trust_meter")).status).toBe(404);
+    // On, it reaches the session and the report like any other, with its date as typed.
+    flags.trustMeterEnabled = true;
+    mocks.getSession.mockClear();
+    await get("trust_meter", "?asOf=2026-11-02");
+    expect(mocks.getSession).toHaveBeenCalledTimes(1);
+    expect(mocks.reportForSession.mock.calls.at(-1)?.[1]).toEqual({ name: "trust_meter", args: { asOf: "2026-11-02" } });
+    // An arg it does not take is refused before any read.
+    const calls = mocks.reportForSession.mock.calls.length;
+    expect((await get("trust_meter", "?year=2026")).status).toBe(400);
+    expect(mocks.reportForSession.mock.calls.length).toBe(calls);
+    // With reports off, its own switch alone does not open it.
+    flags.reportsEnabled = false;
+    expect((await get("trust_meter")).status).toBe(404);
   });
 
   it("refuses a request with no session", async () => {

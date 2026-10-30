@@ -12,6 +12,8 @@ import {
   PURCHASED_BETWEEN,
   QUEUE_CHILDREN,
   QUEUE_LOADS,
+  TRUST_DECISIONS_FIRST,
+  TRUST_DECISIONS_NEXT,
 } from "../../../data/read";
 import { DUE_SQL as ESCROW_DUE_SQL } from "../../../escrow/due";
 import { DRIVER_ESCROW_SQL, DRIVER_RELEASES_SQL } from "../../../escrow/read";
@@ -273,6 +275,30 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
         .sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))
         .slice(0, Number(numbers[1]))
         .map((r) => ({ id: r.id, load_number: r.load_number }));
+    }
+    // The trust meter's paged read (data/read.ts readTrustInput): the decided, unexpired proposals
+    // in the window of instants, in id order, after the last id seen on the next pages. A seed plan
+    // holds no proposals, so this answers from a proposals list a test adds, or none.
+    if (numbers && (stem === TRUST_DECISIONS_FIRST || stem === TRUST_DECISIONS_NEXT)) {
+      const [start, end] = [String(params[0]), String(params[1])];
+      const after = stem === TRUST_DECISIONS_NEXT ? String(params[2]) : null;
+      return [...(tables.proposals ?? [])]
+        .filter((r) => r.decided_at != null && r.status !== "expired")
+        .filter((r) => String(r.decided_at) >= start && String(r.decided_at) < end)
+        .filter((r) => after === null || String(r.id) > after)
+        .sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))
+        .slice(0, Number(numbers[1]))
+        .map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          status: r.status,
+          decided_at: r.decided_at,
+          decision_note: r.decision_note ?? null,
+          auditor_verdict: r.auditor_verdict ?? null,
+          engine_check: r.engine_check ?? null,
+          auditor_overridden: r.auditor_override_reason != null,
+          engine_overridden: r.engine_override_reason != null,
+        }));
     }
     const m = FROM.exec(sql);
     if (!m) return undefined;

@@ -194,7 +194,7 @@ export type Flags = {
     // At most 400,000: the byte_length CHECK in migration 0052 refuses a larger card.
     maxPngBytes: number;
   };
-  // The seven report tools in the chat and the report download route. Off: the agent is not
+  // The eight report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
   // The IFTA quarter report (report_ifta_quarter and /api/reports/ifta_quarter): per-state miles
@@ -206,6 +206,12 @@ export type Flags = {
   // against the 1099-NEC threshold. Nothing is filed. Off: the tool is not offered and a call is
   // refused as unknown, the route answers 404. reportsEnabled must also be on.
   yearEndEnabled: boolean;
+  // The review trust meter (report_trust_meter and /api/reports/trust_meter): per action type and
+  // pay week, how often a card a person caught as wrong had passed both checks, and whether the
+  // record would support exception-only review. Display only: it changes nothing about who
+  // approves. Off: the tool is not offered and a call is refused as unknown, the route answers 404.
+  // reportsEnabled must also be on.
+  trustMeterEnabled: boolean;
   // The invoice queue: Refresh turns each delivered, rated load into an invoice card, and an
   // approval records the invoice here. Posting it to the books still needs accountingEnabled.
   invoicesEnabled: boolean;
@@ -792,6 +798,7 @@ export const flags: Flags = {
   reportsEnabled: true,
   iftaEnabled: false,
   yearEndEnabled: false,
+  trustMeterEnabled: false,
   invoicesEnabled: true,
   invoicesStart: "2026-10-05",
   invoiceLimits: { proposalsPerRun: 50, maxPostAttempts: 3 },

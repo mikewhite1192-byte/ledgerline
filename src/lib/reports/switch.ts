@@ -6,6 +6,7 @@ import type { ReportName } from "./types";
 const REPORT_FLAGS: Readonly<Partial<Record<ReportName, () => boolean>>> = {
   ifta_quarter: () => flags.iftaEnabled,
   year_end_contractors: () => flags.yearEndEnabled,
+  trust_meter: () => flags.trustMeterEnabled,
 };
 
 // Whether a report may run right now: every report needs reportsEnabled, and a listed one also

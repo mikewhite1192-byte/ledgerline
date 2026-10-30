@@ -50,6 +50,8 @@ export const REPORT_ARGS = {
   ifta_quarter: z.strictObject({ asOf: dateArg().optional() }),
   // The calendar year the settlements were paid in; default this year in the carrier's time zone.
   year_end_contractors: z.strictObject({ year: yearArg().optional(), driverId: idArg().optional() }),
+  // Any date inside the last pay week wanted; default today in the carrier's time zone.
+  trust_meter: z.strictObject({ asOf: dateArg().optional() }),
 } as const satisfies Record<ReportName, z.ZodType>;
 
 export type ReportArgs = { [K in ReportName]: z.infer<(typeof REPORT_ARGS)[K]> };

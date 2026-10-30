@@ -37,6 +37,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   report_margin_per_load: { tier: "read", roles: ["operator"] },
   report_ifta_quarter: { tier: "read", roles: ["operator"] },
   report_year_end_contractors: { tier: "read", roles: ["operator", "auditor"] },
+  report_trust_meter: { tier: "read", roles: ["operator"] },
   get_proposal: { tier: "read", roles: ["auditor"] },
   find_unbilled_detention: { tier: "read", roles: ["operator", "auditor"] },
   propose_detention_charge: { tier: "propose", roles: ["operator"] },
@@ -72,12 +73,13 @@ const ESCROW_TOOLS = ["list_escrow_releases_due", "get_escrow_statement", "propo
 const DETENTION_TOOLS = ["find_unbilled_detention", "propose_detention_charge"];
 // The tools behind the money codes switch, likewise.
 const MONEY_CODE_TOOLS = ["get_money_codes", "propose_money_code"];
-// The IFTA quarter and year-end 1099 reports also need their own switches, so they are kept apart
-// from the other reports.
+// The IFTA quarter, year-end 1099 and trust meter reports also need their own switches, so they
+// are kept apart from the other reports.
 const IFTA_TOOL = "report_ifta_quarter";
 const YEAR_END_TOOL = "report_year_end_contractors";
+const TRUST_TOOL = "report_trust_meter";
 const REPORT_TOOLS = Object.keys(EXPECTED).filter(
-  (n) => n.startsWith("report_") && n !== IFTA_TOOL && n !== YEAR_END_TOOL,
+  (n) => n.startsWith("report_") && n !== IFTA_TOOL && n !== YEAR_END_TOOL && n !== TRUST_TOOL,
 );
 // The card check's tools, behind its switch.
 const CARD_TOOLS = ["get_card_breaks", "propose_card_match"];
@@ -95,6 +97,7 @@ afterEach(() => {
   flags.reportsEnabled = false;
   flags.iftaEnabled = false;
   flags.yearEndEnabled = false;
+  flags.trustMeterEnabled = false;
   flags.detentionEnabled = false;
   flags.moneyCodes.enabled = false;
   flags.cardRecon.enabled = false;
@@ -423,6 +426,45 @@ describe("tool registry", () => {
     flags.yearEndEnabled = false;
   });
 
+  it("offers and finds the trust meter report only while the reports and its own switch are both on", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    expect(flags.trustMeterEnabled).toBe(false);
+    flags.reportsEnabled = true;
+    // Reports on, trust meter off: the reports as before, and the tool neither offered nor found.
+    expect(toolsFor("operator")).toHaveLength(26);
+    for (const role of AGENT_ROLES) expect(names(role), role).not.toContain(TRUST_TOOL);
+    expect(toolNamed(TRUST_TOOL)).toBeNull();
+    expect(isToolEnabled(TOOL_REGISTRY[TRUST_TOOL])).toBe(false);
+    // Another report's own switch does not open it.
+    flags.iftaEnabled = true;
+    flags.yearEndEnabled = true;
+    for (const role of AGENT_ROLES) expect(names(role), role).not.toContain(TRUST_TOOL);
+    flags.iftaEnabled = false;
+    flags.yearEndEnabled = false;
+
+    flags.trustMeterEnabled = true;
+    expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
+      operator: 27,
+      auditor: 12,
+      triage: 2,
+    });
+    expect(names("operator")).toContain(TRUST_TOOL);
+    expect(names("auditor")).not.toContain(TRUST_TOOL);
+    expect(names("triage")).not.toContain(TRUST_TOOL);
+    expect(toolNamed(TRUST_TOOL)?.tier).toBe("read");
+    expect(toolNamed(TRUST_TOOL)?.roles).toEqual(["operator"]);
+    expect(isToolEnabled(TOOL_REGISTRY[TRUST_TOOL])).toBe(true);
+    // Its switch opens neither the IFTA quarter nor the year-end 1099.
+    expect(names("operator")).not.toContain(IFTA_TOOL);
+    expect(names("operator")).not.toContain(YEAR_END_TOOL);
+
+    // The trust meter switch alone does not open it.
+    flags.reportsEnabled = false;
+    for (const role of AGENT_ROLES) expect(names(role), role).not.toContain(TRUST_TOOL);
+    expect(toolNamed(TRUST_TOOL)).toBeNull();
+    flags.trustMeterEnabled = false;
+  });
+
   it("offers the note suggestion tool to the operator only while carrier memory is on, read on every offer", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
     expect(flags.carrierMemoryEnabled).toBe(false);
@@ -460,9 +502,10 @@ describe("tool registry", () => {
     flags.quarterReviewEnabled = true;
     flags.iftaEnabled = true;
     flags.yearEndEnabled = true;
+    flags.trustMeterEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 50,
+      operator: 51,
       auditor: 21,
       triage: 2,
     });

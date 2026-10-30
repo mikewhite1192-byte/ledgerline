@@ -18,6 +18,7 @@ import {
   OPERATOR_PROMPT,
   REPORT_PROMPT,
   TOOL_SEARCH_RULE,
+  TRUST_PROMPT,
   VERIFY_RULE,
   YEAR_END_PROMPT,
   escalatedText,
@@ -933,6 +934,7 @@ describe("runTurn with tool search and the prompt cache", () => {
     carrierMemoryEnabled: boolean;
     iftaEnabled?: boolean;
     yearEndEnabled?: boolean;
+    trustMeterEnabled?: boolean;
   }) => {
     const before = {
       reportsEnabled: flags.reportsEnabled,
@@ -941,6 +943,7 @@ describe("runTurn with tool search and the prompt cache", () => {
       carrierMemoryEnabled: flags.carrierMemoryEnabled,
       iftaEnabled: flags.iftaEnabled,
       yearEndEnabled: flags.yearEndEnabled,
+      trustMeterEnabled: flags.trustMeterEnabled,
     };
     onTestFinished(() => {
       Object.assign(flags, before);
@@ -1058,6 +1061,32 @@ describe("runTurn with tool search and the prompt cache", () => {
     flags.reportsEnabled = false;
     const neither = toolsFor("operator").map((t) => t.name);
     expect(neither).not.toContain("report_year_end_contractors");
+    expect(operatorPrompt(neither, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
+  });
+
+  it("adds the trust meter lines only while the reports and the trust meter switch are both on", () => {
+    const base = { collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: false };
+    promptSwitches({ ...base, reportsEnabled: true, iftaEnabled: false, yearEndEnabled: false, trustMeterEnabled: false });
+    const off = toolsFor("operator").map((t) => t.name);
+    expect(off).not.toContain("report_trust_meter");
+    expect(operatorPrompt(off, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${REPORT_PROMPT}`);
+    flags.trustMeterEnabled = true;
+    const on = toolsFor("operator").map((t) => t.name);
+    expect(on).toContain("report_trust_meter");
+    expect(operatorPrompt(on, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${REPORT_PROMPT}\n${TRUST_PROMPT}`);
+    expect(TRUST_PROMPT).toContain("never turn a rate into dollars");
+    expect(TRUST_PROMPT).toContain("never\n  say the approval rule changed");
+    expect(TRUST_PROMPT).toContain("every money action still needs a person's approval");
+    // With the IFTA quarter and the year-end 1099 on too, their lines come first.
+    flags.iftaEnabled = true;
+    flags.yearEndEnabled = true;
+    const all = toolsFor("operator").map((t) => t.name);
+    expect(operatorPrompt(all, false)).toBe(
+      `${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${REPORT_PROMPT}\n${IFTA_PROMPT}\n${YEAR_END_PROMPT}\n${TRUST_PROMPT}`,
+    );
+    flags.reportsEnabled = false;
+    const neither = toolsFor("operator").map((t) => t.name);
+    expect(neither).not.toContain("report_trust_meter");
     expect(operatorPrompt(neither, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
   });
 
