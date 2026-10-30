@@ -40,7 +40,7 @@ export function navRowClass(current = false): string {
 
 function Items({ items, label }: { items: NavItem[]; label?: string }) {
   return (
-    <ul aria-label={label} className="grid gap-0.5">
+    <ul aria-label={label} className="grid grid-cols-1 gap-0.5">
       {items.map((item) => (
         <li key={item.href}>
           <Link href={item.href} aria-current={item.current ? "page" : undefined} className={navRowClass(item.current)}>
@@ -60,12 +60,12 @@ export function NavList({ items }: { items: NavItem[] }) {
   const groups = runs(items);
   if (groups.every((g) => g.group === undefined)) return <Items items={items} />;
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       {groups.map((g, i) =>
         g.group === undefined ? (
           <Items key={`run-${i}`} items={g.items} />
         ) : (
-          <div key={`${g.group}-${i}`} className="grid gap-1">
+          <div key={`${g.group}-${i}`} className="grid grid-cols-1 gap-1">
             <p aria-hidden className="px-2.5 text-caption font-medium tracking-wide text-muted-foreground uppercase">
               {g.group}
             </p>
