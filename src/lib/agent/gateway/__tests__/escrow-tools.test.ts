@@ -69,7 +69,7 @@ describe("escrow release tools switched off", () => {
     ["get_escrow_statement", { driverId: hero.id }],
     ["propose_escrow_release", proposeArgs],
   ])("%s refuses as disabled before reading a record, with one decision row", async (name, args) => {
-    expect(flags.escrowRelease.enabled).toBe(false);
+    flags.escrowRelease.enabled = false;
     const { out, db } = await run(name, args, heroAs("2026-07-01", 100_000));
     expect(out).toMatchObject({ decision: "blocked", reason: "disabled" });
     expect(db.decisions).toHaveLength(1);

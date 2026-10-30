@@ -83,7 +83,8 @@ describe("money code switches", () => {
     flags.payoutsEnabled = true;
   };
 
-  it("is off by default and closed at every step of the gate", () => {
+  it("is off while its switch is off, and closed at every step of the gate", () => {
+    flags.moneyCodes = { ...flags.moneyCodes, enabled: false };
     expect(moneyCodesOn()).toBe(false);
     expect(issueGate(15_000, "2026-10-28")).toBe("codes_off");
     on();

@@ -349,7 +349,7 @@ describe("margin_per_load", () => {
 });
 
 describe("ifta_quarter", () => {
-  // computeReport refuses a report whose switch is off, and the IFTA quarter ships dark.
+  // computeReport refuses a report whose switch is off, so these tests turn the IFTA quarter on themselves.
   beforeEach(() => {
     flags.iftaEnabled = true;
   });

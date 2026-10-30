@@ -65,6 +65,7 @@ function proposal(over: Partial<ProposalRow> = {}, args: Record<string, unknown>
 
 describe("escrowReleaseGate", () => {
   it("names the first closed switch, in order", () => {
+    flags.escrowRelease = { enabled: false, armed: false, capCents: 500_000, startDate: "2026-11-02" };
     expect(escrowReleaseGate(120_000, "2026-11-02")).toBe("escrow_off");
     flags.escrowRelease.enabled = true;
     flags.payoutsEnabled = false;
@@ -91,8 +92,10 @@ describe("escrowReleaseGate", () => {
     expect(escrowReleaseGate(120_000, "2026-11-02")).toBe("escrow_before_start");
   });
 
-  it("is off by default, so escrowReleaseOn is false and nothing is offered or executed", () => {
-    expect(saved).toEqual({ enabled: false, armed: false, capCents: 500_000, startDate: "2026-11-02" });
+  it("ships on and armed with its cap and start date, and is off while its switch is off", () => {
+    expect(saved).toEqual({ enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" });
+    expect(escrowReleaseOn()).toBe(true);
+    flags.escrowRelease.enabled = false;
     expect(escrowReleaseOn()).toBe(false);
   });
 });
@@ -164,6 +167,7 @@ describe("the dedupe key", () => {
 
 describe("the executor behind the switch", () => {
   it("is registered only while the switch is on, with its precheck", () => {
+    flags.escrowRelease.enabled = false;
     expect(EXECUTORS.escrow_release).toBeUndefined();
     flags.escrowRelease.enabled = true;
     expect(EXECUTORS.escrow_release).toBe(escrowReleaseExecutor);
@@ -173,6 +177,7 @@ describe("the executor behind the switch", () => {
   });
 
   it("refuses with the switch off before opening a transaction", async () => {
+    flags.escrowRelease.enabled = false;
     const withTenant = vi.fn();
     const db = { withTenant } as unknown as TenantDb;
     const session = { sub: "sub-1", email: "", tenantId: "8f7e6d5c-4b3a-4d2c-9b8a-7f6e5d4c3b2a" };

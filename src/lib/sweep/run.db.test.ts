@@ -783,6 +783,7 @@ describe("the sweep's coverage and its starting checklist (verification on)", ()
   });
 
   it("keeps no coverage for a run whose find phase ran with the switch off, as for a run from before the column", async () => {
+    flags.verification = { ...flags.verification, enabled: false };
     const runId = await start();
     await advanceSweep(SESSION, runId, NOW.getTime() + 5_000, deps());
     verifyOn();
@@ -852,6 +853,7 @@ describe("the sweep's coverage and its starting checklist (verification on)", ()
   });
 
   it("starts with the list as written while the switch is off, as today", async () => {
+    flags.verification = { ...flags.verification, enabled: false };
     const real = (await vi.importActual<typeof import("./checklist")>("./checklist")).sweepChecklist(false);
     tamper.list = { ...real, items: real.items.filter((i) => i.key !== "audit") };
     const runId = await start();

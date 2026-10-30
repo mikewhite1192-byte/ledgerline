@@ -656,8 +656,8 @@ export type Flags = {
     requirePacket: boolean;
     startDate: string;
   };
-  // The "How the models score" card on /models, read from src/lib/eval/results/latest.json. Off
-  // until the owner's one-line flip after a real run is recorded.
+  // The "How the models score" card on /models, read from src/lib/eval/results/latest.json. On
+  // once a real run was recorded.
   evalCardEnabled: boolean;
   // The model eval script (npm run eval). It runs every case on a fresh local database that it
   // drops after, and only spends model cents on the developer's own ledger, never production's.
@@ -673,7 +673,8 @@ export type Flags = {
   // reads pinned rates (get_pinned_rates); it never looks one up or pins one, and nothing is
   // recalculated, billed or paid from a pin in this release. Off means the Fuel and tax rates page
   // is not found, its link is hidden, the routes and the services refuse before any work, and the
-  // read tool is not offered. Not a local override: the demo path's tool list must not change.
+  // read tool is not offered. Local mode may only turn it off: the demo path's tool list must not
+  // change.
   groundedRatesEnabled: boolean;
   ratesLimits: {
     // The cap on one lookup call, in cents.
@@ -750,7 +751,7 @@ export const flags: Flags = {
   payoutsEnabled: true,
   paymentProvider: "stripe_test",
   accountingEnabled: true,
-  inboundEmailEnabled: false,
+  inboundEmailEnabled: true,
   screenOutputMode: "text",
   gatewayLimits: {
     payCorrectionMaxCents: 50_000,
@@ -763,7 +764,7 @@ export const flags: Flags = {
   runLimits: {
     maxTurns: 30,
   },
-  stepThrough: { dev: true, staff: false },
+  stepThrough: { dev: true, staff: true },
   agentTurnLimits: {
     maxToolSteps: 6,
     maxModelCalls: 6,
@@ -778,12 +779,12 @@ export const flags: Flags = {
   verifyEngineMismatchBlocks: true,
   approverRole: { adminAboveCents: 200_000 },
   documentsEnabled: true,
-  documentCrop: false,
+  documentCrop: true,
   documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
-  documentMarkupEnabled: false,
+  documentMarkupEnabled: true,
   markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
   advancesEnabled: true,
-  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-29" },
+  advancePayouts: { armed: true, capCents: 50_000, startDate: "2026-10-29" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
   advanceTakeback: { enabled: true, maxCents: 100_000 },
   agentToolSearch: true,
@@ -793,12 +794,12 @@ export const flags: Flags = {
   driverNotesEmailAllowlist: [],
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
-  payCardsEnabled: false,
+  payCardsEnabled: true,
   payCardLimits: { checkMaxCostCents: 3, maxBatchCents: 40, cardsPerTenantPerDay: 100, maxPngBytes: 400_000 },
   reportsEnabled: true,
-  iftaEnabled: false,
-  yearEndEnabled: false,
-  trustMeterEnabled: false,
+  iftaEnabled: true,
+  yearEndEnabled: true,
+  trustMeterEnabled: true,
   invoicesEnabled: true,
   invoicesStart: "2026-10-05",
   invoiceLimits: { proposalsPerRun: 50, maxPostAttempts: 3 },
@@ -820,7 +821,7 @@ export const flags: Flags = {
   detentionEnabled: true,
   demoResetEnabled: true,
   rulesByTalkingEnabled: true,
-  policyOnboardEnabled: false,
+  policyOnboardEnabled: true,
   policyLimits: {
     maxBytes: 700_000,
     maxPdfPages: 3,
@@ -831,7 +832,7 @@ export const flags: Flags = {
     proposeTimeoutMs: 20_000,
   },
   sweepEnabled: true,
-  sweepScheduleEnabled: false,
+  sweepScheduleEnabled: true,
   payCorrectionsEnabled: true,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
   fanoutEnabled: true,
@@ -889,7 +890,7 @@ export const flags: Flags = {
   carrierMemoryEnabled: true,
   carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
   carrierMemoryAgentLimits: { maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 },
-  quarterReviewEnabled: false,
+  quarterReviewEnabled: true,
   quarterReviewLimits: { maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 },
   fuelAnomalyEnabled: true,
   fuelAnomalyLimits: {
@@ -902,7 +903,7 @@ export const flags: Flags = {
     comparesPerTenantPerDay: 20,
   },
   judgeAccess: {
-    enabled: false,
+    enabled: true,
     sessionCapCents: 100,
     turnsPerSession: 25,
     dayCapCents: 800,
@@ -911,7 +912,7 @@ export const flags: Flags = {
     sessionsPerDay: 150,
     cookieHours: 2,
   },
-  moneyCodes: { enabled: false, armed: false, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
+  moneyCodes: { enabled: true, armed: true, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
   cardRecon: {
     enabled: true,
     limits: {
@@ -926,9 +927,9 @@ export const flags: Flags = {
     },
   },
   deskLoop: {
-    enabled: false,
-    armed: false,
-    startDate: "2026-10-31",
+    enabled: true,
+    armed: true,
+    startDate: "2026-10-30",
     limits: {
       sliceMs: 20_000,
       leaseMs: 55_000,
@@ -939,14 +940,14 @@ export const flags: Flags = {
       dayCents: 400,
     },
   },
-  factoring: { enabled: false, armed: false, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
-  evalCardEnabled: false,
+  factoring: { enabled: true, armed: true, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
+  evalCardEnabled: true,
   evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
-  groundedRatesEnabled: false,
+  groundedRatesEnabled: true,
   ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
-  verification: { enabled: false, maxAttempts: 3 },
-  ratecon: { enabled: false, startDate: "2026-11-02", readMaxCostCents: 8, perTenantPerDay: 20 },
-  phoneLineEnabled: false,
+  verification: { enabled: true, maxAttempts: 3 },
+  ratecon: { enabled: true, startDate: "2026-10-30", readMaxCostCents: 8, perTenantPerDay: 20 },
+  phoneLineEnabled: true,
   phoneLineLimits: {
     maxSegmentBytes: 1_000_000,
     maxSegmentMs: 30_000,
@@ -957,7 +958,7 @@ export const flags: Flags = {
     maxUpdateCents: 3,
     idleEndMs: 600_000,
   },
-  escrowRelease: { enabled: false, armed: false, capCents: 500_000, startDate: "2026-11-02" },
+  escrowRelease: { enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" },
 };
 
 applyLocalOverrides(flags);
