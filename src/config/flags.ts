@@ -61,8 +61,8 @@ export type Flags = {
   // accepts a focus, checks it under the carrier and names the record in the state summary's
   // Subject line, and GET /api/agent/recent returns the caller's newest conversation for the
   // panel to resume. Off: a turn with a focus is refused as a bad request and the recent route
-  // answers agent_off. Ships off until the panel that sends it lands; local mode can turn it on
-  // through FLAGS_LOCAL_OVERRIDES, as the demo-path run does.
+  // answers agent_off. On now that the panel that sends it has landed; local mode can set it either
+  // way through FLAGS_LOCAL_OVERRIDES.
   agentFocusEnabled: boolean;
   // How the chat follows a running turn: server-sent events, or polling the turn every 1.5 s.
   // The client falls back to polling on its own when no event arrives within 3 seconds.
@@ -766,7 +766,7 @@ export const flags: Flags = {
     ruleChangeImpactMaxCents: 500_000,
   },
   agentEnabled: true,
-  agentFocusEnabled: false,
+  agentFocusEnabled: true,
   agentStreamMode: "sse",
   runLimits: {
     maxTurns: 30,
