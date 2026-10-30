@@ -719,8 +719,9 @@ export type Flags = {
   // Escrow release (Test mode, docs: ESCROW-RELEASE): a terminated driver's escrow balance goes
   // back to the driver by a bank payout to the one Stripe test connected account, once a person
   // approves the agent's card. enabled: the due list and statement tools, the propose tool, the
-  // route and the kind's executor; off, the route answers 404, the tools are not offered and the
-  // kind has no executor. armed, capCents (inclusive: the most one release may be) and startDate
+  // due route, the check route (reads back a payout whose outcome is unknown) and the kind's
+  // executor; off, both routes answer 403 disabled, the tools are not offered and the kind has no
+  // executor. armed, capCents (inclusive: the most one release may be) and startDate
   // (YYYY-MM-DD, tenant-local) are asked by the propose tool, again by the precheck, by the
   // executor before the release row is written and at the reserve, on top of payoutsEnabled.
   // Nothing is emailed: a driver due for release is only listed.
