@@ -1,7 +1,10 @@
-import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import sharp from "sharp";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { flags } from "../../config/flags";
-import { AiError, type AiResult } from "../ai";
+import { AiError, type AiMessage, type AiResult, type SegmentResult } from "../ai";
 import { LOAD_NUMBERS_FIRST, LOAD_NUMBERS_NEXT } from "../data/read";
 import type { Param, Queryable } from "../db";
 import { createPgDb } from "../db/pg";
@@ -12,15 +15,25 @@ import type { GatewayContext } from "../agent/gateway/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal } from "../proposals/execute";
 import { loadCandidates } from "./candidates";
+import type { CropDeps } from "./crop";
 import type { ReadComplete } from "./read";
-import { getDocument, listDocuments, readAgain, readDocumentFile, uploadDocument, type UploadFile } from "./service";
+import {
+  getDocument,
+  listDocuments,
+  readAgain,
+  readCropFile,
+  readDocumentFile,
+  uploadDocument,
+  type UploadFile,
+} from "./service";
 import { listDocumentRows } from "./store";
 import { CONFIDENCE_FIELDS, READ_ATTEMPTS_MAX, type DocumentRead } from "./types";
 
 // Documents against the real database, as the app's role, with a fake model call (no network, no
 // model). A document stays inside its carrier, bytes included; the same file twice is one row read
 // once; the app login can neither delete a document nor change its file; a capped read keeps the
-// file viewable; and approving a rate fill writes the load's rate once. Only this file's two
+// file viewable; approving a rate fill writes the load's rate once; and a photo cropped to the
+// paper is read as the crop, kept once, and never replaces the file. Only this file's four
 // tenants are made, and they are removed after, whichever way the tests end.
 
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -536,5 +549,284 @@ describe("documents in the database", () => {
     const none = await app.withTenant(A.tenantId, (q) => loadCandidates(q, readingOf("DOC-P2"), ofOne));
     expect(none.loadMatches).toBe(0);
     expect(none.load).toBeNull();
+  });
+});
+
+// --- The crop before a read (migration 0067), with a fake segment call ---
+
+const SAMPLES = path.join(process.cwd(), "public", "samples", "docs");
+const LUMPER = readFileSync(path.join(SAMPLES, "br-l10327-lumper.webp"));
+// The receipt in the 1,008 x 1,344 sample, a little loose, and a mask the box's size with every
+// bit set, at 0, 0 as the documented example places it: 528 x 504 bits are 33,264 bytes, whole
+// base85 groups, and four 0xff bytes are "|NsC0".
+const PAPER = { x1: 240, y1: 352, x2: 768, y2: 856 };
+const PAPER_MASK = {
+  x: 0,
+  y: 0,
+  width: 528,
+  height: 504,
+  encoding: "one_bit" as const,
+  payload: "|NsC0".repeat((528 * 504) / 32),
+};
+
+// The sample with a numbered description in its metadata, so each upload is its own file while
+// its pixels stay the same (two nearby qualities can encode to the same bytes).
+let photos = 0;
+async function photo(name = "lumper.webp"): Promise<UploadFile> {
+  photos += 1;
+  const bytes = await sharp(LUMPER)
+    .webp({ quality: 80 })
+    .withExif({ IFD0: { ImageDescription: `synthetic sample ${photos}` } })
+    .toBuffer();
+  return { name, type: "image/webp", bytes: new Uint8Array(bytes) };
+}
+
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+
+const paperAnswer = (): SegmentResult => ({
+  callId: randomUUID(),
+  imageWidth: 1008,
+  imageHeight: 1344,
+  matches: [{ box: PAPER, confidence: 0.92, mask: PAPER_MASK }],
+  costNanocents: 250_000_000,
+});
+
+const paperSegment = () => vi.fn<NonNullable<CropDeps["segment"]>>(async () => paperAnswer());
+
+const slowSegment = () =>
+  vi.fn<NonNullable<CropDeps["segment"]>>(async () => {
+    throw new AiError("timeout");
+  });
+
+const slowRead = () =>
+  vi.fn<ReadComplete>(async () => {
+    throw new AiError("timeout");
+  });
+
+// The image the read was sent on its n-th call.
+function sentImage(read: Mock<ReadComplete>, n = 0): { mime: string; bytes: Uint8Array } {
+  const user = read.mock.calls[n][1].messages.find((m): m is Extract<AiMessage, { role: "user" }> => m.role === "user");
+  const image = user?.attachments?.[0];
+  if (!image || image.kind !== "image") throw new Error("no image sent");
+  return image;
+}
+
+describe("a photo cropped to the paper before its read", () => {
+  let C: Fixture;
+  let D: Fixture;
+  const at = (minutes: number) => () => new Date(NOW + minutes * 60_000);
+  const cropRow = async (id: string) =>
+    (
+      await admin.withTenant(C.tenantId, (q) =>
+        q.query<{
+          crop_status: string;
+          crop_attempts: number;
+          crop_category: string | null;
+          crop_hash: string | null;
+          crop_length: number | null;
+        }>(
+          `SELECT crop_status, crop_attempts, crop_category, crop_hash, crop_length FROM documents
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [id],
+        ),
+      )
+    )[0];
+
+  beforeAll(async () => {
+    admin = createPgDb({ connectionString: adminUrl() });
+    app = createPgDb({ connectionString: appUrl() });
+    C = await makeTenant(admin, `crop-c-${randomUUID().slice(0, 8)}`);
+    D = await makeTenant(admin, `crop-d-${randomUUID().slice(0, 8)}`);
+  });
+
+  beforeEach(() => {
+    flags.documentsEnabled = true;
+    flags.documentCrop = true;
+    flags.auditorRequired = false;
+    vi.restoreAllMocks();
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterAll(async () => {
+    flags.documentsEnabled = saved.enabled;
+    flags.documentCrop = saved.crop;
+    flags.auditorRequired = saved.auditor;
+    vi.restoreAllMocks();
+    if (admin) {
+      await dropTenant(admin, C);
+      await dropTenant(admin, D);
+    }
+    await app?.close();
+    await admin?.close();
+  });
+
+  it("reads the crop, keeps it once inside its carrier, and leaves the file as uploaded", async () => {
+    const segment = paperSegment();
+    const read = fakeModel(rateReading());
+    const file = await photo();
+    const deps = { db: app, now: clock, read: { complete: read }, crop: { segment } };
+    const out = await uploadDocument(C.session, file, deps);
+    if (!out.ok) throw new Error(`upload refused: ${out.error}`);
+    expect(segment).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(out.view.readStatus).toBe("read");
+    expect(out.view.crop).toEqual({
+      status: "cropped",
+      method: "quad",
+      category: null,
+      confidence: 920,
+      quad: [
+        { x: 240, y: 352 },
+        { x: 768, y: 352 },
+        { x: 768, y: 856 },
+        { x: 240, y: 856 },
+      ],
+      box: { ...PAPER, width: 1008, height: 1344 },
+      at: new Date(NOW).toISOString(),
+    });
+
+    // The read saw the crop: a JPEG of the paper, not the upload.
+    const sent = sentImage(read);
+    expect(sent.mime).toBe("image/jpeg");
+    expect(sha256(sent.bytes)).not.toBe(sha256(file.bytes));
+    const size = await sharp(sent.bytes).metadata();
+    expect({ width: size.width, height: size.height }).toEqual({ width: 528, height: 504 });
+    expect(await cropRow(out.view.id)).toEqual({
+      crop_status: "cropped",
+      crop_attempts: 1,
+      crop_category: null,
+      crop_hash: sha256(sent.bytes),
+      crop_length: sent.bytes.byteLength,
+    });
+    const kept = await readCropFile(C.session, out.view.id, { db: app });
+    expect(kept?.mime).toBe("image/jpeg");
+    expect(sha256(kept?.bytes ?? new Uint8Array(0))).toBe(sha256(sent.bytes));
+    // The file and its hash are as uploaded.
+    const back = await readDocumentFile(C.session, out.view.id, { db: app });
+    expect(back?.mime).toBe("image/webp");
+    expect(sha256(back?.bytes ?? new Uint8Array(0))).toBe(sha256(file.bytes));
+
+    // The other carrier sees no crop, through the service or in plain SQL.
+    expect(await readCropFile(D.session, out.view.id, { db: app })).toBeNull();
+    const seen = await app.withTenant(D.tenantId, (q) =>
+      q.query<{ n: number }>(
+        "SELECT count(*)::int AS n FROM documents WHERE id = CAST($1 AS uuid) AND crop_bytes IS NOT NULL",
+        [out.view.id],
+      ),
+    );
+    expect(seen[0].n).toBe(0);
+
+    // The same file again is the same row: no second crop, no second read.
+    const dup = await uploadDocument(C.session, { ...file, name: "lumper copy.webp" }, deps);
+    expect(dup).toMatchObject({ ok: true, duplicate: true, view: { id: out.view.id, crop: { status: "cropped" } } });
+    expect(segment).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the kept crop on Read again, with no second segment call", async () => {
+    const segment = paperSegment();
+    const slow = slowRead();
+    const out = await uploadDocument(C.session, await photo(), {
+      db: app,
+      now: clock,
+      read: { complete: slow },
+      crop: { segment },
+    });
+    if (!out.ok) throw new Error("upload refused");
+    expect(out.view).toMatchObject({ readStatus: "pending", crop: { status: "cropped" } });
+    const first = sentImage(slow);
+    const good = fakeModel(rateReading());
+    const again = await readAgain(C.session, out.view.id, { db: app, now: at(3), read: { complete: good }, crop: { segment } });
+    expect(again).toMatchObject({ ok: true, view: { readStatus: "read", crop: { status: "cropped" } } });
+    expect(segment).toHaveBeenCalledTimes(1);
+    expect(sentImage(good).mime).toBe("image/jpeg");
+    expect(sha256(sentImage(good).bytes)).toBe(sha256(first.bytes));
+  });
+
+  it("reads the photo as uploaded when the crop has no answer, tries once more, then stops; the database holds the cap", async () => {
+    const segment = slowSegment();
+    const slow = slowRead();
+    const file = await photo();
+    const deps = (minutes: number) => ({ db: app, now: at(minutes), read: { complete: slow }, crop: { segment } });
+    const out = await uploadDocument(C.session, file, deps(0));
+    if (!out.ok) throw new Error("upload refused");
+    const id = out.view.id;
+    expect(out.view.crop).toMatchObject({ status: "unavailable", category: "timeout", method: null, quad: null });
+    expect(await readAgain(C.session, id, deps(3))).toMatchObject({
+      ok: true,
+      view: { readStatus: "pending", crop: { status: "unavailable", category: "timeout" } },
+    });
+    expect(segment).toHaveBeenCalledTimes(2);
+    // No tries left: the raw photo, and no call.
+    expect(await readAgain(C.session, id, deps(6))).toMatchObject({
+      ok: true,
+      view: { readStatus: "pending", crop: { status: "unavailable", category: "timeout" } },
+    });
+    expect(segment).toHaveBeenCalledTimes(2);
+    expect(slow).toHaveBeenCalledTimes(READ_ATTEMPTS_MAX);
+    for (let n = 0; n < READ_ATTEMPTS_MAX; n++) {
+      expect(sentImage(slow, n).mime).toBe("image/webp");
+      expect(sha256(sentImage(slow, n).bytes)).toBe(sha256(file.bytes));
+    }
+    expect(await cropRow(id)).toMatchObject({ crop_status: "unavailable", crop_attempts: 2, crop_hash: null });
+    expect(await readCropFile(C.session, id, { db: app })).toBeNull();
+    const past = app.withTenant(C.tenantId, (q) =>
+      q.execute("UPDATE documents SET crop_attempts = 3 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [id]),
+    );
+    expect(await sqlStateOf(past)).toBe("23514");
+  });
+
+  it("leaves a running crop alone until it is stalled, then ends it stalled with no call", async () => {
+    flags.documentCrop = false;
+    const slow = slowRead();
+    const out = await uploadDocument(C.session, await photo(), { db: app, now: clock, read: { complete: slow } });
+    if (!out.ok) throw new Error("upload refused");
+    const id = out.view.id;
+    expect(out.view.crop.status).toBe("none");
+    // The last try, started at minute 2 and never ended (its server stopped mid-call).
+    await admin.withTenant(C.tenantId, (q) =>
+      q.execute(
+        `UPDATE documents SET crop_status = 'cropping', crop_attempts = 2, crop_at = CAST($2 AS timestamptz)
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [id, new Date(NOW + 2 * 60_000).toISOString()],
+      ),
+    );
+    flags.documentCrop = true;
+    const segment = paperSegment();
+    const deps = (minutes: number) => ({ db: app, now: at(minutes), read: { complete: slow }, crop: { segment } });
+    // A minute old at minute 3: still running, so the read takes the photo as uploaded.
+    expect(await readAgain(C.session, id, deps(3))).toMatchObject({ ok: true, view: { crop: { status: "cropping" } } });
+    expect(await cropRow(id)).toMatchObject({ crop_status: "cropping", crop_attempts: 2 });
+    // Four minutes old at minute 6: stalled, and no try is left.
+    expect(await readAgain(C.session, id, deps(6))).toMatchObject({
+      ok: true,
+      view: { crop: { status: "unavailable", category: "stalled" } },
+    });
+    expect(segment).not.toHaveBeenCalled();
+    expect(slow).toHaveBeenCalledTimes(READ_ATTEMPTS_MAX);
+    for (let n = 0; n < READ_ATTEMPTS_MAX; n++) expect(sentImage(slow, n).mime).toBe("image/webp");
+  });
+
+  it("makes no segment call and reads the photo as uploaded while the switch is off", async () => {
+    flags.documentCrop = false;
+    const segment = paperSegment();
+    const read = fakeModel(rateReading());
+    const file = await photo();
+    const out = await uploadDocument(C.session, file, { db: app, now: clock, read: { complete: read }, crop: { segment } });
+    if (!out.ok) throw new Error("upload refused");
+    expect(segment).not.toHaveBeenCalled();
+    expect(out.view.crop).toEqual({
+      status: "none",
+      method: null,
+      category: null,
+      confidence: null,
+      quad: null,
+      box: null,
+      at: null,
+    });
+    expect(sentImage(read).mime).toBe("image/webp");
+    expect(sha256(sentImage(read).bytes)).toBe(sha256(file.bytes));
+    expect(await readCropFile(C.session, out.view.id, { db: app })).toBeNull();
   });
 });

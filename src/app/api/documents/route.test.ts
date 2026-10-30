@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
+import { GET as CROP_FILE } from "./[id]/crop/file/route";
 import { GET as FILE } from "./[id]/file/route";
 import { POST as MARK } from "./[id]/markup/route";
 import { GET as MARKUP_FILE } from "./[id]/markup/file/route";
@@ -27,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   readAgain: vi.fn(),
   markDocument: vi.fn(),
   readMarkupFile: vi.fn(),
+  readCropFile: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
@@ -37,6 +39,7 @@ vi.mock("@/lib/documents/service", () => ({
   listDocuments: mocks.listDocuments,
   readDocumentFile: mocks.readDocumentFile,
   readAgain: mocks.readAgain,
+  readCropFile: mocks.readCropFile,
 }));
 vi.mock("@/lib/documents/markup", () => ({
   markDocument: mocks.markDocument,
@@ -67,11 +70,14 @@ const VIEW = {
 
 const saved = flags.documentsEnabled;
 const savedMarkup = flags.documentMarkupEnabled;
+const savedCrop = flags.documentCrop;
 beforeEach(() => {
   flags.documentsEnabled = true;
   flags.documentMarkupEnabled = true;
+  flags.documentCrop = true;
   mocks.markDocument.mockReset();
   mocks.readMarkupFile.mockReset();
+  mocks.readCropFile.mockReset();
   mocks.getSession.mockReset().mockResolvedValue(SESSION);
   mocks.uploadDocument.mockReset().mockResolvedValue({ ok: true, view: VIEW, duplicate: false });
   mocks.listDocuments.mockReset().mockResolvedValue([]);
@@ -82,6 +88,7 @@ beforeEach(() => {
 afterEach(() => {
   flags.documentsEnabled = saved;
   flags.documentMarkupEnabled = savedMarkup;
+  flags.documentCrop = savedCrop;
   vi.restoreAllMocks();
 });
 
@@ -326,5 +333,40 @@ describe("GET /api/documents/:id/markup/file", () => {
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("content-security-policy")).toContain("sandbox");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(WEBP);
+  });
+});
+
+describe("GET /api/documents/:id/crop/file", () => {
+  const get = (id = ID) =>
+    CROP_FILE(new Request(`https://app.example/api/documents/${id}/crop/file`), { params: Promise.resolve({ id }) });
+  const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 0x4a, 0x46, 0x49, 0x46, 0]);
+
+  it("refuses signed out, either switch off, a bad id and a document with no kept crop", async () => {
+    mocks.getSession.mockResolvedValueOnce(null);
+    expect((await get()).status).toBe(401);
+    flags.documentCrop = false;
+    expect((await get()).status).toBe(404);
+    flags.documentCrop = true;
+    flags.documentsEnabled = false;
+    expect((await get()).status).toBe(404);
+    flags.documentsEnabled = true;
+    expect((await get("not-a-uuid")).status).toBe(400);
+    expect(mocks.readCropFile).not.toHaveBeenCalled();
+    mocks.readCropFile.mockResolvedValue(null);
+    expect((await get()).status).toBe(404);
+    mocks.readCropFile.mockRejectedValue(Object.assign(new Error("x"), { name: "ForbiddenError" }));
+    expect((await get()).status).toBe(403);
+  });
+
+  it("serves the kept crop inline with no caching, no sniffing and a sandbox", async () => {
+    mocks.readCropFile.mockResolvedValue({ mime: "image/jpeg", bytes: JPEG });
+    const res = await get();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(res.headers.get("content-length")).toBe(String(JPEG.byteLength));
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("content-security-policy")).toContain("sandbox");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(JPEG);
   });
 });

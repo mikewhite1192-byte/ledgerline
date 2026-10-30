@@ -141,6 +141,14 @@ describe("viewOf", () => {
     markup_attempts: 0,
     markup_category: null,
     markup_at: null,
+    crop_status: "none",
+    crop_attempts: 0,
+    crop_method: null,
+    crop_category: null,
+    crop_confidence: null,
+    crop_quad: null,
+    crop_box: null,
+    crop_at: null,
     ...over,
   });
 
@@ -222,6 +230,63 @@ describe("viewOf", () => {
       expect(marking(MARKUP_STALLED_MS)).toBe(false);
       expect(marking(MARKUP_STALLED_MS + 1)).toBe(true);
       expect(viewOf(readRow({ markup_status: "unavailable", markup_at: at(MARKUP_STALLED_MS * 2) }), NOW).markup.stalled).toBe(false);
+    });
+  });
+
+  describe("crop", () => {
+    const quad = [
+      { x: 10, y: 12 },
+      { x: 90, y: 10 },
+      { x: 92, y: 80 },
+      { x: 8, y: 82 },
+    ];
+    const box = { x1: 8, y1: 10, x2: 92, y2: 82, width: 100, height: 100 };
+
+    it("shows a photo never cropped as none, with nothing else", () => {
+      expect(viewOf(row(), NOW).crop).toEqual({
+        status: "none",
+        method: null,
+        category: null,
+        confidence: null,
+        quad: null,
+        box: null,
+        at: null,
+      });
+    });
+
+    it("carries a kept crop's corners, box and confidence, never its bytes", () => {
+      const view = viewOf(
+        row({
+          crop_status: "cropped",
+          crop_attempts: 1,
+          crop_method: "quad",
+          crop_confidence: 930,
+          crop_quad: JSON.stringify(quad),
+          crop_box: JSON.stringify(box),
+          crop_at: "2026-10-24T14:00:00.000Z",
+        }),
+        NOW,
+      );
+      expect(view.crop).toEqual({
+        status: "cropped",
+        method: "quad",
+        category: null,
+        confidence: 930,
+        quad,
+        box,
+        at: "2026-10-24T14:00:00.000Z",
+      });
+      expect(JSON.stringify(view)).not.toContain("crop_bytes");
+    });
+
+    it("reads a malformed corner list or box as none rather than guessing", () => {
+      const crop = (over: Partial<DocumentMetaRow>) => viewOf(row({ crop_status: "skipped", crop_category: "too_small", ...over }), NOW).crop;
+      expect(crop({ crop_quad: JSON.stringify(quad.slice(0, 3)) }).quad).toBeNull();
+      expect(crop({ crop_quad: JSON.stringify([...quad.slice(0, 3), { x: "1", y: 2 }]) }).quad).toBeNull();
+      expect(crop({ crop_quad: "not json" }).quad).toBeNull();
+      expect(crop({ crop_box: JSON.stringify({ ...box, height: null }) }).box).toBeNull();
+      expect(crop({ crop_box: JSON.stringify([1, 2, 3, 4]) }).box).toBeNull();
+      expect(crop({ crop_box: JSON.stringify(box) })).toMatchObject({ status: "skipped", category: "too_small", box });
     });
   });
 });

@@ -5,21 +5,28 @@ import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
 import { loadCandidates } from "./candidates";
+import { cropDocument, type CropDeps, type CropOutcome } from "./crop";
 import { matchDocument } from "./match";
 import { planMarkup } from "./markup-text";
 import { readDocument, type ReadDeps, type ReadOutcome } from "./read";
 import { parseRead, rawOf } from "./schema";
 import {
+  claimCrop,
   claimStalledRead,
   countRecentUploads,
   findDocumentByHash,
+  finishCrop,
   finishRead,
   insertDocument,
   insertTranscription,
   listDocumentRows,
   lockTenantUploads,
+  readCropBytes,
   readDocumentBytes,
   readDocumentMeta,
+  reclaimStalledCrop,
+  releaseCrop,
+  type CropEnding,
   type DocumentMetaRow,
   type ReadPatch,
 } from "./store";
@@ -27,6 +34,9 @@ import {
   DOCUMENT_MIMES,
   MARKUP_ATTEMPTS_MAX,
   READ_ATTEMPTS_MAX,
+  type CropBox,
+  type CropPoint,
+  type CropView,
   type DocumentMime,
   type DocumentRead,
   type DocumentView,
@@ -45,6 +55,10 @@ import {
 // outcome is not known (a timeout, a 5xx), leaves the row pending; after two minutes the page
 // offers Read again, which takes the row with a lease (so two clicks start one read) and does the
 // same work. A row gets READ_ATTEMPTS_MAX reads in all, the upload's included.
+//
+// With flags.documentCrop on, a photo is cropped to the paper before its read (prepareForRead):
+// the kept crop when the row has one, else a new try when one may start, else the file as
+// uploaded. The crop never changes the stored file, its content hash or the read itself.
 
 export const STALLED_MS = 2 * 60 * 1000;
 
@@ -52,7 +66,7 @@ export const STALLED_MS = 2 * 60 * 1000;
 // running for longer than this lost its request, so another try may start.
 export const MARKUP_STALLED_MS = 3 * 60 * 1000;
 
-export type ServiceDeps = { db?: TenantDb; now?: () => Date; read?: ReadDeps };
+export type ServiceDeps = { db?: TenantDb; now?: () => Date; read?: ReadDeps; crop?: CropDeps };
 
 export type UploadFile = { name: string; type: string; bytes: Uint8Array };
 
@@ -124,6 +138,57 @@ function markupOf(
   };
 }
 
+function jsonOf(text: string | null): unknown {
+  if (text === null) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+const isNumber = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+
+function quadOf(text: string | null): CropPoint[] | null {
+  const v = jsonOf(text);
+  if (!Array.isArray(v) || v.length !== 4) return null;
+  const points: CropPoint[] = [];
+  for (const p of v) {
+    const r = p !== null && typeof p === "object" ? (p as Record<string, unknown>) : null;
+    if (!r || !isNumber(r.x) || !isNumber(r.y)) return null;
+    points.push({ x: r.x, y: r.y });
+  }
+  return points;
+}
+
+function boxOf(text: string | null): CropBox | null {
+  const v = jsonOf(text);
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return null;
+  const b = v as Record<string, unknown>;
+  if (![b.x1, b.y1, b.x2, b.y2, b.width, b.height].every(isNumber)) return null;
+  return {
+    x1: b.x1 as number,
+    y1: b.y1 as number,
+    x2: b.x2 as number,
+    y2: b.y2 as number,
+    width: b.width as number,
+    height: b.height as number,
+  };
+}
+
+function cropOf(row: DocumentMetaRow): CropView {
+  const confidence = row.crop_confidence === null ? null : Number(row.crop_confidence);
+  return {
+    status: row.crop_status,
+    method: row.crop_method,
+    category: row.crop_category,
+    confidence: confidence !== null && Number.isSafeInteger(confidence) ? confidence : null,
+    quad: quadOf(row.crop_quad),
+    box: boxOf(row.crop_box),
+    at: row.crop_at,
+  };
+}
+
 // opts.plan false (a list row, which carries no transcription): the markup's eligibility is null.
 export function viewOf(row: DocumentMetaRow, now: Date, opts: { plan?: boolean } = {}): DocumentView {
   const read = row.read_status === "read" && row.reading !== null ? parseRead(row.reading) : null;
@@ -146,6 +211,7 @@ export function viewOf(row: DocumentMetaRow, now: Date, opts: { plan?: boolean }
       row.read_status === "pending" && new Date(row.updated_at).getTime() < now.getTime() - STALLED_MS,
     readAttempts: Number(row.read_attempts),
     markup: markupOf(row, { read, match }, now, opts.plan ?? true),
+    crop: cropOf(row),
   };
 }
 
@@ -158,6 +224,7 @@ function tx<T>(db: TenantDb, session: Session, fn: (q: Queryable) => Promise<T>)
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const base64Of = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
+const bytesOf = (base64: string) => new Uint8Array(Buffer.from(base64.replace(/\s+/g, ""), "base64"));
 
 async function patchFor(
   q: Queryable,
@@ -192,6 +259,75 @@ async function patchFor(
   };
 }
 
+function endingOf(outcome: Exclude<CropOutcome, { status: "off" }>): CropEnding {
+  if (outcome.status !== "cropped") return outcome;
+  return {
+    status: "cropped",
+    method: outcome.method,
+    bytesBase64: base64Of(outcome.bytes),
+    byteLength: outcome.bytes.byteLength,
+    hash: outcome.hash,
+    quad: outcome.quad,
+    box: outcome.box,
+    confidence: outcome.confidence,
+    callId: outcome.callId,
+  };
+}
+
+// The image the read uses. In a short transaction: a try marked running for longer than
+// STALLED_MS ends stalled, then the row's next try is claimed (a photo never tried, or one whose
+// last try had no answer, with tries left). Not claimed: the kept crop when there is one, else
+// the file as uploaded. Claimed: the segment call and the warp run outside any transaction, then
+// one write under the claim ends the try, and the read uses the crop only when that write kept
+// it. Any failure here reads the file as uploaded; a crash leaves the row cropping, which the
+// next Read again ends stalled.
+async function prepareForRead(
+  session: Session,
+  doc: { id: string; bytes: Uint8Array; mime: DocumentMime; traceId: string },
+  deps: ServiceDeps,
+): Promise<{ bytes: Uint8Array; mime: DocumentMime }> {
+  const raw = { bytes: doc.bytes, mime: doc.mime };
+  if (!flags.documentCrop || doc.mime === "application/pdf") return raw;
+  const mime = doc.mime;
+  const db = deps.db ?? getDb();
+  const now = (deps.now ?? (() => new Date()))();
+  const nowIso = now.toISOString();
+  try {
+    const claimed = await tx(db, session, async (q) => {
+      await reclaimStalledCrop(q, doc.id, new Date(now.getTime() - STALLED_MS).toISOString());
+      const attempt = await claimCrop(q, doc.id, nowIso);
+      if (attempt !== null) return { lease: { attempt, atIso: nowIso } };
+      return { kept: await readCropBytes(q, doc.id) };
+    });
+    if ("kept" in claimed) {
+      return claimed.kept ? { bytes: bytesOf(claimed.kept.base64), mime: "image/jpeg" } : raw;
+    }
+    const lease = claimed.lease;
+    const outcome = await cropDocument(
+      { documentId: doc.id, bytes: doc.bytes, mime, traceId: doc.traceId },
+      session,
+      deps.crop,
+    );
+    const wrote = await tx(db, session, (q) =>
+      outcome.status === "off" ? releaseCrop(q, doc.id, lease) : finishCrop(q, doc.id, lease, endingOf(outcome)),
+    );
+    if (wrote !== 1) {
+      console.error(`documents: crop ${doc.id} lost its claim before the try ended`);
+      return raw;
+    }
+    if (outcome.status === "off") return raw;
+    if (outcome.status === "cropped") {
+      console.log(`documents: crop ${doc.id} status=cropped method=${outcome.method}`);
+      return { bytes: outcome.bytes, mime: "image/jpeg" };
+    }
+    console.log(`documents: crop ${doc.id} status=${outcome.status} category=${outcome.category}`);
+    return raw;
+  } catch (err) {
+    console.error(`documents: crop ${doc.id} failed error=${(err as Error)?.name ?? "unknown"}`);
+    return raw;
+  }
+}
+
 async function readAndFinish(
   session: Session,
   doc: { id: string; bytes: Uint8Array; mime: DocumentMime; traceId: string },
@@ -199,8 +335,9 @@ async function readAndFinish(
 ): Promise<DocumentView> {
   const db = deps.db ?? getDb();
   const clock = deps.now ?? (() => new Date());
+  const image = await prepareForRead(session, doc, deps);
   const outcome = await readDocument(
-    { documentId: doc.id, bytes: doc.bytes, mime: doc.mime, traceId: doc.traceId },
+    { documentId: doc.id, bytes: image.bytes, mime: image.mime, traceId: doc.traceId },
     session,
     deps.read,
   );
@@ -293,10 +430,9 @@ export async function readAgain(
     return { row, file };
   });
   if ("error" in claimed) return { ok: false, error: claimed.error };
-  const bytes = new Uint8Array(Buffer.from(claimed.file.base64.replace(/\s+/g, ""), "base64"));
   const view = await readAndFinish(
     session,
-    { id, bytes, mime: claimed.file.mime, traceId: claimed.row.trace_id },
+    { id, bytes: bytesOf(claimed.file.base64), mime: claimed.file.mime, traceId: claimed.row.trace_id },
     deps,
   );
   return { ok: true, view };
@@ -324,5 +460,17 @@ export async function readDocumentFile(
   const db = deps.db ?? getDb();
   const file = await tx(db, session, (q) => readDocumentBytes(q, id));
   if (!file) return null;
-  return { mime: file.mime, bytes: new Uint8Array(Buffer.from(file.base64.replace(/\s+/g, ""), "base64")) };
+  return { mime: file.mime, bytes: bytesOf(file.base64) };
+}
+
+// The kept crop, for a later page: only a cropped row holds one, so any other answers null.
+export async function readCropFile(
+  session: Session,
+  id: string,
+  deps: ServiceDeps = {},
+): Promise<{ mime: "image/jpeg"; bytes: Uint8Array } | null> {
+  const db = deps.db ?? getDb();
+  const file = await tx(db, session, (q) => readCropBytes(q, id));
+  if (!file || file.mime !== "image/jpeg") return null;
+  return { mime: "image/jpeg", bytes: bytesOf(file.base64) };
 }

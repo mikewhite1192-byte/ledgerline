@@ -103,8 +103,9 @@ export type Flags = {
   // Document upload and the one Muse Spark read of each file. Off means the routes answer 404,
   // the pages say reading is off, and no model call is made (the reader re-checks it).
   documentsEnabled: boolean;
-  // The crop step before a photo is read. Off: the photo goes to the model as uploaded. The crop
-  // itself is a later item; on does nothing new until it lands.
+  // The crop step before a photo is read (src/lib/documents/crop.ts): one segmentation call finds
+  // the paper and the server warps it flat. Off: the photo goes to the model as uploaded and no
+  // segmentation call is made (the crop step re-checks it).
   documentCrop: boolean;
   // Upload limits: bytes per file, PDF pages, the per-read cost bound in cents (the wrapper's own
   // spend cap still applies) and uploads per carrier in any rolling 24 hours.
