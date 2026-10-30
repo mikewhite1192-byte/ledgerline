@@ -975,11 +975,18 @@ const PAGES: PageCase[] = [
   },
   {
     file: "documents/[id]/page.tsx",
-    variants: fx.DOCUMENTS.map((d) => ({
-      name: d.readStatus,
-      setup: () => (state.fx.document = d),
-      load: async () => (await import("@/app/documents/[id]/page")).default({ params: p({ id: d.id }) }),
-    })),
+    variants: [
+      ...fx.DOCUMENTS.map((d) => ({
+        name: d.readStatus,
+        setup: () => (state.fx.document = d),
+        load: async () => (await import("@/app/documents/[id]/page")).default({ params: p({ id: d.id }) }),
+      })),
+      ...fx.MARKUP_DOCUMENTS.map(({ name, view }) => ({
+        name: `marked copy ${name}`,
+        setup: () => (state.fx.document = view),
+        load: async () => (await import("@/app/documents/[id]/page")).default({ params: p({ id: view.id }) }),
+      })),
+    ],
   },
   {
     file: "driver-notes/page.tsx",

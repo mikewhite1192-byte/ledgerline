@@ -9,6 +9,7 @@ import type {
   MatchNote,
   MatchNone,
   MatchedTable,
+  MarkupView,
   ReadStatus,
 } from "@/lib/documents/types";
 
@@ -38,6 +39,35 @@ const READ_STATUS: Record<ReadStatus, { label: string; tone: BadgeTone }> = {
 export function readStatusBadge(view: Pick<DocumentView, "readStatus" | "stalled">): { label: string; tone: BadgeTone } {
   if (view.readStatus === "pending" && view.stalled) return { label: "Read did not finish", tone: "warning" };
   return READ_STATUS[view.readStatus];
+}
+
+// The marked copy's pill: its state in two or three words.
+export function markupBadge(markup: Pick<MarkupView, "status" | "category" | "stalled">): { label: string; tone: BadgeTone } {
+  switch (markup.status) {
+    case "checked":
+      return { label: "Checked", tone: "success" };
+    case "marking":
+      return markup.stalled ? { label: "Did not finish", tone: "warning" } : { label: "Marking", tone: "info" };
+    case "mismatch":
+      return { label: "Not kept", tone: "warning" };
+    case "unavailable":
+      return markup.category === "budget"
+        ? { label: "Waiting for budget", tone: "warning" }
+        : { label: "Not made", tone: "warning" };
+    case "none":
+      return { label: "Not made yet", tone: "neutral" };
+  }
+}
+
+// Whether the page offers a try now: a photo with something to mark, no kept copy, no try
+// running, and tries left. The server checks all of it again.
+export function canTryMarkup(markup: MarkupView): boolean {
+  return (
+    markup.eligibility === "eligible" &&
+    markup.status !== "checked" &&
+    !(markup.status === "marking" && !markup.stalled) &&
+    markup.attemptsLeft > 0
+  );
 }
 
 const FIELD_LABELS: Record<string, string> = {

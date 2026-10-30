@@ -34,6 +34,8 @@ export const TERMS = {
   "past-due": "An invoice not paid by the day it was due.",
   "credit-on-account": "Money a customer paid that is not yet matched to an invoice.",
   "second-check": "A separate model re-read this against your records before anyone approves.",
+  "marked-copy":
+    "A picture of the document with the line in question circled and what your records say written beside it.",
   "test-payout": "A simulated payment; no real money moves in this demo.",
   margin: "What is left of the revenue after driver pay.",
   "days-to-pay":

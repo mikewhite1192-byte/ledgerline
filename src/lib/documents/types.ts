@@ -122,6 +122,52 @@ export type MatchNone = {
 
 export type MatchResult = MatchFound | MatchNone;
 
+// A marked copy's state (migration 0055). none: never tried. marking: a try is running.
+// checked: kept, the only state with a file. mismatch: the copy did not read back the same
+// numbers and was not kept. unavailable: no copy this time (budget, a timeout, an error).
+export type MarkupStatus = "none" | "marking" | "checked" | "mismatch" | "unavailable";
+
+// Why a try kept no copy: a fixed word, never upstream text.
+export const MARKUP_CATEGORIES = [
+  "field_changed",
+  "callout_wrong",
+  "anchor_wrong",
+  "extra_amount",
+  "off_schema",
+  "no_anchor_line",
+  "too_large",
+  "timeout",
+  "budget",
+  "unknown",
+] as const;
+export type MarkupCategory = (typeof MARKUP_CATEGORIES)[number];
+
+// Tries a document gets in all; a budget refusal before any paid call gives its try back.
+export const MARKUP_ATTEMPTS_MAX = 3;
+
+// Whether a marked copy can be asked for, from the reading and its comparison: "eligible", or
+// why not (markup-text.ts MarkupBlocked).
+export type MarkupEligibility =
+  | "eligible"
+  | "not_image"
+  | "not_read"
+  | "not_matched"
+  | "agrees"
+  | "no_anchor_line";
+
+export type MarkupView = {
+  status: MarkupStatus;
+  // Tries left, 0 to MARKUP_ATTEMPTS_MAX.
+  attemptsLeft: number;
+  category: MarkupCategory | null;
+  // When the last try started (the checked copy's date), or null.
+  at: string | null;
+  // A try marked running for longer than the cutoff: its request is gone, so another may start.
+  stalled: boolean;
+  // Null on a list row, which carries no transcription to plan from.
+  eligibility: MarkupEligibility | null;
+};
+
 // A document as the pages and the routes show it. Never the bytes, never the uploader.
 export type DocumentView = {
   id: string;
@@ -142,4 +188,6 @@ export type DocumentView = {
   stalled: boolean;
   // Model reads started so far, 1 to READ_ATTEMPTS_MAX.
   readAttempts: number;
+  // The marked copy (never its bytes).
+  markup: MarkupView;
 };
