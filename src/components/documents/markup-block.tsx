@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { Term } from "@/components/app/term";
 import { canTryMarkup, markupBadge } from "@/components/documents/labels";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,7 @@ const MESSAGES: Record<string, string> = {
   disabled: "Marked copies are not switched on.",
   unauthenticated: "Your session ended. Sign in again.",
   forbidden: "This login cannot mark documents for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   unavailable: "Could not start the marked copy. Nothing changed. Try again in a moment.",
   network: "Could not reach LedgerLine. Check the connection and try again.",
 };

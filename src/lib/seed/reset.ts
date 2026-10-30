@@ -85,7 +85,7 @@ export const DEMO_RESET_KEPT = {
   tenants:
     "the carrier itself, with its document key (0015), so the invoice and payment numbers it " +
     "sends keep the same key",
-  memberships: "the staff and admin logins, so nobody is signed out of the carrier",
+  memberships: "the staff, admin and demo visitor logins, so nobody is signed out of the carrier",
   model_calls: "the record of every model charge",
   portal_accounts:
     "the carrier's sign-in account on the fictional broker portal; it names only the carrier, and " +
@@ -105,6 +105,9 @@ export const DEMO_RESET_KEPT = {
   desk_log:
     "the desk loop's insert-only log, kept so the events it handled survive a reset; its subject ids " +
     "have no foreign key, so it names nothing the reset deletes",
+  demo_sessions:
+    "each demo visitor's sign-in with its spend and turn counts (0043); it names only the carrier, " +
+    "the app login cannot delete it, and a reset must not hand a visitor a fresh budget",
   schema_migrations: "the migration record, not tenant data",
   "ops.ai_spend": "the one model credit every tenant shares",
 } as const;

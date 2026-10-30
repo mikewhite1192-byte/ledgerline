@@ -138,10 +138,17 @@ export function rollupByCustomer(lines: readonly ProfitLine[], max?: number): Cu
 export const FIGURE_KINDS = ["cents", "bps", "int", "date", "text"] as const;
 export type FigureKind = (typeof FIGURE_KINDS)[number];
 
-// Where a figure comes from: one record, or a report run with these arguments.
+// The parts of the quarter page a quarter figure no single record holds is shown in.
+export const FIGURE_SECTIONS = ["pay_runs", "customers", "exceptions", "recovered"] as const;
+export type FigureSection = (typeof FIGURE_SECTIONS)[number];
+
+// Where a figure comes from: one record, a report run with these arguments, or the part of the
+// quarter page that shows it.
 export type FigureSource =
-  | { table: "customers"; id: string }
-  | { report: "margin_per_load"; args: { periodStart: string; periodEnd: string } };
+  | { table: "customers" | "drivers"; id: string }
+  | { report: "margin_per_load"; args: { periodStart: string; periodEnd: string } }
+  | { report: "ar_aging"; args: { asOf: string } }
+  | { section: FigureSection };
 
 // One figure, keyed f1..fN in order. `subject` is the route or customer the figure is about, as
 // written in the label; the check reads it as a name, never as numbers.

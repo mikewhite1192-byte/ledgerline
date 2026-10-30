@@ -8,8 +8,8 @@ import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody } from "@/components/ui/card";
 import { readDriverIdentity } from "@/lib/advances/identity";
-import { readMember } from "@/lib/advances/member";
 import { advancesOn } from "@/lib/advances/switches";
+import { readRole } from "@/lib/auth/role";
 import { formatPeriod } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
 import { readDriverRecord } from "@/lib/settlements/views";
@@ -31,8 +31,9 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
     if (record === null) return null;
     if (!advancesOn()) return { record, advanceLinks: false, money: null };
     const identity = await readDriverIdentity(q, driverId);
-    const member = await readMember(q, session);
-    return { record, advanceLinks: true, money: identity ? { identity, canAdmin: member.role === "admin" } : null };
+    // Read only: any member's role, a demo visitor's too (its writes are refused on the routes).
+    const role = await readRole(q, session);
+    return { record, advanceLinks: true, money: identity ? { identity, canAdmin: role === "admin" } : null };
   });
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   if (page.kind === "missing") {

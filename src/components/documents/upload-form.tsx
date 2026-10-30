@@ -2,13 +2,17 @@
 
 import { useRouter } from "next/navigation";
 import { useId, useRef, useState, type FormEvent } from "react";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
+import { StaffOnlyLine } from "@/components/app/staff-only-line";
+import { useViewerRole } from "@/components/app/viewer-role";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { InlineAlert } from "@/components/ui/inline-alert";
 
 // The upload card's form. One file goes up as multipart to /api/documents; the reply is a
-// category, shown as a fixed sentence. On success the page opens the document.
+// category, shown as a fixed sentence. On success the page opens the document. Uploading is staff
+// work: a demo visitor (the judge role) sees the staff-only line instead of the form.
 
 export const ACCEPTED_TYPES = "image/jpeg,image/png,image/webp,application/pdf";
 
@@ -20,6 +24,7 @@ const MESSAGES: Record<string, string> = {
   disabled: "Document reading is not switched on.",
   unauthenticated: "Your session ended. Sign in again.",
   forbidden: "This login cannot upload documents for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   bad_request: "Choose one file, then upload it.",
   unavailable: "Could not save the document.",
   network: "Could not reach LedgerLine. Check the connection and try again.",
@@ -30,6 +35,7 @@ export function messageFor(category: string): string {
 }
 
 export function UploadForm({ maxBytes, maxPdfPages }: { maxBytes: number; maxPdfPages: number }) {
+  const judge = useViewerRole() === "judge";
   const router = useRouter();
   const id = useId();
   const input = useRef<HTMLInputElement>(null);
@@ -62,6 +68,7 @@ export function UploadForm({ maxBytes, maxPdfPages }: { maxBytes: number; maxPdf
     }
   }
 
+  if (judge) return <StaffOnlyLine />;
   return (
     <form onSubmit={onSubmit} className="grid gap-3" noValidate>
       <Field

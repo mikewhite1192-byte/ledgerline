@@ -1,18 +1,13 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { CARRIERS } from "../../../scripts/lib/demo-logins";
 import { DEMO_CARRIERS, carrierBySlug } from "./carriers";
 import { HERO_LANES, LANES, laneMiles, reverseLane } from "./lanes";
 
 describe("DEMO_CARRIERS", () => {
   it("matches the tenants that create-demo-users makes", () => {
-    const path = new URL("../../../scripts/create-demo-users.ts", import.meta.url);
-    const script = readFileSync(path, "utf8");
-    for (const c of DEMO_CARRIERS) {
-      const block = new RegExp(
-        `slug: "${c.slug}",\\s*name: "${c.name}",\\s*timezone: "${c.timezone}",`,
-      );
-      expect(script).toMatch(block);
-    }
+    expect(CARRIERS.map((c) => ({ slug: c.slug, name: c.name, timezone: c.timezone, email: c.email }))).toEqual(
+      DEMO_CARRIERS.map((c) => ({ slug: c.slug, name: c.name, timezone: c.timezone, email: `ops@${c.emailDomain}` })),
+    );
   });
 
   it("finds a carrier by slug and nothing else", () => {

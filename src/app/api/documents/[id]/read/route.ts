@@ -1,12 +1,14 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { readAgain } from "@/lib/documents/service";
 import { isCrossSite } from "@/lib/http/same-site";
 import { isUuid } from "@/lib/uuid";
 import { failure, REFUSAL_STATUS, reply } from "../../reply";
 
 // POST: read a document again whose first read never finished (the request that started it went
-// away). Only a read pending for more than two minutes is taken, and only by one request.
+// away). Only a read pending for more than two minutes is taken, and only by one request. Staff
+// only: a demo visitor (the judge role) is refused before any work.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -15,6 +17,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
   if (!flags.documentsEnabled) return reply({ error: "disabled" }, 404);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id } = await params;
   if (!isUuid(id)) return reply({ error: "bad_request" }, 400);
   try {

@@ -10,6 +10,7 @@ import type { Db, Param, Queryable } from "../src/lib/db/types";
 import { runInvariants, type InvariantResult } from "../src/lib/invariants";
 import { PROBE_TENANT_SLUGS } from "../src/lib/invariants/rls";
 import { INVOICES_AFTER_SQL, INVOICES_FIRST_SQL, type InvoiceRow } from "../src/lib/invariants/ledger";
+import { DEMO_SESSION_CAP_NANOCENTS } from "../src/lib/invariants/model-calls";
 import { READ_ONLY_SNAPSHOT_SQL, READ_ONLY_SQL, readAll, readPaged } from "../src/lib/invariants/types";
 import { dropDatabase, freshSeededDatabase } from "./lib/fresh-seeded-db";
 
@@ -247,6 +248,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "pay_rule_changes",
     "fuel_check_runs",
     "fuel_findings",
+    // A demo visit (0043), written as the sign-in will write it.
+    "demo_sessions",
     "card_recon_runs",
     "card_recon_breaks",
     // The desk loop's lease row and its insert-only log (0063): no seed, the loop writes them.
@@ -535,6 +538,11 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           [randomUUID(), fuelRun],
         );
         expect(fuelFound).toBe(1);
+        await q.execute(
+          `INSERT INTO demo_sessions (id, tenant_id, cognito_sub, expires_at, spent_nanocents, turns)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'invariants-test', now() + interval '2 hours', 1000, 1)`,
+          [randomUUID()],
+        );
         // A finished card check with one difference left for a person, on one of the carrier's own
         // statement rows (0046).
         const cardRun = randomUUID();
@@ -809,6 +817,46 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
       await expectAllPass();
     });
 
+    it("catches a ledger row a demo visitor's login (the judge role) approved", async () => {
+      const c = carriers[0];
+      const action = randomUUID();
+      let judge = "";
+      await planted(
+        "I3",
+        () =>
+          admin.withoutTenant(async (q) => {
+            const [m] = await q.query<{ id: string }>(
+              `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+               VALUES (CAST($1 AS uuid), 'invariants-judge', 'judge@invariants.example', 'judge')
+               RETURNING CAST(id AS text) AS id`,
+              [c.id],
+            );
+            judge = m.id;
+            // An invoice post the switch refused, as the filled rows above, but on attempt 2.
+            await q.execute(
+              `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, attempt,
+                 idempotency_key, request_id, amount_cents, counterparty_table, counterparty_id, proposed_by,
+                 approver_membership_id)
+               VALUES (CAST($1 AS uuid), CAST($2 AS uuid), 'invoice', 'accounting', 'invoices', CAST($3 AS uuid), 2,
+                 $4, $5, 100, 'customers', CAST($6 AS uuid), 'person', CAST($7 AS uuid))`,
+              [action, c.id, c.invoice.id, `invoice:${c.invoice.id}:2`, action.replace(/-/g, ""), c.invoice.customer, judge],
+            );
+            await q.execute(
+              `UPDATE money_actions SET state = 'failed', settled_via = 'refused', settled_at = now(),
+                 failure_category = 'disabled'
+               WHERE id = CAST($1 AS uuid)`,
+              [action],
+            );
+          }),
+        () =>
+          admin.withoutTenant(async (q) => {
+            await q.execute("DELETE FROM money_actions WHERE id = CAST($1 AS uuid)", [action]);
+            await q.execute("DELETE FROM memberships WHERE id = CAST($1 AS uuid)", [judge]);
+          }),
+        { approved_by_judge: 1 },
+      );
+    });
+
     it("catches a proposal that names a ledger row before anyone approved it", async () => {
       await planted(
         "I3",
@@ -877,6 +925,38 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           }),
         { stale_reserved: 1 },
       );
+    });
+  });
+
+  describe("I4 demo visits", () => {
+    // spent plus reserved, in nanocents, for one visit of the first carrier; undo deletes it.
+    function visitAt(spent: bigint, reserved: bigint) {
+      const id = randomUUID();
+      return {
+        plant: () =>
+          sql(
+            `INSERT INTO demo_sessions (id, tenant_id, cognito_sub, expires_at, spent_nanocents, reserved_nanocents)
+             VALUES (CAST($1 AS uuid), CAST($2 AS uuid), 'invariants-cap', now() + interval '2 hours',
+               CAST($3 AS bigint), CAST($4 AS bigint))`,
+            [id, carriers[0].id, spent.toString(), reserved.toString()],
+          ),
+        undo: () => sql("DELETE FROM demo_sessions WHERE id = CAST($1 AS uuid)", [id]),
+      };
+    }
+
+    it("catches a visit one nanocent over the per-visit cap, reserved included", async () => {
+      const { plant, undo } = visitAt(DEMO_SESSION_CAP_NANOCENTS - 10n, 11n);
+      await planted("I4", plant, undo, { demo_session_over_cap: 1 });
+    });
+
+    it("passes a visit exactly at the cap", async () => {
+      const { plant, undo } = visitAt(DEMO_SESSION_CAP_NANOCENTS - 10n, 10n);
+      try {
+        await plant();
+        await expectAllPass();
+      } finally {
+        await undo();
+      }
     });
   });
 
@@ -1315,6 +1395,25 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
             end: "reserved",
           }),
         );
+        // A row a demo visitor's login (the judge role) approved.
+        const [judge] = await rows<{ id: string }>(
+          `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+           VALUES (CAST($1 AS uuid), 'invariants-judge', 'judge@invariants.example', 'judge')
+           RETURNING CAST(id AS text) AS id`,
+          [c0.id],
+        );
+        undo.push(() => sql("DELETE FROM memberships WHERE id = CAST($1 AS uuid)", [judge.id]));
+        undo.push(
+          await plantAction({
+            tenant: c0.id,
+            kind: "settlement_payout",
+            subject: randomUUID(),
+            amount: 100,
+            driver: c0.driver,
+            approver: judge.id,
+            end: "refused",
+          }),
+        );
         // Rows whose proposer is neither the agent nor a person, one of them NULL.
         for (const by of ["robot", null]) {
           undo.push(
@@ -1398,11 +1497,12 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
             sent_before_decision: 1,
             proposal_linked_early: 2,
             proposal_action_missing: 1,
+            approved_by_judge: 1,
           },
           unknown: [],
           counts: {
             ...base.counts,
-            payment_rows: base.counts.payment_rows + 14,
+            payment_rows: base.counts.payment_rows + 15,
             linked_proposals: (base.counts.linked_proposals ?? 0) + 2,
             // The two advances, the twice-paid week, the unmarked week, the refused week and the
             // week paid early are no longer seeded history.

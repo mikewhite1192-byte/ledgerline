@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { rejectReminder } from "@/lib/collections/decide";
 import { isCrossSite } from "@/lib/http/same-site";
 import { isUuid } from "@/lib/uuid";
@@ -28,6 +29,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!flags.collectionsEnabled) return reply({ error: "not_found" }, 404);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id } = await params;
   if (!isUuid(id)) return reply({ error: "bad_request" }, 400);
   try {

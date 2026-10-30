@@ -10,6 +10,7 @@ import {
   localDateOf,
   parseInstant,
   periodContaining,
+  quarterContaining,
 } from "./local-date";
 
 const NY = "America/New_York";
@@ -168,5 +169,26 @@ describe("isLocalDate", () => {
       expect(isLocalDate(bad)).toBe(false);
     }
     expect(() => assertLocalDate("2026-13-01", "day")).toThrow(/day is not a YYYY-MM-DD date/);
+  });
+});
+
+describe("quarterContaining", () => {
+  it("quarterContaining gives Oct 1 to Dec 31 for Nov 2 and Jan 1 to Mar 31 for Mar 31", () => {
+    expect(quarterContaining("2026-11-02")).toEqual({ start: "2026-10-01", end: "2026-12-31" });
+    expect(quarterContaining("2027-03-31")).toEqual({ start: "2027-01-01", end: "2027-03-31" });
+  });
+
+  it("puts each quarter's first and last day inside it, in a leap year too", () => {
+    expect(quarterContaining("2028-01-01")).toEqual({ start: "2028-01-01", end: "2028-03-31" });
+    expect(quarterContaining("2028-02-29")).toEqual({ start: "2028-01-01", end: "2028-03-31" });
+    expect(quarterContaining("2026-04-01")).toEqual({ start: "2026-04-01", end: "2026-06-30" });
+    expect(quarterContaining("2026-06-30")).toEqual({ start: "2026-04-01", end: "2026-06-30" });
+    expect(quarterContaining("2026-07-01")).toEqual({ start: "2026-07-01", end: "2026-09-30" });
+    expect(quarterContaining("2026-09-30")).toEqual({ start: "2026-07-01", end: "2026-09-30" });
+    expect(quarterContaining("2026-12-31")).toEqual({ start: "2026-10-01", end: "2026-12-31" });
+  });
+
+  it("refuses a date that is not YYYY-MM-DD", () => {
+    expect(() => quarterContaining("2026-11-2")).toThrow(RangeError);
   });
 });

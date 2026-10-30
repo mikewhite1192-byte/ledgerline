@@ -6,6 +6,7 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Session } from "@/lib/auth/claims";
+import { isRole, type Role } from "@/lib/auth/role";
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 
@@ -13,7 +14,7 @@ import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 // the verified token; signed out, withRequestTenant redirects to /sign-in), the sign-out form, and
 // the page shown when the carrier cannot be read.
 
-export type SweepCarrier = { name: string; timezone: string; email: string; session: Session };
+export type SweepCarrier = { name: string; timezone: string; email: string; role: Role; session: Session };
 
 export async function readCarrier(): Promise<{ carrier: SweepCarrier } | { problem: "forbidden" | "unreadable" }> {
   try {
@@ -21,12 +22,15 @@ export async function readCarrier(): Promise<{ carrier: SweepCarrier } | { probl
       const tenants = await q.query<{ name: string; timezone: string }>(
         "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
       );
-      const members = await q.query<{ email: string }>(
-        "SELECT email FROM memberships WHERE cognito_sub = $1 AND tenant_id = current_tenant_id()",
+      const members = await q.query<{ email: string; role: unknown }>(
+        "SELECT email, role FROM memberships WHERE cognito_sub = $1 AND tenant_id = current_tenant_id()",
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
-      return { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email, session };
+      // A role this code does not know is refused, never shown as staff.
+      const role = members[0].role;
+      if (!isRole(role)) throw new ForbiddenError();
+      return { name: tenants[0].name, timezone: tenants[0].timezone, email: members[0].email, role, session };
     });
     return { carrier };
   } catch (err) {
@@ -72,7 +76,7 @@ export async function SweepOffPage({ title, description }: { title: string; desc
   const { carrier } = read;
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/sweep")}
       title={title}
       signOut={<SignOut />}

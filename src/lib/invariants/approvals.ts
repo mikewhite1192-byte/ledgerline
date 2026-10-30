@@ -24,6 +24,8 @@ import type { Db } from "../db/types";
 //   failed when a definite failure stopped it before a retry) before the money was sent; an
 //   advance payout names the same proposal its advance came from.
 // - A proposal that names a ledger row is executing, done or failed, and the row exists.
+// - No ledger row, on either channel, names a demo visitor's membership (the judge role, 0043) as
+//   its approver: a judge reads and proposes and never approves.
 //
 // "Decided before sent" compares two clocks: proposals.decided_at is the app host's clock (the
 // approval writes the server's time, src/lib/proposals/execute.ts) and money_actions.sent_at is
@@ -125,6 +127,12 @@ export const PROPOSAL_LINKS_SQL = `SELECT count(*) AS linked_proposals,
           LEFT JOIN money_actions m ON m.tenant_id = p.tenant_id AND m.id = p.money_action_id
          WHERE p.money_action_id IS NOT NULL) l`;
 
+// Every ledger row's approver, on both channels, and how many of them are a judge's membership.
+export const JUDGE_APPROVALS_SQL = `SELECT count(*) AS approvals,
+       count(*) FILTER (WHERE mem.role = 'judge') AS by_judge
+  FROM money_actions m
+  JOIN memberships mem ON mem.tenant_id = m.tenant_id AND mem.id = m.approver_membership_id`;
+
 export type AdvancePayoutRow = {
   advances: unknown;
   unread: unknown;
@@ -155,6 +163,7 @@ export type PaymentRow = {
   mismatch: unknown;
 };
 export type ProposalLinkRow = { linked_proposals: unknown; unread: unknown; linked_early: unknown; action_missing: unknown };
+export type JudgeApprovalRow = { approvals: unknown; by_judge: unknown };
 
 // One aggregate row each.
 export type ApprovalRows = {
@@ -162,6 +171,7 @@ export type ApprovalRows = {
   settlements: SettlementPayoutRow[];
   paymentRows: PaymentRow[];
   proposalLinks: ProposalLinkRow[];
+  judgeApprovals: JudgeApprovalRow[];
 };
 
 // Every payment-channel ledger row's judgment, tallied into v; returns how many rows were read.
@@ -211,6 +221,10 @@ export function judgeApprovals(rows: ApprovalRows): InvariantResult {
   const paymentRows = judgePaymentRows(rows.paymentRows, v);
   const linkedProposals = judgeProposalLinks(rows.proposalLinks, v);
 
+  const j = onlyRow(rows.judgeApprovals, "judge_approvals_unread");
+  countOf(j.approvals);
+  tally(v, "approved_by_judge", countOf(j.by_judge));
+
   return resultOf(
     "I3",
     {
@@ -230,6 +244,7 @@ export async function readApprovals(q: ReadQuery): Promise<ApprovalRows> {
     settlements: await q.query<SettlementPayoutRow>(SETTLEMENT_PAYOUTS_SQL),
     paymentRows: await q.query<PaymentRow>(PAYMENT_ROWS_SQL),
     proposalLinks: await q.query<ProposalLinkRow>(PROPOSAL_LINKS_SQL),
+    judgeApprovals: await q.query<JudgeApprovalRow>(JUDGE_APPROVALS_SQL),
   };
 }
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
 import { failure, reply } from "@/lib/portal/http";
 import { startPortalRun } from "@/lib/portal/start";
@@ -15,6 +16,8 @@ export async function POST(request: Request) {
   if (isCrossSite(request)) return reply({ error: "forbidden" }, 403);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   let body: z.infer<typeof Body>;
   try {
     const parsed = Body.safeParse(JSON.parse(await request.text()));
