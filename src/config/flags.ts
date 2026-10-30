@@ -76,6 +76,8 @@ export type Flags = {
   // Hard caps on one turn. Reaching any of them ends the turn with what it found so far.
   agentTurnLimits: {
     maxToolSteps: number;
+    // Muse Spark makes about one tool call per response, so four ran out before the answer in
+    // half the scored run; the cents cap and the clock still bound the turn.
     maxModelCalls: number;
     maxTurnCents: number;
     // Leaves room inside the 30 second response for the last event to flush.
@@ -703,7 +705,7 @@ export const flags: Flags = {
   stepThrough: { dev: true, staff: false },
   agentTurnLimits: {
     maxToolSteps: 6,
-    maxModelCalls: 4,
+    maxModelCalls: 6,
     maxTurnCents: 40,
     wallClockMs: 22_000,
     summaryChars: 10_000,

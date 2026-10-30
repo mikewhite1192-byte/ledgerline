@@ -152,7 +152,7 @@ export const VERIFY_RULE = [
 
 // Refused tries at one card before the turn ends and goes to a person: flags.verification's
 // maxAttempts, clamped to 1..3 and never above. Three tries are three model calls, inside the
-// turn's maxModelCalls of 4, so a third accepted try still leaves a call for the answer.
+// turn's maxModelCalls of 6, so a third accepted try still leaves calls for the answer.
 export const MAX_VERIFY_ATTEMPTS = 3;
 export function verifyAttempts(configured: number): number {
   if (!Number.isSafeInteger(configured)) return MAX_VERIFY_ATTEMPTS;
