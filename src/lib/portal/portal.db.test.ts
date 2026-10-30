@@ -701,6 +701,77 @@ describe("the portal tables", () => {
     clock = later.getTime();
   });
 
+  it("puts a run whose worker stopped back in the queue from its last executed step, twice, then ends it", async () => {
+    const asker: Session = { sub: SUB_A, email: memberA.email, tenantId: B };
+    const load = setup[B].pendingLoad;
+    const store = dbRunStore(B, app);
+    // Past any run an earlier test left live on this load, which the first ask clears.
+    const start = clock + 2 * STALLED_AFTER_MS;
+    const at = (ms: number) => new Date(start + ms);
+    const ask = (now: Date) => asApp(B, (q) => createRunIn(q, asker, { loadId: load, refresh: true, turnId: null }, now));
+    const row = (id: string) =>
+      asApp(B, (q) =>
+        q.query<{ status: string; ended_reason: string | null; resume_step: number | null; resume_attempts: number; claim_token: string | null; has_session: boolean }>(
+          "SELECT status, ended_reason, resume_step, resume_attempts, claim_token, session_id IS NOT NULL AS has_session" +
+            " FROM portal_runs WHERE id = CAST($1 AS uuid)",
+          [id],
+        ),
+      ).then((r) => ({ ...r[0], resume_step: r[0].resume_step === null ? null : Number(r[0].resume_step), resume_attempts: Number(r[0].resume_attempts) }));
+    const step = (seq: number) => ({
+      seq,
+      modelCallId: null,
+      call: seq === 0 ? null : { callId: `call_${seq}`, raw: { type: "computer_call", call_id: `call_${seq}`, actions: [] } },
+      summary: [],
+      executed: true,
+      stoppedEarly: false,
+      screenshot: { mime: "image/png" as const, bytes: PNG_BYTES },
+      urlAfter: DETAIL,
+      costNanocents: 0,
+      pendingCheckCount: 0,
+    });
+
+    const asked = await ask(at(0));
+    expect(asked.kind).toBe("queued");
+    const runId = (asked as { runId: string }).runId;
+    // A worker claims it, opens its session and stores the opening and two executed steps, then stops.
+    const token = randomUUID();
+    const claimed = await store.claim(runId, token, at(1_000));
+    expect(claimed).toMatchObject({ kind: "claimed" });
+    await store.mintSession((claimed as { run: Parameters<typeof store.mintSession>[0] }).run, token, at(1_000));
+    for (const seq of [0, 1, 2]) await store.insertStep(runId, token, step(seq));
+
+    // Not yet stalled: still its worker's.
+    expect(await ask(at(1_000 + STALLED_AFTER_MS - 1_000))).toEqual({ kind: "live", runId, status: "running" });
+    // Stalled: back in the queue, the same run, from step 2, its claim gone.
+    let now = 1_000 + STALLED_AFTER_MS + 1_000;
+    expect(await ask(at(now))).toEqual({ kind: "queued", runId });
+    expect(await row(runId)).toEqual({ status: "queued", ended_reason: null, resume_step: 2, resume_attempts: 1, claim_token: null, has_session: true });
+    // The worker that stopped comes back and is refused: its claim is gone.
+    await expect(store.progress(runId, token, { costNanocents: 0, modelCallCount: 2, stepCount: 2, lastUrl: DETAIL })).rejects.toBeInstanceOf(
+      LostClaimError,
+    );
+
+    // A second worker claims it and reads the counter, then stops too: back once more.
+    const again = await store.claim(runId, randomUUID(), at(now + 1_000));
+    expect(again).toMatchObject({ kind: "claimed", run: { resumeStep: 2, resumeAttempts: 1 } });
+    now += 1_000 + STALLED_AFTER_MS + 1_000;
+    expect(await ask(at(now))).toEqual({ kind: "queued", runId });
+    expect(await row(runId)).toMatchObject({ status: "queued", resume_step: 2, resume_attempts: 2 });
+
+    // At two the next stall ends it as a runner error, and the ask queues a new run.
+    expect(await store.claim(runId, randomUUID(), at(now + 1_000))).toMatchObject({ kind: "claimed", run: { resumeAttempts: 2 } });
+    now += 1_000 + STALLED_AFTER_MS + 1_000;
+    const fresh = await ask(at(now));
+    expect(fresh.kind).toBe("queued");
+    expect((fresh as { runId: string }).runId).not.toBe(runId);
+    expect(await row(runId)).toMatchObject({ status: "failed", ended_reason: "runner_error", resume_attempts: 2, claim_token: null });
+    // The counter is bounded by the table too.
+    expect(
+      await sqlStateOf(asApp(B, (q) => q.execute("UPDATE portal_runs SET resume_attempts = 3 WHERE id = CAST($1 AS uuid)", [runId]))),
+    ).toBe("23514");
+    // The shared clock stays where it was: later tests sign in with a session this jump would end.
+  });
+
   it("refuses every sign-in after ten misses in a minute, for that tenant only", async () => {
     // Past any minute an earlier test's miss opened.
     clock += 120_000;

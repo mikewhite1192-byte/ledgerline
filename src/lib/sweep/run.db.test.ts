@@ -417,6 +417,32 @@ describe("a sweep of the open week", () => {
     expect(explain).toHaveBeenCalledTimes(5);
   });
 
+  it("stops at the turn ceiling with the rest left found, and the next run drafts them", async () => {
+    // The seed's week has five fixes (one live correction per driver), so the ceiling is scaled
+    // down to three here; the rule is the same at the shipped thirty.
+    flags.runLimits = { maxTurns: 3 };
+    const first = await start();
+    expect(await runToEnd(first)).toMatchObject({ status: "done", truncatedReason: "max_turns" });
+    const fixes = (await items(first)).filter((i) => i.kind === "fix");
+    expect(fixes.filter((i) => i.status === "drafted")).toHaveLength(3);
+    expect(fixes.filter((i) => i.status === "found")).toHaveLength(2);
+    expect(explain).toHaveBeenCalledTimes(3);
+    const page = await readSweepPage(SESSION, first, { db: app });
+    expect(page?.counts).toMatchObject({ fixes_drafted: 3, left: 2 });
+    expect(page?.run.turnsUsed).toBe(3);
+    expect(await ticks(first)).toEqual({ find: "done", draft: "done", audit: "not_done" });
+
+    const second = await start();
+    expect(await runToEnd(second)).toMatchObject({ status: "done", truncatedReason: null });
+    expect((await items(second)).filter((i) => i.kind === "fix").map((i) => i.status)).toEqual(Array(5).fill("drafted"));
+    // The two left were drafted once each, and no fix twice.
+    expect(explain).toHaveBeenCalledTimes(5);
+    expect(await proposals()).toHaveLength(5);
+    const next = await readSweepPage(SESSION, second, { db: app });
+    expect(next?.counts).toMatchObject({ left: 0 });
+    expect(next?.run.turnsUsed).toBe(2);
+  });
+
   it("leaves a finding from an earlier week out of the run, so it takes no place and drafts no fix", async () => {
     // The planted duplicate advances, moved two weeks back: the engine still finds them, since it
     // reads every advance the carrier has, but they are not this week's.

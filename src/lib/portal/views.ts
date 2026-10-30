@@ -17,9 +17,21 @@ export const STALLED_AFTER_MS = 10 * 60_000;
 // A run still "queued" this long after it was queued was never claimed: a worker claims within
 // seconds of the kick, so the kick or its process is gone.
 export const UNCLAIMED_AFTER_MS = 2 * 60_000;
+// How many times a run whose worker stopped mid-run is put back in the queue to carry on from its
+// last executed step (start.ts); the next stall after that ends it as a runner error. The column's
+// CHECK holds the same bound.
+export const MAX_RESUME_ATTEMPTS = 2;
 
-// Whether a live run has no worker and never will. Starting a run for the load ends such runs as
-// runner errors (start.ts, the same rule in SQL); the pages show them as stalled until then.
+// The words for a run put back in the queue after its worker stopped, from its counter; null when
+// it never was.
+export function resumedWords(attempts: number): string | null {
+  if (!Number.isSafeInteger(attempts) || attempts < 1) return null;
+  return `Resumed after a stop (attempt ${attempts} of ${MAX_RESUME_ATTEMPTS})`;
+}
+
+// Whether a live run has no worker and never will. Starting a run for the load puts such a run
+// back in the queue when it can carry on, or ends it as a runner error (start.ts, the same rule in
+// SQL); the pages show them as stalled until then.
 export function isStale(r: { status: string; claimedAt: string | null; queuedAt: string }, now: Date): boolean {
   const since = (at: string) => now.getTime() - Date.parse(at);
   if (r.status === "running") return since(r.claimedAt ?? r.queuedAt) > STALLED_AFTER_MS;
@@ -143,6 +155,9 @@ export type RunSummary = {
   finishedAt: string | null;
   requestedBy: string | null;
   stalled: boolean;
+  // Times the run was put back in the queue after a stop, 0 to MAX_RESUME_ATTEMPTS, and its words.
+  resumeAttempts: number;
+  resumed: string | null;
 };
 
 type RunRaw = {
@@ -160,13 +175,14 @@ type RunRaw = {
   claimed_at: string | null;
   queued_at: string;
   trace_id: string;
+  resume_attempts: number;
   requested_email: string | null;
 };
 
 const RUN_SELECT =
   "SELECT r.id, r.load_id, l.load_number, r.reference, r.status, r.ended_reason, r.model, r.step_count," +
   ` r.cost_nanocents, ${iso("r.created_at")}, ${iso("r.finished_at")}, ${iso("r.claimed_at")}, ${iso("r.queued_at")},` +
-  " r.trace_id," +
+  " r.trace_id, r.resume_attempts," +
   " m.email AS requested_email" +
   " FROM portal_runs r JOIN loads l ON l.tenant_id = r.tenant_id AND l.id = r.load_id" +
   " LEFT JOIN memberships m ON m.tenant_id = r.tenant_id AND m.cognito_sub = r.requested_by" +
@@ -187,6 +203,8 @@ function summaryOf(r: RunRaw, now: Date): RunSummary {
     finishedAt: r.finished_at,
     requestedBy: r.requested_email,
     stalled: isStale({ status: r.status, claimedAt: r.claimed_at, queuedAt: r.queued_at }, now),
+    resumeAttempts: Number(r.resume_attempts),
+    resumed: resumedWords(Number(r.resume_attempts)),
   };
 }
 

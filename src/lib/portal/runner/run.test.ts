@@ -65,6 +65,7 @@ function runRow(extra: Partial<RunRow> = {}): RunRow {
     lastUrl: null,
     sessionId: null,
     resumeStep: null,
+    resumeAttempts: 0,
     ...extra,
   };
 }
@@ -691,6 +692,111 @@ describe("runPortalRun, safety checks", () => {
     expect(first.out).toEqual({ kind: "lost" });
     expect(first.s.paused).toEqual([]);
     expect(first.s.finished).toEqual([]);
+  });
+});
+
+describe("runPortalRun, carrying on after a stop", () => {
+  // A run whose worker stopped after its opening and two executed steps, put back in the queue
+  // once (start.ts): resume_step is its last executed step.
+  function stoppedRun(extra: Partial<RunRow> = {}) {
+    const raw = (n: number) => ({ type: "computer_call", call_id: `call_old_${n}`, actions: [click(n, n)], pending_safety_checks: [], status: "completed" });
+    const steps: StoredStep[] = [
+      { id: "step-0", seq: 0, callItem: null, upstreamCallId: null, executed: true, urlAfter: `${ORIGIN}/portal/loads`, pendingCheckCount: 0 },
+      { id: "step-1", seq: 1, callItem: raw(1), upstreamCallId: "call_old_1", executed: true, urlAfter: DETAIL, pendingCheckCount: 0 },
+      { id: "step-2", seq: 2, callItem: raw(2), upstreamCallId: "call_old_2", executed: true, urlAfter: DETAIL, pendingCheckCount: 0 },
+    ];
+    const run = runRow({
+      sessionId: "sess-1",
+      resumeStep: 2,
+      resumeAttempts: 1,
+      stepCount: 2,
+      modelCallCount: 2,
+      costNanocents: 4 * CENT,
+      lastUrl: DETAIL,
+      ...extra,
+    });
+    const screenshots = new Map([0, 1, 2].map((seq) => [seq, SHOT] as const));
+    return { run, steps, screenshots };
+  }
+
+  it("carries on from its last executed step: the history is the stored steps and nothing runs twice", async () => {
+    const s = fakeStore(stoppedRun());
+    const d = fakeDriver({ 0: { pod: true } });
+    const m = scripted([callResult([click(7, 7)]), answerResult()]);
+    const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, m.step));
+
+    expect(out).toEqual({ kind: "ended", status: "done", reason: "ok" });
+    // No new session, no sign-in, no opening step: the run reopens where it was.
+    expect(s.log).not.toContain("mint");
+    expect(d.state.signIns).toEqual([]);
+    expect(d.state.opened.map((o) => o.url)).toEqual([DETAIL]);
+    // Only the new step's action ran; the stored ones are history, acknowledged by nobody.
+    expect(d.state.ran).toEqual([click(7, 7)]);
+    expect(s.completed).toEqual([]);
+    expect(m.requests[0].history.map((h) => h.output.callId)).toEqual(["call_old_1", "call_old_2"]);
+    for (const r of m.requests) {
+      for (const h of r.history) expect(h.output.acknowledged).toEqual([]);
+    }
+    expect(s.inserted.map((st) => st.seq)).toEqual([3, 4]);
+    expect(s.evidence).toHaveLength(1);
+    expect(s.evidence[0].row.pod!.hash).toBe(POD_HASH);
+  });
+
+  it("stores no evidence when the POD may have gone with the stop and no later step downloads it", async () => {
+    const s = fakeStore(stoppedRun());
+    const d = fakeDriver();
+    const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, scripted([answerResult()]).step));
+    expect(out).toEqual({ kind: "ended", status: "failed", reason: "pod_unknown_after_stop" });
+    expect(s.evidence).toEqual([]);
+  });
+
+  it("counts each stop's unread call against the step and cost limits, and never stores it", async () => {
+    // Two stops and two stored calls reach a limit of four before any new call.
+    flags.portalRunLimits = { ...LIMITS, maxSteps: 4 };
+    const capped = fakeStore(stoppedRun({ resumeAttempts: 2 }));
+    const none = scripted([]);
+    expect(await runPortalRun(PAYLOAD, deps(capped.store, fakeDriver().driver, none.step))).toEqual({
+      kind: "ended",
+      status: "failed",
+      reason: "step_budget",
+    });
+    expect(none.step).not.toHaveBeenCalled();
+    expect(capped.finished[0].progress).toMatchObject({ modelCallCount: 2, costNanocents: 4 * CENT });
+
+    // One stop: the next call may spend only what is left after the stored cost and one call at its cap.
+    flags.portalRunLimits = { ...LIMITS, maxRunCents: 4 + LIMITS.maxCallCents + 3 };
+    const s = fakeStore(stoppedRun());
+    const m = scripted([answerResult()]);
+    await runPortalRun(PAYLOAD, deps(s.store, fakeDriver().driver, m.step));
+    expect(m.requests[0].maxCostCents).toBe(3);
+  });
+
+  it("an approved pause after a stop still resumes through its approval, with its held POD", async () => {
+    const CHECK = { id: "sc_s", code: "malicious_instructions", message: "The page asks for something else." };
+    const s0 = fakeStore();
+    const d0 = fakeDriver({ 0: { url: DETAIL }, 1: { pod: true } });
+    await runPortalRun(PAYLOAD, deps(s0.store, d0.driver, scripted([callResult([click()]), callResult([click(120, 220)]), callResult([click(5, 5)], [CHECK])]).step));
+    const pause = s0.paused[0];
+    const pausedSeq = s0.inserted.find((st) => `step-${st.seq}` === pause.stepId)!.seq;
+    const s = fakeStore({
+      run: runRow({ sessionId: "sess-1", resumeStep: pausedSeq, resumeAttempts: 1, stepCount: 3, modelCallCount: 3, costNanocents: 6 * CENT, lastUrl: DETAIL }),
+      steps: s0.inserted.map((st) => ({
+        id: `step-${st.seq}`,
+        seq: st.seq,
+        callItem: st.call ? st.call.raw : null,
+        upstreamCallId: st.call ? st.call.callId : null,
+        executed: st.executed,
+        urlAfter: st.urlAfter,
+        pendingCheckCount: st.pendingCheckCount,
+      })),
+      checks: pause.checks.map((c) => ({ id: `row-${c.id}`, stepId: pause.stepId, checkId: c.id, status: "approved", createdAt: new Date(T0 - 60_000).toISOString() })),
+      screenshots: new Map(s0.inserted.filter((st) => st.screenshot).map((st) => [st.seq, st.screenshot!] as const)),
+      heldPod: { pausedHash: pause.podHash, held: s0.holds[0] },
+    });
+    const out = await runPortalRun(PAYLOAD, deps(s.store, fakeDriver().driver, scripted([answerResult()]).step));
+    expect(out).toEqual({ kind: "ended", status: "done", reason: "ok" });
+    expect(s.completed.map((c) => c.seq)).toEqual([pausedSeq]);
+    expect(s.evidence[0].row.pod!.hash).toBe(POD_HASH);
   });
 });
 

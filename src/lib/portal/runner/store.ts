@@ -25,6 +25,8 @@ export type RunRow = {
   lastUrl: string | null;
   sessionId: string | null;
   resumeStep: number | null;
+  // Times the run was put back in the queue after its worker stopped mid-run (start.ts).
+  resumeAttempts: number;
 };
 
 export type ClaimResult =
@@ -154,7 +156,7 @@ const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64");
 
 const RUN_COLUMNS =
   "id, load_id, reference, requested_by, turn_id, trace_id, model, step_count, model_call_count," +
-  " cost_nanocents, last_url, session_id, resume_step";
+  " cost_nanocents, last_url, session_id, resume_step, resume_attempts";
 
 type RawRun = {
   id: string;
@@ -170,6 +172,7 @@ type RawRun = {
   last_url: string | null;
   session_id: string | null;
   resume_step: number | null;
+  resume_attempts: number;
 };
 
 const runOf = (r: RawRun): RunRow => ({
@@ -186,6 +189,7 @@ const runOf = (r: RawRun): RunRow => ({
   lastUrl: r.last_url,
   sessionId: r.session_id,
   resumeStep: r.resume_step === null ? null : Number(r.resume_step),
+  resumeAttempts: Number(r.resume_attempts),
 });
 
 const GUARD = "tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND claim_token = CAST($2 AS uuid) AND status = 'running'";
