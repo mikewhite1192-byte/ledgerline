@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import { ALWAYS_LOADED } from "../loading";
 import { isToolEnabled, REDACT_ENUMS, STRICT_TOOL_SCHEMAS, TOOL_NAME, TOOL_REGISTRY, toolNamed, toolsFor } from "../registry";
@@ -93,7 +93,10 @@ const REVIEW_TOOLS = ["get_invoice_review", "get_invoice_review_queue"];
 // The collections read, behind its own switch.
 const COLLECTIONS_TOOLS = ["get_collections"];
 
-afterEach(() => {
+const saved = structuredClone(flags);
+
+// Every test starts from these switches off, whatever ships, and the shipped values come back after.
+beforeEach(() => {
   flags.reportsEnabled = false;
   flags.iftaEnabled = false;
   flags.yearEndEnabled = false;
@@ -113,6 +116,10 @@ afterEach(() => {
   flags.groundedRatesEnabled = false;
   flags.quarterReviewEnabled = false;
   flags.escrowRelease.enabled = false;
+});
+
+afterEach(() => {
+  Object.assign(flags, structuredClone(saved));
 });
 
 describe("tool registry", () => {

@@ -54,8 +54,10 @@ function fakeQ(rows: Row[]) {
   return { q, seen };
 }
 
+const saved = structuredClone(flags);
+
 afterEach(() => {
-  flags.groundedRatesEnabled = false;
+  Object.assign(flags, structuredClone(saved));
 });
 
 describe("get_pinned_rates", () => {

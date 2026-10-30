@@ -56,10 +56,10 @@ async function engineOption() {
   }
 }
 
+const saved = structuredClone(flags);
+
 afterEach(() => {
-  flags.factoring.enabled = false;
-  flags.factoring.maxNetCents = 2_500_000;
-  flags.cashFridayEnabled = false;
+  Object.assign(flags, structuredClone(saved));
 });
 
 describe("factoring tools switched off", () => {

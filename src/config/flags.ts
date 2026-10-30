@@ -1,13 +1,14 @@
 // Release switches. Every outside effect (payments, accounting posts, email, model calls)
 // reads its switch here, and every path that reaches the write re-checks it.
-// Turning a switch on is the owner's call, in its own one-line PR.
+// Turning a switch on is the owner's call, in a release PR of its own; caps and start dates stay
+// as set here.
 // The demo-path test's local overrides (src/config/local-overrides.ts) are inert in production
 // and whenever an Aurora cluster is configured.
 
 import { applyLocalOverrides } from "./local-overrides";
 
 export type Flags = {
-  // Model calls through src/lib/ai. Off until the wrapper and its spend cap are live.
+  // Model calls through src/lib/ai, on since the wrapper and its spend cap went live.
   aiEnabled: boolean;
   // The most one job may spend on model calls in the last 60 minutes, or since an admin last
   // cleared it when that is more recent, in cents, inside the overall budget. A job is one trace,
@@ -69,9 +70,7 @@ export type Flags = {
   // Who sees "Step through" in the trace panel under an answer (design-agents-101 3.4): one model
   // call at a time, with what it saw, its note, what it did and what came back. Display only: it
   // reads the stored trace and never pauses a run. dev is a development or test run (a laptop,
-  // the tests); staff is the carrier's own people on production. A judge's default (on)
-  // waits for the judge sign-in to put the demo session on the token. Flipping staff is the
-  // owner's call, in its own one-line PR.
+  // the tests); staff is the carrier's own people on production. Both are on.
   stepThrough: { dev: boolean; staff: boolean };
   // Hard caps on one turn. Reaching any of them ends the turn with what it found so far.
   agentTurnLimits: {

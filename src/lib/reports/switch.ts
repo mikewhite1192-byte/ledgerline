@@ -1,8 +1,8 @@
 import { flags } from "../../config/flags";
 import type { ReportName } from "./types";
 
-// A report's own switch, read on every call, for the reports that ship dark behind one. A report
-// not listed here needs only reportsEnabled.
+// A report's own switch, read on every call, for the reports that have their own switch on top of
+// reportsEnabled. A report not listed here needs only reportsEnabled.
 const REPORT_FLAGS: Readonly<Partial<Record<ReportName, () => boolean>>> = {
   ifta_quarter: () => flags.iftaEnabled,
   year_end_contractors: () => flags.yearEndEnabled,

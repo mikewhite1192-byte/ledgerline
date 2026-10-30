@@ -141,8 +141,8 @@ URL in `e2e/env.local-mode.ts`), and the run drops and recreates the `payday_e2e
    read back (Check pending on the advance's page); only a definite failure offers Retry.
 5. A paid advance posts to the QuickBooks sandbox as the advance plus its fee, once.
 
-Every step is behind switches that ship off: advances, payouts, an arm switch, a per-payout cap
-and a start date.
+Every step is behind its own switches and limits: advances, payouts, an arm switch, a per-payout
+cap and a start date. Payouts go to Stripe test mode only.
 
 ## Voice intake: a driver's voice note, in English or Spanish
 
