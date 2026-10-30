@@ -32,6 +32,22 @@ const MAX_TENANTS = 20;
 export type ScheduleState = "ENABLED" | "DISABLED";
 export type SweepSettings = { appUrl?: string; tenantIds?: readonly string[]; deskScheduleState?: ScheduleState };
 
+// A bare https origin (no path, query, hash or login), or a refusal naming the setting. Shared with
+// the inbound stack's app URL.
+export function httpsOrigin(raw: string, name: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${name} must be an https origin`);
+  }
+  const bare = url.pathname === "/" && url.search === "" && url.hash === "";
+  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || !bare) {
+    throw new Error(`${name} must be an https origin`);
+  }
+  return url.origin;
+}
+
 // The deploying shell's sweep settings, checked whole: an https origin with no path, query or
 // login, up to 20 carrier ids, and the desk schedule's state spelled exactly. Anything else refuses
 // the synth rather than ship a kicker that calls the wrong place or a schedule in a state nobody
@@ -39,19 +55,7 @@ export type SweepSettings = { appUrl?: string; tenantIds?: readonly string[]; de
 export function sweepSettingsFromEnv(env: Record<string, string | undefined>): SweepSettings {
   const out: { appUrl?: string; tenantIds?: string[]; deskScheduleState?: ScheduleState } = {};
   const appUrl = env.SWEEP_APP_URL?.trim();
-  if (appUrl) {
-    let url: URL;
-    try {
-      url = new URL(appUrl);
-    } catch {
-      throw new Error("SWEEP_APP_URL must be an https origin");
-    }
-    const bare = url.pathname === "/" && url.search === "" && url.hash === "";
-    if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || !bare) {
-      throw new Error("SWEEP_APP_URL must be an https origin");
-    }
-    out.appUrl = url.origin;
-  }
+  if (appUrl) out.appUrl = httpsOrigin(appUrl, "SWEEP_APP_URL");
   const ids = env.SWEEP_TENANT_IDS?.trim();
   if (ids) {
     const list = [...new Set(ids.split(",").map((s) => s.trim().toLowerCase()))];

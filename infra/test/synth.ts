@@ -12,12 +12,15 @@ import { sweepSettingsFromEnv } from "../lib/sweep-stack";
 // the deploy uses) into a temp folder the caller owns. No account by default: the templates must
 // not depend on one. `exported` stands for the deploying shell's money variables; by default none
 // are exported and MONEY_SETTINGS=none says so on purpose. `sweepExported` stands for the shell's
-// SWEEP_APP_URL and SWEEP_TENANT_IDS (none by default). A refusal throws before the temp folder
-// exists, and any later failure removes it.
+// SWEEP_APP_URL and SWEEP_TENANT_IDS (none by default). `extraContext` stands for -c values on
+// the deploy's command line (the inbound stack's zone, domain, carriers and app URL; none by
+// default, so the inbound stack is left out). A refusal throws before the temp folder exists, and
+// any later failure removes it.
 export function synthAll(
   account?: string,
   exported: Record<string, string | undefined> = { MONEY_SETTINGS: "none" },
   sweepExported: Record<string, string | undefined> = {},
+  extraContext: Record<string, string> = {},
 ) {
   const money = moneySettingsFromEnv(exported);
   const sweep = sweepSettingsFromEnv(sweepExported);
@@ -25,7 +28,7 @@ export function synthAll(
   const cleanup = () => rmSync(outdir, { recursive: true, force: true });
   try {
     const { context } = JSON.parse(readFileSync(fileURLToPath(new URL("../cdk.json", import.meta.url)), "utf8"));
-    const app = new App({ outdir, context });
+    const app = new App({ outdir, context: { ...context, ...extraContext } });
     const stacks = addStacks(app, { account, region: "us-east-2" }, money, sweep);
     return {
       app,
@@ -34,6 +37,7 @@ export function synthAll(
       auth: Template.fromStack(stacks.auth),
       hosting: Template.fromStack(stacks.hosting),
       sweep: Template.fromStack(stacks.sweep),
+      inbound: stacks.inbound ? Template.fromStack(stacks.inbound) : undefined,
       cleanup,
     };
   } catch (err) {
