@@ -447,7 +447,7 @@ describe("flags", () => {
     expect(flags.agentStreamMode).toBe("sse");
     expect(flags.agentTurnLimits).toEqual({
       maxToolSteps: 6,
-      maxModelCalls: 4,
+      maxModelCalls: 6,
       maxTurnCents: 40,
       wallClockMs: 22_000,
       summaryChars: 10_000,
