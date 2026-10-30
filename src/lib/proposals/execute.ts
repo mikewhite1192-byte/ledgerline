@@ -14,6 +14,7 @@ import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from
 import { executeDetentionCharge } from "./executors/detention-charge";
 import { loadRateFill } from "./executors/load-rate-fill";
 import { payCorrectionExecutor } from "./executors/pay-correction";
+import { payPolicySetupExecutor } from "./executors/pay-policy-setup";
 import { executePayRuleChange } from "./executors/pay-rule-change";
 
 // A person approves an agent's proposal (design 2.8). This file is outside src/lib/agent on
@@ -60,11 +61,14 @@ export type ProposalRow = {
 // confirmed: the person's second confirm, on a flagged proposal (owner decision 2) or on any
 // auditor verdict other than pass. overrideReason: their reason for approving over a block (the
 // gate trims it and checks its length again). auditedAt: the auditor's checked_at the card showed,
-// so an override always refers to the one verdict the person read.
+// so an override always refers to the one verdict the person read. edits: the person's own
+// values for rules on a pay_policy_setup card (rule key to stored value text); only that executor
+// reads them, and it checks each with the rule's own parser.
 export type ApproveOptions = {
   confirmed: boolean;
   overrideReason?: string | null;
   auditedAt?: string | null;
+  edits?: Readonly<Record<string, string>>;
 };
 
 export type ProposalRefusal =
@@ -97,8 +101,15 @@ export type ExecuteDeps = {
 // A refusal (or a throw) rolls that transaction back, so the proposal stays proposed, undecided,
 // with its Approve button, and nothing is written. Reads only. It never replaces the executor's
 // own checks: the executor asks them again after the approval, because a switch can change in
-// between. It is not asked on a resume (the row is already approved).
-export type Precheck = (q: Queryable, proposal: ProposalRow, now: Date) => Promise<ProposalRefused | null>;
+// between. It is not asked on a resume (the row is already approved). ctx: who is approving and
+// what they sent, for a precheck that depends on it (pay_policy_setup's edits and role).
+export type PrecheckContext = { session: Session; opts: ApproveOptions };
+export type Precheck = (
+  q: Queryable,
+  proposal: ProposalRow,
+  now: Date,
+  ctx?: PrecheckContext,
+) => Promise<ProposalRefused | null>;
 
 // An executor's contract: it runs only on a row the gate already moved to approved (or one already
 // executing, on a resume), never on a proposed one, and it never sets approved itself. On a resume
@@ -179,6 +190,13 @@ export const EXECUTORS: ExecutorRegistry = {
   },
   get money_code() {
     return flags.moneyCodes.enabled ? moneyCodeExecutor : undefined;
+  },
+  // Pay rules from a policy document (src/lib/proposals/executors/pay-policy-setup.ts): one new
+  // dated version, read through policyOnboardEnabled on every approval, with a precheck that
+  // refuses a card that still needs a choice, a bad edit, a start that no longer holds, or a
+  // member whose role does not cover it, before anything is approved.
+  get pay_policy_setup() {
+    return flags.policyOnboardEnabled ? payPolicySetupExecutor : undefined;
   },
 };
 
@@ -327,7 +345,7 @@ async function gate(
   if (!executor) return { result: refused("not_executable") };
   // The executor's own early refusal, before anything is approved (see Precheck).
   if (executor.precheck) {
-    const stop = await executor.precheck(q, p, now);
+    const stop = await executor.precheck(q, p, now, { session, opts });
     if (stop) throw new Prechecked(stop);
   }
   // Lock the approval in while the row is still locked. Exactly one row must move; anything else

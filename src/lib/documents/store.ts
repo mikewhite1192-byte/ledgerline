@@ -7,6 +7,7 @@ import {
   READ_ATTEMPTS_MAX,
   type DocumentKind,
   type DocumentMime,
+  type StoredDocumentKind,
   type DocumentRead,
   type MarkupCategory,
   type MarkupStatus,
@@ -27,7 +28,7 @@ export type DocumentMetaRow = {
   page_count: number;
   read_status: ReadStatus;
   read_attempts: number;
-  document_kind: DocumentKind | null;
+  document_kind: StoredDocumentKind | null;
   reading: string | null;
   match: string;
   untrusted_input_id: string | null;
@@ -147,7 +148,8 @@ export async function listDocumentRows(q: Queryable, limit = 50): Promise<Docume
 
 // Read again takes the pending row only when its last attempt is older than the cutoff and it
 // has attempts left, and marks the new attempt (time and count), so two clicks start one read
-// and a read that keeps failing stops at READ_ATTEMPTS_MAX. 1 when taken.
+// and a read that keeps failing stops at READ_ATTEMPTS_MAX. 1 when taken. A pay policy is never
+// taken: its read is the policy run's own (src/lib/policy-onboard), never the receipt read.
 export async function claimStalledRead(
   q: Queryable,
   id: string,
@@ -157,7 +159,8 @@ export async function claimStalledRead(
   return q.execute(
     `UPDATE documents SET updated_at = CAST($3 AS timestamptz), read_attempts = read_attempts + 1
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
-        AND read_status = 'pending' AND updated_at < CAST($2 AS timestamptz) AND read_attempts < $4`,
+        AND read_status = 'pending' AND updated_at < CAST($2 AS timestamptz) AND read_attempts < $4
+        AND document_kind IS DISTINCT FROM 'pay_policy'`,
     [id, cutoffIso, nowIso, READ_ATTEMPTS_MAX],
   );
 }

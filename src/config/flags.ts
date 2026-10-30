@@ -244,6 +244,24 @@ export type Flags = {
   // page. Off means neither tool is offered or runs, an approval is refused before anything is
   // written, and the page shows the switched-off state.
   rulesByTalkingEnabled: boolean;
+  // Pay rules from a policy document: a staff member uploads the carrier's driver pay policy (or
+  // a sample), Muse Spark reads it into numbered sections and finds each pay rule with the
+  // sentence it comes from, code checks every number against that sentence, and one card proposes
+  // a new dated version for a person to approve. Off means the routes refuse before anything is
+  // stored or read and an approval is refused before anything is written.
+  policyOnboardEnabled: boolean;
+  // Per run: the file's bytes and PDF pages, each call's cost bound in cents (the wrapper's own
+  // spend cap still applies), runs per carrier in any rolling 24 hours, and each call's timeout,
+  // short enough that one stage fits in one request.
+  policyLimits: {
+    maxBytes: number;
+    maxPdfPages: number;
+    readMaxCostCents: number;
+    proposeMaxCostCents: number;
+    perTenantPerDay: number;
+    readTimeoutMs: number;
+    proposeTimeoutMs: number;
+  };
   // The pay sweep: checks one open week for every driver, drafts a pay correction for each
   // finding it can fix and lists the rest for a person. It only proposes; a person approves.
   // Off means the Sweep page shows its reason text and the routes refuse before any work.
@@ -613,6 +631,16 @@ export const flags: Flags = {
   detentionEnabled: false,
   demoResetEnabled: false,
   rulesByTalkingEnabled: false,
+  policyOnboardEnabled: false,
+  policyLimits: {
+    maxBytes: 700_000,
+    maxPdfPages: 3,
+    readMaxCostCents: 10,
+    proposeMaxCostCents: 6,
+    perTenantPerDay: 5,
+    readTimeoutMs: 25_000,
+    proposeTimeoutMs: 20_000,
+  },
   sweepEnabled: false,
   sweepScheduleEnabled: false,
   payCorrectionsEnabled: false,

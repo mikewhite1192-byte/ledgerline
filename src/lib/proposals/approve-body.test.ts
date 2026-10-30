@@ -51,4 +51,29 @@ describe("parseApproveBody", () => {
     expect(parseApproveBody("[]")).toBeNull();
     expect(parseApproveBody("null")).toBeNull();
   });
+
+  it("reads a policy card's edits as given, and leaves them out when none are sent", () => {
+    const edits = { net_pay_floor_cents: "30000", advance_recovery_cap_cents: "null", percent_base: "linehaul" };
+    expect(parseApproveBody(JSON.stringify({ confirmed: true, edits }))).toEqual({
+      confirmed: true,
+      overrideReason: null,
+      auditedAt: null,
+      edits,
+    });
+    expect(parseApproveBody(JSON.stringify({ edits: {} }))?.edits).toEqual({});
+    expect(parseApproveBody("{}")).not.toHaveProperty("edits");
+  });
+
+  it("refuses edits with a bad key, a bad value or more than one per rule", () => {
+    const bad = (edits: unknown) => parseApproveBody(JSON.stringify({ edits }));
+    expect(bad({ __proto__x: "1" })).toBeNull();
+    expect(bad({ Net_pay: "1" })).toBeNull();
+    expect(bad({ net_pay_floor_cents: "$300" })).toBeNull();
+    expect(bad({ net_pay_floor_cents: "-1" })).toBeNull();
+    expect(bad({ net_pay_floor_cents: 30000 })).toBeNull();
+    expect(bad({ net_pay_floor_cents: "1".repeat(10) })).toBeNull();
+    expect(bad(["net_pay_floor_cents"])).toBeNull();
+    const many = Object.fromEntries(Array.from({ length: 14 }, (_, i) => [`rule_${"k".repeat(i + 1)}`, "1"]));
+    expect(bad(many)).toBeNull();
+  });
 });

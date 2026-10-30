@@ -132,8 +132,11 @@ describe("the money ledger checks in the migration texts", () => {
   });
 });
 
+// Kinds added by a later re-creation of the proposal check, which lists 0048's fourteen first.
+const AFTER_0048 = ["pay_policy_setup"];
+
 describe("0048's proposal kind check", () => {
-  it("lists the 14-kind union, which holds every kind the code knows", () => {
+  it("lists the 14-kind union, which holds every kind the code knew then", () => {
     const sql = MIGRATIONS.find((m) => m.version === "0048")?.sql ?? "";
     const m = /ADD\s+CONSTRAINT\s+proposals_kind_check\s+CHECK\s*\(\s*kind\s+IN\s*\(([^)]*)\)\s*\)/i.exec(sql);
     expect(m).not.toBeNull();
@@ -154,6 +157,8 @@ describe("0048's proposal kind check", () => {
       "card_match",
       "money_code",
     ]);
-    for (const kind of PROPOSAL_KINDS) expect(kinds).toContain(kind);
+    for (const kind of PROPOSAL_KINDS) {
+      if (!AFTER_0048.includes(kind)) expect(kinds).toContain(kind);
+    }
   });
 });

@@ -39,6 +39,8 @@ describe("flags", () => {
     // The card check writes no money, but it reads three systems and spends model cents.
     expect(flags.cardRecon.enabled).toBe(false);
     expect(flags.rulesByTalkingEnabled).toBe(false);
+    // Pay rules from a policy document: two Muse Spark calls a run and a new version on approval.
+    expect(flags.policyOnboardEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
     // The demo visitor sign-in: dark until the owner's one-line release PR.
     expect(flags.judgeAccess.enabled).toBe(false);
@@ -169,6 +171,27 @@ describe("flags", () => {
     for (const v of Object.values(flags.documentLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
+  });
+
+  it("keeps a policy run small: one file of three pages, two calls under 16 cents, five runs a day", () => {
+    expect(flags.policyLimits).toEqual({
+      maxBytes: 700_000,
+      maxPdfPages: 3,
+      readMaxCostCents: 10,
+      proposeMaxCostCents: 6,
+      perTenantPerDay: 5,
+      readTimeoutMs: 25_000,
+      proposeTimeoutMs: 20_000,
+    });
+    for (const v of Object.values(flags.policyLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // One stage runs in one request, under the hosting request limit of about 30 seconds.
+    expect(flags.policyLimits.readTimeoutMs).toBeLessThan(28_000);
+    expect(flags.policyLimits.proposeTimeoutMs).toBeLessThan(28_000);
+    // The table's own limits (0013): 700,000 bytes and 3 pages.
+    expect(flags.policyLimits.maxBytes).toBeLessThanOrEqual(700_000);
+    expect(flags.policyLimits.maxPdfPages).toBeLessThanOrEqual(3);
   });
 
   it("keeps the marked copy small: two cents an edit, four a check, ten a day, the upload size cap", () => {
