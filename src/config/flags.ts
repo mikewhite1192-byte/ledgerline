@@ -581,6 +581,18 @@ export type Flags = {
     requirePacket: boolean;
     startDate: string;
   };
+  // The "How the models score" card on /models, read from src/lib/eval/results/latest.json. Off
+  // until the owner's one-line flip after a real run is recorded.
+  evalCardEnabled: boolean;
+  // The model eval script (npm run eval). It runs every case on a fresh local database that it
+  // drops after, and only spends model cents on the developer's own ledger, never production's.
+  evalRun: {
+    enabled: boolean;
+    // The most one run may spend, in cents, unless --max-cents asks for less.
+    maxRunCents: number;
+    // Cents the ledger must still have free after the run's own limit before a run starts.
+    reserveCents: number;
+  };
   // Fuel and tax rates: a person looks up this week's diesel price or a state's fuel tax rate (one
   // Muse Spark call with web search) and an admin pins one from its linked source. The agent only
   // reads pinned rates (get_pinned_rates); it never looks one up or pins one, and nothing is
@@ -768,6 +780,8 @@ export const flags: Flags = {
     },
   },
   factoring: { enabled: false, armed: false, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
+  evalCardEnabled: false,
+  evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
   groundedRatesEnabled: false,
   ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
 };

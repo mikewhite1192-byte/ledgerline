@@ -86,6 +86,10 @@ const KEPT_OFF = [
   "groundedRatesEnabled",
   // Pay cards ship dark with their own merge; the owner turns them on in their own PR.
   "payCardsEnabled",
+  // The models page's eval card waits on a recorded run; the owner turns it on in its own PR.
+  "evalCardEnabled",
+  // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
+  "evalRun.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -149,6 +153,9 @@ describe("flags", () => {
       startDate: "2026-10-28",
     });
     expect(isLocalDate(flags.factoring.startDate)).toBe(true);
+    // The models page's eval card and the eval script that spends model cents.
+    expect(flags.evalCardEnabled).toBe(false);
+    expect(flags.evalRun).toEqual({ enabled: false, maxRunCents: 1_500, reserveCents: 4_000 });
     expect(flags.groundedRatesEnabled).toBe(false);
   });
 

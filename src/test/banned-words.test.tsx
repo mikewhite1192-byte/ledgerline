@@ -324,6 +324,11 @@ vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
   readRecentAgentTurns: async () => get("turns"),
   readWaitingRuleChangeViews: async () => get("ruleChanges"),
 }));
+// A recorded eval run, so the models page's eval card has rows to show when its switch is on.
+vi.mock("@/lib/eval/latest", async (importOriginal) => {
+  const { sampleEvalResults } = await import("@/lib/eval/test-fixtures");
+  return { ...(await importOriginal<typeof import("@/lib/eval/latest")>()), latestResults: () => sampleEvalResults() };
+});
 vi.mock("@/lib/ai/spend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/ai/spend")>()),
   readSpend: async () => get("spend"),
@@ -1199,7 +1204,21 @@ const PAGES: PageCase[] = [
   },
   {
     file: "models/page.tsx",
-    variants: [{ name: "models", load: async () => (await import("@/app/models/page")).default() }],
+    variants: [
+      { name: "models", load: async () => (await import("@/app/models/page")).default() },
+      {
+        name: "models with the eval card",
+        load: async () => {
+          flags.evalCardEnabled = true;
+          try {
+            return await (await import("@/app/models/page")).default();
+          } finally {
+            flags.evalCardEnabled = false;
+          }
+        },
+        shows: ["How the models score", "Right amount", "When the operator and the second check agreed"],
+      },
+    ],
   },
   {
     file: "money-codes/page.tsx",
@@ -1824,6 +1843,8 @@ const LISTED: Readonly<Record<string, string>> = {
     "The document around every page: it puts each one in the html shell and the toast holder and shows no words on the page. Its tab title and description are scanned below.",
   "records/settlement_periods/[id]/page.tsx":
     "Shows nothing of its own: it only sends a pay week's link on to that week on the Settlements page, which is rendered above.",
+  "help/page.tsx":
+    "Shows nothing of its own: it only sends the bare help address on to How trucking pay works, which is rendered above.",
   "design/page.tsx":
     "The builders' design reference: it shows status codes, token names and sample states on purpose, and no carrier or driver reaches it from the app's menu.",
 };
