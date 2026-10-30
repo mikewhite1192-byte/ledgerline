@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { writeQuarterReview } from "@/lib/briefs/write-quarter";
 import { isCrossSite } from "@/lib/http/same-site";
 
@@ -35,6 +36,8 @@ export async function POST(request: Request) {
   // The session first, so a caller with none learns nothing about the switches.
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   if (!flags.quarterReviewEnabled) return reply({ error: "review_off" }, 409);
   if (!flags.aiEnabled) return reply({ error: "ai_off" }, 409);
   try {

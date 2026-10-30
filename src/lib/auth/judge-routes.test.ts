@@ -124,6 +124,7 @@ describe("a judge on every staff-only route", () => {
       "POST /api/cards/breaks/[id]/dismiss",
       "POST /api/cash/check",
       "POST /api/briefs/profit",
+      "POST /api/briefs/quarter",
       "POST /api/inbound-messages",
       "POST /api/inbound-messages/[id]/sort",
       "POST /api/inbound-messages/[id]/hand-off",
