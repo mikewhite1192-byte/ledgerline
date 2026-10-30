@@ -57,6 +57,12 @@ export type Flags = {
   // The agent chat. Off means the composer shows its reason text and the turn route refuses
   // before any model call. aiEnabled must also be on for a turn to reach a model.
   agentEnabled: boolean;
+  // A question asked from a record page carries that record (design-ui-pass 2): the turn route
+  // accepts a focus, checks it under the carrier and names the record in the state summary's
+  // Subject line, and GET /api/agent/recent returns the caller's newest conversation for the
+  // panel to resume. Off: a turn with a focus is refused as a bad request and the recent route
+  // answers agent_off. Ships off until the panel that sends it lands; local mode turns it on.
+  agentFocusEnabled: boolean;
   // How the chat follows a running turn: server-sent events, or polling the turn every 1.5 s.
   // The client falls back to polling on its own when no event arrives within 3 seconds.
   agentStreamMode: "sse" | "poll";
@@ -759,6 +765,7 @@ export const flags: Flags = {
     ruleChangeImpactMaxCents: 500_000,
   },
   agentEnabled: true,
+  agentFocusEnabled: false,
   agentStreamMode: "sse",
   runLimits: {
     maxTurns: 30,

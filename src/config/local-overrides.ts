@@ -6,6 +6,7 @@ import { localHooksAllowed, type LocalModeEnv } from "./local-mode";
 export const LOCAL_OVERRIDABLE = [
   "aiEnabled",
   "agentEnabled",
+  "agentFocusEnabled",
   "auditorEnabled",
   "reportsEnabled",
   "driverNotesEnabled",

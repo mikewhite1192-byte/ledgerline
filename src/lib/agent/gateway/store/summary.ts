@@ -8,6 +8,7 @@ import { dollars } from "../../../money/format";
 import { localDateOf, periodContaining } from "../../../time/local-date";
 import { isAuditConcern } from "../../auditor/words";
 import { STATE_HEADER } from "../../policy";
+import { focusLine, type FocusSubject } from "../focus";
 
 // The compact state summary (design 2.3, tip 5): Muse Spark never sees the chat history, only
 // this one system message rebuilt from the database on every turn. Sections in a fixed order,
@@ -17,7 +18,9 @@ import { STATE_HEADER } from "../../policy";
 // person of this carrier wrote or kept, one line each, in quotes, under a label that says they
 // are context and never a source for any amount; their figures are never added to cents, so an
 // amount stated only in a note is masked in the answer. It is the last section, so the cut to the
-// turn's cap takes it first.
+// turn's cap takes it first. A page focus (agentFocusEnabled) adds the record's own short words to
+// the Subject line, read from the database by gateway/focus.ts and cleaned to letters, digits and
+// a few marks; never anything the client sent.
 
 export type SummarySection = { title: string; lines: string[]; maxChars: number };
 
@@ -157,6 +160,8 @@ export function voiceNoteLines(row: VoiceRow | undefined, money: (n: number) => 
 // voice note section when it is the voice note page's hand-off sentence. notes: the carrier notes
 // read for this turn (the store reads them in their own transaction, so a failed read cannot end
 // this one); they add the last section only while carrierMemoryEnabled is on, checked here again.
+// focus: the page's record, already checked under the tenant by the store (gateway/focus.ts); it
+// replaces the Subject section only while agentFocusEnabled is on, checked here again.
 export async function buildStateSummary(
   q: Queryable,
   _session: Session,
@@ -165,6 +170,7 @@ export async function buildStateSummary(
   cap: number,
   text = "",
   notes: readonly NoteRow[] = [],
+  focus: FocusSubject | null = null,
 ): Promise<{ text: string; chars: number; cents: number[]; notesUsed: string[] }> {
   const cents: number[] = [];
   const money = (n: number) => {
@@ -198,17 +204,21 @@ export async function buildStateSummary(
   sections.push({ title: "Carrier", lines: header, maxChars: 300 });
   sections.push({ title: "Pay rules", lines: rules, maxChars: 600 });
 
-  const subject = await q.query<SubjectRow>(
-    "SELECT subject_table, subject_id FROM conversations WHERE id = CAST($1 AS uuid)",
-    [conversationId],
-  );
-  const s = subject[0];
-  if (s && s.subject_table && s.subject_id) {
-    sections.push({
-      title: "Subject",
-      lines: [`${s.subject_table} ${s.subject_id}`],
-      maxChars: 800,
-    });
+  if (focus !== null && flags.agentFocusEnabled) {
+    sections.push({ title: "Subject", lines: [focusLine(focus, money)], maxChars: 800 });
+  } else {
+    const subject = await q.query<SubjectRow>(
+      "SELECT subject_table, subject_id FROM conversations WHERE id = CAST($1 AS uuid)",
+      [conversationId],
+    );
+    const s = subject[0];
+    if (s && s.subject_table && s.subject_id) {
+      sections.push({
+        title: "Subject",
+        lines: [`${s.subject_table} ${s.subject_id}`],
+        maxChars: 800,
+      });
+    }
   }
 
   const voice = VOICE_NOTE_TEXT.exec(text);

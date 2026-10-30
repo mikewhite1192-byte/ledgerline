@@ -7,6 +7,7 @@ import type { Queryable } from "../../../db";
 import type { NoteRow } from "../../../memory/notes";
 import { checklistSchema, type Checklist } from "../../checklist";
 import type { StepView } from "../../view";
+import { readFocus, type FocusSubject, type PageFocus } from "../focus";
 import { buildStateSummary } from "./summary";
 import type { OpenTurnRefusal, OpenedTurn, StepFinish, StepStart, TurnFinish } from "./types";
 
@@ -30,6 +31,10 @@ export type OpenTurnInput = {
   // The carrier notes read for this turn (openAgentTurn reads them for an operator's own question
   // while carrierMemoryEnabled is on); none otherwise.
   notes?: readonly NoteRow[];
+  // The record the page the question was asked from is about (the chat's turn route only), as
+  // the client sent it: checked here under the tenant before any row is written. Absent or null:
+  // no focus, and the turn opens as it always has.
+  focus?: PageFocus | null;
 };
 
 // Starts a turn: the conversation (new, or this person's own), a refusal while another turn in
@@ -42,6 +47,11 @@ export type OpenTurnInput = {
 // A judge with no visit (the switch went off mid-visit, or a judge token without pc_demo) opens
 // nothing either, refused before any row is written; its model calls would be refused anyway
 // (src/lib/ai/spend.ts reserve).
+//
+// A page focus is checked right after the duplicate check, before the first write (the abandoned
+// turn sweep, the visit count, the conversation): with agentFocusEnabled off, or for a record that
+// is not a row of this tenant on the ref check's list, the turn is refused bad_focus and nothing
+// is written.
 export async function openTurn(
   q: Queryable,
   session: Session,
@@ -60,6 +70,13 @@ export async function openTurn(
     input.turnId,
   ]);
   if (taken.length > 0) return { refused: "duplicate" };
+
+  let focus: FocusSubject | null = null;
+  if (input.focus !== undefined && input.focus !== null) {
+    if (!flags.agentFocusEnabled) return { refused: "bad_focus" };
+    focus = await readFocus(q, input.focus);
+    if (focus === null) return { refused: "bad_focus" };
+  }
 
   let conversationId = input.conversationId;
   if (conversationId) {
@@ -112,6 +129,7 @@ export async function openTurn(
     input.summaryChars,
     input.text,
     input.notes ?? [],
+    focus,
   );
   const next = await q.query<{ seq: number | string }>(
     "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM turns WHERE conversation_id = CAST($1 AS uuid)",
