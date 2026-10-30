@@ -39,7 +39,9 @@ const ADVANCE_QUESTION = "Propose a $100.00 advance for Monique Vasquez (BR-D07)
 // Local answers replay word for word as recorded on the fixture's recordedOn, whatever the run's date.
 const TURN_TIMEOUT = 30_000;
 
-type Features = { agent: boolean; auditor: boolean; reports: boolean };
+// judgeAccess and demoReset are read like the others; the deployed run stays on the admin login,
+// so no step waits on them.
+type Features = { agent: boolean; auditor: boolean; reports: boolean; judgeAccess: boolean; demoReset: boolean };
 
 function login(): { email: string; password: string } | null {
   if (!DEPLOYED) return E2E_LOGIN;
@@ -57,6 +59,8 @@ async function features(baseURL: string): Promise<Features> {
     agent: body.features?.agent === true,
     auditor: body.features?.auditor === true,
     reports: body.features?.reports === true,
+    judgeAccess: body.features?.judgeAccess === true,
+    demoReset: body.features?.demoReset === true,
   };
 }
 

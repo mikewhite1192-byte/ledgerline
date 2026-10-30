@@ -6,22 +6,33 @@ import { Card } from "@/components/ui/card";
 import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { Input } from "@/components/ui/input";
+import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
 import { signInAction } from "./actions";
+import { tryDemoAction } from "./try-demo-action";
 
-// Logins are created only by the demo script: no sign-up link, no password reset.
+// Logins are created only by the demo script: no sign-up link, no password reset. While
+// flags.judgeAccess is on, a second card signs a visitor in to the demo carrier
+// (./try-demo-action.ts); ?demo= carries its one fixed line back.
 export default async function SignIn({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string | string[] }>;
+  searchParams: Promise<{ error?: string | string[]; demo?: string | string[] }>;
 }) {
   if (await getSession()) redirect("/");
-  const { error } = await searchParams;
+  const { error, demo } = await searchParams;
   const message =
     error === "invalid"
       ? "Email or password is wrong"
       : error === "unavailable"
         ? "Sign-in is unavailable right now"
+        : null;
+  const demoOn = flags.judgeAccess.enabled;
+  const demoMessage =
+    demo === "unavailable"
+      ? "The demo sign-in is not available right now. The video shows the full flow."
+      : demo === "expired"
+        ? "Your demo visit ended. Start another any time."
         : null;
 
   return (
@@ -57,6 +68,27 @@ export default async function SignIn({
             </Button>
           </form>
         </Card>
+        {demoOn || demoMessage ? (
+          <Card className="grid gap-4 p-6 sm:p-8">
+            {demoOn ? (
+              <div className="grid gap-1">
+                <h2 className="text-h3 text-foreground">Try the demo carrier</h2>
+                <p className="text-body text-foreground-2">
+                  A fictional carrier with made-up drivers and loads. You can ask the agent and watch
+                  every check. Nothing is paid or sent.
+                </p>
+              </div>
+            ) : null}
+            {demoMessage ? <InlineAlert tone="neutral">{demoMessage}</InlineAlert> : null}
+            {demoOn ? (
+              <form action={tryDemoAction}>
+                <Button type="submit" variant="outline" size="lg" className="w-full">
+                  Try the demo carrier
+                </Button>
+              </form>
+            ) : null}
+          </Card>
+        ) : null}
         <p className="text-center text-body text-foreground-2">
           New to trucking pay?{" "}
           <Link href="/help/how-pay-works" className="text-link underline-offset-4 hover:underline">

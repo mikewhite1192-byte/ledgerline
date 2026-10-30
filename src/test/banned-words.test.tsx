@@ -10,6 +10,7 @@ import { reportTable, type ReportLoad } from "@/components/agent/report-table";
 import { toMessages } from "@/components/agent/turn-view";
 import { ChatThread } from "@/components/app/chat-thread";
 import { DataTable } from "@/components/app/data-table";
+import { DemoBanner } from "@/components/app/demo-banner";
 import { Paystub } from "@/components/app/paystub";
 import { ProposalCard, type ProposalAudit, type ProposalStatus } from "@/components/app/proposal-card";
 import { EmptyState, ERROR_CATEGORIES, ErrorState, FeatureOff, LoadingState, PageNotFound } from "@/components/app/states";
@@ -248,6 +249,7 @@ vi.mock("next/navigation", async (importOriginal) => {
   };
 });
 vi.mock("@/app/sign-in/actions", () => ({ signInAction: async () => {} }));
+vi.mock("@/app/sign-in/try-demo-action", () => ({ tryDemoAction: async () => {} }));
 vi.mock("@/app/ai-proof-action", () => ({ proofCallAction: async () => ({ kind: "idle" }) }));
 vi.mock("@/app/settings/demo/reset-action", () => ({ resetDemoAction: async () => {} }));
 vi.mock("@/app/models/clear-alert-action", () => ({ clearAlertAction: async () => {} }));
@@ -1477,6 +1479,35 @@ const PAGES: PageCase[] = [
       { name: "form", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({}) }) },
       { name: "invalid", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "invalid" }) }) },
       { name: "unavailable", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "unavailable" }) }) },
+      {
+        name: "demo carrier card",
+        load: async () => {
+          flags.judgeAccess.enabled = true;
+          try {
+            return await (await import("@/app/sign-in/page")).default({ searchParams: p({}) });
+          } finally {
+            flags.judgeAccess.enabled = false;
+          }
+        },
+        shows: ["Try the demo carrier", "Nothing is paid or sent."],
+      },
+      {
+        name: "demo sign-in unavailable",
+        load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ demo: "unavailable" }) }),
+        shows: "The demo sign-in is not available right now. The video shows the full flow.",
+      },
+      {
+        name: "demo visit ended",
+        load: async () => {
+          flags.judgeAccess.enabled = true;
+          try {
+            return await (await import("@/app/sign-in/page")).default({ searchParams: p({ demo: "expired" }) });
+          } finally {
+            flags.judgeAccess.enabled = false;
+          }
+        },
+        shows: ["Your demo visit ended. Start another any time.", "Try the demo carrier"],
+      },
     ],
   },
   {
@@ -2489,7 +2520,7 @@ describe("no internal word on the quarter review, in every state", () => {
 });
 
 describe("no internal word in a shared state", () => {
-  it("every error, the empty, loading, off and not found states", () => {
+  it("every error, the empty, loading, off and not found states, and the demo visit line", () => {
     const { container } = render(
       <>
         {ERROR_CATEGORIES.map((c) => (
@@ -2500,6 +2531,7 @@ describe("no internal word in a shared state", () => {
         <FeatureOff name="Advances" plural />
         <FeatureOff name="Pay sweep" />
         <PageNotFound />
+        <DemoBanner carrier="Blue Ridge Freight" visitCapCents={flags.judgeAccess.sessionCapCents} />
       </>,
     );
     expect(scan(container)).toEqual([]);

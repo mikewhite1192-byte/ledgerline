@@ -60,6 +60,7 @@ export const ERROR_CATEGORIES = [
   "timeout",
   "not_found",
   "budget",
+  "visit_budget",
   "job_cap",
   "unknown",
 ] as const;
@@ -88,6 +89,12 @@ const ERROR_COPY: Record<ErrorCategory, { title: string; body: string }> = {
   budget: {
     title: "The demo budget is used up",
     body: "The agent pauses until the budget is raised. Your data and every payout are unchanged.",
+  },
+  // The budget state as a demo visitor sees it: their own visit's budget, not the carrier's
+  // (src/lib/auth/demo-visit.ts). An admin or staff login keeps the line above.
+  visit_budget: {
+    title: "This visit's demo budget is used up",
+    body: "The agent pauses for the rest of this visit. The carrier's records are unchanged. Watch the video for the full flow, or come back tomorrow.",
   },
   job_cap: {
     title: "This job paused",
