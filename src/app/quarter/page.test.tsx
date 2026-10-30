@@ -166,7 +166,7 @@ describe("/quarter", () => {
     for (const caption of ["Money recovered", "Customers"]) expect(screen.getByRole("table", { name: caption })).toBeTruthy();
     // Reads only, and no word the house list bans.
     expect(reads.sql.every((sql) => sql.startsWith("SELECT"))).toBe(true);
-    expect(document.body.textContent).not.toMatch(/proposal|tenant|rules engine|verdict|\blane|—/i);
+    expect(document.body.textContent).not.toMatch(/proposal|tenant|rules engine|verdict|\blane|\u2014/i);
   });
 
   it("links a written review's numbers to the tables that show them while its figures are unchanged", async () => {

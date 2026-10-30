@@ -357,7 +357,7 @@ describe("the review's words", () => {
         reviewOutcome({ ok: false, error, data: {} }),
       ),
     ].join(" ");
-    expect(all).not.toMatch(/proposal|tenant|rules engine|verdict|\blane|token|—/i);
+    expect(all).not.toMatch(/proposal|tenant|rules engine|verdict|\blane|token|\u2014/i);
   });
 });
 
