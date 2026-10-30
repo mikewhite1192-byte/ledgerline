@@ -208,6 +208,13 @@ describe("inbound mail poster", () => {
     noSecretsInLogs();
   });
 
+  it("accepts an SES message id with hyphens and reads that one stored copy", async () => {
+    const messageId = "0100018c-example-message-01";
+    expect((await run([record({ messageId })])).outcomes).toEqual(["posted"]);
+    expect(readRaw).toHaveBeenCalledWith(ENV.BUCKET, `raw/${messageId}`);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).messageId).toBe(messageId);
+  });
+
   it("sends no sender address unless the message passed DMARC", async () => {
     for (const dmarc of ["FAIL", "GRAY", "PROCESSING_FAILED"]) {
       fetchMock.mockClear();
@@ -256,6 +263,7 @@ describe("inbound mail poster", () => {
   it("skips a failed virus scan, a missing or malformed message id, and a message with no text", async () => {
     expect((await run([record({ virus: "FAIL" })])).outcomes).toEqual(["virus"]);
     expect((await run([record({ messageId: "../raw/other" })])).outcomes).toEqual(["no_message_id"]);
+    expect((await run([record({ messageId: "raw.other" })])).outcomes).toEqual(["no_message_id"]);
     readRaw.mockResolvedValueOnce({ tooBig: false, bytes: Buffer.from(TEXT_MAIL.replace(/Need a[^\r]*/, "")) });
     expect((await run([record()])).outcomes).toEqual(["empty"]);
     // A parse that throws is final, not retried.

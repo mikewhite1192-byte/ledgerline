@@ -25,7 +25,8 @@ const CALL_TIMEOUT_MS = 30_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SLUG = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const KEY_SHAPE = /^[\x21-\x7e]{32,512}$/;
-const SES_ID = /^[A-Za-z0-9]{1,128}$/;
+// SES message ids are letters, digits and hyphens: never a slash or a dot, so raw/<id> stays one key.
+const SES_ID = /^[A-Za-z0-9-]{1,128}$/;
 const CATEGORY = /^[a-z_]{1,40}$/;
 const STATUSES = new Set(["received", "blocked", "triaged", "handed_off", "failed"]);
 
