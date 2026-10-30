@@ -8,7 +8,9 @@
 // checks from 0029 (the seed leaves cash_checks empty; the replace, and so the demo reset, clears
 // it before the weeks a check names), the pay cards from 0052 (none planted; their image bytes are
 // never listed, so no table read carries them), the pinned fuel and tax rates from 0053 (the seed
-// pins none, so its replace only empties them), the factoring requests and their invoice lines from
+// pins none, so its replace only empties them), the phone line's calls, segments and turns from
+// 0068 (planned empty; they name drivers and untrusted inputs, so they come after both), the
+// factoring requests and their invoice lines from
 // 0060 (the seed leaves both empty; the replace clears them first, before the invoices and weeks
 // they name), and the carrier notes from 0040 (last: a note names its customer or driver by a soft
 // reference), in an order where every table comes after the tables it references (insert in this
@@ -51,6 +53,9 @@ export const TENANT_TABLES = [
   "payment_applications",
   "untrusted_inputs",
   "screenings",
+  "calls",
+  "call_segments",
+  "call_turns",
   "card_recon_runs",
   "card_recon_breaks",
   "collection_drafts",
@@ -66,10 +71,17 @@ export const TENANT_TABLES = [
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
 // The seeded tables the app role may add to but never delete from: the arming log is append-only
-// (0027). The replace leaves them out of its deletes; the seed clears them through the admin login
-// before the replace (clearTenantArmLog), and a row written after that clear goes with its driver
-// (the foreign key cascades).
-export const APP_KEEPS_TABLES: ReadonlySet<TenantTable> = new Set<TenantTable>(["driver_arm_events"]);
+// (0027), and the phone line's calls, segments and turns are the record of a call (0068). The
+// replace leaves them out of its deletes; the seed clears them through the admin login before the
+// replace (clearTenantArmLog, and the calls with the agent's records), and a row written after
+// that clear goes with its driver (the foreign keys cascade: a call names its driver, a segment
+// its call, a turn its segment).
+export const APP_KEEPS_TABLES: ReadonlySet<TenantTable> = new Set<TenantTable>([
+  "driver_arm_events",
+  "calls",
+  "call_segments",
+  "call_turns",
+]);
 
 export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
   customers: {
@@ -484,6 +496,56 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["model_call_id", "uuid"],
       ["latency_ms", "int"],
       ["expires_at", "timestamptz"],
+    ],
+  },
+  calls: {
+    table: "calls",
+    columns: [
+      ["id", "uuid"],
+      ["driver_id", "uuid"],
+      ["trace_id", "uuid"],
+      ["created_by", "text"],
+      ["status", "text"],
+      ["segments", "int"],
+      ["hand_offs", "int"],
+      ["started_at", "timestamptz"],
+      ["last_segment_at", "timestamptz"],
+      ["ended_at", "timestamptz"],
+    ],
+  },
+  call_segments: {
+    table: "call_segments",
+    columns: [
+      ["id", "uuid"],
+      ["call_id", "uuid"],
+      ["seq", "int"],
+      ["status", "text"],
+      ["fail_category", "text"],
+      ["attempts", "int"],
+      ["offset_ms", "int"],
+      ["duration_ms", "int"],
+      ["input_id", "uuid"],
+      ["transcript_call_id", "uuid"],
+      ["update_call_id", "uuid"],
+      ["updated_at", "timestamptz"],
+    ],
+  },
+  call_turns: {
+    table: "call_turns",
+    columns: [
+      ["id", "uuid"],
+      ["segment_id", "uuid"],
+      ["turn_key", "text"],
+      ["upstream_turn_id", "text"],
+      ["start_ms", "int"],
+      ["end_ms", "int"],
+      ["text", "text"],
+      ["update_kind", "text"],
+      ["english_text", "text"],
+      ["amount_cents", "int"],
+      ["summary", "text"],
+      ["voice_note_id", "uuid"],
+      ["conversation_id", "uuid"],
     ],
   },
   card_recon_runs: {

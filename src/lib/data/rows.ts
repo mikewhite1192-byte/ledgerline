@@ -615,6 +615,51 @@ export type PinnedRateRow = {
   retired_at: string | null;
 };
 
+// The phone line (0068). The seed plans none; the replace empties them through their drivers.
+export type CallRow = {
+  id: string;
+  driver_id: string;
+  trace_id: string;
+  created_by: string;
+  status: "open" | "ended";
+  segments: number;
+  hand_offs: number;
+  started_at: string;
+  last_segment_at: string | null;
+  ended_at: string | null;
+};
+
+export type CallSegmentRow = {
+  id: string;
+  call_id: string;
+  seq: number;
+  status: "received" | "transcribed" | "blocked" | "done" | "empty" | "failed";
+  fail_category: string | null;
+  attempts: number;
+  offset_ms: number;
+  duration_ms: number;
+  input_id: string | null;
+  transcript_call_id: string | null;
+  update_call_id: string | null;
+  updated_at: string;
+};
+
+export type CallTurnRow = {
+  id: string;
+  segment_id: string;
+  turn_key: string;
+  upstream_turn_id: string | null;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  update_kind: "advance_request" | "pay_question" | "dispute" | "promise" | "note" | "none" | null;
+  english_text: string | null;
+  amount_cents: number | null;
+  summary: string | null;
+  voice_note_id: string | null;
+  conversation_id: string | null;
+};
+
 export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
@@ -641,6 +686,9 @@ export type TenantRows = {
   payment_applications: PaymentApplicationRow[];
   untrusted_inputs: UntrustedInputRow[];
   screenings: ScreeningRow[];
+  calls: CallRow[];
+  call_segments: CallSegmentRow[];
+  call_turns: CallTurnRow[];
   card_recon_runs: CardReconRunRow[];
   card_recon_breaks: CardReconBreakRow[];
   collection_drafts: CollectionDraftRow[];

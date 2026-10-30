@@ -104,6 +104,8 @@ const KEPT_OFF = [
   // Rate confirmations into proposed loads ship dark with their own merge; the owner turns them on
   // in their own PR.
   "ratecon.enabled",
+  // The phone line ships dark with its own merge; the owner turns it on in its own PR.
+  "phoneLineEnabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -283,6 +285,31 @@ describe("flags", () => {
   it("ships rate confirmations into loads off, with a start date, a per-read cap and a daily limit", () => {
     expect(flags.ratecon).toEqual({ enabled: false, startDate: "2026-11-02", readMaxCostCents: 8, perTenantPerDay: 20 });
     expect(isLocalDate(flags.ratecon.startDate)).toBe(true);
+  });
+
+  it("ships the phone line off, with its segment size, call length, daily calls and hand-offs capped", () => {
+    expect(flags.phoneLineEnabled).toBe(false);
+    expect(flags.phoneLineLimits).toEqual({
+      maxSegmentBytes: 1_000_000,
+      maxSegmentMs: 30_000,
+      maxSegmentsPerCall: 120,
+      maxCallMs: 3_600_000,
+      callsPerDay: 20,
+      maxHandOffsPerCall: 3,
+      maxUpdateCents: 3,
+      idleEndMs: 600_000,
+    });
+    for (const v of Object.values(flags.phoneLineLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    const limits = flags.phoneLineLimits;
+    // The longest segment fits the byte cap (32 bytes a millisecond after the 44-byte header), and
+    // the CHECKs in migration 0068 hold every segment and hand-off these limits allow.
+    expect(limits.maxSegmentMs).toBeLessThanOrEqual(Math.floor((limits.maxSegmentBytes - 44) / 32));
+    expect(limits.maxSegmentMs).toBeLessThanOrEqual(30_000);
+    expect(limits.maxSegmentsPerCall).toBeLessThanOrEqual(1000);
+    expect(limits.maxCallMs).toBeLessThanOrEqual(3_600_000);
+    expect(limits.maxHandOffsPerCall).toBeLessThanOrEqual(100);
   });
 
   it("pins every switch that ships on for the demo-path run, on or off as its replay was recorded", () => {

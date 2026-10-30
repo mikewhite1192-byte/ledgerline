@@ -689,6 +689,33 @@ export type Flags = {
   // A document uploaded before startDate (YYYY-MM-DD, the carrier's zone) never gets a card. Off
   // means the route answers 404, the read refuses before any call, and no executor is registered.
   ratecon: { enabled: boolean; startDate: string; readMaxCostCents: number; perTenantPerDay: number };
+  // The phone line (docs: PHONE-LINE): a dispatcher's call with a driver, sent as short segments.
+  // Each segment is transcribed (Muse Voice Transcribe, turns split at pauses), screened, and read
+  // by one Muse Spark call into a case update per turn; the first advance request or pay question
+  // in a segment becomes an ordinary voice note handed to the agent, which only reads and
+  // proposes. A person approves on the card. Off means the call routes answer 403 disabled before
+  // any read, and receiveSegment and endCall refuse at their top. The hand-off also needs
+  // voiceIntakeEnabled, agentEnabled and aiEnabled (handOffVoiceNote checks them itself).
+  phoneLineEnabled: boolean;
+  phoneLineLimits: {
+    // One segment's WAV (16 kHz mono PCM): 30 seconds is 960,044 bytes.
+    maxSegmentBytes: number;
+    // Longer segments are refused before anything is stored. Also the duration_ms CHECK in
+    // migration 0068: raise both together.
+    maxSegmentMs: number;
+    // Segments one call may send (seq runs 0 to this less one): 120 is an hour of 30 s segments.
+    maxSegmentsPerCall: number;
+    // A call older than this takes no more segments.
+    maxCallMs: number;
+    // Calls one carrier may start in one of its local days, counted apart from voice notes.
+    callsPerDay: number;
+    // Turns one call may hand to the agent; later ones are recorded and not handed off.
+    maxHandOffsPerCall: number;
+    // The cap on one segment's case-update call, in cents.
+    maxUpdateCents: number;
+    // A call with no segment for this long takes no more (the next segment answers not_open).
+    idleEndMs: number;
+  };
 };
 
 export const flags: Flags = {
@@ -894,6 +921,17 @@ export const flags: Flags = {
   ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
   verification: { enabled: false, maxAttempts: 3 },
   ratecon: { enabled: false, startDate: "2026-11-02", readMaxCostCents: 8, perTenantPerDay: 20 },
+  phoneLineEnabled: false,
+  phoneLineLimits: {
+    maxSegmentBytes: 1_000_000,
+    maxSegmentMs: 30_000,
+    maxSegmentsPerCall: 120,
+    maxCallMs: 3_600_000,
+    callsPerDay: 20,
+    maxHandOffsPerCall: 3,
+    maxUpdateCents: 3,
+    idleEndMs: 600_000,
+  },
 };
 
 applyLocalOverrides(flags);

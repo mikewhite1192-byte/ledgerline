@@ -215,7 +215,8 @@ export type TranscribeRequest = AiCallOptions & {
   keywords?: string[];
 };
 
-export type TranscribeTurn = { startMs: number; endMs: number; transcript: string };
+// turnId: the upstream's id for the turn, when it sends one (kept only when it is a string).
+export type TranscribeTurn = { startMs: number; endMs: number; transcript: string; turnId?: string };
 
 export type TranscribeResult = {
   callId: string;

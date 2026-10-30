@@ -159,17 +159,19 @@ describe("deleteTenantRows", () => {
     expect(seen.map((s) => s.sql)).toEqual(
       [...TENANT_TABLES]
         .reverse()
-        .filter((t) => t !== "driver_arm_events")
+        .filter((t) => !APP_KEEPS_TABLES.has(t))
         .map((t) => `DELETE FROM ${t} WHERE tenant_id = current_tenant_id()`),
     );
     expect(Object.keys(out).sort()).toEqual([...TENANT_TABLES].sort());
-    expect(Object.entries(out).every(([t, n]) => n === (t === "driver_arm_events" ? 0 : 3))).toBe(true);
+    expect(Object.entries(out).every(([t, n]) => n === (APP_KEEPS_TABLES.has(t as never) ? 0 : 3))).toBe(true);
   });
 
-  it("never deletes from the arming log, which the app role may only add to", async () => {
-    expect([...APP_KEEPS_TABLES]).toEqual(["driver_arm_events"]);
+  it("never deletes from the arming log or the phone line's calls, which the app role may only add to", async () => {
+    expect([...APP_KEEPS_TABLES]).toEqual(["driver_arm_events", "calls", "call_segments", "call_turns"]);
     const { q, seen } = fakeQ(() => 0);
     await deleteTenantRows(q);
-    expect(seen.some((s) => s.sql.includes("driver_arm_events"))).toBe(false);
+    for (const table of APP_KEEPS_TABLES) {
+      expect(seen.some((s) => new RegExp(`DELETE FROM ${table} `).test(s.sql)), table).toBe(false);
+    }
   });
 });

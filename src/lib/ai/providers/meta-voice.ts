@@ -54,7 +54,9 @@ export function parseVoice(json: unknown, httpStatus: number): CallOutcome<Voice
   for (const raw of asArray(body.turns)) {
     const t = asRecord(raw);
     if (t && whole(t.startMs) && whole(t.endMs) && typeof t.transcript === "string") {
-      turns.push({ startMs: t.startMs, endMs: t.endMs, transcript: t.transcript });
+      const turn: TranscribeTurn = { startMs: t.startMs, endMs: t.endMs, transcript: t.transcript };
+      if (typeof t.turnId === "string") turn.turnId = t.turnId;
+      turns.push(turn);
     }
   }
   return {
