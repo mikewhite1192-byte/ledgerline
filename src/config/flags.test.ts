@@ -311,8 +311,13 @@ describe("flags", () => {
     for (const [name, on] of booleanSwitches(flags)) {
       if (on && !guards.includes(name)) expect(local, name).toContain(name);
     }
-    // Nothing that stays off can be switched by local mode at all.
-    for (const name of KEPT_OFF) expect(local).not.toContain(name);
+    // Local mode can never turn on a switch that stays off: none is on the list that turns one on.
+    for (const name of KEPT_OFF) expect(LOCAL_OVERRIDABLE as readonly string[], name).not.toContain(name);
+    // The only kept-off switches local mode may turn off are the four armed money switches listed
+    // ahead of their own arming: exactly those of them still kept off, and nothing else.
+    const armedAhead: readonly string[] = ["moneyCodes.armed", "factoring.armed", "escrowRelease.armed", "deskLoop.armed"];
+    const offOnly = LOCAL_OFF_ONLY as readonly string[];
+    expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));
   });
 
   it("releases carrier memory, with the agent's suggestions and the second check's notes few", () => {
