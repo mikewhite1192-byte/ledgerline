@@ -3,15 +3,15 @@
 import { ChevronRight, ListTree } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { EmptyState, ErrorState, LoadingState } from "@/components/app/states";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { VisuallyHidden } from "@/components/ui/visually-hidden";
-import { isNotesLine, traceLines, traceModels, traceTotals, type TraceLine, type TraceModel } from "@/lib/trace/format";
+import { traceLines, traceModels, traceTotals, type TraceModel } from "@/lib/trace/format";
+import { turnsOf } from "@/lib/trace/steps";
 import type { TurnTrace } from "@/lib/trace/types";
 import { cn } from "@/lib/cn";
 import { recordNamer } from "@/lib/format/labels";
-import { NOTE_REF_TABLE, noteHref } from "@/lib/memory/links";
-import { hrefOrNull, recordHref, type HrefFor } from "@/lib/records/href";
+import { recordHref, type HrefFor } from "@/lib/records/href";
+import { StepView, TraceRow } from "./step-view";
 
 // "How this was worked out": under an answer (the whole turn) or a proposal card (that card's
 // steps and checks). Closed by default and read only when first opened, so a thread of answers
@@ -19,7 +19,9 @@ import { hrefOrNull, recordHref, type HrefFor } from "@/lib/records/href";
 // link, such as an auditor footnote pointing at #trace-<proposal id>. Opened, it reads in three
 // groups: the steps in order (who did each, its time and cost, what happened), the models used
 // (each model's job, calls, time and cost), and a closed Details with each call's effort and
-// prompt cache figures, for the reader who wants them.
+// prompt cache figures, for the reader who wants them. With stepThrough (flags.stepThrough, read
+// by the page), the whole answer's panel also offers "Step through": the steps one model call at
+// a time (step-view.tsx). It only changes what is shown; the trace is read the same way.
 
 export type TraceLoad = { trace: TurnTrace } | { missing: true } | { error: string };
 export type TraceLoader = (turnId: string) => Promise<TraceLoad>;
@@ -61,71 +63,27 @@ export function traceAnchor(turnId: string, proposalId?: string): string {
   return `trace-${proposalId ?? turnId}`;
 }
 
-function Line({
-  line,
-  step,
-  hrefFor,
-  name,
-}: {
-  line: TraceLine;
-  step: number;
-  hrefFor: HrefFor;
-  name: ReturnType<typeof recordNamer>;
-}) {
-  return (
-    <li className="grid gap-1 border-l-2 border-border pl-3">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        {/* The list's own order tells a screen reader the number; Details names rows by it. */}
-        <span aria-hidden className="text-small text-muted-foreground tabular-nums">
-          {step}.
-        </span>
-        <span className="text-small font-semibold text-foreground">{line.who}</span>
-        {line.meta.length > 0 ? (
-          <span className="text-small text-muted-foreground tabular-nums">{line.meta.join(", ")}</span>
-        ) : null}
-        {line.badge ? <Badge tone={line.badge.tone}>{line.badge.label}</Badge> : null}
-      </div>
-      <p className="text-body text-foreground-2">{line.text}</p>
-      {line.refs.length > 0 ? (
-        <ul className="flex flex-wrap gap-x-3 gap-y-1" aria-label={isNotesLine(line) ? "Notes it read" : "Records it read"}>
-          {line.refs.map((ref) => {
-            // A carrier note links to its row on the Memory page, never to a record page.
-            const href = ref.table === NOTE_REF_TABLE ? noteHref(ref.id) : hrefOrNull(hrefFor, ref);
-            const label = ref.label ?? name(ref);
-            return (
-              <li key={`${ref.table}:${ref.id}`} className="text-small">
-                {href ? (
-                  <a href={href} className="text-primary underline-offset-2 hover:underline">
-                    {label}
-                  </a>
-                ) : (
-                  <span className="text-muted-foreground">{label}</span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      ) : null}
-    </li>
-  );
-}
-
 export function HowWorkedOut({
   turnId,
   proposalId,
   load = fetchTrace,
   hrefFor = recordHref,
+  stepThrough = false,
   className,
 }: {
   turnId: string;
   proposalId?: string;
   load?: TraceLoader;
   hrefFor?: HrefFor;
+  // Offer "Step through" on the whole answer's panel (never under a card, whose rows are a part of
+  // the answer's). Off by default.
+  stepThrough?: boolean;
   className?: string;
 }) {
   const anchor = traceAnchor(turnId, proposalId);
   const panelId = useId();
   const [open, setOpen] = useState(false);
+  const [stepping, setStepping] = useState(false);
   const [state, setState] = useState<State>({ kind: "idle" });
   const alive = useRef(true);
   const request = useRef(0);
@@ -189,7 +147,15 @@ export function HowWorkedOut({
         <VisuallyHidden>{proposalId ? "for this card" : "for this answer"}</VisuallyHidden>
       </Button>
       <div id={panelId} hidden={!open} className="rounded-lg border border-border bg-card px-4 py-3">
-        {open ? <Body state={state} proposalId={proposalId} hrefFor={hrefFor} onRetry={() => void read()} /> : null}
+        {open ? (
+          <Body
+            state={state}
+            proposalId={proposalId}
+            hrefFor={hrefFor}
+            onRetry={() => void read()}
+            stepping={stepThrough && !proposalId ? { on: stepping, set: setStepping } : null}
+          />
+        ) : null}
       </div>
     </div>
   );
@@ -200,11 +166,14 @@ function Body({
   proposalId,
   hrefFor,
   onRetry,
+  stepping,
 }: {
   state: State;
   proposalId?: string;
   hrefFor: HrefFor;
   onRetry: () => void;
+  // Set when this panel offers "Step through": whether it is on, and the switch.
+  stepping: { on: boolean; set: (on: boolean) => void } | null;
 }) {
   if (state.kind === "idle" || state.kind === "loading") {
     return <LoadingState label="Reading how this was worked out" rows={3} />;
@@ -241,19 +210,35 @@ function Body({
   const details = lines.flatMap((line, i) => (line.effort || line.cache ? [{ line, step: i + 1 }] : []));
   // One name per record across every step, so a record read twice reads the same both times.
   const name = recordNamer(lines.flatMap((l) => l.refs));
+  // The toggle shows only when there is a model call to step through.
+  const through = stepping ? turnsOf(state.trace) : null;
+  const canStep = stepping !== null && through !== null && through.turns.length > 0;
+  const stepped = canStep && stepping.on;
   return (
     <div className="grid gap-4">
       <div className="grid gap-2">
-        <GroupTitle>Steps</GroupTitle>
-        <ol className="grid gap-3" aria-label="Steps, in order">
-          {lines.map((line, i) => (
-            <Line key={line.key} line={line} step={i + 1} hrefFor={hrefFor} name={name} />
-          ))}
-        </ol>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <GroupTitle>Steps</GroupTitle>
+          {canStep ? (
+            <Button type="button" variant="outline" size="sm" aria-pressed={stepping.on} onClick={() => stepping.set(!stepping.on)}>
+              Step through
+            </Button>
+          ) : null}
+        </div>
+        {stepped ? (
+          // The carrier's own people read the summary's own text; the toggle is offered to no one else.
+          <StepView through={through} hrefFor={hrefFor} name={name} fullSummary />
+        ) : (
+          <ol className="grid gap-3" aria-label="Steps, in order">
+            {lines.map((line, i) => (
+              <TraceRow key={line.key} line={line} step={i + 1} hrefFor={hrefFor} name={name} />
+            ))}
+          </ol>
+        )}
       </div>
       {models.length > 0 ? <ModelsUsed models={models} /> : null}
       {totals ? <p className="border-t border-border pt-2 text-small text-muted-foreground tabular-nums">{totals}</p> : null}
-      {details.length > 0 ? (
+      {!stepped && details.length > 0 ? (
         <details className="text-small">
           <summary className="w-fit cursor-pointer rounded-sm text-link underline-offset-4 hover:underline">Details</summary>
           <ul className="mt-2 grid gap-2" aria-label="Details for each step">

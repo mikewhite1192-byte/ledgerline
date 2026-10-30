@@ -1,10 +1,12 @@
 // How a turn was worked out, as plain data safe to send to the browser: the model calls, gateway
 // decisions and proposal checks behind one answer. The gateway's store reads it from model_calls,
 // turn_steps, gateway_decisions and proposals (store/trace.ts); format.ts turns it into fixed
-// sentences. Ids, enum codes, whole numbers and cents only: no model text, no arguments, no
-// upstream messages. Codes are never shown as they are; every one goes through a fixed table. The
-// one piece of text is a carrier note's short label (who it is about and its first words), which
-// the office wrote and every member of the carrier already sees on the Memory page.
+// sentences. Ids, enum codes, whole numbers and cents, with no arguments and no upstream messages.
+// Codes are never shown as they are; every one goes through a fixed table. Three pieces of text:
+// a carrier note's short label (who it is about and its first words), which the office wrote and
+// every member of the carrier already sees on the Memory page; the summary of the carrier's
+// records the turn started from; and a model step's own short note, its figures masked before it
+// was stored. The last two are read only by the step-through (steps.ts) and shown only as text.
 
 export type TraceRef = { table: string; id: string };
 
@@ -38,6 +40,8 @@ export type TraceDecision = {
   limitCents: number | null;
   issuedBy: string | null;
   refs: TraceRef[];
+  // How many characters the tool's result held. Absent when none was recorded.
+  resultChars?: number;
 };
 
 // One turn_steps row with what it links to. category, result, toolCalls, toolSearches and
@@ -57,6 +61,9 @@ export type TraceStep = {
   toolSearches: number | null;
   incomplete: boolean;
   escalation: { attempts: number; finishedBy: string } | null;
+  // A model step's own short note (design-agents-101 3.4), when the model returned one. Absent
+  // otherwise: never a made-up note.
+  reasoningNote?: string;
 };
 
 // A model call in the turn's trace that no step names (a screening, or a call whose step failed
@@ -91,6 +98,9 @@ export type TurnTrace = {
   proposals: TraceProposal[];
   // Absent or empty when the turn held no notes, or while carrierMemoryEnabled is off.
   notesUsed?: TraceNote[];
+  // The summary of the carrier's records the turn started from, whole, as the model read it.
+  // Absent for a turn opened before it was kept.
+  contextSummary?: string;
 };
 
 // The Meta models page: this carrier's week, grouped in SQL, summed in week.ts. The token sums

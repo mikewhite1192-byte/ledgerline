@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isLocalDate } from "../lib/time/local-date";
-import { flags, type Flags } from "./flags";
+import { flags, stepThroughShown, type Flags } from "./flags";
 import { applyLocalOverrides, LOCAL_OVERRIDABLE } from "./local-overrides";
 
 describe("flags", () => {
@@ -351,6 +351,21 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("profitBriefEnabled");
+  });
+});
+
+describe("step through", () => {
+  it("is on in development and tests only, and off elsewhere until the owner turns it on for staff", () => {
+    expect(flags.stepThrough).toEqual({ dev: true, staff: false });
+    expect(stepThroughShown(flags, { NODE_ENV: "production" })).toBe(false);
+    expect(stepThroughShown(flags, { NODE_ENV: "test" })).toBe(true);
+    expect(stepThroughShown(flags, { NODE_ENV: "development" })).toBe(true);
+    // Unset or unknown reads as production.
+    expect(stepThroughShown(flags, {})).toBe(false);
+    expect(stepThroughShown(flags, { NODE_ENV: "staging" })).toBe(false);
+    expect(stepThroughShown({ stepThrough: { dev: true, staff: true } }, { NODE_ENV: "production" })).toBe(true);
+    expect(stepThroughShown({ stepThrough: { dev: false, staff: false } }, { NODE_ENV: "development" })).toBe(false);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("stepThrough");
   });
 });
 

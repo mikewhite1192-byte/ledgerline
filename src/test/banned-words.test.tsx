@@ -2021,6 +2021,35 @@ describe("no internal word in a chat answer or its trace", () => {
     expect(scan(body)).toEqual([]);
   });
 
+  it("the step-through, on every turn, with the summary's parts and its own text opened", async () => {
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} stepThrough load={async () => ({ trace: { ...sampleTrace(), notesUsed: fx.NOTES_USED } })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /How this was worked out/i }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Step through" }));
+    const view = screen.getByRole("region", { name: "Step through" });
+    const next = within(view).getByRole("button", { name: "Next" }) as HTMLButtonElement;
+    let turns = 0;
+    for (;;) {
+      turns += 1;
+      for (const summary of within(view).queryAllByText("Details", { selector: "summary" })) fireEvent.click(summary);
+      expect(scan(document.body)).toEqual([]);
+      if (next.disabled) break;
+      fireEvent.click(next);
+    }
+    expect(turns).toBe(4);
+    expect(within(view).getByRole("list", { name: "Parts of the summary" })).toBeTruthy();
+    // The summary's own text is the model's input word for word (ids, dates, its own section
+    // titles), shown as plain text only when a person opens it. Everything around it is scanned.
+    fireEvent.click(within(view).getByRole("button", { name: "Show the summary" }));
+    const verbatim = view.querySelector("[data-verbatim='summary']");
+    expect(verbatim?.textContent).toBe(sampleTrace().contextSummary);
+    const rest = document.body.cloneNode(true) as HTMLElement;
+    for (const el of Array.from(rest.querySelectorAll("[data-verbatim]"))) el.remove();
+    expect(rest.querySelector("[data-verbatim]")).toBeNull();
+    expect(scan(rest)).toEqual([]);
+  });
+
   it("the trace's note links, for an answer that read the office's notes", async () => {
     render(<HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace: { ...sampleTrace(), notesUsed: fx.NOTES_USED } })} />);
     await act(async () => {

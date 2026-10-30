@@ -34,6 +34,8 @@ const ids = (tenant: string) => ({
   tenant,
 });
 const IDS = { [A]: ids(A), [B]: ids(B) };
+const SUMMARY = "Current state (from the database, for this turn only):\n\nCarrier:\nCarrier: Trace test";
+const NOTE = "Over the limit, so ask again at the limit.";
 
 let admin: Db;
 let app: Db;
@@ -118,11 +120,12 @@ async function seed(tenantId: string, slug: string, payWeekFromWednesday: boolea
     );
     await q.execute(
       `INSERT INTO turns (id, tenant_id, conversation_id, seq, user_text, assistant_text, status, trace_id,
-         started_at, finished_at)
+         started_at, finished_at, context_summary)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 1, 'Can AG-1 get an advance?',
          'Yes, up to the limit.', 'done', $3, CAST('2026-11-02T14:00:00Z' AS timestamptz),
-         CAST('2026-11-02T14:00:08Z' AS timestamptz))`,
-      [x.turn, x.conversation, x.trace],
+         CAST('2026-11-02T14:00:08Z' AS timestamptz), $4)`,
+      // Carrier A's turn kept the summary it started from; carrier B's is an older turn that did not.
+      [x.turn, x.conversation, x.trace, tenantId === A ? SUMMARY : null],
     );
     // Carrier A's first call read most of its input from the prompt cache after a tool search;
     // carrier B's has no token counts.
@@ -135,15 +138,16 @@ async function seed(tenantId: string, slug: string, payWeekFromWednesday: boolea
     });
     await q.execute(
       `INSERT INTO turn_steps (id, tenant_id, turn_id, seq, kind, label, state, model_call_id, detail,
-         started_at, finished_at)
+         started_at, finished_at, reasoning_note)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 1, 'model', 'Thinking it through',
          'done', CAST($3 AS uuid), CAST($4 AS jsonb),
-         CAST('2026-11-02T14:00:00Z' AS timestamptz), CAST('2026-11-02T14:00:02Z' AS timestamptz))`,
+         CAST('2026-11-02T14:00:00Z' AS timestamptz), CAST('2026-11-02T14:00:02Z' AS timestamptz), $5)`,
       [
         randomUUID(),
         x.turn,
         x.plan,
         JSON.stringify(tenantId === A ? { status: "ok", toolCalls: 1, toolSearches: 1 } : { status: "ok", toolCalls: 1 }),
+        tenantId === A ? NOTE : null,
       ],
     );
     if (tenantId !== A) return;
@@ -151,10 +155,10 @@ async function seed(tenantId: string, slug: string, payWeekFromWednesday: boolea
     // Carrier A's turn goes on: a blocked ask, a screening, an escalation, a saved card.
     await q.execute(
       `INSERT INTO gateway_decisions (id, tenant_id, turn_id, trace_id, role, model, tool, tier, refs,
-         decision, reason, limit_cents, model_call_id, latency_ms, created_at)
+         decision, reason, limit_cents, model_call_id, latency_ms, created_at, result_chars)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'operator', 'spark',
          'propose_advance', 'propose', CAST($4 AS jsonb), 'blocked', 'amount_over_limit', 41200,
-         CAST($5 AS uuid), 3, CAST('2026-11-02T14:00:02Z' AS timestamptz))`,
+         CAST($5 AS uuid), 3, CAST('2026-11-02T14:00:02Z' AS timestamptz), 57)`,
       [x.blocked, x.turn, x.trace, JSON.stringify([{ table: "drivers", id: x.driver }]), x.plan],
     );
     await q.execute(
@@ -289,7 +293,13 @@ describe("the trace and the model week", () => {
       limitCents: 41_200,
       issuedBy: a.plan,
       refs: [{ table: "drivers", id: a.driver }],
+      resultChars: 57,
     });
+    // The step-through's three pieces: the summary the turn started from, the model step's note,
+    // and the size of what each tool sent back. Only a model step carries a note.
+    expect(trace.contextSummary).toBe(SUMMARY);
+    expect(trace.steps[0].reasoningNote).toBe(NOTE);
+    expect(trace.steps.slice(1).every((s) => s.reasoningNote === undefined)).toBe(true);
     expect(trace.steps[1].toolSearches).toBeNull();
     expect(trace.steps[2]).toMatchObject({
       call: { id: a.wonder, target: "wonder", effort: "high", costNanocents: 5_800_000_000, inputTokens: 3_000, cachedTokens: 0, savedNanocents: 0 },
@@ -337,6 +347,10 @@ describe("the trace and the model week", () => {
     expect(JSON.stringify(own)).not.toContain(IDS[A].plan);
     expect(own?.steps[0].call?.id).toBe(IDS[B].plan);
     expect(own?.steps[0]).toMatchObject({ toolSearches: null, call: { inputTokens: null, cachedTokens: null, savedNanocents: null } });
+    // A turn that kept no summary and a step with no note read as absent, never as empty text.
+    expect(own && "contextSummary" in own).toBe(false);
+    expect(own && "reasoningNote" in own.steps[0]).toBe(false);
+    expect(JSON.stringify(own)).not.toContain(NOTE);
   });
 
   it("sums only this carrier's calls inside its own pay week", async () => {
