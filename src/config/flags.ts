@@ -437,15 +437,16 @@ export type Flags = {
   // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
   // and proposes; a person approves a pay correction on its card. Off means the Fuel checks page
   // is not found, its link is hidden, the routes and the service refuse before any work, no
-  // receipt compare is called, and the agent's run_checks leaves fuel findings out.
+  // receipt compare is called, and the agent's run_checks leaves fuel findings out. On, a check
+  // runs only for the two demo carriers: the run route refuses any other carrier as disabled and
+  // run_checks leaves its fuel findings out, because the start date below is the demo weeks'.
   fuelAnomalyEnabled: boolean;
   fuelAnomalyLimits: {
     // Tenant-local date: fill-ups before it are never listed. The release for the demo carriers set
     // it to the first day of the earlier seeded open week (Prairie Wind's, Sunday 2026-10-25), so
     // every planted fill-up lists again after a demo reset; fuel checks only list and propose, and
-    // nothing goes outside. Before a carrier with real history uses fuel checks, its release moves
-    // this to that go-live date; left as it is, the first run lists every fill-up from this date up
-    // to go-live.
+    // nothing goes outside. It is one date for every carrier, which is why only the demo carriers
+    // run the checks; a carrier with real history needs its own go-live date before it can.
     from: string;
     // Two fill-ups with the same gallons, amount and state this close together are one fill-up
     // turned in twice.
@@ -543,7 +544,7 @@ export const flags: Flags = {
   documentMarkupEnabled: false,
   markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
   advancesEnabled: true,
-  advancePayouts: { armed: true, capCents: 50_000, startDate: "2026-10-29" },
+  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-29" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
   advanceTakeback: { enabled: true, maxCents: 100_000 },
   agentToolSearch: true,

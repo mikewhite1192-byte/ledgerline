@@ -21,7 +21,6 @@ const RELEASED_ON = [
   "auditorEnabled",
   "documentsEnabled",
   "advancesEnabled",
-  "advancePayouts.armed",
   "advanceTakeback.enabled",
   "agentToolSearch",
   "agentPromptCache.enabled",
@@ -90,9 +89,13 @@ describe("flags", () => {
     const switches = Object.fromEntries(booleanSwitches(flags));
     for (const name of RELEASED_ON) expect(switches[name], name).toBe(true);
     for (const name of KEPT_OFF) expect(switches[name], name).toBe(false);
-    // auditorRequired ships on with the auditor: a proposal waits for its verdict.
-    expect(Object.keys(switches).sort()).toEqual([...RELEASED_ON, ...KEPT_OFF, "auditorRequired"].sort());
+    // auditorRequired ships on with the auditor: a proposal waits for its verdict. Advance payouts
+    // ship unarmed: arming is its own one-line PR.
+    expect(Object.keys(switches).sort()).toEqual(
+      [...RELEASED_ON, ...KEPT_OFF, "auditorRequired", "advancePayouts.armed"].sort(),
+    );
     expect(flags.auditorRequired).toBe(true);
+    expect(flags.advancePayouts.armed).toBe(false);
   });
 
   it("keeps every outside send and the standby host off", () => {
@@ -211,15 +214,16 @@ describe("flags", () => {
     );
   });
 
-  it("tells the next release beside the fuel start date to move it to go-live for a carrier with real history", () => {
-    // The start date is production posture, and the switch alone does not keep older fill-ups off
-    // the first run: the note beside the date says why the demo carriers' date is what it is and
-    // what a carrier with real history needs first.
+  it("says beside the fuel start date that only the demo carriers run the checks, and what another carrier needs", () => {
+    // The start date is one date for every carrier: the note beside it says why the demo
+    // carriers' date is what it is, that the checks run for them alone, and what a carrier with
+    // real history needs first.
     const src = readFileSync(join(__dirname, "flags.ts"), "utf8");
     const at = src.indexOf("fuelAnomalyLimits: {");
     const note = src.slice(at, src.indexOf("from: string;", at)).replace(/\s*\/\/\s*/g, " ");
     expect(note).toContain("first day of the earlier seeded open week");
-    expect(note).toContain("Before a carrier with real history uses fuel checks, its release moves this to that go-live date");
+    expect(note).toContain("which is why only the demo carriers run the checks");
+    expect(note).toContain("a carrier with real history needs its own go-live date before it can");
     expect(note).not.toMatch(/switching on never/);
   });
 
@@ -316,9 +320,9 @@ describe("flags", () => {
     expect(flags.markupLimits.maxBytes).toBeLessThanOrEqual(flags.documentLimits.maxBytes);
   });
 
-  it("releases the advance flow armed, with its cap kept and dated from the release", () => {
+  it("releases the advance flow with payouts unarmed, its cap kept and dated from the release", () => {
     expect(flags.advancesEnabled).toBe(true);
-    expect(flags.advancePayouts).toEqual({ armed: true, capCents: 50_000, startDate: "2026-10-29" });
+    expect(flags.advancePayouts).toEqual({ armed: false, capCents: 50_000, startDate: "2026-10-29" });
     expect(isLocalDate(flags.advancePayouts.startDate)).toBe(true);
     expect(flags.advancesLimits).toEqual({
       proposalsPerDay: 30,
@@ -608,8 +612,10 @@ describe("local overrides for the demo-path test", () => {
     expect(keys).toEqual([...LOCAL_OVERRIDABLE, ...LOCAL_OFF_ONLY]);
     for (const name of LOCAL_OVERRIDABLE) expect(Object.fromEntries(booleanSwitches(target))[name], name).toBe(true);
     for (const name of LOCAL_OFF_ONLY) expect(Object.fromEntries(booleanSwitches(target))[name], name).toBe(false);
-    // Caps, limits, dates, providers and every kept-off switch are exactly as shipped.
-    const expected = [...LOCAL_OFF_ONLY].reduce((f, k) => withSwitch(f, k, false), copy());
+    // Caps, limits, dates, providers and every kept-off switch are exactly as shipped. Advance
+    // payouts ship unarmed, so local mode is what arms them for the run.
+    const on = LOCAL_OVERRIDABLE.reduce((f, k) => withSwitch(f, k, true), copy());
+    const expected = [...LOCAL_OFF_ONLY].reduce((f, k) => withSwitch(f, k, false), on);
     expect(target).toEqual(expected);
   });
 

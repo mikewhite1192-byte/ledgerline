@@ -222,11 +222,11 @@ describe("the payout switches", () => {
     expect(payoutGate(25_000, "2026-11-02")).toBe("disabled");
   });
 
-  it("ships open for the demo carriers from the release date, under the cap", () => {
+  it("ships the advance flow on with payouts unarmed: every payout refuses until its own release", () => {
     expect(advancesOn()).toBe(true);
-    expect(payoutGate(25_000, "2026-11-02")).toBeNull();
-    expect(payoutGate(25_000, "2026-10-28")).toBe("before_start");
-    expect(payoutGate(50_001, "2026-11-02")).toBe("over_cap");
+    expect(payoutGate(25_000, "2026-11-02")).toBe("not_armed");
+    expect(payoutGate(25_000, "2026-10-28")).toBe("not_armed");
+    expect(payoutGate(50_001, "2026-11-02")).toBe("not_armed");
   });
 
   it("refuses in order: switch, payouts, armed, cap, start date", () => {

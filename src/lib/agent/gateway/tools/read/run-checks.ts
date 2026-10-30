@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { flags } from "../../../../../config/flags";
-import { readCheckInput, readReceivablesInput } from "../../../../data/read";
+import { readCheckInput, readReceivablesInput, readTenant } from "../../../../data/read";
 import { findPaymentOnWrongInvoice, runAllChecks } from "../../../../rules-engine";
 import { runFuelChecks } from "../../../../rules-engine/fuel";
+import { demoCarrierFor } from "../../../../seed/carriers";
 import { localDateOf } from "../../../../time/local-date";
 import { defineTool, type GatewayRef } from "../../types";
 import { idField } from "../../validate";
@@ -32,9 +33,11 @@ export const runChecks = defineTool({
         amountCents: f.amountCents ?? null,
         sources: f.sources,
       }));
-    // The fuel checks join the list only while their switch is on, with the engine's signed
-    // suggested correction (null when it suggests none). The description stays the same either way.
-    if (flags.fuelAnomalyEnabled) {
+    // The fuel checks join the list only while their switch is on, and only for the demo carriers
+    // (they list fill-ups from one shared start date, the first day of the seeded demo weeks), with
+    // the engine's signed suggested correction (null when it suggests none). The description stays
+    // the same either way.
+    if (flags.fuelAnomalyEnabled && demoCarrierFor(await readTenant(q))) {
       for (const f of runFuelChecks(input, flags.fuelAnomalyLimits)) {
         if (a.driverId && f.driverId !== a.driverId) continue;
         rows.push({

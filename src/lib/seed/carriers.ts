@@ -104,3 +104,14 @@ export const DEMO_CARRIERS: readonly DemoCarrier[] = [
 export function carrierBySlug(slug: string): DemoCarrier | undefined {
   return DEMO_CARRIERS.find((c) => c.slug === slug);
 }
+
+// The demo carrier a tenant row is, or null when it is not one of the two: its slug, name and
+// timezone must all be that carrier's, so a carrier that only took a demo slug is not one.
+export function demoCarrierFor(
+  tenant: { slug: string; name: string; timezone: string } | null,
+): DemoCarrier | null {
+  if (!tenant) return null;
+  const carrier = carrierBySlug(tenant.slug);
+  if (!carrier || carrier.name !== tenant.name || carrier.timezone !== tenant.timezone) return null;
+  return carrier;
+}
