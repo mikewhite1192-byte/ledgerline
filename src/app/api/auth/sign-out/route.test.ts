@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SESSION_COOKIE } from "@/lib/auth/cookie";
+import { DEMO_COOKIE, SESSION_COOKIE } from "@/lib/auth/cookie";
 import { POST } from "./route";
 
 function signOut(secFetchSite?: string) {
@@ -13,6 +13,8 @@ describe("POST /api/auth/sign-out", () => {
     expect(response.status).toBe(303);
     expect(response.headers.get("location")).toBe("/sign-in");
     expect(response.cookies.get(SESSION_COOKIE)).toMatchObject({ value: "", maxAge: 0, path: "/" });
+    // A demo visit's Leave is this same sign-out: the visit cookie goes too.
+    expect(response.cookies.get(DEMO_COOKIE)).toMatchObject({ value: "", maxAge: 0, path: "/" });
   });
 
   it("refuses a cross-site or same-site post and leaves the cookie alone", () => {

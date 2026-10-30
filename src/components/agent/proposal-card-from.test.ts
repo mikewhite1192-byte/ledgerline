@@ -9,6 +9,7 @@ import {
   hoursMinutes,
   kindCopy,
   proposalCardFrom,
+  verificationFor,
 } from "./proposal-card-from";
 
 const DRIVER = "11111111-1111-4111-8111-111111111111";
@@ -408,5 +409,137 @@ describe("each kind's confirm words", () => {
     expect(proposalCardFrom({ ...view, subjectLabel: "" })).not.toHaveProperty("references");
     expect(proposalCardFrom({ ...view, subjectLabel: "   " })).not.toHaveProperty("references");
     expect(proposalCardFrom({ ...view, subjectLabel: null })).not.toHaveProperty("references");
+  });
+});
+
+describe("the verification label on the card", () => {
+  const on = { on: true, checking: false };
+
+  it("reads Verified only when the pay rules matched and the second check passed", () => {
+    const card = proposalCardFrom({ ...view, engineCheck: "matched", engineHeld: false, auditorVerdict: "pass" }, on);
+    expect(card.verification).toEqual({ state: "verified", line: "Your pay rules recomputed it and a second check agreed.", held: false });
+    expect(proposalCardFrom({ ...view, engineCheck: "matched", engineHeld: false }, on).verification?.state).toBe("unverified");
+    expect(proposalCardFrom({ ...view, engineCheck: "unavailable", engineHeld: false, auditorVerdict: "pass" }, on).verification?.state).toBe(
+      "unverified",
+    );
+  });
+
+  it("holds a mismatch for a person, and leaves the confirm question as it was", () => {
+    const card = proposalCardFrom({ ...view, engineCheck: "mismatch", engineHeld: true, auditorVerdict: "pass" }, on);
+    expect(card.verification).toMatchObject({ state: "mismatch", held: true });
+    expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07's fuel card ending 4417?");
+  });
+
+  it("says the second check is off when the page reads it off", () => {
+    expect(verificationFor({ ...view, engineCheck: "matched", engineHeld: false }, { on: false, checking: false })?.line).toBe(
+      "Pay rules matched. Second check is off",
+    );
+  });
+
+  it("carries a person's reason for approving over a mismatch, the time in the page's timezone", () => {
+    const v = verificationFor(
+      {
+        ...view,
+        status: "approved",
+        engineCheck: "mismatch",
+        engineHeld: false,
+        engineOverride: { reason: "The rate sheet changed this week", byLabel: "an admin", at: "2026-10-28T15:00:00.000Z" },
+      },
+      { ...on, timezone: "UTC" },
+    );
+    expect(v).toMatchObject({ state: "mismatch", held: false, override: { reason: "The rate sheet changed this week", byLabel: "an admin" } });
+    expect(v?.override?.at).toContain("UTC");
+  });
+
+  it("adds no label when the page did not read the engine check", () => {
+    expect(proposalCardFrom(view, on)).not.toHaveProperty("verification");
+    expect(verificationFor(view)).toBeUndefined();
+  });
+});
+
+describe("a factoring card", () => {
+  const INV_A = "22222222-2222-4222-8222-222222222222";
+  const INV_B = "33333333-3333-4333-8333-333333333333";
+  const factoring: ProposalView = {
+    ...view,
+    id: "p-f",
+    kind: "factoring_request",
+    subjectTable: "invoices",
+    subjectId: INV_A,
+    subjectLabel: null,
+    amountCents: 152_745,
+    direction: "in",
+    title: "Factor invoices (Test mode)",
+    reasons: [],
+    sources: [{ table: "invoices", id: INV_A }],
+    destination: { label: "bank", last4: null, testMode: true },
+    cash: {
+      kind: "factoring_request",
+      shortCents: 140_000,
+      advanceBps: 9000,
+      feeBps: 250,
+      invoices: [
+        { invoiceId: INV_A, invoiceNumber: "INV-1042", balanceCents: 100_000, advanceCents: 90_000, feeCents: 2_500, netCents: 87_500, reserveCents: 10_000 },
+        { invoiceId: INV_B, invoiceNumber: "INV-1043", balanceCents: 72_000, advanceCents: 64_800, feeCents: 1_800, netCents: 63_000, reserveCents: 7_200 },
+      ],
+    },
+  };
+  const withStatus = (requestStatus: string | null): ProposalView => ({
+    ...factoring,
+    cash: { ...(factoring.cash as Extract<NonNullable<ProposalView["cash"]>, { kind: "factoring_request" }>), requestStatus },
+  });
+
+  it("sums what is planned to come in now, what is held back and the fee from the engine's lines", () => {
+    const card = proposalCardFrom(factoring);
+    const texts = card.reasons.map((r) => r.text);
+    expect(texts).toContain("Planned: $1,505.00 now, $172.00 held back until the customer pays, fee $43.00.");
+    expect(texts).toContain("The factoring partner pays 90% up front and charges 2.5%, against a $1,400.00 short.");
+    expect(texts.some((t) => t.startsWith("Factoring request:"))).toBe(false);
+    expect(card.impact.label).toBe("Would come in before Friday");
+  });
+
+  it("says what the partner did once a request was sent, and never more than that", () => {
+    const label = (s: string | null) => proposalCardFrom(withStatus(s)).impact.label;
+    expect(label("funded")).toBe("Came in from the factoring partner (Test mode)");
+    expect(label("partly_funded")).toBe("Part of this came in; see Factoring (Test mode)");
+    expect(label("submitted")).toBe("Sent, not confirmed yet (Test mode)");
+    expect(label("unknown")).toBe("Sent, not confirmed yet (Test mode)");
+    expect(label("declined")).toBe("Nothing came in (Test mode)");
+    expect(label("failed")).toBe("Nothing came in (Test mode)");
+    // No request yet: the card's own status decides.
+    expect(label(null)).toBe("Would come in before Friday");
+  });
+
+  it("adds one line naming the request's status in plain words", () => {
+    const texts = proposalCardFrom(withStatus("partly_funded")).reasons.map((r) => r.text);
+    expect(texts).toContain("Factoring request: Partly funded. The Factoring page shows each invoice. Test mode.");
+    const unknown = proposalCardFrom(withStatus("unknown")).reasons.map((r) => r.text);
+    expect(unknown).toContain("Factoring request: Sent, not confirmed yet. The Factoring page shows each invoice. Test mode.");
+  });
+
+  it("never says you receive a sum, before a request or after a part of it was declined", () => {
+    for (const s of [null, "submitted", "unknown", "funded", "partly_funded", "declined", "failed"]) {
+      const card = proposalCardFrom(withStatus(s));
+      for (const t of [...card.reasons.map((r) => r.text), card.impact.label ?? ""]) expect(t, String(s)).not.toMatch(/you receive/i);
+    }
+  });
+
+  it("lets a person resume a card left approved, or left executing with an invoice not sent yet", () => {
+    const resume = (status: ProposalView["status"], requestStatus: string | null) =>
+      proposalCardFrom({ ...withStatus(requestStatus), status }).canResume;
+    // Stopped after the approval, before the request was written.
+    expect(resume("approved", null)).toBe(true);
+    // Stopped after the request was written, before every invoice went out.
+    expect(resume("executing", "submitted")).toBe(true);
+    // Waiting on the partner's answer: Check pending on the Factoring page, not Resume.
+    expect(resume("executing", "unknown")).toBeUndefined();
+    expect(resume("executing", null)).toBeUndefined();
+    for (const status of ["proposed", "done", "failed", "unknown", "rejected", "expired"] as const) {
+      expect(resume(status, "submitted"), status).toBeUndefined();
+    }
+    // No other kind resumes from executing.
+    for (const kind of ["advance_payout", "pay_correction", "money_code", "card_match", "collections_chase"] as const) {
+      expect(proposalCardFrom({ ...withStatus("submitted"), kind, status: "executing" }).canResume, kind).toBeUndefined();
+    }
   });
 });

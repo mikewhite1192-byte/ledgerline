@@ -52,8 +52,10 @@ type FoundRow = { loadId: string; amountCents: number; canPropose: boolean; bloc
   unknown
 >;
 
+const shipped = flags.detentionEnabled;
+
 afterEach(() => {
-  flags.detentionEnabled = false;
+  flags.detentionEnabled = shipped;
 });
 
 describe("detention tools switched off", () => {
@@ -61,6 +63,7 @@ describe("detention tools switched off", () => {
     ["find_unbilled_detention", { month: "2026-10" }],
     ["propose_detention_charge", { loadId: ids[0], amountCents: GOLDEN[0], sourceRefs: [] }],
   ])("%s refuses as disabled before reading a record, with one decision row", async (name, args) => {
+    flags.detentionEnabled = false;
     const { out, db } = await run(name, args);
     expect(out).toMatchObject({ decision: "blocked", reason: "disabled" });
     expect(db.decisions).toHaveLength(1);

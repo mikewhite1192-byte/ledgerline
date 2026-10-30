@@ -117,6 +117,35 @@ export interface PaymentAdapter {
   ): Promise<ReadBack>;
 }
 
+// One invoice offered to the factoring partner. Codes only, never a name: the invoice number and
+// the customer's record id. The numbers are the rules engine's, whole cents; the partner answers
+// with the advance less its fee (netCents) or a definite no.
+export type FactoringSubmission = {
+  actionId: string;
+  invoiceNumber: string;
+  customerCode: string;
+  balanceCents: number;
+  advanceCents: number;
+  feeCents: number;
+  netCents: number;
+  reserveCents: number;
+};
+
+// The factoring partner. Simulated only today (Test mode); a real partner would be a second
+// implementation of this same interface.
+export interface FactoringAdapter {
+  readonly system: "factoring_sim";
+  // Repeats the switch checks on every call.
+  ready(): Promise<Ready>;
+  // The one outside call: offer one invoice for an advance.
+  submitInvoice(req: FactoringSubmission, ctx: SendContext): Promise<SendOutcome>;
+  // Reads only; the original submission rides along, as for a payout read-back.
+  readBack(
+    ref: { requestId: string; outsideId?: string | null; request: FactoringSubmission },
+    ctx: SendContext,
+  ): Promise<ReadBack>;
+}
+
 // A one-time money code the card provider issues for a lumper or a repair at the dock. The code
 // itself is never in a request, a reply, a log or a row: the provider derives it from the request
 // id and hands it over only through revealCode.

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import { rawOf } from "../../../documents/schema";
 import { CONFIDENCE_FIELDS, type DocumentRead } from "../../../documents/types";
@@ -24,6 +24,13 @@ const call = (proposalId: string) => ({
   argumentsJson: JSON.stringify({ proposalId }),
 });
 
+// Put back as shipped after each test: each test sets the switches it assumes.
+const shipped = structuredClone(flags);
+
+afterEach(() => {
+  Object.assign(flags, structuredClone(shipped));
+});
+
 function keysDeep(value: unknown, out: Set<string> = new Set()): Set<string> {
   if (Array.isArray(value)) for (const v of value) keysDeep(v, out);
   else if (value && typeof value === "object") {
@@ -36,6 +43,12 @@ function keysDeep(value: unknown, out: Set<string> = new Set()): Set<string> {
 }
 
 describe("get_proposal", () => {
+  // These packs are the ones carrier memory off gives: the fake database plans no notes read, so
+  // with it on, a driver's request would read carrier_notes and fail.
+  beforeEach(() => {
+    flags.carrierMemoryEnabled = false;
+  });
+
   const cases: [ProposalKindName, string][] = [
     ["advance_payout", "advance_eligibility"],
     ["pay_correction", "pay_checks"],
@@ -267,11 +280,8 @@ describe("get_proposal carrier notes", () => {
   const notesOf = (n: number, text: (i: number) => string = (i) => `Note ${i}: prefers a text before a call`) =>
     Array.from({ length: n }, (_, i) => ({ id: noteId(i), text: text(i) }));
 
-  afterEach(() => {
-    flags.carrierMemoryEnabled = false;
-  });
-
   it("reads no notes and adds no key while carrier memory is off", async () => {
+    flags.carrierMemoryEnabled = false;
     const db = planDb(plan, withProposal(proposalRowFor(plan, "advance_payout"), withNotes(notesOf(3))));
     const out = await callTool(auditor, call(PROPOSAL_ID), { db, clock: fixedClock });
     if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);

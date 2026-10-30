@@ -11,6 +11,7 @@ import type { ClipView } from "@/lib/clips/types";
 import type { BreakView, RunView as CardRunView } from "@/lib/data/card-recon";
 import type { CollectionsView, LateInvoice, ReminderCard } from "@/lib/collections/view";
 import type { DocumentView } from "@/lib/documents/types";
+import type { RequestDetail, RequestSummary } from "@/lib/factoring/read";
 import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/view";
 import { figureValueText, profitWeek, type ClosedWeek } from "@/lib/briefs/figures";
 import type { BriefRecord, ProfitView } from "@/lib/briefs/view";
@@ -34,9 +35,12 @@ import type { RequestChoices } from "@/lib/money-codes/request";
 import type { MoneyAction } from "@/lib/money/types";
 import { noteLabel, type NoteRow, type NoteSubject } from "@/lib/memory/notes";
 import type { PayRulesPage } from "@/lib/pay-rules/read";
+import type { CardRow, CardSummary, PeriodCards } from "@/lib/pay-cards/read";
+import { cardSpec, type CardSpec } from "@/lib/pay-cards/spec";
 import { RULES as RULE_SPECS, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
 import type { CardHome, HandPick } from "@/lib/recon/view";
+import type { RatesPage, RateView } from "@/lib/rates/read";
 import type { RunSummary, RunView } from "@/lib/portal/views";
 import type { InvoiceReviewReason, InvoiceReviewStatus } from "@/lib/rules-engine";
 import type { DriverDayView, PayItemView, ScheduleView } from "@/lib/records/views";
@@ -330,6 +334,7 @@ const counts: SweepCounts = {
   mismatch: 0,
   audit_pending: 0,
   over_cap: 0,
+  left: 0,
 };
 
 export const SWEEP_RUN: SweepRunView = {
@@ -357,6 +362,14 @@ export const SWEEP_RUN_STOPPED: SweepRunView = {
   ...SWEEP_RUN,
   truncatedReason: "cap",
   checklist: endSweep(tickSweep(sweepChecklist(true), "draft"), "stopped"),
+};
+// A run that reached its turn ceiling while drafting: what it drafted was audited, and the rest
+// wait for the next sweep.
+export const SWEEP_RUN_MAX_TURNS: SweepRunView = {
+  ...SWEEP_RUN,
+  truncatedReason: "max_turns",
+  turnsUsed: 30,
+  checklist: endSweep(tickSweep(tickSweep(sweepChecklist(false), "draft"), "audit"), "stopped", { stoppedAfter: "audit" }),
 };
 export const SWEEP_RUN_RUNNING: SweepRunView = {
   ...SWEEP_RUN,
@@ -904,6 +917,8 @@ const runSummary: RunSummary = {
   finishedAt: "2026-10-28T15:04:00.000Z",
   requestedBy: EMAIL,
   stalled: false,
+  resumeAttempts: 0,
+  resumed: null,
 };
 
 export const RUNS: RunSummary[] = [
@@ -1061,6 +1076,108 @@ export const DRIVER_VIEW: DriverView = {
   },
   message: { kind: "note", body: "Your pay is lower this week because an advance was repaid.", language: "en" },
 };
+
+// The pay cards page for the settled week: one row in each state a clerk meets. Every card's
+// figures come from the seed's own paystub through cardSpec, as the page's read works them out.
+const cardSpecFor = (settlementId: string, driverId: string, firstName: string, language: "en" | "es"): CardSpec => {
+  const spec = cardSpec({
+    carrierName: TENANT.name,
+    settlement: { ...settled.settlement, id: settlementId, status: "approved" },
+    period: settled.period,
+    driver: { id: driverId, first_name: firstName, preferred_language: language },
+    lines: settled.lines,
+    previousNetCents: settled.settlement.net_cents - 4_000,
+    previousLines: [...settled.lines.map((l) => ({ kind: l.kind, amount_cents: l.amount_cents })), { kind: "reimbursement", amount_cents: -4_000 }],
+  });
+  if (!spec) throw new Error("the fixture paystub gives no pay card");
+  return spec;
+};
+
+const cardTry = (n: number, attempt: number, status: CardSummary["status"], category: CardSummary["category"], spec: unknown): CardSummary => ({
+  id: id(n),
+  attempt,
+  status,
+  category,
+  spec,
+});
+
+const cardRow = (n: number, name: string, language: "en" | "es", row: Omit<CardRow, "settlementId" | "driverName" | "driverCode" | "spec">): CardRow => {
+  const settlementId = n === 660 ? settled.settlement.id : id(n);
+  const [first] = name.split(" ");
+  return {
+    settlementId,
+    driverName: name,
+    driverCode: `BR-D${String(n - 640).padStart(2, "0")}`,
+    spec: cardSpecFor(settlementId, n === 660 ? settled.driver.id : id(n + 300), first, language),
+    ...row,
+  };
+};
+
+export const PERIOD_CARDS: PeriodCards = {
+  period: { id: settled.period.id, periodStart: settled.period.period_start, periodEnd: settled.period.period_end },
+  rows: [
+    cardRow(660, `${settled.driver.first_name} ${settled.driver.last_name}`, "en", {
+      latest: cardTry(670, 1, "checked", null, {}),
+      checkedId: id(670),
+      attemptsUsed: 1,
+      pill: "checked",
+      reason: null,
+    }),
+    cardRow(662, "Marcus Hale", "es", { latest: null, checkedId: null, attemptsUsed: 0, pill: "none", reason: null }),
+    cardRow(664, "Dana Whitfield", "en", {
+      latest: cardTry(671, 1, "mismatch", "number_mismatch", {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "mismatch",
+      reason: "number_mismatch",
+    }),
+    cardRow(666, "Luis Romero", "es", {
+      latest: cardTry(672, 2, "mismatch", "text_mismatch", {}),
+      checkedId: null,
+      attemptsUsed: 2,
+      pill: "mismatch",
+      reason: "text_mismatch",
+    }),
+    cardRow(668, "Priya Nair", "en", {
+      latest: cardTry(673, 1, "unavailable", "timeout", {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "unavailable",
+      reason: "timeout",
+    }),
+    cardRow(674, "Owen Brooks", "en", {
+      latest: cardTry(675, 1, "unavailable", "budget", {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "budget",
+      reason: "budget",
+    }),
+    cardRow(676, "Tessa Lund", "en", {
+      latest: cardTry(677, 1, "checked", null, {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "stale",
+      reason: null,
+    }),
+    cardRow(678, "Caleb Ortiz", "en", {
+      latest: cardTry(679, 1, "checking", null, {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "checking",
+      reason: null,
+    }),
+    cardRow(680, "Nora Vance", "en", {
+      latest: cardTry(681, 3, "unavailable", "off_schema", {}),
+      checkedId: null,
+      attemptsUsed: 3,
+      pill: "unavailable",
+      reason: "off_schema",
+    }),
+  ],
+};
+
+// The checked card the driver's view shows above the note.
+export const DRIVER_CARD = { id: id(670), art: PERIOD_CARDS.rows[0].spec.art };
 
 export const DEMO_PREVIEW: DemoResetPreview = {
   carrier: DEMO_CARRIERS[0],
@@ -2533,3 +2650,198 @@ export const SCHEDULE_CASES: [string, ScheduleView][] = [
 // The help page's link to the worked week's driver: her draft paystub, or her driver page.
 export const HERO_LINK_DRAFT = { href: `/records/settlements/${PAYSTUB_REF.id}`, draft: true };
 export const HERO_LINK_DRIVER = { href: `/records/drivers/${DRIVER_ID}`, draft: false };
+// ---- Factoring (Test mode) ----
+
+const FACTORING_REQUEST_ID = id(530);
+const FACTORING_DOC_RC = id(531);
+const FACTORING_DOC_BOL = id(532);
+
+const factoringRequest = (over: Partial<RequestSummary>): RequestSummary => ({
+  id: FACTORING_REQUEST_ID,
+  createdAt: "2026-11-02T15:20:00.000Z",
+  invoiceCount: 3,
+  balanceCents: 645_000,
+  advanceCents: 580_500,
+  feeCents: 19_350,
+  netCents: 561_150,
+  reserveCents: 64_500,
+  // The one funded invoice below; the request's own totals are what was planned.
+  cameInCents: 187_050,
+  status: "partly_funded",
+  fundedAt: "2026-11-02T15:20:04.000Z",
+  proposalId: id(533),
+  advanceBps: 9_000,
+  feeBps: 300,
+  ...over,
+});
+
+export const FACTORING_REQUESTS: RequestSummary[] = [
+  factoringRequest({}),
+  factoringRequest({ id: id(534), createdAt: "2026-10-30T14:00:00.000Z", invoiceCount: 1, status: "unknown", fundedAt: null, cameInCents: 0 }),
+  factoringRequest({ id: id(535), createdAt: "2026-10-23T14:00:00.000Z", invoiceCount: 2, status: "funded", cameInCents: 561_150 }),
+  factoringRequest({ id: id(536), createdAt: "2026-10-16T14:00:00.000Z", invoiceCount: 1, status: "declined", fundedAt: null, cameInCents: 0 }),
+];
+
+export const FACTORING_REQUEST: RequestDetail = {
+  ...factoringRequest({}),
+  lines: [
+    {
+      id: id(537),
+      invoiceId: INVOICE_ID,
+      invoiceNumber: "BR-INV-10231",
+      customerId: CUSTOMER_ID,
+      customerName: "Tanglewood Grocery Supply",
+      attempt: 1,
+      balanceCents: 215_000,
+      advanceCents: 193_500,
+      feeCents: 6_450,
+      netCents: 187_050,
+      reserveCents: 21_500,
+      status: "funded",
+      providerRef: "fsim_adv_3f2a9c1d7e5b4a0c9d8e7f6a",
+      moneyActionId: id(538),
+      settledAt: "2026-11-02T15:20:04.000Z",
+      packet: {
+        invoice: true,
+        rateConfirmation: { onFile: true, documentId: FACTORING_DOC_RC },
+        billOfLading: { onFile: true, documentId: FACTORING_DOC_BOL },
+        pod: { onFile: true, portalRunId: RUN_ID },
+      },
+    },
+    {
+      id: id(539),
+      invoiceId: id(540),
+      invoiceNumber: "BR-INV-10236",
+      customerId: CUSTOMER_ID,
+      customerName: "Tanglewood Grocery Supply",
+      attempt: 1,
+      balanceCents: 214_998,
+      advanceCents: 193_498,
+      feeCents: 6_450,
+      netCents: 187_048,
+      reserveCents: 21_500,
+      status: "unknown",
+      providerRef: null,
+      moneyActionId: id(541),
+      settledAt: null,
+      packet: {
+        invoice: true,
+        rateConfirmation: { onFile: true, documentId: FACTORING_DOC_RC },
+        billOfLading: { onFile: false, documentId: null },
+        pod: { onFile: false, portalRunId: null },
+      },
+    },
+    {
+      id: id(542),
+      invoiceId: id(543),
+      invoiceNumber: "BR-INV-10238",
+      customerId: CUSTOMER_ID,
+      customerName: "Tanglewood Grocery Supply",
+      attempt: 1,
+      balanceCents: 215_002,
+      advanceCents: 193_502,
+      feeCents: 6_450,
+      netCents: 187_052,
+      reserveCents: 21_500,
+      status: "declined",
+      providerRef: null,
+      moneyActionId: id(544),
+      settledAt: "2026-11-02T15:20:03.000Z",
+      packet: {
+        invoice: true,
+        rateConfirmation: { onFile: false, documentId: null },
+        billOfLading: { onFile: false, documentId: null },
+        pod: { onFile: false, portalRunId: null },
+      },
+    },
+  ],
+};
+
+export const FACTORED_LINE = { requestId: FACTORING_REQUEST_ID, status: "funded", at: "2026-11-02T15:20:04.000Z" };
+
+// The Fuel and tax rates page: a pinned diesel price with a newer lookup waiting, one state pinned
+// by hand, one state whose lookup could not match its number, and one not pinned yet. Synthetic
+// pages only (rates.example).
+const RATE_BASE: RateView = {
+  id: "5a1d2c3b-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+  kind: "diesel_index",
+  state: null,
+  status: "pinned",
+  valueMcents: 365_700,
+  perGallon: "$3.657",
+  sourceUrl: "https://rates.example/diesel/weekly",
+  sourceTitle: "Weekly diesel prices, all regions",
+  sourceHost: "rates.example",
+  quote: null,
+  asOf: null,
+  effectiveFrom: "2026-10-19",
+  pinnedAt: "2026-10-20T14:00:00.000Z",
+  pinnedOn: "2026-10-20",
+  byYou: true,
+  typed: false,
+  createdAt: "2026-10-20T13:58:00.000Z",
+};
+export const RATE_PINNED: RateView = RATE_BASE;
+export const RATE_SUGGESTED: RateView = {
+  ...RATE_BASE,
+  id: "6b2e3d4c-5f6a-4b7c-9d8e-0f1a2b3c4d5e",
+  status: "suggested",
+  valueMcents: 371_200,
+  perGallon: "$3.712",
+  quote: "U.S. on-highway diesel averaged 3.712 dollars a gallon for the week of October 26, 2026.",
+  asOf: "2026-10-26",
+  effectiveFrom: null,
+  pinnedAt: null,
+  pinnedOn: null,
+  createdAt: "2026-10-27T15:00:00.000Z",
+};
+export const RATE_UNCONFIRMED: RateView = {
+  ...RATE_BASE,
+  id: "7c3f4e5d-6a7b-4c8d-8e9f-1a2b3c4d5e6f",
+  kind: "ifta_rate",
+  state: "IL",
+  status: "unconfirmed",
+  valueMcents: null,
+  perGallon: null,
+  sourceUrl: "https://rates.example/fuel-tax/illinois",
+  sourceTitle: "Illinois motor fuel tax",
+  quote: null,
+  asOf: null,
+  effectiveFrom: null,
+  pinnedAt: null,
+  pinnedOn: null,
+  byYou: false,
+  createdAt: "2026-10-27T15:05:00.000Z",
+};
+export const RATES_PAGE: RatesPage = {
+  today: "2026-10-27",
+  canPin: true,
+  lookupsLeft: 17,
+  diesel: { pinned: RATE_PINNED, suggestion: RATE_SUGGESTED },
+  states: [
+    { code: "IL", name: "Illinois", pinned: null, suggestion: RATE_UNCONFIRMED },
+    {
+      code: "IN",
+      name: "Indiana",
+      pinned: {
+        ...RATE_BASE,
+        id: "8d4a5f6e-7b8c-4d9e-9f0a-2b3c4d5e6f7a",
+        kind: "ifta_rate",
+        state: "IN",
+        valueMcents: 61_000,
+        perGallon: "$0.6100",
+        sourceUrl: "https://rates.example/fuel-tax/indiana",
+        sourceTitle: "Indiana fuel tax rates",
+        byYou: false,
+        typed: true,
+      },
+      suggestion: null,
+    },
+    { code: "OH", name: "Ohio", pinned: null, suggestion: null },
+  ],
+};
+export const RATES_EMPTY: RatesPage = {
+  ...RATES_PAGE,
+  diesel: { pinned: null, suggestion: null },
+  states: RATES_PAGE.states.map((s) => ({ ...s, pinned: null, suggestion: null })),
+};

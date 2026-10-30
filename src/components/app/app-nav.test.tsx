@@ -28,22 +28,26 @@ const SWITCHES = [
   "rulesByTalkingEnabled",
   "profitBriefEnabled",
   "carrierMemoryEnabled",
+  "groundedRatesEnabled",
   "quarterReviewEnabled",
 ] as const;
 type Switch = (typeof SWITCHES)[number];
 
 const saved = Object.fromEntries(SWITCHES.map((s) => [s, flags[s]])) as Record<Switch, boolean>;
-// A feature whose switch sits inside its own settings block.
+// Features whose switch sits inside its own settings block.
 const savedCardRecon = flags.cardRecon.enabled;
+const savedFactoring = flags.factoring.enabled;
 afterEach(() => {
   for (const s of SWITCHES) flags[s] = saved[s];
   flags.cardRecon.enabled = savedCardRecon;
+  flags.factoring.enabled = savedFactoring;
   cleanup();
 });
 
 function setAll(on: boolean) {
   for (const s of SWITCHES) flags[s] = on;
   flags.cardRecon.enabled = on;
+  flags.factoring.enabled = on;
 }
 
 const shape = (current: NavKey) => appNav(current).map((i) => [i.group, i.href, i.label, i.current ?? false]);
@@ -64,6 +68,7 @@ describe("appNav", () => {
       ["Money in", "/customer-payments/new", "Payments", false],
       ["Money in", "/collections", "Collections", false],
       ["Money in", "/cash", "Cash", false],
+      ["Money in", "/factoring", "Factoring", false],
       ["Drivers", "/documents", "Documents", false],
       ["Drivers", "/voice-notes", "Voice notes", false],
       ["Drivers", "/clips", "Dock clips", false],
@@ -72,6 +77,7 @@ describe("appNav", () => {
       ["Settings", "/models", "Models and spend", false],
       ["Settings", "/portal-runs", "Portal runs", false],
       ["Settings", "/settings/demo", "Demo", false],
+      ["Settings", "/settings/rates", "Fuel and tax rates", false],
       ["Settings", "/memory", "Memory", false],
     ]);
   });
@@ -103,6 +109,7 @@ describe("appNav", () => {
       rulesByTalkingEnabled: "/settings/pay-rules",
       profitBriefEnabled: "/profit",
       carrierMemoryEnabled: "/memory",
+      groundedRatesEnabled: "/settings/rates",
       quarterReviewEnabled: "/quarter",
     };
     for (const s of SWITCHES) {
@@ -117,6 +124,10 @@ describe("appNav", () => {
     expect(appNav("none").map((i) => i.href)).not.toContain("/cards");
     flags.cardRecon.enabled = true;
     expect(appNav("none").map((i) => i.href)).toContain("/cards");
+    flags.factoring.enabled = false;
+    expect(appNav("none").map((i) => i.href)).not.toContain("/factoring");
+    flags.factoring.enabled = true;
+    expect(appNav("none").map((i) => i.href)).toContain("/factoring");
   });
 
   it("marks no item current on a page with no item", () => {
@@ -177,6 +188,7 @@ describe("NavList", () => {
     flags.customerPaymentsEnabled = false;
     flags.collectionsEnabled = false;
     flags.cashFridayEnabled = false;
+    flags.factoring.enabled = false;
     render(<NavList items={appNav("/")} />);
     expect(screen.queryByText("Money in")).toBeNull();
     expect(screen.queryByRole("list", { name: "Money in" })).toBeNull();
@@ -199,7 +211,8 @@ describe("NavList", () => {
 
 // Every page a person can open from the app is either a menu item or linked from one, so a page
 // never goes missing from the menu. Record pages ([id]) are reached from the lists and answers;
-// /sign-in, /design and the stand-in broker portal are not part of the signed-in app.
+// /sign-in, /design and the stand-in broker portal are not part of the signed-in app; /help shows
+// nothing of its own and only sends on to the help page under the menu.
 describe("every signed-in page is reachable", () => {
   const appDir = path.join(process.cwd(), "src", "app");
 
@@ -218,7 +231,7 @@ describe("every signed-in page is reachable", () => {
 
   const routes = pages(appDir)
     .map(routeOf)
-    .filter((r) => r !== "/sign-in" && r !== "/design" && r !== "/portal" && !r.startsWith("/portal/"))
+    .filter((r) => r !== "/sign-in" && r !== "/design" && r !== "/help" && r !== "/portal" && !r.startsWith("/portal/"))
     .filter((r) => !r.includes("["));
 
   const itemPage = (href: string) => {

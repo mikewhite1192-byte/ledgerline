@@ -53,11 +53,21 @@ describe("ProposalCard", () => {
     expect(onReject).not.toHaveBeenCalled();
   });
 
-  it("offers no Resume without canResume, and none on any status but approved", () => {
-    const { unmount } = render(<ProposalCard {...card} status="approved" />);
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
-    unmount();
-    const others: ProposalStatus[] = ["executing", "rejected", "done", "failed", "unknown"];
+  it("offers one Resume on an executing card when the caller says it may resume (a factoring card)", () => {
+    const onApprove = vi.fn();
+    render(<ProposalCard {...card} status="executing" canResume onApprove={onApprove} />);
+    expect(screen.queryAllByRole("button").map((b) => b.textContent)).toEqual(["Resume"]);
+    fireEvent.click(button("Resume")!);
+    expect(onApprove).toHaveBeenCalledWith("p-1");
+  });
+
+  it("offers no Resume without canResume, and none on any status but approved or executing", () => {
+    for (const status of ["approved", "executing"] as const) {
+      const { unmount } = render(<ProposalCard {...card} status={status} />);
+      expect(screen.queryAllByRole("button"), status).toHaveLength(0);
+      unmount();
+    }
+    const others: ProposalStatus[] = ["rejected", "done", "failed", "unknown"];
     for (const status of others) {
       const view = render(<ProposalCard {...card} status={status} canResume />);
       expect(screen.queryAllByRole("button"), status).toHaveLength(0);
@@ -607,5 +617,65 @@ describe("ProposalCard with a kind's own words", () => {
     view.unmount();
     render(<ProposalCard {...rule} audit={{ state: "off" }} />);
     expect(screen.getByText("Second check is off")).toBeTruthy();
+  });
+});
+
+// Both checks as one label (src/lib/agent/verify.ts), above the second check's line, which keeps
+// its own words.
+describe("ProposalCard with the verification label", () => {
+  const verified = { state: "verified" as const, line: "Your pay rules recomputed it and a second check agreed.", held: false };
+  const held = { state: "mismatch" as const, line: "Numbers did not match your pay rules; held for a person.", held: true };
+
+  it("shows the pill and its line above the second check's badge, which is unchanged", () => {
+    render(<ProposalCard {...card} audit={{ state: "pass" }} verification={verified} />);
+    const pill = screen.getByText("Verified");
+    const badge = screen.getByText("Second check passed");
+    expect(pill.compareDocumentPosition(badge) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText(verified.line)).toBeTruthy();
+    expect(button("Approve $200.00")).toBeTruthy();
+  });
+
+  it("holds a mismatch for a reason, through the same box a block uses, and asks its own question", () => {
+    const onApprove = vi.fn();
+    render(<ProposalCard {...card} audit={{ state: "pass" }} verification={held} onApprove={onApprove} />);
+    expect(screen.getByText("Unverified")).toBeTruthy();
+    expect(screen.getByText(held.line)).toBeTruthy();
+    expect(button("Approve $200.00")).toBeNull();
+    const override = button("Approve anyway") as HTMLButtonElement;
+    expect(override.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/Why approve it anyway/), { target: { value: "  The rate sheet was updated today  " } });
+    fireEvent.click(button("Approve anyway")!);
+    expect(screen.getByText("Approve even though the numbers did not match your pay rules?")).toBeTruthy();
+    fireEvent.click(button("Confirm")!);
+    expect(onApprove.mock.calls).toEqual([["p-1", "The rate sheet was updated today"]]);
+  });
+
+  it("asks the second check's question when both hold the card", () => {
+    render(<ProposalCard {...card} audit={{ state: "block" }} verification={held} />);
+    fireEvent.change(screen.getByLabelText(/Why approve it anyway/), { target: { value: "Driver showed the receipt" } });
+    fireEvent.click(button("Approve anyway")!);
+    expect(screen.getByText("Approve even though the second check did not pass?")).toBeTruthy();
+  });
+
+  it("offers only the secondary control on a held card that takes no override", () => {
+    render(<ProposalCard {...card} verification={held} noOverride />);
+    expect(button("Approve anyway")).toBeNull();
+    expect(button("Approve $200.00")).toBeNull();
+    expect(button("Reject")).toBeTruthy();
+  });
+
+  it("does not hold a mismatch the switch leaves open, and shows who overrode one", () => {
+    const open = { state: "mismatch" as const, line: "Numbers did not match your pay rules.", held: false };
+    const { unmount } = render(<ProposalCard {...card} verification={open} />);
+    expect(button("Approve $200.00")).toBeTruthy();
+    unmount();
+    render(
+      <ProposalCard
+        {...card}
+        status="approved"
+        verification={{ ...open, override: { reason: "The rate sheet was updated today", byLabel: "a staff member", at: "Oct 28, 2026, 3:00 PM UTC" } }}
+      />,
+    );
+    expect(screen.getByText("Overridden by a staff member on Oct 28, 2026, 3:00 PM UTC: The rate sheet was updated today")).toBeTruthy();
   });
 });

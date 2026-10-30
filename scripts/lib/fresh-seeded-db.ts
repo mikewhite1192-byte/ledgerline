@@ -11,14 +11,14 @@ import { withDatabase } from "./local-db";
 // an admin login each, then the seed for both carriers at a fixed anchor (never today, so a run
 // does not depend on the wall clock). The caller drops it with dropDatabase, failures included.
 
-// Only names this helper made can be dropped by it.
-const NAME = /^payday_inv_[a-z0-9_]{1,40}$/;
+// Only names this helper made can be dropped by it: the invariants' and the model eval's.
+const NAME = /^payday_(inv|eval)_[a-z0-9_]{1,40}$/;
 
 // The seed's week: the Monday of the demo's open week.
 export const SEED_ANCHOR = "2026-11-02";
 
 function checkedName(name: string): string {
-  if (!NAME.test(name)) throw new Error("a throwaway database name starts with payday_inv_");
+  if (!NAME.test(name)) throw new Error("a throwaway database name starts with payday_inv_ or payday_eval_");
   return name;
 }
 

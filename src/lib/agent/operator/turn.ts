@@ -368,7 +368,11 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     text: lastText ? `${LOOP_TEXT.stopped}\n\n${lastText}` : LOOP_TEXT.stopped,
   });
   const modelFailed = (category: string, reducedCap: boolean): Ending => {
-    if (category === "cap") return { status: "failed", endedReason: "budget", text: LOOP_TEXT.budget };
+    // A demo visit hits its own budget (src/lib/ai/spend.ts), so it gets its own line.
+    if (category === "cap") {
+      const text = session.demoSessionId ? LOOP_TEXT.visitBudget : LOOP_TEXT.budget;
+      return { status: "failed", endedReason: "budget", text };
+    }
     if (category === "job_cap") return { status: "failed", endedReason: "job_cap", text: LOOP_TEXT.jobCap };
     if (category === "too_expensive" && reducedCap) return stopped("cents");
     if (category === "disabled") return { status: "failed", endedReason: "ai_off", text: LOOP_TEXT.failed };

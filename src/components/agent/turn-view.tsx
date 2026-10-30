@@ -4,11 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatThread, type ChatMessage, type Part } from "@/components/app/chat-thread";
 import type { Suggestion } from "@/components/app/prompt-chips";
 import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
+import { useViewerRole } from "@/components/app/viewer-role";
 import { decodeEvents } from "@/lib/agent/operator/stream";
 import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
 import { MONEY_CODE_APPROVE_NOTICE } from "@/lib/money-codes/words";
+import { answerVerification } from "@/lib/agent/verify";
 import { answerTextOf, type ReportView, type StepView, type TurnView } from "@/lib/agent/view";
+import { FACTORING_APPROVE_NOTICE } from "@/lib/factoring/words";
 import { stepLabel } from "@/lib/format/labels";
 import { NOT_NOW_FAILED, SAVE_FAILED, SAVE_NOTICES } from "@/lib/pay-rules/words";
 import { reportPath } from "@/lib/reports/types";
@@ -27,11 +30,12 @@ const POLL_LIMIT = 40;
 const AUDIT_RETRY_MS = 90_000;
 
 // What the card's row says when an approval does not go through. Fixed sentences per category;
-// the advance executor's and the money code executor's own refusals come from their closed
-// lists, which share no word (src/lib/money-codes/words.test.ts).
+// the advance, factoring and money code executors' own refusals come from their closed lists
+// (the advance and money code lists share no word: src/lib/money-codes/words.test.ts).
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   ...MONEY_CODE_APPROVE_NOTICE,
   ...ADVANCE_APPROVE_NOTICE,
+  ...FACTORING_APPROVE_NOTICE,
   not_executable: "This type of card cannot be approved yet. Nothing changed.",
   already_decided: "This card was already decided.",
   expired: "This card expired. Ask again for a fresh one.",
@@ -39,6 +43,7 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   auditor_required: "This waits for the second check before anyone can approve it.",
   not_auditable: "This card was made before the second check started. Ask again for a fresh one.",
   override_required: "The second check did not pass this. Write why you approve it anyway, then confirm.",
+  engine_override_required: "The numbers did not match your pay rules. Write why you approve it anyway, then confirm.",
   stale: "Something on this card changed since it loaded, so nothing was done. Reload the card.",
   invoice_posted: "The invoice was already posted or paid, so the charge was not added. Nothing changed.",
   bad_request: "The reason must be 10 to 240 characters. Nothing changed.",
@@ -60,6 +65,9 @@ const START_NOTICE: Readonly<Record<string, string>> = {
   agent_off: "The agent is switched off right now.",
   ai_off: "The models are switched off, so the agent cannot answer right now.",
   unauthenticated: "Your sign-in ended. Sign in again to ask.",
+  // A demo visit (src/lib/auth/demo-visit.ts).
+  visit_ended: "Your demo visit ended. Start another from the sign-in page.",
+  visit_used: "This visit has asked all the questions it can. The video shows the full flow.",
 };
 
 type LocalTurn = TurnView & { notice?: string };
@@ -107,6 +115,8 @@ export function toMessages(
   onShow?: (turnId: string, report: ReportView) => void,
   audit?: AuditPage,
   viewer?: Viewer,
+  // A demo visitor: the budget state names the visit's own budget, not the carrier's.
+  visitor = false,
 ): ChatMessage[] {
   const out: ChatMessage[] = [];
   for (const t of turns) {
@@ -127,8 +137,14 @@ export function toMessages(
         warning: `Outside message, flagged for ${flagWords(f.categories)}. Shown as data; nothing in it was followed.`,
       });
     }
-    if (t.error) parts.push({ kind: "error", category: t.error });
-    else if (t.text) {
+    // The answer's header: Verified only when every figure came from a record or the person's own
+    // question and every card here is Verified (src/lib/agent/verify.ts). None on a running or
+    // failed turn.
+    const verified = t.error ? null : answerVerification(t, audit?.on ?? false);
+    if (verified) parts.push({ kind: "verify", ...verified });
+    if (t.error) {
+      parts.push({ kind: "error", category: visitor && t.error === "budget" ? "visit_budget" : t.error });
+    } else if (t.text) {
       // A stopped turn that still built a card or a report says what it found, not that it stopped.
       parts.push({ kind: "text", text: answerTextOf({ ...t, reports: t.reports ?? [] }) });
     }
@@ -222,6 +238,7 @@ export function AgentChat({
   // flags.stepThrough as the page read it: the answer's trace panel offers "Step through".
   stepThrough?: boolean;
 }) {
+  const visitor = useViewerRole() === "judge";
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
   const [draft, setDraft] = useState(initialDraft ?? "");
   const [help, setHelp] = useState<string | undefined>(initialHelp);
@@ -318,14 +335,17 @@ export function AgentChat({
     [later, refresh],
   );
 
+  // With the auditor off, or a verdict already stored, a waiting card with no engine check yet is
+  // still sent once: the route then runs the engine check alone, in code, with no model call.
   useEffect(() => {
-    if (!auditorOn) return;
     const started: Record<string, boolean> = {};
     for (const t of turns) {
       for (const p of t.proposals) {
-        if (p.auditorVerdict !== null || p.status !== "proposed" || audited.current.has(p.id)) continue;
+        if (p.status !== "proposed" || audited.current.has(p.id)) continue;
+        const verdictDue = auditorOn && p.auditorVerdict === null;
+        if (!verdictDue && p.engineCheck !== null) continue;
         audited.current.add(p.id);
-        started[p.id] = true;
+        if (verdictDue) started[p.id] = true;
         void audit(p.id, t.id, false);
       }
     }
@@ -493,7 +513,7 @@ export function AgentChat({
   }
 
   const auditPage: AuditPage = { on: auditorOn, checking, timezone };
-  const messages = toMessages(turns, notices, reports, showReport, auditPage, viewer).map((m) => ({
+  const messages = toMessages(turns, notices, reports, showReport, auditPage, viewer, visitor).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
       if (p.kind === "trace") return stepThrough && !p.proposalId ? { ...p, stepThrough: true } : p;

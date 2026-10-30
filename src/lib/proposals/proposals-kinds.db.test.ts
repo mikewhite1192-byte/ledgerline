@@ -81,6 +81,21 @@ describe("proposal kinds and origins on a fresh database", () => {
     ]);
   });
 
+  it("validates the two checks 0062 re-creates NOT VALID, in 0062_policy_onboard_validate", async () => {
+    const rows = await admin.withoutTenant((q) =>
+      q.query<{ conname: string; convalidated: boolean }>(
+        `SELECT conname, convalidated FROM pg_constraint
+          WHERE (conrelid = CAST('public.proposals' AS regclass) AND conname = 'proposals_kind_check')
+             OR (conrelid = CAST('public.documents' AS regclass) AND conname = 'documents_document_kind_check')
+          ORDER BY conname`,
+      ),
+    );
+    expect(rows.map((r) => `${r.conname}:${r.convalidated}`)).toEqual([
+      "documents_document_kind_check:true",
+      "proposals_kind_check:true",
+    ]);
+  });
+
   it("takes one engine proposal of every kind the code knows, and refuses any other kind", async () => {
     for (const kind of PROPOSAL_KINDS) {
       expect(await insert({ kind }), kind).toBe(1);
@@ -89,10 +104,10 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // 0013, 0015, 0022, 0029, 0030, 0032, 0046 and 0048 each re-create the check, so whichever ran
-    // last decides it. 0048 runs last in number order and 0046 or 0048 last in production's merge
-    // order; both list the same full union of fourteen: 0029's twelve in the same order, then
-    // card_match and money_code.
+    // 0013, 0015, 0022, 0029, 0030, 0032, 0046, 0048 and 0062 each re-create the check, so
+    // whichever ran last decides it. 0062 runs last in number order and in production's merge
+    // order; it lists 0048's fourteen (0029's twelve in the same order, then card_match and
+    // money_code) and then pay_policy_setup.
     const union = [
       "advance_payout",
       "pay_correction",
@@ -108,6 +123,7 @@ describe("proposal kinds and origins on a fresh database", () => {
       "pay_rule_change",
       "card_match",
       "money_code",
+      "pay_policy_setup",
     ];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);
@@ -122,7 +138,7 @@ describe("proposal kinds and origins on a fresh database", () => {
     expect(listed).toEqual(union);
   });
 
-  it("lists vendor bills (0029) and card statement rows (0046) as subject tables, after the seventeen of 0009", async () => {
+  it("lists vendor bills (0029), card statement rows (0046) and pinned rates (0053) as subject tables, after the seventeen of 0009", async () => {
     const [def] = await admin.withoutTenant((q) =>
       q.query<{ def: string }>(
         `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
@@ -130,8 +146,8 @@ describe("proposal kinds and origins on a fresh database", () => {
       ),
     );
     const listed = [...def.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
-    expect(listed).toHaveLength(19);
-    expect(listed.slice(17)).toEqual(["vendor_bills", "card_transactions"]);
+    expect(listed).toHaveLength(20);
+    expect(listed.slice(17)).toEqual(["vendor_bills", "card_transactions", "pinned_rates"]);
   });
 
   it("keeps the dedupe key the engine computes inside the table's pattern", () => {

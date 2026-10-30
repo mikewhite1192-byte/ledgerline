@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { flags } from "@/config/flags";
 import { readAgentTurn } from "@/lib/agent/gateway/store";
-import { getSession } from "@/lib/auth/session";
+import { getSession } from "@/lib/agent/gateway/session";
 import { isUuid } from "@/lib/uuid";
 
 // GET: a turn as the chat shows it (steps, answer, cards, flags). The poll fallback while a turn

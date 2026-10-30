@@ -180,6 +180,17 @@ export type {
   QuarterProposal,
 } from "./quarter";
 export {
+  compareFactoringLines,
+  FACTORING_REFUSALS,
+  factoringFor,
+  factoringLineOf,
+  factoringOptionOf,
+  type FactoringDecision,
+  type FactoringInput,
+  type FactoringRates,
+  type FactoringRefusal,
+} from "./factoring";
+export {
   FUEL_CATEGORY_OF,
   FUEL_CHECK_NAMES,
   findFuelDuplicate,
@@ -192,3 +203,5 @@ export {
   suggestedCorrection,
 } from "./fuel";
 export type { FuelCategory, FuelCheckName, FuelFinding, FuelLimits, NoSuggestionReason } from "./fuel";
+export { PINNED_RATE_KINDS, rateOn } from "./rates";
+export type { PinnedRate, PinnedRateKind } from "./rates";

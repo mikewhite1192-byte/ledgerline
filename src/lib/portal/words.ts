@@ -20,6 +20,7 @@ const ENDED: Record<string, string> = {
   screenshot_too_large: "A screenshot was larger than the limit",
   not_resumable: "The run could not pick up where it paused",
   pod_not_kept: "The POD downloaded before the pause could not be kept, so no evidence was stored",
+  pod_unknown_after_stop: "The run stopped after it may have downloaded the POD, so no evidence was stored",
   browser_error: "The browser failed",
   db_error: "The database could not be reached",
   model_error: "The model call failed",

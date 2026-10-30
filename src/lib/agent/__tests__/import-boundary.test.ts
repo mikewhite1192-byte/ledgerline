@@ -19,7 +19,8 @@ import { describe, expect, it } from "vitest";
 //   P2. Nothing reachable from any agent file, the gateway included, is a money write or a
 //       payment or accounting adapter: under money/ only read, types, keys and format, under
 //       money-codes/ only read, words and switches (never the issue, the reveal or the request
-//       form), and under adapters/ only types and tms/*.
+//       form), under adapters/ only types and tms/*, and under factoring/ only read, packet, words
+//       and propose (never the executor that submits to the factoring partner, or its switches).
 //   P3. Nothing reachable from any agent file uploads, stores or reads a document with the model:
 //       under documents/ only types, schema, match and candidates.
 //
@@ -51,6 +52,7 @@ const MODEL_CALLERS: ReadonlySet<string> = new Set([
 const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/i;
 const MONEY_CODES_OK = /^src\/lib\/money-codes\/(read|words|switches)\.[cm]?[jt]sx?$/i;
 const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/i;
+const FACTORING_OK = /^src\/lib\/factoring\/(read|packet|words|propose)\.[cm]?[jt]sx?$/i;
 const DOCUMENTS_OK = /^src\/lib\/documents\/(types|schema|match|candidates)\.[cm]?[jt]sx?$/i;
 // Every name that loads a module with no import line; eslint.config.mjs bans the same set. Regexes,
 // not strings: this file is agent code too, so it names no loader in quotes.
@@ -246,7 +248,8 @@ function ledgerViolations(root: string, agentFiles: string[], graph: Graph): str
     const money = /^src\/lib\/money(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !MONEY_OK.test(rel);
     const codes = /^src\/lib\/money-codes(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !MONEY_CODES_OK.test(rel);
     const adapter = /(^|\/)adapters(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !ADAPTERS_OK.test(rel);
-    if (!money && !codes && !adapter) continue;
+    const factoring = /^src\/lib\/factoring(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !FACTORING_OK.test(rel);
+    if (!money && !codes && !adapter && !factoring) continue;
     out.push(chainTo(root, parent, file));
   }
   return out;
@@ -364,6 +367,19 @@ describe("the walker itself, on fixture trees", () => {
     expect(out.ledger).toEqual([
       "src/lib/agent/operator/plan.ts -> src/lib/seed/helpers.ts -> src/lib/money/execute.ts",
     ]);
+  });
+
+  it("lets the gateway read factoring requests and papers, never reach the factoring executor", () => {
+    const out = run({
+      "src/lib/agent/gateway/ok.ts": 'import { r } from "../../factoring/read";\nimport "../../factoring/propose";',
+      "src/lib/factoring/read.ts": 'import "./packet";',
+      "src/lib/factoring/packet.ts": "",
+      "src/lib/factoring/propose.ts": 'import "./read";',
+      "src/lib/agent/gateway/bad.ts": 'export { executeFactoringRequest } from "@/lib/factoring/execute";',
+      "src/lib/factoring/execute.ts": "export const executeFactoringRequest = 1;",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.ledger).toEqual(["src/lib/agent/gateway/bad.ts -> src/lib/factoring/execute.ts"]);
   });
 
   it("lets the gateway read money codes, never issue, reveal or request one", () => {

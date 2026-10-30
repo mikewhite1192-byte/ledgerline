@@ -159,3 +159,40 @@ export async function writeAuditVerdict(
   );
   return n === 1;
 }
+
+// Whether the code-side engine check is still to run: only on a proposal still waiting with none
+// stored. Null when the proposal is not readable on this carrier.
+export async function readEngineCheckDue(q: Queryable, proposalId: string): Promise<boolean | null> {
+  const rows = await q.query<{ due: boolean }>(
+    `SELECT (status = 'proposed' AND engine_check IS NULL) AS due
+       FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+    [proposalId],
+  );
+  return rows[0] ? rows[0].due === true : null;
+}
+
+export type EngineCheckWrite = { check: "matched" | "mismatch" | "unavailable"; engineCents: number | null };
+
+// Writes the engine check once, only on a proposal still waiting with none stored (the database
+// refuses any change after, and any write outside proposed). A mismatch is also an exception on
+// the proposal in the same statement, so no clean list (Approve all clean) ever holds it. False
+// when one was already there or the proposal was decided meanwhile.
+export async function writeEngineCheck(
+  q: Queryable,
+  proposalId: string,
+  w: EngineCheckWrite,
+  now: Date,
+): Promise<boolean> {
+  const n = await q.execute(
+    `UPDATE proposals
+        SET engine_check = CAST($2 AS text), engine_cents = CAST($3 AS bigint),
+            engine_checked_at = CAST($4 AS timestamptz),
+            exceptions = CASE WHEN CAST($2 AS text) = 'mismatch' AND NOT (exceptions ? 'engine_mismatch')
+                              THEN exceptions || CAST('["engine_mismatch"]' AS jsonb) ELSE exceptions END,
+            updated_at = CAST($4 AS timestamptz)
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'proposed'
+        AND engine_check IS NULL`,
+    [proposalId, w.check, w.engineCents, now.toISOString()],
+  );
+  return n === 1;
+}

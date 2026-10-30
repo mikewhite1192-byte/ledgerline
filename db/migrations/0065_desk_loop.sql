@@ -1,4 +1,4 @@
--- DESK LOOP (0063): one always-on loop per carrier. Each wake finds new work in our own tables,
+-- DESK LOOP (0065): one always-on loop per carrier. Each wake finds new work in our own tables,
 -- hands each piece to the agent that already does it, and writes every step to an insert-only
 -- log. The log is the loop's whole state: a later wake resumes from it.
 --

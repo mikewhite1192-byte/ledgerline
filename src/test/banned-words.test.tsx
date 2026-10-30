@@ -10,8 +10,9 @@ import { reportTable, type ReportLoad } from "@/components/agent/report-table";
 import { toMessages } from "@/components/agent/turn-view";
 import { ChatThread } from "@/components/app/chat-thread";
 import { DataTable } from "@/components/app/data-table";
+import { DemoBanner } from "@/components/app/demo-banner";
 import { Paystub } from "@/components/app/paystub";
-import { ProposalCard, type ProposalAudit, type ProposalStatus } from "@/components/app/proposal-card";
+import { ProposalCard, type ProposalAudit, type ProposalStatus, type ProposalVerification } from "@/components/app/proposal-card";
 import { EmptyState, ERROR_CATEGORIES, ErrorState, FeatureOff, LoadingState, PageNotFound } from "@/components/app/states";
 import { BADGE_STATUSES, StatusBadge } from "@/components/app/status-badge";
 import { ViewerRoleProvider } from "@/components/app/viewer-role";
@@ -27,11 +28,13 @@ import { WriteBrief } from "@/components/profit/write-brief";
 import { WriteReview } from "@/components/quarter/write-review";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { NotesBoard } from "@/app/memory/notes-board";
+import { CardsBoard, type BoardRow } from "@/components/pay-cards/cards-board";
 import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
 import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { reasonSentence } from "@/lib/agent/reasons";
+import { ANSWER_PILL, ANSWER_REASONS, VERIFY_LINES } from "@/lib/agent/verify";
 import { refusalWords as briefRefusalWords, writeOutcome } from "@/lib/briefs/words";
 import { reviewOutcome, reviewRefusalWords } from "@/lib/briefs/quarter-words";
 import {
@@ -61,6 +64,7 @@ import {
 import type { BreakView } from "@/lib/data/card-recon";
 import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
+import * as factoringWords from "@/lib/factoring/words";
 import { TERMS } from "@/lib/format/terms";
 import {
   compareLine,
@@ -75,6 +79,8 @@ import {
 import { SUBJECT_STATUSES } from "@/lib/money/types";
 import { RULE_KEYS, RULES, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import * as payWords from "@/lib/pay-rules/words";
+import { lookupNotice, lookupsLeftLine, pinnedFromLine, pinNext, pinNotice, pinQuestion, RATES_WORDS } from "@/lib/rates/words";
+import { CARD_ERROR_FALLBACK, CARD_ERROR_WORDS, CARD_PILL_WORDS, CARD_REASON_WORDS, CARD_WORDS } from "@/lib/pay-cards/words";
 import { INVOICE_REVIEW_STATUSES } from "@/lib/rules-engine";
 import { FUEL_CHECK_NAMES, NO_SUGGESTION_REASONS } from "@/lib/rules-engine/fuel";
 import type { HandPick } from "@/lib/recon/view";
@@ -248,6 +254,7 @@ vi.mock("next/navigation", async (importOriginal) => {
   };
 });
 vi.mock("@/app/sign-in/actions", () => ({ signInAction: async () => {} }));
+vi.mock("@/app/sign-in/try-demo-action", () => ({ tryDemoAction: async () => {} }));
 vi.mock("@/app/ai-proof-action", () => ({ proofCallAction: async () => ({ kind: "idle" }) }));
 vi.mock("@/app/settings/demo/reset-action", () => ({ resetDemoAction: async () => {} }));
 vi.mock("@/app/models/clear-alert-action", () => ({ clearAlertAction: async () => {} }));
@@ -291,6 +298,18 @@ vi.mock("@/lib/driver-notes/view", async (importOriginal) => ({
   readPeriodNotes: async () => get("periodNotes"),
   readDriverView: async () => get("driverView"),
 }));
+// The card picture is drawn by the browser; here it is a fixed stand-in so the board's answers
+// can be driven through fetch.
+vi.mock("@/components/pay-cards/card-canvas", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/pay-cards/card-canvas")>()),
+  cardPng: async () => new Blob(["card"], { type: "image/png" }),
+  blobBase64: async () => "Y2FyZA==",
+}));
+vi.mock("@/lib/pay-cards/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/pay-cards/read")>()),
+  readPeriodCards: async () => get("periodCards"),
+  readDriverCard: async () => get("driverCard"),
+}));
 vi.mock("@/lib/recon/view", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/recon/view")>();
   return {
@@ -308,6 +327,11 @@ vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
   readRecentAgentTurns: async () => get("turns"),
   readWaitingRuleChangeViews: async () => get("ruleChanges"),
 }));
+// A recorded eval run, so the models page's eval card has rows to show when its switch is on.
+vi.mock("@/lib/eval/latest", async (importOriginal) => {
+  const { sampleEvalResults } = await import("@/lib/eval/test-fixtures");
+  return { ...(await importOriginal<typeof import("@/lib/eval/latest")>()), latestResults: () => sampleEvalResults() };
+});
 vi.mock("@/lib/ai/spend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/ai/spend")>()),
   readSpend: async () => get("spend"),
@@ -336,6 +360,10 @@ vi.mock("@/lib/pay-rules/read", async (importOriginal) => ({
     return page;
   },
   readNextWeekStart: async () => get("nextStart"),
+}));
+vi.mock("@/lib/rates/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/rates/read")>()),
+  readRatesPage: async () => get("ratesPage"),
 }));
 vi.mock("@/lib/portal/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/portal/views")>()),
@@ -411,6 +439,12 @@ const noteActions = vi.hoisted(() => ({
   removeNoteAction: vi.fn(),
 }));
 vi.mock("@/app/memory/actions", () => noteActions);
+vi.mock("@/lib/factoring/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/factoring/read")>()),
+  listRequests: async () => get("factoringRequests"),
+  readRequest: async () => get("factoringRequest"),
+  readFactoredLine: async () => get("factoredLine"),
+}));
 vi.mock("@/lib/briefs/quarter-review", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/briefs/quarter-review")>()),
   readQuarterView: async () => get("quarterView"),
@@ -450,6 +484,8 @@ function defaults(): Record<string, unknown> {
     periods: fx.PERIODS,
     periodNotes: fx.PERIOD_NOTES,
     driverView: fx.DRIVER_VIEW,
+    periodCards: fx.PERIOD_CARDS,
+    driverCard: null,
     invoiceProposals: fx.INVOICE_PROPOSALS,
     week: fx.WEEK,
     turns: fx.TURNS,
@@ -460,6 +496,7 @@ function defaults(): Record<string, unknown> {
     sweepHome: fx.SWEEP_HOME,
     sweepPage: fx.SWEEP_PAGE,
     fuelPage: fx.FUEL_PAGE,
+    ratesPage: fx.RATES_PAGE,
     runView: fx.RUN_VIEW,
     runs: fx.RUNS,
     runChoices: fx.RUN_CHOICES,
@@ -496,6 +533,9 @@ function defaults(): Record<string, unknown> {
     cashHome: null,
     memoryNotes: fx.MEMORY_NOTES,
     noteSubjects: fx.NOTE_SUBJECTS,
+    factoringRequests: fx.FACTORING_REQUESTS,
+    factoringRequest: fx.FACTORING_REQUEST,
+    factoredLine: null,
     quarterView: fx.QUARTER_VIEW,
   };
 }
@@ -504,14 +544,18 @@ function defaults(): Record<string, unknown> {
 // with settings, so only its own enabled is turned on.
 const SWITCHES = Object.keys(flags).filter((k) => typeof (flags as Record<string, unknown>)[k] === "boolean");
 const saved = Object.fromEntries(SWITCHES.map((k) => [k, (flags as Record<string, unknown>)[k]]));
+// Factoring's switch is a field of its own settings object, so it is turned on beside the others.
+const savedFactoring = flags.factoring.enabled;
 const savedCodes = { ...flags.moneyCodes };
 beforeAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = true;
+  flags.factoring.enabled = true;
   flags.moneyCodes = { ...savedCodes, enabled: true };
   vi.stubGlobal("fetch", () => new Promise(() => {}));
 });
 afterAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = saved[k];
+  flags.factoring.enabled = savedFactoring;
   flags.moneyCodes = { ...savedCodes };
   vi.unstubAllGlobals();
 });
@@ -1030,6 +1074,49 @@ const PAGES: PageCase[] = [
             params: p({ settlementId: fx.DRIVER_VIEW.source.settlement.id }),
           }),
       },
+      {
+        name: "driver view with a checked pay card",
+        setup: () => (state.fx.driverCard = fx.DRIVER_CARD),
+        load: async () =>
+          (await import("@/app/driver-notes/[settlementId]/view/page")).default({
+            params: p({ settlementId: fx.DRIVER_VIEW.source.settlement.id }),
+          }),
+        shows: ["Pay card", "Save image"],
+      },
+    ],
+  },
+  {
+    file: "factoring/page.tsx",
+    variants: [
+      { name: "requests", load: async () => (await import("@/app/factoring/page")).default(), shows: "Partly funded" },
+      {
+        name: "none yet",
+        setup: () => (state.fx.factoringRequests = []),
+        load: async () => (await import("@/app/factoring/page")).default(),
+        shows: "No invoices factored yet",
+      },
+    ],
+  },
+  {
+    file: "factoring/[id]/page.tsx",
+    variants: [
+      {
+        name: "partly funded, one invoice not confirmed yet",
+        load: async () => (await import("@/app/factoring/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Check pending",
+      },
+      {
+        name: "funded",
+        setup: () =>
+          (state.fx.factoringRequest = {
+            ...fx.FACTORING_REQUEST,
+            status: "funded",
+            cameInCents: fx.FACTORING_REQUEST.lines.reduce((t, l) => t + l.netCents, 0),
+            lines: fx.FACTORING_REQUEST.lines.map((l) => ({ ...l, status: "funded" })),
+          }),
+        load: async () => (await import("@/app/factoring/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Funded",
+      },
     ],
   },
   {
@@ -1038,6 +1125,42 @@ const PAGES: PageCase[] = [
       {
         name: "notes",
         load: async () => (await import("@/app/pay/[periodId]/notes/page")).default({ params: p({ periodId: fx.PERIODS[0].id }) }),
+        shows: "Pay cards",
+      },
+    ],
+  },
+  {
+    file: "pay/[periodId]/cards/page.tsx",
+    variants: [
+      {
+        name: "a card in every state",
+        load: async () => (await import("@/app/pay/[periodId]/cards/page")).default({ params: p({ periodId: fx.PERIODS[0].id }) }),
+        shows: [
+          "Pay cards for the week of",
+          "Make 6 pay cards",
+          "Checked",
+          "Save image",
+          "Not made yet",
+          "Did not match, not saved",
+          "Could not check",
+          "Waiting for budget",
+          "Out of date, make it again",
+          "Checking now",
+          "All three tries are used for this paystub.",
+        ],
+      },
+      {
+        name: "no approved paystub yet",
+        setup: () => (state.fx.periodCards = { ...fx.PERIOD_CARDS, rows: [] }),
+        load: async () => (await import("@/app/pay/[periodId]/cards/page")).default({ params: p({ periodId: fx.PERIODS[0].id }) }),
+        shows: ["Pay cards appear here once the week is approved", "Approve the pay run first."],
+      },
+      {
+        name: "every card checked",
+        setup: () =>
+          (state.fx.periodCards = { ...fx.PERIOD_CARDS, rows: fx.PERIOD_CARDS.rows.filter((r) => r.pill === "checked") }),
+        load: async () => (await import("@/app/pay/[periodId]/cards/page")).default({ params: p({ periodId: fx.PERIODS[0].id }) }),
+        shows: ["1 of 1 card checked", "Every card that can be made is made."],
       },
     ],
   },
@@ -1084,7 +1207,21 @@ const PAGES: PageCase[] = [
   },
   {
     file: "models/page.tsx",
-    variants: [{ name: "models", load: async () => (await import("@/app/models/page")).default() }],
+    variants: [
+      { name: "models", load: async () => (await import("@/app/models/page")).default() },
+      {
+        name: "models with the eval card",
+        load: async () => {
+          flags.evalCardEnabled = true;
+          try {
+            return await (await import("@/app/models/page")).default();
+          } finally {
+            flags.evalCardEnabled = false;
+          }
+        },
+        shows: ["How the models score", "Right amount", "When the operator and the second check agreed"],
+      },
+    ],
   },
   {
     file: "money-codes/page.tsx",
@@ -1139,7 +1276,20 @@ const PAGES: PageCase[] = [
   },
   {
     file: "portal-runs/[id]/page.tsx",
-    variants: [{ name: "run", load: async () => (await import("@/app/portal-runs/[id]/page")).default({ params: p({ id: ID }) }) }],
+    variants: [
+      { name: "run", load: async () => (await import("@/app/portal-runs/[id]/page")).default({ params: p({ id: ID }) }) },
+      {
+        name: "put back in the queue after a stop",
+        setup: () =>
+          (state.fx.runView = {
+            ...fx.RUN_VIEW,
+            run: { ...fx.RUN_VIEW.run, status: "running", endedReason: null, finishedAt: null, resumeAttempts: 2, resumed: "Resumed after a stop (attempt 2 of 2)" },
+            evidence: null,
+          }),
+        load: async () => (await import("@/app/portal-runs/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: ["Resumed", "Resumed after a stop (attempt 2 of 2)."],
+      },
+    ],
   },
   {
     file: "portal/page.tsx",
@@ -1315,6 +1465,18 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.invoiceReview = view),
         load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
       })),
+      {
+        name: "factored",
+        setup: () => (state.fx.factoredLine = fx.FACTORED_LINE),
+        load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Factored (Test mode)",
+      },
+      {
+        name: "sent to factoring, not confirmed yet",
+        setup: () => (state.fx.factoredLine = { ...fx.FACTORED_LINE, status: "unknown" }),
+        load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Sent, not confirmed yet (Test mode)",
+      },
     ],
   },
   {
@@ -1477,6 +1639,35 @@ const PAGES: PageCase[] = [
       { name: "form", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({}) }) },
       { name: "invalid", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "invalid" }) }) },
       { name: "unavailable", load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ error: "unavailable" }) }) },
+      {
+        name: "demo carrier card",
+        load: async () => {
+          flags.judgeAccess.enabled = true;
+          try {
+            return await (await import("@/app/sign-in/page")).default({ searchParams: p({}) });
+          } finally {
+            flags.judgeAccess.enabled = false;
+          }
+        },
+        shows: ["Try the demo carrier", "Nothing is paid or sent.", "The data is made up, so please do not upload real documents."],
+      },
+      {
+        name: "demo sign-in unavailable",
+        load: async () => (await import("@/app/sign-in/page")).default({ searchParams: p({ demo: "unavailable" }) }),
+        shows: "The demo sign-in is not available right now. The video shows the full flow.",
+      },
+      {
+        name: "demo visit ended",
+        load: async () => {
+          flags.judgeAccess.enabled = true;
+          try {
+            return await (await import("@/app/sign-in/page")).default({ searchParams: p({ demo: "expired" }) });
+          } finally {
+            flags.judgeAccess.enabled = false;
+          }
+        },
+        shows: ["Your demo visit ended. Start another any time.", "Try the demo carrier"],
+      },
     ],
   },
   {
@@ -1554,6 +1745,13 @@ const PAGES: PageCase[] = [
         load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
       },
       {
+        name: "stopped at its turn ceiling, the rest left for the next sweep",
+        setup: () =>
+          (state.fx.sweepPage = { ...fx.SWEEP_PAGE, run: fx.SWEEP_RUN_MAX_TURNS, counts: { ...fx.SWEEP_PAGE.counts, left: 5 } }),
+        load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Stopped after 30 turns: 2 fixes drafted, 1 needs a person, 5 left for the next sweep. Nothing was paid.",
+      },
+      {
         name: "second check stopped",
         setup: () => (state.fx.sweepPage = { ...fx.SWEEP_PAGE, fanout: { ...fx.SWEEP_FANOUT, status: "plan_skipped", finished: false } }),
         load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
@@ -1587,6 +1785,28 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.fuelPage = { ...fx.FUEL_PAGE, lastRun: { ...fx.FUEL_RUN, status: "failed" } }),
         load: async () => (await import("@/app/sweep/fuel/page")).default(),
         shows: FUEL_PAGE_WORDS.failed,
+      },
+    ],
+  },
+  {
+    file: "settings/rates/page.tsx",
+    variants: [
+      {
+        name: "pinned, with a newer lookup and a state not matched",
+        load: async () => (await import("@/app/settings/rates/page")).default(),
+        shows: RATES_WORDS.notMatched,
+      },
+      {
+        name: "nothing pinned yet",
+        setup: () => (state.fx.ratesPage = fx.RATES_EMPTY),
+        load: async () => (await import("@/app/settings/rates/page")).default(),
+        shows: RATES_WORDS.emptyTitle,
+      },
+      {
+        name: "a staff member, who cannot pin",
+        setup: () => (state.fx.ratesPage = { ...fx.RATES_PAGE, canPin: false, lookupsLeft: 0 }),
+        load: async () => (await import("@/app/settings/rates/page")).default(),
+        shows: RATES_WORDS.onlyAdmin,
       },
     ],
   },
@@ -1638,12 +1858,14 @@ const PAGES: PageCase[] = [
   loading("memory/loading.tsx", () => import("@/app/memory/loading")),
   loading("models/loading.tsx", () => import("@/app/models/loading")),
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
+  loading("pay/[periodId]/cards/loading.tsx", () => import("@/app/pay/[periodId]/cards/loading")),
   loading("profit/loading.tsx", () => import("@/app/profit/loading")),
   loading("quarter/loading.tsx", () => import("@/app/quarter/loading")),
   loading("records/loading.tsx", () => import("@/app/records/loading")),
   loading("settings/pay-rules/loading.tsx", () => import("@/app/settings/pay-rules/loading")),
   loading("sweep/loading.tsx", () => import("@/app/sweep/loading")),
   loading("sweep/fuel/loading.tsx", () => import("@/app/sweep/fuel/loading")),
+  loading("settings/rates/loading.tsx", () => import("@/app/settings/rates/loading")),
 ];
 
 // Route files this test does not render as a page, each with the reason. Keep it short: a new page
@@ -1653,6 +1875,8 @@ const LISTED: Readonly<Record<string, string>> = {
     "The document around every page: it puts each one in the html shell and the toast holder and shows no words on the page. Its tab title and description are scanned below.",
   "records/settlement_periods/[id]/page.tsx":
     "Shows nothing of its own: it only sends a pay week's link on to that week on the Settlements page, which is rendered above.",
+  "help/page.tsx":
+    "Shows nothing of its own: it only sends the bare help address on to How trucking pay works, which is rendered above.",
   "design/page.tsx":
     "The builders' design reference: it shows status codes, token names and sample states on purpose, and no carrier or driver reaches it from the app's menu.",
 };
@@ -1849,6 +2073,46 @@ describe("no internal word on a card", () => {
   }
 });
 
+// The Verified / Unverified label in each state it can show, on a waiting and a decided card.
+const VERIFICATIONS: ProposalVerification[] = [
+  { state: "verified", line: VERIFY_LINES.verified, held: false },
+  ...Object.values(VERIFY_LINES).map((line) => ({ state: "unverified" as const, line, held: false })),
+  { state: "mismatch", line: VERIFY_LINES.held, held: true },
+  { state: "mismatch", line: VERIFY_LINES.mismatch, held: false },
+  {
+    state: "mismatch",
+    line: VERIFY_LINES.mismatch,
+    held: false,
+    override: { reason: "The rate sheet changed this week", byLabel: "Admin", at: "Oct 28, 10:00 AM" },
+  },
+];
+
+describe("no internal word on a card's Verified label", () => {
+  for (const status of ["proposed", "approved"] as const) {
+    it(`advance card, ${status}, every label state, with and without a block`, () => {
+      for (const verification of VERIFICATIONS) {
+        for (const audit of [AUDITS[2], AUDITS[4]]) {
+          for (const confirming of [false, true]) {
+            const { container, unmount } = render(
+              <ProposalCard
+                {...ADVANCE_PROPOSAL}
+                status={status}
+                audit={audit}
+                verification={verification}
+                onApprove={() => {}}
+                onReject={() => {}}
+                initialConfirming={confirming}
+              />,
+            );
+            expect(scan(container), `${verification.line}${confirming ? ", confirm open" : ""}`).toEqual([]);
+            unmount();
+          }
+        }
+      }
+    });
+  }
+});
+
 // Every kind's card as the chat builds it, plus a kind the table has no row for, in every status;
 // a waiting card is also read with its approve question open and with its reject question open.
 const KIND_VIEWS: [string, ProposalView][] = (() => {
@@ -1892,6 +2156,22 @@ const KIND_VIEWS: [string, ProposalView][] = (() => {
     ["invoice fix", { ...base, ...loads, kind: "invoice_fix", direction: "none", title: "Fix invoice" }],
     ["a kind with no row yet", { ...base, kind: "money_code" as ProposalView["kind"], title: "Issue money code" }],
     ["no subject code", { ...base, subjectLabel: null }],
+    ["advance, pay rules matched", { ...base, engineCheck: "matched", engineHeld: false, engineOverride: null }],
+    ["advance, pay rules not checked", { ...base, auditorVerdict: null, engineCheck: null, engineHeld: false, engineOverride: null }],
+    ["advance, not recomputed", { ...base, engineCheck: "unavailable", engineHeld: false, engineOverride: null }],
+    ["advance, held mismatch", { ...base, engineCheck: "mismatch", engineHeld: true, engineOverride: null }],
+    [
+      "paystub, approved over a mismatch",
+      {
+        ...base,
+        subjectTable: "settlements",
+        kind: "settlement_approve",
+        title: "Approve paystub",
+        engineCheck: "mismatch",
+        engineHeld: false,
+        engineOverride: { reason: "The rate sheet changed this week", byLabel: "an admin", at: "2026-10-28T15:00:00.000Z" },
+      },
+    ],
   ];
 })();
 
@@ -2118,6 +2398,24 @@ describe("no internal word in a chat answer or its trace", () => {
     // The repeated step shows once in the first answer's list.
     const first = screen.getAllByRole("list", { name: "What the agent did" })[0];
     expect(first.textContent?.match(/Thinking it through/g)).toHaveLength(1);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the answer's Verified header in each state, with its reasons", () => {
+    const card = { ...fx.PROPOSALS[0], engineCheck: "matched" as const, engineHeld: false, auditorVerdict: "pass" };
+    const pending = { ...card, auditorVerdict: null };
+    const base: TurnView = { ...fx.TURNS[0], status: "done", error: null, proposals: [card] };
+    const turns: TurnView[] = [
+      { ...base, id: "turn-verified", withheldFigures: 0 },
+      { ...base, id: "turn-plain", withheldFigures: 0, proposals: [] },
+      { ...base, id: "turn-withheld", withheldFigures: 2 },
+      { ...base, id: "turn-unknown", withheldFigures: null },
+      { ...base, id: "turn-cards", withheldFigures: 0, proposals: [card, pending] },
+    ];
+    const messages = toMessages(turns, {}, {}, undefined, { on: true, checking: {}, timezone: fx.TENANT.timezone });
+    const { container } = render(<ChatThread messages={messages} composer={{}} />);
+    const text = container.textContent ?? "";
+    for (const shown of [ANSWER_PILL.verified, ANSWER_PILL.unverified, ...Object.values(ANSWER_REASONS)]) expect(text).toContain(shown);
     expect(scan(container)).toEqual([]);
   });
 
@@ -2489,7 +2787,7 @@ describe("no internal word on the quarter review, in every state", () => {
 });
 
 describe("no internal word in a shared state", () => {
-  it("every error, the empty, loading, off and not found states", () => {
+  it("every error, the empty, loading, off and not found states, and the demo visit line", () => {
     const { container } = render(
       <>
         {ERROR_CATEGORIES.map((c) => (
@@ -2500,6 +2798,7 @@ describe("no internal word in a shared state", () => {
         <FeatureOff name="Advances" plural />
         <FeatureOff name="Pay sweep" />
         <PageNotFound />
+        <DemoBanner carrier="Blue Ridge Freight" visitCapCents={flags.judgeAccess.sessionCapCents} />
       </>,
     );
     expect(scan(container)).toEqual([]);
@@ -2582,6 +2881,35 @@ describe("no internal word in the Cash page's notes and words", () => {
       <ul>
         {words.map((w, n) => (
           <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("no internal word in factoring's words", () => {
+  it("every refusal, check result, status, planned and came-in line", () => {
+    const w = factoringWords;
+    const statuses = ["submitted", "unknown", "funded", "partly_funded", "declined", "failed"];
+    const none = { confirmed: 0, failed: 0, tooNew: 0, stillWaiting: 0, stillUnknown: 0, errors: 0 };
+    const words = [
+      ...Object.values(w.FACTORING_APPROVE_NOTICE),
+      ...Object.values(w.FACTORING_REFUSAL_SENTENCES),
+      ...Object.values(w.CHECK_NOTICE),
+      ...Object.values(w.CHECK_RESULT),
+      ...Object.values(w.REQUEST_STATUS_WORDS),
+      w.checkResultSentence({ ...none, errors: 1 }),
+      w.PLANNED_LABEL,
+      w.plannedLine("$5,611.50", "$645.00", "$193.50"),
+      ...statuses.flatMap((s) => [w.cameInLabel(s), w.cameInLine(s, "$1,870.50")]),
+      w.TEST_MODE_HELP,
+    ];
+    expect(words.every((x) => x.length > 0)).toBe(true);
+    const { container } = render(
+      <ul>
+        {words.map((x, n) => (
+          <li key={n}>{x}</li>
         ))}
       </ul>,
     );
@@ -2889,12 +3217,173 @@ describe("the advances pages read by driver and date", () => {
   });
 });
 
+// The Fuel and tax rates page's words that show only after a click (a lookup's or a pin's note, the
+// typed form, the confirm), each read once, every category included.
+describe("no internal word on the rates page's notes and forms", () => {
+  it("every fixed line, note and confirm", () => {
+    const categories = [
+      "suggested",
+      "unconfirmed",
+      "no_source",
+      "limit",
+      "budget",
+      "forbidden",
+      "disabled",
+      "unknown",
+      "failed",
+      "pinned",
+      "already",
+      "changed",
+      "not_found",
+      "bad_request",
+      "unavailable",
+    ];
+    const words = [
+      ...Object.values(RATES_WORDS),
+      ...categories.flatMap((c) => [lookupNotice(c).text, pinNotice(c).text]),
+      pinQuestion("$3.657"),
+      pinNext("Oct 26, 2026"),
+      pinnedFromLine("Oct 19, 2026"),
+      ...[0, 1, 20].map(lookupsLeftLine),
+    ];
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
 describe("the money code record page", () => {
   it("describes the receipt by what it is, never as a photo or an image", async () => {
     await renderPage(async () => (await import("@/app/money-codes/[id]/page")).default({ params: p({ id: ID }) }));
     const alt = screen.getByRole("img", { name: /receipt/ }).getAttribute("alt");
     expect(alt).toBe(`The receipt, ${fx.MONEY_CODE_DETAIL.receipt?.filename}`);
     expect(alt).not.toMatch(/photo|image|picture/i);
+  });
+});
+
+describe("no internal word on the pay cards board, in every state", () => {
+  const rows = (): BoardRow[] =>
+    fx.PERIOD_CARDS.rows.map((r) => ({
+      settlementId: r.settlementId,
+      driverName: r.driverName,
+      spec: r.spec,
+      pill: r.pill,
+      reason: r.reason,
+      checkedId: r.checkedId,
+      attemptsUsed: r.attemptsUsed,
+    }));
+  const board = (offReason?: string) =>
+    render(
+      <ToastProvider>
+        <CardsBoard rows={rows()} offReason={offReason} maxPngBytes={400_000} />
+      </ToastProvider>,
+    );
+  const make = async () => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Make 6 pay cards/ }));
+    });
+  };
+  const answer = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+
+  afterEach(() => {
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+  });
+
+  it("while a card is being checked", async () => {
+    board();
+    await make();
+    expect(screen.getAllByText("Checking card 1 of 6").length).toBeGreaterThan(0);
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("every answer a check can give, one card each, and a refusal that skips one card", async () => {
+    const answers = [
+      answer(200, { status: "checked", cardId: "0b9f6a52-3c1d-4e8f-9a7b-000000000690" }),
+      answer(200, { status: "mismatch", category: "number_mismatch" }),
+      answer(200, { status: "mismatch", category: "text_mismatch" }),
+      answer(200, { status: "unavailable", category: "off_schema" }),
+      answer(409, { error: "busy" }),
+      answer(200, { status: "unavailable", category: "timeout" }),
+    ];
+    vi.stubGlobal("fetch", async () => answers.shift() ?? answer(500, {}));
+    board();
+    await make();
+    expect(screen.getByText("Wait a moment.", { exact: false })).toBeTruthy();
+    expect(screen.getAllByText("Save image").length).toBe(2);
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("each refusal that stops the run, and a check lost on the way", async () => {
+    for (const code of ["cards_off", "ai_off", "budget", "batch_cap", "day_cap", "forbidden", "unauthenticated"]) {
+      vi.stubGlobal("fetch", async () => answer(403, { error: code }));
+      board();
+      await make();
+      expect(screen.getByText("Pay cards stopped")).toBeTruthy();
+      expect(scan(document.body), code).toEqual([]);
+      cleanup();
+    }
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("lost on the way");
+    });
+    board();
+    await make();
+    expect(screen.getByText(CARD_ERROR_FALLBACK)).toBeTruthy();
+    expect(scan(document.body), "lost").toEqual([]);
+  });
+
+  it("with the models switched off", () => {
+    board("The models are switched off, so no card can be checked right now.");
+    expect(screen.getByRole("button", { name: /Make 6 pay cards/ })).toHaveProperty("disabled", true);
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("every pill, reason, refusal and card line, in both languages", () => {
+    const { periodStart, periodEnd } = fx.PERIOD_CARDS.period;
+    const words = [
+      ...fx.PERIOD_CARDS.rows.flatMap((r) => Object.values(r.spec.text).filter((t): t is string => t !== null)),
+      ...Object.values(CARD_PILL_WORDS),
+      ...Object.values(CARD_REASON_WORDS),
+      ...Object.values(CARD_ERROR_WORDS),
+      CARD_ERROR_FALLBACK,
+      ...(["en", "es"] as const).flatMap((lang) => {
+        const w = CARD_WORDS[lang];
+        return [
+          w.title,
+          w.week(periodStart, periodEnd),
+          w.netLabel,
+          w.earned(141_200),
+          w.takenOut(31_000),
+          w.loads(1),
+          w.loads(4),
+          w.miles(1),
+          w.miles(2_310),
+          w.up(1_250),
+          w.down(1_250),
+          w.same,
+          w.firstWeek,
+          w.topChange(w.kind("fuel"), -4_500),
+          w.carried(2_000),
+          w.approved,
+          w.paid,
+          w.testMode,
+          ...["load_pay", "fuel", "lease", "escrow", "carried_shortfall"].map(w.kind),
+        ];
+      }),
+    ];
+    expect(words.every((w) => w.length > 0)).toBe(true);
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
   });
 });
 

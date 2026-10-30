@@ -12,6 +12,8 @@ import { getCardBreaks } from "./tools/read/get-card-breaks";
 import { getCashFriday } from "./tools/read/get-cash-friday";
 import { getCollections } from "./tools/read/get-collections";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
+import { getFactoringPacket } from "./tools/read/get-factoring-packet";
+import { getFactoringRequests } from "./tools/read/get-factoring-requests";
 import { getDocument } from "./tools/read/get-document";
 import { getDriver } from "./tools/read/get-driver";
 import { getDriverIdentity } from "./tools/read/get-driver-identity";
@@ -29,6 +31,7 @@ import { getQuarterReview } from "./tools/read/get-quarter-review";
 import { ALWAYS_LOADED } from "./loading";
 import { getSettlements } from "./tools/read/get-settlements";
 import { getPayItems } from "./tools/read/get-pay-items";
+import { getPinnedRates } from "./tools/read/get-pinned-rates";
 import { getPaymentsIn } from "./tools/read/get-payments-in";
 import { getPortalEvidence } from "./tools/read/get-portal-evidence";
 import { getVoiceNote } from "./tools/read/get-voice-note";
@@ -42,6 +45,7 @@ import { setChecklist } from "./tools/note/set-checklist";
 import { proposeAdvance } from "./tools/propose/propose-advance";
 import { proposeCardMatch } from "./tools/propose/propose-card-match";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
+import { proposeFactoring } from "./tools/propose/propose-factoring";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposeMoneyCode } from "./tools/propose/propose-money-code";
@@ -109,10 +113,14 @@ const TOOLS: readonly AnyToolDef[] = [
   getMoneyCodes,
   proposeMoneyCode,
   getPortalEvidence,
+  getPinnedRates,
   classifyMessage,
   getCashFriday,
   setChecklist,
   rememberNote,
+  getFactoringPacket,
+  getFactoringRequests,
+  proposeFactoring,
 ];
 
 function build(): Readonly<Record<string, AnyToolDef>> {

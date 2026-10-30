@@ -1,0 +1,54 @@
+{
+  "source": "cedar-bend-pay-policy.md",
+  "carrier": {
+    "name": "Cedar Bend Carriers",
+    "city": "Marion",
+    "state": "IL",
+    "timezone": "America/Chicago",
+    "fictitious": true
+  },
+  "effectiveFrom": { "value": "2026-12-06", "section": "1.1" },
+  "config": {
+    "weekStartDow": { "value": 0, "section": "2.1" },
+    "percentBase": { "value": "linehaul_fsc_accessorials", "section": "3.2" },
+    "emptyMilesPaidBps": { "value": 8000, "section": "3.3" },
+    "accessorialDriverShareBps": { "value": 6000, "section": "4.1" },
+    "insuranceAppliesTo": { "value": "all", "section": "5.1" },
+    "insurancePerDayCents": { "value": 1100, "section": "5.1" },
+    "netPayFloorCents": { "value": 27500, "section": "6.1" },
+    "advanceMinCents": { "value": 5000, "section": "7.2" },
+    "advanceLimitDefaultCents": { "value": 50000, "section": "7.2" },
+    "advanceMaxBpsOfEarned": { "value": 4000, "section": "7.2" },
+    "advanceRecoveryCapCents": { "value": null, "section": "7.3" }
+  },
+  "notInDocument": ["escrowTargetCents", "escrowPerSettlementCents"],
+  "customerDefaults": {
+    "detentionFreeMinutes": { "value": 90, "section": "8.1" },
+    "detentionHourlyCents": { "value": 5500, "section": "8.1" }
+  },
+  "flags": [
+    {
+      "field": "advanceFeeCents",
+      "kind": "range",
+      "sections": ["7.1"],
+      "values": [300, 500]
+    }
+  ],
+  "restated": [
+    {
+      "field": "insurancePerDayCents",
+      "section": "5.1",
+      "perDayCents": 1100,
+      "perWeekCents": 7700
+    }
+  ],
+  "informational": [
+    { "what": "company long-haul drivers, per loaded mile", "cents": 58, "section": "3.1" },
+    { "what": "company regional drivers, per load", "cents": 18500, "section": "3.1" },
+    {
+      "what": "owner-operators, share of linehaul, fuel surcharge and accessorial charges",
+      "bps": 7000,
+      "section": "3.2"
+    }
+  ]
+}

@@ -4,13 +4,30 @@ import { GET } from "./route";
 
 const shipped = structuredClone(flags);
 
+// Every switch the health check reads, off: each test states the switches it needs.
+function switchesOff() {
+  Object.assign(flags, {
+    aiEnabled: false,
+    agentEnabled: false,
+    auditorEnabled: false,
+    reportsEnabled: false,
+    driverNotesEnabled: false,
+    advancesEnabled: false,
+    payoutsEnabled: false,
+    accountingEnabled: false,
+    demoResetEnabled: false,
+  });
+  flags.judgeAccess.enabled = false;
+}
+
 afterEach(() => {
   Object.assign(flags, structuredClone(shipped));
   vi.unstubAllEnvs();
 });
 
 describe("GET /api/health", () => {
-  it("reports the build's commit and every feature off as shipped", async () => {
+  it("reports the build's commit and every feature off while its switches are off", async () => {
+    switchesOff();
     vi.stubEnv("APP_COMMIT", "abc1234");
     const body = await GET().json();
     expect(body).toEqual({
@@ -24,11 +41,14 @@ describe("GET /api/health", () => {
         advances: false,
         payouts: false,
         accounting: false,
+        judgeAccess: false,
+        demoReset: false,
       },
     });
   });
 
   it("reports a feature on only when a visitor can use it", async () => {
+    switchesOff();
     flags.agentEnabled = true;
     flags.auditorEnabled = true;
     flags.reportsEnabled = true;
@@ -39,6 +59,8 @@ describe("GET /api/health", () => {
     flags.payoutsEnabled = true;
     flags.accountingEnabled = true;
     flags.driverNotesEnabled = true;
+    flags.judgeAccess.enabled = true;
+    flags.demoResetEnabled = true;
     expect((await GET().json()).features).toEqual({
       agent: true,
       auditor: true,
@@ -47,6 +69,8 @@ describe("GET /api/health", () => {
       advances: true,
       payouts: true,
       accounting: true,
+      judgeAccess: true,
+      demoReset: true,
     });
   });
 

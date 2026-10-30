@@ -17,6 +17,8 @@ export const JUDGE_ALLOWED: Readonly<Record<string, string>> = {
   "POST /api/proposals/[id]/audit": "asks for one second check on a card; never approves",
   "POST /api/auth/sign-out": "anyone may sign out",
   "src/app/sign-in/actions.ts#signInAction": "signing in comes before any role exists",
+  "src/app/sign-in/try-demo-action.ts#tryDemoAction":
+    "the demo visitor's sign-in comes before any role exists, and it signs in a judge only",
 };
 
 // Write handlers no carrier login reaches: each takes its own credential, never pc_session.

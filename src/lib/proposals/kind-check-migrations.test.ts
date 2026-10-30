@@ -57,12 +57,12 @@ function kindRecreations(): Listing[] {
   const out: Listing[] = [];
   for (const { version, sql } of migrations()) {
     const re = /ADD\s+CONSTRAINT\s+proposals_kind_check\s+CHECK\s*\(\s*kind\s+IN\s*\(([^)]*)\)\s*\)/gi;
-    for (const m of sql.matchAll(re)) out.push({ version, kinds: quoted(m[1]) });
-    // A re-creation this parser cannot read must fail the test, never be skipped.
+    const read = [...sql.matchAll(re)].map((m) => ({ version, kinds: quoted(m[1]) }));
+    // A re-creation this parser cannot read must fail the test, never be skipped. Counted per file:
+    // a validation file shares its version with the file it validates.
     const named = (sql.match(/ADD\s+CONSTRAINT\s+proposals_kind_check\b/gi) ?? []).length;
-    expect(named, `${version}: every proposals_kind_check re-creation is readable`).toBe(
-      out.filter((l) => l.version === version).length,
-    );
+    expect(named, `${version}: every proposals_kind_check re-creation is readable`).toBe(read.length);
+    out.push(...read);
   }
   return out;
 }
@@ -131,5 +131,29 @@ describe("the proposals subject check in the migration texts", () => {
     expect(new Set(newest.kinds).size).toBe(newest.kinds.length);
     expect([...newest.kinds].sort()).toEqual([...TABLES].sort());
     expect(newest.kinds).toContain("vendor_bills");
+  });
+});
+
+describe("0062's two re-created checks", () => {
+  // Re-created NOT VALID, so the file that holds the exclusive lock reads no rows, then validated
+  // by the file the runner applies next, in its own transaction, under a lock that lets reads and
+  // writes go on.
+  const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
+
+  it("adds each NOT VALID in 0062_policy_onboard and validates each in 0062_policy_onboard_validate", () => {
+    const added = read("0062_policy_onboard.sql");
+    const validate = read("0062_policy_onboard_validate.sql");
+    for (const [table, name] of [
+      ["documents", "documents_document_kind_check"],
+      ["proposals", "proposals_kind_check"],
+    ] as const) {
+      const adds = [...added.matchAll(new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\s+CHECK\\b[^;]*;`, "gi"))];
+      expect(adds, name).toHaveLength(1);
+      expect(adds[0][0], name).toMatch(/\)\s*NOT\s+VALID\s*;$/i);
+      expect(validate, name).toMatch(new RegExp(`ALTER\\s+TABLE\\s+${table}\\s+VALIDATE\\s+CONSTRAINT\\s+${name}\\s*;`, "i"));
+    }
+    // The runner applies the validation right after the file it validates.
+    const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
+    expect(names.indexOf("0062_policy_onboard_validate.sql")).toBe(names.indexOf("0062_policy_onboard.sql") + 1);
   });
 });

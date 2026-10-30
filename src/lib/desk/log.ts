@@ -2,7 +2,7 @@ import { DbError, type Queryable } from "../db";
 import { isUuid } from "../uuid";
 import { isDeskSource, parseEventKey, SUBJECT_TABLES, type DeskSource } from "./keys";
 
-// The desk log: one insert-only line per step (0063). The loop's whole state is read back from it:
+// The desk log: one insert-only line per step (0065). The loop's whole state is read back from it:
 // an event's state is its latest line (closed for good once it has a terminal line), an attempt is
 // a claimed line, a run it carries on is named by its latest carried line, and a carried line with
 // the category THREW is a carried try that threw. Nothing here updates or deletes a line (the app

@@ -6,7 +6,7 @@ import type { OpenedTurn, OpenTurnRefusal, TurnStore } from "../../agent/gateway
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../../agent/gateway/types";
 import { reasonSentence } from "../../agent/reasons";
 import type { Session } from "../../auth/claims";
-import type { Queryable } from "../../db";
+import { DbError, type Queryable } from "../../db";
 import { nextSweepChecklist } from "../checklist";
 import { runChildCheck, type ChildOutcome, type ValidCheck } from "./check";
 import {
@@ -46,7 +46,9 @@ import { CheckAnswer, PLAN_FORMAT, RECONCILE_FORMAT, parseJson } from "./schemas
 export type FanoutDeps = {
   complete: CompleteFn;
   callTool: (ctx: GatewayContext, call: ToolCall) => Promise<GatewayOutcome>;
-  openTurn: (
+  // Opens a turn inside the caller's transaction (the gateway's openAgentTurnIn).
+  openTurnIn: (
+    q: Queryable,
     session: Session,
     input: { conversationId: string | null; turnId: string; text: string; now: Date; summaryChars: number },
   ) => Promise<OpenedTurn | { refused: OpenTurnRefusal }>;
@@ -126,8 +128,9 @@ async function setPhase(q: Queryable, runId: string, phase: "check" | "reconcile
   );
 }
 
-// The turn a dead slice left running for the plan or the comparison. Closed before the next try
-// opens its own: the try then points the run at the new turn, and the old one would stay running.
+// The turn a dead slice left running for the plan or the comparison (its id is written in the
+// transaction that opens it, so the row always points at it). Closed before the next try opens
+// its own: the try then points the run at the new turn, and the old one would stay running.
 const LEFT_TURN_SQL = {
   plan: `UPDATE turns SET status = 'failed', ended_reason = 'abandoned', finished_at = CAST($2 AS timestamptz)
           WHERE tenant_id = current_tenant_id() AND status = 'running' AND id IN (
@@ -143,18 +146,49 @@ async function closeLeftTurn(q: Queryable, fx: FanoutCtx, which: keyof typeof LE
   await q.execute(LEFT_TURN_SQL[which], [fx.runId, fx.clock().toISOString()]);
 }
 
-// Opens one turn for a fan-out call, in a conversation of its own: the checks run side by side,
-// and a conversation takes one running turn at a time.
-async function openFanoutTurn(fx: FanoutCtx, text: string): Promise<{ turnId: string; opened: OpenedTurn } | null> {
+// Opens one turn for a fan-out call, in a conversation of its own (the checks run side by side,
+// and a conversation takes one running turn at a time), inside the caller's leased transaction,
+// and writes its id to the run's row in that same transaction. A slice that dies between the two
+// rolls both back, so no turn is left running that nothing points at: a fan-out turn is alone in
+// its conversation, so the turn store's own abandoned rule never reaches it. An id write that
+// finds no row throws, which undoes the open with it. The try was counted in an earlier
+// transaction, so a slice that keeps dying here is still bounded by MAX_ATTEMPTS.
+async function openFanoutTurn(
+  q: Queryable,
+  fx: FanoutCtx,
+  text: string,
+  writeId: (turnId: string) => Promise<number>,
+): Promise<{ turnId: string; opened: OpenedTurn } | null> {
   const turnId = randomUUID();
-  const opened = await fx.deps.openTurn(fx.service, {
+  const opened = await fx.deps.openTurnIn(q, fx.service, {
     conversationId: null,
     turnId,
     text,
     now: fx.clock(),
     summaryChars: flags.agentTurnLimits.summaryChars,
   });
-  return "refused" in opened ? null : { turnId, opened };
+  if ("refused" in opened) return null;
+  if ((await writeId(turnId)) !== 1) throw new Error("the fan-out turn's id did not write");
+  return { turnId, opened };
+}
+
+const UNIQUE_VIOLATION = "23505";
+
+// The plan's or the comparison's turn, opened with its id write in one leased transaction. A
+// unique violation there (another open took the same turn id or the next seq) rolls both back,
+// and it is the gateway's own "busy" refusal: no turn is left and nothing was sent, so the caller
+// gives its hold back as for any refusal. Any other error still ends the slice.
+export async function openLeasedTurn(
+  fx: FanoutCtx,
+  text: string,
+  writeId: (q: Queryable, turnId: string) => Promise<number>,
+): Promise<{ turnId: string; opened: OpenedTurn } | null> {
+  try {
+    return await fx.leased((q) => openFanoutTurn(q, fx, text, (turnId) => writeId(q, turnId)));
+  } catch (err) {
+    if (err instanceof DbError && err.sqlState === UNIQUE_VIOLATION) return null;
+    throw err;
+  }
 }
 
 type TurnEnd = { ok: boolean; endedReason: string | null; text: string; summary: string; steps: number; calls: number; nano: number };
@@ -342,7 +376,12 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
   const attempts = start.attempts + 1;
   const lastTry = attempts >= MAX_ATTEMPTS;
 
-  const turn = await openFanoutTurn(fx, "Second opinion: order the week's drivers");
+  const turn = await openLeasedTurn(fx, "Second opinion: order the week's drivers", (q, turnId) =>
+    q.execute(
+      "UPDATE sweep_fanout SET plan_turn_id = CAST($2 AS uuid) WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()",
+      [fx.runId, turnId],
+    ),
+  );
   if (!turn) {
     // Nothing was sent.
     await fx.leased(async (q) => {
@@ -351,12 +390,6 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
     });
     return lastTry ? "check" : "plan";
   }
-  await fx.leased((q) =>
-    q.execute("UPDATE sweep_fanout SET plan_turn_id = CAST($2 AS uuid) WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()", [
-      fx.runId,
-      turn.turnId,
-    ]),
-  );
   // The switch is read again right before the call.
   const call: WonderCall = fanoutOn()
     ? await callWonder(fx, turn, "Ordering the week's drivers", {
@@ -531,22 +564,23 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
   if (start.kind === "wait") return "wait";
   if (start.kind === "next") return start.phase;
 
-  // The turns are opened one after another (each takes the next seq), then the checks run together.
-  const turns: ({ turnId: string; opened: OpenedTurn } | null)[] = [];
-  for (const row of start.rows) {
-    turns.push(await openFanoutTurn(fx, `Second opinion: check ${row.code ?? "a driver"}`));
-  }
-  await fx.leased(async (q) => {
-    for (let i = 0; i < start.rows.length; i += 1) {
-      const t = turns[i];
-      if (!t) continue;
-      await q.execute(
-        `UPDATE sweep_fanout_checks SET turn_id = CAST($3 AS uuid)
-          WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND lease_token = CAST($2 AS uuid)
-            AND status = 'running'`,
-        [start.rows[i].id, fx.token, t.turnId],
+  // The turns are opened one after another (each takes the next seq), each with its row's turn id
+  // in the same transaction, then the checks run together.
+  const turns = await fx.leased(async (q) => {
+    const opened: ({ turnId: string; opened: OpenedTurn } | null)[] = [];
+    for (const row of start.rows) {
+      opened.push(
+        await openFanoutTurn(q, fx, `Second opinion: check ${row.code ?? "a driver"}`, (turnId) =>
+          q.execute(
+            `UPDATE sweep_fanout_checks SET turn_id = CAST($3 AS uuid)
+              WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND lease_token = CAST($2 AS uuid)
+                AND status = 'running'`,
+            [row.id, fx.token, turnId],
+          ),
+        ),
       );
     }
+    return opened;
   });
   const tools = fx.deps.tools();
   const steps = fx.deps.steps(fx.service);
@@ -780,7 +814,12 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
   if (!held) return "draft";
   const lastTry = start.attempts + 1 >= MAX_ATTEMPTS;
 
-  const turn = await openFanoutTurn(fx, "Second opinion: compare the checks");
+  const turn = await openLeasedTurn(fx, "Second opinion: compare the checks", (q, turnId) =>
+    q.execute(
+      "UPDATE sweep_fanout SET reconcile_turn_id = CAST($2 AS uuid) WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()",
+      [fx.runId, turnId],
+    ),
+  );
   if (!turn) {
     await fx.leased(async (q) => {
       await settleRunCents(q, fx.runId, fx.token, l.reconcileCents, 0);
@@ -788,12 +827,6 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
     });
     return lastTry ? "draft" : "reconcile";
   }
-  await fx.leased((q) =>
-    q.execute("UPDATE sweep_fanout SET reconcile_turn_id = CAST($2 AS uuid) WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()", [
-      fx.runId,
-      turn.turnId,
-    ]),
-  );
   const checked = new Set(start.checks.filter((c) => c.status === "done").map((c) => c.driverId));
   const call: WonderCall = fanoutOn()
     ? await callWonder(fx, turn, "Comparing the two checks", {

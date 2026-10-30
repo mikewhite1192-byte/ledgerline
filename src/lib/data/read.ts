@@ -336,6 +336,7 @@ export async function readCashFridayInput(
       payment_applications: await readTable(q, "payment_applications"),
       vendor_bills: await readTable(q, "vendor_bills"),
       cash_settings: await readTable(q, "cash_settings"),
+      factoring_request_invoices: await readTable(q, "factoring_request_invoices"),
     },
     zone,
     limits,

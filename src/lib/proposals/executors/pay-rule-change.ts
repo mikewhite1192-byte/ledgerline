@@ -6,6 +6,7 @@ import { readRowsWhereId, readTable } from "../../data/read";
 import { assertIdentifier } from "../../data/tables";
 import { changeArgsSchema, changeMatches, readRuleChangeRows, ruleChangeOf } from "../../pay-rules/change";
 import { formatValue, RULES, valueText, type RuleValue } from "../../pay-rules/rules";
+import { castFor, insertVersionCopy, lockPayRules, one, payConfigColumns } from "../../pay-rules/write-version";
 import { parsePayConfig } from "../../rules-engine";
 import type { Executor, ProposalResult } from "../execute";
 
@@ -42,17 +43,6 @@ const refusal = (category: string): ProposalResult => ({ ok: false, category, re
 
 type Locked = { status: string; amount_cents: number | string; args: string };
 
-// Columns the copy sets itself; every other column is copied from the base version.
-const OWN_COLUMNS = new Set(["id", "tenant_id", "effective_from", "note", "source", "created_at"]);
-
-// The SQL type a replaced value is cast to, by the catalog's data_type. Anything else refuses.
-const CASTS: Readonly<Record<string, string>> = {
-  bigint: "bigint",
-  integer: "integer",
-  smallint: "smallint",
-  text: "text",
-};
-
 async function fail(q: Queryable, proposalId: string, category: string, nowIso: string): Promise<ProposalResult> {
   await q.execute(
     `UPDATE proposals SET status = 'failed', decision_note = $2, updated_at = CAST($3 AS timestamptz)
@@ -62,32 +52,6 @@ async function fail(q: Queryable, proposalId: string, category: string, nowIso: 
   );
   console.warn(`pay rule change ${proposalId} refused: ${category}`);
   return refusal(category);
-}
-
-async function one(q: Queryable, sql: string, params: (string | number | null)[]): Promise<void> {
-  const n = await q.execute(sql, params);
-  if (n !== 1) throw new Error("a pay rule change write did not change exactly one row");
-}
-
-// pay_configs' columns as the catalog lists them now, each a plain identifier, with its cast.
-async function payConfigColumns(q: Queryable): Promise<Map<string, string>> {
-  const rows = await q.query<{ column_name: string; data_type: string }>(
-    `SELECT column_name, data_type FROM information_schema.columns
-      WHERE table_schema = 'public' AND table_name = 'pay_configs'
-      ORDER BY ordinal_position`,
-  );
-  const out = new Map<string, string>();
-  for (const r of rows) out.set(assertIdentifier(r.column_name), r.data_type);
-  for (const own of OWN_COLUMNS) {
-    if (!out.has(own)) throw new Error("pay_configs is missing a column the copy sets");
-  }
-  return out;
-}
-
-function castFor(columns: Map<string, string>, column: string): string {
-  const cast = CASTS[columns.get(column) ?? ""];
-  if (!cast) throw new Error("a pay rule's column has no known type");
-  return cast;
 }
 
 const param = (value: RuleValue): string | number | null => value;
@@ -123,10 +87,7 @@ export const executePayRuleChange: Executor = async (db, session, proposal, _opt
     const args = parsed.data;
 
     // Every version locked, and the tenant's pay rules serialized, before anything is read.
-    await q.query("SELECT id FROM pay_configs WHERE tenant_id = current_tenant_id() FOR UPDATE");
-    await q.query(
-      "SELECT 1 AS ok FROM (SELECT pg_advisory_xact_lock(hashtextextended('pay_rules:' || CAST(current_tenant_id() AS text), 0))) AS l",
-    );
+    await lockPayRules(q);
     const check = ruleChangeOf(
       await readRuleChangeRows(q),
       { ruleKey: args.ruleKey, newValue: args.newValue, askedFrom: args.askedFrom },
@@ -147,19 +108,15 @@ export const executePayRuleChange: Executor = async (db, session, proposal, _opt
     let versionId: string;
     if (change.applied === "new_version") {
       versionId = randomUUID();
-      const copied = [...columns.keys()].filter((c) => !OWN_COLUMNS.has(c));
-      if (!copied.includes(column)) throw new Error("a pay rule's column is not in pay_configs");
-      const values = copied.map((c) => (c === column ? `CAST($4 AS ${cast})` : c));
-      await one(
-        q,
-        `INSERT INTO pay_configs (id, tenant_id, effective_from, note, source, ${copied.join(", ")})
-         SELECT CAST($1 AS uuid), current_tenant_id(), CAST($2 AS date), CAST($3 AS text), 'proposal',
-                ${values.join(", ")}
-           FROM pay_configs
-          WHERE tenant_id = current_tenant_id() AND id = CAST($5 AS uuid)
-            AND ${column} IS NOT DISTINCT FROM CAST($6 AS ${cast})`,
-        [versionId, change.effectiveFrom, words, param(change.newValue), change.baseVersionId, param(change.oldValue)],
-      );
+      // The shared write (src/lib/pay-rules/write-version.ts): the base copied with the one rule
+      // replaced, guarded on its old value.
+      await insertVersionCopy(q, columns, {
+        versionId,
+        baseVersionId: change.baseVersionId,
+        effectiveFrom: change.effectiveFrom,
+        note: words,
+        replacements: [{ key: change.ruleKey, newValue: param(change.newValue), oldValue: param(change.oldValue) }],
+      });
     } else {
       versionId = change.baseVersionId;
       await one(

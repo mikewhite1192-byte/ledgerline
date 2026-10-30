@@ -110,9 +110,19 @@ const turnBusy: SweepDeps["openTurn"] = async () => ({ refused: "busy" });
 
 async function proposals() {
   return admin.withTenant(T, (q) =>
-    q.query<{ id: string; subject_id: string; amount_cents: string; direction: string; exceptions: string; status: string }>(
+    q.query<{
+      id: string;
+      subject_id: string;
+      amount_cents: string;
+      direction: string;
+      exceptions: string;
+      status: string;
+      engine_check: string | null;
+      engine_cents: string | null;
+    }>(
       `SELECT CAST(id AS text) AS id, CAST(subject_id AS text) AS subject_id, CAST(amount_cents AS text) AS amount_cents,
-              direction, CAST(exceptions AS text) AS exceptions, status
+              direction, CAST(exceptions AS text) AS exceptions, status, engine_check,
+              CAST(engine_cents AS text) AS engine_cents
          FROM proposals WHERE kind = 'pay_correction' ORDER BY id`,
     ),
   );
@@ -163,6 +173,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   flags.sweepEnabled = true;
+  // The second opinion ships on; these runs are the sweep alone (fanout.db.test.ts runs it).
+  flags.fanoutEnabled = false;
   await clearTenantAgent(admin, T);
   explain.mockClear();
   explain.mockImplementation(explainOk);
@@ -202,6 +214,8 @@ describe("a sweep of the open week", () => {
     const ps = await proposals();
     expect(ps.map((p) => `${p.subject_id}:${(p.direction === "in" ? -1 : 1) * Number(p.amount_cents)}`).sort()).toEqual(legKeys);
     expect(ps.every((p) => p.status === "proposed" && p.exceptions === "[]")).toBe(true);
+    // The same comparison is stored as each card's engine check, the engine's figure beside it.
+    expect(ps.every((p) => p.engine_check === "matched" && p.engine_cents === p.amount_cents)).toBe(true);
     // One explanation per fix and one auditor run per audit slice, counted against the cap.
     expect(explain).toHaveBeenCalledTimes(5);
     // Each explanation names the finding's own category, and the correction's reason beside it.
@@ -270,6 +284,10 @@ describe("a sweep of the open week", () => {
     expect(fixes.map((i) => i.status)).toEqual(Array(5).fill("mismatch"));
     const ps = await proposals();
     expect(ps.every((p) => p.exceptions.includes("sweep_mismatch"))).toBe(true);
+    // Stored as a mismatch, with the leg's own figure: one cent off what the card says.
+    expect(ps.every((p) => p.engine_check === "mismatch" && Math.abs(Number(p.engine_cents) - Number(p.amount_cents)) === 1)).toBe(
+      true,
+    );
     expect(explain).not.toHaveBeenCalled();
     expect((await readSweepPage(SESSION, runId, { db: app }))?.clean.proposalIds).toEqual([]);
   });
@@ -415,6 +433,33 @@ describe("a sweep of the open week", () => {
     expect(await proposals()).toHaveLength(5);
     // No fix was drafted twice across the runs.
     expect(explain).toHaveBeenCalledTimes(5);
+  });
+
+  it("stops at the turn ceiling with the rest left found, and the next run drafts them", async () => {
+    // The seed's week has five fixes (one live correction per driver), so the ceiling is scaled
+    // down to three here; the rule is the same at the shipped thirty.
+    flags.runLimits = { maxTurns: 3 };
+    const first = await start();
+    expect(await runToEnd(first)).toMatchObject({ status: "done", truncatedReason: "max_turns" });
+    const fixes = (await items(first)).filter((i) => i.kind === "fix");
+    expect(fixes.filter((i) => i.status === "drafted")).toHaveLength(3);
+    expect(fixes.filter((i) => i.status === "found")).toHaveLength(2);
+    expect(explain).toHaveBeenCalledTimes(3);
+    const page = await readSweepPage(SESSION, first, { db: app });
+    expect(page?.counts).toMatchObject({ fixes_drafted: 3, left: 2 });
+    expect(page?.run.turnsUsed).toBe(3);
+    // The drafted three were audited before the run ended, so its second check is done.
+    expect(await ticks(first)).toEqual({ find: "done", draft: "done", audit: "done" });
+
+    const second = await start();
+    expect(await runToEnd(second)).toMatchObject({ status: "done", truncatedReason: null });
+    expect((await items(second)).filter((i) => i.kind === "fix").map((i) => i.status)).toEqual(Array(5).fill("drafted"));
+    // The two left were drafted once each, and no fix twice.
+    expect(explain).toHaveBeenCalledTimes(5);
+    expect(await proposals()).toHaveLength(5);
+    const next = await readSweepPage(SESSION, second, { db: app });
+    expect(next?.counts).toMatchObject({ left: 0 });
+    expect(next?.run.turnsUsed).toBe(2);
   });
 
   it("leaves a finding from an earlier week out of the run, so it takes no place and drafts no fix", async () => {
@@ -667,7 +712,8 @@ describe("a sweep of the open week", () => {
     const second = await start();
     await runToEnd(second);
     expect((await fixRows(second)).map((r) => [r.status, r.refusal_category])).toEqual(Array(5).fill(["drafted", null]));
-    expect(await proposals()).toEqual(saved);
+    // The same rows, with the engine check the second run stored once on each.
+    expect(await proposals()).toEqual(saved.map((p) => ({ ...p, engine_check: "matched", engine_cents: p.amount_cents })));
     const linked = (await items(second)).filter((i) => i.kind === "fix").map((i) => i.proposal_id).sort();
     expect(linked).toEqual(saved.map((p) => p.id).sort());
   });

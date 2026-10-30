@@ -1166,6 +1166,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     settlement_periods: settlementPeriods,
     settlements: [],
     settlement_lines: [],
+    pay_cards: [],
     pay_items: payItems,
     money_codes: [],
     advances,
@@ -1181,7 +1182,10 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     vendor_bills: [],
     cash_settings: [],
     cash_checks: [],
+    factoring_requests: [],
+    factoring_request_invoices: [],
     carrier_notes: [],
+    pinned_rates: [],
   };
   applyHistory({ slug, zone, rows, newId });
   // The take-back is recorded after history, which never recovered from it, so no settled week moves.

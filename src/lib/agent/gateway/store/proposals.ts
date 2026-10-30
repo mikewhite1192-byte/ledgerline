@@ -23,6 +23,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   collections_chase: "Chase a late payer (Test mode)",
   pay_rule_change: "Change a pay rule",
   money_code: "Issue a money code",
+  pay_policy_setup: "Pay rules from your policy",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;
@@ -67,6 +68,8 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   // a delayed bill moves its date while the amount stays owed.
   if (kind === "factoring_request" || kind === "collections_chase") return { amountCents, direction: "in" } as const;
   if (kind === "bill_defer") return { amountCents, direction: "none" } as const;
+  // Pay rules read from a policy document: a new dated version, no money moved and no pay sized.
+  if (kind === "pay_policy_setup") return { amountCents: 0, direction: "none" } as const;
   // A pay rule change's amount is the engine's signed change to last settled week's total net pay:
   // more pay is money out, less pay money kept in, none when no one's pay changes.
   if (kind === "pay_rule_change") {

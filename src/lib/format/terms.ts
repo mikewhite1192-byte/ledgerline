@@ -34,15 +34,27 @@ export const TERMS = {
   "past-due": "An invoice not paid by the day it was due.",
   "credit-on-account": "Money a customer paid that is not yet matched to an invoice.",
   "second-check": "A separate model re-read this against your records before anyone approves.",
+  verified: "Your pay rules worked out the same amount to the cent, and a second check agreed.",
+  unverified: "Not yet confirmed both ways: your pay rules must work out the same amount and a second check must agree.",
+  "verified-answer": "Every amount came from a record or from your own question; no request was made, so no second check ran.",
   "marked-copy":
     "A picture of the document with the line in question circled and what your records say written beside it.",
   "test-payout": "A simulated payment; no real money moves in this demo.",
   "money-code":
     "A one-time code the driver gives a lumper or a repair shop to pay at the dock; it is charged to the driver's week and paid back from the receipt.",
   "card-provider": "The company that issues the fuel cards and money codes; in this demo it is simulated, so no real money moves.",
+  "take-home-pay": "What the driver is paid for the week after everything taken out, the same as net pay.",
+  "pay-card":
+    "A picture of one driver's week for their phone, kept only after a second read matched every number to the paystub.",
   margin: "What is left of the revenue after driver pay.",
   "days-to-pay":
     "The average days from an invoice's date to the day it was paid, over invoices paid in the 180 days before the week ended.",
+  factoring: "Selling an open invoice to a factoring company for cash now, instead of waiting for the customer to pay.",
+  "advance-rate": "The share of an invoice the factoring company pays now; the rest is held back.",
+  "held-back": "The part of a factored invoice kept until the customer pays it (in factoring, the reserve).",
+  "factoring-fee": "What the factoring company charges for paying early, taken from the money paid now.",
+  "diesel-index": "The weekly average diesel price many customers tie the fuel surcharge to.",
+  "fuel-tax-rate": "What each state charges per gallon of diesel burned on its roads; settled every quarter.",
 } as const;
 
 export type TermId = keyof typeof TERMS;

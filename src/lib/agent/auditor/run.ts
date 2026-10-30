@@ -130,6 +130,47 @@ async function askWonder(
   }
 }
 
+// The code-side engine check (design 3.6), stored on the proposal whatever the call does. A
+// failure is logged by its name only and stores nothing (unknown is not a check), and never
+// changes the verdict.
+async function storeEngineCheck(store: AuditStore, proposalId: string, ctx: GatewayContext): Promise<void> {
+  try {
+    await store.checkEngine(proposalId, ctx);
+  } catch (err) {
+    console.warn(
+      `auditor: the engine check was not stored (${err instanceof Error ? err.name : "unknown"}) trace=${ctx.traceId}`,
+    );
+  }
+}
+
+// The engine check alone, with no lease and no model call: for a card the auditor did not run on
+// (switched off, made before it started, or checked before this check existed). It writes no
+// verdict, so auditorEnabled is not read here; a proposal no longer waiting is left as it is.
+// Never throws: a failed read is logged by its name only and stores nothing.
+export async function runEngineCheck(session: Session, proposalId: string, deps: AuditDeps = {}): Promise<void> {
+  const clock = deps.clock ?? (() => new Date());
+  const store = deps.store ?? dbAuditStore(session, { db: deps.db, clock });
+  let state: AuditState | null;
+  try {
+    state = await store.read(proposalId);
+  } catch (err) {
+    console.warn(`auditor: the engine check could not read the proposal (${err instanceof Error ? err.name : "unknown"})`);
+    return;
+  }
+  if (!state || state.status !== "proposed") return;
+  const now = clock();
+  await storeEngineCheck(store, proposalId, {
+    session,
+    role: "auditor",
+    model: "wonder",
+    turnId: state.turnId,
+    traceId: state.traceId ?? randomUUID(),
+    now,
+    deadlineAt: now.getTime() + EVIDENCE_DEADLINE_MS,
+    timeZone: state.timeZone,
+  });
+}
+
 export async function runAudit(
   session: Session,
   proposalId: string,
@@ -157,6 +198,20 @@ export async function runAudit(
     return now && now.status === "proposed" ? { state: "in_progress" } : { state: "not_auditable" };
   }
   const { traceId, attempts } = lease;
+  const ctx: GatewayContext = {
+    session,
+    role: "auditor",
+    model: "wonder",
+    turnId: state.turnId,
+    traceId,
+    now: leasedAt,
+    deadlineAt: leasedAt.getTime() + EVIDENCE_DEADLINE_MS,
+    timeZone: state.timeZone,
+  };
+  // The engine's own figure against the proposal's, in code, before any evidence read or call.
+  await storeEngineCheck(store, proposalId, ctx);
+  // The evidence read gets its own full deadline, so a slow engine check never spends it.
+  ctx.deadlineAt = clock().getTime() + EVIDENCE_DEADLINE_MS;
 
   const write = async (
     verdict: ParsedVerdict,
@@ -210,17 +265,7 @@ export async function runAudit(
   // unknown tool) is no evidence and is stored as unknown; a failure (a tool error, or the evidence
   // deadline under load) is not a refusal and gives the lease back. The same database as the
   // store, so an injected one is used end to end.
-  const tool = deps.callTool ?? ((ctx, call) => callTool(ctx, call, { db: deps.db }));
-  const ctx: GatewayContext = {
-    session,
-    role: "auditor",
-    model: "wonder",
-    turnId: state.turnId,
-    traceId,
-    now: leasedAt,
-    deadlineAt: leasedAt.getTime() + EVIDENCE_DEADLINE_MS,
-    timeZone: state.timeZone,
-  };
+  const tool = deps.callTool ?? ((c, call) => callTool(c, call, { db: deps.db }));
   let outcome: GatewayOutcome;
   try {
     outcome = await tool(ctx, {

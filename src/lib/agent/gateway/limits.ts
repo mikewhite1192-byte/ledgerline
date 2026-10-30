@@ -27,6 +27,8 @@ import { loadCandidates } from "../../documents/candidates";
 import { matchDocument, RATE_FILL_STATUSES } from "../../documents/match";
 import { isWithin, localDateOf } from "../../time/local-date";
 import { readDocumentForInput } from "./store/document-reads";
+import { optionReasons } from "../../cash/args";
+import { factoringProposalOf } from "../../factoring/propose";
 import type { GatewayContext, GatewayRef, LimitResult, ReasonCategory } from "./types";
 
 // Amount limits for the propose tools. The rules engine sizes every number; the gateway only
@@ -484,5 +486,40 @@ export async function ruleChangeLimit(
     };
   } catch {
     return unavailable(requested);
+  }
+}
+
+// ---- Factoring ----
+
+export type FactoringLimitArgs = { invoiceIds: readonly string[] };
+
+// The agent names invoices, never a number: the engine sizes the request on exactly those
+// invoices, and the most one request may bring in (factoring.maxNetCents) is the limit. A request
+// the engine refuses (an invoice too old, already factored, not open, or no short to name) is
+// engine_refused with no number; get_factoring_packet says which invoice and why.
+export async function factoringLimit(
+  q: Queryable,
+  ctx: GatewayContext,
+  args: FactoringLimitArgs,
+): Promise<LimitResult> {
+  const max = flags.factoring?.maxNetCents;
+  if (flags.factoring?.enabled !== true || typeof max !== "number" || !Number.isSafeInteger(max) || max <= 0) {
+    return unavailable(null);
+  }
+  try {
+    const p = await factoringProposalOf(q, ctx.timeZone, ctx.now, args.invoiceIds);
+    if (!p.ok) return { ok: false, reason: "engine_refused", limitCents: null, requestedCents: null };
+    const net = p.option.amountCents;
+    if (net > max) return refused("amount_over_limit", max, net);
+    return {
+      ok: true,
+      limitCents: cents(Math.min(net, max)),
+      requestedCents: cents(net),
+      exceptions: [],
+      reasons: optionReasons(p.option),
+      sources: p.option.sources,
+    };
+  } catch {
+    return unavailable(null);
   }
 }
