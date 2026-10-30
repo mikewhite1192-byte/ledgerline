@@ -24,6 +24,27 @@ describe("the read answer", () => {
     ]);
   });
 
+  it("keeps a number as printed, dropping only the word or sign before it", () => {
+    const printed = [
+      { number: "Section 1", text: "a" },
+      { number: "Sec. 2.1", text: "b" },
+      { number: "Article II", text: "c" },
+      { number: "\u00a7 4.1A", text: "d" },
+      { number: "B.", text: "e" },
+      { number: "Para 6", text: "f" },
+    ];
+    expect(sectionsFromAnswer(answer(printed))?.map((s) => s.number)).toEqual(["1", "2.1", "II", "4.1A", "B", "6"]);
+    const sections = sectionsFromAnswer(answer(printed))!;
+    expect([...sectionsOfTranscript(transcriptOf(sections))!.keys()]).toEqual(["1", "2.1", "II", "4.1A", "B", "6"]);
+  });
+
+  it("never renumbers: a number that still does not read, or two labels for one number, refuses the read", () => {
+    for (const odd of ["1(a)", "Schedule A-1", "AB", "ii", "Section", "\u00a7"]) {
+      expect(sectionsFromAnswer(answer([{ number: "1", text: "a" }, { number: odd, text: "b" }])), odd).toBeNull();
+    }
+    expect(sectionsFromAnswer(answer([{ number: "Article 3", text: "a" }, { number: "Section 3", text: "b" }]))).toBeNull();
+  });
+
   it("refuses an empty, malformed, duplicated or oversized read, never part of one", () => {
     expect(sectionsFromAnswer("not json")).toBeNull();
     expect(sectionsFromAnswer(answer([]))).toBeNull();

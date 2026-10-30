@@ -117,10 +117,16 @@ async function roleOf(q: Queryable, sub: string): Promise<string | null> {
   return rows[0]?.role ?? null;
 }
 
+// The second check's verdict covers the card as stored, never the person's own values, so an
+// approval that carries edits always needs the second confirm, even on a pass.
+const editsUnconfirmed = (opts: { confirmed: boolean; edits?: Edits }): boolean =>
+  Object.keys(opts.edits ?? {}).length > 0 && !opts.confirmed;
+
 // Before the approval, inside the gate's transaction: the same checks, reads only, so a card that
 // cannot be written stays proposed with its Approve button.
 const precheck: Precheck = async (q, proposal, now, ctx) => {
   if (!flags.policyOnboardEnabled || proposal.kind !== "pay_policy_setup" || !ctx) return refusal("not_executable");
+  if (editsUnconfirmed(ctx.opts)) return refusal("needs_confirm");
   const args = parsePolicyArgs(proposal.args);
   if (!args) return refusal("not_executable");
   const checked = await check(q, args, proposal.subjectId, ctx.opts.edits ?? {}, await roleOf(q, ctx.session.sub), now);
@@ -150,6 +156,8 @@ type Locked = { status: string; args: string };
 const execute: Executor = async (db, session, proposal, opts, deps) => {
   if (!flags.policyOnboardEnabled) return refusal("not_executable");
   if (proposal.kind !== "pay_policy_setup") return refusal("not_executable");
+  // A resume skips the gate, so the confirm is checked here too, before anything is read.
+  if (editsUnconfirmed(opts)) return refusal("needs_confirm");
   const now = (deps.clock ?? (() => new Date()))();
   const nowIso = now.toISOString();
   return db.withTenant(session.tenantId, async (q) => {

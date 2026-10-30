@@ -63,7 +63,7 @@ export type ProposalRow = {
 // gate trims it and checks its length again). auditedAt: the auditor's checked_at the card showed,
 // so an override always refers to the one verdict the person read. edits: the person's own
 // values for rules on a pay_policy_setup card (rule key to stored value text); only that executor
-// reads them, and it checks each with the rule's own parser.
+// reads them, checks each with the rule's own parser, and takes them only with confirmed.
 export type ApproveOptions = {
   confirmed: boolean;
   overrideReason?: string | null;

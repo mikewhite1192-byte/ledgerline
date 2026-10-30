@@ -7,8 +7,14 @@ import { normalize } from "./parse";
 
 export type Section = { number: string; text: string };
 
-// "6.1", "10.2", "3", "4.1a".
-export const SECTION_NUMBER = /^[0-9]{1,3}(?:\.[0-9]{1,3}){0,3}[a-z]?$/;
+// "6.1", "10.2", "3", "4.1a" or "4.1A", and a letter or Roman numeral as some policies print
+// them: "A", "II", "B.2".
+export const SECTION_NUMBER =
+  /^(?:[0-9]{1,3}(?:\.[0-9]{1,3}){0,3}[a-zA-Z]?|(?:[A-Z]|[IVXL]{1,6})(?:\.[0-9]{1,3}){0,3}[a-z]?)$/;
+// The word or section sign a policy may print before the number ("Section 3", "Sec. 3", "Article
+// II", the sign then "3"). Only it is dropped: the number is kept as printed, so a person can find
+// the section in the document. A number that still does not read is never renumbered.
+const NUMBER_LABEL = /^(?:\u00a7+\s*|(?:section|article|paragraph|sec|art|para)\.?\s*)/i;
 export const SECTIONS_MAX = 80;
 export const SECTION_TEXT_MAX = 1_200;
 // One screening chunk (the gateway's CHUNK_CHARS), and the propose call's reserve (format.ts).
@@ -22,8 +28,9 @@ const answerSchema = z.strictObject({
 });
 
 // The read call's answer, checked: at least one section and at most SECTIONS_MAX, each number
-// well formed and used once, each text 1 to SECTION_TEXT_MAX characters once whitespace is
-// folded, and the whole transcript at most TRANSCRIPT_MAX. Null otherwise (never a partial read).
+// well formed once its printed label and a trailing dot are dropped, and used once, each text 1
+// to SECTION_TEXT_MAX characters once whitespace is folded, and the whole transcript at most
+// TRANSCRIPT_MAX. Null otherwise (never a partial read, and never a number made up).
 export function sectionsFromAnswer(text: string): Section[] | null {
   let json: unknown;
   try {
@@ -38,7 +45,7 @@ export function sectionsFromAnswer(text: string): Section[] | null {
   const out: Section[] = [];
   const seen = new Set<string>();
   for (const s of list) {
-    const number = s.number.trim().replace(/\.$/, "");
+    const number = s.number.trim().replace(NUMBER_LABEL, "").replace(/\.$/, "");
     const body = normalize(s.text.replace(CONTROL, " "));
     if (!SECTION_NUMBER.test(number) || seen.has(number)) return null;
     if (body.length === 0 || body.length > SECTION_TEXT_MAX) return null;

@@ -230,8 +230,9 @@ const auditorPasses = (f: Fixture, id: string) =>
     ),
   );
 
-const approve = (f: Fixture, id: string, edits?: Record<string, string>) =>
-  executeProposal(f.session, id, { confirmed: false, ...(edits ? { edits } : {}) }, { db: app, clock, executors: EXECUTORS });
+// The person's own values always come with the second confirm, as the card asks for it.
+const approve = (f: Fixture, id: string, edits?: Record<string, string>, confirmed = edits !== undefined) =>
+  executeProposal(f.session, id, { confirmed, ...(edits ? { edits } : {}) }, { db: app, clock, executors: EXECUTORS });
 
 const setRole = (f: Fixture, role: "admin" | "staff") =>
   admin.withTenant(f.tenantId, (q) =>
@@ -456,6 +457,13 @@ describe("a pay policy run", () => {
       ok: false,
       category: "role",
       retryable: true,
+    });
+    // The second check passed the card as stored, never the person's values: edits on one click
+    // are refused until confirmed.
+    expect(await approve(A, id, { net_pay_floor_cents: "30000" }, false)).toEqual({
+      ok: false,
+      category: "needs_confirm",
+      retryable: false,
     });
     expect((await cardsOf(A)).map((c) => c.status)).toEqual(["proposed"]);
     expect(await versionsOf(A)).toHaveLength(1);
@@ -696,7 +704,14 @@ describe("a pay policy run", () => {
       subjectId: card.subject_id,
       status: "approved",
     } as ProposalRow;
+    // A resume skips the gate, so the executor asks for the confirm itself and leaves the row as it is.
     expect(await payPolicySetupExecutor(app, E.session, row, { confirmed: false, edits }, { db: app, clock })).toEqual({
+      ok: false,
+      category: "needs_confirm",
+      retryable: false,
+    });
+    await nothingWritten("approved");
+    expect(await payPolicySetupExecutor(app, E.session, row, { confirmed: true, edits }, { db: app, clock })).toEqual({
       ok: false,
       category: "not_executable",
       retryable: false,

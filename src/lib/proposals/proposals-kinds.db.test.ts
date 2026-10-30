@@ -81,6 +81,21 @@ describe("proposal kinds and origins on a fresh database", () => {
     ]);
   });
 
+  it("validates the two checks 0062 re-creates NOT VALID, in 0062_policy_onboard_validate", async () => {
+    const rows = await admin.withoutTenant((q) =>
+      q.query<{ conname: string; convalidated: boolean }>(
+        `SELECT conname, convalidated FROM pg_constraint
+          WHERE (conrelid = CAST('public.proposals' AS regclass) AND conname = 'proposals_kind_check')
+             OR (conrelid = CAST('public.documents' AS regclass) AND conname = 'documents_document_kind_check')
+          ORDER BY conname`,
+      ),
+    );
+    expect(rows.map((r) => `${r.conname}:${r.convalidated}`)).toEqual([
+      "documents_document_kind_check:true",
+      "proposals_kind_check:true",
+    ]);
+  });
+
   it("takes one engine proposal of every kind the code knows, and refuses any other kind", async () => {
     for (const kind of PROPOSAL_KINDS) {
       expect(await insert({ kind }), kind).toBe(1);
