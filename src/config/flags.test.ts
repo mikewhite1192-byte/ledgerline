@@ -58,6 +58,8 @@ const KEPT_OFF = [
   "inboundEmailEnabled",
   // Not built: on would do nothing new.
   "documentCrop",
+  // Ships off with its own merge; the owner turns it on in its own PR.
+  "documentMarkupEnabled",
   // Outside sends: the pages show "would send" lines instead.
   "driverNotesEmailEnabled",
   "collectionsEmailEnabled",
@@ -94,6 +96,7 @@ describe("flags", () => {
     expect(flags.aiProofRoute).toBe(false);
     expect(flags.inboundEmailEnabled).toBe(false);
     expect(flags.documentCrop).toBe(false);
+    expect(flags.documentMarkupEnabled).toBe(false);
     expect(flags.driverNotesEmailEnabled).toBe(false);
     expect(flags.collectionsEmailEnabled).toBe(false);
     expect(flags.sweepScheduleEnabled).toBe(false);
@@ -284,6 +287,21 @@ describe("flags", () => {
     for (const v of Object.values(flags.documentLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
+  });
+
+  it("keeps the marked copy small: two cents an edit, four a check, ten a day, the upload size cap", () => {
+    expect(flags.markupLimits).toEqual({
+      editMaxCostCents: 2,
+      checkMaxCostCents: 4,
+      perTenantPerDay: 10,
+      maxBytes: 700_000,
+    });
+    for (const v of Object.values(flags.markupLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // A marked copy is never larger than the largest upload, so reading it alone stays under the
+    // database's answer limit exactly as an upload does.
+    expect(flags.markupLimits.maxBytes).toBeLessThanOrEqual(flags.documentLimits.maxBytes);
   });
 
   it("releases the advance flow armed, with its cap kept and dated from the release", () => {

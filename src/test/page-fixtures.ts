@@ -798,6 +798,7 @@ const document = (over: Partial<DocumentView>): DocumentView => ({
   createdAt: "2026-10-28T15:00:00.000Z",
   stalled: false,
   readAttempts: 1,
+  markup: { status: "none", attemptsLeft: 3, category: null, at: null, stalled: false, eligibility: "eligible" },
   ...over,
 });
 
@@ -806,6 +807,30 @@ export const DOCUMENTS: DocumentView[] = [
   document({ id: id(111), filename: "rate-con.pdf", mime: "application/pdf", readStatus: "pending", kind: null, read: null, match: null, readCallId: null }),
   document({ id: id(112), filename: "blurry.png", mime: "image/png", readStatus: "unreadable", kind: null, read: null, match: { found: false, reason: "unreadable" }, readAttempts: 3 }),
   document({ id: id(113), filename: "late.webp", mime: "image/webp", readStatus: "budget", kind: null, read: null, match: null }),
+];
+
+// The document page's marked copy block, one per state the block shows.
+const markup = (over: Partial<DocumentView["markup"]>): DocumentView["markup"] => ({
+  status: "none",
+  attemptsLeft: 3,
+  category: null,
+  at: null,
+  stalled: false,
+  eligibility: "eligible",
+  ...over,
+});
+
+export const MARKUP_DOCUMENTS: { name: string; view: DocumentView }[] = [
+  { name: "eligible", view: document({}) },
+  { name: "marking", view: document({ markup: markup({ status: "marking", attemptsLeft: 2, at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "checked", view: document({ markup: markup({ status: "checked", attemptsLeft: 2, at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "mismatch", view: document({ markup: markup({ status: "mismatch", attemptsLeft: 2, category: "callout_wrong", at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "mismatch, no tries left", view: document({ markup: markup({ status: "mismatch", attemptsLeft: 0, category: "extra_amount", at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "waiting for budget", view: document({ markup: markup({ status: "unavailable", category: "budget" }) }) },
+  { name: "timed out", view: document({ markup: markup({ status: "unavailable", attemptsLeft: 1, category: "timeout", at: "2026-10-28T15:05:00.000Z" }) }) },
+  { name: "agrees", view: document({ markup: markup({ eligibility: "agrees" }) }) },
+  { name: "no line to circle", view: document({ markup: markup({ eligibility: "no_anchor_line" }) }) },
+  { name: "pdf", view: document({ id: id(114), filename: "rate-con.pdf", mime: "application/pdf", markup: markup({ eligibility: "not_image" }) }) },
 ];
 
 export const CLIPS: ClipView[] = [

@@ -4,8 +4,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import type { TenantDb } from "../db";
-import { checkUpload, readAgain, safeFilename, STALLED_MS, uploadDocument, viewOf } from "./service";
+import { checkUpload, MARKUP_STALLED_MS, readAgain, safeFilename, STALLED_MS, uploadDocument, viewOf } from "./service";
 import type { DocumentMetaRow } from "./store";
+import { CONFIDENCE_FIELDS } from "./types";
 
 // The upload's own checks and the view a page shows, with no database: a db that is touched
 // fails the test, so every refusal here happens before anything is stored.
@@ -136,6 +137,10 @@ describe("viewOf", () => {
     trace_id: "t1",
     created_at: "2026-10-24T14:00:00.000Z",
     updated_at: "2026-10-24T14:58:00.000Z",
+    markup_status: "none",
+    markup_attempts: 0,
+    markup_category: null,
+    markup_at: null,
     ...over,
   });
 
@@ -153,6 +158,70 @@ describe("viewOf", () => {
     expect(viewOf(row({ match: JSON.stringify({ found: false, reason: "unreadable" }) }), NOW).match).toEqual({
       found: false,
       reason: "unreadable",
+    });
+  });
+
+  describe("markup", () => {
+    const reading = JSON.stringify({
+      document_kind: "lumper_receipt",
+      sample_word: true,
+      vendor: null,
+      date_mmddyyyy: null,
+      total_cents: 17_500,
+      load_number: null,
+      truck_unit: null,
+      gallons_milli: null,
+      price_cents: null,
+      loaded_miles: null,
+      rate_per_mile_cents: null,
+      linehaul_cents: null,
+      fuel_surcharge_cents: null,
+      customer_name: null,
+      stops: [],
+      text_lines: ["Total $175.00"],
+      confidence: Object.fromEntries(CONFIDENCE_FIELDS.map((f) => [f, "high"])),
+    });
+    const match = JSON.stringify({
+      found: true,
+      table: "loads",
+      id: "l1",
+      humanRef: "BR-1",
+      loadId: "l1",
+      driverId: null,
+      fields: [{ name: "total_cents", claim: 17_500, record: null, status: "no_record_value" }],
+      notes: ["reimbursement_missing"],
+      supports: "missing_reimbursement",
+    });
+    const readRow = (over: Partial<DocumentMetaRow> = {}) => row({ read_status: "read", reading, match, ...over });
+    const at = (ms: number) => new Date(NOW.getTime() - ms).toISOString();
+
+    it("says whether a copy can be made, and leaves that out of a list row", () => {
+      expect(viewOf(readRow(), NOW).markup).toEqual({
+        status: "none",
+        attemptsLeft: 3,
+        category: null,
+        at: null,
+        stalled: false,
+        eligibility: "eligible",
+      });
+      expect(viewOf(readRow(), NOW, { plan: false }).markup.eligibility).toBeNull();
+      expect(viewOf(readRow({ mime: "application/pdf" }), NOW).markup.eligibility).toBe("not_image");
+      expect(viewOf(row(), NOW).markup.eligibility).toBe("not_read");
+      expect(viewOf(readRow({ match: JSON.stringify({ found: false, reason: "no_record" }) }), NOW).markup.eligibility).toBe(
+        "not_matched",
+      );
+    });
+
+    it("counts tries left and calls a try stalled only after three minutes", () => {
+      expect(viewOf(readRow({ markup_attempts: 2, markup_status: "mismatch", markup_category: "callout_wrong" }), NOW).markup).toMatchObject({
+        attemptsLeft: 1,
+        category: "callout_wrong",
+      });
+      expect(viewOf(readRow({ markup_attempts: 9 }), NOW).markup.attemptsLeft).toBe(0);
+      const marking = (ms: number) => viewOf(readRow({ markup_status: "marking", markup_at: at(ms) }), NOW).markup.stalled;
+      expect(marking(MARKUP_STALLED_MS)).toBe(false);
+      expect(marking(MARKUP_STALLED_MS + 1)).toBe(true);
+      expect(viewOf(readRow({ markup_status: "unavailable", markup_at: at(MARKUP_STALLED_MS * 2) }), NOW).markup.stalled).toBe(false);
     });
   });
 });
