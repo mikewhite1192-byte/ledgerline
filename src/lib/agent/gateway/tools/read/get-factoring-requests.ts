@@ -4,13 +4,16 @@ import { listRequests } from "../../../../factoring/read";
 import { defineTool, type GatewayRef } from "../../types";
 import { OPERATOR_AUDITOR } from "../shared";
 
-// The carrier's factoring requests, newest first: what each brought in, what is held back, and
-// where it stands. Reads only; the Factoring page shows each request's invoices.
+// The carrier's factoring requests, newest first: what each was planned to bring in, what its
+// funded invoices did bring in, what is held back, and where it stands. Reads only; the Factoring
+// page shows each request's invoices.
 export const getFactoringRequests = defineTool({
   name: "get_factoring_requests",
   description:
-    "List the carrier's factoring requests, newest first, in integer cents: invoices sold, the net " +
-    "that came in, the fee, the part held back until the customer pays, and the status (submitted " +
+    "List the carrier's factoring requests, newest first, in integer cents: invoices sold, the " +
+    "planned net (netCents, which still counts an invoice that was declined or not confirmed yet), " +
+    "what came in (cameInCents, the funded invoices only), the fee, the part held back until the " +
+    "customer pays, and the status (submitted " +
     "or unknown means sent, not confirmed yet; funded; partly_funded; declined; failed). Test mode. " +
     "This only reads.",
   tier: "read",
@@ -30,6 +33,7 @@ export const getFactoringRequests = defineTool({
           invoiceCount: r.invoiceCount,
           balanceCents: r.balanceCents,
           netCents: r.netCents,
+          cameInCents: r.cameInCents,
           feeCents: r.feeCents,
           reserveCents: r.reserveCents,
           status: r.status,

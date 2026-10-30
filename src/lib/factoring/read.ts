@@ -35,6 +35,8 @@ export type RequestSummary = {
   feeCents: number;
   netCents: number;
   reserveCents: number;
+  // The sum of the funded invoices' own net: what came in. netCents is what was planned.
+  cameInCents: number;
   status: string;
   fundedAt: string | null;
   proposalId: string | null;
@@ -51,6 +53,7 @@ type SummaryRow = {
   fee_cents: number | string;
   net_cents: number | string;
   reserve_cents: number | string;
+  came_in_cents: number | string;
   status: string;
   funded_at: string | null;
   proposal_id: string | null;
@@ -76,6 +79,7 @@ function summaryOf(r: SummaryRow): RequestSummary {
     feeCents: whole(r.fee_cents),
     netCents: whole(r.net_cents),
     reserveCents: whole(r.reserve_cents),
+    cameInCents: whole(r.came_in_cents),
     status: r.status,
     fundedAt: r.funded_at,
     proposalId: r.proposal_id,
@@ -84,12 +88,17 @@ function summaryOf(r: SummaryRow): RequestSummary {
   };
 }
 
-// Exported so a test's fake database can answer the list by name.
+// Exported so a test's fake database can answer the list by name. The request's own amounts are
+// the planned totals (the roll-up changes its status, never its totals); came_in_cents adds up only
+// the funded invoices' stored net, so a declined, failed or unconfirmed invoice is never in it.
 export const SUMMARY_SQL = `
   SELECT CAST(r.id AS text) AS id, ${ISO("r.created_at")} AS created_at,
          (SELECT count(*) FROM factoring_request_invoices l
            WHERE l.tenant_id = r.tenant_id AND l.request_id = r.id) AS invoice_count,
-         r.balance_cents, r.advance_cents, r.fee_cents, r.net_cents, r.reserve_cents, r.status,
+         r.balance_cents, r.advance_cents, r.fee_cents, r.net_cents, r.reserve_cents,
+         (SELECT COALESCE(sum(l.net_cents), 0) FROM factoring_request_invoices l
+           WHERE l.tenant_id = r.tenant_id AND l.request_id = r.id AND l.status = 'funded') AS came_in_cents,
+         r.status,
          ${ISO("r.funded_at")} AS funded_at, CAST(r.proposal_id AS text) AS proposal_id,
          r.advance_bps, r.fee_bps
     FROM factoring_requests r

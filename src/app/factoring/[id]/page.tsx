@@ -12,7 +12,7 @@ import { Facts, RecordLink } from "@/components/invoices/cells";
 import { Card, CardBody } from "@/components/ui/card";
 import { readRequest, type RequestDetail, type RequestLine } from "@/lib/factoring/read";
 import { factoringOn } from "@/lib/factoring/switches";
-import { TEST_MODE_HELP, dayOf, packetLine, receiveLine } from "@/lib/factoring/words";
+import { PLANNED_LABEL, TEST_MODE_HELP, cameInLabel, cameInLine, dayOf, packetLine, plannedLine } from "@/lib/factoring/words";
 import { formatCents } from "@/lib/format/money";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { readShell, type ShellTenant } from "@/lib/tenant/shell";
@@ -46,9 +46,10 @@ function Papers({ line }: { line: RequestLine }) {
   );
 }
 
-// One factoring request: each invoice sold, what came in for it now, the fee, what is held back,
-// where it stands and the papers sent with it. "Check pending" shows while any invoice was sent
-// but not confirmed yet; it reads back and never sends again. Every number is a stored row's.
+// One factoring request: each invoice sold, what was planned to come in for it now, the fee, what
+// is held back, where it stands and the papers sent with it. The request's totals are the plan;
+// what came in is the sum of its funded invoices only. "Check pending" shows while any invoice was
+// sent but not confirmed yet; it reads back and never sends again. Every number is a stored row's.
 export default async function FactoringRequestPage({ params }: { params: Promise<{ id: string }> }) {
   if (!factoringOn()) return <FactoringOffPage title="Factoring request" />;
   const { id } = await params;
@@ -80,7 +81,7 @@ export default async function FactoringRequestPage({ params }: { params: Promise
     <FactoringFrame shell={page.shell} title="Factoring request">
       <PageHeader
         title={`Factoring request, ${dayOf(r.createdAt, zone)}`}
-        description={receiveLine(formatCents(r.netCents), formatCents(r.reserveCents), formatCents(r.feeCents))}
+        description={`${plannedLine(formatCents(r.netCents), formatCents(r.reserveCents), formatCents(r.feeCents))} ${cameInLine(r.status, formatCents(r.cameInCents))}`}
         actions={
           <span className="flex flex-wrap items-center gap-2">
             <TestModeBadge />
@@ -96,7 +97,8 @@ export default async function FactoringRequestPage({ params }: { params: Promise
               { label: "Owed on them", value: <Money cents={r.balanceCents} tone="plain" /> },
               { label: "Advance", value: <Money cents={r.advanceCents} tone="plain" />, term: "advance-rate" },
               { label: "Fee", value: <Money cents={r.feeCents} tone="plain" />, term: "factoring-fee" },
-              { label: "You receive", value: <Money cents={r.netCents} tone="plain" /> },
+              { label: PLANNED_LABEL, value: <Money cents={r.netCents} tone="plain" /> },
+              { label: cameInLabel(r.status), value: <Money cents={r.cameInCents} tone="plain" /> },
               { label: "Held back", value: <Money cents={r.reserveCents} tone="plain" />, term: "held-back" },
               { label: "Rates", value: `${percentOf(r.advanceBps)} paid now, fee ${percentOf(r.feeBps)}` },
               { label: "Funded", value: r.fundedAt ? dayOf(r.fundedAt, zone) : "Not yet" },
@@ -126,7 +128,7 @@ export default async function FactoringRequestPage({ params }: { params: Promise
           { key: "balance", header: "Owed", align: "right", cell: (l) => <Money cents={l.balanceCents} tone="plain" /> },
           { key: "advance", header: "Advance", align: "right", cell: (l) => <Money cents={l.advanceCents} tone="plain" /> },
           { key: "fee", header: "Fee", align: "right", cell: (l) => <Money cents={l.feeCents} tone="plain" /> },
-          { key: "net", header: "You receive", align: "right", cell: (l) => <Money cents={l.netCents} tone="plain" /> },
+          { key: "net", header: PLANNED_LABEL, align: "right", cell: (l) => <Money cents={l.netCents} tone="plain" /> },
           { key: "reserve", header: "Held back", align: "right", cell: (l) => <Money cents={l.reserveCents} tone="plain" /> },
           { key: "status", header: "Status", cell: (l) => <RequestStatus status={l.status} /> },
           { key: "papers", header: "Papers sent", wrap: true, cell: (l) => <Papers line={l} /> },

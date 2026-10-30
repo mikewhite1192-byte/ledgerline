@@ -32,6 +32,7 @@ export function CheckPendingButton({ url }: { url: string }) {
           confirmed: count(summary.confirmed),
           failed: count(summary.failed),
           stillUnknown: count(summary.stillUnknown),
+          errors: count(summary.errors),
           tooNew: count(reply.data.tooNew),
           stillWaiting: count(reply.data.stillWaiting),
         }),

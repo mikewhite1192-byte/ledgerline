@@ -710,13 +710,16 @@ async function cashEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow, raw
 // A factoring card with factoring on, checked the way the approval checks it (design 4.4): the
 // engine runs on exactly the card's invoices today, at the card's own short and pay day, and the
 // stored args must equal its args as a whole value. Each invoice's papers come with it: which of
-// the rate confirmation, the bill of lading and the proof of delivery are missing.
+// the rate confirmation, the bill of lading and the proof of delivery are missing. Only a card
+// still waiting for a person is checked: once it is decided its invoices are on its own request,
+// so a fresh run would refuse them as already factored, and nothing is read or run for it.
 async function factoringEngine(
   q: Queryable,
   ctx: GatewayContext,
   p: ProposalRow,
   raw: Record<string, unknown>,
 ): Promise<Engine> {
+  if (p.status !== "proposed") return UNAVAILABLE;
   const base = { ok: true, check: "factoring", proposedCents: Number(p.amount_cents) };
   const a = factoringArgsSchema.safeParse(raw);
   if (!a.success || a.data.periodId !== p.subject_id) return { ...base, engine: { ok: false, reason: "args_unreadable" } };

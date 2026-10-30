@@ -443,10 +443,10 @@ describe("a factoring card", () => {
     cash: { ...(factoring.cash as Extract<NonNullable<ProposalView["cash"]>, { kind: "factoring_request" }>), requestStatus },
   });
 
-  it("sums what comes in now, what is held back and the fee from the engine's lines", () => {
+  it("sums what is planned to come in now, what is held back and the fee from the engine's lines", () => {
     const card = proposalCardFrom(factoring);
     const texts = card.reasons.map((r) => r.text);
-    expect(texts).toContain("You receive $1,505.00 now, $172.00 held back until the customer pays, fee $43.00.");
+    expect(texts).toContain("Planned: $1,505.00 now, $172.00 held back until the customer pays, fee $43.00.");
     expect(texts).toContain("The factoring partner pays 90% up front and charges 2.5%, against a $1,400.00 short.");
     expect(texts.some((t) => t.startsWith("Factoring request:"))).toBe(false);
     expect(card.impact.label).toBe("Would come in before Friday");
@@ -469,5 +469,12 @@ describe("a factoring card", () => {
     expect(texts).toContain("Factoring request: Partly funded. The Factoring page shows each invoice. Test mode.");
     const unknown = proposalCardFrom(withStatus("unknown")).reasons.map((r) => r.text);
     expect(unknown).toContain("Factoring request: Sent, not confirmed yet. The Factoring page shows each invoice. Test mode.");
+  });
+
+  it("never says you receive a sum, before a request or after a part of it was declined", () => {
+    for (const s of [null, "submitted", "unknown", "funded", "partly_funded", "declined", "failed"]) {
+      const card = proposalCardFrom(withStatus(s));
+      for (const t of [...card.reasons.map((r) => r.text), card.impact.label ?? ""]) expect(t, String(s)).not.toMatch(/you receive/i);
+    }
   });
 });

@@ -504,8 +504,9 @@ export type Flags = {
   // keeps Cash Friday's record-only behavior. armed, maxNetCents (inclusive: the most one request
   // may pay out), requirePacket (refuse an invoice whose rate confirmation, bill of lading or POD
   // is missing) and startDate (YYYY-MM-DD, tenant-local; it gates submitting, never proposing) are
-  // asked again on every approval, before the ledger reserves a row and by the partner adapter
-  // itself at each call, on top of payoutsEnabled.
+  // asked again on every approval, before the ledger reserves a row, on top of payoutsEnabled. The
+  // partner adapter asks enabled, armed, maxNetCents (against the one invoice it is sent) and
+  // startDate again itself at each call; it is sent no papers, so requirePacket is the approval's.
   factoring: {
     enabled: boolean;
     armed: boolean;

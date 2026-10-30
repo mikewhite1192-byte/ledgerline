@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { FACTORING_REFUSALS } from "../rules-engine/factoring";
 import { EMPTY_PACKET } from "./packet";
 import {
+  cameInLabel,
+  cameInLine,
   CHECK_NOTICE,
   CHECK_RESULT,
   checkResultSentence,
@@ -10,7 +12,8 @@ import {
   FACTORING_REFUSAL_SENTENCES,
   factoringSentence,
   packetLine,
-  receiveLine,
+  PLANNED_LABEL,
+  plannedLine,
   requestStatusWords,
   TEST_MODE_HELP,
 } from "./words";
@@ -24,6 +27,8 @@ const ALL = [
   ...Object.values(CHECK_NOTICE),
   ...Object.values(CHECK_RESULT),
   TEST_MODE_HELP,
+  plannedLine("$5,611.50", "$645.00", "$193.50"),
+  ...["submitted", "unknown", "funded", "partly_funded", "declined", "failed"].map((s) => cameInLine(s, "$1,870.50")),
 ];
 
 describe("factoring words", () => {
@@ -74,20 +79,40 @@ describe("factoring words", () => {
     ).toBe("Invoice, rate confirmation, bill of lading, POD on file");
   });
 
-  it("says the money in one sentence", () => {
-    expect(receiveLine("$5,611.50", "$645.00", "$193.50")).toBe(
-      "You receive $5,611.50 now, $645.00 held back until the customer pays, fee $193.50.",
+  it("says the planned money in one sentence, and what came in apart from it", () => {
+    expect(plannedLine("$5,611.50", "$645.00", "$193.50")).toBe(
+      "Planned: $5,611.50 now, $645.00 held back until the customer pays, fee $193.50.",
     );
+    expect(PLANNED_LABEL).toBe("Planned net");
+    expect(cameInLine("partly_funded", "$1,870.50")).toBe("Came in: $1,870.50.");
+    expect(cameInLine("funded", "$5,611.50")).toBe("Came in: $5,611.50.");
+    expect(cameInLine("declined", "$0.00")).toBe("Came in: $0.00.");
+    // While an invoice is still being confirmed, only so far.
+    expect(cameInLabel("unknown")).toBe("Came in so far");
+    expect(cameInLabel("submitted")).toBe("Came in so far");
+    expect(cameInLabel("failed")).toBe("Came in");
+    // No planned or came-in sentence says "you receive".
+    for (const s of ALL) expect(s, s).not.toMatch(/you receive/i);
   });
 
   it("says what a Check pending press found, the strongest news first", () => {
-    const none = { confirmed: 0, failed: 0, tooNew: 0, stillWaiting: 0, stillUnknown: 0 };
+    const none = { confirmed: 0, failed: 0, tooNew: 0, stillWaiting: 0, stillUnknown: 0, errors: 0 };
     expect(checkResultSentence({ ...none, confirmed: 1, failed: 1 })).toBe(CHECK_RESULT.confirmed);
     expect(checkResultSentence({ ...none, failed: 1, tooNew: 1 })).toBe(CHECK_RESULT.declined);
     expect(checkResultSentence({ ...none, tooNew: 1, stillWaiting: 1 })).toBe(CHECK_RESULT.tooNew);
     expect(checkResultSentence({ ...none, stillWaiting: 1 })).toBe(CHECK_RESULT.waiting);
     expect(checkResultSentence({ ...none, stillUnknown: 1 })).toBe(CHECK_RESULT.waiting);
     expect(checkResultSentence(none)).toBe(CHECK_RESULT.nothing);
+  });
+
+  it("says a check that could not read an invoice back was not finished, never that nothing is waiting", () => {
+    const none = { confirmed: 0, failed: 0, tooNew: 0, stillWaiting: 0, stillUnknown: 0, errors: 0 };
+    expect(checkResultSentence({ ...none, errors: 1 })).toBe(CHECK_RESULT.errors);
+    expect(CHECK_RESULT.errors).toMatch(/could not be checked/);
+    expect(CHECK_RESULT.errors).toMatch(/Try again\.$/);
+    // Firmer news still comes first.
+    expect(checkResultSentence({ ...none, errors: 1, confirmed: 1 })).toBe(CHECK_RESULT.confirmed);
+    expect(checkResultSentence({ ...none, errors: 1, stillUnknown: 1 })).toBe(CHECK_RESULT.waiting);
   });
 
   it("names the Test mode convention the simulated partner follows", () => {

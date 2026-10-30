@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { flags } from "../../../config/flags";
 import { isCanonicalUuid, requestIdOf } from "../../money/keys";
 import { AMOUNT_LIMIT_CENTS, MoneyError } from "../../money/types";
+import { isLocalDate, localDateOf } from "../../time/local-date";
 import type { FactoringAdapter, FactoringSubmission, ReadBack, Ready, SendContext, SendOutcome } from "../types";
 
 // The factoring partner in Test mode: a simulated partner that lives inside the app. It holds no
@@ -15,10 +16,14 @@ import type { FactoringAdapter, FactoringSubmission, ReadBack, Ready, SendContex
 //   else  funded at once with the advance less the fee; reads back succeeded
 // The partner's reference is fsim_adv_ + 24 hex of sha256("adv:" + request id), the same for the
 // same request id on every call, so a resend after a crash lands on the same advance. ready() and
-// every call re-read payoutsEnabled and the factoring switches; submitting also needs armed. Logs
-// carry the outcome, the reference, the cents and the invoice number, never a name.
+// every call re-read payoutsEnabled and the factoring switches; submitting also needs armed, an
+// invoice net within maxNetCents (the adapter sees one invoice, so the whole request's cap is the
+// approval's to check) and today, in the carrier's zone, on or after startDate. requirePacket is
+// not asked here: a submission carries no papers, so the approval checks it. Logs carry the
+// outcome, the reference, the cents and the invoice number, never a name.
 
-export type FactoringSimDeps = { log?: (line: string) => void };
+// now: the clock the start date is read against (tests pin it).
+export type FactoringSimDeps = { log?: (line: string) => void; now?: () => Date };
 
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 const INVOICE_NUMBER = /^[A-Za-z0-9-]{1,40}$/;
@@ -65,8 +70,22 @@ function validSubmission(r: FactoringSubmission, ctx: SendContext): boolean {
 
 const factoringOn = (): boolean => flags.payoutsEnabled === true && flags.factoring?.enabled === true;
 
+// The cap and the start date, asked again at the call. A cap that is not a whole cent count, a
+// start date that is not a real date, or a zone that cannot be read is unknown, so closed.
+function withinLimits(netCents: number, zone: string, now: Date): boolean {
+  const f = flags.factoring;
+  if (!Number.isSafeInteger(f.maxNetCents) || netCents > f.maxNetCents) return false;
+  if (!isLocalDate(f.startDate)) return false;
+  try {
+    return localDateOf(now.toISOString(), zone) >= f.startDate;
+  } catch {
+    return false;
+  }
+}
+
 export function createFactoringSim(deps: FactoringSimDeps = {}): FactoringAdapter {
   const log = deps.log ?? ((line: string) => console.info(line));
+  const now = deps.now ?? (() => new Date());
 
   return {
     system: "factoring_sim",
@@ -80,6 +99,7 @@ export function createFactoringSim(deps: FactoringSimDeps = {}): FactoringAdapte
     async submitInvoice(r: FactoringSubmission, ctx: SendContext): Promise<SendOutcome> {
       if (!validSubmission(r, ctx)) return { kind: "failed", category: "validation" };
       if (!factoringOn() || flags.factoring.armed !== true) return { kind: "failed", category: "disabled" };
+      if (!withinLimits(r.netCents, ctx.tenantZone, now())) return { kind: "failed", category: "disabled" };
       const behavior = factoringBehavior(r.balanceCents);
       const id = advanceRef(ctx.requestId);
       log(`factoring: invoice ${r.invoiceNumber} ${behavior} ${id} ${r.netCents}c of ${r.balanceCents}c`);

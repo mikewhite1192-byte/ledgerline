@@ -59,15 +59,26 @@ export const CHECK_RESULT = {
   declined: "The factoring partner did not take an invoice. See the invoices below.",
   tooNew: "Sent less than a minute ago. Check again in a minute.",
   waiting: "The factoring partner has not confirmed it yet. Check again in a few minutes.",
+  errors: "An invoice could not be checked just now. Nothing was sent. Try again.",
   nothing: "Nothing here is waiting on the factoring partner.",
   lost: "The check's answer did not come back. The page below shows what is on file.",
 } as const;
 
-export function checkResultSentence(r: { confirmed: number; failed: number; tooNew: number; stillWaiting: number; stillUnknown: number }): string {
+// errors: read-backs that did not finish (the summary's own count); with nothing else to say, the
+// press says so instead of "nothing is waiting".
+export function checkResultSentence(r: {
+  confirmed: number;
+  failed: number;
+  tooNew: number;
+  stillWaiting: number;
+  stillUnknown: number;
+  errors: number;
+}): string {
   if (r.confirmed > 0) return CHECK_RESULT.confirmed;
   if (r.failed > 0) return CHECK_RESULT.declined;
   if (r.tooNew > 0) return CHECK_RESULT.tooNew;
   if (r.stillWaiting > 0 || r.stillUnknown > 0) return CHECK_RESULT.waiting;
+  if (r.errors > 0) return CHECK_RESULT.errors;
   return CHECK_RESULT.nothing;
 }
 
@@ -111,9 +122,23 @@ export function packetLine(p: FactoringPacket): string {
   return missing.length === 0 ? have : `${have}; ${missing.join(", ")} missing`;
 }
 
-// The money summary a factoring card and the request page share.
-export function receiveLine(netCents: string, reserveCents: string, feeCents: string): string {
-  return `You receive ${netCents} now, ${reserveCents} held back until the customer pays, fee ${feeCents}.`;
+// The money a factoring card and the request page show. A request's own totals are what was
+// planned when it was sent (its roll-up changes its status, never its totals), so they keep an
+// invoice the partner declined; what came in is the sum of its funded invoices' stored amounts.
+// Neither the card nor a page says "you receive" for a planned figure.
+export const PLANNED_LABEL = "Planned net";
+
+export function plannedLine(netCents: string, reserveCents: string, feeCents: string): string {
+  return `Planned: ${netCents} now, ${reserveCents} held back until the customer pays, fee ${feeCents}.`;
+}
+
+// While an invoice is still being confirmed, what came in is only so far.
+export function cameInLabel(status: string): string {
+  return status === "submitted" || status === "unknown" ? "Came in so far" : "Came in";
+}
+
+export function cameInLine(status: string, cameInCents: string): string {
+  return `${cameInLabel(status)}: ${cameInCents}.`;
 }
 
 // The Test mode convention, said on the page so a person can see each outcome on purpose.

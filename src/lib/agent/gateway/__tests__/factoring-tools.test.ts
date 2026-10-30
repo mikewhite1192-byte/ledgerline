@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import { optionArgs, sameArgs } from "../../../cash/args";
 import { readCashFridayInput } from "../../../data/read";
+import { PACKET_INVOICES_SQL } from "../../../factoring/packet";
 import { computeCashFriday } from "../../../rules-engine";
 import golden from "../../../seed/golden.json";
 import { instantAt } from "../../../seed/calendar";
@@ -202,6 +203,7 @@ describe("get_factoring_requests", () => {
               fee_cents: "7500",
               net_cents: "217500",
               reserve_cents: "25000",
+              came_in_cents: "130500",
               status: "partly_funded",
               funded_at: "2026-11-02T17:01:00.000Z",
               proposal_id: null,
@@ -215,7 +217,14 @@ describe("get_factoring_requests", () => {
       decision: "allowed",
       result: {
         requests: [
-          { requestId: REQUEST_ID, invoiceCount: 2, netCents: 217_500, reserveCents: 25_000, status: "partly_funded" },
+          {
+            requestId: REQUEST_ID,
+            invoiceCount: 2,
+            netCents: 217_500,
+            cameInCents: 130_500,
+            reserveCents: 25_000,
+            status: "partly_funded",
+          },
         ],
       },
     });
@@ -264,6 +273,27 @@ describe("get_proposal on a factoring card, factoring on", () => {
     expect(engine.engine).toMatchObject({ ok: true, amountCents: want.factoringNetCents, matchesProposal: true });
     expect(engine.packet).toHaveLength(want.factoringInvoices);
     for (const line of engine.packet) expect(line.missing).toEqual(["rate_confirmation", "bill_of_lading", "pod"]);
+  });
+
+  it("gives no engine figure for a decided card, and reads none of its invoices or papers", async () => {
+    const read = async (status: string) => {
+      const db = planDb(plan, withProposal(await cardRow({ status }), none));
+      const out = await callTool({ ...ctx, role: "auditor" }, call("get_proposal", { proposalId: PROPOSAL_ID }), {
+        db,
+        clock: fixedClock,
+      });
+      if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
+      return {
+        engine: out.result.engine,
+        packets: db.statements.some((st) => st.sql === PACKET_INVOICES_SQL),
+        lines: db.statements.some((st) => /FROM factoring_request_invoices\b/.test(st.sql)),
+      };
+    };
+    // A card still waiting for a person is checked, so these reads are what a decided card skips.
+    expect(await read("proposed")).toMatchObject({ engine: { ok: true, check: "factoring" }, packets: true, lines: true });
+    for (const status of ["approved", "executing", "done", "failed", "rejected", "expired"]) {
+      expect(await read(status), status).toEqual({ engine: { ok: false, reason: "unavailable" }, packets: false, lines: false });
+    }
   });
 
   it("says the card no longer matches when its stored amount differs from the engine's", async () => {

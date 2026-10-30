@@ -58,6 +58,7 @@ import {
 import type { BreakView } from "@/lib/data/card-recon";
 import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
+import * as factoringWords from "@/lib/factoring/words";
 import { TERMS } from "@/lib/format/terms";
 import {
   compareLine,
@@ -1062,6 +1063,7 @@ const PAGES: PageCase[] = [
           (state.fx.factoringRequest = {
             ...fx.FACTORING_REQUEST,
             status: "funded",
+            cameInCents: fx.FACTORING_REQUEST.lines.reduce((t, l) => t + l.netCents, 0),
             lines: fx.FACTORING_REQUEST.lines.map((l) => ({ ...l, status: "funded" })),
           }),
         load: async () => (await import("@/app/factoring/[id]/page")).default({ params: p({ id: ID }) }),
@@ -2449,6 +2451,35 @@ describe("no internal word in the Cash page's notes and words", () => {
       <ul>
         {words.map((w, n) => (
           <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("no internal word in factoring's words", () => {
+  it("every refusal, check result, status, planned and came-in line", () => {
+    const w = factoringWords;
+    const statuses = ["submitted", "unknown", "funded", "partly_funded", "declined", "failed"];
+    const none = { confirmed: 0, failed: 0, tooNew: 0, stillWaiting: 0, stillUnknown: 0, errors: 0 };
+    const words = [
+      ...Object.values(w.FACTORING_APPROVE_NOTICE),
+      ...Object.values(w.FACTORING_REFUSAL_SENTENCES),
+      ...Object.values(w.CHECK_NOTICE),
+      ...Object.values(w.CHECK_RESULT),
+      ...Object.values(w.REQUEST_STATUS_WORDS),
+      w.checkResultSentence({ ...none, errors: 1 }),
+      w.PLANNED_LABEL,
+      w.plannedLine("$5,611.50", "$645.00", "$193.50"),
+      ...statuses.flatMap((s) => [w.cameInLabel(s), w.cameInLine(s, "$1,870.50")]),
+      w.TEST_MODE_HELP,
+    ];
+    expect(words.every((x) => x.length > 0)).toBe(true);
+    const { container } = render(
+      <ul>
+        {words.map((x, n) => (
+          <li key={n}>{x}</li>
         ))}
       </ul>,
     );

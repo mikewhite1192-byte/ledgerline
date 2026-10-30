@@ -2,7 +2,7 @@ import type { ProposalAudit, ProposalCardProps } from "@/components/app/proposal
 import { auditConfirmQuestion, sentences } from "@/lib/agent/auditor/words";
 import { flagWords } from "@/lib/agent/reasons";
 import type { ProposalView } from "@/lib/agent/view";
-import { receiveLine, requestStatusWords } from "@/lib/factoring/words";
+import { plannedLine, requestStatusWords } from "@/lib/factoring/words";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { sourceLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
@@ -233,8 +233,10 @@ export function cashLines(c: NonNullable<ProposalView["cash"]>): { text: string;
       {
         text: `The factoring partner pays ${percentOf(c.advanceBps)} up front and charges ${percentOf(c.feeBps)}, against a ${formatCents(c.shortCents)} short.`,
       },
+      // The card's figures are the plan, whatever the partner did later: the Factoring page shows
+      // what came in, so the card never says "you receive" for an invoice that was not funded.
       {
-        text: receiveLine(
+        text: plannedLine(
           formatCents(c.invoices.reduce((t, i) => t + i.netCents, 0)),
           formatCents(c.invoices.reduce((t, i) => t + i.reserveCents, 0)),
           formatCents(c.invoices.reduce((t, i) => t + i.feeCents, 0)),

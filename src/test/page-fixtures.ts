@@ -2386,6 +2386,8 @@ const factoringRequest = (over: Partial<RequestSummary>): RequestSummary => ({
   feeCents: 19_350,
   netCents: 561_150,
   reserveCents: 64_500,
+  // The one funded invoice below; the request's own totals are what was planned.
+  cameInCents: 187_050,
   status: "partly_funded",
   fundedAt: "2026-11-02T15:20:04.000Z",
   proposalId: id(533),
@@ -2396,9 +2398,9 @@ const factoringRequest = (over: Partial<RequestSummary>): RequestSummary => ({
 
 export const FACTORING_REQUESTS: RequestSummary[] = [
   factoringRequest({}),
-  factoringRequest({ id: id(534), createdAt: "2026-10-30T14:00:00.000Z", invoiceCount: 1, status: "unknown", fundedAt: null }),
-  factoringRequest({ id: id(535), createdAt: "2026-10-23T14:00:00.000Z", invoiceCount: 2, status: "funded" }),
-  factoringRequest({ id: id(536), createdAt: "2026-10-16T14:00:00.000Z", invoiceCount: 1, status: "declined", fundedAt: null }),
+  factoringRequest({ id: id(534), createdAt: "2026-10-30T14:00:00.000Z", invoiceCount: 1, status: "unknown", fundedAt: null, cameInCents: 0 }),
+  factoringRequest({ id: id(535), createdAt: "2026-10-23T14:00:00.000Z", invoiceCount: 2, status: "funded", cameInCents: 561_150 }),
+  factoringRequest({ id: id(536), createdAt: "2026-10-16T14:00:00.000Z", invoiceCount: 1, status: "declined", fundedAt: null, cameInCents: 0 }),
 ];
 
 export const FACTORING_REQUEST: RequestDetail = {

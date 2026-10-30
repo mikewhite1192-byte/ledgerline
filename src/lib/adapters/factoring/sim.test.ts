@@ -29,11 +29,14 @@ function submission(balanceCents = 1_000_000, over: Partial<FactoringSubmission>
     ...over,
   };
 }
-const ctx = (requestId = requestIdOf(ACTION)) => ({ requestId, timeoutMs: 1_000, tenantZone: "America/Chicago" });
+const ctx = (requestId = requestIdOf(ACTION), tenantZone = "America/Chicago") => ({ requestId, timeoutMs: 1_000, tenantZone });
+
+// A fixed clock: 03:00 UTC on Nov 3 is still Nov 2 in Central time.
+const NOW = new Date("2026-11-03T03:00:00.000Z");
 
 function make() {
   const lines: string[] = [];
-  return { sim: createFactoringSim({ log: (l) => lines.push(l) }), lines };
+  return { sim: createFactoringSim({ log: (l) => lines.push(l), now: () => NOW }), lines };
 }
 
 const REF = `fsim_adv_${createHash("sha256").update(`adv:${requestIdOf(ACTION)}`).digest("hex").slice(0, 24)}`;
@@ -125,6 +128,35 @@ describe("the simulated factoring partner", () => {
       expect(await sim.submitInvoice(submission(), ctx())).toEqual({ kind: "failed", category: "disabled" });
     }
     expect(lines).toEqual([]);
+  });
+
+  it("submits nothing for an invoice whose net is over the cap, and funds one exactly at it", async () => {
+    const { sim, lines } = make();
+    const s = submission();
+    flags.factoring = { ...flags.factoring, maxNetCents: s.netCents - 1 };
+    expect(await sim.submitInvoice(s, ctx())).toEqual({ kind: "failed", category: "disabled" });
+    flags.factoring = { ...flags.factoring, maxNetCents: Number.NaN };
+    expect(await sim.submitInvoice(s, ctx())).toEqual({ kind: "failed", category: "disabled" });
+    expect(lines).toEqual([]);
+    flags.factoring = { ...flags.factoring, maxNetCents: s.netCents };
+    expect(await sim.submitInvoice(s, ctx())).toMatchObject({ kind: "confirmed", amountCents: s.netCents });
+  });
+
+  it("submits nothing before the start date in the carrier's own zone, or when the date or zone cannot be read", async () => {
+    const { sim, lines } = make();
+    // Nov 3 starts: it is still Nov 2 in Central time, already Nov 3 in UTC.
+    flags.factoring = { ...flags.factoring, startDate: "2026-11-03" };
+    expect(await sim.submitInvoice(submission(), ctx())).toEqual({ kind: "failed", category: "disabled" });
+    expect(await sim.submitInvoice(submission(), ctx(requestIdOf(ACTION), "Not/AZone"))).toEqual({ kind: "failed", category: "disabled" });
+    for (const startDate of ["2026-02-30", "soon", ""]) {
+      flags.factoring = { ...flags.factoring, startDate };
+      expect(await sim.submitInvoice(submission(), ctx())).toEqual({ kind: "failed", category: "disabled" });
+    }
+    expect(lines).toEqual([]);
+    flags.factoring = { ...flags.factoring, startDate: "2026-11-03" };
+    expect(await sim.submitInvoice(submission(), ctx(requestIdOf(ACTION), "UTC"))).toMatchObject({ kind: "confirmed" });
+    flags.factoring = { ...flags.factoring, startDate: "2026-11-02" };
+    expect(await sim.submitInvoice(submission(), ctx())).toMatchObject({ kind: "confirmed" });
   });
 
   it("refuses a read-back for another reference, a bad request or while switched off", async () => {

@@ -429,6 +429,15 @@ describe("factoring on the real database", { timeout: 60_000 }, () => {
     expect(request?.status).toBe("partly_funded");
     const lines = await linesOf(request?.id ?? "");
     expect(Object.fromEntries(lines.map((l) => [l.invoice_id, l.status]))).toEqual({ [x.id]: "declined", [y.id]: "funded" });
+    // The request keeps its planned total; what came in is the funded invoice's own net only.
+    const planned = lines.reduce((t, l) => t + Number(l.net_cents), 0);
+    const cameIn = Number(lines.find((l) => l.invoice_id === y.id)?.net_cents);
+    const listed = (await app.withTenant(A, (q) => listRequests(q, 50))).find((r) => r.id === request?.id);
+    const detail = await app.withTenant(A, (q) => readRequest(q, request?.id ?? ""));
+    for (const r of [listed, detail]) {
+      expect(r).toMatchObject({ id: request?.id, status: "partly_funded", netCents: planned, cameInCents: cameIn });
+    }
+    expect(cameIn).toBeLessThan(planned);
     const money = await moneyRows();
     expect(money.find((m) => m.subject_id === x.id)).toMatchObject({ state: "failed", failure_category: "declined" });
     expect(money.find((m) => m.subject_id === y.id)).toMatchObject({ state: "confirmed" });
