@@ -58,24 +58,20 @@ export const LOCAL_OFF_ONLY = [
   "quarterReviewEnabled",
   "judgeAccess.enabled",
   "moneyCodes.enabled",
-  "moneyCodes.armed",
   "deskLoop.enabled",
-  "deskLoop.armed",
   "factoring.enabled",
-  "factoring.armed",
   "evalCardEnabled",
   "groundedRatesEnabled",
   "verification.enabled",
   "ratecon.enabled",
   "phoneLineEnabled",
   "escrowRelease.enabled",
-  "escrowRelease.armed",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];
 type OffOnly = (typeof LOCAL_OFF_ONLY)[number];
 type LocalKey = Overridable | OffOnly;
-// A switch inside a switch object, by its path ("deskLoop.armed").
+// A switch inside a switch object, by its path ("deskLoop.enabled").
 type InnerKey = Extract<LocalKey, `${string}.${string}`>;
 
 function isOverridable(key: string): key is Overridable {

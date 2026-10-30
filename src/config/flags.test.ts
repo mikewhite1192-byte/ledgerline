@@ -50,14 +50,13 @@ const RELEASED_ON = [
   // Writes no money and only reads QuickBooks; its reads and model cents are capped below.
   "cardRecon.enabled",
   // Every finished feature, on for the owner's walk-through (D-056, 2026-10-30). Payments stay in
-  // Stripe test mode and accounting in the QuickBooks sandbox; every cap is as it was.
+  // Stripe test mode and accounting in the QuickBooks sandbox; every cap is as it was. The arm
+  // switches that let money move stay off: each arming is its own one-line PR.
   "inboundEmailEnabled",
   "documentCrop",
   "documentMarkupEnabled",
   "sweepScheduleEnabled",
-  "advancePayouts.armed",
   "moneyCodes.enabled",
-  "moneyCodes.armed",
   "quarterReviewEnabled",
   "iftaEnabled",
   "yearEndEnabled",
@@ -66,17 +65,14 @@ const RELEASED_ON = [
   "judgeAccess.enabled",
   "policyOnboardEnabled",
   "factoring.enabled",
-  "factoring.armed",
   "groundedRatesEnabled",
   "payCardsEnabled",
   "verification.enabled",
   "evalCardEnabled",
   "deskLoop.enabled",
-  "deskLoop.armed",
   "ratecon.enabled",
   "phoneLineEnabled",
   "escrowRelease.enabled",
-  "escrowRelease.armed",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -92,6 +88,12 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
+  // Money codes, factoring, the desk loop and escrow releases ship on and unarmed: each arming is
+  // the owner's call, in its own one-line PR.
+  "moneyCodes.armed",
+  "factoring.armed",
+  "deskLoop.armed",
+  "escrowRelease.armed",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -114,14 +116,21 @@ describe("flags", () => {
     for (const name of KEPT_OFF) expect(switches[name], name).toBe(false);
     // auditorRequired ships on with the auditor: a proposal waits for its verdict, and
     // verifyEngineMismatchBlocks ships on with the pay rules check: a mismatch waits for a person.
-    // Step through ships on for development and test runs, as it merged; the release does not set
-    // dev.
+    // Advance payouts ship unarmed: arming is its own one-line PR. Step through ships on for
+    // development and test runs, as it merged; the release does not set dev.
     expect(Object.keys(switches).sort()).toEqual(
-      [...RELEASED_ON, ...KEPT_OFF, "auditorRequired", "verifyEngineMismatchBlocks", "stepThrough.dev"].sort(),
+      [
+        ...RELEASED_ON,
+        ...KEPT_OFF,
+        "auditorRequired",
+        "verifyEngineMismatchBlocks",
+        "advancePayouts.armed",
+        "stepThrough.dev",
+      ].sort(),
     );
     expect(flags.auditorRequired).toBe(true);
     expect(flags.verifyEngineMismatchBlocks).toBe(true);
-    expect(flags.advancePayouts.armed).toBe(true);
+    expect(flags.advancePayouts.armed).toBe(false);
     expect(flags.stepThrough.dev).toBe(true);
   });
 
@@ -130,10 +139,11 @@ describe("flags", () => {
     expect(flags.inboundEmailEnabled).toBe(true);
     expect(flags.documentCrop).toBe(true);
     expect(flags.documentMarkupEnabled).toBe(true);
-    // Money codes issue through the simulated provider only, released with their cap and date kept.
+    // Money codes issue through the simulated provider only, released unarmed with their cap and
+    // date kept.
     expect(flags.moneyCodes).toEqual({
       enabled: true,
-      armed: true,
+      armed: false,
       capCents: 50_000,
       perDriverPerDay: 2,
       startDate: "2026-10-28",
@@ -148,15 +158,17 @@ describe("flags", () => {
     expect(flags.sparkOpenFallback).toBe("off");
     // Driver messages and voice notes are sorted by Muse Spark Open, the open-weights model.
     expect(flags.triageProvider).toBe("baseten");
-    // The desk loop hands work to the agents on its own, each under its own switch and caps.
+    // The desk loop hands work to the agents on its own, each under its own switch and caps, once
+    // the owner arms it.
     expect(flags.deskLoop.enabled).toBe(true);
-    expect(flags.deskLoop.armed).toBe(true);
+    expect(flags.deskLoop.armed).toBe(false);
     // The demo visitor sign-in, inside the visit limits below.
     expect(flags.judgeAccess.enabled).toBe(true);
-    // Factoring submits to the simulated partner only, released with its cap, packet rule and date kept.
+    // Factoring submits to the simulated partner only, released unarmed with its cap, packet rule and
+    // date kept.
     expect(flags.factoring).toEqual({
       enabled: true,
-      armed: true,
+      armed: false,
       maxNetCents: 2_500_000,
       requirePacket: false,
       startDate: "2026-10-28",
@@ -291,8 +303,8 @@ describe("flags", () => {
     expect(limits.maxHandOffsPerCall).toBeLessThanOrEqual(100);
   });
 
-  it("ships escrow releases on and armed, with a $5,000 cap and a start date", () => {
-    expect(flags.escrowRelease).toEqual({ enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" });
+  it("ships escrow releases on and unarmed, with a $5,000 cap and a start date", () => {
+    expect(flags.escrowRelease).toEqual({ enabled: true, armed: false, capCents: 500_000, startDate: "2026-10-30" });
     expect(isLocalDate(flags.escrowRelease.startDate)).toBe(true);
   });
 
@@ -371,7 +383,7 @@ describe("flags", () => {
   it("starts the desk loop on a fixed date and keeps its wakes short and its spend small", () => {
     expect(flags.deskLoop).toEqual({
       enabled: true,
-      armed: true,
+      armed: false,
       startDate: "2026-10-30",
       limits: {
         sliceMs: 20_000,
@@ -491,9 +503,9 @@ describe("flags", () => {
     expect(flags.markupLimits.maxBytes).toBeLessThanOrEqual(flags.documentLimits.maxBytes);
   });
 
-  it("releases the advance flow with payouts armed, its cap kept and dated from the release", () => {
+  it("releases the advance flow with payouts unarmed, its cap kept and dated from the release", () => {
     expect(flags.advancesEnabled).toBe(true);
-    expect(flags.advancePayouts).toEqual({ armed: true, capCents: 50_000, startDate: "2026-10-29" });
+    expect(flags.advancePayouts).toEqual({ armed: false, capCents: 50_000, startDate: "2026-10-29" });
     expect(isLocalDate(flags.advancePayouts.startDate)).toBe(true);
     expect(flags.advancesLimits).toEqual({
       proposalsPerDay: 30,
@@ -847,7 +859,8 @@ describe("local overrides for the demo-path test", () => {
     expect(keys).toEqual([...LOCAL_OVERRIDABLE, ...LOCAL_OFF_ONLY]);
     for (const name of LOCAL_OVERRIDABLE) expect(Object.fromEntries(booleanSwitches(target))[name], name).toBe(true);
     for (const name of LOCAL_OFF_ONLY) expect(Object.fromEntries(booleanSwitches(target))[name], name).toBe(false);
-    // Caps, limits, dates, providers and every kept-off switch are exactly as shipped.
+    // Caps, limits, dates, providers and every kept-off switch are exactly as shipped. Advance
+    // payouts ship unarmed, so local mode is what arms them for the run.
     const on = LOCAL_OVERRIDABLE.reduce((f, k) => withSwitch(f, k, true), copy());
     const expected = [...LOCAL_OFF_ONLY].reduce((f, k) => withSwitch(f, k, false), on);
     expect(target).toEqual(expected);

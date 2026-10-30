@@ -1,7 +1,7 @@
 // Release switches. Every outside effect (payments, accounting posts, email, model calls)
 // reads its switch here, and every path that reaches the write re-checks it.
 // Turning a switch on is the owner's call, in a release PR of its own; caps and start dates stay
-// as set here.
+// as set here. Arming a switch that lets money move is a one-line PR of its own.
 // The demo-path test's local overrides (src/config/local-overrides.ts) are inert in production
 // and whenever an Aurora cluster is configured.
 
@@ -783,7 +783,7 @@ export const flags: Flags = {
   documentMarkupEnabled: true,
   markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
   advancesEnabled: true,
-  advancePayouts: { armed: true, capCents: 50_000, startDate: "2026-10-29" },
+  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-29" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
   advanceTakeback: { enabled: true, maxCents: 100_000 },
   agentToolSearch: true,
@@ -911,7 +911,7 @@ export const flags: Flags = {
     sessionsPerDay: 150,
     cookieHours: 2,
   },
-  moneyCodes: { enabled: true, armed: true, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
+  moneyCodes: { enabled: true, armed: false, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
   cardRecon: {
     enabled: true,
     limits: {
@@ -927,7 +927,7 @@ export const flags: Flags = {
   },
   deskLoop: {
     enabled: true,
-    armed: true,
+    armed: false,
     startDate: "2026-10-30",
     limits: {
       sliceMs: 20_000,
@@ -939,7 +939,7 @@ export const flags: Flags = {
       dayCents: 400,
     },
   },
-  factoring: { enabled: true, armed: true, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
+  factoring: { enabled: true, armed: false, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
   evalCardEnabled: true,
   evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
   groundedRatesEnabled: true,
@@ -957,7 +957,7 @@ export const flags: Flags = {
     maxUpdateCents: 3,
     idleEndMs: 600_000,
   },
-  escrowRelease: { enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" },
+  escrowRelease: { enabled: true, armed: false, capCents: 500_000, startDate: "2026-10-30" },
 };
 
 applyLocalOverrides(flags);
