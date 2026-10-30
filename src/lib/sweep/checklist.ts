@@ -1,4 +1,5 @@
 import { checklistSchema, parseChecklist, type Checklist, type ChecklistItem } from "../agent/checklist";
+import { requiredSweepSteps } from "../agent/verify/required";
 import type { Queryable } from "../db";
 
 // The sweep's checklist (design-agents-101 3.1): the run's own phases in a clerk's words, written
@@ -28,6 +29,30 @@ export function sweepChecklist(secondLook: boolean): Checklist {
   const keys: Key[] = secondLook ? ["find", "plan", "check", "draft", "audit"] : ["find", "draft", "audit"];
   const items: ChecklistItem[] = keys.map((key, i) => ({ key, text: SWEEP_CHECKLIST_TEXT[key], state: i === 0 ? "doing" : "todo" }));
   return checklistSchema.parse({ v: 1, by: "run", items }) as Checklist;
+}
+
+// The list a run must start with (design-agents-102 3.3), built from the required steps alone
+// (agent/verify/required.ts), never from sweepChecklist, so the start can check the list it is
+// about to write before any work starts.
+export function requiredSweepItems(secondLook: boolean): Checklist {
+  const items: ChecklistItem[] = requiredSweepSteps(secondLook).map((key, i) => ({
+    key,
+    text: SWEEP_CHECKLIST_TEXT[key],
+    state: i === 0 ? "doing" : "todo",
+  }));
+  return { v: 1, by: "run", items };
+}
+
+// Whether a run's starting list is exactly the required one: the same version and author, and
+// the same items in the same order, each the same key, text and state as a whole value.
+export function isRequiredSweepChecklist(list: Checklist, secondLook: boolean): boolean {
+  const want = requiredSweepItems(secondLook);
+  return (
+    list.v === want.v &&
+    list.by === want.by &&
+    list.items.length === want.items.length &&
+    list.items.every((item, i) => item.key === want.items[i].key && item.text === want.items[i].text && item.state === want.items[i].state)
+  );
 }
 
 const itemOf = (phase: SweepPhase): Key | null =>

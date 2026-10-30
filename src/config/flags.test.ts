@@ -88,6 +88,9 @@ const KEPT_OFF = [
   "groundedRatesEnabled",
   // Pay cards ship dark with their own merge; the owner turns them on in their own PR.
   "payCardsEnabled",
+  // The sweep's checklist check and coverage figure ship dark with their own merge; the owner
+  // turns them on in their own PR.
+  "verification.enabled",
   // The models page's eval card waits on a recorded run; the owner turns it on in its own PR.
   "evalCardEnabled",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
@@ -265,6 +268,10 @@ describe("flags", () => {
       expect(isLocalDate(d), d).toBe(true);
     }
     expect(isLocalDate(flags.collectionsEmailFrom)).toBe(false);
+  });
+
+  it("ships the sweep's checklist check and coverage figure off, with nothing else in the switch", () => {
+    expect(flags.verification).toEqual({ enabled: false });
   });
 
   it("pins every switch that ships on for the demo-path run, on or off as its replay was recorded", () => {

@@ -13,6 +13,7 @@ import {
   instantMs,
   type AdvanceRecord,
   type CheckInput,
+  type CheckName,
   type DriverRecord,
   type Finding,
   type FuelPurchaseRecord,
@@ -270,6 +271,17 @@ export function findAdvanceOverLoadCap(input: CheckInput): Finding[] {
   }
   return out;
 }
+
+// The checks runAllChecks runs, in its order. Read-only; it changes nothing runAllChecks does.
+export const RUN_ALL_CHECKS = [
+  "duplicate_advance",
+  "fuel_on_wrong_driver",
+  "insurance_day_not_driven",
+  "missing_reimbursement",
+  "delivered_without_rate",
+  "over_advance_limit",
+  "advance_over_load_cap",
+] as const satisfies readonly CheckName[];
 
 export function runAllChecks(input: CheckInput): Finding[] {
   return [

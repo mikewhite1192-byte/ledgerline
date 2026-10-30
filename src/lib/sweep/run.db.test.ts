@@ -17,9 +17,10 @@ import type { Cents } from "../rules-engine/types";
 import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
+import type { Checklist } from "../agent/checklist";
 import { fixPlanFor, type FixLeg } from "./plan";
 import { advanceSweep, MAX_DRAFT_ATTEMPTS, startSweep, type SweepDeps } from "./run";
-import { readSweepPage } from "./view";
+import { readSweepHome, readSweepPage } from "./view";
 
 // The sweep against the real database, as the app's role, with the real gateway, turn store and
 // pay correction checks. Only the two model calls are stand-ins: the explanation and the auditor
@@ -35,6 +36,13 @@ const plan = buildCarrierPlan(CARRIER, ANCHOR);
 const T = randomUUID();
 const SESSION: Session = { sub: `sub-${T}`, email: "ops@sweep-run-test.example", tenantId: T };
 const saved = { ...flags, sweepLimits: { ...flags.sweepLimits } };
+
+// The list a start writes, passed through unless a test sets its own (a tampered list).
+const tamper = vi.hoisted(() => ({ list: null as Checklist | null }));
+vi.mock("./checklist", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./checklist")>();
+  return { ...real, sweepChecklist: (secondLook: boolean) => tamper.list ?? real.sweepChecklist(secondLook) };
+});
 
 // The fix legs the engine plans for the open week, keyed driver id : signed cents.
 const input = checkInputOf(plan.rows);
@@ -184,6 +192,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   Object.assign(flags, saved, { sweepLimits: { ...saved.sweepLimits } });
+  tamper.list = null;
 });
 
 afterAll(async () => {
@@ -726,5 +735,127 @@ describe("a sweep of the open week", () => {
       category: "disabled",
     });
     await expect(advanceSweep(SESSION, runId, NOW.getTime() + SLICE, deps())).resolves.toEqual({ ok: false, category: "disabled" });
+  });
+});
+
+describe("the sweep's coverage and its starting checklist (verification on)", () => {
+  const verifyOn = () => {
+    flags.verification = { ...flags.verification, enabled: true };
+  };
+
+  async function runRow(runId: string) {
+    const rows = await admin.withTenant(T, (q) =>
+      q.query<{ status: string; failure_category: string | null; coverage: string | null; counts: string; finished_at: string | null }>(
+        `SELECT status, failure_category, CAST(coverage AS text) AS coverage, CAST(counts AS text) AS counts,
+                CAST(finished_at AS text) AS finished_at
+           FROM sweep_runs WHERE id = CAST($1 AS uuid)`,
+        [runId],
+      ),
+    );
+    return rows[0];
+  }
+
+  const want = {
+    v: 1,
+    checks: { required: 9, ran: 9 },
+    drivers: { total: input.drivers.length, checked: input.drivers.length },
+    pct: 100,
+  };
+
+  it("records 100% with the engine's check and driver counts as the find phase moves on, and the end leaves it as written", async () => {
+    verifyOn();
+    expect(input.drivers.length).toBeGreaterThan(1);
+    const runId = await start();
+    expect((await runRow(runId)).coverage).toBeNull();
+    // The find phase runs, then the slice hands the run back while drafting.
+    const first = await advanceSweep(SESSION, runId, NOW.getTime() + 5_000, deps());
+    expect(first).toMatchObject({ ok: true, status: "running", phase: "draft" });
+    const written = (await runRow(runId)).coverage;
+    expect(JSON.parse(written ?? "null")).toEqual(want);
+    await expect(runToEnd(runId)).resolves.toMatchObject({ status: "done" });
+    const ended = await runRow(runId);
+    // The run's end wrote its counts and did not touch the coverage.
+    expect(JSON.parse(ended.counts)).toMatchObject({ fixes_drafted: 5 });
+    expect(ended.coverage).toBe(written);
+    expect((await readSweepPage(SESSION, runId, { db: app }))?.run.coverage).toEqual(want);
+    // The same week and the same work as with the switch off: five engine fixes.
+    expect((await proposals()).length).toBe(5);
+  });
+
+  it("keeps no coverage for a run whose find phase ran with the switch off, as for a run from before the column", async () => {
+    const runId = await start();
+    await advanceSweep(SESSION, runId, NOW.getTime() + 5_000, deps());
+    verifyOn();
+    await runToEnd(runId);
+    expect((await runRow(runId)).coverage).toBeNull();
+    expect((await readSweepPage(SESSION, runId, { db: app }))?.run.coverage).toBeNull();
+  });
+
+  it("reads no coverage at all while the switch is off, even for a run that has one", async () => {
+    verifyOn();
+    const runId = await start();
+    await runToEnd(runId);
+    expect((await runRow(runId)).coverage).not.toBeNull();
+    expect(await readSweepPage(SESSION, runId, { db: app })).toHaveProperty("run.coverage");
+    flags.verification = { ...flags.verification, enabled: false };
+    // Off, the run view is the one from before 0064: no coverage key at all, on either page.
+    const page = await readSweepPage(SESSION, runId, { db: app });
+    expect(page?.run).toBeDefined();
+    expect(page?.run).not.toHaveProperty("coverage");
+    const home = await readSweepHome(SESSION, { db: app });
+    const listed = home.runs.find((r) => r.id === runId);
+    expect(listed).toBeDefined();
+    expect(listed).not.toHaveProperty("coverage");
+  });
+
+  it("fails a run whose starting checklist is not the required one checklist_invalid, before any item is written", async () => {
+    verifyOn();
+    const real = (await vi.importActual<typeof import("./checklist")>("./checklist")).sweepChecklist(false);
+    tamper.list = { ...real, items: real.items.filter((i) => i.key !== "audit") };
+    const runId = randomUUID();
+    await expect(startSweep(SESSION, { runId, trigger: "button" }, deps())).resolves.toEqual({ ok: true, runId, existing: false });
+    expect(await runRow(runId)).toMatchObject({ status: "failed", failure_category: "checklist_invalid", coverage: null });
+    expect((await runRow(runId)).finished_at).not.toBeNull();
+    // Moving it on does nothing: no lease, no item, no proposal, no model call.
+    await expect(advanceSweep(SESSION, runId, NOW.getTime() + SLICE, deps())).resolves.toMatchObject({
+      ok: true,
+      status: "failed",
+      failureCategory: "checklist_invalid",
+    });
+    expect(await items(runId)).toEqual([]);
+    expect(await proposals()).toEqual([]);
+    expect(explain).not.toHaveBeenCalled();
+    // A replayed start returns the same run; the week can be swept again with the right list.
+    await expect(startSweep(SESSION, { runId, trigger: "button" }, deps())).resolves.toEqual({ ok: true, runId, existing: true });
+    tamper.list = null;
+    const next = await start();
+    expect(next).not.toBe(runId);
+    expect((await runRow(next)).status).toBe("running");
+  });
+
+  it("holds the column to an object, its check validated, and lets the app's role write it", async () => {
+    // 0064 adds the check NOT VALID; 0064_sweep_coverage_validate validates it.
+    const checks = await admin.withTenant(T, (q) =>
+      q.query<{ convalidated: boolean }>(
+        "SELECT convalidated FROM pg_constraint WHERE conrelid = 'sweep_runs'::regclass AND conname = 'sweep_runs_coverage_check'",
+      ),
+    );
+    expect(checks.map((c) => c.convalidated)).toEqual([true]);
+    const runId = await start();
+    const write = (value: string) =>
+      app.withTenant(T, (q) =>
+        q.execute("UPDATE sweep_runs SET coverage = CAST($2 AS jsonb) WHERE id = CAST($1 AS uuid)", [runId, value]),
+      );
+    await expect(write("[]")).rejects.toThrow();
+    await write(JSON.stringify(want));
+    expect(JSON.parse((await runRow(runId)).coverage ?? "null")).toEqual(want);
+  });
+
+  it("starts with the list as written while the switch is off, as today", async () => {
+    const real = (await vi.importActual<typeof import("./checklist")>("./checklist")).sweepChecklist(false);
+    tamper.list = { ...real, items: real.items.filter((i) => i.key !== "audit") };
+    const runId = await start();
+    expect(await runRow(runId)).toMatchObject({ status: "running", failure_category: null });
+    expect(await ticks(runId)).toEqual({ find: "doing", draft: "todo" });
   });
 });

@@ -36,7 +36,8 @@ import {
 } from "./plan";
 import { fanoutLimits, fanoutOn, lockTenantDay } from "./fanout/limits";
 import { checkPhase, planPhase, reconcilePhase, type FanoutCtx, type FanoutDeps } from "./fanout/run";
-import { nextSweepChecklist, sweepChecklist, type SweepChecklistChange } from "./checklist";
+import { endSweep, isRequiredSweepChecklist, nextSweepChecklist, sweepChecklist, type SweepChecklistChange } from "./checklist";
+import { sweepCoverage, SWEEP_ENGINE_CHECKS } from "../agent/verify/required";
 import { serviceSession } from "./service-session";
 
 // The pay sweep (design 3.2): one run checks one open week, drafts a pay correction for each
@@ -45,6 +46,8 @@ import { serviceSession } from "./service-session";
 // workers never touch one run:
 //   find   one slice: run the engine's checks, plan each finding, write one item per leg (the
 //          dedupe key is finding_key per week, so a second run adds nothing it already has);
+//          with flags.verification on, record how many of the required checks ran over how many
+//          drivers (sweep_runs.coverage) in the update that moves the phase;
 //   plan, check, reconcile
 //          the second opinion (fanout/run.ts), only with its switch on and the run started with
 //          its larger cap: a model orders the week's drivers, a short check reads each driver's
@@ -283,11 +286,28 @@ export async function startSweep(
         return { ok: true, runId: earlier[0].id, existing: true };
       }
     }
+    const checklist = sweepChecklist(secondLook);
+    // With verification on, the list the run starts with must be the required one (design-agents-102
+    // 3.3). One that differs fails the run checklist_invalid here, as it is written, so the run
+    // never takes a lease and no item is ever written for it.
+    if (flags.verification.enabled && !isRequiredSweepChecklist(checklist, secondLook)) {
+      await q.execute(
+        `INSERT INTO sweep_runs (id, tenant_id, period_id, trigger, started_by, cap_cents, started_at, checklist,
+                                 status, failure_category, finished_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, CAST($6 AS timestamptz), CAST($7 AS jsonb),
+                 'failed', 'checklist_invalid', CAST($6 AS timestamptz))
+         ON CONFLICT DO NOTHING`,
+        [runId, period.id, input.trigger, session.sub, cap, nowIso, JSON.stringify(endSweep(checklist, "failed"))],
+      );
+      if (!(await readRun(q, runId))) throw new Error("the sweep run did not read back");
+      console.warn(`sweep run ${runId} failed checklist_invalid`);
+      return { ok: true, runId, existing: false };
+    }
     await q.execute(
       `INSERT INTO sweep_runs (id, tenant_id, period_id, trigger, started_by, cap_cents, started_at, checklist)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, CAST($6 AS timestamptz), CAST($7 AS jsonb))
        ON CONFLICT DO NOTHING`,
-      [runId, period.id, input.trigger, session.sub, cap, nowIso, JSON.stringify(sweepChecklist(secondLook))],
+      [runId, period.id, input.trigger, session.sub, cap, nowIso, JSON.stringify(checklist)],
     );
     const now2 = await q.query<{ id: string }>(
       "SELECT id FROM sweep_runs WHERE period_id = CAST($1 AS uuid) AND status = 'running'",
@@ -470,6 +490,8 @@ type Planned = { key: string; check: string; category: string; leg: PlanLeg; sou
 // opinion when its switch is on and the run was started with room for it, else draft.
 async function findPhase(ctx: Ctx, run: Run): Promise<"plan" | "draft" | null> {
   const now = ctx.clock().toISOString();
+  // Read once, so the checks counted and the coverage written agree.
+  const verify = flags.verification.enabled;
   return leased(ctx, async (q) => {
     const [period] = await readRowsWhereId(q, "settlement_periods", "id", run.period_id);
     if (!period || period.status !== "open") {
@@ -489,14 +511,20 @@ async function findPhase(ctx: Ctx, run: Run): Promise<"plan" | "draft" | null> {
     };
     // The engine reads every record the carrier has; only a finding whose record at fault falls in
     // this week is this run's, so an earlier week's problem never takes a place or drafts a fix.
+    // Each check is counted as ran once its loop is through (design-agents-102 3.3); all of them
+    // run in this one transaction, so a check that threw leaves no coverage at all.
+    const ran = new Set<string>();
     for (const f of runAllChecks(input)) {
       if (findingInWeek(f, input, window)) add(f, fixPlanFor(f, input, window));
     }
+    for (const c of SWEEP_ENGINE_CHECKS) ran.add(c);
     const receivables = await readReceivablesInput(q, period.period_end);
     for (const f of findPaymentOnWrongInvoice(receivables)) add(f, receivablesPlanFor(f, receivables));
+    ran.add("payment_on_wrong_invoice");
     for (const e of await settlementExceptions(q, period.id)) {
       add({ check: "settlement" as Finding["check"], category: e.category as Finding["category"], sources: [{ table: "settlements", id: e.settlementId }] }, settlementPlanFor(e, input));
     }
+    ran.add("settlement");
     // A finding this week already settled (drafted, decided earlier, listed for a person, or
     // refused for good) needs no work: it joins this run without taking one of the maxItems
     // places, because the engine reports it again every run and would otherwise hold the same
@@ -523,10 +551,25 @@ async function findPhase(ctx: Ctx, run: Run): Promise<"plan" | "draft" | null> {
     }
     for (const leg of kept.flat()) await writeItem(q, ctx, run, leg, now);
     const next = fanoutOn() && Number(run.cap_cents) >= fanoutLimits().runCapCents ? "plan" : "draft";
-    await q.execute(
-      `UPDATE sweep_runs SET phase = $3, truncated_reason = $2, checklist = COALESCE(CAST($4 AS jsonb), checklist)
+    const truncated = waiting > 0 ? "max_items" : null;
+    const checklist = await nextSweepChecklist(q, ctx.runId, { phase: next });
+    if (!verify) {
+      await q.execute(
+        `UPDATE sweep_runs SET phase = $3, truncated_reason = $2, checklist = COALESCE(CAST($4 AS jsonb), checklist)
         WHERE id = CAST($1 AS uuid)`,
-      [ctx.runId, waiting > 0 ? "max_items" : null, next, await nextSweepChecklist(q, ctx.runId, { phase: next })],
+        [ctx.runId, truncated, next, checklist],
+      );
+      return next;
+    }
+    // The coverage rides the same update that moves the phase. The engine's checks read every
+    // record of every driver the carrier has in one pass, so each driver the input holds is
+    // checked. Nothing after this rewrites it; the second opinion only adds its own part.
+    const coverage = sweepCoverage(ran, { total: input.drivers.length, checked: input.drivers.length });
+    await q.execute(
+      `UPDATE sweep_runs SET phase = $3, truncated_reason = $2, checklist = COALESCE(CAST($4 AS jsonb), checklist),
+              coverage = CAST($5 AS jsonb)
+        WHERE id = CAST($1 AS uuid)`,
+      [ctx.runId, truncated, next, checklist, JSON.stringify(coverage)],
     );
     return next;
   });
