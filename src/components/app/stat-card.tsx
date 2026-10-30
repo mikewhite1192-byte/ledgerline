@@ -2,12 +2,17 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
+import { isReportPath } from "@/lib/reports/types";
 
 const HINT_TONE = {
   neutral: "text-muted-foreground",
   warning: "text-warning",
   destructive: "text-destructive",
 } as const;
+
+function hintLink(tone: keyof typeof HINT_TONE): string {
+  return cn("w-fit text-small underline-offset-4 hover:underline", tone === "neutral" ? "text-link" : HINT_TONE[tone]);
+}
 
 // A label, one figure, and one hint line that links to the records behind it when href is set.
 export function StatCard({
@@ -31,12 +36,15 @@ export function StatCard({
       <p className="truncate text-figure text-foreground tabular-nums">{value}</p>
       {hint ? (
         href ? (
-          <Link
-            href={href}
-            className={cn("w-fit text-small underline-offset-4 hover:underline", tone === "neutral" ? "text-link" : HINT_TONE[tone])}
-          >
-            {hint}
-          </Link>
+          isReportPath(href) ? (
+            <a href={href} download className={hintLink(tone)}>
+              {hint}
+            </a>
+          ) : (
+            <Link href={href} className={hintLink(tone)}>
+              {hint}
+            </Link>
+          )
         ) : (
           <p className={cn("text-small", HINT_TONE[tone])}>{hint}</p>
         )

@@ -1653,6 +1653,8 @@ const LISTED: Readonly<Record<string, string>> = {
     "The document around every page: it puts each one in the html shell and the toast holder and shows no words on the page. Its tab title and description are scanned below.",
   "records/settlement_periods/[id]/page.tsx":
     "Shows nothing of its own: it only sends a pay week's link on to that week on the Settlements page, which is rendered above.",
+  "help/page.tsx":
+    "Shows nothing of its own: it only sends the bare help address on to How trucking pay works, which is rendered above.",
   "design/page.tsx":
     "The builders' design reference: it shows status codes, token names and sample states on purpose, and no carrier or driver reaches it from the app's menu.",
 };
