@@ -3,7 +3,7 @@ import { TENANT_TABLES, assertIdentifier, type TenantTable } from "../data/table
 import { DbError, type Queryable, type TenantDb } from "../db/types";
 import { settleDriver } from "../rules-engine";
 import { HERO_OPEN_WEEK } from "./assert-plan";
-import { carrierBySlug, type DemoCarrier } from "./carriers";
+import { demoCarrierFor, type DemoCarrier } from "./carriers";
 import type { CarrierPlan } from "./plan";
 import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 
@@ -246,11 +246,7 @@ export class DemoResetFailed extends Error {
 
 // The current tenant's demo carrier, or null when it is not one of the two.
 export async function demoCarrierOf(q: Queryable): Promise<DemoCarrier | null> {
-  const tenant = await readTenant(q);
-  if (!tenant) return null;
-  const carrier = carrierBySlug(tenant.slug);
-  if (!carrier || carrier.name !== tenant.name || carrier.timezone !== tenant.timezone) return null;
-  return carrier;
+  return demoCarrierFor(await readTenant(q));
 }
 
 function count(value: unknown): number {
