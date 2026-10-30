@@ -74,6 +74,9 @@ export type ReportResult = {
   // Fixed sentences the report code writes from its own numbers (never model text): how a figure
   // was worked out and what the totals leave out. Shown under the table and after the CSV total.
   notes?: string[];
+  // The IFTA quarter only: the state with the largest tax due, in integer cents. Kept beside the
+  // rows, so a tool result cut to fit still holds the figure the note names.
+  largestTaxDue?: { state: string; taxCents: number };
 };
 
 // Every cents column key ends in "Cents", so the agent's figure check accepts what a report says.

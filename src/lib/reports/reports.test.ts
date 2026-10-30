@@ -397,6 +397,9 @@ describe("ifta_quarter", () => {
     if (due.length > 0) {
       const top = due.reduce((a, b) => ((b.taxDueCents as number) > (a.taxDueCents as number) ? b : a));
       expect(notes.some((n) => n.startsWith(`Largest tax due: ${String(top.state)}, $`))).toBe(true);
+      expect(r.largestTaxDue).toEqual({ state: top.state, taxCents: top.taxDueCents });
+    } else {
+      expect(r.largestTaxDue).toBeUndefined();
     }
   });
 

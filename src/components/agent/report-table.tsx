@@ -35,8 +35,10 @@ export function formatBps(bps: number): string {
   return `${bps < 0 ? "-" : ""}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}%`;
 }
 
-// 450500 thousandths is "450.500", from the integer, with no floating point.
+// 450500 thousandths is "450.500", from the integer, with no floating point. Refuses anything but
+// a whole number, as the CSV does.
 export function formatMilli(milli: number): string {
+  if (!Number.isSafeInteger(milli)) throw new Error("a report number is not a whole number");
   const abs = Math.abs(milli);
   return `${milli < 0 ? "-" : ""}${Math.floor(abs / 1000)}.${String(abs % 1000).padStart(3, "0")}`;
 }
@@ -66,7 +68,9 @@ function cellOf(column: ReportColumn, value: ReportCell, hrefFor: HrefFor): Reac
     case "pct":
       return typeof value === "number" ? <span className="tabular-nums">{formatBps(value)}</span> : null;
     case "milli":
-      return typeof value === "number" ? <span className="tabular-nums">{formatMilli(value)}</span> : null;
+      // A number that is not whole shows as not known instead of breaking the whole chat.
+      if (typeof value !== "number") return null;
+      return Number.isSafeInteger(value) ? <span className="tabular-nums">{formatMilli(value)}</span> : <Unknown />;
     case "date":
       // A malformed date shows as not known instead of breaking the whole chat.
       if (typeof value !== "string") return null;

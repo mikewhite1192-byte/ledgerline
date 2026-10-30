@@ -102,7 +102,7 @@ export function computeIftaQuarter(input: IftaInput, asOf: string, quarter: Peri
   if (q.totals.taxCents !== null) totals.taxDueCents = q.totals.taxCents;
   // With no rows and nothing left out there is nothing to explain; a gap is always said.
   const notes = rows.length > 0 || q.gaps.length > 0 ? iftaNotes(q) : [];
-  return reportOf("ifta_quarter", {
+  const result = reportOf("ifta_quarter", {
     asOf,
     args: { asOf },
     period: { start: q.quarter.start, end: q.quarter.end },
@@ -110,4 +110,7 @@ export function computeIftaQuarter(input: IftaInput, asOf: string, quarter: Peri
     totals,
     notes,
   });
+  // Rows run A to Z and a tool result loses them from the end, so the largest tax due also rides
+  // whole at the top level, under a cents key the agent's figure check reads.
+  return q.largestTaxDue ? { ...result, largestTaxDue: { ...q.largestTaxDue } } : result;
 }

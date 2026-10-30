@@ -141,6 +141,20 @@ describe("the IFTA quarter in the chat", () => {
     expect(formatMilli(0)).toBe("0.000");
   });
 
+  it("refuses gallons that are not a whole number of thousandths, and the table shows them as not known", () => {
+    expect(() => formatMilli(1.5)).toThrow("not a whole number");
+    expect(() => formatMilli(Number.MAX_SAFE_INTEGER + 1)).toThrow("not a whole number");
+    for (const odd of [1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const bad: ReportResult = { ...ifta, rows: [{ ...ifta.rows[0], netGallonsMilli: odd }] };
+      const t = reportTable("ifta_quarter", { state: "ready", result: bad });
+      const net = t.columns.find((c) => c.key === "netGallonsMilli");
+      if (!net) throw new Error("net gallons column missing");
+      const cell = html(net.cell(t.rows[0]));
+      expect(cell, String(odd)).toContain("Not known");
+      expect(cell, String(odd)).not.toContain("0.1.5");
+    }
+  });
+
   it("right-aligns the gallons and shows them, and the total, to three places", () => {
     const t = reportTable("ifta_quarter", { state: "ready", result: ifta });
     const net = t.columns.find((c) => c.key === "netGallonsMilli");
