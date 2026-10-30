@@ -56,10 +56,10 @@ async function engineOption() {
   }
 }
 
+const saved = structuredClone(flags);
+
 afterEach(() => {
-  flags.factoring.enabled = false;
-  flags.factoring.maxNetCents = 2_500_000;
-  flags.cashFridayEnabled = false;
+  Object.assign(flags, structuredClone(saved));
 });
 
 describe("factoring tools switched off", () => {
@@ -68,7 +68,7 @@ describe("factoring tools switched off", () => {
     ["get_factoring_packet", { invoiceIds: [paid.id] }],
     ["get_factoring_requests", {}],
   ])("%s refuses as disabled before reading a record, with one decision row", async (name, args) => {
-    expect(flags.factoring.enabled).toBe(false);
+    flags.factoring.enabled = false;
     const { out, db } = await run(name, args);
     expect(out).toMatchObject({ decision: "blocked", reason: "disabled" });
     expect(db.decisions).toHaveLength(1);

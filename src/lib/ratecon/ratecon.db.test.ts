@@ -399,7 +399,8 @@ describe("rate confirmations in the database", () => {
   });
 
   it("refuses a document stored before the start date with no read, no tries left and none of the day's count", async () => {
-    // Three days before RATECON_NOW: October 31 in the carrier's zone, before flags.ratecon.startDate.
+    // Three days before RATECON_NOW: October 31 in the carrier's zone, before the start date set here.
+    flags.ratecon = { ...flags.ratecon, startDate: "2026-11-02" };
     const doc = await upload("RC-2601", ++files, () => new Date(RATECON_NOW - 3 * 24 * 60 * MINUTE));
     const counted = () => app.withTenant(A.tenantId, (q) => countRecentRateCons(q, clock().toISOString()));
     const before = await counted();

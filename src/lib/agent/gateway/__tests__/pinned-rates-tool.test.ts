@@ -54,14 +54,17 @@ function fakeQ(rows: Row[]) {
   return { q, seen };
 }
 
+const saved = structuredClone(flags);
+
 afterEach(() => {
-  flags.groundedRatesEnabled = false;
+  Object.assign(flags, structuredClone(saved));
 });
 
 describe("get_pinned_rates", () => {
   it("is a read tool for the operator and the auditor, offered only with the switch on", () => {
     expect(getPinnedRates.tier).toBe("read");
     expect(getPinnedRates.roles).toEqual(["operator", "auditor"]);
+    flags.groundedRatesEnabled = false;
     expect(toolsFor("operator").map((t) => t.name)).not.toContain("get_pinned_rates");
     expect(toolsFor("auditor").map((t) => t.name)).not.toContain("get_pinned_rates");
     flags.groundedRatesEnabled = true;
@@ -82,6 +85,7 @@ describe("get_pinned_rates", () => {
   });
 
   it("refuses to run with the switch off, even when called directly", async () => {
+    flags.groundedRatesEnabled = false;
     await expect(getPinnedRates.run(fakeQ([]).q, ctx, { kind: "diesel_index" }, EXTRAS)).rejects.toThrow();
   });
 

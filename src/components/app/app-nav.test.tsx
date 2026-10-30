@@ -37,10 +37,12 @@ const saved = Object.fromEntries(SWITCHES.map((s) => [s, flags[s]])) as Record<S
 // Features whose switch sits inside its own settings block.
 const savedCardRecon = flags.cardRecon.enabled;
 const savedFactoring = flags.factoring.enabled;
+const savedMoneyCodes = flags.moneyCodes.enabled;
 afterEach(() => {
   for (const s of SWITCHES) flags[s] = saved[s];
   flags.cardRecon.enabled = savedCardRecon;
   flags.factoring.enabled = savedFactoring;
+  flags.moneyCodes.enabled = savedMoneyCodes;
   cleanup();
 });
 
@@ -48,6 +50,7 @@ function setAll(on: boolean) {
   for (const s of SWITCHES) flags[s] = on;
   flags.cardRecon.enabled = on;
   flags.factoring.enabled = on;
+  flags.moneyCodes.enabled = on;
 }
 
 const shape = (current: NavKey) => appNav(current).map((i) => [i.group, i.href, i.label, i.current ?? false]);
@@ -63,6 +66,7 @@ describe("appNav", () => {
       ["Pay", "/settlements", "Settlements", false],
       ["Pay", "/driver-notes", "Driver notes", false],
       ["Pay", "/advances", "Advances", false],
+      ["Pay", "/money-codes", "Money codes", false],
       ["Pay", "/cards", "Card check", false],
       ["Money in", "/invoices", "Invoices", true],
       ["Money in", "/customer-payments/new", "Payments", false],
@@ -176,7 +180,7 @@ describe("NavList", () => {
     setAll(true);
     render(<NavList items={appNav("/advances")} />);
     const pay = screen.getByRole("list", { name: "Pay" });
-    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay sweep", "Settlements", "Driver notes", "Advances", "Card check"]);
+    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay sweep", "Settlements", "Driver notes", "Advances", "Money codes", "Card check"]);
     expect(screen.getByRole("link", { name: "Advances" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: "Home" }).getAttribute("aria-current")).toBeNull();
     expect(screen.getAllByText("Money in")).toHaveLength(1);

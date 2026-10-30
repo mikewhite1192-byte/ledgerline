@@ -226,6 +226,8 @@ const fakeQ = {
     if (/FROM memberships/.test(sql)) return [{ ok: 1, id: "membership-1", email: fx.EMAIL, role: "admin" }];
     if (/count\(\*\) FROM drivers/.test(sql)) return [{ drivers: 25, loads: 310, periods: 4 }];
     if (/SELECT id, load_number, dest_city, dest_state FROM loads/.test(sql)) return fx.CLIP_LOADS;
+    // The home page's escalated-turns count, read while verification is on: none waiting.
+    if (/^SELECT count\(\*\) AS n\s+FROM turns t\s+JOIN conversations c/.test(sql)) return [{ n: 0 }];
     throw new Error(`unexpected read: ${sql.slice(0, 80)}`);
   },
 } as unknown as Queryable;

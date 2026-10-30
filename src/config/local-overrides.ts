@@ -18,7 +18,8 @@ export const LOCAL_OVERRIDABLE = [
 // Switches FLAGS_LOCAL_OVERRIDES may only turn off, never on. They ship on, but the demo-path
 // test's model replay was recorded with them off: each one adds a tool, a prompt line or a
 // request field the replay never saw (or, for accounting, a start-up check that needs the sandbox
-// company's id). The local run sets every one of them false so it replays what it recorded.
+// company's id; for the rest, a page, a card or a route the recorded run never had). The local run
+// sets every one of them false so it replays what it recorded.
 export const LOCAL_OFF_ONLY = [
   "accountingEnabled",
   "documentsEnabled",
@@ -44,11 +45,34 @@ export const LOCAL_OFF_ONLY = [
   "carrierMemoryEnabled",
   "fuelAnomalyEnabled",
   "cardRecon.enabled",
+  "inboundEmailEnabled",
+  "stepThrough.staff",
+  "documentCrop",
+  "documentMarkupEnabled",
+  "payCardsEnabled",
+  "iftaEnabled",
+  "yearEndEnabled",
+  "trustMeterEnabled",
+  "policyOnboardEnabled",
+  "sweepScheduleEnabled",
+  "quarterReviewEnabled",
+  "judgeAccess.enabled",
+  "moneyCodes.enabled",
+  "deskLoop.enabled",
+  "factoring.enabled",
+  "evalCardEnabled",
+  "groundedRatesEnabled",
+  "verification.enabled",
+  "ratecon.enabled",
+  "phoneLineEnabled",
+  "escrowRelease.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];
 type OffOnly = (typeof LOCAL_OFF_ONLY)[number];
 type LocalKey = Overridable | OffOnly;
+// A switch inside a switch object, by its path ("deskLoop.enabled").
+type InnerKey = Extract<LocalKey, `${string}.${string}`>;
 
 function isOverridable(key: string): key is Overridable {
   return (LOCAL_OVERRIDABLE as readonly string[]).includes(key);
@@ -56,6 +80,10 @@ function isOverridable(key: string): key is Overridable {
 
 function isOffOnly(key: string): key is OffOnly {
   return (LOCAL_OFF_ONLY as readonly string[]).includes(key);
+}
+
+function isInner(key: LocalKey): key is InnerKey {
+  return key.includes(".");
 }
 
 // The demo-path test runs the app with its switches set, without editing flags.ts. In local mode
@@ -94,14 +122,10 @@ export function applyLocalOverrides(target: Flags, env: LocalModeEnv = process.e
     set.push([key, value]);
   }
   for (const [key, value] of set) {
-    if (key === "advancePayouts.armed") {
-      target.advancePayouts = { ...target.advancePayouts, armed: value };
-    } else if (key === "advanceTakeback.enabled") {
-      target.advanceTakeback = { ...target.advanceTakeback, enabled: value };
-    } else if (key === "agentPromptCache.enabled") {
-      target.agentPromptCache = { ...target.agentPromptCache, enabled: value };
-    } else if (key === "cardRecon.enabled") {
-      target.cardRecon = { ...target.cardRecon, enabled: value };
+    if (isInner(key)) {
+      // A copy of the switch object with that one field set; its caps, limits and dates as they were.
+      const [outer, inner] = key.split(".") as [keyof Flags, string];
+      (target as Record<keyof Flags, unknown>)[outer] = { ...(target[outer] as object), [inner]: value };
     } else {
       target[key] = value;
     }

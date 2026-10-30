@@ -154,7 +154,7 @@ describe("checkPayCard switches", () => {
     expect(db.withTenant).not.toHaveBeenCalled();
   });
 
-  it("ships dark", () => {
-    expect(saved.cards).toBe(false);
+  it("ships on", () => {
+    expect(saved.cards).toBe(true);
   });
 });

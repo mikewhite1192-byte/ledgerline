@@ -298,7 +298,9 @@ describe("Cash Friday on the real database", () => {
     expect(cardOf(await cards(A), "bill_defer").status).toBe("proposed");
   });
 
-  it("records a factoring or chase approval in test mode and writes nothing else", async () => {
+  it("records a factoring or chase approval in test mode and writes nothing else while factoring is off", async () => {
+    // Factoring off: Cash Friday's own test-mode decision (factoring.db.test.ts runs its executor).
+    flags.factoring = { ...flags.factoring, enabled: false };
     const before = await admin.withTenant(A, (q) => readTenantRows(q));
     const money = await countOf(A, "money_actions");
     const factoring = cardOf(await cards(A), "factoring_request");

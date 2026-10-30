@@ -49,69 +49,50 @@ const RELEASED_ON = [
   "fuelAnomalyEnabled",
   // Writes no money and only reads QuickBooks; its reads and model cents are capped below.
   "cardRecon.enabled",
+  // Every finished feature, on for the owner's walk-through (D-056, 2026-10-30). Payments stay in
+  // Stripe test mode and accounting in the QuickBooks sandbox; every cap is as it was. The arm
+  // switches that let money move stay off: each arming is its own one-line PR.
+  "inboundEmailEnabled",
+  "documentCrop",
+  "documentMarkupEnabled",
+  "sweepScheduleEnabled",
+  "moneyCodes.enabled",
+  "quarterReviewEnabled",
+  "iftaEnabled",
+  "yearEndEnabled",
+  "trustMeterEnabled",
+  "stepThrough.staff",
+  "judgeAccess.enabled",
+  "policyOnboardEnabled",
+  "factoring.enabled",
+  "groundedRatesEnabled",
+  "payCardsEnabled",
+  "verification.enabled",
+  "evalCardEnabled",
+  "deskLoop.enabled",
+  "ratecon.enabled",
+  "phoneLineEnabled",
+  "escrowRelease.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
 const KEPT_OFF = [
   // On only to prove a deploy.
   "aiProofRoute",
-  // No SES domain yet.
-  "inboundEmailEnabled",
-  // Not built: on would do nothing new.
-  "documentCrop",
-  // Ships off with its own merge; the owner turns it on in its own PR.
-  "documentMarkupEnabled",
   // Outside sends: the pages show "would send" lines instead.
   "driverNotesEmailEnabled",
   "collectionsEmailEnabled",
-  // The nightly kicker waits on the scheduler stack.
-  "sweepScheduleEnabled",
   // No runner is wired on the hosted site: the page's only action would always refuse.
   "portalRunnerEnabled",
-  // Money codes ship with their own merge, dark and unarmed; the owner turns them on in their own PR.
-  "moneyCodes.enabled",
-  "moneyCodes.armed",
-  // The quarter review ships dark with its own merge; the owner turns it on in its own PR.
-  "quarterReviewEnabled",
-  // The IFTA quarter report ships dark with its own merge; the owner turns it on in its own PR.
-  "iftaEnabled",
-  // The year-end 1099 report ships dark with its own merge; the owner turns it on in its own PR.
-  "yearEndEnabled",
-  // The review trust meter ships dark with its own merge; the owner turns it on in its own PR.
-  "trustMeterEnabled",
-  // Step through for staff on production is the owner's call, in its own one-line PR.
-  "stepThrough.staff",
-  // The demo visitor sign-in ships dark with its own merge; the owner turns it on in its own PR.
-  "judgeAccess.enabled",
-  // Pay rules from a policy document ship dark with their own merge; the owner turns them on in their own PR.
-  "policyOnboardEnabled",
-  // Factoring ships dark and unarmed with its own merge; the owner turns it on in its own PR.
-  "factoring.enabled",
-  "factoring.armed",
   // Off until the owner asks for the rate confirmation, bill of lading and POD on every approval.
   "factoring.requirePacket",
-  // Fuel and tax rate lookups ship dark with their own merge; the owner turns them on in their own PR.
-  "groundedRatesEnabled",
-  // Pay cards ship dark with their own merge; the owner turns them on in their own PR.
-  "payCardsEnabled",
-  // The sweep's checklist check and coverage figure, and the chat loop's checks inside the
-  // submit with its refused attempts and escalation to a person, ship dark with their own merge;
-  // the owner turns them on in their own PR.
-  "verification.enabled",
-  // The models page's eval card waits on a recorded run; the owner turns it on in its own PR.
-  "evalCardEnabled",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The desk loop ships dark and unarmed with its own merge; the owner turns it on in its own PR.
-  "deskLoop.enabled",
+  // Money codes, factoring, the desk loop and escrow releases ship on and unarmed: each arming is
+  // the owner's call, in its own one-line PR.
+  "moneyCodes.armed",
+  "factoring.armed",
   "deskLoop.armed",
-  // Rate confirmations into proposed loads ship dark with their own merge; the owner turns them on
-  // in their own PR.
-  "ratecon.enabled",
-  // The phone line ships dark with its own merge; the owner turns it on in its own PR.
-  "phoneLineEnabled",
-  // Escrow releases ship dark and unarmed with their own merge; the owner turns them on in their own PR.
-  "escrowRelease.enabled",
   "escrowRelease.armed",
 ] as const;
 
@@ -136,7 +117,7 @@ describe("flags", () => {
     // auditorRequired ships on with the auditor: a proposal waits for its verdict, and
     // verifyEngineMismatchBlocks ships on with the pay rules check: a mismatch waits for a person.
     // Advance payouts ship unarmed: arming is its own one-line PR. Step through ships on for
-    // development and test runs only, as it merged; the release does not set it.
+    // development and test runs, as it merged; the release does not set dev.
     expect(Object.keys(switches).sort()).toEqual(
       [
         ...RELEASED_ON,
@@ -153,14 +134,15 @@ describe("flags", () => {
     expect(flags.stepThrough.dev).toBe(true);
   });
 
-  it("keeps every outside send and the standby host off", () => {
+  it("keeps the email sends, the proof route and the standby host off, and the test-mode writes capped", () => {
     expect(flags.aiProofRoute).toBe(false);
-    expect(flags.inboundEmailEnabled).toBe(false);
-    expect(flags.documentCrop).toBe(false);
-    expect(flags.documentMarkupEnabled).toBe(false);
-    // Money codes issue through the simulated provider only, dark and unarmed until the owner's go.
+    expect(flags.inboundEmailEnabled).toBe(true);
+    expect(flags.documentCrop).toBe(true);
+    expect(flags.documentMarkupEnabled).toBe(true);
+    // Money codes issue through the simulated provider only, released unarmed with their cap and
+    // date kept.
     expect(flags.moneyCodes).toEqual({
-      enabled: false,
+      enabled: true,
       armed: false,
       capCents: 50_000,
       perDriverPerDay: 2,
@@ -169,21 +151,23 @@ describe("flags", () => {
     expect(isLocalDate(flags.moneyCodes.startDate)).toBe(true);
     expect(flags.driverNotesEmailEnabled).toBe(false);
     expect(flags.collectionsEmailEnabled).toBe(false);
-    expect(flags.sweepScheduleEnabled).toBe(false);
+    expect(flags.sweepScheduleEnabled).toBe(true);
     // Pay rules from a policy document: two Muse Spark calls a run and a new version on approval.
-    expect(flags.policyOnboardEnabled).toBe(false);
+    expect(flags.policyOnboardEnabled).toBe(true);
     // Spark Open's standby host stays dark: Baseten serves screening and sorting alone.
     expect(flags.sparkOpenFallback).toBe("off");
     // Driver messages and voice notes are sorted by Muse Spark Open, the open-weights model.
     expect(flags.triageProvider).toBe("baseten");
-    // The desk loop hands work to the agents on its own: dark and unarmed until the owner's go.
-    expect(flags.deskLoop.enabled).toBe(false);
+    // The desk loop hands work to the agents on its own, each under its own switch and caps, once
+    // the owner arms it.
+    expect(flags.deskLoop.enabled).toBe(true);
     expect(flags.deskLoop.armed).toBe(false);
-    // The demo visitor sign-in: dark until the owner's one-line release PR.
-    expect(flags.judgeAccess.enabled).toBe(false);
-    // Factoring submits to the simulated partner only, dark and unarmed until the owner's go.
+    // The demo visitor sign-in, inside the visit limits below.
+    expect(flags.judgeAccess.enabled).toBe(true);
+    // Factoring submits to the simulated partner only, released unarmed with its cap, packet rule and
+    // date kept.
     expect(flags.factoring).toEqual({
-      enabled: false,
+      enabled: true,
       armed: false,
       maxNetCents: 2_500_000,
       requirePacket: false,
@@ -191,9 +175,9 @@ describe("flags", () => {
     });
     expect(isLocalDate(flags.factoring.startDate)).toBe(true);
     // The models page's eval card and the eval script that spends model cents.
-    expect(flags.evalCardEnabled).toBe(false);
+    expect(flags.evalCardEnabled).toBe(true);
     expect(flags.evalRun).toEqual({ enabled: false, maxRunCents: 1_500, reserveCents: 4_000 });
-    expect(flags.groundedRatesEnabled).toBe(false);
+    expect(flags.groundedRatesEnabled).toBe(true);
   });
 
   it("keeps a rate lookup small and its switch out of the local overrides", () => {
@@ -204,7 +188,7 @@ describe("flags", () => {
 
   it("keeps a demo visit small: a dollar of model time, 25 turns, $8.00 a day across every visit", () => {
     expect(flags.judgeAccess).toEqual({
-      enabled: false,
+      enabled: true,
       sessionCapCents: 100,
       turnsPerSession: 25,
       dayCapCents: 800,
@@ -285,17 +269,17 @@ describe("flags", () => {
     expect(isLocalDate(flags.collectionsEmailFrom)).toBe(false);
   });
 
-  it("ships the sweep's checks and the chat loop's checks off, with three attempts before a person", () => {
-    expect(flags.verification).toEqual({ enabled: false, maxAttempts: 3 });
+  it("ships the sweep's checks and the chat loop's checks on, with three attempts before a person", () => {
+    expect(flags.verification).toEqual({ enabled: true, maxAttempts: 3 });
   });
 
-  it("ships rate confirmations into loads off, with a start date, a per-read cap and a daily limit", () => {
-    expect(flags.ratecon).toEqual({ enabled: false, startDate: "2026-11-02", readMaxCostCents: 8, perTenantPerDay: 20 });
+  it("ships rate confirmations into loads on, with a start date, a per-read cap and a daily limit", () => {
+    expect(flags.ratecon).toEqual({ enabled: true, startDate: "2026-10-30", readMaxCostCents: 8, perTenantPerDay: 20 });
     expect(isLocalDate(flags.ratecon.startDate)).toBe(true);
   });
 
-  it("ships the phone line off, with its segment size, call length, daily calls and hand-offs capped", () => {
-    expect(flags.phoneLineEnabled).toBe(false);
+  it("ships the phone line on, with its segment size, call length, daily calls and hand-offs capped", () => {
+    expect(flags.phoneLineEnabled).toBe(true);
     expect(flags.phoneLineLimits).toEqual({
       maxSegmentBytes: 1_000_000,
       maxSegmentMs: 30_000,
@@ -319,8 +303,8 @@ describe("flags", () => {
     expect(limits.maxHandOffsPerCall).toBeLessThanOrEqual(100);
   });
 
-  it("ships escrow releases off and unarmed, with a $5,000 cap and a start date", () => {
-    expect(flags.escrowRelease).toEqual({ enabled: false, armed: false, capCents: 500_000, startDate: "2026-11-02" });
+  it("ships escrow releases on and unarmed, with a $5,000 cap and a start date", () => {
+    expect(flags.escrowRelease).toEqual({ enabled: true, armed: false, capCents: 500_000, startDate: "2026-10-30" });
     expect(isLocalDate(flags.escrowRelease.startDate)).toBe(true);
   });
 
@@ -398,9 +382,9 @@ describe("flags", () => {
 
   it("starts the desk loop on a fixed date and keeps its wakes short and its spend small", () => {
     expect(flags.deskLoop).toEqual({
-      enabled: false,
+      enabled: true,
       armed: false,
-      startDate: "2026-10-31",
+      startDate: "2026-10-30",
       limits: {
         sliceMs: 20_000,
         leaseMs: 55_000,
@@ -557,8 +541,8 @@ describe("flags", () => {
     expect(flags.driverNoteLimits.maxNoteCents).toBeLessThan(flags.driverNoteLimits.maxBatchCents);
   });
 
-  it("keeps pay cards dark, with small caps and a picture size limit", () => {
-    expect(flags.payCardsEnabled).toBe(false);
+  it("releases pay cards, with small caps and a picture size limit", () => {
+    expect(flags.payCardsEnabled).toBe(true);
     expect(flags.payCardLimits).toEqual({
       checkMaxCostCents: 3,
       maxBatchCents: 40,
@@ -598,10 +582,9 @@ describe("flags", () => {
     }
   });
 
-  it("releases the sweep and its fixes, keeps its schedule off and its caps small", () => {
+  it("releases the sweep, its fixes and its nightly kicker, with its caps small", () => {
     expect(flags.sweepEnabled).toBe(true);
-    // The nightly kicker waits on the scheduler stack.
-    expect(flags.sweepScheduleEnabled).toBe(false);
+    expect(flags.sweepScheduleEnabled).toBe(true);
     expect(flags.payCorrectionsEnabled).toBe(true);
     expect(flags.sweepLimits).toEqual({
       maxItems: 40,
@@ -747,8 +730,8 @@ describe("flags", () => {
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("profitBriefEnabled");
   });
 
-  it("ships the quarter review dark, at most 30 cents a review, and never switched on by local mode", () => {
-    expect(flags.quarterReviewEnabled).toBe(false);
+  it("releases the quarter review, at most 30 cents a review, and never switched on by local mode", () => {
+    expect(flags.quarterReviewEnabled).toBe(true);
     expect(flags.quarterReviewLimits).toEqual({ maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 });
     for (const v of Object.values(flags.quarterReviewLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
@@ -759,33 +742,37 @@ describe("flags", () => {
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("quarterReviewLimits");
   });
 
-  it("ships the IFTA quarter report dark, and never switched on by local mode", () => {
-    expect(flags.iftaEnabled).toBe(false);
+  it("releases the IFTA quarter report, and never switched on by local mode", () => {
+    expect(flags.iftaEnabled).toBe(true);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("iftaEnabled");
   });
 
-  it("ships the year-end 1099 report dark, and never switched on by local mode", () => {
-    expect(flags.yearEndEnabled).toBe(false);
+  it("releases the year-end 1099 report, and never switched on by local mode", () => {
+    expect(flags.yearEndEnabled).toBe(true);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("yearEndEnabled");
-    expect(LOCAL_OFF_ONLY as readonly string[]).not.toContain("yearEndEnabled");
+    // Local mode may only turn it off, so the demo path's tool list is the one its replay recorded.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("yearEndEnabled");
   });
 
-  it("ships the review trust meter dark, and never switched on by local mode", () => {
-    expect(flags.trustMeterEnabled).toBe(false);
+  it("releases the review trust meter, and never switched on by local mode", () => {
+    expect(flags.trustMeterEnabled).toBe(true);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("trustMeterEnabled");
-    expect(LOCAL_OFF_ONLY as readonly string[]).not.toContain("trustMeterEnabled");
+    // Local mode may only turn it off, so the demo path's tool list is the one its replay recorded.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("trustMeterEnabled");
   });
 });
 
 describe("step through", () => {
-  it("is on in development and tests only, and off elsewhere until the owner turns it on for staff", () => {
-    expect(flags.stepThrough).toEqual({ dev: true, staff: false });
-    expect(stepThroughShown(flags, { NODE_ENV: "production" })).toBe(false);
-    expect(stepThroughShown(flags, { NODE_ENV: "test" })).toBe(true);
-    expect(stepThroughShown(flags, { NODE_ENV: "development" })).toBe(true);
+  it("ships on for staff, and with staff off is on in development and tests only", () => {
+    expect(flags.stepThrough).toEqual({ dev: true, staff: true });
+    expect(stepThroughShown(flags, { NODE_ENV: "production" })).toBe(true);
+    const devOnly = { stepThrough: { dev: true, staff: false } };
+    expect(stepThroughShown(devOnly, { NODE_ENV: "production" })).toBe(false);
+    expect(stepThroughShown(devOnly, { NODE_ENV: "test" })).toBe(true);
+    expect(stepThroughShown(devOnly, { NODE_ENV: "development" })).toBe(true);
     // Unset or unknown reads as production.
-    expect(stepThroughShown(flags, {})).toBe(false);
-    expect(stepThroughShown(flags, { NODE_ENV: "staging" })).toBe(false);
+    expect(stepThroughShown(devOnly, {})).toBe(false);
+    expect(stepThroughShown(devOnly, { NODE_ENV: "staging" })).toBe(false);
     expect(stepThroughShown({ stepThrough: { dev: true, staff: true } }, { NODE_ENV: "production" })).toBe(true);
     expect(stepThroughShown({ stepThrough: { dev: false, staff: false } }, { NODE_ENV: "development" })).toBe(false);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("stepThrough");
@@ -942,8 +929,9 @@ describe("local overrides for the demo-path test", () => {
       { collectionsEnabled: true },
       { "agentPromptCache.enabled": true },
       { sparkOpenFallback: "fireworks" },
-      { inboundEmailEnabled: false },
-      { sweepScheduleEnabled: false },
+      // Off-only: local mode may never turn these on.
+      { inboundEmailEnabled: true },
+      { sweepScheduleEnabled: true },
       // Off-only, and not on the demo path: its tools stay out of the replay's tool list.
       { cardRecon: { enabled: true } },
       { "cardRecon.enabled": true },

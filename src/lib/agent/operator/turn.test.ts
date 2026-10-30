@@ -926,7 +926,8 @@ describe("runTurn with tool search and the prompt cache", () => {
       ? allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT })
       : allowed(c.name, { totalCents: 150_000 });
 
-  // The switches that add prompt lines, set for one test and put back as shipped when it ends.
+  // The switches that add prompt lines, set for one test and put back as shipped when it ends. One
+  // the test does not name is off, so the prompt holds only the lines the test asks for.
   const promptSwitches = (set: {
     reportsEnabled: boolean;
     collectionsEnabled: boolean;
@@ -944,11 +945,20 @@ describe("runTurn with tool search and the prompt cache", () => {
       iftaEnabled: flags.iftaEnabled,
       yearEndEnabled: flags.yearEndEnabled,
       trustMeterEnabled: flags.trustMeterEnabled,
+      moneyCodes: flags.moneyCodes,
+      escrowRelease: flags.escrowRelease,
     };
     onTestFinished(() => {
       Object.assign(flags, before);
     });
-    Object.assign(flags, set);
+    Object.assign(flags, {
+      iftaEnabled: false,
+      yearEndEnabled: false,
+      trustMeterEnabled: false,
+      moneyCodes: { ...flags.moneyCodes, enabled: false },
+      escrowRelease: { ...flags.escrowRelease, enabled: false },
+      ...set,
+    });
   };
 
   it("gives the same outcome, gateway calls and proposals with both on as with both off", async () => {
@@ -1011,9 +1021,6 @@ describe("runTurn with tool search and the prompt cache", () => {
   it("adds the money code lines only while propose_money_code is offered", () => {
     promptSwitches({ reportsEnabled: false, collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: false });
     flags.moneyCodes.enabled = true;
-    onTestFinished(() => {
-      flags.moneyCodes.enabled = false;
-    });
     const on = toolsFor("operator").map((t) => t.name);
     expect(on).toContain("propose_money_code");
     expect(operatorPrompt(on, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${MONEY_CODE_PROMPT}`);

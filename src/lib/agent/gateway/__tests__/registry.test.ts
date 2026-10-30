@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import { ALWAYS_LOADED } from "../loading";
 import { isToolEnabled, REDACT_ENUMS, STRICT_TOOL_SCHEMAS, TOOL_NAME, TOOL_REGISTRY, toolNamed, toolsFor } from "../registry";
@@ -93,7 +93,10 @@ const REVIEW_TOOLS = ["get_invoice_review", "get_invoice_review_queue"];
 // The collections read, behind its own switch.
 const COLLECTIONS_TOOLS = ["get_collections"];
 
-afterEach(() => {
+const saved = structuredClone(flags);
+
+// Every test starts from these switches off, whatever ships, and the shipped values come back after.
+beforeEach(() => {
   flags.reportsEnabled = false;
   flags.iftaEnabled = false;
   flags.yearEndEnabled = false;
@@ -113,6 +116,10 @@ afterEach(() => {
   flags.groundedRatesEnabled = false;
   flags.quarterReviewEnabled = false;
   flags.escrowRelease.enabled = false;
+});
+
+afterEach(() => {
+  Object.assign(flags, structuredClone(saved));
 });
 
 describe("tool registry", () => {
@@ -269,8 +276,8 @@ describe("tool registry", () => {
 
   it("offers the factoring tools only while the factoring switch is on, read on every offer, all deferred", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
-    // Off by default: the default lists, and so the replayed demo's tool fingerprints, are unchanged.
-    expect(flags.factoring.enabled).toBe(false);
+    // Off: the lists hold none of its tools.
+    flags.factoring.enabled = false;
     for (const role of AGENT_ROLES) for (const n of FACTORING_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
     expect(toolsFor("operator")).toHaveLength(21);
     expect(toolsFor("auditor")).toHaveLength(12);
@@ -292,8 +299,8 @@ describe("tool registry", () => {
 
   it("offers the escrow release tools only while the escrow release switch is on, the card to the operator alone", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
-    // Off by default: the default lists, and so the replayed demo's tool fingerprints, are unchanged.
-    expect(flags.escrowRelease.enabled).toBe(false);
+    // Off: the lists hold none of its tools.
+    flags.escrowRelease.enabled = false;
     for (const role of AGENT_ROLES) for (const n of ESCROW_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
     expect(toolsFor("operator")).toHaveLength(21);
     expect(toolsFor("auditor")).toHaveLength(12);
@@ -368,7 +375,7 @@ describe("tool registry", () => {
 
   it("offers and finds the IFTA quarter report only while the reports and its own switch are both on", () => {
     const names = () => toolsFor("operator").map((t) => t.name);
-    expect(flags.iftaEnabled).toBe(false);
+    flags.iftaEnabled = false;
     flags.reportsEnabled = true;
     // Reports on, IFTA off: the five reports as before, and the IFTA tool neither offered nor found.
     expect(toolsFor("operator")).toHaveLength(26);
@@ -395,7 +402,7 @@ describe("tool registry", () => {
 
   it("offers and finds the year-end 1099 report only while the reports and its own switch are both on", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
-    expect(flags.yearEndEnabled).toBe(false);
+    flags.yearEndEnabled = false;
     flags.reportsEnabled = true;
     // Reports on, year-end off: the reports as before, and the year-end tool neither offered nor found.
     expect(toolsFor("operator")).toHaveLength(26);
@@ -428,7 +435,7 @@ describe("tool registry", () => {
 
   it("offers and finds the trust meter report only while the reports and its own switch are both on", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
-    expect(flags.trustMeterEnabled).toBe(false);
+    flags.trustMeterEnabled = false;
     flags.reportsEnabled = true;
     // Reports on, trust meter off: the reports as before, and the tool neither offered nor found.
     expect(toolsFor("operator")).toHaveLength(26);
@@ -622,8 +629,8 @@ describe("deferred loading for tool search", () => {
 
   it("offers the quarter review read to the operator only while its switch is on, deferred, read on every offer", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
-    expect(flags.quarterReviewEnabled).toBe(false);
-    // Off by default: the operator's list, and so the recorded replays, are unchanged.
+    flags.quarterReviewEnabled = false;
+    // Off: the operator's list is unchanged.
     expect(names("operator")).not.toContain("get_quarter_review");
     expect(toolsFor("operator")).toHaveLength(21);
     expect(toolNamed("get_quarter_review")).not.toBeNull();

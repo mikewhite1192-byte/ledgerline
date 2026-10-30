@@ -325,6 +325,7 @@ describe("the sweep's second opinion", () => {
   });
 
   it("adds no second opinion part to a run whose find phase kept no coverage", async () => {
+    flags.verification = { ...flags.verification, enabled: false };
     const runId = await start();
     // The find phase runs with the switch off, then the slice hands the run back.
     await advanceSweep(SESSION, runId, NOW.getTime() + 5_000, deps());
