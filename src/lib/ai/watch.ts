@@ -213,6 +213,29 @@ export async function readDaySpend(q: Queryable, at: string | null): Promise<Day
   return { spentNanocents: row.spent_nanocents, calls: row.calls };
 }
 
+// This carrier's model spend since `at` (an instant), counted as readDaySpend counts it. The desk
+// loop reads it before each piece of work to stop a wake that has spent its share.
+export async function readSpendSince(q: Queryable, at: string): Promise<DaySpend> {
+  const [row] = await q.query<{ spent_nanocents: number; calls: number }>(
+    `SELECT CAST(COALESCE(SUM(COALESCE(cost_nanocents, reserved_nanocents)), 0) AS bigint) AS spent_nanocents,
+            CAST(count(*) AS integer) AS calls
+       FROM model_calls
+      WHERE tenant_id = current_tenant_id()
+        AND created_at >= CAST($1 AS timestamptz)`,
+    [at],
+  );
+  if (
+    !row ||
+    !Number.isSafeInteger(row.spent_nanocents) ||
+    row.spent_nanocents < 0 ||
+    !Number.isSafeInteger(row.calls) ||
+    row.calls < 0
+  ) {
+    throw new DbError("unknown");
+  }
+  return { spentNanocents: row.spent_nanocents, calls: row.calls };
+}
+
 export type ClearResult = "cleared" | "already_cleared" | "not_found";
 
 // A person lets a stopped job run again. Admins only: anyone else gets ForbiddenError and nothing

@@ -92,6 +92,9 @@ const KEPT_OFF = [
   "evalCardEnabled",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
+  // The desk loop ships dark and unarmed with its own merge; the owner turns it on in its own PR.
+  "deskLoop.enabled",
+  "deskLoop.armed",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -155,6 +158,9 @@ describe("flags", () => {
     expect(flags.sparkOpenFallback).toBe("off");
     // Driver messages and voice notes are sorted by Muse Spark Open, the open-weights model.
     expect(flags.triageProvider).toBe("baseten");
+    // The desk loop hands work to the agents on its own: dark and unarmed until the owner's go.
+    expect(flags.deskLoop.enabled).toBe(false);
+    expect(flags.deskLoop.armed).toBe(false);
     // The demo visitor sign-in: dark until the owner's one-line release PR.
     expect(flags.judgeAccess.enabled).toBe(false);
     // Factoring submits to the simulated partner only, dark and unarmed until the owner's go.
@@ -331,6 +337,31 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(flags.cardRecon.limits.sliceMs).toBeLessThan(25_000);
+  });
+
+  it("starts the desk loop on a fixed date and keeps its wakes short and its spend small", () => {
+    expect(flags.deskLoop).toEqual({
+      enabled: false,
+      armed: false,
+      startDate: "2026-10-31",
+      limits: {
+        sliceMs: 20_000,
+        leaseMs: 55_000,
+        eventsPerWake: 20,
+        eventsPerDay: 300,
+        maxAttempts: 3,
+        wakeCents: 60,
+        dayCents: 400,
+      },
+    });
+    expect(isLocalDate(flags.deskLoop.startDate)).toBe(true);
+    for (const v of Object.values(flags.deskLoop.limits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // One wake ends inside the route's 30 s, and its lease outlives the route.
+    expect(flags.deskLoop.limits.sliceMs).toBeLessThan(25_000);
+    expect(flags.deskLoop.limits.leaseMs).toBeGreaterThan(30_000);
+    expect(flags.deskLoop.limits.wakeCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
@@ -842,6 +873,10 @@ describe("local overrides for the demo-path test", () => {
       // Off-only, and not on the demo path: its tools stay out of the replay's tool list.
       { cardRecon: { enabled: true } },
       { "cardRecon.enabled": true },
+      // The desk loop is the owner's release, like the sweep.
+      { deskLoop: { enabled: true, armed: true } },
+      { "deskLoop.enabled": true },
+      { "deskLoop.armed": true },
     ]) {
       const target = copy();
       const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify(bad) };

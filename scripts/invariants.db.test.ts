@@ -254,6 +254,9 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "demo_sessions",
     "card_recon_runs",
     "card_recon_breaks",
+    // The desk loop's lease row and its insert-only log (0065): no seed, the loop writes them.
+    "desk_loops",
+    "desk_log",
     "pinned_rates",
     "pay_cards",
   ];
@@ -565,6 +568,16 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           [randomUUID(), randomBytes(32).toString("hex"), cardRun],
         );
         expect(cardFound).toBe(1);
+        // The desk loop's row and one wake line (0065), as the app writes them.
+        await q.execute(
+          "INSERT INTO desk_loops (tenant_id, updated_at) VALUES (current_tenant_id(), CAST('2026-11-02T15:00:00Z' AS timestamptz))",
+        );
+        await q.execute(
+          `INSERT INTO desk_log (id, tenant_id, wake_id, at, kind, by, detail)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST('2026-11-02T15:00:00Z' AS timestamptz),
+             'wake', 'schedule', CAST('{}' AS jsonb))`,
+          [randomUUID(), randomUUID()],
+        );
         // A factoring request the test-mode partner declined, on the carrier's paid invoice (0060).
         // Declined, so no ledger row and no money; it only gives the probe a row to (not) see.
         const request = randomUUID();

@@ -11,6 +11,11 @@ import type { Db } from "../db/types";
 import { approvalFrom } from "../money/approval";
 import { markSent, reserve, settle, type OutsideRecord, type Settlement } from "../money/ledger";
 import type { MoneyDraft } from "../money/types";
+import type { Handlers } from "../desk/handlers";
+import { DESK_SOURCES } from "../desk/keys";
+import { wakeDesk } from "../desk/loop";
+import { startSweep } from "../sweep/run";
+import { serviceSession, serviceSub } from "../sweep/service-session";
 import { DEMO_ANCHOR } from "./anchor";
 import { HERO_OPEN_WEEK } from "./assert-plan";
 import { DEMO_CARRIERS } from "./carriers";
@@ -1014,5 +1019,111 @@ describe("the demo reset", () => {
       await resetDemoTenant(app, A, planA);
       expect(await rowsOf(A)).toEqual(sorted(planA.rows));
     });
+  });
+
+  it("lets the desk loop sweep the day again, once, after a reset removed the day's sweep run, and leaves the other carrier alone", async () => {
+    const saved = { desk: structuredClone(flags.deskLoop), sweep: flags.sweepEnabled, fanout: flags.fanoutEnabled };
+    // Tuesday Jan 6, 2026, 10:00 in New York: the sweep is due. Every seeded row is stamped later,
+    // so only the due periods are found.
+    let now = Date.parse("2026-01-06T15:00:00.000Z");
+    const clock = () => new Date(now);
+    try {
+      flags.deskLoop.enabled = true;
+      flags.deskLoop.armed = true;
+      flags.deskLoop.startDate = "2026-01-05";
+      flags.sweepEnabled = true;
+      flags.fanoutEnabled = false;
+      for (const id of [A, B]) {
+        await admin.withTenant(id, (q) =>
+          q.execute(
+            `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+             VALUES (current_tenant_id(), $1, 'sweep@carrier.example', 'staff')`,
+            [serviceSub(id)],
+          ),
+        );
+      }
+      // The sweep handler starts the day's run as the real one does, and leaves it running; every
+      // other piece of work is done at once.
+      const sweeps: { tenantId: string; key: string }[] = [];
+      const handlers = {} as Handlers;
+      for (const source of DESK_SOURCES) {
+        handlers[source] = { switchOn: () => true, needsMs: 1_000, run: async () => ({ outcome: "done", detail: {} }) };
+      }
+      handlers.sweep = {
+        switchOn: () => true,
+        needsMs: 1_000,
+        run: async (session, event) => {
+          sweeps.push({ tenantId: session.tenantId, key: event.eventKey });
+          const started = await startSweep(session, { runId: randomUUID(), trigger: "schedule" }, { db: app, clock });
+          if (!started.ok) return { outcome: "failed", detail: { category: started.category } };
+          return { outcome: "done", detail: { runId: started.runId } };
+        },
+      };
+      const wake = async (tenantId: string) => {
+        const service = await serviceSession(app, tenantId);
+        if (!service) throw new Error("no service login");
+        const out = await wakeDesk(
+          service,
+          { wakeId: randomUUID(), by: "schedule", deadlineMs: now + 25_000 },
+          { db: app, clock, handlers, newId: randomUUID, log: () => {} },
+        );
+        expect(out).toMatchObject({ ok: true, status: "done" });
+      };
+      const runsOf = (tenantId: string) =>
+        app.withTenant(tenantId, (q) =>
+          q.query<{ id: string }>("SELECT CAST(id AS text) AS id FROM sweep_runs WHERE tenant_id = current_tenant_id()"),
+        );
+      const sweepLinesOf = (tenantId: string) =>
+        app.withTenant(tenantId, (q) =>
+          q.query<{ kind: string; event_key: string }>(
+            `SELECT kind, event_key FROM desk_log
+              WHERE tenant_id = current_tenant_id() AND source = 'sweep'
+              ORDER BY at, CASE kind WHEN 'seen' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END`,
+          ),
+        );
+
+      await wake(A);
+      await wake(B);
+      const [first] = await runsOf(A);
+      expect(await runsOf(A)).toHaveLength(1);
+      expect(await runsOf(B)).toHaveLength(1);
+      const b = await printOf(B);
+
+      const report = await resetDemoTenant(app, A, planA);
+      expect(report.cleared.sweep_runs).toBe(1);
+      expect(await runsOf(A)).toEqual([]);
+      // The log kept the first go's lines.
+      expect((await sweepLinesOf(A)).map((l) => l.kind)).toEqual(["seen", "claimed", "done"]);
+
+      now += 15 * 60_000;
+      await wake(A);
+      const again = await runsOf(A);
+      expect(again).toHaveLength(1);
+      expect(again[0].id).not.toBe(first.id);
+      // Fifteen minutes on, nothing more: the second go's run is there.
+      now += 15 * 60_000;
+      await wake(A);
+      expect(await runsOf(A)).toEqual(again);
+
+      expect(sweeps).toEqual([
+        { tenantId: A.toLowerCase(), key: "sweep:2026-01-06" },
+        { tenantId: B.toLowerCase(), key: "sweep:2026-01-06" },
+        { tenantId: A.toLowerCase(), key: "sweep:2026-01-06.2" },
+      ]);
+      expect(await sweepLinesOf(A)).toEqual([
+        { kind: "seen", event_key: "sweep:2026-01-06" },
+        { kind: "claimed", event_key: "sweep:2026-01-06" },
+        { kind: "done", event_key: "sweep:2026-01-06" },
+        { kind: "seen", event_key: "sweep:2026-01-06.2" },
+        { kind: "claimed", event_key: "sweep:2026-01-06.2" },
+        { kind: "done", event_key: "sweep:2026-01-06.2" },
+      ]);
+      // Nothing of the other carrier's moved: its run, its log and its loop row.
+      expect(await printOf(B)).toEqual(b);
+    } finally {
+      flags.deskLoop = saved.desk;
+      flags.sweepEnabled = saved.sweep;
+      flags.fanoutEnabled = saved.fanout;
+    }
   });
 });
