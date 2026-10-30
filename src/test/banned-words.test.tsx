@@ -304,6 +304,11 @@ vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
   readRecentAgentTurns: async () => get("turns"),
   readWaitingRuleChangeViews: async () => get("ruleChanges"),
 }));
+// A recorded eval run, so the models page's eval card has rows to show when its switch is on.
+vi.mock("@/lib/eval/latest", async (importOriginal) => {
+  const { sampleEvalResults } = await import("@/lib/eval/test-fixtures");
+  return { ...(await importOriginal<typeof import("@/lib/eval/latest")>()), latestResults: () => sampleEvalResults() };
+});
 vi.mock("@/lib/ai/spend", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/ai/spend")>()),
   readSpend: async () => get("spend"),
@@ -1052,7 +1057,21 @@ const PAGES: PageCase[] = [
   },
   {
     file: "models/page.tsx",
-    variants: [{ name: "models", load: async () => (await import("@/app/models/page")).default() }],
+    variants: [
+      { name: "models", load: async () => (await import("@/app/models/page")).default() },
+      {
+        name: "models with the eval card",
+        load: async () => {
+          flags.evalCardEnabled = true;
+          try {
+            return await (await import("@/app/models/page")).default();
+          } finally {
+            flags.evalCardEnabled = false;
+          }
+        },
+        shows: ["How the models score", "Right amount", "When the operator and the second check agreed"],
+      },
+    ],
   },
   {
     file: "portal-runs/page.tsx",

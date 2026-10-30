@@ -469,6 +469,18 @@ export type Flags = {
       sliceMs: number;
     };
   };
+  // The "How the models score" card on /models, read from src/lib/eval/results/latest.json. Off
+  // until the owner's one-line flip after a real run is recorded.
+  evalCardEnabled: boolean;
+  // The model eval script (npm run eval). It runs every case on a fresh local database that it
+  // drops after, and only spends model cents on the developer's own ledger, never production's.
+  evalRun: {
+    enabled: boolean;
+    // The most one run may spend, in cents, unless --max-cents asks for less.
+    maxRunCents: number;
+    // Cents the ledger must still have free after the run's own limit before a run starts.
+    reserveCents: number;
+  };
 };
 
 export const flags: Flags = {
@@ -623,6 +635,8 @@ export const flags: Flags = {
       sliceMs: 20_000,
     },
   },
+  evalCardEnabled: false,
+  evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
 };
 
 applyLocalOverrides(flags);

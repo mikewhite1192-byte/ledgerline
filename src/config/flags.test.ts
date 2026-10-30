@@ -30,6 +30,9 @@ describe("flags", () => {
     expect(flags.cardRecon.enabled).toBe(false);
     expect(flags.rulesByTalkingEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
+    // The models page's eval card and the eval script that spends model cents.
+    expect(flags.evalCardEnabled).toBe(false);
+    expect(flags.evalRun).toEqual({ enabled: false, maxRunCents: 1_500, reserveCents: 4_000 });
   });
 
   it("keeps carrier memory dark, with the agent's suggestions and the second check's notes few", () => {
