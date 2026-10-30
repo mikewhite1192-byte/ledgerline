@@ -11,7 +11,7 @@ import { toMessages } from "@/components/agent/turn-view";
 import { ChatThread } from "@/components/app/chat-thread";
 import { DataTable } from "@/components/app/data-table";
 import { Paystub } from "@/components/app/paystub";
-import { ProposalCard, type ProposalAudit, type ProposalStatus } from "@/components/app/proposal-card";
+import { ProposalCard, type ProposalAudit, type ProposalStatus, type ProposalVerification } from "@/components/app/proposal-card";
 import { EmptyState, ERROR_CATEGORIES, ErrorState, FeatureOff, LoadingState, PageNotFound } from "@/components/app/states";
 import { BADGE_STATUSES, StatusBadge } from "@/components/app/status-badge";
 import { ViewerRoleProvider } from "@/components/app/viewer-role";
@@ -32,6 +32,7 @@ import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
 import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { reasonSentence } from "@/lib/agent/reasons";
+import { ANSWER_PILL, ANSWER_REASONS, VERIFY_LINES } from "@/lib/agent/verify";
 import { refusalWords as briefRefusalWords, writeOutcome } from "@/lib/briefs/words";
 import { reviewOutcome, reviewRefusalWords } from "@/lib/briefs/quarter-words";
 import {
@@ -1849,6 +1850,46 @@ describe("no internal word on a card", () => {
   }
 });
 
+// The Verified / Unverified label in each state it can show, on a waiting and a decided card.
+const VERIFICATIONS: ProposalVerification[] = [
+  { state: "verified", line: VERIFY_LINES.verified, held: false },
+  ...Object.values(VERIFY_LINES).map((line) => ({ state: "unverified" as const, line, held: false })),
+  { state: "mismatch", line: VERIFY_LINES.held, held: true },
+  { state: "mismatch", line: VERIFY_LINES.mismatch, held: false },
+  {
+    state: "mismatch",
+    line: VERIFY_LINES.mismatch,
+    held: false,
+    override: { reason: "The rate sheet changed this week", byLabel: "Admin", at: "Oct 28, 10:00 AM" },
+  },
+];
+
+describe("no internal word on a card's Verified label", () => {
+  for (const status of ["proposed", "approved"] as const) {
+    it(`advance card, ${status}, every label state, with and without a block`, () => {
+      for (const verification of VERIFICATIONS) {
+        for (const audit of [AUDITS[2], AUDITS[4]]) {
+          for (const confirming of [false, true]) {
+            const { container, unmount } = render(
+              <ProposalCard
+                {...ADVANCE_PROPOSAL}
+                status={status}
+                audit={audit}
+                verification={verification}
+                onApprove={() => {}}
+                onReject={() => {}}
+                initialConfirming={confirming}
+              />,
+            );
+            expect(scan(container), `${verification.line}${confirming ? ", confirm open" : ""}`).toEqual([]);
+            unmount();
+          }
+        }
+      }
+    });
+  }
+});
+
 // Every kind's card as the chat builds it, plus a kind the table has no row for, in every status;
 // a waiting card is also read with its approve question open and with its reject question open.
 const KIND_VIEWS: [string, ProposalView][] = (() => {
@@ -1892,6 +1933,22 @@ const KIND_VIEWS: [string, ProposalView][] = (() => {
     ["invoice fix", { ...base, ...loads, kind: "invoice_fix", direction: "none", title: "Fix invoice" }],
     ["a kind with no row yet", { ...base, kind: "money_code" as ProposalView["kind"], title: "Issue money code" }],
     ["no subject code", { ...base, subjectLabel: null }],
+    ["advance, pay rules matched", { ...base, engineCheck: "matched", engineHeld: false, engineOverride: null }],
+    ["advance, pay rules not checked", { ...base, auditorVerdict: null, engineCheck: null, engineHeld: false, engineOverride: null }],
+    ["advance, not recomputed", { ...base, engineCheck: "unavailable", engineHeld: false, engineOverride: null }],
+    ["advance, held mismatch", { ...base, engineCheck: "mismatch", engineHeld: true, engineOverride: null }],
+    [
+      "paystub, approved over a mismatch",
+      {
+        ...base,
+        subjectTable: "settlements",
+        kind: "settlement_approve",
+        title: "Approve paystub",
+        engineCheck: "mismatch",
+        engineHeld: false,
+        engineOverride: { reason: "The rate sheet changed this week", byLabel: "an admin", at: "2026-10-28T15:00:00.000Z" },
+      },
+    ],
   ];
 })();
 
@@ -2118,6 +2175,24 @@ describe("no internal word in a chat answer or its trace", () => {
     // The repeated step shows once in the first answer's list.
     const first = screen.getAllByRole("list", { name: "What the agent did" })[0];
     expect(first.textContent?.match(/Thinking it through/g)).toHaveLength(1);
+    expect(scan(container)).toEqual([]);
+  });
+
+  it("the answer's Verified header in each state, with its reasons", () => {
+    const card = { ...fx.PROPOSALS[0], engineCheck: "matched" as const, engineHeld: false, auditorVerdict: "pass" };
+    const pending = { ...card, auditorVerdict: null };
+    const base: TurnView = { ...fx.TURNS[0], status: "done", error: null, proposals: [card] };
+    const turns: TurnView[] = [
+      { ...base, id: "turn-verified", withheldFigures: 0 },
+      { ...base, id: "turn-plain", withheldFigures: 0, proposals: [] },
+      { ...base, id: "turn-withheld", withheldFigures: 2 },
+      { ...base, id: "turn-unknown", withheldFigures: null },
+      { ...base, id: "turn-cards", withheldFigures: 0, proposals: [card, pending] },
+    ];
+    const messages = toMessages(turns, {}, {}, undefined, { on: true, checking: {}, timezone: fx.TENANT.timezone });
+    const { container } = render(<ChatThread messages={messages} composer={{}} />);
+    const text = container.textContent ?? "";
+    for (const shown of [ANSWER_PILL.verified, ANSWER_PILL.unverified, ...Object.values(ANSWER_REASONS)]) expect(text).toContain(shown);
     expect(scan(container)).toEqual([]);
   });
 

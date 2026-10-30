@@ -9,6 +9,7 @@ import {
   hoursMinutes,
   kindCopy,
   proposalCardFrom,
+  verificationFor,
 } from "./proposal-card-from";
 
 const DRIVER = "11111111-1111-4111-8111-111111111111";
@@ -408,5 +409,50 @@ describe("each kind's confirm words", () => {
     expect(proposalCardFrom({ ...view, subjectLabel: "" })).not.toHaveProperty("references");
     expect(proposalCardFrom({ ...view, subjectLabel: "   " })).not.toHaveProperty("references");
     expect(proposalCardFrom({ ...view, subjectLabel: null })).not.toHaveProperty("references");
+  });
+});
+
+describe("the verification label on the card", () => {
+  const on = { on: true, checking: false };
+
+  it("reads Verified only when the pay rules matched and the second check passed", () => {
+    const card = proposalCardFrom({ ...view, engineCheck: "matched", engineHeld: false, auditorVerdict: "pass" }, on);
+    expect(card.verification).toEqual({ state: "verified", line: "Your pay rules recomputed it and a second check agreed.", held: false });
+    expect(proposalCardFrom({ ...view, engineCheck: "matched", engineHeld: false }, on).verification?.state).toBe("unverified");
+    expect(proposalCardFrom({ ...view, engineCheck: "unavailable", engineHeld: false, auditorVerdict: "pass" }, on).verification?.state).toBe(
+      "unverified",
+    );
+  });
+
+  it("holds a mismatch for a person, and leaves the confirm question as it was", () => {
+    const card = proposalCardFrom({ ...view, engineCheck: "mismatch", engineHeld: true, auditorVerdict: "pass" }, on);
+    expect(card.verification).toMatchObject({ state: "mismatch", held: true });
+    expect(card.confirmQuestion).toBe("Pay $200.00 to BR-D07's fuel card ending 4417?");
+  });
+
+  it("says the second check is off when the page reads it off", () => {
+    expect(verificationFor({ ...view, engineCheck: "matched", engineHeld: false }, { on: false, checking: false })?.line).toBe(
+      "Pay rules matched. Second check is off",
+    );
+  });
+
+  it("carries a person's reason for approving over a mismatch, the time in the page's timezone", () => {
+    const v = verificationFor(
+      {
+        ...view,
+        status: "approved",
+        engineCheck: "mismatch",
+        engineHeld: false,
+        engineOverride: { reason: "The rate sheet changed this week", byLabel: "an admin", at: "2026-10-28T15:00:00.000Z" },
+      },
+      { ...on, timezone: "UTC" },
+    );
+    expect(v).toMatchObject({ state: "mismatch", held: false, override: { reason: "The rate sheet changed this week", byLabel: "an admin" } });
+    expect(v?.override?.at).toContain("UTC");
+  });
+
+  it("adds no label when the page did not read the engine check", () => {
+    expect(proposalCardFrom(view, on)).not.toHaveProperty("verification");
+    expect(verificationFor(view)).toBeUndefined();
   });
 });

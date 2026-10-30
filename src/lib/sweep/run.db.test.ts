@@ -110,9 +110,19 @@ const turnBusy: SweepDeps["openTurn"] = async () => ({ refused: "busy" });
 
 async function proposals() {
   return admin.withTenant(T, (q) =>
-    q.query<{ id: string; subject_id: string; amount_cents: string; direction: string; exceptions: string; status: string }>(
+    q.query<{
+      id: string;
+      subject_id: string;
+      amount_cents: string;
+      direction: string;
+      exceptions: string;
+      status: string;
+      engine_check: string | null;
+      engine_cents: string | null;
+    }>(
       `SELECT CAST(id AS text) AS id, CAST(subject_id AS text) AS subject_id, CAST(amount_cents AS text) AS amount_cents,
-              direction, CAST(exceptions AS text) AS exceptions, status
+              direction, CAST(exceptions AS text) AS exceptions, status, engine_check,
+              CAST(engine_cents AS text) AS engine_cents
          FROM proposals WHERE kind = 'pay_correction' ORDER BY id`,
     ),
   );
@@ -202,6 +212,8 @@ describe("a sweep of the open week", () => {
     const ps = await proposals();
     expect(ps.map((p) => `${p.subject_id}:${(p.direction === "in" ? -1 : 1) * Number(p.amount_cents)}`).sort()).toEqual(legKeys);
     expect(ps.every((p) => p.status === "proposed" && p.exceptions === "[]")).toBe(true);
+    // The same comparison is stored as each card's engine check, the engine's figure beside it.
+    expect(ps.every((p) => p.engine_check === "matched" && p.engine_cents === p.amount_cents)).toBe(true);
     // One explanation per fix and one auditor run per audit slice, counted against the cap.
     expect(explain).toHaveBeenCalledTimes(5);
     // Each explanation names the finding's own category, and the correction's reason beside it.
@@ -270,6 +282,10 @@ describe("a sweep of the open week", () => {
     expect(fixes.map((i) => i.status)).toEqual(Array(5).fill("mismatch"));
     const ps = await proposals();
     expect(ps.every((p) => p.exceptions.includes("sweep_mismatch"))).toBe(true);
+    // Stored as a mismatch, with the leg's own figure: one cent off what the card says.
+    expect(ps.every((p) => p.engine_check === "mismatch" && Math.abs(Number(p.engine_cents) - Number(p.amount_cents)) === 1)).toBe(
+      true,
+    );
     expect(explain).not.toHaveBeenCalled();
     expect((await readSweepPage(SESSION, runId, { db: app }))?.clean.proposalIds).toEqual([]);
   });
@@ -667,7 +683,8 @@ describe("a sweep of the open week", () => {
     const second = await start();
     await runToEnd(second);
     expect((await fixRows(second)).map((r) => [r.status, r.refusal_category])).toEqual(Array(5).fill(["drafted", null]));
-    expect(await proposals()).toEqual(saved);
+    // The same rows, with the engine check the second run stored once on each.
+    expect(await proposals()).toEqual(saved.map((p) => ({ ...p, engine_check: "matched", engine_cents: p.amount_cents })));
     const linked = (await items(second)).filter((i) => i.kind === "fix").map((i) => i.proposal_id).sort();
     expect(linked).toEqual(saved.map((p) => p.id).sort());
   });

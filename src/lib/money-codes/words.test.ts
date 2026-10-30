@@ -25,6 +25,7 @@ const GATE_CATEGORIES = [
   "auditor_required",
   "not_auditable",
   "override_required",
+  "engine_override_required",
   "stale",
   "invoice_posted",
   "bad_request",

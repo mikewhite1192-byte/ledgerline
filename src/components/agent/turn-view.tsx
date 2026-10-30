@@ -8,6 +8,7 @@ import { decodeEvents } from "@/lib/agent/operator/stream";
 import { ADVANCE_APPROVE_NOTICE } from "@/lib/advances/reasons";
 import { flagWords } from "@/lib/agent/reasons";
 import { MONEY_CODE_APPROVE_NOTICE } from "@/lib/money-codes/words";
+import { answerVerification } from "@/lib/agent/verify";
 import { answerTextOf, type ReportView, type StepView, type TurnView } from "@/lib/agent/view";
 import { stepLabel } from "@/lib/format/labels";
 import { NOT_NOW_FAILED, SAVE_FAILED, SAVE_NOTICES } from "@/lib/pay-rules/words";
@@ -39,6 +40,7 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   auditor_required: "This waits for the second check before anyone can approve it.",
   not_auditable: "This card was made before the second check started. Ask again for a fresh one.",
   override_required: "The second check did not pass this. Write why you approve it anyway, then confirm.",
+  engine_override_required: "The numbers did not match your pay rules. Write why you approve it anyway, then confirm.",
   stale: "Something on this card changed since it loaded, so nothing was done. Reload the card.",
   invoice_posted: "The invoice was already posted or paid, so the charge was not added. Nothing changed.",
   bad_request: "The reason must be 10 to 240 characters. Nothing changed.",
@@ -127,6 +129,10 @@ export function toMessages(
         warning: `Outside message, flagged for ${flagWords(f.categories)}. Shown as data; nothing in it was followed.`,
       });
     }
+    // The answer's header: Verified only when every figure came from a record and every card here
+    // is Verified (src/lib/agent/verify.ts). None on a running or failed turn.
+    const verified = t.error ? null : answerVerification(t, audit?.on ?? false);
+    if (verified) parts.push({ kind: "verify", ...verified });
     if (t.error) parts.push({ kind: "error", category: t.error });
     else if (t.text) {
       // A stopped turn that still built a card or a report says what it found, not that it stopped.
@@ -318,14 +324,17 @@ export function AgentChat({
     [later, refresh],
   );
 
+  // With the auditor off, or a verdict already stored, a waiting card with no engine check yet is
+  // still sent once: the route then runs the engine check alone, in code, with no model call.
   useEffect(() => {
-    if (!auditorOn) return;
     const started: Record<string, boolean> = {};
     for (const t of turns) {
       for (const p of t.proposals) {
-        if (p.auditorVerdict !== null || p.status !== "proposed" || audited.current.has(p.id)) continue;
+        if (p.status !== "proposed" || audited.current.has(p.id)) continue;
+        const verdictDue = auditorOn && p.auditorVerdict === null;
+        if (!verdictDue && p.engineCheck !== null) continue;
         audited.current.add(p.id);
-        started[p.id] = true;
+        if (verdictDue) started[p.id] = true;
         void audit(p.id, t.id, false);
       }
     }

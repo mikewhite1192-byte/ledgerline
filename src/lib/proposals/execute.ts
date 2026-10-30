@@ -26,13 +26,15 @@ import { executePayRuleChange } from "./executors/pay-rule-change";
 // covers the amount (approverRole), the auditor's verdict is in when auditorRequired is on (one
 // made before auditorStart, which the auditor never checks, is refused as not_auditable rather
 // than left waiting), a block carries the person's override reason for the very verdict they saw,
-// and anything other than a pass, or anything flagged, carries the person's second confirm. Then
+// a mismatch with the rules engine's own recompute (engine_check, 0045) carries a reason too while
+// verifyEngineMismatchBlocks is on, and anything other than a pass, or anything flagged, carries
+// the person's second confirm. Then
 // the proposal's kind picks its executor from EXECUTORS. A kind with no executor is refused as
 // not_executable before any write. An executor with a precheck is asked it next, still under the
 // lock: a refusal there returns with the proposal still waiting and nothing written. Every refusal
 // except expired leaves the row proposed and writes nothing. When every check passes, the gate
-// moves the proposal to approved in that same locked transaction (a block's override reason, with
-// who and when, goes in the same statement), so a reject that lands after the gate finds it
+// moves the proposal to approved in that same locked transaction (a block's or a mismatch's
+// override reason, with who and when, goes in the same statement), so a reject that lands after the gate finds it
 // approved and is refused; only then does the executor run. Each executor reserves its ledger row
 // before any outside call (the money executor) and moves the proposal on from there.
 
@@ -58,8 +60,8 @@ export type ProposalRow = {
 };
 
 // confirmed: the person's second confirm, on a flagged proposal (owner decision 2) or on any
-// auditor verdict other than pass. overrideReason: their reason for approving over a block (the
-// gate trims it and checks its length again). auditedAt: the auditor's checked_at the card showed,
+// auditor verdict other than pass. overrideReason: their reason for approving over a block or a
+// held mismatch (the gate trims it and checks its length again; one reason covers both). auditedAt: the auditor's checked_at the card showed,
 // so an override always refers to the one verdict the person read.
 export type ApproveOptions = {
   confirmed: boolean;
@@ -76,6 +78,7 @@ export type ProposalRefusal =
   | "auditor_required"
   | "not_auditable"
   | "override_required"
+  | "engine_override_required"
   | "stale"
   | "needs_confirm";
 
@@ -210,6 +213,7 @@ type Row = {
   too_old: boolean;
   before_auditor: boolean;
   auditor_checked_at: string | null;
+  engine_check: string | null;
 };
 
 function rowOf(r: Row): ProposalRow {
@@ -280,7 +284,7 @@ async function gate(
             money_action_id, trace_id, (created_at < CAST($2 AS timestamptz)) AS too_old,
             (CAST($3 AS timestamptz) IS NULL OR created_at < CAST($3 AS timestamptz)) AS before_auditor,
             to_char(auditor_checked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-              AS auditor_checked_at
+              AS auditor_checked_at, engine_check
        FROM proposals WHERE id = CAST($1 AS uuid) FOR UPDATE`,
     [proposalId, cutoff, auditorStartIso()],
   );
@@ -315,11 +319,16 @@ async function gate(
   // override only ever sits on a row that is already approved or later, which took the resume path
   // above.
   const block = p.auditorVerdict === "block";
-  const reason = block ? overrideReasonOf(opts.overrideReason) : null;
+  // A mismatch is held the same way while the switch is on (it is read here, on every approval).
+  // The check never changes once stored, so the reason always refers to the mismatch the card
+  // showed; an unchecked or unavailable one is not held (it is never Verified either).
+  const mismatch = flags.verifyEngineMismatchBlocks && rows[0].engine_check === "mismatch";
+  const reason = block || mismatch ? overrideReasonOf(opts.overrideReason) : null;
   if (block) {
     if (reason === null) return { result: refused("override_required") };
     if (!sameInstant(opts.auditedAt, rows[0].auditor_checked_at)) return { result: refused("stale") };
   }
+  if (mismatch && reason === null) return { result: refused("engine_override_required") };
   // Only a pass goes through on one click: every other verdict, and any flagged input, needs the
   // second confirm.
   const needsConfirm = p.flaggedInputId !== null || p.auditorVerdict !== "pass";
@@ -332,31 +341,48 @@ async function gate(
   }
   // Lock the approval in while the row is still locked. Exactly one row must move; anything else
   // means it is no longer waiting, and nothing runs. A block's override is stored in the same
-  // statement, only for the verdict the card showed and only if none is stored yet, so the
-  // approval and its reason land together or not at all.
+  // statement, only for the verdict the card showed and only if none is stored yet, and a
+  // mismatch's the same way, only on the stored mismatch, so the approval and its reason land
+  // together or not at all. One fixed statement per case; the same reason fills both.
   const nowIso = now.toISOString();
-  const approved =
-    reason === null
-      ? await q.execute(
-          `UPDATE proposals
-              SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
-                  updated_at = CAST($3 AS timestamptz)
-            WHERE id = CAST($1 AS uuid) AND status = 'proposed'`,
-          [p.id, session.sub, nowIso],
-        )
-      : await q.execute(
-          `UPDATE proposals
+  const params = reason === null ? [p.id, session.sub, nowIso] : [p.id, session.sub, nowIso, reason];
+  const approved = await q.execute(
+    block && mismatch
+      ? `UPDATE proposals
+            SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                updated_at = CAST($3 AS timestamptz), auditor_override_reason = $4,
+                auditor_override_by = $2, auditor_override_at = CAST($3 AS timestamptz),
+                engine_override_reason = $4, engine_override_by = $2,
+                engine_override_at = CAST($3 AS timestamptz)
+          WHERE id = CAST($1 AS uuid) AND status = 'proposed' AND auditor_verdict = 'block'
+            AND auditor_override_reason IS NULL
+            AND date_trunc('milliseconds', auditor_checked_at) = CAST($5 AS timestamptz)
+            AND engine_check = 'mismatch' AND engine_override_reason IS NULL`
+      : block
+        ? `UPDATE proposals
               SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
                   updated_at = CAST($3 AS timestamptz), auditor_override_reason = $4,
                   auditor_override_by = $2, auditor_override_at = CAST($3 AS timestamptz)
             WHERE id = CAST($1 AS uuid) AND status = 'proposed' AND auditor_verdict = 'block'
               AND auditor_override_reason IS NULL
-              AND date_trunc('milliseconds', auditor_checked_at) = CAST($5 AS timestamptz)`,
-          [p.id, session.sub, nowIso, reason, rows[0].auditor_checked_at],
-        );
+              AND date_trunc('milliseconds', auditor_checked_at) = CAST($5 AS timestamptz)`
+        : mismatch
+          ? `UPDATE proposals
+                SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                    updated_at = CAST($3 AS timestamptz), engine_override_reason = $4,
+                    engine_override_by = $2, engine_override_at = CAST($3 AS timestamptz)
+              WHERE id = CAST($1 AS uuid) AND status = 'proposed'
+                AND engine_check = 'mismatch' AND engine_override_reason IS NULL`
+          : `UPDATE proposals
+                SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                    updated_at = CAST($3 AS timestamptz)
+              WHERE id = CAST($1 AS uuid) AND status = 'proposed'`,
+    block ? [...params, rows[0].auditor_checked_at] : params,
+  );
   if (approved !== 1) return { result: refused("already_decided") };
   // Never the reason itself: its length only.
-  if (reason !== null) console.info(`proposal ${p.id} override=stored len=${reason.length}`);
+  if (reason !== null && block) console.info(`proposal ${p.id} override=stored len=${reason.length}`);
+  if (reason !== null && mismatch) console.info(`proposal ${p.id} engine_override=stored len=${reason.length}`);
   return { run: { ...p, status: "approved" }, executor };
 }
 

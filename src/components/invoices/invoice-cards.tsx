@@ -28,6 +28,7 @@ const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   auditor_required: "This waits for the second check before anyone can approve it.",
   not_auditable: "This card was made before the second check started. Refresh the queue for a fresh one.",
   override_required: "The second check did not pass this. Write why you approve it anyway, then confirm.",
+  engine_override_required: "The numbers did not match your pay rules. Write why you approve it anyway, then confirm.",
   stale: "The second check's result changed. Reload the card.",
   bad_request: "The reason must be 10 to 240 characters. Nothing changed.",
   needs_confirm: "Confirm the warning on the card first.",

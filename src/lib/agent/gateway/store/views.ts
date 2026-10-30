@@ -1,3 +1,4 @@
+import { flags } from "../../../../config/flags";
 import type { Queryable } from "../../../db";
 import { billDeferArgsSchema, chaseArgsSchema, factoringArgsSchema } from "../../../cash/args";
 import { chargeArgsSchema } from "../../../data/detention-charge";
@@ -46,6 +47,7 @@ type StepRow = {
   label: string;
   state: string;
   report: string | null;
+  masked_figures: string | null;
 };
 type ProposalRow = {
   id: string;
@@ -69,6 +71,10 @@ type ProposalRow = {
   auditor_override_reason: string | null;
   auditor_override_at: string | null;
   override_role: string | null;
+  engine_check: string | null;
+  engine_override_reason: string | null;
+  engine_override_at: string | null;
+  engine_override_role: string | null;
   card_last4: string | null;
   args: string | null;
   exceptions: string | null;
@@ -132,6 +138,22 @@ function overrideOf(r: ProposalRow): ProposalView["auditorOverride"] {
     reason: r.auditor_override_reason,
     byLabel: overrideLabel(r.override_role),
     at: r.auditor_override_at,
+  };
+}
+
+// The code-side engine check as stored (0045): null until it ran; a value the card does not know
+// reads as unavailable, never as matched.
+function engineCheckOf(r: ProposalRow): ProposalView["engineCheck"] {
+  if (r.engine_check === null) return null;
+  return r.engine_check === "matched" || r.engine_check === "mismatch" ? r.engine_check : "unavailable";
+}
+
+function engineOverrideOf(r: ProposalRow): ProposalView["engineOverride"] {
+  if (r.engine_override_reason === null || r.engine_override_at === null) return null;
+  return {
+    reason: r.engine_override_reason,
+    byLabel: overrideLabel(r.engine_override_role),
+    at: r.engine_override_at,
   };
 }
 
@@ -327,6 +349,8 @@ function proposalView(r: ProposalRow): ProposalView {
       reasons.push({ category: e, text: reasonSentence(e), source: null });
     }
   }
+  const engineCheck = engineCheckOf(r);
+  const engineOverride = engineOverrideOf(r);
   return {
     id: r.id,
     kind: r.kind,
@@ -346,6 +370,12 @@ function proposalView(r: ProposalRow): ProposalView {
     auditorConcerns: stringsOf(r.auditor_concerns).filter((c) => CONCERN.test(c)),
     auditorCheckedAt: r.auditor_checked_at,
     auditorOverride: overrideOf(r),
+    engineCheck,
+    engineOverride,
+    // Held for a person's reason (the approve gate asks the same): a waiting proposal whose
+    // numbers did not match, while verifyEngineMismatchBlocks is on.
+    engineHeld:
+      engineCheck === "mismatch" && flags.verifyEngineMismatchBlocks && engineOverride === null && r.status === "proposed",
     destination: destinationOf(r),
     ...(r.kind === "detention_charge" ? { detention: detentionOf(r) } : {}),
     ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args) } : {}),
@@ -404,6 +434,9 @@ const PROPOSAL_SQL = `
          p.auditor_override_reason, ${ISO("p.auditor_override_at")} AS auditor_override_at,
          (SELECT m.role FROM memberships m
            WHERE m.tenant_id = p.tenant_id AND m.cognito_sub = p.auditor_override_by) AS override_role,
+         p.engine_check, p.engine_override_reason, ${ISO("p.engine_override_at")} AS engine_override_at,
+         (SELECT m.role FROM memberships m
+           WHERE m.tenant_id = p.tenant_id AND m.cognito_sub = p.engine_override_by) AS engine_override_role,
          CASE WHEN p.kind = 'advance_payout' AND p.subject_table = 'drivers' THEN
            CASE
              WHEN p.status IN ('proposed', 'approved') THEN
@@ -439,7 +472,8 @@ export async function readProposalViews(q: Queryable, ids: readonly string[]): P
 
 async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
   const steps = await q.query<StepRow>(
-    `SELECT id, seq, kind, label, state, CAST(detail->'report' AS text) AS report
+    `SELECT id, seq, kind, label, state, CAST(detail->'report' AS text) AS report,
+            detail->>'maskedFigures' AS masked_figures
        FROM turn_steps WHERE turn_id = CAST($1 AS uuid) ORDER BY seq`,
     [t.id],
   );
@@ -491,7 +525,23 @@ async function viewOf(q: Queryable, t: TurnRow): Promise<TurnView> {
     ),
     error: turnErrorFor(status, t.ended_reason),
     checklist,
+    withheldFigures: withheldFiguresOf(steps),
   };
+}
+
+// How many figures in the answer's model steps were held back as not coming from a record
+// (maskedFigures, operator/turn.ts), summed over the finished model steps. Null when any finished
+// model step did not record a whole count, or none finished: unknown is not zero.
+function withheldFiguresOf(steps: readonly StepRow[]): number | null {
+  let total = 0;
+  let seen = false;
+  for (const s of steps) {
+    if (s.kind !== "model" || s.state !== "done") continue;
+    if (s.masked_figures === null || !/^[0-9]{1,6}$/.test(s.masked_figures)) return null;
+    total += Number(s.masked_figures);
+    seen = true;
+  }
+  return seen ? total : null;
 }
 
 // The report a finished tool step built, read back through the report's own strict schema;

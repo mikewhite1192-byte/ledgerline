@@ -6,15 +6,19 @@ import { relevantNotes, type NoteRow } from "../../../memory/notes";
 import { summarizeModelWeek, type ModelWeek } from "../../../trace/week";
 import type { TurnView } from "../../view";
 import { withAgentTenant } from "../tenant";
+import type { GatewayContext } from "../types";
 import {
   readAuditState,
+  readEngineCheckDue,
   releaseAuditLease,
   takeAuditLease,
   writeAuditVerdict,
+  writeEngineCheck,
   type AuditLease,
   type AuditState,
   type VerdictWrite,
 } from "./audit";
+import { engineCheck } from "./engine-check";
 import { findProposalConflict, flagTurnProposals, persistProposal } from "./proposals";
 import { finishStep, finishTurn, openTurn, setChecklist, startStep, type OpenTurnInput } from "./turns";
 import type { OpenTurnRefusal, OpenedTurn, TurnStore } from "./types";
@@ -29,7 +33,8 @@ export type { OpenedTurn, OpenTurnRefusal, PersistResult, StepFinish, TurnStore 
 export { assembleSummary } from "./summary";
 export { PROPOSAL_TITLES, canonicalJson, dedupeKey, impactOf } from "./proposals";
 export { cardStatusOf, readEngineProposalViews, readWaitingRuleChangeViews } from "./views";
-export type { AuditLease, AuditState, VerdictWrite } from "./audit";
+export type { AuditLease, AuditState, EngineCheckWrite, VerdictWrite } from "./audit";
+export { compareEngine, comparePayCorrection, type EngineCheck, type EngineCheckResult } from "./engine-check";
 
 export type StoreDeps = { db?: TenantDb; clock?: () => Date };
 
@@ -127,6 +132,10 @@ export interface AuditStore {
   // Writes as the holder of the lease taken at startedAt. False when a verdict was already there,
   // the proposal was decided, or that lease is no longer this caller's.
   write(proposalId: string, verdict: VerdictWrite, now: Date, startedAt: Date): Promise<boolean>;
+  // The code-side engine check (design 3.6), as of ctx.now: computed and stored once, in one
+  // transaction, on a proposal still waiting with none stored; anything else is left as it is.
+  // No model call. True when this call stored it.
+  checkEngine(proposalId: string, ctx: GatewayContext): Promise<boolean>;
 }
 
 export function dbAuditStore(session: Session, deps: StoreDeps = {}): AuditStore {
@@ -141,6 +150,11 @@ export function dbAuditStore(session: Session, deps: StoreDeps = {}): AuditStore
     },
     write: (proposalId, verdict, now, startedAt) =>
       tx((q) => writeAuditVerdict(q, proposalId, verdict, now, startedAt)),
+    checkEngine: (proposalId, ctx) =>
+      tx(async (q) => {
+        if ((await readEngineCheckDue(q, proposalId)) !== true) return false;
+        return writeEngineCheck(q, proposalId, await engineCheck(q, ctx, proposalId), ctx.now);
+      }),
   };
 }
 

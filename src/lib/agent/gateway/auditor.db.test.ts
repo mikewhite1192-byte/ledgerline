@@ -6,10 +6,11 @@ import type { Session } from "../../auth/claims";
 import { createPgDb } from "../../db/pg";
 import { adminUrl, appUrl } from "../../db/test-urls";
 import type { Db, Param } from "../../db/types";
-import { runAudit } from "../auditor/run";
+import { runAudit, runEngineCheck } from "../auditor/run";
 import { CLEAN_SQL } from "../proposals/clean";
 import { callTool } from "./index";
 import { dbAuditStore } from "./store";
+import { writeEngineCheck } from "./store/audit";
 import type { CompleteFn, GatewayContext, ToolCall } from "./types";
 
 // The auditor's columns (0014) against a real database: the verdict words and their agreement,
@@ -615,5 +616,87 @@ describe("the auditor on a real database", () => {
       ),
     );
     expect(rows).toEqual([{ id: ids.pass }]);
+  });
+
+  // The code-side engine check (0045), stored by the app role.
+  type EngineRow = { check: string | null; cents: string | null; checked_at: string | null; exceptions: string[] };
+  const engineRow = async (tenantId: string, id: string) =>
+    (
+      await admin.withTenant(tenantId, (q) =>
+        q.query<EngineRow>(
+          `SELECT engine_check AS check, CAST(engine_cents AS text) AS cents,
+                  to_char(engine_checked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS checked_at,
+                  exceptions
+             FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [id],
+        ),
+      )
+    )[0];
+
+  it("stores the engine check as the app role in the same run as the verdict, at the lease's instant", async () => {
+    flags.auditorEnabled = true;
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const id = await addProposal(B);
+    const calls = { n: 0 };
+    const deps = { db: app, clock: () => new Date(T0), callTool: gatewayAt(T0), complete: passModel(calls), env: { META_MODEL_WONDER: "muse-wonder-1.0" } };
+    expect(await runAudit(session(B), id, deps)).toMatchObject({ state: "done", verdict: "pass" });
+    const row = await engineRow(B, id);
+    expect(["matched", "mismatch", "unavailable"]).toContain(row.check);
+    expect(row.checked_at).toBe(new Date(T0).toISOString());
+    // A mismatch is an exception on the card, once; anything else adds none.
+    expect(row.exceptions).toEqual(row.check === "mismatch" ? ["engine_mismatch"] : []);
+  });
+
+  it("runs the engine check alone with no call: once, only while the proposal waits, and only on its carrier", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const at = (ms: number) => ({ db: app, clock: () => new Date(T0 + ms) });
+    // The auditor is off, and a verdict is already stored: the check still runs, with no model.
+    const passed = await addProposal(B, { audit: { verdict: "pass", agrees: true } });
+    await runEngineCheck(session(B), passed, at(0));
+    const first = await engineRow(B, passed);
+    expect(first.check).not.toBeNull();
+    expect(first.checked_at).toBe(new Date(T0).toISOString());
+    // Again later: left as it is.
+    await runEngineCheck(session(B), passed, at(60_000));
+    expect(await engineRow(B, passed)).toEqual(first);
+    expect(await auditRow(B, passed)).toMatchObject({ auditor_verdict: "pass", attempts: 0 });
+
+    // Another carrier cannot reach it; a decided proposal is left unchecked.
+    const theirs = await addProposal(B);
+    await runEngineCheck(session(A), theirs, at(0));
+    expect(await engineRow(B, theirs)).toMatchObject({ check: null, checked_at: null });
+    const decided = await addProposal(B);
+    await admin.withTenant(B, (q) =>
+      q.execute(
+        `UPDATE proposals SET status = 'rejected', decided_by = 'someone', decided_at = now()
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [decided],
+      ),
+    );
+    await runEngineCheck(session(B), decided, at(0));
+    expect(await engineRow(B, decided)).toMatchObject({ check: null, checked_at: null });
+  });
+
+  it("writes a check once, a mismatch adds one exception, and Approve all clean's filter then leaves it out", async () => {
+    const id = await addProposal(B, { audit: { verdict: "pass", agrees: true } });
+    const write = (check: "matched" | "mismatch", ms: number) =>
+      app.withTenant(B, (q) => writeEngineCheck(q, id, { check, engineCents: 19_999 }, new Date(T0 + ms)));
+    expect(await write("mismatch", 0)).toBe(true);
+    expect(await write("matched", 1_000)).toBe(false);
+    expect(await write("mismatch", 2_000)).toBe(false);
+    expect(await engineRow(B, id)).toEqual({
+      check: "mismatch",
+      cents: "19999",
+      checked_at: new Date(T0).toISOString(),
+      exceptions: ["engine_mismatch"],
+    });
+    const clean = await app.withTenant(B, (q) =>
+      q.query<{ id: string }>(
+        `SELECT CAST(p.id AS text) AS id FROM proposals p
+          WHERE p.tenant_id = current_tenant_id() AND p.id = CAST($1 AS uuid) AND ${CLEAN_SQL}`,
+        [id],
+      ),
+    );
+    expect(clean).toEqual([]);
   });
 });

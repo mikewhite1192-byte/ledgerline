@@ -155,6 +155,8 @@ describe("flags", () => {
     expect(flags.proposalMaxAgeDays).toBe(7);
     expect(flags.auditorEnabled).toBe(false);
     expect(flags.auditorRequired).toBe(true);
+    // A mismatch with the rules engine's recompute is held for a person's reason.
+    expect(flags.verifyEngineMismatchBlocks).toBe(true);
     expect(Number.isNaN(Date.parse(flags.auditorStart))).toBe(false);
     expect(flags.approverRole).toEqual({ adminAboveCents: 200_000 });
   });

@@ -901,6 +901,16 @@ async function sameNumbers(ctx: Ctx, proposalId: string, leg: FixLeg, expected: 
         [proposalId, ctx.clock().toISOString()],
       );
     }
+    // The same comparison is the card's engine check (design 3.6), stored once while it waits, so
+    // the sweep needs no second read. The engine's figure is the leg's, in whole cents.
+    if (p.status === "proposed") {
+      await q.execute(
+        `UPDATE proposals SET engine_check = $2, engine_cents = CAST($3 AS bigint),
+                engine_checked_at = CAST($4 AS timestamptz), updated_at = CAST($4 AS timestamptz)
+          WHERE id = CAST($1 AS uuid) AND status = 'proposed' AND engine_check IS NULL`,
+        [proposalId, ok ? "matched" : "mismatch", Math.abs(expected), ctx.clock().toISOString()],
+      );
+    }
     return ok;
   });
 }

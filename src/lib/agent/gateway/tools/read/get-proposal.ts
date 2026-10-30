@@ -218,7 +218,7 @@ async function sourceRow(q: Queryable, ref: Ref): Promise<Record<string, unknown
   return { table: ref.table, id: ref.id, ...picked(ref.table, row as Record<string, unknown>) };
 }
 
-type ProposalRow = {
+export type ProposalRow = {
   id: string;
   kind: string;
   title: string;
@@ -705,7 +705,8 @@ async function cashEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow, raw
 }
 
 // The engine's own number for the proposal. A read or engine error is unavailable, never zero.
-async function engineFor(
+// The code-side engine check (../../store/engine-check.ts) reads the same result.
+export async function engineFor(
   q: Queryable,
   ctx: GatewayContext,
   p: ProposalRow,
@@ -737,6 +738,18 @@ async function engineFor(
     console.warn("gateway: the auditor's engine check could not be computed");
     return UNAVAILABLE;
   }
+}
+
+export type StoredProposal = { row: ProposalRow; raw: Record<string, unknown>; args: Record<string, unknown> };
+
+// The proposal as stored on this carrier, its args parsed whole (raw) and cut to scalars (args);
+// null when it is not readable. The pack and the code-side engine check read it the same way.
+export async function readStoredProposal(q: Queryable, proposalId: string): Promise<StoredProposal | null> {
+  const [row] = await q.query<ProposalRow>(PROPOSAL_SQL, [proposalId]);
+  if (!row) return null;
+  const parsed = parseJson(row.args);
+  const raw = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+  return { row, raw, args: safeArgs(raw) };
 }
 
 type Pack = { proposal: Record<string, unknown>; engine: Engine; notes?: SubjectNote[] };
@@ -773,11 +786,9 @@ export const getProposal = defineTool({
   args: z.strictObject({ proposalId: idField() }),
   refs: (a) => [{ table: "proposals", id: a.proposalId }],
   run: async (q, ctx, a) => {
-    const [p] = await q.query<ProposalRow>(PROPOSAL_SQL, [a.proposalId]);
-    if (!p) throw new Error("the proposal is not readable");
-    const parsed = parseJson(p.args);
-    const raw = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
-    const args = safeArgs(raw);
+    const stored = await readStoredProposal(q, a.proposalId);
+    if (!stored) throw new Error("the proposal is not readable");
+    const { row: p, raw, args } = stored;
     const refs = refsOf(p.sources).slice(0, MAX_SOURCES);
     const sources: Record<string, unknown>[] = [];
     for (const ref of refs) sources.push(await sourceRow(q, ref));
