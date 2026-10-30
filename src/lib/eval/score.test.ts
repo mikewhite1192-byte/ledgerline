@@ -153,6 +153,8 @@ describe("scoreCase", () => {
       expect(s.status).toBe("unknown");
       expect(s.pass).toBeNull();
       expect(s.operatorRight).toBeNull();
+      // The score keeps why the turn ended, so an unknown case can be told apart afterward.
+      expect(s.endedReason).toBe(t.endedReason);
     }
     expect(statusOf({ status: "failed", endedReason: "budget" })).toBe("over_cap");
     // The turn's own caps are the model's outcome and are scored.

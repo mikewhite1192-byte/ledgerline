@@ -9,7 +9,6 @@ import type { CompleteFn } from "../agent/gateway/types";
 import { ESCALATION_CALL, LOOP_TEXT, OPERATOR_CALL, operatorPrompt } from "../agent/policy";
 import { runTurn, turnRequest, type TurnDeps, type TurnOutcome } from "../agent/operator/turn";
 import { AiError, type AiMessage, type AiRequest, type AiTextTarget } from "../ai";
-import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { Session } from "../auth/claims";
 import type { Queryable, TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
@@ -26,20 +25,14 @@ import type { Arm, CaseResult, CaseScore, EvalCase, SourceRef } from "./types";
 // The arm's operator calls. spark is the product as shipped. wonder and spark_open send the
 // operator's Muse Spark calls to that model instead, in the plain shape every host takes (no tool
 // search, no prompt cache, no input-placed system message, no tool search items); the escalation
-// and the second check already call Muse Wonder and are left as they are. On wonder the per-call
-// cap rises from the operator's to the escalation's, Wonder's own ceiling for an operator call,
-// but never past what the turn has left: one complete per turn, counting its calls' cost the way
-// the turn's own budget does.
-export function armComplete(arm: Arm, base: CompleteFn, maxTurnCents: number = flags.agentTurnLimits.maxTurnCents): CompleteFn {
+// and the second check already call Muse Wonder and are left as they are. Each call keeps the
+// operator's own cap, which the turn already lowers to what it has left; at Muse Wonder's list
+// price it holds a plain request of about 88,000 bytes with the operator's 1,200 output tokens.
+export function armComplete(arm: Arm, base: CompleteFn): CompleteFn {
   if (arm === "spark") return base;
   const to: AiTextTarget = arm;
-  let spentNanocents = 0;
-  return async (target, request, session) => {
-    const centsLeft = Math.floor((maxTurnCents * NANOCENTS_PER_CENT - spentNanocents) / NANOCENTS_PER_CENT);
-    const result = target !== "spark" ? await base(target, request, session) : await base(to, plainRequest(to, request, centsLeft), session);
-    if (Number.isSafeInteger(result.costNanocents) && result.costNanocents > 0) spentNanocents += result.costNanocents;
-    return result;
-  };
+  return async (target, request, session) =>
+    target !== "spark" ? base(target, request, session) : base(to, plainRequest(to, request), session);
 }
 
 function plainMessage(m: AiMessage): AiMessage {
@@ -50,8 +43,7 @@ function plainMessage(m: AiMessage): AiMessage {
   return m;
 }
 
-// centsLeft: the whole cents the turn has left; a raised cap is never more.
-export function plainRequest(to: AiTextTarget, request: AiRequest, centsLeft: number): AiRequest {
+export function plainRequest(to: AiTextTarget, request: AiRequest): AiRequest {
   const plain: AiRequest = { ...request, messages: request.messages.map(plainMessage) };
   delete plain.toolSearch;
   delete plain.cache;
@@ -60,9 +52,6 @@ export function plainRequest(to: AiTextTarget, request: AiRequest, centsLeft: nu
   // Reasoning items replay only on Meta's API; the open-weights host's answers carry none.
   const reasoning = (request.replay ?? []).filter((item) => item.type === "reasoning");
   if (to === "wonder" && reasoning.length > 0) plain.replay = reasoning;
-  if (to === "wonder" && request.maxCostCents === OPERATOR_CALL.maxCostCents) {
-    plain.maxCostCents = Math.max(request.maxCostCents, Math.min(ESCALATION_CALL.maxCostCents, centsLeft));
-  }
   return plain;
 }
 
@@ -116,7 +105,7 @@ export function evalTurnDeps(deps: CaseDeps, onRead?: (result: Record<string, un
   const gateway = { db, clock, complete: deps.complete };
   const limits = evalTurnLimits();
   return {
-    complete: armComplete(arm, deps.complete, limits.maxTurnCents),
+    complete: armComplete(arm, deps.complete),
     callTool: async (ctx, call) => {
       const outcome = await callTool(ctx, call, gateway);
       if (outcome.decision === "allowed" && outcome.tier === "read") onRead?.(outcome.result);
@@ -264,6 +253,7 @@ const NO_SIGNALS = {
   auditorVerdict: null,
   auditorAgrees: null,
   injection: null,
+  endedReason: null,
   costNanocents: 0,
   auditorNanocents: 0,
   latencyMs: 0,
@@ -273,12 +263,16 @@ export const notRunScore = (): CaseScore => ({ status: "not_run", ...NO_SIGNALS,
 export const unknownScore = (): CaseScore => ({ status: "unknown", ...NO_SIGNALS, proposalKinds: [] });
 export const overCapScore = (): CaseScore => ({ status: "over_cap", ...NO_SIGNALS, proposalKinds: [] });
 
+// How a turn that threw ended: a store write failed mid-turn. The turn is stored with it and the
+// case's score carries it, so the results say why the case is unknown.
+const THREW_REASON = "store";
+
 // A turn that threw, closed as failed so it does not stay running (as the Inbox hand-off does).
 async function closeFailed(deps: CaseDeps, turnId: string): Promise<void> {
   try {
     await dbTurnStore(deps.session, { db: deps.db, clock: () => new Date(deps.clock()) }).finishTurn(turnId, {
       status: "failed",
-      endedReason: "store",
+      endedReason: THREW_REASON,
       text: LOOP_TEXT.failed,
       summary: "",
       stepCount: 0,
@@ -346,7 +340,7 @@ export async function runCase(c: EvalCase, deps: CaseDeps): Promise<CaseScore> {
   const read = await readTurn(deps.db, deps.session, c, opened);
   return scoreCase(c, {
     status: outcome ? outcome.status : "threw",
-    endedReason: outcome ? outcome.endedReason : null,
+    endedReason: outcome ? outcome.endedReason : THREW_REASON,
     text: outcome ? outcome.text : "",
     toolEvidence: evidenceOf(reads),
     auditorCapped,

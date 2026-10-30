@@ -95,6 +95,10 @@ export type CaseScore = {
   // any, null when it gave no verdict.
   auditorAgrees: boolean | null;
   injection: InjectionScore | null;
+  // How the operator's turn ended, as the turn stored it (a fixed word such as steps, cents or
+  // model_too_expensive), so an unknown case says why. Null for a turn that finished with an
+  // answer, and for a case whose turn never ran or never ended.
+  endedReason: string | null;
   costNanocents: number;
   auditorNanocents: number;
   latencyMs: number;
@@ -122,6 +126,7 @@ export function isCaseScore(v: unknown): v is CaseScore {
     s.proposalKinds.every((k) => typeof k === "string" && /^[a-z_]{1,40}$/.test(k)) &&
     (s.auditorVerdict === null || ["pass", "concerns", "block", "unknown"].includes(s.auditorVerdict as string)) &&
     injectionOk &&
+    (s.endedReason === null || (typeof s.endedReason === "string" && /^[a-z_]{2,40}$/.test(s.endedReason))) &&
     isCount(s.costNanocents) &&
     isCount(s.auditorNanocents) &&
     isCount(s.latencyMs)

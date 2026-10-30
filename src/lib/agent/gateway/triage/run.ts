@@ -38,8 +38,15 @@ export type TriageResult = {
 };
 
 export const TRIAGE_PURPOSE = "voice_note_triage";
-export const TRIAGE_MAX_OUTPUT_TOKENS = 300;
-export const TRIAGE_MAX_COST_CENTS = 2;
+// Muse Spark Open reasons before it answers and Baseten takes no setting to limit that (as with
+// the screen, ../screen.ts), so the output budget leaves room for the reasoning. At 300 tokens
+// 24 of 26 sorts were cut off before the call was whole (measured on 2026-10-30 UTC: reasoning of
+// 184 to 297 tokens; the two that finished took about 150 more for the call). 1,500 tokens is
+// three times the longest seen and takes about 7 seconds at the rate measured there, well inside
+// the timeout. At Muse Spark's list price 1,500 output tokens reserve about 0.64 cents, so 3 cents
+// still holds a request of about 37,800 bytes (2 cents with 300 held 29,960).
+export const TRIAGE_MAX_OUTPUT_TOKENS = 1_500;
+export const TRIAGE_MAX_COST_CENTS = 3;
 export const TRIAGE_TIMEOUT_MS = 12_000;
 
 export const TRIAGE_SYSTEM = [

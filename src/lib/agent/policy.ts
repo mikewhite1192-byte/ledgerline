@@ -33,6 +33,9 @@ export const OPERATOR_PROMPT = [
   "  no_run, or a run that ended or stalled, say a person can start one on the Portal runs page. If",
   "  a run is queued, running or waiting_approval, say it is going and the person can ask again.",
   "  Report its times exactly as returned, with their time zone.",
+  "- When a read shows something wrong that one of the propose_* tools can fix, propose that fix in",
+  "  this same turn (a person approves it before anything changes), and say in a sentence or two",
+  "  what you found.",
   "- Keep answers short: a direct answer first, then at most a few plain lines of why.",
 ].join("\n");
 
@@ -177,12 +180,21 @@ export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean
 
 export const STATE_HEADER = "Current state (from the database, for this turn only):";
 
-// The operator's calls to Muse Spark.
+// The operator's calls to Muse Spark. maxCostCents bounds one call's reserve, which is a worst
+// case: with tool search on, the wrapper reserves the request's input twice (SEARCH_INPUT_FACTOR),
+// and each call after a search sends the loaded tools back. At Muse Spark's list price, 1,200
+// output tokens reserve about 0.51 cents and each request byte 0.000125 cents (half a token, read
+// twice), so 20 cents holds a request of about 155,900 bytes. A turn's first request is about
+// 47,000 bytes (57,000 with a full summary), one search's echo adds about 36,000, and each tool
+// result is at most about 8,000 (the gateway's limit), so even six of them come to about 141,000.
+// At 10 cents (about 75,900 bytes) the call right after a search was refused. The turn's own
+// maxTurnCents still bounds the whole turn: each call's cap is the lower of this and what the
+// turn has left.
 export const OPERATOR_CALL = {
   purpose: "agent_operator_turn",
   reasoningEffort: "low",
   maxOutputTokens: 1200,
-  maxCostCents: 10,
+  maxCostCents: 20,
   cacheKeyPrefix: "ledgerline-operator",
 } as const;
 

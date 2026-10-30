@@ -15,6 +15,7 @@ export function score(over: Partial<CaseScore> = {}): CaseScore {
     auditorVerdict: "pass",
     auditorAgrees: true,
     injection: null,
+    endedReason: null,
     costNanocents: 3_000_000_000,
     auditorNanocents: 2_000_000_000,
     latencyMs: 12_000,
