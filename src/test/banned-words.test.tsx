@@ -27,6 +27,7 @@ import { WriteBrief } from "@/components/profit/write-brief";
 import { WriteReview } from "@/components/quarter/write-review";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
 import { NotesBoard } from "@/app/memory/notes-board";
+import { CardsBoard, type BoardRow } from "@/components/pay-cards/cards-board";
 import { flags } from "@/config/flags";
 import { TOOL_REGISTRY } from "@/lib/agent/gateway/registry";
 import { FOUND_TEXT, STOPPED_TEXT, type ProposalView, type TurnView } from "@/lib/agent/view";
@@ -75,6 +76,7 @@ import {
 import { SUBJECT_STATUSES } from "@/lib/money/types";
 import { RULE_KEYS, RULES, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import * as payWords from "@/lib/pay-rules/words";
+import { CARD_ERROR_FALLBACK, CARD_ERROR_WORDS, CARD_PILL_WORDS, CARD_REASON_WORDS, CARD_WORDS } from "@/lib/pay-cards/words";
 import { INVOICE_REVIEW_STATUSES } from "@/lib/rules-engine";
 import { FUEL_CHECK_NAMES, NO_SUGGESTION_REASONS } from "@/lib/rules-engine/fuel";
 import type { HandPick } from "@/lib/recon/view";
@@ -291,6 +293,18 @@ vi.mock("@/lib/driver-notes/view", async (importOriginal) => ({
   readPeriodNotes: async () => get("periodNotes"),
   readDriverView: async () => get("driverView"),
 }));
+// The card picture is drawn by the browser; here it is a fixed stand-in so the board's answers
+// can be driven through fetch.
+vi.mock("@/components/pay-cards/card-canvas", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/pay-cards/card-canvas")>()),
+  cardPng: async () => new Blob(["card"], { type: "image/png" }),
+  blobBase64: async () => "Y2FyZA==",
+}));
+vi.mock("@/lib/pay-cards/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/pay-cards/read")>()),
+  readPeriodCards: async () => get("periodCards"),
+  readDriverCard: async () => get("driverCard"),
+}));
 vi.mock("@/lib/recon/view", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/recon/view")>();
   return {
@@ -450,6 +464,8 @@ function defaults(): Record<string, unknown> {
     periods: fx.PERIODS,
     periodNotes: fx.PERIOD_NOTES,
     driverView: fx.DRIVER_VIEW,
+    periodCards: fx.PERIOD_CARDS,
+    driverCard: null,
     invoiceProposals: fx.INVOICE_PROPOSALS,
     week: fx.WEEK,
     turns: fx.TURNS,
@@ -1030,6 +1046,15 @@ const PAGES: PageCase[] = [
             params: p({ settlementId: fx.DRIVER_VIEW.source.settlement.id }),
           }),
       },
+      {
+        name: "driver view with a checked pay card",
+        setup: () => (state.fx.driverCard = fx.DRIVER_CARD),
+        load: async () =>
+          (await import("@/app/driver-notes/[settlementId]/view/page")).default({
+            params: p({ settlementId: fx.DRIVER_VIEW.source.settlement.id }),
+          }),
+        shows: ["Pay card", "Save image"],
+      },
     ],
   },
   {
@@ -1038,6 +1063,42 @@ const PAGES: PageCase[] = [
       {
         name: "notes",
         load: async () => (await import("@/app/pay/[periodId]/notes/page")).default({ params: p({ periodId: fx.PERIODS[0].id }) }),
+        shows: "Pay cards",
+      },
+    ],
+  },
+  {
+    file: "pay/[periodId]/cards/page.tsx",
+    variants: [
+      {
+        name: "a card in every state",
+        load: async () => (await import("@/app/pay/[periodId]/cards/page")).default({ params: p({ periodId: fx.PERIODS[0].id }) }),
+        shows: [
+          "Pay cards for the week of",
+          "Make 6 pay cards",
+          "Checked",
+          "Save image",
+          "Not made yet",
+          "Did not match, not saved",
+          "Could not check",
+          "Waiting for budget",
+          "Out of date, make it again",
+          "Checking now",
+          "All three tries are used for this paystub.",
+        ],
+      },
+      {
+        name: "no approved paystub yet",
+        setup: () => (state.fx.periodCards = { ...fx.PERIOD_CARDS, rows: [] }),
+        load: async () => (await import("@/app/pay/[periodId]/cards/page")).default({ params: p({ periodId: fx.PERIODS[0].id }) }),
+        shows: ["Pay cards appear here once the week is approved", "Approve the pay run first."],
+      },
+      {
+        name: "every card checked",
+        setup: () =>
+          (state.fx.periodCards = { ...fx.PERIOD_CARDS, rows: fx.PERIOD_CARDS.rows.filter((r) => r.pill === "checked") }),
+        load: async () => (await import("@/app/pay/[periodId]/cards/page")).default({ params: p({ periodId: fx.PERIODS[0].id }) }),
+        shows: ["1 of 1 card checked", "Every card that can be made is made."],
       },
     ],
   },
@@ -1638,6 +1699,7 @@ const PAGES: PageCase[] = [
   loading("memory/loading.tsx", () => import("@/app/memory/loading")),
   loading("models/loading.tsx", () => import("@/app/models/loading")),
   loading("pay/[periodId]/notes/loading.tsx", () => import("@/app/pay/[periodId]/notes/loading")),
+  loading("pay/[periodId]/cards/loading.tsx", () => import("@/app/pay/[periodId]/cards/loading")),
   loading("profit/loading.tsx", () => import("@/app/profit/loading")),
   loading("quarter/loading.tsx", () => import("@/app/quarter/loading")),
   loading("records/loading.tsx", () => import("@/app/records/loading")),
@@ -2895,6 +2957,127 @@ describe("the money code record page", () => {
     const alt = screen.getByRole("img", { name: /receipt/ }).getAttribute("alt");
     expect(alt).toBe(`The receipt, ${fx.MONEY_CODE_DETAIL.receipt?.filename}`);
     expect(alt).not.toMatch(/photo|image|picture/i);
+  });
+});
+
+describe("no internal word on the pay cards board, in every state", () => {
+  const rows = (): BoardRow[] =>
+    fx.PERIOD_CARDS.rows.map((r) => ({
+      settlementId: r.settlementId,
+      driverName: r.driverName,
+      spec: r.spec,
+      pill: r.pill,
+      reason: r.reason,
+      checkedId: r.checkedId,
+      attemptsUsed: r.attemptsUsed,
+    }));
+  const board = (offReason?: string) =>
+    render(
+      <ToastProvider>
+        <CardsBoard rows={rows()} offReason={offReason} maxPngBytes={400_000} />
+      </ToastProvider>,
+    );
+  const make = async () => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /Make 6 pay cards/ }));
+    });
+  };
+  const answer = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+
+  afterEach(() => {
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+  });
+
+  it("while a card is being checked", async () => {
+    board();
+    await make();
+    expect(screen.getAllByText("Checking card 1 of 6").length).toBeGreaterThan(0);
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("every answer a check can give, one card each, and a refusal that skips one card", async () => {
+    const answers = [
+      answer(200, { status: "checked", cardId: "0b9f6a52-3c1d-4e8f-9a7b-000000000690" }),
+      answer(200, { status: "mismatch", category: "number_mismatch" }),
+      answer(200, { status: "mismatch", category: "text_mismatch" }),
+      answer(200, { status: "unavailable", category: "off_schema" }),
+      answer(409, { error: "busy" }),
+      answer(200, { status: "unavailable", category: "timeout" }),
+    ];
+    vi.stubGlobal("fetch", async () => answers.shift() ?? answer(500, {}));
+    board();
+    await make();
+    expect(screen.getByText("Wait a moment.", { exact: false })).toBeTruthy();
+    expect(screen.getAllByText("Save image").length).toBe(2);
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("each refusal that stops the run, and a check lost on the way", async () => {
+    for (const code of ["cards_off", "ai_off", "budget", "batch_cap", "day_cap", "forbidden", "unauthenticated"]) {
+      vi.stubGlobal("fetch", async () => answer(403, { error: code }));
+      board();
+      await make();
+      expect(screen.getByText("Pay cards stopped")).toBeTruthy();
+      expect(scan(document.body), code).toEqual([]);
+      cleanup();
+    }
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("lost on the way");
+    });
+    board();
+    await make();
+    expect(screen.getByText(CARD_ERROR_FALLBACK)).toBeTruthy();
+    expect(scan(document.body), "lost").toEqual([]);
+  });
+
+  it("with the models switched off", () => {
+    board("The models are switched off, so no card can be checked right now.");
+    expect(screen.getByRole("button", { name: /Make 6 pay cards/ })).toHaveProperty("disabled", true);
+    expect(scan(document.body)).toEqual([]);
+  });
+
+  it("every pill, reason, refusal and card line, in both languages", () => {
+    const { periodStart, periodEnd } = fx.PERIOD_CARDS.period;
+    const words = [
+      ...fx.PERIOD_CARDS.rows.flatMap((r) => Object.values(r.spec.text).filter((t): t is string => t !== null)),
+      ...Object.values(CARD_PILL_WORDS),
+      ...Object.values(CARD_REASON_WORDS),
+      ...Object.values(CARD_ERROR_WORDS),
+      CARD_ERROR_FALLBACK,
+      ...(["en", "es"] as const).flatMap((lang) => {
+        const w = CARD_WORDS[lang];
+        return [
+          w.title,
+          w.week(periodStart, periodEnd),
+          w.netLabel,
+          w.earned(141_200),
+          w.takenOut(31_000),
+          w.loads(1),
+          w.loads(4),
+          w.miles(1),
+          w.miles(2_310),
+          w.up(1_250),
+          w.down(1_250),
+          w.same,
+          w.firstWeek,
+          w.topChange(w.kind("fuel"), -4_500),
+          w.carried(2_000),
+          w.approved,
+          w.paid,
+          w.testMode,
+          ...["load_pay", "fuel", "lease", "escrow", "carried_shortfall"].map(w.kind),
+        ];
+      }),
+    ];
+    expect(words.every((w) => w.length > 0)).toBe(true);
+    const { container } = render(
+      <ul>
+        {words.map((w, n) => (
+          <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
   });
 });
 

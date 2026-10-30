@@ -1166,6 +1166,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     settlement_periods: settlementPeriods,
     settlements: [],
     settlement_lines: [],
+    pay_cards: [],
     pay_items: payItems,
     money_codes: [],
     advances,

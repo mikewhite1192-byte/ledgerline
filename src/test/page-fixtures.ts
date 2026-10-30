@@ -34,6 +34,8 @@ import type { RequestChoices } from "@/lib/money-codes/request";
 import type { MoneyAction } from "@/lib/money/types";
 import { noteLabel, type NoteRow, type NoteSubject } from "@/lib/memory/notes";
 import type { PayRulesPage } from "@/lib/pay-rules/read";
+import type { CardRow, CardSummary, PeriodCards } from "@/lib/pay-cards/read";
+import { cardSpec, type CardSpec } from "@/lib/pay-cards/spec";
 import { RULES as RULE_SPECS, formatValue, labelFor } from "@/lib/pay-rules/rules";
 import type { PortalLoadDetail, PortalLoadLine } from "@/lib/portal/read";
 import type { CardHome, HandPick } from "@/lib/recon/view";
@@ -1061,6 +1063,108 @@ export const DRIVER_VIEW: DriverView = {
   },
   message: { kind: "note", body: "Your pay is lower this week because an advance was repaid.", language: "en" },
 };
+
+// The pay cards page for the settled week: one row in each state a clerk meets. Every card's
+// figures come from the seed's own paystub through cardSpec, as the page's read works them out.
+const cardSpecFor = (settlementId: string, driverId: string, firstName: string, language: "en" | "es"): CardSpec => {
+  const spec = cardSpec({
+    carrierName: TENANT.name,
+    settlement: { ...settled.settlement, id: settlementId, status: "approved" },
+    period: settled.period,
+    driver: { id: driverId, first_name: firstName, preferred_language: language },
+    lines: settled.lines,
+    previousNetCents: settled.settlement.net_cents - 4_000,
+    previousLines: [...settled.lines.map((l) => ({ kind: l.kind, amount_cents: l.amount_cents })), { kind: "reimbursement", amount_cents: -4_000 }],
+  });
+  if (!spec) throw new Error("the fixture paystub gives no pay card");
+  return spec;
+};
+
+const cardTry = (n: number, attempt: number, status: CardSummary["status"], category: CardSummary["category"], spec: unknown): CardSummary => ({
+  id: id(n),
+  attempt,
+  status,
+  category,
+  spec,
+});
+
+const cardRow = (n: number, name: string, language: "en" | "es", row: Omit<CardRow, "settlementId" | "driverName" | "driverCode" | "spec">): CardRow => {
+  const settlementId = n === 660 ? settled.settlement.id : id(n);
+  const [first] = name.split(" ");
+  return {
+    settlementId,
+    driverName: name,
+    driverCode: `BR-D${String(n - 640).padStart(2, "0")}`,
+    spec: cardSpecFor(settlementId, n === 660 ? settled.driver.id : id(n + 300), first, language),
+    ...row,
+  };
+};
+
+export const PERIOD_CARDS: PeriodCards = {
+  period: { id: settled.period.id, periodStart: settled.period.period_start, periodEnd: settled.period.period_end },
+  rows: [
+    cardRow(660, `${settled.driver.first_name} ${settled.driver.last_name}`, "en", {
+      latest: cardTry(670, 1, "checked", null, {}),
+      checkedId: id(670),
+      attemptsUsed: 1,
+      pill: "checked",
+      reason: null,
+    }),
+    cardRow(662, "Marcus Hale", "es", { latest: null, checkedId: null, attemptsUsed: 0, pill: "none", reason: null }),
+    cardRow(664, "Dana Whitfield", "en", {
+      latest: cardTry(671, 1, "mismatch", "number_mismatch", {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "mismatch",
+      reason: "number_mismatch",
+    }),
+    cardRow(666, "Luis Romero", "es", {
+      latest: cardTry(672, 2, "mismatch", "text_mismatch", {}),
+      checkedId: null,
+      attemptsUsed: 2,
+      pill: "mismatch",
+      reason: "text_mismatch",
+    }),
+    cardRow(668, "Priya Nair", "en", {
+      latest: cardTry(673, 1, "unavailable", "timeout", {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "unavailable",
+      reason: "timeout",
+    }),
+    cardRow(674, "Owen Brooks", "en", {
+      latest: cardTry(675, 1, "unavailable", "budget", {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "budget",
+      reason: "budget",
+    }),
+    cardRow(676, "Tessa Lund", "en", {
+      latest: cardTry(677, 1, "checked", null, {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "stale",
+      reason: null,
+    }),
+    cardRow(678, "Caleb Ortiz", "en", {
+      latest: cardTry(679, 1, "checking", null, {}),
+      checkedId: null,
+      attemptsUsed: 1,
+      pill: "checking",
+      reason: null,
+    }),
+    cardRow(680, "Nora Vance", "en", {
+      latest: cardTry(681, 3, "unavailable", "off_schema", {}),
+      checkedId: null,
+      attemptsUsed: 3,
+      pill: "unavailable",
+      reason: "off_schema",
+    }),
+  ],
+};
+
+// The checked card the driver's view shows above the note.
+export const DRIVER_CARD = { id: id(670), art: PERIOD_CARDS.rows[0].spec.art };
 
 export const DEMO_PREVIEW: DemoResetPreview = {
   carrier: DEMO_CARRIERS[0],

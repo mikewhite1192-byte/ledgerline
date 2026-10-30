@@ -161,6 +161,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   settlement_periods: "Pay weeks",
   settlements: "Settlements",
   settlement_lines: "Settlement lines",
+  pay_cards: "Pay cards",
   pay_items: "Pay items",
   money_codes: "Money codes (test mode)",
   advances: "Advances",
