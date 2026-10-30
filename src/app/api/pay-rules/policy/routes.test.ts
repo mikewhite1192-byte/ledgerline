@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
@@ -6,9 +7,11 @@ import { POST } from "./route";
 import { POST as SAMPLE } from "./sample/route";
 
 // The policy run routes' own checks, in order, with the session and the run faked: a cross-site
-// post is refused before the session is read, then the login, the switch, the size and the form
-// (or the sample's name), each before anything is stored. A refusal answers its own status, a
-// thrown error answers unavailable with only its name logged, and replies carry categories only.
+// post is refused before the session is read, then the login, the staff check (a judge is refused
+// on every POST, before the body is read; GET only reads and is not gated), the switch, the size
+// and the form (or the sample's name), each before anything is stored. A refusal answers its own
+// status, a thrown error answers unavailable with only its name logged, and replies carry
+// categories only.
 
 const SESSION: Session = {
   sub: "sub-test",
@@ -24,9 +27,13 @@ const mocks = vi.hoisted(() => ({
   startPolicyRun: vi.fn(),
   readPolicyRun: vi.fn(),
   advancePolicyRun: vi.fn(),
+  staffGate: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here a caller is staff unless
+// a test says it is a judge.
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: mocks.staffGate }));
 vi.mock("@/lib/policy-onboard/run", () => ({
   startPolicyRun: mocks.startPolicyRun,
   readPolicyRun: mocks.readPolicyRun,
@@ -76,10 +83,13 @@ const VIEW = {
   proposalId: null,
 };
 
+const judgeRefusal = () => NextResponse.json({ error: "judge", retryable: false }, { status: 403 });
+
 const saved = flags.policyOnboardEnabled;
 beforeEach(() => {
   flags.policyOnboardEnabled = true;
   mocks.getSession.mockReset().mockResolvedValue(SESSION);
+  mocks.staffGate.mockReset().mockResolvedValue(null);
   mocks.startPolicyRun.mockReset().mockResolvedValue({ ok: true, turnId: TURN, documentId: DOC });
   mocks.readPolicyRun.mockReset().mockResolvedValue(VIEW);
   mocks.advancePolicyRun.mockReset().mockResolvedValue({ ok: true, view: VIEW, busy: false });
@@ -108,6 +118,16 @@ describe("POST /api/pay-rules/policy", () => {
     const res = await upload();
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: "disabled" });
+    expect(mocks.startPolicyRun).not.toHaveBeenCalled();
+  });
+
+  it("refuses a judge before the switch, the body or the run", async () => {
+    mocks.staffGate.mockResolvedValue(judgeRefusal());
+    flags.policyOnboardEnabled = false;
+    const res = await upload({ site: "same-origin" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "judge", retryable: false });
+    expect(mocks.staffGate).toHaveBeenCalledWith(SESSION);
     expect(mocks.startPolicyRun).not.toHaveBeenCalled();
   });
 
@@ -181,6 +201,15 @@ describe("POST /api/pay-rules/policy/sample", () => {
     expect(mocks.startPolicyRun).not.toHaveBeenCalled();
   });
 
+  it("refuses a judge before reading the name or starting a run", async () => {
+    mocks.staffGate.mockResolvedValue(judgeRefusal());
+    const res = await sample("not json");
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "judge", retryable: false });
+    expect(mocks.staffGate).toHaveBeenCalledWith(SESSION);
+    expect(mocks.startPolicyRun).not.toHaveBeenCalled();
+  });
+
   it("starts only this repo's own samples, by name", async () => {
     for (const body of [{ name: "other" }, { name: "harrow-flats-pay-policy", extra: 1 }, {}, "not json", { name: "__proto__" }]) {
       const res = await sample(body);
@@ -223,6 +252,19 @@ describe("/api/pay-rules/policy/[turnId]", () => {
     flags.policyOnboardEnabled = false;
     expect((await RUN(runRequest("GET"), params())).status).toBe(404);
     expect(mocks.readPolicyRun).toHaveBeenCalledTimes(2);
+    // Reading the run is not gated.
+    expect(mocks.staffGate).not.toHaveBeenCalled();
+  });
+
+  it("POST refuses a judge before running any stage, and GET still reads for one", async () => {
+    mocks.staffGate.mockResolvedValue(judgeRefusal());
+    const res = await ADVANCE(runRequest("POST", "same-origin"), params());
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "judge", retryable: false });
+    expect(mocks.staffGate).toHaveBeenCalledWith(SESSION);
+    expect(mocks.advancePolicyRun).not.toHaveBeenCalled();
+    expect((await RUN(runRequest("GET"), params())).status).toBe(200);
+    expect(mocks.staffGate).toHaveBeenCalledTimes(1);
   });
 
   it("POST runs the next stage, refusing a cross-site post first", async () => {

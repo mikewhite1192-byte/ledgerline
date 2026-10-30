@@ -38,9 +38,10 @@ import { readAnswerFor, rulesAnswerFor, type SampleName } from "./test-fixtures"
 // writing anything. One approval writes one version and one pay_rule_changes row per changed rule,
 // once. A run ends at the spending cap, on a file it cannot read, on text the screen flags and for
 // a carrier with no pay rules, each with nothing proposed; the daily limit refuses a start; another
-// carrier sees and approves nothing. A week already paid on the start, or a transcript changed
-// after the card was made, refuses the approval and writes nothing, and the executor fails a row
-// that reached it anyway. Only this file's five tenants are made, and they are removed after.
+// carrier sees and approves nothing. A week already paid on the start, a Found quote that no
+// longer names its rule, or a transcript changed after the card was made, refuses the approval and
+// writes nothing, and the executor fails a row that reached it anyway. A run's turn costs what its
+// model calls cost. Only this file's five tenants are made, and they are removed after.
 
 const saved = { ...flags, policyLimits: { ...flags.policyLimits }, approverRole: { ...flags.approverRole } };
 // Tuesday Oct 27, 2026, 10:00 in Chicago: the week of Oct 26 has begun, so the next week start is
@@ -106,6 +107,27 @@ function modelFor(name: SampleName, read?: (request: AiRequest) => Promise<AiRes
       if (request.purpose === READ_PURPOSE) return read ? read(request) : result(readAnswerFor(name));
       if (request.purpose === PROPOSE_PURPOSE) return result(JSON.stringify(rulesAnswerFor(name)));
       throw new Error(`an unexpected model call: ${request.purpose}`);
+    },
+  };
+}
+
+// The same model, each call also written to the model ledger at the given cost on the request's
+// trace, as complete() writes it before it answers.
+function billed(f: Fixture, model: Model, costs: Record<string, number>): Model {
+  return {
+    calls: model.calls,
+    complete: async (target, request, session) => {
+      const answer = await model.complete(target, request, session);
+      await admin.withTenant(f.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO model_calls (id, tenant_id, target, provider, model, kind, purpose, trace_id, status,
+             reserved_nanocents, cost_nanocents)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'spark', 'meta', 'test-model', 'text', $2,
+             CAST($3 AS uuid), 'ok', 0, CAST($4 AS bigint))`,
+          [answer.callId, request.purpose, request.traceId ?? null, costs[request.purpose] ?? 0],
+        ),
+      );
+      return { ...answer, costNanocents: costs[request.purpose] ?? 0 };
     },
   };
 }
@@ -293,11 +315,15 @@ describe("a pay policy run", () => {
   it("runs a sample one stage a request into a card that waits, with each model call inside its caps", async () => {
     const during: AdvanceOutcome[] = [];
     let turnId = "";
-    const model = modelFor(HARROW, async () => {
-      // A second request while the read runs: the stage is taken, so it is busy and runs nothing.
-      during.push(await advancePolicyRun(A.session, turnId, deps));
-      return result(readAnswerFor(HARROW));
-    });
+    const model = billed(
+      A,
+      modelFor(HARROW, async () => {
+        // A second request while the read runs: the stage is taken, so it is busy and runs nothing.
+        during.push(await advancePolicyRun(A.session, turnId, deps));
+        return result(readAnswerFor(HARROW));
+      }),
+      { [READ_PURPOSE]: 700_000, [PROPOSE_PURPOSE]: 1_100_000 },
+    );
     const deps = depsFor(model);
 
     const start = await startPolicyRun(A.session, fileOf(HARROW), deps);
@@ -353,6 +379,17 @@ describe("a pay policy run", () => {
     // An ended run runs nothing more.
     expect(viewOf(await advancePolicyRun(A.session, turnId, deps))).toEqual(view);
     expect(model.calls).toHaveLength(2);
+    // The turn costs what its two calls cost, never nothing.
+    const [cost] = await adminRows<{ turn: string; calls: string; n: string }>(
+      A,
+      `SELECT CAST(t.cost_nanocents AS text) AS turn, CAST(SUM(m.cost_nanocents) AS text) AS calls,
+         CAST(COUNT(m.id) AS text) AS n
+         FROM turns t JOIN model_calls m ON m.tenant_id = t.tenant_id AND m.trace_id = CAST(t.trace_id AS uuid)
+        WHERE t.tenant_id = current_tenant_id() AND t.id = CAST($1 AS uuid)
+        GROUP BY t.cost_nanocents`,
+      [turnId],
+    );
+    expect(cost).toEqual({ turn: "1800000", calls: "1800000", n: "2" });
 
     const cards = await cardsOf(A);
     expect(cards.map((c) => [c.id, c.status, c.amount_cents, c.subject_id])).toEqual([
@@ -603,6 +640,24 @@ describe("a pay policy run", () => {
     await admin.withTenant(E.tenantId, (q) =>
       q.execute("DELETE FROM settlement_periods WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [period]),
     );
+
+    // A Found value whose quote no longer names its rule, the figure still in its section and the
+    // same: the card no longer checks.
+    const setArgs = (args: string) =>
+      admin.withTenant(E.tenantId, (q) =>
+        q.execute("UPDATE proposals SET args = CAST($2 AS jsonb) WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+          id,
+          args,
+        ]),
+      );
+    const original = (await cardsOf(E))[0].args;
+    const bare = JSON.parse(original);
+    expect(bare.fields.advance_recovery_cap_cents).toMatchObject({ state: "found", value: "30000" });
+    bare.fields.advance_recovery_cap_cents.passages[0].quote = "at most $300 per settlement";
+    await setArgs(JSON.stringify(bare));
+    expect(await approve(E, id, edits)).toEqual({ ok: false, category: "not_executable", retryable: false });
+    await nothingWritten("proposed");
+    await setArgs(original);
 
     // The transcript changed after the card was made, its hash made to match: the card's quote of
     // the insurance rate is no longer in it, so the card no longer checks.

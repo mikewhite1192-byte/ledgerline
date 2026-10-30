@@ -253,6 +253,8 @@ async function endRun(q: Queryable, run: Run, reason: EndReason, now: Date): Pro
       summary: END_WORDS[reason].slice(0, 120),
       stepCount: steps.length,
       modelCallCount: steps.filter((s) => s.model_call_id !== null).length,
+      // finishTurn adds up the model_calls on the turn's trace (the read, the screen and the
+      // propose call each carry it), so the turn's cost is what its calls cost.
       costNanocents: 0,
       checklist: checklistOf(states),
     },

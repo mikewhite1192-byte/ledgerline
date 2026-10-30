@@ -140,7 +140,7 @@ export const PROPOSE_PROMPT = [
   "The policy is given as numbered paragraphs, one per line: the number, a space, the text.",
   "For each rule, list up to two passages that state it. Each passage gives:",
   "- section: the paragraph number exactly as given;",
-  "- quote: the shortest exact words from that paragraph that state the value, copied character for character, one sentence at most;",
+  "- quote: the shortest exact words from that paragraph that state the value and name what it is for, copied character for character, one sentence at most;",
   "- value_text: the value as the document writes it (\"$10.50\", \"75 percent\", \"half\", \"owner-operators\", \"no cap\").",
   "If two paragraphs state different values for one rule, list both. If the policy does not state a rule, give an empty list. Never guess or work a value out.",
   "",

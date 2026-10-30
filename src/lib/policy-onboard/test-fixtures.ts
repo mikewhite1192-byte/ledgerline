@@ -41,7 +41,7 @@ export const HARROW_RULES: RulesAnswer = {
       p("6.2", "weekly net pay under $350", "$350"),
       p("9.4", "No deduction of any kind may take a driver's weekly net pay under $300", "$300"),
     ],
-    advance_recovery_cap_cents: [p("9.3", "at most $300 per settlement", "$300")],
+    advance_recovery_cap_cents: [p("9.3", "recovered from the driver's settlements, at most $300 per settlement", "$300")],
     advance_fee_cents: [p("9.1", "Each advance carries a $3 fee.", "$3")],
     advance_limit_default_cents: [p("9.2", "an advance may not exceed $600", "$600")],
     advance_max_bps_of_earned: [p("9.2", "50 percent of the driver's earned and unpaid pay", "50 percent")],

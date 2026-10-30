@@ -8,7 +8,7 @@ import { readRowsWhereId, readTable } from "../../data/read";
 import { RULE_KEYS, RuleError, RULES, valueText } from "../../pay-rules/rules";
 import { insertVersionCopy, lockPayRules, one, payConfigColumns, VERSION_NOTE_MAX } from "../../pay-rules/write-version";
 import { parsePolicyArgs, type PolicyArgs } from "../../policy-onboard/args";
-import { citedPassage } from "../../policy-onboard/cite";
+import { citedPassage, namesRule } from "../../policy-onboard/cite";
 import { candidatesFor } from "../../policy-onboard/parse";
 import { checkStart, parseStoredValue, planVersion, type Edits, type PlannedChange } from "../../policy-onboard/plan";
 import { sectionsOfTranscript } from "../../policy-onboard/sections";
@@ -23,7 +23,7 @@ import type { Executor, Precheck, ProposalRefused, ProposalResult } from "../exe
 // one a pay rule change takes, so the two run one after the other). Then everything the card was
 // made from is checked again: the transcript is the one the document points at and still hashes
 // the same, every quote is word for word in its section, and every Found value is one the quote
-// itself states. The start must still be a week start after this week with no later version and
+// itself states, from a quote that names its rule. The start must still be a week start after this week with no later version and
 // no approved or paid pay on or after it, and its base still the version in force. Then the plan:
 // each Found value, or the person's edit, set over the base (a rule Not in document keeps the
 // base's value; one that Needs you must be edited), each through the rule's own parser and the
@@ -74,6 +74,7 @@ async function recordHolds(q: Queryable, args: PolicyArgs): Promise<boolean> {
         throw error;
       }
       for (const p of field.passages) {
+        if (!namesRule(key, p.quote)) return false;
         const c = candidatesFor(key, p.quote);
         if (c.range !== null || c.weekMismatch || !c.values.includes(value)) return false;
       }
@@ -109,7 +110,10 @@ async function check(
 }
 
 async function roleOf(q: Queryable, sub: string): Promise<string | null> {
-  const rows = await q.query<{ role: string }>("SELECT role FROM memberships WHERE cognito_sub = $1", [sub]);
+  const rows = await q.query<{ role: string }>(
+    "SELECT role FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
+    [sub],
+  );
   return rows[0]?.role ?? null;
 }
 
