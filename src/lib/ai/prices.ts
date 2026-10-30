@@ -24,6 +24,16 @@ export const SAM_NANOCENTS = 250_000_000;
 export const SAM_VIDEO_FRAME_NANOCENTS = 20_000_000;
 export const SAM_VIDEO_MIN_FRAMES = 50;
 
+// Hosted web search on Muse Spark: $2.50 per 1,000 searches, on top of the tokens.
+export const WEB_SEARCH_QUERY_NANOCENTS = 250_000_000;
+// The input tokens reserved for each web search the request allows. The pages a search returns
+// are read as input inside the same answer, and each later step reads all of them again, so the
+// input grows faster than the search count. Measured on Muse Spark on 2026-10-28 UTC: one search
+// billed 2,004 input tokens and two searches 6,019 (low context) and 6,041 (medium), about 2,000
+// tokens of results a search. Three searches would bill about 12,000; 8,000 a search keeps the
+// reserve a worst case with room to spare.
+export const WEB_SEARCH_RESERVE_TOKENS = 8_000;
+
 // The input tokens reserved for each image sent to a text model. Meta's docs put a 1280-pixel
 // image at about 1,300 to 1,500 tokens; a 400 x 300 PNG measured 167.
 export const MEDIA_RESERVE_TOKENS = 1_600;
@@ -195,7 +205,11 @@ export function savedByCache(price: TokenPrice, cached: number): number {
 // The cost of any answer, from what the provider reported. Null when what was reported is not
 // what this price is metered by, which settles the call as unknown with its reservation kept.
 export function meteredCost(price: Price, metered: Metered): number | null {
-  if (price.unit === "tokens" && metered.unit === "tokens") return actualCost(price, metered.usage);
+  if (price.unit === "tokens" && metered.unit === "tokens") {
+    const searches = metered.searches ?? 0;
+    if (!Number.isSafeInteger(searches) || searches < 0) return null;
+    return actualCost(price, metered.usage) + searches * WEB_SEARCH_QUERY_NANOCENTS;
+  }
   if (price.unit === "audio_seconds" && metered.unit === "audio_seconds") {
     return metered.seconds * price.perSecond;
   }

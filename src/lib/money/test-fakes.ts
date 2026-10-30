@@ -53,6 +53,13 @@ export class FakeLedger {
   counterparties = new Map<string, string>([[ADVANCE, DRIVER]]);
   events: string[] = [];
   zone = "America/Chicago";
+  // The tenant's own row: not one of the demo carriers unless a test makes it one.
+  tenantRow: { id: string; slug: string; name: string; timezone: string } | null = {
+    id: TENANT,
+    slug: "fake-carrier",
+    name: "Fake Carrier",
+    timezone: "America/Chicago",
+  };
   // Seconds a sent row reports as its age (the database clock in the real store).
   sentAgeSeconds = 0;
   // The kinds each pending read asked for.
@@ -95,6 +102,7 @@ export class FakeLedger {
       return { membershipId: MEMBER, role: "staff", sub: session.sub } as Approval;
     },
     tenantZone: async () => this.zone,
+    tenant: async () => this.tenantRow,
     reserve: async (_q, approval, draft, actionId) => {
       this.events.push("reserve");
       const d = validateDraft(draft);

@@ -54,13 +54,20 @@ export function tickSweep(list: Checklist, phase: SweepPhase): Checklist {
 
 // The list once the run has ended. Finished: the item in hand is done (skipped when the step was
 // switched off), anything never started is skipped. Stopped at its cap or failed: whatever was not
-// done is not finished; the next run picks those findings up.
-export function endSweep(list: Checklist, ended: "done" | "stopped" | "failed", opts: { skipped?: Key } = {}): Checklist {
+// done is not finished; the next run picks those findings up. Stopped after an item ran to its
+// end (stoppedAfter: the turn ceiling left findings for the next run, but the second check ran on
+// every draft): that item and the ones before it are done, the rest not finished.
+export function endSweep(
+  list: Checklist,
+  ended: "done" | "stopped" | "failed",
+  opts: { skipped?: Key; stoppedAfter?: Key } = {},
+): Checklist {
+  const after = ended === "stopped" && opts.stoppedAfter ? list.items.findIndex((i) => i.key === opts.stoppedAfter) : -1;
   return {
     ...list,
-    items: list.items.map((item) => {
+    items: list.items.map((item, i) => {
       if (item.state === "done" || item.state === "skipped") return item;
-      if (ended !== "done") return { ...item, state: "not_done" };
+      if (ended !== "done") return { ...item, state: i <= after ? "done" : "not_done" };
       if (item.key === opts.skipped) return { ...item, state: "skipped" };
       return { ...item, state: item.state === "doing" ? "done" : "skipped" };
     }),
@@ -69,7 +76,7 @@ export function endSweep(list: Checklist, ended: "done" | "stopped" | "failed", 
 
 export type SweepChecklistChange =
   | { phase: SweepPhase }
-  | { ended: "done" | "stopped" | "failed"; skipped?: Key };
+  | { ended: "done" | "stopped" | "failed"; skipped?: Key; stoppedAfter?: Key };
 
 // The run's ticked list as JSON for the update that moves the phase, read inside the same
 // transaction (the run row is locked by then). Null when the run has no list: the update keeps
@@ -81,6 +88,9 @@ export async function nextSweepChecklist(q: Queryable, runId: string, change: Sw
   );
   const list = parseChecklist(rows[0]?.checklist ?? null);
   if (!list) return null;
-  const next = "phase" in change ? tickSweep(list, change.phase) : endSweep(list, change.ended, { skipped: change.skipped });
+  const next =
+    "phase" in change
+      ? tickSweep(list, change.phase)
+      : endSweep(list, change.ended, { skipped: change.skipped, stoppedAfter: change.stoppedAfter });
   return JSON.stringify(checklistSchema.parse(next));
 }

@@ -12,14 +12,17 @@ import {
   type UnknownCategory,
 } from "../adapters/types";
 import type { Session } from "../auth/claims";
+import { readTenant } from "../data/read";
 import type { Queryable, TenantDb } from "../db";
 import { approvalFrom } from "./approval";
 import { memoCodeOf } from "./keys";
 import {
   bumpCheck,
+  demoCarriersOnly,
   isOutsideRecord,
   markSent,
   mustReadAction,
+  payoutSwitchOn,
   reserve,
   settle,
   switchOn,
@@ -84,6 +87,8 @@ const HOOKED_PAYMENT_SYSTEM: Readonly<Partial<Record<MoneyActionKind, OutsideSys
 export type LedgerStore = {
   approvalFrom: typeof approvalFrom;
   tenantZone: typeof readTenantZone;
+  // The tenant's own row (slug, name, timezone), for a payout that runs only for the demo carriers.
+  tenant: typeof readTenant;
   reserve: typeof reserve;
   markSent: typeof markSent;
   settle: typeof settle;
@@ -95,6 +100,7 @@ export type LedgerStore = {
 export const dbLedgerStore: LedgerStore = {
   approvalFrom,
   tenantZone: readTenantZone,
+  tenant: readTenant,
   reserve,
   markSent,
   settle,
@@ -370,6 +376,18 @@ export async function executeMoneyAction(
     );
     throw new MoneyError("disabled");
   }
+  // A bank payout in Stripe test mode runs only for the two demo carriers (payoutSwitchOn): any
+  // other carrier is refused here as if payoutsEnabled were off, before the adapter is asked or
+  // anything is written, and again, from a fresh read of its row, before the send.
+  const demoOnly = channel === "payment" && !hooked && demoCarriersOnly(clean.kind, via);
+  const tenantRow = () => db.withTenant(tenantId, (q) => d.store.tenant(q));
+  if (demoOnly && !payoutSwitchOn(clean.kind, via, await tenantRow())) {
+    d.log(
+      `money: would send ${clean.kind} ${clean.amountCents}c for ${subjectTable} ` +
+        `${clean.subjectId} via ${railWord}${via} (demo carriers only)`,
+    );
+    throw new MoneyError("disabled");
+  }
   const before = await adapterReady(db, tenantId, clean.kind, pinned, hooks.ready);
   if (!before.ok) throw new MoneyError(before.category);
 
@@ -398,7 +416,11 @@ export async function executeMoneyAction(
   // Only a payment kind on a rail sends through the payment adapter (and needs its
   // destination); a hooked kind ignores an injected payment adapter.
   const payment = channel === "payment" && !hooked ? pinned.payment : undefined;
-  const ready: Ready = switchOn(channel)
+  // A payout that runs only for the demo carriers reads the tenant's row again: any other carrier
+  // is refused as if the switch were off.
+  const tenantNow = demoOnly ? await tenantRow() : null;
+  const on = switchOn(channel) && (!demoOnly || payoutSwitchOn(clean.kind, via, tenantNow));
+  const ready: Ready = on
     ? await adapterReady(db, tenantId, clean.kind, pinned, hooks.ready)
     : { ok: false, category: "disabled" };
   const now: Ready =
@@ -436,11 +458,18 @@ export async function executeMoneyAction(
     tenantZone: first.tenantZone,
   };
   const sending = action;
-  // The payment adapter checks its switch itself on every call. A hooked send is the caller's
-  // hook, so the channel's switch is checked here, at the write: off means a definite disabled
-  // answer and no call (the hook checks its own feature switch too).
+  // The payment adapter checks its switch itself on every call; a payout that runs only for the
+  // demo carriers is checked here too, at the write, against the row read above (the adapter has
+  // no tenant): any other carrier is a definite disabled answer and no call. A hooked send is the
+  // caller's hook, so the channel's switch is checked here, at the write: off means a definite
+  // disabled answer and no call (the hook checks its own feature switch too).
   const work = payment
-    ? () => payment.sendPayout(payoutOf(sending, first.destination), ctx)
+    ? async (): Promise<SendOutcome> => {
+        if (demoOnly && !payoutSwitchOn(clean.kind, via, tenantNow)) {
+          return { kind: "failed", category: "disabled" };
+        }
+        return payment.sendPayout(payoutOf(sending, first.destination), ctx);
+      }
     : async (): Promise<SendOutcome> => {
         if (!switchOn(channel)) return { kind: "failed", category: "disabled" };
         return (hooks.send as NonNullable<MoneyHooks["send"]>)(sending, ctx);

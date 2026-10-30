@@ -129,7 +129,7 @@ describe("mock payment adapter", () => {
 });
 
 describe("adapter selection", () => {
-  it("uses the mock for bank payouts by default; Stripe test and the sandbox refuse with no settings", async () => {
+  it("uses the mock for bank payouts on the mock provider; Stripe test and the sandbox refuse with no settings", async () => {
     expect(paymentAdapter("bank").system).toBe("mock");
     expect(paymentAdapter("bank")).toBe(paymentAdapter("bank"));
     flags.paymentProvider = "stripe_test";
@@ -142,6 +142,7 @@ describe("adapter selection", () => {
       category: "not_configured",
     });
     const accounting = accountingAdapter();
+    flags.accountingEnabled = false;
     expect(await accounting.ready(null as never)).toEqual({ ok: false, category: "disabled" });
     flags.accountingEnabled = true;
     expect(await accounting.ready(null as never)).toEqual({ ok: false, category: "not_configured" });

@@ -749,19 +749,21 @@ describe("tenant walls and guards", () => {
 });
 
 describe("the readers", () => {
-  it("lists the fuel checks in the run_checks tool only while the switch is on", async () => {
+  it("leaves the fuel checks out of the run_checks tool for a carrier that is not a demo carrier", async () => {
     const ctx = { session: SESSION, now: NOW, timeZone: CARRIER.timezone } as Parameters<typeof runChecks.run>[1];
     const fuelRows = async () => {
       const out = await app.withTenant(T, (q) => runChecks.run(q, ctx, {}, { screen: null, limit: null }));
       const rows = (out as { result: { rows: { check: string; suggestedCents?: number | null }[] } }).result.rows;
       return rows.filter((r) => FUEL_CHECKS.has(r.check));
     };
+    expect(expected.length).toBeGreaterThan(0);
     flags.fuelAnomalyEnabled = false;
     expect(await fuelRows()).toEqual([]);
+    // The start date is the demo weeks', so with the switch on this carrier (not one of the two
+    // demo carriers) still lists none of its planted fill-ups. The demo carriers' rows are checked
+    // over the seed plan in the gateway's run-checks-fuel test.
     flags.fuelAnomalyEnabled = true;
-    const on = await fuelRows();
-    expect(on.map((r) => r.check).sort()).toEqual(expected.map((f) => f.check).sort());
-    expect(on.find((r) => r.check === "fuel_off_route")?.suggestedCents).toBe(planted("fuel_off_route").suggestedCents);
+    expect(await fuelRows()).toEqual([]);
   });
 
   it("reads the page as sentences with the numbers and no raw ids", async () => {

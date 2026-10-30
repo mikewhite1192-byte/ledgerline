@@ -214,6 +214,31 @@ export type StoredNoteSource = PackInput & {
 // Inside a tenant transaction: the stored rows behind one settlement's pack, or null when the
 // settlement is not this tenant's. Every read names the tenant (readRowsWhereId does).
 export async function readNoteSource(q: Queryable, settlementId: string): Promise<StoredNoteSource | null> {
+  return (await readSource(q, settlementId))?.source ?? null;
+}
+
+// A pay card's rows (src/lib/pay-cards): the note's source plus the previous settled week's lines,
+// for the card's biggest change. previousLines is null exactly when previousNetCents is.
+export type StoredCardSource = StoredNoteSource & {
+  previousLines: Pick<SettlementLineRow, "kind" | "amount_cents">[] | null;
+};
+
+export async function readCardSource(q: Queryable, settlementId: string): Promise<StoredCardSource | null> {
+  const read = await readSource(q, settlementId);
+  if (!read) return null;
+  const previousLines = read.previousId
+    ? (await readRowsWhereId(q, "settlement_lines", "settlement_id", read.previousId)).map((l) => ({
+        kind: l.kind,
+        amount_cents: l.amount_cents,
+      }))
+    : null;
+  return { ...read.source, previousLines };
+}
+
+async function readSource(
+  q: Queryable,
+  settlementId: string,
+): Promise<{ source: StoredNoteSource; previousId: string | null } | null> {
   const [settlement] = await readRowsWhereId(q, "settlements", "id", settlementId);
   if (!settlement) return null;
   const [period] = await readRowsWhereId(q, "settlement_periods", "id", settlement.period_id);
@@ -221,8 +246,8 @@ export async function readNoteSource(q: Queryable, settlementId: string): Promis
   if (!period || !driver) return null;
   const lines = await readRowsWhereId(q, "settlement_lines", "settlement_id", settlement.id);
   // The same driver's latest settled pay before this period, for the week-over-week change.
-  const previous = await q.query<{ net_cents: number }>(
-    `SELECT s.net_cents
+  const previous = await q.query<{ id: string; net_cents: number }>(
+    `SELECT CAST(s.id AS text) AS id, s.net_cents
        FROM settlements s
        JOIN settlement_periods p ON p.tenant_id = s.tenant_id AND p.id = s.period_id
       WHERE s.tenant_id = current_tenant_id() AND p.tenant_id = current_tenant_id()
@@ -233,10 +258,13 @@ export async function readNoteSource(q: Queryable, settlementId: string): Promis
     [settlement.driver_id, period.period_start],
   );
   return {
-    settlement,
-    period,
-    driver,
-    lines,
-    previousNetCents: previous.length === 1 ? Number(previous[0].net_cents) : null,
+    source: {
+      settlement,
+      period,
+      driver,
+      lines,
+      previousNetCents: previous.length === 1 ? Number(previous[0].net_cents) : null,
+    },
+    previousId: previous.length === 1 ? previous[0].id : null,
   };
 }

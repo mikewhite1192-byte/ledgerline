@@ -3,7 +3,7 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import type { Param, Queryable, TenantDb } from "../db";
 import { createRunIn, startPortalRun } from "./start";
-import { STALLED_AFTER_MS, UNCLAIMED_AFTER_MS } from "./views";
+import { MAX_RESUME_ATTEMPTS, STALLED_AFTER_MS, UNCLAIMED_AFTER_MS } from "./views";
 
 const mocks = vi.hoisted(() => ({ kick: vi.fn(() => true) }));
 vi.mock("./runner/kick", async (importOriginal) => ({
@@ -29,7 +29,9 @@ const EVIDENCE = {
   created_at: "2026-10-27T14:00:00.000Z",
 };
 
-function fakeQ(state: { portal?: boolean; evidence?: boolean; live?: { id: string; status: string }[]; inserted?: boolean } = {}) {
+function fakeQ(
+  state: { portal?: boolean; evidence?: boolean; live?: { id: string; status: string }[]; inserted?: boolean; requeued?: string } = {},
+) {
   const calls: { sql: string; params: Param[] }[] = [];
   let liveReads = 0;
   const q: Queryable = {
@@ -38,6 +40,7 @@ function fakeQ(state: { portal?: boolean; evidence?: boolean; live?: { id: strin
       if (sql.includes("FROM memberships")) return [{ ok: 1 }] as T[];
       if (sql.includes("FROM portal_loads")) return (state.portal === false ? [] : [{ reference: "FFE-100001" }]) as T[];
       if (sql.includes("FROM portal_evidence")) return (state.evidence ? [EVIDENCE] : []) as T[];
+      if (sql.startsWith("UPDATE portal_runs r SET status = 'queued'")) return (state.requeued ? [{ id: state.requeued }] : []) as T[];
       if (sql.includes("FROM portal_runs")) {
         liveReads += 1;
         const live = state.live ?? [];
@@ -119,6 +122,34 @@ describe("createRunIn", () => {
     ]);
   });
 
+  it("puts a stalled run with an executed step back in the queue first, at most twice, from its last executed step", async () => {
+    const { q, calls } = fakeQ();
+    await createRunIn(q, SESSION, input(), NOW);
+    const requeue = calls.findIndex((c) => c.sql.startsWith("UPDATE portal_runs r SET status = 'queued'"));
+    const ending = calls.findIndex((c) => c.sql.startsWith("UPDATE portal_runs SET status = 'failed'"));
+    expect(requeue).toBeGreaterThanOrEqual(0);
+    expect(requeue).toBeLessThan(ending);
+    const { sql, params } = calls[requeue];
+    expect(sql).toContain("r.status = 'running'");
+    expect(sql).toContain("r.resume_attempts < $4");
+    expect(sql).toContain("resume_attempts = r.resume_attempts + 1");
+    expect(sql).toContain("s.executed AND s.seq > 0");
+    expect(sql).toContain("r.session_id IS NOT NULL");
+    expect(sql).toContain("claim_token = NULL");
+    // The held POD is left as it is for the resume.
+    expect(sql).not.toContain("held_pod");
+    expect(sql).not.toContain("paused_pod_hash");
+    expect(params).toEqual([LOAD, NOW.toISOString(), new Date(NOW.getTime() - STALLED_AFTER_MS).toISOString(), MAX_RESUME_ATTEMPTS]);
+    expect(MAX_RESUME_ATTEMPTS).toBe(2);
+  });
+
+  it("returns a run put back in the queue as queued, without a second one", async () => {
+    const back = "99999999-9999-4999-8999-999999999999";
+    const { q, calls } = fakeQ({ requeued: back });
+    expect(await createRunIn(q, SESSION, input(), NOW)).toEqual({ kind: "queued", runId: back });
+    expect(calls.some((c) => c.sql.startsWith("INSERT"))).toBe(false);
+  });
+
   it("sets the stalled limit past any live worker's wall limit", () => {
     // A worker ends itself at its wall limit plus one last step; twice the wall limit is past it.
     expect(2 * flags.portalRunLimits.maxWallMs).toBeLessThanOrEqual(STALLED_AFTER_MS);
@@ -158,6 +189,13 @@ describe("startPortalRun", () => {
     const again = vi.fn(() => true);
     await startPortalRun(SESSION, input(), { db: db(fakeQ({ live: [{ id: "x", status: "running" }] }).q), kick: again, now: NOW });
     expect(again).not.toHaveBeenCalled();
+  });
+
+  it("starts the worker for a run put back in the queue", async () => {
+    const back = "99999999-9999-4999-8999-999999999999";
+    const kick = vi.fn(() => true);
+    expect(await startPortalRun(SESSION, input(), { db: db(fakeQ({ requeued: back }).q), kick, now: NOW })).toEqual({ kind: "queued", runId: back });
+    expect(kick).toHaveBeenCalledWith({ tenantId: SESSION.tenantId, runId: back });
   });
 
   it("opens no transaction when disabled", async () => {

@@ -94,6 +94,8 @@ describe("money start-up guard", () => {
     vi.stubEnv("NEXT_RUNTIME", "nodejs");
     await expect(register()).rejects.toBeInstanceOf(MoneyEnvRefused);
     vi.stubEnv("QBO_ENVIRONMENT", "sandbox");
+    // The release turns accounting on, so the start-up check needs the one sandbox company's id.
+    vi.stubEnv("QBO_ALLOWED_REALM_ID", "1234567890123456");
     vi.stubEnv("STRIPE_SECRET_KEY", "");
     vi.stubEnv("DB_CLUSTER_ARN", "");
     await expect(register()).resolves.toBeUndefined();

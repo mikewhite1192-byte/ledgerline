@@ -31,6 +31,7 @@ const counts: SweepCounts = {
   mismatch: 0,
   audit_pending: 0,
   over_cap: 0,
+  left: 0,
 };
 
 const proposal = (status: CardStatus, n: number): ProposalView => ({

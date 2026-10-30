@@ -62,13 +62,18 @@ const q: Queryable = {
 };
 
 const SWITCHES = ["rulesByTalkingEnabled", "agentEnabled", "aiEnabled"] as const;
-const saved = Object.fromEntries(SWITCHES.map((k) => [k, flags[k]]));
+// The switches whose reads the fake transaction above does not answer (the needs-you rows of the
+// pay run, advances and invoices, the sweep's line, Friday's cash card): off, so the page reads
+// only what this test fakes.
+const OFF = ["settlementsEnabled", "advancesEnabled", "invoicesEnabled", "sweepEnabled", "cashFridayEnabled"] as const;
+const saved = Object.fromEntries([...SWITCHES, ...OFF].map((k) => [k, flags[k]]));
 
 beforeEach(() => {
   // Tuesday Nov 10, 2026, after the week of Nov 9 has begun.
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-11-10T15:00:00Z"));
   for (const k of SWITCHES) flags[k] = true;
+  for (const k of OFF) flags[k] = false;
   mocks.withRequestTenant.mockImplementation((fn: (q: Queryable, s: Session) => unknown) => fn(q, SESSION));
   mocks.readNextWeekStart.mockImplementation(async (_q: Queryable, now: Date) =>
     nextWeekStart(now, "America/New_York", 1),
@@ -79,7 +84,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  for (const k of SWITCHES) flags[k] = saved[k];
+  for (const k of [...SWITCHES, ...OFF]) flags[k] = saved[k];
   vi.clearAllMocks();
 });
 

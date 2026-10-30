@@ -102,8 +102,9 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
 
   const on = await features(baseURL);
   if (!DEPLOYED) {
-    // The local overrides took: the agent and the auditor run here even though main ships them off.
-    expect(on, "every merged switch is on in local mode").toMatchObject({ agent: true, auditor: true });
+    // The local overrides took: the agent and the auditor run here, on the switches the replay was
+    // recorded with.
+    expect(on, "the recorded switches are on in local mode").toMatchObject({ agent: true, auditor: true });
     await test.step("warm up the dev server (local only)", async () => {
       // next dev compiles each page and route on its first request; doing it here keeps the
       // timed steps below about the app, not the compiler. Any answer is fine (405, 401, redirect).

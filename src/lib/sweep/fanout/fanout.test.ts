@@ -1,14 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
-import type { StepFinish, StepStart } from "@/lib/agent/gateway/store/types";
+import type { OpenedTurn, StepFinish, StepStart } from "@/lib/agent/gateway/store/types";
 import type { StepView } from "@/lib/agent/view";
 import type { GatewayOutcome } from "@/lib/agent/gateway/types";
 import { AiError, type AiRequest, type AiResult, type AiTool } from "@/lib/ai";
 import { NANOCENTS_PER_CENT } from "@/lib/ai/prices";
+import { DbError, type Queryable } from "@/lib/db";
 import { CHECK_TOOLS, runChildCheck, sourcesFrom, validateCheck, type ChildDeps, type ChildInput } from "./check";
 import { refusedByProvider } from "./limits";
 import { defaultOrder, validatePlan, type Roster } from "./plan";
 import { computeCounts, fanoutFindingKey, validateReconcile, type CheckRow, type EngineFinding } from "./reconcile";
+import { openLeasedTurn, type FanoutCtx, type FanoutDeps } from "./run";
 import { parseJson, scrubFigures } from "./schemas";
 import { treeOf, type FanoutCheckRow, type FanoutRow } from "./tree";
 
@@ -476,5 +478,51 @@ describe("treeOf", () => {
     expect(tree.plan.summary).toBeNull();
     expect(tree.reconcile.counts).toBeNull();
     expect(tree.reconcile.disagreements).toEqual([]);
+  });
+});
+
+// ---- The plan's and the comparison's turn, opened with its id write ----
+
+describe("openLeasedTurn", () => {
+  const q = { query: vi.fn(), execute: vi.fn() } as unknown as Queryable;
+  // The leased transaction on a fake: whatever its body throws comes out of it (the rollback).
+  const ctx = (openTurnIn: FanoutDeps["openTurnIn"]) =>
+    ({
+      service: SESSION,
+      runId: "run-1",
+      token: "token-1",
+      clock: () => new Date(0),
+      deadlineAt: 60_000,
+      leased: async <T>(fn: (tx: Queryable) => Promise<T>) => fn(q),
+      deps: { openTurnIn },
+    }) as unknown as FanoutCtx;
+
+  it("opens the turn and writes its id in the same transaction", async () => {
+    const writeId = vi.fn(async () => 1);
+    const turn = await openLeasedTurn(
+      ctx(async (_q, _s, input) => ({ turnId: input.turnId, traceId: "trace-1" }) as OpenedTurn),
+      "Second opinion: order the week's drivers",
+      writeId,
+    );
+    expect(turn?.opened.traceId).toBe("trace-1");
+    expect(writeId).toHaveBeenCalledWith(q, turn?.turnId);
+  });
+
+  it("reads a unique violation as the gateway's busy refusal: no turn, so the caller gives its hold back", async () => {
+    const writeId = vi.fn(async () => 1);
+    const raced = ctx(async () => {
+      throw new DbError("sql", "23505");
+    });
+    expect(await openLeasedTurn(raced, "Second opinion: compare the checks", writeId)).toBeNull();
+    expect(writeId).not.toHaveBeenCalled();
+  });
+
+  it("still ends the slice on any other database error", async () => {
+    for (const err of [new DbError("timeout"), new DbError("sql", "40001")]) {
+      const failing = ctx(async () => {
+        throw err;
+      });
+      await expect(openLeasedTurn(failing, "Second opinion: compare the checks", async () => 1)).rejects.toBe(err);
+    }
   });
 });
