@@ -38,6 +38,9 @@
   --info: #2f4b5a;
   --info-soft: #e3eaee;
   --ring: #4f46e5;
+  /* Home's money chart: money in and money out, a pair checked for color-blind readers. */
+  --chart-in: #2a78d6;
+  --chart-out: #eb6834;
   --radius: 12px;
   --float-shadow: 0 4px 16px rgba(22, 29, 26, 0.1);
   color-scheme: light;
@@ -71,6 +74,8 @@
     --info: #a7c3d2;
     --info-soft: #1a2a31;
     --ring: #818cf8;
+    --chart-in: #3987e5;
+    --chart-out: #d95926;
     --radius: 12px;
     --float-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
     color-scheme: dark;
@@ -104,6 +109,8 @@
   --info: #a7c3d2;
   --info-soft: #1a2a31;
   --ring: #818cf8;
+  --chart-in: #3987e5;
+  --chart-out: #d95926;
   --radius: 12px;
   --float-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
@@ -168,6 +175,8 @@
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
   --color-ring: var(--ring);
+  --color-chart-in: var(--chart-in);
+  --color-chart-out: var(--chart-out);
 
   --radius-*: initial;
   --radius-sm: calc(var(--radius) - 4px);

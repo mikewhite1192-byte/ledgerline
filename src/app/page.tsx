@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { flags, stepThroughShown } from "@/config/flags";
 import { DETENTION_SUGGESTION, homeSuggestions, ruleChangeSuggestion, withPaystubSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
@@ -14,6 +13,10 @@ import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Wordmark } from "@/components/brand/wordmark";
 import { FridayPay } from "@/components/cash/friday-pay";
+import { Greeting, type Shortcut } from "@/components/home/greeting";
+import { CashFlowCard, OwedCard } from "@/components/home/money-cards";
+import { PaydayCard } from "@/components/home/payday-card";
+import { TodayCard } from "@/components/home/today-card";
 import { NewHereLine } from "@/components/help/how-pay-works";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -31,14 +34,20 @@ import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
 import { isRole, type Role } from "@/lib/auth/role";
 import { formatInstant } from "@/lib/format/dates";
+import { owedOf, paydayOf, type Owed, type Payday } from "@/lib/home/cards";
+import { loaded, type Loaded } from "@/lib/home/loaded";
+import { readMoneyFlow, type FlowWeek } from "@/lib/home/money-flow";
 import { cardsRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/lib/home/needs-you";
+import { readTodayIntake, type TodayIntake } from "@/lib/home/today";
+import { readInvoiceList } from "@/lib/invoices/views";
 import { readNextWeekStart } from "@/lib/pay-rules/read";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
+import { readSettlementsView } from "@/lib/settlements/views";
 import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday } from "@/lib/tenant/shell";
-import type { LocalDate } from "@/lib/time/local-date";
+import { localTimeOf, type LocalDate } from "@/lib/time/local-date";
 import { isUuid } from "@/lib/uuid";
 import { AiProofForm } from "./ai-proof-form";
 
@@ -65,6 +74,8 @@ type Carrier = {
 // example sentence and the help under it.
 // ?paystub=<settlement id>: "Ask about this paystub" links here with the paystub's id; anything
 // else is ignored.
+// ?ask=<card>, from a Home card's "Ask about this": the box starts with that card's question, one
+// of the suggested questions; only the card's name is taken from the address.
 export default async function Home({
   searchParams,
 }: {
@@ -78,6 +89,7 @@ export default async function Home({
   // question starts a new conversation in the same visit.
   const startOver = params.new === "1";
   const askedPaystub = params.paystub;
+  const askedCard = isCardAsk(params.ask) ? params.ask : null;
   const paystubId =
     typeof askedPaystub === "string" && isUuid(askedPaystub) ? askedPaystub.toLowerCase() : null;
   let carrier: Carrier | null = null;
@@ -183,12 +195,13 @@ export default async function Home({
     needsYou = { rows: cards ? [cards, ...rows] : rows, unread };
   }
 
-  // The last sweep's line, when the sweep is on. A failed read leaves the card out.
-  let lastSweep: SweepRunView | null = null;
+  // The last sweep, for the Today card while the sweep is on. A failed read says so on the card.
+  let lastSweep: Loaded<SweepRunView | null> | null = null;
   if (carrier && flags.sweepEnabled) {
     try {
-      lastSweep = (await readSweepHome(carrier.session)).runs[0] ?? null;
+      lastSweep = { ok: true, value: (await readSweepHome(carrier.session)).runs[0] ?? null };
     } catch (err) {
+      lastSweep = { ok: false };
       console.error("sweep home read failed:", err instanceof Error ? err.name : "unknown");
     }
   }
@@ -205,7 +218,11 @@ export default async function Home({
     }
   }
 
-  if (!carrier) {
+  // Home's cards, each in its own carrier transaction and only while its page is on, so one failed
+  // read shows that card as unavailable and leaves the rest of the page alone.
+  const cards = carrier ? await readCards(carrierToday(carrier.timezone, new Date())) : null;
+
+  if (!carrier || !cards) {
     return (
       <main className="flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
         <div className="grid w-full max-w-[440px] gap-6">
@@ -230,6 +247,11 @@ export default async function Home({
   // ?rule=1 starts the box with the chip's own sentence and help, both dated the first week a
   // change can start.
   const ruleAsk = !documentInput && ruleAsked && carrier.nextStart ? ruleChangeSuggestion(carrier.nextStart) : null;
+  const cardAsk = askedCard ? SUGGESTIONS.find((s) => CARD_ASKS[askedCard].includes(s.id))?.label : undefined;
+  // A card's "Ask about this", while the agent can answer on this page.
+  const askHref = (card: CardAsk) => (flags.agentEnabled ? `/?ask=${card}#${ASK_ANCHOR}` : undefined);
+  const now = new Date();
+  const today = carrierToday(carrier.timezone, now);
 
   return (
     <AppShell
@@ -242,45 +264,140 @@ export default async function Home({
       agentPanel={false}
       // The bell's dot counts only a read that came back; an unread list never reads as zero.
       needsYouCount={needsYou && !needsYou.unread ? needsYou.rows.length : undefined}
+      // The sidebar's pinned amounts, from the cards' own reads; a card not read leaves its out.
+      pinned={{
+        payWeekCents: cards.payday?.ok ? cards.payday.value.netCents : undefined,
+        dueCents: cards.owed?.ok ? cards.owed.value.owedCents : undefined,
+      }}
     >
       <h1 className="sr-only">Home</h1>
-      {needsYou ? <NeedsYou view={needsYou} /> : null}
-      <NewHereLine />
-      <RecordCounts counts={carrier.counts} />
-      {flags.agentEnabled ? (
-        // The top bar's box and the menu's Ask land here and put the cursor in the question box.
-        <div id={ASK_ANCHOR} className="scroll-mt-28">
-          <AgentChat
-            initialTurns={agentTurns}
-            streamMode={flags.agentStreamMode}
-            auditorOn={flags.auditorEnabled}
-            timezone={carrier.timezone}
-            stepThrough={stepThroughShown()}
-            suggestions={suggestions}
-            initialDraft={documentInput ? `Check document ${documentInput}` : ruleAsk?.fill}
-            initialHelp={ruleAsk?.help}
-            viewer={{ admin: carrier.admin, adminAboveCents: flags.approverRole.adminAboveCents }}
-            intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
-            disabledReason={
-              flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
-            }
-          />
-        </div>
-      ) : (
-        <ChatThread
-          messages={[]}
-          suggestions={SUGGESTIONS}
-          intro="Drivers, loads and this week's pay run arrive with the next items."
-          composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
+      <div className="grid gap-8">
+        <Greeting
+          name={carrier.name}
+          today={today}
+          hour={localTimeOf(now.toISOString(), carrier.timezone).hour}
+          shortcuts={shortcuts()}
         />
-      )}
-      {cashHome !== undefined ? (
-        <FridayPay home={cashHome} today={carrierToday(carrier.timezone, new Date())} />
-      ) : null}
-      {lastSweep ? <LastSweep run={lastSweep} /> : null}
-      {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
+        {/* What the agent did today and what needs your OK come first. */}
+        <div className="grid items-start gap-4 lg:grid-cols-2">
+          <TodayCard
+            intake={cards.intake}
+            shown={{ documents: flags.documentsEnabled, voiceNotes: flags.voiceIntakeEnabled, messages: flags.inboxEnabled }}
+            sweep={lastSweep}
+            needs={needsYou ?? { rows: [], unread: true }}
+            today={today}
+            timezone={carrier.timezone}
+          />
+          {needsYou ? <NeedsYou view={needsYou} /> : null}
+        </div>
+        <NewHereLine />
+        {flags.agentEnabled ? (
+          // The top bar's box and the menu's Ask land here and put the cursor in the question box.
+          <div id={ASK_ANCHOR} className="scroll-mt-28">
+            <AgentChat
+              initialTurns={agentTurns}
+              streamMode={flags.agentStreamMode}
+              auditorOn={flags.auditorEnabled}
+              timezone={carrier.timezone}
+              stepThrough={stepThroughShown()}
+              suggestions={suggestions}
+              initialDraft={documentInput ? `Check document ${documentInput}` : (ruleAsk?.fill ?? cardAsk)}
+              initialHelp={ruleAsk?.help}
+              viewer={{ admin: carrier.admin, adminAboveCents: flags.approverRole.adminAboveCents }}
+              intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
+              disabledReason={
+                flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
+              }
+            />
+          </div>
+        ) : (
+          <ChatThread
+            messages={[]}
+            suggestions={SUGGESTIONS}
+            intro="Drivers, loads and this week's pay run arrive with the next items."
+            composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
+          />
+        )}
+        {/* Then payday: this pay week's paystubs, Friday's pay run and the drivers on file. */}
+        <section aria-labelledby="pay-week-title" className="grid gap-3">
+          <h2 id="pay-week-title" className="text-h2 text-foreground">
+            This pay week
+          </h2>
+          <div className="grid items-stretch gap-4 lg:grid-cols-2">
+            {cards.payday ? <PaydayCard payday={cards.payday} askHref={askHref("payday")} /> : null}
+            <div className="grid content-start gap-4">
+              {cashHome !== undefined ? <FridayPay home={cashHome} today={today} className="mt-0 max-w-none" /> : null}
+              <StatCard
+                label="Drivers"
+                value={carrier.counts.drivers.toLocaleString("en-US")}
+                hint={flags.driverNotesEnabled ? "Open driver notes" : undefined}
+                href={flags.driverNotesEnabled ? "/driver-notes" : undefined}
+              />
+            </div>
+          </div>
+        </section>
+        {/* Then money: what came in and went out, and what customers owe. */}
+        {cards.flow || cards.owed ? (
+          <section aria-labelledby="money-title" className="grid gap-3">
+            <h2 id="money-title" className="text-h2 text-foreground">
+              Money
+            </h2>
+            <div className="grid items-stretch gap-4 lg:grid-cols-2">
+              {cards.flow ? <CashFlowCard flow={cards.flow} askHref={askHref("cash")} /> : null}
+              {cards.owed ? <OwedCard owed={cards.owed} askHref={askHref("owed")} /> : null}
+            </div>
+          </section>
+        ) : null}
+        {carrier.ledger ? <ModelCheck ledger={carrier.ledger} timezone={carrier.timezone} /> : null}
+      </div>
     </AppShell>
   );
+}
+
+// Each card's "Ask about this" question: the first of these suggested questions on offer.
+type CardAsk = "payday" | "cash" | "owed";
+const CARD_ASKS: Record<CardAsk, readonly string[]> = {
+  payday: ["paystub-problems"],
+  cash: ["make-pay-run", "pay-run-cost"],
+  owed: ["past-60"],
+};
+const isCardAsk = (v: unknown): v is CardAsk => typeof v === "string" && Object.hasOwn(CARD_ASKS, v);
+
+type Cards = {
+  intake: Loaded<TodayIntake> | null;
+  payday: Loaded<Payday> | null;
+  flow: Loaded<FlowWeek[]> | null;
+  owed: Loaded<Owed> | null;
+};
+
+// null is a card whose page is switched off, so it is not shown at all.
+async function readCards(today: LocalDate): Promise<Cards> {
+  const intakeOn = flags.documentsEnabled || flags.voiceIntakeEnabled || flags.inboxEnabled;
+  const [intake, payday, flow, owed] = await Promise.all([
+    intakeOn ? loaded("intake", () => withRequestTenant((q) => readTodayIntake(q, today))) : null,
+    flags.settlementsEnabled
+      ? loaded("payday", () => withRequestTenant(async (q) => paydayOf(await readSettlementsView(q, null))))
+      : null,
+    flags.settlementsEnabled && flags.invoicesEnabled
+      ? loaded("money flow", () => withRequestTenant((q) => readMoneyFlow(q, today)))
+      : null,
+    flags.invoicesEnabled
+      ? loaded("owed", () => withRequestTenant(async (q) => owedOf(await readInvoiceList(q, today))))
+      : null,
+  ]);
+  return { intake, payday, flow, owed };
+}
+
+// The greeting's shortcuts, each only while its page is on. Running payday opens the sweep when it
+// is on, else the pay run.
+function shortcuts(): Shortcut[] {
+  const payday = flags.sweepEnabled ? "/sweep" : flags.settlementsEnabled ? "/settlements" : null;
+  return [
+    payday ? { label: "Run payday", href: payday } : null,
+    flags.advancesEnabled ? { label: "Advance", href: "/advances/new" } : null,
+    flags.documentsEnabled ? { label: "Upload document", href: "/documents" } : null,
+    flags.customerPaymentsEnabled ? { label: "Record payment", href: "/customer-payments/new" } : null,
+  ].filter((s) => s !== null);
 }
 
 // Shown before the agent can answer; they light up when it can.
@@ -290,44 +407,6 @@ const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, {
   collections: flags.collectionsEnabled,
   cashFridayOn: flags.cashFridayEnabled,
 });
-
-// "Last sweep: 7 problems, 5 fixes drafted, 2 approved", one click from the run.
-function LastSweep({ run }: { run: SweepRunView }) {
-  const found = run.counts.found ?? 0;
-  const drafted = run.counts.fixes_drafted ?? 0;
-  const line =
-    run.status === "running"
-      ? "A sweep is running now."
-      : run.status === "failed"
-        ? "The last sweep stopped before it finished."
-        : `Last sweep: ${found} ${found === 1 ? "problem" : "problems"}, ${drafted} ${drafted === 1 ? "fix" : "fixes"} drafted, ${run.approved} approved.`;
-  return (
-    <section aria-label="Last sweep" className="mx-auto mt-12 w-full max-w-[720px]">
-      <Card className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 py-4 sm:px-5">
-        <p className="text-body text-foreground">{line}</p>
-        <Link href={`/sweep/${run.id}`} className="text-small text-link underline-offset-4 hover:underline">
-          Open the sweep
-        </Link>
-      </Card>
-    </section>
-  );
-}
-
-// What this carrier has on file, from the counts read above, under "Needs you" so it never
-// scrolls away under the thread. Pay periods opens Driver notes, where each week is listed.
-function RecordCounts({ counts }: { counts: Carrier["counts"] }) {
-  return (
-    <section aria-label="Records on file" className="mx-auto mt-3 mb-6 grid w-full max-w-[720px] grid-cols-2 gap-3">
-      <StatCard label="Drivers" value={counts.drivers.toLocaleString("en-US")} />
-      <StatCard
-        label="Pay periods"
-        value={counts.periods.toLocaleString("en-US")}
-        hint={flags.driverNotesEnabled ? "Open driver notes" : undefined}
-        href={flags.driverNotesEnabled ? "/driver-notes" : undefined}
-      />
-    </section>
-  );
-}
 
 const PURPOSE_WORDS: Record<string, string> = { proof: "Connection test" };
 

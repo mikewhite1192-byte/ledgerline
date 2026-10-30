@@ -293,6 +293,11 @@ vi.mock("@/lib/invoices/views", async (importOriginal) => ({
   readCustomerRecord: async () => get("customerRecord"),
   readLoadRecord: async () => get("loadRecord"),
 }));
+vi.mock("@/lib/home/today", () => ({ readTodayIntake: async () => get("todayIntake") }));
+vi.mock("@/lib/home/money-flow", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/home/money-flow")>()),
+  readMoneyFlow: async () => get("moneyFlow"),
+}));
 vi.mock("@/lib/collections/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/collections/view")>()),
   readCollectionsView: async () => get("collectionsView"),
@@ -504,6 +509,11 @@ function defaults(): Record<string, unknown> {
     day: fx.DAY,
     alerts: fx.ALERTS,
     sweepHome: fx.SWEEP_HOME,
+    todayIntake: { documents: 3, voiceNotes: 1, messages: 2 },
+    moneyFlow: [
+      { start: "2026-10-19", end: "2026-10-25", inCents: 1_250_000, outCents: 980_000 },
+      { start: "2026-10-26", end: "2026-11-01", inCents: 640_000, outCents: 1_010_000 },
+    ],
     sweepPage: fx.SWEEP_PAGE,
     fuelPage: fx.FUEL_PAGE,
     ratesPage: fx.RATES_PAGE,
@@ -855,6 +865,10 @@ const PAGES: PageCase[] = [
           "invoice waiting for approval",
           "invoices past due",
           "Open driver notes",
+          "3 documents, 1 voice note and 2 driver messages today.",
+          "Net pay on",
+          "Customer payments in",
+          "On 3 open invoices",
         ],
       },
       {
@@ -867,7 +881,45 @@ const PAGES: PageCase[] = [
           state.fx.settlementsView = { ...fx.SETTLEMENTS_VIEW, rows: [] };
         },
         load: async () => (await import("@/app/page")).default(sp()),
-        shows: ["Nothing is waiting on you. Ask a question or open a page from the menu."],
+        shows: ["Nothing is waiting on you. Ask a question or open a page from the menu.", "No paystubs built for"],
+      },
+      {
+        name: "home, a quiet start",
+        setup: () => {
+          state.fx.todayIntake = { documents: 0, voiceNotes: 0, messages: 0 };
+          state.fx.moneyFlow = [];
+          state.fx.invoices = [];
+          state.fx.settlementsView = { ...fx.SETTLEMENTS_VIEW, period: null, rows: [] };
+          state.fx.sweepHome = { openPeriod: null, runs: [] };
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: [
+          "Nothing yet today.",
+          "No sweep of the books has run yet.",
+          "No pay week is open yet. Paystubs show here once one is.",
+          "No pay weeks yet. Money in and out shows here week by week.",
+          "No customer owes you money right now.",
+        ],
+      },
+      {
+        name: "home, cards not read",
+        // Thenables that reject only when the page awaits them, as failed reads do.
+        setup: () => {
+          const failed = { then: (_ok: unknown, fail: (e: unknown) => void) => fail(new DbError("unknown")) };
+          state.fx.todayIntake = failed;
+          state.fx.moneyFlow = failed;
+          state.fx.invoices = failed;
+          state.fx.settlementsView = failed;
+          state.fx.sweepHome = failed;
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: [
+          "Could not read what came in today.",
+          "Could not read the last sweep.",
+          "Could not read this pay week's paystubs.",
+          "Could not read money in and out.",
+          "Could not read what customers owe.",
+        ],
       },
       {
         name: "home, waiting list not read",
