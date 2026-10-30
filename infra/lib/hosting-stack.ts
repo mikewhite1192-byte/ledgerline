@@ -20,6 +20,9 @@ export const STRIPE_SECRET_KEY_SECRET_NAME = "payday-copilot/stripe-test-key";
 // The nightly sweep kicker's key (PaydayCopilotSweep generates it); the app checks the kicker's
 // header against it. Read by name, like the others.
 export const SWEEP_INTERNAL_KEY_SECRET_NAME = "payday-copilot/sweep-internal-key";
+// The inbound mail poster's key (PaydayCopilotInbound generates it); the app checks the poster's
+// header against it. Read by name, like the others.
+export const INBOUND_INTERNAL_KEY_SECRET_NAME = "payday-copilot/inbound-internal-key";
 // The QuickBooks API minor version the adapter asks for (Intuit retired those below 75).
 export const QBO_MINOR_VERSION = "75";
 // The highest a spend cap may be set, in cents ($400). The $150 Meta credit is spent first and the
@@ -72,6 +75,7 @@ export const BRANCH_ENV_NAMES = [
   "QBO_TOKEN_KEY_SECRET_NAME",
   "STRIPE_SECRET_KEY_SECRET_NAME",
   "SWEEP_INTERNAL_KEY_SECRET_NAME",
+  "INBOUND_INTERNAL_KEY_SECRET_NAME",
   ...OPTIONAL_BRANCH_ENV_NAMES,
 ];
 
@@ -270,10 +274,11 @@ export class HostingStack extends Stack {
       Secret.fromSecretNameV2(this, "QboTokenKey", QBO_TOKEN_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "StripeTestKey", STRIPE_SECRET_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "SweepInternalKey", SWEEP_INTERNAL_KEY_SECRET_NAME),
+      Secret.fromSecretNameV2(this, "InboundInternalKey", INBOUND_INTERNAL_KEY_SECRET_NAME),
     ].map((secret) => `${secret.secretArn}-??????`);
 
     // The SSR runtime's credentials: the Data API on this cluster, the app's own database login,
-    // the three model API keys and the three money secrets, nothing else. No Cognito permission
+    // the three model API keys, the three money secrets and the two internal keys, nothing else. No Cognito permission
     // is needed (sign-in is an unauthenticated API). Set on the branch, not the app, as Amplify recommends for a public
     // repository. Amplify may assume it only for this account and this app's main branch; the
     // app does not refer to this role, so naming the app here is no cycle.
@@ -324,6 +329,7 @@ export class HostingStack extends Stack {
       QBO_TOKEN_KEY_SECRET_NAME,
       STRIPE_SECRET_KEY_SECRET_NAME,
       SWEEP_INTERNAL_KEY_SECRET_NAME,
+      INBOUND_INTERNAL_KEY_SECRET_NAME,
       ...money,
     };
 

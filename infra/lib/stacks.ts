@@ -2,6 +2,7 @@ import { Tags, type App, type Environment } from "aws-cdk-lib";
 import { AuthStack } from "./auth-stack";
 import { DataStack } from "./data-stack";
 import { HostingStack, type MoneySettings } from "./hosting-stack";
+import { InboundStack, inboundSettingsFromContext } from "./inbound-stack";
 import { SweepStack, type SweepSettings } from "./sweep-stack";
 
 export const PROJECT_TAG = { key: "project", value: "payday-copilot" };
@@ -10,7 +11,9 @@ export const PROJECT_TAG = { key: "project", value: "payday-copilot" };
 // every resource carries the project tag (cdk.json sets explicitStackTags, so stack tags are
 // given here explicitly as well as on the app). The money settings come from the deploying shell
 // (infra/bin/app.ts); unset, the branch carries none of them. The sweep stack (the nightly kicker,
-// its key and a schedule that ships disabled) stands alone: the app reads its key by name.
+// its key and a schedule that ships disabled) stands alone: the app reads its key by name. The
+// inbound mail stack stands alone the same way, and is added only when the deploy passes its zone
+// context (INBOUND_ZONE_ID, INBOUND_ZONE_NAME, INBOUND_DOMAIN), so no other deploy needs it.
 export function addStacks(app: App, env: Environment, money: MoneySettings = {}, sweep: SweepSettings = {}) {
   const tags = { [PROJECT_TAG.key]: PROJECT_TAG.value };
   Tags.of(app).add(PROJECT_TAG.key, PROJECT_TAG.value);
@@ -47,5 +50,10 @@ export function addStacks(app: App, env: Environment, money: MoneySettings = {},
   hosting.addStackDependency(data);
   hosting.addStackDependency(auth);
   const sweepStack = new SweepStack(app, "PaydayCopilotSweep", { env, tags, settings: sweep });
-  return { data, auth, hosting, sweep: sweepStack };
+  const inboundSettings = inboundSettingsFromContext((key) => app.node.tryGetContext(key));
+  // Left off the result entirely without its context, so a walk over the stacks sees only real ones.
+  const inbound: { inbound?: InboundStack } = inboundSettings
+    ? { inbound: new InboundStack(app, "PaydayCopilotInbound", { env, tags, settings: inboundSettings }) }
+    : {};
+  return { data, auth, hosting, sweep: sweepStack, ...inbound };
 }
