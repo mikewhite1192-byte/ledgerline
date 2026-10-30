@@ -545,6 +545,19 @@ describe("runAudit and the engine check", () => {
     }
   });
 
+  it("gives the evidence read its own full deadline after a slow engine check", async () => {
+    let at = NOW.getTime();
+    const { store } = fakeStore();
+    store.checkEngine = async () => {
+      at += 9_000;
+      return true;
+    };
+    const tool = fakeTool();
+    const out = await runAudit(SESSION, PROPOSAL, deps({ store, callTool: tool.fn, clock: () => new Date(at) }));
+    expect(out).toMatchObject({ state: "done", verdict: "pass" });
+    expect(tool.calls[0].ctx.deadlineAt).toBe(NOW.getTime() + 9_000 + 8_000);
+  });
+
   it("keeps the verdict as it was when storing the engine check throws", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const { store, log } = fakeStore();

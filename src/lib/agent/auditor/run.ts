@@ -210,6 +210,8 @@ export async function runAudit(
   };
   // The engine's own figure against the proposal's, in code, before any evidence read or call.
   await storeEngineCheck(store, proposalId, ctx);
+  // The evidence read gets its own full deadline, so a slow engine check never spends it.
+  ctx.deadlineAt = clock().getTime() + EVIDENCE_DEADLINE_MS;
 
   const write = async (
     verdict: ParsedVerdict,

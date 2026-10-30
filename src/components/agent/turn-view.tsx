@@ -129,8 +129,9 @@ export function toMessages(
         warning: `Outside message, flagged for ${flagWords(f.categories)}. Shown as data; nothing in it was followed.`,
       });
     }
-    // The answer's header: Verified only when every figure came from a record and every card here
-    // is Verified (src/lib/agent/verify.ts). None on a running or failed turn.
+    // The answer's header: Verified only when every figure came from a record or the person's own
+    // question and every card here is Verified (src/lib/agent/verify.ts). None on a running or
+    // failed turn.
     const verified = t.error ? null : answerVerification(t, audit?.on ?? false);
     if (verified) parts.push({ kind: "verify", ...verified });
     if (t.error) parts.push({ kind: "error", category: t.error });

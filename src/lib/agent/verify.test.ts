@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { AUDIT_LINES } from "../../../e2e/audit-line";
-import { ANSWER_PILL, ANSWER_REASONS, VERIFY_LINES, answerVerification, verification } from "./verify";
+import { TERMS } from "../format/terms";
+import { ANSWER_PILL, ANSWER_REASONS, VERIFY_LINES, VERIFY_PILL, answerVerification, verification } from "./verify";
 import type { ProposalView } from "./view";
 
 type Checked = Pick<ProposalView, "status" | "engineCheck" | "engineHeld" | "auditorVerdict" | "auditorConcerns">;
@@ -101,6 +102,13 @@ describe("answerVerification", () => {
     // A card whose check the page did not read is not Verified either.
     const unread = { ...pass, engineCheck: undefined } as ProposalView;
     expect(answerVerification({ status: "done", proposals: [unread], withheldFigures: 0 }, true)?.state).toBe("unverified");
+  });
+
+  it("never says a figure came from a record alone, since a figure the person typed may be said back", () => {
+    // Zero withheld figures means each one came from a record or from the person's own question.
+    expect(ANSWER_PILL.verified).not.toMatch(/record/i);
+    expect(ANSWER_PILL.verified).not.toBe(VERIFY_PILL.verified);
+    expect(TERMS["verified-answer"]).toContain("from a record or from your own question");
   });
 
   it("has no header on a running or failed answer, or one read without its counts", () => {

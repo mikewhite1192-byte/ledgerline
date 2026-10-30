@@ -61,7 +61,10 @@ export function verification(p: Checked, auditorOn: boolean): Verification | nul
 // The answer's header: a pill, and for Unverified the reason, one fixed sentence.
 export type AnswerVerification = { state: "verified" | "unverified"; pill: string; reason: string | null; help: TermId };
 
-export const ANSWER_PILL = { verified: "Verified by your records", unverified: "Unverified" } as const;
+// The count only proves no figure was made up: each came from a record or from what the person
+// typed this turn (operator/turn.ts, typedCentsIn). So the pill names the answer, never "by your
+// records", and the plain answer's help says both sources.
+export const ANSWER_PILL = { verified: "Verified answer", unverified: "Unverified" } as const;
 
 export const ANSWER_REASONS = {
   withheld: "Some figures did not come from a record and were left out.",
@@ -70,9 +73,10 @@ export const ANSWER_REASONS = {
 } as const;
 
 // The answer's header. Only for an answer that finished (done or partial) and was read with its
-// steps' counts: Verified when every finished model step recorded zero withheld figures and every
-// card in the turn is Verified; a plain answer with no card reads Verified with its own help. An
-// unknown count is not verified.
+// steps' counts: Verified when every finished model step recorded zero withheld figures (every
+// figure came from a record or from the person's own question) and every card in the turn is
+// Verified; a plain answer with no card reads Verified with its own help. An unknown count is not
+// verified.
 export function answerVerification(
   turn: Pick<TurnView, "status" | "proposals" | "withheldFigures">,
   auditorOn: boolean,

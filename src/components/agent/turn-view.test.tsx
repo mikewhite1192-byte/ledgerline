@@ -83,7 +83,7 @@ describe("toMessages", () => {
     const page = { on: true, checking: {} };
     const [, a] = toMessages([verifiedTurn], {}, {}, undefined, page);
     expect(a.parts.map((p) => p.kind)).toEqual(["steps", "verify", "text", "trace", "proposal", "trace"]);
-    expect(a.parts[1]).toEqual({ kind: "verify", state: "verified", pill: "Verified by your records", reason: null, help: "verified" });
+    expect(a.parts[1]).toEqual({ kind: "verify", state: "verified", pill: "Verified answer", reason: null, help: "verified" });
     const [, withheld] = toMessages([{ ...verifiedTurn, withheldFigures: 1 }], {}, {}, undefined, page);
     expect(withheld.parts[1]).toMatchObject({ kind: "verify", state: "unverified", reason: "Some figures did not come from a record and were left out." });
     for (const status of ["running", "failed"] as const) {
