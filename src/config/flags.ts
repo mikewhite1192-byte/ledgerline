@@ -480,9 +480,9 @@ export type Flags = {
   };
   // The demo carrier's visitor sign-in (the judge role, migration 0043). A judge reads, asks the
   // agent and proposes, and never approves or pays: every write route outside
-  // src/lib/auth/judge-allowlist.ts refuses the role whatever this says. Off means the sign-in
-  // card does not render and its action refuses; the visit limits below are read by that sign-in
-  // (a later change) and do nothing yet.
+  // src/lib/auth/judge-allowlist.ts refuses the role whatever this says. Off means a judge login's
+  // password sign-in is refused before any cookie (src/app/sign-in/actions.ts); the visitor
+  // sign-in card and the visit limits below come with a later change and do nothing yet.
   judgeAccess: {
     enabled: boolean;
     // One visit's model spend, in cents (spent plus reserved, demo_sessions).
