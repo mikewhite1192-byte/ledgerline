@@ -12,6 +12,7 @@ import { overrideReasonOf } from "../agent/auditor/words";
 import { cardMatchExecutor } from "./executors/card-match";
 import { factoringRequestExecutor } from "../factoring/execute";
 import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
+import { escrowReleaseExecutor } from "./executors/escrow-release";
 import { executeDetentionCharge } from "./executors/detention-charge";
 import { loadCreateExecutor } from "./executors/load-create";
 import { loadRateFill } from "./executors/load-rate-fill";
@@ -162,7 +163,9 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 // cardRecon.enabled like pay_correction, with a precheck that refuses a card no longer unknown.
 // money_code issues one code (src/lib/money-codes/execute.ts), with a precheck that refuses before
 // the approval when the code could not be issued now; it is read through moneyCodes.enabled the
-// same way, and the executor asks the whole issue gate again itself.
+// same way, and the executor asks the whole issue gate again itself. escrow_release sends a
+// terminated driver's escrow balance back (src/lib/escrow/execute.ts), read through
+// escrowRelease.enabled the same way.
 export const EXECUTORS: ExecutorRegistry = {
   advance_payout: Object.assign(
     (...args: Parameters<Executor>) => executeAdvanceProposal(...args),
@@ -215,6 +218,13 @@ export const EXECUTORS: ExecutorRegistry = {
   // card whose reading, customer or number no longer checks before anything is approved.
   get load_create() {
     return flags.ratecon.enabled ? loadCreateExecutor : undefined;
+  },
+  // A terminated driver's escrow back to the driver (src/lib/escrow/execute.ts): one test-mode
+  // bank payout of exactly the balance, read through escrowRelease.enabled on every approval, with
+  // a precheck that refuses a driver still active, a balance that moved (stale), another live
+  // release or any release gate reason before anything is approved.
+  get escrow_release() {
+    return flags.escrowRelease.enabled ? escrowReleaseExecutor : undefined;
   },
 };
 

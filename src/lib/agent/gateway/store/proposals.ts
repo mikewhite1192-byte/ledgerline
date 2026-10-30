@@ -25,6 +25,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   money_code: "Issue a money code",
   pay_policy_setup: "Pay rules from your policy",
   load_create: "Create load from rate confirmation",
+  escrow_release: "Release driver escrow",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;

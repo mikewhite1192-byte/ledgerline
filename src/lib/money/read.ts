@@ -153,10 +153,11 @@ const SUBJECT_TABLES: readonly SubjectTable[] = [
   "invoices",
   "customer_payments",
   "money_codes",
+  "escrow_releases",
 ];
 
 // Every row for one subject, oldest first: the ledger card for an advance, settlement, invoice,
-// payment or money code.
+// payment, money code or escrow release.
 export function readBySubject(
   q: Queryable,
   table: SubjectTable,

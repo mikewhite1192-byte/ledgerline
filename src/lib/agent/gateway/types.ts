@@ -154,7 +154,7 @@ export type RunExtras = {
 // The one list of proposal kinds. src/lib/proposals/execute.ts imports it from here (the ledger
 // side may import the agent tree; the reverse is what the import-boundary test forbids). The
 // database CHECK carries this list plus kinds that later items add (0013, 0015, 0022, 0048, 0062,
-// 0066).
+// 0066, 0069).
 export const PROPOSAL_KINDS = [
   "advance_payout",
   "pay_correction",
@@ -172,6 +172,7 @@ export const PROPOSAL_KINDS = [
   "money_code",
   "pay_policy_setup",
   "load_create",
+  "escrow_release",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 

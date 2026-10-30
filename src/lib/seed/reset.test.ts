@@ -50,14 +50,15 @@ describe("the function's demo-carrier gate", () => {
   });
 
   // 0033 with the sweep's second checks, 0034 with the fuel checks, 0036 with the pay rule changes,
-  // 0038 with the Inbox messages, then 0066 with the rate confirmation readings last, so a fresh
-  // database ends on the full union.
-  it("is re-created whole by 0033, 0034, 0036 and 0038, then 0066 last", () => {
+  // 0038 with the Inbox messages, 0066 with the rate confirmation readings, then 0069 with the
+  // escrow releases last, so a fresh database ends on the full union.
+  it("is re-created whole by 0033, 0034, 0036, 0038 and 0066, then 0069 last", () => {
     expect(DEFINITIONS).toContain("0033_demo_reset_fanout.sql");
     expect(DEFINITIONS).toContain("0034_fuel_reset.sql");
     expect(DEFINITIONS).toContain("0036_demo_reset_pay_rule_changes.sql");
     expect(DEFINITIONS).toContain("0038_demo_reset_inbound.sql");
-    expect(DEFINITIONS.at(-1)).toBe("0066_ratecon_loads.sql");
+    expect(DEFINITIONS).toContain("0066_ratecon_loads.sql");
+    expect(DEFINITIONS.at(-1)).toBe("0069_escrow_releases.sql");
   });
 
   it("finds a definition in any spelling, and never a call or a longer name", () => {

@@ -89,10 +89,11 @@ export const RECOVERY_LINES_SQL = `SELECT count(*) AS lines,
   FROM settlement_lines l
  WHERE l.kind = 'advance_recovery'`;
 
-// A payout whose subject is gone (no advance, settlement, money code or factored invoice line
-// behind it) is a violation of its own, judged before its amounts. Otherwise the amount must equal
-// the subject's, the outside amount must equal the amount (a missing outside amount never does),
-// and the payee must match: the driver for a driver payout or a money code, the invoice's customer
+// A payout whose subject is gone (no advance, settlement, money code, escrow release or factored
+// invoice line behind it) is a violation of its own, judged before its amounts. Otherwise the amount
+// must equal the subject's, the outside amount must equal the amount (a missing outside amount never
+// does), and the payee must match: the driver for a driver payout, a money code or an escrow
+// release (whose subject amount is the release's approved amount), the invoice's customer
 // for a factoring advance (whose subject amount is the net of the line that names the ledger row,
 // on the same invoice). A payment kind with no branch here (one whose code has not merged) has no
 // subject amount, so it counts as subject_missing: unknown is never judged clean.
@@ -105,13 +106,15 @@ export const PAYOUTS_SQL = `SELECT count(*) AS payouts,
   FROM (SELECT m.amount_cents AS amount, m.outside_amount_cents AS outside_amount,
                CASE m.kind WHEN 'advance_payout' THEN a.amount_cents WHEN 'settlement_payout' THEN s.net_cents
                            WHEN 'factoring_advance' THEN f.net_cents
-                           WHEN 'money_code_issue' THEN c.amount_cents END
+                           WHEN 'money_code_issue' THEN c.amount_cents
+                           WHEN 'escrow_release' THEN er.amount_cents END
                  AS subject_amount,
                (CASE WHEN m.kind = 'factoring_advance'
                      THEN m.counterparty_table = 'customers' AND m.counterparty_id = i.customer_id
                      ELSE m.counterparty_table = 'drivers' AND m.counterparty_id =
                        CASE m.kind WHEN 'advance_payout' THEN a.driver_id WHEN 'settlement_payout' THEN s.driver_id
-                                   WHEN 'money_code_issue' THEN c.driver_id END
+                                   WHEN 'money_code_issue' THEN c.driver_id
+                                   WHEN 'escrow_release' THEN er.driver_id END
                 END) IS TRUE AS same_driver
           FROM money_actions m
           LEFT JOIN advances a ON m.kind = 'advance_payout' AND a.tenant_id = m.tenant_id AND a.id = m.subject_id
@@ -120,6 +123,8 @@ export const PAYOUTS_SQL = `SELECT count(*) AS payouts,
                 AND f.money_action_id = m.id AND f.invoice_id = m.subject_id
           LEFT JOIN invoices i ON m.kind = 'factoring_advance' AND i.tenant_id = m.tenant_id AND i.id = m.subject_id
           LEFT JOIN money_codes c ON m.kind = 'money_code_issue' AND c.tenant_id = m.tenant_id AND c.id = m.subject_id
+          LEFT JOIN escrow_releases er ON m.kind = 'escrow_release' AND er.tenant_id = m.tenant_id
+                AND er.id = m.subject_id
          WHERE m.channel = 'payment' AND m.state = 'confirmed') p`;
 
 export const PAYMENTS_SQL = `SELECT count(*) AS payments,

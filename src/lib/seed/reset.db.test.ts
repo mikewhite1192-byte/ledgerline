@@ -670,6 +670,15 @@ describe("the demo reset", () => {
          VALUES (current_tenant_id(), 'meta', 'reset-test-model', 'reset_test', 'reserved', 0, 'spark')`,
       ),
     );
+    // A failed escrow release naming the flow's proposal: the app role cannot delete it, so only
+    // the function clears it.
+    await app.withTenant(tenantId, (q) =>
+      q.execute(
+        `INSERT INTO escrow_releases (id, tenant_id, driver_id, proposal_id, opening_balance_cents, amount_cents, status)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 2500, 2500, 'failed')`,
+        [randomUUID(), driver.id, flowProposal],
+      ),
+    );
     return session;
   };
 
@@ -708,6 +717,7 @@ describe("the demo reset", () => {
       const preview = await app.withTenant(A, (q) => previewDemoReset(q, BR));
       expect(preview.refusals).toEqual([]);
       expect(pick(preview.current, CLEARED_TABLES)).toEqual({
+        escrow_releases: 1,
         money_actions: 3,
         ratecon_reads: 1,
         documents: 1,
@@ -749,6 +759,7 @@ describe("the demo reset", () => {
       expect(report.before).toEqual(preview.current);
       expect(portalA.loads.length).toBeGreaterThan(0);
       expect(report.cleared).toEqual({
+        escrow_releases: 1,
         money_actions: 3,
         ratecon_reads: 1,
         documents: 1,

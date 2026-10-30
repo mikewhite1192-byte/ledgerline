@@ -423,7 +423,7 @@ describe("callTool dispatch order", () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, IFTA quarter, invoicing, invoice review, customer payments,
     // collections, Cash Friday, factoring, profit brief, quarter review, pay rule change, money code,
-    // carrier memory and fuel rates switches after this test. remember_note outside a chat turn writes nothing and says so.
+    // carrier memory, fuel rates and escrow release switches after this test. remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.iftaEnabled = true;
@@ -440,6 +440,7 @@ describe("callTool dispatch order", () => {
     flags.factoring.enabled = true;
     flags.groundedRatesEnabled = true;
     flags.quarterReviewEnabled = true;
+    flags.escrowRelease.enabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;
       flags.iftaEnabled = false;
@@ -456,6 +457,7 @@ describe("callTool dispatch order", () => {
       flags.factoring.enabled = false;
       flags.groundedRatesEnabled = false;
       flags.quarterReviewEnabled = false;
+      flags.escrowRelease.enabled = false;
     });
     // The second check's read of the office's notes about the driver: none on file.
     const store: Handler = (sql, params) =>
@@ -495,6 +497,12 @@ describe("callTool dispatch order", () => {
       // propose_factoring: two days before the anchor the bank balance is dated after today, so Cash
       // Friday finds no short to name and the engine refuses (factoring-tools.test.ts runs it on the anchor).
       if (name === "propose_factoring") {
+        expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
+        continue;
+      }
+      // propose_escrow_release: the release switch is on but not armed, and the sample driver is
+      // still active, so the engine refuses before a draft (escrow.db.test.ts runs it end to end).
+      if (name === "propose_escrow_release") {
         expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
         continue;
       }

@@ -16,7 +16,8 @@ import { impactOf, PROPOSAL_TITLES } from "./proposals";
 //
 // Kinds merged after the design (the three Cash Friday kinds, the pay rule change, the money code
 // and the card match) have no comparison yet and read unavailable. A load from a rate confirmation
-// (load_create) is compared: the checks run again on the stored reading.
+// (load_create) is compared: the checks run again on the stored reading. An escrow release stays
+// unavailable: its amount is the driver's stored balance, which its precheck reads again.
 
 export type EngineCheck = "matched" | "mismatch" | "unavailable";
 export type EngineCheckResult = { check: EngineCheck; engineCents: number | null };
