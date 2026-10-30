@@ -8,7 +8,8 @@
 --
 -- crop_status: none (never tried), cropping (a try is running), cropped (kept; the only state with
 -- bytes), skipped (a definite no; final), unavailable (no answer this time; Read again may try
--- once more). crop_attempts counts tries started, at most two. crop_category is a fixed word,
+-- once more). crop_attempts counts tries that reached the model, at most two (a try refused before
+-- any call gives its count back). crop_category is a fixed word,
 -- never upstream text, set exactly on skipped and unavailable. crop_quad and crop_box are pixels of
 -- the normalized frame the segmenter saw; crop_confidence is in thousandths. The crop is at most
 -- 700,000 bytes, the same cap as an upload: a statement reads one of bytes, markup_bytes and

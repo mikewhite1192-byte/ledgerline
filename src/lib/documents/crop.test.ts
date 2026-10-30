@@ -2,12 +2,14 @@ import sharp from "sharp";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import { AiError, type SegmentMatch, type SegmentResult } from "../ai";
+import { FALLBACKS } from "../ai/targets";
 import type { Session } from "../auth/claims";
 import {
   CROP_MAX_BYTES,
   CROP_MAX_COST_CENTS,
   CROP_PROMPT,
   CROP_TIMEOUT_MS,
+  base85Length,
   boxQuad,
   chooseMatch,
   cornersOf,
@@ -218,6 +220,35 @@ describe("the mask", () => {
     expect(decodeMask(oneBit(new Uint8Array(0), 0, 0))).toBeNull();
   });
 
+  it("knows the one payload length each byte count encodes to, and refuses an oversized payload before decoding it", () => {
+    for (let n = 0; n <= 41; n++) {
+      const text = encodeBase85(new Uint8Array(n).fill(0x5a));
+      expect(base85Length(n)).toBe(text.length);
+      expect(decodeBase85(text)?.length).toBe(n);
+    }
+    const width = 13;
+    const height = 7;
+    const good = oneBit(rectBits(width, height), width, height);
+    expect(good.payload.length).toBe(base85Length(Math.ceil((width * height) / 8)));
+    expect(decodeMask(good)?.set).toBe(width * height);
+    // A million characters where the shape needs fifteen, and one character short.
+    expect(decodeMask({ ...good, payload: "0".repeat(1_000_000) })).toBeNull();
+    expect(decodeMask({ ...good, payload: good.payload.slice(0, -1) })).toBeNull();
+    // A payload that throws when any character is read: the decoder reads it, the length check
+    // alone refuses it, so the oversized answer is never decoded.
+    const untouchable = new Proxy(
+      { length: 1_000_000 },
+      {
+        get(target, key) {
+          if (key === "length") return target.length;
+          throw new Error("payload read");
+        },
+      },
+    ) as unknown as string;
+    expect(() => decodeBase85(untouchable)).toThrow("payload read");
+    expect(decodeMask({ ...good, payload: untouchable })).toBeNull();
+  });
+
   it("places a mask only where it can tell: the whole frame, or the box at its corner or at 0, 0", () => {
     const frame = { width: 400, height: 300 };
     const box = { x1: 50, y1: 40, x2: 250, y2: 200 };
@@ -419,20 +450,33 @@ describe("cropDocument", () => {
     expect(out).toMatchObject({ status: "skipped", category, callId: CALL });
   });
 
+  // [stored category, the error, its name in the log, whether the try is given back]
   it.each([
-    ["timeout", new AiError("timeout")],
-    ["unavailable", new AiError("unavailable", 503)],
-    ["rate_limited", new AiError("rate_limited", 429)],
-    ["budget", new AiError("cap")],
-    ["budget", new AiError("too_expensive")],
-    ["unknown", new AiError("bad_request")],
-    ["unknown", new Error("boom")],
-  ] as const)("has no answer (%s) when the call fails, after exactly one call", async (category, err) => {
+    ["timeout", new AiError("timeout"), "timeout", false],
+    ["unavailable", new AiError("unavailable", 503), "unavailable", false],
+    ["network", new AiError("network"), "network", false],
+    ["rate_limited", new AiError("rate_limited", 429), "rate_limited", false],
+    ["budget", new AiError("billing", 402), "billing", false],
+    ["budget", new AiError("cap"), "cap", true],
+    ["budget", new AiError("job_cap"), "job_cap", true],
+    ["budget", new AiError("too_expensive"), "too_expensive", true],
+    ["unknown", new AiError("disabled"), "disabled", true],
+    ["unknown", new AiError("not_configured"), "not_configured", true],
+    ["unknown", new AiError("bad_request"), "bad_request", false],
+    ["unknown", new AiError("unknown"), "unknown", false],
+    ["unknown", new Error("boom"), "Error", false],
+  ] as const)("has no answer (%s from %s) when the call fails, after exactly one call", async (category, err, name, refund) => {
     const segment = fakeSegment(err);
     const out = await cropDocument(input(await gray(400, 300)), SESSION, { segment });
     expect(segment).toHaveBeenCalledTimes(1);
-    expect(out).toEqual({ status: "unavailable", category });
+    expect(out).toEqual({ status: "unavailable", category, refund });
+    // The stored word as category=, the error's name as error=, never its text.
+    expect(vi.mocked(console.error)).toHaveBeenCalledWith(`documents: crop d1 failed category=${category} error=${name}`);
     expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain("boom");
+  });
+
+  it("gives a try back only for refusals no request can follow: the segment target has no standby host", () => {
+    expect(FALLBACKS.sam).toBeUndefined();
   });
 
   it("skips a crop over the size cap after exactly one call", { timeout: 60_000 }, async () => {

@@ -439,7 +439,9 @@ export type CropEnding =
       confidence: number | null;
       callId: string | null;
     }
-  | { status: "unavailable"; category: CropUnavailableCategory };
+  // refund: no request went out, so the try is given back (the count drops by one) while the
+  // row still says why it has no crop.
+  | { status: "unavailable"; category: CropUnavailableCategory; refund: boolean };
 
 // Ends this try, once (the lease). The only write of crop_bytes. 1 when this call ended it.
 export async function finishCrop(q: Queryable, id: string, lease: CropLease, e: CropEnding): Promise<number> {
@@ -467,10 +469,11 @@ export async function finishCrop(q: Queryable, id: string, lease: CropLease, e: 
     );
   }
   const skipped = e.status === "skipped" ? e : null;
+  const refund = e.status === "unavailable" && e.refund;
   return q.execute(
     `UPDATE documents
         SET crop_status = $4, crop_category = $5, crop_box = CAST($6 AS jsonb), crop_confidence = $7,
-            crop_call_id = CAST($8 AS uuid)
+            crop_call_id = CAST($8 AS uuid), crop_attempts = crop_attempts - $9
       WHERE ${CROP_LEASE}`,
     [
       id,
@@ -481,6 +484,7 @@ export async function finishCrop(q: Queryable, id: string, lease: CropLease, e: 
       skipped?.box ? JSON.stringify(skipped.box) : null,
       skipped?.confidence ?? null,
       skipped?.callId ?? null,
+      refund ? 1 : 0,
     ],
   );
 }

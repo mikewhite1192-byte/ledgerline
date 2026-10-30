@@ -26,7 +26,7 @@ import {
   uploadDocument,
   type UploadFile,
 } from "./service";
-import { listDocumentRows } from "./store";
+import { claimCrop, finishCrop, listDocumentRows, reclaimStalledCrop } from "./store";
 import { CONFIDENCE_FIELDS, READ_ATTEMPTS_MAX, type DocumentRead } from "./types";
 
 // Documents against the real database, as the app's role, with a fake model call (no network, no
@@ -753,6 +753,8 @@ describe("a photo cropped to the paper before its read", () => {
     if (!out.ok) throw new Error("upload refused");
     const id = out.view.id;
     expect(out.view.crop).toMatchObject({ status: "unavailable", category: "timeout", method: null, quad: null });
+    // A timeout may have reached the provider, so it spends the try.
+    expect(await cropRow(id)).toMatchObject({ crop_status: "unavailable", crop_category: "timeout", crop_attempts: 1 });
     expect(await readAgain(C.session, id, deps(3))).toMatchObject({
       ok: true,
       view: { readStatus: "pending", crop: { status: "unavailable", category: "timeout" } },
@@ -775,6 +777,72 @@ describe("a photo cropped to the paper before its read", () => {
       q.execute("UPDATE documents SET crop_attempts = 3 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [id]),
     );
     expect(await sqlStateOf(past)).toBe("23514");
+  });
+
+  it("gives the try back when the spend cap refuses the call before it is sent, so the photo is cropped once the cap clears", async () => {
+    const capped = vi.fn<NonNullable<CropDeps["segment"]>>(async () => {
+      throw new AiError("cap");
+    });
+    const slow = slowRead();
+    const out = await uploadDocument(C.session, await photo(), {
+      db: app,
+      now: at(0),
+      read: { complete: slow },
+      crop: { segment: capped },
+    });
+    if (!out.ok) throw new Error("upload refused");
+    const id = out.view.id;
+    // Still capped at the upload and at Read again: the row says why, and no try is used.
+    expect(out.view.crop).toMatchObject({ status: "unavailable", category: "budget" });
+    expect(await cropRow(id)).toMatchObject({ crop_status: "unavailable", crop_category: "budget", crop_attempts: 0 });
+    expect(
+      await readAgain(C.session, id, { db: app, now: at(3), read: { complete: slow }, crop: { segment: capped } }),
+    ).toMatchObject({ ok: true, view: { readStatus: "pending", crop: { status: "unavailable", category: "budget" } } });
+    expect(capped).toHaveBeenCalledTimes(2);
+    expect(await cropRow(id)).toMatchObject({ crop_status: "unavailable", crop_category: "budget", crop_attempts: 0 });
+
+    // The cap clears: the next Read again crops the photo and reads the crop.
+    const segment = paperSegment();
+    const good = fakeModel(rateReading());
+    const again = await readAgain(C.session, id, { db: app, now: at(6), read: { complete: good }, crop: { segment } });
+    expect(again).toMatchObject({ ok: true, view: { readStatus: "read", crop: { status: "cropped", method: "quad" } } });
+    expect(segment).toHaveBeenCalledTimes(1);
+    expect(sentImage(good).mime).toBe("image/jpeg");
+    expect(await cropRow(id)).toMatchObject({ crop_status: "cropped", crop_category: null, crop_attempts: 1 });
+  });
+
+  it("gives a try back only under that try's own lease, never a newer one", async () => {
+    flags.documentCrop = false;
+    const out = await uploadDocument(C.session, await photo(), { db: app, now: clock, read: { complete: slowRead() } });
+    if (!out.ok) throw new Error("upload refused");
+    const id = out.view.id;
+    const iso = (minutes: number) => new Date(NOW + minutes * 60_000).toISOString();
+    const inTenant = <T>(fn: (q: Queryable) => Promise<T>) => app.withTenant(C.tenantId, fn);
+    const claim = async (minutes: number) => ({ attempt: (await inTenant((q) => claimCrop(q, id, iso(minutes)))) ?? 0, atIso: iso(minutes) });
+    const budget = { status: "unavailable", category: "budget", refund: true } as const;
+
+    // Worker A's try at minute 1 is refused before its call and given back; B's try at minute 2
+    // takes the same count, so only the time tells them apart, and A's lease no longer names it.
+    const a = await claim(1);
+    expect(a.attempt).toBe(1);
+    expect(await inTenant((q) => finishCrop(q, id, a, budget))).toBe(1);
+    expect(await cropRow(id)).toMatchObject({ crop_status: "unavailable", crop_category: "budget", crop_attempts: 0 });
+    const b = await claim(2);
+    expect(b.attempt).toBe(1);
+    expect(await inTenant((q) => finishCrop(q, id, a, budget))).toBe(0);
+    expect(await cropRow(id)).toMatchObject({ crop_status: "cropping", crop_attempts: 1 });
+
+    // B stalls and C claims the last try: B, back late with a refusal, gives nothing back.
+    expect(await inTenant((q) => reclaimStalledCrop(q, id, iso(5)))).toBe(1);
+    const c = await claim(6);
+    expect(c.attempt).toBe(2);
+    expect(await inTenant((q) => finishCrop(q, id, b, budget))).toBe(0);
+    expect(await cropRow(id)).toMatchObject({ crop_status: "cropping", crop_attempts: 2 });
+    // C's timeout ends its try and keeps it spent: no try is left.
+    const timeout = { status: "unavailable", category: "timeout", refund: false } as const;
+    expect(await inTenant((q) => finishCrop(q, id, c, timeout))).toBe(1);
+    expect(await cropRow(id)).toMatchObject({ crop_status: "unavailable", crop_category: "timeout", crop_attempts: 2 });
+    expect(await inTenant((q) => claimCrop(q, id, iso(9)))).toBeNull();
   });
 
   it("leaves a running crop alone until it is stalled, then ends it stalled with no call", async () => {

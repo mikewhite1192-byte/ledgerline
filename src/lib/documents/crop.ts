@@ -63,7 +63,8 @@ export type CropOutcome =
       confidence: number | null;
       callId: string | null;
     }
-  | { status: "unavailable"; category: CropUnavailableCategory };
+  // refund: no request went out (a refusal before the call), so the try is given back.
+  | { status: "unavailable"; category: CropUnavailableCategory; refund: boolean };
 
 export type Raster = { data: Uint8Array; width: number; height: number; channels: 1 | 2 | 3 | 4 };
 
@@ -242,18 +243,28 @@ export function decodeBase85(text: string): Uint8Array | null {
   return tail === 0 ? out : out.subarray(0, out.length - (5 - tail));
 }
 
+// The one text length decodeBase85 reads as exactly `bytes` bytes: five characters for each four
+// bytes, and a last group of 1 to 3 bytes one character more than its bytes.
+export function base85Length(bytes: number): number {
+  const rest = bytes % 4;
+  return Math.floor(bytes / 4) * 5 + (rest === 0 ? 0 : rest + 1);
+}
+
 export type MaskBits = { bits: Uint8Array; width: number; height: number; set: number };
 
 // A one_bit mask: height x width bits row by row, a byte's highest bit first, one byte per pixel
 // here (0 or 1). Null for the lossless encoding (not decoded), a shape larger than any frame, or
-// a payload that does not decode to exactly the bytes the shape needs.
+// a payload that does not decode to exactly the bytes the shape needs. The payload's length is
+// checked before it is decoded, so an oversized answer is refused without allocating for it.
 export function decodeMask(mask: NonNullable<SegmentMatch["mask"]>): MaskBits | null {
   const { width, height } = mask;
   if (mask.encoding !== "one_bit") return null;
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) return null;
   if (width > FRAME_MAX_SIDE + 1 || height > FRAME_MAX_SIDE + 1) return null;
+  const need = Math.ceil((width * height) / 8);
+  if (mask.payload.length !== base85Length(need)) return null;
   const packed = decodeBase85(mask.payload);
-  if (!packed || packed.length !== Math.ceil((width * height) / 8)) return null;
+  if (!packed || packed.length !== need) return null;
   const bits = new Uint8Array(width * height);
   let set = 0;
   for (let i = 0; i < bits.length; i++) {
@@ -395,21 +406,30 @@ export function boxQuad(box: SamBox, frame: { width: number; height: number }): 
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-function unavailableOf(err: unknown): CropUnavailableCategory {
-  if (!(err instanceof AiError)) return "unknown";
+// The wrapper's refusals made before its one request: the switch (disabled), a missing key, model
+// id or cap (not_configured), the call's own bound (too_expensive) and the reserve (cap, job_cap).
+// Nothing was sent or charged, so the try is given back. The sam target has no standby host
+// (src/lib/ai/targets.ts FALLBACKS), so none of these can follow a request that went out.
+// Everything else (a timeout, the provider's own answer, billing among them, a failed settle,
+// anything not an AiError) may have reached the provider and spends the try.
+const NOT_SENT: readonly string[] = ["disabled", "not_configured", "cap", "job_cap", "too_expensive"];
+
+function unavailableOf(err: unknown): { category: CropUnavailableCategory; refund: boolean } {
+  if (!(err instanceof AiError)) return { category: "unknown", refund: false };
+  const refund = NOT_SENT.includes(err.category);
   switch (err.category) {
     case "timeout":
     case "unavailable":
     case "network":
     case "rate_limited":
-      return err.category;
+      return { category: err.category, refund };
     case "cap":
     case "job_cap":
     case "too_expensive":
     case "billing":
-      return "budget";
+      return { category: "budget", refund };
     default:
-      return "unknown";
+      return { category: "unknown", refund };
   }
 }
 
@@ -460,7 +480,7 @@ export async function cropDocument(input: CropInput, session: Session, deps: Cro
   const sharp = await loadSharp();
   if (!sharp) {
     console.error(`documents: crop ${id} failed category=no_library`);
-    return { status: "unavailable", category: "no_library" };
+    return { status: "unavailable", category: "no_library", refund: true };
   }
   let frame: Frame;
   try {
@@ -487,8 +507,9 @@ export async function cropDocument(input: CropInput, session: Session, deps: Cro
       deps.ai ?? {},
     );
   } catch (err) {
-    console.error(`documents: crop ${id} failed category=${errorName(err)}`);
-    return { status: "unavailable", category: unavailableOf(err) };
+    const { category, refund } = unavailableOf(err);
+    console.error(`documents: crop ${id} failed category=${category} error=${errorName(err)}`);
+    return { status: "unavailable", category, refund };
   }
   const callId = answer.callId;
   const boxOf = (m: SegmentMatch | null): CropBox | null => (m ? { ...m.box, ...size } : null);
