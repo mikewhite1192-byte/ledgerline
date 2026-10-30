@@ -6,6 +6,7 @@ import { getDb, type Queryable, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
 import { loadCandidates } from "./candidates";
 import { matchDocument } from "./match";
+import { planMarkup } from "./markup-text";
 import { readDocument, type ReadDeps, type ReadOutcome } from "./read";
 import { parseRead, rawOf } from "./schema";
 import {
@@ -24,9 +25,12 @@ import {
 } from "./store";
 import {
   DOCUMENT_MIMES,
+  MARKUP_ATTEMPTS_MAX,
   READ_ATTEMPTS_MAX,
   type DocumentMime,
+  type DocumentRead,
   type DocumentView,
+  type MarkupView,
   type MatchResult,
 } from "./types";
 
@@ -43,6 +47,10 @@ import {
 // same work. A row gets READ_ATTEMPTS_MAX reads in all, the upload's included.
 
 export const STALLED_MS = 2 * 60 * 1000;
+
+// A marked copy's try runs one edit (up to 60 seconds) and one check (up to 25): one marked
+// running for longer than this lost its request, so another try may start.
+export const MARKUP_STALLED_MS = 3 * 60 * 1000;
 
 export type ServiceDeps = { db?: TenantDb; now?: () => Date; read?: ReadDeps };
 
@@ -95,8 +103,31 @@ function parseMatch(text: string): MatchResult | null {
   }
 }
 
-export function viewOf(row: DocumentMetaRow, now: Date): DocumentView {
+function markupOf(
+  row: DocumentMetaRow,
+  doc: { read: DocumentRead | null; match: MatchResult | null },
+  now: Date,
+  withPlan: boolean,
+): MarkupView {
+  const attempts = Number(row.markup_attempts);
+  const plan = withPlan ? planMarkup({ mime: row.mime, read: doc.read, match: doc.match }) : null;
+  return {
+    status: row.markup_status,
+    attemptsLeft: Number.isSafeInteger(attempts) ? Math.max(0, MARKUP_ATTEMPTS_MAX - attempts) : 0,
+    category: row.markup_category,
+    at: row.markup_at,
+    stalled:
+      row.markup_status === "marking" &&
+      row.markup_at !== null &&
+      new Date(row.markup_at).getTime() < now.getTime() - MARKUP_STALLED_MS,
+    eligibility: plan === null ? null : plan.ok ? "eligible" : plan.reason,
+  };
+}
+
+// opts.plan false (a list row, which carries no transcription): the markup's eligibility is null.
+export function viewOf(row: DocumentMetaRow, now: Date, opts: { plan?: boolean } = {}): DocumentView {
   const read = row.read_status === "read" && row.reading !== null ? parseRead(row.reading) : null;
+  const match = parseMatch(row.match);
   return {
     id: row.id,
     filename: row.filename,
@@ -106,7 +137,7 @@ export function viewOf(row: DocumentMetaRow, now: Date): DocumentView {
     readStatus: row.read_status,
     kind: row.document_kind,
     read,
-    match: parseMatch(row.match),
+    match,
     inputId: row.untrusted_input_id,
     readCallId: row.read_call_id,
     traceId: row.trace_id,
@@ -114,6 +145,7 @@ export function viewOf(row: DocumentMetaRow, now: Date): DocumentView {
     stalled:
       row.read_status === "pending" && new Date(row.updated_at).getTime() < now.getTime() - STALLED_MS,
     readAttempts: Number(row.read_attempts),
+    markup: markupOf(row, { read, match }, now, opts.plan ?? true),
   };
 }
 
@@ -281,7 +313,7 @@ export async function listDocuments(session: Session, deps: ServiceDeps = {}): P
   const db = deps.db ?? getDb();
   const now = (deps.now ?? (() => new Date()))();
   const rows = await tx(db, session, (q) => listDocumentRows(q, 50));
-  return rows.map((r) => viewOf(r, now));
+  return rows.map((r) => viewOf(r, now, { plan: false }));
 }
 
 export async function readDocumentFile(

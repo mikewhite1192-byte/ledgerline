@@ -26,7 +26,14 @@ import { FIREWORKS_CHAT_URL, parseFireworks } from "./providers/fireworks";
 import { post, type FetchFn } from "./providers/http";
 import { dataUrlLength, IMAGE_MIMES, looksLike, pdfPages } from "./providers/media";
 import { META_RESPONSES_URL, metaBody, metaComputerBody, parseMeta } from "./providers/meta";
-import { imageBody, META_IMAGES_URL, parseImage } from "./providers/meta-image";
+import {
+  editBody,
+  imageBody,
+  META_IMAGE_EDITS_URL,
+  META_IMAGES_URL,
+  parseImage,
+  parseImageEdit,
+} from "./providers/meta-image";
 import { parseSam, parseSamVideo, samBody, samVideoBody } from "./providers/meta-sam";
 import {
   META_TRANSCRIBE_ACCEPT,
@@ -57,6 +64,7 @@ import {
   type ComputerRequest,
   type ComputerResult,
   type ComputerScreenshot,
+  type ImageEditRequest,
   type ImageRequest,
   type ImageResult,
   type Metered,
@@ -97,6 +105,7 @@ export type {
   ComputerRequest,
   ComputerResult,
   ComputerScreenshot,
+  ImageEditRequest,
   ImageRequest,
   ImageResult,
   SafetyCheck,
@@ -111,7 +120,7 @@ export type {
 } from "./types";
 
 // The one door to a model. Every runtime model call in the app goes through complete(),
-// transcribe(), generateImage(), segment() or segmentVideo(), and all of them through runCall(): it checks the
+// transcribe(), generateImage(), editImage(), segment() or segmentVideo(), and all of them through runCall(): it checks the
 // switch, reserves the call's worst-case cost in the spend ledger, calls the provider once,
 // settles the ledger to the real cost, and writes one log line. It never retries a host. Muse
 // Spark Open alone has a standby host (./standby.ts): while flags.sparkOpenFallback names it,
@@ -1091,6 +1100,55 @@ export async function generateImage(
         reserveNanocents: n * price.perImage,
         reasoningEffort: null,
         parse: parseImage(outputFormat, n),
+      };
+    },
+  );
+  return { callId, images: answer.value, costNanocents };
+}
+
+// --- editImage: Muse Image, one picture edited ---
+
+const EDIT_MIMES: readonly ImageEditRequest["image"]["mime"][] = [
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+];
+
+export async function editImage(
+  request: ImageEditRequest,
+  session: Session,
+  deps: AiDeps = {},
+): Promise<ImageResult> {
+  const { callId, answer, costNanocents } = await runCall(
+    "image",
+    "images",
+    request,
+    SLOW_TIMEOUT_MS,
+    session,
+    deps,
+    (model, price) => {
+      const image = request.image;
+      if (
+        typeof request.prompt !== "string" ||
+        request.prompt.trim() === "" ||
+        request.prompt.length > MAX_PROMPT_CHARS ||
+        typeof image !== "object" ||
+        image === null ||
+        !(image.bytes instanceof Uint8Array) ||
+        !EDIT_MIMES.includes(image.mime) ||
+        image.bytes.length === 0 ||
+        image.bytes.length > MAX_IMAGE_BYTES ||
+        !looksLike(image.mime, image.bytes)
+      ) {
+        bad();
+      }
+      return {
+        url: META_IMAGE_EDITS_URL,
+        body: JSON.stringify(editBody(model, request.prompt, image)),
+        // One image back.
+        reserveNanocents: price.perImage,
+        reasoningEffort: null,
+        parse: parseImageEdit,
       };
     },
   );
