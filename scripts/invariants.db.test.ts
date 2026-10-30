@@ -261,6 +261,10 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "pay_cards",
     // A rate confirmation's second read (0066): no seed, an upload writes it.
     "ratecon_reads",
+    // A driver's phone call, one of its segments and a turn in it (0068): no seed, a call writes them.
+    "calls",
+    "call_segments",
+    "call_turns",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -408,6 +412,25 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           `INSERT INTO ratecon_reads (id, tenant_id, document_id, load_id)
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid))`,
           [randomUUID(), documentId, randomUUID()],
+        );
+        // A driver's phone call still open, its first segment read, and the turn it heard (0068).
+        const [call, segment] = [randomUUID(), randomUUID()];
+        await q.execute(
+          `INSERT INTO calls (id, tenant_id, driver_id, trace_id, created_by, status, segments)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'invariants-test',
+             'open', 1)`,
+          [call, c.driver, randomUUID()],
+        );
+        await q.execute(
+          `INSERT INTO call_segments (id, tenant_id, call_id, seq, status, offset_ms, duration_ms)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 0, 'done', 0, 30000)`,
+          [segment, call],
+        );
+        await q.execute(
+          `INSERT INTO call_turns (id, tenant_id, segment_id, turn_key, start_ms, end_ms, text, update_kind)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), '0:0', 0, 4000, 'Load is delivered.',
+             'note')`,
+          [randomUUID(), segment],
         );
         // A portal run queued for one of the carrier's loads, with its sign-in code, a first step
         // not run yet, a check waiting for a person, and the evidence it read back (0021).

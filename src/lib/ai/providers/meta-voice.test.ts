@@ -93,6 +93,28 @@ describe("parseVoice", () => {
     });
   });
 
+  it("keeps a turn's id when it is a string and reads a turn without one", () => {
+    const outcome = parseVoice(
+      {
+        transcript: "a b c",
+        audioDurationMs: 1500,
+        turns: [
+          { startMs: 0, endMs: 400, transcript: "a", turnId: "t-1" },
+          { startMs: 500, endMs: 900, transcript: "b" },
+          { startMs: 1000, endMs: 1400, transcript: "c", turnId: 3 },
+        ],
+      },
+      200,
+    );
+    expect(outcome).toMatchObject({ kind: "answered" });
+    const turns = outcome.kind === "answered" ? outcome.value.turns : [];
+    expect(turns).toEqual([
+      { startMs: 0, endMs: 400, transcript: "a", turnId: "t-1" },
+      { startMs: 500, endMs: 900, transcript: "b" },
+      { startMs: 1000, endMs: 1400, transcript: "c" },
+    ]);
+  });
+
   it("is unknown without a whole audioDurationMs or a transcript", () => {
     for (const json of [
       null,

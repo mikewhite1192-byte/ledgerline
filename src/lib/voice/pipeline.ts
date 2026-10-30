@@ -117,12 +117,16 @@ export type UploadInput = {
 export type UploadResult = { ok: true; voiceNoteId: string; status: "transcribed" } | Refusal;
 
 // Counts every note the carrier stored today in its own zone, failed ones too: each one cost a
-// transcription. Advisory under a race (two uploads in the same instant can both pass).
+// transcription. A note a phone call handed off (its input is a call segment's, 0068) counts in
+// the call's own daily limit instead. Advisory under a race (two uploads in the same instant can
+// both pass).
 export const NOTES_TODAY_SQL =
   "SELECT CAST(count(*) AS integer) AS n FROM voice_notes v JOIN tenants t ON t.id = v.tenant_id" +
   " WHERE v.tenant_id = current_tenant_id()" +
   " AND CAST(timezone(t.timezone, v.created_at) AS date) =" +
-  " CAST(timezone(t.timezone, CAST($1 AS timestamptz)) AS date)";
+  " CAST(timezone(t.timezone, CAST($1 AS timestamptz)) AS date)" +
+  " AND NOT EXISTS (SELECT 1 FROM call_segments s" +
+  " WHERE s.tenant_id = v.tenant_id AND s.input_id = v.input_id)";
 
 const INSERT_FAILED_SQL =
   "INSERT INTO voice_notes (id, tenant_id, driver_id, trace_id, created_by, status, fail_category," +
