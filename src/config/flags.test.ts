@@ -38,6 +38,9 @@ describe("flags", () => {
     expect(isLocalDate(flags.moneyCodes.startDate)).toBe(true);
     // The card check writes no money, but it reads three systems and spends model cents.
     expect(flags.cardRecon.enabled).toBe(false);
+    // The desk loop hands work to the agents on its own: dark and unarmed until the owner's go.
+    expect(flags.deskLoop.enabled).toBe(false);
+    expect(flags.deskLoop.armed).toBe(false);
     expect(flags.rulesByTalkingEnabled).toBe(false);
     expect(flags.fuelAnomalyEnabled).toBe(false);
   });
@@ -93,6 +96,31 @@ describe("flags", () => {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
     expect(flags.cardRecon.limits.sliceMs).toBeLessThan(25_000);
+  });
+
+  it("starts the desk loop on a fixed date and keeps its wakes short and its spend small", () => {
+    expect(flags.deskLoop).toEqual({
+      enabled: false,
+      armed: false,
+      startDate: "2026-10-31",
+      limits: {
+        sliceMs: 20_000,
+        leaseMs: 55_000,
+        eventsPerWake: 20,
+        eventsPerDay: 300,
+        maxAttempts: 3,
+        wakeCents: 60,
+        dayCents: 400,
+      },
+    });
+    expect(isLocalDate(flags.deskLoop.startDate)).toBe(true);
+    for (const v of Object.values(flags.deskLoop.limits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // One wake ends inside the route's 30 s, and its lease outlives the route.
+    expect(flags.deskLoop.limits.sliceMs).toBeLessThan(25_000);
+    expect(flags.deskLoop.limits.leaseMs).toBeGreaterThan(30_000);
+    expect(flags.deskLoop.limits.wakeCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {
@@ -489,6 +517,10 @@ describe("local overrides for the demo-path test", () => {
       // Not on the demo path: its tools stay out of the replay's tool list.
       { cardRecon: { enabled: true } },
       { "cardRecon.enabled": true },
+      // The desk loop is the owner's release, like the sweep.
+      { deskLoop: { enabled: true, armed: true } },
+      { "deskLoop.enabled": true },
+      { "deskLoop.armed": true },
     ]) {
       const target = copy();
       const env = { NODE_ENV: "development", FLAGS_LOCAL_OVERRIDES: JSON.stringify(bad) };

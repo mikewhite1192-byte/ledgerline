@@ -1,0 +1,129 @@
+import { describe, expect, it } from "vitest";
+import {
+  DESK_SOURCES,
+  duePeriodKeys,
+  dueToday,
+  eventKey,
+  isoWeekOf,
+  localNowOf,
+  parseEventKey,
+  periodKey,
+  SUBJECT_TABLES,
+} from "./keys";
+
+const ID = "6B1C9D2E-3F4A-4B5C-8D6E-7F8A9B0C1D2E";
+
+describe("event keys", () => {
+  it("names a subject row by its source and lower-case id, and refuses anything else", () => {
+    expect(eventKey("card_transaction", ID)).toBe(`card_transaction:${ID.toLowerCase()}`);
+    expect(eventKey("audit", ID.toLowerCase())).toBe(`audit:${ID.toLowerCase()}`);
+    expect(() => eventKey("card_transaction", "acme")).toThrow(RangeError);
+    expect(() => eventKey("sweep" as never, ID)).toThrow(RangeError);
+  });
+
+  it("reads back only the keys this loop writes", () => {
+    const id = ID.toLowerCase();
+    expect(parseEventKey(`voice_note:${id}`)).toEqual({ source: "voice_note", subjectId: id });
+    expect(parseEventKey("sweep:2026-10-31")).toEqual({ source: "sweep", subjectId: null });
+    expect(parseEventKey("collections:2026-11-02")).toEqual({ source: "collections", subjectId: null });
+    expect(parseEventKey("cash_check:2026-W44")).toEqual({ source: "cash_check", subjectId: null });
+    for (const bad of [
+      `voice_note:${ID}`,
+      "voice_note:acme",
+      "sweep:2026-W44",
+      "cash_check:2026-10-30",
+      "cash_check:2026-W54",
+      "cash_check:2026-W00",
+      `fuel:${id}`,
+      `:${id}`,
+      "sweep",
+      "",
+      "x".repeat(121),
+      null,
+      42,
+    ]) {
+      expect(parseEventKey(bad)).toBeNull();
+    }
+  });
+
+  it("maps every subject source to its own table, and every source is a desk source", () => {
+    for (const source of Object.keys(SUBJECT_TABLES)) expect(DESK_SOURCES).toContain(source);
+    expect(new Set(Object.values(SUBJECT_TABLES)).size).toBe(Object.keys(SUBJECT_TABLES).length);
+  });
+});
+
+describe("ISO weeks", () => {
+  it("puts dates near New Year in the week that holds their Thursday", () => {
+    expect(isoWeekOf("2026-01-01")).toBe("2026-W01");
+    expect(isoWeekOf("2026-10-30")).toBe("2026-W44");
+    expect(isoWeekOf("2026-12-28")).toBe("2026-W53");
+    expect(isoWeekOf("2026-12-31")).toBe("2026-W53");
+    expect(isoWeekOf("2027-01-01")).toBe("2026-W53");
+    expect(isoWeekOf("2027-01-04")).toBe("2027-W01");
+    expect(isoWeekOf("2024-12-30")).toBe("2025-W01");
+    expect(isoWeekOf("2021-01-03")).toBe("2020-W53");
+  });
+
+  it("refuses a date that is not a calendar date", () => {
+    expect(() => isoWeekOf("2026-02-30")).toThrow();
+    expect(() => isoWeekOf("10/30/2026")).toThrow();
+  });
+});
+
+describe("due periods", () => {
+  it("makes the sweep due from 05:00 and collections from 06:00 on the carrier's own clock", () => {
+    expect(dueToday("sweep", { date: "2026-10-31", hour: 4 })).toBe(false);
+    expect(dueToday("sweep", { date: "2026-10-31", hour: 5 })).toBe(true);
+    expect(dueToday("collections", { date: "2026-10-31", hour: 5 })).toBe(false);
+    expect(dueToday("collections", { date: "2026-10-31", hour: 6 })).toBe(true);
+  });
+
+  it("makes the cash check due on Fridays from 06:00 only, keyed by the ISO week", () => {
+    expect(dueToday("cash_check", { date: "2026-10-30", hour: 5 })).toBe(false);
+    expect(dueToday("cash_check", { date: "2026-10-30", hour: 6 })).toBe(true);
+    expect(dueToday("cash_check", { date: "2026-10-31", hour: 23 })).toBe(false);
+    expect(dueToday("cash_check", { date: "2026-11-05", hour: 12 })).toBe(false);
+    expect(periodKey("cash_check", "2026-11-06")).toBe("cash_check:2026-W45");
+    expect(periodKey("sweep", "2026-11-06")).toBe("sweep:2026-11-06");
+  });
+
+  it("lists what is due in a fixed order, and nothing before the start date", () => {
+    expect(duePeriodKeys({ date: "2026-11-06", hour: 7 }, "2026-10-31")).toEqual([
+      { source: "sweep", key: "sweep:2026-11-06" },
+      { source: "collections", key: "collections:2026-11-06" },
+      { source: "cash_check", key: "cash_check:2026-W45" },
+    ]);
+    expect(duePeriodKeys({ date: "2026-10-31", hour: 5 }, "2026-10-31")).toEqual([
+      { source: "sweep", key: "sweep:2026-10-31" },
+    ]);
+    expect(duePeriodKeys({ date: "2026-10-30", hour: 23 }, "2026-10-31")).toEqual([]);
+  });
+});
+
+describe("the carrier's wall clock", () => {
+  it("reads the local date and hour across the fall-back change", () => {
+    // Chicago leaves daylight time at 2:00 on Nov 1, 2026: 05:00 local is 10:00 UTC before the
+    // change and 11:00 UTC after it.
+    expect(localNowOf("2026-10-31T09:59:00.000Z", "America/Chicago")).toEqual({ date: "2026-10-31", hour: 4 });
+    expect(localNowOf("2026-10-31T10:00:00.000Z", "America/Chicago")).toEqual({ date: "2026-10-31", hour: 5 });
+    expect(localNowOf("2026-11-01T10:59:00.000Z", "America/Chicago")).toEqual({ date: "2026-11-01", hour: 4 });
+    expect(localNowOf("2026-11-01T11:00:00.000Z", "America/Chicago")).toEqual({ date: "2026-11-01", hour: 5 });
+    expect(dueToday("sweep", localNowOf("2026-11-01T10:59:00.000Z", "America/Chicago"))).toBe(false);
+    expect(dueToday("sweep", localNowOf("2026-11-01T11:00:00.000Z", "America/Chicago"))).toBe(true);
+  });
+
+  it("reads the local date and hour across the spring-forward change", () => {
+    // Chicago enters daylight time on Mar 14, 2027: 05:00 local is 10:00 UTC that day.
+    expect(localNowOf("2027-03-14T09:59:00.000Z", "America/Chicago")).toEqual({ date: "2027-03-14", hour: 4 });
+    expect(localNowOf("2027-03-14T10:00:00.000Z", "America/Chicago")).toEqual({ date: "2027-03-14", hour: 5 });
+  });
+
+  it("uses the carrier's own date, which can differ from the UTC date", () => {
+    // Mexico City keeps UTC-6 all year; Kolkata is UTC+5:30.
+    expect(localNowOf("2026-11-01T03:00:00.000Z", "America/Mexico_City")).toEqual({ date: "2026-10-31", hour: 21 });
+    expect(localNowOf("2026-10-30T23:30:00.000Z", "Asia/Kolkata")).toEqual({ date: "2026-10-31", hour: 5 });
+    expect(duePeriodKeys(localNowOf("2026-10-30T23:30:00.000Z", "Asia/Kolkata"), "2026-10-31")).toEqual([
+      { source: "sweep", key: "sweep:2026-10-31" },
+    ]);
+  });
+});

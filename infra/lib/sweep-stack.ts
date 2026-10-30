@@ -17,19 +17,27 @@ import { SWEEP_INTERNAL_KEY_SECRET_NAME } from "./hosting-stack";
 //   owner's release, and the app still refuses every call unless sweepScheduleEnabled is on.
 // APP_URL and TENANT_IDS come from the deploying shell (SWEEP_APP_URL, SWEEP_TENANT_IDS); unset,
 // the kicker logs "not configured" and calls nothing.
+// A second schedule, every 15 minutes, wakes the carriers' desk loops through the same Lambda and
+// key (input {"job":"desk"}). Its state comes from the deploying shell (DESK_SCHEDULE_STATE,
+// ENABLED or DISABLED, default DISABLED), so it ships off and turning it on is a deploy the owner
+// runs; the app still refuses every wake unless deskLoop is enabled. 96 wakes a day at 128 MB stay
+// inside the Lambda free tier.
 
 export const SWEEP_SCHEDULE_EXPRESSION = "cron(0 10 * * ? *)";
+export const DESK_SCHEDULE_EXPRESSION = "rate(15 minutes)";
 const KICKER_DIR = join(__dirname, "..", "lambda", "sweep-kicker");
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_TENANTS = 20;
 
-export type SweepSettings = { appUrl?: string; tenantIds?: readonly string[] };
+export type ScheduleState = "ENABLED" | "DISABLED";
+export type SweepSettings = { appUrl?: string; tenantIds?: readonly string[]; deskScheduleState?: ScheduleState };
 
 // The deploying shell's sweep settings, checked whole: an https origin with no path, query or
-// login, and up to 20 carrier ids. Anything else refuses the synth rather than ship a kicker that
-// calls the wrong place.
+// login, up to 20 carrier ids, and the desk schedule's state spelled exactly. Anything else refuses
+// the synth rather than ship a kicker that calls the wrong place or a schedule in a state nobody
+// chose.
 export function sweepSettingsFromEnv(env: Record<string, string | undefined>): SweepSettings {
-  const out: { appUrl?: string; tenantIds?: string[] } = {};
+  const out: { appUrl?: string; tenantIds?: string[]; deskScheduleState?: ScheduleState } = {};
   const appUrl = env.SWEEP_APP_URL?.trim();
   if (appUrl) {
     let url: URL;
@@ -52,6 +60,11 @@ export function sweepSettingsFromEnv(env: Record<string, string | undefined>): S
     }
     out.tenantIds = list;
   }
+  const desk = env.DESK_SCHEDULE_STATE;
+  if (desk !== undefined && desk !== "") {
+    if (desk !== "ENABLED" && desk !== "DISABLED") throw new Error("DESK_SCHEDULE_STATE must be ENABLED or DISABLED");
+    out.deskScheduleState = desk;
+  }
   return out;
 }
 
@@ -61,6 +74,7 @@ export class SweepStack extends Stack {
   readonly key: Secret;
   readonly kicker: LambdaFunction;
   readonly schedule: CfnSchedule;
+  readonly deskSchedule: CfnSchedule;
 
   constructor(scope: Construct, id: string, props: SweepStackProps) {
     super(scope, id, props);
@@ -117,7 +131,25 @@ export class SweepStack extends Stack {
       },
     });
 
+    // The desk loop's wake, every 15 minutes, through the same function. Off unless the deploying
+    // shell says ENABLED. One attempt per tick: the next tick is 15 minutes away.
+    const deskState: ScheduleState = settings.deskScheduleState ?? "DISABLED";
+    this.deskSchedule = new CfnSchedule(this, "DeskLoop", {
+      description: "Desk loop wake, every 15 minutes. Ships disabled; enabling it is the owner's release.",
+      scheduleExpression: DESK_SCHEDULE_EXPRESSION,
+      scheduleExpressionTimezone: "UTC",
+      flexibleTimeWindow: { mode: "OFF" },
+      state: deskState,
+      target: {
+        arn: this.kicker.functionArn,
+        roleArn: invoker.roleArn,
+        input: JSON.stringify({ job: "desk" }),
+        retryPolicy: { maximumRetryAttempts: 0, maximumEventAgeInSeconds: 900 },
+      },
+    });
+
     new CfnOutput(this, "KickerName", { value: this.kicker.functionName });
     new CfnOutput(this, "ScheduleState", { value: "DISABLED" });
+    new CfnOutput(this, "DeskScheduleState", { value: deskState });
   }
 }

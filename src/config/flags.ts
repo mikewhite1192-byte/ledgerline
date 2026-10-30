@@ -497,6 +497,34 @@ export type Flags = {
       sliceMs: number;
     };
   };
+  // The desk loop: one loop per carrier, woken every 15 minutes by the kicker (or "Wake now"),
+  // that finds new work in our own tables and hands each piece to the agent that already does it,
+  // writing every step to an insert-only log it resumes from. Off: the internal route refuses
+  // before reading the key and the wake button refuses. On and not armed: it wakes, finds work and
+  // writes "would hand on" lines, and runs nothing. Armed: each handler runs, under its own switch
+  // and caps. It never moves money and makes no model call of its own.
+  deskLoop: {
+    enabled: boolean;
+    armed: boolean;
+    // Rows created before this day (UTC midnight) are never seen, so history is not worked again.
+    startDate: string;
+    limits: {
+      // How long one wake works before it answers "more" and the kicker asks again.
+      sliceMs: number;
+      // How long one wake holds the carrier's loop; longer than the route's own 30 s limit.
+      leaseMs: number;
+      // Pieces of work one wake looks at.
+      eventsPerWake: number;
+      // Pieces of work one carrier's loop looks at in 24 hours.
+      eventsPerDay: number;
+      // Tries at one piece of work before it is given up as abandoned.
+      maxAttempts: number;
+      // Model spend by this carrier since the wake started, in cents; past it the wake stops.
+      wakeCents: number;
+      // Model spend by this carrier in the last 24 hours, in cents; past it the wake stops.
+      dayCents: number;
+    };
+  };
 };
 
 export const flags: Flags = {
@@ -652,6 +680,20 @@ export const flags: Flags = {
       matchMaxCents: 3,
       maxRunCents: 100,
       sliceMs: 20_000,
+    },
+  },
+  deskLoop: {
+    enabled: false,
+    armed: false,
+    startDate: "2026-10-31",
+    limits: {
+      sliceMs: 20_000,
+      leaseMs: 55_000,
+      eventsPerWake: 20,
+      eventsPerDay: 300,
+      maxAttempts: 3,
+      wakeCents: 60,
+      dayCents: 400,
     },
   },
 };

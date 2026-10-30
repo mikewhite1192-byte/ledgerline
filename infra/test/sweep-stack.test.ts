@@ -1,7 +1,7 @@
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SWEEP_INTERNAL_KEY_SECRET_NAME } from "../lib/hosting-stack";
-import { SWEEP_SCHEDULE_EXPRESSION, sweepSettingsFromEnv } from "../lib/sweep-stack";
+import { DESK_SCHEDULE_EXPRESSION, SWEEP_SCHEDULE_EXPRESSION, sweepSettingsFromEnv } from "../lib/sweep-stack";
 import { asArray, policyStatements, synthAll } from "./synth";
 
 const TENANT_A = "0f8e2c4a-1b3d-4e5f-8a9b-0c1d2e3f4a5b";
@@ -19,15 +19,50 @@ describe("SweepStack", () => {
   afterAll(() => synth?.cleanup());
 
   it("ships the nightly schedule disabled, at 10:00 UTC, with no flexible window and no retries", () => {
-    template.resourceCountIs("AWS::Scheduler::Schedule", 1);
+    template.resourceCountIs("AWS::Scheduler::Schedule", 2);
     expect(SWEEP_SCHEDULE_EXPRESSION).toBe("cron(0 10 * * ? *)");
     template.hasResourceProperties("AWS::Scheduler::Schedule", {
       State: "DISABLED",
       ScheduleExpression: "cron(0 10 * * ? *)",
       ScheduleExpressionTimezone: "UTC",
       FlexibleTimeWindow: { Mode: "OFF" },
-      Target: Match.objectLike({ RetryPolicy: { MaximumRetryAttempts: 0, MaximumEventAgeInSeconds: 3600 } }),
+      Target: Match.objectLike({
+        Input: Match.absent(),
+        RetryPolicy: { MaximumRetryAttempts: 0, MaximumEventAgeInSeconds: 3600 },
+      }),
     });
+  });
+
+  it("ships the desk loop schedule disabled, every 15 minutes, waking the same kicker with the desk job", () => {
+    expect(DESK_SCHEDULE_EXPRESSION).toBe("rate(15 minutes)");
+    const schedules = Object.values(template.findResources("AWS::Scheduler::Schedule"));
+    const desk = schedules.filter((r) => r.Properties.ScheduleExpression === "rate(15 minutes)");
+    const nightly = schedules.filter((r) => r.Properties.ScheduleExpression === "cron(0 10 * * ? *)");
+    expect(desk).toHaveLength(1);
+    expect(nightly).toHaveLength(1);
+    const p = desk[0].Properties;
+    expect(p.State).toBe("DISABLED");
+    expect(p.FlexibleTimeWindow).toEqual({ Mode: "OFF" });
+    expect(JSON.parse(p.Target.Input)).toEqual({ job: "desk" });
+    expect(p.Target.RetryPolicy).toEqual({ MaximumRetryAttempts: 0, MaximumEventAgeInSeconds: 900 });
+    expect(p.Target.Arn).toEqual(nightly[0].Properties.Target.Arn);
+    expect(p.Target.RoleArn).toEqual(nightly[0].Properties.Target.RoleArn);
+    const [fnId] = Object.keys(template.findResources("AWS::Lambda::Function"));
+    expect(JSON.stringify(p.Target.Arn)).toContain(fnId);
+    template.hasOutput("DeskScheduleState", { Value: "DISABLED" });
+    template.hasOutput("ScheduleState", { Value: "DISABLED" });
+  });
+
+  it("enables only the desk loop schedule, and only when the shell says ENABLED", () => {
+    const s = synthAll(undefined, undefined, { DESK_SCHEDULE_STATE: "ENABLED" });
+    try {
+      const schedules = Object.values(s.sweep.findResources("AWS::Scheduler::Schedule"));
+      const states = Object.fromEntries(schedules.map((r) => [r.Properties.ScheduleExpression, r.Properties.State]));
+      expect(states).toEqual({ "cron(0 10 * * ? *)": "DISABLED", "rate(15 minutes)": "ENABLED" });
+      s.sweep.hasOutput("DeskScheduleState", { Value: "ENABLED" });
+    } finally {
+      s.cleanup();
+    }
   });
 
   it("runs the kicker on Node 22 with 128 MB, a 300 second timeout, no VPC and one attempt", () => {
@@ -107,7 +142,15 @@ describe("SweepStack", () => {
 describe("sweepSettingsFromEnv", () => {
   it("takes nothing when nothing is exported", () => {
     expect(sweepSettingsFromEnv({})).toEqual({});
-    expect(sweepSettingsFromEnv({ SWEEP_APP_URL: " ", SWEEP_TENANT_IDS: "" })).toEqual({});
+    expect(sweepSettingsFromEnv({ SWEEP_APP_URL: " ", SWEEP_TENANT_IDS: "", DESK_SCHEDULE_STATE: "" })).toEqual({});
+  });
+
+  it("takes the desk schedule's state only when it is spelled exactly", () => {
+    expect(sweepSettingsFromEnv({ DESK_SCHEDULE_STATE: "ENABLED" })).toEqual({ deskScheduleState: "ENABLED" });
+    expect(sweepSettingsFromEnv({ DESK_SCHEDULE_STATE: "DISABLED" })).toEqual({ deskScheduleState: "DISABLED" });
+    for (const bad of ["enabled", "ON", "true", "1", " ENABLED", "ENABLED "]) {
+      expect(() => sweepSettingsFromEnv({ DESK_SCHEDULE_STATE: bad })).toThrow(/ENABLED or DISABLED/);
+    }
   });
 
   it("refuses anything but a bare https origin", () => {

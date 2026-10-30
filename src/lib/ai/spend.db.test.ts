@@ -7,7 +7,7 @@ import type { Db } from "../db/types";
 import { ForbiddenError } from "../tenant/context";
 import { readRecentCalls, readSpend, reserve, settle, type Reservation, type Spend } from "./spend";
 import { AiError } from "./types";
-import { clearSpendAlert, readDaySpend, readSpendAlerts } from "./watch";
+import { clearSpendAlert, readDaySpend, readSpendAlerts, readSpendSince } from "./watch";
 
 // The spend ledger as the app's own role sees it: reservations race on the counter's row lock,
 // a settle happens once, refused calls release their reservation, unknown ones keep it, and a
@@ -890,6 +890,25 @@ describe("model spend ledger", () => {
     });
     // A day after the last of them, nothing is in the window.
     expect(await app.withTenant(C, (q) => readDaySpend(q, at(60 * 26)))).toEqual({ spentNanocents: 0, calls: 0 });
+  });
+
+  it("counts the carrier's spend since an instant the way the day's spend is counted", async () => {
+    const [expected] = await admin.withTenant(C, (q) =>
+      q.query<{ spent: number; calls: number }>(
+        `SELECT CAST(COALESCE(SUM(COALESCE(cost_nanocents, reserved_nanocents)), 0) AS bigint) AS spent,
+                CAST(count(*) AS integer) AS calls
+           FROM model_calls
+          WHERE tenant_id = current_tenant_id() AND created_at >= CAST($1 AS timestamptz)`,
+        [at(1)],
+      ),
+    );
+    expect(expected.calls).toBeGreaterThan(0);
+    expect(await app.withTenant(C, (q) => readSpendSince(q, at(1)))).toEqual({
+      spentNanocents: expected.spent,
+      calls: expected.calls,
+    });
+    // Nothing is spent after the last of them.
+    expect(await app.withTenant(C, (q) => readSpendSince(q, at(60 * 26)))).toEqual({ spentNanocents: 0, calls: 0 });
   });
 
   it("gives the app only reads, new alerts and the clear on spend_alerts", async () => {

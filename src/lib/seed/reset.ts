@@ -99,6 +99,12 @@ export const DEMO_RESET_KEPT = {
   qbo_connections: "the QuickBooks sandbox link",
   qbo_oauth_states: "short-lived sign-in states for the sandbox link",
   qbo_entity_ids: "the sandbox entity map, still valid because the seed's ids are the same at the same anchor",
+  desk_loops:
+    "the desk loop's own row per carrier (running since, lease, watermarks), kept so its running-since " +
+    "date survives a reset; it names only the carrier",
+  desk_log:
+    "the desk loop's insert-only log, kept so the events it handled survive a reset; its subject ids " +
+    "have no foreign key, so it names nothing the reset deletes",
   schema_migrations: "the migration record, not tenant data",
   "ops.ai_spend": "the one model credit every tenant shares",
 } as const;

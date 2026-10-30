@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { judgeApprovals, type ApprovalRows } from "./approvals";
+import { InvariantReadError, type ReadQuery } from "./types";
+import { countApprovalBreaks, judgeApprovals, PAYMENT_ROWS_SQL, PROPOSAL_LINKS_SQL, type ApprovalRows } from "./approvals";
 
 // The per-record rules run in SQL; scripts/invariants.db.test.ts plants each kind of bad row on a
 // real database. These cover how the aggregate counts become the result.
@@ -83,5 +84,54 @@ describe("judgeApprovals", () => {
       change(rows);
       expect(() => judgeApprovals(rows)).toThrow(category);
     }
+  });
+});
+
+describe("countApprovalBreaks", () => {
+  // A read handle that answers the two SQL texts with the given rows, and refuses any other.
+  function answering(rows: ApprovalRows, seen: string[] = []): ReadQuery {
+    return {
+      query<T>(sql: string): Promise<T[]> {
+        seen.push(sql);
+        if (sql === PAYMENT_ROWS_SQL) return Promise.resolve(rows.paymentRows as T[]);
+        if (sql === PROPOSAL_LINKS_SQL) return Promise.resolve(rows.proposalLinks as T[]);
+        return Promise.reject(new Error("unexpected read"));
+      },
+    };
+  }
+
+  it("counts no money moved without approval when every payment row and link is clean", async () => {
+    const seen: string[] = [];
+    expect(await countApprovalBreaks(answering(clean(), seen))).toBe(0);
+    // Only the payment rows and the proposal links are read: the carrier's own session.
+    expect(seen).toEqual([PAYMENT_ROWS_SQL, PROPOSAL_LINKS_SQL]);
+  });
+
+  it("adds every way money could move without approval, as I3 names them", async () => {
+    const rows = clean();
+    rows.paymentRows[0].approver_missing = 1;
+    rows.paymentRows[0].sent_before_decision = "2";
+    rows.proposalLinks[0].action_missing = 1;
+    // The advance and settlement checks are not this count's: a bad one there changes nothing.
+    rows.advances[0].paid_twice = 5;
+    expect(await countApprovalBreaks(answering(rows))).toBe(4);
+  });
+
+  it("throws, never answers 0, when a read is not whole", async () => {
+    const cases: ((r: ApprovalRows) => void)[] = [
+      (r) => (r.paymentRows = []),
+      (r) => (r.proposalLinks = [r.proposalLinks[0], r.proposalLinks[0]]),
+      (r) => (r.paymentRows[0].unread = 1),
+      (r) => (r.paymentRows[0].approver_missing = null),
+      (r) => (r.proposalLinks[0].linked_early = "x"),
+      (r) => (r.paymentRows[0].mismatch = -1),
+    ];
+    for (const change of cases) {
+      const rows = clean();
+      change(rows);
+      await expect(countApprovalBreaks(answering(rows))).rejects.toBeInstanceOf(InvariantReadError);
+    }
+    const failing: ReadQuery = { query: () => Promise.reject(new Error("unavailable")) };
+    await expect(countApprovalBreaks(failing)).rejects.toThrow();
   });
 });
