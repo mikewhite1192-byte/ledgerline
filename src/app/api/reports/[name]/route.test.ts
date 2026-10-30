@@ -63,6 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   flags.reportsEnabled = false;
   flags.iftaEnabled = false;
+  flags.yearEndEnabled = false;
   vi.restoreAllMocks();
 });
 
@@ -96,6 +97,33 @@ describe("GET /api/reports/:name", () => {
     // With reports off, the IFTA switch alone does not open it.
     flags.reportsEnabled = false;
     expect((await get("ifta_quarter")).status).toBe(404);
+  });
+
+  it("is not there for the year-end 1099 while its own switch is off, though the others answer", async () => {
+    flags.yearEndEnabled = false;
+    const off = await get("year_end_contractors", "?year=2026");
+    expect(off.status).toBe(404);
+    expect(off.headers.get("cache-control")).toBe("no-store");
+    expect(await off.json()).toEqual({ error: "not_found" });
+    expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(mocks.reportForSession).not.toHaveBeenCalled();
+    expect((await get("ar_aging")).status).toBe(200);
+    // The IFTA switch does not open it.
+    flags.iftaEnabled = true;
+    expect((await get("year_end_contractors")).status).toBe(404);
+    // On, it reaches the session and the report like any other, with its year as typed.
+    flags.yearEndEnabled = true;
+    mocks.getSession.mockClear();
+    await get("year_end_contractors", "?year=2026");
+    expect(mocks.getSession).toHaveBeenCalledTimes(1);
+    expect(mocks.reportForSession.mock.calls.at(-1)?.[1]).toEqual({ name: "year_end_contractors", args: { year: "2026" } });
+    // A year outside 2000 to 2100 is refused before any read.
+    const calls = mocks.reportForSession.mock.calls.length;
+    expect((await get("year_end_contractors", "?year=2101")).status).toBe(400);
+    expect(mocks.reportForSession.mock.calls.length).toBe(calls);
+    // With reports off, its own switch alone does not open it.
+    flags.reportsEnabled = false;
+    expect((await get("year_end_contractors")).status).toBe(404);
   });
 
   it("refuses a request with no session", async () => {

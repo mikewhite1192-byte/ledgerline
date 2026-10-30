@@ -8,6 +8,7 @@ import {
   MONEY_CODE_DRIVER_SQL,
   MONEY_CODE_LOAD_SQL,
   MONEY_CODES_SQL,
+  PAID_WHERE,
   PURCHASED_BETWEEN,
   QUEUE_CHILDREN,
   QUEUE_LOADS,
@@ -28,8 +29,9 @@ import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 
 const FROM =
   /^SELECT .+? FROM (\w+) WHERE tenant_id = current_tenant_id\(\)(?: AND (.+))? ORDER BY (\w+)(?: LIMIT (\d+))?$/s;
-// A paged read: its filter in parentheses and, after the first page, the last key it saw.
-const AFTER_KEY = " AND id > CAST($3 AS uuid)";
+// A paged read: its filter in parentheses and, after the first page, the last key it saw, as the
+// statement's last parameter.
+const AFTER_KEY = / AND id > CAST\(\$(\d+) AS uuid\)$/;
 const BY_COLUMN = /^(\w+) = CAST\(\$1 AS uuid\)$/;
 const BY_DRIVER_LOADS =
   "load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid))";
@@ -240,8 +242,10 @@ function pageRows(
   params: Param[],
 ): Row[] {
   if (where === undefined || key !== "id") throw new Error("unexpected paged read");
-  const after = where.endsWith(AFTER_KEY) ? String(params[2]) : null;
-  const inner = after === null ? where : where.slice(0, -AFTER_KEY.length);
+  const last = AFTER_KEY.exec(where);
+  if (last && Number(last[1]) !== params.length) throw new Error("the page key is not the last parameter");
+  const after = last ? String(params[params.length - 1]) : null;
+  const inner = last ? where.slice(0, last.index) : where;
   if (!inner.startsWith("(") || !inner.endsWith(")")) {
     throw new Error(`unexpected paged where clause: ${inner.slice(0, 60)}`);
   }
@@ -294,6 +298,41 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
   if (where === PURCHASED_BETWEEN) {
     const [start, end] = params as string[];
     return all.filter((r) => typeof r.purchased_on === "string" && r.purchased_on >= start && r.purchased_on <= end);
+  }
+  const paidWhere = [PAID_WHERE.all, PAID_WHERE.oneDriver].find((w) => Object.values(w).includes(where));
+  if (paidWhere) {
+    const [start, end] = (params.slice(0, 2) as string[]).map((t) => Date.parse(t));
+    // One driver's read names the driver in $3, in every statement.
+    const one = paidWhere === PAID_WHERE.oneDriver ? String(params[2]) : null;
+    if (params.length !== (one === null ? 2 : 3)) throw new Error("unexpected year-end parameters");
+    const mine = (driverId: unknown) => one === null || driverId === one;
+    const inWindow = (st: Row) => {
+      const at = typeof st.paid_at === "string" ? Date.parse(st.paid_at) : NaN;
+      return st.status === "paid" && at >= start && at < end && mine(st.driver_id);
+    };
+    if (where === paidWhere.settlements) return all.filter(inWindow);
+    const paid = rows.settlements.filter((st) => inWindow(st as unknown as Row));
+    if (where === paidWhere.drivers) {
+      const ids = new Set(paid.map((st) => st.driver_id));
+      return all.filter((r) => ids.has(r.id as string) && mine(r.id));
+    }
+    const ids = new Set(paid.map((st) => st.id));
+    const corrections = rows.pay_items.filter(
+      (i) => i.ref_table === "proposals" && i.settlement_id !== null && ids.has(i.settlement_id) && mine(i.driver_id),
+    );
+    if (where === paidWhere.pay_items) {
+      const found = new Set(corrections.map((i) => i.id));
+      return all.filter((r) => found.has(r.id as string));
+    }
+    // The earning lines, and a deduction line only when its first source is a correction's pay item.
+    const correctionIds = new Set(corrections.map((i) => i.id));
+    const earning = ["load_pay", "accessorial_pay", "reimbursement"];
+    return all.filter((r) => {
+      if (!ids.has(r.settlement_id as string)) return false;
+      if (earning.includes(r.kind as string)) return true;
+      const first = Array.isArray(r.sources) ? (r.sources[0] as { table?: unknown; id?: unknown } | undefined) : undefined;
+      return r.kind === "other_deduction" && first?.table === "pay_items" && correctionIds.has(first.id as string);
+    });
   }
   throw new Error(`unexpected where clause: ${where.slice(0, 60)}`);
 }

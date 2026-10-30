@@ -12,6 +12,19 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const dateArg = () => z.string().regex(DATE).refine(isLocalDate, { message: "not a calendar date" });
 const idArg = () => z.uuid().toLowerCase();
 
+export const MIN_REPORT_YEAR = 2000;
+export const MAX_REPORT_YEAR = 2100;
+
+// A calendar year as four digits, like every other report arg a string (the query string and the
+// model's args alike).
+const yearArg = () =>
+  z
+    .string()
+    .regex(/^\d{4}$/)
+    .refine((y) => Number(y) >= MIN_REPORT_YEAR && Number(y) <= MAX_REPORT_YEAR, {
+      message: "the year must be 2000 to 2100",
+    });
+
 const marginArgs = z
   .strictObject({ periodStart: dateArg(), periodEnd: dateArg(), customerId: idArg().optional() })
   .refine(
@@ -35,6 +48,8 @@ export const REPORT_ARGS = {
   margin_per_load: marginArgs,
   // Any date inside the quarter wanted; default today in the carrier's time zone.
   ifta_quarter: z.strictObject({ asOf: dateArg().optional() }),
+  // The calendar year the settlements were paid in; default this year in the carrier's time zone.
+  year_end_contractors: z.strictObject({ year: yearArg().optional(), driverId: idArg().optional() }),
 } as const satisfies Record<ReportName, z.ZodType>;
 
 export type ReportArgs = { [K in ReportName]: z.infer<(typeof REPORT_ARGS)[K]> };

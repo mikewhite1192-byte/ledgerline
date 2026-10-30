@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { flags } from "../../config/flags";
 import { blueRidgePlan, planDb } from "../agent/gateway/__tests__/plan-db";
 import { TENANT } from "../agent/gateway/__tests__/fake-db";
 import { configForDay } from "../data/config-version";
@@ -348,6 +349,14 @@ describe("margin_per_load", () => {
 });
 
 describe("ifta_quarter", () => {
+  // computeReport refuses a report whose switch is off, and the IFTA quarter ships dark.
+  beforeEach(() => {
+    flags.iftaEnabled = true;
+  });
+  afterEach(() => {
+    flags.iftaEnabled = false;
+  });
+
   const Q4 = { start: "2026-10-01", end: "2026-12-31" };
   const inQ4 = (day: string | null) => day !== null && Q4.start <= day && day <= Q4.end;
   // Thousandths written with three decimals ("-59.724") and cents with two ("-21.68"), as integers.

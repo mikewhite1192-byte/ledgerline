@@ -29,6 +29,27 @@ describe("report args", () => {
     expect(reportOfTool("report_ifta_quarter")).toBe("ifta_quarter");
   });
 
+  it("takes the year-end 1099 for a four-digit year from 2000 to 2100, and refuses anything else", () => {
+    expect(parseReportArgs("year_end_contractors", {})?.args).toEqual({});
+    expect(parseReportArgs("year_end_contractors", { year: "2026" })?.args).toEqual({ year: "2026" });
+    expect(parseReportArgs("year_end_contractors", { year: "2000" })?.args).toEqual({ year: "2000" });
+    expect(parseReportArgs("year_end_contractors", { year: "2100" })?.args).toEqual({ year: "2100" });
+    expect(parseReportArgs("year_end_contractors", { year: "1999" })).toBeNull();
+    expect(parseReportArgs("year_end_contractors", { year: "2101" })).toBeNull();
+    expect(parseReportArgs("year_end_contractors", { year: "26" })).toBeNull();
+    expect(parseReportArgs("year_end_contractors", { year: "2026.0" })).toBeNull();
+    expect(parseReportArgs("year_end_contractors", { year: " 2026" })).toBeNull();
+    expect(parseReportArgs("year_end_contractors", { year: 2026 })).toBeNull();
+    expect(parseReportArgs("year_end_contractors", { year: "2026", taxId: "x" })).toBeNull();
+    expect(parseReportArgs("year_end_contractors", { asOf: "2026-11-02" })).toBeNull();
+    expect(parseReportArgs("year_end_contractors", { driverId: "not-a-uuid" })).toBeNull();
+    expect(parseReportArgs("year_end_contractors", { year: "2026", driverId: ID })?.args).toEqual({
+      year: "2026",
+      driverId: ID.toLowerCase(),
+    });
+    expect(reportOfTool("report_year_end_contractors")).toBe("year_end_contractors");
+  });
+
   it("lowercases ids and keeps only string values", () => {
     const parsed = parseReportArgs("driver_pay_summary", { driverId: ID });
     expect(parsed?.args).toEqual({ driverId: ID.toLowerCase() });
