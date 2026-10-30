@@ -252,6 +252,31 @@ export type PayItemRow = {
   settlement_id: string | null;
 };
 
+// A money code (0048). The seed plans none; the table is seeded so the demo reset empties it with
+// the pay items and load charges it names. The code itself is never a column.
+export type MoneyCodeRow = {
+  id: string;
+  driver_id: string;
+  load_id: string;
+  purpose: "lumper" | "repair" | "other";
+  amount_cents: number;
+  source_kind: "document" | "voice_note" | "chat" | "form";
+  document_id: string | null;
+  voice_note_id: string | null;
+  receipt_total_cents: number | null;
+  proposal_id: string | null;
+  money_action_id: string | null;
+  membership_id: string;
+  status: "issuing" | "issued" | "failed" | "unknown" | "voided";
+  provider_ref: string | null;
+  code_last4: string | null;
+  accessorial_id: string | null;
+  charge_item_id: string | null;
+  reimbursement_item_id: string | null;
+  issued_at: string | null;
+  expires_at: string | null;
+};
+
 export type AdvanceRow = {
   id: string;
   driver_id: string;
@@ -527,6 +552,7 @@ export type TenantRows = {
   settlements: SettlementRow[];
   settlement_lines: SettlementLineRow[];
   pay_items: PayItemRow[];
+  money_codes: MoneyCodeRow[];
   advances: AdvanceRow[];
   invoices: InvoiceRow[];
   customer_payments: CustomerPaymentRow[];

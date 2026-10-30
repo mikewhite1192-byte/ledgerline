@@ -15,6 +15,7 @@ export { home } from "./home";
 export { invoices } from "./invoices";
 export { memory } from "./memory";
 export { models } from "./models";
+export { moneyCodes } from "./money-codes";
 export { payRules } from "./pay-rules";
 export { portalRuns } from "./portal-runs";
 export { profitBrief } from "./profit-brief";

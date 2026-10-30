@@ -40,6 +40,8 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_detention_charge: { tier: "propose", roles: ["operator"] },
   get_driver_identity: { tier: "read", roles: ["operator", "auditor"] },
   get_advance_headroom: { tier: "read", roles: ["operator", "auditor"] },
+  get_money_codes: { tier: "read", roles: ["operator", "auditor"] },
+  propose_money_code: { tier: "propose", roles: ["operator"] },
   get_card_breaks: { tier: "read", roles: ["operator", "auditor"] },
   propose_card_match: { tier: "propose", roles: ["operator"] },
   get_cash_friday: { tier: "read", roles: ["operator"] },
@@ -53,6 +55,8 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
 const DETENTION_TOOLS = ["find_unbilled_detention", "propose_detention_charge"];
+// The tools behind the money codes switch, likewise.
+const MONEY_CODE_TOOLS = ["get_money_codes", "propose_money_code"];
 const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_"));
 // The card check's tools, behind its switch.
 const CARD_TOOLS = ["get_card_breaks", "propose_card_match"];
@@ -69,6 +73,7 @@ const COLLECTIONS_TOOLS = ["get_collections"];
 afterEach(() => {
   flags.reportsEnabled = false;
   flags.detentionEnabled = false;
+  flags.moneyCodes.enabled = false;
   flags.cardRecon.enabled = false;
   flags.invoicesEnabled = false;
   flags.invoiceReviewEnabled = false;
@@ -104,7 +109,7 @@ describe("tool registry", () => {
 
   it("gives every propose tool an engine limit", () => {
     const propose = Object.values(TOOL_REGISTRY).filter((t) => t.tier === "propose");
-    expect(propose).toHaveLength(8);
+    expect(propose).toHaveLength(9);
     for (const tool of propose) expect(typeof tool.limit).toBe("function");
   });
 
@@ -139,6 +144,23 @@ describe("tool registry", () => {
     expect(names("auditor")).toContain("find_unbilled_detention");
     expect(names("auditor")).not.toContain("propose_detention_charge");
     flags.detentionEnabled = false;
+    expect(toolsFor("operator")).toHaveLength(21);
+  });
+
+  it("offers the money code tools only while their switch is on, read on every offer", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    for (const role of AGENT_ROLES) for (const n of MONEY_CODE_TOOLS) expect(names(role)).not.toContain(n);
+    flags.moneyCodes.enabled = true;
+    expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
+      operator: 23,
+      auditor: 13,
+      triage: 2,
+    });
+    expect(names("operator")).toEqual(expect.arrayContaining(MONEY_CODE_TOOLS));
+    expect(names("auditor")).toContain("get_money_codes");
+    expect(names("auditor")).not.toContain("propose_money_code");
+    expect(toolNamed("propose_money_code")?.limit).toBeTypeOf("function");
+    flags.moneyCodes.enabled = false;
     expect(toolsFor("operator")).toHaveLength(21);
   });
 
@@ -297,6 +319,7 @@ describe("tool registry", () => {
     flags.invoicesEnabled = true;
     flags.invoiceReviewEnabled = true;
     flags.customerPaymentsEnabled = true;
+    flags.moneyCodes.enabled = true;
     flags.cardRecon.enabled = true;
     flags.rulesByTalkingEnabled = true;
     flags.collectionsEnabled = true;
@@ -304,8 +327,8 @@ describe("tool registry", () => {
     flags.carrierMemoryEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 41,
-      auditor: 16,
+      operator: 43,
+      auditor: 17,
       triage: 2,
     });
     for (const role of AGENT_ROLES) {
@@ -346,7 +369,7 @@ describe("deferred loading for tool search", () => {
       plain.map((t) => t.name).filter((n) => !ALWAYS_LOADED.includes(n)).sort(),
     );
     // A tool its switch keeps off is left out deferred too, not sent as a name to search for.
-    for (const n of DETENTION_TOOLS) expect(deferred.map((t) => t.name), n).not.toContain(n);
+    for (const n of [...DETENTION_TOOLS, ...MONEY_CODE_TOOLS]) expect(deferred.map((t) => t.name), n).not.toContain(n);
     // Without defer, no tool carries the key at all, so today's request is unchanged.
     for (const t of plain) expect(t).not.toHaveProperty("deferLoading");
     for (const t of toolsFor("operator", { defer: false })) expect(t).not.toHaveProperty("deferLoading");

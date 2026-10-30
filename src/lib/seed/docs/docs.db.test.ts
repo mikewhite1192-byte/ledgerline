@@ -90,7 +90,8 @@ describe("the sample documents against a seeded database", () => {
       expect(rows, doc.id).toHaveLength(1);
       const [row] = rows;
       expect(row.human_ref, doc.id).toBe(doc.ref.humanRef);
-      if (isPhoto(doc)) {
+      // A receipt for a load (MONEY-CODE's) has no row of its own to match its total.
+      if (isPhoto(doc) && doc.ref.table !== "loads") {
         expect(Number(row.amount_cents), doc.id).toBe(doc.expect.amountCents);
       }
       expect(row.load_number, doc.id).toBe(doc.ref.loadNumber);

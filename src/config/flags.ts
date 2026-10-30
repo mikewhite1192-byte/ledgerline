@@ -456,6 +456,21 @@ export type Flags = {
     comparesPerRun: number;
     comparesPerTenantPerDay: number;
   };
+  // Money codes (Test mode): a one-time code from the simulated fuel-card provider that a driver
+  // gives a lumper or a repair shop, charged to the driver's week and reimbursed by the receipt.
+  // enabled: the Money codes page, its menu item, the agent's two tools and approving a code; off,
+  // the page shows the feature as off, the routes answer 404, the tools are not offered and the
+  // kind has no executor. armed, capCents (inclusive: the most one code may be), perDriverPerDay
+  // and startDate (YYYY-MM-DD, tenant-local; it gates issuing, never proposing) are asked again on
+  // every approval, before the ledger reserves a row and by the issuer itself at the call, on top
+  // of payoutsEnabled.
+  moneyCodes: {
+    enabled: boolean;
+    armed: boolean;
+    capCents: number;
+    perDriverPerDay: number;
+    startDate: string;
+  };
   // Card check: compares the card provider's statement (Test mode: seeded rows), the bank and the
   // books with our own payment records, lists each difference with a plain sentence and a fix,
   // and drafts a card that matches an unknown card to a driver. Off: the page and menu item are
@@ -625,6 +640,7 @@ export const flags: Flags = {
     comparesPerRun: 10,
     comparesPerTenantPerDay: 20,
   },
+  moneyCodes: { enabled: false, armed: false, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
   cardRecon: {
     enabled: false,
     limits: {

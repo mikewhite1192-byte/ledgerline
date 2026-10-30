@@ -22,6 +22,7 @@ import { getInvoiceReviewQueue } from "./tools/read/get-invoice-review-queue";
 import { getInvoices } from "./tools/read/get-invoices";
 import { getLedger } from "./tools/read/get-ledger";
 import { getLoads } from "./tools/read/get-loads";
+import { getMoneyCodes } from "./tools/read/get-money-codes";
 import { getProfitBrief } from "./tools/read/get-profit-brief";
 import { getProposal } from "./tools/read/get-proposal";
 import { ALWAYS_LOADED } from "./loading";
@@ -42,6 +43,7 @@ import { proposeCardMatch } from "./tools/propose/propose-card-match";
 import { proposeDetentionCharge } from "./tools/propose/propose-detention-charge";
 import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
+import { proposeMoneyCode } from "./tools/propose/propose-money-code";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
 import { proposeRuleChange } from "./tools/propose/propose-rule-change";
@@ -101,6 +103,9 @@ const TOOLS: readonly AnyToolDef[] = [
   proposeCardMatch,
   previewRuleChange,
   proposeRuleChange,
+  // Offered only while flags.moneyCodes.enabled is on (each tool's enabled switch).
+  getMoneyCodes,
+  proposeMoneyCode,
   getPortalEvidence,
   classifyMessage,
   getCashFriday,

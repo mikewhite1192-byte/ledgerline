@@ -20,6 +20,7 @@
         "settlements": 75,
         "settlement_lines": 528,
         "pay_items": 247,
+        "money_codes": 0,
         "advances": 21,
         "invoices": 335,
         "customer_payments": 167,
@@ -313,6 +314,10 @@
           }
         ]
       },
+      "moneyCode": {
+        "loadNumber": "BR-L10327",
+        "receiptCents": 15000
+      },
       "cardRecon": {
         "planted": {
           "fuelAmountDiffers": {
@@ -377,6 +382,7 @@
         "settlements": 75,
         "settlement_lines": 553,
         "pay_items": 212,
+        "money_codes": 0,
         "advances": 20,
         "invoices": 324,
         "customer_payments": 161,
@@ -601,6 +607,7 @@
           }
         ]
       },
+      "moneyCode": null,
       "cardRecon": {
         "planted": {
           "fuelAmountDiffers": {

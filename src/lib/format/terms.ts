@@ -37,6 +37,9 @@ export const TERMS = {
   "marked-copy":
     "A picture of the document with the line in question circled and what your records say written beside it.",
   "test-payout": "A simulated payment; no real money moves in this demo.",
+  "money-code":
+    "A one-time code the driver gives a lumper or a repair shop to pay at the dock; it is charged to the driver's week and paid back from the receipt.",
+  "card-provider": "The company that issues the fuel cards and money codes; in this demo it is simulated, so no real money moves.",
   margin: "What is left of the revenue after driver pay.",
   "days-to-pay":
     "The average days from an invoice's date to the day it was paid, over invoices paid in the 180 days before the week ended.",

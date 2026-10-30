@@ -6,6 +6,7 @@ import { executeMoneyAction, type MoneyDeps, type MoneyHooks } from "./execute";
 import { requestIdOf } from "./keys";
 import { reconcileMoneyActions, type ReconcileHooks } from "./reconcile";
 import {
+  DRIVER,
   FakeDb,
   FakeLedger,
   nextId,
@@ -362,5 +363,97 @@ describe("reconcileMoneyActions", () => {
       reconcileMoneyActions(t.db, { ...SESSION, sub: "someone-else" }, { hooks: t.hooks }, t.deps),
     ).rejects.toThrow("no membership");
     expect(t.payment.readBacks).toBe(0);
+  });
+});
+
+describe("reconciling a payment kind with no rail (a money code)", () => {
+  const CODE = "55555555-5555-4555-8555-555555555555";
+
+  async function unknownCode() {
+    const ledger = new FakeLedger();
+    ledger.subjects.set(CODE, "issuing");
+    ledger.counterparties.set(CODE, DRIVER);
+    const db = new FakeDb(ledger);
+    const payment = recordingPayment(createMockPaymentAdapter({ log: () => {} }), ledger.events);
+    const deps: Partial<MoneyDeps> = {
+      store: ledger.store,
+      payment,
+      timeoutMs: 5,
+      waitMs: 0,
+      pollMs: 1,
+      sleep: async () => {},
+      log: () => {},
+      newActionId: nextId,
+    };
+    const draft = payoutDraft({
+      kind: "money_code_issue",
+      subjectId: CODE,
+      amountCents: 15_000,
+      subjectStatuses: ["issuing", "unknown"],
+    });
+    const r = await executeMoneyAction(
+      db,
+      SESSION,
+      draft,
+      {
+        onReserved: async () => {},
+        send: async () => ({ kind: "unknown", category: "timeout" }),
+        ready: async () => ({ ok: true }),
+      },
+      deps,
+    );
+    expect(r.action.state).toBe("unknown");
+    const onConfirmed = vi.fn(async () => {});
+    const readBack = vi.fn(
+      async (): Promise<ReadBack> => ({
+        found: true,
+        system: "fuel_card_sim",
+        type: "money_code",
+        id: "fcs_code_0123456789abcdef01234567",
+        amountCents: 15_000,
+        status: "succeeded",
+      }),
+    );
+    const ready = vi.fn(async () => ({ ok: true as const }));
+    return { ledger, db, payment, deps, onConfirmed, readBack, ready, id: r.action.id };
+  }
+
+  it("needs its own read-back and ready hooks, never a destination, and never reads through the payment adapter", async () => {
+    const t = await unknownCode();
+    const none = { checked: 0, confirmed: 0, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 };
+    const bad: ReconcileHooks[] = [
+      { onConfirmed: t.onConfirmed },
+      { onConfirmed: t.onConfirmed, readBack: t.readBack },
+      { onConfirmed: t.onConfirmed, ready: t.ready },
+      { onConfirmed: t.onConfirmed, readBack: t.readBack, ready: t.ready, destination: async () => null },
+    ];
+    for (const h of bad) {
+      expect(await reconcileMoneyActions(t.db, SESSION, { hooks: { money_code_issue: h } }, t.deps)).toEqual(none);
+    }
+    expect(t.readBack).not.toHaveBeenCalled();
+    const s = await reconcileMoneyActions(
+      t.db,
+      SESSION,
+      { hooks: { money_code_issue: { onConfirmed: t.onConfirmed, readBack: t.readBack, ready: t.ready } } },
+      t.deps,
+    );
+    expect(s).toMatchObject({ checked: 1, confirmed: 1 });
+    expect(t.readBack).toHaveBeenCalledTimes(1);
+    expect(t.onConfirmed).toHaveBeenCalledTimes(1);
+    expect(t.payment.readBacks).toBe(0);
+    expect(t.ledger.row(t.id)).toMatchObject({ state: "confirmed", settledVia: "read_back" });
+  });
+
+  it("skips the kind when its own ready hook says not ready", async () => {
+    const t = await unknownCode();
+    t.ready.mockResolvedValue({ ok: false, category: "disabled" } as never);
+    const s = await reconcileMoneyActions(
+      t.db,
+      SESSION,
+      { hooks: { money_code_issue: { onConfirmed: t.onConfirmed, readBack: t.readBack, ready: t.ready } } },
+      t.deps,
+    );
+    expect(s).toMatchObject({ checked: 0, confirmed: 0 });
+    expect(t.readBack).not.toHaveBeenCalled();
   });
 });

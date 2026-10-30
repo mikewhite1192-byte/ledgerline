@@ -55,13 +55,29 @@ export type MoneyHooks = {
   // reconcile pass, which runs the same hook when it confirms.
   onConfirmed?(q: Queryable, action: MoneyAction): Promise<void>;
   onFailed?(q: Queryable, action: MoneyAction): Promise<void>;
-  // Accounting kinds only: the one outside call for this action. Payouts go through the payment
-  // adapter and must not pass this.
+  // Hooked kinds only (isHooked: an accounting post, or a payment kind with no payout rail): the
+  // one outside call for this action. Payouts on a rail go through the payment adapter and must
+  // not pass this.
   send?(action: MoneyAction, ctx: SendContext): Promise<SendOutcome>;
-  // Payment kinds only: where this payout lands (the driver's fuel card), read in the reserve
-  // transaction for a row about to be sent. A throw rolls the reservation back. Null means there
-  // is nowhere to send it: the row is refused validation before any call.
+  // Payment kinds with no rail only (a money code, a factoring advance): the caller's adapter
+  // asked whether it can send now. Required for those kinds, refused for every other.
+  ready?(): Promise<Ready>;
+  // Payment kinds on a rail only: where this payout lands (the driver's fuel card), read in the
+  // reserve transaction for a row about to be sent. A throw rolls the reservation back. Null
+  // means there is nowhere to send it: the row is refused validation before any call.
   destination?(q: Queryable, action: MoneyAction): Promise<PayoutDestination | null>;
+};
+
+// A kind whose one outside call is the caller's hooks.send: every accounting post, and a payment
+// kind with no payout rail (railOf null), whose adapter belongs to its own feature.
+export function isHooked(kind: MoneyActionKind): boolean {
+  return KIND_SHAPES[kind].channel === "accounting" || railOf(kind) === null;
+}
+
+// The outside system that answers a payment kind with no rail. Fixed per kind in code.
+const HOOKED_PAYMENT_SYSTEM: Readonly<Partial<Record<MoneyActionKind, OutsideSystem>>> = {
+  factoring_advance: "factoring_sim",
+  money_code_issue: "fuel_card_sim",
 };
 
 // The ledger functions the executor and the reconcile pass use; tests swap in a fake.
@@ -178,16 +194,21 @@ const DEFINITE_FAILURES: readonly MoneyFailure[] = [
 ];
 
 // The payment adapter for a payout kind: the injected one, else the app's adapter for the kind's
-// rail. A kind with no rail (an accounting post) has no payment adapter.
+// rail. A kind with no rail (an accounting post, a hooked payment kind) has no payment adapter,
+// and asking for one is a validation error even when a test injected one.
 export function paymentFor(kind: MoneyActionKind, d: MoneyDeps): PaymentAdapter {
-  if (d.payment) return d.payment;
   const rail = railOf(kind);
   if (rail === null) throw new MoneyError("validation");
+  if (d.payment) return d.payment;
   return paymentAdapter(rail);
 }
 
 export function systemFor(kind: MoneyActionKind, d: MoneyDeps): OutsideSystem {
-  return KIND_SHAPES[kind].channel === "payment" ? paymentFor(kind, d).system : d.accounting.system;
+  if (KIND_SHAPES[kind].channel === "accounting") return d.accounting.system;
+  if (railOf(kind) !== null) return paymentFor(kind, d).system;
+  const system = HOOKED_PAYMENT_SYSTEM[kind];
+  if (system === undefined) throw new MoneyError("validation");
+  return system;
 }
 
 // The adapters that cannot send without a destination: a fuel-card load needs the card.
@@ -235,18 +256,24 @@ export function settlementFor(
   return { to: "unknown", category: "unknown" };
 }
 
-// The kind's adapter, asked again. A throw is "not ready", never "ready".
+// The kind's adapter, asked again. A throw is "not ready", never "ready". A payment kind with no
+// rail asks the caller's own ready hook; without one it is never ready.
 export async function adapterReady(
   db: TenantDb,
   tenantId: string,
   kind: MoneyActionKind,
   d: MoneyDeps,
+  hookReady?: () => Promise<Ready>,
 ): Promise<Ready> {
   try {
-    const r =
-      KIND_SHAPES[kind].channel === "payment"
-        ? await paymentFor(kind, d).ready()
-        : await db.withTenant(tenantId, (q) => d.accounting.ready(q));
+    const r: Ready | undefined =
+      KIND_SHAPES[kind].channel === "accounting"
+        ? await db.withTenant(tenantId, (q) => d.accounting.ready(q))
+        : railOf(kind) !== null
+          ? await paymentFor(kind, d).ready()
+          : typeof hookReady === "function"
+            ? await hookReady()
+            : { ok: false, category: "not_configured" };
     if (r?.ok === true) return { ok: true };
     return { ok: false, category: isMoneyFailure(r?.category) ? r.category : "unknown" };
   } catch (err) {
@@ -318,15 +345,19 @@ export async function executeMoneyAction(
   // The checked copy, so a caller's object changing later cannot change what is reserved.
   const asDraft: MoneyDraft = { ...clean, subjectStatuses: clean.subjectStatuses ?? undefined };
   if (typeof hooks?.onReserved !== "function") throw new MoneyError("validation");
-  if ((channel === "accounting") !== (typeof hooks.send === "function")) {
-    throw new MoneyError("validation");
-  }
-  if (channel === "accounting" && hooks.destination !== undefined) throw new MoneyError("validation");
+  // A hooked kind sends through hooks.send and never names a destination; a payment kind with no
+  // rail also brings its own ready check. Anything else must not pass either.
+  const hooked = isHooked(clean.kind);
+  if (hooked !== (typeof hooks.send === "function")) throw new MoneyError("validation");
+  if (hooked && hooks.destination !== undefined) throw new MoneyError("validation");
+  const railless = channel === "payment" && hooked;
+  if (railless !== (typeof hooks.ready === "function")) throw new MoneyError("validation");
   const tenantId = session?.tenantId;
   if (typeof tenantId !== "string") throw new MoneyError("validation");
   // The kind's rail picks the adapter once for this whole call.
   const rail = railOf(clean.kind);
-  const pinned: MoneyDeps = channel === "payment" ? { ...d, payment: paymentFor(clean.kind, d) } : d;
+  const pinned: MoneyDeps =
+    channel === "payment" && !hooked ? { ...d, payment: paymentFor(clean.kind, d) } : d;
   const via = systemFor(clean.kind, pinned);
   const railWord = rail ? `${rail} ` : "";
 
@@ -339,7 +370,7 @@ export async function executeMoneyAction(
     );
     throw new MoneyError("disabled");
   }
-  const before = await adapterReady(db, tenantId, clean.kind, pinned);
+  const before = await adapterReady(db, tenantId, clean.kind, pinned, hooks.ready);
   if (!before.ok) throw new MoneyError(before.category);
 
   // (1) Approve and reserve, with the caller's own write, in one transaction. A row about to be
@@ -351,7 +382,7 @@ export async function executeMoneyAction(
     const r = await d.store.reserve(q, approval, asDraft, d.newActionId());
     if (r.created) await hooks.onReserved(q, r.action);
     const destination =
-      channel === "payment" && r.action.state === "reserved" && hooks.destination
+      channel === "payment" && !hooked && r.action.state === "reserved" && hooks.destination
         ? await hooks.destination(q, r.action)
         : null;
     return { ...r, tenantZone, destination };
@@ -364,11 +395,11 @@ export async function executeMoneyAction(
 
   // (2) The switch, the adapter and the destination again, outside any transaction. A refusal
   // settles the row.
-  // Only a payment kind sends through the payment adapter (and needs its destination); an
-  // accounting post ignores an injected payment adapter.
-  const payment = channel === "payment" ? pinned.payment : undefined;
+  // Only a payment kind on a rail sends through the payment adapter (and needs its
+  // destination); a hooked kind ignores an injected payment adapter.
+  const payment = channel === "payment" && !hooked ? pinned.payment : undefined;
   const ready: Ready = switchOn(channel)
-    ? await adapterReady(db, tenantId, clean.kind, pinned)
+    ? await adapterReady(db, tenantId, clean.kind, pinned, hooks.ready)
     : { ok: false, category: "disabled" };
   const now: Ready =
     ready.ok && payment && destinationMissing(hooks, payment, first.destination)
@@ -405,16 +436,15 @@ export async function executeMoneyAction(
     tenantZone: first.tenantZone,
   };
   const sending = action;
-  // The payment adapter checks its switch itself on every call. The accounting send is the
-  // caller's hook, so its switch is checked here, at the write: off means a definite disabled
-  // answer and no call.
-  const work =
-    channel === "payment" && payment
-      ? () => payment.sendPayout(payoutOf(sending, first.destination), ctx)
-      : async (): Promise<SendOutcome> => {
-          if (!switchOn("accounting")) return { kind: "failed", category: "disabled" };
-          return (hooks.send as NonNullable<MoneyHooks["send"]>)(sending, ctx);
-        };
+  // The payment adapter checks its switch itself on every call. A hooked send is the caller's
+  // hook, so the channel's switch is checked here, at the write: off means a definite disabled
+  // answer and no call (the hook checks its own feature switch too).
+  const work = payment
+    ? () => payment.sendPayout(payoutOf(sending, first.destination), ctx)
+    : async (): Promise<SendOutcome> => {
+        if (!switchOn(channel)) return { kind: "failed", category: "disabled" };
+        return (hooks.send as NonNullable<MoneyHooks["send"]>)(sending, ctx);
+      };
   d.log(`money: sending ${action.id} ${action.kind} ${action.amountCents}c via ${railWord}${via}`);
   let outcome: unknown;
   try {
