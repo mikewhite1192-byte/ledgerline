@@ -82,6 +82,7 @@ describe("every suggestion says why", () => {
       ...homeSuggestions(false, { profitOn: true }),
       ...homeSuggestions(false, { cashFridayOn: true }),
       ...homeSuggestions(false, { collections: true }),
+      ...homeSuggestions(false, { quarterOn: true }),
       DETENTION_SUGGESTION,
       ruleChangeSuggestion("2026-11-02"),
       ...withPaystubSuggestion(homeSuggestions(true), paystub),
@@ -116,7 +117,9 @@ describe("ruleChangeSuggestion", () => {
     );
     expect(s.help).not.toContain("Nov 9");
   });
+});
 
+describe("homeSuggestions with the quarter review", () => {
   it("asks how the quarter is going in that place while the quarter review is on, ahead of last week", () => {
     for (const reportsOn of [false, true]) {
       for (const profitOn of [false, true]) {
