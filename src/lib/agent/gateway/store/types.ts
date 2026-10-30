@@ -1,6 +1,7 @@
 import type { Checklist } from "../../checklist";
 import type { StepKind, StepView } from "../../view";
-import type { ProposalDraft } from "../types";
+import type { GatewayContext, ProposalDraft } from "../types";
+import type { EngineCheckResult } from "./engine-check";
 
 // The agent's own records (migration 0009), as the operator loop writes them. Every write goes
 // through the gateway's tenant transaction with the membership check (design 3.7); the loop sees
@@ -42,6 +43,10 @@ export type PersistInput = {
   gatewayDecisionId: string;
   // The first flagged input this turn read, if any. Set by the loop, never by the model.
   flaggedInputId: string | null;
+  // The engine's recompute of the draft, matched to the cent before the insert (design-agents-102
+  // 3.2), stored by the same INSERT with the row's own time. Absent: the columns stay null, as for
+  // every card made with flags.verification off and every kind the engine never compares.
+  engine?: { check: "matched"; engineCents: number | null };
 };
 
 // created: a new card. duplicate: the same proposal already exists (same kind, subject and
@@ -70,6 +75,9 @@ export interface TurnStore {
   startStep(turnId: string, step: StepStart): Promise<StepView>;
   finishStep(turnId: string, stepId: string, finish: StepFinish): Promise<StepView>;
   persistProposal(input: PersistInput): Promise<PersistResult>;
+  // The engine's own figure for a draft, compared to the cent, read in its own transaction before
+  // the insert. Reads only. Null when a read or the engine threw: unknown, never matched.
+  checkDraft(draft: ProposalDraft, ctx: GatewayContext): Promise<EngineCheckResult | null>;
   // Marks this turn's unflagged waiting proposals with a flagged input read later in the turn.
   flagTurnProposals(turnId: string, inputId: string): Promise<number>;
   // Replaces the turn's checklist while it runs (set_checklist; the loop masks it first).

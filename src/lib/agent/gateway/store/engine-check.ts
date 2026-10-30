@@ -3,8 +3,9 @@ import { readCheckInput, readRowsWhereId } from "../../../data/read";
 import { runAllChecks } from "../../../rules-engine";
 import { findingInWeek, fixPlanFor, type FixLeg } from "../../../sweep/plan";
 import { isUuid } from "../../../uuid";
-import { engineOrThrow, readStoredProposal, type ProposalRow } from "../tools/read/get-proposal";
-import type { GatewayContext } from "../types";
+import { engineOrThrow, readStoredProposal, safeArgs, type ProposalRow } from "../tools/read/get-proposal";
+import type { GatewayContext, ProposalDraft } from "../types";
+import { impactOf, PROPOSAL_TITLES } from "./proposals";
 
 // The code-side engine check (design 3.6): the rules engine's own figure for a proposal, compared
 // in code with what the proposal says, to the cent, whole values only. It reads the same engine
@@ -31,6 +32,14 @@ const COMPARED: ReadonlySet<string> = new Set([
   "detention_charge",
   "settlement_approve",
 ]);
+
+// Whether the engine compares this kind at all. A kind with no comparison here (the card match,
+// the Cash Friday kinds, the pay rule change, the money code, the pay policy setup) has no
+// recompute by design, so a draft of it is never refused for the lack of one (design-agents-102
+// 3.2 and D3: only a kind the engine does compare is refused when its recompute cannot run).
+export function engineCompares(kind: string): boolean {
+  return kind === "pay_correction" || COMPARED.has(kind);
+}
 
 // Whole cents the column can hold, else null: a figure that is not one is no figure.
 function centsOf(v: unknown): number | null {
@@ -154,12 +163,65 @@ export async function engineCheck(
   try {
     const stored = await readStoredProposal(q, proposalId);
     if (!stored) return ENGINE_UNAVAILABLE;
-    const { row, raw, args } = stored;
-    if (row.kind === "pay_correction") return await payCorrectionCheck(q, row, raw);
-    if (!COMPARED.has(row.kind)) return ENGINE_UNAVAILABLE;
-    return compareEngine(row.kind, Number(row.amount_cents), await engineOrThrow(q, ctx, row, args, raw));
+    return await checkRow(q, ctx, stored.row, stored.raw, stored.args);
   } catch (err) {
     console.warn("gateway: the engine check could not be computed:", err instanceof Error ? err.name : "unknown");
+    return null;
+  }
+}
+
+async function checkRow(
+  q: Queryable,
+  ctx: GatewayContext,
+  row: ProposalRow,
+  raw: Record<string, unknown>,
+  args: Record<string, unknown>,
+): Promise<EngineCheckResult> {
+  if (row.kind === "pay_correction") return await payCorrectionCheck(q, row, raw);
+  if (!COMPARED.has(row.kind)) return ENGINE_UNAVAILABLE;
+  return compareEngine(row.kind, Number(row.amount_cents), await engineOrThrow(q, ctx, row, args, raw));
+}
+
+// A draft shaped as the row the insert would store and the engine reads: the amount and direction
+// as impactOf stores them, the subject id as the database returns it, the args as their JSON. It
+// is still proposed and has no id yet; no engine reads either.
+function draftRow(draft: ProposalDraft): ProposalRow {
+  const impact = impactOf(draft.kind, draft.amountCents);
+  return {
+    id: "00000000-0000-0000-0000-000000000000",
+    kind: draft.kind,
+    title: PROPOSAL_TITLES[draft.kind],
+    subject_table: draft.subjectTable,
+    subject_id: draft.subjectId.toLowerCase(),
+    subject_label: null,
+    amount_cents: impact.amountCents,
+    direction: impact.direction,
+    operator_verdict: "not_given",
+    status: "proposed",
+    reasons: "[]",
+    sources: "[]",
+    args: JSON.stringify(draft.args),
+    exceptions: "[]",
+    flagged: false,
+    flag_categories: null,
+  };
+}
+
+// The same check on a draft before it is saved (design-agents-102 3.2), so a card the engine does
+// not recompute to the cent is never inserted. Never throws: null when a read or the engine threw,
+// which the loop treats as unknown (refused), never as matched. The error is logged by name only.
+export async function engineCheckDraft(
+  q: Queryable,
+  ctx: GatewayContext,
+  draft: ProposalDraft,
+): Promise<EngineCheckResult | null> {
+  try {
+    const row = draftRow(draft);
+    const parsed: unknown = JSON.parse(row.args);
+    const raw = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    return await checkRow(q, ctx, row, raw, safeArgs(raw));
+  } catch (err) {
+    console.warn("gateway: the engine check on a draft could not be computed:", err instanceof Error ? err.name : "unknown");
     return null;
   }
 }

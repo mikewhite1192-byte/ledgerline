@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  coverageOf,
   fanoutCoverage,
+  gatewayVerification,
+  persistVerification,
+  PROPOSAL_CHECK_WORDS,
+  PROPOSAL_REQUIRED_CHECKS,
   parseSweepCoverage,
   requiredSweepSteps,
   sweepCoverage,
@@ -59,5 +64,40 @@ describe("the sweep's coverage figure", () => {
     expect(parseSweepCoverage(JSON.stringify({ ...stored, v: 2 }))).toBeNull();
     expect(parseSweepCoverage(JSON.stringify({ ...stored, pct: 101 }))).toBeNull();
     expect(parseSweepCoverage(JSON.stringify({ ...stored, extra: true }))).toBeNull();
+  });
+});
+
+describe("what every proposal must pass", () => {
+  it("lists five checks in the order they run, each with plain words", () => {
+    expect(PROPOSAL_REQUIRED_CHECKS).toEqual(["schema", "records_exist", "engine_limit", "sources_in_record", "engine_recompute"]);
+    expect(Object.keys(PROPOSAL_CHECK_WORDS)).toEqual([...PROPOSAL_REQUIRED_CHECKS]);
+    for (const words of Object.values(PROPOSAL_CHECK_WORDS)) expect(words).toMatch(/^[A-Z][a-z ]+$/);
+  });
+
+  it("names the step a gateway refusal stopped at, and claims no check after it", () => {
+    expect(gatewayVerification("unknown_record")).toEqual({ failed: ["records_exist"], passed: ["schema"] });
+    for (const reason of ["amount_over_limit", "engine_refused", "limit_unavailable", "budget"]) {
+      expect(gatewayVerification(reason)).toEqual({ failed: ["engine_limit"], passed: ["schema", "records_exist"] });
+    }
+    expect(gatewayVerification("screen_flagged")).toEqual({ failed: [], passed: ["schema", "records_exist", "engine_limit"] });
+    expect(gatewayVerification("something_new")).toEqual({ failed: [], passed: ["schema"] });
+  });
+
+  it("names the loop's refusals before the insert, and an accepted card with or without a recompute", () => {
+    expect(persistVerification("citation_not_in_record", false)).toEqual({
+      failed: ["sources_in_record"],
+      passed: ["schema", "records_exist", "engine_limit"],
+    });
+    for (const refusal of ["engine_mismatch", "limit_unavailable"] as const) {
+      expect(persistVerification(refusal, false).failed).toEqual(["engine_recompute"]);
+    }
+    expect(persistVerification(null, true).passed).toEqual([...PROPOSAL_REQUIRED_CHECKS]);
+    expect(persistVerification(null, false).passed).not.toContain("engine_recompute");
+  });
+
+  it("counts the checks a card passed, each once, rounded down", () => {
+    expect(coverageOf(PROPOSAL_REQUIRED_CHECKS)).toEqual({ required: 5, passed: 5, pct: 100 });
+    expect(coverageOf(["schema", "schema", "records_exist", "not_a_check"])).toEqual({ required: 5, passed: 2, pct: 40 });
+    expect(coverageOf(persistVerification(null, false).passed)).toEqual({ required: 5, passed: 4, pct: 80 });
   });
 });

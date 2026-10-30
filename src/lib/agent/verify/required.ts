@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-// What every pay sweep run must do, as fixed lists (design-agents-102 3.1 and 3.3), and the
-// coverage figure a run records against them. Pure: no reads, no writes, no model.
+// What every pay sweep run and every proposal must do, as fixed lists (design-agents-102 3.1 and
+// 3.3), and the coverage figures recorded against them. Pure: no reads, no writes, no model.
 
 // The steps a sweep run's checklist must list, in order. The second look (plan, then check each
 // driver) is listed only when the run starts with room for it.
@@ -70,4 +70,66 @@ export function parseSweepCoverage(raw: string | null): SweepCoverage | null {
   } catch {
     return null;
   }
+}
+
+// What every proposal must pass before it is saved (design-agents-102 3.1), in the order the checks
+// run: the gateway's form, record and limit steps, then, in the loop before the insert, the case
+// record and the engine's own recompute. Every propose_* kind moves money or sits beside it, so all
+// five are required.
+export const PROPOSAL_REQUIRED_CHECKS = [
+  "schema",
+  "records_exist",
+  "engine_limit",
+  "sources_in_record",
+  "engine_recompute",
+] as const;
+export type ProposalCheck = (typeof PROPOSAL_REQUIRED_CHECKS)[number];
+
+// The checks in plain words, as a person reads them.
+export const PROPOSAL_CHECK_WORDS: Readonly<Record<ProposalCheck, string>> = {
+  schema: "In the right form",
+  records_exist: "Every record named exists",
+  engine_limit: "Inside what the pay rules allow",
+  sources_in_record: "Every citation is from the case record",
+  engine_recompute: "The pay rules recomputed the same number",
+};
+
+// One try's result: the checks that failed and the ones that passed before it stopped. A check
+// after the one that failed never ran, so it is in neither list.
+export type ProposalVerification = { failed: ProposalCheck[]; passed: ProposalCheck[] };
+
+const upTo = (n: number): ProposalCheck[] => PROPOSAL_REQUIRED_CHECKS.slice(0, n);
+
+// The gateway's limit step refuses with one of these; a screen refuses after the limit passed.
+const LIMIT_REASONS: ReadonlySet<string> = new Set(["amount_over_limit", "engine_refused", "limit_unavailable", "budget"]);
+const SCREEN_REASONS: ReadonlySet<string> = new Set(["screen_flagged", "screen_error"]);
+
+// A gateway refusal after the schema passed, by the step it stopped at (the gateway's order: ids,
+// then the limit, then the screen). A screen is not a proposal check, so it fails none of them. A
+// reason this does not know claims only the schema, which the call passed to be counted at all.
+export function gatewayVerification(reason: string): ProposalVerification {
+  if (reason === "unknown_record") return { failed: ["records_exist"], passed: upTo(1) };
+  if (LIMIT_REASONS.has(reason)) return { failed: ["engine_limit"], passed: upTo(2) };
+  if (SCREEN_REASONS.has(reason)) return { failed: [], passed: upTo(3) };
+  return { failed: [], passed: upTo(1) };
+}
+
+// The loop's refusals before the insert, and an accepted card. A kind the engine never compares
+// passes without engine_recompute: it did not run, so it is not claimed.
+export type PersistRefusal = "citation_not_in_record" | "engine_mismatch" | "limit_unavailable";
+export function persistVerification(refusal: PersistRefusal | null, recomputed: boolean): ProposalVerification {
+  if (refusal === "citation_not_in_record") return { failed: ["sources_in_record"], passed: upTo(3) };
+  if (refusal !== null) return { failed: ["engine_recompute"], passed: upTo(4) };
+  return { failed: [], passed: recomputed ? upTo(5) : upTo(4) };
+}
+
+export type ProposalCoverage = { required: number; passed: number; pct: number };
+
+// How many of the required checks a card passed ("5 of 5 checks passed (100%)"). Only a name on
+// the list counts, each once; pct is rounded down.
+export function coverageOf(passed: Iterable<string>): ProposalCoverage {
+  const seen = new Set(passed);
+  const required = PROPOSAL_REQUIRED_CHECKS.length;
+  const n = PROPOSAL_REQUIRED_CHECKS.filter((c) => seen.has(c)).length;
+  return { required, passed: n, pct: Math.floor((n * 100) / required) };
 }
