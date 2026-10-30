@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import { matchArgs, rankCandidates } from "../../../rules-engine/card-recon";
 import { instantAt } from "../../../seed/calendar";
@@ -30,8 +30,11 @@ const run = (name: string, args: unknown, role: GatewayContext["role"] = "operat
   return callTool({ ...ctx, role }, call(name, args), { db, clock: fixedClock }).then((out) => ({ out, db }));
 };
 
+// Put back as shipped after each test: each test sets the switch it assumes.
+const shipped = structuredClone(flags);
+
 afterEach(() => {
-  flags.cardRecon.enabled = false;
+  Object.assign(flags, structuredClone(shipped));
 });
 
 const BREAK: Row = {
@@ -67,6 +70,10 @@ const BREAK: Row = {
 };
 
 describe("card tools switched off", () => {
+  beforeEach(() => {
+    flags.cardRecon.enabled = false;
+  });
+
   it.each([
     ["get_card_breaks", { status: "open" }],
     ["propose_card_match", { transactionId: planted.cardUnknownId, driverId: plan.rows.drivers[0].id }],

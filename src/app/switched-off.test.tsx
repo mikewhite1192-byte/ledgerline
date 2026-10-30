@@ -71,15 +71,19 @@ const SWITCHES = [
   "quarterReviewEnabled",
 ] as const;
 const saved = Object.fromEntries(SWITCHES.map((s) => [s, flags[s]])) as Record<(typeof SWITCHES)[number], boolean>;
+// The card check's switch sits inside its own object.
+const savedCardRecon = flags.cardRecon;
 
 beforeEach(() => {
   reads.sql = [];
   reads.role = "admin";
   reads.lenient = false;
   for (const s of SWITCHES) flags[s] = false;
+  flags.cardRecon = { ...savedCardRecon, enabled: false };
 });
 afterEach(() => {
   for (const s of SWITCHES) flags[s] = saved[s];
+  flags.cardRecon = savedCardRecon;
   cleanup();
 });
 

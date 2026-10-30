@@ -8,6 +8,7 @@ import type {
   ComputerScreenshot,
   SafetyCheck,
 } from "../../ai";
+import { clampToMaxTurns } from "../../agent/run-limits";
 import type { Session } from "../../auth/claims";
 import { cookieValue } from "../session";
 import { summarize, validateBatch } from "./actions";
@@ -202,14 +203,49 @@ export async function runPortalRun(
     let paused: StoredStep | null = null;
     let approvedIds = new Set<string>();
     const ackByStep = new Map<string, Set<string>>();
+    // A run put back in the queue after its worker stopped (start.ts) carries on from its last
+    // executed step, which is its resume_step: nothing is paused and nothing is acknowledged anew.
+    // A run a person approved resumes at a step that has not run, so it never takes this path.
+    let carriedFrom: StoredStep | null = null;
+    let checks: Awaited<ReturnType<RunStore["checks"]>> = [];
+    // Model calls a stop took with it whose stored step gives back their cost.
+    let recoveredCalls = 0;
     if (resuming) {
       stored = await store.steps(run.id);
-      const checks = await store.checks(run.id);
+      // A stop between storing a step and the run's progress write leaves that step's call, cost
+      // and count off the run. Each progress write sets all three together, so the stored steps
+      // past the run's own step count, in order, are exactly the ones missing from all three: each
+      // is added once, and a later resume reads the counters this one writes and adds nothing. A
+      // cost that does not read back as a whole number of nanocents is unknown, and fails closed.
+      const missing = stored
+        .filter((s) => s.seq > 0)
+        .sort((a, b) => a.seq - b.seq)
+        .slice(run.stepCount);
+      if (missing.some((s) => !Number.isSafeInteger(s.costNanocents) || s.costNanocents < 0)) {
+        return await end("failed", "not_resumable");
+      }
+      for (const s of missing) state.cost += s.costNanocents;
+      state.calls += missing.length;
+      state.steps += missing.length;
+      recoveredCalls = missing.length;
+      checks = await store.checks(run.id);
       for (const c of checks) {
         if (c.status !== "approved") continue;
         if (!ackByStep.has(c.stepId)) ackByStep.set(c.stepId, new Set());
         ackByStep.get(c.stepId)!.add(c.checkId);
       }
+      // Only an executed step with the page it left: without that page the run cannot reopen
+      // where its history ends, so it is not resumable.
+      if (run.resumeAttempts > 0 && run.resumeStep !== null && run.resumeStep > 0) {
+        carriedFrom = stored.find((s) => s.seq === run.resumeStep && s.executed && s.urlAfter !== null) ?? null;
+      }
+    }
+    if (carriedFrom) {
+      // The page follows the stored steps, which a stop between storing a step and the run's
+      // progress write leaves ahead of the run's own. The browser reopens on the page the last
+      // executed step left, the page of the last screenshot in the history.
+      state.lastUrl = carriedFrom.urlAfter;
+    } else if (resuming) {
       paused = stored.find((s) => s.seq === run.resumeStep && !s.executed && s.callItem !== null) ?? null;
       if (!paused) return await end("failed", "not_resumable");
       const own = checks.filter((c) => c.stepId === paused!.id);
@@ -285,7 +321,7 @@ export async function runPortalRun(
         });
       }
       nextSeq = Math.max(...stored.map((s) => s.seq)) + 1;
-      const back = run.lastUrl && sameOrigin(run.lastUrl, deps.origin) ? run.lastUrl : `${deps.origin}/portal/loads`;
+      const back = state.lastUrl && sameOrigin(state.lastUrl, deps.origin) ? state.lastUrl : `${deps.origin}/portal/loads`;
       await browser(() => opened.open(back, { name: PORTAL_COOKIE, value: cookieValue(payload.tenantId, sessionId!) }));
     }
 
@@ -320,6 +356,10 @@ export async function runPortalRun(
         }
       }
     }
+    // A run that was ever put back after a stop may have downloaded this load's POD before the
+    // stop, and those bytes went with the worker. Unknown is not zero: unless the run holds a POD,
+    // it stores no evidence until a later step downloads this load's POD again.
+    let podUnknown = run.resumeAttempts > 0 && pod === null && lostPod === null;
     let seenPod: CapturedPod | null = opened.pod();
     // Only this run's own load's POD counts: the whole path, compared whole. A POD the browser
     // opened for any other load (a misclick, or page text steering the model) is never stored as
@@ -337,6 +377,7 @@ export async function runPortalRun(
       }
       pod = { bytes: captured.bytes, hash: sha256(captured.bytes), stepSeq: seq };
       lostPod = null;
+      podUnknown = false;
     };
 
     // Holds the POD on the run for its resume, in its own write before the pause, failing safe:
@@ -374,12 +415,20 @@ export async function runPortalRun(
       });
     }
 
+    // The step limit under the one ceiling over every run (flags.runLimits.maxTurns).
+    const maxSteps = clampToMaxTurns(limits.maxSteps);
+    // Each stop may have taken one model call with it whose cost never reached the run: the
+    // budget counts each such call at the per-call cap. A stop whose call was recovered from its
+    // stored step above took no other call, so only the stops left are counted. Never stored, so
+    // the run's cost stays what was read back plus what was recovered.
+    const lostCalls = Math.max(0, run.resumeAttempts - recoveredCalls);
+    const lostNanocents = lostCalls * limits.maxCallCents * 1_000_000_000;
     let retried = false;
     for (;;) {
       // 4. Budget gate, before every model call.
-      if (state.calls >= limits.maxSteps) return await end("failed", "step_budget");
+      if (state.calls + lostCalls >= maxSteps) return await end("failed", "step_budget");
       if (deps.now().getTime() - startedMs >= limits.maxWallMs) return await end("failed", "wall_time");
-      const remainingCents = limits.maxRunCents - state.cost / 1_000_000_000;
+      const remainingCents = limits.maxRunCents - (state.cost + lostNanocents) / 1_000_000_000;
       const maxCostCents = Math.min(limits.maxCallCents, Math.floor(remainingCents));
       if (maxCostCents < 1) return await end("failed", "run_cents");
 
@@ -437,6 +486,7 @@ export async function runPortalRun(
         // A POD captured before a pause that the resume did not get back and no later step
         // downloaded again: the run ends without evidence rather than storing it as no POD.
         if (lostPod !== null) return await end("failed", "pod_not_kept");
+        if (podUnknown) return await end("failed", "pod_unknown_after_stop");
         const read = readAnswer(result.text, run.reference);
         if (!read.ok) return await end("failed", "no_evidence");
         const inputId = await store.storeAnswer(result.text, deps.now());

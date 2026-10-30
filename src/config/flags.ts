@@ -27,7 +27,10 @@ export type Flags = {
   // reads it at the moment of that decision; callers never do.
   sparkOpenFallback: "off" | "fireworks";
   // Any payout through the payment adapter, mock included. Off means the money executor refuses
-  // before reserving a ledger row, and the adapter refuses again at send.
+  // before reserving a ledger row, and the adapter refuses again at send. With paymentProvider
+  // stripe_test, a weekly pay payout (the bank rail) runs only for the two demo carriers, because
+  // Stripe test mode sends every transfer to the one test account the environment names: any other
+  // carrier is refused as if this were off, before a ledger row is reserved and again at the send.
   payoutsEnabled: boolean;
   // Payouts: the mock card-load adapter unless Stripe test mode is switched on.
   paymentProvider: "mock" | "stripe_test";
@@ -165,6 +168,24 @@ export type Flags = {
   // Caps on note drafting: one note's worst case, the spend of one period's notes, and the
   // output budget of one note.
   driverNoteLimits: { maxNoteCents: number; maxBatchCents: number; maxOutputTokens: number };
+  // Pay cards: a picture of a driver's approved week (take-home pay, earned, taken out, loads,
+  // change from last week) drawn in the browser from the settlement's own engine figures, read
+  // back by Muse Spark and kept only when every figure matches, for the clerk to save and send
+  // from their phone. Off means the cards page shows the switched-off state, its link is hidden,
+  // the routes refuse before any work and the driver view shows no card. aiEnabled must also be on
+  // for a check to reach a model. Nothing is ever sent by the app.
+  payCardsEnabled: boolean;
+  payCardLimits: {
+    // The cap on one read-back call, in cents.
+    checkMaxCostCents: number;
+    // The spend of one run of the cards page, in cents.
+    maxBatchCents: number;
+    // Cards one carrier may check in 24 hours, every outcome counted.
+    cardsPerTenantPerDay: number;
+    // The largest card picture the check takes, in bytes.
+    // At most 400,000: the byte_length CHECK in migration 0052 refuses a larger card.
+    maxPngBytes: number;
+  };
   // The five report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
@@ -324,7 +345,8 @@ export type Flags = {
   approveAllLimits: { maxItems: number };
   // The portal runner: the agent opens the fictional broker portal in a browser and reads a
   // load's delivery stamps and POD. Off gates the portal pages, the run routes, the gateway tool
-  // and the worker, which re-checks it when it claims a run. aiEnabled must also be on.
+  // and the worker, which re-checks it when it claims a run. aiEnabled must also be on. Ships off:
+  // no runner is wired on the hosted site, so the page's only action would always refuse.
   portalRunnerEnabled: boolean;
   // The model that drives the browser, and the only one a computer step may call. Muse Spark is
   // the default: Muse Wonder answered 400 "Unsupported tool type: 'computer'" when the runner was
@@ -458,12 +480,16 @@ export type Flags = {
   // day, with a Muse Spark look at two receipt photos of a fill-up turned in twice. It only lists
   // and proposes; a person approves a pay correction on its card. Off means the Fuel checks page
   // is not found, its link is hidden, the routes and the service refuse before any work, no
-  // receipt compare is called, and the agent's run_checks leaves fuel findings out.
+  // receipt compare is called, and the agent's run_checks leaves fuel findings out. On, a check
+  // runs only for the two demo carriers: the run route refuses any other carrier as disabled and
+  // run_checks leaves its fuel findings out, because the start date below is the demo weeks'.
   fuelAnomalyEnabled: boolean;
   fuelAnomalyLimits: {
-    // Tenant-local date: fill-ups before it are never listed. The release PR that turns
-    // fuelAnomalyEnabled on also sets this to its go-live date; left as it is, the first run lists
-    // every fill-up from this date up to go-live.
+    // Tenant-local date: fill-ups before it are never listed. The release for the demo carriers set
+    // it to the first day of the earlier seeded open week (Prairie Wind's, Sunday 2026-10-25), so
+    // every planted fill-up lists again after a demo reset; fuel checks only list and propose, and
+    // nothing goes outside. It is one date for every carrier, which is why only the demo carriers
+    // run the checks; a carrier with real history needs its own go-live date before it can.
     from: string;
     // Two fill-ups with the same gallons, amount and state this close together are one fill-up
     // turned in twice.
@@ -550,17 +576,32 @@ export type Flags = {
     // Cents the ledger must still have free after the run's own limit before a run starts.
     reserveCents: number;
   };
+  // Fuel and tax rates: a person looks up this week's diesel price or a state's fuel tax rate (one
+  // Muse Spark call with web search) and an admin pins one from its linked source. The agent only
+  // reads pinned rates (get_pinned_rates); it never looks one up or pins one, and nothing is
+  // recalculated, billed or paid from a pin in this release. Off means the Fuel and tax rates page
+  // is not found, its link is hidden, the routes and the services refuse before any work, and the
+  // read tool is not offered. Not a local override: the demo path's tool list must not change.
+  groundedRatesEnabled: boolean;
+  ratesLimits: {
+    // The cap on one lookup call, in cents.
+    lookupMaxCostCents: number;
+    // Lookups one carrier may start in a rolling day (failed ones count).
+    lookupsPerTenantPerDay: number;
+    // Web searches one lookup may run (each is billed on top of the tokens).
+    maxSearchCalls: 1 | 2 | 3;
+  };
 };
 
 export const flags: Flags = {
-  aiEnabled: false,
+  aiEnabled: true,
   aiJobHourlyCapCents: 1000,
   aiProofRoute: false,
   triageProvider: "baseten",
   sparkOpenFallback: "off",
-  payoutsEnabled: false,
-  paymentProvider: "mock",
-  accountingEnabled: false,
+  payoutsEnabled: true,
+  paymentProvider: "stripe_test",
+  accountingEnabled: true,
   inboundEmailEnabled: false,
   screenOutputMode: "text",
   gatewayLimits: {
@@ -569,7 +610,7 @@ export const flags: Flags = {
     detentionChargeMaxCents: 100_000,
     ruleChangeImpactMaxCents: 500_000,
   },
-  agentEnabled: false,
+  agentEnabled: true,
   agentStreamMode: "sse",
   runLimits: {
     maxTurns: 30,
@@ -583,33 +624,35 @@ export const flags: Flags = {
     summaryChars: 10_000,
   },
   proposalMaxAgeDays: 7,
-  auditorEnabled: false,
+  auditorEnabled: true,
   auditorStart: "2026-10-27T00:00:00Z",
   auditorRequired: true,
   approverRole: { adminAboveCents: 200_000 },
-  documentsEnabled: false,
+  documentsEnabled: true,
   documentCrop: false,
   documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
   documentMarkupEnabled: false,
   markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
-  advancesEnabled: false,
-  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-27" },
+  advancesEnabled: true,
+  advancePayouts: { armed: false, capCents: 50_000, startDate: "2026-10-29" },
   advancesLimits: { proposalsPerDay: 30, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
-  advanceTakeback: { enabled: false, maxCents: 100_000 },
-  agentToolSearch: false,
-  agentPromptCache: { enabled: false, retention: "in_memory" },
-  driverNotesEnabled: false,
+  advanceTakeback: { enabled: true, maxCents: 100_000 },
+  agentToolSearch: true,
+  agentPromptCache: { enabled: true, retention: "in_memory" },
+  driverNotesEnabled: true,
   driverNotesEmailEnabled: false,
   driverNotesEmailAllowlist: [],
   driverNotesEmailFrom: "2026-10-27",
   driverNoteLimits: { maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 },
-  reportsEnabled: false,
-  invoicesEnabled: false,
+  payCardsEnabled: false,
+  payCardLimits: { checkMaxCostCents: 3, maxBatchCents: 40, cardsPerTenantPerDay: 100, maxPngBytes: 400_000 },
+  reportsEnabled: true,
+  invoicesEnabled: true,
   invoicesStart: "2026-10-05",
   invoiceLimits: { proposalsPerRun: 50, maxPostAttempts: 3 },
-  customerPaymentsEnabled: false,
+  customerPaymentsEnabled: true,
   customerPaymentLimits: { perDay: 50, maxCents: 5_000_000 },
-  clipsEnabled: false,
+  clipsEnabled: true,
   clipLimits: {
     bytes: 700_000,
     durationMs: 20_000,
@@ -618,18 +661,18 @@ export const flags: Flags = {
     readMaxCostCents: 10,
     perTenantPerDay: 20,
   },
-  inboxEnabled: false,
+  inboxEnabled: true,
   inboxLimits: { messagesPerDay: 50, maxChars: 20_000, maxAttempts: 3 },
-  voiceIntakeEnabled: false,
+  voiceIntakeEnabled: true,
   voiceLimits: { maxWavBytes: 2_000_000, maxOriginalBytes: 700_000, maxDurationMs: 60_000, voiceNotesPerDay: 20 },
-  detentionEnabled: false,
-  demoResetEnabled: false,
-  rulesByTalkingEnabled: false,
-  sweepEnabled: false,
+  detentionEnabled: true,
+  demoResetEnabled: true,
+  rulesByTalkingEnabled: true,
+  sweepEnabled: true,
   sweepScheduleEnabled: false,
-  payCorrectionsEnabled: false,
+  payCorrectionsEnabled: true,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
-  fanoutEnabled: false,
+  fanoutEnabled: true,
   fanoutLimits: {
     maxDrivers: 30,
     parallel: 6,
@@ -645,7 +688,7 @@ export const flags: Flags = {
     runCapCents: 450,
   },
   approveAllLimits: { maxItems: 25 },
-  cashFridayEnabled: false,
+  cashFridayEnabled: true,
   cashFridayLimits: {
     maxExplainCents: 8,
     maxExplainChars: 600,
@@ -668,27 +711,27 @@ export const flags: Flags = {
     podMaxBytes: 300_000,
     approvalWaitMinutes: 30,
   },
-  settlementsEnabled: false,
+  settlementsEnabled: true,
   settlementsStart: "2026-10-05",
   settlementLimits: { driversPerRun: 200, maxPayoutAttempts: 3, legTwoMinRemainingMs: 12_000 },
-  batchApproveEnabled: false,
+  batchApproveEnabled: true,
   batchLimits: { maxItems: 50, maxTotalCents: 10_000_000, drainBudgetMs: 22_000 },
-  invoiceReviewEnabled: false,
-  collectionsEnabled: false,
+  invoiceReviewEnabled: true,
+  collectionsEnabled: true,
   collectionsEmailEnabled: false,
   collectionsEmailAllowlist: [],
   collectionsEmailFrom: "",
   collectionsLimits: { maxDraftCents: 2, maxRunCents: 40, maxOutputTokens: 500, maxDraftsPerRun: 12, minDaysLate: 30 },
-  profitBriefEnabled: false,
+  profitBriefEnabled: true,
   profitBriefLimits: { maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 },
-  carrierMemoryEnabled: false,
+  carrierMemoryEnabled: true,
   carrierMemoryLimits: { maxNotesPerTurn: 8, maxPromptChars: 1600, maxNoteChars: 300, maxNotesPerCarrier: 500 },
   carrierMemoryAgentLimits: { maxSuggestionsPerTurn: 2, maxSuggestionsWaiting: 20, maxAuditorNotes: 4 },
   quarterReviewEnabled: false,
   quarterReviewLimits: { maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 },
-  fuelAnomalyEnabled: false,
+  fuelAnomalyEnabled: true,
   fuelAnomalyLimits: {
-    from: "2026-10-27",
+    from: "2026-10-25",
     duplicateWindowMinutes: 60,
     chargebackMaxCents: 50_000,
     compareMaxCostCents: 5,
@@ -707,7 +750,7 @@ export const flags: Flags = {
   },
   moneyCodes: { enabled: false, armed: false, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
   cardRecon: {
-    enabled: false,
+    enabled: true,
     limits: {
       windowDays: 14,
       maxBreaks: 50,
@@ -721,6 +764,8 @@ export const flags: Flags = {
   },
   evalCardEnabled: false,
   evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
+  groundedRatesEnabled: false,
+  ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
 };
 
 applyLocalOverrides(flags);
