@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { LOCAL_OVERRIDABLE } from "../src/config/local-overrides";
+import { LOCAL_OFF_ONLY, LOCAL_OVERRIDABLE } from "../src/config/local-overrides";
 import { DEMO_CARRIERS } from "../src/lib/seed/carriers";
 
 // Everything the local demo-path run needs, in one tracked file. Nothing here is a secret: the
@@ -71,8 +71,13 @@ export function e2eAppUrl(): string {
   return url.toString();
 }
 
-// Every switch the override allows, on: every merged step runs. Caps and limits stay as shipped.
-export const LOCAL_SWITCHES = JSON.stringify(Object.fromEntries(LOCAL_OVERRIDABLE.map((k) => [k, true])));
+// The switches the model replay was recorded with: every switch the override allows, on (every
+// step of the path runs), and every off-only switch, off (none of them adds a tool, a prompt line
+// or a request field the replay never saw). Caps, limits, dates and providers stay as shipped.
+export const LOCAL_SWITCHES = JSON.stringify({
+  ...Object.fromEntries(LOCAL_OVERRIDABLE.map((k) => [k, true])),
+  ...Object.fromEntries(LOCAL_OFF_ONLY.map((k) => [k, false])),
+});
 
 // The app's environment for next dev. Every variable the app reads that could reach an outside
 // system is set here, blank where unused, so a developer's .env.local cannot leak into the run
@@ -115,7 +120,6 @@ export function appEnv(): Record<string, string> {
     COGNITO_USER_POOL_ID: E2E_POOL_ID,
     COGNITO_CLIENT_ID: E2E_CLIENT_ID,
     AUTH_LOCAL_JWKS: JWKS_FILE,
-    PAYMENT_PROVIDER: "mock",
     STRIPE_SECRET_KEY: "",
     STRIPE_SECRET_KEY_SECRET_NAME: "",
     STRIPE_TEST_DESTINATION_ACCOUNT: "",

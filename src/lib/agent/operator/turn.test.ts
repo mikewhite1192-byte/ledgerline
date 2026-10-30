@@ -482,10 +482,11 @@ describe("runTurn", () => {
   });
 
   it("refuses remember_note in a flagged turn even when the flag's decision row is not on file", async () => {
-    flags.carrierMemoryEnabled = true;
+    const before = flags.carrierMemoryEnabled;
     onTestFinished(() => {
-      flags.carrierMemoryEnabled = false;
+      flags.carrierMemoryEnabled = before;
     });
+    flags.carrierMemoryEnabled = true;
     const INPUT = "77777777-7777-4777-8777-777777777777";
     const MODEL_CALL = "c0ffee00-0000-4000-8000-0000000000bb";
     const plan = blueRidgePlan();
@@ -604,10 +605,11 @@ describe("runTurn", () => {
       { text: "Who owes us money?" },
     );
     h.deps.tools = [...TOOLS, { name: "report_ar_aging", description: "report", parameters: {} }];
-    flags.reportsEnabled = true;
+    const before = flags.reportsEnabled;
     onTestFinished(() => {
-      flags.reportsEnabled = false;
+      flags.reportsEnabled = before;
     });
+    flags.reportsEnabled = true;
     const out = await h.run();
     expect(out.status).toBe("done");
     const [aging, cash] = h.steps.filter((s) => s.kind === "tool");
@@ -630,6 +632,11 @@ describe("runTurn", () => {
   });
 
   it("labels a report call made while the switch is off as an unknown tool", async () => {
+    const before = flags.reportsEnabled;
+    onTestFinished(() => {
+      flags.reportsEnabled = before;
+    });
+    flags.reportsEnabled = false;
     const h = harness(
       [result({ toolCalls: [call("r1", "report_ar_aging")] }), result({ text: "I cannot build that report." })],
       (c) => ({ decision: "unknown_tool", decisionId: "d-x", tool: c.name, reason: "unknown_tool", result: { error: "unknown_tool" }, latencyMs: 1 }) as Outcome,
@@ -902,6 +909,25 @@ describe("runTurn with tool search and the prompt cache", () => {
       ? allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT })
       : allowed(c.name, { totalCents: 150_000 });
 
+  // The switches that add prompt lines, set for one test and put back as shipped when it ends.
+  const promptSwitches = (set: {
+    reportsEnabled: boolean;
+    collectionsEnabled: boolean;
+    cashFridayEnabled: boolean;
+    carrierMemoryEnabled: boolean;
+  }) => {
+    const before = {
+      reportsEnabled: flags.reportsEnabled,
+      collectionsEnabled: flags.collectionsEnabled,
+      cashFridayEnabled: flags.cashFridayEnabled,
+      carrierMemoryEnabled: flags.carrierMemoryEnabled,
+    };
+    onTestFinished(() => {
+      Object.assign(flags, before);
+    });
+    Object.assign(flags, set);
+  };
+
   it("gives the same outcome, gateway calls and proposals with both on as with both off", async () => {
     const off = harness(script(), gateway);
     const on = harness(script(), gateway);
@@ -928,10 +954,7 @@ describe("runTurn with tool search and the prompt cache", () => {
   });
 
   it("sends today's request with both off and the report tools on: their full schemas and the report lines", async () => {
-    flags.reportsEnabled = true;
-    onTestFinished(() => {
-      flags.reportsEnabled = false;
-    });
+    promptSwitches({ reportsEnabled: true, collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: false });
     const tools = toolsFor("operator");
     expect(tools.filter((t) => t.name.startsWith("report_"))).toHaveLength(5);
     const h = harness(script(), gateway);
@@ -950,12 +973,9 @@ describe("runTurn with tool search and the prompt cache", () => {
   });
 
   it("adds the collections line only while get_collections is offered", () => {
-    expect(flags.collectionsEnabled).toBe(false);
+    promptSwitches({ reportsEnabled: false, collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: false });
     expect(operatorPrompt(toolsFor("operator").map((t) => t.name), false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
     flags.collectionsEnabled = true;
-    onTestFinished(() => {
-      flags.collectionsEnabled = false;
-    });
     const names = toolsFor("operator").map((t) => t.name);
     expect(names).toContain("get_collections");
     expect(operatorPrompt(names, false)).toBe(`${OPERATOR_PROMPT}\n${COLLECTIONS_RULE}\n${CHECKLIST_RULE}`);
@@ -966,6 +986,7 @@ describe("runTurn with tool search and the prompt cache", () => {
   });
 
   it("adds the money code lines only while propose_money_code is offered", () => {
+    promptSwitches({ reportsEnabled: false, collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: false });
     flags.moneyCodes.enabled = true;
     onTestFinished(() => {
       flags.moneyCodes.enabled = false;
@@ -980,10 +1001,7 @@ describe("runTurn with tool search and the prompt cache", () => {
   });
 
   it("adds the memory lines only while the note suggestion tool is offered", async () => {
-    flags.carrierMemoryEnabled = true;
-    onTestFinished(() => {
-      flags.carrierMemoryEnabled = false;
-    });
+    promptSwitches({ reportsEnabled: false, collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: true });
     const tools = toolsFor("operator");
     expect(tools.map((t) => t.name)).toContain("remember_note");
     const h = harness(script(), gateway);

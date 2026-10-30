@@ -298,6 +298,8 @@ function openSwitches() {
   flags.accountingEnabled = false;
   flags.auditorRequired = false;
   flags.advancePayouts = { armed: true, capCents: 50_000, startDate: "2026-10-27" };
+  // The take-back ships on; the tests that take one back turn it on themselves.
+  flags.advanceTakeback = { ...flags.advanceTakeback, enabled: false };
 }
 
 describe("the advance flow", () => {
