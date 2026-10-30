@@ -31,7 +31,12 @@ export default async function LoadRecord({ params }: { params: Promise<{ id: str
   }
   const l = page.record;
   return (
-    <SignedInPage tenant={page.shell} current="/invoices" title={`Load ${l.loadNumber}`}>
+    <SignedInPage
+      tenant={page.shell}
+      current="/invoices"
+      title={`Load ${l.loadNumber}`}
+      focus={{ table: "loads", id: l.id, label: `Load ${l.loadNumber}` }}
+    >
       <PageHeader
         title={`Load ${l.loadNumber}`}
         description={<RecordLink table="customers" id={l.customerId}>{l.customerName}</RecordLink>}

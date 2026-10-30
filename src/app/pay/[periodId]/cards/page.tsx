@@ -1,6 +1,7 @@
 import { ImageIcon } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { weekEnding } from "@/components/agent/page-focus";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
@@ -50,6 +51,8 @@ export default async function PayCardsPage({ params }: { params: Promise<{ perio
       nav={appNav("/driver-notes")}
       title="Pay cards"
       signOut={<SignOutForm />}
+      // The pay week, once it was read under the carrier; a week not found declares none.
+      focus={cards ? { table: "settlement_periods", id: cards.period.id, label: weekEnding(cards.period.periodEnd) } : undefined}
     >
       <div className="mx-auto grid w-full max-w-[720px] gap-6">
         <Link href="/driver-notes" className="w-fit text-small text-link underline-offset-4 hover:underline">

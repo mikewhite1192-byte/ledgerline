@@ -1,8 +1,11 @@
 import { BellDot, MessageCircle, Pin } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { AgentLauncher } from "@/components/agent/agent-launcher";
+import type { AgentPanelConfig } from "@/components/agent/agent-panel";
+import type { PageFocus } from "@/components/agent/page-focus";
 import { Wordmark } from "@/components/brand/wordmark";
-import { flags } from "@/config/flags";
+import { flags, stepThroughShown } from "@/config/flags";
 import { cn } from "@/lib/cn";
 import { NEEDS_YOU_ANCHOR } from "./anchors";
 import { AreaTabs, type AreaTab } from "./area-tabs";
@@ -143,6 +146,10 @@ function AreaNav({ nav, agentOn, pinned }: { nav: NavItem[]; agentOn: boolean; p
 // visible title (the h1); `title` names the main region for a screen reader. A demo visitor (the
 // judge role) also gets the demo banner above the top bar. A nav with no areas (the /design
 // specimen) shows as one flat list.
+//
+// Off Home, while the agent and page focus switches are both on, the page also gets the agent
+// launcher and its panel; `focus` is the one record the page is about, for the panel's chip.
+// Home (its chat is inline) and the public /design specimen pass agentPanel={false}.
 export function AppShell({
   tenant,
   nav,
@@ -152,6 +159,8 @@ export function AppShell({
   homeHref = "/",
   needsYouCount,
   pinned,
+  focus,
+  agentPanel = true,
   children,
 }: {
   tenant: TenantInfo;
@@ -163,16 +172,19 @@ export function AppShell({
   // How many Needs you rows wait, from a page that read them (Home); the bell shows a dot.
   needsYouCount?: number;
   pinned?: PinnedAmounts;
+  focus?: PageFocus;
+  agentPanel?: boolean;
   children: ReactNode;
 }) {
   const testMode = testModeOnly();
   const agentOn = flags.agentEnabled === true;
+  const panelOn = agentPanel && agentOn && flags.agentFocusEnabled === true;
   const list = nav.some((i) => i.area !== undefined) ? (
     <AreaNav nav={nav} agentOn={agentOn} pinned={pinned} />
   ) : (
     <NavList items={nav} />
   );
-  return (
+  const shell = (
     <div className="min-h-dvh bg-background">
       <a
         href="#main"
@@ -230,4 +242,23 @@ export function AppShell({
       </div>
     </div>
   );
+  if (!panelOn) return shell;
+  return (
+    <AgentLauncher config={panelConfig(tenant)} focus={focus}>
+      {shell}
+    </AgentLauncher>
+  );
+}
+
+// The settings Home passes its own chat, read here on the server for the panel's.
+function panelConfig(tenant: TenantInfo): AgentPanelConfig {
+  return {
+    streamMode: flags.agentStreamMode,
+    auditorOn: flags.auditorEnabled,
+    stepThrough: stepThroughShown(),
+    timezone: tenant.timezone,
+    viewer: { admin: tenant.role === "admin", adminAboveCents: flags.approverRole.adminAboveCents },
+    role: tenant.role,
+    disabledReason: flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now.",
+  };
 }

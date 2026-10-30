@@ -106,7 +106,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
   const paid = advance.paidAt ? when(advance.paidAt) : advance.status === "paid" && beforeApp ? "Before this app" : "Not yet";
   const rules = (Object.keys(RULE_LINES) as AdvanceRefusal[]).filter((code) => code !== "over_load_cap" || headroom !== null);
   return (
-    <AdvanceFrame shell={shell} title={title}>
+    <AdvanceFrame shell={shell} title={title} focus={{ table: "advances", id: advance.id, label: title }}>
       <PageHeader
         title={
           <span className="flex flex-wrap items-center gap-3">

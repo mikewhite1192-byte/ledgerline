@@ -35,7 +35,7 @@ export default async function CustomerRecord({ params }: { params: Promise<{ id:
   }
   const c = page.record;
   return (
-    <SignedInPage tenant={page.shell} current="none" title={c.name}>
+    <SignedInPage tenant={page.shell} current="none" title={c.name} focus={{ table: "customers", id: c.id, label: c.name }}>
       <PageHeader
         title={c.name}
         description={`${c.code} · Pays within ${c.termsDays} days`}

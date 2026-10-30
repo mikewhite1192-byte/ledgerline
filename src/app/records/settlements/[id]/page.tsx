@@ -20,6 +20,7 @@ import { codeToWords } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { LEG_LABELS, legFailureLabel, settlementOutcome } from "@/lib/settlements/labels";
 import { readSettlementRecord, type SettlementRecordView } from "@/lib/settlements/views";
+import { weekEnding } from "@/components/agent/page-focus";
 import { readRecordPage } from "../../read-record";
 
 export const dynamic = "force-dynamic";
@@ -69,7 +70,12 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
   const canBook = flags.settlementsEnabled && s.status === "approved" && s.netCents > 0 && payout === "confirmed";
   const ask = `/?paystub=${encodeURIComponent(s.id)}`;
   return (
-    <SignedInPage tenant={page.shell} current="/settlements" title={`Paystub ${view.driver.name}`}>
+    <SignedInPage
+      tenant={page.shell}
+      current="/settlements"
+      title={`Paystub ${view.driver.name}`}
+      focus={{ table: "settlements", id: s.id, label: `${view.driver.name}, ${weekEnding(view.period.end)}` }}
+    >
       <PageHeader
         title={view.driver.name}
         description={

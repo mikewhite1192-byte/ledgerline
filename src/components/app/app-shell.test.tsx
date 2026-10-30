@@ -2,7 +2,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { PageFocus } from "@/components/agent/page-focus";
 import { flags } from "@/config/flags";
 import { ASK_ANCHOR } from "./anchors";
 import { AppShell, type NavItem } from "./app-shell";
@@ -27,8 +28,10 @@ function memoryStorage(): Storage {
 }
 
 const savedAgent = flags.agentEnabled;
+const savedFocus = flags.agentFocusEnabled;
 afterEach(() => {
   flags.agentEnabled = savedAgent;
+  flags.agentFocusEnabled = savedFocus;
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   delete document.documentElement.dataset.amounts;
@@ -44,7 +47,11 @@ const NAV: NavItem[] = [
   { group: "Settings", area: "books", href: "/models", label: "Models and spend", icon: null },
 ];
 
-function shell(current: string | null, children = <p>Body</p>, extra: { needsYouCount?: number } = {}) {
+function shell(
+  current: string | null,
+  children = <p>Body</p>,
+  extra: { needsYouCount?: number; agentPanel?: boolean; focus?: PageFocus } = {},
+) {
   return render(
     <AppShell
       tenant={TENANT}
@@ -219,3 +226,71 @@ describe("hide amounts", () => {
     expect(pageAmount.matches(MASKED_AMOUNT)).toBe(false);
   });
 });
+
+describe("the agent launcher", () => {
+  // jsdom has no dialog methods: opening sets the attribute, closing clears it and fires close.
+  beforeEach(() => {
+    HTMLDialogElement.prototype.show = function show(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+      if (!this.hasAttribute("open")) return;
+      this.removeAttribute("open");
+      this.dispatchEvent(new Event("close"));
+    };
+    vi.stubGlobal("sessionStorage", memoryStorage());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ conversationId: null, turns: [] }), { status: 200 })),
+    );
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLDialogElement.prototype, "show");
+    Reflect.deleteProperty(HTMLDialogElement.prototype, "close");
+    delete document.documentElement.dataset.agentPanel;
+  });
+
+  const launcher = () => screen.queryByRole("button", { name: "Ask the agent" });
+
+  it("shows off Home while the agent and page focus switches are both on", () => {
+    flags.agentEnabled = true;
+    flags.agentFocusEnabled = true;
+    shell("/advances");
+    expect(launcher()).not.toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("is left off with either switch off, and on Home, and makes no request then", () => {
+    flags.agentEnabled = true;
+    flags.agentFocusEnabled = false;
+    const { unmount } = shell("/advances");
+    expect(launcher()).toBeNull();
+    unmount();
+    flags.agentEnabled = false;
+    flags.agentFocusEnabled = true;
+    const off = shell("/advances");
+    expect(launcher()).toBeNull();
+    off.unmount();
+    flags.agentEnabled = true;
+    shell("/", <p>Body</p>, { agentPanel: false });
+    expect(launcher()).toBeNull();
+    expect(screen.getByRole("link", { name: "Search or ask anything" }).getAttribute("href")).toBe("/#ask");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("opens from the top bar's Ask off Home, with the cursor in the panel's question box", async () => {
+    flags.agentEnabled = true;
+    flags.agentFocusEnabled = true;
+    shell("/advances", <p>Body</p>, {
+      focus: { table: "drivers", id: "11111111-1111-4111-8111-111111111111", label: "Dana Reyes" },
+    });
+    expect(screen.queryByRole("dialog", { name: "Agent" })).toBeNull();
+    fireEvent.click(screen.getByRole("link", { name: "Search or ask anything" }));
+    const panel = await screen.findByRole("dialog", { name: "Agent" });
+    const box = await within(panel).findByRole("textbox", { name: "Your question" });
+    await waitFor(() => expect(document.activeElement).toBe(box));
+    expect(within(panel).getByText("About: Dana Reyes")).toBeTruthy();
+    expect(screen.getAllByRole("textbox", { name: "Your question" })).toHaveLength(1);
+  });
+});
+

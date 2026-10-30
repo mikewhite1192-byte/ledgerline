@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import type { PageFocus } from "@/components/agent/page-focus";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
@@ -31,13 +32,25 @@ const signOut = (
   </form>
 );
 
-export function AdvanceFrame({ shell, title, children }: { shell: Shell; title: string; children: ReactNode }) {
+// `focus` is set by the one advance's page, for the agent panel's chip.
+export function AdvanceFrame({
+  shell,
+  title,
+  focus,
+  children,
+}: {
+  shell: Shell;
+  title: string;
+  focus?: PageFocus;
+  children: ReactNode;
+}) {
   return (
     <AppShell
       tenant={{ name: shell.name, email: shell.email, timezone: shell.timezone, role: shell.role }}
       nav={appNav("/advances")}
       title={title}
       signOut={signOut}
+      focus={focus}
     >
       <div className="mx-auto grid w-full max-w-[960px] gap-6">{children}</div>
     </AppShell>

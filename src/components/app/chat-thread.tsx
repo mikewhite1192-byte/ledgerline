@@ -159,6 +159,7 @@ export function ChatThread({
   hrefFor = recordHref,
   title = "What do you want to know?",
   intro,
+  compact = false,
   className,
 }: {
   messages: ChatMessage[];
@@ -168,113 +169,139 @@ export function ChatThread({
   hrefFor?: HrefFor;
   title?: string;
   intro?: string;
+  // The agent panel: smaller type, the thread scrolls above the box and the box stays at the bottom.
+  compact?: boolean;
   className?: string;
 }) {
   const latest = newestStep(messages);
+  const scroller = useRef<HTMLDivElement>(null);
+  // In the panel a new question or answer scrolls into view; Home's page scrolls on its own.
+  useEffect(() => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages.length]);
+  const thread =
+    messages.length === 0 ? (
+      <div className={cn("grid gap-4", compact ? "pt-2" : "pt-6 sm:pt-12")}>
+        <div className="grid gap-1.5">
+          <h2 className={cn("text-foreground", compact ? "text-h2" : "text-h1")}>{title}</h2>
+          {intro ? (
+            <p className={cn("max-w-[60ch] text-foreground-2", compact ? "text-body" : "text-lead")}>{intro}</p>
+          ) : null}
+        </div>
+        {suggestions.length > 0 ? <PromptChips prompts={suggestions} onPick={onPick} /> : null}
+      </div>
+    ) : (
+      <ol className="grid gap-6" aria-label="Conversation">
+        {messages.map((m) =>
+          m.role === "user" ? (
+            <li key={m.id} className="flex justify-end">
+              <div className="max-w-[85%] rounded-lg bg-secondary px-4 py-2.5 text-body text-foreground">
+                {m.parts.map((p, i) => (p.kind === "text" ? <p key={i}>{p.text}</p> : null))}
+                {/* On the bubble's fill, muted ink falls under 4.5:1, so the time takes the second ink. */}
+                {m.at ? <p className="mt-1 text-caption text-foreground-2">{m.at}</p> : null}
+              </div>
+            </li>
+          ) : (
+            <li key={m.id} className="flex gap-3">
+              <Mark size={24} className="mt-0.5" />
+              <div className="grid min-w-0 flex-1 gap-3">
+                <p className="sr-only">Agent</p>
+                {m.parts.map((p, i) => {
+                  switch (p.kind) {
+                    case "text":
+                      return p.warning ? (
+                        <figure key={i} className="grid max-w-[68ch] gap-1.5 rounded-lg border border-warning bg-warning-soft px-4 py-3">
+                          <figcaption className="text-small font-semibold text-foreground">{p.warning}</figcaption>
+                          <blockquote className="whitespace-pre-wrap break-words text-body text-foreground">{p.text}</blockquote>
+                        </figure>
+                      ) : (
+                        <AnswerText key={i} text={p.text} />
+                      );
+                    case "steps":
+                      return <Steps key={i} steps={p.steps} />;
+                    case "checklist":
+                      return <Checklist key="checklist" list={p.checklist} />;
+                    case "verify":
+                      return (
+                        <div key="verify" className="flex flex-wrap items-center gap-2">
+                          <Badge tone={p.state === "verified" ? "success" : "warning"}>
+                            <Term id={p.help}>{p.pill}</Term>
+                          </Badge>
+                          {p.reason ? <span className="text-small text-foreground-2">{p.reason}</span> : null}
+                        </div>
+                      );
+                    case "proposal":
+                      // Keyed by the proposal, not its place, so an open confirm row stays with it.
+                      // The anchor (card-<id>) is where Home's "Needs you" link lands.
+                      return (
+                        <div key={`proposal:${p.proposal.id}`} id={cardAnchor(p.proposal.id)} className="min-w-0 scroll-mt-24">
+                          <ProposalCard {...p.proposal} hrefFor={hrefFor} />
+                        </div>
+                      );
+                    case "table":
+                      return p.onVisible ? (
+                        <WhenVisible key={i} onVisible={p.onVisible}>
+                          <DataTable {...p.table} />
+                        </WhenVisible>
+                      ) : (
+                        <DataTable key={i} {...p.table} />
+                      );
+                    case "link":
+                      return (
+                        <p key={i} className="text-small">
+                          <a href={p.href} download className="text-link underline-offset-4 hover:underline">
+                            {p.label}
+                          </a>
+                        </p>
+                      );
+                    case "error":
+                      return (
+                        <div key={i} className="rounded-lg border border-border bg-card">
+                          <ErrorState category={p.category} className="py-6" />
+                        </div>
+                      );
+                    case "trace":
+                      // Keyed by what it explains, so an open disclosure stays open across reads.
+                      return (
+                        <HowWorkedOut
+                          key={`trace:${p.proposalId ?? p.turnId}`}
+                          turnId={p.turnId}
+                          proposalId={p.proposalId}
+                          load={p.load}
+                          hrefFor={hrefFor}
+                          stepThrough={p.stepThrough}
+                        />
+                      );
+                  }
+                })}
+                {m.at ? <p className="text-caption text-muted-foreground">{m.at}</p> : null}
+              </div>
+            </li>
+          ),
+        )}
+      </ol>
+    );
+  const announcer = (
+    <p className="sr-only" aria-live="polite" data-testid="step-announcer">
+      {latest ? `${latest.label}, ${STATE_WORD[latest.state]}` : ""}
+    </p>
+  );
+  if (compact) {
+    return (
+      <div className={cn("flex min-h-0 flex-1 flex-col", className)}>
+        <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+          {thread}
+        </div>
+        {announcer}
+        <Composer {...composer} className={cn("border-t border-border p-3", composer.className)} />
+      </div>
+    );
+  }
   return (
     <div className={cn("mx-auto flex w-full max-w-[720px] flex-col gap-6", className)}>
-      {messages.length === 0 ? (
-        <div className="grid gap-4 pt-6 sm:pt-12">
-          <div className="grid gap-1.5">
-            <h2 className="text-h1 text-foreground">{title}</h2>
-            {intro ? <p className="max-w-[60ch] text-lead text-foreground-2">{intro}</p> : null}
-          </div>
-          {suggestions.length > 0 ? <PromptChips prompts={suggestions} onPick={onPick} /> : null}
-        </div>
-      ) : (
-        <ol className="grid gap-6" aria-label="Conversation">
-          {messages.map((m) =>
-            m.role === "user" ? (
-              <li key={m.id} className="flex justify-end">
-                <div className="max-w-[85%] rounded-lg bg-secondary px-4 py-2.5 text-body text-foreground">
-                  {m.parts.map((p, i) => (p.kind === "text" ? <p key={i}>{p.text}</p> : null))}
-                  {/* On the bubble's fill, muted ink falls under 4.5:1, so the time takes the second ink. */}
-                  {m.at ? <p className="mt-1 text-caption text-foreground-2">{m.at}</p> : null}
-                </div>
-              </li>
-            ) : (
-              <li key={m.id} className="flex gap-3">
-                <Mark size={24} className="mt-0.5" />
-                <div className="grid min-w-0 flex-1 gap-3">
-                  <p className="sr-only">Agent</p>
-                  {m.parts.map((p, i) => {
-                    switch (p.kind) {
-                      case "text":
-                        return p.warning ? (
-                          <figure key={i} className="grid max-w-[68ch] gap-1.5 rounded-lg border border-warning bg-warning-soft px-4 py-3">
-                            <figcaption className="text-small font-semibold text-foreground">{p.warning}</figcaption>
-                            <blockquote className="whitespace-pre-wrap break-words text-body text-foreground">{p.text}</blockquote>
-                          </figure>
-                        ) : (
-                          <AnswerText key={i} text={p.text} />
-                        );
-                      case "steps":
-                        return <Steps key={i} steps={p.steps} />;
-                      case "checklist":
-                        return <Checklist key="checklist" list={p.checklist} />;
-                      case "verify":
-                        return (
-                          <div key="verify" className="flex flex-wrap items-center gap-2">
-                            <Badge tone={p.state === "verified" ? "success" : "warning"}>
-                              <Term id={p.help}>{p.pill}</Term>
-                            </Badge>
-                            {p.reason ? <span className="text-small text-foreground-2">{p.reason}</span> : null}
-                          </div>
-                        );
-                      case "proposal":
-                        // Keyed by the proposal, not its place, so an open confirm row stays with it.
-                        // The anchor (card-<id>) is where Home's "Needs you" link lands.
-                        return (
-                          <div key={`proposal:${p.proposal.id}`} id={cardAnchor(p.proposal.id)} className="min-w-0 scroll-mt-24">
-                            <ProposalCard {...p.proposal} hrefFor={hrefFor} />
-                          </div>
-                        );
-                      case "table":
-                        return p.onVisible ? (
-                          <WhenVisible key={i} onVisible={p.onVisible}>
-                            <DataTable {...p.table} />
-                          </WhenVisible>
-                        ) : (
-                          <DataTable key={i} {...p.table} />
-                        );
-                      case "link":
-                        return (
-                          <p key={i} className="text-small">
-                            <a href={p.href} download className="text-link underline-offset-4 hover:underline">
-                              {p.label}
-                            </a>
-                          </p>
-                        );
-                      case "error":
-                        return (
-                          <div key={i} className="rounded-lg border border-border bg-card">
-                            <ErrorState category={p.category} className="py-6" />
-                          </div>
-                        );
-                      case "trace":
-                        // Keyed by what it explains, so an open disclosure stays open across reads.
-                        return (
-                          <HowWorkedOut
-                            key={`trace:${p.proposalId ?? p.turnId}`}
-                            turnId={p.turnId}
-                            proposalId={p.proposalId}
-                            load={p.load}
-                            hrefFor={hrefFor}
-                            stepThrough={p.stepThrough}
-                          />
-                        );
-                    }
-                  })}
-                  {m.at ? <p className="text-caption text-muted-foreground">{m.at}</p> : null}
-                </div>
-              </li>
-            ),
-          )}
-        </ol>
-      )}
-      <p className="sr-only" aria-live="polite" data-testid="step-announcer">
-        {latest ? `${latest.label}, ${STATE_WORD[latest.state]}` : ""}
-      </p>
+      {thread}
+      {announcer}
       <Composer {...composer} />
     </div>
   );

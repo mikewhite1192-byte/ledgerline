@@ -5,6 +5,8 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { AgentLauncher } from "@/components/agent/agent-launcher";
+import { weekEnding } from "@/components/agent/page-focus";
 import { proposalCardFrom } from "@/components/agent/proposal-card-from";
 import { reportTable, type ReportLoad } from "@/components/agent/report-table";
 import { toMessages } from "@/components/agent/turn-view";
@@ -2847,6 +2849,42 @@ describe("no internal word in a shared state", () => {
     expect(container.textContent).toContain("Search or ask anything");
     expect(container.textContent).toContain("Test mode");
     expect(scan(container)).toEqual([]);
+  });
+
+  it("the agent launcher, and its panel opened on a pay week's paystub with the chip on", async () => {
+    // jsdom has no dialog methods; these stand in for the browser's, as the sheet's own test does.
+    HTMLDialogElement.prototype.show = function show(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    const pending = globalThis.fetch;
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ conversationId: null, turns: [] }), { status: 200 }));
+    try {
+      const config = {
+        streamMode: "poll" as const,
+        auditorOn: false,
+        stepThrough: false,
+        timezone: fx.TENANT.timezone,
+        viewer: { admin: false, adminAboveCents: flags.approverRole.adminAboveCents },
+        role: "staff" as const,
+      };
+      const label = `Rosa Delgado, ${weekEnding("2026-10-25")}`;
+      render(
+        <AgentLauncher config={config} focus={{ table: "settlements", id: fx.ID, label }}>
+          <p>Page</p>
+        </AgentLauncher>,
+      );
+      expect(scan(document.body)).toEqual([]);
+      fireEvent.click(screen.getByRole("button", { name: "Ask the agent" }));
+      const panel = await screen.findByRole("dialog", { name: "Agent" });
+      await within(panel).findByRole("textbox", { name: "Your question" });
+      expect(panel.textContent).toContain("About: Rosa Delgado, week ending Oct 25, 2026");
+      expect(within(panel).getByRole("button", { name: "New conversation" })).toBeTruthy();
+      expect(scan(document.body)).toEqual([]);
+    } finally {
+      vi.stubGlobal("fetch", pending);
+      Reflect.deleteProperty(HTMLDialogElement.prototype, "show");
+      delete document.documentElement.dataset.agentPanel;
+    }
   });
 });
 
