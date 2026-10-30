@@ -5,7 +5,7 @@ import { AnswerText } from "@/components/app/answer-text";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { countWords, isNotesLine, type TraceLine } from "@/lib/trace/format";
-import { NO_NOTE, type StepThrough, type StepTurn, type SummaryShape } from "@/lib/trace/steps";
+import { NO_NOTE, NOTE_NOT_KEPT, type StepThrough, type StepTurn, type SummaryShape } from "@/lib/trace/steps";
 import type { recordNamer } from "@/lib/format/labels";
 import { NOTE_REF_TABLE, noteHref } from "@/lib/memory/links";
 import { hrefOrNull, type HrefFor } from "@/lib/records/href";
@@ -113,7 +113,7 @@ export function StepView({
           <Saw turn={turn} first={index === 0} summary={through.summary} summaryText={fullSummary ? through.summaryText : null} />
         </Block>
         <Block title="Its note">
-          {turn.note !== null ? <AnswerText text={turn.note} className="text-foreground-2" /> : <p className="text-body text-foreground-2">{NO_NOTE}</p>}
+          {turn.note !== null ? <AnswerText text={turn.note} className="text-foreground-2" /> : <p className="text-body text-foreground-2">{through.summary === null ? NOTE_NOT_KEPT : NO_NOTE}</p>}
         </Block>
         <Block title="What it did">
           <p className="text-body text-foreground-2">{turn.model.text}</p>

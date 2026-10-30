@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { recordNamer } from "@/lib/format/labels";
 import { recordHref } from "@/lib/records/href";
 import { SAMPLE_PROPOSAL_ID, SAMPLE_REASONING_NOTE, SAMPLE_TURN_ID, sampleTrace } from "@/lib/trace/sample";
-import { NO_NOTE, turnsOf } from "@/lib/trace/steps";
+import { NO_NOTE, NOTE_NOT_KEPT, turnsOf } from "@/lib/trace/steps";
 import type { TurnTrace } from "@/lib/trace/types";
 import { HowWorkedOut } from "./how-worked-out";
 import { StepView } from "./step-view";
@@ -103,6 +103,15 @@ describe("Step through", () => {
     next();
     expect(within(view).getByText(SAMPLE_REASONING_NOTE)).toBeTruthy();
     expect(within(view).queryByText(NO_NOTE)).toBeNull();
+  });
+
+  it("says a note was not kept, not that none came back, for a turn from before notes were kept", async () => {
+    const view = await stepThrough({ ...sampleTrace(), contextSummary: undefined });
+    expect(within(view).getByText(NOTE_NOT_KEPT)).toBeTruthy();
+    expect(within(view).queryByText(NO_NOTE)).toBeNull();
+    next();
+    expect(within(view).getByText(SAMPLE_REASONING_NOTE)).toBeTruthy();
+    expect(within(view).queryByText(NOTE_NOT_KEPT)).toBeNull();
   });
 
   it("shows the tools it asked for and what came back, with the records and the size", async () => {

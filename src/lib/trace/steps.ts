@@ -11,6 +11,8 @@ import type { TraceStep, TurnTrace } from "./types";
 // row does not hold. Display only: it never pauses or changes a run.
 
 export const NO_NOTE = "No note was returned for this step.";
+// A turn from before notes were kept: its note is unknown, not missing.
+export const NOTE_NOT_KEPT = "The note for this step was not kept.";
 
 // The summary's own section titles (store/summary.ts, and the notes section's title in
 // memory/notes.ts) in the words a person reads. A title this table does not know reads as

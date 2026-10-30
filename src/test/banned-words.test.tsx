@@ -84,6 +84,7 @@ import { EXCEPTION_LABELS, LEG_LABELS, PARK_LABELS, SETTLEMENT_OUTCOMES } from "
 import type { SettlementRecordView } from "@/lib/settlements/views";
 import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
 import { SAMPLE_PROPOSAL_ID, SAMPLE_TURN_ID, sampleTrace } from "@/lib/trace/sample";
+import { NOTE_NOT_KEPT } from "@/lib/trace/steps";
 import { VOICE_STATUS_WORDS } from "@/lib/voice/words";
 import * as fx from "./page-fixtures";
 
@@ -2115,6 +2116,17 @@ describe("no internal word in a chat answer or its trace", () => {
     for (const el of Array.from(rest.querySelectorAll("[data-verbatim]"))) el.remove();
     expect(rest.querySelector("[data-verbatim]")).toBeNull();
     expect(scan(rest)).toEqual([]);
+  });
+
+  it("the step-through, for an answer whose summary and notes were not kept", async () => {
+    render(<HowWorkedOut turnId={SAMPLE_TURN_ID} stepThrough load={async () => ({ trace: { ...sampleTrace(), contextSummary: undefined } })} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /How this was worked out/i }));
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Step through" }));
+    const view = screen.getByRole("region", { name: "Step through" });
+    expect(within(view).getByText(NOTE_NOT_KEPT)).toBeTruthy();
+    expect(scan(document.body)).toEqual([]);
   });
 
   it("the trace's note links, for an answer that read the office's notes", async () => {
