@@ -1,5 +1,6 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
 import { readCappedForm } from "@/lib/http/multipart";
 import { answer, failed, voiceOn, voiceRefuse } from "@/lib/voice/http";
@@ -9,7 +10,8 @@ import { uploadVoiceNote } from "@/lib/voice/pipeline";
 // POST: a driver's voice note, as multipart: driverId, wav (16 kHz mono PCM, made in the browser,
 // sent to the model and not stored) and original (the clip as recorded, kept for playback,
 // optional). Transcribes it and stores the transcript as an untrusted input. The body is read with
-// a cap, so an oversized upload is refused before anything is stored.
+// a cap, so an oversized upload is refused before anything is stored. Staff only: a demo visitor
+// (the judge role) is refused before the body is read.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -22,6 +24,8 @@ export async function POST(request: Request) {
   if (!voiceOn()) return voiceRefuse("disabled");
   const session = await getSession();
   if (!session) return voiceRefuse("unauthenticated");
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const limits = flags.voiceLimits;
   const read = await readCappedForm(request, limits.maxWavBytes + limits.maxOriginalBytes + FORM_OVERHEAD);
   if (!read.ok) return voiceRefuse(read.category);

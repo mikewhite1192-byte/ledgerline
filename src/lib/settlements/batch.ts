@@ -3,10 +3,11 @@ import { z } from "zod";
 import { isClean } from "../agent/proposals/clean";
 import type { Session } from "../auth/claims";
 import { flags } from "../../config/flags";
+import { readTenant } from "../data/read";
 import type { Queryable, TenantDb } from "../db";
 import { approvalFrom } from "../money/approval";
 import { resolveDeps, systemFor } from "../money/execute";
-import { reserve, switchOn } from "../money/ledger";
+import { payoutSwitchOn, reserve, switchOn } from "../money/ledger";
 import { assertMembership } from "../tenant/context";
 import { isUuid } from "../uuid";
 import { SettlementArgs, sameAsStored } from "./approve";
@@ -204,10 +205,10 @@ async function checkItems(q: Queryable, session: Session, req: BatchRequest): Pr
   return { ok: true, items };
 }
 
-// The legs a confirm reserves now: the payout when payouts are on, and the bill legs only when
-// accounting is on as well.
-export function legsToReserve(): LegKind[] {
-  if (!switchOn("payment")) return [];
+// The legs a confirm reserves now: the payout when payouts are on for this carrier, and the bill
+// legs only when accounting is on as well.
+export function legsToReserve(payoutsOn: boolean = switchOn("payment")): LegKind[] {
+  if (!payoutsOn) return [];
   return switchOn("accounting") ? [...LEG_KINDS] : ["settlement_payout"];
 }
 
@@ -262,7 +263,11 @@ export async function confirmBatch(
       throw new Error("batch confirm lost its lock");
     }
 
-    const legs = legsToReserve();
+    // Payouts in Stripe test mode run only for the two demo carriers: for any other carrier the
+    // confirm reserves nothing, as with payoutsEnabled off (payoutSwitchOn), decided here before
+    // any ledger row.
+    const payoutsOn = payoutSwitchOn("settlement_payout", systemFor("settlement_payout", d), await readTenant(q));
+    const legs = legsToReserve(payoutsOn);
     let reserved = 0;
     if (legs.length > 0) {
       const approval = await approvalFrom(q, session);
@@ -281,13 +286,17 @@ export async function confirmBatch(
       }
     }
     // One "would send" line for every leg not reserved, naming the switch that held it.
+    const held = !switchOn("payment")
+      ? "payoutsEnabled off"
+      : !payoutsOn
+        ? "demo carriers only"
+        : "accountingEnabled off";
     for (const item of items) {
       for (const kind of LEG_KINDS) {
         if (legs.includes(kind)) continue;
-        const flag = !switchOn("payment") ? "payoutsEnabled" : "accountingEnabled";
         d.log(
           `money: would send ${kind} ${item.netCents}c for settlements ${item.settlementId} via ` +
-            `${systemFor(kind, d)} (${flag} off)`,
+            `${systemFor(kind, d)} (${held})`,
         );
       }
     }

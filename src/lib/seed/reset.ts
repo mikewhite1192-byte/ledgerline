@@ -3,7 +3,7 @@ import { TENANT_TABLES, assertIdentifier, type TenantTable } from "../data/table
 import { DbError, type Queryable, type TenantDb } from "../db/types";
 import { settleDriver } from "../rules-engine";
 import { HERO_OPEN_WEEK } from "./assert-plan";
-import { carrierBySlug, type DemoCarrier } from "./carriers";
+import { demoCarrierFor, type DemoCarrier } from "./carriers";
 import type { CarrierPlan } from "./plan";
 import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 
@@ -85,7 +85,7 @@ export const DEMO_RESET_KEPT = {
   tenants:
     "the carrier itself, with its document key (0015), so the invoice and payment numbers it " +
     "sends keep the same key",
-  memberships: "the staff and admin logins, so nobody is signed out of the carrier",
+  memberships: "the staff, admin and demo visitor logins, so nobody is signed out of the carrier",
   model_calls: "the record of every model charge",
   portal_accounts:
     "the carrier's sign-in account on the fictional broker portal; it names only the carrier, and " +
@@ -99,6 +99,9 @@ export const DEMO_RESET_KEPT = {
   qbo_connections: "the QuickBooks sandbox link",
   qbo_oauth_states: "short-lived sign-in states for the sandbox link",
   qbo_entity_ids: "the sandbox entity map, still valid because the seed's ids are the same at the same anchor",
+  demo_sessions:
+    "each demo visitor's sign-in with its spend and turn counts (0043); it names only the carrier, " +
+    "the app login cannot delete it, and a reset must not hand a visitor a fresh budget",
   schema_migrations: "the migration record, not tenant data",
   "ops.ai_spend": "the one model credit every tenant shares",
 } as const;
@@ -245,11 +248,7 @@ export class DemoResetFailed extends Error {
 
 // The current tenant's demo carrier, or null when it is not one of the two.
 export async function demoCarrierOf(q: Queryable): Promise<DemoCarrier | null> {
-  const tenant = await readTenant(q);
-  if (!tenant) return null;
-  const carrier = carrierBySlug(tenant.slug);
-  if (!carrier || carrier.name !== tenant.name || carrier.timezone !== tenant.timezone) return null;
-  return carrier;
+  return demoCarrierFor(await readTenant(q));
 }
 
 function count(value: unknown): number {

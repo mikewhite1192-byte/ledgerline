@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { getDb } from "@/lib/db";
 import { isCrossSite } from "@/lib/http/same-site";
 import { retryPayout } from "@/lib/settlements/post";
@@ -28,6 +29,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (isCrossSite(request)) return reply({ error: "forbidden" }, 403);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id } = await params;
   if (!isUuid(id)) return reply({ error: "bad_request" }, 400);
   try {

@@ -45,7 +45,7 @@ export default async function PeriodNotesPage({ params }: { params: Promise<{ pe
 
   return (
     <AppShell
-      tenant={{ name: shell.name, email: shell.email, timezone: shell.timezone }}
+      tenant={{ name: shell.name, email: shell.email, timezone: shell.timezone, role: shell.role }}
       nav={appNav("/driver-notes")}
       title="Driver notes"
       signOut={<SignOutForm />}

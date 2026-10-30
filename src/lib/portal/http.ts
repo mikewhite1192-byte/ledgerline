@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { getSession } from "../auth/session";
+import { staffGate } from "../auth/staff-gate";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { isCrossSite } from "../http/same-site";
 import { assertMembership } from "../tenant/context";
@@ -43,6 +44,8 @@ export async function decideRoute(
   if (isCrossSite(request)) return reply({ error: "forbidden" }, 403);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id, checkId } = await params;
   if (!isUuid(id) || !isUuid(checkId)) return reply({ error: "bad_request" }, 400);
   // An approval resumes the run, which needs a runner; a decline never does.

@@ -4,6 +4,7 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { MobileNav } from "./mobile-nav";
 import { NavList, type NavItem } from "./nav-list";
 import { TenantSwitcher, type TenantInfo } from "./tenant-switcher";
+import { ViewerRoleProvider } from "./viewer-role";
 
 export type { NavItem };
 
@@ -72,7 +73,7 @@ export function AppShell({
           </div>
         </header>
         <main id="main" tabIndex={-1} aria-label={title} className="px-4 py-6 outline-none md:px-6 md:py-8">
-          {children}
+          <ViewerRoleProvider role={tenant.role}>{children}</ViewerRoleProvider>
         </main>
       </div>
     </div>

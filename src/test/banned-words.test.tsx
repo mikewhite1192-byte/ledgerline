@@ -14,6 +14,7 @@ import { Paystub } from "@/components/app/paystub";
 import { ProposalCard, type ProposalAudit, type ProposalStatus } from "@/components/app/proposal-card";
 import { EmptyState, ERROR_CATEGORIES, ErrorState, FeatureOff, LoadingState, PageNotFound } from "@/components/app/states";
 import { BADGE_STATUSES, StatusBadge } from "@/components/app/status-badge";
+import { ViewerRoleProvider } from "@/components/app/viewer-role";
 import { ToastProvider } from "@/components/app/toast";
 import { ApproveAll } from "@/components/settlements/approve-all";
 import { ContinueBatch } from "@/components/settlements/continue-batch";
@@ -1890,6 +1891,21 @@ describe("no internal word on a card", () => {
         }
       });
     }
+    it(`${name} card seen by a demo visitor, every status and second-check state`, async () => {
+      for (const status of STATUSES) {
+        for (const audit of AUDITS) {
+          for (const confirming of [false, true]) {
+            const { container, unmount } = render(
+              <ViewerRoleProvider role="judge">
+                <ProposalCard {...sample} status={status} audit={audit} onApprove={() => {}} onReject={() => {}} canResume initialConfirming={confirming} />
+              </ViewerRoleProvider>,
+            );
+            expect(scan(container)).toEqual([]);
+            unmount();
+          }
+        }
+      }
+    });
   }
 });
 

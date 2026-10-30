@@ -1,3 +1,4 @@
+import { STAFF_ONLY_NOTE } from "../../components/app/staff-only";
 import { FACTORING_APPROVE_NOTICE } from "../factoring/words";
 import type { PaymentLabel, ReceiptStatus, VendorBillCategory, VendorBillStatus } from "../rules-engine/types";
 
@@ -43,6 +44,7 @@ export const CHECK_NOTICE: Readonly<Record<string, string>> = {
   pay_run_unknown:
     "This week's pay could not be worked out for every driver, so Friday cannot be checked. Nothing was saved.",
   forbidden: "This login is not linked to a carrier. Sign in with the login your carrier set up.",
+  judge: STAFF_ONLY_NOTE,
   no_tenant: "This login is not linked to a carrier. Sign in with the login your carrier set up.",
   unauthenticated: "Your sign-in ended. Sign in again, then check again.",
 };

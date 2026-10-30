@@ -28,6 +28,7 @@ import { DbError } from "@/lib/db";
 import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
 import type { TurnView } from "@/lib/agent/view";
 import type { Session } from "@/lib/auth/claims";
+import { isRole, type Role } from "@/lib/auth/role";
 import { formatInstant } from "@/lib/format/dates";
 import { cardsRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/lib/home/needs-you";
 import { readNextWeekStart } from "@/lib/pay-rules/read";
@@ -45,6 +46,7 @@ type Carrier = {
   name: string;
   timezone: string;
   email: string;
+  role: Role;
   counts: { drivers: number; loads: number; periods: number };
   ledger: ModelLedger | null;
   paystub: { driverName: string; periodEnd: string } | null;
@@ -81,11 +83,13 @@ export default async function Home({
       const tenants = await q.query<{ name: string; timezone: string }>(
         "SELECT name, timezone FROM tenants WHERE id = current_tenant_id()",
       );
-      const members = await q.query<{ email: string; role: string }>(
+      const members = await q.query<{ email: string; role: unknown }>(
         "SELECT email, role FROM memberships WHERE cognito_sub = $1",
         [session.sub],
       );
       if (tenants.length !== 1 || members.length !== 1) throw new ForbiddenError();
+      const role = members[0].role;
+      if (!isRole(role)) throw new ForbiddenError();
       // Each count names its tenant, as every read does.
       const [counts] = await q.query<{ drivers: number; loads: number; periods: number }>(
         `SELECT (SELECT count(*) FROM drivers WHERE tenant_id = current_tenant_id()) AS drivers,
@@ -104,11 +108,12 @@ export default async function Home({
         name: tenants[0].name,
         timezone: tenants[0].timezone,
         email: members[0].email,
+        role,
         counts,
         ledger,
         paystub,
         session,
-        admin: members[0].role === "admin",
+        admin: role === "admin",
         nextStart: flags.rulesByTalkingEnabled ? await readNextWeekStart(q, new Date()) : null,
       };
     });
@@ -215,7 +220,7 @@ export default async function Home({
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/")}
       help={HOW_PAY_WORKS}
       title="Home"

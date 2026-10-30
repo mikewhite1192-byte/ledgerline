@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import { createMockPaymentAdapter } from "../adapters/payment/mock";
-import type { AccountingAdapter, SendOutcome } from "../adapters/types";
+import type { AccountingAdapter, PaymentAdapter, SendOutcome } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import { readSettlementInput } from "../data/read";
 import { createPgDb } from "../db/pg";
@@ -16,6 +16,7 @@ import golden from "../seed/golden.json";
 import { buildCarrierPlan, type CarrierPlan } from "../seed/plan";
 import { resetDemoTenant } from "../seed/reset";
 import { replaceTenantData } from "../seed/run";
+import { ForbiddenError } from "../tenant/context";
 import { settlementApproveExecutor } from "./approve";
 import { confirmBatch, type BatchRequest } from "./batch";
 import { readCleanSet } from "./clean";
@@ -711,6 +712,38 @@ describe("settlements against a seeded database", () => {
     expect(batch.finished_at).not.toBeNull();
   }, 60_000);
 
+  // With payouts on, a confirm builds an Approval before it reserves a leg, and approvalFrom takes
+  // admin and staff only: the transaction rolls back whole. (With payouts off nothing is reserved,
+  // no Approval is built, and the route's staff gate is the refusal; see src/lib/auth/judge-routes.test.ts.)
+  it("refuses a demo visitor's batch confirm with payouts on, and writes nothing", async () => {
+    const req = await requestFor(BR, ["BR-D12", "BR-D13"]);
+    const judge: Session = { sub: `settlements-judge-${BR.carrier.slug}`, email: "", tenantId: BR.id };
+    await adminWrite(
+      BR,
+      `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+       VALUES (current_tenant_id(), $1, $2, 'judge')`,
+      [judge.sub, `judge@${BR.carrier.slug}.example`],
+    );
+    try {
+      const ledgerBefore = await ledgerCount(BR);
+      const batchesBefore = await batchCount(BR);
+      // Above the admin line the approver check answers "role" first; lift the line so the confirm
+      // reaches approvalFrom, the refusal this test is about.
+      flags.approverRole.adminAboveCents = Number.MAX_SAFE_INTEGER;
+      const err = await withSwitches(true, () => confirmBatch(app, judge, req, clock(), money)).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ForbiddenError);
+      expect(await batchCount(BR)).toBe(batchesBefore);
+      expect(await ledgerCount(BR)).toBe(ledgerBefore);
+      for (const id of req.proposalIds) expect((await cardById(BR, id)).status).toBe("proposed");
+      expect((await settlementOf(BR, "BR-D12")).status).toBe("draft");
+    } finally {
+      flags.approverRole.adminAboveCents = saved.approverRole.adminAboveCents;
+      await adminWrite(BR, "DELETE FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1", [
+        judge.sub,
+      ]);
+    }
+  }, 60_000);
+
   it("approves a batch with the switches off as not paid: nothing reserved, each leg logged as held", async () => {
     const req = await requestFor(BR, ["BR-D12", "BR-D13"]);
     const ledgerBefore = await ledgerCount(BR);
@@ -1074,5 +1107,63 @@ describe("settlements against a seeded database", () => {
       flags.settlementLimits.driversPerRun = saved.settlementLimits.driversPerRun;
       await Promise.allSettled([held, ...pending]);
     }
+  }, 60_000);
+
+  it("pays weekly pay through Stripe test mode only for a demo carrier: any other carrier is held as if payouts were off", async () => {
+    // A Stripe test double: Stripe test mode sends every transfer to the one test account the
+    // environment names, whoever it is for. It counts every call and confirms.
+    const stripe = { ready: 0, sends: 0 };
+    const double: PaymentAdapter = {
+      system: "stripe_test",
+      ready: async () => {
+        stripe.ready += 1;
+        return { ok: true };
+      },
+      sendPayout: async (p): Promise<SendOutcome> => {
+        stripe.sends += 1;
+        return { kind: "confirmed", system: "stripe_test", type: "transfer", id: `tr_test${stripe.sends}`, amountCents: p.amountCents };
+      },
+      readBack: async () => ({ found: false }),
+    };
+    const viaStripe: SettlementMoneyDeps = { ...money, payment: double };
+    const stripeExecutors: ExecutorRegistry = { ...EXECUTORS, settlement_approve: settlementApproveExecutor(viaStripe) };
+    const [forBatch, forSingle] = (await cleanOf(PW)).items.filter((i) => i.driverCode !== "PW-D17" && i.netCents > 0);
+    if (!forBatch || !forSingle) throw new Error("PW has fewer than two clean paystubs left");
+    const single = await settlementOf(PW, forSingle.driverCode);
+
+    // The same carrier under another name is not a demo carrier (slug, name and timezone).
+    await adminWrite(PW, "UPDATE tenants SET name = $2 WHERE id = CAST($1 AS uuid)", [PW.id, "Renamed Carrier"]);
+    try {
+      await withSwitches(true, async () => {
+        const ledgerBefore = await ledgerCount(PW);
+        const logBefore = moneyLog.length;
+        const req = await requestFor(PW, [forBatch.driverCode]);
+        const out = await confirmBatch(app, PW.session, req, clock(), viaStripe);
+        expect(out).toMatchObject({ ok: true, status: "done", legsReserved: 0 });
+        expect(await ledgerCount(PW)).toBe(ledgerBefore);
+        expect(await cardById(PW, forBatch.proposalId)).toMatchObject({ status: "done", decision_note: "not_paid" });
+        const held = moneyLog.slice(logBefore).filter((l) => l.startsWith("money: would send settlement_"));
+        expect(held).toHaveLength(3);
+        expect(held.every((l) => l.includes("(demo carriers only)"))).toBe(true);
+
+        // The single approve and Retry payout are held the same way, before any ledger row.
+        await executeProposal(PW.session, forSingle.proposalId, { confirmed: true }, { db: app, clock, executors: stripeExecutors });
+        expect(await cardById(PW, forSingle.proposalId)).toMatchObject({ status: "done", decision_note: "not_paid" });
+        expect((await settlementOf(PW, forSingle.driverCode)).status).toBe("approved");
+        expect(await ledgerOf(PW, single.id)).toEqual([]);
+        expect(await retryPayout(app, PW.session, single.id, viaStripe, clock)).toEqual({ ok: false, category: "disabled" });
+        expect(await ledgerCount(PW)).toBe(ledgerBefore);
+      });
+      expect(stripe).toEqual({ ready: 0, sends: 0 });
+    } finally {
+      await adminWrite(PW, "UPDATE tenants SET name = $2 WHERE id = CAST($1 AS uuid)", [PW.id, PW.carrier.name]);
+    }
+
+    // The demo carrier again: Retry payout pays once through Stripe test mode.
+    const retried = await withSwitches(true, () => retryPayout(app, PW.session, single.id, viaStripe, clock));
+    expect(retried).toMatchObject({ ok: true, state: "confirmed" });
+    expect(stripe.sends).toBe(1);
+    expect((await settlementOf(PW, forSingle.driverCode)).status).toBe("paid");
+    expect((await ledgerOf(PW, single.id)).map((r) => [r.kind, r.state, r.attempt])).toEqual([["settlement_payout", "confirmed", 1]]);
   }, 60_000);
 });

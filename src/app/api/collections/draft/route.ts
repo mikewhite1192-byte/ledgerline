@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { draftCollections } from "@/lib/collections/draft";
 import { isCrossSite } from "@/lib/http/same-site";
 
@@ -26,6 +27,8 @@ export async function POST(request: Request) {
   if (!flags.aiEnabled) return reply({ error: "ai_off" }, 409);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   try {
     const result = await draftCollections(session, new Date(Date.now() + RUN_MS));
     if (!result.ok) {

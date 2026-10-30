@@ -3,6 +3,8 @@
 import { Mic, Square } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
+import { StaffOnlyLine } from "@/components/app/staff-only-line";
+import { useViewerRole } from "@/components/app/viewer-role";
 import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
@@ -16,7 +18,8 @@ import { noticeFor } from "@/lib/voice/words";
 // Adds a voice note: record in the browser or pick a clip, turn it into 16 kHz mono WAV here, then
 // run the steps one after another with a line per step: transcribe, screen and translate, hand to
 // the agent. Each step is its own request, so a slow one never times out the others, and the note's
-// page can resume any step that stopped. Only fixed sentences are shown, never server text.
+// page can resume any step that stopped. Only fixed sentences are shown, never server text. Adding
+// a note is staff work: a demo visitor (the judge role) sees the staff-only line instead.
 
 export type UploaderLimits = { maxWavBytes: number; maxOriginalBytes: number; maxDurationMs: number };
 
@@ -91,6 +94,7 @@ export function Uploader({
   agentOn: boolean;
   limits: UploaderLimits;
 }) {
+  const judge = useViewerRole() === "judge";
   const router = useRouter();
   const [driverId, setDriverId] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -203,6 +207,7 @@ export function Uploader({
     }
   }
 
+  if (judge) return <StaffOnlyLine />;
   const busy = stage !== null;
   const picked = recorded ?? file;
   const notKept = picked && !recording ? originalNotKept(picked, limits.maxOriginalBytes) : null;

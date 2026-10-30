@@ -8,6 +8,8 @@ const WEEK = "2026-10-19";
 
 const mocks = vi.hoisted(() => ({ getSession: vi.fn(), writeBrief: vi.fn() }));
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here every caller is staff.
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/briefs/write", () => ({ writeBrief: mocks.writeBrief }));
 
 const saved = { brief: flags.profitBriefEnabled, ai: flags.aiEnabled };

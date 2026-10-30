@@ -46,6 +46,8 @@ export default async function VoiceNotesPage() {
   if (!page) return <ReadFailed problem={problem ?? "unreadable"} />;
 
   const zone = page.shell.timezone;
+  // A demo visitor (the judge role) cannot add a note, so the invitations to add one are staff only.
+  const judge = page.shell.role === "judge";
   const offReason = !flags.aiEnabled ? "The models are switched off, so new notes cannot be read right now." : null;
   return (
     <VoiceFrame shell={page.shell} title="Voice notes">
@@ -53,7 +55,9 @@ export default async function VoiceNotesPage() {
       <Card>
         <CardHeader>
           <CardTitle>Add a voice note</CardTitle>
-          <CardDescription>Record one here or pick a clip. The sample clips in this demo are synthetic voices.</CardDescription>
+          <CardDescription>
+            {judge ? "" : "Record one here or pick a clip. "}The sample clips in this demo are synthetic voices.
+          </CardDescription>
         </CardHeader>
         <CardBody className="grid gap-4">
           {offReason ? <InlineAlert tone="warning">{offReason}</InlineAlert> : null}
@@ -75,7 +79,7 @@ export default async function VoiceNotesPage() {
         rowKey={(r) => r.id}
         empty={{
           title: "No voice notes yet",
-          body: (
+          body: judge ? undefined : (
             <>
               Add one above, or try one of the sample notes: save it, then pick it above.{" "}
               {SAMPLE_NOTES.map((s, i) => (

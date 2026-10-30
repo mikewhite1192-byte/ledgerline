@@ -34,7 +34,7 @@ const signOut = (
 export function AdvanceFrame({ shell, title, children }: { shell: Shell; title: string; children: ReactNode }) {
   return (
     <AppShell
-      tenant={{ name: shell.name, email: shell.email, timezone: shell.timezone }}
+      tenant={{ name: shell.name, email: shell.email, timezone: shell.timezone, role: shell.role }}
       nav={appNav("/advances")}
       title={title}
       signOut={signOut}
