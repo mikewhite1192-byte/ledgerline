@@ -77,13 +77,63 @@ export function readConfig(env) {
 export function bodyText(parsed) {
   let text = typeof parsed?.text === "string" ? parsed.text : "";
   if (text.trim() === "" && typeof parsed?.html === "string") {
-    text = parsed.html
-      .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
-      .replace(/<[^>]*>/g, " ")
+    text = stripTags(parsed.html)
       .replace(/&nbsp;/gi, " ")
       .replace(/[ \t]+/g, " ");
   }
   return text.trim().slice(0, MAX_TEXT_CHARS);
+}
+
+const DROPPED = ["script", "style"];
+const NAME_END = " \t\n\r\f/>";
+
+// Whether `name` starts at index `at` (any case) and ends there as a tag name does: at a space,
+// a "/" or a ">".
+function nameAt(html, at, name) {
+  if (html.slice(at, at + name.length).toLowerCase() !== name) return false;
+  const next = html.charAt(at + name.length);
+  return next !== "" && NAME_END.includes(next);
+}
+
+// The index just past the first </name ...> at or after `from`, or -1 when there is none.
+function closeAfter(html, from, name) {
+  let at = from;
+  for (;;) {
+    const open = html.indexOf("</", at);
+    if (open === -1) return -1;
+    if (nameAt(html, open + 2, name)) {
+      const gt = html.indexOf(">", open + 2 + name.length);
+      return gt === -1 ? -1 : gt + 1;
+    }
+    at = open + 2;
+  }
+}
+
+// The HTML's text in one forward pass, so the time grows with the length whatever the markup
+// (no pattern here can backtrack): each tag becomes a space, a script or style element is dropped
+// with its contents, and a tag or a script or style left open ends the text there.
+function stripTags(html) {
+  const parts = [];
+  let i = 0;
+  while (i < html.length) {
+    const lt = html.indexOf("<", i);
+    if (lt === -1) {
+      parts.push(html.slice(i));
+      break;
+    }
+    parts.push(html.slice(i, lt), " ");
+    const gt = html.indexOf(">", lt + 1);
+    if (gt === -1) break;
+    const dropped = DROPPED.find((name) => nameAt(html, lt + 1, name));
+    if (dropped === undefined) {
+      i = gt + 1;
+      continue;
+    }
+    const end = closeAfter(html, gt + 1, dropped);
+    if (end === -1) break;
+    i = end;
+  }
+  return parts.join("");
 }
 
 // The header From's address, only when SES says it passed DMARC (aligned with that From).
@@ -231,11 +281,13 @@ export async function handle(event, overrides = {}) {
       deps.log(`inbound mail could not read its key: ${err instanceof Error ? err.name : "unknown"}`);
       throw new Error("inbound mail key unreadable");
     }
-    if (!KEY_SHAPE.test(value)) {
+    // Trimmed before the shape check, as the app's reader trims the same secret.
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    if (!KEY_SHAPE.test(trimmed)) {
       deps.log("inbound mail could not read its key: wrong shape");
       throw new Error("inbound mail key unreadable");
     }
-    key = value;
+    key = trimmed;
     return key;
   };
   const records = Array.isArray(event?.Records) ? event.Records : [];

@@ -232,6 +232,27 @@ describe("inbound mail poster", () => {
     expect(bodyText({ text: "x".repeat(MAX_TEXT_CHARS + 50) })).toHaveLength(MAX_TEXT_CHARS);
   });
 
+  it("strips HTML in one forward pass, and an unclosed tag, script or style ends the text", () => {
+    const strip = (html: string) => bodyText({ text: "", html });
+    expect(strip("<p>Waited <b>4</b> hours</p><br/>at the dock")).toBe("Waited 4 hours at the dock");
+    // Script and style contents go whatever the case of the tag, attributes and all.
+    expect(strip('<SCRIPT type="text/javascript">x()</Script >Waited<Style media="all">p{}</STYLE>4 hours')).toBe(
+      "Waited 4 hours",
+    );
+    expect(strip("<script>a()</script>Waited<script>b()</script>")).toBe("Waited");
+    // Left open at the end: the text stops where the tag starts.
+    expect(strip("Waited 4 hours <img src=x")).toBe("Waited 4 hours");
+    expect(strip("Waited<script>x() and the rest")).toBe("Waited");
+    expect(strip("Waited<style>p{} and the rest")).toBe("Waited");
+    expect(strip("Waited<script>x()</script")).toBe("Waited");
+
+    // A megabyte of markup that never closes returns at once: every scan only moves forward.
+    const megabyte = (unit: string) => unit.repeat(Math.ceil(MAX_RAW_BYTES / unit.length));
+    for (const html of [megabyte("<"), megabyte("<script"), megabyte("<script>"), `<style>${megabyte("</")}`]) {
+      expect(strip(html)).toBe("");
+    }
+  });
+
   it("skips a failed virus scan, a missing or malformed message id, and a message with no text", async () => {
     expect((await run([record({ virus: "FAIL" })])).outcomes).toEqual(["virus"]);
     expect((await run([record({ messageId: "../raw/other" })])).outcomes).toEqual(["no_message_id"]);
@@ -300,6 +321,21 @@ describe("inbound mail poster", () => {
     readKey.mockRejectedValueOnce(Object.assign(new Error("denied"), { name: "AccessDeniedException" }));
     await expect(run([record()])).rejects.toThrow(/key unreadable/);
     expect(logs).toContain("inbound mail could not read its key: AccessDeniedException");
+    expect(fetchMock).not.toHaveBeenCalled();
+    noSecretsInLogs();
+  });
+
+  it("trims the stored key before its shape check, as the app's reader does", async () => {
+    readKey.mockResolvedValueOnce(`${KEY}\n`);
+    expect((await run([record()])).outcomes).toEqual(["posted"]);
+    expect(fetchMock.mock.calls[0][1].headers["x-inbound-key"]).toBe(KEY);
+
+    // Short once trimmed, or a space inside it: still refused, and nothing is posted.
+    fetchMock.mockClear();
+    for (const stored of [` ${"k".repeat(20)} \n`, `${"k".repeat(24)} ${"k".repeat(24)}`]) {
+      readKey.mockResolvedValueOnce(stored);
+      await expect(run([record()])).rejects.toThrow(/key unreadable/);
+    }
     expect(fetchMock).not.toHaveBeenCalled();
     noSecretsInLogs();
   });
