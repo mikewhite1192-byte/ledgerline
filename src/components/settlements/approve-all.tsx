@@ -99,8 +99,9 @@ export function ApproveAll({ periodId, items, totalCents }: { periodId: string; 
     router.refresh();
   }
 
+  // The batch approval: its count, total and every line never hide.
   return (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-center gap-3" data-amounts="shown">
       <Button type="button" variant="primary" onClick={() => setOpen(true)} disabled={items.length === 0}>
         Approve all clean ({items.length}, {formatCents(totalCents)})
       </Button>

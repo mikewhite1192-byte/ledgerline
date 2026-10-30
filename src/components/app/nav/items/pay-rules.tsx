@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const payRules = {
   group: "Settings",
+  area: "books",
   order: 15,
   href: "/settings/pay-rules",
   label: "Pay rules",

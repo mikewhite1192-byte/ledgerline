@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
 import { appNav, NAV_HREFS, type NavKey } from "./app-nav";
 import * as registry from "./nav/items";
-import { MENU_GROUPS } from "./nav/menu-item";
+import { MENU_AREAS, MENU_GROUPS } from "./nav/menu-item";
 import { NavList } from "./nav-list";
 import { HOW_PAY_WORKS } from "./signed-in-page";
 
@@ -172,6 +172,33 @@ describe("the menu registry", () => {
       expect(MENU_GROUPS, item.href).toContain(item.group);
       expect(Number.isInteger(item.order) && item.order > 0, item.href).toBe(true);
     }
+  });
+
+  it("gives every item an area, and only Home sits above the tabs", () => {
+    for (const item of items) expect([...MENU_AREAS, "primary"], item.href).toContain(item.area);
+    const byArea = (area: string) =>
+      items
+        .filter((i) => i.area === area)
+        .map((i) => i.label)
+        .sort();
+    expect(byArea("primary")).toEqual(["Home"]);
+    expect(byArea("pay")).toEqual(
+      ["Advances", "Card check", "Documents", "Dock clips", "Driver notes", "Money codes", "Pay sweep", "Settlements", "Voice notes"].sort(),
+    );
+    expect(byArea("billing")).toEqual(["Cash", "Collections", "Factoring", "Invoices", "Payments"].sort());
+    expect(byArea("books")).toEqual(
+      [
+        "Demo",
+        "Fuel and tax rates",
+        "Memory",
+        "Models and spend",
+        "Pay rules",
+        "Portal runs",
+        "Profit brief",
+        "QuickBooks",
+        "Quarter review",
+      ].sort(),
+    );
   });
 });
 

@@ -20,8 +20,9 @@ export type NavKey = (typeof registry)[keyof typeof registry]["href"] | "none";
 export const NAV_HREFS: readonly string[] = ITEMS.map((item) => item.href);
 
 export function appNav(current: NavKey): NavItem[] {
-  return ITEMS.filter((item) => item.shown()).map(({ group, href, label, icon }) => ({
+  return ITEMS.filter((item) => item.shown()).map(({ group, area, href, label, icon }) => ({
     group,
+    area,
     href,
     label,
     icon,

@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const accounting = {
   group: "Settings",
+  area: "books",
   order: 10,
   href: "/settings/accounting",
   label: "QuickBooks",

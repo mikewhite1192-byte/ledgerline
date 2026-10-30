@@ -23,10 +23,11 @@
   --muted-foreground: #66706b;
   --border: #e2e4df;
   --input: #858e89;
-  --primary: #0e6b4d;
-  --primary-hover: #0b5a41;
+  --primary: #4f46e5;
+  --primary-hover: #4338ca;
   --primary-foreground: #ffffff;
-  --link: #0e6b4d;
+  --accent-soft: #eef0ff;
+  --link: #4f46e5;
   --success: #0b4a36;
   --success-soft: #dcefe5;
   --warning: #8a4b00;
@@ -36,8 +37,8 @@
   --destructive-foreground: #ffffff;
   --info: #2f4b5a;
   --info-soft: #e3eaee;
-  --ring: #0e6b4d;
-  --radius: 8px;
+  --ring: #4f46e5;
+  --radius: 12px;
   --float-shadow: 0 4px 16px rgba(22, 29, 26, 0.1);
   color-scheme: light;
 }
@@ -55,10 +56,11 @@
     --muted-foreground: #8f9893;
     --border: #2a312d;
     --input: #626c66;
-    --primary: #3fb984;
-    --primary-hover: #5ccb9c;
-    --primary-foreground: #0e1a14;
-    --link: #5ccb9c;
+    --primary: #818cf8;
+    --primary-hover: #a5b4fc;
+    --primary-foreground: #111336;
+    --accent-soft: #1e2140;
+    --link: #818cf8;
     --success: #8fe0ba;
     --success-soft: #153527;
     --warning: #f2b33d;
@@ -68,8 +70,8 @@
     --destructive-foreground: #161d1a;
     --info: #a7c3d2;
     --info-soft: #1a2a31;
-    --ring: #3fb984;
-    --radius: 8px;
+    --ring: #818cf8;
+    --radius: 12px;
     --float-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
     color-scheme: dark;
   }
@@ -87,10 +89,11 @@
   --muted-foreground: #8f9893;
   --border: #2a312d;
   --input: #626c66;
-  --primary: #3fb984;
-  --primary-hover: #5ccb9c;
-  --primary-foreground: #0e1a14;
-  --link: #5ccb9c;
+  --primary: #818cf8;
+  --primary-hover: #a5b4fc;
+  --primary-foreground: #111336;
+  --accent-soft: #1e2140;
+  --link: #818cf8;
   --success: #8fe0ba;
   --success-soft: #153527;
   --warning: #f2b33d;
@@ -100,8 +103,8 @@
   --destructive-foreground: #161d1a;
   --info: #a7c3d2;
   --info-soft: #1a2a31;
-  --ring: #3fb984;
-  --radius: 8px;
+  --ring: #818cf8;
+  --radius: 12px;
   --float-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
   color-scheme: dark;
 }
@@ -148,6 +151,7 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--foreground);
+  --color-accent-soft: var(--accent-soft);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-primary: var(--primary);
@@ -169,6 +173,8 @@
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 2px);
+  --radius-2xl: calc(var(--radius) + 4px);
 
   --shadow-*: initial;
   --shadow-float: var(--float-shadow);
@@ -237,8 +243,33 @@
   }
 
   ::selection {
-    background-color: var(--success-soft);
+    background-color: var(--accent-soft);
     color: var(--foreground);
+  }
+
+  /*
+    Hide amounts (the eye in the top bar). With data-amounts="hidden" on the page (theme.js puts it
+    on before the first paint), each Money amount is drawn blurred and read as "Amount hidden". An
+    amount inside data-amounts="shown" never is: a number a person must approve stays in plain view.
+    The digits keep their place, so nothing moves; the blurred copy comes from the span's own
+    data-money. The selector is MASKED_AMOUNT in components/app/money.tsx (a test keeps them equal).
+    A browser that cannot give generated content its own spoken text draws the words instead, so it
+    never reads an amount aloud.
+  */
+  [data-amounts="hidden"] [data-money]:not([data-amounts="shown"] *) {
+    position: relative;
+    visibility: hidden;
+  }
+
+  [data-amounts="hidden"] [data-money]:not([data-amounts="shown"] *)::after {
+    content: "Amount hidden";
+    content: attr(data-money) / "Amount hidden";
+    position: absolute;
+    inset: 0;
+    visibility: visible;
+    filter: blur(0.35em);
+    user-select: none;
+    pointer-events: none;
   }
 
   @media (prefers-reduced-motion: reduce) {

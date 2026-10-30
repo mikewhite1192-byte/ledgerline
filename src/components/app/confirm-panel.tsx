@@ -69,10 +69,12 @@ export function ConfirmPanel({
   }, [pending]);
 
   return (
+    // The confirm before an approval: its total and lines never hide.
     <div
       ref={panelRef}
       role="group"
       aria-labelledby={titleId}
+      data-amounts="shown"
       className={cn("grid gap-3 rounded-lg border border-border bg-secondary px-4 py-3 sm:px-5", className)}
     >
       <div className="grid gap-1">

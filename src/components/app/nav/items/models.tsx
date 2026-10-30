@@ -3,6 +3,7 @@ import type { MenuItem } from "../menu-item";
 
 export const models = {
   group: "Settings",
+  area: "books",
   order: 20,
   href: "/models",
   label: "Models and spend",

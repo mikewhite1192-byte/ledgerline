@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const collections = {
   group: "Money in",
+  area: "billing",
   order: 40,
   href: "/collections",
   label: "Collections",

@@ -34,6 +34,15 @@ const PAIRS: [string, string, number][] = [
   ["input", "background", 3],
   ["ring", "background", 3],
   ["ring", "card", 3],
+  // The indigo accent as text: the carrier's initials and an active row's icon on the soft indigo,
+  // and indigo on a card or the page.
+  ["primary", "accent-soft", 4.5],
+  ["primary", "card", 4.5],
+  ["primary", "background", 4.5],
+  // The current menu row's label on the soft indigo.
+  ["foreground", "accent-soft", 4.5],
+  // The test-mode banner: page-colored text on the dark band.
+  ["background", "foreground", 4.5],
 ];
 
 describe("contrastRatio", () => {

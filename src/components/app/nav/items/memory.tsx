@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const memory = {
   group: "Settings",
+  area: "books",
   order: 50,
   href: "/memory",
   label: "Memory",

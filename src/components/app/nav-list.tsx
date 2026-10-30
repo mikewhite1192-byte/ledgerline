@@ -1,9 +1,19 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
+import type { MenuArea } from "./nav/menu-item";
 
 // `group` is the job the item belongs to ("Pay", "Money in"). Items of one group sit together.
-export type NavItem = { href: string; label: string; icon: ReactNode; current?: boolean; group?: string };
+// `area` is the sidebar tab it shows under ("primary" sits above the tabs); a list with no areas
+// (the /design specimen) shows as one list with no tabs.
+export type NavItem = {
+  href: string;
+  label: string;
+  icon: ReactNode;
+  current?: boolean;
+  group?: string;
+  area?: MenuArea | "primary";
+};
 
 // Consecutive items with the same group become one run; an item with no group is a run of its own
 // kind, so a flat list (the /design specimen) renders as before.
@@ -17,21 +27,23 @@ function runs(items: NavItem[]): { group?: string; items: NavItem[] }[] {
   return out;
 }
 
+// One menu row's look, shared with the rows the shell adds above the areas (Needs you, Ask). The
+// row for the page you are on sits on the soft indigo with an indigo icon.
+export function navRowClass(current = false): string {
+  return cn(
+    "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-body transition-colors duration-150 [&_svg]:size-4 [&_svg]:shrink-0",
+    current
+      ? "bg-accent-soft font-medium text-foreground [&_svg]:text-primary"
+      : "text-foreground-2 hover:bg-accent hover:text-foreground [&_svg]:text-muted-foreground",
+  );
+}
+
 function Items({ items, label }: { items: NavItem[]; label?: string }) {
   return (
     <ul aria-label={label} className="grid gap-0.5">
       {items.map((item) => (
         <li key={item.href}>
-          <Link
-            href={item.href}
-            aria-current={item.current ? "page" : undefined}
-            className={cn(
-              "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-body transition-colors duration-150 [&_svg]:size-4 [&_svg]:shrink-0",
-              item.current
-                ? "bg-accent font-medium text-foreground [&_svg]:text-primary"
-                : "text-foreground-2 hover:bg-accent hover:text-foreground [&_svg]:text-muted-foreground",
-            )}
-          >
+          <Link href={item.href} aria-current={item.current ? "page" : undefined} className={navRowClass(item.current)}>
             {item.icon}
             {item.label}
           </Link>

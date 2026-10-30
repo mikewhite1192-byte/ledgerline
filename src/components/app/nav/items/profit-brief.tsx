@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const profitBrief = {
   group: "Today",
+  area: "books",
   order: 20,
   href: "/profit",
   label: "Profit brief",

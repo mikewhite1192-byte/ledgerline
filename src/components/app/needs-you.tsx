@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NEEDS_YOU_ANCHOR } from "@/components/app/anchors";
 import { Money } from "@/components/app/money";
 import { Card } from "@/components/ui/card";
 import type { NeedsYouView } from "@/lib/home/needs-you";
@@ -14,13 +15,22 @@ export const NEEDS_YOU_UNREAD = "Could not check everything that is waiting righ
 export function NeedsYou({ view }: { view: NeedsYouView }) {
   const { rows, unread } = view;
   return (
-    <section aria-labelledby="needs-you-title" className="mx-auto w-full max-w-[720px]">
+    <section
+      id={NEEDS_YOU_ANCHOR}
+      aria-labelledby="needs-you-title"
+      className="mx-auto w-full max-w-[720px] scroll-mt-28"
+    >
       <Card>
         <h2 id="needs-you-title" className="px-4 pt-4 text-h3 text-foreground sm:px-5">
           Needs you
         </h2>
         {rows.length > 0 ? (
-          <ul aria-label="Waiting on you" className="mt-2 divide-y divide-border border-t border-border">
+          // Each row is something a person approves, so its amounts never hide.
+          <ul
+            aria-label="Waiting on you"
+            className="mt-2 divide-y divide-border border-t border-border"
+            data-amounts="shown"
+          >
             {rows.map((r) => (
               <li
                 key={r.key}

@@ -233,7 +233,7 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
   });
 
   await test.step("6. sign out returns to the sign-in page", async () => {
-    // Sign out sits in the carrier menu in the top bar.
+    // Sign out sits in the carrier menu in the sidebar.
     await page.locator("summary").filter({ hasText: "carrier menu" }).click();
     await page.getByRole("button", { name: "Sign out" }).filter({ visible: true }).first().click();
     await expect(page).toHaveURL(/\/sign-in$/);

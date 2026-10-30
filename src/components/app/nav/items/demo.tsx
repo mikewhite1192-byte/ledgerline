@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const demo = {
   group: "Settings",
+  area: "books",
   order: 40,
   href: "/settings/demo",
   label: "Demo",

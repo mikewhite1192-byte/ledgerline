@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const driverNotes = {
   group: "Pay",
+  area: "pay",
   order: 20,
   href: "/driver-notes",
   label: "Driver notes",

@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const factoring = {
   group: "Money in",
+  area: "billing",
   order: 60,
   href: "/factoring",
   label: "Factoring",

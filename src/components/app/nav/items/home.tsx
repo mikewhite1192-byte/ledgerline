@@ -3,6 +3,7 @@ import type { MenuItem } from "../menu-item";
 
 export const home = {
   group: "Today",
+  area: "primary",
   order: 10,
   href: "/",
   label: "Home",

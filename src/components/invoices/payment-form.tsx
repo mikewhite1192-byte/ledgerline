@@ -177,7 +177,8 @@ export function PaymentForm({
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} className="grid gap-5" noValidate>
+    // A payment a person records and applies: its amounts never hide.
+    <form onSubmit={(e) => void submit(e)} className="grid gap-5" noValidate data-amounts="shown">
       <div className="grid gap-4 sm:grid-cols-2">
         <Field id="pay-customer" label="Customer">
           {(p) => (
