@@ -132,13 +132,15 @@ describe("runArm", () => {
   };
 
   it("a skipped case is not run, and the spend stop counts the rest over the cap", async () => {
-    const cases = pick(
-      "prairie-wind:fuel_while_parked",
-      "blue-ridge:missing_reimbursement",
-      "blue-ridge:duplicate_advance",
-      "prairie-wind:missing_reimbursement",
-      "prairie-wind:fuel_while_parked",
-    );
+    // No built case is skipped today (the fuel checks list every planted fill-up), so the test
+    // marks one the way a fill-up before the checks' start date would be.
+    const [parked] = pick("prairie-wind:fuel_while_parked");
+    const skipped: EvalCase = { ...parked, skip: "fuel_before_start" };
+    const cases = [
+      skipped,
+      ...pick("blue-ridge:missing_reimbursement", "blue-ridge:duplicate_advance", "prairie-wind:missing_reimbursement"),
+      skipped,
+    ];
     const run = vi.fn(async (c: EvalCase, d: CaseDeps) => {
       expect(d.arm).toBe("spark");
       expect(d.session).toBe(sessions[c.carrierSlug as keyof typeof sessions]);

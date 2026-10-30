@@ -14,8 +14,9 @@ describe("eval cases", () => {
     expect(cases).toHaveLength(30);
     expect(new Set(cases.map((c) => c.key)).size).toBe(30);
     expect(cases.filter((c) => c.kind !== "fuel")).toHaveLength(24);
-    // The fuel checks start on a fixed date; a planted fill-up before it has nothing to find.
-    expect(cases.filter((c) => c.skip !== null).map((c) => c.key)).toEqual(["prairie-wind:fuel_while_parked"]);
+    // The fuel checks' start date is the first day of the earlier seeded open week, so the
+    // product's own checks list every planted fill-up and no case is skipped.
+    expect(cases.filter((c) => c.skip !== null).map((c) => c.key)).toEqual([]);
     for (const c of cases) {
       const plan = plans.get(c.carrierSlug);
       expect(plan, c.key).toBeDefined();

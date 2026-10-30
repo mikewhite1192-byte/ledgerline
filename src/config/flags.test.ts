@@ -81,6 +81,10 @@ const KEPT_OFF = [
   "groundedRatesEnabled",
   // Pay cards ship dark with their own merge; the owner turns them on in their own PR.
   "payCardsEnabled",
+  // The models page's eval card waits on a recorded run; the owner turns it on in its own PR.
+  "evalCardEnabled",
+  // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
+  "evalRun.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
