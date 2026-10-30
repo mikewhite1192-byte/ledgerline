@@ -19,6 +19,7 @@ import { loadCreateExecutor } from "../proposals/executors/load-create";
 import { EXECUTORS, executeProposal, type ExecuteDeps, type Executor, type ProposalRow } from "../proposals/execute";
 import { runAllChecks } from "../rules-engine";
 import { ForbiddenError } from "../tenant/context";
+import { countLoadsWithNumber } from "./candidates";
 import type { RateConComplete } from "./read";
 import { rateConTranscriptOf } from "./schema";
 import { createLoadCard } from "./service";
@@ -620,5 +621,25 @@ describe("rate confirmations in the database", () => {
     expect((await readRows(doc.id))[0].status).toBe("proposed");
     const checked = await app.withTenant(A.tenantId, (q) => engineCheck(q, auditorCtx(), id));
     expect(checked).toEqual({ check: "mismatch", engineCents: RATECON_TOTAL_CENTS });
+  });
+
+  it("counts the loads holding a number in pages of one, as the app, seeing only its own carrier's", async () => {
+    const ids = [randomUUID(), randomUUID(), randomUUID()];
+    const numbers = ["RC-7101", "rc-7101 ", "RC-71011"];
+    for (const [i, id] of ids.entries()) {
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO loads (id, tenant_id, load_number, customer_id, status, origin_city, origin_state, dest_city,
+             dest_state, pickup_on, loaded_miles)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid), 'planned', 'Dallas', 'TX',
+             'Memphis', 'TN', CAST('2026-11-05' AS date), 450)`,
+          [id, numbers[i], A.customerId],
+        ),
+      );
+    }
+    const pages = { pageSize: 1, maxPages: 10_000 };
+    expect(await app.withTenant(A.tenantId, (q) => countLoadsWithNumber(q, "RC-7101", randomUUID(), pages))).toBe(2);
+    expect(await app.withTenant(A.tenantId, (q) => countLoadsWithNumber(q, "RC-7101", ids[0], pages))).toBe(1);
+    expect(await app.withTenant(B.tenantId, (q) => countLoadsWithNumber(q, "RC-7101", randomUUID(), pages))).toBe(0);
   });
 });

@@ -1,5 +1,6 @@
 import type { Queryable } from "../db";
-import { readTable, readTenant } from "../data/read";
+import { readTable, readTenant, ReadLimitError, type Paging } from "../data/read";
+import { isUuid } from "../uuid";
 import { loadNumberOf, normCode, type RateConCandidates, type StoredRateCon } from "./check";
 import type { RateConReading } from "./schema";
 
@@ -23,12 +24,7 @@ export async function rateConCandidates(
   const number = loadNumberOf(reading.loadNumber);
   if (number === null) return { zone: tenant.timezone, customers, loadsWithNumber: 0, cardsWithNumber: 0 };
 
-  // Only the two columns compared. normCode (NFKC, every Unicode space, full upper case) has no
-  // identical SQL form, so the whole-value compare stays here.
-  const loads = await q.query<{ id: string; load_number: string | null }>(
-    "SELECT CAST(id AS text) AS id, load_number FROM loads WHERE tenant_id = current_tenant_id()",
-  );
-  const loadsWithNumber = loads.filter((l) => l.id !== ownLoadId && normCode(l.load_number) === number).length;
+  const loadsWithNumber = await countLoadsWithNumber(q, number, ownLoadId);
   const cards = await q.query<{ subject_id: string; load_number: string | null }>(
     `SELECT CAST(subject_id AS text) AS subject_id, args ->> 'loadNumber' AS load_number FROM proposals
       WHERE tenant_id = current_tenant_id() AND kind = 'load_create'
@@ -38,6 +34,44 @@ export async function rateConCandidates(
     (c) => c.subject_id !== ownLoadId && normCode(c.load_number) === number,
   ).length;
   return { zone: tenant.timezone, customers, loadsWithNumber, cardsWithNumber };
+}
+
+// Rows per statement and statements per read for the loads count. A row is an id and a load
+// number, so a page of 1,000 stays far under the Data API's 1 MiB response cap; the bound (200,000
+// loads) stops a runaway read, and a read stopped there fails closed.
+export const LOAD_PAGING: Paging = { pageSize: 1000, maxPages: 200 };
+
+// The tenant's loads, other than ownLoadId, whose load number is this one, read in pages keyed on
+// the uuid id (loads.id, so the order is the uuid's and not the text column's). Only the two columns
+// compared: normCode (NFKC, every Unicode space, full upper case) has no identical SQL form, so the
+// whole-value compare stays here and every load is seen once.
+export async function countLoadsWithNumber(
+  q: Queryable,
+  number: string,
+  ownLoadId: string,
+  paging: Paging = LOAD_PAGING,
+): Promise<number> {
+  const { pageSize, maxPages } = paging;
+  for (const n of [pageSize, maxPages]) {
+    if (!Number.isSafeInteger(n) || n < 1) throw new RangeError("paging is not a positive count");
+  }
+  const select = "SELECT CAST(id AS text) AS id, load_number FROM loads WHERE tenant_id = current_tenant_id()";
+  type Row = { id: string; load_number: string | null };
+  let count = 0;
+  let cursor: string | null = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    const rows: Row[] =
+      cursor === null
+        ? await q.query<Row>(`${select} ORDER BY loads.id LIMIT ${pageSize}`)
+        : await q.query<Row>(`${select} AND id > CAST($1 AS uuid) ORDER BY loads.id LIMIT ${pageSize}`, [cursor]);
+    if (rows.length > pageSize) throw new Error("a page is larger than its page size");
+    count += rows.filter((l) => l.id !== ownLoadId && normCode(l.load_number) === number).length;
+    if (rows.length < pageSize) return count;
+    const last: string = rows[rows.length - 1].id;
+    if (!isUuid(last)) throw new Error("a page key is not a uuid");
+    cursor = last;
+  }
+  throw new ReadLimitError();
 }
 
 const utc = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
