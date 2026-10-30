@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { checkPendingFactoring } from "@/lib/factoring/execute";
 import { factoringOn } from "@/lib/factoring/switches";
 import { isCrossSite } from "@/lib/http/same-site";
 import { isUuid } from "@/lib/uuid";
 
 // POST: "Check pending" on a factoring request's page. Reads back from the factoring partner each
-// invoice of this request that was sent but not confirmed yet; never sends anything new. Counts
-// and categories only in the reply. Switched off, the route is not there.
+// invoice of this request that was sent but not confirmed yet; never sends anything new, but it
+// settles the ledger rows it reads back, so it is staff only: a demo visitor (the judge role) is
+// refused before any work. Counts and categories only in the reply. Switched off, the route is
+// not there.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -27,6 +30,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!factoringOn()) return reply({ error: "not_found" }, 404);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { id } = await params;
   if (!isUuid(id)) return reply({ error: "not_found" }, 404);
   try {

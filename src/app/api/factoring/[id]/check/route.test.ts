@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
@@ -12,9 +13,12 @@ const REQUEST = "6b1c9d2e-3f4a-4b5c-8d6e-7f8a9b0c1d2e";
 const SESSION: Session = { sub: "sub-test", email: "ops@example.test", tenantId: TENANT };
 const SUMMARY = { checked: 1, confirmed: 1, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 };
 
-const mocks = vi.hoisted(() => ({ getSession: vi.fn(), checkPendingFactoring: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getSession: vi.fn(), staffGate: vi.fn(), checkPendingFactoring: vi.fn() }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here a caller is staff
+// unless a test says it is a demo visitor (the judge role).
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: mocks.staffGate }));
 vi.mock("@/lib/factoring/execute", () => ({ checkPendingFactoring: mocks.checkPendingFactoring }));
 
 const saved = flags.factoring.enabled;
@@ -27,6 +31,7 @@ const post = (id = REQUEST, headers: Record<string, string> = {}) =>
 beforeEach(() => {
   flags.factoring.enabled = true;
   mocks.getSession.mockResolvedValue(SESSION);
+  mocks.staffGate.mockResolvedValue(null);
   mocks.checkPendingFactoring.mockResolvedValue({ ok: true, summary: SUMMARY, tooNew: 0, stillWaiting: 0, status: "funded" });
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -67,6 +72,19 @@ describe("POST /api/factoring/[id]/check", () => {
     mocks.getSession.mockResolvedValue(null);
     const res = await post();
     expect(res.status).toBe(401);
+    expect(mocks.staffGate).not.toHaveBeenCalled();
+    expect(mocks.checkPendingFactoring).not.toHaveBeenCalled();
+  });
+
+  // Check pending settles the ledger rows it reads back, so a demo visitor is refused by the staff
+  // check before the id is read or the check runs.
+  it("refuses a demo visitor (the judge role) before any work", async () => {
+    mocks.staffGate.mockResolvedValue(NextResponse.json({ error: "judge", retryable: false }, { status: 403 }));
+    const res = await post(REQUEST, { "sec-fetch-site": "same-origin" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "judge", retryable: false });
+    expect(mocks.staffGate).toHaveBeenCalledTimes(1);
+    expect(mocks.staffGate).toHaveBeenCalledWith(SESSION);
     expect(mocks.checkPendingFactoring).not.toHaveBeenCalled();
   });
 
