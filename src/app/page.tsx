@@ -73,6 +73,9 @@ export default async function Home({
   const asked = params.document;
   const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
   const ruleAsked = params.rule === "1";
+  // The demo banner's "Start over": a demo visitor's chat opens with no thread, and the next
+  // question starts a new conversation in the same visit.
+  const startOver = params.new === "1";
   const askedPaystub = params.paystub;
   const paystubId =
     typeof askedPaystub === "string" && isUuid(askedPaystub) ? askedPaystub.toLowerCase() : null;
@@ -136,7 +139,7 @@ export default async function Home({
   // thread with the box still working; the turns are read back again on the next question.
   let agentTurns: TurnView[] = [];
   let turnsUnread = false;
-  if (carrier && flags.agentEnabled) {
+  if (carrier && flags.agentEnabled && !(startOver && carrier.role === "judge")) {
     try {
       agentTurns = await readRecentAgentTurns(carrier.session);
     } catch (err) {

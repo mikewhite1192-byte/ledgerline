@@ -94,6 +94,15 @@ describe("toMessages", () => {
     expect(errored.parts.map((p) => p.kind)).not.toContain("verify");
   });
 
+  it("names the visit's own budget for a demo visitor, and leaves every other error alone", () => {
+    const spent = { ...turn, status: "failed" as const, error: "budget" as const, proposals: [], flags: [] };
+    const [, a] = toMessages([spent], {}, {}, undefined, undefined, undefined, true);
+    expect(a.parts[1]).toEqual({ kind: "error", category: "visit_budget" });
+    const timedOut = { ...spent, error: "timeout" as const };
+    const [, b] = toMessages([timedOut], {}, {}, undefined, undefined, undefined, true);
+    expect(b.parts[1]).toEqual({ kind: "error", category: "timeout" });
+  });
+
   it("offers no disclosure for a turn that never reached the server", () => {
     const lost = { ...turn, status: "failed" as const, error: "unknown" as const, steps: [], proposals: [], flags: [] };
     const [, a] = toMessages([lost], {});

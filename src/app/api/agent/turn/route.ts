@@ -6,7 +6,7 @@ import { LOOP_TEXT } from "@/lib/agent/policy";
 import { encodeEvent } from "@/lib/agent/operator/stream";
 import { defaultTurnDeps, runTurn } from "@/lib/agent/operator/turn";
 import type { TurnEvent, TurnStatus } from "@/lib/agent/view";
-import { getSession } from "@/lib/auth/session";
+import { getSession } from "@/lib/agent/gateway/session";
 import { isCrossSite } from "@/lib/http/same-site";
 
 // POST: one operator turn (design 2.2). The turn row is written, running, before any model call;
@@ -23,7 +23,9 @@ const Body = z.strictObject({
   text: z.string().trim().min(1).max(2000),
 });
 
-const REFUSED = { not_found: 404, busy: 409, duplicate: 409 } as const;
+// visit_ended and visit_used: a demo visit that is over, or has asked all its turns
+// (flags.judgeAccess.turnsPerSession), counted when the turn opens, before any model call.
+const REFUSED = { not_found: 404, busy: 409, duplicate: 409, visit_ended: 403, visit_used: 429 } as const;
 
 function refuse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: { "cache-control": "no-store" } });

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { flags } from "../../../../config/flags";
 import type { Session } from "../../../auth/claims";
+import { countVisitTurn } from "../../../auth/demo-visit";
 import { readTenant } from "../../../data/read";
 import type { Queryable } from "../../../db";
 import type { NoteRow } from "../../../memory/notes";
@@ -32,12 +34,28 @@ export type OpenTurnInput = {
 
 // Starts a turn: the conversation (new, or this person's own), a refusal while another turn in
 // it is running, then the turn row, running, with its state summary.
+//
+// A demo visit (session.demoSessionId, src/lib/auth/session.ts) sees only its own conversations,
+// since every judge shares one login, and each turn it opens counts against the visit's
+// turnsPerSession limit (src/lib/auth/demo-visit.ts) after the other checks, so a refused turn
+// counts nothing. A visit that ended, or any visit while flags.judgeAccess is off, opens nothing.
+// A judge with no visit (the switch went off mid-visit, or a judge token without pc_demo) opens
+// nothing either, refused before any row is written; its model calls would be refused anyway
+// (src/lib/ai/spend.ts reserve).
 export async function openTurn(
   q: Queryable,
   session: Session,
   input: OpenTurnInput,
 ): Promise<OpenedTurn | { refused: OpenTurnRefusal }> {
   const nowIso = input.now.toISOString();
+  const visitId = session.demoSessionId ?? null;
+  if (visitId === null) {
+    const member = await q.query<{ role: unknown }>(
+      "SELECT role FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",
+      [session.sub],
+    );
+    if (member.some((m) => m.role === "judge")) return { refused: "visit_ended" };
+  }
   const taken = await q.query<{ id: string }>("SELECT id FROM turns WHERE id = CAST($1 AS uuid)", [
     input.turnId,
   ]);
@@ -46,8 +64,10 @@ export async function openTurn(
   let conversationId = input.conversationId;
   if (conversationId) {
     const own = await q.query<{ id: string }>(
-      "SELECT id FROM conversations WHERE id = CAST($1 AS uuid) AND created_by = $2",
-      [conversationId, session.sub],
+      `SELECT id FROM conversations
+        WHERE id = CAST($1 AS uuid) AND created_by = $2
+          AND demo_session_id IS NOT DISTINCT FROM CAST($3 AS uuid)`,
+      [conversationId, session.sub, visitId],
     );
     if (own.length !== 1) return { refused: "not_found" };
     await q.execute(
@@ -62,13 +82,24 @@ export async function openTurn(
       [conversationId],
     );
     if (running.length > 0) return { refused: "busy" };
-  } else {
+  }
+  if (visitId !== null) {
+    if (!flags.judgeAccess.enabled) return { refused: "visit_ended" };
+    const gate = await countVisitTurn(q, {
+      visitId,
+      sub: session.sub,
+      turnsPerSession: flags.judgeAccess.turnsPerSession,
+      at: nowIso,
+    });
+    if (gate !== "ok") return { refused: gate };
+  }
+  if (!conversationId) {
     conversationId = randomUUID();
     await q.execute(
-      `INSERT INTO conversations (id, tenant_id, created_by, created_at, updated_at)
+      `INSERT INTO conversations (id, tenant_id, created_by, created_at, updated_at, demo_session_id)
        VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS timestamptz),
-               CAST($3 AS timestamptz))`,
-      [conversationId, session.sub, nowIso],
+               CAST($3 AS timestamptz), CAST($4 AS uuid))`,
+      [conversationId, session.sub, nowIso, visitId],
     );
   }
 
