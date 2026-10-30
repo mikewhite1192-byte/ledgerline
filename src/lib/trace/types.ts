@@ -61,8 +61,8 @@ export type TraceStep = {
   toolSearches: number | null;
   incomplete: boolean;
   escalation: { attempts: number; finishedBy: string } | null;
-  // A model step's own short note (design-agents-101 3.4), when the model returned one. Absent
-  // otherwise: never a made-up note.
+  // A model step's own short note (design-agents-101 3.4), when the model returned one and the
+  // step-through is shown (stepThroughShown). Absent otherwise: never a made-up note.
   reasoningNote?: string;
 };
 
@@ -99,7 +99,8 @@ export type TurnTrace = {
   // Absent or empty when the turn held no notes, or while carrierMemoryEnabled is off.
   notesUsed?: TraceNote[];
   // The summary of the carrier's records the turn started from, whole, as the model read it.
-  // Absent for a turn opened before it was kept.
+  // Absent for a turn opened before it was kept, or while the step-through is not shown
+  // (stepThroughShown).
   contextSummary?: string;
 };
 

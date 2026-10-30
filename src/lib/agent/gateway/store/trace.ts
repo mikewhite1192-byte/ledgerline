@@ -1,7 +1,7 @@
 // The saving is priced from the wrapper's one price table; prices.ts is a pure table that makes no model call.
 import { priceFor, savedByCache } from "../../../ai/prices";
 import type { AiProvider, AiTarget } from "../../../ai/types";
-import { flags } from "../../../../config/flags";
+import { flags, stepThroughShown } from "../../../../config/flags";
 import { sortVersions } from "../../../data/config-version";
 import { readTable, readTenant } from "../../../data/read";
 import type { Queryable } from "../../../db";
@@ -177,11 +177,12 @@ function decisionOf(r: StepRow): TraceDecision | null {
 // A stored text column as it was kept, or nothing for an empty or missing one.
 const textOrNone = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
 
-function stepOf(r: StepRow): TraceStep {
+function stepOf(r: StepRow, shown: boolean): TraceStep {
   const attempts = r.attempts !== null && COUNT.test(r.attempts) ? Number(r.attempts) : null;
   const finishedBy = codeOrNull(r.finished_by);
-  // Only a model step keeps a note (migration 0044); any other step's is never read.
-  const note = r.kind === "model" ? textOrNone(r.reasoning_note) : null;
+  // Only a model step keeps a note (migration 0044); any other step's is never read. Off
+  // (stepThroughShown), no note is sent.
+  const note = shown && r.kind === "model" ? textOrNone(r.reasoning_note) : null;
   return {
     seq: Number(r.seq),
     kind: r.kind,
@@ -313,6 +314,10 @@ type TurnRow = {
 };
 
 async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
+  // The summary the turn started from and each model step's note leave the server only while the
+  // trace panel may step through them (stepThroughShown, as the page reads it); off, the trace
+  // carries neither.
+  const shown = stepThroughShown();
   const steps = await q.query<StepRow>(
     `SELECT s.seq, s.kind, s.label, s.state, s.proposal_id,
             s.detail->>'category' AS category, s.detail->>'result' AS result,
@@ -374,14 +379,14 @@ async function traceOfTurn(q: Queryable, turn: TurnRow): Promise<TurnTrace> {
 
   const notesUsed = await readTraceNotes(q, turn.notes_used);
   const auditorNotes = await readAuditorNotes(q, proposals);
-  const contextSummary = textOrNone(turn.context_summary);
+  const contextSummary = shown ? textOrNone(turn.context_summary) : null;
 
   return {
     turnId: turn.id,
     status: turn.status,
     ...(notesUsed.length > 0 ? { notesUsed } : {}),
     ...(contextSummary !== null ? { contextSummary } : {}),
-    steps: steps.map(stepOf),
+    steps: steps.map((r) => stepOf(r, shown)),
     extraCalls: extras.flatMap((r): TraceExtraCall[] => {
       const call = callOf(r);
       if (!call) return [];

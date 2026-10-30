@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { flags } from "../../../../config/flags";
 import type { Session } from "../../../auth/claims";
 import { createPgDb } from "../../../db/pg";
 import { adminUrl, appUrl } from "../../../db/test-urls";
@@ -337,6 +338,28 @@ describe("the trace and the model week", () => {
       "no input tokens from cache",
       null,
     ]);
+  });
+
+  it("keeps the turn's summary and the model's note on the server while the step-through is not shown", async () => {
+    const a = IDS[A];
+    const saved = flags.stepThrough;
+    flags.stepThrough = { dev: false, staff: false };
+    try {
+      const off = await readAgentTurnTrace(session(A), a.turn, deps());
+      expect(off).not.toBeNull();
+      expect(off && "contextSummary" in off).toBe(false);
+      expect(off?.steps.some((s) => "reasoningNote" in s)).toBe(false);
+      expect(JSON.stringify(off)).not.toContain(SUMMARY);
+      expect(JSON.stringify(off)).not.toContain(NOTE);
+      // The rest of the trace reads as it does with the switch on.
+      expect(off?.steps.map((s) => s.kind)).toEqual(["model", "tool", "escalation", "proposal"]);
+      expect(off?.steps[0].call?.id).toBe(a.plan);
+    } finally {
+      flags.stepThrough = saved;
+    }
+    const on = await readAgentTurnTrace(session(A), a.turn, deps());
+    expect(on?.contextSummary).toBe(SUMMARY);
+    expect(on?.steps[0].reasoningNote).toBe(NOTE);
   });
 
   it("gives nothing for another carrier's turn, or for another person's conversation", async () => {

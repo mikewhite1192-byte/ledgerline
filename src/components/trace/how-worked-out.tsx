@@ -21,7 +21,8 @@ import { StepView, TraceRow } from "./step-view";
 // (each model's job, calls, time and cost), and a closed Details with each call's effort and
 // prompt cache figures, for the reader who wants them. With stepThrough (flags.stepThrough, read
 // by the page), the whole answer's panel also offers "Step through": the steps one model call at
-// a time (step-view.tsx). It only changes what is shown; the trace is read the same way.
+// a time (step-view.tsx). Off, the trace route leaves out the turn's summary and the model's notes
+// (store/trace.ts), so neither reaches the browser.
 
 export type TraceLoad = { trace: TurnTrace } | { missing: true } | { error: string };
 export type TraceLoader = (turnId: string) => Promise<TraceLoad>;
