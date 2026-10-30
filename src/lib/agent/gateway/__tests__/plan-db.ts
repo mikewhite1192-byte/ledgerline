@@ -3,6 +3,8 @@ import { QUARTER_DETENTION_SQL, QUARTER_PROPOSALS_SQL, QUARTER_RECOVERY_SQL } fr
 import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
 import {
   ESCROW_LINES,
+  LOAD_NUMBERS_FIRST,
+  LOAD_NUMBERS_NEXT,
   MONEY_CODE_DRIVER_SQL,
   MONEY_CODE_LOAD_SQL,
   MONEY_CODES_SQL,
@@ -204,6 +206,18 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
             decided_at: p.decided_at ?? null,
           };
         });
+    }
+    // The paged read of load ids and numbers (data/read.ts readLoadNumbers): the loads in id order,
+    // after the last id seen on the next pages, up to the limit.
+    const numbers = / LIMIT (\d+)$/.exec(sql);
+    const stem = numbers ? sql.slice(0, numbers.index) : null;
+    if (numbers && (stem === LOAD_NUMBERS_FIRST || stem === LOAD_NUMBERS_NEXT)) {
+      const after = stem === LOAD_NUMBERS_NEXT ? String(params[0]) : null;
+      return [...(tables.loads ?? [])]
+        .filter((r) => after === null || String(r.id) > after)
+        .sort((a, b) => (String(a.id) < String(b.id) ? -1 : 1))
+        .slice(0, Number(numbers[1]))
+        .map((r) => ({ id: r.id, load_number: r.load_number }));
     }
     const m = FROM.exec(sql);
     if (!m) return undefined;
