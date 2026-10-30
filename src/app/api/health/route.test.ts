@@ -15,7 +15,9 @@ function switchesOff() {
     advancesEnabled: false,
     payoutsEnabled: false,
     accountingEnabled: false,
+    demoResetEnabled: false,
   });
+  flags.judgeAccess.enabled = false;
 }
 
 afterEach(() => {
