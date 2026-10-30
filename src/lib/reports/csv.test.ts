@@ -106,6 +106,37 @@ describe("reportCsv", () => {
     expect(reportCsv({ ...base, rows: [], rowsTotal: 0 })).toBe("Driver,Driver id,Type,Status,Net due\r\n");
   });
 
+  it("writes thousandths with three decimals, the sign kept, and the notes after the total", () => {
+    const ifta: ReportResult = {
+      report: "ifta_quarter",
+      title: REPORT_TITLES.ifta_quarter,
+      asOf: "2026-11-02",
+      args: { asOf: "2026-11-02" },
+      period: { start: "2026-10-01", end: "2026-12-31" },
+      columns: [...REPORT_COLUMNS.ifta_quarter],
+      rows: [
+        { state: "NC", miles: 1600, taxPaidGallonsMilli: 300000, taxableGallonsMilli: 240276, netGallonsMilli: -59724, sampleRate: "$0.3630", taxDueCents: -2168 },
+        { state: "AK", miles: 3, taxPaidGallonsMilli: 0, taxableGallonsMilli: 17, netGallonsMilli: 17, sampleRate: "", taxDueCents: null },
+      ],
+      totals: { miles: 1603, taxPaidGallonsMilli: 300000, taxableGallonsMilli: 240293, netGallonsMilli: -59707, taxDueCents: -2168 },
+      notes: ["SAMPLE rates: not for filing.", "Largest tax due: SC, $21.02.", "-1 is a guarded note"],
+      truncated: false,
+      rowsTotal: 2,
+    };
+    expect(reportCsv(ifta).split("\r\n")).toEqual([
+      "State,Miles,Tax-paid gallons,Taxable gallons,Net gallons,SAMPLE rate per gallon,Tax due at SAMPLE rates",
+      "NC,1600,300.000,240.276,-59.724,$0.3630,-21.68",
+      "AK,3,0.000,0.017,0.017,,",
+      "Total,1603,300.000,240.293,-59.707,,-21.68",
+      "SAMPLE rates: not for filing.,,,,,,",
+      '"Largest tax due: SC, $21.02.",,,,,,',
+      "'-1 is a guarded note,,,,,,",
+      "",
+    ]);
+    // No notes on the result, no note lines.
+    expect(reportCsv({ ...ifta, notes: undefined }).split("\r\n")).toHaveLength(5);
+  });
+
   it("refuses a money value that is not a whole number of cents", () => {
     expect(() =>
       reportCsv(margin([{ load: LOAD, deliveredOn: "2026-10-07", revenueCents: 1.5 }])),

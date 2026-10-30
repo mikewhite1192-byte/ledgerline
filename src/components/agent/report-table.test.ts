@@ -2,7 +2,7 @@ import { createElement, Fragment, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { REPORT_COLUMNS, REPORT_TITLES, type ReportResult } from "@/lib/reports/types";
-import { formatBps, reportResultOf, reportTable } from "./report-table";
+import { formatBps, formatMilli, reportResultOf, reportTable } from "./report-table";
 
 const result: ReportResult = {
   report: "cash_needed",
@@ -104,6 +104,75 @@ describe("reportTable captions and cells", () => {
       expect(() => cellFor(bad), bad).not.toThrow();
       expect(cellFor(bad), bad).toContain("Not known");
     }
+  });
+});
+
+describe("the IFTA quarter in the chat", () => {
+  const html = (node: ReactNode) => renderToStaticMarkup(createElement(Fragment, null, node));
+  const ifta: ReportResult = {
+    report: "ifta_quarter",
+    title: REPORT_TITLES.ifta_quarter,
+    asOf: "2026-11-02",
+    args: { asOf: "2026-11-02" },
+    period: { start: "2026-10-01", end: "2026-12-31" },
+    columns: [...REPORT_COLUMNS.ifta_quarter],
+    rows: [
+      {
+        state: "NC",
+        miles: 1600,
+        taxPaidGallonsMilli: 300000,
+        taxableGallonsMilli: 240276,
+        netGallonsMilli: -59724,
+        sampleRate: "$0.3630",
+        taxDueCents: -2168,
+      },
+    ],
+    totals: { miles: 1600, taxPaidGallonsMilli: 300000, taxableGallonsMilli: 240276, netGallonsMilli: -59724, taxDueCents: -2168 },
+    truncated: false,
+    rowsTotal: 1,
+    notes: ["SAMPLE rates: placeholders.", "No data gaps."],
+  };
+
+  it("writes gallons in thousandths to three places from the integer", () => {
+    expect(formatMilli(450500)).toBe("450.500");
+    expect(formatMilli(-59724)).toBe("-59.724");
+    expect(formatMilli(17)).toBe("0.017");
+    expect(formatMilli(-1)).toBe("-0.001");
+    expect(formatMilli(0)).toBe("0.000");
+  });
+
+  it("refuses gallons that are not a whole number of thousandths, and the table shows them as not known", () => {
+    expect(() => formatMilli(1.5)).toThrow("not a whole number");
+    expect(() => formatMilli(Number.MAX_SAFE_INTEGER + 1)).toThrow("not a whole number");
+    for (const odd of [1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const bad: ReportResult = { ...ifta, rows: [{ ...ifta.rows[0], netGallonsMilli: odd }] };
+      const t = reportTable("ifta_quarter", { state: "ready", result: bad });
+      const net = t.columns.find((c) => c.key === "netGallonsMilli");
+      if (!net) throw new Error("net gallons column missing");
+      const cell = html(net.cell(t.rows[0]));
+      expect(cell, String(odd)).toContain("Not known");
+      expect(cell, String(odd)).not.toContain("0.1.5");
+    }
+  });
+
+  it("right-aligns the gallons and shows them, and the total, to three places", () => {
+    const t = reportTable("ifta_quarter", { state: "ready", result: ifta });
+    const net = t.columns.find((c) => c.key === "netGallonsMilli");
+    if (!net) throw new Error("net gallons column missing");
+    expect(net.align).toBe("right");
+    expect(t.rows.map((l) => l.kind)).toEqual(["row", "total"]);
+    expect(html(net.cell(t.rows[0]))).toContain("-59.724");
+    expect(html(net.cell(t.rows[1]))).toContain("-59.724");
+  });
+
+  it("puts the notes after the title as plain sentences, and leaves out anything that is not text", () => {
+    const t = reportTable("ifta_quarter", { state: "ready", result: ifta });
+    expect(t.caption).toBe("IFTA quarter summary (SAMPLE rates), Oct 1 to Dec 31, 2026. SAMPLE rates: placeholders. No data gaps.");
+    const odd = { ...ifta, notes: ["Kept.", 7, null] as unknown as string[] };
+    expect(reportTable("ifta_quarter", { state: "ready", result: odd }).caption).toMatch(/\. Kept\.$/);
+    const none: ReportResult = { ...ifta };
+    delete none.notes;
+    expect(reportTable("ifta_quarter", { state: "ready", result: none }).caption).not.toContain("SAMPLE rates:");
   });
 });
 

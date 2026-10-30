@@ -85,6 +85,14 @@ export const REPORT_PROMPT = [
   "  (the total or the largest rows) in one or two lines and say the full table is below.",
 ].join("\n");
 
+// Added after REPORT_PROMPT only while report_ifta_quarter is offered (flags.reportsEnabled and
+// flags.iftaEnabled), so a turn with the IFTA switch off sends exactly today's prompt.
+export const IFTA_PROMPT = [
+  "- report_ifta_quarter: \"what do we owe for IFTA this quarter and which state is driving it\": the",
+  "  per-state table at SAMPLE rates; quote the tax total and the largest state from the result and",
+  "  say the rates are samples. The per-state rates are in the table below: do not restate them.",
+].join("\n");
+
 // Added to the prompt only while get_cash_friday is offered (flags.cashFridayEnabled), so a turn
 // with the switch off sends exactly today's prompt.
 export const CASH_PROMPT = [
@@ -174,7 +182,8 @@ export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean
   const prompt = verify ? `${listed}\n${VERIFY_RULE}` : listed;
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
   const withReports = reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
-  const withCodes = toolNames.includes("propose_money_code") ? `${withReports}\n${MONEY_CODE_PROMPT}` : withReports;
+  const withIfta = toolNames.includes("report_ifta_quarter") ? `${withReports}\n${IFTA_PROMPT}` : withReports;
+  const withCodes = toolNames.includes("propose_money_code") ? `${withIfta}\n${MONEY_CODE_PROMPT}` : withIfta;
   return toolNames.includes("remember_note") ? `${withCodes}\n${MEMORY_PROMPT}` : withCodes;
 }
 

@@ -62,6 +62,7 @@ beforeEach(() => {
 
 afterEach(() => {
   flags.reportsEnabled = false;
+  flags.iftaEnabled = false;
   vi.restoreAllMocks();
 });
 
@@ -75,6 +76,26 @@ describe("GET /api/reports/:name", () => {
     expect(await response.json()).toEqual({ error: "not_found" });
     expect(mocks.getSession).not.toHaveBeenCalled();
     expect(mocks.reportForSession).not.toHaveBeenCalled();
+  });
+
+  it("is not there for the IFTA quarter while its own switch is off, though the others answer", async () => {
+    flags.iftaEnabled = false;
+    const off = await get("ifta_quarter");
+    expect(off.status).toBe(404);
+    expect(off.headers.get("cache-control")).toBe("no-store");
+    expect(await off.json()).toEqual({ error: "not_found" });
+    expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(mocks.reportForSession).not.toHaveBeenCalled();
+    expect((await get("ar_aging")).status).toBe(200);
+    // On, it reaches the session and the report like any other.
+    flags.iftaEnabled = true;
+    mocks.getSession.mockClear();
+    await get("ifta_quarter", "?asOf=2026-11-02");
+    expect(mocks.getSession).toHaveBeenCalledTimes(1);
+    expect(mocks.reportForSession.mock.calls.at(-1)?.[1]).toEqual({ name: "ifta_quarter", args: { asOf: "2026-11-02" } });
+    // With reports off, the IFTA switch alone does not open it.
+    flags.reportsEnabled = false;
+    expect((await get("ifta_quarter")).status).toBe(404);
   });
 
   it("refuses a request with no session", async () => {

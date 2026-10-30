@@ -1,10 +1,12 @@
+import { IFTA_SAMPLE_RATES } from "../../config/ifta-sample-rates";
 import type { Queryable } from "../db";
 import { configForDay } from "../data/config-version";
-import { readReportInput } from "../data/read";
+import { readIftaInput, readReportInput } from "../data/read";
 import {
   advanceOf,
   customerOf,
   driverOf,
+  fuelPurchaseOf,
   loadsOf,
   payConfigOf,
   periodOf,
@@ -13,17 +15,19 @@ import {
 } from "../data/records";
 import type { PayConfigRow } from "../data/rows";
 import { ConfigError, type PayConfig } from "../rules-engine";
-import { localDateOf } from "../time/local-date";
+import { localDateOf, quarterContaining } from "../time/local-date";
 import { computeAdvancesOutstanding } from "./advances-outstanding";
 import { computeArAging } from "./ar-aging";
 import type { ReportRequest } from "./args";
 import { computeCashNeeded } from "./cash-needed";
 import { computeDriverPaySummary } from "./driver-pay-summary";
+import { computeIftaQuarter } from "./ifta-quarter";
 import { computeMarginPerLoad } from "./margin-per-load";
 import type { ReportResult } from "./types";
 
 // One report for the current tenant: read the tables it needs (whole, SELECT only, inside the
-// caller's tenant transaction), map them to the engine's records, compute. The same function
+// caller's tenant transaction; the IFTA quarter in pages, by its dates), map them to the engine's
+// records, compute. The same function
 // serves the chat tool and the download route, so both show the same numbers.
 
 export type ReportClock = { now: Date; timeZone: string };
@@ -115,6 +119,21 @@ export async function computeReport(
         },
         request.args,
         today,
+      );
+    }
+    case "ifta_quarter": {
+      // The calendar quarter holding asOf, in the carrier's own dates; the report covers all of it.
+      const asOf = request.args.asOf ?? today;
+      const quarter = quarterContaining(asOf);
+      const rows = await readIftaInput(q, quarter);
+      return computeIftaQuarter(
+        {
+          loads: loadsOf(rows.loads, rows.load_state_miles, []),
+          fuel: rows.fuel_purchases.map(fuelPurchaseOf),
+          rates: IFTA_SAMPLE_RATES,
+        },
+        asOf,
+        quarter,
       );
     }
   }

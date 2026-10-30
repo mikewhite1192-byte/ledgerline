@@ -27,12 +27,20 @@ export type ReportLoad =
 
 type Line = { key: string; kind: "row" | "subtotal" | "total"; cells: Record<string, ReportCell> };
 
-const NUMERIC = new Set<ReportColumn["kind"]>(["cents", "int", "pct"]);
+const NUMERIC = new Set<ReportColumn["kind"]>(["cents", "int", "milli", "pct"]);
 
 // 1234 basis points is "12.34%", from the integer, with no floating point.
 export function formatBps(bps: number): string {
   const abs = Math.abs(bps);
   return `${bps < 0 ? "-" : ""}${Math.floor(abs / 100)}.${String(abs % 100).padStart(2, "0")}%`;
+}
+
+// 450500 thousandths is "450.500", from the integer, with no floating point. Refuses anything but
+// a whole number, as the CSV does.
+export function formatMilli(milli: number): string {
+  if (!Number.isSafeInteger(milli)) throw new Error("a report number is not a whole number");
+  const abs = Math.abs(milli);
+  return `${milli < 0 ? "-" : ""}${Math.floor(abs / 1000)}.${String(abs % 1000).padStart(3, "0")}`;
 }
 
 function Unknown() {
@@ -59,6 +67,10 @@ function cellOf(column: ReportColumn, value: ReportCell, hrefFor: HrefFor): Reac
       return typeof value === "number" ? <span className="tabular-nums">{value}</span> : null;
     case "pct":
       return typeof value === "number" ? <span className="tabular-nums">{formatBps(value)}</span> : null;
+    case "milli":
+      // A number that is not whole shows as not known instead of breaking the whole chat.
+      if (typeof value !== "number") return null;
+      return Number.isSafeInteger(value) ? <span className="tabular-nums">{formatMilli(value)}</span> : <Unknown />;
     case "date":
       // A malformed date shows as not known instead of breaking the whole chat.
       if (typeof value !== "string") return null;
@@ -91,7 +103,9 @@ function captionOf(result: ReportResult): string {
   const cut = result.truncated
     ? `. Showing the first ${result.rows.length} of ${result.rowsTotal} rows; the CSV has them all`
     : "";
-  return `${headOf(result)}${cut}`;
+  // A report's notes (the IFTA quarter's method and what it left out) follow as plain sentences.
+  const notes = Array.isArray(result.notes) ? result.notes.filter((n) => typeof n === "string") : [];
+  return `${headOf(result)}${cut}${notes.length > 0 ? `. ${notes.join(" ")}` : ""}`;
 }
 
 function linesOf(result: ReportResult): Line[] {

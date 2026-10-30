@@ -1,5 +1,5 @@
-import { flags } from "../../../config/flags";
 import type { AiTool } from "../../ai";
+import { reportSwitchOn } from "../../reports/switch";
 import { reportOfTool } from "../../reports/types";
 import { enumValuesOf } from "./redact";
 import { classifyMessage } from "./tools/triage/classify-message";
@@ -39,6 +39,7 @@ import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstand
 import { reportArAging } from "./tools/read/report-ar-aging";
 import { reportCashNeeded } from "./tools/read/report-cash-needed";
 import { reportDriverPaySummary } from "./tools/read/report-driver-pay-summary";
+import { reportIftaQuarter } from "./tools/read/report-ifta-quarter";
 import { reportMarginPerLoad } from "./tools/read/report-margin-per-load";
 import { runChecks } from "./tools/read/run-checks";
 import { setChecklist } from "./tools/note/set-checklist";
@@ -84,6 +85,7 @@ const TOOLS: readonly AnyToolDef[] = [
   reportAdvancesOutstanding,
   reportCashNeeded,
   reportMarginPerLoad,
+  reportIftaQuarter,
   getInboundMessage,
   getInvoiceQueue,
   getInvoiceReview,
@@ -139,10 +141,12 @@ function build(): Readonly<Record<string, AnyToolDef>> {
 
 export const TOOL_REGISTRY: Readonly<Record<string, AnyToolDef>> = build();
 
-// The report tools exist only while their switch is on (flags.reportsEnabled, read on every call):
-// off, they are not offered and a call to one is refused as an unknown tool.
+// The report tools exist only while their switch is on (reportSwitchOn: flags.reportsEnabled, and
+// flags.iftaEnabled for the IFTA quarter, read on every call): off, they are not offered and a call
+// to one is refused as an unknown tool.
 function switchedOn(name: string): boolean {
-  return reportOfTool(name) === null || flags.reportsEnabled;
+  const report = reportOfTool(name);
+  return report === null || reportSwitchOn(report);
 }
 
 export function toolNamed(name: string): AnyToolDef | null {

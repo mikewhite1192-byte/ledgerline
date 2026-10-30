@@ -13,6 +13,7 @@ import {
   COLLECTIONS_RULE,
   LOOP_TEXT,
   MEMORY_PROMPT,
+  IFTA_PROMPT,
   MONEY_CODE_PROMPT,
   OPERATOR_PROMPT,
   REPORT_PROMPT,
@@ -929,12 +930,14 @@ describe("runTurn with tool search and the prompt cache", () => {
     collectionsEnabled: boolean;
     cashFridayEnabled: boolean;
     carrierMemoryEnabled: boolean;
+    iftaEnabled?: boolean;
   }) => {
     const before = {
       reportsEnabled: flags.reportsEnabled,
       collectionsEnabled: flags.collectionsEnabled,
       cashFridayEnabled: flags.cashFridayEnabled,
       carrierMemoryEnabled: flags.carrierMemoryEnabled,
+      iftaEnabled: flags.iftaEnabled,
     };
     onTestFinished(() => {
       Object.assign(flags, before);
@@ -1012,6 +1015,23 @@ describe("runTurn with tool search and the prompt cache", () => {
     const off = toolsFor("operator").map((t) => t.name);
     expect(off).not.toContain("propose_money_code");
     expect(operatorPrompt(off, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
+  });
+
+  it("adds the IFTA line only while the reports and the IFTA switch are both on", () => {
+    const base = { collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: false };
+    promptSwitches({ ...base, reportsEnabled: true, iftaEnabled: false });
+    const off = toolsFor("operator").map((t) => t.name);
+    expect(off).not.toContain("report_ifta_quarter");
+    expect(operatorPrompt(off, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${REPORT_PROMPT}`);
+    flags.iftaEnabled = true;
+    const on = toolsFor("operator").map((t) => t.name);
+    expect(on).toContain("report_ifta_quarter");
+    expect(operatorPrompt(on, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${REPORT_PROMPT}\n${IFTA_PROMPT}`);
+    expect(IFTA_PROMPT).toContain("SAMPLE");
+    flags.reportsEnabled = false;
+    const neither = toolsFor("operator").map((t) => t.name);
+    expect(neither).not.toContain("report_ifta_quarter");
+    expect(operatorPrompt(neither, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
   });
 
   it("adds the memory lines only while the note suggestion tool is offered", async () => {

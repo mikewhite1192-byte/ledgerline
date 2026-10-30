@@ -1,0 +1,58 @@
+import type { IftaRate } from "../lib/rules-engine/ifta";
+
+// SAMPLE IFTA rates, cents per gallon in thousandths (the pinned_rates unit: $0.2850 is 28500).
+// Placeholders chosen for the demo so the report has a rate for every contiguous state. They are
+// NOT current, official or filed rates and must never be shown as such: every place they appear
+// says SAMPLE. A real deployment replaces them with rates a person pinned (pinned_rates, D1).
+export const IFTA_SAMPLE_LABEL = "SAMPLE";
+
+export const IFTA_SAMPLE_RATES: readonly IftaRate[] = [
+  { state: "AL", rateMcents: 29000 },
+  { state: "AR", rateMcents: 28500 },
+  { state: "AZ", rateMcents: 26000 },
+  { state: "CA", rateMcents: 54000 },
+  { state: "CO", rateMcents: 20500 },
+  { state: "CT", rateMcents: 49000 },
+  { state: "DE", rateMcents: 22000 },
+  { state: "FL", rateMcents: 37500 },
+  { state: "GA", rateMcents: 35000 },
+  { state: "IA", rateMcents: 32500 },
+  { state: "ID", rateMcents: 32000 },
+  { state: "IL", rateMcents: 45500 },
+  { state: "IN", rateMcents: 57000 },
+  { state: "KS", rateMcents: 26500 },
+  { state: "KY", rateMcents: 24600 },
+  { state: "LA", rateMcents: 20000 },
+  { state: "MA", rateMcents: 24000 },
+  { state: "MD", rateMcents: 42700 },
+  { state: "ME", rateMcents: 31200 },
+  { state: "MI", rateMcents: 47200 },
+  { state: "MN", rateMcents: 28600 },
+  { state: "MO", rateMcents: 19500 },
+  { state: "MS", rateMcents: 18000 },
+  { state: "MT", rateMcents: 29700 },
+  { state: "NC", rateMcents: 36300 },
+  { state: "ND", rateMcents: 23000 },
+  { state: "NE", rateMcents: 29500 },
+  { state: "NH", rateMcents: 22200 },
+  { state: "NJ", rateMcents: 48500 },
+  { state: "NM", rateMcents: 21000 },
+  { state: "NV", rateMcents: 27000 },
+  { state: "NY", rateMcents: 40100 },
+  { state: "OH", rateMcents: 47000 },
+  { state: "OK", rateMcents: 19000 },
+  { state: "OR", rateMcents: 15500 },
+  { state: "PA", rateMcents: 58500 },
+  { state: "RI", rateMcents: 37000 },
+  { state: "SC", rateMcents: 28000 },
+  { state: "SD", rateMcents: 28200 },
+  { state: "TN", rateMcents: 27400 },
+  { state: "TX", rateMcents: 20200 },
+  { state: "UT", rateMcents: 34500 },
+  { state: "VA", rateMcents: 30000 },
+  { state: "VT", rateMcents: 31000 },
+  { state: "WA", rateMcents: 49400 },
+  { state: "WI", rateMcents: 32900 },
+  { state: "WV", rateMcents: 35700 },
+  { state: "WY", rateMcents: 24300 },
+];

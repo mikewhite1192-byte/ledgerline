@@ -4,12 +4,13 @@ import { getSession } from "@/lib/auth/session";
 import { parseReportQuery } from "@/lib/reports/args";
 import { reportCsv } from "@/lib/reports/csv";
 import { reportForSession } from "@/lib/reports/for-session";
-import { capRows } from "@/lib/reports/types";
+import { reportSwitchOn } from "@/lib/reports/switch";
+import { capRows, isReportName } from "@/lib/reports/types";
 
 // GET: one report for the signed-in person's carrier, recomputed from the records with the same
 // typed args the chat tool takes. format=csv (the default) downloads every row; format=json is the
 // chat's table, capped at 50 rows like the tool result. Never cached. Off while the report switch
-// is off.
+// is off, and a report with its own switch (the IFTA quarter) is off while that one is.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -21,10 +22,11 @@ function reply(body: unknown, status: number) {
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ name: string }> }) {
-  if (!flags.reportsEnabled) return reply({ error: "not_found" }, 404);
+  const { name } = await params;
+  const off = isReportName(name) ? !reportSwitchOn(name) : !flags.reportsEnabled;
+  if (off) return reply({ error: "not_found" }, 404);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
-  const { name } = await params;
   const query = parseReportQuery(name, new URL(request.url).searchParams);
   if (!query) return reply({ error: "bad_request" }, 400);
   try {
