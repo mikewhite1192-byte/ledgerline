@@ -4,6 +4,7 @@ import { DEMO_ANCHOR } from "../seed/anchor";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
 import { buildCases, selectCases, TEN_CASE_KEYS } from "./cases";
+import { hasWholeToken, NO_EVIDENCE, scoreCase } from "./score";
 
 const cases = buildCases(DEMO_ANCHOR);
 const plans = new Map<string, ReturnType<typeof buildCarrierPlan>>(DEMO_CARRIERS.map((c) => [c.slug, buildCarrierPlan(c, DEMO_ANCHOR)]));
@@ -80,6 +81,32 @@ describe("eval cases", () => {
       if (c.expected.fixKind === null) expect(c.expected.fixCount).toBe(0);
       else expect(c.expected.fixCount).toBeGreaterThan(0);
       if (c.expected.fixKind === null && c.kind !== "injection") expect(c.expected.causeTokens.length).toBeGreaterThan(0);
+      // One engine amount per card, and the first is the one the case shows.
+      expect(c.expected.fixCents).toHaveLength(c.expected.fixCount);
+      if (c.expected.fixCount > 0) expect(c.expected.fixCents[0]).toBe(c.expected.cents);
+    }
+  });
+
+  it("no answer-only case can pass by repeating its question with no tool read", () => {
+    const answerOnly = cases.filter((c) => c.expected.fixKind === null && c.kind !== "injection");
+    expect(answerOnly.length).toBeGreaterThan(0);
+    for (const c of answerOnly) {
+      // The question never holds a cause token, so the cause must come from a tool's result.
+      for (const t of c.expected.causeTokens.flat()) expect(hasWholeToken(c.prompt, t), `${c.key} ${t}`).toBe(false);
+      const echoed = scoreCase(c, {
+        status: "done",
+        endedReason: "done",
+        text: `${c.prompt} ${c.expected.causeTokens.flat().join(" ")}`,
+        proposals: [],
+        injection: null,
+        toolEvidence: NO_EVIDENCE,
+        auditorCapped: false,
+        costNanocents: 0,
+        auditorNanocents: 0,
+        latencyMs: 0,
+      });
+      expect(echoed.causeRight, c.key).toBe(false);
+      expect(echoed.pass, c.key).toBe(false);
     }
   });
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
+import { AUDIT_CALL } from "../agent/auditor/policy";
 import { runAudit } from "../agent/auditor/run";
 import { callTool, toolsFor } from "../agent/gateway";
 import { dbTurnStore, openAgentTurn } from "../agent/gateway/store";
@@ -7,12 +8,13 @@ import type { OpenedTurn } from "../agent/gateway/store/types";
 import type { CompleteFn } from "../agent/gateway/types";
 import { ESCALATION_CALL, LOOP_TEXT, OPERATOR_CALL, operatorPrompt } from "../agent/policy";
 import { runTurn, turnRequest, type TurnDeps, type TurnOutcome } from "../agent/operator/turn";
-import type { AiMessage, AiRequest, AiTextTarget } from "../ai";
+import { AiError, type AiMessage, type AiRequest, type AiTextTarget } from "../ai";
+import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { Session } from "../auth/claims";
 import type { Queryable, TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
 import { cachedRun, cacheKey } from "./cache";
-import { scoreCase, type InjectionRead, type ProposalRead, type TurnRead } from "./score";
+import { evidenceOf, scoreCase, type InjectionRead, type ProposalRead, type TurnRead } from "./score";
 import type { Arm, CaseResult, CaseScore, EvalCase, SourceRef } from "./types";
 
 // One case through the real operator turn (design 4.5): a fresh conversation, the product's
@@ -25,13 +27,18 @@ import type { Arm, CaseResult, CaseScore, EvalCase, SourceRef } from "./types";
 // operator's Muse Spark calls to that model instead, in the plain shape every host takes (no tool
 // search, no prompt cache, no input-placed system message, no tool search items); the escalation
 // and the second check already call Muse Wonder and are left as they are. On wonder the per-call
-// cap rises from the operator's to the escalation's, Wonder's own ceiling for an operator call.
-export function armComplete(arm: Arm, base: CompleteFn): CompleteFn {
+// cap rises from the operator's to the escalation's, Wonder's own ceiling for an operator call,
+// but never past what the turn has left: one complete per turn, counting its calls' cost the way
+// the turn's own budget does.
+export function armComplete(arm: Arm, base: CompleteFn, maxTurnCents: number = flags.agentTurnLimits.maxTurnCents): CompleteFn {
   if (arm === "spark") return base;
   const to: AiTextTarget = arm;
-  return (target, request, session) => {
-    if (target !== "spark") return base(target, request, session);
-    return base(to, plainRequest(to, request), session);
+  let spentNanocents = 0;
+  return async (target, request, session) => {
+    const centsLeft = Math.floor((maxTurnCents * NANOCENTS_PER_CENT - spentNanocents) / NANOCENTS_PER_CENT);
+    const result = target !== "spark" ? await base(target, request, session) : await base(to, plainRequest(to, request, centsLeft), session);
+    if (Number.isSafeInteger(result.costNanocents) && result.costNanocents > 0) spentNanocents += result.costNanocents;
+    return result;
   };
 }
 
@@ -43,17 +50,18 @@ function plainMessage(m: AiMessage): AiMessage {
   return m;
 }
 
-export function plainRequest(to: AiTextTarget, request: AiRequest): AiRequest {
+// centsLeft: the whole cents the turn has left; a raised cap is never more.
+export function plainRequest(to: AiTextTarget, request: AiRequest, centsLeft: number): AiRequest {
   const plain: AiRequest = { ...request, messages: request.messages.map(plainMessage) };
   delete plain.toolSearch;
   delete plain.cache;
   delete plain.replay;
   if (request.tools) plain.tools = request.tools.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
-  // Reasoning items replay only on Meta's API; Baseten's answers carry none.
+  // Reasoning items replay only on Meta's API; the open-weights host's answers carry none.
   const reasoning = (request.replay ?? []).filter((item) => item.type === "reasoning");
   if (to === "wonder" && reasoning.length > 0) plain.replay = reasoning;
   if (to === "wonder" && request.maxCostCents === OPERATOR_CALL.maxCostCents) {
-    plain.maxCostCents = ESCALATION_CALL.maxCostCents;
+    plain.maxCostCents = Math.max(request.maxCostCents, Math.min(ESCALATION_CALL.maxCostCents, centsLeft));
   }
   return plain;
 }
@@ -90,18 +98,34 @@ export function armRequest(arm: Arm, tools: TurnDeps["tools"]): NonNullable<Turn
   return arm === "spark" ? turnRequest(tools, flags.agentToolSearch, flags.agentPromptCache) : { toolSearch: false, cache: null };
 }
 
+// The turn's caps, as the product's turn deps set them.
+export const evalTurnLimits = (): TurnDeps["limits"] => ({ ...flags.agentTurnLimits, maxTurns: flags.runLimits.maxTurns });
+
+// Every limit that can change a case's answer, for the cache key: the turn's caps and each model
+// call's output and cost ceilings (the operator's, the escalation's and the second check's).
+export function armLimitsOf(): string {
+  const call = (c: { maxOutputTokens: number; maxCostCents: number }) => ({ maxOutputTokens: c.maxOutputTokens, maxCostCents: c.maxCostCents });
+  return JSON.stringify({ turn: evalTurnLimits(), operator: call(OPERATOR_CALL), escalation: call(ESCALATION_CALL), audit: call(AUDIT_CALL) });
+}
+
 // The product's turn deps (defaultTurnDeps), with this case's database, clock and model call.
-export function evalTurnDeps(deps: CaseDeps): TurnDeps {
+// onRead sees each result a read tool returned the turn (kept in memory for the scorer only).
+export function evalTurnDeps(deps: CaseDeps, onRead?: (result: Record<string, unknown>) => void): TurnDeps {
   const { arm, session, db, clock } = deps;
   const tools = armTools(arm);
   const gateway = { db, clock, complete: deps.complete };
+  const limits = evalTurnLimits();
   return {
-    complete: armComplete(arm, deps.complete),
-    callTool: (ctx, call) => callTool(ctx, call, gateway),
+    complete: armComplete(arm, deps.complete, limits.maxTurnCents),
+    callTool: async (ctx, call) => {
+      const outcome = await callTool(ctx, call, gateway);
+      if (outcome.decision === "allowed" && outcome.tier === "read") onRead?.(outcome.result);
+      return outcome;
+    },
     store: dbTurnStore(session, { db, clock: () => new Date(clock()) }),
     tools,
     clock,
-    limits: { ...flags.agentTurnLimits, maxTurns: flags.runLimits.maxTurns },
+    limits,
     request: armRequest(arm, tools),
   };
 }
@@ -285,17 +309,32 @@ export async function runCase(c: EvalCase, deps: CaseDeps): Promise<CaseScore> {
   if ("refused" in opened) return unknownScore();
 
   let outcome: TurnOutcome | null = null;
+  const reads: Record<string, unknown>[] = [];
   try {
-    outcome = await runTurn({ session: deps.session, turn: opened, text: c.prompt, startedAt }, evalTurnDeps(deps));
+    outcome = await runTurn(
+      { session: deps.session, turn: opened, text: c.prompt, startedAt },
+      evalTurnDeps(deps, (r) => reads.push(r)),
+    );
   } catch (err) {
     console.error(`eval: case ${c.key} turn failed: ${err instanceof Error ? err.name : "unknown"}`);
     await closeFailed(deps, opened.turnId);
   }
 
   // The second check on each proposal, as the product runs it when a card is shown. A check that
-  // fails leaves the verdict empty, which scores as no verdict.
+  // fails leaves the verdict empty, which scores the case unknown. A call refused at the run's
+  // spend cap is seen here (the check itself stores it as an unknown verdict), so the case is
+  // over the cap and the arm stops.
+  let auditorCapped = false;
+  const auditComplete: CompleteFn = async (target, request, session) => {
+    try {
+      return await deps.complete(target, request, session);
+    } catch (err) {
+      if (err instanceof AiError && err.category === "cap") auditorCapped = true;
+      throw err;
+    }
+  };
   const audit =
-    deps.audit ?? ((s: Session, id: string) => runAudit(s, id, { db: deps.db, complete: deps.complete, clock: () => new Date(deps.clock()) }));
+    deps.audit ?? ((s: Session, id: string) => runAudit(s, id, { db: deps.db, complete: auditComplete, clock: () => new Date(deps.clock()) }));
   for (const p of await readProposals(deps.db, deps.session, opened.turnId)) {
     try {
       await audit(deps.session, p.id);
@@ -309,6 +348,8 @@ export async function runCase(c: EvalCase, deps: CaseDeps): Promise<CaseScore> {
     status: outcome ? outcome.status : "threw",
     endedReason: outcome ? outcome.endedReason : null,
     text: outcome ? outcome.text : "",
+    toolEvidence: evidenceOf(reads),
+    auditorCapped,
     ...read,
   });
 }
@@ -339,6 +380,7 @@ export type ArmRun = {
 // stop, the cases after it are not started and count as over the cap.
 export async function runArm(a: ArmRun): Promise<{ results: CaseResult[]; stoppedAtCap: boolean }> {
   const { systemPrompt, toolNames } = armPromptOf(a.arm);
+  const limits = armLimitsOf();
   const run = a.run ?? runCase;
   const results: CaseResult[] = [];
   const push = (c: EvalCase, score: CaseScore, cached = false) =>
@@ -368,6 +410,7 @@ export async function runArm(a: ArmRun): Promise<{ results: CaseResult[]; stoppe
       systemPrompt,
       anchor: a.anchor,
       toolNames,
+      limits,
     });
     let out: { score: CaseScore; cached: boolean };
     try {

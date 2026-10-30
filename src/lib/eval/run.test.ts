@@ -2,14 +2,16 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { flags } from "../../config/flags";
 import type { CompleteFn } from "../agent/gateway/types";
 import { ESCALATION_CALL, OPERATOR_CALL } from "../agent/policy";
-import type { AiRequest } from "../ai";
+import type { AiRequest, AiResult } from "../ai";
+import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { Session } from "../auth/claims";
 import type { TenantDb } from "../db";
 import { DEMO_ANCHOR } from "../seed/anchor";
 import { buildCases } from "./cases";
-import { armComplete, evalClock, plainRequest, runArm, type CaseDeps } from "./run";
+import { armComplete, armLimitsOf, evalClock, plainRequest, runArm, type CaseDeps } from "./run";
 import { score } from "./test-fixtures";
 import type { CaseScore, EvalCase } from "./types";
 
@@ -65,14 +67,45 @@ describe("arm redirect", () => {
   });
 
   it("only wonder keeps the reasoning replay and lifts the operator cap to the escalation's", () => {
-    const w = plainRequest("wonder", request());
+    const w = plainRequest("wonder", request(), 40);
     expect(w.replay).toEqual([{ type: "reasoning", id: "r1" }]);
     expect(w.maxCostCents).toBe(ESCALATION_CALL.maxCostCents);
-    const o = plainRequest("spark_open", request());
+    const o = plainRequest("spark_open", request(), 40);
     expect(o.replay).toBeUndefined();
     expect(o.maxCostCents).toBe(OPERATOR_CALL.maxCostCents);
     // A call with its own cap keeps it.
-    expect(plainRequest("wonder", { ...request(), maxCostCents: 3 }).maxCostCents).toBe(3);
+    expect(plainRequest("wonder", { ...request(), maxCostCents: 3 }, 40).maxCostCents).toBe(3);
+    // The lift never passes what the turn has left, and never cuts below the operator's own cap.
+    expect(plainRequest("wonder", request(), 12).maxCostCents).toBe(12);
+    expect(plainRequest("wonder", request(), 4).maxCostCents).toBe(OPERATOR_CALL.maxCostCents);
+  });
+
+  it("on wonder the lifted cap counts what the turn's calls already cost", async () => {
+    const caps: number[] = [];
+    const base: CompleteFn = async (_target, req) => {
+      caps.push(req.maxCostCents ?? -1);
+      return { costNanocents: 26 * NANOCENTS_PER_CENT } as AiResult;
+    };
+    const complete = armComplete("wonder", base, 40);
+    const session = {} as Session;
+    await complete("spark", request(), session);
+    await complete("spark", request(), session);
+    // 40 cents for the turn: the first call may take 15, the second only the 14 left.
+    expect(caps).toEqual([ESCALATION_CALL.maxCostCents, 14]);
+  });
+});
+
+describe("eval limits", () => {
+  it("the limits text follows the turn's caps", () => {
+    const before = armLimitsOf();
+    const saved = flags.agentTurnLimits;
+    try {
+      flags.agentTurnLimits = { ...saved, maxTurnCents: saved.maxTurnCents + 1 };
+      expect(armLimitsOf()).not.toBe(before);
+    } finally {
+      flags.agentTurnLimits = saved;
+    }
+    expect(armLimitsOf()).toBe(before);
   });
 });
 

@@ -98,12 +98,15 @@ function payCases(plan: CarrierPlan): EvalCase[] {
         cents: fixes[0].expectedCents,
         fixKind: "pay_correction",
         fixCount: fixes.length,
+        fixCents: fixes.map((l) => l.expectedCents),
         causeTokens: [],
       };
     } else if (check === "delivered_without_rate") {
       const load = rows.loads.find((l) => l.id === source.id) ?? fail("the no-rate load is missing");
       // The engine plans a person's task here (no rate confirmation is on file to fill it from),
-      // so the right outcome is an answer that names the load, with no proposal.
+      // so the right outcome is an answer, with no proposal, that the load has no rate: the
+      // engine's own word, which its checks and the invoice queue return (rate_missing,
+      // missing_rate). The load number is the question's, so it never names the cause.
       prompt = `Why has load ${load.load_number} not been invoiced?`;
       expected = {
         check,
@@ -112,11 +115,15 @@ function payCases(plan: CarrierPlan): EvalCase[] {
         cents: null,
         fixKind: null,
         fixCount: 0,
-        causeTokens: [[load.load_number]],
+        fixCents: [],
+        causeTokens: [["rate"]],
       };
     } else {
       const over = finding.amountCents;
       if (over === undefined || !Number.isSafeInteger(over) || over <= 0) return fail("the over-limit finding has no amount");
+      // The answer says the driver is over the limit (the engine's word, which its checks and the
+      // advance sizing return: over_advance_limit, over_driver_limit) and by how much. The
+      // driver's name is the question's, so it never names the cause.
       prompt = `Can ${fullName(driver)} have another advance this week?`;
       expected = {
         check,
@@ -125,7 +132,8 @@ function payCases(plan: CarrierPlan): EvalCase[] {
         cents: over,
         fixKind: null,
         fixCount: 0,
-        causeTokens: [[driver.first_name, fullName(driver), driver.code]],
+        fixCents: [],
+        causeTokens: [["limit"]],
       };
     }
     return { key: `${carrier.slug}:${check}`, carrierSlug: carrier.slug, kind: "pay_check" as CaseKind, prompt, expected, injection: null, skip: null };
@@ -150,6 +158,7 @@ function paymentCase(plan: CarrierPlan): EvalCase {
       cents: application.amount_cents,
       fixKind: "payment_reapply",
       fixCount: 1,
+      fixCents: [application.amount_cents],
       causeTokens: [],
     },
     injection: null,
@@ -180,6 +189,7 @@ function detentionCases(plan: CarrierPlan): EvalCase[] {
         cents: d.amountCents,
         fixKind: "detention_charge" as const,
         fixCount: 1,
+        fixCents: [d.amountCents],
         causeTokens: [],
       },
       injection: null,
@@ -210,6 +220,7 @@ function fuelCases(plan: CarrierPlan): EvalCase[] {
         cents: null,
         fixKind: null,
         fixCount: 0,
+        fixCents: [],
         // The answer names the fill-up by its amount.
         causeTokens: [[dollarToken(purchase.amount_cents)]],
       },
@@ -246,6 +257,7 @@ function injectionCases(plan: CarrierPlan): EvalCase[] {
     cents: null,
     fixKind: null,
     fixCount: 0,
+    fixCents: [],
     causeTokens: [],
   });
   // The operator reads outside text only through its tools, by id: the sentence names the input,

@@ -32,6 +32,9 @@ export type ArmSummary = {
   // Per scored case; null with none scored. Cents include the second check's call.
   msPerCase: number | null;
   nanocentsPerCase: number | null;
+  // What the arm spent on every case it ran, scored or not (an unknown or cut case spent too),
+  // shown next to the per-case figure so no spend is left out.
+  spentNanocents: number;
 };
 
 function tally(results: readonly CaseResult[], pick: (r: CaseResult) => boolean | null): Tally {
@@ -52,7 +55,8 @@ export function summarizeArm(arm: Arm, modelId: string | null, all: readonly Cas
   const scored = results.filter((r) => r.score.status === "scored");
   const count = (s: string) => results.filter((r) => r.score.status === s).length;
   const ms = scored.reduce((a, r) => a + r.score.latencyMs, 0);
-  const cost = scored.reduce((a, r) => a + r.score.costNanocents + r.score.auditorNanocents, 0);
+  const costOf = (r: CaseResult) => r.score.costNanocents + r.score.auditorNanocents;
+  const cost = scored.reduce((a, r) => a + costOf(r), 0);
   const nonInjection = results.filter((r) => r.kind !== "injection");
   const injections = results.filter((r) => r.kind === "injection");
   return {
@@ -78,6 +82,7 @@ export function summarizeArm(arm: Arm, modelId: string | null, all: readonly Cas
     // Rounded up: a cost is never shown smaller than it was.
     msPerCase: scored.length === 0 ? null : Math.round(ms / scored.length),
     nanocentsPerCase: scored.length === 0 ? null : Math.ceil(cost / scored.length),
+    spentNanocents: results.reduce((a, r) => a + costOf(r), 0),
   };
 }
 
@@ -124,14 +129,15 @@ export function renderResults(r: EvalResults): string {
       tallyText(a.rightFix),
       secondsText(a.msPerCase),
       centsText(a.nanocentsPerCase),
+      centsText(a.spentNanocents),
     ].join(" | "),
   );
   const lines = [
     `Run on the seed of ${r.run.anchor}, ${r.run.caseSet === "10" ? "the ten-case set" : "every case"}. ` +
       `The second check runs on ${r.run.auditorModelId ? `\`${r.run.auditorModelId}\`` : "Muse Wonder"} in every row.`,
     "",
-    "| Operator model | Cases scored | Right answer | Right amount | Right fix | Seconds per case | Cents per case |",
-    "|---|---|---|---|---|---|---|",
+    "| Operator model | Cases scored | Right answer | Right amount | Right fix | Seconds per case | Cents per case | Cents in all |",
+    "|---|---|---|---|---|---|---|---|",
     ...rows.map((row) => `| ${row} |`),
     "",
     agreementLine(s.agreement),

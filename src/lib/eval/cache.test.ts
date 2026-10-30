@@ -14,6 +14,7 @@ const base: CacheKeyInput = {
   systemPrompt: "You are the operator.",
   anchor: "2026-11-02",
   toolNames: ["run_checks", "propose_pay_correction"],
+  limits: JSON.stringify({ turn: { maxTurnCents: 40 }, operator: { maxOutputTokens: 1200, maxCostCents: 10 } }),
 };
 
 const dirs: string[] = [];
@@ -28,7 +29,7 @@ afterEach(() => {
 });
 
 describe("eval cache", () => {
-  it("the key changes with the tool list, model id and prompt version", () => {
+  it("the key changes with the tool list, model id, limits and prompt version", () => {
     const k = cacheKey(base);
     expect(k).toMatch(/^[0-9a-f]{64}$/);
     // The same inputs, tools in another order: the same key.
@@ -42,6 +43,8 @@ describe("eval cache", () => {
       { prompt: "Is the pay right this week? " },
       { systemPrompt: "You are the operator!" },
       { anchor: "2026-11-09" },
+      // A changed turn cap or a call's output or cost ceiling never reuses an old score.
+      { limits: JSON.stringify({ turn: { maxTurnCents: 40 }, operator: { maxOutputTokens: 1201, maxCostCents: 10 } }) },
     ]) {
       expect(cacheKey({ ...base, ...changed }), JSON.stringify(changed)).not.toBe(k);
     }

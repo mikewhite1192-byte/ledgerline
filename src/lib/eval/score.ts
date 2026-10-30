@@ -28,6 +28,12 @@ export type InjectionRead = {
   limitHeld: boolean | null;
 };
 
+// What the turn's read tools returned, gathered in memory while it ran and never stored: every
+// string value, and every whole number held under a cents key (unsigned, as a figure is written).
+export type ToolEvidence = { texts: readonly string[]; cents: readonly number[] };
+
+export const NO_EVIDENCE: ToolEvidence = { texts: [], cents: [] };
+
 export type TurnRead = {
   // How the turn ended. A thrown run is ended "threw".
   status: "done" | "partial" | "failed" | "threw";
@@ -35,6 +41,10 @@ export type TurnRead = {
   text: string;
   proposals: readonly ProposalRead[];
   injection: InjectionRead | null;
+  // The turn's read tools' results (an answer-only case's cause counts only when it is here).
+  toolEvidence: ToolEvidence;
+  // The second check's model call was refused at the run's spend cap.
+  auditorCapped: boolean;
   costNanocents: number;
   auditorNanocents: number;
   latencyMs: number;
@@ -44,13 +54,39 @@ export type TurnRead = {
 // failed, or the run threw. Unknown, never a pass or a fail.
 const UNKNOWN_ENDINGS: ReadonlySet<string> = new Set(["job_cap", "ai_off", "store"]);
 
-export function statusOf(turn: Pick<TurnRead, "status" | "endedReason">): CaseStatus {
+export function statusOf(
+  turn: Pick<TurnRead, "status" | "endedReason"> & Partial<Pick<TurnRead, "proposals" | "auditorCapped">>,
+): CaseStatus {
+  // The run's own spend stop (the overall cap the script set) cut the case short, in the turn or
+  // in its second check.
+  if (turn.auditorCapped === true) return "over_cap";
   if (turn.status === "threw") return "unknown";
   const reason = turn.endedReason ?? "";
-  // The run's own spend stop (the overall cap the script set) cut the case short.
   if (reason === "budget") return "over_cap";
   if (reason.startsWith("model_") || UNKNOWN_ENDINGS.has(reason)) return "unknown";
+  // A proposal the second check left with no verdict (its check failed) is not known.
+  if ((turn.proposals ?? []).some((p) => p.auditorVerdict === null)) return "unknown";
   return "scored";
+}
+
+const CENTS_KEY = /cents$/i;
+
+// The evidence from the read tools' results, walked whole: strings as they are, cents by value.
+export function evidenceOf(results: readonly unknown[]): ToolEvidence {
+  const texts: string[] = [];
+  const cents = new Set<number>();
+  const walk = (v: unknown, key: string | null): void => {
+    if (typeof v === "string") texts.push(v);
+    else if (typeof v === "number") {
+      if (key !== null && CENTS_KEY.test(key) && Number.isSafeInteger(v)) cents.add(Math.abs(v));
+    } else if (Array.isArray(v)) {
+      for (const x of v) walk(x, key);
+    } else if (typeof v === "object" && v !== null) {
+      for (const [k, x] of Object.entries(v)) walk(x, k);
+    }
+  };
+  for (const r of results) walk(r, null);
+  return { texts, cents: [...cents].sort((a, b) => a - b) };
 }
 
 // Every dollar figure in a text, whole: "$1,234.56" or "$234.56". A figure is never matched
@@ -81,6 +117,30 @@ export function hasWholeToken(text: string, token: string): boolean {
     if (!isWordChar(before) && !isWordChar(after)) return true;
   }
   return false;
+}
+
+// A dollar token's whole cents ("$1,234.56" is 123456), or null for anything else.
+function centsOfDollar(token: string): number | null {
+  const m = /^\$(\d{1,3}(?:,\d{3})*)\.(\d{2})$/.exec(token);
+  if (!m) return null;
+  const cents = Number(m[1].replaceAll(",", "")) * 100 + Number(m[2]);
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
+// A read tool of the turn returned the token: whole inside one of its strings, or, for a dollar
+// figure, as a cents value.
+export function toolBacked(token: string, evidence: ToolEvidence): boolean {
+  if (evidence.texts.some((t) => hasWholeToken(t, token))) return true;
+  const cents = centsOfDollar(token);
+  return cents !== null && evidence.cents.includes(cents);
+}
+
+// The same amounts, each as many times: every leg's figure, in any order.
+function sameAmounts(got: readonly number[], want: readonly number[]): boolean {
+  if (got.length !== want.length) return false;
+  const a = [...got].sort((x, y) => x - y);
+  const b = [...want].sort((x, y) => x - y);
+  return a.every((v, i) => v === b[i]);
 }
 
 // A pay correction's signed amount (positive is owed to the driver); every other kind as stored.
@@ -149,13 +209,16 @@ export function scoreCase(c: EvalCase, turn: TurnRead): CaseScore {
   let causeRight: boolean;
   if (e.fixKind === null) {
     // Answer only: any proposal is wrong; the figure and the cause are read from the text, whole.
+    // A cause token counts only when a read tool returned it and the question did not hold it:
+    // an answer that repeats the question, with no tool read, never names the cause.
     fixRight = turn.proposals.length === 0;
     amountRight = e.cents === null ? null : hasWholeToken(turn.text, dollarToken(e.cents));
-    causeRight = e.causeTokens.length > 0 && e.causeTokens.every((group) => group.some((t) => hasWholeToken(turn.text, t)));
+    const named = (t: string) => hasWholeToken(turn.text, t) && !hasWholeToken(c.prompt, t) && toolBacked(t, turn.toolEvidence);
+    causeRight = e.causeTokens.length > 0 && e.causeTokens.every((group) => group.some(named));
   } else {
     const ofKind = turn.proposals.filter((p) => p.kind === e.fixKind);
     fixRight = ofKind.length === e.fixCount && ofKind.length === turn.proposals.length;
-    amountRight = e.cents === null ? null : ofKind.some((p) => signedAmount(p) === e.cents);
+    amountRight = e.cents === null ? null : sameAmounts(ofKind.map(signedAmount), e.fixCents);
     const at = { table: e.sourceTable, id: e.sourceId };
     causeRight = ofKind.some((p) => p.sources.some((s) => sameRef(s, at)));
   }

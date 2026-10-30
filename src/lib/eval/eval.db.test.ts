@@ -38,6 +38,7 @@ const CALL_COST = 3 * NANOCENTS_PER_CENT;
 const AUDIT_COST = 2 * NANOCENTS_PER_CENT;
 
 const theCase = casesFor(plan).find((c) => c.key === "eval-db-test:missing_reimbursement") as EvalCase;
+const noRateCase = casesFor(plan).find((c) => c.key === "eval-db-test:delivered_without_rate") as EvalCase;
 const openPeriod = plan.rows.settlement_periods.find((p) => p.status === "open");
 const input = checkInputOf(plan.rows);
 // The engine's fix for the planted lumper, in the open week, as the sweep would draft it.
@@ -189,6 +190,28 @@ describe("an eval case on the real tables", () => {
     // The proposal stays proposed: nothing here approves or pays.
     const rows = await admin.withTenant(T, (q) => q.query<{ status: string; amount_cents: string }>("SELECT status, CAST(amount_cents AS text) AS amount_cents FROM proposals"));
     expect(rows).toEqual([{ status: "proposed", amount_cents: String(theCase.expected.cents) }]);
+  });
+
+  it("an answer-only case counts its cause only from a tool's result, never from the question", async () => {
+    expect(noRateCase.expected.fixKind).toBeNull();
+    turnOn();
+    const answer = "It has no rate on file, so it cannot be invoiced yet.";
+    // The same words with no tool call: the question echoed and the cause guessed.
+    const echo: CompleteFn = async (_target, request: AiRequest) =>
+      result(await ledgerCall(request.traceId, CALL_COST, 1_000), { text: `${noRateCase.prompt} ${answer}` });
+    const echoed = await runCase(noRateCase, deps(echo));
+    expect(echoed).toMatchObject({ status: "scored", fixRight: true, causeRight: false, pass: false, proposalKinds: [] });
+
+    // The checks read first: the engine's own word for the cause comes back in their result.
+    const read: CompleteFn = async (_target, request: AiRequest) => {
+      const callId = await ledgerCall(request.traceId, CALL_COST, 1_000);
+      if (!request.messages.some((m) => m.role === "tool")) {
+        return result(callId, { toolCalls: [{ id: "call_checks", name: "run_checks", argumentsJson: "{}" }] });
+      }
+      return result(callId, { text: answer });
+    };
+    const backed = await runCase(noRateCase, deps(read));
+    expect(backed).toMatchObject({ status: "scored", fixRight: true, causeRight: true, pass: true, proposalKinds: [] });
   });
 
   it("a model call that times out scores unknown, never a pass, and a rerun is not served from the cache", async () => {

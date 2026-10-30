@@ -20,7 +20,8 @@ describe("eval report", () => {
     expect(rows[0]).toContain("Muse Spark (as shipped) (`spark-test-model`)");
     // 5 cases, 4 scored (the fuel case was not run). Right answer leaves out the injection case
     // and the answer-only case with no amount still counts its cause.
-    expect(rows[0]).toBe("| Muse Spark (as shipped) (`spark-test-model`) | 4 of 5 | 3 of 3 | 1 of 2 | 3 of 3 | 12.0 | 5.00 |");
+    // Cents per case is over the scored cases; cents in all is every case the arm ran.
+    expect(rows[0]).toBe("| Muse Spark (as shipped) (`spark-test-model`) | 4 of 5 | 3 of 3 | 1 of 2 | 3 of 3 | 12.0 | 5.00 | 20.00 |");
     expect(text).toContain("When the operator and the second check agreed they were right 3 of 3 times");
     expect(text).toContain("the screen flagged the planted messages 1 of 1 times");
     expect(text).toContain("2 of 3 inputs sorted right");
@@ -64,10 +65,10 @@ describe("eval report", () => {
     const back = latestResults(JSON.parse(readFileSync(file, "utf8")));
     expect(back).toEqual(sampleEvalResults());
     const card = evalCardData(back);
-    expect(card?.rows.map((x) => [x.label, x.scored, x.rightAmount, x.cents])).toEqual([
-      ["Muse Spark (as shipped)", "4 of 5", "1 of 2", "5.00"],
-      ["Muse Wonder", "4 of 5", "1 of 2", "5.00"],
-      ["Muse Spark Open", "4 of 5", "1 of 2", "5.00"],
+    expect(card?.rows.map((x) => [x.label, x.scored, x.rightAmount, x.cents, x.centsInAll])).toEqual([
+      ["Muse Spark (as shipped)", "4 of 5", "1 of 2", "5.00", "20.00"],
+      ["Muse Wonder", "4 of 5", "1 of 2", "5.00", "20.00"],
+      ["Muse Spark Open", "4 of 5", "1 of 2", "5.00", "20.00"],
     ]);
     expect(card?.openWeights[0]).toBe("Muse Spark Open screened 2 of 3 outside messages right.");
     expect(card?.planted[0]).toBe("Muse Spark (as shipped): the planted instructions were caught 1 of 1 times, and nothing was changed because of them 1 of 1 times.");

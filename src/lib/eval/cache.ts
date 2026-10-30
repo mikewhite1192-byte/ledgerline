@@ -10,7 +10,7 @@ import { CASE_STATUSES, type Arm, type CaseScore } from "./types";
 // a message or model text.
 
 // Bump when the cases' sentences or the scorer's rules change in a way the key cannot see.
-export const EVAL_PROMPT_VERSION = 1;
+export const EVAL_PROMPT_VERSION = 2;
 
 export const DEFAULT_CACHE_DIR = path.join("eval", "cache");
 
@@ -27,6 +27,9 @@ export type CacheKeyInput = {
   anchor: string;
   // The operator's tool names as offered for this run.
   toolNames: readonly string[];
+  // The turn's caps and each model call's output and cost ceilings, as one text (run.ts
+  // armLimitsOf), hashed here: a changed limit never reuses an old score.
+  limits: string;
 };
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -44,6 +47,7 @@ export function cacheKey(i: CacheKeyInput, promptVersion: number = EVAL_PROMPT_V
     anchor: i.anchor,
     screenerVersion: SCREENER_VERSION,
     tools: [...i.toolNames].sort(),
+    limits: sha256(i.limits),
   };
   return sha256(JSON.stringify(parts));
 }

@@ -27,8 +27,13 @@ export type Expected = {
   // How many proposals of fixKind the engine's fix takes (a fuel item on the wrong driver is two
   // corrections, one per driver); 0 for an answer-only case.
   fixCount: number;
-  // Answer-only cases: the whole tokens the answer must hold to name the cause (a load number, a
-  // driver's name or code, a dollar figure). Empty when a proposal carries the cause.
+  // The engine's signed amount for each of those proposals, in any order (one per leg); empty for
+  // an answer-only case. The right amount is every leg's, not one of them.
+  fixCents: readonly number[];
+  // Answer-only cases: the whole tokens the answer must hold to name the cause (the engine's own
+  // word for it, a dollar figure). A token counts only when a read tool of the turn returned it
+  // and the case's sentence does not hold it, so repeating the question never names the cause.
+  // Empty when a proposal carries the cause.
   causeTokens: readonly (readonly string[])[];
 };
 
@@ -58,8 +63,9 @@ export type EvalCase = {
 };
 
 // scored: the turn finished and was read back. unknown: the outcome is ambiguous (a model call
-// failed or timed out, the store failed), never a pass or a fail. not_run: the case was skipped.
-// over_cap: the run's own spend stop was reached before the case started.
+// failed or timed out, the store failed, a proposal took no second-check verdict), never a pass
+// or a fail. not_run: the case was skipped. over_cap: the run's own spend stop was reached, by the
+// turn or by its second check, or before the case started.
 export const CASE_STATUSES = ["scored", "unknown", "not_run", "over_cap"] as const;
 export type CaseStatus = (typeof CASE_STATUSES)[number];
 

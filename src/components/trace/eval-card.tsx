@@ -14,6 +14,7 @@ export type EvalCardRow = {
   rightFix: string;
   seconds: string;
   cents: string;
+  centsInAll: string;
 };
 
 export type EvalCardProps = {
@@ -24,7 +25,7 @@ export type EvalCardProps = {
   stoppedAtCap: boolean;
 };
 
-const COLUMNS = ["Model", "Cases scored", "Right answer", "Right amount", "Right fix", "Seconds per case", "Cents per case"] as const;
+const COLUMNS = ["Model", "Cases scored", "Right answer", "Right amount", "Right fix", "Seconds per case", "Cents per case", "Cents in all"] as const;
 
 export function EvalCard({ rows, agreement, planted, openWeights, stoppedAtCap }: EvalCardProps) {
   return (
@@ -57,7 +58,7 @@ export function EvalCard({ rows, agreement, planted, openWeights, stoppedAtCap }
                     {r.label}
                     {r.modelId ? <span className="block font-mono text-caption text-muted-foreground">{r.modelId}</span> : null}
                   </th>
-                  {[r.scored, r.rightAnswer, r.rightAmount, r.rightFix, r.seconds, r.cents].map((v, i) => (
+                  {[r.scored, r.rightAnswer, r.rightAmount, r.rightFix, r.seconds, r.cents, r.centsInAll].map((v, i) => (
                     <td key={COLUMNS[i + 1]} className="py-2 pr-3 tabular-nums text-foreground">
                       {v}
                     </td>

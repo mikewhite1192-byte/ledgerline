@@ -8,6 +8,7 @@ import { capNanocents, NANOCENTS_PER_CENT } from "../src/lib/ai/prices";
 import { readSpend } from "../src/lib/ai/spend";
 import { modelIdFor } from "../src/lib/ai/targets";
 import type { Session } from "../src/lib/auth/claims";
+import type { Queryable } from "../src/lib/db";
 import { createPgDb } from "../src/lib/db/pg";
 import { DEFAULT_CACHE_DIR } from "../src/lib/eval/cache";
 import { buildCases, selectCases } from "../src/lib/eval/cases";
@@ -17,6 +18,7 @@ import type { Arm, CaseResult, EvalResults, SparkOpenResults } from "../src/lib/
 import { DEMO_ANCHOR } from "../src/lib/seed/anchor";
 import type { ArmInput, ArmOutput } from "./eval-arm";
 import { evalRefusal, parseEvalArgs, type EvalArgs } from "./lib/eval-args";
+import { carrySpend, settleArmSpend } from "./lib/eval-spend";
 import { dropDatabase, freshSeededDatabase, SEED_ANCHOR } from "./lib/fresh-seeded-db";
 import { localDatabaseUrl } from "./lib/local-db";
 
@@ -33,6 +35,8 @@ import { localDatabaseUrl } from "./lib/local-db";
 // Spend: refused unless the switch is on, the database is local, and the developer's own ledger
 // has room for this run's limit plus the reserve. Each arm's process gets the run's remaining
 // cents as its hard spend cap, so the run stops at its limit even if every turn runs to its caps.
+// The arm's spend is added to the developer's own ledger before its database is dropped; a carry
+// that fails counts the arm's whole allowance and the run exits non-zero.
 
 // The model each arm sends the operator's calls to.
 const ARM_TARGET: Record<Arm, "spark" | "wonder" | "spark_open"> = { spark: "spark", wonder: "wonder", spark_open: "spark_open" };
@@ -78,17 +82,18 @@ async function sessionsOf(url: URL): Promise<Record<string, Session>> {
   }
 }
 
-// What the arm's database spent: its own ledger, read before it is dropped. A reservation still
-// open counts, so unknown is never zero.
-async function spentOn(url: URL): Promise<number> {
+// One transaction on a database, as the URL's login.
+async function onDatabase<T>(url: URL, fn: (q: Queryable) => Promise<T>): Promise<T> {
   const db = createPgDb({ connectionString: url.toString(), max: 1 });
   try {
-    const s = await db.withoutTenant((q) => readSpend(q));
-    return s.spentNanocents + s.reservedNanocents;
+    return await db.withoutTenant(fn);
   } finally {
     await db.close();
   }
 }
+
+// An arm process that runs longer than this is stopped; its open reservations still count.
+const ARM_TIMEOUT_MS = 30 * 60 * 1000;
 
 function appLogin(url: URL): string {
   const app = new URL(url);
@@ -109,12 +114,13 @@ async function runArmProcess(
   args: EvalArgs,
   leftCents: number,
   models: { modelId: string; auditorModelId: string },
-): Promise<{ out: ArmOutput | null; spent: number }> {
+): Promise<{ out: ArmOutput | null; spent: number; carried: boolean }> {
   const name = `payday_eval_${Date.now().toString(36)}_${randomBytes(3).toString("hex")}_${arm}`;
   const dir = mkdtempSync(path.join(tmpdir(), "payday-eval-"));
   let url: URL | null = null;
   let out: ArmOutput | null = null;
   let spent = 0;
+  let carried = true;
   try {
     url = await freshSeededDatabase(server, name);
     const input: ArmInput = {
@@ -134,6 +140,7 @@ async function runArmProcess(
     const cents = String(leftCents);
     const child = spawnSync("npx", ["tsx", "scripts/eval-arm.ts"], {
       stdio: ["ignore", "inherit", "inherit"],
+      timeout: ARM_TIMEOUT_MS,
       env: {
         ...process.env,
         DATABASE_URL: appLogin(url),
@@ -142,17 +149,31 @@ async function runArmProcess(
         EVAL_ARM_INPUT: inputFile,
       },
     });
+    if (child.error) console.error(`eval: the ${arm} arm was stopped at its time limit or did not start`);
     if (child.status !== 0) console.error(`eval: the ${arm} arm stopped early`);
     out = existsSync(input.outFile) ? (JSON.parse(readFileSync(input.outFile, "utf8")) as ArmOutput) : null;
   } catch (err) {
     console.error(`eval: the ${arm} arm failed: ${err instanceof Error ? err.message : "unknown"}`);
   } finally {
-    // The arm's own ledger, read before the drop; unreadable counts the whole allowance as spent.
-    if (url) spent = await spentOn(url).catch(() => leftCents * NANOCENTS_PER_CENT);
-    await dropDatabase(server, name);
+    // The arm's own ledger, read before the drop and added to the developer's ledger (its admin
+    // login); unreadable, or not added, counts the whole allowance as spent.
+    const armUrl = url;
+    if (armUrl) {
+      const settled = await settleArmSpend(arm, leftCents, {
+        read: () => onDatabase(armUrl, (q) => readSpend(q)),
+        carry: (s) => onDatabase(server, (q) => carrySpend(q, s)),
+      });
+      spent = settled.spentNanocents;
+      carried = settled.carried;
+    }
+    try {
+      await dropDatabase(server, name);
+    } catch {
+      console.error(`eval: the ${name} database could not be dropped; drop it by hand`);
+    }
     rmSync(dir, { recursive: true, force: true });
   }
-  return { out, spent };
+  return { out, spent, carried };
 }
 
 async function run(args: EvalArgs): Promise<number> {
@@ -174,6 +195,7 @@ async function run(args: EvalArgs): Promise<number> {
   }
 
   let spent = 0;
+  let carryFailed = false;
   let stoppedAtCap = false;
   let sparkOpen: SparkOpenResults | null = null;
   const cases: CaseResult[] = [];
@@ -187,6 +209,7 @@ async function run(args: EvalArgs): Promise<number> {
     console.log(`eval: ${arm} arm, up to ${leftCents} cents`);
     const r = await runArmProcess(server, arm, args, leftCents, { modelId: modelId ?? "", auditorModelId });
     spent += r.spent;
+    carryFailed ||= !r.carried;
     if (r.out) {
       cases.push(...r.out.results);
       stoppedAtCap ||= r.out.stoppedAtCap;
@@ -213,6 +236,10 @@ async function run(args: EvalArgs): Promise<number> {
   writeResults(results);
   console.log(renderResults(results));
   console.log(`eval: spent ${(spent / NANOCENTS_PER_CENT).toFixed(2)} cents; results in ${RESULTS_FILE}`);
+  if (carryFailed) {
+    console.error("eval: an arm's spend was not added to the local spend ledger; check its spent count before the next run");
+    return 1;
+  }
   return 0;
 }
 

@@ -28,6 +28,7 @@ export function evalCardData(r: EvalResults | null): EvalCardProps | null {
     rightFix: tallyText(a.rightFix),
     seconds: secondsText(a.msPerCase),
     cents: centsText(a.nanocentsPerCase),
+    centsInAll: centsText(a.spentNanocents),
   }));
   const planted = s.arms.map(
     (a) =>
