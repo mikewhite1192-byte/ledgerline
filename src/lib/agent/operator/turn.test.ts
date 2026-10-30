@@ -19,6 +19,7 @@ import {
   REPORT_PROMPT,
   TOOL_SEARCH_RULE,
   VERIFY_RULE,
+  YEAR_END_PROMPT,
   escalatedText,
   verifyAttempts,
   operatorCacheKey,
@@ -931,6 +932,7 @@ describe("runTurn with tool search and the prompt cache", () => {
     cashFridayEnabled: boolean;
     carrierMemoryEnabled: boolean;
     iftaEnabled?: boolean;
+    yearEndEnabled?: boolean;
   }) => {
     const before = {
       reportsEnabled: flags.reportsEnabled,
@@ -938,6 +940,7 @@ describe("runTurn with tool search and the prompt cache", () => {
       cashFridayEnabled: flags.cashFridayEnabled,
       carrierMemoryEnabled: flags.carrierMemoryEnabled,
       iftaEnabled: flags.iftaEnabled,
+      yearEndEnabled: flags.yearEndEnabled,
     };
     onTestFinished(() => {
       Object.assign(flags, before);
@@ -1031,6 +1034,30 @@ describe("runTurn with tool search and the prompt cache", () => {
     flags.reportsEnabled = false;
     const neither = toolsFor("operator").map((t) => t.name);
     expect(neither).not.toContain("report_ifta_quarter");
+    expect(operatorPrompt(neither, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
+  });
+
+  it("adds the year-end 1099 lines only while the reports and the year-end switch are both on", () => {
+    const base = { collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: false };
+    promptSwitches({ ...base, reportsEnabled: true, iftaEnabled: false, yearEndEnabled: false });
+    const off = toolsFor("operator").map((t) => t.name);
+    expect(off).not.toContain("report_year_end_contractors");
+    expect(operatorPrompt(off, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${REPORT_PROMPT}`);
+    flags.yearEndEnabled = true;
+    const on = toolsFor("operator").map((t) => t.name);
+    expect(on).toContain("report_year_end_contractors");
+    expect(operatorPrompt(on, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${REPORT_PROMPT}\n${YEAR_END_PROMPT}`);
+    expect(YEAR_END_PROMPT).toContain("not a filing");
+    expect(YEAR_END_PROMPT).toContain("confirm it for the tax year");
+    // With the IFTA quarter on too, its lines come first.
+    flags.iftaEnabled = true;
+    const both = toolsFor("operator").map((t) => t.name);
+    expect(operatorPrompt(both, false)).toBe(
+      `${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${REPORT_PROMPT}\n${IFTA_PROMPT}\n${YEAR_END_PROMPT}`,
+    );
+    flags.reportsEnabled = false;
+    const neither = toolsFor("operator").map((t) => t.name);
+    expect(neither).not.toContain("report_year_end_contractors");
     expect(operatorPrompt(neither, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
   });
 

@@ -1,4 +1,4 @@
-// The six reports: their names, titles, columns and result shape. Plain data with no imports, so
+// The seven reports: their names, titles, columns and result shape. Plain data with no imports, so
 // the chat, the turn view and the download route can all use it without reaching the records or
 // the rules engine. The numbers themselves are computed in the files next to this one, from the
 // records and the engine's own functions; a model only picks a report and fills its typed args.
@@ -10,6 +10,7 @@ export const REPORT_NAMES = [
   "cash_needed",
   "margin_per_load",
   "ifta_quarter",
+  "year_end_contractors",
 ] as const;
 export type ReportName = (typeof REPORT_NAMES)[number];
 
@@ -36,6 +37,7 @@ export const REPORT_TITLES: Readonly<Record<ReportName, string>> = {
   cash_needed: "Cash needed for the pay run",
   margin_per_load: "Margin per load",
   ifta_quarter: "IFTA quarter summary (SAMPLE rates)",
+  year_end_contractors: "Year-end 1099 contractor totals (not a filing)",
 };
 
 // cents: integer cents. int: a count. pct: basis points (1234 is 12.34%). milli: thousandths
@@ -77,6 +79,10 @@ export type ReportResult = {
   // The IFTA quarter only: the state with the largest tax due, in integer cents. Kept beside the
   // rows, so a tool result cut to fit still holds the figure the note names.
   largestTaxDue?: { state: string; taxCents: number };
+  // The year-end 1099 only: the tax year, the 1099-NEC threshold for payments made in it (null
+  // when the code does not know it), how many contractors meet it (null when unknown) and how
+  // many could not be classified. Kept beside the rows for the same reason.
+  form1099?: { taxYear: number; thresholdCents: number | null; meeting: number | null; unclassified: number };
 };
 
 // Every cents column key ends in "Cents", so the agent's figure check accepts what a report says.
@@ -133,6 +139,17 @@ export const REPORT_COLUMNS: Readonly<Record<ReportName, readonly ReportColumn[]
     { key: "netGallonsMilli", header: "Net gallons", kind: "milli" },
     { key: "sampleRate", header: "SAMPLE rate per gallon", kind: "text" },
     { key: "taxDueCents", header: "Tax due at SAMPLE rates", kind: "cents" },
+  ],
+  year_end_contractors: [
+    { key: "driver", header: "Contractor", kind: "ref" },
+    { key: "workerType", header: "Type", kind: "text" },
+    { key: "settlementsPaid", header: "Settlements paid", kind: "int" },
+    { key: "compensationCents", header: "Nonemployee compensation", kind: "cents" },
+    { key: "reimbursementsCents", header: "Reimbursements (not counted)", kind: "cents" },
+    { key: "correctionsCents", header: "Pay corrections (not counted)", kind: "cents" },
+    { key: "meetsThreshold", header: "Meets 1099-NEC threshold", kind: "text" },
+    { key: "firstPaidOn", header: "First paid", kind: "date" },
+    { key: "lastPaidOn", header: "Last paid", kind: "date" },
   ],
 };
 

@@ -93,6 +93,14 @@ export const IFTA_PROMPT = [
   "  say the rates are samples. The per-state rates are in the table below: do not restate them.",
 ].join("\n");
 
+// Added after the IFTA lines only while report_year_end_contractors is offered (flags.reportsEnabled
+// and flags.yearEndEnabled), so a turn with the year-end switch off sends exactly today's prompt.
+export const YEAR_END_PROMPT = [
+  "- report_year_end_contractors: \"which contractors need a 1099 this year and for how much\":",
+  "  contractor 1099-NEC totals from paid settlements; it is not a filing. Quote the threshold from",
+  "  form1099 and say to confirm it for the tax year; when it is unknown, say so and never say yes or no.",
+].join("\n");
+
 // Added to the prompt only while get_cash_friday is offered (flags.cashFridayEnabled), so a turn
 // with the switch off sends exactly today's prompt.
 export const CASH_PROMPT = [
@@ -192,7 +200,8 @@ export function operatorPrompt(toolNames: readonly string[], toolSearch: boolean
   const reports = toolNames.some((n) => reportOfTool(n) !== null);
   const withReports = reports ? `${prompt}\n${REPORT_PROMPT}` : prompt;
   const withIfta = toolNames.includes("report_ifta_quarter") ? `${withReports}\n${IFTA_PROMPT}` : withReports;
-  const withCodes = toolNames.includes("propose_money_code") ? `${withIfta}\n${MONEY_CODE_PROMPT}` : withIfta;
+  const withYearEnd = toolNames.includes("report_year_end_contractors") ? `${withIfta}\n${YEAR_END_PROMPT}` : withIfta;
+  const withCodes = toolNames.includes("propose_money_code") ? `${withYearEnd}\n${MONEY_CODE_PROMPT}` : withYearEnd;
   const withEscrow = toolNames.includes("propose_escrow_release") ? `${withCodes}\n${ESCROW_RELEASE_PROMPT}` : withCodes;
   return toolNames.includes("remember_note") ? `${withEscrow}\n${MEMORY_PROMPT}` : withEscrow;
 }

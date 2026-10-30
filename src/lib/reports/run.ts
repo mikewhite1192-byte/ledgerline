@@ -1,7 +1,7 @@
 import { IFTA_SAMPLE_RATES } from "../../config/ifta-sample-rates";
 import type { Queryable } from "../db";
 import { configForDay } from "../data/config-version";
-import { readIftaInput, readReportInput } from "../data/read";
+import { readIftaInput, readPaidBetween, readReportInput } from "../data/read";
 import {
   advanceOf,
   customerOf,
@@ -23,12 +23,15 @@ import { computeCashNeeded } from "./cash-needed";
 import { computeDriverPaySummary } from "./driver-pay-summary";
 import { computeIftaQuarter } from "./ifta-quarter";
 import { computeMarginPerLoad } from "./margin-per-load";
+import { ReportsOffError, reportSwitchOn } from "./switch";
 import type { ReportResult } from "./types";
+import { computeYearEnd1099, yearEndWindow } from "./year-end";
 
 // One report for the current tenant: read the tables it needs (whole, SELECT only, inside the
-// caller's tenant transaction; the IFTA quarter in pages, by its dates), map them to the engine's
-// records, compute. The same function
-// serves the chat tool and the download route, so both show the same numbers.
+// caller's tenant transaction; the IFTA quarter and the year-end 1099 in pages, by their dates),
+// map them to the engine's records, compute. The same function serves the chat tool and the
+// download route, so both show the same numbers, and it refuses a report whose switch is off, so a
+// caller that skipped the route's or the registry's check still fails closed.
 
 export type ReportClock = { now: Date; timeZone: string };
 
@@ -50,6 +53,7 @@ export async function computeReport(
   request: ReportRequest,
   clock: ReportClock,
 ): Promise<ReportResult> {
+  if (!reportSwitchOn(request.name)) throw new ReportsOffError();
   const today = localDateOf(clock.now.toISOString(), clock.timeZone);
   switch (request.name) {
     case "ar_aging": {
@@ -134,6 +138,37 @@ export async function computeReport(
         },
         asOf,
         quarter,
+      );
+    }
+    case "year_end_contractors": {
+      // The calendar year the settlements were paid in, in the carrier's own dates; one contractor
+      // asked for is read alone.
+      const year = request.args.year ?? today.slice(0, 4);
+      const rows = await readPaidBetween(q, { ...yearEndWindow(Number(year)), driverId: request.args.driverId });
+      return computeYearEnd1099(
+        {
+          settlements: rows.settlements.map(settlementOf),
+          lines: rows.settlement_lines.map((l) => ({
+            settlementId: l.settlement_id,
+            kind: l.kind,
+            amountCents: l.amount_cents,
+            sources: l.sources,
+          })),
+          drivers: rows.drivers.map(driverOf),
+          corrections: rows.pay_items.map((i) => {
+            if (i.ref_table !== "proposals") throw new Error("a pay item read as a correction is not one");
+            return {
+              id: i.id,
+              driverId: i.driver_id,
+              settlementId: i.settlement_id,
+              kind: i.kind,
+              amountCents: i.amount_cents,
+            };
+          }),
+        },
+        { ...request.args, year },
+        today,
+        clock.timeZone,
       );
     }
   }
