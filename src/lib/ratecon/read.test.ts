@@ -38,18 +38,14 @@ afterEach(() => {
 });
 
 describe("readRateCon", () => {
-  it("makes no call while either switch is off", async () => {
+  it("makes no call while either switch is off, and leaves the reading to a later try", async () => {
     const complete = vi.fn<RateConComplete>();
+    const off = { ok: false, status: "retry", category: "disabled", callId: null };
     flags.ratecon = { ...flags.ratecon, enabled: false };
-    expect(await readRateCon(INPUT, SESSION, { complete })).toEqual({
-      ok: false,
-      status: "unreadable",
-      category: "disabled",
-      callId: null,
-    });
+    expect(await readRateCon(INPUT, SESSION, { complete })).toEqual(off);
     flags.ratecon = { ...flags.ratecon, enabled: true };
     flags.documentsEnabled = false;
-    expect(await readRateCon(INPUT, SESSION, { complete })).toMatchObject({ ok: false, category: "disabled" });
+    expect(await readRateCon(INPUT, SESSION, { complete })).toEqual(off);
     expect(complete).not.toHaveBeenCalled();
   });
 

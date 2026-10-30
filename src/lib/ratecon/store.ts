@@ -68,11 +68,13 @@ export async function readRateConRowByLoad(q: Queryable, loadId: string): Promis
 }
 
 // Second reads started in the 24 hours before now (a rolling day). Read under lockTenantRateCons.
+// A row refused before any read (before_start, no call id) started none and is not counted.
 export async function countRecentRateCons(q: Queryable, nowIso: string): Promise<number> {
   const rows = await q.query<{ n: number | string }>(
     `SELECT count(*) AS n FROM ratecon_reads
       WHERE tenant_id = current_tenant_id()
-        AND created_at > CAST($1 AS timestamptz) - interval '24 hours'`,
+        AND created_at > CAST($1 AS timestamptz) - interval '24 hours'
+        AND NOT (status = 'refused' AND category = 'before_start' AND read_call_id IS NULL)`,
     [nowIso],
   );
   const n = Number(rows[0]?.n);
@@ -95,9 +97,27 @@ export async function insertRateConRow(
   );
 }
 
+// A new row for a document stored before flags.ratecon.startDate: refused (before_start) with no
+// tries left, before any read, so it is never read. 1 when inserted.
+export async function insertRateConBeforeStart(
+  q: Queryable,
+  row: { id: string; documentId: string; loadId: string },
+  nowIso: string,
+): Promise<number> {
+  return q.execute(
+    `INSERT INTO ratecon_reads (id, tenant_id, document_id, load_id, status, category, attempts,
+                                created_at, updated_at)
+     VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'refused',
+             'before_start', $5, CAST($4 AS timestamptz), CAST($4 AS timestamptz))
+     ON CONFLICT (tenant_id, document_id) DO NOTHING`,
+    [row.id, row.documentId, row.loadId, nowIso, RATECON_ATTEMPTS_MAX],
+  );
+}
+
 // Another try on a row that ended with no card (refused, unreadable, budget), or a pending one
 // whose request went away (older than the cutoff). One statement, guarded on the status and the
-// count the caller read, so two clicks start one try. 1 when this call took it.
+// count the caller read, so two clicks start one try. 1 when this call took it. input_id is left
+// as it is (the earlier try's transcript stays linked while this one runs); the finish sets it.
 export async function claimRateConTry(
   q: Queryable,
   row: Pick<RateConRow, "id" | "status" | "attempts">,
@@ -106,7 +126,7 @@ export async function claimRateConTry(
 ): Promise<number> {
   return q.execute(
     `UPDATE ratecon_reads
-        SET status = 'pending', category = NULL, reading = NULL, input_id = NULL, read_call_id = NULL,
+        SET status = 'pending', category = NULL, reading = NULL, read_call_id = NULL,
             attempts = attempts + 1, updated_at = CAST($4 AS timestamptz)
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
         AND status = $2 AND attempts = $3 AND attempts < $6

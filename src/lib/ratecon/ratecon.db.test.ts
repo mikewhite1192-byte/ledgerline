@@ -22,6 +22,7 @@ import { ForbiddenError } from "../tenant/context";
 import type { RateConComplete } from "./read";
 import { rateConTranscriptOf } from "./schema";
 import { createLoadCard } from "./service";
+import { countRecentRateCons } from "./store";
 import { RATECON_NOW, RATECON_TOTAL_CENTS, rateConPdf, rateConReading, rateConResult, rateConText } from "./test-fixtures";
 
 // A rate confirmation for a load no record holds, against the real database as the app's role,
@@ -393,6 +394,34 @@ describe("rate confirmations in the database", () => {
     const out = await card(A.session, doc.id, later, () => new Date(RATECON_NOW + 3 * MINUTE));
     expect(out).toMatchObject({ ok: true, view: { status: "proposed", attemptsLeft: 1 } });
     expect(later).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a document stored before the start date with no read, no tries left and none of the day's count", async () => {
+    // Three days before RATECON_NOW: October 31 in the carrier's zone, before flags.ratecon.startDate.
+    const doc = await upload("RC-2601", ++files, () => new Date(RATECON_NOW - 3 * 24 * 60 * MINUTE));
+    const counted = () => app.withTenant(A.tenantId, (q) => countRecentRateCons(q, clock().toISOString()));
+    const before = await counted();
+    const complete = model(rateConText({ loadNumber: "RC-2601" }));
+    expect(await card(A.session, doc.id, complete)).toEqual({
+      ok: true,
+      view: { documentId: doc.id, status: "refused", category: "before_start", proposalId: null, attemptsLeft: 0 },
+    });
+    expect(await card(A.session, doc.id, complete, () => new Date(RATECON_NOW + 3 * MINUTE))).toEqual({
+      ok: false,
+      error: "attempt_limit",
+    });
+    expect(complete).not.toHaveBeenCalled();
+    const [row] = await readRows(doc.id);
+    expect(row).toMatchObject({
+      status: "refused",
+      category: "before_start",
+      attempts: 3,
+      reading: null,
+      input_id: null,
+      read_call_id: null,
+      proposal_id: null,
+    });
+    expect(await counted()).toBe(before);
   });
 
   it("keeps a carrier's readings to itself: another carrier finds nothing and can write nothing", async () => {

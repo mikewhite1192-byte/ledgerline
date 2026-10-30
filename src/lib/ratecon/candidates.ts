@@ -23,9 +23,12 @@ export async function rateConCandidates(
   const number = loadNumberOf(reading.loadNumber);
   if (number === null) return { zone: tenant.timezone, customers, loadsWithNumber: 0, cardsWithNumber: 0 };
 
-  const loadsWithNumber = (await readTable(q, "loads")).filter(
-    (l) => l.id !== ownLoadId && normCode(l.load_number) === number,
-  ).length;
+  // Only the two columns compared. normCode (NFKC, every Unicode space, full upper case) has no
+  // identical SQL form, so the whole-value compare stays here.
+  const loads = await q.query<{ id: string; load_number: string | null }>(
+    "SELECT CAST(id AS text) AS id, load_number FROM loads WHERE tenant_id = current_tenant_id()",
+  );
+  const loadsWithNumber = loads.filter((l) => l.id !== ownLoadId && normCode(l.load_number) === number).length;
   const cards = await q.query<{ subject_id: string; load_number: string | null }>(
     `SELECT CAST(subject_id AS text) AS subject_id, args ->> 'loadNumber' AS load_number FROM proposals
       WHERE tenant_id = current_tenant_id() AND kind = 'load_create'

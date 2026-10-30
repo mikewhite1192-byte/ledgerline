@@ -35,7 +35,7 @@ export type RateConReadCategory =
 export type RateConReadOutcome =
   | { ok: true; reading: RateConReading; callId: string; costNanocents: number }
   | { ok: false; status: "unreadable" | "budget"; category: RateConReadCategory; callId: string | null }
-  | { ok: false; status: "retry"; category: "model_error" | "error"; callId: null };
+  | { ok: false; status: "retry"; category: "disabled" | "model_error" | "error"; callId: null };
 
 // The model call, as this module needs it. The default is complete() with the given AiDeps.
 export type RateConComplete = (target: "spark", request: AiRequest, session: Session) => Promise<AiResult>;
@@ -58,9 +58,10 @@ export async function readRateCon(
   session: Session,
   deps: RateConReadDeps = {},
 ): Promise<RateConReadOutcome> {
-  // Both switches are re-read here, at the outside call, whatever the route already checked.
+  // Both switches are re-read here, at the outside call, whatever the route already checked. No
+  // call is made, so the reading is left pending: a switch turned off never ends it.
   if (!flags.documentsEnabled || !flags.ratecon.enabled) {
-    return { ok: false, status: "unreadable", category: "disabled", callId: null };
+    return { ok: false, status: "retry", category: "disabled", callId: null };
   }
   const call: RateConComplete = deps.complete ?? ((t, r, s) => complete(t, r, s, deps.ai ?? {}));
   let result: AiResult;
