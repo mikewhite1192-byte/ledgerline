@@ -7,6 +7,10 @@ import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionCharge
 import { changeArgsSchema, changeMatches, readRuleChangeRows, ruleChangeOf } from "../../../../pay-rules/change";
 import { RULE_KEYS } from "../../../../pay-rules/rules";
 import { parsePolicyArgs, stateCounts } from "../../../../policy-onboard/args";
+import { parseLoadCreateArgs } from "../../../../ratecon/args";
+import { rateConCandidates, readStoredRateCon } from "../../../../ratecon/candidates";
+import { accessorialCentsOf, recheckCard } from "../../../../ratecon/check";
+import { parseRateCon } from "../../../../ratecon/schema";
 import { checkStart, planVersion, type FieldPlan, type PlanRows } from "../../../../policy-onboard/plan";
 import { loadsOf } from "../../../../data/records";
 import {
@@ -594,6 +598,39 @@ async function policySetupEngine(q: Queryable, ctx: GatewayContext, p: ProposalR
   };
 }
 
+// A load from a rate confirmation (load_create), checked the way its executor checks it: the
+// stored reading and transcript are the ones the card names, and the deterministic checks take the
+// stored reading against the records as they are now and draft exactly the card's values. Whole
+// numbers only; no text the model read is returned.
+async function loadCreateEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow): Promise<Engine> {
+  if (p.subject_table !== "loads" || !isUuid(p.subject_id)) return UNAVAILABLE;
+  const a = parseLoadCreateArgs(parseJson(p.args));
+  if (!a || a.loadId !== p.subject_id) return UNAVAILABLE;
+  const stored = await readStoredRateCon(q, a.loadId);
+  const reading = stored?.reading ? parseRateCon(stored.reading) : null;
+  if (!stored || !reading) return UNAVAILABLE;
+  const candidates = await rateConCandidates(q, reading, a.loadId);
+  const checked = recheckCard(a, stored, candidates, {
+    now: ctx.now,
+    documentCreatedAt: stored.documentCreatedAt,
+    startDate: flags.ratecon.startDate,
+  });
+  // No longer holds: the document's own printed total is the figure, the card's when none is printed.
+  if (!checked.ok) {
+    return { ok: true, check: "load_create", holds: false, reason: checked.category, totalCents: reading.totalCents ?? a.totalCents };
+  }
+  const d = checked.draft;
+  return {
+    ok: true,
+    check: "load_create",
+    holds: true,
+    totalCents: d.totalCents,
+    linehaulCents: d.linehaulCents,
+    fuelSurchargeCents: d.fuelSurchargeCents,
+    accessorialCents: accessorialCentsOf(d),
+  };
+}
+
 // A payment move (payment_reapply), checked the way its executor checks it: the payment is not in
 // QuickBooks yet and has no post reserved, sent or not yet known (the executor's own rule), the
 // application is where the card says, and the engine's payment_on_wrong_invoice finding still
@@ -800,6 +837,8 @@ export async function engineOrThrow(
   if (p.kind === "pay_policy_setup") return await policySetupEngine(q, ctx, p);
   // The stored evidence ids are read as stored; the engine runs again as of now.
   if (p.kind === "money_code") return await moneyCodeEngine(q, ctx, p, raw);
+  // The card's charge lines are objects, which safeArgs leaves out; the stored args are parsed whole.
+  if (p.kind === "load_create") return await loadCreateEngine(q, ctx, p);
   return UNAVAILABLE;
 }
 

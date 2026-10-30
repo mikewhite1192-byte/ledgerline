@@ -13,6 +13,7 @@ import { cardMatchExecutor } from "./executors/card-match";
 import { factoringRequestExecutor } from "../factoring/execute";
 import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
 import { executeDetentionCharge } from "./executors/detention-charge";
+import { loadCreateExecutor } from "./executors/load-create";
 import { loadRateFill } from "./executors/load-rate-fill";
 import { payCorrectionExecutor } from "./executors/pay-correction";
 import { payPolicySetupExecutor } from "./executors/pay-policy-setup";
@@ -208,6 +209,12 @@ export const EXECUTORS: ExecutorRegistry = {
   // member whose role does not cover it, before anything is approved.
   get pay_policy_setup() {
     return flags.policyOnboardEnabled ? payPolicySetupExecutor : undefined;
+  },
+  // A load from a rate confirmation (src/lib/proposals/executors/load-create.ts): one planned load
+  // with no driver, read through ratecon.enabled on every approval, with a precheck that refuses a
+  // card whose reading, customer or number no longer checks before anything is approved.
+  get load_create() {
+    return flags.ratecon.enabled ? loadCreateExecutor : undefined;
   },
 };
 

@@ -22,7 +22,8 @@ import { describe, expect, it } from "vitest";
 //       form), under adapters/ only types and tms/*, and under factoring/ only read, packet, words
 //       and propose (never the executor that submits to the factoring partner, or its switches).
 //   P3. Nothing reachable from any agent file uploads, stores or reads a document with the model:
-//       under documents/ only types, schema, match and candidates.
+//       under documents/ only types, schema, match and candidates, and under ratecon/ only schema,
+//       check, args and candidates (never the read, the store or the service).
 //
 // A module loaded by a name that is not a string literal, a loader named anywhere but as the
 // callee of a direct require("..."), or a local import that does not resolve, fails the walk:
@@ -54,6 +55,7 @@ const MONEY_CODES_OK = /^src\/lib\/money-codes\/(read|words|switches)\.[cm]?[jt]
 const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/i;
 const FACTORING_OK = /^src\/lib\/factoring\/(read|packet|words|propose)\.[cm]?[jt]sx?$/i;
 const DOCUMENTS_OK = /^src\/lib\/documents\/(types|schema|match|candidates)\.[cm]?[jt]sx?$/i;
+const RATECON_OK = /^src\/lib\/ratecon\/(schema|check|args|candidates)\.[cm]?[jt]sx?$/i;
 // Every name that loads a module with no import line; eslint.config.mjs bans the same set. Regexes,
 // not strings: this file is agent code too, so it names no loader in quotes.
 const LOADER_NAME =
@@ -255,13 +257,17 @@ function ledgerViolations(root: string, agentFiles: string[], graph: Graph): str
   return out;
 }
 
-// P3: the same walk; under documents/ only the shapes, the schema and the record comparison.
+// P3: the same walk; under documents/ only the shapes, the schema and the record comparison, and
+// under ratecon/ only the rate confirmation's schema, its checks, its card's args and its reads.
 function documentViolations(root: string, agentFiles: string[], graph: Graph): string[] {
   const parent = reachable(agentFiles, graph);
   const out: string[] = [];
   for (const file of parent.keys()) {
     const rel = relTo(root, file);
     if (/^src\/lib\/documents(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !DOCUMENTS_OK.test(rel)) {
+      out.push(chainTo(root, parent, file));
+    }
+    if (/^src\/lib\/ratecon(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !RATECON_OK.test(rel)) {
       out.push(chainTo(root, parent, file));
     }
   }
@@ -319,6 +325,7 @@ describe("agent import boundary, on the real tree", () => {
 
   it("P3: nothing an agent file reaches uploads, stores or reads a document with the model", () => {
     expect(reached).toContain("src/lib/documents/match.ts");
+    expect(reached).toContain("src/lib/ratecon/check.ts");
     expect(result.documents).toEqual([]);
   });
 });
@@ -540,6 +547,28 @@ describe("the walker itself, on fixture trees", () => {
       "src/lib/agent/gateway/bad.ts -> src/lib/documents/service.ts",
       "src/lib/agent/gateway/bad.ts -> src/lib/documents/service.ts -> src/lib/documents/read.ts",
       "src/lib/agent/operator/x.ts -> src/lib/Documents/store.ts",
+    ]);
+  });
+
+  it("P3: allows the rate confirmation's schema, checks, args and reads, and catches its read, store and service", () => {
+    const out = run({
+      "src/lib/agent/gateway/rc.ts":
+        'import "../../ratecon/check";\nimport "../../ratecon/args";\nimport "../../ratecon/candidates";',
+      "src/lib/agent/gateway/bad.ts": 'import { createLoadCard } from "@/lib/ratecon/service";',
+      "src/lib/agent/operator/x.ts": 'export * from "../../RateCon/store";',
+      "src/lib/ratecon/schema.ts": "",
+      "src/lib/ratecon/check.ts": 'import "./schema";\nimport "./args";',
+      "src/lib/ratecon/args.ts": "",
+      "src/lib/ratecon/candidates.ts": "",
+      "src/lib/ratecon/service.ts": 'import "./read";',
+      "src/lib/ratecon/read.ts": "",
+      "src/lib/RateCon/store.ts": "",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.documents.sort()).toEqual([
+      "src/lib/agent/gateway/bad.ts -> src/lib/ratecon/service.ts",
+      "src/lib/agent/gateway/bad.ts -> src/lib/ratecon/service.ts -> src/lib/ratecon/read.ts",
+      "src/lib/agent/operator/x.ts -> src/lib/RateCon/store.ts",
     ]);
   });
 });

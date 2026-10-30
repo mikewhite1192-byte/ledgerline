@@ -676,6 +676,14 @@ export type Flags = {
   // tries of one propose tool (clamped to 1..3) the turn ends and goes to a person. Off means
   // today's prompt, today's loop and today's insert exactly.
   verification: { enabled: boolean; maxAttempts: number };
+  // Rate confirmations into proposed loads (docs: RATECON-LOADS). A rate confirmation the first
+  // read could not match to a load gets one more model read (src/lib/ratecon/read.ts, at most
+  // readMaxCostCents, at most perTenantPerDay new readings per carrier per day) into a strict
+  // format; code checks every field and makes a load_create card a person approves, and only the
+  // approval's executor writes the load (planned, no driver). It moves no money and sends nothing.
+  // A document uploaded before startDate (YYYY-MM-DD, the carrier's zone) never gets a card. Off
+  // means the route answers 404, the read refuses before any call, and no executor is registered.
+  ratecon: { enabled: boolean; startDate: string; readMaxCostCents: number; perTenantPerDay: number };
 };
 
 export const flags: Flags = {
@@ -879,6 +887,7 @@ export const flags: Flags = {
   groundedRatesEnabled: false,
   ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
   verification: { enabled: false, maxAttempts: 3 },
+  ratecon: { enabled: false, startDate: "2026-11-02", readMaxCostCents: 8, perTenantPerDay: 20 },
 };
 
 applyLocalOverrides(flags);

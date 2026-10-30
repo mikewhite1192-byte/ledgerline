@@ -52,6 +52,12 @@ const CASES: Case[] = [
     mismatched: { ok: true, found: true, status: "draft", engine: { ok: true, netCents: AMOUNT - 1 }, matches: { cardEqualsStored: true, storedEqualsEngine: false } },
     engineCents: AMOUNT,
   },
+  {
+    kind: "load_create",
+    matched: { ok: true, check: "load_create", holds: true, totalCents: AMOUNT, linehaulCents: AMOUNT, fuelSurchargeCents: 0, accessorialCents: 0 },
+    mismatched: { ok: true, check: "load_create", holds: true, totalCents: AMOUNT - 1, linehaulCents: AMOUNT - 1, fuelSurchargeCents: 0, accessorialCents: 0 },
+    engineCents: AMOUNT,
+  },
 ];
 
 describe("compareEngine", () => {
@@ -96,6 +102,15 @@ describe("compareEngine", () => {
     expect(compareEngine("settlement_approve", AMOUNT, { ok: true, found: false })).toEqual({ check: "mismatch", engineCents: null });
     const approved = { ...CASES[6].matched, status: "approved" };
     expect(compareEngine("settlement_approve", AMOUNT, approved)).toEqual(ENGINE_UNAVAILABLE);
+  });
+
+  it("matches a load from a rate confirmation only while the checks still take the card's exact values", () => {
+    const held = { ok: true, check: "load_create", holds: true, totalCents: AMOUNT };
+    expect(compareEngine("load_create", AMOUNT, { ...held, holds: false })).toEqual({ check: "mismatch", engineCents: AMOUNT });
+    expect(compareEngine("load_create", AMOUNT, { ...held, holds: "true" })).toEqual(ENGINE_UNAVAILABLE);
+    expect(compareEngine("load_create", AMOUNT, { ...held, totalCents: "12345" })).toEqual(ENGINE_UNAVAILABLE);
+    expect(compareEngine("load_create", AMOUNT, { ...held, totalCents: 123.45 })).toEqual(ENGINE_UNAVAILABLE);
+    expect(compareEngine("load_create", AMOUNT, { ok: true, check: "load_create" })).toEqual(ENGINE_UNAVAILABLE);
   });
 
   it("has no comparison for the kinds merged after the design: unavailable", () => {

@@ -575,13 +575,21 @@ describe("the demo reset", () => {
 
     const input = await seededInput(tenantId);
     const voiceNote = randomUUID();
+    const documentId = randomUUID();
     await app.withTenant(tenantId, async (q) => {
       await q.execute(
         `INSERT INTO documents (id, tenant_id, uploaded_by, filename, mime, byte_length, bytes, content_hash,
            untrusted_input_id, trace_id)
          VALUES (CAST($1 AS uuid), current_tenant_id(), $2, 'receipt.png', 'image/png', 4,
            decode('89504e47', 'hex'), $3, CAST($4 AS uuid), CAST($5 AS uuid))`,
-        [randomUUID(), session.sub, randomUUID().replace(/-/g, "").repeat(2), input, randomUUID()],
+        [documentId, session.sub, randomUUID().replace(/-/g, "").repeat(2), input, randomUUID()],
+      );
+      // A rate confirmation's second reading (0066): it names the document and the input.
+      await q.execute(
+        `INSERT INTO ratecon_reads (id, tenant_id, document_id, load_id, status, category, input_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'refused',
+           'no_miles', CAST($4 AS uuid))`,
+        [randomUUID(), documentId, randomUUID(), input],
       );
       await q.execute(
         `INSERT INTO voice_notes (id, tenant_id, driver_id, input_id, trace_id, created_by, status)
@@ -701,6 +709,7 @@ describe("the demo reset", () => {
       expect(preview.refusals).toEqual([]);
       expect(pick(preview.current, CLEARED_TABLES)).toEqual({
         money_actions: 3,
+        ratecon_reads: 1,
         documents: 1,
         evidence_clips: 1,
         portal_evidence: 1,
@@ -741,6 +750,7 @@ describe("the demo reset", () => {
       expect(portalA.loads.length).toBeGreaterThan(0);
       expect(report.cleared).toEqual({
         money_actions: 3,
+        ratecon_reads: 1,
         documents: 1,
         evidence_clips: 1,
         portal_evidence: 1,

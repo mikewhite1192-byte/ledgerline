@@ -81,6 +81,7 @@ describe("proposal kinds and origins on a fresh database", () => {
     ]);
   });
 
+  // 0066 re-creates the kind check NOT VALID again and validates it in 0066_ratecon_loads_validate.
   it("validates the two checks 0062 re-creates NOT VALID, in 0062_policy_onboard_validate", async () => {
     const rows = await admin.withoutTenant((q) =>
       q.query<{ conname: string; convalidated: boolean }>(
@@ -104,10 +105,10 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // 0013, 0015, 0022, 0029, 0030, 0032, 0046, 0048 and 0062 each re-create the check, so
-    // whichever ran last decides it. 0062 runs last in number order and in production's merge
-    // order; it lists 0048's fourteen (0029's twelve in the same order, then card_match and
-    // money_code) and then pay_policy_setup.
+    // 0013, 0015, 0022, 0029, 0030, 0032, 0046, 0048, 0062 and 0066 each re-create the check, so
+    // whichever ran last decides it. 0066 runs last in number order and in production's merge
+    // order; it lists 0062's fifteen (0048's fourteen in the same order, then pay_policy_setup)
+    // and then load_create.
     const union = [
       "advance_payout",
       "pay_correction",
@@ -124,6 +125,7 @@ describe("proposal kinds and origins on a fresh database", () => {
       "card_match",
       "money_code",
       "pay_policy_setup",
+      "load_create",
     ];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);

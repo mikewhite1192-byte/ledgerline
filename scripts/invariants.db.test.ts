@@ -259,6 +259,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "desk_log",
     "pinned_rates",
     "pay_cards",
+    // A rate confirmation's second read (0066): no seed, an upload writes it.
+    "ratecon_reads",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -393,12 +395,19 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           [randomUUID(), randomUUID()],
         );
         // An uploaded receipt not read yet (0013).
+        const documentId = randomUUID();
         await q.execute(
           `INSERT INTO documents (id, tenant_id, uploaded_by, filename, mime, byte_length, bytes, content_hash,
              trace_id)
            VALUES (CAST($1 AS uuid), current_tenant_id(), 'invariants-test', 'receipt.png', 'image/png', 4,
              decode($2, 'hex'), $3, CAST($4 AS uuid))`,
-          [randomUUID(), "89504e47", randomBytes(32).toString("hex"), randomUUID()],
+          [documentId, "89504e47", randomBytes(32).toString("hex"), randomUUID()],
+        );
+        // A second read of it still pending, with the load id it would reserve (0066).
+        await q.execute(
+          `INSERT INTO ratecon_reads (id, tenant_id, document_id, load_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid))`,
+          [randomUUID(), documentId, randomUUID()],
         );
         // A portal run queued for one of the carrier's loads, with its sign-in code, a first step
         // not run yet, a check waiting for a person, and the evidence it read back (0021).
