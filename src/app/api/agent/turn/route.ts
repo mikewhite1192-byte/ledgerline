@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { flags } from "@/config/flags";
+import { pageFocusSchema } from "@/lib/agent/gateway/focus";
 import { openAgentTurn, dbTurnStore } from "@/lib/agent/gateway/store";
 import { LOOP_TEXT } from "@/lib/agent/policy";
 import { encodeEvent } from "@/lib/agent/operator/stream";
@@ -13,6 +14,11 @@ import { isCrossSite } from "@/lib/http/same-site";
 // the steps stream back as server-sent events; the chat then reads the finished turn from
 // /api/agent/turns/:id, which is also the poll fallback. The client makes the turn id, so it can
 // poll even when the stream is buffered. Off unless both agentEnabled and aiEnabled are on.
+//
+// focus: the record the page is about, as {table, id} only (design-ui-pass 2). The schema takes a
+// table from a closed list and a uuid, nothing else; the store then checks the id is a row of the
+// caller's tenant and reads the record's label itself, before any row is written. Any miss, or a
+// focus while agentFocusEnabled is off, is a bad request. The person's text is never changed.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -21,11 +27,20 @@ const Body = z.strictObject({
   conversationId: z.uuid().optional(),
   turnId: z.uuid(),
   text: z.string().trim().min(1).max(2000),
+  focus: pageFocusSchema.optional(),
 });
 
 // visit_ended and visit_used: a demo visit that is over, or has asked all its turns
 // (flags.judgeAccess.turnsPerSession), counted when the turn opens, before any model call.
-const REFUSED = { not_found: 404, busy: 409, duplicate: 409, visit_ended: 403, visit_used: 429 } as const;
+// bad_focus: the page's record failed the store's check; the client sees bad_request.
+const REFUSED = {
+  not_found: { error: "not_found", status: 404 },
+  busy: { error: "busy", status: 409 },
+  duplicate: { error: "duplicate", status: 409 },
+  visit_ended: { error: "visit_ended", status: 403 },
+  visit_used: { error: "visit_used", status: 429 },
+  bad_focus: { error: "bad_request", status: 400 },
+} as const;
 
 function refuse(error: string, status: number) {
   return NextResponse.json({ error }, { status, headers: { "cache-control": "no-store" } });
@@ -46,6 +61,8 @@ export async function POST(request: Request) {
   } catch {
     return refuse("bad_request", 400);
   }
+  // A focus while the switch is off is refused, as the strict body refused it before the switch.
+  if (body.focus !== undefined && !flags.agentFocusEnabled) return refuse("bad_request", 400);
 
   const startedAt = Date.now();
   let opened;
@@ -57,13 +74,17 @@ export async function POST(request: Request) {
       now: new Date(startedAt),
       summaryChars: flags.agentTurnLimits.summaryChars,
       readNotes: true,
+      focus: body.focus ?? null,
     });
   } catch (err) {
     if (err instanceof Error && err.name === "ForbiddenError") return refuse("forbidden", 403);
     console.error("agent turn could not start:", err instanceof Error ? err.name : "unknown");
     return refuse("unavailable", 503);
   }
-  if ("refused" in opened) return refuse(opened.refused, REFUSED[opened.refused]);
+  if ("refused" in opened) {
+    const { error, status } = REFUSED[opened.refused];
+    return refuse(error, status);
+  }
   const turn = opened;
 
   const encoder = new TextEncoder();

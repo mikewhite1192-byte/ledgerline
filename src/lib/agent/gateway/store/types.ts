@@ -20,8 +20,9 @@ export type OpenedTurn = {
   summaryCents: number[];
 };
 
-// visit_ended and visit_used come only from a demo visit (src/lib/auth/demo-visit.ts).
-export type OpenTurnRefusal = "not_found" | "busy" | "duplicate" | "visit_ended" | "visit_used";
+// visit_ended and visit_used come only from a demo visit (src/lib/auth/demo-visit.ts). bad_focus:
+// the page's record is not one this tenant has, or the page focus switch is off (gateway/focus.ts).
+export type OpenTurnRefusal = "not_found" | "busy" | "duplicate" | "visit_ended" | "visit_used" | "bad_focus";
 
 export type StepStart = { kind: StepKind; label: string; detail?: Record<string, unknown> };
 
