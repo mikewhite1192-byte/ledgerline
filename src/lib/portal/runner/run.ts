@@ -206,7 +206,7 @@ export async function runPortalRun(
     // A run put back in the queue after its worker stopped (start.ts) carries on from its last
     // executed step, which is its resume_step: nothing is paused and nothing is acknowledged anew.
     // A run a person approved resumes at a step that has not run, so it never takes this path.
-    let carriesOn = false;
+    let carriedFrom: StoredStep | null = null;
     let checks: Awaited<ReturnType<RunStore["checks"]>> = [];
     if (resuming) {
       stored = await store.steps(run.id);
@@ -216,13 +216,18 @@ export async function runPortalRun(
         if (!ackByStep.has(c.stepId)) ackByStep.set(c.stepId, new Set());
         ackByStep.get(c.stepId)!.add(c.checkId);
       }
-      carriesOn =
-        run.resumeAttempts > 0 && run.resumeStep !== null && run.resumeStep > 0 &&
-        stored.some((s) => s.seq === run.resumeStep && s.executed);
+      // Only an executed step with the page it left: without that page the run cannot reopen
+      // where its history ends, so it is not resumable.
+      if (run.resumeAttempts > 0 && run.resumeStep !== null && run.resumeStep > 0) {
+        carriedFrom = stored.find((s) => s.seq === run.resumeStep && s.executed && s.urlAfter !== null) ?? null;
+      }
     }
-    if (resuming && carriesOn) {
-      // The step count follows the stored steps, which a stop can leave ahead of the run's own.
+    if (carriedFrom) {
+      // The step count and the page follow the stored steps, which a stop between storing a step
+      // and the run's progress write leaves ahead of the run's own. The browser reopens on the
+      // page the last executed step left, the page of the last screenshot in the history.
       state.steps = Math.max(state.steps, stored.filter((s) => s.seq > 0).length);
+      state.lastUrl = carriedFrom.urlAfter;
     } else if (resuming) {
       paused = stored.find((s) => s.seq === run.resumeStep && !s.executed && s.callItem !== null) ?? null;
       if (!paused) return await end("failed", "not_resumable");
@@ -299,7 +304,7 @@ export async function runPortalRun(
         });
       }
       nextSeq = Math.max(...stored.map((s) => s.seq)) + 1;
-      const back = run.lastUrl && sameOrigin(run.lastUrl, deps.origin) ? run.lastUrl : `${deps.origin}/portal/loads`;
+      const back = state.lastUrl && sameOrigin(state.lastUrl, deps.origin) ? state.lastUrl : `${deps.origin}/portal/loads`;
       await browser(() => opened.open(back, { name: PORTAL_COOKIE, value: cookieValue(payload.tenantId, sessionId!) }));
     }
 

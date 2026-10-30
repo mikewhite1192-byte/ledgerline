@@ -769,6 +769,19 @@ describe("the portal tables", () => {
     expect(
       await sqlStateOf(asApp(B, (q) => q.execute("UPDATE portal_runs SET resume_attempts = 3 WHERE id = CAST($1 AS uuid)", [runId]))),
     ).toBe("23514");
+    // 0050 adds both counters' checks NOT VALID; 0050_portal_resume_attempts_validate validates them.
+    const checks = await admin.withoutTenant((q) =>
+      q.query<{ conname: string; convalidated: boolean }>(
+        `SELECT conname, convalidated FROM pg_constraint
+          WHERE (conrelid = 'portal_runs'::regclass AND conname = 'portal_runs_resume_attempts_check')
+             OR (conrelid = 'sweep_runs'::regclass AND conname = 'sweep_runs_turns_used_check')
+          ORDER BY conname`,
+      ),
+    );
+    expect(checks.map((c) => `${c.conname}:${c.convalidated}`)).toEqual([
+      "portal_runs_resume_attempts_check:true",
+      "sweep_runs_turns_used_check:true",
+    ]);
     // The shared clock stays where it was: later tests sign in with a session this jump would end.
   });
 

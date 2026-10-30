@@ -742,6 +742,27 @@ describe("runPortalRun, carrying on after a stop", () => {
     expect(s.evidence[0].row.pod!.hash).toBe(POD_HASH);
   });
 
+  it("reopens on the page its last executed step left when the stop came before the run's progress write", async () => {
+    // The stop stored step 2 but not the progress after it: the run still holds the page before.
+    const s = fakeStore(stoppedRun({ lastUrl: `${ORIGIN}/portal/loads`, stepCount: 1 }));
+    const d = fakeDriver();
+    await runPortalRun(PAYLOAD, deps(s.store, d.driver, scripted([answerResult()]).step));
+    expect(d.state.opened.map((o) => o.url)).toEqual([DETAIL]);
+    expect(s.finished[0].progress).toMatchObject({ lastUrl: DETAIL, stepCount: 3 });
+  });
+
+  it("is not resumable when its last executed step holds no page, and opens nothing", async () => {
+    const stopped = stoppedRun();
+    stopped.steps[2] = { ...stopped.steps[2], urlAfter: null };
+    const s = fakeStore(stopped);
+    const d = fakeDriver();
+    const none = scripted([]);
+    const out = await runPortalRun(PAYLOAD, deps(s.store, d.driver, none.step));
+    expect(out).toEqual({ kind: "ended", status: "failed", reason: "not_resumable" });
+    expect(d.state.opened).toEqual([]);
+    expect(none.step).not.toHaveBeenCalled();
+  });
+
   it("stores no evidence when the POD may have gone with the stop and no later step downloads it", async () => {
     const s = fakeStore(stoppedRun());
     const d = fakeDriver();

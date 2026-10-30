@@ -11,11 +11,23 @@
 --   turns_used       the findings this run has taken to draft, counted as each is taken, so the
 --                    draft step stops at the run's turn ceiling (flags.runLimits.maxTurns) and
 --                    leaves the rest found for the next run
+--
+-- Locks: both checks are added NOT VALID, so this file reads no rows and commits at once. Adding
+-- a column with a constant default takes a brief exclusive lock on its table and rewrites nothing.
+-- A NOT VALID check holds for every row written from then on. The next file the runner applies,
+-- in its own transaction, is 0050_portal_resume_attempts_validate.sql: it checks the rows already
+-- there under a lock that lets reads and writes go on (the same split as 0028). Validating in this
+-- file would not help: the runner applies each file in one transaction, so the scan would still
+-- run under the exclusive lock. The checks are table constraints only so they can be NOT VALID,
+-- and each keeps the name Postgres gives an inline check.
 ALTER TABLE portal_runs
-  ADD COLUMN resume_attempts smallint NOT NULL DEFAULT 0 CHECK (resume_attempts BETWEEN 0 AND 2);
+  ADD COLUMN resume_attempts smallint NOT NULL DEFAULT 0,
+  ADD CONSTRAINT portal_runs_resume_attempts_check
+    CHECK (resume_attempts BETWEEN 0 AND 2) NOT VALID;
 
 ALTER TABLE sweep_runs
-  ADD COLUMN turns_used smallint NOT NULL DEFAULT 0 CHECK (turns_used BETWEEN 0 AND 1000);
+  ADD COLUMN turns_used smallint NOT NULL DEFAULT 0,
+  ADD CONSTRAINT sweep_runs_turns_used_check CHECK (turns_used BETWEEN 0 AND 1000) NOT VALID;
 
 -- The app role's grants on these tables are column-level; INSERT is table-wide already, so only
 -- the columns updated after the insert are granted. The existing column lists stay as they are.
