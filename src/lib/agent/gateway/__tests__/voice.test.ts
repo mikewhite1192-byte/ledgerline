@@ -159,7 +159,7 @@ describe("runTriage", () => {
     expect(sent[0].request.timeoutMs).toBe(12_000);
     // Room for Muse Spark Open's reasoning before its call, at a cap that still holds the
     // longest message (triage/run.ts).
-    expect(sent[0].request.maxOutputTokens).toBe(2_000);
+    expect(sent[0].request.maxOutputTokens).toBe(1_500);
     expect(sent[0].request.maxCostCents).toBe(3);
     expect(sent[0].request.tools?.map((t) => t.name)).toEqual(["classify_message"]);
     const user = sent[0].request.messages[1].content as string;
