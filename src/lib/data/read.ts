@@ -25,6 +25,7 @@ import {
 import {
   assertLocalDate,
   localDateOf,
+  parseInstant,
   type Instant,
   type LocalDate,
   type Period,
@@ -489,6 +490,39 @@ export async function readIftaInput(
     loads: await readWherePaged(q, "loads", DELIVERED_BETWEEN, p, paging),
     load_state_miles: await readWherePaged(q, "load_state_miles", DELIVERED_LOADS, p, paging),
     fuel_purchases: await readWherePaged(q, "fuel_purchases", PURCHASED_BETWEEN, p, paging),
+  };
+}
+
+// ---- Year-end 1099 ----
+
+// The year-end 1099's inputs: the settlements paid inside one window of instants (start included,
+// end not), their earning lines, and the drivers they pay. The report keeps only the settlements
+// paid on a date inside its year in the carrier's time zone, so the window it asks for may run
+// wider. Each table is read in pages through the same bound as a month's loads, and a read past
+// the bound fails whole with ReadLimitError, never a short total.
+export const PAID_BETWEEN =
+  "status = 'paid' AND paid_at >= CAST($1 AS timestamptz) AND paid_at < CAST($2 AS timestamptz)";
+export const PAID_EARNING_LINES =
+  "kind IN ('load_pay', 'accessorial_pay', 'reimbursement') AND settlement_id IN (SELECT id FROM settlements" +
+  ` WHERE tenant_id = current_tenant_id() AND ${PAID_BETWEEN})`;
+export const PAID_DRIVERS =
+  "id IN (SELECT driver_id FROM settlements" + ` WHERE tenant_id = current_tenant_id() AND ${PAID_BETWEEN})`;
+
+export type PaidRows = Pick<TenantRows, "settlements" | "settlement_lines" | "drivers">;
+
+export async function readPaidBetween(
+  q: Queryable,
+  window: { start: Instant; end: Instant },
+  paging: Paging = DELIVERED_PAGING,
+): Promise<PaidRows> {
+  const start = parseInstant(window.start);
+  const end = parseInstant(window.end);
+  if (end <= start) throw new RangeError("window ends before it starts");
+  const p = [new Date(start).toISOString(), new Date(end).toISOString()];
+  return {
+    settlements: await readWherePaged(q, "settlements", PAID_BETWEEN, p, paging),
+    settlement_lines: await readWherePaged(q, "settlement_lines", PAID_EARNING_LINES, p, paging),
+    drivers: await readWherePaged(q, "drivers", PAID_DRIVERS, p, paging),
   };
 }
 

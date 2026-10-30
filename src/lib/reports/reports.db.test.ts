@@ -17,7 +17,7 @@ import { parseReportArgs } from "./args";
 import { reportForSession } from "./for-session";
 import { isRefCell, REPORT_NAMES, reportToolName, type ReportName, type ReportResult } from "./types";
 
-// The six report tools against a real database, as the app's own role, on both seeded demo
+// The report tools against a real database, as the app's own role, on both seeded demo
 // carriers: each report reads its own carrier's records only, the Blue Ridge figures match the
 // reviewed golden numbers, an id from the other carrier is refused, the switch off hides the
 // tools, the download path computes the same numbers, and a report step reads back from the turn
@@ -76,6 +76,7 @@ function argsFor(plan: CarrierPlan): Record<ReportName, Record<string, string>> 
     cash_needed: { periodStart: weekOf(plan, "open") },
     margin_per_load: { periodStart: "2026-10-05", periodEnd: "2026-11-01" },
     ifta_quarter: { asOf: ANCHOR },
+    year_end_contractors: { year: ANCHOR.slice(0, 4) },
   };
 }
 
@@ -172,11 +173,13 @@ describe("reports on a seeded database", () => {
     }
     flags.reportsEnabled = true;
     flags.iftaEnabled = true;
+    flags.yearEndEnabled = true;
   });
 
   afterAll(async () => {
     flags.reportsEnabled = false;
     flags.iftaEnabled = false;
+    flags.yearEndEnabled = false;
     // Only what this file made: the two tenants (their rows, memberships, decisions and turns go
     // with them, by cascade).
     for (const t of tenants) {

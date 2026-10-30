@@ -5,10 +5,12 @@ import {
   LOAD_NUMBERS_FIRST,
   LOAD_NUMBERS_NEXT,
   ReadLimitError,
+  PAID_BETWEEN,
   PURCHASED_BETWEEN,
   readDeliveredBetween,
   readIftaInput,
   readLoadNumbers,
+  readPaidBetween,
   type LoadNumberRow,
 } from "./read";
 
@@ -159,6 +161,59 @@ describe("readIftaInput in pages", () => {
     const { q, calls } = fakeDb({});
     await expect(readIftaInput(q, { start: "2026-12-31", end: "2026-10-01" })).rejects.toBeInstanceOf(RangeError);
     await expect(readIftaInput(q, { start: "2026-10-01", end: "2026-13-01" })).rejects.toBeInstanceOf(RangeError);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+// The year-end 1099's window: a day either side of 2026 in UTC.
+const YEAR = { start: "2025-12-31T00:00:00.000Z", end: "2027-01-02T00:00:00.000Z" };
+
+describe("readPaidBetween in pages", () => {
+  it("pages the three tables, each statement in the tenant, every one through the paid window", async () => {
+    const { q, calls } = fakeDb({ settlements: loads(3), settlement_lines: loads(5), drivers: loads(2) });
+    const out = await readPaidBetween(q, YEAR, { pageSize: 2, maxPages: 4 });
+    expect(out.settlements.map((r) => r.id)).toEqual([id(1), id(2), id(3)]);
+    expect(out.settlement_lines.map((r) => r.id)).toEqual([id(1), id(2), id(3), id(4), id(5)]);
+    expect(out.drivers.map((r) => r.id)).toEqual([id(1), id(2)]);
+    expect(Object.keys(out).sort()).toEqual(["drivers", "settlement_lines", "settlements"]);
+    expect(new Set(calls.map((c) => c.table))).toEqual(new Set(["settlements", "settlement_lines", "drivers"]));
+    for (const c of calls) {
+      expect(c.sql).toContain("tenant_id = current_tenant_id()");
+      expect(c.sql).toContain(PAID_BETWEEN);
+      expect(c.sql).toMatch(/ ORDER BY id LIMIT 2$/);
+      expect(c.params.slice(0, 2)).toEqual([YEAR.start, YEAR.end]);
+    }
+    for (const c of of(calls, "settlement_lines")) {
+      expect(c.sql).toContain("kind IN ('load_pay', 'accessorial_pay', 'reimbursement')");
+    }
+    // Two drivers at two a page: one full page and one empty one.
+    expect(of(calls, "drivers").map((c) => c.params.at(-1))).toEqual([YEAR.end, id(2)]);
+  });
+
+  it("sends the window as UTC instants whatever offset it was written with", async () => {
+    const { q, calls } = fakeDb({});
+    await readPaidBetween(q, { start: "2025-12-31T19:00:00-05:00", end: "2027-01-01T19:00:00-05:00" });
+    for (const c of calls) expect(c.params).toEqual(["2026-01-01T00:00:00.000Z", "2027-01-02T00:00:00.000Z"]);
+  });
+
+  it("throws at the page bound instead of returning part of the year's settlements", async () => {
+    const { q } = fakeDb({ settlements: loads(5) });
+    const read = readPaidBetween(q, YEAR, { pageSize: 2, maxPages: 2 });
+    await expect(read).rejects.toBeInstanceOf(ReadLimitError);
+    await expect(read).rejects.toMatchObject({ category: "too_many_rows" });
+  });
+
+  it("throws at the page bound on the lines too, never a short total", async () => {
+    const { q } = fakeDb({ settlements: loads(1), settlement_lines: loads(5) });
+    const read = readPaidBetween(q, YEAR, { pageSize: 2, maxPages: 2 });
+    await expect(read).rejects.toBeInstanceOf(ReadLimitError);
+  });
+
+  it("refuses a window that is not two instants in order before reading anything", async () => {
+    const { q, calls } = fakeDb({});
+    await expect(readPaidBetween(q, { start: YEAR.end, end: YEAR.start })).rejects.toBeInstanceOf(RangeError);
+    await expect(readPaidBetween(q, { start: YEAR.start, end: YEAR.start })).rejects.toBeInstanceOf(RangeError);
+    await expect(readPaidBetween(q, { start: "2026-01-01", end: YEAR.end })).rejects.toBeInstanceOf(RangeError);
     expect(calls).toHaveLength(0);
   });
 });

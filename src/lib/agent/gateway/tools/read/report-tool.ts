@@ -1,26 +1,18 @@
 import type { z } from "zod";
 import { REPORT_ARGS, type ReportRequest } from "../../../../reports/args";
 import { computeReport } from "../../../../reports/run";
-import { reportSwitchOn } from "../../../../reports/switch";
+import { ReportsOffError, reportSwitchOn } from "../../../../reports/switch";
 import { REPORT_ROW_CAP, reportToolName, type ReportName, type ReportResult } from "../../../../reports/types";
-import { defineTool, type AnyToolDef, type GatewayRef } from "../../types";
+import { defineTool, type AgentRole, type AnyToolDef, type GatewayRef } from "../../types";
 import { OPERATOR } from "../shared";
 
-// The six report tools share one shape: the model picks the report and fills its typed args;
+// The report tools share one shape: the model picks the report and fills its typed args;
 // the code reads the records and the rules engine computes every number. The result carries at
 // most 50 rows (the download has them all), and fewer when 50 would not fit the gateway's
 // character cap, so the gateway never cuts it and rowsTotal stays the report's own row count.
 
 // The gateway's MAX_RESULT_CHARS (a test holds them equal; the gateway index imports this file).
 export const REPORT_RESULT_CHARS = 8_000;
-
-// Thrown when a report's switch is off, so a call that got past the registry still fails closed.
-export class ReportsOffError extends Error {
-  constructor() {
-    super("reports are switched off");
-    this.name = "ReportsOffError";
-  }
-}
 
 type ReportArgsShape = Record<string, string | undefined>;
 
@@ -49,12 +41,17 @@ export function fitResult(result: ReportResult): Record<string, unknown> {
   return shape(lo);
 }
 
-export function reportTool(name: ReportName, text: { description: string; label: string }): AnyToolDef {
+// Most reports are the operator's; a report the auditor may also read passes its roles.
+export function reportTool(
+  name: ReportName,
+  text: { description: string; label: string },
+  roles: readonly AgentRole[] = OPERATOR,
+): AnyToolDef {
   return defineTool({
     name: reportToolName(name),
     description: text.description,
     tier: "read",
-    roles: OPERATOR,
+    roles,
     label: text.label,
     // Each report's own strict schema; its fields are all optional or required strings.
     args: REPORT_ARGS[name] as z.ZodType<ReportArgsShape>,

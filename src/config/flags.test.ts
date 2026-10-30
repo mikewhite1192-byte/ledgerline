@@ -75,6 +75,8 @@ const KEPT_OFF = [
   "quarterReviewEnabled",
   // The IFTA quarter report ships dark with its own merge; the owner turns it on in its own PR.
   "iftaEnabled",
+  // The year-end 1099 report ships dark with its own merge; the owner turns it on in its own PR.
+  "yearEndEnabled",
   // Step through for staff on production is the owner's call, in its own one-line PR.
   "stepThrough.staff",
   // The demo visitor sign-in ships dark with its own merge; the owner turns it on in its own PR.
@@ -750,6 +752,12 @@ describe("flags", () => {
   it("ships the IFTA quarter report dark, and never switched on by local mode", () => {
     expect(flags.iftaEnabled).toBe(false);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("iftaEnabled");
+  });
+
+  it("ships the year-end 1099 report dark, and never switched on by local mode", () => {
+    expect(flags.yearEndEnabled).toBe(false);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("yearEndEnabled");
+    expect(LOCAL_OFF_ONLY as readonly string[]).not.toContain("yearEndEnabled");
   });
 });
 

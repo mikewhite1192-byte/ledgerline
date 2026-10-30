@@ -8,6 +8,9 @@ import {
   MONEY_CODE_DRIVER_SQL,
   MONEY_CODE_LOAD_SQL,
   MONEY_CODES_SQL,
+  PAID_BETWEEN,
+  PAID_DRIVERS,
+  PAID_EARNING_LINES,
   PURCHASED_BETWEEN,
   QUEUE_CHILDREN,
   QUEUE_LOADS,
@@ -294,6 +297,22 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
   if (where === PURCHASED_BETWEEN) {
     const [start, end] = params as string[];
     return all.filter((r) => typeof r.purchased_on === "string" && r.purchased_on >= start && r.purchased_on <= end);
+  }
+  if (where === PAID_BETWEEN || where === PAID_EARNING_LINES || where === PAID_DRIVERS) {
+    const [start, end] = (params as string[]).map((t) => Date.parse(t));
+    const inWindow = (st: Row) => {
+      const at = typeof st.paid_at === "string" ? Date.parse(st.paid_at) : NaN;
+      return st.status === "paid" && at >= start && at < end;
+    };
+    if (where === PAID_BETWEEN) return all.filter(inWindow);
+    const paid = rows.settlements.filter((st) => inWindow(st as unknown as Row));
+    if (where === PAID_DRIVERS) {
+      const ids = new Set(paid.map((st) => st.driver_id));
+      return all.filter((r) => ids.has(r.id as string));
+    }
+    const ids = new Set(paid.map((st) => st.id));
+    const earning = ["load_pay", "accessorial_pay", "reimbursement"];
+    return all.filter((r) => earning.includes(r.kind as string) && ids.has(r.settlement_id as string));
   }
   throw new Error(`unexpected where clause: ${where.slice(0, 60)}`);
 }

@@ -36,6 +36,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   report_cash_needed: { tier: "read", roles: ["operator"] },
   report_margin_per_load: { tier: "read", roles: ["operator"] },
   report_ifta_quarter: { tier: "read", roles: ["operator"] },
+  report_year_end_contractors: { tier: "read", roles: ["operator", "auditor"] },
   get_proposal: { tier: "read", roles: ["auditor"] },
   find_unbilled_detention: { tier: "read", roles: ["operator", "auditor"] },
   propose_detention_charge: { tier: "propose", roles: ["operator"] },
@@ -66,9 +67,13 @@ const FACTORING_TOOLS = ["get_factoring_packet", "get_factoring_requests", "prop
 const DETENTION_TOOLS = ["find_unbilled_detention", "propose_detention_charge"];
 // The tools behind the money codes switch, likewise.
 const MONEY_CODE_TOOLS = ["get_money_codes", "propose_money_code"];
-// The IFTA quarter report also needs its own switch, so it is kept apart from the other reports.
+// The IFTA quarter and year-end 1099 reports also need their own switches, so they are kept apart
+// from the other reports.
 const IFTA_TOOL = "report_ifta_quarter";
-const REPORT_TOOLS = Object.keys(EXPECTED).filter((n) => n.startsWith("report_") && n !== IFTA_TOOL);
+const YEAR_END_TOOL = "report_year_end_contractors";
+const REPORT_TOOLS = Object.keys(EXPECTED).filter(
+  (n) => n.startsWith("report_") && n !== IFTA_TOOL && n !== YEAR_END_TOOL,
+);
 // The card check's tools, behind its switch.
 const CARD_TOOLS = ["get_card_breaks", "propose_card_match"];
 // The tools behind the invoicing and customer payments switches, likewise.
@@ -84,6 +89,7 @@ const COLLECTIONS_TOOLS = ["get_collections"];
 afterEach(() => {
   flags.reportsEnabled = false;
   flags.iftaEnabled = false;
+  flags.yearEndEnabled = false;
   flags.detentionEnabled = false;
   flags.moneyCodes.enabled = false;
   flags.cardRecon.enabled = false;
@@ -358,6 +364,39 @@ describe("tool registry", () => {
     flags.iftaEnabled = false;
   });
 
+  it("offers and finds the year-end 1099 report only while the reports and its own switch are both on", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    expect(flags.yearEndEnabled).toBe(false);
+    flags.reportsEnabled = true;
+    // Reports on, year-end off: the reports as before, and the year-end tool neither offered nor found.
+    expect(toolsFor("operator")).toHaveLength(26);
+    expect(toolsFor("auditor")).toHaveLength(12);
+    for (const role of AGENT_ROLES) expect(names(role), role).not.toContain(YEAR_END_TOOL);
+    expect(toolNamed(YEAR_END_TOOL)).toBeNull();
+    expect(isToolEnabled(TOOL_REGISTRY[YEAR_END_TOOL])).toBe(false);
+
+    flags.yearEndEnabled = true;
+    expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
+      operator: 27,
+      auditor: 13,
+      triage: 2,
+    });
+    expect(names("operator")).toContain(YEAR_END_TOOL);
+    expect(names("auditor")).toContain(YEAR_END_TOOL);
+    expect(names("triage")).not.toContain(YEAR_END_TOOL);
+    expect(toolNamed(YEAR_END_TOOL)?.tier).toBe("read");
+    expect(toolNamed(YEAR_END_TOOL)?.roles).toEqual(["operator", "auditor"]);
+    expect(isToolEnabled(TOOL_REGISTRY[YEAR_END_TOOL])).toBe(true);
+    // Its switch does not open the IFTA quarter.
+    expect(names("operator")).not.toContain(IFTA_TOOL);
+
+    // The year-end switch alone does not open it.
+    flags.reportsEnabled = false;
+    for (const role of AGENT_ROLES) expect(names(role), role).not.toContain(YEAR_END_TOOL);
+    expect(toolNamed(YEAR_END_TOOL)).toBeNull();
+    flags.yearEndEnabled = false;
+  });
+
   it("offers the note suggestion tool to the operator only while carrier memory is on, read on every offer", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
     expect(flags.carrierMemoryEnabled).toBe(false);
@@ -394,10 +433,11 @@ describe("tool registry", () => {
     flags.groundedRatesEnabled = true;
     flags.quarterReviewEnabled = true;
     flags.iftaEnabled = true;
+    flags.yearEndEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 49,
-      auditor: 20,
+      operator: 50,
+      auditor: 21,
       triage: 2,
     });
     for (const role of AGENT_ROLES) {
