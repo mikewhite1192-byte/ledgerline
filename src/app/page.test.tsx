@@ -12,8 +12,8 @@ import Home from "./page";
 // The home screen's ?rule=1 path, from the Pay rules page's button: the question box starts with
 // the example change and the help under it, both dated the first week a change can start. Then
 // Home's order (today and what needs your OK, the chat, payday, money), a card's "Ask about this",
-// and a card that could not be read. Every read is faked and the clock is fixed; nothing reads the
-// wall clock.
+// and a card that could not be read, Friday's pay run among them. Every read is faked and the clock
+// is fixed; nothing reads the wall clock.
 
 const SESSION: Session = {
   sub: "sub-test",
@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => ({
   readMoneyFlow: vi.fn(),
   readSettlementsView: vi.fn(),
   readInvoiceList: vi.fn(),
+  readCashHome: vi.fn(),
 }));
 
 vi.mock("@/lib/tenant/context", async (importOriginal) => ({
@@ -71,6 +72,10 @@ vi.mock("@/lib/settlements/views", async (importOriginal) => ({
 vi.mock("@/lib/invoices/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/invoices/views")>()),
   readInvoiceList: mocks.readInvoiceList,
+}));
+vi.mock("@/lib/cash/view", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/cash/view")>()),
+  readCashHome: mocks.readCashHome,
 }));
 
 // The request's transaction: one carrier in New York, one member, and its record counts.
@@ -244,6 +249,29 @@ describe("home's order and cards", () => {
           ["home card read failed:", "owed", "DbError"],
         ]),
       );
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("shows Friday's pay run as unavailable when its check cannot be read, and leaves it out while Cash Friday is off", async () => {
+    flags.cashFridayEnabled = true;
+    mocks.readCashHome.mockRejectedValue(new DbError("timeout"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(await Home({ searchParams: Promise.resolve({}) }));
+      const card = region("Friday's pay run");
+      expect(within(card).getByRole("status").textContent).toBe("Could not read the last check of Friday's pay run.");
+      expect(card.textContent).not.toContain("Not checked yet");
+      expect(within(card).getByRole("link", { name: "Open the Cash page" }).getAttribute("href")).toBe("/cash");
+      expect(region("Today")).toBeTruthy();
+      // Only the error's name reaches the log.
+      expect(log.mock.calls).toContainEqual(["cash home read failed:", "DbError"]);
+      cleanup();
+      flags.cashFridayEnabled = false;
+      render(await Home({ searchParams: Promise.resolve({}) }));
+      expect(screen.queryByRole("region", { name: "Friday's pay run" })).toBeNull();
+      expect(mocks.readCashHome).toHaveBeenCalledTimes(1);
     } finally {
       log.mockRestore();
     }

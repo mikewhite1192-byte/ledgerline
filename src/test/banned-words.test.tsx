@@ -911,6 +911,7 @@ const PAGES: PageCase[] = [
           state.fx.invoices = failed;
           state.fx.settlementsView = failed;
           state.fx.sweepHome = failed;
+          state.fx.cashHome = failed;
         },
         load: async () => (await import("@/app/page")).default(sp()),
         shows: [
@@ -919,6 +920,7 @@ const PAGES: PageCase[] = [
           "Could not read this pay week's paystubs.",
           "Could not read money in and out.",
           "Could not read what customers owe.",
+          "Could not read the last check of Friday's pay run.",
         ],
       },
       {

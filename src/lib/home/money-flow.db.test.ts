@@ -118,10 +118,10 @@ describe("Home's money in and out by pay week", () => {
 
   afterAll(async () => {
     for (const id of [A, B]) {
-      await admin.withTenant(id, (q) => q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"));
+      await admin?.withTenant(id, (q) => q.execute("DELETE FROM tenants WHERE id = current_tenant_id()"));
     }
-    await admin.close();
-    await app.close();
+    await app?.close();
+    await admin?.close();
   });
 
   it("returns the last four started weeks, oldest first, in whole cents", async () => {

@@ -14,6 +14,7 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { Wordmark } from "@/components/brand/wordmark";
 import { FridayPay } from "@/components/cash/friday-pay";
 import { Greeting, type Shortcut } from "@/components/home/greeting";
+import { HomeCard, Unavailable } from "@/components/home/home-card";
 import { CashFlowCard, OwedCard } from "@/components/home/money-cards";
 import { PaydayCard } from "@/components/home/payday-card";
 import { TodayCard } from "@/components/home/today-card";
@@ -81,6 +82,9 @@ export default async function Home({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // One clock for the whole page, so the greeting, the Today card and the cards all read the
+  // same carrier date, even across midnight.
+  const now = new Date();
   const params = await searchParams;
   const asked = params.document;
   const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
@@ -130,7 +134,7 @@ export default async function Home({
         paystub,
         session,
         admin: role === "admin",
-        nextStart: flags.rulesByTalkingEnabled ? await readNextWeekStart(q, new Date()) : null,
+        nextStart: flags.rulesByTalkingEnabled ? await readNextWeekStart(q, now) : null,
       };
     });
   } catch (err) {
@@ -168,7 +172,7 @@ export default async function Home({
     let rows: NeedsYouRow[] = [];
     let unread = turnsUnread;
     try {
-      const today = carrierToday(carrier.timezone, new Date());
+      const today = carrierToday(carrier.timezone, now);
       rows = await withRequestTenant((q) =>
         readNeedsYou(q, {
           today,
@@ -178,7 +182,7 @@ export default async function Home({
           ...(flags.verification.enabled && flags.agentEnabled
             ? {
                 escalations: {
-                  now: new Date(),
+                  now,
                   sub: carrier.session.sub,
                   visitId: carrier.session.demoSessionId ?? null,
                 },
@@ -208,19 +212,20 @@ export default async function Home({
 
   // Friday's pay run, when Cash Friday is on: the latest check's verdict, that it is out of date
   // (its pay day has passed), or that there is none.
-  // A failed read leaves the card out (undefined), never "not checked".
-  let cashHome: CashHome | null | undefined;
+  // A failed read says so on the card, never "not checked".
+  let cashHome: Loaded<CashHome | null> | null = null;
   if (carrier && flags.cashFridayEnabled) {
     try {
-      cashHome = await readCashHome(carrier.session);
+      cashHome = { ok: true, value: await readCashHome(carrier.session) };
     } catch (err) {
+      cashHome = { ok: false };
       console.error("cash home read failed:", err instanceof Error ? err.name : "unknown");
     }
   }
 
   // Home's cards, each in its own carrier transaction and only while its page is on, so one failed
   // read shows that card as unavailable and leaves the rest of the page alone.
-  const cards = carrier ? await readCards(carrierToday(carrier.timezone, new Date())) : null;
+  const cards = carrier ? await readCards(carrierToday(carrier.timezone, now)) : null;
 
   if (!carrier || !cards) {
     return (
@@ -250,7 +255,6 @@ export default async function Home({
   const cardAsk = askedCard ? SUGGESTIONS.find((s) => CARD_ASKS[askedCard].includes(s.id))?.label : undefined;
   // A card's "Ask about this", while the agent can answer on this page.
   const askHref = (card: CardAsk) => (flags.agentEnabled ? `/?ask=${card}#${ASK_ANCHOR}` : undefined);
-  const now = new Date();
   const today = carrierToday(carrier.timezone, now);
 
   return (
@@ -326,7 +330,15 @@ export default async function Home({
           <div className="grid items-stretch gap-4 lg:grid-cols-2">
             {cards.payday ? <PaydayCard payday={cards.payday} askHref={askHref("payday")} /> : null}
             <div className="grid content-start gap-4">
-              {cashHome !== undefined ? <FridayPay home={cashHome} today={today} className="mt-0 max-w-none" /> : null}
+              {cashHome ? (
+                cashHome.ok ? (
+                  <FridayPay home={cashHome.value} today={today} className="mt-0 max-w-none" />
+                ) : (
+                  <HomeCard title="Friday's pay run" link={{ href: "/cash", label: "Open the Cash page" }}>
+                    <Unavailable>Could not read the last check of Friday&apos;s pay run.</Unavailable>
+                  </HomeCard>
+                )
+              ) : null}
               <StatCard
                 label="Drivers"
                 value={carrier.counts.drivers.toLocaleString("en-US")}
