@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
@@ -21,9 +22,13 @@ const mocks = vi.hoisted(() => ({
   internalKey: vi.fn(),
   wakeDesk: vi.fn(),
   assertMembership: vi.fn(),
+  staffGate: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here the caller is staff
+// unless a test says it is a demo visitor.
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: mocks.staffGate }));
 vi.mock("@/lib/db", () => ({ getDb: () => ({ withTenant: (_t: string, fn: (q: unknown) => unknown) => fn({}) }) }));
 vi.mock("@/lib/desk/loop", () => ({ wakeDesk: mocks.wakeDesk }));
 vi.mock("@/lib/sweep/service-session", () => ({ serviceSession: mocks.serviceSession }));
@@ -52,6 +57,7 @@ beforeEach(() => {
   mocks.serviceSession.mockResolvedValue(SERVICE);
   mocks.internalKey.mockResolvedValue(KEY);
   mocks.assertMembership.mockResolvedValue(undefined);
+  mocks.staffGate.mockResolvedValue(null);
   mocks.wakeDesk.mockResolvedValue({ ok: true, wakeId: WAKE, status: "done", reason: "no_work", counts: COUNTS });
   vi.spyOn(console, "info").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -79,6 +85,7 @@ describe("POST /api/internal/desk", () => {
     expect(input.deadlineMs).toBeGreaterThanOrEqual(before + flags.deskLoop.limits.sliceMs);
     expect(input.deadlineMs).toBeLessThanOrEqual(Date.now() + flags.deskLoop.limits.sliceMs);
     expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(mocks.staffGate).not.toHaveBeenCalled();
   });
 
   it("names a fresh wake when the kicker sends none, and answers busy and more as 200", async () => {
@@ -165,6 +172,17 @@ describe("POST /api/desk/wake", () => {
     flags.deskLoop.enabled = true;
     mocks.getSession.mockResolvedValueOnce(null);
     expect((await call()).status).toBe(401);
+    expect(mocks.wakeDesk).not.toHaveBeenCalled();
+  });
+
+  it("refuses a demo visitor with the judge answer before any membership read or wake", async () => {
+    mocks.staffGate.mockResolvedValueOnce(NextResponse.json({ error: "judge", retryable: false }, { status: 403 }));
+    const res = await call({ "Sec-Fetch-Site": "same-origin" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "judge", retryable: false });
+    expect(mocks.staffGate).toHaveBeenCalledWith(SESSION);
+    expect(mocks.assertMembership).not.toHaveBeenCalled();
+    expect(mocks.serviceSession).not.toHaveBeenCalled();
     expect(mocks.wakeDesk).not.toHaveBeenCalled();
   });
 

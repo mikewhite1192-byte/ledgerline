@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { getDb } from "@/lib/db";
 import { wakeDesk } from "@/lib/desk/loop";
 import { isCrossSite } from "@/lib/http/same-site";
@@ -8,9 +9,10 @@ import { serviceSession } from "@/lib/sweep/service-session";
 import { assertMembership } from "@/lib/tenant/context";
 import { failed, refused, reply } from "../../sweeps/reply";
 
-// POST: "Wake now". A signed-in member of the carrier wakes its desk loop for one slice. The
-// person's session proves membership; the loop's writes run as the carrier's sweep login (as the
-// sweep page does), which can draft but never approve. Nothing here approves or pays.
+// POST: "Wake now". A signed-in staff member of the carrier wakes its desk loop for one slice (a
+// demo visitor is refused: a wake is a staff write). The person's session proves membership; the
+// loop's writes run as the carrier's sweep login (as the sweep page does), which can draft but
+// never approve. Nothing here approves or pays.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -21,6 +23,8 @@ export async function POST(request: Request) {
   if (flags.deskLoop.enabled !== true) return refused("disabled");
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   try {
     const db = getDb();
     await db.withTenant(session.tenantId, (q) => assertMembership(q, session));
