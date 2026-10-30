@@ -64,11 +64,11 @@ function Pinned({ nav, amounts }: { nav: NavItem[]; amounts?: PinnedAmounts }) {
   ].filter((l) => l !== null);
   if (lines.length === 0) return null;
   return (
-    <div className="grid gap-1 border-t border-border pt-4">
+    <div className="grid grid-cols-1 gap-1 border-t border-border pt-4">
       <p aria-hidden className="px-2.5 text-caption font-medium tracking-wide text-muted-foreground uppercase">
         Pinned
       </p>
-      <ul aria-label="Pinned" className="grid gap-0.5">
+      <ul aria-label="Pinned" className="grid grid-cols-1 gap-0.5">
         {lines.map((l) => (
           <li key={l.label}>
             <Link href={l.href} className={navRowClass()}>
@@ -97,10 +97,12 @@ function AreaNav({ nav, agentOn, pinned }: { nav: NavItem[]; agentOn: boolean; p
   const open = tabs.some((t) => t.area === wanted) ? wanted : (tabs[0]?.area ?? wanted);
   const primary = nav.filter((i) => areaOf(i) === "primary");
   const pages = nav.filter((i) => areaOf(i) === open);
+  // One column no wider than the sidebar (minmax(0, 1fr)), so a long row truncates instead of
+  // widening the column and pushing the area tabs past the edge.
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       {tabs.length > 0 ? <AreaTabs tabs={tabs} current={open} /> : null}
-      <ul className="grid gap-0.5">
+      <ul className="grid grid-cols-1 gap-0.5">
         {primary.map((item) => (
           <li key={item.href}>
             <Link
