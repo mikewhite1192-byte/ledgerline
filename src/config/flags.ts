@@ -63,6 +63,13 @@ export type Flags = {
   runLimits: {
     maxTurns: number;
   };
+  // Who sees "Step through" in the trace panel under an answer (design-agents-101 3.4): one model
+  // call at a time, with what it saw, its note, what it did and what came back. Display only: it
+  // reads the stored trace and never pauses a run. dev is a development or test run (a laptop,
+  // the tests); staff is the carrier's own people on production. A judge's default (on)
+  // waits for the judge sign-in to put the demo session on the token. Flipping staff is the
+  // owner's call, in its own one-line PR.
+  stepThrough: { dev: boolean; staff: boolean };
   // Hard caps on one turn. Reaching any of them ends the turn with what it found so far.
   agentTurnLimits: {
     maxToolSteps: number;
@@ -521,6 +528,7 @@ export const flags: Flags = {
   runLimits: {
     maxTurns: 30,
   },
+  stepThrough: { dev: true, staff: false },
   agentTurnLimits: {
     maxToolSteps: 6,
     maxModelCalls: 4,
@@ -657,3 +665,14 @@ export const flags: Flags = {
 };
 
 applyLocalOverrides(flags);
+
+// Whether the trace panel offers "Step through", read on the server and handed to the page: in a
+// development or test run while dev is on, and anywhere else (production) only once staff is on.
+// An unset or unknown NODE_ENV counts as production.
+export function stepThroughShown(
+  f: Pick<Flags, "stepThrough"> = flags,
+  env: { NODE_ENV?: string } = process.env,
+): boolean {
+  const dev = env.NODE_ENV === "development" || env.NODE_ENV === "test";
+  return f.stepThrough.staff || (f.stepThrough.dev && dev);
+}

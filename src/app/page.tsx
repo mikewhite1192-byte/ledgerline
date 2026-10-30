@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { flags } from "@/config/flags";
+import { flags, stepThroughShown } from "@/config/flags";
 import { DETENTION_SUGGESTION, homeSuggestions, ruleChangeSuggestion, withPaystubSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
 import { appNav } from "@/components/app/app-nav";
@@ -231,6 +231,7 @@ export default async function Home({
           streamMode={flags.agentStreamMode}
           auditorOn={flags.auditorEnabled}
           timezone={carrier.timezone}
+          stepThrough={stepThroughShown()}
           suggestions={suggestions}
           initialDraft={documentInput ? `Check document ${documentInput}` : ruleAsk?.fill}
           initialHelp={ruleAsk?.help}

@@ -1,7 +1,8 @@
 import type { TraceCall, TurnTrace } from "./types";
 
 // A made-up turn for the design page and the tests: an advance asked for over the limit, blocked,
-// asked again at the limit, saved as a card, checked by the auditor. Synthetic ids only.
+// asked again at the limit, saved as a card, checked by the auditor. Synthetic ids only. It carries
+// the summary the turn started from and one model step's note, for the step-through.
 
 export const SAMPLE_TURN_ID = "7a1e0c2b-4f7d-4c1a-9e55-0c3f2b8d6a10";
 export const SAMPLE_PROPOSAL_ID = "5b2f8e41-0d6c-4a3e-8b17-9c4d2e6f1a20";
@@ -49,6 +50,27 @@ export const SAMPLE_CALLS = {
   }),
 };
 
+// The summary the sample turn started from, in the shape store/summary.ts writes it.
+export const SAMPLE_CONTEXT_SUMMARY = [
+  "Current state (from the database, for this turn only):",
+  "",
+  "Carrier:",
+  "Carrier: Sample Freight",
+  "Time zone: America/Chicago",
+  "Today: 2026-10-29",
+  "",
+  "Pay rules:",
+  "Advance fee: $5.00",
+  "Default advance limit per driver: $500.00",
+  "Smallest advance: $25.00",
+  "",
+  "Subject:",
+  `Driver: D-104 (driverId ${SAMPLE_DRIVER_ID})`,
+].join("\n");
+
+// The note the second model call returned; the other calls returned none.
+export const SAMPLE_REASONING_NOTE = "The ask is over what the pay rules allow, so ask again at the limit.";
+
 const D = {
   items: "d0000001-0000-4000-8000-000000000001",
   blocked: "d0000001-0000-4000-8000-000000000002",
@@ -73,6 +95,7 @@ export function sampleTrace(): TurnTrace {
   return {
     turnId: SAMPLE_TURN_ID,
     status: "done",
+    contextSummary: SAMPLE_CONTEXT_SUMMARY,
     steps: [
       { ...step, seq: 1, kind: "model", label: "Thinking it through", call: c.plan, toolCalls: 1 },
       {
@@ -91,9 +114,18 @@ export function sampleTrace(): TurnTrace {
             { table: "drivers", id: SAMPLE_DRIVER_ID },
             { table: "pay_items", id: SAMPLE_PAY_ITEM_ID },
           ],
+          resultChars: 1_240,
         },
       },
-      { ...step, seq: 3, kind: "model", label: "Thinking it through", call: c.ask, toolCalls: 1 },
+      {
+        ...step,
+        seq: 3,
+        kind: "model",
+        label: "Thinking it through",
+        call: c.ask,
+        toolCalls: 1,
+        reasoningNote: SAMPLE_REASONING_NOTE,
+      },
       {
         ...step,
         seq: 4,
