@@ -5,6 +5,7 @@ import { createMockPaymentAdapter } from "../adapters/payment/mock";
 import type { AccountingAdapter, FuelCardDestination, PaymentAdapter, SendOutcome } from "../adapters/types";
 import {
   executeMoneyAction,
+  isHooked,
   payoutOf,
   settlementFor,
   type LedgerStore,
@@ -13,6 +14,7 @@ import {
 } from "./execute";
 import {
   FakeDb,
+  DRIVER,
   FakeLedger,
   nextId,
   payoutDraft,
@@ -20,7 +22,7 @@ import {
   SESSION,
   steps,
 } from "./test-fakes";
-import { KIND_SHAPES, MONEY_ACTION_KINDS, MoneyError, RAIL_OF_KIND, type MoneyAction } from "./types";
+import { KIND_SHAPES, MONEY_ACTION_KINDS, MoneyError, RAIL_OF_KIND, railOf, type MoneyAction } from "./types";
 
 const saved = { ...flags };
 
@@ -475,10 +477,14 @@ describe("the fuel-card rail", () => {
     destination: async () => dest,
   });
 
-  it("maps exactly the payment kinds to a rail: advances to the card, settlements to the bank", () => {
+  it("maps the payment kinds on a rail: advances to the card, settlements to the bank; the rest are hooked", () => {
     const paymentKinds = MONEY_ACTION_KINDS.filter((k) => KIND_SHAPES[k].channel === "payment");
-    expect(Object.keys(RAIL_OF_KIND).sort()).toEqual([...paymentKinds].sort());
+    const onRail = paymentKinds.filter((k) => !isHooked(k));
+    expect(Object.keys(RAIL_OF_KIND).sort()).toEqual([...onRail].sort());
     expect(RAIL_OF_KIND).toEqual({ advance_payout: "fuel_card", settlement_payout: "bank" });
+    expect(paymentKinds.filter((k) => isHooked(k)).sort()).toEqual(["factoring_advance", "money_code_issue"]);
+    expect(railOf("factoring_advance")).toBeNull();
+    expect(railOf("money_code_issue")).toBeNull();
   });
 
   it("builds the payout with its rail and the card, and refuses a kind with no rail", () => {
@@ -603,5 +609,101 @@ describe("the fuel-card rail", () => {
     ).rejects.toMatchObject({ category: "validation" });
     expect(t.db.transactions).toBe(0);
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+describe("a payment kind with no rail (a money code)", () => {
+  const CODE = "55555555-5555-4555-8555-555555555555";
+  const codeDraft = () =>
+    payoutDraft({ kind: "money_code_issue", subjectId: CODE, amountCents: 15_000, subjectStatuses: ["issuing", "unknown"] });
+  function codeSetup(answer: SendOutcome = {
+    kind: "confirmed",
+    system: "fuel_card_sim",
+    type: "money_code",
+    id: "fcs_code_0123456789abcdef01234567",
+    amountCents: 15_000,
+  }) {
+    const t = setup();
+    t.ledger.subjects.set(CODE, "issuing");
+    t.ledger.counterparties.set(CODE, DRIVER);
+    const send = vi.fn(async (): Promise<SendOutcome> => answer);
+    const ready = vi.fn(async () => ({ ok: true as const }));
+    const hooks: MoneyHooks = { ...t.hooks, onReserved: async () => {}, send, ready };
+    return { ...t, send, ready, hooks };
+  }
+
+  it("refuses a rail-less kind without its own send and ready hooks, or with a destination, before any transaction", async () => {
+    const t = codeSetup();
+    const { send, ready, ...bare } = t.hooks;
+    await expect(executeMoneyAction(t.db, SESSION, codeDraft(), bare, t.deps)).rejects.toMatchObject({
+      category: "validation",
+    });
+    await expect(executeMoneyAction(t.db, SESSION, codeDraft(), { ...bare, send }, t.deps)).rejects.toMatchObject({
+      category: "validation",
+    });
+    await expect(executeMoneyAction(t.db, SESSION, codeDraft(), { ...bare, ready }, t.deps)).rejects.toMatchObject({
+      category: "validation",
+    });
+    await expect(
+      executeMoneyAction(t.db, SESSION, codeDraft(), { ...t.hooks, destination: async () => null }, t.deps),
+    ).rejects.toMatchObject({ category: "validation" });
+    // A ready hook on a kind with a rail is refused too.
+    await expect(executeMoneyAction(t.db, SESSION, payoutDraft(), { ...t.hooks, send: undefined }, t.deps)).rejects.toMatchObject({
+      category: "validation",
+    });
+    expect(t.db.transactions).toBe(0);
+    expect(t.payment.sends).toBe(0);
+  });
+
+  it("reserves, sends through its own hook once (never the payment adapter) and settles", async () => {
+    const t = codeSetup();
+    const r = await executeMoneyAction(t.db, SESSION, codeDraft(), t.hooks, t.deps);
+    expect(steps(t.ledger.events)).toEqual([
+      "begin",
+      "approval",
+      "reserve",
+      "commit",
+      "begin",
+      "markSent",
+      "commit",
+      "begin",
+      "settle:confirmed:response",
+      "commit",
+    ]);
+    expect(r.action).toMatchObject({ state: "confirmed", outsideSystem: "fuel_card_sim", subjectTable: "money_codes" });
+    expect(t.send).toHaveBeenCalledTimes(1);
+    expect(t.ready).toHaveBeenCalledTimes(2);
+    expect(t.payment.sends).toBe(0);
+    expect(t.onConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks only its own ready hook: not ready means no transaction and no send", async () => {
+    const t = codeSetup();
+    t.ready.mockResolvedValueOnce({ ok: false, category: "not_configured" } as never);
+    await expect(executeMoneyAction(t.db, SESSION, codeDraft(), t.hooks, t.deps)).rejects.toMatchObject({
+      category: "not_configured",
+    });
+    expect(t.db.transactions).toBe(0);
+    expect(t.send).not.toHaveBeenCalled();
+  });
+
+  it("re-checks the payment switch at the write: off after the claim means no call and failed/disabled", async () => {
+    const t = codeSetup();
+    t.ready.mockImplementationOnce(async () => ({ ok: true as const }));
+    t.ready.mockImplementationOnce(async () => {
+      flags.payoutsEnabled = false;
+      return { ok: true as const };
+    });
+    const r = await executeMoneyAction(t.db, SESSION, codeDraft(), t.hooks, t.deps);
+    expect(t.send).not.toHaveBeenCalled();
+    expect(r.action).toMatchObject({ state: "failed", failureCategory: "disabled" });
+  });
+
+  it("leaves an ambiguous answer unknown for the read-back", async () => {
+    const t = codeSetup({ kind: "unknown", category: "timeout" });
+    const r = await executeMoneyAction(t.db, SESSION, codeDraft(), t.hooks, t.deps);
+    expect(r.action.state).toBe("unknown");
+    expect(t.onConfirmed).not.toHaveBeenCalled();
+    expect(t.onFailed).not.toHaveBeenCalled();
   });
 });

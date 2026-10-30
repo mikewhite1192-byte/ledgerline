@@ -141,7 +141,7 @@ async function call<T>(send: () => Promise<T>): Promise<T> {
     const sqlState = sqlStateOf(err);
     const category = sqlState ? categoryForSqlState(sqlState) : categoryForName(name);
     console.error(`db: ${category} (${name}${sqlState ? ` ${sqlState}` : ""})`);
-    throw new DbError(category, sqlState);
+    throw new DbError(category, sqlState, constraintOf(err, sqlState));
   }
 }
 
@@ -169,4 +169,13 @@ function sqlStateOf(err: unknown): string | undefined {
   if (!(err instanceof Error)) return undefined;
   if (err.name !== "DatabaseErrorException" && err.name !== "BadRequestException") return undefined;
   return /SQLState: ([0-9A-Z]{5})\b/.exec(err.message)?.[1];
+}
+
+// A unique violation (23505) names its constraint in the Postgres text: violates unique
+// constraint "<name>". Only that quoted name is read, and only when it is a plain lower-case
+// identifier filling the quotes; anything else gives no name. The rest of the message is never
+// kept or logged.
+function constraintOf(err: unknown, sqlState: string | undefined): string | undefined {
+  if (sqlState !== "23505" || !(err instanceof Error)) return undefined;
+  return /violates unique constraint "([a-z0-9_]{1,63})"/.exec(err.message)?.[1];
 }

@@ -86,6 +86,8 @@ const PURPOSES: Readonly<Record<string, string>> = {
   voice_note_prepare: "Found the language, wrote the English copy",
   voice_note_triage: "Sorted the note",
   voice_note_reply: "Translated the reply",
+  document_markup: "Marked the line on the photo",
+  document_markup_check: "Read the marked copy back",
 };
 
 export function targetLabel(target: string): string {

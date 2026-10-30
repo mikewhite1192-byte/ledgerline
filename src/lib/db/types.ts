@@ -35,17 +35,21 @@ export type DbErrorCategory =
   | "unknown"
   | "not_configured";
 
-// Carries a category and, when the database gave one, its SQLSTATE. Never the SQL text, the
-// parameters or the upstream message: those can hold personal data.
+// Carries a category and, when the database gave one, its SQLSTATE and the name of the constraint
+// it broke (a schema name: pg's own field, or for a unique violation the quoted name the Data
+// API's text gives; compared whole). Never the SQL text, the parameters or the upstream message:
+// those can hold personal data.
 export class DbError extends Error {
   readonly category: DbErrorCategory;
   readonly sqlState?: string;
+  readonly constraint?: string;
 
-  constructor(category: DbErrorCategory, sqlState?: string) {
+  constructor(category: DbErrorCategory, sqlState?: string, constraint?: string) {
     super(sqlState ? `database error: ${category} (${sqlState})` : `database error: ${category}`);
     this.name = "DbError";
     this.category = category;
     this.sqlState = sqlState;
+    this.constraint = constraint;
   }
 }
 

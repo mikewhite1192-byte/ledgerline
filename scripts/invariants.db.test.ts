@@ -239,6 +239,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "sweep_fanout_checks",
     "approval_batches",
     "cash_checks",
+    // Seeded with an empty plan (0048); a person's request writes it.
+    "money_codes",
     // Seeded, but filled here as a person writes them too (0027), so the probe also reads rows the
     // app role wrote.
     "driver_arm_events",
@@ -467,6 +469,15 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), 'proposals', ARRAY[CAST($2 AS uuid)], 10000, 'refused',
              'invariants-test', now())`,
           [randomUUID(), proposal],
+        );
+        // A repair code a person asked for that the card provider declined: no ledger row names it,
+        // so the ledger checks have nothing to compare (0048).
+        await q.execute(
+          `INSERT INTO money_codes (id, tenant_id, driver_id, load_id, purpose, amount_cents, source_kind,
+             membership_id, status)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'repair', 4099,
+             'form', CAST($4 AS uuid), 'failed')`,
+          [randomUUID(), c.driver, load.id, c.membership],
         );
         // A person arming the driver for advances, and the id the carrier's TMS knows them by (0027).
         await q.execute(
