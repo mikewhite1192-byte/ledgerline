@@ -1,13 +1,15 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { listClips, uploadClip } from "@/lib/clips/service";
 import { isCrossSite } from "@/lib/http/same-site";
 import { isUuid } from "@/lib/uuid";
 import { failed, isForeignRead, readCapped, refuse, reply } from "./reply";
 
 // POST: a dock clip upload (multipart: file, loadId, stop). The raw file lives only in this
-// request: the reply is the clip and the redaction plan the browser blurs from. GET: the carrier's
-// clips, newest first, optionally for one load (?loadId=). Categories only in every reply.
+// request: the reply is the clip and the redaction plan the browser blurs from. Staff only: a demo
+// visitor (the judge role) is refused before the body is read. GET: the carrier's clips, newest
+// first, optionally for one load (?loadId=). Categories only in every reply.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -19,6 +21,8 @@ export async function POST(request: Request) {
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
   if (!flags.clipsEnabled) return refuse({ ok: false, category: "disabled", retryable: false });
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.startsWith("multipart/form-data")) return reply({ error: "bad_request" }, 400);
   const body = await readCapped(request, flags.clipLimits.bytes + FORM_OVERHEAD_BYTES);

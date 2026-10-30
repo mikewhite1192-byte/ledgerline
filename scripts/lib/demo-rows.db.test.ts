@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPgDb } from "../../src/lib/db/pg";
 import { adminUrl } from "../../src/lib/db/test-urls";
 import type { Db } from "../../src/lib/db/types";
-import { ensureRows, type DemoCarrier } from "./demo-rows";
+import { ensureRows, type DemoCarrier, type DemoMember } from "./demo-rows";
 
 // On Aurora the admin login that runs the demo user script (the cluster's master user) is not
 // held by row-level security. This stands in for it with a throwaway role that has BYPASSRLS and
@@ -22,6 +22,8 @@ const carrier = (prefix: string, timezone: string): DemoCarrier => ({
   timezone,
   email: `ops@${prefix}-${tag}.example`,
 });
+// The carrier's admin login, as the script passes it.
+const adminOf = (c: DemoCarrier, sub: string): DemoMember => ({ sub, email: c.email, role: "admin" });
 const carrierA = carrier("a", "America/New_York");
 const carrierB = carrier("b", "America/Chicago");
 
@@ -94,7 +96,7 @@ describe("demo rows through a login that skips row-level security", () => {
   });
 
   it("writes the first carrier", async () => {
-    await ensureRows(master, carrierA, A, `sub-${A}`);
+    await ensureRows(master, carrierA, A, adminOf(carrierA, `sub-${A}`));
     const a = await rowsOf(A);
     expect(a.tenants).toMatchObject([{ id: A, slug: carrierA.slug }]);
     expect(a.members).toMatchObject([
@@ -117,7 +119,7 @@ describe("demo rows through a login that skips row-level security", () => {
 
   it("writes the second carrier and leaves the first untouched", async () => {
     const before = await rowsOf(A);
-    await ensureRows(master, carrierB, B, `sub-${B}`);
+    await ensureRows(master, carrierB, B, adminOf(carrierB, `sub-${B}`));
     expect(await rowsOf(A)).toEqual(before);
     const b = await rowsOf(B);
     expect(b.tenants).toMatchObject([{ id: B, slug: carrierB.slug }]);
@@ -129,9 +131,34 @@ describe("demo rows through a login that skips row-level security", () => {
 
   it("reruns both carriers and changes nothing", async () => {
     const before = [await rowsOf(A), await rowsOf(B)];
-    await ensureRows(master, carrierA, A, `sub-${A}`);
-    await ensureRows(master, carrierB, B, `sub-${B}`);
+    await ensureRows(master, carrierA, A, adminOf(carrierA, `sub-${A}`));
+    await ensureRows(master, carrierB, B, adminOf(carrierB, `sub-${B}`));
     expect([await rowsOf(A), await rowsOf(B)]).toEqual(before);
+  });
+
+  it("adds the clerk (staff) and the demo visitor (judge) to the first carrier with their own roles", async () => {
+    const before = await rowsOf(B);
+    const clerk: DemoMember = { sub: `clerk-${A}`, email: `clerk@a-${tag}.example`, role: "staff" };
+    const judge: DemoMember = { sub: `judge-${A}`, email: `judge@a-${tag}.example`, role: "judge" };
+    await ensureRows(master, carrierA, A, clerk);
+    await ensureRows(master, carrierA, A, judge);
+    // A rerun changes nothing.
+    await ensureRows(master, carrierA, A, judge);
+    const a = await rowsOf(A);
+    expect(a.members).toMatchObject([
+      { cognito_sub: clerk.sub, email: clerk.email, role: "staff" },
+      { cognito_sub: judge.sub, email: judge.email, role: "judge" },
+      { cognito_sub: `service:sweep:${A}`, role: "staff" },
+      { cognito_sub: `sub-${A}`, email: carrierA.email, role: "admin" },
+    ]);
+    expect(await rowsOf(B)).toEqual(before);
+  });
+
+  it("never changes a login's role: the demo visitor asked for as staff is refused", async () => {
+    const before = await rowsOf(A);
+    const promoted: DemoMember = { sub: `judge-${A}`, email: `judge@a-${tag}.example`, role: "staff" };
+    await expect(ensureRows(master, carrierA, A, promoted)).rejects.toThrow(/already holds another role/);
+    expect(await rowsOf(A)).toEqual(before);
   });
 
   it("refuses a slug that belongs to another carrier and keeps nothing", async () => {
@@ -140,7 +167,7 @@ describe("demo rows through a login that skips row-level security", () => {
     const before = await rowsOf(A);
     const taken = { ...carrier("c", "America/Denver"), slug: carrierA.slug };
     // The tenant insert skips the taken slug, and the read-back stops it before the membership.
-    await expect(ensureRows(master, taken, C, `sub-${C}`)).rejects.toThrow(
+    await expect(ensureRows(master, taken, C, adminOf(taken, `sub-${C}`))).rejects.toThrow(
       /belongs to another tenant id/,
     );
     expect(await rowsOf(C)).toEqual({ tenants: [], members: [] });
@@ -153,7 +180,7 @@ describe("demo rows through a login that skips row-level security", () => {
     const before = await rowsOf(A);
     // Same login and email as carrier A, so only the tenant filter tells them apart.
     const other = { ...carrier("d", "America/Denver"), email: carrierA.email };
-    await expect(ensureRows(master, other, D, `sub-${A}`)).rejects.toThrow(
+    await expect(ensureRows(master, other, D, adminOf(other, `sub-${A}`))).rejects.toThrow(
       /linked to another tenant/,
     );
     expect(await rowsOf(D)).toEqual({ tenants: [], members: [] });

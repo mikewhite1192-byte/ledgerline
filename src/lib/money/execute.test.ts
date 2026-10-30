@@ -22,6 +22,7 @@ import {
   SESSION,
   steps,
 } from "./test-fakes";
+import { DEMO_CARRIERS } from "../seed/carriers";
 import { KIND_SHAPES, MONEY_ACTION_KINDS, MoneyError, RAIL_OF_KIND, railOf, type MoneyAction } from "./types";
 
 const saved = { ...flags };
@@ -705,5 +706,113 @@ describe("a payment kind with no rail (a money code)", () => {
     expect(r.action.state).toBe("unknown");
     expect(t.onConfirmed).not.toHaveBeenCalled();
     expect(t.onFailed).not.toHaveBeenCalled();
+  });
+});
+
+describe("the bank rail in Stripe test mode", () => {
+  const SETTLEMENT = "66666666-6666-4666-8666-666666666666";
+  const [demo] = DEMO_CARRIERS;
+  const demoRow = {
+    id: "77777777-7777-4777-8777-777777777777",
+    slug: demo.slug,
+    name: demo.name,
+    timezone: demo.timezone,
+  };
+  const settlementDraft = () =>
+    payoutDraft({ kind: "settlement_payout", subjectId: SETTLEMENT, subjectStatuses: ["approved"] });
+
+  // A Stripe test double: every transfer would go to the one test account, whoever it is for.
+  function stripeSetup(system: "stripe_test" | "mock" = "stripe_test") {
+    const ready = vi.fn(async () => ({ ok: true as const }));
+    const inner: PaymentAdapter = {
+      system,
+      ready,
+      sendPayout: async (p) => ({
+        kind: "confirmed",
+        system,
+        type: "payout",
+        id: system === "stripe_test" ? "tr_test000001" : "mock_1",
+        amountCents: p.amountCents,
+      }),
+      readBack: async () => ({ found: false }),
+    };
+    const t = setup(inner);
+    t.ledger.subjects.set(SETTLEMENT, "approved");
+    t.ledger.counterparties.set(SETTLEMENT, DRIVER);
+    const hooks: MoneyHooks = { onReserved: async () => {}, onConfirmed: t.onConfirmed, onFailed: t.onFailed };
+    return { ...t, ready, hooks };
+  }
+
+  it("refuses any carrier but the demo carriers before the adapter or a ledger row, as if payouts were off", async () => {
+    for (const row of [
+      undefined,
+      { ...demoRow, name: "Another Carrier" },
+      { ...demoRow, timezone: "UTC" },
+      null,
+    ]) {
+      const t = stripeSetup();
+      if (row !== undefined) t.ledger.tenantRow = row;
+      await expect(
+        executeMoneyAction(t.db, SESSION, settlementDraft(), t.hooks, t.deps),
+      ).rejects.toMatchObject({ category: "disabled" });
+      expect(t.ledger.rows.size).toBe(0);
+      expect(t.ready).not.toHaveBeenCalled();
+      expect(t.payment.sends).toBe(0);
+      // Only the read of the tenant's own row ran: no approval, no reserve.
+      expect(steps(t.ledger.events)).toEqual(["begin", "commit"]);
+      expect(t.lines).toEqual([
+        expect.stringMatching(
+          /^money: would send settlement_payout 25000c for settlements [0-9a-f-]{36} via bank stripe_test \(demo carriers only\)$/,
+        ),
+      ]);
+    }
+  });
+
+  it("pays a demo carrier through Stripe test mode", async () => {
+    const t = stripeSetup();
+    t.ledger.tenantRow = demoRow;
+    const r = await executeMoneyAction(t.db, SESSION, settlementDraft(), t.hooks, t.deps);
+    expect(r.action).toMatchObject({ state: "confirmed", outsideSystem: "stripe_test", outsideId: "tr_test000001" });
+    expect(t.payment.sends).toBe(1);
+    expect(t.onConfirmed).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles failed/refused/disabled, with no call, when the carrier is no longer a demo carrier after the reserve", async () => {
+    const t = stripeSetup();
+    t.ledger.tenantRow = demoRow;
+    const hooks: MoneyHooks = {
+      ...t.hooks,
+      onReserved: async () => {
+        t.ledger.tenantRow = { ...demoRow, name: "Renamed Carrier" };
+      },
+    };
+    const r = await executeMoneyAction(t.db, SESSION, settlementDraft(), hooks, t.deps);
+    expect(r.action).toMatchObject({ state: "failed", settledVia: "refused", failureCategory: "disabled" });
+    expect(r.sent).toBe(false);
+    expect(t.payment.sends).toBe(0);
+    expect(t.onFailed).toHaveBeenCalledTimes(1);
+    expect(t.onConfirmed).not.toHaveBeenCalled();
+    expect(steps(t.ledger.events)).not.toContain("markSent");
+  });
+
+  it("re-checks at the write: the switch off after the claim means no call and failed/disabled", async () => {
+    const t = stripeSetup();
+    t.ledger.tenantRow = demoRow;
+    t.ready.mockImplementationOnce(async () => ({ ok: true as const }));
+    t.ready.mockImplementationOnce(async () => {
+      flags.payoutsEnabled = false;
+      return { ok: true as const };
+    });
+    const r = await executeMoneyAction(t.db, SESSION, settlementDraft(), t.hooks, t.deps);
+    expect(t.payment.sends).toBe(0);
+    expect(r.action).toMatchObject({ state: "failed", settledVia: "response", failureCategory: "disabled" });
+    expect(t.onConfirmed).not.toHaveBeenCalled();
+  });
+
+  it("leaves the mock provider as it was: any carrier pays", async () => {
+    const t = stripeSetup("mock");
+    const r = await executeMoneyAction(t.db, SESSION, settlementDraft(), t.hooks, t.deps);
+    expect(r.action).toMatchObject({ state: "confirmed", outsideSystem: "mock" });
+    expect(t.payment.sends).toBe(1);
   });
 });

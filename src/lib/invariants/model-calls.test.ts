@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { MODEL_CALLS_SQL, STALE_RESERVED_MINUTES, judgeModelCalls, type ModelCallsRow } from "./model-calls";
+import { flags } from "../../config/flags";
+import {
+  DEMO_SESSION_CAP_NANOCENTS,
+  MODEL_CALLS_SQL,
+  STALE_RESERVED_MINUTES,
+  judgeModelCalls,
+  type ModelCallsRow,
+} from "./model-calls";
 
 function clean(): ModelCallsRow {
   return {
@@ -9,6 +16,7 @@ function clean(): ModelCallsRow {
     counter_calls: 4,
     counter_wonder_spent: "20000000",
     counter_wonder_reserved: 0,
+    demo_over_cap: 0,
     calls_logged: 5,
     answered_without_cost: 0,
     text_without_tokens: 0,
@@ -50,10 +58,22 @@ describe("judgeModelCalls", () => {
     }
   });
 
+  it("catches a demo visit whose spent plus reserved is over the per-visit cap", () => {
+    expect(judgeModelCalls([{ ...clean(), demo_over_cap: "2" }]).violations).toEqual({ demo_session_over_cap: 2 });
+  });
+
   it("treats a missing counter row or an unreadable value as unread, never as zero", () => {
     expect(() => judgeModelCalls([])).toThrow("model_calls_unread");
     expect(() => judgeModelCalls([{ ...clean(), counter_rows: 0 }])).toThrow("spend_counter_missing");
     expect(() => judgeModelCalls([{ ...clean(), counter_spent: null }])).toThrow("not_whole");
+    expect(() => judgeModelCalls([{ ...clean(), demo_over_cap: null }])).toThrow("not_whole");
+  });
+
+  it("writes the per-visit cap into the statement as the flag's cents in nanocents", () => {
+    expect(DEMO_SESSION_CAP_NANOCENTS).toBe(BigInt(flags.judgeAccess.sessionCapCents) * 1_000_000_000n);
+    expect(MODEL_CALLS_SQL).toContain(
+      `WHERE spent_nanocents + reserved_nanocents > ${flags.judgeAccess.sessionCapCents}000000000)`,
+    );
   });
 
   it("reads the counters and the log in one statement, against the database clock", () => {

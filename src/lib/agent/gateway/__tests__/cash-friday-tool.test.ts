@@ -31,8 +31,10 @@ const stored: Handler = (sql) => {
 
 const call = { id: "call-1", name: "get_cash_friday", argumentsJson: "{}" };
 
+const shipped = structuredClone(flags);
+
 afterEach(() => {
-  flags.cashFridayEnabled = false;
+  Object.assign(flags, structuredClone(shipped));
 });
 
 describe("get_cash_friday", () => {
@@ -75,6 +77,7 @@ describe("get_cash_friday", () => {
   });
 
   it("is neither offered nor run while its switch is off", async () => {
+    flags.cashFridayEnabled = false;
     expect(toolsFor("operator").map((t) => t.name)).not.toContain("get_cash_friday");
     const db = planDb(plan, stored);
     const out = await callTool(ctx, call, { db, clock: fixedClock });
@@ -83,6 +86,8 @@ describe("get_cash_friday", () => {
   });
 
   it("adds its prompt lines only while it is offered, so the switched-off prompt is unchanged", () => {
+    // The other switches that add prompt lines are off too, so the base prompt is the whole of it.
+    Object.assign(flags, { cashFridayEnabled: false, collectionsEnabled: false, reportsEnabled: false, carrierMemoryEnabled: false });
     const off = toolsFor("operator").map((t) => t.name);
     expect(operatorPrompt(off, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
     flags.cashFridayEnabled = true;

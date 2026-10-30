@@ -1,5 +1,6 @@
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { readRun } from "@/lib/data/card-recon";
 import { isCrossSite } from "@/lib/http/same-site";
 import { advanceCardCheck } from "@/lib/recon/run";
@@ -37,6 +38,8 @@ export async function POST(request: Request, { params }: Params) {
   if (!flags.cardRecon.enabled) return refused("disabled");
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   const { runId } = await params;
   if (!isUuid(runId)) return refused("bad_request");
   try {

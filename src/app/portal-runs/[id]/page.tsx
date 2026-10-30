@@ -22,7 +22,7 @@ export default async function PortalRunPage({ params }: { params: Promise<{ id: 
   const { carrier, data } = read;
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone }}
+      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/portal-runs")}
       title="Portal run"
       signOut={signOut}

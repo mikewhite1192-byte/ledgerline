@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { flags } from "@/config/flags";
 import { AiError, complete, type AiErrorCategory } from "@/lib/ai";
 import type { Session } from "@/lib/auth/claims";
+import { requireStaff } from "@/lib/auth/role";
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 
@@ -26,6 +27,7 @@ export async function proofCallAction(): Promise<ProofState> {
   let session: Session;
   try {
     session = await withRequestTenant(async (q, s) => {
+      await requireStaff(q, s);
       const rows = await q.query<{ role: string }>(
         "SELECT role FROM memberships WHERE cognito_sub = $1",
         [s.sub],

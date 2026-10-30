@@ -1,3 +1,4 @@
+import { STAFF_ONLY_NOTE } from "../../components/app/staff-only";
 import { formatInstant } from "../format/dates";
 import type { CollectionTone } from "../rules-engine/collections";
 
@@ -82,6 +83,7 @@ export const DRAFT_ERROR_WORDS: Record<string, string> = {
   not_found: "Collections is switched off.",
   ai_off: "The models are switched off.",
   forbidden: "This login cannot draft reminders for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   unauthenticated: "Your session ended. Sign in again.",
 };
 
@@ -94,6 +96,7 @@ export const DECIDE_ERROR_WORDS: Record<string, string> = {
   not_approvable: "Only a reminder that passed its check can be decided.",
   not_found: "This reminder is not here.",
   forbidden: "This login cannot decide reminders for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   unauthenticated: "Your session ended. Sign in again.",
 };
 

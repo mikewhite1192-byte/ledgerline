@@ -48,12 +48,16 @@ const driverNote = (text = "Prefers a text before a call") => ({
 const inserts = (db: ReturnType<typeof planDb>) =>
   db.statements.filter((st) => st.sql.startsWith("INSERT INTO carrier_notes"));
 
+// Put back as shipped after each test: each test sets the switch it assumes.
+const shipped = structuredClone(flags);
+
 afterEach(() => {
-  flags.carrierMemoryEnabled = false;
+  Object.assign(flags, structuredClone(shipped));
 });
 
 describe("remember_note", () => {
   it("is refused as disabled while carrier memory is off, before any read", async () => {
+    flags.carrierMemoryEnabled = false;
     const db = planDb(plan, noteStore());
     const out = await callTool(ctx, call(driverNote()), { db, clock: fixedClock });
     expect(out).toMatchObject({ decision: "blocked", reason: "disabled" });

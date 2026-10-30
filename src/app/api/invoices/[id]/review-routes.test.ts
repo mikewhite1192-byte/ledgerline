@@ -17,6 +17,8 @@ const ID = "22222222-2222-4222-8222-222222222222";
 const mocks = vi.hoisted(() => ({ getSession: vi.fn(), markReviewed: vi.fn(), markSent: vi.fn(), getDb: vi.fn() }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
+// The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here every caller is staff.
+vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/db", () => ({ getDb: mocks.getDb }));
 vi.mock("@/lib/invoices/review", () => ({ markReviewed: mocks.markReviewed, markSent: mocks.markSent }));
 

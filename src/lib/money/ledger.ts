@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import { DbError, type Param, type Queryable } from "../db";
+import { demoCarrierFor } from "../seed/carriers";
 import { idempotencyKey, isAttempt, isCanonicalUuid, requestIdOf } from "./keys";
 import { assertPendingSubject, readAction, readActionByKey, type PendingSubject } from "./read";
 import {
@@ -12,6 +13,7 @@ import {
   MoneyError,
   OUTSIDE_SYSTEMS,
   PROPOSERS,
+  railOf,
   SUBJECT_STATUSES,
   type Approval,
   type MoneyAction,
@@ -34,6 +36,25 @@ import {
 // The channel's release switch, read at every call (never cached).
 export function switchOn(channel: MoneyChannel): boolean {
   return channel === "payment" ? flags.payoutsEnabled === true : flags.accountingEnabled === true;
+}
+
+// A payout that runs only for the two demo carriers: a bank payout answered by Stripe test mode,
+// which sends every transfer to the one test account the environment names, whoever it is for.
+// Every other rail and provider (the mock included) is unchanged.
+export function demoCarriersOnly(kind: MoneyActionKind, system: OutsideSystem): boolean {
+  return railOf(kind) === "bank" && system === "stripe_test";
+}
+
+// The payment switch for one payout and the tenant's own row, read at every call: off whenever
+// payoutsEnabled is off, and off for any carrier but the two demo carriers (slug, name and
+// timezone, demoCarrierFor) when the payout runs only for them.
+export function payoutSwitchOn(
+  kind: MoneyActionKind,
+  system: OutsideSystem,
+  tenant: { slug: string; name: string; timezone: string } | null,
+): boolean {
+  if (!switchOn("payment")) return false;
+  return !demoCarriersOnly(kind, system) || demoCarrierFor(tenant) !== null;
 }
 
 export type CleanDraft = {

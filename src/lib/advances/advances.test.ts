@@ -216,9 +216,17 @@ describe("the payout switches", () => {
     flags.advancePayouts = { armed: true, capCents: 50_000, startDate: "2026-10-27" };
   };
 
-  it("ships closed", () => {
+  it("is closed while the advance switch is off", () => {
+    flags.advancesEnabled = false;
     expect(advancesOn()).toBe(false);
     expect(payoutGate(25_000, "2026-11-02")).toBe("disabled");
+  });
+
+  it("ships the advance flow on with payouts unarmed: every payout refuses until its own release", () => {
+    expect(advancesOn()).toBe(true);
+    expect(payoutGate(25_000, "2026-11-02")).toBe("not_armed");
+    expect(payoutGate(25_000, "2026-10-28")).toBe("not_armed");
+    expect(payoutGate(50_001, "2026-11-02")).toBe("not_armed");
   });
 
   it("refuses in order: switch, payouts, armed, cap, start date", () => {
@@ -308,6 +316,8 @@ describe("the record page's buttons", () => {
   beforeEach(() => {
     flags.advancesEnabled = true;
     flags.accountingEnabled = true;
+    // Take back is off here; the test about it turns it on itself.
+    flags.advanceTakeback = { ...flags.advanceTakeback, enabled: false };
   });
 
   it("offers nothing for seeded history or while advances are off", () => {

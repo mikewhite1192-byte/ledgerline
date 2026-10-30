@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { refuse, reply } from "@/lib/advances/http";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
 import { requestMoneyCode } from "@/lib/money-codes/request";
 import { moneyCodesOn } from "@/lib/money-codes/switches";
@@ -9,7 +10,8 @@ import { MONEY_CODE_PURPOSES } from "@/lib/rules-engine";
 // POST: Request a code. A load (its driver comes with it), the amount in integer cents, the
 // purpose and, optionally, a receipt already read. The pay rules check it as of now; a passing
 // request becomes one card waiting on the Money codes page. No model runs and nothing is issued
-// until a person approves the card.
+// until a person approves the card. Staff only: a demo visitor (the judge role) is refused before
+// the body is read.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 15;
@@ -26,6 +28,8 @@ export async function POST(request: Request) {
   if (!moneyCodesOn()) return refuse("disabled");
   const session = await getSession();
   if (!session) return refuse("unauthenticated");
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   let body: z.infer<typeof Body>;
   try {
     const parsed = Body.safeParse(await request.json());

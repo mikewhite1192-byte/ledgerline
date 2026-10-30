@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
+import { staffGate } from "@/lib/auth/staff-gate";
 import { draftDriverNotes } from "@/lib/driver-notes/draft";
 import { isCrossSite } from "@/lib/http/same-site";
 
@@ -26,6 +27,8 @@ export async function POST(request: Request) {
   if (!flags.aiEnabled) return reply({ error: "ai_off" }, 409);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
+  const notStaff = await staffGate(session);
+  if (notStaff) return notStaff;
   let periodId: string;
   try {
     const parsed = Body.safeParse(await request.json());

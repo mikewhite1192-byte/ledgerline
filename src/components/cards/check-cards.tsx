@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { Button } from "@/components/ui/button";
 import { postJson } from "@/components/invoices/post-json";
 
@@ -13,6 +14,7 @@ const NOTICE: Readonly<Record<string, string>> = {
   disabled: "The card check is switched off right now.",
   unauthenticated: "Your sign-in ended. Sign in again to check cards.",
   forbidden: "You cannot check cards for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   not_found: "That check is not here any more. Press Check cards again.",
 };
 // A lost or unreadable reply: the check may still be running on the server.

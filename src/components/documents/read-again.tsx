@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { READ_ATTEMPTS_MAX } from "@/lib/documents/types";
@@ -19,6 +20,7 @@ const MESSAGES: Record<string, string> = {
   disabled: "Document reading is not switched on.",
   unauthenticated: "Your session ended. Sign in again.",
   forbidden: "This login cannot read documents for this carrier.",
+  judge: STAFF_ONLY_NOTE,
   unavailable: "Could not start the read. Try again in a moment.",
   network: "Could not reach LedgerLine. Check the connection and try again.",
 };

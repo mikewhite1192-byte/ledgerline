@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { STAFF_ONLY_BODY, STAFF_ONLY_TITLE } from "./staff-only";
 import { cn } from "@/lib/cn";
 
 export type EmptyStateProps = {
@@ -52,7 +53,16 @@ export function LoadingState({
   );
 }
 
-export const ERROR_CATEGORIES = ["unreadable", "forbidden", "timeout", "not_found", "budget", "job_cap", "unknown"] as const;
+export const ERROR_CATEGORIES = [
+  "unreadable",
+  "forbidden",
+  "judge",
+  "timeout",
+  "not_found",
+  "budget",
+  "job_cap",
+  "unknown",
+] as const;
 export type ErrorCategory = (typeof ERROR_CATEGORIES)[number];
 
 // A fixed message per category: what failed and what to do. The raw error never reaches a prop.
@@ -65,6 +75,8 @@ const ERROR_COPY: Record<ErrorCategory, { title: string; body: string }> = {
     title: "This login is not linked to a carrier",
     body: "Sign out, then sign in with the login your carrier set up for you.",
   },
+  // A demo visitor pressed a button that is for the carrier's staff (src/lib/auth/staff-gate.ts).
+  judge: { title: STAFF_ONLY_TITLE, body: STAFF_ONLY_BODY },
   timeout: {
     title: "That took too long to load",
     body: "Nothing on this page changed. Try again in a moment.",
