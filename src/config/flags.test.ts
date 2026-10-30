@@ -77,6 +77,11 @@ const KEPT_OFF = [
   "stepThrough.staff",
   // The demo visitor sign-in ships dark with its own merge; the owner turns it on in its own PR.
   "judgeAccess.enabled",
+  // Factoring ships dark and unarmed with its own merge; the owner turns it on in its own PR.
+  "factoring.enabled",
+  "factoring.armed",
+  // Off until the owner asks for the rate confirmation, bill of lading and POD on every approval.
+  "factoring.requirePacket",
   // Fuel and tax rate lookups ship dark with their own merge; the owner turns them on in their own PR.
   "groundedRatesEnabled",
   // Pay cards ship dark with their own merge; the owner turns them on in their own PR.
@@ -139,6 +144,15 @@ describe("flags", () => {
     expect(flags.triageProvider).toBe("baseten");
     // The demo visitor sign-in: dark until the owner's one-line release PR.
     expect(flags.judgeAccess.enabled).toBe(false);
+    // Factoring submits to the simulated partner only, dark and unarmed until the owner's go.
+    expect(flags.factoring).toEqual({
+      enabled: false,
+      armed: false,
+      maxNetCents: 2_500_000,
+      requirePacket: false,
+      startDate: "2026-10-28",
+    });
+    expect(isLocalDate(flags.factoring.startDate)).toBe(true);
     // The models page's eval card and the eval script that spends model cents.
     expect(flags.evalCardEnabled).toBe(false);
     expect(flags.evalRun).toEqual({ enabled: false, maxRunCents: 1_500, reserveCents: 4_000 });

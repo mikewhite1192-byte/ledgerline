@@ -104,6 +104,20 @@ const LEDGER_WRITES = [
     message: "Agent code may use adapters/types and adapters/tms only.",
   },
   {
+    // factoring/ holds the executor that submits to the factoring partner; the gateway may read
+    // requests and papers, say them in words and size a card, never submit or check one. The
+    // simulated partner under adapters/factoring is refused by the adapters rule above.
+    regex: "(^|/)(?<!(?:^|/)adapters/)factoring/(?!(read|packet|words|propose)(\\.[cm]?[jt]s)?$)",
+    message:
+      "Agent code proposes only; a person approves and the executor submits to the factoring " +
+      "partner. From factoring/ it may import read, packet, words and propose.",
+  },
+  {
+    // rules-engine/factoring is the engine's factoring math, not the executor.
+    regex: "(^|/)(?<!(?:^|/)rules-engine/)factoring(\\.[cm]?[jt]s)?$",
+    message: "Import the factoring read module you need (factoring/read, packet, words, propose).",
+  },
+  {
     // A money code is issued and revealed only after a person approves it: the gateway may read
     // codes and their words, never the executor, the reveal or the request form.
     regex: "(^|/)money-codes/(?!(read|words|switches)(\\.[cm]?[jt]s)?$)",
@@ -135,7 +149,7 @@ const DOCUMENT_READS = [
 // Outside the gateway, agent code reaches records, the engine and money only by tool calls.
 const GATEWAY_ONLY = [
   {
-    regex: "(^|/)(db|data|rules-engine|money|money-codes|adapters)(/|$)",
+    regex: "(^|/)(db|data|rules-engine|money|money-codes|adapters|factoring)(/|$)",
     message:
       "Agent code reaches records, the rules engine and money only through the gateway " +
       "(src/lib/agent/gateway).",

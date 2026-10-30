@@ -11,9 +11,11 @@ import type { Executor, ProposalResult } from "../execute";
 // sets the bill deferred to the card's date with the proposal's id, and the proposal moves to done
 // in the same transaction. A second approval of the same card finds it done and writes nothing.
 //
-// factoring_request and collections_chase are test mode until FACTORING and COLLECTIONS ship: the
+// collections_chase, and factoring_request while factoring.enabled is off, are test mode: the
 // approval is recorded (the proposal moves to done with the note test_mode) and nothing else is
-// written, sent or paid.
+// written, sent or paid. With factoring on, src/lib/factoring/execute.ts runs the card instead. A
+// factoring card that already has a request (it ran while factoring was on) is refused as
+// factoring_off and left as it is.
 //
 // The switch: cashFridayEnabled off refuses as not_executable before anything is read or written.
 // No money moves here and nothing leaves the system.
@@ -134,6 +136,16 @@ export const executeBillDefer: Executor = async (db, session, proposal, _opts, d
   });
 };
 
+// Whether a factoring request names this proposal. A count that does not read back reads as yes.
+async function hasFactoringRequest(q: Queryable, proposalId: string): Promise<boolean> {
+  const rows = await q.query<{ n: number | string }>(
+    `SELECT count(*) AS n FROM factoring_requests
+      WHERE tenant_id = current_tenant_id() AND proposal_id = CAST($1 AS uuid)`,
+    [proposalId],
+  );
+  return Number(rows[0]?.n ?? 1) !== 0;
+}
+
 // factoring_request and collections_chase: the decision is recorded, nothing else is written.
 function testModeExecutor(kind: "factoring_request" | "collections_chase"): Executor {
   return async (db, session, proposal, _opts, deps) => {
@@ -145,6 +157,12 @@ function testModeExecutor(kind: "factoring_request" | "collections_chase"): Exec
       if (!row) return refusal("not_found");
       if (row.status === "done") return done(proposal.id);
       if (row.status !== "approved" && row.status !== "executing") return refusal("already_decided");
+      // A factoring card that already wrote its request ran while factoring was on, so its invoices
+      // may be with the partner: it is left as it is, for Check pending and a resume once factoring
+      // is back, never closed here as if it had only been recorded.
+      if (kind === "factoring_request" && (await hasFactoringRequest(q, proposal.id))) {
+        return refusal("factoring_off");
+      }
       await finish(q, proposal.id, row.status, nowIso, "test_mode");
       console.info(`cash friday ${proposal.id} recorded in test mode`);
       return done(proposal.id);

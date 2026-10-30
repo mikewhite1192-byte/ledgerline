@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { flags } from "../../../../../config/flags";
-import { optionArgs, sameArgs } from "../../../../cash/args";
+import { factoringArgsOf, factoringArgsSchema, optionArgs, sameArgs } from "../../../../cash/args";
 import type { Queryable } from "../../../../db";
 import { readCandidateFacts, readMatchFacts } from "../../../../data/card-recon";
 import { chargeArgsSchema, chargeMatches, detentionChargeOf, readDetentionChargeRows } from "../../../../data/detention-charge";
@@ -15,6 +15,8 @@ import {
   readRowsWhereId,
 } from "../../../../data/read";
 import { TENANT_TABLES, type TenantTable } from "../../../../data/tables";
+import { packetGaps, packetsOf } from "../../../../factoring/packet";
+import { readFactoringInput } from "../../../../factoring/read";
 import { matchWrongInvoiceFinding } from "../../../../invoices/match";
 import { paymentPostedOutside } from "../../../../invoices/posted-outside";
 import { lineSummary, sameLines, type LineSummary } from "../../../../invoices/queue";
@@ -33,6 +35,7 @@ import {
   type MoneyCodeSource,
 } from "../../../../rules-engine";
 import { rankCandidates, topIsTied } from "../../../../rules-engine/card-recon";
+import { factoringFor } from "../../../../rules-engine/factoring";
 import { localDateOf } from "../../../../time/local-date";
 import { isUuid } from "../../../../uuid";
 import { defineTool, type AgentRole, type GatewayContext } from "../../types";
@@ -704,6 +707,52 @@ async function cashEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow, raw
   };
 }
 
+// A factoring card with factoring on, checked the way the approval checks it (design 4.4): the
+// engine runs on exactly the card's invoices today, at the card's own short and pay day, and the
+// stored args must equal its args as a whole value. Each invoice's papers come with it: which of
+// the rate confirmation, the bill of lading and the proof of delivery are missing. Only a card
+// still waiting for a person is checked: once it is decided its invoices are on its own request,
+// so a fresh run would refuse them as already factored, and nothing is read or run for it.
+async function factoringEngine(
+  q: Queryable,
+  ctx: GatewayContext,
+  p: ProposalRow,
+  raw: Record<string, unknown>,
+): Promise<Engine> {
+  if (p.status !== "proposed") return UNAVAILABLE;
+  const base = { ok: true, check: "factoring", proposedCents: Number(p.amount_cents) };
+  const a = factoringArgsSchema.safeParse(raw);
+  if (!a.success || a.data.periodId !== p.subject_id) return { ...base, engine: { ok: false, reason: "args_unreadable" } };
+  const ids = a.data.invoices.map((l) => l.invoiceId);
+  const packets = await packetsOf(q, ids);
+  const packet = ids.map((id) => {
+    const paper = packets.get(id);
+    return { invoiceId: id, onFile: paper !== undefined, missing: paper ? packetGaps(paper) : [] };
+  });
+  const limits = flags.cashFridayLimits;
+  const d = factoringFor(
+    await readFactoringInput(q, a.data.periodId),
+    ids,
+    localDateOf(ctx.now.toISOString(), ctx.timeZone),
+    { maxAgeDays: limits.factoringMaxAgeDays, maxInvoices: limits.maxFactorInvoices },
+    a.data.shortCents,
+  );
+  if (!d.ok) return { ...base, packet, engine: { ok: false, reason: d.category, invoiceId: d.invoiceId } };
+  const now = factoringArgsOf(d.option, a.data.payDay, a.data.shortCents);
+  return {
+    ...base,
+    packet,
+    engine: {
+      ok: true,
+      payDay: a.data.payDay,
+      amountCents: d.option.amountCents,
+      coversShort: d.option.coversShort,
+      matchesProposal: d.option.amountCents === Number(p.amount_cents) && sameArgs(raw, now),
+      sources: refList(d.option.sources, MAX_ENGINE_SOURCES),
+    },
+  };
+}
+
 // The engine's own number for the proposal. A read or engine error is unavailable, never zero.
 async function engineFor(
   q: Queryable,
@@ -726,6 +775,8 @@ async function engineFor(
     if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
     if (p.kind === "card_match") return await cardMatchEngine(p, q, args);
     // The cards' invoice lists are objects, which safeArgs leaves out; compared as stored.
+    // With factoring on, a factoring card is checked on exactly its own invoices, as the approval does.
+    if (p.kind === "factoring_request" && flags.factoring?.enabled === true) return await factoringEngine(q, ctx, p, raw);
     if (p.kind === "factoring_request" || p.kind === "bill_defer" || p.kind === "collections_chase") {
       return await cashEngine(q, ctx, p, raw);
     }

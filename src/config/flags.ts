@@ -564,6 +564,23 @@ export type Flags = {
       sliceMs: number;
     };
   };
+  // Factoring (Test mode): invoices sold to a simulated factoring partner for cash now, the rest
+  // held back until the customer pays. enabled: the Factoring page, its menu item, the agent's
+  // three tools and approving a "Factor these invoices" card through the partner; off, the page
+  // shows the feature as off, the check route answers 404, the tools are not offered and the card
+  // keeps Cash Friday's record-only behavior. armed, maxNetCents (inclusive: the most one request
+  // may pay out), requirePacket (refuse an invoice whose rate confirmation, bill of lading or POD
+  // is missing) and startDate (YYYY-MM-DD, tenant-local; it gates submitting, never proposing) are
+  // asked again on every approval, before the ledger reserves a row, on top of payoutsEnabled. The
+  // partner adapter asks enabled, armed, maxNetCents (against the one invoice it is sent) and
+  // startDate again itself at each call; it is sent no papers, so requirePacket is the approval's.
+  factoring: {
+    enabled: boolean;
+    armed: boolean;
+    maxNetCents: number;
+    requirePacket: boolean;
+    startDate: string;
+  };
   // The "How the models score" card on /models, read from src/lib/eval/results/latest.json. Off
   // until the owner's one-line flip after a real run is recorded.
   evalCardEnabled: boolean;
@@ -762,6 +779,7 @@ export const flags: Flags = {
       sliceMs: 20_000,
     },
   },
+  factoring: { enabled: false, armed: false, maxNetCents: 2_500_000, requirePacket: false, startDate: "2026-10-28" },
   evalCardEnabled: false,
   evalRun: { enabled: false, maxRunCents: 1_500, reserveCents: 4_000 },
   groundedRatesEnabled: false,

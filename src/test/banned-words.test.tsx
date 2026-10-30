@@ -62,6 +62,7 @@ import {
 import type { BreakView } from "@/lib/data/card-recon";
 import { DbError, type Queryable } from "@/lib/db";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
+import * as factoringWords from "@/lib/factoring/words";
 import { TERMS } from "@/lib/format/terms";
 import {
   compareLine,
@@ -435,6 +436,12 @@ const noteActions = vi.hoisted(() => ({
   removeNoteAction: vi.fn(),
 }));
 vi.mock("@/app/memory/actions", () => noteActions);
+vi.mock("@/lib/factoring/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/factoring/read")>()),
+  listRequests: async () => get("factoringRequests"),
+  readRequest: async () => get("factoringRequest"),
+  readFactoredLine: async () => get("factoredLine"),
+}));
 vi.mock("@/lib/briefs/quarter-review", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/briefs/quarter-review")>()),
   readQuarterView: async () => get("quarterView"),
@@ -523,6 +530,9 @@ function defaults(): Record<string, unknown> {
     cashHome: null,
     memoryNotes: fx.MEMORY_NOTES,
     noteSubjects: fx.NOTE_SUBJECTS,
+    factoringRequests: fx.FACTORING_REQUESTS,
+    factoringRequest: fx.FACTORING_REQUEST,
+    factoredLine: null,
     quarterView: fx.QUARTER_VIEW,
   };
 }
@@ -531,14 +541,18 @@ function defaults(): Record<string, unknown> {
 // with settings, so only its own enabled is turned on.
 const SWITCHES = Object.keys(flags).filter((k) => typeof (flags as Record<string, unknown>)[k] === "boolean");
 const saved = Object.fromEntries(SWITCHES.map((k) => [k, (flags as Record<string, unknown>)[k]]));
+// Factoring's switch is a field of its own settings object, so it is turned on beside the others.
+const savedFactoring = flags.factoring.enabled;
 const savedCodes = { ...flags.moneyCodes };
 beforeAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = true;
+  flags.factoring.enabled = true;
   flags.moneyCodes = { ...savedCodes, enabled: true };
   vi.stubGlobal("fetch", () => new Promise(() => {}));
 });
 afterAll(() => {
   for (const k of SWITCHES) (flags as Record<string, unknown>)[k] = saved[k];
+  flags.factoring.enabled = savedFactoring;
   flags.moneyCodes = { ...savedCodes };
   vi.unstubAllGlobals();
 });
@@ -1069,6 +1083,40 @@ const PAGES: PageCase[] = [
     ],
   },
   {
+    file: "factoring/page.tsx",
+    variants: [
+      { name: "requests", load: async () => (await import("@/app/factoring/page")).default(), shows: "Partly funded" },
+      {
+        name: "none yet",
+        setup: () => (state.fx.factoringRequests = []),
+        load: async () => (await import("@/app/factoring/page")).default(),
+        shows: "No invoices factored yet",
+      },
+    ],
+  },
+  {
+    file: "factoring/[id]/page.tsx",
+    variants: [
+      {
+        name: "partly funded, one invoice not confirmed yet",
+        load: async () => (await import("@/app/factoring/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Check pending",
+      },
+      {
+        name: "funded",
+        setup: () =>
+          (state.fx.factoringRequest = {
+            ...fx.FACTORING_REQUEST,
+            status: "funded",
+            cameInCents: fx.FACTORING_REQUEST.lines.reduce((t, l) => t + l.netCents, 0),
+            lines: fx.FACTORING_REQUEST.lines.map((l) => ({ ...l, status: "funded" })),
+          }),
+        load: async () => (await import("@/app/factoring/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Funded",
+      },
+    ],
+  },
+  {
     file: "pay/[periodId]/notes/page.tsx",
     variants: [
       {
@@ -1414,6 +1462,18 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.invoiceReview = view),
         load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
       })),
+      {
+        name: "factored",
+        setup: () => (state.fx.factoredLine = fx.FACTORED_LINE),
+        load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Factored (Test mode)",
+      },
+      {
+        name: "sent to factoring, not confirmed yet",
+        setup: () => (state.fx.factoredLine = { ...fx.FACTORED_LINE, status: "unknown" }),
+        load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "Sent, not confirmed yet (Test mode)",
+      },
     ],
   },
   {
@@ -2714,6 +2774,35 @@ describe("no internal word in the Cash page's notes and words", () => {
       <ul>
         {words.map((w, n) => (
           <li key={n}>{w}</li>
+        ))}
+      </ul>,
+    );
+    expect(scan(container)).toEqual([]);
+  });
+});
+
+describe("no internal word in factoring's words", () => {
+  it("every refusal, check result, status, planned and came-in line", () => {
+    const w = factoringWords;
+    const statuses = ["submitted", "unknown", "funded", "partly_funded", "declined", "failed"];
+    const none = { confirmed: 0, failed: 0, tooNew: 0, stillWaiting: 0, stillUnknown: 0, errors: 0 };
+    const words = [
+      ...Object.values(w.FACTORING_APPROVE_NOTICE),
+      ...Object.values(w.FACTORING_REFUSAL_SENTENCES),
+      ...Object.values(w.CHECK_NOTICE),
+      ...Object.values(w.CHECK_RESULT),
+      ...Object.values(w.REQUEST_STATUS_WORDS),
+      w.checkResultSentence({ ...none, errors: 1 }),
+      w.PLANNED_LABEL,
+      w.plannedLine("$5,611.50", "$645.00", "$193.50"),
+      ...statuses.flatMap((s) => [w.cameInLabel(s), w.cameInLine(s, "$1,870.50")]),
+      w.TEST_MODE_HELP,
+    ];
+    expect(words.every((x) => x.length > 0)).toBe(true);
+    const { container } = render(
+      <ul>
+        {words.map((x, n) => (
+          <li key={n}>{x}</li>
         ))}
       </ul>,
     );

@@ -72,6 +72,8 @@ type ProposalRow = {
   card_last4: string | null;
   args: string | null;
   exceptions: string | null;
+  // A factoring card's request (0060), once its approval wrote one.
+  factoring_status?: string | null;
 };
 type FlagRow = { input_id: string; body_text: string; categories: string | null };
 
@@ -240,6 +242,7 @@ function cashOf(r: ProposalRow): CashCardView | null {
     if (!p.success) return null;
     return {
       kind: "factoring_request",
+      requestStatus: typeof r.factoring_status === "string" ? r.factoring_status : null,
       shortCents: p.data.shortCents,
       advanceBps: p.data.advanceBps,
       feeBps: p.data.feeBps,
@@ -422,7 +425,10 @@ const PROPOSAL_SQL = `
          CASE WHEN p.kind IN ('detention_charge', 'advance_payout', 'card_match', 'factoring_request', 'bill_defer',
                              'collections_chase', 'pay_rule_change')
               THEN CAST(p.args AS text) END AS args,
-         CAST(p.exceptions AS text) AS exceptions
+         CAST(p.exceptions AS text) AS exceptions,
+         CASE WHEN p.kind = 'factoring_request' THEN
+           (SELECT fr.status FROM factoring_requests fr WHERE fr.tenant_id = p.tenant_id AND fr.proposal_id = p.id)
+         END AS factoring_status
     FROM proposals p`;
 
 // Proposals by id, for the sweep's run page (any staff member of the carrier sees a run's drafts,
