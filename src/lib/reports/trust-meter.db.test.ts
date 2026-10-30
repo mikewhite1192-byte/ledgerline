@@ -184,13 +184,15 @@ describe("the review trust meter on a seeded database", () => {
     counted[A.id] = [
       await approve(A, WED, { verdict: "pass", engine: "matched" }),
       await reject(A, WED, { verdict: "pass", engine: "matched" }, "wrong_amount"),
-      await reject(A, WED, { verdict: "pass" }, "not_needed"),
+      await reject(A, WED, { verdict: "pass", engine: "matched" }, "not_needed"),
+      // Wrong, and the auditor passed it, but no recompute was stored: not a pass, so not a miss.
+      await reject(A, WED, { verdict: "pass" }, "wrong_amount"),
       await approve(A, WED, { verdict: "block" }, "Checked the invoice against the signed rate sheet"),
       await reject(A, WED, { verdict: "pass", engine: "mismatch" }, "wrong_record"),
       await reject(A, WED, { verdict: null }, "wrong_amount"),
       await reject(A, WED, { verdict: "unknown" }, "other"),
       await approve(A, SUNDAY_NIGHT, { verdict: "pass", engine: "matched" }),
-      await approve(A, LAST_WED, { verdict: "pass" }),
+      await approve(A, LAST_WED, { verdict: "pass", engine: "matched" }),
     ];
     // Eight days old when approved: the gate expires it, and an expired card is no decision.
     const old = await addCard(A, { createdAt: "2026-10-13T14:00:00.000Z", verdict: "pass" });
@@ -207,7 +209,7 @@ describe("the review trust meter on a seeded database", () => {
     // Prairie Wind's cards, of another action type.
     counted[B.id] = [
       await approve(B, WED, { kind: "load_rate_fill", verdict: "pass", engine: "matched" }),
-      await reject(B, WED, { kind: "load_rate_fill", verdict: "pass" }, "wrong_record"),
+      await reject(B, WED, { kind: "load_rate_fill", verdict: "pass", engine: "matched" }, "wrong_record"),
     ];
   });
 
@@ -232,10 +234,10 @@ describe("the review trust meter on a seeded database", () => {
     expect(a.period).toEqual({ start: "2026-05-11", end: "2026-11-08" });
     expect(a.rows).toEqual([
       { actionType: post, weekStart: "2026-10-19", decided: 1, checked: 1, flagged: 0, passed: 1, wrong: 0, missed: 0, missedBps: null },
-      { actionType: post, weekStart: "2026-10-26", decided: 8, checked: 6, flagged: 2, passed: 4, wrong: 3, missed: 1, missedBps: null },
+      { actionType: post, weekStart: "2026-10-26", decided: 9, checked: 7, flagged: 2, passed: 4, wrong: 4, missed: 1, missedBps: null },
     ]);
     expect(a.subtotals).toEqual([
-      { label: post, totals: { decided: 9, checked: 7, flagged: 2, passed: 5, wrong: 3, missed: 1 } },
+      { label: post, totals: { decided: 10, checked: 8, flagged: 2, passed: 5, wrong: 4, missed: 1 } },
     ]);
     expect(a.trust).toEqual([{ kind: "invoice_post", upperBps: expect.any(Number), ready: false }]);
     expect(a.notes?.[0]).toBe(DISPLAY_ONLY_NOTE);
@@ -281,9 +283,9 @@ describe("the review trust meter on a seeded database", () => {
   it("pages through the decisions and stops with a read-limit error at its bound", async () => {
     const window = trustReadWindow(bucketWeeks("2026-11-02", 1));
     const whole = await app.withTenant(A.id, (q) => readTrustInput(q, window));
-    expect(whole).toHaveLength(9);
-    // Nine rows two at a time: the fifth page is short, so the read ends there.
-    expect(await app.withTenant(A.id, (q) => readTrustInput(q, window, { pageSize: 2, maxPages: 5 }))).toEqual(whole);
+    expect(whole).toHaveLength(10);
+    // Ten rows three at a time: the fourth page is short, so the read ends there.
+    expect(await app.withTenant(A.id, (q) => readTrustInput(q, window, { pageSize: 3, maxPages: 4 }))).toEqual(whole);
     await expect(
       app.withTenant(A.id, (q) => readTrustInput(q, window, { pageSize: 1, maxPages: 1 })),
     ).rejects.toBeInstanceOf(ReadLimitError);

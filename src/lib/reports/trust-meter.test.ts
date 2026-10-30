@@ -100,8 +100,8 @@ describe("trust_meter: what counts", () => {
       { engineCheck: "mismatch", engineOverridden: true },
       { ...yes, checked: true, flagged: true, overridden: true },
     ],
-    ["the recompute unavailable", { engineCheck: "unavailable" }, { ...yes, checked: true, passed: true }],
-    ["no recompute", { engineCheck: null }, { ...yes, checked: true, passed: true }],
+    ["the recompute unavailable: checked, not passed", { engineCheck: "unavailable" }, { ...yes, checked: true }],
+    ["no recompute stored: checked, not passed", { engineCheck: null }, { ...yes, checked: true }],
     [
       "never checked: decided only",
       { auditorVerdict: null, status: "rejected", decisionNote: "wrong_amount" },

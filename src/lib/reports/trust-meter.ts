@@ -69,7 +69,9 @@ const NOTHING: TrustClass = {
 // What one proposal counts as, by whole-value compares. A status, verdict or engine check outside
 // the stored sets is refused, never counted as anything: a value added later fails closed. A NULL
 // or 'unknown' verdict was never independently checked, so it is decided but never checked or
-// passed. An expired or still open card counts for nothing: nobody judged it.
+// passed. Passed also needs the recompute to have matched: one that was unavailable (cut, refused,
+// or a kind with no comparison) or never stored is unknown, not a pass. An expired or still open
+// card counts for nothing: nobody judged it.
 export function classify(d: TrustDecision): TrustClass {
   if (!STATUSES.includes(d.status)) throw new Error("a proposal status is not known");
   if (d.auditorVerdict !== null && !VERDICTS.includes(d.auditorVerdict)) {
@@ -81,7 +83,7 @@ export function classify(d: TrustDecision): TrustClass {
   if (d.decidedAt === null || d.status === "proposed" || d.status === "expired") return { ...NOTHING };
   const checked = d.auditorVerdict === "pass" || d.auditorVerdict === "concerns" || d.auditorVerdict === "block";
   const flagged = d.auditorVerdict === "concerns" || d.auditorVerdict === "block" || d.engineCheck === "mismatch";
-  const passed = checked && !flagged;
+  const passed = checked && d.engineCheck === "matched" && !flagged;
   const rejected = d.status === "rejected";
   const wrong = rejected && d.decisionNote !== null && WRONG_CATEGORIES.includes(d.decisionNote);
   return {
@@ -172,7 +174,7 @@ export const DISPLAY_ONLY_NOTE =
 
 const DEFINITION_NOTE =
   "Wrong means a person declined the card as the wrong amount or the wrong record. Passed means the " +
-  "independent check and the pay recompute both found nothing, and missed means a wrong card had " +
+  "independent check passed and the pay recompute matched, and missed means a wrong card had " +
   `passed. The missed rate is missed over passed, blank under ${TRUST_MIN_RATE_SAMPLE} passed, so a ` +
   "rate over a few decisions never reads as 0%. A decision never checked is counted as decided only.";
 
