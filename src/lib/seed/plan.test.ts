@@ -33,6 +33,7 @@ import { instantAt } from "./calendar";
 import { assertPlan, DETENTION_TOTAL_CENTS, HERO_OPEN_WEEK, seededAdvanceDecision } from "./assert-plan";
 import { DEMO_CARRIERS } from "./carriers";
 import { buildCarrierPlan, buildDriverCards, type CarrierPlan } from "./plan";
+import { ESCROW_RELEASE_REMINDER_DAYS } from "../escrow/switches";
 
 const ANCHOR = "2026-11-02";
 const plans = DEMO_CARRIERS.map((c) => buildCarrierPlan(c, ANCHOR));
@@ -222,9 +223,11 @@ describe("fuel cards", () => {
   it("gives every driver one default active card, unique tokens and last four, and plants one declined and one slow", () => {
     for (const plan of plans) {
       const { drivers, driver_cards: cards } = plan.rows;
+      // The departed driver (terminated-plan.ts) holds no default: their one card is closed.
+      const roster = drivers.filter((d) => d.active_to === null);
       const defaults = cards.filter((c) => c.is_default);
-      expect(defaults).toHaveLength(drivers.length);
-      expect(new Set(defaults.map((c) => c.driver_id))).toEqual(new Set(drivers.map((d) => d.id)));
+      expect(defaults).toHaveLength(roster.length);
+      expect(new Set(defaults.map((c) => c.driver_id))).toEqual(new Set(roster.map((d) => d.id)));
       expect(defaults.every((c) => c.status === "active" && c.closed_at === null && c.holder_kind === "named")).toBe(true);
       expect(cards.every((c) => c.source === "seed")).toBe(true);
       expect(new Set(cards.map((c) => c.provider_token)).size).toBe(cards.length);
@@ -233,8 +236,9 @@ describe("fuel cards", () => {
       expect(cards.filter((c) => c.sim_behavior === "declined")).toHaveLength(1);
       expect(cards.filter((c) => c.sim_behavior === "slow")).toHaveLength(1);
       expect(cards.some((c) => c.sim_behavior === "offline")).toBe(false);
-      // Three more cards only where there is a hero: 28 at Blue Ridge, 25 at Prairie Wind.
-      expect(cards).toHaveLength(drivers.length + (plan.carrier.heroCode ? 3 : 0));
+      // One per driver on the roster, the departed driver's closed card, and three more only
+      // where there is a hero: 29 at Blue Ridge, 26 at Prairie Wind.
+      expect(cards).toHaveLength(roster.length + 1 + (plan.carrier.heroCode ? 3 : 0));
     }
   });
 
@@ -242,7 +246,12 @@ describe("fuel cards", () => {
     const plan = plans.find((p) => p.carrier.heroCode === "BR-D07")!;
     const codeOf = new Map(plan.rows.drivers.map((d) => [d.id, d.code]));
     const by = (b: string) => plan.rows.driver_cards.filter((c) => c.sim_behavior === b).map((c) => codeOf.get(c.driver_id));
-    const codes = plan.rows.drivers.map((d) => d.code).filter((c) => c !== "BR-D07").sort();
+    // Planted on the roster's codes; the departed driver joined after the cards were drawn.
+    const codes = plan.rows.drivers
+      .filter((d) => d.active_to === null)
+      .map((d) => d.code)
+      .filter((c) => c !== "BR-D07")
+      .sort();
     expect(by("declined")).toEqual([codes[codes.length - 1]]);
     expect(by("slow")).toEqual([codes[codes.length - 2]]);
     const hero = plan.rows.drivers.find((d) => d.code === "BR-D07")!;
@@ -349,7 +358,11 @@ describe("advance parity", () => {
     const plan = plans.find((p) => p.carrier.heroCode === null)!;
     const { parity } = plan.planted;
     expect([parity.extraCardId, parity.genericCardId, parity.closedCardId]).toEqual([null, null, null]);
-    expect(plan.rows.driver_cards.every((c) => c.is_default && c.holder_kind === "named")).toBe(true);
+    // Every roster card is a named default; the departed driver's closed card is the only other.
+    const gone = new Set(plan.rows.drivers.filter((d) => d.active_to !== null).map((d) => d.id));
+    const roster = plan.rows.driver_cards.filter((c) => !gone.has(c.driver_id));
+    expect(roster.every((c) => c.is_default && c.holder_kind === "named")).toBe(true);
+    expect(plan.rows.driver_cards.length - roster.length).toBe(1);
   });
 
   it("plants two paid advances on one open-week load, different amounts, both granted and under the load's cap", () => {
@@ -448,8 +461,9 @@ describe("versioned pay rules", () => {
   it("settles Blue Ridge's first two weeks under the opening rules and the third under v2", () => {
     const { rows, periods } = plans[0];
     const versions = sortVersions(rows.pay_configs);
+    // The opening version reaches back to the departed driver's first old week (W-13).
     expect(versions.map((v) => [v.effective_from, v.insurance_per_day_cents, v.source])).toEqual([
-      ["2026-10-05", 1050, "seed"],
+      ["2026-07-06", 1050, "seed"],
       ["2026-10-19", 1100, "seed"],
     ]);
     const versionOf = (start: string) => {
@@ -477,7 +491,7 @@ describe("versioned pay rules", () => {
   it("settles Prairie Wind's weeks under its one version", () => {
     const { rows } = plans[1];
     expect(rows.pay_configs.map((v) => [v.effective_from, v.note])).toEqual([
-      ["2026-10-04", "Opening pay policy"],
+      ["2026-07-05", "Opening pay policy"],
     ]);
     expect(new Set(rows.settlements.map((s) => s.pay_config_id))).toEqual(
       new Set([rows.pay_configs[0].id]),
@@ -490,6 +504,124 @@ describe("versioned pay rules", () => {
     const r = settleDriver(settlementInputOf(rows, hero.id, periods[3]));
     expect(r.netCents).toBe(HERO_OPEN_WEEK.netCents);
     expect(r.lines.find((l) => l.kind === "insurance")?.amountCents).toBe(-5 * 1100);
+  });
+});
+
+describe("departed driver", () => {
+  // One owner-operator per carrier who drove three old weeks and left (terminated-plan.ts), with
+  // the escrow those paid weeks withheld still held, due back 90 days after leaving.
+  const facts = [
+    { code: "BR-D26", from: "2025-07-07", to: "2026-07-26", weeks: ["2026-07-06", "2026-07-13", "2026-07-20"], balance: 30000 },
+    { code: "PW-D26", from: "2025-07-06", to: "2026-07-25", weeks: ["2026-07-05", "2026-07-12", "2026-07-19"], balance: 22500 },
+  ];
+  const departedOf = (plan: CarrierPlan) => {
+    const gone = plan.rows.drivers.filter((d) => d.active_to !== null);
+    expect(gone).toHaveLength(1);
+    return gone[0];
+  };
+
+  it("is one owner-operator per carrier who left in July, 99 or 100 days before the anchor", () => {
+    plans.forEach((plan, i) => {
+      const d = departedOf(plan);
+      const f = facts[i];
+      expect([d.code, d.active_from, d.active_to]).toEqual([f.code, f.from, f.to]);
+      expect([d.worker_type, d.pay_basis, d.percent_bps, d.preferred_language]).toEqual([
+        "owner_operator",
+        "percent",
+        7400,
+        "en",
+      ]);
+      expect(d.money_armed).toBe(true);
+      expect(d.money_armed_at).toBe(instantAt(d.active_from, 8, 0, plan.carrier.timezone));
+      expect(d.active_to! < plan.periods[0].start).toBe(true);
+      // Due for release: the list reads active_to <= today - 90.
+      expect(daysBetween(d.active_to!, ANCHOR)).toBe(i === 0 ? 99 : 100);
+      expect(daysBetween(d.active_to!, ANCHOR)).toBeGreaterThanOrEqual(ESCROW_RELEASE_REMINDER_DAYS);
+      // The name repeats no roster driver's.
+      const names = plan.rows.drivers.map((x) => `${x.first_name} ${x.last_name}`);
+      expect(new Set(names).size).toBe(names.length);
+    });
+  });
+
+  it("has no row in the four demo weeks", () => {
+    for (const plan of plans) {
+      const d = departedOf(plan);
+      const { rows, periods } = plan;
+      const demoIds = new Set(
+        rows.settlement_periods.filter((p) => p.period_start >= periods[0].start).map((p) => p.id),
+      );
+      expect(rows.loads.filter((l) => l.driver_id === d.id && l.pickup_on >= periods[0].start)).toEqual([]);
+      expect(rows.driver_days.filter((x) => x.driver_id === d.id)).toEqual([]);
+      expect(rows.pay_items.filter((x) => x.driver_id === d.id)).toEqual([]);
+      expect(rows.advances.filter((x) => x.driver_id === d.id)).toEqual([]);
+      expect(rows.fuel_purchases.filter((x) => x.driver_id === d.id)).toEqual([]);
+      expect(rows.settlements.filter((x) => x.driver_id === d.id && demoIds.has(x.period_id))).toEqual([]);
+      const tokens = new Set(rows.driver_cards.filter((c) => c.driver_id === d.id).map((c) => c.provider_token));
+      expect(rows.card_transactions.filter((x) => tokens.has(x.card_token))).toEqual([]);
+      // The open week's pay run would not pick them either: nothing of theirs is in it.
+      const r = settleDriver(settlementInputOf(rows, d.id, periods[3]));
+      expect([r.grossCents, r.netCents]).toEqual([0, 0]);
+    }
+  });
+
+  it("was paid for three old weeks, each withholding the full escrow step, so the balance is their sum", () => {
+    plans.forEach((plan, i) => {
+      const d = departedOf(plan);
+      const { rows } = plan;
+      const step = configFor(rows.pay_configs, facts[i].weeks[0]).escrow_per_settlement_cents;
+      const own = rows.settlements
+        .filter((x) => x.driver_id === d.id)
+        .map((x) => ({ x, p: rows.settlement_periods.find((p) => p.id === x.period_id)! }))
+        .sort((a, b) => (a.p.period_start < b.p.period_start ? -1 : 1));
+      expect(own.map(({ p }) => [p.period_start, p.status])).toEqual(facts[i].weeks.map((w) => [w, "paid"]));
+      expect(own.map(({ p }) => p.period_end)).toEqual(facts[i].weeks.map((w) => addDays(w, 6)));
+      expect(own.every(({ x }) => x.status === "paid" && x.escrow_charges_cents === 0)).toBe(true);
+      expect(own.map(({ x }) => x.escrow_withheld_cents)).toEqual([step, step, step]);
+      expect(own.map(({ x }) => x.escrow_closing_cents)).toEqual([step, 2 * step, 3 * step]);
+      for (const { x } of own) {
+        const lines = rows.settlement_lines.filter((l) => l.settlement_id === x.id);
+        expect(lines.map((l) => l.kind)).toEqual(["load_pay", "escrow"]);
+        expect(lines[1].amount_cents).toBe(-step);
+        expect(x.net_cents).toBe(x.gross_cents - step);
+      }
+      expect(d.escrow_balance_cents).toBe(facts[i].balance);
+      expect(d.escrow_balance_cents).toBe(3 * step);
+      const schedules = rows.deduction_schedules.filter((x) => x.driver_id === d.id);
+      expect(schedules.map((x) => [x.kind, x.amount_cents, x.active_from, x.active_to])).toEqual([
+        ["escrow", step, d.active_from, d.active_to],
+      ]);
+    });
+  });
+
+  it("drove one long regional load a week, with stop times and state miles that add up", () => {
+    for (const plan of plans) {
+      const d = departedOf(plan);
+      const { rows, carrier } = plan;
+      const loads = rows.loads.filter((l) => l.driver_id === d.id).sort((a, b) => (a.pickup_on < b.pickup_on ? -1 : 1));
+      expect(loads.map((l) => l.load_number)).toEqual([9981, 9982, 9983].map((n) => `${carrier.prefix}-L${n}`));
+      for (const l of loads) {
+        expect(l.status).toBe("invoiced");
+        expect(l.loaded_miles).toBeGreaterThanOrEqual(400);
+        expect(l.delivered_on! <= d.active_to!).toBe(true);
+        expect([l.pickup_arrived_at, l.pickup_departed_at, l.delivery_arrived_at, l.delivery_departed_at].every((t) => t !== null)).toBe(true);
+        expect(l.delivery_departed_at).toBe(l.delivered_at);
+        const miles = rows.load_state_miles.filter((m) => m.load_id === l.id).reduce((n, m) => n + m.miles, 0);
+        expect(miles).toBe(l.loaded_miles + l.empty_miles);
+      }
+    }
+  });
+
+  it("holds one closed card, a dispatch id and an arming row", () => {
+    for (const plan of plans) {
+      const d = departedOf(plan);
+      const { rows, carrier } = plan;
+      const cards = rows.driver_cards.filter((c) => c.driver_id === d.id);
+      expect(cards.map((c) => [c.status, c.is_default, c.sim_behavior, c.closed_at])).toEqual([
+        ["closed", false, "ok", instantAt(addDays(d.active_to!, 1), 10, 0, carrier.timezone)],
+      ]);
+      expect(rows.driver_identities.filter((x) => x.driver_id === d.id)).toHaveLength(1);
+      expect(rows.driver_arm_events.filter((x) => x.driver_id === d.id).map((x) => x.armed)).toEqual([true]);
+    }
   });
 });
 

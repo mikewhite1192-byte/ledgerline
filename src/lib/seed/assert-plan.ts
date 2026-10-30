@@ -51,6 +51,7 @@ import { rankCandidates, reconcileStatement, topIsTied } from "../rules-engine/c
 import { PLANT_FUEL_EXTRA_CENTS, PLANT_LOAD_CENTS, PLANT_UNKNOWN_CENTS, STATEMENT_DAYS } from "./card-statement";
 import { cashPositionOf, plantedGapCents } from "./cash-plan";
 import type { CarrierPlan } from "./plan";
+import { DEPARTED_WEEKS } from "./terminated-plan";
 
 // The whole plan is checked before anything is written: keys, references, dates, the history the
 // engine wrote, the receivables, and the problems the checks must find (exactly the planted ones,
@@ -156,15 +157,18 @@ export function assertPlan(plan: CarrierPlan): void {
   cashFriday(plan);
   invoiceReviewPlants(plan);
   cardStatementPlants(plan);
+  departedDriver(plan);
 
   // Victims: eleven distinct drivers, never the hero.
   const codes = Object.values(victims);
   if (new Set(codes).size !== codes.length) fail("two problems share a victim");
   if (carrier.heroCode && codes.includes(carrier.heroCode)) fail("the hero is a victim");
 
-  // History: every driver settled once in each of the three paid weeks, under the pay rules
-  // version in force at the week's start.
-  if (rows.settlements.length !== rows.drivers.length * 3) fail("history is incomplete");
+  // History: every driver on the roster settled once in each of the three paid demo weeks, the
+  // departed driver once in each of their old weeks, nobody in a week they were not active in,
+  // and each under the pay rules version in force at the week's start.
+  const roster = rows.drivers.filter((d) => d.active_to === null);
+  if (rows.settlements.length !== roster.length * 3 + DEPARTED_WEEKS) fail("history is incomplete");
   if (rows.settlement_periods.filter((p) => p.status === "open").length !== 1) {
     fail("there must be exactly one open week");
   }
@@ -172,6 +176,10 @@ export function assertPlan(plan: CarrierPlan): void {
     const p = rows.settlement_periods.find((x) => x.id === s.period_id)!;
     if (configFor(rows.pay_configs, p.period_start).id !== s.pay_config_id) {
       fail("a settlement names the wrong pay rules version");
+    }
+    const d = rows.drivers.find((x) => x.id === s.driver_id)!;
+    if (d.active_from > p.period_end || (d.active_to !== null && d.active_to < p.period_start)) {
+      fail("a driver is settled in a week they were not active");
     }
   }
 
@@ -274,7 +282,11 @@ function driverCards(rows: TenantRows, heroCode: string | null): void {
   const defaults = cards.filter((c) => c.is_default);
   if (defaults.some((c) => c.status !== "active")) fail("a default card is not active");
   unique(defaults, (c) => c.driver_id, "default card per driver");
-  if (defaults.length !== rows.drivers.length) fail("a driver has no default fuel card");
+  // Every driver on the roster holds a default; the departed driver's card is closed.
+  const roster = new Set(rows.drivers.filter((d) => d.active_to === null).map((d) => d.id));
+  if (defaults.length !== roster.size || defaults.some((c) => !roster.has(c.driver_id))) {
+    fail("a driver has no default fuel card");
+  }
   for (const c of cards) {
     if (!/^fcs_card_[0-9a-f]{24}$/.test(c.provider_token) || !/^[0-9]{4}$/.test(c.last4)) {
       fail("a fuel card is malformed");
@@ -358,6 +370,62 @@ function parityPlants(plan: CarrierPlan): void {
     const extra = rows.driver_cards.find((c) => c.id === p.extraCardId);
     if (!extra || extra.status !== "active" || extra.is_default) fail("the planted extra card is off");
   }
+}
+
+// The departed driver (terminated-plan.ts): exactly one driver has left, before the first demo
+// week; nothing of theirs is dated after they left (no loads, days, items, advances, fuel or card
+// lines); their settlements are their old weeks only, paid, back to back and before the demo
+// weeks; their card is closed and not a default; and their balance is exactly what those paid
+// weeks withheld, the full step each week, so their escrow statement matches.
+function departedDriver(plan: CarrierPlan): void {
+  const { rows, periods } = plan;
+  const gone = rows.drivers.filter((d) => d.active_to !== null);
+  if (gone.length !== 1) fail("not exactly one departed driver");
+  const d = gone[0];
+  const left = d.active_to!;
+  if (left >= periods[0].start) fail("the departed driver left inside the demo weeks");
+  if (rows.loads.some((l) => l.driver_id === d.id && (l.pickup_on > left || (l.delivered_on ?? left) > left))) {
+    fail("the departed driver has a load after leaving");
+  }
+  const holds = (list: readonly { driver_id: string | null }[]) => list.some((x) => x.driver_id === d.id);
+  if (holds(rows.driver_days) || holds(rows.pay_items) || holds(rows.advances) || holds(rows.fuel_purchases)) {
+    fail("the departed driver has days, items, advances or fuel");
+  }
+  const cards = rows.driver_cards.filter((c) => c.driver_id === d.id);
+  if (cards.length === 0 || cards.some((c) => c.status !== "closed" || c.is_default)) {
+    fail("the departed driver's card is not closed");
+  }
+  for (const c of cards) {
+    if (c.closed_at === null || localDateOf(c.closed_at, plan.carrier.timezone) <= left) {
+      fail("the departed driver's card closed before they left");
+    }
+  }
+  const tokens = new Set(cards.map((c) => c.provider_token));
+  if (rows.card_transactions.some((x) => tokens.has(x.card_token))) fail("the departed driver's card has statement lines");
+
+  const own = rows.settlements.filter((s) => s.driver_id === d.id);
+  const weeks = own
+    .map((s) => rows.settlement_periods.find((p) => p.id === s.period_id)!)
+    .sort((a, b) => (a.period_start < b.period_start ? -1 : 1));
+  if (own.length !== DEPARTED_WEEKS || own.some((s) => s.status !== "paid")) {
+    fail("the departed driver is not paid for each old week");
+  }
+  weeks.forEach((p, i) => {
+    if (p.status !== "paid" || p.period_end > left || p.period_end >= periods[0].start) {
+      fail("a departed driver's week is not an old paid week");
+    }
+    if (i > 0 && p.period_start !== addDays(weeks[i - 1].period_end, 1)) fail("the old weeks are not back to back");
+  });
+  const schedule = rows.deduction_schedules.filter((x) => x.driver_id === d.id);
+  if (schedule.length !== 1 || schedule[0].kind !== "escrow" || schedule[0].active_to !== left) {
+    fail("the departed driver's escrow schedule is off");
+  }
+  const withheld = sum(own.map((s) => s.escrow_withheld_cents));
+  const charged = sum(own.map((s) => s.escrow_charges_cents));
+  if (d.escrow_balance_cents !== withheld - charged || charged !== 0) {
+    fail("the departed driver's balance is not what their weeks withheld");
+  }
+  if (withheld !== DEPARTED_WEEKS * schedule[0].amount_cents) fail("an old week did not withhold the full step");
 }
 
 function keysAndReferences(rows: TenantRows): void {

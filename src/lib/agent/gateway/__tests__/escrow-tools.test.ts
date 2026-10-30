@@ -9,15 +9,17 @@ import { context, fixedClock, type Handler, type Row } from "./fake-db";
 import { blueRidgePlan, PLAN_ANCHOR, planDb } from "./plan-db";
 
 // The three escrow release tools over the synthetic Blue Ridge plan, with the hero driver read as
-// terminated by a handler (the plan has no terminated driver): switched off they refuse before
-// reading a record; on, the reads work on the carrier's local date, and the propose tool drafts
-// exactly the balance for a person to approve, refusing every other amount, an amount over the
-// cap, an active driver, a driver with a live release and a balance date that is not today. No
-// tool writes anything but the gateway's own decision row. No database, no clock, no network.
+// terminated by a handler: switched off they refuse before reading a record; on, the reads work
+// on the carrier's local date, and the propose tool drafts exactly the balance for a person to
+// approve, refusing every other amount, an amount over the cap, an active driver, a driver with a
+// live release and a balance date that is not today. The plan's own departed driver (seed
+// terminated-plan.ts) is due on the plan alone, and their statement matches. No tool writes
+// anything but the gateway's own decision row. No database, no clock, no network.
 
 const plan = blueRidgePlan();
 const zone = plan.carrier.timezone;
 const hero = plan.rows.drivers.find((d) => d.code === plan.carrier.heroCode)!;
+const departed = plan.rows.drivers.find((d) => d.active_to !== null)!;
 const ctx: GatewayContext = context({ now: new Date(instantAt(PLAN_ANCHOR, 12, 0, zone)), timeZone: zone });
 const saved = structuredClone(flags.escrowRelease);
 const savedPayouts = flags.payoutsEnabled;
@@ -97,6 +99,19 @@ describe("list_escrow_releases_due", () => {
     wroteNothing(db);
   });
 
+  it("lists the plan's departed driver with their balance once the release switch is on", async () => {
+    flags.escrowRelease.enabled = true;
+    const { out, db } = await run("list_escrow_releases_due", {});
+    if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
+    expect(out.result).toEqual({
+      asOf: PLAN_ANCHOR,
+      max: 50,
+      truncated: false,
+      drivers: [{ driverId: departed.id, driverCode: "BR-D26", lastActiveDay: "2026-07-26", daysSince: 99, balanceCents: 30_000 }],
+    });
+    wroteNothing(db);
+  });
+
   it("is offered to the auditor and refused to the triage role", async () => {
     switchesOn();
     const { out } = await run("list_escrow_releases_due", {}, undefined, { role: "auditor" });
@@ -109,6 +124,8 @@ describe("list_escrow_releases_due", () => {
 describe("get_escrow_statement", () => {
   it("reports a balance its paid weeks do not add up to as not matching, and corrects nothing", async () => {
     switchesOn();
+    // The hero's three paid weeks each withheld the $100 step, while the stored balance reads
+    // $1,000 (the seed's opening balance has no paid weeks behind it).
     const { out, db } = await run("get_escrow_statement", { driverId: hero.id }, heroAs("2026-07-01", 100_000));
     if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
     expect(out.result).toMatchObject({
@@ -117,13 +134,51 @@ describe("get_escrow_statement", () => {
       terminated: true,
       asOf: PLAN_ANCHOR,
       openingCents: 0,
-      closingCents: 0,
+      withheldCents: 30_000,
+      closingCents: 30_000,
       balanceCents: 100_000,
       matches: false,
       openRelease: null,
-      linesTotal: 0,
-      lines: [],
+      linesTotal: 3,
     });
+    wroteNothing(db);
+  });
+
+  it("matches the plan's departed driver: three paid weeks, the full step each, nothing released", async () => {
+    flags.escrowRelease.enabled = true;
+    const { out, db } = await run("get_escrow_statement", { driverId: departed.id });
+    if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
+    const weeks = plan.rows.settlements
+      .filter((s) => s.driver_id === departed.id)
+      .map((s) => ({ s, p: plan.rows.settlement_periods.find((p) => p.id === s.period_id)! }))
+      .sort((a, b) => (a.p.period_start < b.p.period_start ? -1 : 1));
+    expect(out.result).toEqual({
+      found: true,
+      driverId: departed.id,
+      driverCode: "BR-D26",
+      firstActiveDay: "2025-07-07",
+      lastActiveDay: "2026-07-26",
+      terminated: true,
+      asOf: PLAN_ANCHOR,
+      openingCents: 0,
+      withheldCents: 30_000,
+      chargesCents: 0,
+      releasedCents: 0,
+      closingCents: 30_000,
+      balanceCents: 30_000,
+      matches: true,
+      openRelease: null,
+      linesTotal: 3,
+      lines: weeks.map(({ s, p }) => ({
+        kind: "withheld",
+        settlementId: s.id,
+        periodStart: p.period_start,
+        periodEnd: p.period_end,
+        withheldCents: 10_000,
+        chargesCents: 0,
+      })),
+    });
+    expect(weeks.map(({ p }) => p.period_start)).toEqual(["2026-07-06", "2026-07-13", "2026-07-20"]);
     wroteNothing(db);
   });
 });

@@ -50,13 +50,14 @@ describe("readNextWeekStart", () => {
 describe("readPayRulesPage", () => {
   it("dates each version by the first pay week it runs, so one saved midweek starts the next Monday", async () => {
     // Blue Ridge weeks start Monday. A version saved for Wednesday Oct 28 first runs the week of
-    // Nov 2, the week the engine picks it for; the seeded versions start on their own Mondays.
+    // Nov 2, the week the engine picks it for; the seeded versions start on their own Mondays
+    // (the opening one on Jul 6, the departed driver's first old week).
     const rows = rowsFor("blue-ridge");
     const midweek = versionFrom(rows, "midweek", "2026-10-28");
     const page = await readPayRulesPage(db(() => [...rows.pay_configs, midweek]), "sub", NOW);
     const firstWeeks = page.versions.map((v) => [v.effective_from, v.firstWeek]);
     expect(firstWeeks).toEqual([
-      ["2026-10-05", "2026-10-05"],
+      ["2026-07-06", "2026-07-06"],
       ["2026-10-19", "2026-10-19"],
       ["2026-10-28", "2026-11-02"],
     ]);

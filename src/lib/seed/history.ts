@@ -14,7 +14,7 @@ import { paidWritesOf } from "../settlements/paid";
 import { addDays, type LocalDate } from "../time/local-date";
 import { instantAt } from "./calendar";
 
-// The settled weeks. For each paid period, oldest first, every driver is settled by the engine
+// The settled weeks. For each paid period, oldest first, every driver active in it is settled by the engine
 // (settleDriver, the same call the pay run makes), and the result is written back the way the
 // pay run will write it: a paid settlement with its lines, the escrow delta on the driver, each
 // recovery on its advance, every pay item the lines cite stamped with the settlement, and a
@@ -22,7 +22,9 @@ import { instantAt } from "./calendar";
 // paidWritesOf, the same function the live booking (bookPaidSettlement) uses, and are checked
 // against the engine's own escrow delta and recoveries. So the open week starts from
 // balances the engine itself produced (design D5). Each period runs under the pay rules version
-// in force at its start (rows.pay_configs), and its settlements name that version.
+// in force at its start (rows.pay_configs), and its settlements name that version. A driver is
+// active in a period by the pay run's own rule (records.ts previewsOf): started on or before its
+// last day and not gone before its first, so a driver who left is never settled after leaving.
 
 export type HistoryArgs = {
   slug: string;
@@ -32,8 +34,9 @@ export type HistoryArgs = {
 };
 
 export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
-  const paid = rows.settlement_periods.filter((p) => p.status === "paid");
-  const open = rows.settlement_periods.filter((p) => p.status === "open");
+  const byStart = [...rows.settlement_periods].sort((a, b) => (a.period_start < b.period_start ? -1 : 1));
+  const paid = byStart.filter((p) => p.status === "paid");
+  const open = byStart.filter((p) => p.status === "open");
   if (open.length !== 1) throw new Error("history needs exactly one open period");
   const byDriver = <T extends { driver_id: string | null }>(list: readonly T[]) => {
     const out = new Map<string, T[]>();
@@ -59,6 +62,7 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
     const version = configFor(rows.pay_configs, p.period_start);
     const config = payConfigOf(version);
     for (const d of drivers) {
+      if (d.active_from > p.period_end || (d.active_to !== null && d.active_to < p.period_start)) continue;
       const driverLoads = loads.get(d.id) ?? [];
       const loadIds = new Set(driverLoads.map((l) => l.id));
       const result = settleDriver({

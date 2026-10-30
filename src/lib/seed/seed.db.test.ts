@@ -18,6 +18,8 @@ import { customerOf, loadStopsOf, loadsOf, payConfigOf } from "../data/records";
 import type { TenantRows } from "../data/rows";
 import { TENANT_TABLES, type TenantTable } from "../data/tables";
 import { createPgDb } from "../db/pg";
+import { listReleasesDue } from "../escrow/due";
+import { readEscrowStatement } from "../escrow/statement";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Queryable } from "../db/types";
 import { approvalFrom } from "../money/approval";
@@ -300,13 +302,18 @@ describe("seeding the demo carriers", () => {
         const version = plan.rows.pay_configs.find((v) => v.effective_from === from)!;
         return plan.rows.settlements.filter((s) => s.pay_config_id === version.id).length;
       };
+      // The opening version is dated back to the departed driver's first old week, so it also
+      // holds their three old settlements: 25 x 2 + 3 at Blue Ridge, 25 x 3 + 3 at Prairie Wind.
       expect(versions.map((v) => [v.effective_from, Number(v.settled)])).toEqual(
         plan.carrier.slug === "blue-ridge"
           ? [
-              ["2026-10-05", settledUnder("2026-10-05")],
+              ["2026-07-06", settledUnder("2026-07-06")],
               ["2026-10-19", settledUnder("2026-10-19")],
             ]
-          : [["2026-10-04", plan.rows.settlements.length]],
+          : [["2026-07-05", plan.rows.settlements.length]],
+      );
+      expect(settledUnder(plan.carrier.slug === "blue-ridge" ? "2026-07-06" : "2026-07-05")).toBe(
+        plan.carrier.slug === "blue-ridge" ? 53 : 78,
       );
       const [{ wrong }] = await sql<{ wrong: number }>(
         `SELECT count(*) AS wrong
@@ -381,11 +388,48 @@ describe("seeding the demo carriers", () => {
       await readPayConfigFor(q, "2026-10-19"),
     ]);
     expect(blueRidge.map((v) => [v.effective_from, v.insurance_per_day_cents, v.source])).toEqual([
-      ["2026-10-05", 1050, "seed"],
+      ["2026-07-06", 1050, "seed"],
       ["2026-10-19", 1100, "seed"],
     ]);
     const prairieWind = await app.withTenant(B, (q) => readPayConfigFor(q, "2026-10-11"));
-    expect(prairieWind.effective_from).toBe("2026-10-04");
+    expect(prairieWind.effective_from).toBe("2026-07-05");
+  });
+
+  it("lists each carrier's departed driver as due once the release switch is on, with a statement that matches", async () => {
+    const saved = structuredClone(flags.escrowRelease);
+    flags.escrowRelease.enabled = true;
+    try {
+      for (const [id, plan, balance] of [
+        [A, planA, 30_000],
+        [B, planB, 22_500],
+      ] as const) {
+        const zone = plan.carrier.timezone;
+        const gone = plan.rows.drivers.filter((d) => d.active_to !== null);
+        expect(gone.map((d) => d.code)).toEqual([`${plan.carrier.prefix}-D26`]);
+        const d = gone[0];
+        const due = await app.withTenant(id, (q) => listReleasesDue(q, ANCHOR));
+        expect(due.drivers.map((x) => [x.driverId, x.driverCode, x.activeTo, x.balanceCents])).toEqual([
+          [d.id, d.code, d.active_to, balance],
+        ]);
+        const statement = await app.withTenant(id, (q) =>
+          readEscrowStatement(q, d.id, instantAt(ANCHOR, 12, 0, zone), zone),
+        );
+        expect(statement).toMatchObject({
+          terminated: true,
+          matches: true,
+          openingCents: 0,
+          withheldCents: balance,
+          chargesCents: 0,
+          releasedCents: 0,
+          closingCents: balance,
+          balanceCents: balance,
+          openRelease: null,
+        });
+        expect(statement!.lines.map((l) => l.kind)).toEqual(["withheld", "withheld", "withheld"]);
+      }
+    } finally {
+      flags.escrowRelease = saved;
+    }
   });
 
   it("answers an advance request from rows read back as the plan does", async () => {
