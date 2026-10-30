@@ -3,14 +3,15 @@ import { readCheckInput, readRowsWhereId } from "../../../data/read";
 import { runAllChecks } from "../../../rules-engine";
 import { findingInWeek, fixPlanFor, type FixLeg } from "../../../sweep/plan";
 import { isUuid } from "../../../uuid";
-import { engineFor, readStoredProposal, type ProposalRow } from "../tools/read/get-proposal";
+import { engineOrThrow, readStoredProposal, type ProposalRow } from "../tools/read/get-proposal";
 import type { GatewayContext } from "../types";
 
 // The code-side engine check (design 3.6): the rules engine's own figure for a proposal, compared
 // in code with what the proposal says, to the cent, whole values only. It reads the same engine
-// result the auditor's pack carries (engineFor), but before the pack is cut, so a cut never decides
-// it. A read error, an engine refusal or a kind with no comparison here is unavailable, never
-// matched. Reads only; the store writes the result once (audit.ts, writeEngineCheck).
+// result the auditor's pack carries (engineOrThrow), but before the pack is cut, so a cut never
+// decides it. An engine refusal or a kind with no comparison here is unavailable, never matched; a
+// read or engine error is no check at all (null), so nothing is stored and a later pass tries
+// again. Reads only; the store writes the result once (audit.ts, writeEngineCheck).
 //
 // Kinds merged after the design (the three Cash Friday kinds, the pay rule change, the money code
 // and the card match) have no comparison yet and read unavailable.
@@ -142,18 +143,23 @@ async function payCorrectionCheck(q: Queryable, p: ProposalRow, raw: Record<stri
   return comparePayCorrection(p, raw, legs);
 }
 
-// The check for one proposal on this carrier, as of ctx.now. Never throws: an error is logged by
-// name only and is unavailable.
-export async function engineCheck(q: Queryable, ctx: GatewayContext, proposalId: string): Promise<EngineCheckResult> {
+// The check for one proposal on this carrier, as of ctx.now. Never throws. Null when a read or the
+// engine threw (a database error, a timeout): that is not known, so the caller stores nothing and
+// the next load or pass tries again. The error is logged by name only.
+export async function engineCheck(
+  q: Queryable,
+  ctx: GatewayContext,
+  proposalId: string,
+): Promise<EngineCheckResult | null> {
   try {
     const stored = await readStoredProposal(q, proposalId);
     if (!stored) return ENGINE_UNAVAILABLE;
     const { row, raw, args } = stored;
     if (row.kind === "pay_correction") return await payCorrectionCheck(q, row, raw);
     if (!COMPARED.has(row.kind)) return ENGINE_UNAVAILABLE;
-    return compareEngine(row.kind, Number(row.amount_cents), await engineFor(q, ctx, row, args, raw));
+    return compareEngine(row.kind, Number(row.amount_cents), await engineOrThrow(q, ctx, row, args, raw));
   } catch (err) {
     console.warn("gateway: the engine check could not be computed:", err instanceof Error ? err.name : "unknown");
-    return ENGINE_UNAVAILABLE;
+    return null;
   }
 }

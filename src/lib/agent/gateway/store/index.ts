@@ -134,7 +134,8 @@ export interface AuditStore {
   write(proposalId: string, verdict: VerdictWrite, now: Date, startedAt: Date): Promise<boolean>;
   // The code-side engine check (design 3.6), as of ctx.now: computed and stored once, in one
   // transaction, on a proposal still waiting with none stored; anything else is left as it is.
-  // No model call. True when this call stored it.
+  // A read or engine error stores nothing, so the next call tries again. No model call. True when
+  // this call stored it.
   checkEngine(proposalId: string, ctx: GatewayContext): Promise<boolean>;
 }
 
@@ -153,7 +154,9 @@ export function dbAuditStore(session: Session, deps: StoreDeps = {}): AuditStore
     checkEngine: (proposalId, ctx) =>
       tx(async (q) => {
         if ((await readEngineCheckDue(q, proposalId)) !== true) return false;
-        return writeEngineCheck(q, proposalId, await engineCheck(q, ctx, proposalId), ctx.now);
+        const result = await engineCheck(q, ctx, proposalId);
+        if (result === null) return false;
+        return writeEngineCheck(q, proposalId, result, ctx.now);
       }),
   };
 }

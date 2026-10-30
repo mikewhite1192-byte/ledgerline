@@ -5,7 +5,7 @@ import { AiError, type AiResult } from "../../ai";
 import type { Session } from "../../auth/claims";
 import { createPgDb } from "../../db/pg";
 import { adminUrl, appUrl } from "../../db/test-urls";
-import type { Db, Param } from "../../db/types";
+import { DbError, type Db, type Param, type Queryable, type TenantDb } from "../../db/types";
 import { runAudit, runEngineCheck } from "../auditor/run";
 import { CLEAN_SQL } from "../proposals/clean";
 import { callTool } from "./index";
@@ -52,6 +52,17 @@ async function seed(tenantId: string, slug: string) {
          CAST('2026-01-05' AS date))`,
       [DRIVER[tenantId], `sam@${slug}.example`],
     );
+    // The carrier's pay config, so the engine check runs on the driver for real.
+    await q.execute(
+      `INSERT INTO pay_configs (id, tenant_id, effective_from, source, week_start_dow, percent_base,
+         empty_miles_paid_bps, accessorial_driver_share_bps, insurance_applies_to,
+         insurance_per_day_cents, escrow_target_cents, escrow_per_settlement_cents,
+         net_pay_floor_cents, advance_fee_cents, advance_limit_default_cents,
+         advance_max_bps_of_earned, advance_min_cents)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST('2026-01-01' AS date), 'seed', 1, 'linehaul',
+         0, 10000, 'owner_operator', 0, 0, 0, 0, 500, 50000, 5000, 2500)`,
+      [randomUUID()],
+    );
     await q.execute(
       "INSERT INTO conversations (id, tenant_id, created_by) VALUES (CAST($1 AS uuid), current_tenant_id(), $2)",
       [ids.conversation, `sub-${tenantId}`],
@@ -74,10 +85,14 @@ async function seed(tenantId: string, slug: string) {
 type Audit = { verdict: string; agrees: boolean | null; concerns?: readonly string[]; checkedAt?: string };
 
 // A waiting proposal, written by the admin login so created_at and a verdict can be set. The
-// subject is the tenant's driver when asked, else a fresh id, so each proposal waits on its own.
-async function addProposal(tenantId: string, o: { audit?: Audit; onDriver?: boolean; createdAt?: string } = {}) {
+// subject is the driver given, or the tenant's own driver when asked, else a fresh id, so each
+// proposal waits on its own. loadId goes in the args as given.
+async function addProposal(
+  tenantId: string,
+  o: { audit?: Audit; onDriver?: boolean; driverId?: string; createdAt?: string; loadId?: string } = {},
+) {
   const id = randomUUID();
-  const subject = o.onDriver ? DRIVER[tenantId] : randomUUID();
+  const subject = o.driverId ?? (o.onDriver ? DRIVER[tenantId] : randomUUID());
   const t = turnOf[tenantId];
   const created = o.createdAt ?? new Date(T0 - 3_600_000).toISOString();
   await admin.withTenant(tenantId, (q) =>
@@ -94,7 +109,12 @@ async function addProposal(tenantId: string, o: { audit?: Audit; onDriver?: bool
         t.conversation,
         t.turn,
         subject,
-        JSON.stringify({ driverId: subject, amountCents: 20_000, reasonCategories: ["driver_asked"] }),
+        JSON.stringify({
+          driverId: subject,
+          amountCents: 20_000,
+          reasonCategories: ["driver_asked"],
+          ...(o.loadId === undefined ? {} : { loadId: o.loadId }),
+        }),
         JSON.stringify([{ table: "drivers", id: subject }]),
         t.decision,
         `advance_payout:${subject}:${"0".repeat(64)}`,
@@ -104,6 +124,21 @@ async function addProposal(tenantId: string, o: { audit?: Audit; onDriver?: bool
         o.audit ? (o.audit.checkedAt ?? new Date(T0 - 1_800_000).toISOString()) : null,
         created,
       ],
+    ),
+  );
+  return id;
+}
+
+// Another driver on the tenant, with nothing earned, so a waiting advance on them is their only one.
+async function addDriver(tenantId: string): Promise<string> {
+  const id = randomUUID();
+  await admin.withTenant(tenantId, (q) =>
+    q.execute(
+      `INSERT INTO drivers (id, tenant_id, code, first_name, last_name, email, worker_type, pay_basis,
+         per_mile_cents, active_from)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), $2, 'Lee', 'Park', $3, 'company', 'per_mile', 60,
+         CAST('2026-01-05' AS date))`,
+      [id, `AU-${id.slice(0, 8).toUpperCase()}`, `lee-${id.slice(0, 8)}@audit.example`],
     ),
   );
   return id;
@@ -636,7 +671,7 @@ describe("the auditor on a real database", () => {
   it("stores the engine check as the app role in the same run as the verdict, at the lease's instant", async () => {
     flags.auditorEnabled = true;
     vi.spyOn(console, "warn").mockImplementation(() => {});
-    const id = await addProposal(B);
+    const id = await addProposal(B, { driverId: await addDriver(B) });
     const calls = { n: 0 };
     const deps = { db: app, clock: () => new Date(T0), callTool: gatewayAt(T0), complete: passModel(calls), env: { META_MODEL_WONDER: "muse-wonder-1.0" } };
     expect(await runAudit(session(B), id, deps)).toMatchObject({ state: "done", verdict: "pass" });
@@ -651,7 +686,7 @@ describe("the auditor on a real database", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const at = (ms: number) => ({ db: app, clock: () => new Date(T0 + ms) });
     // The auditor is off, and a verdict is already stored: the check still runs, with no model.
-    const passed = await addProposal(B, { audit: { verdict: "pass", agrees: true } });
+    const passed = await addProposal(B, { driverId: await addDriver(B), audit: { verdict: "pass", agrees: true } });
     await runEngineCheck(session(B), passed, at(0));
     const first = await engineRow(B, passed);
     expect(first.check).not.toBeNull();
@@ -698,5 +733,64 @@ describe("the auditor on a real database", () => {
       ),
     );
     expect(clean).toEqual([]);
+  });
+
+  // The app login with one read that fails once, as a read that timed out would: the first
+  // statement carrying the marker throws, every other runs as normal. A throw on this side leaves
+  // the transaction open, so only the code's own handling decides what is stored.
+  const failingOnce = (marker: string): TenantDb => {
+    let armed = true;
+    const wrap = (q: Queryable): Queryable => ({
+      query<T>(sql: string, params?: Param[]): Promise<T[]> {
+        if (armed && sql.includes(marker)) {
+          armed = false;
+          return Promise.reject(new DbError("timeout"));
+        }
+        return q.query<T>(sql, params);
+      },
+      execute: (sql, params) => q.execute(sql, params),
+    });
+    return { withTenant: (tenantId, fn) => app.withTenant(tenantId, (q) => fn(wrap(q))) };
+  };
+
+  const engineCtx = (ms: number): GatewayContext => ({
+    session: session(B),
+    role: "auditor",
+    model: "wonder",
+    turnId: turnOf[B].turn,
+    traceId: randomUUID(),
+    now: new Date(T0 + ms),
+    deadlineAt: T0 + ms + 60_000,
+    timeZone: "America/New_York",
+  });
+
+  it("stores no engine check when a read inside the engine fails, and the next pass stores the real one", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const id = await addProposal(B, { driverId: await addDriver(B) });
+    // The engine's own read of the carrier fails once: not known, so nothing is stored.
+    const store = dbAuditStore(session(B), { db: failingOnce("FROM tenants WHERE id = current_tenant_id()") });
+    expect(await store.checkEngine(id, engineCtx(0))).toBe(false);
+    expect(await engineRow(B, id)).toEqual({ check: null, cents: null, checked_at: null, exceptions: [] });
+    expect(warn).toHaveBeenCalledWith("gateway: the engine check could not be computed:", "DbError");
+    // The next pass reads it whole: the driver has earned nothing yet, so the engine approves none
+    // of the ask.
+    expect(await store.checkEngine(id, engineCtx(60_000))).toBe(true);
+    expect(await engineRow(B, id)).toEqual({
+      check: "mismatch",
+      cents: "0",
+      checked_at: new Date(T0 + 60_000).toISOString(),
+      exceptions: ["engine_mismatch"],
+    });
+  });
+
+  it("still stores unavailable when the engine refuses the proposal", async () => {
+    const id = await addProposal(B, { loadId: "no-such-load" });
+    expect(await dbAuditStore(session(B), { db: app }).checkEngine(id, engineCtx(0))).toBe(true);
+    expect(await engineRow(B, id)).toEqual({
+      check: "unavailable",
+      cents: null,
+      checked_at: new Date(T0).toISOString(),
+      exceptions: [],
+    });
   });
 });

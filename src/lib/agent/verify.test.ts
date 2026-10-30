@@ -3,9 +3,10 @@ import { AUDIT_LINES } from "../../../e2e/audit-line";
 import { ANSWER_PILL, ANSWER_REASONS, VERIFY_LINES, answerVerification, verification } from "./verify";
 import type { ProposalView } from "./view";
 
-type Checked = Pick<ProposalView, "engineCheck" | "engineHeld" | "auditorVerdict" | "auditorConcerns">;
+type Checked = Pick<ProposalView, "status" | "engineCheck" | "engineHeld" | "auditorVerdict" | "auditorConcerns">;
 
 const at = (over: Partial<Checked>): Checked => ({
+  status: "proposed",
   engineCheck: null,
   engineHeld: false,
   auditorVerdict: null,
@@ -32,6 +33,8 @@ describe("verification", () => {
   it.each([
     ["neither ran", at({}), true, "unverified", VERIFY_LINES.notChecked],
     ["only the second check ran", at({ auditorVerdict: "pass" }), true, "unverified", VERIFY_LINES.rulesNotChecked],
+    ["decided with no check", at({ status: "approved", auditorVerdict: "pass" }), true, "unverified", VERIFY_LINES.rulesWereNotChecked],
+    ["decided with neither", at({ status: "rejected" }), true, "unverified", VERIFY_LINES.rulesWereNotChecked],
     ["matched, the second check still to come", at({ engineCheck: "matched" }), true, "unverified", VERIFY_LINES.pending],
     ["matched, the second check off", at({ engineCheck: "matched" }), false, "unverified", VERIFY_LINES.off],
     ["matched, concerns", at({ engineCheck: "matched", auditorVerdict: "concerns" }), true, "unverified", VERIFY_LINES.concerns],
@@ -47,7 +50,7 @@ describe("verification", () => {
   });
 
   it("says nothing when the page did not read the engine check", () => {
-    expect(verification({ auditorVerdict: "pass", auditorConcerns: [] }, true)).toBeNull();
+    expect(verification({ status: "proposed", auditorVerdict: "pass", auditorConcerns: [] }, true)).toBeNull();
   });
 
   it("holds only a mismatch", () => {

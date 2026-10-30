@@ -6,9 +6,9 @@
 -- demo_reset_clear() is not re-created).
 --
 -- proposals gains:
---   engine_check       matched | mismatch | unavailable; null until the comparison ran. A read
---                      error, a cut or refused engine result, or a kind with no comparison is
---                      unavailable, never matched.
+--   engine_check       matched | mismatch | unavailable; null until the comparison ran. A cut or
+--                      refused engine result, or a kind with no comparison, is unavailable, never
+--                      matched; a read error stores nothing, so a later pass tries again.
 --   engine_cents       the engine's own amount in integer cents, when it gave one
 --   engine_checked_at  when the comparison was stored; set with engine_check, never alone
 --   engine_override_reason, engine_override_by, engine_override_at

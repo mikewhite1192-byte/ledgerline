@@ -704,9 +704,41 @@ async function cashEngine(q: Queryable, ctx: GatewayContext, p: ProposalRow, raw
   };
 }
 
-// The engine's own number for the proposal. A read or engine error is unavailable, never zero.
-// The code-side engine check (../../store/engine-check.ts) reads the same result.
-export async function engineFor(
+// The engine's own number for the proposal, or the error itself when a read or the engine threw.
+// The code-side engine check (../../store/engine-check.ts) reads this one, so a failed read there
+// is no check at all (nothing stored, tried again later), never unavailable.
+export async function engineOrThrow(
+  q: Queryable,
+  ctx: GatewayContext,
+  p: ProposalRow,
+  args: Record<string, unknown>,
+  raw: Record<string, unknown>,
+): Promise<Engine> {
+  const amount = Number(p.amount_cents);
+  if (p.kind === "advance_payout") return await advanceEngine(q, ctx, p, amount, args);
+  if (p.kind === "pay_correction") return await payCorrectionEngine(q, args);
+  if (p.kind === "invoice_fix") return await invoiceEngine(q, p, args);
+  if (p.kind === "load_rate_fill") return await rateFillEngine(q, ctx, p, args);
+  // The card's lines are objects, which safeArgs leaves out; this check reads them as stored.
+  if (p.kind === "invoice_post") return await invoicePostEngine(q, p, raw);
+  if (p.kind === "payment_reapply") return await paymentReapplyEngine(q, ctx, p, args);
+  if (p.kind === "detention_charge") return await detentionEngine(q, p);
+  // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
+  if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
+  if (p.kind === "card_match") return await cardMatchEngine(p, q, args);
+  // The cards' invoice lists are objects, which safeArgs leaves out; compared as stored.
+  if (p.kind === "factoring_request" || p.kind === "bill_defer" || p.kind === "collections_chase") {
+    return await cashEngine(q, ctx, p, raw);
+  }
+  if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
+  // The stored evidence ids are read as stored; the engine runs again as of now.
+  if (p.kind === "money_code") return await moneyCodeEngine(q, ctx, p, raw);
+  return UNAVAILABLE;
+}
+
+// The engine's own number for the auditor's pack. A read or engine error is unavailable, never
+// zero.
+async function engineFor(
   q: Queryable,
   ctx: GatewayContext,
   p: ProposalRow,
@@ -714,26 +746,7 @@ export async function engineFor(
   raw: Record<string, unknown>,
 ): Promise<Engine> {
   try {
-    const amount = Number(p.amount_cents);
-    if (p.kind === "advance_payout") return await advanceEngine(q, ctx, p, amount, args);
-    if (p.kind === "pay_correction") return await payCorrectionEngine(q, args);
-    if (p.kind === "invoice_fix") return await invoiceEngine(q, p, args);
-    if (p.kind === "load_rate_fill") return await rateFillEngine(q, ctx, p, args);
-    // The card's lines are objects, which safeArgs leaves out; this check reads them as stored.
-    if (p.kind === "invoice_post") return await invoicePostEngine(q, p, raw);
-    if (p.kind === "payment_reapply") return await paymentReapplyEngine(q, ctx, p, args);
-    if (p.kind === "detention_charge") return await detentionEngine(q, p);
-    // A paystub card: the card against the stored draft, and the draft against a fresh engine run.
-    if (p.kind === "settlement_approve") return await settlementEvidence(q, p, raw);
-    if (p.kind === "card_match") return await cardMatchEngine(p, q, args);
-    // The cards' invoice lists are objects, which safeArgs leaves out; compared as stored.
-    if (p.kind === "factoring_request" || p.kind === "bill_defer" || p.kind === "collections_chase") {
-      return await cashEngine(q, ctx, p, raw);
-    }
-    if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
-    // The stored evidence ids are read as stored; the engine runs again as of now.
-    if (p.kind === "money_code") return await moneyCodeEngine(q, ctx, p, raw);
-    return UNAVAILABLE;
+    return await engineOrThrow(q, ctx, p, args, raw);
   } catch {
     console.warn("gateway: the auditor's engine check could not be computed");
     return UNAVAILABLE;

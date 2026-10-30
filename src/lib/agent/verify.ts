@@ -25,6 +25,7 @@ export const VERIFY_LINES = {
   unavailable: "Could not be recomputed from your records.",
   notChecked: "Not checked yet",
   rulesNotChecked: "Pay rules not checked yet",
+  rulesWereNotChecked: "Pay rules were not checked",
   pending: "Pay rules matched. Second check pending",
   off: "Pay rules matched. Second check is off",
   concerns: "Pay rules matched. Second check has concerns",
@@ -33,16 +34,19 @@ export const VERIFY_LINES = {
   unknown: "Pay rules matched. Second check could not run",
 } as const;
 
-type Checked = Pick<ProposalView, "engineCheck" | "engineHeld" | "auditorVerdict" | "auditorConcerns">;
+type Checked = Pick<ProposalView, "status" | "engineCheck" | "engineHeld" | "auditorVerdict" | "auditorConcerns">;
 
 // The card's label. Null when the page did not read the engine check at all (engineCheck left
 // out), so a page that does not know says nothing rather than "not checked". auditorOn says
-// whether a missing verdict is still to come or the second check is switched off.
+// whether a missing verdict is still to come or the second check is switched off. A proposal no
+// longer waiting with no check never gets one (the check is stored only while it waits), so it
+// reads "were not checked", never "yet".
 export function verification(p: Checked, auditorOn: boolean): Verification | null {
   if (p.engineCheck === undefined) return null;
   const held = p.engineCheck === "mismatch" && p.engineHeld === true;
   if (p.engineCheck === "mismatch") return { state: "mismatch", line: held ? VERIFY_LINES.held : VERIFY_LINES.mismatch, held };
   const unverified = (line: string): Verification => ({ state: "unverified", line, held: false });
+  if (p.engineCheck === null && p.status !== "proposed") return unverified(VERIFY_LINES.rulesWereNotChecked);
   if (p.engineCheck === null) return unverified(p.auditorVerdict === null ? VERIFY_LINES.notChecked : VERIFY_LINES.rulesNotChecked);
   if (p.engineCheck !== "matched") return unverified(VERIFY_LINES.unavailable);
   const v = p.auditorVerdict;
