@@ -63,7 +63,9 @@ export type ProposalRow = {
 // gate trims it and checks its length again). auditedAt: the auditor's checked_at the card showed,
 // so an override always refers to the one verdict the person read. edits: the person's own
 // values for rules on a pay_policy_setup card (rule key to stored value text); only that executor
-// reads them, checks each with the rule's own parser, and takes them only with confirmed.
+// reads them, checks each with the rule's own parser, and takes them only with confirmed. The
+// gate stores them with the approval (approved_edits) and that executor plans from the stored
+// copy only: a resume that sends other edits is refused, one that sends none uses the stored ones.
 export type ApproveOptions = {
   confirmed: boolean;
   overrideReason?: string | null;
@@ -201,6 +203,9 @@ export const EXECUTORS: ExecutorRegistry = {
 };
 
 const DAY_MS = 86_400_000;
+
+// The kinds whose executor reads the person's own values: the gate stores them with the approval.
+const EDITS_KINDS: ReadonlySet<string> = new Set<ProposalKind>(["pay_policy_setup"]);
 
 // auditorStart as an instant, or null when it does not read as one. Null counts every proposal as
 // made before it: the auditor itself never checks a proposal against an unreadable start.
@@ -351,26 +356,31 @@ async function gate(
   // Lock the approval in while the row is still locked. Exactly one row must move; anything else
   // means it is no longer waiting, and nothing runs. A block's override is stored in the same
   // statement, only for the verdict the card showed and only if none is stored yet, so the
-  // approval and its reason land together or not at all.
+  // approval and its reason land together or not at all. On a kind whose executor reads the
+  // person's own values (EDITS_KINDS), the exact edits the precheck just validated ({} for none)
+  // are stored in the same statement too (0063), and that executor plans only from them, so a
+  // resume can never write values other than the approved ones.
   const nowIso = now.toISOString();
+  const approvedEdits = EDITS_KINDS.has(p.kind) ? JSON.stringify(opts.edits ?? {}) : null;
   const approved =
     reason === null
       ? await q.execute(
           `UPDATE proposals
               SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
-                  updated_at = CAST($3 AS timestamptz)
+                  updated_at = CAST($3 AS timestamptz), approved_edits = CAST($4 AS jsonb)
             WHERE id = CAST($1 AS uuid) AND status = 'proposed'`,
-          [p.id, session.sub, nowIso],
+          [p.id, session.sub, nowIso, approvedEdits],
         )
       : await q.execute(
           `UPDATE proposals
               SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
                   updated_at = CAST($3 AS timestamptz), auditor_override_reason = $4,
-                  auditor_override_by = $2, auditor_override_at = CAST($3 AS timestamptz)
+                  auditor_override_by = $2, auditor_override_at = CAST($3 AS timestamptz),
+                  approved_edits = CAST($6 AS jsonb)
             WHERE id = CAST($1 AS uuid) AND status = 'proposed' AND auditor_verdict = 'block'
               AND auditor_override_reason IS NULL
               AND date_trunc('milliseconds', auditor_checked_at) = CAST($5 AS timestamptz)`,
-          [p.id, session.sub, nowIso, reason, rows[0].auditor_checked_at],
+          [p.id, session.sub, nowIso, reason, rows[0].auditor_checked_at, approvedEdits],
         );
   if (approved !== 1) return { result: refused("already_decided") };
   // Never the reason itself: its length only.

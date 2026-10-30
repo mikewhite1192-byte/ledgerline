@@ -31,10 +31,18 @@ import type { Executor, Precheck, ProposalRefused, ProposalResult } from "../exe
 // most recovered a week, or lowers the net pay floor, needs an admin (design 5.2): the role is
 // read here because a resume skips the gate.
 //
+// The plan's edits are the ones stored with the approval (approved_edits, 0063), never the ones a
+// later request sends: the gate writes the exact edits its precheck validated in the statement
+// that approves the card, and every run and resume here plans from that copy only. A request that
+// sends edits other than the stored ones (the whole map compared, key by key) is refused as
+// edits_changed with the row left as it is; one that sends none uses the stored ones. An approved
+// row with no stored edits, or stored edits that do not read, fails as not_executable.
+//
 // What the person can fix (a choice still needed, an edit that does not parse, a value out of
 // range, nothing left to change, the role) is refused without touching the row, so the card can
-// be approved again with other edits or by an admin. Anything else (the card or its document no
-// longer checks, the start no longer holds) fails the row as stale or not_executable.
+// be approved again with other edits, or an approved one resumed by an admin. Anything else (the
+// card or its document no longer checks, the start no longer holds) fails the row as stale or
+// not_executable.
 //
 // On a pass: one new version copied from the base with each changed rule replaced (guarded on its
 // old value), one pay_rule_changes row per changed rule, a read-back through the engine's own
@@ -151,7 +159,30 @@ function noteOf(changes: readonly PlannedChange[]): string {
   return note.length <= VERSION_NOTE_MAX ? note : `${note.slice(0, VERSION_NOTE_MAX - 3)}...`;
 }
 
-type Locked = { status: string; args: string };
+type Locked = { status: string; args: string; approved_edits: string | null };
+
+// The edits stored with the approval: a JSON object of rule key to stored value text, or null
+// when there is none or it does not read (unknown is never taken as no edits).
+function storedEdits(text: string | null): Edits | null {
+  if (text === null) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const entries = Object.entries(v);
+  if (!entries.every(([, value]) => typeof value === "string")) return null;
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+// The same edits: the same keys, each with the same whole value.
+function sameEdits(a: Edits, b: Edits): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((k) => Object.prototype.hasOwnProperty.call(b, k) && a[k] === b[k]);
+}
 
 const execute: Executor = async (db, session, proposal, opts, deps) => {
   if (!flags.policyOnboardEnabled) return refusal("not_executable");
@@ -162,7 +193,7 @@ const execute: Executor = async (db, session, proposal, opts, deps) => {
   const nowIso = now.toISOString();
   return db.withTenant(session.tenantId, async (q) => {
     const locked = await q.query<Locked>(
-      `SELECT status, CAST(args AS text) AS args FROM proposals
+      `SELECT status, CAST(args AS text) AS args, CAST(approved_edits AS text) AS approved_edits FROM proposals
         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind = 'pay_policy_setup'
         FOR UPDATE`,
       [proposal.id],
@@ -180,10 +211,15 @@ const execute: Executor = async (db, session, proposal, opts, deps) => {
     }
     const args = parsePolicyArgs(raw);
     if (!args) return fail(q, proposal.id, "not_executable", nowIso);
+    // The approved edits, as stored with the approval. A request's own edits are only ever
+    // compared with them, never planned from.
+    const edits = storedEdits(row.approved_edits);
+    if (!edits) return fail(q, proposal.id, "not_executable", nowIso);
+    if (opts.edits !== undefined && !sameEdits(opts.edits, edits)) return refusal("edits_changed");
 
     // Every version locked, and the tenant's pay rules serialized, before anything is read.
     await lockPayRules(q);
-    const checked = await check(q, args, proposal.subjectId, opts.edits ?? {}, await roleOf(q, session.sub), now);
+    const checked = await check(q, args, proposal.subjectId, edits, await roleOf(q, session.sub), now);
     if (!checked.ok) {
       if (checked.person) return refusal(checked.category, true);
       return fail(q, proposal.id, checked.category, nowIso);

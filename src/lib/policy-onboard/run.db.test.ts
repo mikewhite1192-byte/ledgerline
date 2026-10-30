@@ -41,7 +41,9 @@ import { readAnswerFor, rulesAnswerFor, type SampleName } from "./test-fixtures"
 // carrier sees and approves nothing. A week already paid on the start, a Found quote that no
 // longer names its rule, or a transcript changed after the card was made, refuses the approval and
 // writes nothing, and the executor fails a row that reached it anyway. A run's turn costs what its
-// model calls cost. Only this file's five tenants are made, and they are removed after.
+// model calls cost. The edits an approval carried are stored with it, and a resume plans from that
+// copy only: other edits are refused with nothing written, none writes the approved version, and
+// the stored copy never changes. Only this file's six tenants are made, and they are removed after.
 
 const saved = { ...flags, policyLimits: { ...flags.policyLimits }, approverRole: { ...flags.approverRole } };
 // Tuesday Oct 27, 2026, 10:00 in Chicago: the week of Oct 26 has begun, so the next week start is
@@ -58,12 +60,13 @@ let admin: Db;
 let app: Db;
 // A: the run from start to an approved version. B: a start that stops holding, the switch, an
 // admin. C: the read's ends. D: no pay rules, the screen's flag and the daily limit. E: a paid
-// week and a changed transcript.
+// week and a changed transcript. F: the stored edits on a resume.
 let A: Fixture;
 let B: Fixture;
 let C: Fixture;
 let D: Fixture;
 let E: Fixture;
+let F: Fixture;
 const V1: Record<string, string> = {};
 const seenA = { turnId: "", proposalId: "" };
 
@@ -184,13 +187,22 @@ async function adminRows<T>(f: Fixture, sql: string, params: Param[] = []): Prom
   return admin.withTenant(f.tenantId, (q) => q.query<T>(sql, params));
 }
 
-type Card = { id: string; status: string; amount_cents: string; subject_id: string; args: string; exceptions: string };
+type Card = {
+  id: string;
+  status: string;
+  amount_cents: string;
+  subject_id: string;
+  args: string;
+  exceptions: string;
+  approved_edits: string | null;
+};
 
 const cardsOf = (f: Fixture) =>
   adminRows<Card>(
     f,
     `SELECT CAST(id AS text) AS id, status, CAST(amount_cents AS text) AS amount_cents,
-       CAST(subject_id AS text) AS subject_id, CAST(args AS text) AS args, CAST(exceptions AS text) AS exceptions
+       CAST(subject_id AS text) AS subject_id, CAST(args AS text) AS args, CAST(exceptions AS text) AS exceptions,
+       CAST(approved_edits AS text) AS approved_edits
        FROM proposals WHERE tenant_id = current_tenant_id() AND kind = 'pay_policy_setup' ORDER BY created_at`,
   );
 
@@ -283,10 +295,12 @@ describe("a pay policy run", () => {
     C = await makeTenant(admin, `policy-c-${randomUUID().slice(0, 8)}`);
     D = await makeTenant(admin, `policy-d-${randomUUID().slice(0, 8)}`);
     E = await makeTenant(admin, `policy-e-${randomUUID().slice(0, 8)}`);
+    F = await makeTenant(admin, `policy-f-${randomUUID().slice(0, 8)}`);
     V1.A = await addPayRules(A);
     V1.B = await addPayRules(B);
     V1.C = await addPayRules(C);
     V1.E = await addPayRules(E);
+    V1.F = await addPayRules(F);
   });
 
   beforeAll(() => {
@@ -309,6 +323,7 @@ describe("a pay policy run", () => {
     await dropTenant(admin, C);
     await dropTenant(admin, D);
     await dropTenant(admin, E);
+    await dropTenant(admin, F);
     await app?.close();
     await admin?.close();
   });
@@ -486,6 +501,8 @@ describe("a pay policy run", () => {
     for (const [column, value] of Object.entries(expected)) expect(String(v2[column]), column).toBe(value);
     expect(String(v2.note)).toContain("(changed by you)");
     expect(v1.id).toBe(V1.A);
+    // The edits the approval carried are stored with it.
+    expect(JSON.parse(String((await cardsOf(A))[0].approved_edits))).toEqual({ net_pay_floor_cents: "30000" });
 
     // One row per rule that differs from the base: all but the most of earned pay an advance may
     // take, which the document states at the base's own 50 percent.
@@ -688,13 +705,14 @@ describe("a pay policy run", () => {
     expect(await approve(E, id, edits)).toEqual({ ok: false, category: "not_executable", retryable: false });
     await nothingWritten("proposed");
 
-    // A row moved to approved without the gate's check, then run: the executor checks it again
-    // itself and fails it, with nothing written.
+    // A row moved to approved without the gate's check (its edits stored as the gate stores them),
+    // then run: the executor checks it again itself and fails it, with nothing written.
     await admin.withTenant(E.tenantId, (q) =>
       q.execute(
-        `UPDATE proposals SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz)
+        `UPDATE proposals SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+           approved_edits = CAST($4 AS jsonb)
           WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
-        [id, E.session.sub, new Date(NOW).toISOString()],
+        [id, E.session.sub, new Date(NOW).toISOString(), JSON.stringify(edits)],
       ),
     );
     const row = {
@@ -717,6 +735,78 @@ describe("a pay policy run", () => {
       retryable: false,
     });
     await nothingWritten("failed");
+  });
+
+  it("stores the approved edits with the approval and writes only those on a resume", async () => {
+    vi.spyOn(console, "info").mockImplementation(() => {});
+    const deps = depsFor(modelFor(HARROW));
+    const view = await drive(F, await started(F, HARROW, deps), deps);
+    expect(view.endedReason).toBe("card_ready");
+    const id = view.proposalId as string;
+    await auditorPasses(F, id);
+    const edits = { net_pay_floor_cents: "30000" };
+    const nothingWritten = async () => {
+      expect((await cardsOf(F)).map((c) => c.status)).toEqual(["approved"]);
+      expect(await versionsOf(F)).toHaveLength(1);
+      expect(await changesOf(F)).toEqual([]);
+    };
+
+    // The gate approves with the person's edits, then the run stops before it writes (a crash
+    // after the approval): the row is approved with exactly those edits stored.
+    const crashed = {
+      pay_policy_setup: Object.assign(
+        async () => {
+          throw new Error("stopped after the approval");
+        },
+        { precheck: payPolicySetupExecutor.precheck },
+      ),
+    };
+    await expect(
+      executeProposal(F.session, id, { confirmed: true, edits }, { db: app, clock, executors: crashed }),
+    ).rejects.toThrow("stopped after the approval");
+    expect(JSON.parse(String((await cardsOf(F))[0].approved_edits))).toEqual(edits);
+    await nothingWritten();
+
+    // A resume with other edits is refused and writes nothing: a different value, a value that
+    // only starts the same, an extra rule, and an empty map, each compared whole.
+    const others: Record<string, string>[] = [
+      { net_pay_floor_cents: "40000" },
+      { net_pay_floor_cents: "3000" },
+      { net_pay_floor_cents: "30000", advance_fee_cents: "500" },
+      {},
+    ];
+    for (const other of others) {
+      expect(await approve(F, id, other, true)).toEqual({ ok: false, category: "edits_changed", retryable: false });
+      await nothingWritten();
+    }
+
+    // The stored edits never change once the card is approved, even through the app's own grant.
+    await expect(
+      app.withTenant(F.tenantId, (q) =>
+        q.execute(
+          `UPDATE proposals SET approved_edits = CAST($2 AS jsonb)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [id, JSON.stringify({ net_pay_floor_cents: "40000" })],
+        ),
+      ),
+    ).rejects.toThrow();
+    expect(JSON.parse(String((await cardsOf(F))[0].approved_edits))).toEqual(edits);
+
+    // A resume with no edits plans from the stored ones and writes the approved version, once.
+    expect(await approve(F, id)).toEqual({ ok: true, proposalId: id, status: "done", moneyActionId: null });
+    const versions = await versionsOf(F);
+    expect(versions).toHaveLength(2);
+    expect(versions[1].effective_from).toBe(NEXT_WEEK);
+    expect(String(versions[1].net_pay_floor_cents)).toBe("30000");
+    expect(String(versions[1].note)).toContain("(changed by you)");
+    expect((await changesOf(F)).find((c) => c.rule_key === "net_pay_floor_cents")).toMatchObject({
+      old_value: "0",
+      new_value: "30000",
+      proposal_id: id,
+    });
+    expect((await cardsOf(F)).map((c) => c.status)).toEqual(["done"]);
+    expect(await approve(F, id)).toMatchObject({ ok: false, category: "already_decided" });
+    expect(await versionsOf(F)).toHaveLength(2);
   });
 
   it("shows another carrier nothing and approves nothing for it", async () => {
