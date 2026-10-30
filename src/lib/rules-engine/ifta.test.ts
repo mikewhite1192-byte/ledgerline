@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { iftaNotes } from "../reports/ifta-quarter";
 import {
   fleetMpgMilliOf,
   iftaQuarter,
@@ -136,8 +137,25 @@ describe("the three rounding steps", () => {
     expect(fleetMpgMilliOf(0, 450_500)).toBeNull();
   });
 
-  it("refuses a fleet MPG that rounds to zero rather than dividing by it", () => {
-    expect(() => fleetMpgMilliOf(1, 2_000_001)).toThrow(InputError);
+  it("leaves a fleet MPG that rounds to zero unknown, with its own note, rather than dividing by it", () => {
+    expect(fleetMpgMilliOf(1, 2_000_001)).toBeNull();
+    const r = iftaQuarter(
+      {
+        loads: [load({ id: "L1", loadNumber: "L-1001", loadedMiles: 1, emptyMiles: 0, stateMiles: sm("L1", [["NC", 1]]) })],
+        fuel: [purchase({ id: "F1", state: "NC", gallonsMilli: 2_000_001 })],
+        rates: RATES,
+      },
+      Q4,
+    );
+    expect(r.fleetMpgMilli).toBeNull();
+    expect(r.totals).toEqual({ miles: 1, taxPaidGallonsMilli: 2_000_001, taxableGallonsMilli: null, netGallonsMilli: null, taxCents: null });
+    expect(r.states).toEqual([
+      { state: "NC", miles: 1, taxPaidGallonsMilli: 2_000_001, taxableGallonsMilli: null, netGallonsMilli: null, rateMcents: 36_300, taxCents: null },
+    ]);
+    expect(r.largestTaxDue).toBeNull();
+    expect(iftaNotes(r)[1]).toBe(
+      "Fleet MPG unknown: it rounds to zero at thousandths, so taxable gallons and tax are not computed.",
+    );
   });
 });
 

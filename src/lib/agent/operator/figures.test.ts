@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centsIn, maskFigures, typedCentsIn, WITHHELD } from "./figures";
+import { centsIn, houseDollars, maskFigures, typedCentsIn, WITHHELD } from "./figures";
 
 describe("figures", () => {
   it("collects every value under a key ending in cents, as absolute values", () => {
@@ -27,6 +27,26 @@ describe("figures", () => {
       masked: 1,
     });
     expect([...typedCentsIn("BR-D07 drove 2,400 miles")]).toEqual([]);
+  });
+
+  it("judges a per-gallon rate as one whole token, never as $0 and a suffix", () => {
+    for (const allowed of [new Set<number>(), new Set([0, 29, 2_900, 29_000])]) {
+      const out = maskFigures("AL is $0.2900 a gallon; IN is $0.28512.", allowed);
+      expect(out).toEqual({ text: `AL is ${WITHHELD} a gallon; IN is ${WITHHELD}.`, masked: 2 });
+    }
+    expect(houseDollars("AL is $0.2900 a gallon.")).toBe("AL is $0.2900 a gallon.");
+    expect([...typedCentsIn("Use $3.657 a gallon")]).toEqual([]);
+  });
+
+  it("reads two decimals, thousands, a sign and a closing period exactly as before", () => {
+    const allowed = new Set([2_102, 123_456, 2_500, 150]);
+    expect(maskFigures("Tax is $21.02. Owed -$1,234.56, $25 and $1.5.", allowed)).toEqual({
+      text: "Tax is $21.02. Owed -$1,234.56, $25 and $1.5.",
+      masked: 0,
+    });
+    expect(maskFigures("Not $21.03.", allowed)).toEqual({ text: `Not ${WITHHELD}.`, masked: 1 });
+    expect(houseDollars("Owed $25. Then $1,234.5.")).toBe("Owed $25.00. Then $1,234.50.");
+    expect([...typedCentsIn("Send $1,234.56.")]).toEqual([123_456]);
   });
 
   it("leaves text with no money alone", () => {

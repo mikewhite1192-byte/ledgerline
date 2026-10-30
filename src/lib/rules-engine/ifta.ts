@@ -91,14 +91,14 @@ const STATE = /^[A-Z]{2}$/;
 const SCALE = 1_000_000;
 
 // Rounding 1 (step 4): total miles / total gallons, in thousandths of a mile per gallon, rounded
-// half up. null when there are no gallons or no miles to divide (unknown, not zero).
+// half up. null when there are no gallons or no miles to divide, or when the MPG rounds to zero
+// at thousandths and so cannot be divided by (unknown, not zero).
 export function fleetMpgMilliOf(totalMiles: number, totalGallonsMilli: number): number | null {
   assertCount(totalMiles, "total miles");
   assertCount(totalGallonsMilli, "total gallons");
   if (totalGallonsMilli === 0 || totalMiles === 0) return null;
   const mpg = roundHalfUp(mul(totalMiles, SCALE, "miles x 10^6"), totalGallonsMilli);
-  if (mpg === 0) throw new InputError("fleet MPG rounds to zero");
-  return mpg;
+  return mpg === 0 ? null : mpg;
 }
 
 // Rounding 2 (step 5): a state's miles / the ROUNDED fleet MPG, in thousandths of a gallon,

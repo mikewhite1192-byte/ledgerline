@@ -90,7 +90,7 @@ export const REPORT_PROMPT = [
 export const IFTA_PROMPT = [
   "- report_ifta_quarter: \"what do we owe for IFTA this quarter and which state is driving it\": the",
   "  per-state table at SAMPLE rates; quote the tax total and the largest state from the result and",
-  "  say the rates are samples.",
+  "  say the rates are samples. The per-state rates are in the table below: do not restate them.",
 ].join("\n");
 
 // Added to the prompt only while get_cash_friday is offered (flags.cashFridayEnabled), so a turn

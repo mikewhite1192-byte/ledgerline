@@ -56,9 +56,12 @@ function gapNotes(q: IftaQuarter): string[] {
 
 function mpgNote(q: IftaQuarter): string {
   if (q.fleetMpgMilli === null) {
-    return q.totalGallonsMilli === 0
-      ? "Fleet MPG unknown: no fuel purchases in the quarter, so taxable gallons and tax are not computed."
-      : "Fleet MPG unknown: no miles with a state split in the quarter, so taxable gallons and tax are not computed.";
+    if (q.totalGallonsMilli === 0) {
+      return "Fleet MPG unknown: no fuel purchases in the quarter, so taxable gallons and tax are not computed.";
+    }
+    return q.totalMiles === 0
+      ? "Fleet MPG unknown: no miles with a state split in the quarter, so taxable gallons and tax are not computed."
+      : "Fleet MPG unknown: it rounds to zero at thousandths, so taxable gallons and tax are not computed.";
   }
   return (
     `Fleet MPG ${milliText(q.fleetMpgMilli)}: ${count(q.totalMiles, "mile", "miles")} / ` +

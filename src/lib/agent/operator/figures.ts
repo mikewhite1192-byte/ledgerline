@@ -5,7 +5,9 @@
 
 export const WITHHELD = "[amount not from a record]";
 
-const DOLLARS = /\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{1,2}))?(?!\d)/g;
+// A dollar figure takes every digit after its point, so a longer token (a per-gallon rate such as
+// "$0.2900") is judged whole, never read as "$0" with the rest left behind.
+const DOLLARS = /\$\s?(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?!\d)/g;
 const CENTS = /\b(\d{1,3}(?:,\d{3})+|\d+)\s?cents\b/gi;
 
 // Every value under a key ending in "cents" (any case), anywhere in a tool result.
@@ -29,7 +31,10 @@ function digits(s: string): number {
   return Number(s.replace(/,/g, ""));
 }
 
+// More than two digits after the point is not a whole number of cents, so it is NaN: never in an
+// allowed set, always withheld, never read from a typed message, and left as written.
 function dollarsToCents(whole: string, frac: string | undefined): number {
+  if (frac !== undefined && frac.length > 2) return Number.NaN;
   const fraction = frac === undefined ? 0 : frac.length === 1 ? digits(frac) * 10 : digits(frac);
   return digits(whole) * 100 + fraction;
 }
