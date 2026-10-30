@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { checklistSchema } from "../agent/checklist";
-import { endSweep, sweepChecklist, SWEEP_CHECKLIST_TEXT, tickSweep } from "./checklist";
+import { endSweep, isRequiredSweepChecklist, requiredSweepItems, sweepChecklist, SWEEP_CHECKLIST_TEXT, tickSweep } from "./checklist";
 
 const states = (l: ReturnType<typeof sweepChecklist>) => Object.fromEntries(l.items.map((i) => [i.key, i.state]));
 
@@ -76,5 +76,24 @@ describe("the sweep's checklist", () => {
   it("marks the second check skipped, not done, when it was switched off", () => {
     const auditing = tickSweep(tickSweep(sweepChecklist(false), "draft"), "audit");
     expect(states(endSweep(auditing, "done", { skipped: "audit" }))).toEqual({ find: "done", draft: "done", audit: "skipped" });
+  });
+
+  it("starts every run with exactly the required list, and calls any other list not the required one", () => {
+    for (const secondLook of [false, true]) {
+      expect(requiredSweepItems(secondLook)).toEqual(sweepChecklist(secondLook));
+      expect(isRequiredSweepChecklist(sweepChecklist(secondLook), secondLook)).toBe(true);
+      expect(isRequiredSweepChecklist(sweepChecklist(secondLook), !secondLook)).toBe(false);
+    }
+    const list = sweepChecklist(false);
+    const [find, draft, audit] = list.items;
+    const tampered = [
+      { ...list, items: [find, draft] },
+      { ...list, items: [find, audit, draft] },
+      { ...list, items: [find, { ...draft, text: "Draft a fix for some problems" }, audit] },
+      { ...list, items: [find, { ...draft, state: "done" as const }, audit] },
+      { ...list, items: [find, { ...draft, key: "drafts" }, audit] },
+      { ...list, by: "model" as const },
+    ];
+    for (const t of tampered) expect(isRequiredSweepChecklist(t, false)).toBe(false);
   });
 });

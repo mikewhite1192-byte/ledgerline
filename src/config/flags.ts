@@ -579,6 +579,12 @@ export type Flags = {
     // Web searches one lookup may run (each is billed on top of the tokens).
     maxSearchCalls: 1 | 2 | 3;
   };
+  // Verification made explicit (design-agents-102): the sweep checks the checklist it starts with
+  // against the steps every run must list (a run whose list differs fails checklist_invalid before
+  // any item is written) and records how much of the week its checks covered, with the second
+  // opinion's drivers when it ran. Off means today's start and today's updates exactly: nothing
+  // reads or writes sweep_runs.coverage. It moves no money, sends nothing and makes no model call.
+  verification: { enabled: boolean };
 };
 
 export const flags: Flags = {
@@ -752,6 +758,7 @@ export const flags: Flags = {
   },
   groundedRatesEnabled: false,
   ratesLimits: { lookupMaxCostCents: 5, lookupsPerTenantPerDay: 20, maxSearchCalls: 2 },
+  verification: { enabled: false },
 };
 
 applyLocalOverrides(flags);

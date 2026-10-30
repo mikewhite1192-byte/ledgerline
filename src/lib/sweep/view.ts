@@ -1,5 +1,7 @@
+import { flags } from "../../config/flags";
 import { CLEAN_SQL } from "../agent/proposals/clean";
 import { parseChecklist, type Checklist } from "../agent/checklist";
+import { parseSweepCoverage, type SweepCoverage } from "../agent/verify/required";
 import { readProposalViews } from "../agent/gateway/store/views";
 import type { ProposalView } from "../agent/view";
 import type { Session } from "../auth/claims";
@@ -35,6 +37,10 @@ export type SweepRunView = {
   checklist?: Checklist | null;
   // The findings this run took to draft, each one of its turns (flags.runLimits.maxTurns).
   turnsUsed?: number;
+  // How much of the week the run's checks covered (design-agents-102 3.3); null for a run that
+  // kept none (its find phase ran before the column existed or with verification off), and
+  // always null while verification is off. Nothing renders it yet.
+  coverage?: SweepCoverage | null;
 };
 
 export type SweepItemView = {
@@ -96,14 +102,19 @@ type RunRow = {
   approved: number | string;
   checklist: string | null;
   turns_used: number | string;
+  coverage: string | null;
 };
 
-const RUN_SELECT = `
+// With verification off no statement names sweep_runs.coverage, so this read runs the same
+// before and after 0064.
+const coverageColumn = () => (flags.verification.enabled ? "CAST(r.coverage AS text)" : "CAST(NULL AS text)");
+
+const runSelect = () => `
   SELECT r.id, r.period_id, CAST(sp.period_start AS text) AS period_start,
          CAST(sp.period_end AS text) AS period_end, r.trigger, r.status, r.phase, r.cap_cents,
          r.spent_cents, CAST(r.counts AS text) AS counts, r.truncated_reason, r.failure_category,
          r.conversation_id, ${TS("r.started_at")} AS started_at, ${TS("r.finished_at")} AS finished_at,
-         CAST(r.checklist AS text) AS checklist, r.turns_used,
+         CAST(r.checklist AS text) AS checklist, r.turns_used, ${coverageColumn()} AS coverage,
          (SELECT count(DISTINCT p.id) FROM sweep_items i JOIN proposals p ON p.id = i.proposal_id
            WHERE i.seen_run_id = r.id AND p.status = 'done') AS approved
     FROM sweep_runs r JOIN settlement_periods sp ON sp.id = r.period_id`;
@@ -138,6 +149,7 @@ function runOf(r: RunRow): SweepRunView {
     approved: Number(r.approved),
     checklist,
     turnsUsed: Number(r.turns_used),
+    coverage: parseSweepCoverage(r.coverage),
   };
 }
 
@@ -190,7 +202,7 @@ export async function readSweepPage(
   const db = deps.db ?? getDb();
   return db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
-    const runs = await q.query<RunRow>(`${RUN_SELECT} WHERE r.id = CAST($1 AS uuid)`, [runId]);
+    const runs = await q.query<RunRow>(`${runSelect()} WHERE r.id = CAST($1 AS uuid)`, [runId]);
     if (runs.length !== 1) return null;
     const items = await q.query<ItemRow>(
       `SELECT i.id, i.check_name, i.category, i.leg, i.kind, d.code AS driver_code,
@@ -264,7 +276,7 @@ export async function readSweepHome(session: Session, deps: { db?: TenantDb } = 
       `SELECT id, CAST(period_start AS text) AS period_start, CAST(period_end AS text) AS period_end
          FROM settlement_periods WHERE status = 'open' ORDER BY period_start DESC LIMIT 2`,
     );
-    const runs = await q.query<RunRow>(`${RUN_SELECT} ORDER BY r.started_at DESC, r.id LIMIT 10`);
+    const runs = await q.query<RunRow>(`${runSelect()} ORDER BY r.started_at DESC, r.id LIMIT 10`);
     return {
       openPeriod:
         open.length === 1 ? { id: open[0].id, periodStart: open[0].period_start, periodEnd: open[0].period_end } : null,

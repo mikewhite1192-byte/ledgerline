@@ -308,6 +308,36 @@ describe("the sweep's second opinion", () => {
     ]);
   });
 
+  it("adds the second opinion's planned and checked drivers to the run's coverage, from the comparison's own counts", async () => {
+    flags.verification = { ...flags.verification, enabled: true };
+    const runId = await start();
+    await runToEnd(runId);
+    const counts = JSON.parse((await fanoutRow(runId)).counts ?? "{}") as { drivers_checked: number; drivers_unchecked: number };
+    const n = (await checks(runId)).length;
+    expect(counts).toMatchObject({ drivers_checked: n, drivers_unchecked: 0 });
+    const rows = await read<{ coverage: string | null }>("SELECT CAST(coverage AS text) AS coverage FROM sweep_runs WHERE id = CAST($1 AS uuid)", [
+      runId,
+    ]);
+    const coverage = JSON.parse(rows[0].coverage ?? "null") as Record<string, unknown>;
+    expect(coverage).toMatchObject({ v: 1, checks: { required: 9, ran: 9 }, pct: 100 });
+    expect(coverage.fanout).toEqual({ planned: counts.drivers_checked + counts.drivers_unchecked, checked: counts.drivers_checked });
+    expect((await readSweepPage(SESSION, runId, { db: app }))?.run.coverage?.fanout).toEqual({ planned: n, checked: n });
+  });
+
+  it("adds no second opinion part to a run whose find phase kept no coverage", async () => {
+    const runId = await start();
+    // The find phase runs with the switch off, then the slice hands the run back.
+    await advanceSweep(SESSION, runId, NOW.getTime() + 5_000, deps());
+    expect((await runRow(runId)).phase).toBe("plan");
+    flags.verification = { ...flags.verification, enabled: true };
+    await runToEnd(runId);
+    expect((await fanoutRow(runId)).counts).not.toBeNull();
+    const rows = await read<{ coverage: string | null }>("SELECT CAST(coverage AS text) AS coverage FROM sweep_runs WHERE id = CAST($1 AS uuid)", [
+      runId,
+    ]);
+    expect(rows[0].coverage).toBeNull();
+  });
+
   it("runs a plain sweep when the switch is off", async () => {
     flags.fanoutEnabled = false;
     const runId = await start();
