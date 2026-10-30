@@ -10,6 +10,7 @@ import {
   readAdvanceInput,
   readCashFridayInput,
   readCheckInput,
+  readMoneyCodeInput,
   readReceivablesInput,
   readRowsWhereId,
 } from "../../../../data/read";
@@ -21,10 +22,15 @@ import { notesAboutSubject, type SubjectNote } from "../../../../memory/notes";
 import { settlementEvidence } from "../../../../settlements/evidence";
 import {
   advanceEligibility,
+  checkMoneyCode,
   computeCashFriday,
   findPaymentOnWrongInvoice,
   invoiceAmount,
+  MONEY_CODE_PURPOSES,
+  MONEY_CODE_SOURCES,
   runAllChecks,
+  type MoneyCodePurpose,
+  type MoneyCodeSource,
 } from "../../../../rules-engine";
 import { rankCandidates, topIsTied } from "../../../../rules-engine/card-recon";
 import { localDateOf } from "../../../../time/local-date";
@@ -572,6 +578,64 @@ async function paymentReapplyEngine(
   };
 }
 
+// A money code: the rules engine as of now on the stored evidence (the load, the driver's arming,
+// the receipt's reading or the voice note's amounts, the codes already asked for), and whether it
+// allows exactly the proposed amount. Only categories and cents reach the pack.
+const optionalId = (v: unknown): string | null | undefined =>
+  v === undefined || v === null ? null : isUuid(v) ? v : undefined;
+
+async function moneyCodeEngine(
+  q: Queryable,
+  ctx: GatewayContext,
+  p: ProposalRow,
+  raw: Record<string, unknown>,
+): Promise<Engine> {
+  const { driverId, loadId, purpose, source } = raw;
+  const documentId = optionalId(raw.documentId);
+  const voiceNoteId = optionalId(raw.voiceNoteId);
+  if (
+    p.subject_table !== "loads" ||
+    loadId !== p.subject_id ||
+    !isUuid(driverId) ||
+    !isUuid(loadId) ||
+    !(MONEY_CODE_PURPOSES as readonly unknown[]).includes(purpose) ||
+    !(MONEY_CODE_SOURCES as readonly unknown[]).includes(source) ||
+    documentId === undefined ||
+    voiceNoteId === undefined
+  ) {
+    return UNAVAILABLE;
+  }
+  const amount = Number(p.amount_cents);
+  const { capCents, perDriverPerDay } = flags.moneyCodes;
+  const input = await readMoneyCodeInput(
+    q,
+    {
+      driverId,
+      loadId,
+      purpose: purpose as MoneyCodePurpose,
+      amountCents: amount,
+      source: source as MoneyCodeSource,
+      documentId,
+      voiceNoteId,
+      capCents,
+      perDriverPerDay,
+    },
+    ctx.now.toISOString(),
+  );
+  const decision = checkMoneyCode(input);
+  const base = { ok: true, check: "money_code", proposedCents: amount };
+  if (!decision.ok) return { ...base, engine: { ok: false, reason: decision.category, refusals: decision.refusals } };
+  return {
+    ...base,
+    engine: {
+      ok: true,
+      amountCents: decision.amountCents,
+      matchesProposal: decision.amountCents === amount,
+      reasons: decision.reasons,
+    },
+  };
+}
+
 // A card match (card_match), checked the way its executor checks it: the statement row is still a
 // fuel purchase on a card on no driver's file and not recorded yet, its cents equal the card's,
 // and where the driver stands among the candidates code ranks for it now.
@@ -666,6 +730,8 @@ async function engineFor(
       return await cashEngine(q, ctx, p, raw);
     }
     if (p.kind === "pay_rule_change") return await ruleChangeEngine(q, ctx, p);
+    // The stored evidence ids are read as stored; the engine runs again as of now.
+    if (p.kind === "money_code") return await moneyCodeEngine(q, ctx, p, raw);
     return UNAVAILABLE;
   } catch {
     console.warn("gateway: the auditor's engine check could not be computed");

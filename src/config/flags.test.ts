@@ -67,6 +67,9 @@ const KEPT_OFF = [
   "sweepScheduleEnabled",
   // No runner is wired on the hosted site: the page's only action would always refuse.
   "portalRunnerEnabled",
+  // Money codes ship with their own merge, dark and unarmed; the owner turns them on in their own PR.
+  "moneyCodes.enabled",
+  "moneyCodes.armed",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -97,6 +100,15 @@ describe("flags", () => {
     expect(flags.inboundEmailEnabled).toBe(false);
     expect(flags.documentCrop).toBe(false);
     expect(flags.documentMarkupEnabled).toBe(false);
+    // Money codes issue through the simulated provider only, dark and unarmed until the owner's go.
+    expect(flags.moneyCodes).toEqual({
+      enabled: false,
+      armed: false,
+      capCents: 50_000,
+      perDriverPerDay: 2,
+      startDate: "2026-10-28",
+    });
+    expect(isLocalDate(flags.moneyCodes.startDate)).toBe(true);
     expect(flags.driverNotesEmailEnabled).toBe(false);
     expect(flags.collectionsEmailEnabled).toBe(false);
     expect(flags.sweepScheduleEnabled).toBe(false);

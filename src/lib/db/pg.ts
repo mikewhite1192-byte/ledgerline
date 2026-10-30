@@ -121,7 +121,9 @@ function toDbError(err: unknown): DbError {
   if (err instanceof DbError) return err;
   const code = (err as { code?: unknown } | null)?.code;
   if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
-    return new DbError(categoryForSqlState(code), code);
+    // node-postgres names the broken constraint in its own field; the message text is never read.
+    const constraint = (err as { constraint?: unknown }).constraint;
+    return new DbError(categoryForSqlState(code), code, typeof constraint === "string" ? constraint : undefined);
   }
   // Node socket errors (ECONNREFUSED, ENOENT on a socket path) mean the database is unreachable.
   if (typeof code === "string" && code.startsWith("E")) return new DbError("unavailable");

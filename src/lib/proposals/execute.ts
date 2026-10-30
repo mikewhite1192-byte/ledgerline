@@ -4,6 +4,7 @@ import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { executeAdvanceProposal, precheckAdvanceProposal } from "../advances/approve";
 import { executeInvoicePost } from "../invoices/execute";
+import { moneyCodeExecutor } from "../money-codes/execute";
 import { executePaymentReapply } from "../invoices/reapply";
 import { executeSettlementApprove } from "../settlements/approve";
 import { assertMembership } from "../tenant/context";
@@ -140,6 +141,9 @@ export type ExecutorRegistry = Readonly<Partial<Record<ProposalKind, Executor>>>
 // read inside the executor, which writes nothing while it is off. card_match puts a card on a
 // driver's file and records its purchase (src/lib/proposals/executors/card-match.ts), read through
 // cardRecon.enabled like pay_correction, with a precheck that refuses a card no longer unknown.
+// money_code issues one code (src/lib/money-codes/execute.ts), with a precheck that refuses before
+// the approval when the code could not be issued now; it is read through moneyCodes.enabled the
+// same way, and the executor asks the whole issue gate again itself.
 export const EXECUTORS: ExecutorRegistry = {
   advance_payout: Object.assign(
     (...args: Parameters<Executor>) => executeAdvanceProposal(...args),
@@ -172,6 +176,9 @@ export const EXECUTORS: ExecutorRegistry = {
   },
   get pay_rule_change() {
     return flags.rulesByTalkingEnabled ? executePayRuleChange : undefined;
+  },
+  get money_code() {
+    return flags.moneyCodes.enabled ? moneyCodeExecutor : undefined;
   },
 };
 

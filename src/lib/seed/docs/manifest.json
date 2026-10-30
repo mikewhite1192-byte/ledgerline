@@ -41,6 +41,36 @@
       "shows": {}
     },
     {
+      "id": "br-l10327-lumper",
+      "kind": "lumper_receipt",
+      "file": "samples/docs/br-l10327-lumper.webp",
+      "mime": "image/webp",
+      "bytes": 33410,
+      "sha256": "0f0e63a8655c83d78524d05f493bb3362841349276dfaf95469fcf9d6b0c5315",
+      "width": 1008,
+      "height": 1344,
+      "cabAngle": true,
+      "origin": "composed",
+      "tenant": "blue-ridge",
+      "ref": {
+        "table": "loads",
+        "id": "f483c339-f3e3-43b7-8ea8-b3148ac6f39e",
+        "humanRef": "BR-L10327",
+        "loadNumber": "BR-L10327"
+      },
+      "expect": {
+        "vendor": "Dock Services",
+        "date": "2026-10-31",
+        "amountCents": 15000,
+        "loadNumber": "BR-L10327",
+        "truckUnit": "BR-T104",
+        "gallonsMilli": null,
+        "priceCents": null,
+        "paidByDriver": true
+      },
+      "shows": {}
+    },
+    {
       "id": "br-l10247-toll",
       "kind": "toll_receipt",
       "file": "samples/docs/br-l10247-toll.webp",

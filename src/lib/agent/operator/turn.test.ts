@@ -13,6 +13,7 @@ import {
   COLLECTIONS_RULE,
   LOOP_TEXT,
   MEMORY_PROMPT,
+  MONEY_CODE_PROMPT,
   OPERATOR_PROMPT,
   REPORT_PROMPT,
   TOOL_SEARCH_RULE,
@@ -982,6 +983,21 @@ describe("runTurn with tool search and the prompt cache", () => {
       `${OPERATOR_PROMPT}\n${TOOL_SEARCH_RULE}\n${COLLECTIONS_RULE}\n${CHECKLIST_RULE}`,
     );
     expect(COLLECTIONS_RULE).toContain("get_collections");
+  });
+
+  it("adds the money code lines only while propose_money_code is offered", () => {
+    promptSwitches({ reportsEnabled: false, collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: false });
+    flags.moneyCodes.enabled = true;
+    onTestFinished(() => {
+      flags.moneyCodes.enabled = false;
+    });
+    const on = toolsFor("operator").map((t) => t.name);
+    expect(on).toContain("propose_money_code");
+    expect(operatorPrompt(on, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}\n${MONEY_CODE_PROMPT}`);
+    flags.moneyCodes.enabled = false;
+    const off = toolsFor("operator").map((t) => t.name);
+    expect(off).not.toContain("propose_money_code");
+    expect(operatorPrompt(off, false)).toBe(`${OPERATOR_PROMPT}\n${CHECKLIST_RULE}`);
   });
 
   it("adds the memory lines only while the note suggestion tool is offered", async () => {

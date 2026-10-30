@@ -202,6 +202,51 @@ describe("createDataApiDb", () => {
     expect(lines.join("\n")).not.toMatch(/carrier\.example|row-level/);
   });
 
+  // The DbError a statement failing with this Data API message becomes.
+  async function errorFor(message: string): Promise<DbError> {
+    const { client } = fakeClient((cmd) =>
+      cmd.name === ExecuteStatementCommand.name && cmd.input.sql === "INSERT x"
+        ? sdkError("DatabaseErrorException", message)
+        : ok(cmd),
+    );
+    const db = createDataApiDb(CONFIG, { client });
+    const err = await db.withTenant(TENANT, (q) => q.execute("INSERT x")).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(DbError);
+    return err as DbError;
+  }
+
+  it("reads the whole quoted constraint name of a unique violation, and nothing else from the text", async () => {
+    const err = await errorFor(
+      'ERROR: duplicate key value violates unique constraint "money_codes_one_live_per_document"\n' +
+        "  Detail: Key (tenant_id, document_id)=(3f6c1a52-8e0b-4f4e-9d7a-2b5c8e1f0a93, " +
+        "9b2d7e41-5c3a-4f8e-a1d6-7e0c2b9f4a18) already exists.; SQLState: 23505",
+    );
+    expect(err).toMatchObject({ category: "sql", sqlState: "23505", constraint: "money_codes_one_live_per_document" });
+    expect(err.message).toBe("database error: sql (23505)");
+    const lines = logged.mock.calls.map((args) => args.join(" "));
+    expect(lines).toContain("db: sql (DatabaseErrorException 23505)");
+    expect(lines.join("\n")).not.toMatch(/money_codes|Detail|9b2d7e41/);
+  });
+
+  it("gives no constraint name without the unique violation phrase, for another SQLSTATE, or for an odd name", async () => {
+    // A unique violation whose text does not name the constraint the usual way.
+    expect(await errorFor("ERROR: duplicate key value; SQLState: 23505")).toMatchObject({
+      sqlState: "23505",
+      constraint: undefined,
+    });
+    // Another SQLSTATE quoting a name in the same words.
+    expect(
+      await errorFor('ERROR: violates unique constraint "money_codes_one_live_per_document"; SQLState: 23503'),
+    ).toMatchObject({ sqlState: "23503", constraint: undefined });
+    // A quoted name with characters outside lower-case letters, digits and underscores.
+    for (const name of ["Money_Codes_One_Live_Per_Document", "money-codes", "money codes", "money_codes.x", ""]) {
+      expect(
+        await errorFor(`ERROR: duplicate key value violates unique constraint "${name}"; SQLState: 23505`),
+        name,
+      ).toMatchObject({ sqlState: "23505", constraint: undefined });
+    }
+  });
+
   it("refuses a handle kept past its transaction and sends nothing", async () => {
     const { client, sent } = fakeClient(ok);
     const db = createDataApiDb(CONFIG, { client });

@@ -22,6 +22,10 @@ const LEDGER_FORBIDDEN = [
   'export { executeMoneyAction } from "../money/./execute";',
   'import { executeMoneyAction } from "../money";',
   'import { createMockPaymentAdapter } from "../adapters/tms/../payment/mock";',
+  'import { moneyCodeExecutor } from "../money-codes/execute";',
+  'import { requestMoneyCode } from "@/lib/money-codes/request";',
+  'import { moneyCodeExecutor } from "../money-codes";',
+  'import { moneyCodeExecutor } from "../money-codes/read/../execute";',
 ];
 const LEDGER_READS = [
   'import { readAction } from "../money/read";',
@@ -30,6 +34,9 @@ const LEDGER_READS = [
   'import { idempotencyKey } from "@/lib/money/keys";',
   'import { dbTmsAdapter } from "../adapters/tms/db";',
   'import type { TmsAdapter } from "../adapters/types";',
+  'import { listMoneyCodes } from "../money-codes/read";',
+  'import { moneyCodeSentence } from "@/lib/money-codes/words";',
+  'import { moneyCodesOn } from "../money-codes/switches";',
 ];
 const GATEWAY_MODULES = [
   'import { createPgDb } from "../../db";',
