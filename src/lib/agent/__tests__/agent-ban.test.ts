@@ -29,6 +29,10 @@ const LEDGER_FORBIDDEN = [
   'import { createFactoringSim } from "../adapters/factoring/sim";',
   'import { readRequest } from "../factoring/read/../execute";',
   'import { factoringRequestExecutor } from "../factoring";',
+  'import { moneyCodeExecutor } from "../money-codes/execute";',
+  'import { requestMoneyCode } from "@/lib/money-codes/request";',
+  'import { moneyCodeExecutor } from "../money-codes";',
+  'import { moneyCodeExecutor } from "../money-codes/read/../execute";',
 ];
 const LEDGER_READS = [
   'import { readAction } from "../money/read";',
@@ -42,6 +46,9 @@ const LEDGER_READS = [
   'import { packetsOf } from "@/lib/factoring/packet";',
   'import { packetLine } from "../factoring/words";',
   'import { factoringProposalOf } from "../../factoring/propose";',
+  'import { listMoneyCodes } from "../money-codes/read";',
+  'import { moneyCodeSentence } from "@/lib/money-codes/words";',
+  'import { moneyCodesOn } from "../money-codes/switches";',
 ];
 const GATEWAY_MODULES = [
   'import { createPgDb } from "../../db";',

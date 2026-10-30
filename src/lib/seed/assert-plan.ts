@@ -235,6 +235,23 @@ export function assertPlan(plan: CarrierPlan): void {
     if (!decision.eligible) fail("a seeded advance is one the engine would refuse");
   }
 
+  // MONEY-CODE's sample: on the road in the open week, not the hero's, driven by an armed driver,
+  // with no lumper line.
+  if (carrier.heroCode && planted.moneyCodeLoadId !== null) {
+    const load = rows.loads.find((l) => l.id === planted.moneyCodeLoadId);
+    if (!load || load.status !== "in_transit") fail("the money code load is not on the road");
+    if (load.driver_id === driverOfCode(carrier.heroCode).id) fail("the money code load is the hero's");
+    if (!rows.drivers.some((d) => d.id === load.driver_id && d.money_armed)) {
+      fail("the money code load's driver is not armed for money");
+    }
+    if (!isWithin(load.pickup_on, openWeek)) fail("the money code load is not in the open week");
+    if (rows.load_accessorials.some((a) => a.load_id === load.id && a.kind === "lumper")) {
+      fail("the money code load already has a lumper line");
+    }
+  } else if (!carrier.heroCode && planted.moneyCodeLoadId !== null) {
+    fail("a carrier with no hero plants no money code load");
+  }
+
   // The hero's open week settles to the worked example.
   if (carrier.heroCode) {
     const hero = driverOfCode(carrier.heroCode);

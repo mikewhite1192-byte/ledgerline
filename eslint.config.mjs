@@ -117,6 +117,18 @@ const LEDGER_WRITES = [
     regex: "(^|/)(?<!(?:^|/)rules-engine/)factoring(\\.[cm]?[jt]s)?$",
     message: "Import the factoring read module you need (factoring/read, packet, words, propose).",
   },
+  {
+    // A money code is issued and revealed only after a person approves it: the gateway may read
+    // codes and their words, never the executor, the reveal or the request form.
+    regex: "(^|/)money-codes/(?!(read|words|switches)(\\.[cm]?[jt]s)?$)",
+    message:
+      "Agent code never issues or reveals a money code; from money-codes/ it may import read, " +
+      "words and switches.",
+  },
+  {
+    regex: "(^|/)money-codes$",
+    message: "Import the money-codes module you need (read, words, switches).",
+  },
 ];
 
 // Uploaded documents: agent code may use the shapes, the strict schema and the record comparison
@@ -137,7 +149,7 @@ const DOCUMENT_READS = [
 // Outside the gateway, agent code reaches records, the engine and money only by tool calls.
 const GATEWAY_ONLY = [
   {
-    regex: "(^|/)(db|data|rules-engine|money|adapters|factoring)(/|$)",
+    regex: "(^|/)(db|data|rules-engine|money|money-codes|adapters|factoring)(/|$)",
     message:
       "Agent code reaches records, the rules engine and money only through the gateway " +
       "(src/lib/agent/gateway).",
@@ -196,7 +208,8 @@ const eslintConfig = [
   //      approval, the ledger writes, the reconcile pass and the payment and accounting
   //      adapters: under money/ and adapters/ each pattern is an allowlist, so any path with that
   //      segment is refused unless the rest is exactly a ledger read module (money/read, types,
-  //      keys, format), adapters/types or a module of adapters/tms. "money/./execute",
+  //      keys, format), adapters/types or a module of adapters/tms; under money-codes/ only read,
+  //      words and switches pass. "money/./execute",
   //      "money//execute" and "money/read/../ledger" are refused too. rules-engine/money, the
   //      engine's cents math, is not the ledger and is allowed.
   //   3. The operator turn, the auditor run and the sweep's explanation may also call the model

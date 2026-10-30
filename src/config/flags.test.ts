@@ -19,6 +19,7 @@ describe("flags", () => {
     expect(flags.agentEnabled).toBe(false);
     expect(flags.documentsEnabled).toBe(false);
     expect(flags.documentCrop).toBe(false);
+    expect(flags.documentMarkupEnabled).toBe(false);
     expect(flags.reportsEnabled).toBe(false);
     // Spark Open's standby host is dark until the owner turns it on in its own PR.
     expect(flags.sparkOpenFallback).toBe("off");
@@ -26,6 +27,15 @@ describe("flags", () => {
     expect(flags.detentionEnabled).toBe(false);
     // The demo reset page deletes and rewrites a carrier's rows: dark until the owner's go.
     expect(flags.demoResetEnabled).toBe(false);
+    // Money codes issue through the simulated provider only, dark and unarmed until the owner's go.
+    expect(flags.moneyCodes).toEqual({
+      enabled: false,
+      armed: false,
+      capCents: 50_000,
+      perDriverPerDay: 2,
+      startDate: "2026-10-28",
+    });
+    expect(isLocalDate(flags.moneyCodes.startDate)).toBe(true);
     // The card check writes no money, but it reads three systems and spends model cents.
     expect(flags.cardRecon.enabled).toBe(false);
     expect(flags.rulesByTalkingEnabled).toBe(false);
@@ -151,6 +161,21 @@ describe("flags", () => {
     for (const v of Object.values(flags.documentLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
+  });
+
+  it("keeps the marked copy small: two cents an edit, four a check, ten a day, the upload size cap", () => {
+    expect(flags.markupLimits).toEqual({
+      editMaxCostCents: 2,
+      checkMaxCostCents: 4,
+      perTenantPerDay: 10,
+      maxBytes: 700_000,
+    });
+    for (const v of Object.values(flags.markupLimits)) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // A marked copy is never larger than the largest upload, so reading it alone stays under the
+    // database's answer limit exactly as an upload does.
+    expect(flags.markupLimits.maxBytes).toBeLessThanOrEqual(flags.documentLimits.maxBytes);
   });
 
   it("ships the advance flow dark, disarmed, capped and dated", () => {

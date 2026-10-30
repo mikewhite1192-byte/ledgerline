@@ -18,9 +18,9 @@ const TOOLS = Object.values(TOOL_REGISTRY);
 const call = (name: string, args: unknown) => ({ id: "c", name, argumentsJson: JSON.stringify(args) });
 
 // Every tool's switch on (detention, reports, invoicing, invoice review, customer payments, the card check, collections,
-// Cash Friday, factoring, the profit brief, pay rule changes and carrier memory), so each test below reaches every
-// registered tool.
-// The detention switch's own cases are in detention-tools.test.ts; the last test here checks the report switch-off path.
+// Cash Friday, factoring, the profit brief, pay rule changes, money codes and carrier memory), so each test below
+// reaches every registered tool. The detention switch's own cases are in detention-tools.test.ts; the last test here
+// checks the report switch-off path.
 beforeEach(() => {
   flags.detentionEnabled = true;
   flags.reportsEnabled = true;
@@ -30,6 +30,7 @@ beforeEach(() => {
   flags.cardRecon.enabled = true;
   flags.cashFridayEnabled = true;
   flags.collectionsEnabled = true;
+  flags.moneyCodes.enabled = true;
   flags.profitBriefEnabled = true;
   flags.rulesByTalkingEnabled = true;
   flags.carrierMemoryEnabled = true;
@@ -45,6 +46,7 @@ afterEach(() => {
   flags.cardRecon.enabled = false;
   flags.cashFridayEnabled = false;
   flags.collectionsEnabled = false;
+  flags.moneyCodes.enabled = false;
   flags.profitBriefEnabled = false;
   flags.rulesByTalkingEnabled = false;
   flags.carrierMemoryEnabled = false;

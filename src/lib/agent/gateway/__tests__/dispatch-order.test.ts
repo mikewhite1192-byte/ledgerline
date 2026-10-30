@@ -422,7 +422,8 @@ describe("callTool dispatch order", () => {
   it("8: every tool runs on the seed plan and returns a result inside the size cap", async () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, invoicing, invoice review, customer payments, collections,
-    // Cash Friday, factoring, profit brief, pay rule change and carrier memory switches after this test.
+    // Cash Friday, factoring, profit brief, pay rule change, money code and carrier memory switches after this
+    // test.
     // remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
@@ -432,6 +433,7 @@ describe("callTool dispatch order", () => {
     flags.cardRecon.enabled = true;
     flags.cashFridayEnabled = true;
     flags.collectionsEnabled = true;
+    flags.moneyCodes.enabled = true;
     flags.profitBriefEnabled = true;
     flags.rulesByTalkingEnabled = true;
     flags.carrierMemoryEnabled = true;
@@ -444,6 +446,7 @@ describe("callTool dispatch order", () => {
       flags.cardRecon.enabled = false;
       flags.cashFridayEnabled = false;
       flags.collectionsEnabled = false;
+      flags.moneyCodes.enabled = false;
       flags.profitBriefEnabled = false;
       flags.rulesByTalkingEnabled = false;
       flags.carrierMemoryEnabled = false;

@@ -1,19 +1,20 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
 // and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, the
-// driver identity map and arming log from 0027, the card provider's statement and the card
-// check's runs and differences from 0046 (the seed writes no run and no difference; the replace,
-// and so the demo reset, clears them), the collection reminders from 0041 (seeded empty), the
-// owner's briefs from 0042 (none planted), Cash Friday's bills, bank position and checks from 0029
-// (the seed leaves cash_checks empty; the replace, and so the demo reset, clears it before the
-// weeks a check names), the factoring requests and their invoice lines from 0060 (the seed leaves
-// both empty; the replace clears them first, before the invoices and weeks they name), and the
-// carrier notes from 0040 (last: a note names its customer or driver by a soft reference), in an
-// order where every table comes after the tables it references
-// (insert in this order, delete in reverse). Each column says how it travels: the Data API sends
-// strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the way in, and
-// reads turn timestamptz into one ISO form and jsonb into text so both drivers return the same
-// values. tenant_id and created_at are never listed: tenant_id is always current_tenant_id() and
-// created_at is the database's own (a note's updated_at too).
+// driver identity map and arming log from 0027, the money codes from 0048 (planned empty; it names
+// pay items and load charges, so it goes before them on a delete), the card provider's statement
+// and the card check's runs and differences from 0046 (the seed writes no run and no difference;
+// the replace, and so the demo reset, clears them), the collection reminders from 0041 (seeded
+// empty), the owner's briefs from 0042 (none planted), Cash Friday's bills, bank position and
+// checks from 0029 (the seed leaves cash_checks empty; the replace, and so the demo reset, clears
+// it before the weeks a check names), the factoring requests and their invoice lines from 0060 (the
+// seed leaves both empty; the replace clears them first, before the invoices and weeks they name),
+// and the carrier notes from 0040 (last: a note names its customer or driver by a soft reference),
+// in an order where every table comes after the tables it references (insert in this order, delete
+// in reverse). Each column says how it travels: the Data
+// API sends strings as text, so uuid, date, timestamptz and jsonb columns need a CAST on the way
+// in, and reads turn timestamptz into one ISO form and jsonb into text so both drivers return the
+// same values. tenant_id and created_at are never listed: tenant_id is always current_tenant_id()
+// and created_at is the database's own (a note's updated_at too).
 
 export type ColumnKind = "uuid" | "text" | "int" | "bool" | "date" | "timestamptz" | "jsonb";
 
@@ -40,6 +41,7 @@ export const TENANT_TABLES = [
   "settlements",
   "settlement_lines",
   "pay_items",
+  "money_codes",
   "advances",
   "invoices",
   "customer_payments",
@@ -330,6 +332,31 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["item_ref", "text"],
       ["description", "text"],
       ["settlement_id", "uuid"],
+    ],
+  },
+  money_codes: {
+    table: "money_codes",
+    columns: [
+      ["id", "uuid"],
+      ["driver_id", "uuid"],
+      ["load_id", "uuid"],
+      ["purpose", "text"],
+      ["amount_cents", "int"],
+      ["source_kind", "text"],
+      ["document_id", "uuid"],
+      ["voice_note_id", "uuid"],
+      ["receipt_total_cents", "int"],
+      ["proposal_id", "uuid"],
+      ["money_action_id", "uuid"],
+      ["membership_id", "uuid"],
+      ["status", "text"],
+      ["provider_ref", "text"],
+      ["code_last4", "text"],
+      ["accessorial_id", "uuid"],
+      ["charge_item_id", "uuid"],
+      ["reimbursement_item_id", "uuid"],
+      ["issued_at", "timestamptz"],
+      ["expires_at", "timestamptz"],
     ],
   },
   advances: {

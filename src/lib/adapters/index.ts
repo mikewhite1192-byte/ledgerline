@@ -2,11 +2,11 @@ import { flags } from "../../config/flags";
 import type { PayoutRail } from "../money/types";
 import { createQboAdapter } from "./accounting/qbo/adapter";
 import { createFactoringSim } from "./factoring/sim";
-import { createFuelCardSimAdapter } from "./payment/fuel-card-sim";
+import { createFuelCardSimAdapter, createMoneyCodeIssuer } from "./payment/fuel-card-sim";
 import { createMockPaymentAdapter, type MockPaymentAdapter } from "./payment/mock";
 import { createStripeTestAdapter } from "./payment/stripe-test";
 import { dbTmsAdapter } from "./tms/db";
-import type { AccountingAdapter, FactoringAdapter, PaymentAdapter, TmsAdapter } from "./types";
+import type { AccountingAdapter, FactoringAdapter, MoneyCodeIssuer, PaymentAdapter, TmsAdapter } from "./types";
 
 export type * from "./types";
 
@@ -16,6 +16,7 @@ export type * from "./types";
 let mock: MockPaymentAdapter | undefined;
 let stripe: PaymentAdapter | undefined;
 let fuelCard: PaymentAdapter | undefined;
+let moneyCodes: MoneyCodeIssuer | undefined;
 let qbo: AccountingAdapter | undefined;
 let factoring: FactoringAdapter | undefined;
 
@@ -35,6 +36,12 @@ export function paymentAdapter(rail: PayoutRail): PaymentAdapter {
 // submits nothing.
 export function factoringAdapter(): FactoringAdapter {
   return (factoring ??= createFactoringSim());
+}
+
+// One-time money codes come from the same simulated card provider. Its calls re-check
+// payoutsEnabled and the moneyCodes switches, so choosing it here issues nothing.
+export function moneyCodeIssuer(): MoneyCodeIssuer {
+  return (moneyCodes ??= createMoneyCodeIssuer());
 }
 
 export function accountingAdapter(): AccountingAdapter {

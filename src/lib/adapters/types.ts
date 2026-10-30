@@ -5,6 +5,7 @@ import type {
   CheckInput,
   CustomerRecord,
   LoadRecord,
+  MoneyCodePurpose,
   ReceivablesInput,
   SettlementInput,
 } from "../rules-engine";
@@ -143,6 +144,35 @@ export interface FactoringAdapter {
     ref: { requestId: string; outsideId?: string | null; request: FactoringSubmission },
     ctx: SendContext,
   ): Promise<ReadBack>;
+}
+
+// A one-time money code the card provider issues for a lumper or a repair at the dock. The code
+// itself is never in a request, a reply, a log or a row: the provider derives it from the request
+// id and hands it over only through revealCode.
+export type MoneyCodeRequest = {
+  actionId: string;
+  driverId: string;
+  amountCents: number;
+  // Which record this pays (memoCodeOf), never a person's name.
+  memoCode: string;
+  purpose: MoneyCodePurpose;
+};
+
+export interface MoneyCodeIssuer {
+  readonly system: "fuel_card_sim";
+  // Repeats the switch checks on every call.
+  ready(): Promise<Ready>;
+  issueMoneyCode(req: MoneyCodeRequest, ctx: SendContext): Promise<SendOutcome>;
+  // Reads only; the original request rides along, as for a payout read-back.
+  readBackCode(
+    ref: { requestId: string; outsideId?: string | null; request: MoneyCodeRequest },
+    ctx: SendContext,
+  ): Promise<ReadBack>;
+  // The ten digits of an issued code, for staff to read to the driver. Refuses while money codes
+  // are off.
+  revealCode(requestId: string): string;
+  // The last four digits, which the row keeps.
+  codeLast4(requestId: string): string;
 }
 
 // kind is the rules engine's invoice line kind; it picks the accounting item for the line.
