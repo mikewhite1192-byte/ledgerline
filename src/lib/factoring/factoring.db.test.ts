@@ -19,7 +19,7 @@ import { DEMO_CARRIERS } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { localDateOf } from "../time/local-date";
-import { checkPendingFactoring } from "./execute";
+import { checkPendingFactoring, type FactoringDeps } from "./execute";
 import { factoringProposalOf } from "./propose";
 import { listRequests, readFactoredLine, readFactoringInput, readRequest } from "./read";
 
@@ -28,7 +28,8 @@ import { listRequests, readFactoredLine, readFactoringInput, readRequest } from 
 // with every switch on makes one request, one line and one ledger row per invoice, funded, and
 // approving it again (or twice at once) writes nothing more. A card with one 99 invoice ends
 // partly funded; a 98 invoice stays unknown until Check pending reads it back. A card naming an
-// invoice already factored, or any switch off, is refused before anything is written. Another
+// invoice already factored, or any switch off, is refused before anything is written. A card whose
+// request write hits a unique index ends failed, so approving it again repeats nothing. Another
 // carrier reads and changes nothing. Both demo carriers are seeded from their plans; the two
 // tenants are removed after.
 
@@ -384,6 +385,37 @@ describe("factoring on the real database", { timeout: 60_000 }, () => {
     }
     expect([await countRows(A, "factoring_requests"), await countRows(A, "money_actions")]).toEqual(before);
     expect((await proposal(card.id)).status).toBe("proposed");
+  });
+
+  it("ends the card when its request's write hits a unique index, and approving again changes nothing", async () => {
+    switchesOn();
+    const [x, y] = await factorable();
+    const card = await cardFor([x.id, y.id]);
+    // The request's id, then one id for every line: the second line's write hits the line key, the
+    // same unique violation (23505) the one-live-line-per-invoice index raises when another request
+    // takes an invoice first, and the request's transaction rolls back.
+    const lineId = randomUUID();
+    let calls = 0;
+    const deps: FactoringDeps = {
+      db: app,
+      clock,
+      executors: EXECUTORS,
+      newId: () => (calls++ === 0 ? randomUUID() : lineId),
+    };
+    const tables = ["factoring_requests", "factoring_request_invoices", "money_actions"] as const;
+    const counts = () => Promise.all(tables.map((t) => countRows(A, t)));
+    const before = await counts();
+    expect(await executeProposal(ADMIN_A, card.id, { confirmed: false }, deps)).toMatchObject({
+      ok: false,
+      category: "invoices_changed",
+    });
+    expect(calls).toBe(3);
+    expect(await counts()).toEqual(before);
+    const ended = await proposal(card.id);
+    expect([ended.status, ended.decision_note, ended.money_action_id]).toEqual(["failed", "refused: invoices_changed", null]);
+    // Approving again finds the card decided: nothing is sent, and the refusal is not run again.
+    expect(await approve(ADMIN_A, card.id)).toMatchObject({ ok: false, category: "already_decided" });
+    expect(await counts()).toEqual(before);
   });
 
   it("declines a 99-cent invoice alone and funds the rest: partly funded, the card done", async () => {

@@ -167,6 +167,35 @@ function failProposal(
   );
 }
 
+// A refusal whose transaction rolled back (a unique index refused a write, so nothing was
+// written): the card ends in a short transaction of its own, the way the other refusals end it.
+// Only while it is still approved with no request behind it, so a run of the same card that got
+// further in the meantime is never ended under it. A failure here leaves the card approved, and
+// approving again runs the checks again.
+async function failRolledBack(
+  db: TenantDb,
+  session: Session,
+  proposalId: string,
+  note: string,
+  nowIso: string,
+): Promise<void> {
+  try {
+    await db.withTenant(session.tenantId, (q) =>
+      q.execute(
+        `UPDATE proposals SET status = 'failed', decision_note = $2, updated_at = CAST($3 AS timestamptz)
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind = 'factoring_request'
+            AND status = 'approved'
+            AND NOT EXISTS (SELECT 1 FROM factoring_requests r
+                             WHERE r.tenant_id = current_tenant_id() AND r.proposal_id = CAST($1 AS uuid))`,
+        [proposalId, note.slice(0, NOTE_MAX), nowIso],
+      ),
+    );
+  } catch (err) {
+    if (err instanceof ForbiddenError) throw err;
+    console.error("factoring card could not be closed:", errName(err));
+  }
+}
+
 // ---- Requests and lines ----
 
 type RequestRow = {
@@ -799,7 +828,11 @@ export const executeFactoringRequest: Executor = async (
     prepared = await db.withTenant(session.tenantId, (q) => prepare(q, session, proposal, a, now, newId));
   } catch (err) {
     if (err instanceof Stop) return err.result;
-    if (err instanceof DbError && err.sqlState === "23505") return no("invoices_changed");
+    if (err instanceof DbError && err.sqlState === "23505") {
+      // Another live line took one of these invoices first (factoring_one_live_per_invoice).
+      await failRolledBack(db, session, proposal.id, "refused: invoices_changed", now.toISOString());
+      return no("invoices_changed");
+    }
     throw err;
   }
   if (prepared.kind === "refused") return no(prepared.category);

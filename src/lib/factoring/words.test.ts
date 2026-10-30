@@ -44,7 +44,7 @@ describe("factoring words", () => {
 
   it("writes every sentence without a code, a raw date, an em dash or a model's name", () => {
     for (const s of ALL) {
-      expect(s, s).not.toMatch(/_|—|\d{4}-\d{2}-\d{2}/);
+      expect(s, s).not.toMatch(/_|\u2014|\d{4}-\d{2}-\d{2}/);
       expect(s, s).toMatch(/[.)]$/);
     }
   });
