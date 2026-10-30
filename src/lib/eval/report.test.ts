@@ -96,8 +96,12 @@ describe("eval report", () => {
   });
 
   it("no recorded run, or a file of the wrong shape, shows no card", () => {
-    expect(latestResults()).toBeNull();
-    expect(evalCardData(latestResults())).toBeNull();
+    // The file as it was before the first run was recorded.
+    const none = { version: 1, run: null };
+    expect(latestResults(none)).toBeNull();
+    expect(evalCardData(latestResults(none))).toBeNull();
+    // The recorded run the repo keeps reads back whole, so the card has something to show.
+    expect(latestResults()).not.toBeNull();
     for (const bad of [null, {}, { version: 2, run: {} }, { version: 1, run: { cases: [], models: [] } }, "text"]) {
       expect(latestResults(bad)).toBeNull();
     }
