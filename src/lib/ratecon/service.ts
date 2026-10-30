@@ -244,6 +244,10 @@ async function claim(q: Queryable, session: Session, documentId: string, now: Da
         await followDeadCard(q, session, row, row.proposal_id, fate, doc.created_at, now);
         const after = await readRateConRow(q, documentId);
         if (!after) throw new Error("rate confirmation row vanished");
+        // The same line a read writes, so a new card or a row ended here shows in the logs; no read, no cost.
+        console.info(
+          `ratecon: document ${documentId} status=${after.status} category=${after.category ?? "none"} cost=0 card=${fate}`,
+        );
         return { done: { ok: true, view: viewOf(after) } };
       }
     }
