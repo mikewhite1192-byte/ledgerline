@@ -1,4 +1,5 @@
 import { flags, type Flags } from "../../../config/flags";
+import { clampToMaxTurns } from "../../agent/run-limits";
 import type { Queryable } from "../../db";
 import { tenantLock } from "../../invoices/number";
 
@@ -12,8 +13,10 @@ export function fanoutOn(): boolean {
   return flags.sweepEnabled === true && flags.fanoutEnabled === true && flags.aiEnabled === true;
 }
 
+// One driver check is one of the run's turns: the roster is never larger than the ceiling over
+// every run (flags.runLimits.maxTurns), which only ever lowers maxDrivers.
 export function fanoutLimits(): FanoutLimits {
-  return flags.fanoutLimits;
+  return { ...flags.fanoutLimits, maxDrivers: clampToMaxTurns(flags.fanoutLimits.maxDrivers) };
 }
 
 const whole = (n: number) => Number.isSafeInteger(n) && n > 0;

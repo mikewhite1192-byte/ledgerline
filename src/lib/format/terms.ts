@@ -40,6 +40,9 @@ export const TERMS = {
   "money-code":
     "A one-time code the driver gives a lumper or a repair shop to pay at the dock; it is charged to the driver's week and paid back from the receipt.",
   "card-provider": "The company that issues the fuel cards and money codes; in this demo it is simulated, so no real money moves.",
+  "take-home-pay": "What the driver is paid for the week after everything taken out, the same as net pay.",
+  "pay-card":
+    "A picture of one driver's week for their phone, kept only after a second read matched every number to the paystub.",
   margin: "What is left of the revenue after driver pay.",
   "days-to-pay":
     "The average days from an invoice's date to the day it was paid, over invoices paid in the 180 days before the week ended.",
@@ -47,6 +50,8 @@ export const TERMS = {
   "advance-rate": "The share of an invoice the factoring company pays now; the rest is held back.",
   "held-back": "The part of a factored invoice kept until the customer pays it (in factoring, the reserve).",
   "factoring-fee": "What the factoring company charges for paying early, taken from the money paid now.",
+  "diesel-index": "The weekly average diesel price many customers tie the fuel surcharge to.",
+  "fuel-tax-rate": "What each state charges per gallon of diesel burned on its roads; settled every quarter.",
 } as const;
 
 export type TermId = keyof typeof TERMS;

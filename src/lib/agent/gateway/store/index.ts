@@ -5,6 +5,7 @@ import type { TurnTrace } from "../../../trace/types";
 import { relevantNotes, type NoteRow } from "../../../memory/notes";
 import { summarizeModelWeek, type ModelWeek } from "../../../trace/week";
 import type { TurnView } from "../../view";
+import { assertMembership } from "../../../tenant/context";
 import { withAgentTenant } from "../tenant";
 import {
   readAuditState,
@@ -99,6 +100,21 @@ export async function openAgentTurn(
     if (err instanceof DbError && err.sqlState === UNIQUE_VIOLATION) return { refused: "busy" };
     throw err;
   }
+}
+
+// The same open inside a transaction the caller already holds (the sweep's leased one), so the
+// caller writes the new turn's id in that same transaction: a slice cut off between the open and
+// the id write rolls both back, and no turn is left running that nothing points at. The
+// membership is checked first, as in every gateway transaction. No carrier notes: only the
+// operator's own questions read them. A unique violation here ends the caller's transaction
+// (there is no second read inside an aborted one), so the caller's bounded tries take it.
+export async function openAgentTurnIn(
+  q: Queryable,
+  session: Session,
+  input: Omit<OpenTurnInput, "notes">,
+): Promise<OpenedTurn | { refused: OpenTurnRefusal }> {
+  await assertMembership(q, session);
+  return openTurn(q, session, input);
 }
 
 export async function readAgentTurn(

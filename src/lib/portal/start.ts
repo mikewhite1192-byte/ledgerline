@@ -4,7 +4,14 @@ import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
 import { kickPortalRun, runnerReady, type Kick } from "./runner/kick";
-import { latestEvidence, portalReference, STALLED_AFTER_MS, UNCLAIMED_AFTER_MS, type EvidenceView } from "./views";
+import {
+  latestEvidence,
+  MAX_RESUME_ATTEMPTS,
+  portalReference,
+  STALLED_AFTER_MS,
+  UNCLAIMED_AFTER_MS,
+  type EvidenceView,
+} from "./views";
 
 // Starting a portal run (design 4.1): only a person starts one, through the start route; the
 // agent's tool only reads runs. One live run per load: the partial unique index on portal_runs is
@@ -24,12 +31,31 @@ export function portalRunsAvailable(): boolean {
   return flags.portalRunnerEnabled && runnerReady();
 }
 
-// Ends the load's live runs that no worker will finish, so a lost worker or a failed kick never
+// Clears the load's live runs that no worker will finish, so a lost worker or a failed kick never
 // holds the load's one live slot: running longer than STALLED_AFTER_MS since its claim, or queued
-// and unclaimed for UNCLAIMED_AFTER_MS (views.ts isStale, the same rule). One statement in the
-// start's transaction; a worker that comes back finds its claim gone and writes nothing.
-async function endStaleRuns(q: Queryable, loadId: string, now: Date): Promise<void> {
+// and unclaimed for UNCLAIMED_AFTER_MS (views.ts isStale, the same rule). Both statements run in
+// the start's transaction; a worker that comes back finds its claim gone and writes nothing.
+//
+// First, a stalled running run that has executed at least one model step, has its portal session
+// and has been put back fewer than MAX_RESUME_ATTEMPTS times goes back in the queue to carry on
+// from its last executed step (resume_step), its counter raised by one. Its held POD and paused
+// hash stay as they are. Then every other stale run ends as a runner error, as before. Returns the
+// run put back, for the caller to start once the transaction commits (one live run per load, so
+// at most one).
+async function endStaleRuns(q: Queryable, loadId: string, now: Date): Promise<string | null> {
   const before = (ms: number) => new Date(now.getTime() - ms).toISOString();
+  const lastExecuted =
+    "SELECT max(s.seq) FROM portal_run_steps s WHERE s.tenant_id = current_tenant_id() AND s.run_id = r.id" +
+    " AND s.executed AND s.seq > 0";
+  const requeued = await q.query<{ id: string }>(
+    "UPDATE portal_runs r SET status = 'queued', queued_at = CAST($2 AS timestamptz), claim_token = NULL," +
+      ` resume_attempts = r.resume_attempts + 1, resume_step = (${lastExecuted})` +
+      " WHERE r.tenant_id = current_tenant_id() AND r.load_id = CAST($1 AS uuid) AND r.status = 'running'" +
+      " AND COALESCE(r.claimed_at, r.queued_at) < CAST($3 AS timestamptz) AND r.session_id IS NOT NULL" +
+      ` AND r.resume_attempts < $4 AND (${lastExecuted}) IS NOT NULL` +
+      " RETURNING r.id",
+    [loadId, now.toISOString(), before(STALLED_AFTER_MS), MAX_RESUME_ATTEMPTS],
+  );
   await q.execute(
     "UPDATE portal_runs SET status = 'failed', ended_reason = 'runner_error', finished_at = CAST($2 AS timestamptz)," +
       " claim_token = NULL, held_pod_pdf = NULL, held_pod_step_seq = NULL, paused_pod_hash = NULL" +
@@ -38,6 +64,7 @@ async function endStaleRuns(q: Queryable, loadId: string, now: Date): Promise<vo
       " OR (status = 'queued' AND queued_at < CAST($4 AS timestamptz)))",
     [loadId, now.toISOString(), before(STALLED_AFTER_MS), before(UNCLAIMED_AFTER_MS)],
   );
+  return requeued[0]?.id ?? null;
 }
 
 async function liveRun(q: Queryable, loadId: string) {
@@ -64,7 +91,10 @@ export async function createRunIn(
     const done = await latestEvidence(q, input.loadId);
     if (done) return { kind: "done", runId: done.runId, evidence: done };
   }
-  await endStaleRuns(q, input.loadId, now);
+  // A run put back in the queue is this load's live run again, and it needs a worker: it reads as
+  // queued, so the start route starts it after the commit.
+  const requeued = await endStaleRuns(q, input.loadId, now);
+  if (requeued) return { kind: "queued", runId: requeued };
   const live = await liveRun(q, input.loadId);
   if (live) return { kind: "live", runId: live.id, status: live.status };
   const runId = randomUUID();

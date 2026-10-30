@@ -54,6 +54,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_factoring_packet: { tier: "read", roles: ["operator", "auditor"] },
   get_factoring_requests: { tier: "read", roles: ["operator", "auditor"] },
   propose_factoring: { tier: "propose", roles: ["operator"] },
+  get_pinned_rates: { tier: "read", roles: ["operator", "auditor"] },
   get_quarter_review: { tier: "read", roles: ["operator"] },
 };
 
@@ -91,6 +92,7 @@ afterEach(() => {
   flags.profitBriefEnabled = false;
   flags.carrierMemoryEnabled = false;
   flags.factoring.enabled = false;
+  flags.groundedRatesEnabled = false;
   flags.quarterReviewEnabled = false;
 });
 
@@ -358,11 +360,12 @@ describe("tool registry", () => {
     flags.profitBriefEnabled = true;
     flags.carrierMemoryEnabled = true;
     flags.factoring.enabled = true;
+    flags.groundedRatesEnabled = true;
     flags.quarterReviewEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 47,
-      auditor: 19,
+      operator: 48,
+      auditor: 20,
       triage: 2,
     });
     for (const role of AGENT_ROLES) {

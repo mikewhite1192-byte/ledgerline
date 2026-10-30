@@ -214,11 +214,14 @@ export function PortalRunLive({ initial, timeZone }: { initial: RunView; timeZon
             <CardTitle>
               Load {r.loadNumber} <span className="text-muted-foreground">({r.reference})</span>
             </CardTitle>
-            <StatusBadge status={r.stalled ? "unknown" : r.status} label={r.stalled ? "Stalled" : undefined} />
+            <span className="flex flex-wrap items-center gap-2">
+              {r.resumeAttempts > 0 ? <Badge tone="info">Resumed</Badge> : null}
+              <StatusBadge status={r.stalled ? "unknown" : r.status} label={r.stalled ? "Stalled" : undefined} />
+            </span>
           </div>
           <CardDescription>
             {targetName(r.model)} reading the broker&apos;s portal. {r.stepCount} steps, {formatSpend(r.costNanocents)}. Started{" "}
-            {formatInstant(r.createdAt, timeZone)}.{ended ? ` ${ended}.` : ""}
+            {formatInstant(r.createdAt, timeZone)}.{r.resumed ? ` ${r.resumed}.` : ""}{ended ? ` ${ended}.` : ""}
           </CardDescription>
         </CardHeader>
         {stale ? (

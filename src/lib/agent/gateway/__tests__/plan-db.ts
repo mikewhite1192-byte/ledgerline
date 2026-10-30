@@ -32,6 +32,8 @@ const BY_DRIVER_LOADS =
   "load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid))";
 
 const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)";
+const PINNED_RATES =
+  /^SELECT .+ FROM pinned_rates\s+WHERE tenant_id = current_tenant_id\(\) AND status = 'pinned' AND retired_at IS NULL AND kind = \$1\s+ORDER BY /s;
 const DELIVERED_LOADS = `load_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
 const DELIVERED_CUSTOMERS = `id IN (SELECT customer_id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
 
@@ -156,6 +158,13 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
           (params[0] === null || r.subject_id === params[0]),
       );
       return [...new Set(cards.map((r) => String(r.subject_id)))].map((load_id) => ({ load_id }));
+    }
+    // get_pinned_rates: the live pins of one kind. A seed plan pins none, so this answers from rows
+    // a test adds, or none.
+    if (PINNED_RATES.test(sql)) {
+      return (tables.pinned_rates ?? [])
+        .filter((r) => r.status === "pinned" && r.retired_at === null && r.kind === params[0])
+        .map((r) => ({ ...r }));
     }
     // The quarter review's own reads (briefs/quarter-figures.ts). A seed plan holds no proposals,
     // so the fixes and the detention they billed answer from a proposals list a test adds, or none.

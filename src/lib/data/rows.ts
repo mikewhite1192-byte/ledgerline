@@ -237,6 +237,26 @@ export type SettlementLineRow = {
   meta: Record<string, string | number | boolean | null> | null;
 };
 
+// A pay card (0052) as the tables read it: never its image bytes, which only the one checked
+// card's file route reads.
+export type PayCardRow = {
+  id: string;
+  settlement_id: string;
+  attempt: number;
+  status: "checking" | "checked" | "mismatch" | "unavailable";
+  art: string;
+  spec: Record<string, unknown>;
+  check_read: Record<string, unknown> | null;
+  category: string | null;
+  mime: string | null;
+  byte_length: number | null;
+  content_hash: string | null;
+  check_call_id: string | null;
+  trace_id: string;
+  created_by: string;
+  checked_at: string | null;
+};
+
 export type PayItemRow = {
   id: string;
   driver_id: string;
@@ -573,6 +593,28 @@ export type FactoringRequestInvoiceRow = {
   settled_at: string | null;
 };
 
+// A fuel or tax rate (0053): a lookup's suggestion, or a pin an admin chose. Thousandths of a cent
+// per gallon ($3.657 is 365700); null on an unconfirmed suggestion.
+export type PinnedRateRow = {
+  id: string;
+  kind: "diesel_index" | "ifta_rate";
+  state: string | null;
+  status: "suggested" | "unconfirmed" | "pinned";
+  value_mcents: number | null;
+  source: "lookup" | "typed";
+  source_url: string;
+  source_title: string | null;
+  quote: string | null;
+  as_of: string | null;
+  effective_from: string | null;
+  lookup_call_id: string | null;
+  trace_id: string | null;
+  created_by: string;
+  pinned_by: string | null;
+  pinned_at: string | null;
+  retired_at: string | null;
+};
+
 export type TenantRows = {
   customers: CustomerRow[];
   drivers: DriverRow[];
@@ -590,6 +632,7 @@ export type TenantRows = {
   settlement_periods: SettlementPeriodRow[];
   settlements: SettlementRow[];
   settlement_lines: SettlementLineRow[];
+  pay_cards: PayCardRow[];
   pay_items: PayItemRow[];
   money_codes: MoneyCodeRow[];
   advances: AdvanceRow[];
@@ -608,6 +651,7 @@ export type TenantRows = {
   factoring_requests: FactoringRequestRow[];
   factoring_request_invoices: FactoringRequestInvoiceRow[];
   carrier_notes: CarrierNoteRow[];
+  pinned_rates: PinnedRateRow[];
 };
 
 // Compile-time proof that TenantRows has exactly one key per table.

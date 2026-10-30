@@ -1,8 +1,10 @@
 import type {
   AiAttachment,
+  AiCitation,
   AiReasoningEffort,
   AiReplayItem,
   AiRequest,
+  AiSearchResult,
   AiToolCall,
   CallOutcome,
   ComputerCall,
@@ -110,11 +112,16 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
   const tools = request.tools ?? [];
   const format = request.format;
   const cache = request.cache;
-  return {
-    model,
-    ...(instructions ? { instructions } : {}),
-    input,
-    ...(tools.length > 0
+  // Hosted web search (https://dev.meta.ai/docs/search-grounding). The wrapper refuses it beside
+  // function tools, so it is the request's only tool. max_tool_calls caps the searches the model
+  // may run inside this one answer, and each search is billed.
+  const webSearch = request.webSearch;
+  const toolPart: {
+    tools?: Record<string, unknown>[];
+    tool_choice?: "auto";
+    max_tool_calls?: number;
+  } =
+    tools.length > 0
       ? {
           tools: [
             // Hosted search (https://dev.meta.ai/docs/tool-search): the model searches the
@@ -131,7 +138,17 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
           // The only value Meta accepts.
           tool_choice: "auto",
         }
-      : {}),
+      : webSearch
+        ? {
+            tools: [{ type: "web_search", search_context_size: webSearch.contextSize }],
+            max_tool_calls: webSearch.maxCalls,
+          }
+        : {};
+  return {
+    model,
+    ...(instructions ? { instructions } : {}),
+    input,
+    ...toolPart,
     // Structured output on Responses is text.format, not response_format
     // (https://dev.meta.ai/docs/structured-output).
     ...(format
@@ -150,7 +167,11 @@ export function metaBody(model: string, request: AiRequest, options: MetaOptions
     max_output_tokens: options.maxOutputTokens,
     reasoning: { effort: options.reasoningEffort },
     store: false,
-    include: ["reasoning.encrypted_content"],
+    // With web search, the pages each search returned come back too: a number is taken from an
+    // answer only when it is found whole in a returned page the answer cites.
+    include: webSearch
+      ? ["reasoning.encrypted_content", "web_search_call.results"]
+      : ["reasoning.encrypted_content"],
     // Automatic prefix caching (https://dev.meta.ai/docs/prompt-caching). in_memory is the
     // default retention, so only 24h is sent.
     ...(cache
@@ -246,6 +267,56 @@ function computerCallFrom(item: Record<string, unknown>): ComputerCall | null {
   };
 }
 
+// Bounds on what a web search answer may carry into this app: a page address the pinned_rates
+// table can hold, a title the screen can show, and a snippet long enough to quote from. A field
+// over its bound is dropped whole, never cut, so a kept address always equals the one the API sent.
+const MAX_URL = 2000;
+const MAX_TITLE = 500;
+const MAX_SNIPPET = 4000;
+const MAX_RESULTS = 50;
+const MAX_CITATIONS = 50;
+
+const boundedString = (value: unknown, max: number): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= max;
+
+const offset = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+// A url_citation annotation, with its span moved by `shift` (the length of the answer text before
+// the part it came from), or null when any field is missing, out of bounds or the span is empty
+// or falls outside the part.
+function citationFrom(raw: unknown, shift: number, partLength: number): AiCitation | null {
+  const a = asRecord(raw);
+  if (a?.type !== "url_citation") return null;
+  const { url, title, start_index: start, end_index: end } = a;
+  if (!boundedString(url, MAX_URL) || !offset(start) || !offset(end)) return null;
+  if (start >= end || end > partLength) return null;
+  return {
+    url,
+    title: boundedString(title, MAX_TITLE) ? title : "",
+    startIndex: start + shift,
+    endIndex: end + shift,
+  };
+}
+
+// The pages one web_search_call returned (present only when the request asked for
+// web_search_call.results). An entry without a usable address is dropped. Measured on Muse Spark
+// on Oct 27, 2026: every snippet came back "" and the answer's annotations came back empty, so a
+// caller must not depend on either being there.
+function searchResultsFrom(item: Record<string, unknown>): AiSearchResult[] {
+  const results: AiSearchResult[] = [];
+  for (const raw of asArray(item.results)) {
+    const r = asRecord(raw);
+    if (!r || !boundedString(r.url, MAX_URL)) continue;
+    results.push({
+      url: r.url,
+      title: boundedString(r.title, MAX_TITLE) ? r.title : "",
+      snippet: boundedString(r.snippet, MAX_SNIPPET) ? r.snippet : "",
+    });
+  }
+  return results;
+}
+
 // A 200 answer. Usage decides the cost, so an answer without usable usage, or with a status other
 // than completed or incomplete, is settled as unknown with its reservation kept.
 export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
@@ -267,13 +338,35 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
   let toolSearches = 0;
   const summaries: string[] = [];
   const computerCalls: (ComputerCall | null)[] = [];
+  const answerParts: string[] = [];
+  const citations: AiCitation[] = [];
+  const searchResults: AiSearchResult[] = [];
+  let searchCalls = 0;
+  // The length of the text so far, so each citation's span points into the joined text (`text`,
+  // commentary included; `answerText` leaves the commentary out and carries no spans of its own).
+  let textLength = 0;
   for (const raw of asArray(body.output)) {
     const item = asRecord(raw);
     if (item?.type === "reasoning") summaries.push(...summaryTextsOf(item.summary));
     if (item?.type === "message") {
       for (const part of asArray(item.content)) {
         const p = asRecord(part);
-        if (p?.type === "output_text" && typeof p.text === "string") parts.push(p.text);
+        if (p?.type === "output_text" && typeof p.text === "string") {
+          for (const a of asArray(p.annotations)) {
+            const citation = citationFrom(a, textLength, p.text.length);
+            if (citation && citations.length < MAX_CITATIONS) citations.push(citation);
+          }
+          parts.push(p.text);
+          if (item.phase !== "commentary") answerParts.push(p.text);
+          textLength += p.text.length;
+        }
+      }
+    } else if (item?.type === "web_search_call") {
+      // Every search item is counted for the bill, whatever its status: billing more than ran
+      // keeps the ledger at or above the provider's charge.
+      searchCalls += 1;
+      for (const r of searchResultsFrom(item)) {
+        if (searchResults.length < MAX_RESULTS) searchResults.push(r);
       }
     } else if (item?.type === "function_call") {
       const { call_id: id, name, arguments: args } = item;
@@ -305,18 +398,23 @@ export function parseMeta(json: unknown, httpStatus: number): CallOutcome {
     return { kind: "unknown", category: "unknown", httpStatus };
   }
   const computerCall = computerCalls[0];
+  // Only an answer that searched or cited carries the web part and a search count to bill.
+  const searched = searchCalls > 0 || citations.length > 0;
   const reasoningSummary = summaries.join("\n").trim();
   return {
     kind: "answered",
     status,
     httpStatus,
     upstreamId: upstreamIdFrom(body.id),
-    metered: { unit: "tokens", usage },
+    metered: searched ? { unit: "tokens", usage, searches: searchCalls } : { unit: "tokens", usage },
     value: {
       text: parts.join(""),
       toolCalls,
       replay,
       toolSearches,
+      ...(searched
+        ? { web: { answerText: answerParts.join(""), citations, searchResults, searchCalls } }
+        : {}),
       ...(reasoningSummary ? { reasoningSummary } : {}),
       ...(computerCall ? { computerCall } : {}),
     },

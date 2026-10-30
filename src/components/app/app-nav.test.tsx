@@ -28,6 +28,7 @@ const SWITCHES = [
   "rulesByTalkingEnabled",
   "profitBriefEnabled",
   "carrierMemoryEnabled",
+  "groundedRatesEnabled",
   "quarterReviewEnabled",
 ] as const;
 type Switch = (typeof SWITCHES)[number];
@@ -76,6 +77,7 @@ describe("appNav", () => {
       ["Settings", "/models", "Models and spend", false],
       ["Settings", "/portal-runs", "Portal runs", false],
       ["Settings", "/settings/demo", "Demo", false],
+      ["Settings", "/settings/rates", "Fuel and tax rates", false],
       ["Settings", "/memory", "Memory", false],
     ]);
   });
@@ -107,6 +109,7 @@ describe("appNav", () => {
       rulesByTalkingEnabled: "/settings/pay-rules",
       profitBriefEnabled: "/profit",
       carrierMemoryEnabled: "/memory",
+      groundedRatesEnabled: "/settings/rates",
       quarterReviewEnabled: "/quarter",
     };
     for (const s of SWITCHES) {

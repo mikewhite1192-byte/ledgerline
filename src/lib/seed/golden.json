@@ -19,6 +19,7 @@
         "settlement_periods": 4,
         "settlements": 75,
         "settlement_lines": 528,
+        "pay_cards": 0,
         "pay_items": 247,
         "money_codes": 0,
         "advances": 21,
@@ -36,6 +37,7 @@
         "cash_checks": 0,
         "factoring_requests": 0,
         "factoring_request_invoices": 0,
+        "pinned_rates": 0,
         "carrier_notes": 4
       },
       "linehaulCents": 30165000,
@@ -383,6 +385,7 @@
         "settlement_periods": 4,
         "settlements": 75,
         "settlement_lines": 553,
+        "pay_cards": 0,
         "pay_items": 212,
         "money_codes": 0,
         "advances": 20,
@@ -400,6 +403,7 @@
         "cash_checks": 0,
         "factoring_requests": 0,
         "factoring_request_invoices": 0,
+        "pinned_rates": 0,
         "carrier_notes": 4
       },
       "linehaulCents": 23376800,
