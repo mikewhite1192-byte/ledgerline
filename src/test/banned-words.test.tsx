@@ -11,6 +11,8 @@ import { toMessages } from "@/components/agent/turn-view";
 import { ChatThread } from "@/components/app/chat-thread";
 import { DataTable } from "@/components/app/data-table";
 import { DemoBanner } from "@/components/app/demo-banner";
+import { TestModeBanner } from "@/components/app/test-mode-banner";
+import { TopBar } from "@/components/app/top-bar";
 import { Paystub } from "@/components/app/paystub";
 import { ProposalCard, type ProposalAudit, type ProposalStatus, type ProposalVerification } from "@/components/app/proposal-card";
 import { EmptyState, ERROR_CATEGORIES, ErrorState, FeatureOff, LoadingState, PageNotFound } from "@/components/app/states";
@@ -2824,7 +2826,7 @@ describe("no internal word on the quarter review, in every state", () => {
 });
 
 describe("no internal word in a shared state", () => {
-  it("every error, the empty, loading, off and not found states, and the demo visit line", () => {
+  it("every error, the empty, loading, off and not found states, the demo visit line, the test-mode banner and the top bar", () => {
     const { container } = render(
       <>
         {ERROR_CATEGORIES.map((c) => (
@@ -2836,8 +2838,12 @@ describe("no internal word in a shared state", () => {
         <FeatureOff name="Pay sweep" />
         <PageNotFound />
         <DemoBanner carrier="Blue Ridge Freight" visitCapCents={flags.judgeAccess.sessionCapCents} />
+        <TestModeBanner />
+        <TopBar menu={null} agentOn testMode needsYouCount={2} offset />
       </>,
     );
+    expect(container.textContent).toContain("Search or ask anything");
+    expect(container.textContent).toContain("Test mode");
     expect(scan(container)).toEqual([]);
   });
 });

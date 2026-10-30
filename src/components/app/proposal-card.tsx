@@ -373,7 +373,8 @@ export function ProposalCard({
   );
 
   return (
-    <Card className={cn("overflow-hidden", className)} aria-label={title} role="article">
+    // A card a person approves keeps its amounts in view when the eye hides the rest.
+    <Card className={cn("overflow-hidden", className)} aria-label={title} role="article" data-amounts="shown">
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 pt-4 sm:px-5">
         <h3 className="min-w-0 flex-1 basis-56 text-h3 text-foreground">{title}</h3>
         <StatusBadge status={status} />

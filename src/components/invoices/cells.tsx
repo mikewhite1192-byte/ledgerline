@@ -23,7 +23,8 @@ export function Day({ value }: { value: string | null }) {
 // the label shows it on hover, focus or tap.
 export function Facts({ items }: { items: { label: string; value: ReactNode; term?: TermId }[] }) {
   return (
-    <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+    // A record page's totals: the figures a person checks before acting, so they never hide.
+    <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3" data-amounts="shown">
       {items.map((i) => (
         <div key={i.label} className="grid min-w-0 gap-0.5">
           <dt className="text-small text-foreground-2">{i.term ? <Term id={i.term}>{i.label}</Term> : i.label}</dt>

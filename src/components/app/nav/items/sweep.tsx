@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const sweep = {
   group: "Pay",
+  area: "pay",
   order: 10,
   href: "/sweep",
   label: "Pay sweep",

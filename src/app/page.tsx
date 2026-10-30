@@ -2,6 +2,7 @@ import Link from "next/link";
 import { flags, stepThroughShown } from "@/config/flags";
 import { DETENTION_SUGGESTION, homeSuggestions, ruleChangeSuggestion, withPaystubSuggestion } from "@/components/agent/suggestions";
 import { AgentChat } from "@/components/agent/turn-view";
+import { ASK_ANCHOR } from "@/components/app/anchors";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { ChatThread } from "@/components/app/chat-thread";
@@ -237,27 +238,32 @@ export default async function Home({
       help={HOW_PAY_WORKS}
       title="Home"
       signOut={signOut}
+      // The bell's dot counts only a read that came back; an unread list never reads as zero.
+      needsYouCount={needsYou && !needsYou.unread ? needsYou.rows.length : undefined}
     >
       <h1 className="sr-only">Home</h1>
       {needsYou ? <NeedsYou view={needsYou} /> : null}
       <NewHereLine />
       <RecordCounts counts={carrier.counts} />
       {flags.agentEnabled ? (
-        <AgentChat
-          initialTurns={agentTurns}
-          streamMode={flags.agentStreamMode}
-          auditorOn={flags.auditorEnabled}
-          timezone={carrier.timezone}
-          stepThrough={stepThroughShown()}
-          suggestions={suggestions}
-          initialDraft={documentInput ? `Check document ${documentInput}` : ruleAsk?.fill}
-          initialHelp={ruleAsk?.help}
-          viewer={{ admin: carrier.admin, adminAboveCents: flags.approverRole.adminAboveCents }}
-          intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
-          disabledReason={
-            flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
-          }
-        />
+        // The top bar's box and the menu's Ask land here and put the cursor in the question box.
+        <div id={ASK_ANCHOR} className="scroll-mt-28">
+          <AgentChat
+            initialTurns={agentTurns}
+            streamMode={flags.agentStreamMode}
+            auditorOn={flags.auditorEnabled}
+            timezone={carrier.timezone}
+            stepThrough={stepThroughShown()}
+            suggestions={suggestions}
+            initialDraft={documentInput ? `Check document ${documentInput}` : ruleAsk?.fill}
+            initialHelp={ruleAsk?.help}
+            viewer={{ admin: carrier.admin, adminAboveCents: flags.approverRole.adminAboveCents }}
+            intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
+            disabledReason={
+              flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
+            }
+          />
+        </div>
       ) : (
         <ChatThread
           messages={[]}

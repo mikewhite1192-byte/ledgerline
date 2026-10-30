@@ -1,11 +1,12 @@
 import type { ComponentProps } from "react";
 import { cn } from "@/lib/cn";
 
-// A border on paper and no shadow: shadows belong only to things that float.
+// A border on paper and no shadow: shadows belong only to things that float. Cards take the
+// largest corner (16 px), a step rounder than the controls inside them.
 export function Card({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
-      className={cn("rounded-lg border border-border bg-card text-card-foreground", className)}
+      className={cn("rounded-2xl border border-border bg-card text-card-foreground", className)}
       {...props}
     />
   );

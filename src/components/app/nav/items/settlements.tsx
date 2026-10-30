@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const settlements = {
   group: "Pay",
+  area: "pay",
   order: 15,
   href: "/settlements",
   label: "Settlements",

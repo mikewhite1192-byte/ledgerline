@@ -8,7 +8,12 @@ import { zoneName } from "@/lib/format/dates";
 import { ThemeToggle } from "./theme-toggle";
 
 // role is the membership's, read with the rest. Required: a page that cannot read it fails closed.
-export type TenantInfo = { name: string; email: string; timezone: string; role: Role };
+export type TenantInfo = {
+  name: string;
+  email: string;
+  timezone: string;
+  role: Role;
+};
 
 // Two letters for the carrier chip: the first letters of the first two words, else the first two
 // letters of the one word.
@@ -19,17 +24,56 @@ export function initials(name: string): string {
   return pick.toUpperCase();
 }
 
-function Initials({ name, className }: { name: string; className?: string }) {
+function Initials({ name, size = "sm", className }: { name: string; size?: "sm" | "md"; className?: string }) {
   return (
     <span
       aria-hidden
       className={cn(
-        "grid size-6 shrink-0 place-items-center rounded-md bg-success-soft text-caption font-semibold text-success",
+        "grid shrink-0 place-items-center rounded-md bg-accent-soft font-semibold text-primary",
+        size === "md" ? "size-8 text-small" : "size-6 text-caption",
         className,
       )}
     >
       {initials(name)}
     </span>
+  );
+}
+
+// A demo visitor's carrier says so next to its name.
+function DemoBadge({ role }: { role: Role }) {
+  if (role !== "judge") return null;
+  return <span className="shrink-0 rounded-sm bg-secondary px-1.5 text-caption text-foreground-2">Demo</span>;
+}
+
+// Who is signed in, the carrier's time zone, the light and dark switch and sign out: the lower half
+// of the carrier menu, and the foot of the phone menu, which has no carrier menu of its own.
+export function AccountParts({ tenant, signOut }: { tenant: TenantInfo; signOut: ReactNode }) {
+  return (
+    <>
+      <div className="grid gap-0.5 border-t border-border pt-3 text-body">
+        <p className="[overflow-wrap:anywhere]">
+          Signed in as <span className="font-medium">{tenant.email}</span>
+        </p>
+        {/* The zone's everyday name ("Central time"), never its id. The name does not change with the date. */}
+        <p className="text-foreground-2">Time zone: {zoneName(tenant.timezone, new Date())}</p>
+      </div>
+      <div className="border-t border-border pt-3">
+        <ThemeToggle />
+      </div>
+      <div className="border-t border-border pt-2">{signOut}</div>
+    </>
+  );
+}
+
+// The carrier at the top of the phone menu: the same tile and name as the sidebar's carrier menu,
+// without the menu (the page keeps exactly one carrier menu).
+export function CarrierTile({ tenant }: { tenant: TenantInfo }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2.5">
+      <Initials name={tenant.name} size="md" />
+      <span className="min-w-0 truncate text-body font-medium text-foreground">{tenant.name}</span>
+      <DemoBadge role={tenant.role} />
+    </div>
   );
 }
 
@@ -60,22 +104,12 @@ export function TenantPanel({
         </div>
         <p className="text-small text-muted-foreground">This login belongs to one carrier</p>
       </div>
-      <div className="grid gap-0.5 border-t border-border pt-3 text-body">
-        <p className="[overflow-wrap:anywhere]">
-          Signed in as <span className="font-medium">{tenant.email}</span>
-        </p>
-        {/* The zone's everyday name ("Central time"), never its id. The name does not change with the date. */}
-        <p className="text-foreground-2">Time zone: {zoneName(tenant.timezone, new Date())}</p>
-      </div>
-      <div className="border-t border-border pt-3">
-        <ThemeToggle />
-      </div>
-      <div className="border-t border-border pt-2">{signOut}</div>
+      <AccountParts tenant={tenant} signOut={signOut} />
     </div>
   );
 }
 
-// The carrier chip in the top bar. A native <details>, so it opens with a click or Enter without
+// The carrier menu at the top of the sidebar. A native <details>, so it opens with a click or Enter without
 // any script; the hook below only closes it on Esc and on a click outside.
 export function TenantSwitcher({ tenant, signOut }: { tenant: TenantInfo; signOut: ReactNode }) {
   const ref = useRef<HTMLDetailsElement>(null);
@@ -103,22 +137,23 @@ export function TenantSwitcher({ tenant, signOut }: { tenant: TenantInfo; signOu
     <details ref={ref} className="group relative">
       <summary
         className={cn(
-          "flex h-9 cursor-pointer list-none items-center gap-2 rounded-lg border border-border bg-card pr-2 pl-1.5",
-          "transition-colors duration-150 hover:bg-accent [&::-webkit-details-marker]:hidden",
+          "flex h-12 w-full cursor-pointer list-none items-center gap-2.5 rounded-lg px-2",
+          "transition-colors duration-150 hover:bg-accent group-open:bg-accent [&::-webkit-details-marker]:hidden",
         )}
       >
-        <Initials name={tenant.name} />
-        <span className="max-w-[14rem] truncate text-body font-medium max-sm:sr-only">{tenant.name}</span>
+        <Initials name={tenant.name} size="md" />
+        <span className="min-w-0 flex-1 truncate text-body font-medium text-foreground">{tenant.name}</span>
+        <DemoBadge role={tenant.role} />
         <span className="sr-only">, carrier menu</span>
         <ChevronDown
           aria-hidden
-          className="size-4 text-muted-foreground transition-transform duration-150 group-open:rotate-180"
+          className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-180"
         />
       </summary>
       <TenantPanel
         tenant={tenant}
         signOut={signOut}
-        className="absolute top-full right-0 z-30 mt-2 shadow-float motion-safe:animate-rise"
+        className="absolute top-full left-0 z-30 mt-1 shadow-float motion-safe:animate-rise"
       />
     </details>
   );

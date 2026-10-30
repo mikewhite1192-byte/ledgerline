@@ -133,7 +133,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
           <CardTitle>The advance</CardTitle>
         </CardHeader>
         <CardBody>
-          <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+          <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2" data-amounts="shown">
             <Item label="Reference">{advance.requestRef}</Item>
             <Item label="Requested">{when(advance.requestedAt)}</Item>
             <Item label="Amount"><Money cents={advance.amountCents} /></Item>
@@ -213,7 +213,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
                 The first payout attempt failed; a retry paid it, so the advance above is the record.
               </p>
             ) : null}
-            <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2" data-amounts="shown">
               <Item label="Suggested">{when(proposal.createdAt)}</Item>
               <Item label="Decided">{when(proposal.decidedAt)}</Item>
               <Item label="Agent's check">
@@ -256,7 +256,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
                   );
                 })}
               </ul>
-              <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-3">
+              <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-3" data-amounts="shown">
                 <Item label="Most that could be paid now"><Money cents={eligibility.maxCents} /></Item>
                 <Item label="Earned, not paid yet"><Money cents={eligibility.earnedUnpaidCents} /></Item>
                 <Item label="Advances still open"><Money cents={eligibility.openCents} /></Item>

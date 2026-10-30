@@ -174,7 +174,9 @@ export function Paystub({
   );
 
   return (
+    // A paystub is approved as a whole, so its amounts never hide.
     <section
+      data-amounts="shown"
       aria-label={`Paystub for ${driver.name}, ${formatPeriod(period.start, period.end)}`}
       className={cn("rounded-lg border border-border bg-card px-4 py-4 text-card-foreground sm:px-6 sm:py-5", className)}
     >

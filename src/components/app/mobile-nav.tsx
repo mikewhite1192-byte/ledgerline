@@ -9,15 +9,21 @@ import { Sheet } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
 
 // Under laptop width the sidebar lives behind this button. Following a link closes the sheet.
+// `top` sits above the menu (the carrier and the area tabs) and `bottom` under the help link (who
+// is signed in, the light and dark switch, sign out); the whole sheet scrolls as one.
 export function MobileNav({
   homeHref = "/",
   help,
+  top,
+  bottom,
   children,
   alwaysShow = false,
   buttonLabel,
 }: {
   homeHref?: string;
   help?: ReactNode;
+  top?: ReactNode;
+  bottom?: ReactNode;
   children: ReactNode;
   // /design opens it at any width, with a visible label.
   alwaysShow?: boolean;
@@ -44,16 +50,19 @@ export function MobileNav({
             <Wordmark size="sm" />
           </Link>
         </div>
-        <nav
-          aria-label="Main"
-          className="flex-1 overflow-y-auto px-3 py-2"
+        <div
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto"
           onClick={(e) => {
             if ((e.target as Element).closest("a")) setOpen(false);
           }}
         >
-          {children}
-        </nav>
-        {help ? <div className="border-t border-border px-5 py-4">{help}</div> : null}
+          {top ? <div className="grid gap-3 px-3 pb-2">{top}</div> : null}
+          <nav aria-label="Main" className="flex-1 px-3 py-2">
+            {children}
+          </nav>
+          {help ? <div className="border-t border-border px-5 py-4">{help}</div> : null}
+          {bottom ? <div className="grid gap-3 px-5 pb-4">{bottom}</div> : null}
+        </div>
       </Sheet>
     </>
   );

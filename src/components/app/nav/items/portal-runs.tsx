@@ -4,6 +4,7 @@ import type { MenuItem } from "../menu-item";
 
 export const portalRuns = {
   group: "Settings",
+  area: "books",
   order: 30,
   href: "/portal-runs",
   label: "Portal runs",
