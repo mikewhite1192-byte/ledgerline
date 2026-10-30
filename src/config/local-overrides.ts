@@ -58,6 +58,7 @@ export const LOCAL_OFF_ONLY = [
   "quarterReviewEnabled",
   "judgeAccess.enabled",
   "moneyCodes.enabled",
+  "moneyCodes.armed",
   "deskLoop.enabled",
   "factoring.enabled",
   "evalCardEnabled",

@@ -58,6 +58,7 @@ const RELEASED_ON = [
   "sweepScheduleEnabled",
   "advancePayouts.armed",
   "moneyCodes.enabled",
+  "moneyCodes.armed",
   "quarterReviewEnabled",
   "iftaEnabled",
   "yearEndEnabled",
@@ -89,9 +90,8 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // Money codes, factoring, the desk loop and escrow releases ship on and unarmed: each arming is
-  // the owner's call, in its own one-line PR.
-  "moneyCodes.armed",
+  // Factoring, the desk loop and escrow releases ship on and unarmed: each arming is the owner's
+  // call, in its own one-line PR.
   "factoring.armed",
   "deskLoop.armed",
   "escrowRelease.armed",
@@ -133,11 +133,10 @@ describe("flags", () => {
     expect(flags.inboundEmailEnabled).toBe(true);
     expect(flags.documentCrop).toBe(true);
     expect(flags.documentMarkupEnabled).toBe(true);
-    // Money codes issue through the simulated provider only, released unarmed with their cap and
-    // date kept.
+    // Money codes issue through the simulated provider only, released with their cap and date kept.
     expect(flags.moneyCodes).toEqual({
       enabled: true,
-      armed: false,
+      armed: true,
       capCents: 50_000,
       perDriverPerDay: 2,
       startDate: "2026-10-28",

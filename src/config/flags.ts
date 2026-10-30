@@ -911,7 +911,7 @@ export const flags: Flags = {
     sessionsPerDay: 150,
     cookieHours: 2,
   },
-  moneyCodes: { enabled: true, armed: false, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
+  moneyCodes: { enabled: true, armed: true, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
   cardRecon: {
     enabled: true,
     limits: {
