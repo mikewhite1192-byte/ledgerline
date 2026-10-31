@@ -96,6 +96,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-10-31): the desk mirrors the dispatch feed, read only, inside
   // its per-wake caps.
   "tmsSync.enabled",
+  // Released by the owner (D-071, 2026-10-31): an admin can switch the synthetic feed's faults on
+  // from Settings > Demo. Each fault still starts off.
+  "tmsSync.demoFaultsEnabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -111,8 +114,6 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The synthetic feed's fault switches ship off: its own one-line PR turns them on.
-  "tmsSync.demoFaultsEnabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -348,7 +349,7 @@ describe("flags", () => {
       maxPagesPerWake: 3,
       maxReadsPerWake: 20,
       pageSize: 100,
-      demoFaultsEnabled: false,
+      demoFaultsEnabled: true,
     });
     expect(isLocalDate(flags.tmsSync.startDate)).toBe(true);
     // The demo-path replay never recorded a sync, so the local run turns it off.

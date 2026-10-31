@@ -1087,7 +1087,8 @@ export const flags: Flags = {
     maxPagesPerWake: 3,
     maxReadsPerWake: 20,
     pageSize: 100,
-    demoFaultsEnabled: false,
+    // On by the owner's call (D-071, 2026-10-31): the panel shows; every fault itself starts off.
+    demoFaultsEnabled: true,
   },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.
   agentAsks: {

@@ -85,6 +85,7 @@ export const LOCAL_OFF_ONLY = [
   "advanceAtPickup.enabled",
   "tmsSync.enabled",
   "cardLoadRuling.enabled",
+  "tmsSync.demoFaultsEnabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

@@ -234,6 +234,8 @@ const fakeQ = {
     if (/SELECT id, load_number, dest_city, dest_state FROM loads/.test(sql)) return fx.CLIP_LOADS;
     // The home page's escalated-turns count, read while verification is on: none waiting.
     if (/^SELECT count\(\*\) AS n\s+FROM turns t\s+JOIN conversations c/.test(sql)) return [{ n: 0 }];
+    // Settings > Demo's dispatch fault panel: a synthetic connection with every fault off.
+    if (/FROM tms_connections/.test(sql)) return [{ system: "synthetic", faults: "{}" }];
     throw new Error(`unexpected read: ${sql.slice(0, 80)}`);
   },
 } as unknown as Queryable;
