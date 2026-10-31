@@ -12,7 +12,7 @@ import { DEMO_ANCHOR } from "../seed/anchor";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import { cashPositionOf, PLANTED_GAP_CENTS } from "../seed/cash-plan";
 import { buildCarrierPlan } from "../seed/plan";
-import { TEST_SHORT_CENTS, withShortFriday } from "../seed/test-short-friday";
+import { TEST_SHORT_CENTS, withShortFriday } from "../seed/test-short-friday.test-util";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { runPayPeriod } from "../settlements/run";
 import { runCashCheck, type CheckDeps } from "./check";

@@ -4,7 +4,7 @@ import { cashPositionOf } from "../seed/cash-plan";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import golden from "../seed/golden.json";
 import { buildCarrierPlan } from "../seed/plan";
-import { withShortFriday } from "../seed/test-short-friday";
+import { withShortFriday } from "../seed/test-short-friday.test-util";
 import {
   billDeferArgsSchema,
   chaseArgsSchema,

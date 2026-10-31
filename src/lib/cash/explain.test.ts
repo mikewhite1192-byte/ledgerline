@@ -5,7 +5,7 @@ import { DEMO_CARRIERS } from "../seed/carriers";
 import { cashPositionOf } from "../seed/cash-plan";
 import golden from "../seed/golden.json";
 import { buildCarrierPlan } from "../seed/plan";
-import { withShortFriday } from "../seed/test-short-friday";
+import { withShortFriday } from "../seed/test-short-friday.test-util";
 import { cents, type CashOption, type CashPosition, type ChaseOption } from "../rules-engine";
 import {
   AiError,

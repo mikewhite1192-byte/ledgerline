@@ -711,22 +711,35 @@ function addendumPlants(plan: CarrierPlan): void {
   }
 }
 
-// The demo's numbers from the engine itself. The duplicate advance: the check names the newer
-// one at its amount (the demo week's two recoveries are pinned in plan.test). The off-route
-// fill-up: the fuel rule charges back the whole of it. The disputed detention: one detention
-// line on the load at the engine's amount for its stop times, the invoice at the engine's
-// amount for the load, and one short payment that leaves the invoice partly paid with exactly
-// the detention owed.
+// The demo's numbers from the engine itself. The duplicate advance: the check names the planted
+// newer one, on its victim, at its amount (the demo week's two recoveries are pinned in
+// plan.test). The off-route fill-up: the fuel rule names the planted purchase, on its victim, and
+// charges back the whole of it. The disputed detention: one detention line on the load at the
+// engine's amount for its stop times, the invoice at the engine's amount for the load, and one
+// short payment that leaves the invoice partly paid with exactly the detention owed.
 function demoNumbers(plan: CarrierPlan): void {
-  const { rows, periods, planted } = plan;
+  const { rows, periods, planted, victims } = plan;
   const input = checkInputOf(rows);
+  const victimId = (code: string) => rows.drivers.find((d) => d.code === code)?.id;
   const dup = runAllChecks(input).filter((f) => f.check === "duplicate_advance");
-  if (dup.length !== 1 || dup[0].amountCents !== DUPLICATE_ADVANCE_CENTS) {
-    fail("the duplicate advance is not the planted amount");
+  if (
+    dup.length !== 1 ||
+    dup[0].amountCents !== DUPLICATE_ADVANCE_CENTS ||
+    dup[0].sources[0]?.table !== "advances" ||
+    dup[0].sources[0]?.id !== planted.duplicateAdvanceIds[1] ||
+    dup[0].driverId === undefined ||
+    dup[0].driverId !== victimId(victims.duplicateAdvance)
+  ) {
+    fail("the duplicate advance is not the planted one at the planted amount");
   }
   const offRoute = findFuelOffRoute(input);
-  if (offRoute.length !== 1 || offRoute[0].suggestedCents !== -OFF_ROUTE_FUEL_CENTS) {
-    fail("the off-route fill-up is not the planted amount");
+  if (
+    offRoute.length !== 1 ||
+    offRoute[0].suggestedCents !== -OFF_ROUTE_FUEL_CENTS ||
+    offRoute[0].fuelPurchaseId !== planted.fuelOffRouteId ||
+    offRoute[0].driverId !== victimId(victims.fuelOffRoute)
+  ) {
+    fail("the off-route fill-up is not the planted one at the planted amount");
   }
 
   const d = planted.disputedDetention;

@@ -18,7 +18,7 @@ import { factoringFor } from "../rules-engine/factoring";
 import { DEMO_ANCHOR } from "../seed/anchor";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
-import { withShortFriday } from "../seed/test-short-friday";
+import { withShortFriday } from "../seed/test-short-friday.test-util";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { localDateOf } from "../time/local-date";
 import { checkPendingFactoring, precheckFactoring, type FactoringDeps } from "./execute";

@@ -42,7 +42,7 @@ Its screening and triage scores are in the next section.
 
 ## How the models score
 
-Each operator model takes the same 30 cases: 28 planted pay, payment, fuel and detention problems
+Each operator model takes the same 28 cases: 26 planted pay, payment, fuel and detention problems
 on the two invented carriers, plus 2 planted injection attempts. Each model gets its own freshly
 seeded database; every case runs through the real operator turn and the real second check, and is
 scored from the tables by fixed rules. `npm run eval` writes `src/lib/eval/results/latest.json`;

@@ -24,7 +24,7 @@ import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
-import { withShortFriday } from "../../../seed/test-short-friday";
+import { withShortFriday } from "../../../seed/test-short-friday.test-util";
 import { SETTLEMENT_ROWS } from "../../../settlements/list";
 import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 

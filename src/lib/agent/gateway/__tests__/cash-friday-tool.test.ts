@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import { instantAt } from "../../../seed/calendar";
 import { summarizePlan } from "../../../seed/summary";
+import { TEST_SHORT_CENTS } from "../../../seed/test-short-friday.test-util";
 import { CASH_PROMPT, CHECKLIST_RULE, OPERATOR_PROMPT, operatorPrompt } from "../../policy";
 import { callTool, MAX_RESULT_CHARS } from "../index";
 import { toolsFor } from "../registry";
@@ -47,6 +48,8 @@ describe("get_cash_friday", () => {
     if (out.decision !== "allowed") throw new Error("not allowed");
     const r = out.result as Record<string, unknown> & { figures: Record<string, number>; rows: unknown[] };
     const want = summarizePlan(plan).cashFriday;
+    // The figures below are the plan's own, so first pin that the plan is short by the test's amount.
+    expect(want.gapCents).toBe(-TEST_SHORT_CENTS);
     expect(r.payDay).toBe(want.payDay);
     expect(r.figures).toMatchObject({
       bankBalanceCents: want.bankBalanceCents,

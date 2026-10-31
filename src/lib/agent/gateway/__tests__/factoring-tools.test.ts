@@ -6,6 +6,7 @@ import { PACKET_INVOICES_SQL } from "../../../factoring/packet";
 import { computeCashFriday } from "../../../rules-engine";
 import { instantAt } from "../../../seed/calendar";
 import { summarizePlan } from "../../../seed/summary";
+import { TEST_SHORT_CENTS } from "../../../seed/test-short-friday.test-util";
 import { callTool } from "../index";
 import type { GatewayContext } from "../types";
 import { context, fixedClock, TENANT, type Handler } from "./fake-db";
@@ -81,6 +82,8 @@ describe("factoring tools switched off", () => {
 
 describe("propose_factoring", () => {
   it("drafts the engine's own figures for the named invoices, the same args as Cash Friday's card, and writes nothing", async () => {
+    // The figures below are the plan's own, so first pin that the plan is short by the test's amount.
+    expect(want.gapCents).toBe(-TEST_SHORT_CENTS);
     const engine = await engineOption();
     expect(engine.invoiceIds).toHaveLength(want.factoringInvoices);
     expect(engine.amountCents).toBe(want.factoringNetCents);
