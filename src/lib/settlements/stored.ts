@@ -165,6 +165,7 @@ export function sourceRowsOf(input: SettlementInput): Map<string, SourceRow | nu
   for (const i of input.items) put("pay_items", i.id, { table: "pay_items", record: i });
   for (const s of input.schedules) put("deduction_schedules", s.id, { table: "deduction_schedules", record: s });
   for (const a of input.advances) put("advances", a.id, { table: "advances", record: a });
+  for (const d of input.deficits) put("driver_deficits", d.id, { table: "driver_deficits", record: d });
   put("drivers", input.driver.id, { table: "other" });
   return rows;
 }

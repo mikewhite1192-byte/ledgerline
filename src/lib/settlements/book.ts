@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
 import { readTenant } from "../data/read";
 import { cents } from "../rules-engine";
@@ -8,8 +9,9 @@ import { readPeriod, readStoredLines, readStoredSettlement } from "./stored";
 
 // The writes a paid settlement makes, the same ones the seed's history makes (paidWritesOf is
 // shared): the settlement to paid with its escrow columns, every pay item its lines cite stamped
-// with it, each advance recovery added, the driver's escrow balance moved to the closing balance,
-// and next week's carried_shortfall item when the week ran short. All inside the caller's tenant
+// with it, each advance recovery added, each deficit recovery added to its deficit (settled by this
+// stub once it is whole), the driver's escrow balance moved to the closing balance, and next week's
+// carried_shortfall item when the week ran short. All inside the caller's tenant
 // transaction, with the settlement and the driver locked. Returns false when the settlement was
 // already paid (a second confirm changes nothing), and throws on anything it cannot write whole,
 // which rolls the caller's transaction back.
@@ -25,6 +27,11 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
   if (stored.status === "paid") return false;
   if (stored.status !== "approved") throw new Error("only an approved settlement is booked");
   const lines = await readStoredLines(q, settlementId);
+  // A stub drafted while deficit recovery was on and paid after it was turned off waits for the
+  // switch: nothing is written, so it never half-books.
+  if (!flags.deficitRecovery.enabled && lines.some((l) => l.kind === "deficit_recovery")) {
+    throw new Error("deficit recovery is off");
+  }
   const period = await readPeriod(q, stored.periodId);
   const tenant = await readTenant(q);
   if (!period || !tenant) throw new Error("the settlement's period or carrier is missing");
@@ -81,6 +88,20 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
       [r.advanceId, r.cents, stored.driverId],
     );
     if (moved !== 1) throw new Error("an advance recovery found no paid advance");
+  }
+
+  for (const d of writes.deficitSettlements) {
+    // The 0080 CHECKs refuse an over-recovery whole (recovered never above the amount, settled only
+    // when whole); a deficit settled by another stub or not this driver's changes no row.
+    const moved = await q.execute(
+      `UPDATE driver_deficits
+          SET recovered_cents = recovered_cents + $2,
+              settled_in = CASE WHEN recovered_cents + $2 = amount_cents THEN CAST($3 AS uuid) END
+        WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
+          AND driver_id = CAST($4 AS uuid) AND settled_in IS NULL`,
+      [d.deficitId, d.cents, settlementId, stored.driverId],
+    );
+    if (moved !== 1) throw new Error("a deficit recovery found no open deficit");
   }
 
   await q.execute(

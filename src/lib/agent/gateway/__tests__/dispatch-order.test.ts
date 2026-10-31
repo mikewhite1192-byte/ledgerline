@@ -423,7 +423,7 @@ describe("callTool dispatch order", () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, IFTA quarter, year-end 1099, trust meter, invoicing, invoice review, customer payments,
     // collections, Cash Friday, factoring, profit brief, quarter review, pay rule change, money code,
-    // carrier memory, fuel rates, escrow release, card load ruling, card pull-back and dispatch mirror switches after this test. remember_note outside a chat turn writes nothing and says so.
+    // carrier memory, fuel rates, escrow release, card load ruling, card pull-back, deficit recovery and dispatch mirror switches after this test. remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.iftaEnabled = true;
@@ -445,6 +445,7 @@ describe("callTool dispatch order", () => {
     flags.escrowRelease.enabled = true;
     flags.cardLoadRuling.enabled = true;
     flags.cardPullback.enabled = true;
+    flags.deficitRecovery.enabled = true;
     const tmsSyncWas = flags.tmsSync.enabled;
     flags.tmsSync.enabled = true;
     onTestFinished(() => {
@@ -469,14 +470,16 @@ describe("callTool dispatch order", () => {
       flags.escrowRelease.enabled = false;
       flags.cardLoadRuling.enabled = false;
       flags.cardPullback.enabled = false;
+      flags.deficitRecovery.enabled = false;
     });
     // The second check's read of the office's notes about the driver: none on file. The card
-    // loads read: no loads on the statement in the window.
+    // loads read: no loads on the statement in the window. The deficits read: none named.
     // A seed plan has no dispatch feed: the dispatch mirror tools answer not_connected.
     const store: Handler = (sql, params) =>
       sql.includes("FROM carrier_notes n") ||
       sql.includes("pr.kind = 'card_load_ruling'") ||
-      sql.includes("FROM tms_connections")
+      sql.includes("FROM tms_connections") ||
+      sql.includes("FROM driver_deficits")
         ? []
         : (screenStore(sql, params) ?? cards(sql, params));
     for (const [name, args] of Object.entries(ARGS)) {

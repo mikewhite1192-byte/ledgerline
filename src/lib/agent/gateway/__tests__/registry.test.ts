@@ -48,6 +48,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   propose_money_code: { tier: "propose", roles: ["operator"] },
   get_card_breaks: { tier: "read", roles: ["operator", "auditor"] },
   get_card_loads: { tier: "read", roles: ["operator", "auditor"] },
+  get_driver_deficits: { tier: "read", roles: ["operator", "auditor"] },
   propose_card_match: { tier: "propose", roles: ["operator"] },
   propose_card_pullback: { tier: "propose", roles: ["operator"] },
   get_cash_friday: { tier: "read", roles: ["operator"] },
@@ -114,6 +115,7 @@ beforeEach(() => {
   flags.cardRecon.enabled = false;
   flags.cardLoadRuling.enabled = false;
   flags.cardPullback.enabled = false;
+  flags.deficitRecovery.enabled = false;
   flags.invoicesEnabled = false;
   flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
@@ -388,6 +390,21 @@ describe("tool registry", () => {
     expect(toolNamed("propose_card_pullback")?.limit).toBeTypeOf("function");
     flags.cardPullback.enabled = false;
     expect(toolsFor("operator")).toHaveLength(21);
+  });
+
+  it("offers the deficits read to the operator and the auditor, only while deficit recovery is on", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    for (const role of AGENT_ROLES) expect(names(role), role).not.toContain("get_driver_deficits");
+    flags.deficitRecovery.enabled = true;
+    expect(names("operator")).toContain("get_driver_deficits");
+    expect(names("auditor")).toContain("get_driver_deficits");
+    expect(names("triage")).not.toContain("get_driver_deficits");
+    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("auditor")).toHaveLength(13);
+    expect(ALWAYS_LOADED).not.toContain("get_driver_deficits");
+    flags.deficitRecovery.enabled = false;
+    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("auditor")).toHaveLength(12);
   });
 
   it("offers the invoice review tools to the operator and the auditor only while both switches are on", () => {

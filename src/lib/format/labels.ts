@@ -75,6 +75,7 @@ const LINE_KIND_LABELS: Record<string, string> = {
   insurance: "Insurance",
   escrow: "Escrow",
   advance_recovery: "Advance repaid",
+  deficit_recovery: "Owed",
 };
 
 export const KNOWN_STATUSES: readonly string[] = Object.keys(STATUS_LABELS);

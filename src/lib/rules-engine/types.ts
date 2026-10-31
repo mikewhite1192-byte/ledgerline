@@ -294,6 +294,9 @@ export const ADVANCE_STATUSES = ["requested", "approved", "paid", "rejected", "c
 export type AdvanceStatus = (typeof ADVANCE_STATUSES)[number];
 export const ADVANCE_SOURCES = ["ui", "email", "seed", "voice"] as const;
 export type AdvanceSource = (typeof ADVANCE_SOURCES)[number];
+// Where a driver's named deficit came from (0078's driver_deficits.source_kind).
+export const DEFICIT_SOURCES = ["card_load", "pullback_shortfall", "cancelled_trip", "ruling"] as const;
+export type DeficitSource = (typeof DEFICIT_SOURCES)[number];
 export const PERIOD_STATUSES = ["open", "approved", "paid"] as const;
 export type PeriodStatus = (typeof PERIOD_STATUSES)[number];
 export const SETTLEMENT_STATUSES = ["draft", "approved", "paid"] as const;
@@ -356,6 +359,23 @@ export type AdvanceRecord = {
   takenBackCents: Cents;
 };
 
+// Money a driver owes by a person's ruling (driver_deficits, 0078), taken back from pay a part at
+// a time (0080). What is left of amount after recovered is still owed; a settled deficit has all
+// of it recovered.
+export type DeficitRecord = {
+  id: string;
+  driverId: string;
+  amountCents: Cents;
+  // Recovered from settlements so far.
+  recoveredCents: Cents;
+  createdAt: Instant;
+  // createdAt as the tenant's own date, as the data layer dates it.
+  createdOn: LocalDate;
+  sourceKind: DeficitSource;
+  // Built from cents, a card's last four and a load number only; it names the source.
+  note: string;
+};
+
 export type SettlementPeriodRecord = {
   id: string;
   periodStart: LocalDate;
@@ -408,6 +428,8 @@ export const LINE_KINDS = [
   "insurance",
   "escrow",
   "advance_recovery",
+  // A named deficit taken back from pay (0080), after the advances.
+  "deficit_recovery",
 ] as const;
 export type LineKind = (typeof LINE_KINDS)[number];
 
@@ -443,10 +465,10 @@ export const NOTE_CATEGORIES = ["at_target", "floor", "cap"] as const;
 export type NoteCategory = (typeof NOTE_CATEGORIES)[number];
 
 // Why a discretionary deduction took less than scheduled or outstanding: the escrow reached its
-// target, the net pay floor stopped it, or the tenant's recovery cap did. `amountCents` is what
-// was not taken.
+// target, the net pay floor stopped it, or the tenant's recovery cap did (one cap on advances and
+// deficits together). `amountCents` is what was not taken.
 export type SettlementNote = {
-  kind: "escrow" | "advance_recovery";
+  kind: "escrow" | "advance_recovery" | "deficit_recovery";
   category: NoteCategory;
   sources: SourceRef[];
   amountCents: Cents;
@@ -462,6 +484,9 @@ export type SettlementInput = {
   items: PayItemRecord[];
   schedules: ScheduleRecord[];
   advances: AdvanceRecord[];
+  // The driver's named deficits, open and settled; empty while deficit recovery is off (the data
+  // layer decides, never the engine).
+  deficits: DeficitRecord[];
   // The escrow balance before this settlement.
   escrowBalanceCents: Cents;
 };
@@ -478,6 +503,7 @@ export type SettlementResult = {
   // What the hard deductions took past gross; next period's carried_shortfall item.
   carryForwardCents: Cents;
   recoveries: { advanceId: string; cents: Cents }[];
+  deficitRecoveries: { deficitId: string; cents: Cents }[];
   // Added to the driver's escrow balance.
   escrowDeltaCents: Cents;
   insuredDays: number;

@@ -864,6 +864,17 @@ export type Flags = {
   // itself: the propose tool, the take-back, the gate, the executor, the ledger hooks, the
   // simulated card provider and the Check route.
   cardPullback: { enabled: boolean; startDate: string };
+  // Deficit recovery on pay day (docs: RECOVERY, 0080): a driver's named deficits (a card load
+  // ruled owed, a pull-back the card could not cover) are taken back from pay after the advances,
+  // oldest first, above the net pay floor and within the same advanceRecoveryCapCents, one cap on
+  // everything recovered from a stub (src/lib/rules-engine/recovery.ts). A part taken stays owed on
+  // the deficit for the next week. The engine reads no switch: the settlement input carries the
+  // deficits only while enabled is on (src/lib/data/read.ts), and booking a paid stub that holds
+  // deficit lines is refused while it is off (src/lib/settlements/book.ts), so a flip never
+  // half-books. startDate (YYYY-MM-DD, the carrier's zone): a period ending before it recovers
+  // nothing, so turning it on never rewrites an old stub. The agent reads deficits with
+  // get_driver_deficits only while it is on.
+  deficitRecovery: { enabled: boolean; startDate: string };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1139,6 +1150,8 @@ export const flags: Flags = {
   advanceParking: { enabled: true, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. A pull is an outside write, in test mode only.
   cardPullback: { enabled: false, startDate: "2026-11-02" },
+  // Off until its own one-line enable PR. Pay math only; nothing moves money on its own.
+  deficitRecovery: { enabled: false, startDate: "2026-11-02" },
 };
 
 applyLocalOverrides(flags);

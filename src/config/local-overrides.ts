@@ -26,8 +26,8 @@ export const LOCAL_OVERRIDABLE = [
 // sets every one of them false so it replays what it recorded. The armed switches for money
 // codes, the desk loop, factoring, escrow releases and the autopilot, the dispatch sync's switch
 // (tmsSync.enabled), the card load ruling's switch, the invoice on finalize's switch
-// (tmsFinalizeInvoice.enabled), parked advances' switch (advanceParking.enabled) and the card
-// pull-back's switch are listed ahead of their own release, while they still ship off, so each
+// (tmsFinalizeInvoice.enabled), parked advances' switch (advanceParking.enabled), the card
+// pull-back's switch and deficit recovery's switch are listed ahead of their own release, while they still ship off, so each
 // release PR changes only its flag: an off-only switch can never be turned on, so listing one early
 // lets the local run do nothing it could not already do.
 export const LOCAL_OFF_ONLY = [
@@ -91,6 +91,7 @@ export const LOCAL_OFF_ONLY = [
   "tmsFinalizeInvoice.enabled",
   "advanceParking.enabled",
   "cardPullback.enabled",
+  "deficitRecovery.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

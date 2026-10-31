@@ -75,6 +75,7 @@ const SENTENCES: Readonly<Record<string, string>> = {
   source_settled_elsewhere: "A reimbursement or deduction on this paystub was already paid on another week.",
   source_changed: "A load behind a pay line is no longer delivered in this week.",
   advance_overrecovered: "An advance would be taken back for more than the driver owes.",
+  deficit_overrecovered: "Money the driver owes would be taken back for more than is owed.",
   schedule_inactive: "A deduction schedule on this paystub is no longer active this week.",
   // the card check's driver pick for a card on no driver's file
   on_load_in_state: "The driver was on a load in that state that day or the day next to it.",

@@ -37,12 +37,14 @@ import {
   cashFridayInputOf,
   checkInputOf,
   customerOf,
+  deficitRecoveryApplies,
   driverOf,
   loadsOf,
   payConfigOf,
   receivablesInputOf,
   settlementInputOf,
   advanceOf,
+  type DeficitRow,
 } from "./records";
 import type { PayConfigRow, TenantRows } from "./rows";
 import { assertIdentifier, TABLE_SPECS, TENANT_TABLES, type TenantTable } from "./tables";
@@ -225,9 +227,18 @@ type DriverRows = Pick<
   | "advances"
 >;
 
+// An advance a card pull-back is taking back right now (card_pullbacks, 0080: a pull still issuing
+// or with no answer yet) is not open for recovery in a pay run: the pull decides what is left, and
+// a pay run that took the same money would leave the pull unable to settle. A pull that went
+// through is on the advance already (taken_back_cents); a failed one takes nothing.
+export const NO_LIVE_PULL =
+  "NOT EXISTS (SELECT 1 FROM card_pullbacks cp WHERE cp.tenant_id = current_tenant_id()" +
+  " AND cp.advance_id = advances.id AND cp.status IN ('issuing', 'unknown'))";
+
 // One driver's rows: the driver, their loads with miles and accessorials, days, items,
-// schedules and advances, and every version of the tenant's pay rules.
-async function readDriverRows(q: Queryable, driverId: string): Promise<DriverRows> {
+// schedules and advances, and every version of the tenant's pay rules. forPay: the advances a pay
+// run may recover from, so none with a live card pull (NO_LIVE_PULL).
+async function readDriverRows(q: Queryable, driverId: string, forPay = false): Promise<DriverRows> {
   const p = [assertUuid(driverId, "driverId")];
   const drivers = await readWhere(q, "drivers", BY_ID, p);
   if (drivers.length !== 1) throw new Error("no such driver");
@@ -240,11 +251,55 @@ async function readDriverRows(q: Queryable, driverId: string): Promise<DriverRow
     driver_days: await readWhere(q, "driver_days", BY_DRIVER, p),
     pay_items: await readWhere(q, "pay_items", BY_DRIVER, p),
     deduction_schedules: await readWhere(q, "deduction_schedules", BY_DRIVER, p),
-    advances: await readWhere(q, "advances", BY_DRIVER, p),
+    advances: await readWhere(q, "advances", forPay ? `${BY_DRIVER} AND ${NO_LIVE_PULL}` : BY_DRIVER, p),
   };
 }
 
-// One driver's settlement for one period, from the escrow balance the driver holds now.
+type DeficitDbRow = {
+  id: string;
+  driver_id: string;
+  amount_cents: unknown;
+  recovered_cents: unknown;
+  created_at: unknown;
+  source_kind: DeficitRow["source_kind"];
+  note: string;
+};
+
+const DEFICITS_SQL = `SELECT CAST(id AS text) AS id, CAST(driver_id AS text) AS driver_id,
+       CAST(amount_cents AS text) AS amount_cents, CAST(recovered_cents AS text) AS recovered_cents,
+       to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
+       source_kind, note
+  FROM driver_deficits
+ WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid)
+ ORDER BY created_at, id`;
+
+function wholeCents(value: unknown, what: string): number {
+  const n = typeof value === "string" && /^-?\d+$/.test(value) ? Number(value) : typeof value === "number" ? value : NaN;
+  if (!Number.isSafeInteger(n)) throw new Error(`${what} did not read as whole cents`);
+  return n;
+}
+
+// One driver's deficits, open and settled, oldest first, each dated in the tenant's zone.
+export async function readDriverDeficits(q: Queryable, driverId: string, timeZone: string): Promise<DeficitRow[]> {
+  const rows = await q.query<DeficitDbRow>(DEFICITS_SQL, [assertUuid(driverId, "driverId")]);
+  return rows.map((r) => {
+    if (typeof r.created_at !== "string") throw new Error("driver_deficits.created_at did not read as text");
+    return {
+      id: r.id,
+      driver_id: r.driver_id,
+      amount_cents: wholeCents(r.amount_cents, "driver_deficits.amount_cents"),
+      recovered_cents: wholeCents(r.recovered_cents, "driver_deficits.recovered_cents"),
+      created_at: r.created_at,
+      created_on: localDateOf(r.created_at, timeZone),
+      source_kind: r.source_kind,
+      note: r.note,
+    };
+  });
+}
+
+// One driver's settlement for one period, from the escrow balance the driver holds now. The
+// advances are the ones a pay run may recover from (no live card pull), and the deficits are read
+// only while deficit recovery applies to the period.
 export async function readSettlementInput(
   q: Queryable,
   driverId: string,
@@ -254,9 +309,13 @@ export async function readSettlementInput(
     assertUuid(periodId, "periodId"),
   ]);
   if (periods.length !== 1) throw new Error("no such pay period");
-  const rows = await readDriverRows(q, driverId);
+  const rows = await readDriverRows(q, driverId, true);
   const period = { start: periods[0].period_start, end: periods[0].period_end };
-  return settlementInputOf(rows, driverId, period);
+  if (!deficitRecoveryApplies(period)) return settlementInputOf(rows, driverId, period);
+  const tenant = await readTenant(q);
+  if (!tenant) throw new Error("no tenant is set");
+  const deficits = await readDriverDeficits(q, driverId, tenant.timezone);
+  return settlementInputOf({ ...rows, driver_deficits: deficits }, driverId, period);
 }
 
 // What advanceEligibility needs for one request: the date is the tenant's own, the loads
