@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
 import type { Queryable } from "@/lib/db";
@@ -19,10 +19,15 @@ const CUSTOMER = "22222222-2222-4222-8222-222222222222";
 const NOW = new Date("2026-10-27T15:00:00Z");
 const CAP = 10_000;
 
-const saved = { enabled: flags.carrierMemoryEnabled, limits: flags.carrierMemoryLimits };
+const saved = { enabled: flags.carrierMemoryEnabled, limits: flags.carrierMemoryLimits, tms: flags.tmsSync.enabled };
+// The dispatch feed line (summary-dispatch.test.ts) is off here, as in the replay's local mode.
+beforeEach(() => {
+  flags.tmsSync.enabled = false;
+});
 afterEach(() => {
   flags.carrierMemoryEnabled = saved.enabled;
   flags.carrierMemoryLimits = saved.limits;
+  flags.tmsSync.enabled = saved.tms;
 });
 
 const proposalId = (i: number) => `66666666-6666-4666-8666-${String(i).padStart(12, "0")}`;

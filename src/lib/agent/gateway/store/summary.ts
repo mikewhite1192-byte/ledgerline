@@ -6,6 +6,7 @@ import type { Queryable } from "../../../db";
 import { notesSection, type NoteRow } from "../../../memory/notes";
 import { dollars } from "../../../money/format";
 import { localDateOf, periodContaining } from "../../../time/local-date";
+import { feedLine, readFeedState } from "../../../tms/read";
 import { isAuditConcern } from "../../auditor/words";
 import { STATE_HEADER } from "../../policy";
 import { focusLine, type FocusSubject } from "../focus";
@@ -203,6 +204,18 @@ export async function buildStateSummary(
   }
   sections.push({ title: "Carrier", lines: header, maxChars: 300 });
   sections.push({ title: "Pay rules", lines: rules, maxChars: 600 });
+  // One line on the dispatch feed while the mirror is on: the system, its last full pass, today's
+  // events and flagged loads, or "not connected". Counts and codes only, never dispatch text, and
+  // fixed words (never the error) when the feed cannot be read.
+  if (flags.tmsSync.enabled === true) {
+    let feed: string;
+    try {
+      feed = feedLine(await readFeedState(q, today), zone);
+    } catch {
+      feed = "not available";
+    }
+    sections.push({ title: "Dispatch feed", lines: [feed], maxChars: 160 });
+  }
 
   if (focus !== null && flags.agentFocusEnabled) {
     sections.push({ title: "Subject", lines: [focusLine(focus, money)], maxChars: 800 });

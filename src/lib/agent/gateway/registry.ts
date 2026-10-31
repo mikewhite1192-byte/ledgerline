@@ -33,6 +33,9 @@ import { getProposal } from "./tools/read/get-proposal";
 import { getQuarterReview } from "./tools/read/get-quarter-review";
 import { ALWAYS_LOADED } from "./loading";
 import { getSettlements } from "./tools/read/get-settlements";
+import { getTmsEvents } from "./tools/read/get-tms-events";
+import { getTmsFleet } from "./tools/read/get-tms-fleet";
+import { getTmsLoad } from "./tools/read/get-tms-load";
 import { getPayItems } from "./tools/read/get-pay-items";
 import { getPinnedRates } from "./tools/read/get-pinned-rates";
 import { getPaymentsIn } from "./tools/read/get-payments-in";
@@ -136,6 +139,11 @@ const TOOLS: readonly AnyToolDef[] = [
   listEscrowReleasesDue,
   getEscrowStatement,
   proposeEscrowRelease,
+  // Offered only while flags.tmsSync.enabled is on (each tool's enabled switch): reads of the
+  // dispatch mirror, never a write to it.
+  getTmsLoad,
+  getTmsEvents,
+  getTmsFleet,
 ];
 
 function build(): Readonly<Record<string, AnyToolDef>> {

@@ -423,7 +423,7 @@ describe("callTool dispatch order", () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, IFTA quarter, year-end 1099, trust meter, invoicing, invoice review, customer payments,
     // collections, Cash Friday, factoring, profit brief, quarter review, pay rule change, money code,
-    // carrier memory, fuel rates, escrow release and card load ruling switches after this test. remember_note outside a chat turn writes nothing and says so.
+    // carrier memory, fuel rates, escrow release, card load ruling and dispatch mirror switches after this test. remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.iftaEnabled = true;
@@ -444,7 +444,10 @@ describe("callTool dispatch order", () => {
     flags.quarterReviewEnabled = true;
     flags.escrowRelease.enabled = true;
     flags.cardLoadRuling.enabled = true;
+    const tmsSyncWas = flags.tmsSync.enabled;
+    flags.tmsSync.enabled = true;
     onTestFinished(() => {
+      flags.tmsSync.enabled = tmsSyncWas;
       flags.reportsEnabled = false;
       flags.iftaEnabled = false;
       flags.yearEndEnabled = false;
@@ -467,8 +470,11 @@ describe("callTool dispatch order", () => {
     });
     // The second check's read of the office's notes about the driver: none on file. The card
     // loads read: no loads on the statement in the window.
+    // A seed plan has no dispatch feed: the dispatch mirror tools answer not_connected.
     const store: Handler = (sql, params) =>
-      sql.includes("FROM carrier_notes n") || sql.includes("pr.kind = 'card_load_ruling'")
+      sql.includes("FROM carrier_notes n") ||
+      sql.includes("pr.kind = 'card_load_ruling'") ||
+      sql.includes("FROM tms_connections")
         ? []
         : (screenStore(sql, params) ?? cards(sql, params));
     for (const [name, args] of Object.entries(ARGS)) {

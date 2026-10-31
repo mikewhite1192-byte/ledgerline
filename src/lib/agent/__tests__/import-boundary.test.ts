@@ -23,7 +23,9 @@ import { describe, expect, it } from "vitest";
 //       surface is reads only: adapter-surface.test.ts), under factoring/ only read, packet, words
 //       and propose (never the executor that submits to the factoring partner, or its switches),
 //       and under escrow/ only read, statement, due and switches (never the release executor or
-//       its reconcile pass).
+//       its reconcile pass), and under tms/ only clocks, status, mirror, read and differences
+//       (never the sync, which alone writes the dispatch mirror, or its wake-ups). No reachable
+//       file writes a tms_* table: no INSERT INTO, UPDATE or DELETE FROM one in its source.
 //   P3. Nothing reachable from any agent file uploads, stores or reads a document with the model:
 //       under documents/ only types, schema, match and candidates, and under ratecon/ only schema,
 //       check, args and candidates (never the read, the store or the service).
@@ -58,6 +60,9 @@ const MONEY_CODES_OK = /^src\/lib\/money-codes\/(read|words|switches)\.[cm]?[jt]
 const ADAPTERS_OK = /(^|\/)adapters\/(types|tms(-source)?\/[\w-]+)\.[cm]?[jt]sx?$/i;
 const FACTORING_OK = /^src\/lib\/factoring\/(read|packet|words|propose)\.[cm]?[jt]sx?$/i;
 const ESCROW_OK = /^src\/lib\/escrow\/(read|statement|due|switches)\.[cm]?[jt]sx?$/i;
+const TMS_OK = /^src\/lib\/tms\/(clocks|status|mirror|read|differences)\.[cm]?[jt]sx?$/i;
+// A statement that writes a dispatch mirror table, wherever it sits in a file's text.
+const TMS_WRITE = /\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+tms_\w+/i;
 const DOCUMENTS_OK = /^src\/lib\/documents\/(types|schema|match|candidates)\.[cm]?[jt]sx?$/i;
 const RATECON_OK = /^src\/lib\/ratecon\/(schema|check|args|candidates)\.[cm]?[jt]sx?$/i;
 // Every name that loads a module with no import line; eslint.config.mjs bans the same set. Regexes,
@@ -256,7 +261,8 @@ function ledgerViolations(root: string, agentFiles: string[], graph: Graph): str
     const adapter = /(^|\/)adapters(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !ADAPTERS_OK.test(rel);
     const factoring = /^src\/lib\/factoring(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !FACTORING_OK.test(rel);
     const escrow = /^src\/lib\/escrow(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !ESCROW_OK.test(rel);
-    if (!money && !codes && !adapter && !factoring && !escrow) continue;
+    const tms = /^src\/lib\/tms(\/|\.[cm]?[jt]sx?$)/i.test(rel) && !TMS_OK.test(rel);
+    if (!money && !codes && !adapter && !factoring && !escrow && !tms) continue;
     out.push(chainTo(root, parent, file));
   }
   return out;
@@ -279,6 +285,21 @@ function documentViolations(root: string, agentFiles: string[], graph: Graph): s
   return out;
 }
 
+// P2, the mirror's half: every file the walk reaches, read as text, names no write to a tms_*
+// table. The sync is already refused above; this catches a write written anywhere else. Test
+// files are skipped: they seed the mirror as fixtures and never ship.
+const TEST_FILE = /(\.(test|spec)\.[cm]?[jt]sx?$)|(^|\/)__tests__\//i;
+function tmsWriteViolations(root: string, agentFiles: string[], graph: Graph, host: Host): string[] {
+  const parent = reachable(agentFiles, graph);
+  const out: string[] = [];
+  for (const file of parent.keys()) {
+    if (TEST_FILE.test(relTo(root, file))) continue;
+    const text = host.read(file);
+    if (text !== undefined && TMS_WRITE.test(text)) out.push(chainTo(root, parent, file));
+  }
+  return out;
+}
+
 function check(root: string, agentFiles: string[], host: Host) {
   const graph = buildGraph(root, agentFiles, host);
   return {
@@ -287,6 +308,7 @@ function check(root: string, agentFiles: string[], host: Host) {
     boundary: boundaryViolations(root, agentFiles, graph),
     ledger: ledgerViolations(root, agentFiles, graph),
     documents: documentViolations(root, agentFiles, graph),
+    tmsWrites: tmsWriteViolations(root, agentFiles, graph, host),
   };
 }
 
@@ -326,6 +348,12 @@ describe("agent import boundary, on the real tree", () => {
 
   it("P2: nothing an agent file reaches writes money or calls a payment or accounting adapter", () => {
     expect(result.ledger).toEqual([]);
+  });
+
+  it("P2: the agent reads the dispatch mirror and nothing it reaches writes a tms table", () => {
+    expect(reached).toContain("src/lib/tms/read.ts");
+    expect(reached).not.toContain("src/lib/tms/sync.ts");
+    expect(result.tmsWrites).toEqual([]);
   });
 
   it("P3: nothing an agent file reaches uploads, stores or reads a document with the model", () => {
@@ -413,6 +441,30 @@ describe("the walker itself, on fixture trees", () => {
       "src/lib/agent/gateway/bad.ts -> src/lib/escrow/execute.ts",
       "src/lib/agent/gateway/check.ts -> src/lib/escrow/reconcile.ts",
     ]);
+  });
+
+  it("lets the gateway read the dispatch mirror, never reach the sync or write a tms table", () => {
+    const out = run({
+      "src/lib/agent/gateway/tms.ts":
+        'import { r } from "../../tms/read";\nimport "../../tms/differences";\nimport "../../tms/clocks";',
+      "src/lib/tms/read.ts": 'import "./status";\nimport "./clocks";\nconst q = "SELECT id FROM tms_loads";',
+      "src/lib/tms/differences.ts": "",
+      "src/lib/tms/clocks.ts": "",
+      "src/lib/tms/status.ts": "",
+      "src/lib/agent/gateway/bad.ts": 'export { pullTms } from "@/lib/tms/sync";',
+      "src/lib/agent/gateway/wake.ts": 'import "../../tms/wakeups";',
+      "src/lib/tms/sync.ts": "export const pullTms = 1;",
+      "src/lib/tms/wakeups.ts": "",
+      "src/lib/agent/gateway/sneaky.ts": 'import "../../loads/helper";',
+      "src/lib/loads/helper.ts": "const sql = `" + "UPDATE" + " tms_loads SET flags = '[]'`;",
+      "src/lib/agent/gateway/seed.test.ts": "const sql = `" + "INSERT INTO" + " tms_loads (id) VALUES (1)`;",
+    });
+    expect(out.problems).toEqual([]);
+    expect(out.ledger.sort()).toEqual([
+      "src/lib/agent/gateway/bad.ts -> src/lib/tms/sync.ts",
+      "src/lib/agent/gateway/wake.ts -> src/lib/tms/wakeups.ts",
+    ]);
+    expect(out.tmsWrites).toEqual(["src/lib/agent/gateway/sneaky.ts -> src/lib/loads/helper.ts"]);
   });
 
   it("lets the gateway read money codes, never issue, reveal or request one", () => {
