@@ -1118,6 +1118,30 @@ describe("a finalized dispatch event drafts our load's invoice card", () => {
     expect(await invoiceCardsOf(f)).toEqual([]);
   });
 
+  it("drafts nothing for a finalize whose clocks disagree, or a load no longer finalized there", async () => {
+    const f = await carrier("tms-final-unclear");
+    const { finalId } = await finalized(f);
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        "UPDATE tms_status_events SET clock_flag = 'clocks_disagree' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [finalId],
+      ),
+    );
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "nothing", category: "tms_time_unclear" });
+    await admin.withTenant(f.tenantId, async (q) => {
+      await q.execute(
+        "UPDATE tms_status_events SET clock_flag = NULL WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [finalId],
+      );
+      // Already invoiced in the dispatch system when the finalize is worked.
+      await q.execute(
+        "UPDATE tms_loads SET status_code = 'invoiced' WHERE tenant_id = current_tenant_id() AND external_id = 'A-1'",
+      );
+    });
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "nothing", category: "not_finalized_now" });
+    expect(await invoiceCardsOf(f)).toEqual([]);
+  });
+
   it("drafts nothing for a load we still have in transit", async () => {
     const f = await carrier("tms-final-transit");
     const { l, finalId } = await finalized(f, false);
