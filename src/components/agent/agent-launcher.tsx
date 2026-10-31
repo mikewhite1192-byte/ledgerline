@@ -7,8 +7,12 @@ import { ASK_ANCHOR } from "@/components/app/anchors";
 import type { Suggestion } from "@/components/app/prompt-chips";
 import { isCardAnchor } from "@/lib/home/card-anchor";
 import { AgentPanel, PANEL_ID, type AgentPanelConfig, type PanelRequest } from "./agent-panel";
+import { AskCard, AsksContext } from "./ask-card";
+import { askDraft } from "./asks";
 import type { PageFocus } from "./page-focus";
 import { PanelContext, type AgentOpening, type PanelControl } from "./panel-context";
+import { useLiveAsks } from "./use-live-asks";
+import { ASK_WORDS, badgeCount, moreWaiting } from "./words";
 
 // Laptop width, where the card floats at the bottom right; narrower, it is the modal sheet. Read
 // when it opens. Without a media query to ask, it floats.
@@ -34,12 +38,18 @@ function otherDialogOpen(): boolean {
   return Array.from(document.querySelectorAll("dialog[open]")).some((d) => d.id !== PANEL_ID);
 }
 
+// How long the arrival line stays in the polite live region before it clears.
+const ANNOUNCE_MS = 3_000;
+
 // The round button at the bottom right of every signed-in page, Home included, the agent card it
 // opens, and the "/" shortcut. AppShell renders this while the agent switch is on; with it off
 // nothing here renders and no request is made. The card also opens as the page loads when Home
 // asks for it (`opening`: ?ask=, ?rule=1, ?document=, ?paystub=, ?new=1) or the address ends in
 // #ask or #card-<id>, and again when the hash changes to one of those. Closing the card (Esc, its
-// minimize button, the sheet's X on a phone) puts the cursor back on this button.
+// minimize button, the sheet's X on a phone) puts the cursor back on this button. While the
+// agent's questions are on (config.asksOn), the button carries how many show now, and the newest
+// one this person has not closed slides up above it in a bubble with its buttons; the bubble never
+// opens the card by itself and hides while the card is open (the card's thread shows them).
 export function AgentLauncher({
   config,
   focus,
@@ -123,47 +133,104 @@ export function AgentLauncher({
 
   const control = useMemo<PanelControl>(() => ({ open: (opts) => show(opts) }), [show]);
 
+  const asks = useLiveAsks({
+    on: config.asksOn === true,
+    storeKey: config.asksKey,
+    onQuestion: (ask) => show({ draft: askDraft(ask) }),
+  });
+  const current = open ? null : asks.current;
+  const settled = current ? asks.control.states[current.id]?.settled !== undefined : false;
+  const badge = badgeCount(asks.openCount);
+
+  // "New question from the agent", once per question, as it first shows in the bubble.
+  const [announce, setAnnounce] = useState("");
+  const announced = useRef(new Set<string>());
+  const currentId = current?.id ?? null;
+  const currentKind = current?.kind ?? null;
+  useEffect(() => {
+    if (currentId === null || announced.current.has(currentId)) return;
+    const say = setTimeout(() => {
+      announced.current.add(currentId);
+      setAnnounce(currentKind === "told" ? ASK_WORDS.arrivedTold : ASK_WORDS.arrivedAsk);
+    }, 50);
+    return () => clearTimeout(say);
+  }, [currentId, currentKind]);
+  useEffect(() => {
+    if (!announce) return;
+    const quiet = setTimeout(() => setAnnounce(""), ANNOUNCE_MS);
+    return () => clearTimeout(quiet);
+  }, [announce]);
+
   return (
     <PanelContext.Provider value={control}>
-      {children}
-      <button
-        ref={button}
-        type="button"
-        aria-label="Ask the agent"
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        aria-controls={started ? PANEL_ID : undefined}
-        onClick={() => {
-          if (isOpen.current) {
-            isOpen.current = false;
-            setOpen(false);
-          } else {
-            show();
-          }
-        }}
-        className={cn(
-          "fixed right-4 bottom-4 z-30 grid size-12 cursor-pointer place-items-center rounded-full bg-primary text-primary-foreground shadow-float sm:right-6 sm:bottom-6",
-          "transition-colors duration-150 hover:bg-primary-hover focus-visible:outline-offset-4 print:hidden",
-          // The floating card covers this corner; hidden, the button is out of sight and out of
-          // the tab order until the card closes.
-          open && !modal && "invisible",
-        )}
-      >
-        <MessageCircle aria-hidden className="size-5" />
-      </button>
-      {started ? (
-        <AgentPanel
-          open={open}
-          modal={modal}
-          expanded={expanded}
-          onExpand={setExpanded}
-          onClose={closed}
-          focus={focus}
-          config={config}
-          suggestions={suggestions}
-          request={request}
-        />
-      ) : null}
+      <AsksContext.Provider value={asks.control}>
+        {children}
+        <p className="sr-only" aria-live="polite" data-testid="ask-announcer">
+          {announce}
+        </p>
+        {current ? (
+          <section
+            aria-label={ASK_WORDS.region}
+            className="fixed right-4 bottom-[4.75rem] left-4 z-30 motion-safe:animate-rise sm:right-6 sm:bottom-[5.25rem] sm:left-auto sm:w-[360px] print:hidden"
+          >
+            <AskCard
+              ask={current}
+              state={asks.control.states[current.id]}
+              control={asks.control}
+              more={moreWaiting(settled ? asks.openCount : asks.openCount - 1)}
+              onClose={() => asks.dismiss(current.id)}
+              className="shadow-float"
+            />
+          </section>
+        ) : null}
+        <button
+          ref={button}
+          type="button"
+          aria-label={badge ? `Ask the agent, ${asks.openCount} waiting` : "Ask the agent"}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-controls={started ? PANEL_ID : undefined}
+          onClick={() => {
+            if (isOpen.current) {
+              isOpen.current = false;
+              setOpen(false);
+            } else {
+              show();
+            }
+          }}
+          className={cn(
+            "fixed right-4 bottom-4 z-30 grid size-12 cursor-pointer place-items-center rounded-full bg-primary text-primary-foreground shadow-float sm:right-6 sm:bottom-6",
+            "transition-colors duration-150 hover:bg-primary-hover focus-visible:outline-offset-4 print:hidden",
+            // The floating card covers this corner; hidden, the button is out of sight and out of
+            // the tab order until the card closes.
+            open && !modal && "invisible",
+          )}
+        >
+          <MessageCircle aria-hidden className="size-5" />
+          {badge ? (
+            <span
+              aria-hidden
+              data-testid="ask-badge"
+              className="absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full border-2 border-background bg-destructive px-1 text-caption leading-none font-semibold text-destructive-foreground"
+            >
+              {badge}
+            </span>
+          ) : null}
+        </button>
+        {started ? (
+          <AgentPanel
+            open={open}
+            modal={modal}
+            expanded={expanded}
+            onExpand={setExpanded}
+            onClose={closed}
+            focus={focus}
+            config={config}
+            suggestions={suggestions}
+            request={request}
+          />
+        ) : null}
+      </AsksContext.Provider>
     </PanelContext.Provider>
   );
 }

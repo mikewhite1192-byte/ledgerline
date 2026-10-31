@@ -205,6 +205,17 @@ export async function snoozeAsk(q: Queryable, askId: string, untilIso: string, n
   return n === 1;
 }
 
+// "Got it" on a told line: an open one becomes done (0072 lets a told line move open -> done).
+export async function acknowledgeTold(q: Queryable, askId: string, now: Date): Promise<boolean> {
+  if (!isUuid(askId)) return false;
+  const n = await q.execute(
+    `UPDATE agent_asks SET status = 'done', updated_at = CAST($2 AS timestamptz)
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind = 'told' AND status = 'open'`,
+    [askId, now.toISOString()],
+  );
+  return n === 1;
+}
+
 // After a person's approval went through the gate: the live ask about that proposal is answered.
 export async function answerAsksFor(q: Queryable, proposalId: string, sub: string, now: Date): Promise<number> {
   if (!isUuid(proposalId)) return 0;

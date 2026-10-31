@@ -39,7 +39,10 @@ export type Part =
   | { kind: "link"; href: string; label: string }
   | { kind: "error"; category: string }
   // "How this was worked out" for the turn, or for one proposal card when proposalId is set.
-  | { kind: "trace"; turnId: string; proposalId?: string; load?: TraceLoader; stepThrough?: boolean };
+  | { kind: "trace"; turnId: string; proposalId?: string; load?: TraceLoader; stepThrough?: boolean }
+  // Something the agent said by itself, drawn by its owner (the agent card's question, with its
+  // buttons). Keyed by what it shows, so its state stays with it as the thread grows.
+  | { kind: "node"; key: string; node: ReactNode };
 
 export type ChatMessage = { id: string; role: "user" | "agent"; at?: string; parts: Part[] };
 
@@ -273,6 +276,12 @@ export function ChatThread({
                       return (
                         <div key={i} className="rounded-lg border border-border bg-card">
                           <ErrorState category={p.category} className="py-6" />
+                        </div>
+                      );
+                    case "node":
+                      return (
+                        <div key={`node:${p.key}`} className="min-w-0">
+                          {p.node}
                         </div>
                       );
                     case "trace":

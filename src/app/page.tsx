@@ -1,4 +1,5 @@
 import { flags } from "@/config/flags";
+import { dismissKey } from "@/components/agent/asks";
 import type { AgentOpening } from "@/components/agent/panel-context";
 import {
   defaultSuggestions,
@@ -227,7 +228,13 @@ export default async function Home({
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
+      tenant={{
+        name: carrier.name,
+        email: carrier.email,
+        timezone: carrier.timezone,
+        role: carrier.role,
+        asksKey: dismissKey(carrier.session.tenantId, carrier.session.sub),
+      }}
       nav={appNav("/")}
       help={HOW_PAY_WORKS}
       title="Home"

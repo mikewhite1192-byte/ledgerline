@@ -11,10 +11,12 @@ import { useDetailsMenu } from "@/components/ui/details-menu";
 import type { TurnView } from "@/lib/agent/view";
 import { cn } from "@/lib/cn";
 import type { Role } from "@/lib/roles";
+import { AskCard, useAsks, type AsksControl } from "./ask-card";
+import { asksOf, type LiveAsk } from "./asks";
 import { FloatingDialog } from "./floating-dialog";
 import type { PageFocus } from "./page-focus";
 import type { Viewer } from "./proposal-card-from";
-import { AgentChat } from "./turn-view";
+import { AgentChat, type Aside } from "./turn-view";
 import { TRUST_LINE } from "./words";
 
 // What the page's server read for the chat, the same settings Home passes its own chat.
@@ -30,6 +32,10 @@ export type AgentPanelConfig = {
   greeting: string;
   // The documents page, for the "+" menu, while documents are on.
   documentsHref?: string;
+  // flags.agentAsks.enabled: the launcher asks for the agent's questions and shows them.
+  asksOn?: boolean;
+  // asks:<tenant>:<sub>, where this browser keeps the questions this person closed.
+  asksKey?: string;
 };
 
 // One ask to open the card, numbered so each new one is seen once: text for the box and its help
@@ -87,20 +93,67 @@ function isTurnList(value: unknown): value is TurnView[] {
   );
 }
 
-// The caller's newest conversation. Anything but a clean 200 (the switch off, signed out, a slow
-// or failed read) starts an empty thread: the panel never opens on an error.
-async function readRecent(): Promise<TurnView[]> {
+type ThreadItem = { type: "turn" | "ask"; id: string };
+
+function threadOf(value: unknown): ThreadItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(
+    (x): x is ThreadItem =>
+      typeof x === "object" &&
+      x !== null &&
+      ((x as ThreadItem).type === "turn" || (x as ThreadItem).type === "ask") &&
+      typeof (x as ThreadItem).id === "string",
+  );
+}
+
+type Recent = { turns: TurnView[]; asks: LiveAsk[]; order: ThreadItem[] };
+
+const NO_RECENT: Recent = { turns: [], asks: [], order: [] };
+
+// The caller's newest conversation, with the agent's questions showing now and the order of both
+// by time. Anything but a clean 200 (the switch off, signed out, a slow or failed read) starts an
+// empty thread: the panel never opens on an error.
+async function readRecent(): Promise<Recent> {
   try {
     const res = await fetch("/api/agent/recent", { cache: "no-store" });
-    if (res.status !== 200) return [];
-    const body = (await res.json()) as { turns?: unknown };
-    return isTurnList(body.turns) ? body.turns : [];
+    if (res.status !== 200) return NO_RECENT;
+    const body = (await res.json()) as { turns?: unknown; asks?: unknown; thread?: unknown };
+    if (!isTurnList(body.turns)) return NO_RECENT;
+    return { turns: body.turns, asks: asksOf(body.asks), order: threadOf(body.thread) };
   } catch {
-    return [];
+    return NO_RECENT;
   }
 }
 
-type Thread = { key: number; turns: TurnView[] };
+// The thread's questions, each after the turn it followed in time; then any the launcher read
+// after the thread loaded, after its last turn. One answered, put off or seen here shows no more,
+// except as the line after its Yes.
+function asidesOf(thread: Thread, control: AsksControl | null): Aside[] {
+  if (!control) return [];
+  const out: Aside[] = [];
+  const placed = new Set<string>();
+  const byId = new Map(thread.asks.map((a) => [a.id, a]));
+  const place = (ask: LiveAsk, after: string | null) => {
+    if (placed.has(ask.id)) return;
+    placed.add(ask.id);
+    const state = control.states[ask.id];
+    if (control.gone.has(ask.id) && state?.settled === undefined) return;
+    out.push({ id: ask.id, after, node: <AskCard ask={ask} state={state} control={control} /> });
+  };
+  let after: string | null = null;
+  for (const item of thread.order) {
+    if (item.type === "turn") after = item.id;
+    else {
+      const ask = byId.get(item.id.toLowerCase());
+      if (ask) place(ask, after);
+    }
+  }
+  const last = thread.turns.at(-1)?.id ?? null;
+  for (const ask of [...control.live].reverse()) place(ask, last);
+  return out;
+}
+
+type Thread = { key: number; turns: TurnView[]; asks: LiveAsk[]; order: ThreadItem[] };
 
 // The card's title and its one menu item. A native <details>, like the carrier menu: a click or
 // Enter opens it, Esc and a click outside close it. The title is the thread's first question, or
@@ -207,7 +260,8 @@ export function AgentPanel({
     loading.current = true;
     if (reload) reloaded.current = request.n;
     const left = toCard ? null : leftConversation();
-    void readRecent().then((t) => {
+    void readRecent().then((recent) => {
+      const t = recent.turns;
       const newest = t.at(-1)?.conversationId ?? null;
       // ?new=1 leaves the newest conversation the way "New conversation" does, so the next page
       // does not bring it back either.
@@ -215,9 +269,10 @@ export function AgentPanel({
       // A card link brings the left conversation back, so the next page shows it too.
       else if (toCard && leftConversation() !== null) clearStored();
       const turns = fresh || (left !== null && newest === left) ? [] : t;
-      if (reload) setThread((now) => ({ key: (now?.key ?? 0) + 1, turns }));
+      const read = { turns, asks: recent.asks, order: recent.order };
+      if (reload) setThread((now) => ({ ...read, key: (now?.key ?? 0) + 1 }));
       // "New conversation" pressed while the read ran wins over the read.
-      else setThread((now) => now ?? { key: 0, turns });
+      else setThread((now) => now ?? { ...read, key: 0 });
     });
   }, [open, fresh, toCard, request.n, request.scrollTo]);
 
@@ -240,6 +295,7 @@ export function AgentPanel({
     card.scrollIntoView?.({ block: "center" });
   }, [open, thread, request.n, request.scrollTo]);
 
+  const asks = useAsks();
   const focusKey = focus ? `${focus.table}:${focus.id}` : null;
   const about = focus && focusKey !== dropped ? focus : null;
   const draft =
@@ -252,7 +308,7 @@ export function AgentPanel({
     if (shown.current !== null) writeStored(`${LEFT}${shown.current}`);
     setSpentDraft(request.n);
     setTitle(null);
-    setThread((now) => ({ key: (now?.key ?? 0) + 1, turns: [] }));
+    setThread((now) => ({ key: (now?.key ?? 0) + 1, turns: [], asks: now?.asks ?? [], order: now?.order ?? [] }));
     setNudge((n) => n + 1);
   }
 
@@ -332,6 +388,7 @@ export function AgentPanel({
             focus={about ? { table: about.table, id: about.id } : null}
             onConversation={onConversation}
             onFirstQuestion={setTitle}
+            asides={asidesOf(thread, asks)}
           />
         ) : (
           <LoadingState label="Opening your conversation" className="px-4 py-4" />

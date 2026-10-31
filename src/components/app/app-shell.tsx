@@ -280,5 +280,7 @@ function panelConfig(tenant: TenantInfo): AgentPanelConfig {
     disabledReason: flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now.",
     greeting: greetingLine(tenant.name),
     documentsHref: flags.documentsEnabled ? "/documents" : undefined,
+    asksOn: flags.agentAsks.enabled === true,
+    asksKey: tenant.asksKey,
   };
 }
