@@ -87,6 +87,11 @@ export type ProposalCardProps = {
   // honored while the status is approved or executing (the caller sets it on executing for a
   // factoring card alone); Reject is never offered on either.
   canResume?: boolean;
+  // An approved advance that parked when it ran (its numbers no longer held): the card says why,
+  // and offers Reject and, when releasable, Approve again, which asks the same approve request
+  // (the server runs the checks again and pays at most once). Only honored while the status is
+  // approved or executing; it takes the place of Resume.
+  parked?: { line: string; releasable: boolean };
   onReject?: (id: string) => void;
   pending?: boolean;
   hrefFor?: HrefFor;
@@ -299,6 +304,7 @@ export function ProposalCard({
   onApprove,
   onReject,
   canResume = false,
+  parked,
   pending = false,
   hrefFor = recordHref,
   initialConfirming = false,
@@ -371,6 +377,31 @@ export function ProposalCard({
       Reject
     </Button>
   );
+
+  // The question Reject opens: on a waiting card, and on a parked advance's card.
+  const rejectConfirm = (
+      <div role="group" aria-label="Confirm rejection" className={CONFIRM_ROW}>
+        <p className="text-body font-semibold text-foreground">Reject this {confirmNoun}?</p>
+        <p className="text-small text-foreground-2">{REJECT_NEXT}</p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button
+            ref={keepRef}
+            variant="outline"
+            disabled={pending}
+            onClick={() => {
+              kept.current = true;
+              setRejecting(false);
+            }}
+          >
+            Keep it
+          </Button>
+          <Button variant="destructive" pending={pending} pendingLabel="Rejecting" onClick={() => onReject?.(id)}>
+            Reject
+          </Button>
+        </div>
+      </div>
+  );
+  const parkedNow = parked !== undefined && (status === "approved" || status === "executing");
 
   return (
     // A card a person approves keeps its amounts in view when the eye hides the rest.
@@ -468,26 +499,7 @@ export function ProposalCard({
         />
       ) : status === "proposed" ? (
         rejecting ? (
-          <div role="group" aria-label="Confirm rejection" className={CONFIRM_ROW}>
-            <p className="text-body font-semibold text-foreground">Reject this {confirmNoun}?</p>
-            <p className="text-small text-foreground-2">{REJECT_NEXT}</p>
-            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-              <Button
-                ref={keepRef}
-                variant="outline"
-                disabled={pending}
-                onClick={() => {
-                  kept.current = true;
-                  setRejecting(false);
-                }}
-              >
-                Keep it
-              </Button>
-              <Button variant="destructive" pending={pending} pendingLabel="Rejecting" onClick={() => onReject?.(id)}>
-                Reject
-              </Button>
-            </div>
-          </div>
+          rejectConfirm
         ) : confirming ? (
           // One shape for every approval (design 4.7): the question, the count and total, what
           // happens next, then Keep reviewing and Confirm. It only asks: Confirm sends what it
@@ -584,6 +596,29 @@ export function ProposalCard({
             >
               {approveBlockedLabel ?? wording?.approve ?? (noAmount ? "Approve" : `Approve ${amount}`)}
             </Button>
+          </div>
+        )
+      ) : parkedNow && judge ? (
+        <StaffOnlyActions
+          lead={parked.line}
+          actions={[{ label: "Reject", outline: true }, ...(parked.releasable ? [{ label: "Approve again" }] : [])]}
+        />
+      ) : parkedNow ? (
+        rejecting ? (
+          rejectConfirm
+        ) : (
+          // Approve again is one click, like Resume: the approval already stands, and the server
+          // asks every check and role rule again before it pays anything.
+          <div className="flex flex-col gap-2 border-t border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+            <p className="text-small text-foreground-2">{parked.line}</p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              {rejectButton}
+              {parked.releasable ? (
+                <Button pending={pending} pendingLabel="Approving" disabled={pending} onClick={() => onApprove?.(id)}>
+                  Approve again
+                </Button>
+              ) : null}
+            </div>
           </div>
         )
       ) : canResume && (status === "approved" || status === "executing") && judge ? (

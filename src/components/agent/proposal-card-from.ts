@@ -3,6 +3,7 @@ import { auditConfirmQuestion, sentences } from "@/lib/agent/auditor/words";
 import { flagWords } from "@/lib/agent/reasons";
 import { verification } from "@/lib/agent/verify";
 import type { ProposalView } from "@/lib/agent/view";
+import { outcomeSentence } from "@/lib/advances/reasons";
 import { plannedLine, requestStatusWords } from "@/lib/factoring/words";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { sourceLabel } from "@/lib/format/labels";
@@ -325,6 +326,22 @@ function cashImpactLabel(p: ProposalView): string | undefined {
 // it: admin, and the amount above which the approval gate asks for one (flags.approverRole).
 export type Viewer = { admin: boolean; adminAboveCents: number };
 
+// A parked advance's line and whether this viewer may press Approve again (the executor asks the
+// switch and the role rules again either way). With the switch off it can only be rejected.
+function parkedCard(p: ProposalView, viewer?: Viewer): ProposalCardProps["parked"] {
+  const parked = p.parked;
+  if (!parked || (p.status !== "approved" && p.status !== "executing")) return undefined;
+  if (!parked.on) return { line: outcomeSentence("parking_off"), releasable: false };
+  const line = outcomeSentence(`parked_${parked.reason}`);
+  if (viewer && !viewer.admin && parked.adminOnly) {
+    return { line: `${line} ${outcomeSentence("parked_needs_admin")}`, releasable: false };
+  }
+  if (viewer && !viewer.admin && p.amountCents > viewer.adminAboveCents) {
+    return { line: `${line} ${outcomeSentence("role")}`, releasable: false };
+  }
+  return { line, releasable: true };
+}
+
 type CardProps = Omit<ProposalCardProps, "hrefFor">;
 
 // A pay rule change's card, in the words of its design: the rule and both values as the title,
@@ -416,6 +433,7 @@ export function proposalCardFrom(
       : [];
   const cash = p.cash ? cashLines(p.cash) : [];
   const cashLabel = cashImpactLabel(p);
+  const parked = p.kind === "advance_payout" ? parkedCard(p, viewer) : undefined;
   const card: CardProps = {
     id: p.id,
     title: `${p.title}${subject}`,
@@ -438,6 +456,8 @@ export function proposalCardFrom(
     flagNote: p.flagged ? flagNoteFor(p.flagCategories) : undefined,
     ...(audit ? { audit: auditFor(p, audit) } : {}),
     ...(verify ? { verification: verify } : {}),
+    // A parked advance shows its own line and buttons in place of Resume.
+    ...(parked ? { parked } : {}),
     // An advance, a pay correction, a money code, a card match and a factoring card have executors
     // that resume an approval left approved by a stop before its run finished (the correction's pay
     // item is keyed by the proposal, a money code is one row per proposal, the match's card and

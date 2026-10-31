@@ -13,6 +13,8 @@ const STATUS_LABELS: Record<string, string> = {
   approved: "Approved",
   paid: "Paid",
   rejected: "Rejected",
+  // Approved by a person, but its numbers no longer held when it ran: it waits for a person.
+  parked: "Parked",
   // settlements and periods
   draft: "Draft",
   open: "Open",

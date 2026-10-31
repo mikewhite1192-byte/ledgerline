@@ -3,6 +3,7 @@
 // Ids, enums, cents, fixed labels and fixed sentences only, plus the person's own question, the
 // agent's final answer and, for a flagged input, the quoted text the person is warned about.
 
+import type { ParkReason } from "../advances/parking";
 import type { ReportName } from "../reports/types";
 import type { Checklist } from "./checklist";
 import type { ProposalKind } from "./gateway/types";
@@ -157,6 +158,9 @@ export type ProposalView = {
   cardMatch?: CardMatchView | null;
   // Set on a card_load_ruling only, when its stored args read back whole.
   cardLoad?: CardLoadView | null;
+  // Set on an advance_payout only: its advance parked after the approval, with the reason; whether
+  // the parking switch lets a press release it now; whether only an admin may. Null otherwise.
+  parked?: { reason: ParkReason; on: boolean; adminOnly: boolean } | null;
   // Set on a Cash Friday card only, when its stored args read back whole.
   cash?: CashCardView | null;
   // Set on a pay_rule_change only, when its stored args read back whole.

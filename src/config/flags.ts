@@ -835,6 +835,14 @@ export type Flags = {
   // the loads (get_card_loads). startDate (YYYY-MM-DD, the carrier's zone): a statement row that
   // reached the records before it drafts nothing. Each path asks enabled itself.
   cardLoadRuling: { enabled: boolean; startDate: string };
+  // Parked advances (touchpoint A5): a person's approval of an advance whose numbers no longer
+  // hold when it runs (the card is gone, the card statement names someone else, no room is left,
+  // or the approval went over a block or a mismatch) parks the advance with its reason instead of
+  // failing the proposal (src/lib/advances/approve.ts). A person approves it again to pay it, the
+  // same ledger key it would have had, or rejects it. Never the autopilot's: it never parks,
+  // releases or approves a parked advance. startDate (YYYY-MM-DD, the carrier's zone): a proposal
+  // made before it takes the old fail path. Each path asks enabled itself.
+  advanceParking: { enabled: boolean; startDate: string };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1103,6 +1111,9 @@ export const flags: Flags = {
   advanceAtPickup: { enabled: true, startDate: "2026-10-31" },
   // Off until its own one-line enable PR. Nothing moves money: a ruling books what a driver owes.
   cardLoadRuling: { enabled: true, startDate: "2026-10-31" },
+  // Off until its own one-line enable PR. Parking moves no money; a release pays through the usual
+  // ledger and payout switches.
+  advanceParking: { enabled: false, startDate: "2026-11-02" },
 };
 
 applyLocalOverrides(flags);
