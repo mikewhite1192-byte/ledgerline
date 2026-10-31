@@ -2,7 +2,7 @@ import { DbError, type Queryable } from "../db";
 import { localMidnightOf } from "../desk/keys";
 import { isLocalDate, localDateOf } from "../time/local-date";
 import { isUuid } from "../uuid";
-import type { DayTotals, PauseFacts, RuleFacts } from "./policy";
+import type { DayTotals, PauseFacts, RuleFacts } from "./facts";
 
 // The autopilot's reads, each inside a tenant transaction the caller opened. A read that does not
 // answer in the expected shape throws (unknown is not zero); the caller fails closed.

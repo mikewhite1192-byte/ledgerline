@@ -183,6 +183,35 @@ describe("0071's re-created kind check", () => {
   });
 });
 
+describe("0077's never-alone check and re-created desk_log sources", () => {
+  const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
+
+  it("adds both NOT VALID in 0077_never_alone and validates both in 0077_never_alone_validate, applied next", () => {
+    const added = read("0077_never_alone.sql");
+    const validate = read("0077_never_alone_validate.sql");
+    for (const name of ["autopilot_rules_auto_allowlist", "desk_log_source_check"]) {
+      const adds = [...added.matchAll(new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\s+CHECK\\b[^;]*;`, "gi"))];
+      expect(adds, name).toHaveLength(1);
+      expect(adds[0][0], name).toMatch(/\)\s*NOT\s+VALID\s*;$/i);
+    }
+    expect(validate).toMatch(/ALTER\s+TABLE\s+autopilot_rules\s+VALIDATE\s+CONSTRAINT\s+autopilot_rules_auto_allowlist\s*;/i);
+    expect(validate).toMatch(/ALTER\s+TABLE\s+desk_log\s+VALIDATE\s+CONSTRAINT\s+desk_log_source_check\s*;/i);
+    const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
+    expect(names.indexOf("0077_never_alone_validate.sql")).toBe(names.indexOf("0077_never_alone.sql") + 1);
+  });
+
+  it("keeps every source 0071 listed and adds statement_check and digest", () => {
+    const list = (name: string) => {
+      const m = read(name).match(/ADD\s+CONSTRAINT\s+desk_log_source_check\s+CHECK\s*\(\s*source\s+IN\s*\(([^)]*)\)/i);
+      if (!m) throw new Error(`${name}: desk_log_source_check not found`);
+      return [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1]);
+    };
+    const before = list("0071_load_events.sql");
+    const after = list("0077_never_alone.sql");
+    expect([...after].sort()).toEqual([...before, "statement_check", "digest"].sort());
+  });
+});
+
 describe("0062's two re-created checks", () => {
   // Re-created NOT VALID, so the file that holds the exclusive lock reads no rows, then validated
   // by the file the runner applies next, in its own transaction, under a lock that lets reads and

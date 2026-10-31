@@ -7,7 +7,7 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param, TenantDb } from "../db/types";
 import { findSubjects, SUBJECT_FINDERS } from "../desk/discover";
 import { deskHandlers } from "../desk/handlers";
-import { addAdvance, dropTenant, makeTenant, type Fixture } from "../money/test-db";
+import { addAdvance, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal, type Executor, type ExecutorRegistry, type ProposalKind } from "../proposals/execute";
 import { serviceSub } from "../sweep/service-session";
 import { runAutopilot } from "./run";
@@ -715,6 +715,68 @@ describe("the autopilot", () => {
         ),
       );
       expect(keys).toEqual([{ event_key: `autopilot:${late}` }]);
+    });
+  });
+
+  describe("never alone", () => {
+    const insertRule = (kind: string, mode: string) =>
+      sqlStateOf(
+        app.withTenant(B.tenantId, (q) =>
+          q.execute(
+            `INSERT INTO autopilot_rules (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count, updated_by)
+             VALUES (current_tenant_id(), $1, $2, 1000, 1000, 1, 'owner')`,
+            [kind, mode],
+          ),
+        ),
+      );
+
+    it("refuses an Auto rule on a never-alone kind as a check violation, and takes Ask me", async () => {
+      expect(await insertRule("escrow_release", "auto")).toBe("23514");
+      expect(await insertRule("settlement_approve", "auto")).toBe("23514");
+      expect(await insertRule("escrow_release", "ask")).toBe("no error");
+      // A change to Auto later is refused too, version and all.
+      expect(
+        await asApp(
+          B,
+          `UPDATE autopilot_rules SET mode = 'auto', version = version + 1
+            WHERE tenant_id = current_tenant_id() AND kind = 'escrow_release'`,
+          [],
+        ),
+      ).toBe("autopilot_rules_auto_allowlist");
+      // Off stays the owner's to set.
+      expect(
+        await asApp(
+          B,
+          `UPDATE autopilot_rules SET mode = 'off', version = version + 1
+            WHERE tenant_id = current_tenant_id() AND kind = 'escrow_release'`,
+          [],
+        ),
+      ).toBe("no error");
+      // An allowed kind still takes Auto.
+      expect(await insertRule("payment_reapply", "auto")).toBe("no error");
+    });
+
+    it("refuses the autopilot login on a never-alone kind at the gate, even when the switch lists it", async () => {
+      const id = await addProposal({ kind: "settlement_approve", amountCents: 1_000 });
+      const kinds = flags.autopilot.kinds as Record<string, unknown>;
+      kinds.settlement_approve = { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true };
+      const version = await ruleVersion();
+      const deps = { db: app, clock, executors: { ...REGISTRY, settlement_approve: recorder } };
+      expect(
+        await executeProposal(pilot, id, { confirmed: false, autopilot: { ruleId, version } }, deps),
+      ).toEqual({ ok: false, category: "kind_never_alone", retryable: false });
+      expect(ran).toEqual([]);
+      expect(await rowOf(id)).toEqual({ status: "proposed", decided_by: null, decision: null });
+      // The run looks, stores an ask with the reason, and the proposal waits for a person.
+      expect(await run(id, deps.executors)).toMatchObject({
+        ok: true,
+        result: { outcome: "decided", mode: "ask", reason: "kind_never_alone" },
+      });
+      expect(ran).toEqual([]);
+      // A person's approval is unchanged.
+      expect(await executeProposal(A.session, id, { confirmed: false }, deps)).toMatchObject({ ok: true });
+      expect(ran).toEqual([id]);
+      expect((await rowOf(id)).decided_by).toBe(A.session.sub);
     });
   });
 });

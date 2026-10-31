@@ -103,7 +103,19 @@ describe("decide", () => {
     expect(decide({ ...withProposal({ status: "done" }), paused: true }).reason).toBe("paused");
   });
 
+  // A kind a named person always approves, even with a ceiling and an Auto rule slipped in for it.
+  const NEVER = { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true };
+  const slipped = (kind: string) =>
+    base({
+      switch: { ...base().switch, kinds: { [kind]: NEVER } },
+      rule: rule({ kind }),
+      proposal: { ...base().proposal, kind },
+    });
   const asks: [PolicyReason, PolicyInput][] = [
+    ["kind_never_alone", withProposal({ kind: "escrow_release" })],
+    ["kind_never_alone", slipped("settlement_approve")],
+    ["kind_never_alone", slipped("escrow_release")],
+    ["kind_never_alone", { ...slipped("pay_correction"), rule: null }],
     ["kind_not_allowed", withProposal({ kind: "advance_payout" })],
     // An inherited name is not a kind the switch allows.
     ["kind_not_allowed", withProposal({ kind: "toString" })],
@@ -145,6 +157,16 @@ describe("decide", () => {
     const r = decide(input);
     expect(r.decision).toBe("ask");
     expect(r.reason).toBe(reason);
+  });
+
+  it("refuses a never-alone kind after the holds and before the ceiling or the rule", () => {
+    const s = slipped("settlement_approve");
+    expect(decide(s)).toEqual({ decision: "ask", reason: "kind_never_alone", limits: null });
+    expect(decide({ ...s, switch: { ...s.switch, kinds: { settlement_approve: { ...NEVER, armed: false } } } }).reason).toBe(
+      "kind_never_alone",
+    );
+    expect(decide({ ...s, paused: true }).reason).toBe("paused");
+    expect(decide({ ...s, proposal: { ...s.proposal, status: "approved" } }).reason).toBe("not_waiting");
   });
 
   it("holds a kind whose own ceiling is not armed, before it reads the rule", () => {

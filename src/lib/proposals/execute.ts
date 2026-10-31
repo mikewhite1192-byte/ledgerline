@@ -11,6 +11,7 @@ import { assertMembership } from "../tenant/context";
 import { decide, driverOf, isPaused, recordOf, type DecisionRecord } from "../autopilot/policy";
 import { midnightMs, readDriverToday, readPause, readRule, readToday, readZone, todayStartIso } from "../autopilot/read";
 import { autopilotSub, isAutopilotSub } from "../autopilot/session";
+import { namedPersonRequired } from "../money/never-alone";
 import { isServiceSub } from "../sweep/service-session";
 import { isUuid } from "../uuid";
 import { overrideReasonOf } from "../agent/auditor/words";
@@ -54,8 +55,10 @@ import { executePayRuleChange } from "./executors/pay-rule-change";
 // and only when the policy (src/lib/autopilot/policy.ts) says auto again here, under the lock,
 // with the switch, its arming and start date, the pause, the rule (locked, same id and version)
 // and today's totals read inside this transaction, after every check above and before the
-// precheck. Its approval stores the decision in the same statement. The sweep's login never
-// approves, and opts.autopilot from any other login is refused.
+// precheck. Its approval stores the decision in the same statement. A kind a named person always
+// approves (src/lib/money/never-alone.ts) is refused to the autopilot login as kind_never_alone
+// the moment the row is read, before any write, even if a rule row for it slipped in. The sweep's
+// login never approves, and opts.autopilot from any other login is refused.
 
 export { PROPOSAL_KINDS, type ProposalKind };
 
@@ -112,7 +115,8 @@ export type ProposalRefusal =
   | "service_login"
   | "autopilot_only"
   | "autopilot_override"
-  | "autopilot_rule";
+  | "autopilot_rule"
+  | "kind_never_alone";
 
 export type ProposalResult =
   | { ok: true; proposalId: string; status: string; moneyActionId: string | null }
@@ -439,6 +443,8 @@ async function gate(
   );
   if (rows.length !== 1) return { result: refused("not_found") };
   const p = rowOf(rows[0]);
+  // Never the autopilot's: a named person approves this kind (an unknown kind too).
+  if (auto && namedPersonRequired(p.kind)) return { result: refused("kind_never_alone") };
   const executor = executorFor(registry, p.kind);
   // A resume: every check passed when the row became approved, so none is run again here (see the
   // Executor contract); the executor reads its ledger row back.

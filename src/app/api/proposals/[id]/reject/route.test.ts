@@ -101,6 +101,12 @@ describe("POST /api/proposals/:id/reject", () => {
     const decided = await reject();
     expect(decided.status).toBe(409);
     expect(await decided.json()).toEqual({ error: "already_decided" });
+
+    // Money already left for it: refused with the never-alone code.
+    mocks.rejectProposal.mockResolvedValueOnce({ ok: false, category: "reject_after_money_moved" });
+    const moved = await reject();
+    expect(moved.status).toBe(409);
+    expect(await moved.json()).toEqual({ error: "reject_after_money_moved" });
   });
 
   it("turns a membership refusal into 403 and any other error into 503 with no detail", async () => {

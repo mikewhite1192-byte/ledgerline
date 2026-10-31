@@ -1,5 +1,11 @@
 import type { AutopilotCeiling } from "../../config/flags";
 import { isCanonicalUuid } from "../money/keys";
+import { isNeverAloneKind } from "../money/never-alone";
+import { isPaused, type DayTotals, type PauseFacts, type RuleFacts } from "./facts";
+
+// The shapes it reads live in ./facts, which agent code may reach (this file reads the
+// never-alone list from money code, which agent code may not).
+export { isPaused, type DayTotals, type PauseFacts, type RuleFacts };
 
 // The autopilot's one decision, pure: no clock, no database, no model. It reads the switch, the
 // pause, the owner's rule for the kind, the proposal's stored checks and today's totals, and says
@@ -17,6 +23,8 @@ export const POLICY_REASONS = [
   "not_waiting",
   "kind_unarmed",
   // ask or off: a person decides.
+  // A kind a named person always approves (src/lib/money/never-alone.ts), before any rule is read.
+  "kind_never_alone",
   "kind_not_allowed",
   "bad_limit",
   "no_rule",
@@ -51,18 +59,6 @@ export type PolicySwitch = {
   kinds: Readonly<Partial<Record<string, AutopilotCeiling>>>;
 };
 
-export type RuleFacts = {
-  id: string;
-  version: number;
-  kind: string;
-  mode: string;
-  maxCents: number;
-  dayMaxCents: number;
-  dayMaxCount: number;
-  // One driver's local day; null on a rule that has none (required on a driver kind).
-  driverDayMaxCents: number | null;
-};
-
 export type ProposalFacts = {
   kind: string;
   // The driver it pays (driverOf), on a driver kind; null otherwise or when it does not read.
@@ -74,9 +70,6 @@ export type ProposalFacts = {
   auditorVerdict: string | null;
   engineCheck: string | null;
 };
-
-// What the autopilot already approved today for this kind (every outcome, an unknown one too).
-export type DayTotals = { cents: number; count: number };
 
 // driverDayMaxCents: null on a kind that pays no driver.
 export type Limits = { maxCents: number; dayMaxCents: number; dayMaxCount: number; driverDayMaxCents: number | null };
@@ -138,6 +131,8 @@ export function decide(input: PolicyInput): PolicyResult {
   if (input.switch.armed !== true) return out("hold", "unarmed");
   if (input.paused !== false) return out("hold", "paused");
   if (p.status !== "proposed") return out("hold", "not_waiting");
+  // Never the autopilot's, whatever the switch lists or a rule row says.
+  if (isNeverAloneKind(p.kind)) return out("ask", "kind_never_alone");
   const kinds = input.switch.kinds;
   const ceiling = Object.prototype.hasOwnProperty.call(kinds, p.kind) ? kinds[p.kind] : undefined;
   if (!ceiling) return out("ask", "kind_not_allowed");
@@ -186,19 +181,6 @@ export function decide(input: PolicyInput): PolicyResult {
   if (today.cents + p.amountCents > limits.dayMaxCents) return out("ask", "over_day_cents", limits);
   if (today.count + 1 > limits.dayMaxCount) return out("ask", "over_day_count", limits);
   return out("auto", "within_limits", limits);
-}
-
-// The carrier's pause at one instant. No row, or no pause, is not paused; a pause with no end
-// holds until a person resumes it; one with an end holds until then. A time that does not read
-// counts as paused.
-export type PauseFacts = { pausedAtMs: number | null; pausedUntilMs: number | null };
-
-export function isPaused(state: PauseFacts | null, nowMs: number): boolean {
-  if (state === null || state.pausedAtMs === null) return false;
-  if (!Number.isFinite(state.pausedAtMs)) return true;
-  if (state.pausedUntilMs === null) return true;
-  if (!Number.isFinite(state.pausedUntilMs) || !Number.isFinite(nowMs)) return true;
-  return state.pausedUntilMs > nowMs;
 }
 
 // What is stored on the proposal (proposals.autopilot_decision): the mode, the reason word, the

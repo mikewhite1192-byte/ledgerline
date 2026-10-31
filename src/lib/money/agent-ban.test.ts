@@ -30,6 +30,8 @@ const FORBIDDEN_IMPORTS = [
   'import { createStripeTestAdapter } from "../adapters/payment/stripe-test";',
   'import { moneySecret } from "../adapters/secrets";',
   'import { assertMoneyEnvSafe } from "../money/guard";',
+  // The never-alone rules are money's and the autopilot's; the agent only explains a refusal code.
+  'import { NEVER_ALONE_KINDS } from "../money/never-alone";',
   // The money code's executor, reveal and request form, and the code issuer.
   'import { moneyCodeExecutor } from "../money-codes/execute";',
   'import { revealMoneyCode } from "@/lib/money-codes/execute";',
