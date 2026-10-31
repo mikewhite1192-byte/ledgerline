@@ -785,7 +785,10 @@ export type Flags = {
   // src/lib/loads/movement.ts, and only while loadMovement is on too; an event dated before
   // startDate (YYYY-MM-DD, the carrier's zone) is mirrored and never moves or asks. Settings >
   // Demo's Sync dispatch now re-checks enabled itself. demoFaultsEnabled lets the synthetic feed
-  // play a fault (a later item); it ships off.
+  // play the faults a carrier switches on in tms_connections.demo_faults
+  // (src/lib/adapters/tms-source/faults.ts), from Settings > Demo's Dispatch faults panel (admins
+  // only) and POST /api/demo/tms-faults; the feed, the store and the route each re-check it, and
+  // the sync never knows a fault exists. It ships off.
   tmsSync: {
     enabled: boolean;
     startDate: string;

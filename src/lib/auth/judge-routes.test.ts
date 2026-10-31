@@ -51,6 +51,8 @@ beforeAll(() => {
     }
   };
   on(flags as unknown as Record<string, unknown>);
+  // A route behind a second switch of its own, which answers 404 before the staff check while off.
+  flags.tmsSync.demoFaultsEnabled = true;
 });
 
 afterAll(() => {
