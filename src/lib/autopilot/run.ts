@@ -3,8 +3,8 @@ import { DbError, getDb, type Queryable, type TenantDb } from "../db";
 import { executeProposal, type ExecuteDeps } from "../proposals/execute";
 import { assertMembership } from "../tenant/context";
 import { isUuid } from "../uuid";
-import { decide, isPaused, isPolicyReason, recordOf, type PolicyReason } from "./policy";
-import { midnightMs, readPause, readRule, readToday, readZone, todayStartIso } from "./read";
+import { decide, driverOf, isPaused, isPolicyReason, recordOf, type PolicyReason } from "./policy";
+import { midnightMs, readDriverToday, readPause, readRule, readToday, readZone, todayStartIso } from "./read";
 import { autopilotSession, autopilotSub } from "./session";
 
 // The autopilot's look at one waiting proposal, for the desk loop (src/lib/desk/handlers.ts). It
@@ -34,11 +34,20 @@ export type AutopilotOutcome =
 export type AutopilotDeps = ExecuteDeps & { db?: TenantDb };
 
 // Policy reasons that mean "not now", never "a person decides". A proposal made before the start
-// date is never the autopilot's, so nothing is stored on it either.
-const HOLD_REASONS: ReadonlySet<PolicyReason> = new Set(["switched_off", "unarmed", "paused", "not_waiting", "before_start"]);
+// date is never the autopilot's, so nothing is stored on it either, and neither is anything on a
+// kind not armed yet.
+const HOLD_REASONS: ReadonlySet<PolicyReason> = new Set([
+  "switched_off",
+  "unarmed",
+  "paused",
+  "not_waiting",
+  "before_start",
+  "kind_unarmed",
+]);
 
 const PROPOSAL_SQL = `SELECT kind, status, CAST(amount_cents AS text) AS amount_cents, flagged_input_id,
        auditor_verdict, engine_check, decided_by, autopilot_decision IS NOT NULL AS asked,
+       subject_table, CAST(subject_id AS text) AS subject_id, args->>'driverId' AS driver_arg,
        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at
   FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`;
 
@@ -51,6 +60,9 @@ type ProposalRead = {
   engine_check: unknown;
   decided_by: unknown;
   asked: unknown;
+  subject_table: unknown;
+  subject_id: unknown;
+  driver_arg: unknown;
   created_at: unknown;
 };
 
@@ -97,7 +109,15 @@ async function look(q: Queryable, sub: string, proposalId: string, now: Date): P
   const pause = await readPause(q);
   const zone = await readZone(q);
   const rule = await readRule(q, r.kind, false);
-  const today = await readToday(q, r.kind, sub, todayStartIso(now, zone));
+  const since = todayStartIso(now, zone);
+  const today = await readToday(q, r.kind, sub, since);
+  // The driver it pays, on a kind that pays one, and what the autopilot approved for them today.
+  const driverId = driverOf(r.kind, {
+    subjectTable: typeof r.subject_table === "string" ? r.subject_table : "",
+    subjectId: typeof r.subject_id === "string" ? r.subject_id : "",
+    args: { driverId: r.driver_arg },
+  });
+  const driverToday = driverId === null ? null : await readDriverToday(q, r.kind, sub, since, driverId);
   const sw = flags.autopilot;
   const startMs = midnightMs(sw.startDate, zone);
   const createdAtMs = Date.parse(r.created_at);
@@ -108,6 +128,7 @@ async function look(q: Queryable, sub: string, proposalId: string, now: Date): P
     rule,
     proposal: {
       kind: r.kind,
+      driverId,
       status: r.status,
       amountCents: amountOf(r.amount_cents),
       createdAtMs,
@@ -116,6 +137,7 @@ async function look(q: Queryable, sub: string, proposalId: string, now: Date): P
       engineCheck: typeof r.engine_check === "string" ? r.engine_check : null,
     },
     today,
+    driverToday,
   });
   if (result.decision === "hold") {
     // The demo reset's own pause says so in the log.
@@ -130,7 +152,7 @@ async function look(q: Queryable, sub: string, proposalId: string, now: Date): P
     if (!rule) return { kind: "hold", reason: "no_rule" };
     return { kind: "auto", ruleId: rule.id, version: rule.version };
   }
-  const record = recordOf({ ...result, decision: result.decision }, rule, today);
+  const record = recordOf({ ...result, decision: result.decision }, rule, today, { id: driverId, today: driverToday });
   const stored = await q.execute(RECORD_SQL, [proposalId, JSON.stringify(record), now.toISOString()]);
   if (stored !== 1) return reread(q, sub, proposalId);
   return { kind: "decided", mode: result.decision, reason: result.reason };
@@ -152,6 +174,9 @@ function askRecord(category: string): string {
     dayMaxCount: null,
     dayCents: null,
     dayCount: null,
+    driverId: null,
+    driverDayMaxCents: null,
+    driverDayCents: null,
   });
 }
 

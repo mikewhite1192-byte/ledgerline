@@ -754,14 +754,18 @@ export type Flags = {
   // off, nothing is approved and no decision is written. startDate (YYYY-MM-DD, tenant-local): a
   // proposal made before it is never approved by the autopilot. kinds: the only kinds that may
   // ever be on Auto, each with a ceiling (inclusive, whole cents) over the owner's own limits; a
-  // kind not listed stays with a person whatever its rule says. enabled, armed, startDate and the
-  // ceilings are read by the desk handler and again by the approval gate, inside the transaction
-  // that approves.
+  // kind not listed stays with a person whatever its rule says. A listed kind is approved only
+  // while its own armed is on too (each money kind is armed in its own release); an unarmed kind is
+  // never found, decided or approved, and its proposals wait for a person. enabled, armed, startDate
+  // and the ceilings are read by the desk handler and again by the approval gate, inside the
+  // transaction that approves.
   autopilot: {
     enabled: boolean;
     armed: boolean;
     startDate: string;
-    kinds: Partial<Record<"invoice_post" | "card_match" | "payment_reapply", AutopilotCeiling>>;
+    kinds: Partial<
+      Record<"invoice_post" | "card_match" | "payment_reapply" | "advance_payout" | "money_code", AutopilotCeiling>
+    >;
   };
   // Load movement from driver evidence (docs: LOAD-MOVEMENT, owner D-056): a load moves planned to
   // in transit once its pickup bill of lading is read in, and in transit to delivered once its
@@ -803,7 +807,15 @@ export type Flags = {
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
-export type AutopilotCeiling = { maxCents: number; dayMaxCents: number; dayMaxCount: number };
+// driverDayMaxCents: one driver's local day, on a kind that pays a driver (advance_payout,
+// money_code), where it is required. armed: whether the autopilot may approve this kind at all.
+export type AutopilotCeiling = {
+  maxCents: number;
+  dayMaxCents: number;
+  dayMaxCount: number;
+  driverDayMaxCents?: number;
+  armed: boolean;
+};
 
 export const flags: Flags = {
   aiEnabled: true,
@@ -1028,9 +1040,11 @@ export const flags: Flags = {
     armed: false,
     startDate: "2026-10-31",
     kinds: {
-      invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 },
-      card_match: { maxCents: 50_000, dayMaxCents: 300_000, dayMaxCount: 40 },
-      payment_reapply: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 },
+      invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
+      card_match: { maxCents: 50_000, dayMaxCents: 300_000, dayMaxCount: 40, armed: true },
+      payment_reapply: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
+      advance_payout: { maxCents: 30_000, dayMaxCents: 150_000, dayMaxCount: 10, driverDayMaxCents: 30_000, armed: false },
+      money_code: { maxCents: 15_000, dayMaxCents: 60_000, dayMaxCount: 4, driverDayMaxCents: 30_000, armed: false },
     },
   },
   // Ships off: turning it on is the owner's own one-line PR.

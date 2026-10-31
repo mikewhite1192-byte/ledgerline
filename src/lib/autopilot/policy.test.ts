@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   decide,
+  driverOf,
   isPaused,
   isPolicyReason,
   POLICY_REASONS,
@@ -24,6 +25,7 @@ const rule = (over: Partial<RuleFacts> = {}): RuleFacts => ({
   maxCents: 150_000,
   dayMaxCents: 500_000,
   dayMaxCount: 5,
+  driverDayMaxCents: null,
   ...over,
 });
 
@@ -32,13 +34,14 @@ function base(over: Partial<PolicyInput> = {}): PolicyInput {
     switch: {
       enabled: true,
       armed: true,
-      kinds: { invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 } },
+      kinds: { invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true } },
     },
     paused: false,
     startMs: START,
     rule: rule(),
     proposal: {
       kind: "invoice_post",
+      driverId: null,
       status: "proposed",
       amountCents: 120_000,
       createdAtMs: START + 3_600_000,
@@ -47,6 +50,23 @@ function base(over: Partial<PolicyInput> = {}): PolicyInput {
       engineCheck: "matched",
     },
     today: { cents: 100_000, count: 1 },
+    driverToday: null,
+    ...over,
+  };
+}
+
+// A driver's kind: an advance of $200 to one driver, inside every limit.
+const DRIVER = "7a1e9c4b-2d3f-4e5a-8b6c-9d0e1f2a3b4c";
+const ADVANCE = { maxCents: 30_000, dayMaxCents: 150_000, dayMaxCount: 10, driverDayMaxCents: 30_000, armed: true };
+function driverBase(over: Partial<PolicyInput> = {}): PolicyInput {
+  const b = base();
+  return {
+    ...b,
+    switch: { ...b.switch, kinds: { advance_payout: ADVANCE } },
+    rule: rule({ kind: "advance_payout", maxCents: 20_000, dayMaxCents: 200_000, dayMaxCount: 10, driverDayMaxCents: 30_000 }),
+    proposal: { ...b.proposal, kind: "advance_payout", driverId: DRIVER, amountCents: 20_000 },
+    today: { cents: 0, count: 0 },
+    driverToday: { cents: 0, count: 0 },
     ...over,
   };
 }
@@ -58,11 +78,11 @@ describe("decide", () => {
     expect(decide(base())).toEqual({
       decision: "auto",
       reason: "within_limits",
-      limits: { maxCents: 150_000, dayMaxCents: 500_000, dayMaxCount: 5 },
+      limits: { maxCents: 150_000, dayMaxCents: 500_000, dayMaxCount: 5, driverDayMaxCents: null },
     });
     // A rule above the ceiling is held to the ceiling.
     const high = decide(base({ rule: rule({ maxCents: 900_000, dayMaxCents: 900_000_000, dayMaxCount: 9_000 }) }));
-    expect(high.limits).toEqual({ maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 });
+    expect(high.limits).toEqual({ maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, driverDayMaxCents: null });
   });
 
   const holds: [PolicyReason, PolicyInput][] = [
@@ -70,6 +90,7 @@ describe("decide", () => {
     ["unarmed", base({ switch: { ...base().switch, armed: false } })],
     ["paused", base({ paused: true })],
     ["not_waiting", withProposal({ status: "approved" })],
+    ["kind_unarmed", driverBase({ switch: { ...driverBase().switch, kinds: { advance_payout: { ...ADVANCE, armed: false } } } })],
   ];
   it.each(holds)("holds on %s, deciding nothing", (reason, input) => {
     expect(decide(input)).toEqual({ decision: "hold", reason, limits: null });
@@ -86,7 +107,7 @@ describe("decide", () => {
     ["kind_not_allowed", withProposal({ kind: "advance_payout" })],
     // An inherited name is not a kind the switch allows.
     ["kind_not_allowed", withProposal({ kind: "toString" })],
-    ["bad_limit", base({ switch: { ...base().switch, kinds: { invoice_post: { maxCents: 1.5, dayMaxCents: 10, dayMaxCount: 1 } } } })],
+    ["bad_limit", base({ switch: { ...base().switch, kinds: { invoice_post: { maxCents: 1.5, dayMaxCents: 10, dayMaxCount: 1, armed: true } } } })],
     ["no_rule", base({ rule: null })],
     ["no_rule", base({ rule: rule({ kind: "card_match" }) })],
     ["mode_ask", base({ rule: rule({ mode: "ask" }) })],
@@ -113,11 +134,43 @@ describe("decide", () => {
     ["over_item_limit", withProposal({ amountCents: 150_001 })],
     ["over_day_cents", base({ today: { cents: 380_001, count: 1 } })],
     ["over_day_count", base({ today: { cents: 0, count: 5 } })],
+    ["bad_limit", driverBase({ rule: rule({ kind: "advance_payout", driverDayMaxCents: null }) })],
+    ["no_driver", driverBase({ proposal: { ...driverBase().proposal, driverId: null } })],
+    ["no_driver", driverBase({ proposal: { ...driverBase().proposal, driverId: DRIVER.toUpperCase() } })],
+    ["unknown_today", driverBase({ driverToday: null })],
+    ["unknown_today", driverBase({ driverToday: { cents: Number.NaN, count: 0 } })],
+    ["over_driver_day_cents", driverBase({ driverToday: { cents: 10_001, count: 1 } })],
   ];
   it.each(asks)("leaves it for a person on %s", (reason, input) => {
     const r = decide(input);
     expect(r.decision).toBe("ask");
     expect(r.reason).toBe(reason);
+  });
+
+  it("holds a kind whose own ceiling is not armed, before it reads the rule", () => {
+    const unarmed = driverBase({ switch: { ...driverBase().switch, kinds: { advance_payout: { ...ADVANCE, armed: false } } } });
+    expect(decide(unarmed)).toEqual({ decision: "hold", reason: "kind_unarmed", limits: null });
+    expect(decide({ ...unarmed, rule: null }).reason).toBe("kind_unarmed");
+    expect(decide({ ...unarmed, rule: rule({ kind: "advance_payout", mode: "off" }) }).reason).toBe("kind_unarmed");
+  });
+
+  it("holds a driver's kind to the lower driver's day, and allows its exact limit", () => {
+    expect(decide(driverBase())).toEqual({
+      decision: "auto",
+      reason: "within_limits",
+      limits: { maxCents: 20_000, dayMaxCents: 150_000, dayMaxCount: 10, driverDayMaxCents: 30_000 },
+    });
+    // 10_000 already today plus 20_000 is the driver's limit exactly; one cent more is past it.
+    expect(decide(driverBase({ driverToday: { cents: 10_000, count: 1 } })).decision).toBe("auto");
+    expect(decide(driverBase({ driverToday: { cents: 10_001, count: 1 } })).reason).toBe("over_driver_day_cents");
+    // The ceiling's driver's day is lower than the rule's here, so it holds.
+    const low = driverBase({ switch: { ...driverBase().switch, kinds: { advance_payout: { ...ADVANCE, driverDayMaxCents: 25_000 } } } });
+    expect(decide(low).limits?.driverDayMaxCents).toBe(25_000);
+    expect(decide({ ...low, driverToday: { cents: 5_001, count: 1 } }).reason).toBe("over_driver_day_cents");
+    // The driver's day is checked before the carrier's.
+    expect(decide(driverBase({ driverToday: { cents: 10_001, count: 1 }, today: { cents: 150_000, count: 1 } })).reason).toBe(
+      "over_driver_day_cents",
+    );
   });
 
   it("keeps a kind the owner set to Off for people", () => {
@@ -147,6 +200,17 @@ describe("decide", () => {
   it("answers the same way for the same input", () => {
     const input = base({ today: { cents: 380_001, count: 1 } });
     expect(decide(input)).toEqual(decide(structuredClone(input)));
+  });
+});
+
+describe("driverOf", () => {
+  it("reads an advance's driver from its subject and a money code's from its args", () => {
+    expect(driverOf("advance_payout", { subjectTable: "drivers", subjectId: DRIVER, args: {} })).toBe(DRIVER);
+    expect(driverOf("advance_payout", { subjectTable: "loads", subjectId: DRIVER, args: { driverId: DRIVER } })).toBeNull();
+    expect(driverOf("money_code", { subjectTable: "loads", subjectId: RULE_ID, args: { driverId: DRIVER } })).toBe(DRIVER);
+    expect(driverOf("money_code", { subjectTable: "loads", subjectId: RULE_ID, args: { driverId: DRIVER.toUpperCase() } })).toBeNull();
+    expect(driverOf("money_code", { subjectTable: "loads", subjectId: RULE_ID, args: {} })).toBeNull();
+    expect(driverOf("invoice_post", { subjectTable: "drivers", subjectId: DRIVER, args: { driverId: DRIVER } })).toBeNull();
   });
 });
 
@@ -182,6 +246,9 @@ describe("recordOf", () => {
       dayMaxCount: 5,
       dayCents: 100_000,
       dayCount: 1,
+      driverId: null,
+      driverDayMaxCents: null,
+      driverDayCents: null,
     });
     expect(recordOf({ decision: "ask", reason: "no_rule", limits: null }, null, null)).toEqual({
       mode: "ask",
@@ -193,7 +260,22 @@ describe("recordOf", () => {
       dayMaxCount: null,
       dayCents: null,
       dayCount: null,
+      driverId: null,
+      driverDayMaxCents: null,
+      driverDayCents: null,
     });
+  });
+  it("stores the driver, the driver's limit and the driver's total on a driver's kind", () => {
+    const input = driverBase({ driverToday: { cents: 10_000, count: 1 } });
+    const r = decide(input);
+    if (r.decision === "hold") throw new Error("expected a decision");
+    expect(
+      recordOf({ ...r, decision: r.decision }, input.rule, input.today, { id: DRIVER, today: input.driverToday }),
+    ).toMatchObject({ mode: "auto", driverId: DRIVER, driverDayMaxCents: 30_000, driverDayCents: 10_000 });
+    // An id or a total that does not read is stored as null.
+    expect(
+      recordOf({ ...r, decision: r.decision }, input.rule, input.today, { id: "nope", today: { cents: -1, count: 0 } }),
+    ).toMatchObject({ driverId: null, driverDayCents: null });
   });
   it("knows its own reason words", () => {
     expect(isPolicyReason("within_limits")).toBe(true);

@@ -323,6 +323,44 @@ describe("the autopilot", () => {
       );
     });
 
+    it("holds a rule's driver's day between one item and the carrier's day, and requires it on a kind that pays a driver", async () => {
+      const where = "WHERE tenant_id = current_tenant_id() AND kind = 'card_match'";
+      // A change to the driver's day is a change: its version moves by exactly one.
+      expect(await asApp(A, `UPDATE autopilot_rules SET driver_day_max_cents = 100000 ${where}`, [])).toBe("23514");
+      expect(
+        await asApp(A, `UPDATE autopilot_rules SET driver_day_max_cents = 100000, version = version + 1 ${where}`, []),
+      ).toBe("no error");
+      expect(await asApp(A, `UPDATE autopilot_rules SET driver_day_max_cents = NULL, version = version + 1 ${where}`, [])).toBe(
+        "no error",
+      );
+      // Under one item, over the carrier's day, or negative: refused by the table.
+      for (const bad of [1, 300_001, -1]) {
+        expect(
+          await asApp(A, `UPDATE autopilot_rules SET driver_day_max_cents = $1, version = version + 1 ${where}`, [bad]),
+          String(bad),
+        ).toBe("autopilot_rules_driver_day_check");
+      }
+      const insert = (kind: string, driverDay: number | null) =>
+        asApp(
+          A,
+          `INSERT INTO autopilot_rules (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count, driver_day_max_cents, updated_by)
+           VALUES (current_tenant_id(), $1, 'auto', 100, 1000, 1, $2, 'x')`,
+          [kind, driverDay],
+        );
+      expect(await insert("advance_payout", null)).toBe("autopilot_rules_driver_day_required");
+      expect(await insert("money_code", null)).toBe("autopilot_rules_driver_day_required");
+      const [shape] = await admin.withoutTenant((q) =>
+        q.query<{ type: string; nullable: string; validated: boolean }>(
+          `SELECT c.data_type AS type, c.is_nullable AS nullable,
+                  (SELECT k.convalidated FROM pg_constraint k
+                    WHERE k.conname = 'autopilot_rules_driver_day_required') AS validated
+             FROM information_schema.columns c
+            WHERE c.table_name = 'autopilot_rules' AND c.column_name = 'driver_day_max_cents'`,
+        ),
+      );
+      expect(shape).toEqual({ type: "bigint", nullable: "YES", validated: true });
+    });
+
     it("refuses a decision written out of turn and an approval by the autopilot login without one", async () => {
       const id = await addProposal();
       const where = "WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
@@ -642,6 +680,26 @@ describe("the autopilot", () => {
       expect(lines).toEqual([{ event_key: `autopilot:${ready}`, subject_table: "proposals" }]);
       // Found once, ever.
       expect(await find()).toEqual({ seen: 0 });
+    });
+
+    it("never finds a kind on Auto whose own ceiling is not armed, so arming it still finds the card", async () => {
+      await admin.withTenant(B.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO autopilot_rules (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count, driver_day_max_cents, updated_by)
+           VALUES (current_tenant_id(), 'advance_payout', 'auto', 30000, 150000, 10, 30000, 'setup')`,
+        ),
+      );
+      const advance = await addProposal({ f: B, kind: "advance_payout", amountCents: 1_000 });
+      expect(flags.autopilot.kinds.advance_payout?.armed).toBe(false);
+      expect(await find()).toEqual({ seen: 0 });
+      const none = await admin.withTenant(B.tenantId, (q) =>
+        q.query("SELECT 1 FROM desk_log WHERE tenant_id = current_tenant_id() AND event_key = $1", [`autopilot:${advance}`]),
+      );
+      expect(none).toEqual([]);
+      const ceiling = flags.autopilot.kinds.advance_payout;
+      if (!ceiling) throw new Error("no advance ceiling");
+      ceiling.armed = true;
+      expect(await find()).toEqual({ seen: 1 });
     });
 
     it("never finds a proposal made before the autopilot's start date", async () => {

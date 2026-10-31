@@ -1,11 +1,13 @@
 import type { AutopilotCeiling } from "../../config/flags";
+import { isCanonicalUuid } from "../money/keys";
 
 // The autopilot's one decision, pure: no clock, no database, no model. It reads the switch, the
 // pause, the owner's rule for the kind, the proposal's stored checks and today's totals, and says
 // auto (the autopilot login may approve it now), ask (it waits for a person), off (the owner keeps
 // this kind for people) or hold (nothing is decided or written now). Every amount is whole cents;
 // every instant is ms since the epoch, read by the caller. The checks run in a fixed order and the
-// first one that stops it gives the reason, so the same input always gives the same answer.
+// first one that stops it gives the reason, so the same input always gives the same answer. A kind
+// that pays a driver (DRIVER_KINDS) is held to one driver's local day as well as the carrier's.
 
 export const POLICY_REASONS = [
   // hold: nothing is decided or written now.
@@ -13,6 +15,7 @@ export const POLICY_REASONS = [
   "unarmed",
   "paused",
   "not_waiting",
+  "kind_unarmed",
   // ask or off: a person decides.
   "kind_not_allowed",
   "bad_limit",
@@ -25,8 +28,10 @@ export const POLICY_REASONS = [
   "audit_not_pass",
   "engine_unverified",
   "bad_amount",
+  "no_driver",
   "unknown_today",
   "over_item_limit",
+  "over_driver_day_cents",
   "over_day_cents",
   "over_day_count",
   // auto.
@@ -54,10 +59,14 @@ export type RuleFacts = {
   maxCents: number;
   dayMaxCents: number;
   dayMaxCount: number;
+  // One driver's local day; null on a rule that has none (required on a driver kind).
+  driverDayMaxCents: number | null;
 };
 
 export type ProposalFacts = {
   kind: string;
+  // The driver it pays (driverOf), on a driver kind; null otherwise or when it does not read.
+  driverId: string | null;
   status: string;
   amountCents: number;
   createdAtMs: number;
@@ -69,7 +78,23 @@ export type ProposalFacts = {
 // What the autopilot already approved today for this kind (every outcome, an unknown one too).
 export type DayTotals = { cents: number; count: number };
 
-export type Limits = { maxCents: number; dayMaxCents: number; dayMaxCount: number };
+// driverDayMaxCents: null on a kind that pays no driver.
+export type Limits = { maxCents: number; dayMaxCents: number; dayMaxCount: number; driverDayMaxCents: number | null };
+
+// The kinds that pay one driver, held to that driver's day too.
+export const DRIVER_KINDS: ReadonlySet<string> = new Set(["advance_payout", "money_code"]);
+
+// The driver a proposal pays, from its stored subject and args, as a whole canonical id: an
+// advance's subject is the driver; a money code's subject is the load and its args name the
+// driver. Null for any other kind, and for an id that does not read whole. Pure.
+export function driverOf(
+  kind: string,
+  p: { subjectTable: string; subjectId: string; args: Readonly<Record<string, unknown>> },
+): string | null {
+  if (kind === "advance_payout") return p.subjectTable === "drivers" && isCanonicalUuid(p.subjectId) ? p.subjectId : null;
+  if (kind === "money_code") return isCanonicalUuid(p.args.driverId) ? p.args.driverId : null;
+  return null;
+}
 
 export type PolicyInput = {
   switch: PolicySwitch;
@@ -81,6 +106,8 @@ export type PolicyInput = {
   proposal: ProposalFacts;
   // null: the read did not answer. Unknown is not zero.
   today: DayTotals | null;
+  // The same for the proposal's driver alone, on a driver kind; null when not read.
+  driverToday: DayTotals | null;
 };
 
 export type PolicyResult = {
@@ -92,8 +119,11 @@ export type PolicyResult = {
 
 const whole = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
 
-function wholeLimits(l: Limits | AutopilotCeiling | RuleFacts): boolean {
-  return whole(l.maxCents) && whole(l.dayMaxCents) && whole(l.dayMaxCount);
+// The three limits whole, and on a driver kind the driver's day too.
+function wholeLimits(l: AutopilotCeiling | RuleFacts, driverKind: boolean): boolean {
+  return (
+    whole(l.maxCents) && whole(l.dayMaxCents) && whole(l.dayMaxCount) && (!driverKind || whole(l.driverDayMaxCents))
+  );
 }
 
 const out = (decision: PolicyDecision, reason: PolicyReason, limits: Limits | null = null): PolicyResult => ({
@@ -111,15 +141,24 @@ export function decide(input: PolicyInput): PolicyResult {
   const kinds = input.switch.kinds;
   const ceiling = Object.prototype.hasOwnProperty.call(kinds, p.kind) ? kinds[p.kind] : undefined;
   if (!ceiling) return out("ask", "kind_not_allowed");
-  if (!wholeLimits(ceiling)) return out("ask", "bad_limit");
+  // A listed kind not armed yet: nothing is decided or written, so arming it finds it still waiting.
+  if (ceiling.armed !== true) return out("hold", "kind_unarmed");
+  const driverKind = DRIVER_KINDS.has(p.kind);
+  if (!wholeLimits(ceiling, driverKind)) return out("ask", "bad_limit");
   if (rule === null || rule.kind !== p.kind) return out("ask", "no_rule");
   if (rule.mode === "off") return out("off", "mode_off");
   if (rule.mode !== "auto") return out("ask", "mode_ask");
-  if (!wholeLimits(rule) || !Number.isSafeInteger(rule.version) || rule.version < 1) return out("ask", "bad_limit");
+  if (!wholeLimits(rule, driverKind) || !Number.isSafeInteger(rule.version) || rule.version < 1) {
+    return out("ask", "bad_limit");
+  }
   const limits: Limits = {
     maxCents: Math.min(rule.maxCents, ceiling.maxCents),
     dayMaxCents: Math.min(rule.dayMaxCents, ceiling.dayMaxCents),
     dayMaxCount: Math.min(rule.dayMaxCount, ceiling.dayMaxCount),
+    driverDayMaxCents:
+      driverKind && whole(rule.driverDayMaxCents) && whole(ceiling.driverDayMaxCents)
+        ? Math.min(rule.driverDayMaxCents, ceiling.driverDayMaxCents)
+        : null,
   };
   if (!Number.isFinite(input.startMs) || !Number.isFinite(p.createdAtMs) || p.createdAtMs < input.startMs) {
     return out("ask", "before_start", limits);
@@ -129,9 +168,21 @@ export function decide(input: PolicyInput): PolicyResult {
   if (p.auditorVerdict !== "pass") return out("ask", "audit_not_pass", limits);
   if (p.engineCheck !== "matched") return out("ask", "engine_unverified", limits);
   if (!whole(p.amountCents)) return out("ask", "bad_amount", limits);
+  if (driverKind && !isCanonicalUuid(p.driverId)) return out("ask", "no_driver", limits);
   const today = input.today;
   if (today === null || !whole(today.cents) || !whole(today.count)) return out("ask", "unknown_today", limits);
+  // The driver's own total, read on a driver kind only.
+  const driverToday = driverKind ? input.driverToday : null;
+  if (driverKind && (driverToday === null || !whole(driverToday.cents) || !whole(driverToday.count))) {
+    return out("ask", "unknown_today", limits);
+  }
   if (p.amountCents > limits.maxCents) return out("ask", "over_item_limit", limits);
+  if (
+    driverToday !== null &&
+    (limits.driverDayMaxCents === null || driverToday.cents + p.amountCents > limits.driverDayMaxCents)
+  ) {
+    return out("ask", "over_driver_day_cents", limits);
+  }
   if (today.cents + p.amountCents > limits.dayMaxCents) return out("ask", "over_day_cents", limits);
   if (today.count + 1 > limits.dayMaxCount) return out("ask", "over_day_count", limits);
   return out("auto", "within_limits", limits);
@@ -151,7 +202,8 @@ export function isPaused(state: PauseFacts | null, nowMs: number): boolean {
 }
 
 // What is stored on the proposal (proposals.autopilot_decision): the mode, the reason word, the
-// rule it was decided on and the totals it read. Ids, whole numbers and words only.
+// rule it was decided on and the totals it read, and on a driver kind the driver, the driver's
+// limit and the driver's total. Ids, whole numbers and words only.
 export type DecisionRecord = {
   mode: "auto" | "ask" | "off";
   reason: PolicyReason;
@@ -162,12 +214,16 @@ export type DecisionRecord = {
   dayMaxCount: number | null;
   dayCents: number | null;
   dayCount: number | null;
+  driverId: string | null;
+  driverDayMaxCents: number | null;
+  driverDayCents: number | null;
 };
 
 export function recordOf(
   result: PolicyResult & { decision: "auto" | "ask" | "off" },
   rule: RuleFacts | null,
   today: DayTotals | null,
+  driver: { id: string | null; today: DayTotals | null } = { id: null, today: null },
 ): DecisionRecord {
   return {
     mode: result.decision,
@@ -179,5 +235,8 @@ export function recordOf(
     dayMaxCount: result.limits?.dayMaxCount ?? null,
     dayCents: today && whole(today.cents) ? today.cents : null,
     dayCount: today && whole(today.count) ? today.count : null,
+    driverId: isCanonicalUuid(driver.id) ? driver.id : null,
+    driverDayMaxCents: result.limits?.driverDayMaxCents ?? null,
+    driverDayCents: driver.today && whole(driver.today.cents) ? driver.today.cents : null,
   };
 }

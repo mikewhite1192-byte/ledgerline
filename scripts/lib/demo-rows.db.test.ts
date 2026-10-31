@@ -44,7 +44,7 @@ const rowsOf = (tenantId: string) =>
         WHERE tenant_id = current_tenant_id() ORDER BY cognito_sub`,
     ),
     rules: await q.query(
-      `SELECT id, kind, mode, max_cents, day_max_cents, day_max_count, version, updated_by FROM autopilot_rules
+      `SELECT id, kind, mode, max_cents, day_max_cents, day_max_count, driver_day_max_cents, version, updated_by FROM autopilot_rules
         WHERE tenant_id = current_tenant_id() ORDER BY kind`,
     ),
   }));
@@ -108,12 +108,16 @@ describe("demo rows through a login that skips row-level security", () => {
       { cognito_sub: `service:sweep:${A}`, email: `sweep@${carrierA.slug}.invalid`, role: "staff" },
       { cognito_sub: `sub-${A}`, email: carrierA.email, role: "admin" },
     ]);
-    // The starting autopilot rules: Auto on the three kinds that move no money out of the company.
+    // The starting autopilot rules: Auto on the three kinds that move no money out of the company,
+    // and on the two that pay a driver, with a driver's day (still unarmed in flags.autopilot.kinds).
     expect(a.rules).toMatchObject([
-      { kind: "card_match", mode: "auto", max_cents: 50000, day_max_cents: 300000, day_max_count: 40, version: 1, updated_by: "setup" },
-      { kind: "invoice_post", mode: "auto", max_cents: 200000, day_max_cents: 1000000, day_max_count: 25, version: 1 },
-      { kind: "payment_reapply", mode: "auto", max_cents: 200000, day_max_cents: 1000000, day_max_count: 25, version: 1 },
+      { kind: "advance_payout", mode: "auto", max_cents: 30000, day_max_cents: 150000, day_max_count: 10, driver_day_max_cents: 30000, version: 1 },
+      { kind: "card_match", mode: "auto", max_cents: 50000, day_max_cents: 300000, day_max_count: 40, driver_day_max_cents: null, version: 1, updated_by: "setup" },
+      { kind: "invoice_post", mode: "auto", max_cents: 200000, day_max_cents: 1000000, day_max_count: 25, driver_day_max_cents: null, version: 1 },
+      { kind: "money_code", mode: "auto", max_cents: 15000, day_max_cents: 60000, day_max_count: 4, driver_day_max_cents: 30000, version: 1 },
+      { kind: "payment_reapply", mode: "auto", max_cents: 200000, day_max_cents: 1000000, day_max_count: 25, driver_day_max_cents: null, version: 1 },
     ]);
+    expect(a.rules).toHaveLength(5);
   });
 
   it("stands in for the Aurora master: with tenant B set it still reads tenant A", async () => {

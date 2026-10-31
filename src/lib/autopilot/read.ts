@@ -10,7 +10,8 @@ import type { DayTotals, PauseFacts, RuleFacts } from "./policy";
 const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
 const RULE_SQL = `SELECT CAST(id AS text) AS id, kind, mode, CAST(max_cents AS text) AS max_cents,
-       CAST(day_max_cents AS text) AS day_max_cents, day_max_count, version
+       CAST(day_max_cents AS text) AS day_max_cents, day_max_count, version,
+       CAST(driver_day_max_cents AS text) AS driver_day_max_cents
   FROM autopilot_rules WHERE tenant_id = current_tenant_id() AND kind = $1`;
 
 type RuleRow = {
@@ -21,6 +22,7 @@ type RuleRow = {
   day_max_cents: unknown;
   day_max_count: unknown;
   version: unknown;
+  driver_day_max_cents: unknown;
 };
 
 const cents = (v: unknown): number => (typeof v === "string" && /^\d{1,12}$/.test(v) ? Number(v) : Number.NaN);
@@ -41,6 +43,8 @@ export async function readRule(q: Queryable, kind: string, lock: boolean): Promi
     dayMaxCents: cents(r.day_max_cents),
     dayMaxCount: typeof r.day_max_count === "number" ? r.day_max_count : Number.NaN,
     version: typeof r.version === "number" ? r.version : Number.NaN,
+    // Null on a rule with no driver limit; anything else that does not read is no limit at all.
+    driverDayMaxCents: r.driver_day_max_cents === null ? null : cents(r.driver_day_max_cents),
   };
 }
 
@@ -95,8 +99,28 @@ const TODAY_SQL = `SELECT CAST(COALESCE(sum(amount_cents), 0) AS text) AS cents,
  WHERE tenant_id = current_tenant_id() AND kind = $1 AND decided_by = $2
    AND autopilot_decision->>'mode' = 'auto' AND decided_at >= CAST($3 AS timestamptz)`;
 
+// The same totals for one driver alone, on a kind that pays a driver: the proposals whose args name
+// that driver, compared as the whole canonical id (both money kinds store it there, checked by
+// their executors). An advance's driver is its subject (driverOf), and this keys on its args: the
+// two are one id on every row counted here, since the advance precheck refuses one whose args'
+// driverId is not its subject, under the gate's lock, before the approval that stores auto.
+const DRIVER_TODAY_SQL = `${TODAY_SQL} AND args->>'driverId' = $4`;
+
 export async function readToday(q: Queryable, kind: string, sub: string, sinceIso: string): Promise<DayTotals> {
-  const rows = await q.query<{ cents: unknown; n: unknown }>(TODAY_SQL, [kind, sub, sinceIso]);
+  return totalsOf(await q.query<{ cents: unknown; n: unknown }>(TODAY_SQL, [kind, sub, sinceIso]));
+}
+
+export async function readDriverToday(
+  q: Queryable,
+  kind: string,
+  sub: string,
+  sinceIso: string,
+  driverId: string,
+): Promise<DayTotals> {
+  return totalsOf(await q.query<{ cents: unknown; n: unknown }>(DRIVER_TODAY_SQL, [kind, sub, sinceIso, driverId]));
+}
+
+function totalsOf(rows: { cents: unknown; n: unknown }[]): DayTotals {
   if (rows.length !== 1) throw new DbError("unknown");
   const c = cents(rows[0].cents);
   const n = rows[0].n;

@@ -62,9 +62,17 @@ describe("money code words", () => {
       expect(Object.hasOwn(ADVANCE_APPROVE_NOTICE, k), k).toBe(false);
       expect(GATE_CATEGORIES, k).not.toContain(k);
     }
-    // The two left out are the advance's, with the same meaning.
+    // The ones left out are the advance's, with the same meaning.
     expect(ADVANCE_APPROVE_NOTICE.load_not_drivers).toBeTruthy();
     expect(ADVANCE_APPROVE_NOTICE.driver_not_armed).toBeTruthy();
+    expect(ADVANCE_APPROVE_NOTICE.stale_eligibility).toBeTruthy();
+  });
+
+  it("words the autopilot's stale amount as numbers that changed, never as a bad amount", () => {
+    expect(moneyCodeSentence("stale_eligibility")).not.toBe(FALLBACK);
+    expect(moneyCodeSentence("stale_eligibility")).not.toBe(REFUSAL_SENTENCES.amount_invalid);
+    expect(moneyCodeSentence("stale_eligibility")).toMatch(/numbers changed/);
+    expect(MONEY_CODE_PAGE_NOTICE.stale_eligibility).toBe(moneyCodeSentence("stale_eligibility"));
   });
 
   it("words the request form's outcomes and every status", () => {
@@ -109,7 +117,7 @@ describe("money code switches", () => {
 });
 
 describe("the page's words", () => {
-  it("gives the page's cards every money code sentence, the two shared ones included", () => {
+  it("gives the page's cards every money code sentence, the shared ones included", () => {
     for (const r of MONEY_CODE_REFUSALS) expect(MONEY_CODE_PAGE_NOTICE[r], r).toBe(REFUSAL_SENTENCES[r]);
     for (const k of Object.keys(MONEY_CODE_APPROVE_NOTICE)) expect(MONEY_CODE_PAGE_NOTICE[k], k).toBe(MONEY_CODE_APPROVE_NOTICE[k]);
   });

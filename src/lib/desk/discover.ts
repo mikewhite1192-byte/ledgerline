@@ -1,5 +1,5 @@
 import { flags } from "../../config/flags";
-import { DbError, type Queryable } from "../db";
+import { DbError, type Param, type Queryable } from "../db";
 import { midnightMs, readZone } from "../autopilot/read";
 import { isUuid } from "../uuid";
 import {
@@ -60,12 +60,14 @@ const notLogged = (source: SubjectSource, alias: string) =>
 // a `when` finds nothing while it reads false (the autopilot's, until it is armed: no line is
 // written for work nobody may do yet, so arming finds the proposals still waiting then). A finder
 // with a `notBefore` date (YYYY-MM-DD, the carrier's local midnight) never reads a row made before
-// it, and finds nothing while that date does not read.
+// it, and finds nothing while that date does not read. A finder with `params` binds them after
+// the three, read at each call.
 const FINDERS: {
   source: SubjectSource;
   watermark?: keyof Watermarks;
   when?: () => boolean;
   notBefore?: () => string;
+  params?: () => Param[];
   sql: string;
 }[] = [
   {
@@ -135,15 +137,20 @@ const FINDERS: {
            ORDER BY x.created_at, x.id LIMIT $3`,
   },
   {
-    // A proposal the auditor passed and the engine matched, of a kind the owner set to Auto, that
-    // the autopilot has not looked at. The policy and the approval gate decide it all again.
+    // A proposal the auditor passed and the engine matched, of a kind the owner set to Auto and
+    // armed in flags.autopilot.kinds ($4), that the autopilot has not looked at. A kind not armed
+    // yet is never found, so no line is written for it and arming it finds it still waiting. The
+    // policy and the approval gate decide it all again.
     source: "autopilot",
     when: () => flags.autopilot.enabled === true && flags.autopilot.armed === true,
     notBefore: () => flags.autopilot.startDate,
+    // A Postgres array literal of fixed kind words; {} (none armed) finds nothing.
+    params: () => [`{${armedKinds().join(",")}}`],
     sql: `SELECT CAST(x.id AS text) AS id, ${ts("x.created_at")} AS created_at FROM proposals x
            WHERE x.tenant_id = current_tenant_id() AND x.status = 'proposed'
              AND x.auditor_verdict = 'pass' AND x.engine_check = 'matched'
              AND x.flagged_input_id IS NULL AND x.autopilot_decision IS NULL
+             AND x.kind = ANY(CAST($4 AS text[]))
              AND x.created_at >= CAST($1 AS timestamptz) AND x.created_at <= CAST($2 AS timestamptz)
              AND EXISTS (SELECT 1 FROM autopilot_rules r WHERE r.tenant_id = current_tenant_id()
                             AND r.kind = x.kind AND r.mode = 'auto')
@@ -151,6 +158,13 @@ const FINDERS: {
            ORDER BY x.created_at, x.id LIMIT $3`,
   },
 ];
+
+// The kinds the autopilot may approve now: listed in flags.autopilot.kinds with their own armed on.
+function armedKinds(): string[] {
+  return Object.entries(flags.autopilot.kinds)
+    .filter(([, ceiling]) => ceiling?.armed === true)
+    .map(([kind]) => kind);
+}
 
 const NO_LINE_SQL = `SELECT CAST(count(*) AS integer) AS n FROM desk_log
   WHERE tenant_id = current_tenant_id() AND event_key = $1`;
@@ -241,7 +255,12 @@ export async function findSubjects(
     if (!Number.isFinite(startMs)) return { seen: 0 };
     floor = maxInstant(floor, new Date(startMs).toISOString());
   }
-  const rows = await q.query<{ id: string; created_at: string }>(finder.sql, [floor, input.nowIso, input.budget]);
+  const rows = await q.query<{ id: string; created_at: string }>(finder.sql, [
+    floor,
+    input.nowIso,
+    input.budget,
+    ...(finder.params?.() ?? []),
+  ]);
   let newest = floor;
   for (const r of rows) {
     if (typeof r.id !== "string" || typeof r.created_at !== "string") throw new DbError("unknown");

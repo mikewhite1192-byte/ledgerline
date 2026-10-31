@@ -14,10 +14,12 @@ import { impactOf, PROPOSAL_TITLES } from "./proposals";
 // read or engine error is no check at all (null), so nothing is stored and a later pass tries
 // again. Reads only; the store writes the result once (audit.ts, writeEngineCheck).
 //
-// Kinds merged after the design (the three Cash Friday kinds, the pay rule change, the money code
-// and the card match) have no comparison yet and read unavailable. A load from a rate confirmation
-// (load_create) is compared: the checks run again on the stored reading. An escrow release stays
-// unavailable: its amount is the driver's stored balance, which its precheck reads again.
+// Kinds merged after the design (the three Cash Friday kinds, the pay rule change and the card
+// match) have no comparison yet and read unavailable. A load from a rate confirmation
+// (load_create) is compared: the checks run again on the stored reading. A money code is compared:
+// the money code rules run again on the stored evidence and must allow exactly its amount. An
+// escrow release stays unavailable: its amount is the driver's stored balance, which its precheck
+// reads again.
 
 export type EngineCheck = "matched" | "mismatch" | "unavailable";
 export type EngineCheckResult = { check: EngineCheck; engineCents: number | null };
@@ -34,10 +36,11 @@ const COMPARED: ReadonlySet<string> = new Set([
   "detention_charge",
   "settlement_approve",
   "load_create",
+  "money_code",
 ]);
 
 // Whether the engine compares this kind at all. A kind with no comparison here (the card match,
-// the Cash Friday kinds, the pay rule change, the money code, the pay policy setup) has no
+// the Cash Friday kinds, the pay rule change, the pay policy setup) has no
 // recompute by design, so a draft of it is never refused for the lack of one (design-agents-102
 // 3.2 and D3: only a kind the engine does compare is refused when its recompute cannot run).
 export function engineCompares(kind: string): boolean {
@@ -117,6 +120,13 @@ export function compareEngine(kind: string, amountCents: number, engine: Record<
       const total = centsOf(engine.totalCents);
       if (total === null) return ENGINE_UNAVAILABLE;
       return verdictOf(engine.holds && total === amountCents, total);
+    }
+    case "money_code": {
+      // A refusal by the rules (over the cap, no receipt) is no figure to compare: unavailable.
+      const inner = objectOf(engine.engine);
+      const total = inner?.ok === true ? centsOf(inner.amountCents) : null;
+      if (total === null) return ENGINE_UNAVAILABLE;
+      return verdictOf(inner?.matchesProposal === true && total === amountCents, total);
     }
     default:
       return ENGINE_UNAVAILABLE;

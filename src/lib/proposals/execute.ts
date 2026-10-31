@@ -8,8 +8,8 @@ import { moneyCodeExecutor } from "../money-codes/execute";
 import { executePaymentReapply } from "../invoices/reapply";
 import { executeSettlementApprove } from "../settlements/approve";
 import { assertMembership } from "../tenant/context";
-import { decide, isPaused, recordOf, type DecisionRecord } from "../autopilot/policy";
-import { midnightMs, readPause, readRule, readToday, readZone, todayStartIso } from "../autopilot/read";
+import { decide, driverOf, isPaused, recordOf, type DecisionRecord } from "../autopilot/policy";
+import { midnightMs, readDriverToday, readPause, readRule, readToday, readZone, todayStartIso } from "../autopilot/read";
 import { autopilotSub, isAutopilotSub } from "../autopilot/session";
 import { isServiceSub } from "../sweep/service-session";
 import { isUuid } from "../uuid";
@@ -351,7 +351,8 @@ function principalRefusal(session: Session, opts: ApproveOptions, role: string |
 
 // The autopilot's policy, decided again inside the gate's transaction with the proposal locked:
 // the switch, its arming and start date read now, the pause, the rule (locked, so two approvals
-// of one kind read today's totals one after the other) and today's totals. Anything but auto is
+// of one kind read today's totals one after the other) and today's totals, the driver's own too on a
+// kind that pays a driver (a plain read: no driver or load lock is taken here). Anything but auto is
 // refused with the policy's reason word and nothing written; a rule changed since the decision
 // (another id or version) is refused too. Reads only.
 async function autopilotDecision(
@@ -365,7 +366,10 @@ async function autopilotDecision(
   const pause = await readPause(q);
   const zone = await readZone(q);
   const rule = await readRule(q, p.kind, true);
-  const today = await readToday(q, p.kind, session.sub, todayStartIso(now, zone));
+  const since = todayStartIso(now, zone);
+  const today = await readToday(q, p.kind, session.sub, since);
+  const driverId = driverOf(p.kind, p);
+  const driverToday = driverId === null ? null : await readDriverToday(q, p.kind, session.sub, since, driverId);
   const sw = flags.autopilot;
   const decided = decide({
     switch: { enabled: sw.enabled, armed: sw.armed, kinds: sw.kinds },
@@ -374,6 +378,7 @@ async function autopilotDecision(
     rule,
     proposal: {
       kind: p.kind,
+      driverId,
       status: p.status,
       amountCents: p.amountCents,
       createdAtMs: Date.parse(row.created_at),
@@ -382,12 +387,13 @@ async function autopilotDecision(
       engineCheck: row.engine_check,
     },
     today,
+    driverToday,
   });
   if (decided.decision !== "auto") return { result: { ok: false, category: decided.reason, retryable: false } };
   if (!rule || rule.id !== sent.ruleId.toLowerCase() || rule.version !== sent.version) {
     return { result: refused("autopilot_rule") };
   }
-  return { record: recordOf({ ...decided, decision: "auto" }, rule, today) };
+  return { record: recordOf({ ...decided, decision: "auto" }, rule, today, { id: driverId, today: driverToday }) };
 }
 
 // A precheck's refusal, thrown out of the gate so its transaction rolls back (a read inside the

@@ -14,6 +14,7 @@ import type {
   ApproveOptions,
   ExecuteDeps,
   Executor,
+  PrecheckContext,
   ProposalRefused,
   ProposalResult,
   ProposalRow,
@@ -453,8 +454,16 @@ export function codeReconcileHooks(issuer: MoneyCodeIssuer, purpose: MoneyCodePu
 
 // The gate's early refusal (Precheck in src/lib/proposals/execute.ts), under the gate's proposal
 // lock before the proposal becomes approved: a refusal leaves it waiting, with nothing written.
-// Reads only. The executor asks all of it again after the approval.
-export async function precheckMoneyCode(q: Queryable, p: ProposalRow, now: Date): Promise<ProposalRefused | null> {
+// Reads only. The executor asks all of it again after the approval. For the autopilot (ctx.opts
+// .autopilot) the rules engine must also allow exactly the proposal's amount now: a code whose
+// numbers moved is refused here as stale_eligibility (the advance precheck's word) and waits for a
+// person, never approved only to be refused after.
+export async function precheckMoneyCode(
+  q: Queryable,
+  p: ProposalRow,
+  now: Date,
+  ctx?: PrecheckContext,
+): Promise<ProposalRefused | null> {
   if (!moneyCodesOn()) return no("codes_off");
   const a = codeArgsOf(p);
   if (!a) return no("not_executable");
@@ -472,6 +481,7 @@ export async function precheckMoneyCode(q: Queryable, p: ProposalRow, now: Date)
     return no("check_unavailable", true);
   }
   if (!decision.ok) return no(decision.category);
+  if (ctx?.opts.autopilot !== undefined && decision.amountCents !== a.amountCents) return no("stale_eligibility");
   return null;
 }
 
