@@ -2,47 +2,25 @@
 
 import { Bell, Search } from "lucide-react";
 import Link from "next/link";
-import { useEffect, type MouseEvent, type ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import { useAgentPanel } from "@/components/agent/panel-context";
 import { cn } from "@/lib/cn";
 import { ASK_ANCHOR, NEEDS_YOU_ANCHOR } from "./anchors";
 import { HideAmounts } from "./hide-amounts";
+import { plainClick } from "./panel-hash-link";
 
 const ASK_HREF = `/#${ASK_ANCHOR}`;
 
-// Home's question box, when it is on the page and can take a question. It is picked by its own
-// mark, because a blocked card's "Why approve it anyway?" box sits above it in the thread.
-function composer(): HTMLTextAreaElement | null {
-  const box = document.getElementById(ASK_ANCHOR)?.querySelector<HTMLTextAreaElement>("textarea[data-composer]");
-  return box && !box.readOnly ? box : null;
-}
-
-function focusComposer(box: HTMLTextAreaElement) {
-  box.scrollIntoView?.({ block: "center" });
-  box.focus({ preventScroll: true });
-}
-
-function plainClick(e: MouseEvent<HTMLAnchorElement>): boolean {
-  return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
-}
-
-// "Ask" goes to the agent. On a page with the agent panel it opens the panel; on Home it puts the
-// cursor in the question box instead of reloading; anywhere else it goes to Home's box. A click
-// with a modifier key still opens a new tab. The wait lets the phone menu close and hand focus
-// back before the box takes it.
+// "Ask" goes to the agent. On a page with the agent card it opens the card; without one (the
+// /design specimen) it is a plain link to Home's #ask, which opens the card there. A click with a
+// modifier key still opens a new tab. The wait lets the phone menu close and hand focus back
+// before the card's box takes it.
 export function AskLink({ className, children }: { className?: string; children: ReactNode }) {
   const panel = useAgentPanel();
   function onAsk(e: MouseEvent<HTMLAnchorElement>) {
-    if (!plainClick(e)) return;
-    if (panel) {
-      e.preventDefault();
-      window.setTimeout(() => panel.open(), 0);
-      return;
-    }
-    const box = composer();
-    if (!box) return;
+    if (!panel || !plainClick(e)) return;
     e.preventDefault();
-    window.setTimeout(() => focusComposer(box), 0);
+    window.setTimeout(() => panel.open(), 0);
   }
   return (
     <Link href={ASK_HREF} onClick={onAsk} aria-haspopup={panel ? "dialog" : undefined} className={className}>
@@ -52,17 +30,8 @@ export function AskLink({ className, children }: { className?: string; children:
 }
 
 // The wide box in the top bar. It is the agent, not a separate search: it reads like a field and
-// opens the agent panel, or takes you to Home's question box. Arriving on Home from another page
-// with #ask, it focuses the box.
+// opens the agent card.
 function AskBox() {
-  useEffect(() => {
-    const wait = window.setTimeout(() => {
-      if (window.location.hash !== `#${ASK_ANCHOR}`) return;
-      const box = composer();
-      if (box) focusComposer(box);
-    }, 0);
-    return () => window.clearTimeout(wait);
-  }, []);
   return (
     <AskLink
       className={cn(

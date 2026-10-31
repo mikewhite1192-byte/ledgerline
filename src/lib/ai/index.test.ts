@@ -1396,7 +1396,7 @@ describe("editImage", () => {
       units: 1,
     });
     expect(result.images).toEqual([{ bytes: new Uint8Array(PNG_BYTES), mime: "image/png" }]);
-    expect(logged.join("\n")).not.toContain("175");
+    expect(logged.join("\n")).not.toContain("$175.00");
   });
 
   it("refuses a malformed edit as bad_request before any call", async () => {

@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { PanelContext } from "@/components/agent/panel-context";
 import type { AdvanceListRow } from "@/lib/advances/read";
 import type { ProposalView, TurnView } from "@/lib/agent/view";
-import { advancesRow, cardsRow, pastDueRow, type NeedsYouRow } from "@/lib/home/needs-you";
+import { advancesRow, cardsRow, escalatedRow, pastDueRow, type NeedsYouRow } from "@/lib/home/needs-you";
 import type { InvoiceListRow } from "@/lib/invoices/views";
 import * as fx from "@/test/page-fixtures";
 import { NEEDS_YOU_EMPTY, NEEDS_YOU_UNREAD, NeedsYou } from "./needs-you";
@@ -56,5 +57,37 @@ describe("NeedsYou", () => {
     expect(screen.getByRole("listitem").textContent).toBe(
       "200 or more advance requests waiting for a decisionAt least $200.00 requestedOpen requested advances",
     );
+  });
+
+  it("opens the agent card itself for #ask and #card- links on a plain click, so a link to the hash already showing still works", () => {
+    const open = vi.fn();
+    const cardId = fx.PROPOSALS[0].id;
+    const rows = [cardsRow([turnWith("t1", [card({ id: cardId })])])!, escalatedRow(2)!, ROWS[1]];
+    render(
+      <PanelContext.Provider value={{ open }}>
+        <NeedsYou view={{ rows, unread: false }} />
+      </PanelContext.Provider>,
+    );
+    const toCard = screen.getByRole("link", { name: "Go to the newest card" });
+    const toChat = screen.getByRole("link", { name: "Open your chat" });
+    expect(fireEvent.click(toCard)).toBe(false);
+    expect(open).toHaveBeenLastCalledWith({ scrollTo: `card-${cardId}` });
+    expect(fireEvent.click(toChat)).toBe(false);
+    expect(open).toHaveBeenLastCalledWith(undefined);
+    expect(open).toHaveBeenCalledTimes(2);
+
+    // A click with a modifier key, another button, or a page link keeps the browser's own behavior.
+    expect(fireEvent.click(toCard, { metaKey: true })).toBe(true);
+    expect(fireEvent.click(toChat, { shiftKey: true })).toBe(true);
+    expect(fireEvent.click(toCard, { button: 1 })).toBe(true);
+    fireEvent.click(screen.getByRole("link", { name: "Open the invoice list" }));
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("is a plain link to the hash on a page with no agent card", () => {
+    render(<NeedsYou view={{ rows: [escalatedRow(2)!], unread: false }} />);
+    const toChat = screen.getByRole("link", { name: "Open your chat" });
+    expect(toChat.getAttribute("href")).toBe("#ask");
+    expect(fireEvent.click(toChat)).toBe(true);
   });
 });

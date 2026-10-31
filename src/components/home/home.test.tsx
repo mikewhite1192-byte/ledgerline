@@ -191,7 +191,7 @@ const PAYDAY: Payday = {
 
 describe("PaydayCard", () => {
   it("shows the week in words, its net pay and where the paystubs stand", () => {
-    render(<PaydayCard payday={{ ok: true, value: PAYDAY }} askHref="/?ask=payday#ask" />);
+    render(<PaydayCard payday={{ ok: true, value: PAYDAY }} askHref="/?ask=payday" />);
     const card = screen.getByRole("region", { name: "Paystubs" });
     expect(card.textContent).toContain("Nov 2 to Nov 8, 2026");
     expect(card.querySelector("[data-money]")?.textContent).toBe("$4,567.89");
@@ -206,7 +206,7 @@ describe("PaydayCard", () => {
     ]);
     expect(within(card).getByRole("link", { name: "Open settlements" }).getAttribute("href")).toBe("/settlements");
     expect(within(card).getByRole("link", { name: "Ask about this: Paystubs" }).getAttribute("href")).toBe(
-      "/?ask=payday#ask",
+      "/?ask=payday",
     );
     expect(card.textContent).not.toMatch(ISO_DATE);
   });
@@ -243,7 +243,7 @@ const WEEKS = [
 
 describe("CashFlowCard", () => {
   it("totals money in and out, draws a bar per amount and lists each week in words", () => {
-    render(<CashFlowCard flow={{ ok: true, value: WEEKS }} askHref="/?ask=cash#ask" />);
+    render(<CashFlowCard flow={{ ok: true, value: WEEKS }} askHref="/?ask=cash" />);
     const card = screen.getByRole("region", { name: "Money in and out" });
     expect(card.textContent).toContain(IN_LABEL);
     expect(card.textContent).toContain(OUT_LABEL);
@@ -280,7 +280,7 @@ describe("CashFlowCard", () => {
 describe("OwedCard", () => {
   it("shows what customers owe and how much is past due", () => {
     render(
-      <OwedCard owed={{ ok: true, value: { invoices: 3, owedCents: 60_000, late: 2, lateCents: 50_000 } }} askHref="/?ask=owed#ask" />,
+      <OwedCard owed={{ ok: true, value: { invoices: 3, owedCents: 60_000, late: 2, lateCents: 50_000 } }} askHref="/?ask=owed" />,
     );
     const card = screen.getByRole("region", { name: "Owed to you" });
     expect([...card.querySelectorAll("[data-money]")].map((m) => m.textContent)).toEqual(["$600.00", "$500.00"]);

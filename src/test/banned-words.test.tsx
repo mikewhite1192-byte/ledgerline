@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 import { readdirSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentLauncher } from "@/components/agent/agent-launcher";
+import { defaultSuggestions, withPaystubSuggestion } from "@/components/agent/suggestions";
+import { greetingLine } from "@/components/agent/words";
 import { weekEnding } from "@/components/agent/page-focus";
 import { proposalCardFrom } from "@/components/agent/proposal-card-from";
 import { reportTable, type ReportLoad } from "@/components/agent/report-table";
@@ -1999,12 +2001,35 @@ describe("no internal word on any page", () => {
     failures = failureTitles();
     expect(failures.every((t) => t.length > 0)).toBe(true);
   });
+  // Home opens the agent card as it loads when asked (a paystub, a pay rule change), so its words
+  // are read too: jsdom has no dialog methods, and the card's read of the newest conversation
+  // answers with none. Every other request still never answers.
+  beforeEach(() => {
+    HTMLDialogElement.prototype.show = function show(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    HTMLDialogElement.prototype.close = function close(this: HTMLDialogElement) {
+      this.removeAttribute("open");
+    };
+    vi.stubGlobal("fetch", (url: string) =>
+      url === "/api/agent/recent"
+        ? Promise.resolve(new Response(JSON.stringify({ conversationId: null, turns: [] }), { status: 200 }))
+        : new Promise(() => {}),
+    );
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLDialogElement.prototype, "show");
+    Reflect.deleteProperty(HTMLDialogElement.prototype, "close");
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+  });
 
   for (const c of PAGES) {
     for (const v of c.variants) {
       it(`${c.file} (${v.name})`, async () => {
         v.setup?.();
         const container = await renderPage(v.load);
+        const card = container.querySelector("dialog[open]");
+        if (card) await waitFor(() => expect(card.querySelector("textarea[data-composer]")).not.toBeNull());
         const text = container.textContent ?? "";
         expect(text.trim().length).toBeGreaterThan(0);
         for (const words of [v.shows ?? []].flat()) expect(text, "the state this variant names").toContain(words);
@@ -2905,7 +2930,7 @@ describe("no internal word in a shared state", () => {
     expect(scan(container)).toEqual([]);
   });
 
-  it("the agent launcher, and its panel opened on a pay week's paystub with the chip on", async () => {
+  it("the agent launcher, and its card opened on a pay week's paystub with the chip on and the + menu open", async () => {
     // jsdom has no dialog methods; these stand in for the browser's, as the sheet's own test does.
     HTMLDialogElement.prototype.show = function show(this: HTMLDialogElement) {
       this.setAttribute("open", "");
@@ -2920,10 +2945,16 @@ describe("no internal word in a shared state", () => {
         timezone: fx.TENANT.timezone,
         viewer: { admin: false, adminAboveCents: flags.approverRole.adminAboveCents },
         role: "staff" as const,
+        greeting: greetingLine(fx.TENANT.name),
+        documentsHref: "/documents",
       };
       const label = `Rosa Delgado, ${weekEnding("2026-10-25")}`;
       render(
-        <AgentLauncher config={config} focus={{ table: "settlements", id: fx.ID, label }}>
+        <AgentLauncher
+          config={config}
+          focus={{ table: "settlements", id: fx.ID, label }}
+          suggestions={withPaystubSuggestion(defaultSuggestions(), { driverName: "Rosa Delgado", periodEnd: "2026-10-25" })}
+        >
           <p>Page</p>
         </AgentLauncher>,
       );
@@ -2932,12 +2963,19 @@ describe("no internal word in a shared state", () => {
       const panel = await screen.findByRole("dialog", { name: "Agent" });
       await within(panel).findByRole("textbox", { name: "Your question" });
       expect(panel.textContent).toContain("About: Rosa Delgado, week ending Oct 25, 2026");
+      expect(within(panel).getByRole("heading", { name: greetingLine(fx.TENANT.name) })).toBeTruthy();
+      expect(within(panel).getByText("Beta")).toBeTruthy();
+      expect(within(panel).getByRole("button", { name: "Minimize the agent" })).toBeTruthy();
+      expect(within(panel).getByRole("button", { name: "Expand the agent" })).toBeTruthy();
+      const menu = panel.querySelector("details");
+      if (menu) menu.open = true;
       expect(within(panel).getByRole("button", { name: "New conversation" })).toBeTruthy();
+      fireEvent.click(within(panel).getByRole("button", { name: "More ways to ask" }));
+      expect(within(panel).getByRole("menu", { name: "More ways to ask" }).textContent).toContain("Upload a document");
       expect(scan(document.body)).toEqual([]);
     } finally {
       vi.stubGlobal("fetch", pending);
       Reflect.deleteProperty(HTMLDialogElement.prototype, "show");
-      delete document.documentElement.dataset.agentPanel;
     }
   });
 });

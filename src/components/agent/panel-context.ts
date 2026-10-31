@@ -2,14 +2,25 @@
 
 import { createContext, useContext } from "react";
 
-// Opens the agent panel. Kept apart from the panel so the top bar can ask for it without loading
-// the chat on a page that has none.
-export type PanelControl = { open: () => void };
+// What a page can ask the card to open with: text for the question box (the person sends it) and
+// the help line under it.
+export type OpenRequest = { draft?: string; help?: string };
+
+// One of the ways Home is asked to open the card as it loads, else undefined (the card stays closed).
+export type AgentOpening = OpenRequest & {
+  // ?new=1 (the demo banner's Start over): leave the newest conversation and start empty.
+  fresh?: boolean;
+};
+
+// Opens the agent card. Kept apart from the card so the top bar can ask for it without loading
+// the chat on a page that has none. scrollTo is a "card-<id>" element to bring into view once the
+// thread shows (a Needs you link).
+export type PanelControl = { open: (opts?: OpenRequest & { scrollTo?: string }) => void };
 
 export const PanelContext = createContext<PanelControl | null>(null);
 
-// The menu's and the top bar's Ask open the panel through this on a page that has one; elsewhere
-// (Home, or the switches off) it is null and Ask keeps going to Home's question box.
+// The menu's and the top bar's Ask open the card through this on a page that has one; elsewhere
+// (the agent off, or the /design specimen) it is null and Ask is a plain link to Home.
 export function useAgentPanel(): PanelControl | null {
   return useContext(PanelContext);
 }

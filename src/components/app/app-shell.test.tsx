@@ -5,9 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PageFocus } from "@/components/agent/page-focus";
 import { flags } from "@/config/flags";
-import { ASK_ANCHOR } from "./anchors";
 import { AppShell, type NavItem } from "./app-shell";
-import { Composer } from "./composer";
 import { AMOUNTS_KEY } from "./hide-amounts";
 import { MASKED_AMOUNT, Money } from "./money";
 import { TEST_MODE_LINE, testModeOnly } from "./test-mode-banner";
@@ -104,22 +102,6 @@ describe("the top bar", () => {
     shell("/advances");
     expect(screen.queryByRole("link", { name: "Search or ask anything" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Ask" })).toBeNull();
-  });
-
-  it("puts the cursor in the question box, never in a blocked card's reason box above it", async () => {
-    flags.agentEnabled = true;
-    shell(
-      "/",
-      <div id={ASK_ANCHOR}>
-        <textarea aria-label="Why approve it anyway?" />
-        <Composer onSubmit={() => undefined} />
-      </div>,
-      // Home renders the shell without the panel, so Ask goes to its own question box.
-      { agentPanel: false },
-    );
-    fireEvent.click(screen.getByRole("link", { name: "Search or ask anything" }));
-    const question = screen.getByRole("textbox", { name: "Your question" });
-    await waitFor(() => expect(document.activeElement).toBe(question));
   });
 
   it("prints no group line, and the bell counts what waits only when the page passed a count", () => {
@@ -249,35 +231,61 @@ describe("the agent launcher", () => {
   afterEach(() => {
     Reflect.deleteProperty(HTMLDialogElement.prototype, "show");
     Reflect.deleteProperty(HTMLDialogElement.prototype, "close");
-    delete document.documentElement.dataset.agentPanel;
   });
 
   const launcher = () => screen.queryByRole("button", { name: "Ask the agent" });
 
-  it("shows off Home while the agent and page focus switches are both on", () => {
+  it("shows on every page, Home included, while the agent is on, and reads nothing until it opens", () => {
     flags.agentEnabled = true;
     flags.agentFocusEnabled = true;
-    shell("/advances");
+    const off = shell("/advances");
     expect(launcher()).not.toBeNull();
+    off.unmount();
+    shell("/");
+    expect(launcher()).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Search or ask anything" }).getAttribute("aria-haspopup")).toBe("dialog");
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  it("is left off with either switch off, and on Home, and makes no request then", () => {
-    flags.agentEnabled = true;
-    flags.agentFocusEnabled = false;
-    const { unmount } = shell("/advances");
-    expect(launcher()).toBeNull();
-    unmount();
+  it("is left off with the agent off or a page that asks for none, and makes no request then", () => {
     flags.agentEnabled = false;
     flags.agentFocusEnabled = true;
     const off = shell("/advances");
     expect(launcher()).toBeNull();
     off.unmount();
     flags.agentEnabled = true;
-    shell("/", <p>Body</p>, { agentPanel: false });
+    shell("/design", <p>Body</p>, { agentPanel: false });
     expect(launcher()).toBeNull();
-    expect(screen.getByRole("link", { name: "Search or ask anything" }).getAttribute("href")).toBe("/#ask");
+    // Without a card on the page, Ask is a plain link to Home's #ask, which opens the card there.
+    const box = screen.getByRole("link", { name: "Search or ask anything" });
+    expect(box.getAttribute("href")).toBe("/#ask");
+    expect(box.getAttribute("aria-haspopup")).toBeNull();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("still shows with page focus off, with no chip for the page's record", async () => {
+    flags.agentEnabled = true;
+    flags.agentFocusEnabled = false;
+    shell("/advances", <p>Body</p>, {
+      focus: { table: "drivers", id: "11111111-1111-4111-8111-111111111111", label: "Dana Reyes" },
+    });
+    const button = launcher();
+    if (!button) throw new Error("no launcher");
+    fireEvent.click(button);
+    const panel = await screen.findByRole("dialog", { name: "Agent" });
+    await within(panel).findByRole("textbox", { name: "Your question" });
+    expect(within(panel).queryByText("About: Dana Reyes")).toBeNull();
+  });
+
+  it("opens from Ask on Home with the cursor in the card's box, never in a blocked card's reason box", async () => {
+    flags.agentEnabled = true;
+    shell("/", <textarea aria-label="Why approve it anyway?" />);
+    fireEvent.click(screen.getByRole("link", { name: "Search or ask anything" }));
+    const panel = await screen.findByRole("dialog", { name: "Agent" });
+    const box = await within(panel).findByRole("textbox", { name: "Your question" });
+    await waitFor(() => expect(document.activeElement).toBe(box));
+    // The card's greeting names the carrier.
+    expect(within(panel).getByRole("heading", { name: "Hey, Test Carrier. How can I be helpful?" })).toBeTruthy();
   });
 
   it("opens from the top bar's Ask off Home, with the cursor in the panel's question box", async () => {
