@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { DELIVERY_SLACK_MINUTES, differencesOf, dwellMinutes, ourRevenueCents, type OurSide, type TmsSide } from "./differences";
+import { DELIVERY_SLACK_MINUTES, PICKUP_SLACK_MINUTES, differencesOf, dwellMinutes, ourRevenueCents, type OurSide, type TmsSide } from "./differences";
 
 // Where the dispatch copy of a load and ours disagree, in code: each difference on its own, nothing
-// said about a value either side does not know, the delivery slack at its edge, and the two helpers.
+// said about a value either side does not know, the pickup and delivery slack at its edge, and the two helpers.
 
 const tms = (over: Partial<TmsSide> = {}): TmsSide => ({
   statusCode: "in_transit",
   revenueTotalCents: 150_000,
+  pickedUpAt: null,
   deliveredAt: null,
   goneAt: null,
   flags: [],
@@ -16,6 +17,7 @@ const tms = (over: Partial<TmsSide> = {}): TmsSide => ({
 const ours = (over: Partial<OurSide> = {}): OurSide => ({
   status: "in_transit",
   revenueCents: 150_000,
+  pickedUpAt: null,
   deliveredAt: null,
   hasPod: false,
   ...over,
@@ -62,6 +64,35 @@ describe("differencesOf", () => {
     ]);
     expect(differencesOf(tms({ deliveredAt: at }), ours({ deliveredAt: null }))).toEqual([]);
     expect(differencesOf(tms({ deliveredAt: "not a time" }), ours({ deliveredAt: past }))).toEqual([]);
+    // A second past the slack is a difference, though it rounds to the slack's own minutes.
+    const justPast = new Date(Date.parse(edge) + 1_000).toISOString();
+    expect(differencesOf(tms({ deliveredAt: justPast }), ours({ deliveredAt: at }))).toEqual([
+      { kind: "delivery_time_differs", dispatchAt: justPast, oursAt: at, minutesApart: 30 },
+    ]);
+  });
+
+  it("says pickup times differ only past the slack, either way round, in whole minutes", () => {
+    const at = "2026-11-01T14:15:00.000Z";
+    const edge = new Date(Date.parse(at) + PICKUP_SLACK_MINUTES * 60_000).toISOString();
+    const past = new Date(Date.parse(at) + (PICKUP_SLACK_MINUTES + 1) * 60_000).toISOString();
+    expect(PICKUP_SLACK_MINUTES).toBe(30);
+    expect(differencesOf(tms({ pickedUpAt: at }), ours({ pickedUpAt: at }))).toEqual([]);
+    expect(differencesOf(tms({ pickedUpAt: at }), ours({ pickedUpAt: edge }))).toEqual([]);
+    expect(differencesOf(tms({ pickedUpAt: edge }), ours({ pickedUpAt: at }))).toEqual([]);
+    expect(differencesOf(tms({ pickedUpAt: past }), ours({ pickedUpAt: at }))).toEqual([
+      { kind: "pickup_time_differs", dispatchAt: past, oursAt: at, minutesApart: 31 },
+    ]);
+    expect(differencesOf(tms({ pickedUpAt: at }), ours({ pickedUpAt: past }))).toEqual([
+      { kind: "pickup_time_differs", dispatchAt: at, oursAt: past, minutesApart: 31 },
+    ]);
+    expect(differencesOf(tms({ pickedUpAt: at }), ours({ pickedUpAt: null }))).toEqual([]);
+    expect(differencesOf(tms({ pickedUpAt: null }), ours({ pickedUpAt: past }))).toEqual([]);
+    expect(differencesOf(tms({ pickedUpAt: "not a time" }), ours({ pickedUpAt: past }))).toEqual([]);
+    expect(differencesOf(tms({ pickedUpAt: past }), ours({ pickedUpAt: "not a time" }))).toEqual([]);
+    const justPast = new Date(Date.parse(edge) + 1_000).toISOString();
+    expect(differencesOf(tms({ pickedUpAt: at }), ours({ pickedUpAt: justPast }))).toEqual([
+      { kind: "pickup_time_differs", dispatchAt: at, oursAt: justPast, minutesApart: 30 },
+    ]);
   });
 
   it("says a proof of delivery is in dispatch and not here, a load gone from dispatch, and an edit after finalize", () => {
@@ -80,15 +111,17 @@ describe("differencesOf", () => {
       tms({
         statusCode: "delivered",
         revenueTotalCents: 151_000,
+        pickedUpAt: "2026-11-01T15:00:00.000Z",
         deliveredAt: "2026-11-02T18:00:00.000Z",
         goneAt: "2026-11-02T19:00:00.000Z",
         flags: ["edited_after_finalize"],
         hasPodDocument: true,
       }),
-      ours({ status: "delivered", deliveredAt: "2026-11-02T16:00:00.000Z" }),
+      ours({ status: "delivered", pickedUpAt: "2026-11-01T14:00:00.000Z", deliveredAt: "2026-11-02T16:00:00.000Z" }),
     );
     expect(all.map((d) => d.kind)).toEqual([
       "rate_differs",
+      "pickup_time_differs",
       "delivery_time_differs",
       "pod_in_dispatch_not_here",
       "gone_from_dispatch",
