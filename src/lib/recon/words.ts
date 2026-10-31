@@ -1,4 +1,5 @@
 import type { BreakCategory } from "../rules-engine/card-recon";
+import type { StatementVerdict } from "./run";
 
 // The card check's words on screen, from code: the short name of each difference, the system a
 // payment record lives in, and the fixed sentence a difference shows when no checked model
@@ -129,4 +130,29 @@ export function fixedSentence(input: {
   outsideCents: number | null;
 }): string {
   return `${categoryWords(input.category)} on ${input.record}: ours ${money(input.ourCents)}, theirs ${money(input.outsideCents)}.`;
+}
+
+const count = (n: number, one: string, many: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
+
+// The card statement's verdict as one line, from code: "Verified, go pay $4,210.50: all 38 card
+// lines match our records." (or, when a person dismissed differences, "38 card lines checked, 2
+// differences closed by a person.") or "Hold: 2 breaks on the statement: Fuel amount differs (1),
+// Card not on file (1). Do not pay it yet." Categories in fixed words only. Null when there is no
+// verdict.
+export function verdictWords(v: StatementVerdict | null): string | null {
+  if (!v) return null;
+  if (v.kind === "empty") return "No card lines on the statement for this window. Nothing to pay.";
+  if (v.kind === "verified") {
+    if (v.closed > 0) {
+      const lines = count(v.lines, "card line", "card lines");
+      const closed = count(v.closed, "difference", "differences");
+      return `Verified, go pay ${money(v.cents)}: ${lines} checked, ${closed} closed by a person.`;
+    }
+    const all = v.lines === 1 ? "the one card line matches" : `all ${count(v.lines, "card line", "card lines")} match`;
+    return `Verified, go pay ${money(v.cents)}: ${all} our records.`;
+  }
+  if (v.breaks === 0) return "Hold: not every card line was compared. Do not pay the statement yet.";
+  const list = v.byCategory.map((b) => `${categoryWords(b.category)} (${b.count.toLocaleString("en-US")})`).join(", ");
+  const cut = v.cut ? " Not every line was compared." : "";
+  return `Hold: ${count(v.breaks, "break", "breaks")} on the statement: ${list}.${cut} Do not pay it yet.`;
 }

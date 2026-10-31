@@ -12,6 +12,7 @@ import {
 } from "../data/card-recon";
 import { formatLocalDate } from "../format/dates";
 import { rankCandidates, topIsTied, type Candidate } from "../rules-engine/card-recon";
+import { statementVerdict } from "./run";
 import {
   categoryWords,
   DISMISS_WORDS,
@@ -21,6 +22,7 @@ import {
   money,
   recordWords,
   RECORD_WORDS,
+  verdictWords,
   type HandPickWhy,
 } from "./words";
 
@@ -63,6 +65,11 @@ export function resultLine(run: RunView): string {
   const head = `Checked ${plural(countOf(run, "statement"), "card transaction", "card transactions")} and ${plural(countOf(run, "records"), "payment record", "payment records")}.`;
   const tail = needs === 0 ? "Nothing needs you." : `${plural(needs, "needs", "need")} you.`;
   return `${head} ${tail}`;
+}
+
+// Whether the card statement can be paid, for a finished check: "Verified, go pay ..." or "Hold: ...".
+export function verdictLine(run: RunView | null): string | null {
+  return run ? verdictWords(statementVerdict(run)) : null;
 }
 
 // The lines for the systems the check could not read in full, each once.
