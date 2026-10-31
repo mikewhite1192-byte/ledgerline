@@ -49,8 +49,11 @@ const PROMPT =
 const CATEGORY = /^[a-z_]{2,40}$/;
 // A percent the engine's facts may carry, such as "70%".
 const PERCENT = /\b\d{1,3}(?:\.\d+)?%/g;
-// A number in words that could carry an amount, such as "fifteen hundred" or "two grand".
-const NUMBER_WORD = /\b(?:hundreds?|thousands?|grand|millions?|billions?)\b/i;
+// Any cardinal in words, whole words only (plurals too), since any of them could carry an amount:
+// "one dollar more", "a twenty dollar fee", "fifteen hundred", "two grand". "Someone" and "anyone"
+// still pass; a line such as "one load" is dropped, which is fine for an optional line.
+const NUMBER_WORD =
+  /\b(?:(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|hundred|thousand|million|billion|dozen|grand)(?:e?s)?|(?:twent|thirt|fort|fift|sixt|sevent|eight|ninet)(?:y|ies))\b/i;
 
 // The sentence, kept only when its one amount is the engine's, written exactly as given: with that
 // amount and any percent taken out, no digit and no number word may remain. Strict on purpose

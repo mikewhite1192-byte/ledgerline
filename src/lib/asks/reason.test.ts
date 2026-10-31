@@ -72,10 +72,17 @@ describe("checkReason", () => {
       "The advance is fifteen hundred dollars.",
       "That leaves 1,250 of trip pay.",
       "The rule allows two grand here.",
+      "That leaves a twenty dollar fee.",
+      "The advance is fifteen dollars more.",
+      "The rule allows one dollar more.",
       "That is a thousand under the cap.",
     ]) {
       expect(checkReason(line, 140_000), line).toEqual({ ok: false, category: "figures" });
     }
+  });
+
+  it("keeps a word that only holds a number word inside it", () => {
+    expect(checkReason("Someone sent the paperwork, so anyone can see the $1,400.00 advance is due.", 140_000)).toMatchObject({ ok: true });
   });
 
   it("keeps the engine's exact amount beside a percent", () => {
