@@ -1134,9 +1134,9 @@ export const flags: Flags = {
   advanceAtPickup: { enabled: true, startDate: "2026-10-31" },
   // Off until its own one-line enable PR. Nothing moves money: a ruling books what a driver owes.
   cardLoadRuling: { enabled: true, startDate: "2026-10-31" },
-  // Off until its own one-line enable PR. Parking moves no money; a release pays through the usual
-  // ledger and payout switches.
-  advanceParking: { enabled: false, startDate: "2026-11-02" },
+  // On by the owner's call (D-071, 2026-10-31). Parking moves no money; a release pays through the
+  // usual ledger and payout switches.
+  advanceParking: { enabled: true, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. A pull is an outside write, in test mode only.
   cardPullback: { enabled: false, startDate: "2026-11-02" },
 };
