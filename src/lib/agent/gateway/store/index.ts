@@ -56,7 +56,16 @@ export function dbTurnStore(session: Session, deps: StoreDeps = {}): TurnStore {
         return await tx(async (q) => {
           const now = clock();
           const saved = await persistProposal(q, input, now);
-          if (asks && saved.kind === "created") await askFor(q, saved.proposalId, now);
+          if (asks && saved.kind === "created") {
+            // A database error has already aborted the transaction and goes up; any other throw
+            // (a zone Intl cannot read) costs only the question, never the proposal.
+            try {
+              await askFor(q, saved.proposalId, now);
+            } catch (err) {
+              if (err instanceof DbError) throw err;
+              console.warn("gateway: the question could not be written:", err instanceof Error ? err.name : "unknown");
+            }
+          }
           return saved;
         });
       } catch (err) {
@@ -191,7 +200,7 @@ export async function readAgentThread(
     if (turns.length > 0) {
       const rows = await q.query<{ id: string; at: string }>(
         `SELECT CAST(id AS text) AS id, to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at
-           FROM turns WHERE id = ANY(CAST($1 AS uuid[]))`,
+           FROM turns WHERE tenant_id = current_tenant_id() AND id = ANY(CAST($1 AS uuid[]))`,
         [`{${turns.map((t) => t.id).join(",")}}`],
       );
       for (const r of rows) started.set(r.id.toLowerCase(), r.at);

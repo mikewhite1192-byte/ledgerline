@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import { readAgentAsks, readAgentThread } from "../agent/gateway/store";
 import type { AiResult } from "../ai";
@@ -19,9 +19,9 @@ import { answerAsksFor, askFor, closeStaleAsks, readShowingAsks, snoozeAsk, tell
 // live question even when two writers race; a person's proposal gets none; a question voids when
 // its proposal expires or is decided elsewhere (and hides at once); snooze hides it until its
 // time; Yes marks it answered once; the autopilot's done proposal gets one told line inside the
-// owner's limit; the reason pass keeps a right line, drops a wrong figure, and never calls twice;
-// row-level security holds each carrier to its own questions and the guard refuses a changed
-// word. A fixed clock; two tenants made here and removed after.
+// owner's limit; a plain throw writing the question keeps the card; the reason pass keeps a right
+// line, drops a wrong figure, and never calls twice; row-level security holds each carrier to its
+// own questions and the guard refuses a changed word. A fixed clock; two tenants made here and removed after.
 
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
 const HOUR = 3_600_000;
@@ -268,6 +268,26 @@ describe("agent asks", () => {
       ["told", "open"],
     ]);
     expect(rows[1].text).toBe("Posted a $500.00 invoice to QuickBooks sandbox, inside your $1,500.00 limit.");
+  });
+
+  it("keeps the desk's card when its question cannot be written (a zone Intl cannot read)", async () => {
+    Object.assign(flags.autopilot, { enabled: true, armed: true, startDate: "2026-10-31" });
+    const zone = await admin.withTenant(A.tenantId, async (q) => {
+      const rows = await q.query<{ timezone: string }>("SELECT timezone FROM tenants WHERE id = current_tenant_id()");
+      await q.execute("UPDATE tenants SET timezone = 'Not/AZone' WHERE id = current_tenant_id()");
+      return rows[0].timezone;
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const id = await deskCard(A, { kind: "invoice_post", amountCents: 50_000 });
+      expect(await asksOf(A, id)).toEqual([]);
+      expect(warn).toHaveBeenCalledWith("proposals: the question could not be written:", "RangeError");
+    } finally {
+      warn.mockRestore();
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE tenants SET timezone = $1 WHERE id = current_tenant_id()", [zone]),
+      );
+    }
   });
 
   it("asks when the autopilot's look stores ask (over the owner's limit)", async () => {

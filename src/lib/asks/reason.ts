@@ -15,7 +15,7 @@ import { kindInWords } from "./words";
 // and number come from code. The call goes through the wrapper with its own cap (2 cents, 80
 // output tokens), one try per question, reserved on the row before the call; a reason already
 // written for the same proposal (its dedupe key) is reused with no call. The line is dropped when
-// it names any dollar figure but the engine's; on any failure the reason stays empty and the
+// it names any number but the engine's amount and a percent; on any failure the reason stays empty and the
 // question still shows. Never inside a database transaction.
 
 export const REASON_MAX_CHARS = 200;
@@ -47,18 +47,22 @@ const PROMPT =
   '{"reason": "..."}.';
 
 const CATEGORY = /^[a-z_]{2,40}$/;
-// A decimal amount with no dollar sign, such as "54.20" or "1,250.00", that maskFigures does not read.
-const BARE_AMOUNT = /\d{1,3}(?:,\d{3})*\.\d{2}\b|\d+\.\d{2}\b/;
+// A percent the engine's facts may carry, such as "70%".
+const PERCENT = /\b\d{1,3}(?:\.\d+)?%/g;
+// A number in words that could carry an amount, such as "fifteen hundred" or "two grand".
+const NUMBER_WORD = /\b(?:hundreds?|thousands?|grand|millions?|billions?)\b/i;
 
-// The sentence, kept only when every dollar figure in it is the engine's amount.
+// The sentence, kept only when its one amount is the engine's, written exactly as given: with that
+// amount and any percent taken out, no digit and no number word may remain. Strict on purpose
+// (the line is optional): "1,400 dollars", "about 1500" or "USD 1400" drop the line.
 export function checkReason(text: string, amountCents: number): { ok: true; text: string } | { ok: false; category: string } {
   const clean = text.replace(/\s+/g, " ").trim();
   if (clean.length === 0) return { ok: false, category: "empty" };
   if (clean.length > REASON_MAX_CHARS) return { ok: false, category: "too_long" };
   const cents = Math.abs(amountCents);
   if (maskFigures(clean, new Set([cents])).masked > 0) return { ok: false, category: "figures" };
-  // With the allowed figure taken out, no other decimal amount may remain.
-  if (BARE_AMOUNT.test(clean.split(dollars(cents)).join(" "))) return { ok: false, category: "figures" };
+  const rest = clean.split(dollars(cents)).join(" ").replace(PERCENT, " ");
+  if (/\d/.test(rest) || NUMBER_WORD.test(rest)) return { ok: false, category: "figures" };
   return { ok: true, text: clean };
 }
 
@@ -143,8 +147,11 @@ export async function fillReasons(
     const traceId = newId();
     const held = await tx(async (q) => {
       if (!(await claimReasonTry(q, c.id, traceId))) return { claimed: false, cached: null };
-      const cached = await cachedReason(q, c.dedupeKey);
-      if (cached !== null && checkReason(cached, c.amountCents).ok) await saveReason(q, c.id, traceId, cached);
+      // A reason written for this proposal's dedupe key is reused only when it passes this ask's
+      // check; one that fails (a different amount) counts as none, and the one try makes the call.
+      const found = await cachedReason(q, c.dedupeKey);
+      const cached = found !== null && checkReason(found, c.amountCents).ok ? found : null;
+      if (cached !== null) await saveReason(q, c.id, traceId, cached);
       return { claimed: true, cached };
     });
     if (!held.claimed || held.cached !== null) continue;

@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import { AiError, type AiRequest, type AiResult } from "../ai";
 import type { Session } from "../auth/claims";
-import { checkReason, writeReason, type ReasonCompleteFn } from "./reason";
+import type { Param, Queryable, TenantDb } from "../db";
+import { checkReason, fillReasons, writeReason, type ReasonCompleteFn } from "./reason";
 import type { ReasonCandidate } from "./store";
 
-// The reason line beside a question: a sentence naming any dollar figure but the engine's is
-// dropped and the engine's own is kept; the one call goes through the wrapper with the ask
-// reason caller's own caps; a failed call, a cut answer or a bad answer gives a category only.
+// The reason line beside a question: a sentence naming any number but the engine's amount and a
+// percent is dropped (digits or words, with or without a dollar sign) and the engine's own is
+// kept; the one call goes through the wrapper with the ask reason caller's own caps; a failed
+// call, a cut answer or a bad answer gives a category only; a cached reason is reused only when it
+// passes this ask's check.
 
 const SESSION: Session = { sub: "service:sweep:t", email: "", tenantId: "33333333-3333-4333-8333-333333333333" };
 const CANDIDATE: ReasonCandidate & { traceId: string } = {
@@ -55,6 +58,27 @@ describe("checkReason", () => {
     expect(checkReason("That is $1,400.00 plus a $35.00 fee.", 140_000)).toEqual({ ok: false, category: "figures" });
     expect(checkReason("That leaves 1,250.00 owed.", 140_000)).toEqual({ ok: false, category: "figures" });
     expect(checkReason("That leaves 54.20 owed.", 140_000)).toEqual({ ok: false, category: "figures" });
+  });
+
+  it("drops an amount with no dollar sign, in digits or in words", () => {
+    for (const line of [
+      "The advance is 1,400 dollars.",
+      "That comes to about 1500 for the load.",
+      "The advance is USD 1400.",
+      "The advance is fifteen hundred dollars.",
+      "That leaves 1,250 of trip pay.",
+      "The rule allows two grand here.",
+      "That is a thousand under the cap.",
+    ]) {
+      expect(checkReason(line, 140_000), line).toEqual({ ok: false, category: "figures" });
+    }
+  });
+
+  it("keeps the engine's exact amount beside a percent", () => {
+    expect(checkReason("The paperwork is in, so the $1,400.00 advance at 70% is due.", 140_000)).toEqual({
+      ok: true,
+      text: "The paperwork is in, so the $1,400.00 advance at 70% is due.",
+    });
   });
 
   it("drops an empty or long sentence", () => {
@@ -108,5 +132,64 @@ describe("writeReason", () => {
       throw new Error("socket to model-host.example closed");
     };
     expect(await writeReason(SESSION, CANDIDATE, { complete: raw })).toEqual({ ok: false, category: "unknown" });
+  });
+});
+
+// The desk's reason pass over a fake database: the store's own SQL is answered by text, and the
+// membership read passes.
+function passDb(cached: string | null) {
+  const writes: { sql: string; params: Param[] }[] = [];
+  const q: Queryable = {
+    async query<T>(sql: string): Promise<T[]> {
+      if (sql.includes("FROM memberships")) return [{ ok: 1 }] as T[];
+      if (sql.includes("a.reason_call_id IS NULL")) {
+        return [
+          {
+            id: CANDIDATE.id,
+            proposal_kind: CANDIDATE.proposalKind,
+            amount_cents: String(CANDIDATE.amountCents),
+            text: CANDIDATE.text,
+            reasons: JSON.stringify([{ category: "paperwork_complete" }]),
+            sources: JSON.stringify([{ table: "loads" }]),
+            dedupe_key: CANDIDATE.dedupeKey,
+          },
+        ] as T[];
+      }
+      if (sql.includes("SELECT a.reason FROM agent_asks")) return (cached === null ? [] : [{ reason: cached }]) as T[];
+      throw new Error("unexpected read");
+    },
+    async execute(sql: string, params: Param[] = []): Promise<number> {
+      writes.push({ sql, params });
+      return 1;
+    },
+  };
+  const db: TenantDb = { withTenant: async (_t, fn) => fn(q) };
+  return { db, writes };
+}
+
+describe("fillReasons", () => {
+  const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
+  const deps = (db: TenantDb, complete: ReasonCompleteFn) => ({
+    db,
+    complete,
+    clock: () => new Date(NOW),
+    newId: () => CANDIDATE.traceId,
+    log: () => {},
+  });
+
+  it("reuses a cached reason that passes this ask's check, with no call", async () => {
+    const { db, writes } = passDb("The paperwork is in, so the $1,400.00 advance is due.");
+    const complete = vi.fn<ReasonCompleteFn>(async () => result('{"reason":"unused"}'));
+    expect(await fillReasons(SESSION, NOW + 60_000, deps(db, complete))).toEqual({ tried: 0, kept: 0 });
+    expect(complete).not.toHaveBeenCalled();
+    expect(writes.map((w) => w.params.at(-1))).toEqual([CANDIDATE.traceId, "The paperwork is in, so the $1,400.00 advance is due."]);
+  });
+
+  it("treats a cached reason with another amount as none and makes the one call", async () => {
+    const { db, writes } = passDb("The paperwork is in, so the $950.00 advance is due.");
+    const complete = vi.fn<ReasonCompleteFn>(async () => result('{"reason":"All paperwork for the load is in."}'));
+    expect(await fillReasons(SESSION, NOW + 60_000, deps(db, complete))).toEqual({ tried: 1, kept: 1 });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(writes.map((w) => w.params.at(-1))).toEqual([CANDIDATE.traceId, "All paperwork for the load is in."]);
   });
 });
