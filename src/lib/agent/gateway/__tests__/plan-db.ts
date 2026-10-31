@@ -24,6 +24,7 @@ import { QUEUE_CARD_LOADS_SQL } from "../../../invoices/made-by-queue";
 import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
+import { withShortFriday } from "../../../seed/test-short-friday";
 import { SETTLEMENT_ROWS } from "../../../settlements/list";
 import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 
@@ -66,6 +67,14 @@ let cached: CarrierPlan | null = null;
 export function blueRidgePlan(): CarrierPlan {
   cached ??= buildCarrierPlan(DEMO_CARRIERS[0], PLAN_ANCHOR);
   return cached;
+}
+
+// The same plan with its bank balance lowered so Friday is short (the seed covers it), for the
+// tools that answer a short Friday.
+let shortCached: CarrierPlan | null = null;
+export function shortFridayPlan(): CarrierPlan {
+  shortCached ??= withShortFriday(blueRidgePlan());
+  return shortCached;
 }
 
 export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {

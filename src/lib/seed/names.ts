@@ -23,7 +23,7 @@ export const CUSTOMERS: Record<"BR" | "PW", readonly CustomerSeed[]> = {
     { name: "Tanglewood Grocery Supply", city: "Charlotte", state: "NC" },
     { name: "Larkspur Paper Mills", city: "Greensboro", state: "NC" },
     { name: "Cobble Ridge Furniture", city: "Hickory", state: "NC" },
-    { name: "Bluefern Beverage Group", city: "Richmond", state: "VA" },
+    { name: "Acme Beverage Group", city: "Richmond", state: "VA" },
     { name: "Ashgrove Building Products", city: "Raleigh", state: "NC" },
     { name: "Kestrel Bay Seafood Traders", city: "Wilmington", state: "NC" },
     { name: "Millbrook Textile Works", city: "Spartanburg", state: "SC" },

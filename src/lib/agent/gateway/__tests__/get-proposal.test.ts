@@ -91,13 +91,13 @@ describe("get_proposal", () => {
     const same = await run(row);
     expect(same.proposal).toMatchObject({ subject: { table: "loads", label: row.subject_label } });
     expect(same.engine).toMatchObject({
-      proposedCents: 41_250,
-      engine: { ok: true, amountCents: 41_250, matchesProposal: true },
+      proposedCents: 73_750,
+      engine: { ok: true, amountCents: 73_750, matchesProposal: true },
     });
     const args = JSON.parse(row.args as string);
     args.stops[0].arrivedAt = "2026-10-01T00:00:00.000Z";
     const moved = await run({ ...row, args: JSON.stringify(args) });
-    expect(moved.engine).toMatchObject({ engine: { ok: true, amountCents: 41_250, matchesProposal: false } });
+    expect(moved.engine).toMatchObject({ engine: { ok: true, amountCents: 73_750, matchesProposal: false } });
   });
 
   it("drops free text from the stored args and keeps codes, numbers and references", async () => {

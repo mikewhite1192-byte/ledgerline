@@ -430,9 +430,9 @@ describe("payment reapply limit", () => {
 });
 
 describe("detention charge limit", () => {
-  // The seed's four planted loads and the cents the seed golden records for them.
+  // The seed's three planted loads and the cents the seed golden records for them.
   const ids = plan.planted.detentionLoadIds;
-  const GOLDEN = [41_250, 30_000, 37_500, 26_250];
+  const GOLDEN = [73_750, 90_000, 73_750];
   const [first] = ids;
   const firstInvoice = plan.rows.invoices.find((i) => i.load_id === first)!;
 

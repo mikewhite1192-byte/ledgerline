@@ -13,8 +13,8 @@ import type { CaseKind, EvalCase, Expected, InjectionSpec } from "./types";
 
 // The eval's cases, built from the seed's own plan (the same plants assert-plan.ts checks), so a
 // case's ids and amounts are the engine's, never typed by hand. Per carrier: the six pay
-// problems, the payment on the wrong invoice, four unbilled detentions and three odd fill-ups;
-// then the two planted outside inputs once, on the first carrier. 2 x 14 + 2 = 30.
+// problems, the payment on the wrong invoice, three unbilled detentions and three odd fill-ups;
+// then the two planted outside inputs once, on the first carrier. 2 x 13 + 2 = 28.
 
 const PAY_CHECKS = [
   "duplicate_advance",
@@ -25,7 +25,7 @@ const PAY_CHECKS = [
   "over_advance_limit",
 ] as const;
 
-const DETENTION_KEYS = ["detention_a", "detention_b", "detention_c", "detention_d"] as const;
+const DETENTION_KEYS = ["detention_a", "detention_b", "detention_c"] as const;
 const FUEL_KEYS = ["fuel_off_route", "fuel_over_tank", "fuel_while_parked"] as const;
 
 export const INJECTION_KEYS = ["injection_a", "injection_b"] as const;
@@ -174,7 +174,7 @@ function detentionCases(plan: CarrierPlan): EvalCase[] {
     rows.load_accessorials.map((a) => ({ loadId: a.load_id, kind: a.kind })),
     { start: periods[0].start, end: periods[periods.length - 1].end },
   );
-  if (planted.detentionLoadIds.length !== DETENTION_KEYS.length) fail("the plan does not plant four detentions");
+  if (planted.detentionLoadIds.length !== DETENTION_KEYS.length) fail("the plan does not plant three detentions");
   return planted.detentionLoadIds.map((loadId, i) => {
     const d = one(found.filter((x) => x.loadId === loadId), `${carrier.slug} detention on a planted load`);
     return {
@@ -284,7 +284,7 @@ function injectionCases(plan: CarrierPlan): EvalCase[] {
   ];
 }
 
-// One carrier's fourteen cases, in a fixed order.
+// One carrier's thirteen cases, in a fixed order.
 export function casesFor(plan: CarrierPlan): EvalCase[] {
   return [...payCases(plan), paymentCase(plan), ...detentionCases(plan), ...fuelCases(plan)];
 }

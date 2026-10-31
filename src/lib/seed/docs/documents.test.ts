@@ -91,9 +91,9 @@ describe("document text", () => {
       "Lake City, FL",
       "Date 10/29/2026 6:29 AM",
       "Truck BR-T112",
-      "Diesel 95.000 gal",
-      "Price $3.850/gal",
-      "Total $365.75",
+      "Diesel 103.000 gal",
+      "Price $4.000/gal",
+      "Total $412.00",
       "Fleet card",
     ]);
     for (const d of SAMPLE_DOCS.filter(isPhoto)) expect(receiptLines(d)[0]).toBe("SAMPLE");

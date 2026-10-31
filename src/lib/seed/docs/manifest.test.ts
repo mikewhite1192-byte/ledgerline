@@ -262,7 +262,7 @@ describe("the sample documents manifest", () => {
       } else {
         const b = doc.expect;
         const tz = plan.carrier.timezone;
-        expect(plan.planted.detentionLoadIds).toContain(load.id);
+        expect([...plan.planted.detentionLoadIds, plan.planted.disputedDetention.loadId]).toContain(load.id);
         expect(b.stops).toEqual({
           pickupArrivedAt: load.pickup_arrived_at,
           pickupDepartedAt: load.pickup_departed_at,

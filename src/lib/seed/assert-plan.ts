@@ -25,6 +25,7 @@ import {
   findPaymentOnWrongInvoice,
   findUnbilledDetention,
   inReviewQueue,
+  invoiceAmount,
   invoiceStatus,
   paymentProfile,
   reviewInvoice,
@@ -64,8 +65,15 @@ export const HERO_OPEN_WEEK = { grossCents: 258000, deductionsCents: 35500, netC
 export const AGING_MIN_INVOICES = 3;
 export const AGING_MIN_CENTS = 500000;
 
-// The unbilled detention planted in each tenant's four weeks: $1,350.00.
-export const DETENTION_TOTAL_CENTS = 135000;
+// The unbilled detention planted in each tenant's four weeks: $2,375.00.
+export const DETENTION_TOTAL_CENTS = 237500;
+
+// The demo's numbers, each the engine's answer for the planted inputs: the duplicate advance
+// the sweep pays back, the off-route fill-up it charges back, and the billed detention the
+// customer short-paid (acme-plan.ts), which is exactly what the invoice still owes.
+export const DUPLICATE_ADVANCE_CENTS = 20000;
+export const OFF_ROUTE_FUEL_CENTS = 41200;
+export const DISPUTED_DETENTION_CENTS = 180000;
 
 // The four fuel anomalies (addendum B2 and FUEL-ANOMALY), found by the engine's own fuel rules.
 // Each returns the ids of the purchases at fault (the newer of a duplicate pair).
@@ -154,6 +162,7 @@ export function assertPlan(plan: CarrierPlan): void {
   loadsAndDays(rows, zone, lastDay, openWeek.start);
   receivables(plan, lastDay);
   addendumPlants(plan);
+  demoNumbers(plan);
   cashFriday(plan);
   invoiceReviewPlants(plan);
   cardStatementPlants(plan);
@@ -619,7 +628,7 @@ function receivables(plan: CarrierPlan, lastDay: LocalDate): void {
 }
 
 // The addendum B plants: the four fuel anomalies each found by exactly its rule, the unbilled
-// detention exactly the four planted loads and $1,350.00 over the four weeks, the payment styles
+// detention exactly the three planted loads and $2,375.00 over the four weeks, the payment styles
 // read back from the history, and the collections invoices open at their ages.
 function addendumPlants(plan: CarrierPlan): void {
   const { rows, anchor, periods, planted, carrier } = plan;
@@ -659,7 +668,7 @@ function addendumPlants(plan: CarrierPlan): void {
     found.join() !== [...planted.detentionLoadIds].sort().join() ||
     sum(unbilled.map((u) => u.amountCents)) !== DETENTION_TOTAL_CENTS
   ) {
-    fail("unbilled detention is not exactly the four plants");
+    fail("unbilled detention is not exactly the three plants");
   }
   for (const id of planted.detentionLoadIds) {
     const invoice = rows.invoices.find((i) => i.load_id === id);
@@ -695,17 +704,82 @@ function addendumPlants(plan: CarrierPlan): void {
       rows.loads.find((l) => l.id === loadId)?.driver_id === hero.id;
     if (
       rows.fuel_purchases.some((f) => fuelIds.includes(f.id) && f.driver_id === hero.id) ||
-      planted.detentionLoadIds.some(onHero)
+      [...planted.detentionLoadIds, planted.disputedDetention.loadId].some(onHero)
     ) {
       fail("a new plant landed on the hero");
     }
   }
 }
 
+// The demo's numbers from the engine itself. The duplicate advance: the check names the newer
+// one at its amount (the demo week's two recoveries are pinned in plan.test). The off-route
+// fill-up: the fuel rule charges back the whole of it. The disputed detention: one detention
+// line on the load at the engine's amount for its stop times, the invoice at the engine's
+// amount for the load, and one short payment that leaves the invoice partly paid with exactly
+// the detention owed.
+function demoNumbers(plan: CarrierPlan): void {
+  const { rows, periods, planted } = plan;
+  const input = checkInputOf(rows);
+  const dup = runAllChecks(input).filter((f) => f.check === "duplicate_advance");
+  if (dup.length !== 1 || dup[0].amountCents !== DUPLICATE_ADVANCE_CENTS) {
+    fail("the duplicate advance is not the planted amount");
+  }
+  const offRoute = findFuelOffRoute(input);
+  if (offRoute.length !== 1 || offRoute[0].suggestedCents !== -OFF_ROUTE_FUEL_CENTS) {
+    fail("the off-route fill-up is not the planted amount");
+  }
+
+  const d = planted.disputedDetention;
+  const load = rows.loads.find((l) => l.id === d.loadId);
+  const customer = rows.customers.find((c) => c.id === load?.customer_id);
+  const lines = rows.load_accessorials.filter((a) => a.load_id === d.loadId);
+  const charge = lines.find((a) => a.id === d.accessorialId);
+  if (!load || !customer || lines.length !== 1 || charge?.kind !== "detention") {
+    fail("the disputed load does not carry exactly its detention line");
+  }
+  const earned = findUnbilledDetention(
+    [loadStopsOf(load)],
+    [customerOf(customer)],
+    [],
+    { start: periods[0].start, end: periods[3].end },
+  );
+  if (
+    earned.length !== 1 ||
+    earned[0].amountCents !== charge.amount_cents ||
+    charge.amount_cents !== DISPUTED_DETENTION_CENTS
+  ) {
+    fail("the disputed detention is not the engine's amount for the stop times");
+  }
+  const record = loadsOf([load], rows.load_state_miles, rows.load_accessorials)[0];
+  const billed = invoiceAmount(record);
+  const invoice = rows.invoices.find((i) => i.id === d.invoiceId);
+  if (!billed.ok || invoice?.load_id !== load.id || invoice.amount_cents !== billed.amountCents) {
+    fail("the disputed invoice is not the engine's amount for the load");
+  }
+  const apps = rows.payment_applications.filter((a) => a.invoice_id === invoice.id);
+  const payment = rows.customer_payments.find((p) => p.id === d.paymentId);
+  if (
+    apps.length !== 1 ||
+    apps[0].id !== d.applicationId ||
+    apps[0].payment_id !== payment?.id ||
+    payment.amount_cents !== apps[0].amount_cents ||
+    payment.customer_id !== customer.id
+  ) {
+    fail("the disputed invoice is not paid by exactly its short payment");
+  }
+  const status = invoiceStatus(invoice.amount_cents, apps[0].amount_cents);
+  if (
+    invoice.status !== "partially_paid" ||
+    status.status !== "partially_paid" ||
+    status.balanceCents !== charge.amount_cents
+  ) {
+    fail("the disputed invoice does not owe exactly the detention");
+  }
+}
+
 // Cash Friday (design 4.9): one bank position, six bills with two flexible ones due by pay day, no
-// checks, and the planted gap to the cent at any anchor (the balance is set from the engine). Which
-// options a short carrier gets depends on its receivables at the anchor, so the golden anchor pins
-// them (golden.json cashFriday: three invoices to factor, a bill to delay, two late payers).
+// checks, and the planted gap to the cent at any anchor (the balance is set from the engine). Both
+// demo carriers are covered, so neither gets options (golden.json cashFriday pins them at none).
 function cashFriday(plan: CarrierPlan): void {
   const { rows, carrier, anchor } = plan;
   if (rows.cash_settings.length !== 1) fail("a carrier needs one cash settings row");

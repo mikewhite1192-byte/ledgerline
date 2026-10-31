@@ -18,6 +18,7 @@ import { factoringFor } from "../rules-engine/factoring";
 import { DEMO_ANCHOR } from "../seed/anchor";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
+import { withShortFriday } from "../seed/test-short-friday";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { localDateOf } from "../time/local-date";
 import { checkPendingFactoring, precheckFactoring, type FactoringDeps } from "./execute";
@@ -34,10 +35,11 @@ import { listRequests, readFactoredLine, readFactoringInput, readRequest } from 
 // whose run stopped after the approval, or while executing, resumes and sends each invoice once
 // (two resumes at once too); with a switch off a resume refuses and writes nothing. Another
 // carrier reads and changes nothing. Both demo carriers are seeded from their plans; the two
-// tenants are removed after.
+// tenants are removed after. Blue Ridge's bank balance is lowered so Friday is short and Cash
+// Friday has a factoring card to make (the seed covers its Friday).
 
 const [BR, PW] = DEMO_CARRIERS;
-const planA = buildCarrierPlan(BR, DEMO_ANCHOR);
+const planA = withShortFriday(buildCarrierPlan(BR, DEMO_ANCHOR));
 const planB = buildCarrierPlan(PW, DEMO_ANCHOR);
 
 const NOW = new Date(`${DEMO_ANCHOR}T18:00:00.000Z`);

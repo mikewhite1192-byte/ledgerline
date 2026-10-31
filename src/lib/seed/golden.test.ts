@@ -39,15 +39,14 @@ describe("golden.json", () => {
     expect(sum).toBe(HERO_OPEN_WEEK.netCents);
   });
 
-  // Cash Friday's demo (design 4.9): Blue Ridge is short with money in the bank and all three ways
-  // out on the page; Prairie Wind is covered and gets none.
-  it("plants a short Friday with every option for Blue Ridge and a covered one for Prairie Wind", () => {
+  // Cash Friday's demo (design 4.9): both carriers are covered with money in the bank (Blue Ridge
+  // by $36,120.00), so neither gets a way out on the page.
+  it("plants a covered Friday with no options for both carriers", () => {
     const br = golden.carriers["blue-ridge"].cashFriday;
     expect(br.gapCents).toBe(PLANTED_GAP_CENTS["blue-ridge"]);
+    expect(br.gapCents).toBe(3_612_000);
     expect(br.bankBalanceCents).toBeGreaterThan(0);
-    expect(br.factoringInvoices).toBe(3);
-    expect(br.deferBillRef).toMatch(/^BR-NTB-\d{4}$/);
-    expect(br.chaseCustomers).toBe(2);
+    expect([br.factoringInvoices, br.deferBillRef, br.chaseCustomers]).toEqual([0, null, 0]);
     const pw = golden.carriers["prairie-wind"].cashFriday;
     expect(pw.gapCents).toBe(PLANTED_GAP_CENTS["prairie-wind"]);
     expect(pw.bankBalanceCents).toBeGreaterThan(0);

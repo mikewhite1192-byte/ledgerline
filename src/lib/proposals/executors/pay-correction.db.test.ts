@@ -162,7 +162,7 @@ describe("approving a sweep's pay correction", () => {
   it("writes exactly one pay item for the next pay run, the engine's amount to the cent", async () => {
     const by = await sweep();
     const leg = legOf("duplicate_advance");
-    expect(leg.expectedCents).toBe(34000);
+    expect(leg.expectedCents).toBe(20000);
     const [owed] = by.get(leg.driverId)!;
     const before = await settleOpenWeek(leg.driverId);
 
@@ -174,7 +174,7 @@ describe("approving a sweep's pay correction", () => {
         id: expect.any(String),
         driver_id: leg.driverId,
         kind: "reimbursement",
-        amount_cents: "34000",
+        amount_cents: "20000",
         // Today in the carrier's zone (Nov 2) is past the week, so the item sits on its last day.
         item_date: openWeek.end,
         ref_id: owed.id,
@@ -188,9 +188,9 @@ describe("approving a sweep's pay correction", () => {
     // The engine's pay run picks the line up: one more line, gross up by the correction.
     const after = await settleOpenWeek(leg.driverId);
     const line = after.lines.find((l) => l.sources.some((s) => s.table === "pay_items" && s.id === items[0].id));
-    expect(line).toMatchObject({ kind: "reimbursement", amountCents: 34000 });
+    expect(line).toMatchObject({ kind: "reimbursement", amountCents: 20000 });
     expect(after.lines).toHaveLength(before.lines.length + 1);
-    expect(after.grossCents - before.grossCents).toBe(34000);
+    expect(after.grossCents - before.grossCents).toBe(20000);
   });
 
   it("books an amount owed by the driver as a deduction", async () => {
