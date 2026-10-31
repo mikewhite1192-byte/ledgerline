@@ -6,6 +6,7 @@ import { requireStaff } from "../auth/role";
 import type { Queryable, TenantDb } from "../db";
 import { parseRead } from "../documents/schema";
 import type { ReadStatus } from "../documents/types";
+import { proposeInvoiceOnFinalize } from "../invoices/finalize";
 import { persistEngineProposal } from "../proposals/engine";
 import { instantAt } from "../seed/calendar";
 import { assertMembership } from "../tenant/context";
@@ -75,7 +76,9 @@ export type MoveOutcome =
   | { kind: "already"; loadId: string }
   // Nothing to do and nothing for a person: switched off, before the start date, not a load paper.
   | { kind: "nothing"; category: string }
-  | { kind: "card"; reason: MoveReason; proposalId: string; loadId: string | null };
+  | { kind: "card"; reason: MoveReason; proposalId: string; loadId: string | null }
+  // TMS-MIRROR (S3): a finalized dispatch event drafted the load's invoice card.
+  | { kind: "proposed"; proposalId: string; loadId: string };
 
 type StopTimes = { arrivedAt: Instant; departedAt: Instant } | null;
 
@@ -604,8 +607,9 @@ async function tmsStopTimes(
 // Inside the desk's tenant transaction: what one mirrored status event does to our linked load.
 // The event's label maps through the tenant's label map to a fixed code (src/lib/tms/status.ts);
 // in transit and delivered are moves under the same rules as a driver's message, withdrawn on a
-// load we still run is a card, and every other code is recorded only. A clock flag on the times
-// the move would use is a card, never a move. Nothing is read from or sent to the TMS here.
+// load we still run is a card, finalized drafts our delivered load's invoice card (S3), and every
+// other code is recorded only. A clock flag on the times the move would use is a card, never a
+// move. Nothing is read from or sent to the TMS here.
 export async function moveFromTmsEvent(
   q: Queryable,
   session: Session,
@@ -650,6 +654,10 @@ export async function moveFromTmsEvent(
       ? cardOn("tms_withdrawn", null)
       : { kind: "nothing", category: "recorded" };
   }
+  // TMS-MIRROR (S3): finalized there drafts our delivered load's invoice card, from our own loads
+  // row (src/lib/invoices/finalize.ts asks its own switch and start date). Invoiced and paid there
+  // are recorded only. Never a move.
+  if (code === "finalized") return proposeInvoiceOnFinalize(q, session, load.id, row.day, now);
   const to = moveOf(code);
   if (to === null) return { kind: "nothing", category: "recorded" };
   if (load.status === "cancelled") return { kind: "nothing", category: "wrong_status" };

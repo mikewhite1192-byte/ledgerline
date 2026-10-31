@@ -114,6 +114,8 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
+  // The invoice on finalize ships off; its own one-line PR turns it on.
+  "tmsFinalizeInvoice.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -358,6 +360,13 @@ describe("flags", () => {
     expect(flags.loadMovement.enabled).toBe(true);
   });
 
+  it("ships the invoice on finalize off, with a start date, listed ahead of its release", () => {
+    expect(flags.tmsFinalizeInvoice).toEqual({ enabled: false, startDate: "2026-10-31" });
+    expect(isLocalDate(flags.tmsFinalizeInvoice.startDate)).toBe(true);
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsFinalizeInvoice.enabled");
+  });
+
   it("ships the agent's questions on, with the reason line capped at 2 cents and 80 tokens", () => {
     expect(flags.agentAsks).toEqual({
       enabled: true,
@@ -383,8 +392,9 @@ describe("flags", () => {
     }
     // Local mode can never turn on a switch that stays off: none is on the list that turns one on.
     for (const name of KEPT_OFF) expect(LOCAL_OVERRIDABLE as readonly string[], name).not.toContain(name);
-    // The only kept-off switches local mode may turn off are the armed switches, and the dispatch
-    // sync's switch, listed ahead of their own release: exactly those still kept off, and nothing else.
+    // The only kept-off switches local mode may turn off are the armed switches, the dispatch sync's
+    // switch and the invoice on finalize's, listed ahead of their own release: exactly those still
+    // kept off, and nothing else.
     const armedAhead: readonly string[] = [
       "moneyCodes.armed",
       "factoring.armed",
@@ -393,6 +403,7 @@ describe("flags", () => {
       "autopilot.armed",
       "tmsSync.enabled",
       "cardLoadRuling.enabled",
+      "tmsFinalizeInvoice.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

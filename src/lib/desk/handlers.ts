@@ -83,11 +83,13 @@ const STORED_CHECK_SQL = `SELECT CAST(c.id AS text) AS id, CAST(jsonb_array_leng
  WHERE c.tenant_id = current_tenant_id() AND c.created_at >= CAST($1 AS timestamptz)
  ORDER BY c.created_at DESC, c.id DESC LIMIT 1`;
 
-// What a move did, as a line: moved (found = the moves), a card for a person (found 1), already
-// there, or nothing to do. Switched off is skipped.
+// What a move did, as a line: moved (found = the moves), a card for a person (found 1), an invoice
+// card drafted (found 1), already there, or nothing to do. Switched off is skipped.
 function moveLine(r: MoveOutcome): HandlerOutcome {
   if (r.kind === "moved") return done({ found: r.events.length, category: "moved" });
   if (r.kind === "card") return done({ found: 1, category: "card" });
+  // TMS-MIRROR (S3): a finalized dispatch event drafted the load's invoice card.
+  if (r.kind === "proposed") return done({ found: 1, category: "invoice_proposed" });
   if (r.kind === "already") return done({ found: 0, category: "already" });
   if (r.category === "switched_off") return skipped(SWITCHED_OFF);
   return done({ found: 0, category: r.category });

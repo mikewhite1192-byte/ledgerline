@@ -17,9 +17,10 @@ import { DbError, type Db } from "../db/types";
 import { deskHandlers, type Handlers } from "../desk/handlers";
 import { DESK_SOURCES, eventKey } from "../desk/keys";
 import { wakeDesk } from "../desk/loop";
+import { proposeInvoices } from "../invoices/propose";
 import { moveFromTmsEvent } from "../loads/movement";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
-import { serviceSession } from "../sweep/service-session";
+import { serviceSession, serviceSub } from "../sweep/service-session";
 import { clocksOf } from "./clocks";
 import { syntheticLabelMap } from "./status";
 import { pullTms, syncDispatchNow } from "./sync";
@@ -43,6 +44,10 @@ const TABLES = [
 const savedTms = structuredClone(flags.tmsSync);
 const savedMove = structuredClone(flags.loadMovement);
 const savedDesk = structuredClone(flags.deskLoop);
+const savedFinalize = structuredClone(flags.tmsFinalizeInvoice);
+const savedInvoices = flags.invoicesEnabled;
+const savedAsks = structuredClone(flags.agentAsks);
+const savedPilot = structuredClone(flags.autopilot);
 
 // ---------------------------------------------------------------------------------------------
 // The fake dispatch system: whole records by id, a list from them, history paged by two.
@@ -125,7 +130,14 @@ vi.mock("../adapters/tms-source", async (importOriginal) => {
   return { ...real, tmsSource: () => real.validated(fake.source()) };
 });
 
-const LABEL = { tendered: "Tendered", in_transit: "In Transit", delivered: "Delivered", cancelled: "Cancelled" } as const;
+const LABEL = {
+  tendered: "Tendered",
+  in_transit: "In Transit",
+  delivered: "Delivered",
+  finalized: "Finalized",
+  invoiced: "Invoiced",
+  cancelled: "Cancelled",
+} as const;
 
 // A load as the dispatch system shows it, every step before `upTo` in its history.
 function dispatchLoad(
@@ -357,6 +369,10 @@ afterEach(() => {
   flags.deskLoop.enabled = savedDesk.enabled;
   flags.deskLoop.armed = savedDesk.armed;
   flags.deskLoop.startDate = savedDesk.startDate;
+  Object.assign(flags.tmsFinalizeInvoice, savedFinalize);
+  flags.invoicesEnabled = savedInvoices;
+  Object.assign(flags.agentAsks, savedAsks);
+  Object.assign(flags.autopilot, structuredClone(savedPilot));
   vi.restoreAllMocks();
 });
 
@@ -965,5 +981,233 @@ describe("the desk's dispatch lane", () => {
       ),
     );
     expect(state).toEqual({ status: "delivered", proposals: 0, asks: 0 });
+  });
+});
+
+describe("a finalized dispatch event drafts our load's invoice card", () => {
+  const T_FINAL = "2026-11-02T17:00:00.000Z";
+
+  beforeEach(() => {
+    flags.tmsFinalizeInvoice.enabled = true;
+    flags.tmsFinalizeInvoice.startDate = "2026-10-31";
+    flags.invoicesEnabled = true;
+    flags.agentAsks.enabled = true;
+    // No reason line: nothing here calls a model.
+    flags.agentAsks.reasonEnabled = false;
+  });
+
+  // Our load and its dispatch twin through finalized there; with `deliver`, the delivered event
+  // moves our load first, as the desk would.
+  async function finalized(f: Carrier, deliver = true) {
+    const l = await ourLoad(f);
+    fake.loads.set(
+      "A-1",
+      dispatchLoad("A-1", l.number, [
+        { label: LABEL.tendered, at: T_TENDERED },
+        { label: LABEL.in_transit, at: T_PICKED },
+        { label: LABEL.delivered, at: T_DELIVERED },
+        { label: LABEL.finalized, at: T_FINAL },
+      ]),
+    );
+    await pull(f);
+    const deliveredId = await eventIdOf(f, "A-1:h2");
+    const finalId = await eventIdOf(f, "A-1:h3");
+    if (!deliveredId || !finalId) throw new Error("no events");
+    if (deliver) expect(await fromEvent(f, deliveredId)).toMatchObject({ kind: "moved", loadId: l.id });
+    return { l, finalId };
+  }
+
+  const invoiceCardsOf = (f: Fixture) =>
+    admin.withTenant(f.tenantId, (q) =>
+      q.query<{
+        id: string;
+        subject_id: string;
+        status: string;
+        origin: string;
+        amount_cents: number;
+        direction: string;
+        args: Record<string, unknown>;
+      }>(
+        `SELECT CAST(id AS text) AS id, CAST(subject_id AS text) AS subject_id, status, origin,
+                CAST(amount_cents AS integer) AS amount_cents, direction, args
+           FROM proposals WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post' ORDER BY created_at, id`,
+      ),
+    );
+
+  const asksOn = (f: Fixture, proposalId: string) =>
+    admin.withTenant(f.tenantId, (q) =>
+      q.query<{ kind: string; status: string }>(
+        "SELECT kind, status FROM agent_asks WHERE tenant_id = current_tenant_id() AND proposal_id = CAST($1 AS uuid)",
+        [proposalId],
+      ),
+    );
+
+  const statusOf = async (f: Fixture, loadId: string) => {
+    const [row] = await admin.withTenant(f.tenantId, (q) =>
+      q.query<{ status: string }>("SELECT status FROM loads WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+        loadId,
+      ]),
+    );
+    return row?.status;
+  };
+
+  it("drafts one invoice_post card at the engine's cents, once, and Refresh then finds it unchanged", async () => {
+    const f = await carrier("tms-final");
+    const { l, finalId } = await finalized(f);
+    const first = await fromEvent(f, finalId);
+    expect(first).toMatchObject({ kind: "proposed", loadId: l.id });
+    const cards = await invoiceCardsOf(f);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({
+      subject_id: l.id,
+      status: "proposed",
+      origin: "engine",
+      amount_cents: 150_000,
+      direction: "in",
+    });
+    // Our own loads row's total, never the dispatch system's revenue.
+    expect(cards[0].args).toEqual({
+      loadId: l.id,
+      loadNumber: l.number,
+      amountCents: 150_000,
+      lines: [{ kind: "linehaul", amountCents: 150_000 }],
+      revision: 0,
+    });
+    expect(first.kind === "proposed" ? first.proposalId : null).toBe(cards[0].id);
+    // The same event again (a second finalize on the load reads the same): the live card stands.
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "nothing", category: "duplicate" });
+    expect(await invoiceCardsOf(f)).toHaveLength(1);
+    // A person's turn makes no question; the load is not moved by the finalize.
+    expect(await asksOn(f, cards[0].id)).toEqual([]);
+    expect(await statusOf(f, l.id)).toBe("delivered");
+    // Refresh on the invoice queue drafts the same args, so it counts the card unchanged.
+    expect(await proposeInvoices(app, f.session, NOW)).toMatchObject({
+      ok: true,
+      counts: { created: 0, unchanged: 1, inFlight: 0, decided: 0, retired: 0 },
+    });
+    expect((await invoiceCardsOf(f)).map((c) => [c.id, c.status])).toEqual([[cards[0].id, "proposed"]]);
+  });
+
+  it("drafts nothing for a load we still have in transit", async () => {
+    const f = await carrier("tms-final-transit");
+    const { l, finalId } = await finalized(f, false);
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "nothing", category: "not_in_queue" });
+    expect(await invoiceCardsOf(f)).toEqual([]);
+    expect(await statusOf(f, l.id)).toBe("in_transit");
+  });
+
+  it("drafts nothing for an event before its start date, and records the event", async () => {
+    const f = await carrier("tms-final-before");
+    const { finalId } = await finalized(f);
+    flags.tmsFinalizeInvoice.startDate = "2026-11-05";
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "nothing", category: "recorded" });
+    expect(await invoiceCardsOf(f)).toEqual([]);
+  });
+
+  it("drafts nothing while its switch or the invoice queue is off, and records the event", async () => {
+    const f = await carrier("tms-final-off");
+    const { finalId } = await finalized(f);
+    flags.tmsFinalizeInvoice.enabled = false;
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "nothing", category: "recorded" });
+    flags.tmsFinalizeInvoice.enabled = true;
+    flags.invoicesEnabled = false;
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "nothing", category: "recorded" });
+    expect(await invoiceCardsOf(f)).toEqual([]);
+  });
+
+  it("writes no question when the owner's mode for invoices is Auto", async () => {
+    const f = await carrier("tms-final-auto");
+    const { l, finalId } = await finalized(f);
+    Object.assign(flags.autopilot, { enabled: true, armed: true, startDate: "2026-10-31" });
+    flags.autopilot.kinds = {
+      ...flags.autopilot.kinds,
+      invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
+    };
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO autopilot_rules (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count, updated_by)
+         VALUES (current_tenant_id(), 'invoice_post', 'auto', 200000, 1000000, 25, 'setup')`,
+      ),
+    );
+    const desk = { sub: serviceSub(f.tenantId), email: "", tenantId: f.tenantId };
+    const r = await app.withTenant(f.tenantId, (q) => moveFromTmsEvent(q, desk, finalId, NOW));
+    expect(r).toMatchObject({ kind: "proposed", loadId: l.id });
+    const cards = await invoiceCardsOf(f);
+    expect(cards).toHaveLength(1);
+    expect(await asksOn(f, cards[0].id)).toEqual([]);
+  });
+
+  it("is worked once by the desk's dispatch lane: one card, one question under Ask, one done line", async () => {
+    const f = await carrier("tms-final-desk");
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+         VALUES (current_tenant_id(), 'service:sweep:' || CAST(current_tenant_id() AS text), 'sweep@tms-test.invalid', 'staff')`,
+      ),
+    );
+    // The desk takes its own lease.
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute("UPDATE desk_loops SET lease_token = NULL, lease_until = NULL WHERE tenant_id = current_tenant_id()"),
+    );
+    const service = await serviceSession(app, f.tenantId);
+    if (!service) throw new Error("no service login");
+    flags.deskLoop.enabled = true;
+    flags.deskLoop.armed = true;
+    flags.deskLoop.startDate = "2026-10-30";
+
+    const l = await ourLoad(f);
+    fake.loads.set(
+      "A-1",
+      dispatchLoad("A-1", l.number, [
+        { label: LABEL.tendered, at: T_TENDERED },
+        { label: LABEL.in_transit, at: T_PICKED },
+        { label: LABEL.delivered, at: T_DELIVERED },
+        { label: LABEL.finalized, at: T_FINAL },
+      ]),
+    );
+    const real = deskHandlers({ db: app });
+    const runs: string[] = [];
+    const handlers = {} as Handlers;
+    for (const source of DESK_SOURCES) {
+      handlers[source] =
+        source === "tms_event"
+          ? {
+              ...real.tms_event,
+              run: (s, e, ctx) => {
+                runs.push(e.eventKey);
+                return real.tms_event.run(s, e, ctx);
+              },
+            }
+          : { switchOn: () => true, needsMs: 1_000, run: async () => ({ outcome: "done", detail: { found: 0 } }) };
+    }
+    let now = NOW.getTime() + 20 * 60_000;
+    const wake = () =>
+      wakeDesk(
+        service,
+        { wakeId: randomUUID(), by: "schedule", deadlineMs: now + 25_000 },
+        { db: app, clock: () => new Date(now), handlers, newId: randomUUID, log: () => {} },
+      );
+    // The wake's own pull mirrors the load; the desk moves it delivered, then drafts its card.
+    await wake();
+    now += 20 * 60_000;
+    await wake();
+
+    const finalId = await eventIdOf(f, "A-1:h3");
+    if (!finalId) throw new Error("no event");
+    const key = eventKey("tms_event", finalId);
+    expect(runs.filter((k) => k === key)).toHaveLength(1);
+    expect(await statusOf(f, l.id)).toBe("delivered");
+    const lines = await admin.withTenant(f.tenantId, (q) =>
+      q.query<{ detail: Record<string, unknown> }>(
+        "SELECT detail FROM desk_log WHERE tenant_id = current_tenant_id() AND event_key = $1 AND kind = 'done'",
+        [key],
+      ),
+    );
+    expect(lines).toHaveLength(1);
+    expect(lines[0].detail).toMatchObject({ found: 1, category: "invoice_proposed" });
+    const cards = await invoiceCardsOf(f);
+    expect(cards.map((c) => [c.subject_id, c.amount_cents, c.status])).toEqual([[l.id, 150_000, "proposed"]]);
+    // No autopilot rule for invoices here, so the owner's mode is Ask: the desk asks once.
+    expect(await asksOn(f, cards[0].id)).toEqual([{ kind: "ask", status: "open" }]);
   });
 });
