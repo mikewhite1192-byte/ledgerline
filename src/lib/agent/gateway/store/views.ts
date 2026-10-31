@@ -7,6 +7,7 @@ import { isUuid } from "../../../uuid";
 import { argStrings, parseReportArgs } from "../../../reports/args";
 import { isReportName } from "../../../reports/types";
 import { cardLabel } from "../../../advances/cards";
+import { isParkReason } from "../../../advances/parking";
 import { finalChecklist, parseChecklist } from "../../checklist";
 import { reasonSentence } from "../../reasons";
 import {
@@ -78,6 +79,7 @@ type ProposalRow = {
   card_last4: string | null;
   args: string | null;
   card_load_driver?: string | null;
+  park_reason?: string | null;
   exceptions: string | null;
   // A factoring card's request (0060), once its approval wrote one.
   factoring_status?: string | null;
@@ -388,7 +390,10 @@ function proposalView(r: ProposalRow): ProposalView {
     title: r.title,
     reasons,
     sources: refsOf(r.sources),
-    status: cardStatusOf(r.status, r.money_state),
+    // A parked advance never has a ledger row, so a parked one left executing (its payout refused
+    // at the reserve) reads approved with its parked line, not unknown.
+    status:
+      isParkReason(r.park_reason) && r.money_state === null ? "approved" : cardStatusOf(r.status, r.money_state),
     flagged: r.flagged_input_id !== null,
     flagCategories: stringsOf(r.flag_categories),
     operatorVerdict: r.operator_verdict,
@@ -404,11 +409,23 @@ function proposalView(r: ProposalRow): ProposalView {
       engineCheck === "mismatch" && flags.verifyEngineMismatchBlocks && engineOverride === null && r.status === "proposed",
     destination: destinationOf(r),
     ...(r.kind === "detention_charge" ? { detention: detentionOf(r) } : {}),
-    ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args) } : {}),
+    ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args), parked: parkedOf(r) } : {}),
     ...(r.kind === "card_match" ? { cardMatch: cardMatchOf(r.args) } : {}),
     ...(r.kind === "card_load_ruling" ? { cardLoad: cardLoadOf(r.args, r.card_load_driver) } : {}),
     ...(CASH_KINDS.has(r.kind) ? { cash: cashOf(r) } : {}),
     ...(r.kind === "pay_rule_change" ? { ruleChange: ruleChangeOf(r) } : {}),
+  };
+}
+
+// An advance parked after its approval (0079), read at render: its reason, whether a press may
+// release it now (the parking switch, read now), and whether only an admin may (the approval went
+// over a block or a mismatch). The executor asks all of it again; this only shapes the card.
+function parkedOf(r: ProposalRow): ProposalView["parked"] {
+  if (!isParkReason(r.park_reason)) return null;
+  return {
+    reason: r.park_reason,
+    on: flags.advanceParking.enabled === true,
+    adminOnly: r.auditor_override_at !== null || r.engine_override_at !== null,
   };
 }
 
@@ -486,6 +503,10 @@ const PROPOSAL_SQL = `
            (SELECT d.code FROM drivers d
              WHERE d.tenant_id = p.tenant_id AND CAST(d.id AS text) = p.args ->> 'driverId')
          END AS card_load_driver,
+         CASE WHEN p.kind = 'advance_payout' AND p.status IN ('approved', 'executing') THEN
+           (SELECT a.park_reason FROM advances a
+             WHERE a.tenant_id = p.tenant_id AND a.proposal_id = p.id AND a.status = 'parked')
+         END AS park_reason,
          CAST(p.exceptions AS text) AS exceptions,
          CASE WHEN p.kind = 'factoring_request' THEN
            (SELECT fr.status FROM factoring_requests fr WHERE fr.tenant_id = p.tenant_id AND fr.proposal_id = p.id)

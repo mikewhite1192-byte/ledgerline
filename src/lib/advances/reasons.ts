@@ -83,6 +83,12 @@ export const FLOW_OUTCOMES = [
   "forbidden",
   "bad_request",
   "unavailable",
+  "parked_card_removed",
+  "parked_name_mismatch",
+  "parked_no_room",
+  "parked_override",
+  "parking_off",
+  "parked_needs_admin",
 ] as const;
 export type FlowOutcome = (typeof FLOW_OUTCOMES)[number];
 
@@ -122,6 +128,14 @@ const OUTCOME_SENTENCES: Readonly<Record<FlowOutcome, string>> = {
   forbidden: "This login cannot act for this carrier.",
   bad_request: "That advance link is not valid.",
   unavailable: "That did not finish. Nothing was changed that cannot be checked; try again.",
+  parked_card_removed: "Parked: that card is no longer on file. Fix it, then approve again, or reject.",
+  parked_name_mismatch:
+    "Parked: the card statement names someone else on this card. Check it, then approve again, or reject.",
+  parked_no_room: "Parked: the pay rules no longer allow this amount. Approve again once they do, or reject.",
+  parked_override:
+    "Parked: this was approved over a block or a mismatch. An admin approves it again to pay it, or reject.",
+  parking_off: "Parked advances are switched off, so nothing was paid. It can still be rejected.",
+  parked_needs_admin: "This was approved over a block or a mismatch, so only an admin can approve it again.",
 };
 
 export function isFlowOutcome(code: unknown): code is FlowOutcome {
@@ -149,6 +163,12 @@ const CARD_OUTCOMES = [
   "ref_collision",
   "payout_failed",
   "payout_pending",
+  "parked_card_removed",
+  "parked_name_mismatch",
+  "parked_no_room",
+  "parked_override",
+  "parking_off",
+  "parked_needs_admin",
 ] as const satisfies readonly FlowOutcome[];
 
 export const ADVANCE_APPROVE_NOTICE: Readonly<Record<string, string>> = Object.fromEntries(
@@ -156,9 +176,10 @@ export const ADVANCE_APPROVE_NOTICE: Readonly<Record<string, string>> = Object.f
 );
 
 // A proposal's decision note in words. Notes are codes written by this app (a reject category,
-// "expired", the stale-eligibility codes, or a take-back's cancel), never a person's or a model's
-// text.
+// "expired", the stale-eligibility codes, a parked advance's reject, or a take-back's cancel),
+// never a person's or a model's text.
 const STALE_NOTE = /^stale_eligibility: ([a-z_]+(?:,[a-z_]+)*)$/;
+const REJECTED_PARKED_NOTE = /^rejected_parked:([a-z_]{2,40})$/;
 
 export function decisionNoteSentence(note: string | null): string | null {
   if (note === null || note === "") return null;
@@ -168,6 +189,8 @@ export function decisionNoteSentence(note: string | null): string | null {
     return `The numbers changed before approval (${why.join(", ")}), so nothing was paid.`;
   }
   if (note === "expired") return "No one decided in time, so it expired.";
+  const parked = REJECTED_PARKED_NOTE.exec(note);
+  if (parked) return `Rejected while parked (${codeToWords(parked[1]).toLowerCase()}), so nothing was paid.`;
   if (note === CANCELLED_BY_TAKEBACK) return "The advance was taken back before any money moved, so nothing was paid.";
   return `Decision: ${codeToWords(note).toLowerCase()}.`;
 }

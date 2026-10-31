@@ -157,6 +157,12 @@ describe("the sentences a person sees", () => {
         "no_card",
         "not_armed",
         "over_cap",
+        "parked_card_removed",
+        "parked_name_mismatch",
+        "parked_needs_admin",
+        "parked_no_room",
+        "parked_override",
+        "parking_off",
         "payout_failed",
         "payout_pending",
         "payouts_off",
@@ -297,6 +303,8 @@ describe("the record page's buttons", () => {
     takenBackAt: null,
     takenBackByMembershipId: null,
     takebackReason: null,
+    parkReason: null,
+    parkedAt: null,
     ...over,
   });
   const entry = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({

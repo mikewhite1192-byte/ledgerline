@@ -606,3 +606,56 @@ describe("a factoring card", () => {
     }
   });
 });
+
+describe("a parked advance's card", () => {
+  const parkedView = (parked: ProposalView["parked"], over: Partial<ProposalView> = {}): ProposalView => ({
+    ...view,
+    status: "approved",
+    parked,
+    ...over,
+  });
+
+  it("says why it parked and lets staff approve it again", () => {
+    const card = proposalCardFrom(parkedView({ reason: "no_room", on: true, adminOnly: false }), undefined, {
+      admin: false,
+      adminAboveCents: 50_000,
+    });
+    expect(card.parked).toEqual({
+      line: "Parked: the pay rules no longer allow this amount. Approve again once they do, or reject.",
+      releasable: true,
+    });
+  });
+
+  it("leaves Approve again to an admin after an override, or for an amount over the admin line", () => {
+    const staff = { admin: false, adminAboveCents: 50_000 };
+    const override = proposalCardFrom(parkedView({ reason: "override", on: true, adminOnly: true }), undefined, staff);
+    expect(override.parked?.releasable).toBe(false);
+    expect(override.parked?.line).toContain("only an admin can approve it again");
+    const admin = proposalCardFrom(parkedView({ reason: "override", on: true, adminOnly: true }), undefined, {
+      admin: true,
+      adminAboveCents: 50_000,
+    });
+    expect(admin.parked?.releasable).toBe(true);
+    const large = proposalCardFrom(
+      parkedView({ reason: "card_removed", on: true, adminOnly: false }, { amountCents: 60_000 }),
+      undefined,
+      staff,
+    );
+    expect(large.parked?.releasable).toBe(false);
+  });
+
+  it("offers only Reject with the switch off, and nothing parked on any other status or kind", () => {
+    const off = proposalCardFrom(parkedView({ reason: "name_mismatch", on: false, adminOnly: false }));
+    expect(off.parked).toEqual({
+      line: "Parked advances are switched off, so nothing was paid. It can still be rejected.",
+      releasable: false,
+    });
+    for (const status of ["proposed", "done", "failed", "rejected"] as const) {
+      expect(proposalCardFrom(parkedView({ reason: "no_room", on: true, adminOnly: false }, { status })).parked).toBeUndefined();
+    }
+    expect(proposalCardFrom(parkedView(null)).parked).toBeUndefined();
+    expect(
+      proposalCardFrom(parkedView({ reason: "no_room", on: true, adminOnly: false }, { kind: "money_code" })).parked,
+    ).toBeUndefined();
+  });
+});

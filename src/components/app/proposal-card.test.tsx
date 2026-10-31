@@ -75,6 +75,36 @@ describe("ProposalCard", () => {
     }
   });
 
+  it("shows a parked advance's line with Reject and Approve again in place of Resume", () => {
+    const onApprove = vi.fn();
+    const onReject = vi.fn();
+    const parked = { line: "Parked: the pay rules no longer allow this amount.", releasable: true };
+    render(<ProposalCard {...card} status="approved" canResume parked={parked} onApprove={onApprove} onReject={onReject} />);
+    expect(screen.queryAllByRole("button").map((b) => b.textContent)).toEqual(["Reject", "Approve again"]);
+    expect(screen.getByText(parked.line)).toBeTruthy();
+    fireEvent.click(button("Approve again")!);
+    expect(onApprove).toHaveBeenCalledWith("p-1");
+    // Reject asks its question first, then sends.
+    fireEvent.click(button("Reject")!);
+    expect(onReject).not.toHaveBeenCalled();
+    expect(screen.getByText(REJECT_NEXT)).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: "Reject" }).at(-1)!);
+    expect(onReject).toHaveBeenCalledWith("p-1");
+  });
+
+  it("offers only Reject on a parked advance this viewer cannot release, and nothing parked once decided", () => {
+    const parked = { line: "Parked advances are switched off.", releasable: false };
+    const { unmount } = render(<ProposalCard {...card} status="executing" parked={parked} />);
+    expect(screen.queryAllByRole("button").map((b) => b.textContent)).toEqual(["Reject"]);
+    unmount();
+    for (const status of ["failed", "rejected", "done"] as const) {
+      const view = render(<ProposalCard {...card} status={status} parked={parked} />);
+      expect(screen.queryAllByRole("button")).toHaveLength(0);
+      expect(screen.queryByText(parked.line)).toBeNull();
+      view.unmount();
+    }
+  });
+
   it("disables Resume while it is in flight", () => {
     render(<ProposalCard {...card} status="approved" canResume pending />);
     expect((button(/Resuming/) as HTMLButtonElement).disabled).toBe(true);
@@ -526,6 +556,19 @@ describe("ProposalCard for a demo visitor", () => {
     fireEvent.click(button("Approve anyway")!);
     expect(note()).toBeTruthy();
     expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("explains a parked advance's buttons too, and sends nothing", () => {
+    const { onApprove, onReject } = asJudge({
+      status: "approved",
+      parked: { line: "Parked: that card is no longer on file.", releasable: true },
+    });
+    expect(screen.getByText("Parked: that card is no longer on file.")).toBeTruthy();
+    fireEvent.click(button("Approve again")!);
+    fireEvent.click(button("Reject")!);
+    expect(note()).toBeTruthy();
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(onReject).not.toHaveBeenCalled();
   });
 
   it("explains Resume too, and staff still get the confirm", () => {
