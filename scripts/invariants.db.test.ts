@@ -270,6 +270,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     // A person pausing the autopilot (0070): no seed, the pause switch writes it. Its rules are
     // seeded for both carriers.
     "autopilot_state",
+    // The agent's question about a proposal (0072): no seed, the desk writes it.
+    "agent_asks",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -312,6 +314,12 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
              'drivers', CAST($4 AS uuid), 10000, 'out', 'Pay an advance', CAST('{}' AS jsonb), 'eligible',
              CAST($5 AS uuid), $6, $7)`,
           [proposal, conversation, turn, c.driver, decision, `advance_payout:${c.driver}:${"0".repeat(64)}`, trace],
+        );
+        await q.execute(
+          `INSERT INTO agent_asks (id, tenant_id, kind, proposal_id, subject_table, subject_id, text)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'ask', CAST($2 AS uuid), 'drivers', CAST($3 AS uuid),
+             'Should I send the advance?')`,
+          [randomUUID(), proposal, c.driver],
         );
         // An invoice post a person approved, refused before any call (the switch was off).
         await q.execute(

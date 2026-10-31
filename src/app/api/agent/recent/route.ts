@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { flags } from "@/config/flags";
-import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
+import { readAgentThread } from "@/lib/agent/gateway/store";
 import { getSession } from "@/lib/agent/gateway/session";
 import { isCrossSite } from "@/lib/http/same-site";
 
@@ -8,7 +8,8 @@ import { isCrossSite } from "@/lib/http/same-site";
 // first, so the agent panel resumes the thread after a navigation (design-ui-pass 2). Reads only,
 // under the caller's own tenant: the store's tenant transaction checks the membership first, and
 // row-level security holds the rows to that tenant. Off unless agentEnabled and agentFocusEnabled
-// are both on.
+// are both on. The carrier's questions showing now ride along (asks, newest last) with the thread
+// order of turns and asks by time; with agentAsks off, both are empty.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -22,8 +23,8 @@ export async function GET(request: Request) {
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
   try {
-    const turns = await readRecentAgentTurns(session);
-    return reply({ conversationId: turns.at(-1)?.conversationId ?? null, turns }, 200);
+    const { turns, asks, thread } = await readAgentThread(session);
+    return reply({ conversationId: turns.at(-1)?.conversationId ?? null, turns, asks, thread }, 200);
   } catch (err) {
     if (err instanceof Error && err.name === "ForbiddenError") return reply({ error: "forbidden" }, 403);
     console.error("agent recent read failed:", err instanceof Error ? err.name : "unknown");

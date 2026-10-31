@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
-import { getDb, type TenantDb } from "../db";
+import { askFor, tellFor } from "../asks/store";
+import { getDb, type Queryable, type TenantDb } from "../db";
 import { runAudit } from "../agent/auditor/run";
 import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
@@ -261,6 +262,20 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
   // runs. Ask or off is stored and the proposal waits for a person. A pause writes a skipped line
   // (the proposal stays for a person). A proposal already decided is never approved again: an
   // approval that did not finish is reported as an unknown outcome for a person, not retried.
+  // The agent's question or told line after the autopilot's look (src/lib/asks), in its own tenant
+  // transaction. A failure here never changes the outcome: the proposal's card still waits.
+  const noteAsk = async (session: Session, write: (q: Queryable) => Promise<unknown>): Promise<void> => {
+    if (flags.agentAsks.enabled !== true) return;
+    try {
+      await db().withTenant(session.tenantId, async (q) => {
+        await assertMembership(q, session);
+        await write(q);
+      });
+    } catch (err) {
+      console.warn("desk: the agent's question could not be written:", err instanceof Error ? err.name : "unknown");
+    }
+  };
+
   const autopilot: Handler = {
     switchOn: () => flags.autopilot.enabled === true && flags.autopilot.armed === true,
     needsMs: 20_000,
@@ -270,6 +285,12 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
       const r = await runAutopilot(session.tenantId, id, { db: db(), clock: ctx.clock });
       if (!r.ok) return failed(r.category);
       const o = r.result;
+      // Done by the autopilot: a told line. Stored as ask: the question, if none is live yet.
+      if ((o.outcome === "approved" || (o.outcome === "earlier" && o.mine)) && o.status === "done") {
+        await noteAsk(session, (q) => tellFor(q, session.tenantId, id, ctx.clock()));
+      } else if (o.outcome === "decided" && o.mode === "ask") {
+        await noteAsk(session, (q) => askFor(q, id, ctx.clock(), { mode: "ask" }));
+      }
       switch (o.outcome) {
         case "approved":
           if (o.status === "done") return done({ found: 1, category: "executed" });

@@ -13,12 +13,13 @@ const SESSION: Session = {
 };
 const ID = "22222222-2222-4222-8222-222222222222";
 
-const mocks = vi.hoisted(() => ({ getSession: vi.fn(), executeProposal: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getSession: vi.fn(), executeProposal: vi.fn(), answerAfterApprove: vi.fn() }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
 // The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here every caller is staff.
 vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/proposals/execute", () => ({ executeProposal: mocks.executeProposal }));
+vi.mock("@/lib/asks/session", () => ({ answerAfterApprove: mocks.answerAfterApprove }));
 
 function approve(opts: { id?: string; body?: string; site?: string } = {}) {
   const id = opts.id ?? ID;
@@ -35,6 +36,7 @@ function approve(opts: { id?: string; body?: string; site?: string } = {}) {
 beforeEach(() => {
   mocks.getSession.mockReset().mockResolvedValue(SESSION);
   mocks.executeProposal.mockReset();
+  mocks.answerAfterApprove.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -108,6 +110,27 @@ describe("POST /api/proposals/:id/approve", () => {
       overrideReason: "Driver showed the receipt",
       auditedAt,
     });
+  });
+
+  it("marks the agent's question answered only after the approval went through", async () => {
+    mocks.executeProposal.mockResolvedValueOnce({ ok: false, category: "needs_confirm", retryable: false });
+    expect((await approve({ body: "{}" })).status).toBe(409);
+    mocks.executeProposal.mockRejectedValueOnce(new Error("down"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await approve({ body: "{}" })).status).toBe(503);
+    expect(mocks.answerAfterApprove).not.toHaveBeenCalled();
+
+    const order: string[] = [];
+    mocks.executeProposal.mockImplementationOnce(async () => {
+      order.push("approve");
+      return { ok: true, proposalId: ID, status: "done", moneyActionId: null };
+    });
+    mocks.answerAfterApprove.mockImplementationOnce(async () => {
+      order.push("answered");
+    });
+    expect((await approve({ body: '{"confirmed":true}' })).status).toBe(200);
+    expect(order).toEqual(["approve", "answered"]);
+    expect(mocks.answerAfterApprove).toHaveBeenCalledWith(SESSION, ID);
   });
 
   it("maps each refusal category to its status, with the category only in the reply", async () => {

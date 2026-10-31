@@ -154,7 +154,13 @@ async function post(sess: Session, body: Record<string, unknown>) {
 async function recent(sess: Session) {
   holder.session = sess;
   const res = await GET(new Request("http://localhost/api/agent/recent"));
-  return { status: res.status, body: (await res.json()) as { conversationId?: string | null; turns?: { id: string }[]; error?: string } };
+  const body = (await res.json()) as {
+    conversationId?: string | null;
+    turns?: { id: string }[];
+    thread?: { type: string; id: string; at: string }[];
+    error?: string;
+  };
+  return { status: res.status, body };
 }
 
 const turnRows = (tenantId: string, turnId: string) =>
@@ -456,13 +462,15 @@ describe("the page focus (database)", () => {
     const mine = await recent(session(A, SUB_A2));
     expect(mine.status).toBe(200);
     expect(mine.body.turns?.map((t) => t.id)).toEqual([turnA]);
+    // The thread places the turn by its start; no question of the desk's here.
+    expect(mine.body.thread).toEqual([{ type: "turn", id: turnA, at: expect.any(String) }]);
     const conversationA = mine.body.conversationId;
     expect(conversationA).toBeTruthy();
 
     // B's member, before B has a conversation: nothing, never A's.
     const empty = await recent(session(B));
     expect(empty.status).toBe(200);
-    expect(empty.body).toEqual({ conversationId: null, turns: [] });
+    expect(empty.body).toEqual({ conversationId: null, turns: [], asks: [], thread: [] });
 
     // B's own conversation, once it has one: B's turn only.
     const turnB = randomUUID();

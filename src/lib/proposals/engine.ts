@@ -8,8 +8,9 @@ import {
   impactOf,
 } from "../agent/gateway/store/proposals";
 import type { GatewayRef, GatewayTable, ProposalKind } from "../agent/gateway/types";
+import { askFor, asksForSession } from "../asks/store";
 import type { Session } from "../auth/claims";
-import type { Queryable } from "../db";
+import { DbError, type Queryable } from "../db";
 
 // Proposals the rules engine makes outside a chat turn (origin 'engine', 0015): the invoice queue
 // now, the pay run next. No model and no turn made them, so they carry no conversation, turn,
@@ -147,6 +148,17 @@ export async function persistEngineProposal(
       verdict,
     ],
   );
+  // The desk's card gets its question in the same transaction (src/lib/asks). A database error
+  // has already aborted the transaction and goes up; any other throw (a zone Intl cannot read)
+  // costs only the question, never the card.
+  if (asksForSession(session)) {
+    try {
+      await askFor(q, id, now);
+    } catch (err) {
+      if (err instanceof DbError) throw err;
+      console.warn("proposals: the question could not be written:", err instanceof Error ? err.name : "unknown");
+    }
+  }
   return { kind: "created", proposalId: id };
 }
 
