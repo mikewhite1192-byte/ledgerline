@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
 import { AiError, type AiRequest, type AiResult } from "../ai";
 import type { Session } from "../auth/claims";
@@ -37,6 +37,10 @@ const result = (text: string, status: AiResult["status"] = "ok"): AiResult => ({
 });
 
 const saved = structuredClone(flags.agentAsks);
+beforeEach(() => {
+  // The questions ship off; the reason pass runs only with them on.
+  flags.agentAsks.enabled = true;
+});
 afterEach(() => {
   Object.assign(flags.agentAsks, structuredClone(saved));
 });

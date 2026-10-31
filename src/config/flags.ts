@@ -1015,7 +1015,7 @@ export const flags: Flags = {
     },
   },
   agentAsks: {
-    enabled: true,
+    enabled: false,
     reasonEnabled: true,
     reasonMaxCostCents: 2,
     reasonMaxOutputTokens: 80,
