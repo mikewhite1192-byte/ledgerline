@@ -3,6 +3,7 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { askFor, tellFor } from "../asks/store";
 import { getDb, type Queryable, type TenantDb } from "../db";
+import { proposeAdvanceAtPickup } from "../advances/at-pickup";
 import { runAudit } from "../agent/auditor/run";
 import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
@@ -122,12 +123,23 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     },
   };
 
-  // A recorded move: nothing to run yet. The lanes that follow a move (later items) hang off here.
+  // A recorded move. ADVANCE-AT-PICKUP: a move to in transit, for a carrier whose advances unlock
+  // at pickup, drafts one advance card for a person to approve (src/lib/advances/at-pickup.ts asks
+  // its own switch and start date again). The other lanes that follow a move hang off here too.
   const loadEvent: Handler = {
-    switchOn: () => flags.loadMovement.enabled === true,
-    needsMs: 1_000,
-    async run() {
-      return done({ found: 0, category: "recorded" });
+    switchOn: () => flags.loadMovement.enabled === true || flags.advanceAtPickup.enabled === true,
+    needsMs: 2_000,
+    async run(session, event, ctx) {
+      if (flags.advanceAtPickup.enabled !== true) return done({ found: 0, category: "recorded" });
+      const id = event.subjectId;
+      if (!id) return failed("bad_request");
+      const r = await db().withTenant(session.tenantId, async (q) => {
+        await assertMembership(q, session);
+        return proposeAdvanceAtPickup(q, session, id, ctx.clock());
+      });
+      if (r.kind === "proposed") return done({ found: 1, category: "advance_proposed" });
+      if (r.category === "switched_off") return done({ found: 0, category: "recorded" });
+      return done({ found: 0, category: r.category });
     },
   };
 

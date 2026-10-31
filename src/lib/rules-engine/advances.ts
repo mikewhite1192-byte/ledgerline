@@ -24,7 +24,9 @@ export function floorToDollars(amount: Cents): Cents {
 // and the ledger pays.
 //
 // earnedUnpaid = load pay on loads delivered on or before the request day that no paid
-//                settlement has covered
+//                settlement has covered, plus, when the carrier's advanceUnlockStage is
+//                picked_up, the named load's pay while it is in transit with its pickup recorded
+//                at or before requestedAt (so a trip can be advanced against at pickup)
 // open         = outstanding on approved and paid advances (amount + fee - recovered)
 // maxCents     = min(limit - open - fee, earnedUnpaid x share - open), or 0 when under the minimum
 // The fee counts against the limit, the same way findOverAdvanceLimit counts it. The share is
@@ -50,12 +52,10 @@ export function advanceEligibility(input: AdvanceInput): AdvanceDecision {
     "advance",
   ).sort(byOldest);
 
-  const earned = earnedUnpaid(config, driver, input.loads, input.paidPeriods, requestedOn);
   const owing = advances.filter((a) => outstandingCents(a) > 0);
   const open = sum(owing.map(outstandingCents));
   const limit = advanceLimitOf(config, driver);
   const fee = config.advanceFeeCents;
-  const share = mulBps(earned.cents, config.advanceMaxBpsOfEarned);
   const duplicates = advances.filter(
     (a) =>
       (a.status === "approved" || a.status === "paid") &&
@@ -69,6 +69,17 @@ export function advanceEligibility(input: AdvanceInput): AdvanceDecision {
     assertId(load.id, "load id");
     assertCents(load.payCents, "load payCents");
   }
+  const pickedUpAt = load?.pickedUpAt ?? null;
+  const pickedUp = pickedUpAt !== null && instantMs(pickedUpAt, "load pickedUpAt") <= requestedMs;
+  const earned = earnedUnpaid(
+    config,
+    driver,
+    input.loads,
+    input.paidPeriods,
+    requestedOn,
+    pickedUp && load !== null ? load.id : null,
+  );
+  const share = mulBps(earned.cents, config.advanceMaxBpsOfEarned);
   const capped = load !== null && config.advancePerLoadBpsOfPay !== null;
   const onLoad = load === null ? [] : owing.filter((a) => a.loadId === load.id);
   const openOnLoad = sum(onLoad.map(outstandingCents));

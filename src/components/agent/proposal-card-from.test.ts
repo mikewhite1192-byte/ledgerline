@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { advanceLoadOf } from "@/lib/agent/gateway/store/views";
 import type { ProposalView } from "@/lib/agent/view";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import {
@@ -76,6 +77,29 @@ describe("proposalCardFrom", () => {
     expect(proposalCardFrom(view).detail).toBeUndefined();
     // Only an advance carries a load line.
     expect(proposalCardFrom({ ...view, kind: "pay_correction", destination: null, load }).detail).toBeUndefined();
+  });
+
+  it("quotes the advance at pickup's amount and the carrier's share, never the room left", () => {
+    const load = { number: "BR-L10230", capCents: null, leftAfterCents: null, shareBps: 7_000 };
+    const line = "Load BR-L10230 was picked up: $200.00 now, inside the 70% of trip pay the carrier allows on one load.";
+    expect(advanceLoadDetail(load, 20_000)).toBe(line);
+    expect(proposalCardFrom({ ...view, load }).detail).toBe(line);
+    expect(advanceLoadDetail({ ...load, shareBps: 6_250 }, 41_500)).toBe(
+      "Load BR-L10230 was picked up: $415.00 now, inside the 62.5% of trip pay the carrier allows on one load.",
+    );
+    // No amount to quote: the plain load line.
+    expect(advanceLoadDetail(load)).toBe("For load BR-L10230.");
+    expect(advanceLoadDetail(load, 0)).toBe("For load BR-L10230.");
+  });
+
+  it("reads an advance's load line back from its stored args, the pickup share only whole", () => {
+    const args = (load: unknown) => JSON.stringify({ driverId: "d", load });
+    const base = { number: "BR-L10230", capCents: null, leftAfterCents: null };
+    expect(advanceLoadOf(args(base))).toEqual(base);
+    expect(advanceLoadOf(args({ ...base, shareBps: 7_000 }))).toEqual({ ...base, shareBps: 7_000 });
+    for (const shareBps of [0, 10_001, 12.5, "7000", null]) {
+      expect(advanceLoadOf(args({ ...base, shareBps }))).toBeNull();
+    }
   });
 
   it("shows no destination for a kind that pays no card", () => {

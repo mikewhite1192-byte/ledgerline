@@ -170,6 +170,8 @@ export type PayConfigKnobs = {
   advance_min_cents: number;
   // Advances on one load capped at this share of the driver's pay for it; null is no cap (0027).
   advance_per_load_bps_of_pay: number | null;
+  // When a load's pay first counts toward an advance: delivered, or picked up (0073).
+  advance_unlock_stage: "delivered" | "picked_up";
 };
 
 export type PayConfigRow = PayConfigKnobs & {

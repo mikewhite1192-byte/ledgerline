@@ -235,25 +235,37 @@ export function driverPayOnLoad(config: PayConfig, driver: DriverRecord, load: L
 // has covered yet: what an advance requested that day can be drawn against, so a replayed request
 // is never credited with later loads. A percent or flat load with no rate adds no load pay here,
 // never a guess, but its detention, layover and stop share still counts: that money is known.
+//
+// pickedUpLoadId: the load the advance names, when its pickup is on record (the caller decides
+// that from the load's recorded move, at or before the request). Only when the carrier's
+// advanceUnlockStage is picked_up, and only while that load is in transit with a pickup day on or
+// before `requestedOn`, does its pay count too. A delivered load already counts above, so it is
+// never counted twice; any other status adds nothing.
 export function earnedUnpaid(
   config: PayConfig,
   driver: DriverRecord,
   loads: readonly LoadRecord[],
   paidPeriods: readonly Period[],
   requestedOn: LocalDate,
+  pickedUpLoadId: string | null = null,
 ): { cents: Cents; sources: SourceRef[] } {
   const asOf = assertDate(requestedOn, "requestedOn");
   const periods = paidPeriods.map((p) => assertPeriod(p));
   const amounts: number[] = [];
   const sources: SourceRef[] = [];
-  const unpaid = assertUniqueIds(
+  const checked = assertUniqueIds(
     loads.map((l) => checkLoad(l, driver.id)),
     "load",
-  )
+  );
+  const unpaid = checked
     .filter((l) => isDelivered(l) && l.deliveredOn !== null && l.deliveredOn <= asOf)
     .filter((l) => !periods.some((p) => isWithin(l.deliveredOn ?? "", p)))
     .sort(byLoadNumber);
-  for (const load of unpaid) {
+  const picked =
+    config.advanceUnlockStage === "picked_up" && pickedUpLoadId !== null
+      ? (checked.find((l) => l.id === pickedUpLoadId && l.status === "in_transit" && l.pickupOn <= asOf) ?? null)
+      : null;
+  for (const load of picked === null ? unpaid : [...unpaid, picked]) {
     const total = driverPayOnLoad(config, driver, load);
     if (total > 0) {
       amounts.push(total);

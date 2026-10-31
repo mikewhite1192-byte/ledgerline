@@ -262,6 +262,13 @@ export async function readSettlementInput(
 // What advanceEligibility needs for one request: the date is the tenant's own, the loads
 // delivered inside a paid period count as paid, and the pay rules are the version that the
 // request's week will settle under.
+// The first recorded move of one load to in transit, read under the tenant's own policy.
+// The time travels as one ISO text form, as every other read here, so both drivers agree.
+const PICKED_UP_SQL = `SELECT to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS recorded_at
+  FROM load_events
+  WHERE tenant_id = current_tenant_id() AND load_id = $1::uuid AND to_status = 'in_transit'
+  ORDER BY created_at ASC, id ASC LIMIT 1`;
+
 export async function readAdvanceInput(
   q: Queryable,
   driverId: string,
@@ -282,7 +289,18 @@ export async function readAdvanceInput(
   let load: AdvanceInput["load"] = null;
   if (loadId !== undefined && loadId !== null) {
     const own = loads.find((l) => l.id === assertUuid(loadId, "loadId"));
-    load = own ? { id: own.id, payCents: driverPayOnLoad(config, driver, own) } : null;
+    load = own ? { id: own.id, payCents: driverPayOnLoad(config, driver, own), pickedUpAt: null } : null;
+    // A carrier whose advances unlock at pickup (0073) counts this one load from the moment its
+    // pickup is on record: the first move to in transit, at the time it was recorded (created_at,
+    // the database's own clock, never a time read from paperwork). Read only when it can count.
+    if (load !== null && own !== undefined && config.advanceUnlockStage === "picked_up" && own.status === "in_transit") {
+      const picked = await q.query<{ recorded_at: unknown }>(PICKED_UP_SQL, [load.id]);
+      const recorded = picked[0]?.recorded_at ?? null;
+      if (recorded !== null) {
+        if (typeof recorded !== "string") throw new Error("load_events.created_at did not read as text");
+        load = { ...load, pickedUpAt: recorded };
+      }
+    }
   }
   return {
     config,

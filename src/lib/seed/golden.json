@@ -133,7 +133,7 @@
           "netCents": 2477566
         }
       ],
-      "advancesOutstandingCents": 264381,
+      "advancesOutstandingCents": 254381,
       "receivables": {
         "openByBucket": {
           "current": {
@@ -366,10 +366,10 @@
       },
       "cashFriday": {
         "payDay": "2026-11-06",
-        "bankBalanceCents": 5809366,
-        "cashOnHandCents": 5809366,
+        "bankBalanceCents": 5796866,
+        "cashOnHandCents": 5796866,
         "expectedReceiptsCents": 8837225,
-        "payRunCents": 2805844,
+        "payRunCents": 2793344,
         "payRunSource": "preview",
         "fuelLoadsCents": 0,
         "vendorBillsDueCents": 8228747,
