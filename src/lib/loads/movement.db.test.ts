@@ -303,25 +303,43 @@ describe("the paperwork path", () => {
     expect(await sqlStateOf(dup)).toBe("23505");
   });
 
-  it("makes a card with no money, never a move, for a paper dated outside the window or a POD with no pickup", async () => {
+  it("makes a card with no money, never a move, for a pickup paper dated outside the window", async () => {
     const f = await carrier("move-card");
     const l = await load(f);
     const late = await bol(f, l, "10/25/2026", [], "2026-11-01T20:00:00.000Z");
     expect(await fromDocument(f, late)).toMatchObject({ kind: "card", reason: "date_out_of_window", loadId: l.id });
-    const l2 = await load(f);
-    const pod = await bol(f, l2, "11/02/2026", [deliveryStop(null, null)], "2026-11-02T16:00:00.000Z");
-    expect(await fromDocument(f, pod)).toMatchObject({ kind: "card", reason: "no_pickup_paper", loadId: l2.id });
     expect((await stateOf(f, l.id)).status).toBe("planned");
-    expect((await stateOf(f, l2.id)).status).toBe("planned");
     expect(await eventsOf(f, l.id)).toEqual([]);
     const cards = await cardsOf(f);
-    const byReason = cards
-      .map((c) => [c.subject_table, c.subject_id, c.amount_cents, String(c.args.reason)] as const)
-      .sort((x, y) => (x[3] < y[3] ? -1 : 1));
-    expect(byReason).toEqual([
+    expect(cards.map((c) => [c.subject_table, c.subject_id, c.amount_cents, String(c.args.reason)])).toEqual([
       ["loads", l.id, 0, "date_out_of_window"],
-      ["loads", l2.id, 0, "no_pickup_paper"],
     ]);
+  });
+
+  it("makes no card that could never be carried out: a POD on a planned load, or one dated after today", async () => {
+    const f = await carrier("move-no-card");
+    const planned = await load(f);
+    const pod = await bol(f, planned, "11/02/2026", [deliveryStop(null, null)], "2026-11-02T16:00:00.000Z");
+    expect(await fromDocument(f, pod)).toEqual({ kind: "nothing", category: "no_pickup_paper" });
+    const rolling = await load(f, { status: "in_transit" });
+    // Dated Nov 5, inside the POD window but after today (Nov 2): a press refuses that date.
+    const ahead = await bol(f, rolling, "11/05/2026", [deliveryStop(null, null)], "2026-11-02T16:00:00.000Z");
+    expect(await fromDocument(f, ahead)).toEqual({ kind: "nothing", category: "date_out_of_window" });
+    expect((await stateOf(f, planned.id)).status).toBe("planned");
+    expect((await stateOf(f, rolling.id)).status).toBe("in_transit");
+    expect(await cardsOf(f)).toEqual([]);
+  });
+
+  it("never takes a paper read in before the start date as the pickup paper", async () => {
+    const f = await carrier("move-floor");
+    flags.loadMovement.startDate = "2026-11-01";
+    const l = await load(f);
+    // Read in Oct 31 at 15:00 in Chicago, the day before the start date.
+    await bol(f, l, "11/01/2026", [pickupStop(null, null)], "2026-10-31T20:00:00.000Z");
+    const pod = await bol(f, l, "11/02/2026", [deliveryStop(null, null)], "2026-11-02T16:00:00.000Z");
+    expect(await fromDocument(f, pod)).toEqual({ kind: "nothing", category: "no_pickup_paper" });
+    expect((await stateOf(f, l.id)).status).toBe("planned");
+    expect(await eventsOf(f, l.id)).toEqual([]);
   });
 
   it("moves nothing and makes no card for paper on a cancelled load", async () => {
@@ -421,6 +439,22 @@ describe("the message path", () => {
     ]);
   });
 
+  it("never looks for an invoiced load's number", async () => {
+    const f = await carrier("move-invoiced");
+    const l = await load(f, { status: "in_transit" });
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        `UPDATE loads SET status = 'invoiced', delivered_on = CAST('2026-11-01' AS date),
+                delivered_at = CAST('2026-11-01T23:00:00Z' AS timestamptz)
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [l.id],
+      ),
+    );
+    const note = await voiceNote(f, f.driverId, `Delivered ${l.number}`);
+    expect(await fromVoice(f, note)).toMatchObject({ kind: "card", reason: "no_load_number", loadId: null });
+    expect((await stateOf(f, l.id)).status).toBe("invoiced");
+  });
+
   it("reads a note on a load already delivered as already there, never a card", async () => {
     const f = await carrier("move-already");
     const l = await load(f, { status: "in_transit" });
@@ -434,6 +468,11 @@ describe("the message path", () => {
 });
 
 describe("a person's press", () => {
+  // A person's press never reads the automatic switch: these run with it off.
+  beforeEach(() => {
+    flags.loadMovement.enabled = false;
+  });
+
   it("moves one step under the caller's own carrier, refuses another carrier's load and a demo visitor", async () => {
     const a = await carrier("move-staff-a");
     const b = await carrier("move-staff-b");

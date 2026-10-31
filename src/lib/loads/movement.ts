@@ -273,6 +273,7 @@ export async function moveFromDocument(
     return { kind: "nothing", category: "not_load_paper" };
   }
   const zone = await zoneOf(q);
+  const startDate = flags.loadMovement.startDate;
   if (!automaticOn(localDateOf(doc.createdAt, zone))) return { kind: "nothing", category: "switched_off" };
   const loadId = matchedLoadId(doc.match);
   if (!loadId) return { kind: "nothing", category: "not_matched" };
@@ -281,12 +282,15 @@ export async function moveFromDocument(
   const load = await lockLoad(q, loadId);
   if (!load) return { kind: "nothing", category: "not_found" };
 
+  // Only paper read in from the start date on (the carrier's local midnight): an older paper is
+  // never the pickup paper or the POD.
   const rows = await q.query<DocRow>(
     `SELECT ${DOC_COLUMNS} FROM documents
       WHERE tenant_id = current_tenant_id() AND read_status = 'read'
         AND document_kind IN ('bill_of_lading', 'rate_confirmation') AND match->>'loadId' = $1
+        AND created_at >= CAST($2 AS timestamptz)
       ORDER BY created_at, id`,
-    [load.id],
+    [load.id, instantAt(startDate, 0, 0, zone)],
   );
   const docs = rows.map(toPaper);
   const pl = paperLoad(load);
@@ -316,7 +320,8 @@ export async function moveFromDocument(
 
   if (load.status === "planned") {
     if (!pickupDoc) {
-      if (podDoc) return cardOn("no_pickup_paper", "delivered", paperDateOf(podDoc));
+      // A POD on a planned load: a card asking for delivered could never be carried out.
+      if (podDoc) return { kind: "nothing", category: "no_pickup_paper" };
       const why = whyNotCounted(pl, doc, paper);
       return why && why !== "not_read" && why !== "not_matched" ? cardOn(why, null) : { kind: "nothing", category: "no_pickup_paper_yet" };
     }
@@ -334,7 +339,11 @@ export async function moveFromDocument(
   if (load.status === "in_transit" && podDoc) {
     const day = paperDateOf(podDoc);
     if (day === null || day > today || !podWindowHolds(pl, day)) {
-      return events.length > 0 ? moved(load, events) : cardOn("date_out_of_window", "delivered", day);
+      if (events.length > 0) return moved(load, events);
+      // Dated after today or before the pickup date: a person's press refuses that date, so a card
+      // with it could never be carried out.
+      if (day !== null && (day > today || day < load.pickup_on)) return { kind: "nothing", category: "date_out_of_window" };
+      return cardOn("date_out_of_window", "delivered", day);
     }
     if (load.driver_id === null) return events.length > 0 ? moved(load, events) : cardOn("no_driver", "delivered", day);
     const times = stopTimesOf(podDoc, "delivery", zone);
@@ -399,12 +408,12 @@ async function readMessage(q: Queryable, table: MessageTable, id: string): Promi
   return rows[0] ?? null;
 }
 
-// The loads whose number the text names whole, among the carrier's loads that are not cancelled
-// (a load already delivered is found, so its own note reads as already there, never a card).
+// The loads whose number the text names whole, among the carrier's planned, in transit and
+// delivered loads (a load already delivered is found, so its own note reads as already there).
 async function namedLoads(q: Queryable, text: string): Promise<LockedLoad[]> {
   const loads = await q.query<LockedLoad>(
     `SELECT ${LOAD_COLUMNS} FROM loads
-      WHERE tenant_id = current_tenant_id() AND status <> 'cancelled'
+      WHERE tenant_id = current_tenant_id() AND status IN ('planned', 'in_transit', 'delivered')
       ORDER BY load_number, id`,
   );
   return loads.filter((l) => namesWhole(text, l.load_number));

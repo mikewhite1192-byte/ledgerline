@@ -1007,7 +1007,8 @@ export const flags: Flags = {
       payment_reapply: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 },
     },
   },
-  loadMovement: { enabled: true, startDate: "2026-10-30" },
+  // Ships off: turning it on is the owner's own one-line PR.
+  loadMovement: { enabled: false, startDate: "2026-10-30" },
 };
 
 applyLocalOverrides(flags);

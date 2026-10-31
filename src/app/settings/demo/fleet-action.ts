@@ -1,13 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { flags } from "@/config/flags";
 import { requireStaff } from "@/lib/auth/role";
 import { DbError } from "@/lib/db";
 import { moveFleetIn } from "@/lib/loads/movement";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 
-export type FleetCategory = "forbidden" | "not_demo" | "unreadable" | "failed";
+export type FleetCategory = "disabled" | "forbidden" | "not_demo" | "unreadable" | "unknown" | "failed";
 
 export type FleetState =
   | { ok: true; pickedUp: number; delivered: number }
@@ -28,6 +29,8 @@ const UNREACHABLE: ReadonlySet<DbError["category"]> = new Set(["resuming", "unav
 // demo_feed), in one tenant transaction, leaving the hero driver's loads for the walk-through. Staff
 // only, demo carriers only. No money moves and nothing is sent. Counts and categories only.
 export async function moveFleetAction(): Promise<FleetState> {
+  // The page's own switch, re-checked here before any read or write.
+  if (!flags.demoResetEnabled) return { ok: false, category: "disabled" };
   try {
     const r = await withRequestTenant(async (q, session) => {
       await requireStaff(q, session);
@@ -49,6 +52,8 @@ export async function moveFleetAction(): Promise<FleetState> {
     if (err instanceof NotDemoCarrier) return { ok: false, category: "not_demo" };
     if (err instanceof DbError) {
       console.error(`move the fleet: database ${err.category}${err.sqlState ? ` ${err.sqlState}` : ""}`);
+      // A lost COMMIT reply: the moves may have landed, so never say nothing changed.
+      if (err.category === "unknown") return { ok: false, category: "unknown" };
       return { ok: false, category: UNREACHABLE.has(err.category) ? "unreadable" : "failed" };
     }
     throw err;

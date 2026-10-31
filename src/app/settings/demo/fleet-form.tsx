@@ -7,9 +7,12 @@ import { moveFleetAction, type FleetCategory, type FleetState } from "./fleet-ac
 
 // A fixed message per category; nothing from the database is shown.
 export const FLEET_MESSAGES: Record<FleetCategory, string> = {
+  disabled: "Moving the fleet is switched off. Nothing was changed.",
   forbidden: "Only staff of this carrier can move the fleet. Nothing was changed.",
   not_demo: "This carrier is not a demo carrier. Nothing was changed.",
   unreadable: "Could not reach the database. Nothing was changed. Try again in a moment.",
+  unknown:
+    "The database did not confirm the moves, so they may have gone through. Check the load statuses before pressing again.",
   failed: "The move failed a check and was undone. Nothing was changed.",
 };
 
