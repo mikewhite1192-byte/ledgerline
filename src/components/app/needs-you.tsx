@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { NEEDS_YOU_ANCHOR } from "@/components/app/anchors";
 import { Money } from "@/components/app/money";
+import { PanelHashLink } from "@/components/app/panel-hash-link";
 import { Card } from "@/components/ui/card";
 import type { NeedsYouView } from "@/lib/home/needs-you";
 
@@ -49,9 +50,9 @@ export function NeedsYou({ view }: { view: NeedsYouView }) {
                   ))}
                 </p>
                 {r.href.startsWith("#") ? (
-                  <a href={r.href} className="text-small text-link underline-offset-4 hover:underline">
+                  <PanelHashLink href={r.href} className="text-small text-link underline-offset-4 hover:underline">
                     {r.linkLabel}
-                  </a>
+                  </PanelHashLink>
                 ) : (
                   <Link href={r.href} className="text-small text-link underline-offset-4 hover:underline">
                     {r.linkLabel}

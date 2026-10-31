@@ -43,6 +43,7 @@
   --chart-out: #eb6834;
   --radius: 12px;
   --float-shadow: 0 4px 16px rgba(22, 29, 26, 0.1);
+  --lift-shadow: 0 12px 40px rgba(22, 29, 26, 0.16);
   color-scheme: light;
 }
 
@@ -78,6 +79,7 @@
     --chart-out: #d95926;
     --radius: 12px;
     --float-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+    --lift-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
     color-scheme: dark;
   }
 }
@@ -113,6 +115,7 @@
   --chart-out: #d95926;
   --radius: 12px;
   --float-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --lift-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
   color-scheme: dark;
 }
 
@@ -187,6 +190,7 @@
 
   --shadow-*: initial;
   --shadow-float: var(--float-shadow);
+  --shadow-lift: var(--lift-shadow);
 
   --font-sans: var(--font-public-sans), ui-sans-serif, system-ui, sans-serif;
 }
@@ -280,17 +284,6 @@
     filter: blur(0.35em);
     user-select: none;
     pointer-events: none;
-  }
-
-  /*
-    The agent panel open beside the page (components/agent/agent-launcher.tsx puts the attribute on
-    <html>). On a wide screen the page makes room for it, so nothing the person reads sits under
-    it; narrower, the panel lies over the page's right edge and the rest stays usable.
-  */
-  @media (min-width: 80rem) {
-    [data-agent-panel="open"] body {
-      padding-right: 420px;
-    }
   }
 
   @media (prefers-reduced-motion: reduce) {

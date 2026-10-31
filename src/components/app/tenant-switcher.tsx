@@ -1,7 +1,8 @@
 "use client";
 
 import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
+import { useDetailsMenu } from "@/components/ui/details-menu";
 import type { Role } from "@/lib/roles";
 import { cn } from "@/lib/cn";
 import { zoneName } from "@/lib/format/dates";
@@ -114,24 +115,7 @@ export function TenantPanel({
 export function TenantSwitcher({ tenant, signOut }: { tenant: TenantInfo; signOut: ReactNode }) {
   const ref = useRef<HTMLDetailsElement>(null);
 
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const el = ref.current;
-      if (e.key !== "Escape" || !el?.open) return;
-      el.open = false;
-      el.querySelector("summary")?.focus();
-    }
-    function onPointer(e: PointerEvent) {
-      const el = ref.current;
-      if (el?.open && !el.contains(e.target as Node)) el.open = false;
-    }
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("pointerdown", onPointer);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("pointerdown", onPointer);
-    };
-  }, []);
+  useDetailsMenu(ref);
 
   return (
     <details ref={ref} className="group relative">

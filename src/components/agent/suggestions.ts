@@ -1,4 +1,5 @@
 import type { Suggestion } from "@/components/app/prompt-chips";
+import { flags } from "@/config/flags";
 import { formatLocalDate } from "@/lib/format/dates";
 import { CHIP_LABEL, composerHelp, exampleSentence } from "@/lib/pay-rules/words";
 import type { LocalDate } from "@/lib/time/local-date";
@@ -118,4 +119,20 @@ export function withPaystubSuggestion(
     reason: "Walks through each line of this paystub in plain words.",
   };
   return [first, ...base.slice(0, 3).map((s) => ({ ...s }))];
+}
+
+// The four questions as the switches stand when the page renders.
+export function startingSuggestions(): Suggestion[] {
+  return homeSuggestions(flags.reportsEnabled, {
+    profitOn: flags.profitBriefEnabled,
+    quarterOn: flags.quarterReviewEnabled,
+    collections: flags.collectionsEnabled,
+    cashFridayOn: flags.cashFridayEnabled,
+  });
+}
+
+// The agent card's questions on any page: the four, then detention while its tools are on. No
+// database read, so every page can offer them; Home adds its own dated and paystub questions.
+export function defaultSuggestions(): Suggestion[] {
+  return [...startingSuggestions(), ...(flags.detentionEnabled ? [{ ...DETENTION_SUGGESTION }] : [])];
 }

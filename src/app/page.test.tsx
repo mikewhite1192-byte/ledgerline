@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ASK_ANCHOR } from "@/components/app/anchors";
+import type { AgentOpening } from "@/components/agent/panel-context";
+import type { Suggestion } from "@/components/app/prompt-chips";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
 import { DbError, type Queryable } from "@/lib/db";
@@ -9,10 +11,11 @@ import { nextWeekStart } from "@/lib/pay-rules/words";
 import { INVOICES, SETTLEMENTS_VIEW } from "@/test/page-fixtures";
 import Home from "./page";
 
-// The home screen's ?rule=1 path, from the Pay rules page's button: the question box starts with
-// the example change and the help under it, both dated the first week a change can start. Then
-// Home's order (today and what needs your OK, the chat, payday, money), a card's "Ask about this",
-// and a card that could not be read, Friday's pay run among them. Every read is faked and the clock
+// The home screen's ?rule=1 path, from the Pay rules page's button: the agent card opens with the
+// example change and the help under it, both dated the first week a change can start. Then the
+// other ways Home opens the card (a card's "Ask about this", a document, a paystub, Start over),
+// Home's order (today and what needs your OK, payday, money), and a card that could not be read,
+// Friday's pay run among them. Every read is faked and the clock
 // is fixed; nothing reads the wall clock.
 
 const SESSION: Session = {
@@ -31,6 +34,7 @@ const mocks = vi.hoisted(() => ({
   readSettlementsView: vi.fn(),
   readInvoiceList: vi.fn(),
   readCashHome: vi.fn(),
+  readPaystubAsk: vi.fn(),
 }));
 
 vi.mock("@/lib/tenant/context", async (importOriginal) => ({
@@ -45,13 +49,31 @@ vi.mock("@/lib/agent/gateway/store", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/agent/gateway/store")>()),
   readRecentAgentTurns: mocks.readRecentAgentTurns,
 }));
-// The chat itself is a client component with its own tests; here only what the page hands it.
-vi.mock("@/components/agent/turn-view", () => ({
-  AgentChat: ({ initialDraft, initialHelp }: { initialDraft?: string; initialHelp?: string }) => (
-    <div>
-      <p data-testid="draft">{initialDraft ?? ""}</p>
-      <p data-testid="help">{initialHelp ?? ""}</p>
-    </div>
+vi.mock("@/lib/settlements/list", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/settlements/list")>()),
+  readPaystubAsk: mocks.readPaystubAsk,
+}));
+// The launcher and its card are client components with their own tests; here only what the page
+// hands them: how the card opens and the questions it offers.
+vi.mock("@/components/agent/agent-launcher", () => ({
+  AgentLauncher: ({
+    opening,
+    suggestions,
+    children,
+  }: {
+    opening?: AgentOpening;
+    suggestions: Suggestion[];
+    children: ReactNode;
+  }) => (
+    <>
+      {children}
+      <button type="button">Ask the agent</button>
+      <p data-testid="opening">{opening ? "open" : "closed"}</p>
+      <p data-testid="draft">{opening?.draft ?? ""}</p>
+      <p data-testid="help">{opening?.help ?? ""}</p>
+      <p data-testid="fresh">{opening?.fresh ? "fresh" : ""}</p>
+      <p data-testid="suggestions">{suggestions.map((x) => x.id).join(" ")}</p>
+    </>
   ),
 }));
 vi.mock("./ai-proof-form", () => ({ AiProofForm: () => null }));
@@ -79,12 +101,13 @@ vi.mock("@/lib/cash/view", async (importOriginal) => ({
 }));
 
 // The request's transaction: one carrier in New York, one member, and its record counts.
+const member = { role: "staff" };
 const q: Queryable = {
   async query<T>(sql: string): Promise<T[]> {
     if (sql.startsWith("SELECT name, timezone FROM tenants")) {
       return [{ name: "Blue Ridge", timezone: "America/New_York" }] as T[];
     }
-    if (sql.startsWith("SELECT email, role FROM memberships")) return [{ email: SESSION.email, role: "staff" }] as T[];
+    if (sql.startsWith("SELECT email, role FROM memberships")) return [{ email: SESSION.email, role: member.role }] as T[];
     if (sql.includes("FROM drivers")) return [{ drivers: 1, loads: 2, periods: 3 }] as T[];
     throw new Error(`unexpected read: ${sql}`);
   },
@@ -122,6 +145,8 @@ beforeEach(() => {
   mocks.readMoneyFlow.mockResolvedValue(WEEKS);
   mocks.readSettlementsView.mockResolvedValue(SETTLEMENTS_VIEW);
   mocks.readInvoiceList.mockResolvedValue(INVOICES);
+  mocks.readPaystubAsk.mockResolvedValue({ driverName: "Dana Reyes", periodEnd: "2026-11-06" });
+  member.role = "staff";
 });
 
 afterEach(() => {
@@ -133,7 +158,7 @@ afterEach(() => {
 });
 
 describe("home, ?rule=1", () => {
-  it("starts the box with the example and its help dated the next week start, past Nov 9", async () => {
+  it("opens the card with the example and its help dated the next week start, past Nov 9", async () => {
     render(await Home({ searchParams: Promise.resolve({ rule: "1" }) }));
     expect(screen.getByTestId("draft").textContent).toBe("Starting Nov 16, owner-operator insurance goes to $12 a day");
     expect(screen.getByTestId("help").textContent).toBe(
@@ -141,18 +166,48 @@ describe("home, ?rule=1", () => {
     );
   });
 
-  it("starts the box empty while pay rule changes are off", async () => {
+  it("leaves the card closed while pay rule changes are off", async () => {
     flags.rulesByTalkingEnabled = false;
     render(await Home({ searchParams: Promise.resolve({ rule: "1" }) }));
+    expect(screen.getByTestId("opening").textContent).toBe("closed");
     expect(screen.getByTestId("draft").textContent).toBe("");
     expect(screen.getByTestId("help").textContent).toBe("");
     expect(mocks.readNextWeekStart).not.toHaveBeenCalled();
   });
 
-  it("shows no agent launcher with the panel switches on: its chat is inline", async () => {
+  it("shows the agent launcher on Home, closed, with no question box of its own", async () => {
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    expect(screen.getByRole("button", { name: "Ask the agent" })).toBeTruthy();
+    expect(screen.getByTestId("opening").textContent).toBe("closed");
+    expect(screen.queryByRole("textbox", { name: "Your question" })).toBeNull();
+    expect(document.getElementById("ask")).toBeNull();
+    // Home's questions: every page's, plus the pay rule change while it is on.
+    expect(screen.getByTestId("suggestions").textContent?.split(" ")).toContain("change-pay-rule");
+  });
+
+  it("shows no launcher while the agent is off", async () => {
+    flags.agentEnabled = false;
     render(await Home({ searchParams: Promise.resolve({}) }));
     expect(screen.queryByRole("button", { name: "Ask the agent" })).toBeNull();
-    expect(screen.queryByRole("dialog", { name: "Agent" })).toBeNull();
+  });
+
+  it("opens the card on a paystub's question, first among the suggestions", async () => {
+    const id = "33333333-3333-4333-8333-333333333333";
+    render(await Home({ searchParams: Promise.resolve({ paystub: id }) }));
+    expect(mocks.readPaystubAsk).toHaveBeenCalledWith(expect.anything(), id);
+    expect(screen.getByTestId("draft").textContent).toBe(
+      "Explain Dana Reyes's paystub for the week ending Nov 6, 2026.",
+    );
+    expect(screen.getByTestId("suggestions").textContent?.split(" ")[0]).toBe("explain-paystub");
+  });
+
+  it("opens the card on a new conversation for Start over, and a judge's Home reads no turns", async () => {
+    member.role = "judge";
+    render(await Home({ searchParams: Promise.resolve({ new: "1" }) }));
+    expect(screen.getByTestId("opening").textContent).toBe("open");
+    expect(screen.getByTestId("fresh").textContent).toBe("fresh");
+    expect(screen.getByTestId("draft").textContent).toBe("");
+    expect(mocks.readRecentAgentTurns).not.toHaveBeenCalled();
   });
 });
 
@@ -165,14 +220,13 @@ const region = (name: string) => screen.getByRole("region", { name });
 const before = (a: Node, b: Node) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 
 describe("home's order and cards", () => {
-  it("opens on today and what needs your OK, then the chat, then payday, then money", async () => {
+  it("opens on today and what needs your OK, then payday, then money", async () => {
     cardsOn();
     render(await Home({ searchParams: Promise.resolve({}) }));
     const order = [
       screen.getByText(/^Good morning, Blue Ridge$/),
       region("Today"),
       region("Needs you"),
-      screen.getByTestId("draft"),
       screen.getByRole("heading", { name: "This pay week" }),
       region("Paystubs"),
       screen.getByRole("heading", { name: "Money" }),
@@ -180,8 +234,7 @@ describe("home's order and cards", () => {
       region("Owed to you"),
     ];
     for (let i = 1; i < order.length; i++) expect(before(order[i - 1], order[i])).toBe(true);
-    // The chat stays inline, under its anchor, and no card adds a button a person could take for it.
-    expect(document.getElementById(ASK_ANCHOR)?.contains(screen.getByTestId("draft"))).toBe(true);
+    // The chat lives in the agent card now, and no card adds a button a person could take for it.
     expect(screen.queryAllByRole("button", { name: /send|^Asking/i })).toHaveLength(0);
     expect(region("Today").textContent).toContain("2 documents, 0 voice notes and 1 driver message today.");
     expect(region("Paystubs").textContent).toContain(`Net pay on ${SETTLEMENTS_VIEW.rows.length} paystubs`);
@@ -190,14 +243,14 @@ describe("home's order and cards", () => {
     expect(mocks.readMoneyFlow).toHaveBeenCalledWith(expect.anything(), "2026-11-10");
   });
 
-  it("links each money card's Ask about this to the chat, and drops it while the agent is off", async () => {
+  it("links each money card's Ask about this to the card, and drops it while the agent is off", async () => {
     cardsOn();
     render(await Home({ searchParams: Promise.resolve({}) }));
     expect(
       within(region("Paystubs")).getByRole("link", { name: "Ask about this: Paystubs" }).getAttribute("href"),
-    ).toBe(`/?ask=payday#${ASK_ANCHOR}`);
+    ).toBe("/?ask=payday");
     expect(within(region("Owed to you")).getByRole("link", { name: /^Ask about this/ }).getAttribute("href")).toBe(
-      `/?ask=owed#${ASK_ANCHOR}`,
+      "/?ask=owed",
     );
     cleanup();
     flags.agentEnabled = false;
@@ -205,7 +258,7 @@ describe("home's order and cards", () => {
     expect(screen.queryAllByRole("link", { name: /^Ask about this/ })).toHaveLength(0);
   });
 
-  it("starts the box with the card's question, and a document or pay rule ask wins over it", async () => {
+  it("opens the card on the card's question, and a document or pay rule ask wins over it", async () => {
     const draftFor = async (params: Record<string, string>) => {
       render(await Home({ searchParams: Promise.resolve(params) }));
       const draft = screen.getByTestId("draft").textContent;

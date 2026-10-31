@@ -169,31 +169,42 @@ export function ChatThread({
   hrefFor?: HrefFor;
   title?: string;
   intro?: string;
-  // The agent panel: smaller type, the thread scrolls above the box and the box stays at the bottom.
+  // The agent card: the thread scrolls above the box and the box, a pill, stays at the bottom; the
+  // empty state sits at the bottom too, with the suggestions as pills.
   compact?: boolean;
   className?: string;
 }) {
   const latest = newestStep(messages);
   const scroller = useRef<HTMLDivElement>(null);
-  // In the panel a new question or answer scrolls into view; Home's page scrolls on its own.
+  // In the card a new question or answer scrolls into view; a page scrolls on its own. An empty
+  // card stays at its top, so a short window shows the greeting first rather than clipping it.
   useEffect(() => {
     const el = scroller.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && messages.length > 0) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
-  // The panel has its own h2 ("Agent"), so there the title sits one level under it.
+  // The card has its own h2 ("Agent"), so there the title sits one level under it.
   const Title = compact ? "h3" : "h2";
   const thread =
     messages.length === 0 ? (
-      // On Home the page's own spacing sits above it, so only the panel adds room at the top.
-      <div className={cn("grid gap-4", compact && "pt-2")}>
-        <div className="grid gap-1.5">
-          <Title className={cn("text-foreground", compact ? "text-h2" : "text-h1")}>{title}</Title>
-          {intro ? (
-            <p className={cn("max-w-[60ch] text-foreground-2", compact ? "text-body" : "text-lead")}>{intro}</p>
-          ) : null}
+      compact ? (
+        // The card: the greeting and the pills sit at the bottom, just above the box.
+        <div className="mt-auto grid gap-4 pt-2">
+          <div className="grid gap-1">
+            <Title className="text-h2 text-foreground">{title}</Title>
+            {intro ? <p className="max-w-[60ch] text-small text-muted-foreground">{intro}</p> : null}
+          </div>
+          {suggestions.length > 0 ? <PromptChips prompts={suggestions} onPick={onPick} variant="pills" /> : null}
         </div>
-        {suggestions.length > 0 ? <PromptChips prompts={suggestions} onPick={onPick} /> : null}
-      </div>
+      ) : (
+        // On Home the page's own spacing sits above it.
+        <div className="grid gap-4">
+          <div className="grid gap-1.5">
+            <Title className="text-h1 text-foreground">{title}</Title>
+            {intro ? <p className="max-w-[60ch] text-lead text-foreground-2">{intro}</p> : null}
+          </div>
+          {suggestions.length > 0 ? <PromptChips prompts={suggestions} onPick={onPick} /> : null}
+        </div>
+      )
     ) : (
       <ol className="grid gap-6" aria-label="Conversation">
         {messages.map((m) =>
@@ -299,12 +310,12 @@ export function ChatThread({
           tabIndex={0}
           role="region"
           aria-label="Messages"
-          className="min-h-0 flex-1 overflow-y-auto px-4 py-4"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4"
         >
           {thread}
         </div>
         {announcer}
-        <Composer {...composer} className={cn("border-t border-border p-3", composer.className)} />
+        <Composer {...composer} variant="pill" className={cn("p-3 pt-1", composer.className)} />
       </div>
     );
   }

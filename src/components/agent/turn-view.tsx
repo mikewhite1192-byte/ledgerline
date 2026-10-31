@@ -229,6 +229,10 @@ export function AgentChat({
   compact = false,
   focus = null,
   onConversation,
+  title,
+  draft: draftRequest,
+  onFirstQuestion,
+  documentsHref,
 }: {
   initialTurns: TurnView[];
   streamMode: "sse" | "poll";
@@ -255,6 +259,15 @@ export function AgentChat({
   focus?: ChatFocus | null;
   // Told each time the thread's conversation changes, so the panel can keep it across pages.
   onConversation?: (conversationId: string) => void;
+  // The empty thread's heading (the card's greeting); unset, the thread's own.
+  title?: string;
+  // A later ask for text in the box (the card opened from a link while this chat was mounted): put
+  // in the box, never sent, each time n changes.
+  draft?: { text: string; help?: string; n: number };
+  // Told the thread's first question (null while it has none), for the card's conversation title.
+  onFirstQuestion?: (text: string | null) => void;
+  // The documents page, offered in the card's "+" menu while documents are on.
+  documentsHref?: string;
 }) {
   const visitor = useViewerRole() === "judge";
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
@@ -279,6 +292,24 @@ export function AgentChat({
   useEffect(() => {
     if (conversationId) told.current?.(conversationId);
   }, [conversationId]);
+  const titled = useRef(onFirstQuestion);
+  useEffect(() => {
+    titled.current = onFirstQuestion;
+  });
+  const firstQuestion = turns[0]?.userText ?? null;
+  useEffect(() => {
+    titled.current?.(firstQuestion);
+  }, [firstQuestion]);
+  const drafted = useRef<number | null>(null);
+  const draftN = draftRequest?.n;
+  const draftText = draftRequest?.text;
+  const draftHelp = draftRequest?.help;
+  useEffect(() => {
+    if (draftN === undefined || draftText === undefined || drafted.current === draftN) return;
+    drafted.current = draftN;
+    setDraft(draftText);
+    setHelp(draftHelp);
+  }, [draftN, draftText, draftHelp]);
 
   useEffect(() => {
     alive.current = true;
@@ -557,28 +588,30 @@ export function AgentChat({
     }),
   }));
 
+  const onPick = disabledReason
+    ? undefined
+    : (id: string) => {
+        const s = suggestions?.find((x) => x.id === id);
+        if (!s) return;
+        // A suggestion that fills the box leaves the sending to the person, who edits it.
+        if (s.fill) {
+          setDraft(s.fill);
+          setHelp(s.help);
+        } else {
+          void send(s.label);
+        }
+      };
+
   return (
     <ChatThread
       messages={messages}
       suggestions={suggestions}
-      onPick={
-        disabledReason
-          ? undefined
-          : (id) => {
-              const s = suggestions?.find((x) => x.id === id);
-              if (!s) return;
-              // A suggestion that fills the box leaves the sending to the person, who edits it.
-              if (s.fill) {
-                setDraft(s.fill);
-                setHelp(s.help);
-              } else {
-                void send(s.label);
-              }
-            }
-      }
+      onPick={onPick}
+      title={title}
       intro={intro}
       compact={compact}
       composer={{
+        menu: compact ? { suggestions: suggestions ?? [], onPick, documentsHref } : undefined,
         disabled: Boolean(disabledReason),
         disabledReason,
         pending,

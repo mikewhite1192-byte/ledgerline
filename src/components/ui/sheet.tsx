@@ -1,9 +1,33 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { cn } from "@/lib/cn";
 import { Button } from "./button";
+
+// Opens and closes a native dialog to match `open`: modal (focus kept inside, the page inert) or
+// beside the page. Shared by the sheet and the agent's floating card.
+export function useDialog(ref: RefObject<HTMLDialogElement | null>, open: boolean, modal: boolean) {
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    if (open && !dialog.open) {
+      if (modal) dialog.showModal();
+      else dialog.show();
+    }
+    if (!open && dialog.open) dialog.close();
+  }, [ref, open, modal]);
+}
+
+// Esc pressed inside a dialog opened beside the page closes it, since the browser does that only
+// for a modal one. An Esc already used (a menu inside closed on it) or one that only cancels a
+// half-typed word (an input method) is left alone.
+export function closeOnEscape(e: KeyboardEvent<HTMLDialogElement>) {
+  if (e.key !== "Escape" || e.defaultPrevented) return;
+  if (e.nativeEvent.isComposing) return;
+  e.preventDefault();
+  e.currentTarget.close();
+}
 
 // A panel that slides in from the left over a dimmed page: a native modal dialog, so focus stays
 // inside, Esc closes it and the page behind is inert. A click on the dimmed page closes it too.
@@ -34,16 +58,7 @@ export function Sheet({
   closeLabel?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = ref.current;
-    if (!dialog) return;
-    if (open && !dialog.open) {
-      if (modal) dialog.showModal();
-      else dialog.show();
-    }
-    if (!open && dialog.open) dialog.close();
-  }, [open, modal]);
+  useDialog(ref, open, modal);
 
   return (
     <dialog
@@ -55,11 +70,7 @@ export function Sheet({
         if (modal && e.target === e.currentTarget) e.currentTarget.close();
       }}
       onKeyDown={(e) => {
-        if (modal || e.key !== "Escape" || e.defaultPrevented) return;
-        // Esc that only cancels a half-typed word (an input method) stays in the box.
-        if (e.nativeEvent.isComposing) return;
-        e.preventDefault();
-        e.currentTarget.close();
+        if (!modal) closeOnEscape(e);
       }}
       className={cn(
         "scrim fixed inset-y-0 m-0 h-dvh max-h-none w-[min(20rem,calc(100vw-3rem))] max-w-none",

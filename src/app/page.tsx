@@ -1,10 +1,13 @@
-import { flags, stepThroughShown } from "@/config/flags";
-import { DETENTION_SUGGESTION, homeSuggestions, ruleChangeSuggestion, withPaystubSuggestion } from "@/components/agent/suggestions";
-import { AgentChat } from "@/components/agent/turn-view";
-import { ASK_ANCHOR } from "@/components/app/anchors";
+import { flags } from "@/config/flags";
+import type { AgentOpening } from "@/components/agent/panel-context";
+import {
+  defaultSuggestions,
+  ruleChangeSuggestion,
+  startingSuggestions,
+  withPaystubSuggestion,
+} from "@/components/agent/suggestions";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
-import { ChatThread } from "@/components/app/chat-thread";
 import { HOW_PAY_WORKS } from "@/components/app/signed-in-page";
 import { DataTable } from "@/components/app/data-table";
 import { NeedsYou } from "@/components/app/needs-you";
@@ -69,14 +72,15 @@ type Carrier = {
 
 // The signed-in carrier's shell. Every read runs inside withRequestTenant, so this page can only
 // ever see the carrier on the verified token. Signed out: withRequestTenant redirects to /sign-in.
-// ?document=<input id>, from a document's page: the question box starts with a request to check
-// that document. Only an id is taken from the address; the text around it is fixed.
-// ?rule=1, from the Pay rules page: with pay rule changes switched on, the box starts with the
-// example sentence and the help under it.
-// ?paystub=<settlement id>: "Ask about this paystub" links here with the paystub's id; anything
-// else is ignored.
-// ?ask=<card>, from a Home card's "Ask about this": the box starts with that card's question, one
-// of the suggested questions; only the card's name is taken from the address.
+// Each of these opens the agent card as the page loads, its question box already filled:
+// ?document=<input id>, from a document's page: a request to check that document. Only an id is
+// taken from the address; the text around it is fixed.
+// ?rule=1, from the Pay rules page: with pay rule changes switched on, the example sentence and the
+// help under it.
+// ?paystub=<settlement id>: "Ask about this paystub" links here with the paystub's id; its question
+// goes first among the suggestions and fills the box. Anything else is ignored.
+// ?ask=<card>, from a Home card's "Ask about this": that card's question, one of the suggested
+// questions; only the card's name is taken from the address.
 export default async function Home({
   searchParams,
 }: {
@@ -89,8 +93,8 @@ export default async function Home({
   const asked = params.document;
   const documentInput = typeof asked === "string" && isUuid(asked) ? asked : null;
   const ruleAsked = params.rule === "1";
-  // The demo banner's "Start over": a demo visitor's chat opens with no thread, and the next
-  // question starts a new conversation in the same visit.
+  // The demo banner's "Start over": the card opens on a new conversation, and a demo visitor's
+  // Needs you reads no turns.
   const startOver = params.new === "1";
   const askedPaystub = params.paystub;
   const askedCard = isCardAsk(params.ask) ? params.ask : null;
@@ -200,18 +204,25 @@ export default async function Home({
     unread: turns.unread || needsRows === null,
   };
 
-  const base = [
-    ...SUGGESTIONS,
-    ...(flags.detentionEnabled ? [DETENTION_SUGGESTION] : []),
-    ...(carrier.nextStart ? [ruleChangeSuggestion(carrier.nextStart)] : []),
-  ];
+  // The card's questions on Home: every page's, plus the pay rule change dated the first week a
+  // change can start, with the paystub's question first when one was asked about.
+  const base = [...defaultSuggestions(), ...(carrier.nextStart ? [ruleChangeSuggestion(carrier.nextStart)] : [])];
   const suggestions = withPaystubSuggestion(base, carrier.paystub);
-  // ?rule=1 starts the box with the chip's own sentence and help, both dated the first week a
-  // change can start.
+  // ?rule=1 fills the box with the chip's own sentence and help.
   const ruleAsk = !documentInput && ruleAsked && carrier.nextStart ? ruleChangeSuggestion(carrier.nextStart) : null;
-  const cardAsk = askedCard ? SUGGESTIONS.find((s) => CARD_ASKS[askedCard].includes(s.id))?.label : undefined;
-  // A card's "Ask about this", while the agent can answer on this page.
-  const askHref = (card: CardAsk) => (flags.agentEnabled ? `/?ask=${card}#${ASK_ANCHOR}` : undefined);
+  const cardAsk = askedCard
+    ? startingSuggestions().find((s) => CARD_ASKS[askedCard].includes(s.id))?.label
+    : undefined;
+  const opening = agentOpening({
+    draft: documentInput
+      ? `Check document ${documentInput}`
+      : (ruleAsk?.fill ?? cardAsk ?? (carrier.paystub ? suggestions[0]?.label : undefined)),
+    help: ruleAsk?.help,
+    fresh: startOver,
+  });
+  // A card's "Ask about this", while the agent can answer: Home again, with the card open on its
+  // question.
+  const askHref = (card: CardAsk) => (flags.agentEnabled ? `/?ask=${card}` : undefined);
   const today = carrierToday(carrier.timezone, now);
 
   return (
@@ -221,8 +232,8 @@ export default async function Home({
       help={HOW_PAY_WORKS}
       title="Home"
       signOut={signOut}
-      // Home's chat is inline, so it has no launcher or panel.
-      agentPanel={false}
+      suggestions={suggestions}
+      agentOpening={opening}
       // The bell's dot counts only a read that came back; an unread list never reads as zero.
       needsYouCount={needsYou.unread ? undefined : needsYou.rows.length}
       // The sidebar's pinned amounts, from the cards' own reads; a card not read leaves its out.
@@ -252,33 +263,6 @@ export default async function Home({
           <NeedsYou view={needsYou} />
         </div>
         <NewHereLine />
-        {flags.agentEnabled ? (
-          // The top bar's box and the menu's Ask land here and put the cursor in the question box.
-          <div id={ASK_ANCHOR} className="scroll-mt-28">
-            <AgentChat
-              initialTurns={agentTurns}
-              streamMode={flags.agentStreamMode}
-              auditorOn={flags.auditorEnabled}
-              timezone={carrier.timezone}
-              stepThrough={stepThroughShown()}
-              suggestions={suggestions}
-              initialDraft={documentInput ? `Check document ${documentInput}` : (ruleAsk?.fill ?? cardAsk)}
-              initialHelp={ruleAsk?.help}
-              viewer={{ admin: carrier.admin, adminAboveCents: flags.approverRole.adminAboveCents }}
-              intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
-              disabledReason={
-                flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now."
-              }
-            />
-          </div>
-        ) : (
-          <ChatThread
-            messages={[]}
-            suggestions={SUGGESTIONS}
-            intro="Drivers, loads and this week's pay run arrive with the next items."
-            composer={{ disabled: true, disabledReason: "Asking arrives with the next release" }}
-          />
-        )}
         {/* Then payday: this pay week's paystubs, Friday's pay run and the drivers on file. */}
         <section aria-labelledby="pay-week-title" className="grid gap-3">
           <h2 id="pay-week-title" className="text-h2 text-foreground">
@@ -409,13 +393,15 @@ function shortcuts(): Shortcut[] {
   ].filter((s) => s !== null);
 }
 
-// Shown before the agent can answer; they light up when it can.
-const SUGGESTIONS = homeSuggestions(flags.reportsEnabled, {
-  profitOn: flags.profitBriefEnabled,
-  quarterOn: flags.quarterReviewEnabled,
-  collections: flags.collectionsEnabled,
-  cashFridayOn: flags.cashFridayEnabled,
-});
+// What Home asks the card to open with, or undefined when nothing was asked (the card stays
+// closed). A visit that only starts over opens the card empty on a new conversation.
+function agentOpening(o: { draft?: string; help?: string; fresh: boolean }): AgentOpening | undefined {
+  if (o.draft === undefined && !o.fresh) return undefined;
+  return {
+    ...(o.draft !== undefined ? { draft: o.draft, ...(o.help !== undefined ? { help: o.help } : {}) } : {}),
+    ...(o.fresh ? { fresh: true } : {}),
+  };
+}
 
 const PURPOSE_WORDS: Record<string, string> = { proof: "Connection test" };
 

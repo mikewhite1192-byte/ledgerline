@@ -157,6 +157,50 @@ describe("ChatThread", () => {
   });
 });
 
+describe("ChatThread in the agent card", () => {
+  const cardSuggestions = [...suggestions.map((x, i) => ({ ...x, id: i === 0 ? "paystub-problems" : "past-60" })), {
+    id: "not-a-question",
+    label: "Something new",
+    reason: "",
+  }];
+
+  it("greets over stacked pills, each with its icon, its reason read out as its description", () => {
+    const onPick = vi.fn();
+    render(
+      <ChatThread
+        compact
+        messages={[]}
+        title="Hey, Blue Ridge. How can I be helpful?"
+        intro="Every number comes from your records."
+        suggestions={cardSuggestions}
+        onPick={onPick}
+        composer={{ onSubmit: () => undefined }}
+      />,
+    );
+    expect(screen.getByRole("heading", { level: 3, name: "Hey, Blue Ridge. How can I be helpful?" })).toBeTruthy();
+    expect(screen.getByText("Every number comes from your records.")).toBeTruthy();
+    const list = screen.getByRole("list", { name: "Suggested questions" });
+    const pills = within(list).getAllByRole("button");
+    expect(pills.map((b) => b.getAttribute("data-icon"))).toEqual(["paystub-problems", "past-60", "not-a-question"]);
+    expect(pills[0].querySelector("svg")?.getAttribute("class")).toContain("lucide-clipboard-check");
+    expect(pills[1].querySelector("svg")?.getAttribute("class")).toContain("lucide-hourglass");
+    // An id the icons do not know gets the speech bubble, and a blank reason adds no description.
+    expect(pills[2].querySelector("svg")?.getAttribute("class")).toContain("lucide-message-circle");
+    expect(pills[2].getAttribute("aria-describedby")).toBeNull();
+    const reason = document.getElementById(pills[0].getAttribute("aria-describedby") ?? "");
+    expect(reason?.textContent).toBe(suggestions[0].reason);
+    fireEvent.click(pills[1]);
+    expect(onPick).toHaveBeenCalledWith("past-60");
+  });
+
+  it("puts the pill question box at the foot, with its round send arrow", () => {
+    render(<ChatThread compact messages={[]} suggestions={[]} composer={{ onSubmit: () => undefined }} />);
+    const box = screen.getByRole("textbox", { name: "Your question" }) as HTMLTextAreaElement;
+    expect(box.placeholder).toBe("Ask a question or give a command");
+    expect(screen.getByRole("button", { name: "Send" }).textContent).toBe("");
+  });
+});
+
 describe("collapseSteps", () => {
   it("keeps each label once, in its first place, with its first id", () => {
     const out = collapseSteps([
