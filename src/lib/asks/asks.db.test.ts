@@ -13,15 +13,16 @@ import { dropTenant, makeTenant, type Fixture } from "../money/test-db";
 import { persistEngineProposal } from "../proposals/engine";
 import { serviceSub } from "../sweep/service-session";
 import { fillReasons, type ReasonCompleteFn } from "./reason";
-import { answerAsksFor, askFor, closeStaleAsks, readShowingAsks, snoozeAsk, tellFor } from "./store";
+import { acknowledgeTold, answerAsksFor, askFor, closeStaleAsks, readShowingAsks, snoozeAsk, tellFor } from "./store";
 
 // The agent's questions against the real database, as the app's role: the desk's proposal gets one
 // live question even when two writers race; a person's proposal gets none; a question voids when
 // its proposal expires or is decided elsewhere (and hides at once); snooze hides it until its
 // time; Yes marks it answered once; the autopilot's done proposal gets one told line inside the
-// owner's limit; a plain throw writing the question keeps the card; the reason pass keeps a right
-// line, drops a wrong figure, and never calls twice; row-level security holds each carrier to its
-// own questions and the guard refuses a changed word. A fixed clock; two tenants made here and removed after.
+// owner's limit, and Got it marks that line done once; a plain throw writing the question keeps
+// the card; the reason pass keeps a right line, drops a wrong figure, and never calls twice;
+// row-level security holds each carrier to its own questions and the guard refuses a changed word.
+// A fixed clock; two tenants made here and removed after.
 
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
 const HOUR = 3_600_000;
@@ -268,6 +269,15 @@ describe("agent asks", () => {
       ["told", "open"],
     ]);
     expect(rows[1].text).toBe("Posted a $500.00 invoice to QuickBooks sandbox, inside your $1,500.00 limit.");
+    // "Got it": the told line is done, once and only in its own carrier; an ask is never acknowledged.
+    expect(await asApp(B, (q) => acknowledgeTold(q, rows[1].id, clock()))).toBe(false);
+    expect(await asApp(A, (q) => acknowledgeTold(q, rows[0].id, clock()))).toBe(false);
+    expect(await asApp(A, (q) => acknowledgeTold(q, rows[1].id, clock()))).toBe(true);
+    expect(await asApp(A, (q) => acknowledgeTold(q, rows[1].id, clock()))).toBe(false);
+    expect((await asksOf(A, id)).map((r) => [r.kind, r.status])).toEqual([
+      ["ask", "void"],
+      ["told", "done"],
+    ]);
   });
 
   it("keeps the desk's card when its question cannot be written (a zone Intl cannot read)", async () => {

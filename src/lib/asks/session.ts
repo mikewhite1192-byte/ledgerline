@@ -4,9 +4,9 @@ import { readZone } from "../autopilot/read";
 import { withSessionTenant } from "../tenant/context";
 import { isUuid } from "../uuid";
 import { snoozeUntil } from "./snooze";
-import { answerAsksFor, snoozeAsk } from "./store";
+import { acknowledgeTold, answerAsksFor, snoozeAsk } from "./store";
 
-// The two writes a person makes on a question, each in one membership-checked tenant transaction.
+// The writes a person makes on a question or a told line, each in one membership-checked tenant transaction.
 
 // After a successful approve: the live ask about the proposal is answered. Never throws: the
 // approval already went through, and an ask left open is voided by the desk's next pass.
@@ -31,4 +31,10 @@ export async function snoozeForSession(
     const until = new Date(snoozeUntil(nowMs, await readZone(q))).toISOString();
     return (await snoozeAsk(q, askId, until, new Date(nowMs))) ? { snoozedUntil: until } : null;
   });
+}
+
+// "Got it" on a told line. False when no open told line has that id in the caller's tenant.
+export async function ackForSession(session: Session, askId: string, now: Date = new Date()): Promise<boolean> {
+  if (!isUuid(askId)) return false;
+  return withSessionTenant(session, (q) => acknowledgeTold(q, askId, now));
 }

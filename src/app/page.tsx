@@ -31,6 +31,7 @@ import {
   wonderCapNanocents,
 } from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
+import { dismissKey } from "@/lib/asks/dismiss-key";
 import { readCashHome } from "@/lib/cash/view";
 import { DbError } from "@/lib/db";
 import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
@@ -227,7 +228,13 @@ export default async function Home({
 
   return (
     <AppShell
-      tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
+      tenant={{
+        name: carrier.name,
+        email: carrier.email,
+        timezone: carrier.timezone,
+        role: carrier.role,
+        asksKey: dismissKey(carrier.session.tenantId, carrier.session.sub),
+      }}
       nav={appNav("/")}
       help={HOW_PAY_WORKS}
       title="Home"
