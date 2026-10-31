@@ -76,7 +76,12 @@ export async function rejectProposal(
 }
 
 // The parked branch, under the proposal lock the caller holds. Anything but a parked advance with
-// no ledger row that money may have left for keeps the usual answers.
+// no ledger row that money may have left for keeps the usual answers. The advance is read without
+// a lock: a payout reserve locks the advance first and then writes the proposal, so locking the
+// advance here, under the proposal lock, would take them in the opposite order. Nothing that moves
+// an advance off parked runs without the proposal lock this transaction holds, and a reserve
+// refuses a parked advance before it touches the proposal, so the UPDATE that requires parked is
+// the guard: an advance that moved after the read is already decided.
 async function rejectParked(
   q: Queryable,
   session: Session,
@@ -87,7 +92,7 @@ async function rejectParked(
 ): Promise<RejectResult> {
   const advance = await q.query<{ id: string; status: string }>(
     `SELECT CAST(id AS text) AS id, status FROM advances
-      WHERE tenant_id = current_tenant_id() AND proposal_id = CAST($1 AS uuid) FOR UPDATE`,
+      WHERE tenant_id = current_tenant_id() AND proposal_id = CAST($1 AS uuid)`,
     [proposalId],
   );
   if (advance.length !== 1 || advance[0].status !== "parked") return { ok: false, category: "already_decided" };
@@ -108,15 +113,16 @@ async function rejectParked(
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'parked'`,
     [advance[0].id, category, now, by],
   );
+  if (a !== 1) return { ok: false, category: "already_decided" };
   const p = await q.execute(
     `UPDATE proposals SET status = 'failed', decision_note = $2, updated_at = CAST($3 AS timestamptz)
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind = 'advance_payout'
         AND status IN ('approved', 'executing')`,
     [proposalId, `rejected_parked:${category}`, now],
   );
-  // Both rows were read under their locks a moment ago: anything but one each is a state no path
+  // The proposal was read under its lock a moment ago: anything but one row is a state no path
   // writes, so the transaction rolls back rather than leave half a reject.
-  if (a !== 1 || p !== 1) throw new Error("reject: a parked advance did not move as read");
+  if (p !== 1) throw new Error("reject: a parked advance did not move as read");
   return { ok: true };
 }
 

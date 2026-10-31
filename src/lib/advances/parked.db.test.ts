@@ -5,7 +5,7 @@ import { createMockPaymentAdapter, type MockPaymentAdapter } from "../adapters/p
 import { readTurnView } from "../agent/gateway/store/views";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db, Param } from "../db/types";
+import type { Db, Param, Queryable, TenantDb } from "../db/types";
 import { addAdvance, addCard, addJudge, clearLedger, dropTenant, makeTenant, removeCards, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal, type Executor, type ExecutorRegistry } from "../proposals/execute";
 import { rejectProposal } from "../proposals/reject";
@@ -295,6 +295,49 @@ describe("parked advances", () => {
     };
     expect(await approve(id, {}, racing)).toEqual({ ok: false, category: "parked_card_removed", retryable: false });
     expect(await flowAdvances()).toEqual([expect.objectContaining({ status: "parked", park_reason: "card_removed" })]);
+    expect(await ledger()).toEqual([]);
+    expect(mock.sendCount).toBe(0);
+  });
+
+  it("parks a released advance whose card went before its payout reserved, and rejects it from executing", async () => {
+    const blocking = await block();
+    const { id, turnId } = await addProposal();
+    expect(await approve(id)).toMatchObject({ category: "parked_no_room" });
+    await unblock(blocking);
+    // The cards go once the release has committed (the proposal executing, the advance requested)
+    // and before the payout reserves: the reserve finds the card no longer on file and rolls back.
+    let removed = false;
+    const racing: TenantDb = {
+      async withTenant<T>(tenantId: string, fn: (q: Queryable) => Promise<T>): Promise<T> {
+        if (!removed) {
+          const [adv] = await flowAdvances();
+          if ((await proposalRow(id)).status === "executing" && adv?.status === "requested") {
+            await removeCards(admin, A, A.driverId);
+            removed = true;
+          }
+        }
+        return app.withTenant(tenantId, fn);
+      },
+    };
+    expect(await executeProposal(A.session, id, { confirmed: false }, { ...deps(), db: racing })).toMatchObject({
+      ok: false,
+      category: "unavailable",
+    });
+    expect(removed).toBe(true);
+    expect(await flowAdvances()).toEqual([expect.objectContaining({ status: "requested" })]);
+    expect(await proposalRow(id)).toMatchObject({ status: "executing", money_action_id: null });
+    expect(await ledger()).toEqual([]);
+
+    // The next press parks it as card_removed; the proposal stays executing and the view reads it parked.
+    expect(await approve(id)).toEqual({ ok: false, category: "parked_card_removed", retryable: false });
+    expect(await flowAdvances()).toEqual([expect.objectContaining({ status: "parked", park_reason: "card_removed" })]);
+    expect(await proposalRow(id)).toMatchObject({ status: "executing" });
+    const view = await app.withTenant(A.tenantId, (q) => readTurnView(q, A.session.sub, turnId));
+    expect(view?.proposals[0]).toMatchObject({ status: "approved", parked: { reason: "card_removed", on: true } });
+
+    expect(await reject(id)).toEqual({ ok: true });
+    expect(await flowAdvances()).toEqual([expect.objectContaining({ status: "rejected", reason_category: "wrong_amount" })]);
+    expect(await proposalRow(id)).toMatchObject({ status: "failed", decision_note: "rejected_parked:wrong_amount" });
     expect(await ledger()).toEqual([]);
     expect(mock.sendCount).toBe(0);
   });

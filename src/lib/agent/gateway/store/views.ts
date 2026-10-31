@@ -390,7 +390,10 @@ function proposalView(r: ProposalRow): ProposalView {
     title: r.title,
     reasons,
     sources: refsOf(r.sources),
-    status: cardStatusOf(r.status, r.money_state),
+    // A parked advance never has a ledger row, so a parked one left executing (its payout refused
+    // at the reserve) reads approved with its parked line, not unknown.
+    status:
+      isParkReason(r.park_reason) && r.money_state === null ? "approved" : cardStatusOf(r.status, r.money_state),
     flagged: r.flagged_input_id !== null,
     flagCategories: stringsOf(r.flag_categories),
     operatorVerdict: r.operator_verdict,
