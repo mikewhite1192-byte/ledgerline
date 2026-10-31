@@ -323,12 +323,14 @@ export async function finishPull(q: Queryable, action: MoneyAction, nowIso: stri
   // keeps the ledger row open for a person.
   if (pull.status !== "issuing") throw new MoneyError("validation");
   if (!Number.isFinite(Date.parse(nowIso))) throw new MoneyError("validation");
-  const approver = await approverOf(q, pull.proposalId);
-  if (approver === null) {
-    await markUnknown(q, pull.id, "the approver's membership did not read");
-    return;
-  }
+  // The approver is read only where a write names them (the advance, the deficit); a breakdown
+  // with no shortfall writes neither and settles without it.
   if (pull.advanceId !== null) {
+    const approver = await approverOf(q, pull.proposalId);
+    if (approver === null) {
+      await markUnknown(q, pull.id, "the approver's membership did not read");
+      return;
+    }
     const moved = await q.execute(
       `UPDATE advances
           SET taken_back_cents = taken_back_cents + $2, taken_back_at = CAST($3 AS timestamptz),
@@ -343,6 +345,11 @@ export async function finishPull(q: Queryable, action: MoneyAction, nowIso: stri
       return;
     }
   } else if (pull.shortfallCents > 0) {
+    const approver = await approverOf(q, pull.proposalId);
+    if (approver === null) {
+      await markUnknown(q, pull.id, "the approver's membership did not read");
+      return;
+    }
     const last4 = await last4Of(q, pull.proposalId);
     if (last4 === null || !(await bookShortfall(q, pull, last4, approver, nowIso))) {
       // Another row holds this proposal's deficit with other values: never adopted, never doubled.
@@ -582,7 +589,12 @@ async function issue(
   }
   let destination: FuelCardDestination | null;
   try {
-    destination = await db.withTenant(session.tenantId, (q) => readPullDestination(q, pull));
+    // The first send (no ledger row yet) only to a card still active: a card closed after the pull
+    // row was written takes the card_closed path below. With a row, the card is read whatever its
+    // status, so the row can be replayed or read back.
+    destination = await db.withTenant(session.tenantId, async (q) =>
+      readPullDestination(q, pull, { activeOnly: (await pullRows(q, pull.id)).length === 0 }),
+    );
   } catch (err) {
     console.error("card pull-back card could not be read:", err instanceof Error ? err.name : "unknown");
     return no("pull_unavailable", true);
@@ -665,6 +677,9 @@ export const executeCardPullback = async (
     prepared = await db.withTenant(session.tenantId, (q) => prepare(q, session, proposal, a, now, newId));
   } catch (err) {
     if (err instanceof Stop) return err.result;
+    // Two approved proposals for one driver: B's insert breaks the live index, prepare rolls back,
+    // and B's proposal stays 'approved' with no pull row. That is safe: a later resume plans again
+    // and fails it stale once A pulled, or sends it once if A failed.
     if (err instanceof DbError && err.sqlState === "23505") return no(uniqueViolationCategory(err.constraint));
     throw err;
   }

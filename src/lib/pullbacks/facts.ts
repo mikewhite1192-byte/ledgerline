@@ -240,26 +240,29 @@ export function samePull(a: PullPlanned, b: PullPlanned): boolean {
   );
 }
 
-type DestinationRow = { provider: string; provider_token: string; last4: string; sim_behavior: string };
+type DestinationRow = { provider: string; provider_token: string; last4: string; sim_behavior: string; status: string };
 
 const TOKEN = /^fcs_card_[0-9a-f]{24}$/;
 const LAST4 = /^[0-9]{4}$/;
 
 // Where a pull is sent: the card the row names, read fresh, only while it is still this driver's
 // card. Returned even after the card was closed, so a pull sent to it can still be read back (the
-// provider answers a closed card itself). Null when the row does not read whole.
+// provider answers a closed card itself). activeOnly (a first send, with no ledger row yet): null
+// unless the card is still active. Null when the row does not read whole.
 export async function readPullDestination(
   q: Queryable,
   pull: { cardId: string; driverId: string },
+  opts: { activeOnly?: boolean } = {},
 ): Promise<FuelCardDestination | null> {
   if (!isCanonicalUuid(pull.cardId) || !isCanonicalUuid(pull.driverId)) return null;
   const rows = await q.query<DestinationRow>(
-    `SELECT provider, provider_token, last4, sim_behavior FROM driver_cards
+    `SELECT provider, provider_token, last4, sim_behavior, status FROM driver_cards
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND driver_id = CAST($2 AS uuid)`,
     [pull.cardId, pull.driverId],
   );
   if (rows.length !== 1) return null;
   const r = rows[0];
+  if (opts.activeOnly === true && r.status !== "active") return null;
   if (
     r.provider !== "fuel_card_sim" ||
     !TOKEN.test(r.provider_token) ||

@@ -101,6 +101,10 @@ export async function takeBackAdvance(
   const nowIso = (deps.clock ?? (() => new Date()))().toISOString();
   return db.withTenant(session.tenantId, async (q) => {
     const member = await readMember(q, session);
+    // The advance is locked here, and proposePull's planPull then locks the driver; the pull-back
+    // executor's prepare locks the driver first and then the advance. Two presses at once on the
+    // same advance can deadlock: Postgres aborts one (40P01), which comes back as unavailable with
+    // nothing written. The locks are left in this order on purpose.
     const advance = await readAdvanceView(q, advanceId, true);
     if (!advance) return no("not_found");
     const payouts = (await readBySubject(q, "advances", advance.id)).filter((a) => a.kind === "advance_payout");

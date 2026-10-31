@@ -10,7 +10,7 @@ import type { GatewayContext } from "../agent/gateway/types";
 import { autopilotSession, autopilotSub } from "../autopilot/session";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, TenantDb } from "../db/types";
 import { addAdvance, clearLedger, dropTenant, makeTenant, setCardBehavior, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal } from "../proposals/execute";
 import { checkPendingPull, type PullbackDeps } from "./execute";
@@ -391,6 +391,40 @@ describe("card pull-back", () => {
     expect(await ledger()).toHaveLength(1);
     expect(calls).toBe(1);
     expect((await pulls())[0].status).toBe("pulled");
+  });
+
+  it("sends nothing to a card closed after the approval wrote the pull, and reserves nothing", async () => {
+    const id = await addProposal(await planOf(breakdown(20_000)));
+    const card = await cardOf(A, A.driverId);
+    // The card is closed in the gap between prepare's commit (the pull row written) and the first
+    // send's card read: the first transaction that opens once the pull row exists closes it.
+    let closed = false;
+    const closing: TenantDb = {
+      withTenant: async (tenantId, fn) => {
+        if (!closed && (await pulls()).length > 0) {
+          closed = true;
+          await admin.withTenant(A.tenantId, (q) =>
+            q.execute(
+              `UPDATE driver_cards SET status = 'closed', closed_at = now(), is_default = false
+                WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+              [card.id],
+            ),
+          );
+        }
+        return app.withTenant(tenantId, fn);
+      },
+    };
+    expect(await executeProposal(A.session, id, { confirmed: false }, { ...deps(), db: closing })).toMatchObject({
+      ok: false,
+      category: "card_closed",
+    });
+    expect(closed).toBe(true);
+    expect(calls).toBe(0);
+    expect(await ledger()).toEqual([]);
+    const [pull] = await pulls();
+    expect(pull).toMatchObject({ status: "failed", money_action_id: null });
+    expect(await deficits()).toEqual([]);
+    expect(await proposalStatus(id)).toBe("failed");
   });
 
   it("never lets the autopilot run a pull", async () => {
