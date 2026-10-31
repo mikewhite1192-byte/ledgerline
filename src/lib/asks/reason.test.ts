@@ -38,7 +38,7 @@ const result = (text: string, status: AiResult["status"] = "ok"): AiResult => ({
 
 const saved = structuredClone(flags.agentAsks);
 beforeEach(() => {
-  // The questions ship off; the reason pass runs only with them on.
+  // The reason pass runs only with the questions on; each test starts with them on.
   flags.agentAsks.enabled = true;
 });
 afterEach(() => {

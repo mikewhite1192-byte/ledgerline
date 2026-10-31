@@ -235,7 +235,7 @@ describe("the agent launcher", () => {
 
   const launcher = () => screen.queryByRole("button", { name: "Ask the agent" });
 
-  it("shows on every page, Home included, while the agent is on, and reads nothing until it opens", () => {
+  it("shows on every page, Home included, while the agent is on, and reads no thread until it opens", () => {
     flags.agentEnabled = true;
     flags.agentFocusEnabled = true;
     const off = shell("/advances");
@@ -244,7 +244,9 @@ describe("the agent launcher", () => {
     shell("/");
     expect(launcher()).not.toBeNull();
     expect(screen.getByRole("link", { name: "Search or ask anything" }).getAttribute("aria-haspopup")).toBe("dialog");
-    expect(fetch).not.toHaveBeenCalled();
+    // With the agent's questions on, the launcher's only read is their poll; the thread waits for a click.
+    const urls = vi.mocked(fetch).mock.calls.map(([url]) => String(url));
+    expect(urls.filter((u) => u !== "/api/agent/asks")).toEqual([]);
   });
 
   it("is left off with the agent off or a page that asks for none, and makes no request then", () => {

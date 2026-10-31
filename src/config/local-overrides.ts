@@ -14,6 +14,9 @@ export const LOCAL_OVERRIDABLE = [
   "advancesEnabled",
   "payoutsEnabled",
   "advancePayouts.armed",
+  // The agent's questions: code writes them only for a card the desk drafted, never in a person's
+  // turn, and nothing about them reaches a model request, so the recorded run holds with them on.
+  "agentAsks.enabled",
 ] as const;
 
 // Switches FLAGS_LOCAL_OVERRIDES may only turn off, never on. They ship on, but the demo-path
@@ -21,10 +24,9 @@ export const LOCAL_OVERRIDABLE = [
 // request field the replay never saw (or, for accounting, a start-up check that needs the sandbox
 // company's id; for the rest, a page, a card or a route the recorded run never had). The local run
 // sets every one of them false so it replays what it recorded. The armed switches for money
-// codes, the desk loop, factoring, escrow releases and the autopilot, and the own switches of
-// load movement and the advance at pickup, are listed ahead of their own release, while they still ship off, so each release PR
-// changes only its flag: an off-only switch can never be turned on, so listing one early lets the
-// local run do nothing it could not already do.
+// codes, the desk loop, factoring, escrow releases and the autopilot are listed ahead of their own
+// release, while they still ship off, so each release PR changes only its flag: an off-only switch
+// can never be turned on, so listing one early lets the local run do nothing it could not already do.
 export const LOCAL_OFF_ONLY = [
   "accountingEnabled",
   "documentsEnabled",
