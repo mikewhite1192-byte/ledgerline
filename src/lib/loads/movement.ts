@@ -10,6 +10,8 @@ import { persistEngineProposal } from "../proposals/engine";
 import { instantAt } from "../seed/calendar";
 import { assertMembership } from "../tenant/context";
 import { isLocalDate, localDateOf, type Instant, type LocalDate } from "../time/local-date";
+import { resolve } from "../tms/clocks";
+import { codeOf, isWithdrawn, moveOf, readLabelMap } from "../tms/status";
 import { isUuid } from "../uuid";
 import { directionOf, namesWhole } from "./message";
 import {
@@ -41,9 +43,10 @@ import {
 // date out of the window, a status that is not the one before the move) writes no status and makes
 // one load_move card (no money, amount 0) with a plain reason category for a person to tap.
 
-export type MoveSource = "driver_photo" | "driver_text" | "driver_voice" | "staff" | "demo_feed";
+// tms (0075): a status event mirrored from the dispatch system (src/lib/tms/sync.ts).
+export type MoveSource = "driver_photo" | "driver_text" | "driver_voice" | "staff" | "demo_feed" | "tms";
 export type MoveTo = "in_transit" | "delivered";
-export type EvidenceTable = "documents" | "inbound_messages" | "voice_notes";
+export type EvidenceTable = "documents" | "inbound_messages" | "voice_notes" | "tms_status_events";
 export type Evidence = { table: EvidenceTable; id: string };
 
 // Why a move was not made, as a category (never a reading's or a message's own words).
@@ -59,7 +62,13 @@ export type MoveReason =
   | "field_differs"
   | "no_date"
   | "low_confidence"
-  | "stop_unclear";
+  | "stop_unclear"
+  // The dispatch system withdrew a load we still run (cancelled, expired or archived there).
+  | "tms_withdrawn"
+  // A load we still run was deleted in the dispatch system.
+  | "tms_gone"
+  // The dispatch system's two clocks for the move's time are more than a day apart.
+  | "tms_time_unclear";
 
 export type MoveOutcome =
   | { kind: "moved"; loadId: string; to: MoveTo; events: string[] }
@@ -530,7 +539,162 @@ export async function moveFromMessage(
   return r.kind === "refused" ? cardOn(r.reason, to) : r;
 }
 
-type When = { at: Instant; day: LocalDate; zone: string; today: LocalDate };
+// times: the stop's arrived and departed, when the evidence gives both (the dispatch path).
+// ---------------------------------------------------------------------------------------------
+// The dispatch path (TMS-MIRROR, 0075): a status event mirrored from the tenant's TMS.
+
+type TmsEventRow = {
+  id: string;
+  field: string;
+  new_value: string | null;
+  clock_flag: string | null;
+  day: string;
+  at: string;
+  seeded: boolean;
+  gone: boolean;
+  tms_load_id: string;
+  load_id: string | null;
+  label_map: string | null;
+};
+
+type TmsStopRow = {
+  arrived_utc: string | null;
+  arrived_local: string | null;
+  arrived_at: string | null;
+  completed_utc: string | null;
+  completed_local: string | null;
+  completed_at: string | null;
+};
+
+// Whether the dispatch path may act on a day: the sync is on and the day is on or after its start.
+export function tmsOn(day: LocalDate): boolean {
+  const s = flags.tmsSync;
+  return s.enabled === true && isLocalDate(s.startDate) && day >= s.startDate;
+}
+
+// The one stop of a kind with both times, its clocks agreeing; null times when the load has no
+// such single stop (a multi-stop load gives no times, never a guess), "unclear" on a clock flag.
+async function tmsStopTimes(
+  q: Queryable,
+  tmsLoadId: string,
+  kind: "pickup" | "delivery",
+  zone: string,
+): Promise<StopTimes | "unclear"> {
+  const stops = await q.query<TmsStopRow>(
+    `SELECT ${ts("arrived_utc")} AS arrived_utc, arrived_local, ${ts("arrived_at")} AS arrived_at,
+            ${ts("completed_utc")} AS completed_utc, completed_local, ${ts("completed_at")} AS completed_at
+       FROM tms_stops
+      WHERE tenant_id = current_tenant_id() AND tms_load_id = CAST($1 AS uuid) AND stop_kind = $2
+      ORDER BY ordinal`,
+    [tmsLoadId, kind],
+  );
+  if (stops.length !== 1) return null;
+  const s = stops[0];
+  for (const [utc, local] of [
+    [s.arrived_utc, s.arrived_local],
+    [s.completed_utc, s.completed_local],
+  ] as const) {
+    if (local !== null && resolve({ utc, local }, zone).flag !== null) return "unclear";
+  }
+  if (s.arrived_at === null || s.completed_at === null) return null;
+  if (Date.parse(s.completed_at) < Date.parse(s.arrived_at)) return null;
+  return { arrivedAt: s.arrived_at, departedAt: s.completed_at };
+}
+
+// Inside the desk's tenant transaction: what one mirrored status event does to our linked load.
+// The event's label maps through the tenant's label map to a fixed code (src/lib/tms/status.ts);
+// in transit and delivered are moves under the same rules as a driver's message, withdrawn on a
+// load we still run is a card, and every other code is recorded only. A clock flag on the times
+// the move would use is a card, never a move. Nothing is read from or sent to the TMS here.
+export async function moveFromTmsEvent(
+  q: Queryable,
+  session: Session,
+  eventId: string,
+  now: Date,
+): Promise<MoveOutcome> {
+  if (!isUuid(eventId)) return { kind: "nothing", category: "validation" };
+  if (flags.tmsSync.enabled !== true) return { kind: "nothing", category: "switched_off" };
+  const [row] = await q.query<TmsEventRow>(
+    `SELECT CAST(e.id AS text) AS id, e.field, e.new_value, e.clock_flag, to_char(e.day, 'YYYY-MM-DD') AS day,
+            ${ts("e.at")} AS at, e.seeded, (l.gone_at IS NOT NULL) AS gone,
+            CAST(e.tms_load_id AS text) AS tms_load_id, CAST(l.load_id AS text) AS load_id,
+            CAST(c.label_map AS text) AS label_map
+       FROM tms_status_events e
+       JOIN tms_loads l ON l.tenant_id = e.tenant_id AND l.id = e.tms_load_id
+       LEFT JOIN tms_connections c ON c.tenant_id = e.tenant_id
+      WHERE e.tenant_id = current_tenant_id() AND e.id = CAST($1 AS uuid)`,
+    [eventId],
+  );
+  if (!row) return { kind: "nothing", category: "not_found" };
+  if (row.seeded) return { kind: "nothing", category: "seeded" };
+  if (row.field !== "status") return { kind: "nothing", category: "recorded" };
+  if (row.gone) return { kind: "nothing", category: "gone" };
+  if (!tmsOn(row.day)) return { kind: "nothing", category: "before_start" };
+  if (!automaticOn(row.day)) return { kind: "nothing", category: "switched_off" };
+  const code = codeOf(row.new_value, readLabelMap(parseJson(row.label_map)));
+  if (row.load_id === null) return { kind: "nothing", category: "unlinked" };
+  const load = await lockLoad(q, row.load_id);
+  if (!load) return { kind: "nothing", category: "unlinked" };
+  const evidence: Evidence = { table: "tms_status_events", id: row.id };
+  const cardOn: CardOn = (reason, toStatus, deliveredOn) =>
+    card(q, session, now, {
+      reason,
+      subject: { table: "loads", id: load.id },
+      loadId: load.id,
+      toStatus,
+      deliveredOn,
+      evidence,
+    });
+  if (isWithdrawn(code)) {
+    return load.status === "planned" || load.status === "in_transit"
+      ? cardOn("tms_withdrawn", null)
+      : { kind: "nothing", category: "recorded" };
+  }
+  const to = moveOf(code);
+  if (to === null) return { kind: "nothing", category: "recorded" };
+  if (load.status === "cancelled") return { kind: "nothing", category: "wrong_status" };
+  const zone = await zoneOf(q);
+  const times = await tmsStopTimes(q, row.tms_load_id, to === "in_transit" ? "pickup" : "delivery", zone);
+  if (row.clock_flag !== null || times === "unclear") {
+    const reached =
+      load.status === "invoiced" || load.status === "delivered" || (to === "in_transit" && load.status === "in_transit");
+    return reached ? { kind: "already", loadId: load.id } : cardOn("tms_time_unclear", to, to === "delivered" ? row.day : null);
+  }
+  const at = times?.departedAt ?? row.at;
+  const r = await applyMove(
+    q,
+    load,
+    to,
+    { at, day: row.day, zone, today: localDateOf(now.toISOString(), zone), times },
+    "tms",
+    evidence,
+    cardOn,
+  );
+  return r.kind === "refused" ? cardOn(r.reason, to) : r;
+}
+
+// From the sync, inside its per-load transaction: a load deleted in the TMS that we still run is
+// one card for a person (never a move, never a retry). Same gates as an event, on today's date.
+export async function tmsGoneCard(q: Queryable, session: Session, loadId: string, now: Date): Promise<MoveOutcome> {
+  if (!isUuid(loadId)) return { kind: "nothing", category: "validation" };
+  const zone = await zoneOf(q);
+  const today = localDateOf(now.toISOString(), zone);
+  if (!tmsOn(today) || !automaticOn(today)) return { kind: "nothing", category: "switched_off" };
+  const load = await lockLoad(q, loadId);
+  if (!load) return { kind: "nothing", category: "not_found" };
+  if (load.status !== "planned" && load.status !== "in_transit" && load.status !== "delivered") {
+    return { kind: "nothing", category: "recorded" };
+  }
+  return card(q, session, now, {
+    reason: "tms_gone",
+    subject: { table: "loads", id: load.id },
+    loadId: load.id,
+    toStatus: null,
+    evidence: null,
+  });
+}
+
+type When = { at: Instant; day: LocalDate; zone: string; today: LocalDate; times?: StopTimes };
 
 type CardOn = (reason: MoveReason, toStatus: MoveTo | null, deliveredOn?: LocalDate | null) => Promise<MoveOutcome>;
 
@@ -564,7 +728,7 @@ async function applyMove(
   if (to === "in_transit") {
     if (load.status !== "planned") return refuse("wrong_status");
     if (!inWindow(when.day)) return refuse("date_out_of_window");
-    const id = await writeStep(q, load, { to: "in_transit", at: when.at, times: null }, source, evidence);
+    const id = await writeStep(q, load, { to: "in_transit", at: when.at, times: when.times ?? null }, source, evidence);
     const delivered = await deliverOnPaperIn(q, load, when.today, when.zone);
     return moved(load, delivered ? [id, delivered] : [id]);
   }
@@ -575,7 +739,7 @@ async function applyMove(
   const id = await writeStep(
     q,
     load,
-    { to: "delivered", at: deliveredAt, deliveredOn: when.day, deliveredAt, times: null },
+    { to: "delivered", at: deliveredAt, deliveredOn: when.day, deliveredAt, times: when.times ?? null },
     source,
     evidence,
   );

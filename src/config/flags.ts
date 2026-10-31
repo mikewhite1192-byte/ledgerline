@@ -778,6 +778,22 @@ export type Flags = {
   // load_move executor is registered only while enabled. A person's Mark picked up and Mark
   // delivered buttons and Settings > Demo's Move the fleet are people's presses and do not read it.
   loadMovement: { enabled: boolean; startDate: string };
+  // The dispatch mirror (docs: TMS-MIRROR, 0075, owner D-071): a read-only copy of the tenant's
+  // dispatch system (a TMS), walked by the desk loop at the top of each wake (src/lib/tms/sync.ts):
+  // at most maxPagesPerWake list pages of pageSize rows and maxReadsPerWake full reads a wake.
+  // Nothing is ever written to the TMS. A mirrored status event moves one of our loads only through
+  // src/lib/loads/movement.ts, and only while loadMovement is on too; an event dated before
+  // startDate (YYYY-MM-DD, the carrier's zone) is mirrored and never moves or asks. Settings >
+  // Demo's Sync dispatch now re-checks enabled itself. demoFaultsEnabled lets the synthetic feed
+  // play a fault (a later item); it ships off.
+  tmsSync: {
+    enabled: boolean;
+    startDate: string;
+    maxPagesPerWake: number;
+    maxReadsPerWake: number;
+    pageSize: number;
+    demoFaultsEnabled: boolean;
+  };
   // The agent's questions (src/lib/asks, 0072): when the desk drafts a proposal of an asked kind
   // (advance_payout, invoice_post, detention_charge, settlement_approve, pay_correction, load_move)
   // and the autopilot would not do it by itself, code writes one question about it ("Should I send
@@ -1061,6 +1077,15 @@ export const flags: Flags = {
   },
   // On by the owner's call (D-071, 2026-10-31). A load_move card is still a person's tap.
   loadMovement: { enabled: true, startDate: "2026-10-30" },
+  // Ships off; its own one-line PR turns it on (D-071). A load moves on it only while loadMovement is on too.
+  tmsSync: {
+    enabled: false,
+    startDate: "2026-10-31",
+    maxPagesPerWake: 3,
+    maxReadsPerWake: 20,
+    pageSize: 100,
+    demoFaultsEnabled: false,
+  },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.
   agentAsks: {
     enabled: true,

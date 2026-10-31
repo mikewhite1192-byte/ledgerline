@@ -108,6 +108,10 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
+  // The dispatch mirror ships off: its own one-line PR turns it on (D-071).
+  "tmsSync.enabled",
+  // The synthetic feed's fault switches are a later item.
+  "tmsSync.demoFaultsEnabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -336,6 +340,22 @@ describe("flags", () => {
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("load_move");
   });
 
+  it("ships the dispatch mirror off, read only, with a start date and small per-wake caps", () => {
+    expect(flags.tmsSync).toEqual({
+      enabled: false,
+      startDate: "2026-10-31",
+      maxPagesPerWake: 3,
+      maxReadsPerWake: 20,
+      pageSize: 100,
+      demoFaultsEnabled: false,
+    });
+    expect(isLocalDate(flags.tmsSync.startDate)).toBe(true);
+    // The demo-path replay never recorded a sync, so the local run turns it off.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsSync.enabled");
+    // A load moves on a mirrored event only while load movement is on too (D-071 turned it on).
+    expect(flags.loadMovement.enabled).toBe(true);
+  });
+
   it("ships the agent's questions on, with the reason line capped at 2 cents and 80 tokens", () => {
     expect(flags.agentAsks).toEqual({
       enabled: true,
@@ -361,14 +381,15 @@ describe("flags", () => {
     }
     // Local mode can never turn on a switch that stays off: none is on the list that turns one on.
     for (const name of KEPT_OFF) expect(LOCAL_OVERRIDABLE as readonly string[], name).not.toContain(name);
-    // The only kept-off switches local mode may turn off are the armed switches listed ahead of
-    // their own release: exactly those still kept off, and nothing else.
+    // The only kept-off switches local mode may turn off are the armed switches, and the dispatch
+    // sync's switch, listed ahead of their own release: exactly those still kept off, and nothing else.
     const armedAhead: readonly string[] = [
       "moneyCodes.armed",
       "factoring.armed",
       "escrowRelease.armed",
       "deskLoop.armed",
       "autopilot.armed",
+      "tmsSync.enabled",
       "cardLoadRuling.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];

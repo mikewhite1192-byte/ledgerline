@@ -113,10 +113,136 @@ export type LoadEventRow = {
   load_id: string;
   from_status: "planned" | "in_transit";
   to_status: "in_transit" | "delivered";
-  source: "driver_photo" | "driver_text" | "driver_voice" | "staff" | "demo_feed" | "seed";
-  evidence_table: "documents" | "inbound_messages" | "voice_notes" | null;
+  source: "driver_photo" | "driver_text" | "driver_voice" | "staff" | "demo_feed" | "seed" | "tms";
+  evidence_table: "documents" | "inbound_messages" | "voice_notes" | "tms_status_events" | null;
   evidence_id: string | null;
   at: string;
+};
+
+// The dispatch mirror (0075, src/lib/tms/sync.ts). The seed writes the snapshot the synthetic feed
+// serves at the seeded instant (src/lib/seed/tms.ts); the sync's own bookkeeping columns (read
+// attempts, the rest mark, the tombstone, the token cache, the last pass) are runtime only.
+export type TmsConnectionRow = {
+  id: string;
+  system: "synthetic";
+  label_map: Record<string, string>;
+  lookback_hours: number;
+  finalize_cooloff_minutes: number;
+  demo_faults: Record<string, boolean>;
+  feed_floor_at: string | null;
+};
+
+export type TmsPartyRow = {
+  id: string;
+  kind: "customer" | "driver" | "truck" | "trailer";
+  external_id: string;
+  name: string;
+  unit: string | null;
+  vin: string | null;
+  customer_id: string | null;
+  driver_id: string | null;
+  received_at: string;
+  seeded: boolean;
+};
+
+export type TmsLoadRow = {
+  id: string;
+  external_id: string;
+  load_id: string | null;
+  reference: string;
+  status_code: string;
+  status_label: string;
+  customer_external_id: string | null;
+  driver_external_id: string | null;
+  truck_unit: string | null;
+  trailer_unit: string | null;
+  vin: string | null;
+  stop_count: number;
+  leg_count: number;
+  picked_up_utc: string | null;
+  picked_up_local: string | null;
+  picked_up_at: string | null;
+  picked_up_day: string | null;
+  delivered_utc: string | null;
+  delivered_local: string | null;
+  delivered_at: string | null;
+  delivered_day: string | null;
+  last_completed_utc: string | null;
+  last_completed_local: string | null;
+  last_completed_at: string | null;
+  last_completed_day: string | null;
+  revenue_total_cents: number | null;
+  driver_pay_total_cents: number | null;
+  source_updated_at: string;
+  finalized_at: string | null;
+  received_at: string;
+  recheck_after: string | null;
+  finalized_seen_at: string | null;
+  listed_at: string | null;
+  flags: string[];
+  seeded: boolean;
+};
+
+export type TmsStopRow = {
+  id: string;
+  tms_load_id: string;
+  ordinal: number;
+  stop_kind: "pickup" | "delivery";
+  name: string;
+  city: string;
+  state: string;
+  appt_from_local: string | null;
+  appt_to_local: string | null;
+  appt_from_at: string | null;
+  appt_to_at: string | null;
+  arrived_utc: string | null;
+  arrived_local: string | null;
+  arrived_at: string | null;
+  completed_utc: string | null;
+  completed_local: string | null;
+  completed_at: string | null;
+};
+
+export type TmsStatusEventRow = {
+  id: string;
+  tms_load_id: string;
+  external_event_id: string;
+  field: string;
+  new_value: string | null;
+  previous_value: string | null;
+  changed_by: string | null;
+  at_utc: string | null;
+  at_local: string;
+  at: string;
+  day: string;
+  clock_flag: "clocks_disagree" | null;
+  received_at: string;
+  seeded: boolean;
+};
+
+export type TmsLineItemRow = {
+  id: string;
+  tms_load_id: string;
+  external_id: string;
+  item_group: "revenue" | "driver_pay" | "accessorial";
+  type_label: string;
+  description: string;
+  amount_cents: number;
+};
+
+export type TmsDocumentRow = {
+  id: string;
+  tms_load_id: string;
+  external_id: string;
+  file_name: string;
+  type_label: string;
+  doc_kind: string;
+  shared: boolean;
+  uploader_kind: "driver_app" | "office" | "unknown";
+  byte_length: number;
+  source_updated_at: string;
+  review_state: "unreviewed" | "fetched" | "read" | "rejected";
+  first_seen_at: string;
 };
 
 export type LoadStateMilesRow = { id: string; load_id: string; state: string; miles: number };
@@ -683,6 +809,13 @@ export type TenantRows = {
   driver_arm_events: DriverArmEventRow[];
   loads: LoadRow[];
   load_events: LoadEventRow[];
+  tms_connections: TmsConnectionRow[];
+  tms_parties: TmsPartyRow[];
+  tms_loads: TmsLoadRow[];
+  tms_stops: TmsStopRow[];
+  tms_status_events: TmsStatusEventRow[];
+  tms_line_items: TmsLineItemRow[];
+  tms_documents: TmsDocumentRow[];
   load_state_miles: LoadStateMilesRow[];
   load_accessorials: LoadAccessorialRow[];
   driver_days: DriverDayRow[];

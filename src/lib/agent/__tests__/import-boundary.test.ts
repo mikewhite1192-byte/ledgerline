@@ -19,7 +19,8 @@ import { describe, expect, it } from "vitest";
 //   P2. Nothing reachable from any agent file, the gateway included, is a money write or a
 //       payment or accounting adapter: under money/ only read, types, keys and format, under
 //       money-codes/ only read, words and switches (never the issue, the reveal or the request
-//       form), under adapters/ only types and tms/*, under factoring/ only read, packet, words
+//       form), under adapters/ only types, tms/* and tms-source/* (the dispatch source, whose
+//       surface is reads only: adapter-surface.test.ts), under factoring/ only read, packet, words
 //       and propose (never the executor that submits to the factoring partner, or its switches),
 //       and under escrow/ only read, statement, due and switches (never the release executor or
 //       its reconcile pass).
@@ -54,7 +55,7 @@ const MODEL_CALLERS: ReadonlySet<string> = new Set([
 // Every area match ignores case: on a case-insensitive file system "../../Money/execute" resolves.
 const MONEY_OK = /^src\/lib\/money\/(read|types|keys|format)\.[cm]?[jt]sx?$/i;
 const MONEY_CODES_OK = /^src\/lib\/money-codes\/(read|words|switches)\.[cm]?[jt]sx?$/i;
-const ADAPTERS_OK = /(^|\/)adapters\/(types|tms\/[\w-]+)\.[cm]?[jt]sx?$/i;
+const ADAPTERS_OK = /(^|\/)adapters\/(types|tms(-source)?\/[\w-]+)\.[cm]?[jt]sx?$/i;
 const FACTORING_OK = /^src\/lib\/factoring\/(read|packet|words|propose)\.[cm]?[jt]sx?$/i;
 const ESCROW_OK = /^src\/lib\/escrow\/(read|statement|due|switches)\.[cm]?[jt]sx?$/i;
 const DOCUMENTS_OK = /^src\/lib\/documents\/(types|schema|match|candidates)\.[cm]?[jt]sx?$/i;

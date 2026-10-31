@@ -40,6 +40,7 @@ import { applyHistory } from "./history";
 import { HERO_LANES, LANES, laneMiles, reverseLane, type Lane } from "./lanes";
 import { buildCarrierNotes } from "./memory-plan";
 import { CUSTOMERS, FIRST_NAMES, LAST_NAMES } from "./names";
+import { buildTmsSnapshot } from "./tms";
 import { buildLoadEvents } from "./load-events";
 import { Rng } from "./prng";
 import {
@@ -1202,6 +1203,13 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     driver_arm_events: armEvents(parity, drivers),
     loads,
     load_events: [],
+    tms_connections: [],
+    tms_parties: [],
+    tms_loads: [],
+    tms_stops: [],
+    tms_status_events: [],
+    tms_line_items: [],
+    tms_documents: [],
     load_state_miles: stateMiles,
     load_accessorials: accessorials,
     driver_days: days,
@@ -1266,6 +1274,9 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   appendDeparted({ carrier, seed, periods, rows, firstName: firsts[drivers.length], lastName: lasts[drivers.length] });
   // The moves the history above made, last of all and from their own stream (load-events.ts).
   rows.load_events = buildLoadEvents({ seed, zone, loads: rows.loads });
+  // The dispatch mirror's snapshot at the anchor's midnight, after every load is final and from
+  // its own stream (tms.ts).
+  Object.assign(rows, buildTmsSnapshot({ seed, slug, zone, anchor, rows }));
 
   const plan: CarrierPlan = {
     carrier,

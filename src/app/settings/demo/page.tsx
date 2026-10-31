@@ -16,6 +16,7 @@ import { countRows } from "@/lib/seed/summary";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { MoveFleetForm } from "./fleet-form";
 import { DemoResetForm } from "./reset-form";
+import { TmsSyncForm } from "./tms-sync-form";
 
 export const dynamic = "force-dynamic";
 
@@ -155,6 +156,23 @@ export default async function DemoSettings() {
             </CardHeader>
             <CardBody>
               <MoveFleetForm />
+            </CardBody>
+          </Card>
+        ) : null}
+        {view?.kind === "ready" && flags.tmsSync.enabled ? (
+          <Card>
+            <CardHeader>
+              <div className="grid gap-0.5">
+                <CardTitle>Sync dispatch now</CardTitle>
+                <CardDescription>
+                  {"Reads the demo dispatch system once, the same pull the desk makes on each wake, and " +
+                    "keeps what it finds in the dispatch mirror. It only reads. A load moves when the desk " +
+                    "sees a new status and its own switches are on. No money moves."}
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardBody>
+              <TmsSyncForm />
             </CardBody>
           </Card>
         ) : null}

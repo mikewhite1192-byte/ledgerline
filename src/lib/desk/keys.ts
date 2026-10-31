@@ -18,6 +18,8 @@ export const DESK_SOURCES = [
   // LOAD-MOVEMENT (0071): a read document matched to one load, and a load_events row.
   "document",
   "load_event",
+  // TMS-MIRROR (0075): a status event mirrored from the dispatch system.
+  "tms_event",
 ] as const;
 export type DeskSource = (typeof DESK_SOURCES)[number];
 
@@ -32,6 +34,7 @@ export const SUBJECT_TABLES = {
   autopilot: "proposals",
   document: "documents",
   load_event: "load_events",
+  tms_event: "tms_status_events",
 } as const;
 export type SubjectSource = keyof typeof SUBJECT_TABLES;
 

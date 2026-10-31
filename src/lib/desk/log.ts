@@ -137,6 +137,9 @@ const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-D
 // thaws later and records its old try).
 const RANK = `CASE kind WHEN 'seen' THEN 0 WHEN 'claimed' THEN 1 WHEN 'carried' THEN 2 ELSE 3 END`;
 
+// Oldest first, then by key. TMS-MIRROR (0075): dispatch status events seen in one wake keep their
+// place among the other sources but run in the order they happened, so a load's in transit event
+// runs before its delivered one (their ids are random, so key order is a coin flip).
 export const OPEN_EVENTS_SQL = `WITH lines AS (
   SELECT event_key, kind, source, subject_id, at, detail, ${RANK} AS rank
     FROM desk_log
@@ -162,7 +165,11 @@ SELECT l.event_key, l.kind, l.source, CAST(l.subject_id AS text) AS subject_id, 
    AND NOT EXISTS (SELECT 1 FROM desk_log f
                     WHERE f.tenant_id = current_tenant_id() AND f.event_key = l.event_key
                       AND f.kind IN ('done', 'failed', 'skipped'))
- ORDER BY t.first_at, l.event_key
+ ORDER BY t.first_at,
+          CASE WHEN l.source = 'tms_event' THEN 'tms_event:' ELSE l.event_key END,
+          (SELECT e.at FROM tms_status_events e
+            WHERE l.source = 'tms_event' AND e.tenant_id = current_tenant_id() AND e.id = l.subject_id),
+          l.event_key
  LIMIT $2`;
 
 type OpenRow = {

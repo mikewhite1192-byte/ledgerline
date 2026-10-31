@@ -10,7 +10,7 @@ import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
 import { draftCollections } from "../collections/draft";
 import { handOffMessage, sortMessage } from "../inbound/pipeline";
-import { moveFromDocument, moveFromMessage, type MessageTable, type MoveOutcome } from "../loads/movement";
+import { moveFromDocument, moveFromMessage, moveFromTmsEvent, type MessageTable, type MoveOutcome } from "../loads/movement";
 import { advanceCardCheck, startCardCheck } from "../recon/run";
 import { advanceSweep, startSweep } from "../sweep/run";
 import { assertMembership } from "../tenant/context";
@@ -141,6 +141,22 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
       if (r.kind === "proposed") return done({ found: 1, category: "advance_proposed" });
       if (r.category === "switched_off") return done({ found: 0, category: "recorded" });
       return done({ found: 0, category: r.category });
+    },
+  };
+
+  // TMS-MIRROR (0075): a mirrored status event may move its linked load (one transaction).
+  // movement.ts asks tmsSync, its start date and loadMovement itself; off, it is skipped.
+  const tmsEvent: Handler = {
+    switchOn: () => flags.tmsSync.enabled === true,
+    needsMs: 5_000,
+    async run(session, event, ctx) {
+      const id = event.subjectId;
+      if (!id) return failed("bad_request");
+      const r = await db().withTenant(session.tenantId, async (q) => {
+        await assertMembership(q, session);
+        return moveFromTmsEvent(q, session, id, ctx.clock());
+      });
+      return moveLine(r);
     },
   };
 
@@ -414,5 +430,6 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     autopilot,
     document,
     load_event: loadEvent,
+    tms_event: tmsEvent,
   };
 }

@@ -17,6 +17,7 @@ import {
   type Watermarks,
 } from "./discover";
 import { closeStaleAsks } from "../asks/store";
+import { pullTms } from "../tms/sync";
 import { fillReasons } from "../asks/reason";
 import { deskHandlers, type Handlers } from "./handlers";
 import { localMidnightOf, localNowOf, type DeskSource } from "./keys";
@@ -65,7 +66,8 @@ export type DeskStore = {
   startClock(input: { token: string; nowIso: string }): Promise<void>;
   release(input: { token: string; nowIso: string }): Promise<void>;
   append(line: Line): Promise<boolean>;
-  discover(input: DiscoverInput & { token: string }): Promise<number>;
+  // deadlineMs: the wake's own deadline (epoch ms, by the loop's clock).
+  discover(input: DiscoverInput & { token: string; deadlineMs: number }): Promise<number>;
   state(sinceStart: string): Promise<OpenEvent[]>;
   seenSince(sinceIso: string): Promise<number>;
   spend(input: { wakeStartIso: string; nowIso: string }): Promise<{ wakeNanocents: number; dayNanocents: number }>;
@@ -101,6 +103,7 @@ const CLAIM_LEASE_SQL = `UPDATE desk_loops
   WHERE tenant_id = current_tenant_id() AND (lease_until IS NULL OR lease_until < CAST($1 AS timestamptz))
   RETURNING watermarks->>'card_transactions' AS card_transactions, watermarks->>'customer_payments' AS customer_payments,
             watermarks->>'documents' AS documents, watermarks->>'load_events' AS load_events,
+            watermarks->>'tms_status_events' AS tms_status_events,
             (SELECT t.timezone FROM tenants t WHERE t.id = current_tenant_id()) AS zone`;
 
 // The panel's "running since": set once, by the lease holder only.
@@ -111,7 +114,13 @@ const RELEASE_SQL = `UPDATE desk_loops
     SET lease_token = NULL, lease_until = NULL, last_wake_at = CAST($2 AS timestamptz), updated_at = CAST($2 AS timestamptz)
   WHERE tenant_id = current_tenant_id() AND lease_token = CAST($1 AS uuid)`;
 
-export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
+// The dispatch walk stops this long before the wake's deadline, so it takes at most half of the
+// 20 second slice (flags.deskLoop.limits.sliceMs) and leaves the other half to the handlers, whose
+// common kinds need 5 to 8 seconds each (needsMs in handlers.ts).
+export const TMS_SYNC_MARGIN_MS = 10_000;
+
+// clock: the wake's own clock, so the walk's deadline reads the same time as the wake's.
+export function dbDeskStore(db: TenantDb, session: Session, clock: () => Date = () => new Date()): DeskStore {
   const inTenant = <T>(fn: (q: Queryable) => Promise<T>) =>
     db.withTenant(session.tenantId, async (q) => {
       await assertMembership(q, session);
@@ -126,6 +135,7 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
           customer_payments: unknown;
           documents: unknown;
           load_events: unknown;
+          tms_status_events: unknown;
           zone: unknown;
         }>(
           CLAIM_LEASE_SQL,
@@ -141,6 +151,7 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
             customer_payments: r.customer_payments,
             documents: r.documents,
             load_events: r.load_events,
+            tms_status_events: r.tms_status_events,
           },
         };
       }),
@@ -152,6 +163,19 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
     },
     append: (line) => db.withTenant(session.tenantId, (q) => appendLine(q, line)),
     discover: async (input) => {
+      // TMS-MIRROR (0075): the dispatch mirror's walk first, so the events it mirrors are found in
+      // this same wake. A failure is a category in the log and never stops the wake; the walk's
+      // own rows (attempts, flags) say what failed.
+      try {
+        await pullTms(
+          db,
+          session,
+          { token: input.token, now: new Date(input.nowIso), deadlineMs: input.deadlineMs - TMS_SYNC_MARGIN_MS },
+          { clock: () => clock().getTime() },
+        );
+      } catch (err) {
+        console.error(`desk tms sync failed: ${err instanceof Error ? err.name : "unknown"}`);
+      }
       let budget = input.budget;
       let seen = 0;
       const periods = await inTenant((q) => findPeriods(q, { ...input, budget }));
@@ -222,7 +246,7 @@ export async function wakeDesk(
   const armed = flags.deskLoop.armed === true;
   const clock = deps.clock ?? (() => new Date());
   const newId = deps.newId ?? randomUUID;
-  const store = deps.store ?? dbDeskStore(deps.db ?? getDb(), session);
+  const store = deps.store ?? dbDeskStore(deps.db ?? getDb(), session, clock);
   const handlers = deps.handlers ?? deskHandlers({ db: deps.db, newId });
   const log = deps.log ?? ((line: string) => console.log(line));
   const wakeId = input.wakeId.toLowerCase();
@@ -270,6 +294,7 @@ export async function wakeDesk(
       customer_payments: watermarkOf(claimed.watermarks.customer_payments, startInstant),
       documents: watermarkOf(claimed.watermarks.documents, startInstant),
       load_events: watermarkOf(claimed.watermarks.load_events, startInstant),
+      tms_status_events: watermarkOf(claimed.watermarks.tms_status_events, startInstant),
     };
 
     // Discovery, inside the day's share.
@@ -288,6 +313,7 @@ export async function wakeDesk(
         budget,
         newId,
         token,
+        deadlineMs,
       });
     }
     // Discovery stopped at the day's share, or at this wake's: there may be more to find.
