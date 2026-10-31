@@ -1,4 +1,5 @@
 import type { Db } from "../../src/lib/db/types";
+import { DEFAULT_RULES } from "../../src/lib/autopilot/defaults";
 import type { Role } from "../../src/lib/roles";
 
 export type DemoCarrier = { slug: string; name: string; timezone: string; email: string };
@@ -54,5 +55,24 @@ export async function ensureRows(db: Db, carrier: DemoCarrier, tenantId: string,
        ON CONFLICT (cognito_sub) DO NOTHING`,
       [carrier.slug],
     );
+    // The autopilot's own login (migration 0070 adds it for tenants that already exist): staff,
+    // never admin, and its sub is not a Cognito id either. It approves only through the approval
+    // gate under an Auto rule (src/lib/proposals/execute.ts).
+    await q.execute(
+      `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+       VALUES (current_tenant_id(), 'service:autopilot:' || CAST(current_tenant_id() AS text),
+               'autopilot@' || $1 || '.invalid', 'staff')
+       ON CONFLICT (cognito_sub) DO NOTHING`,
+      [carrier.slug],
+    );
+    // The starting autopilot rules; a rule the owner already changed is kept as it is.
+    for (const rule of DEFAULT_RULES) {
+      await q.execute(
+        `INSERT INTO autopilot_rules (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count, updated_by)
+         VALUES (current_tenant_id(), $1, $2, $3, $4, $5, 'setup')
+         ON CONFLICT (tenant_id, kind) DO NOTHING`,
+        [rule.kind, rule.mode, rule.maxCents, rule.dayMaxCents, rule.dayMaxCount],
+      );
+    }
   });
 }

@@ -8,6 +8,11 @@ import { moneyCodeExecutor } from "../money-codes/execute";
 import { executePaymentReapply } from "../invoices/reapply";
 import { executeSettlementApprove } from "../settlements/approve";
 import { assertMembership } from "../tenant/context";
+import { decide, isPaused, recordOf, type DecisionRecord } from "../autopilot/policy";
+import { midnightMs, readPause, readRule, readToday, readZone, todayStartIso } from "../autopilot/read";
+import { autopilotSub, isAutopilotSub } from "../autopilot/session";
+import { isServiceSub } from "../sweep/service-session";
+import { isUuid } from "../uuid";
 import { overrideReasonOf } from "../agent/auditor/words";
 import { cardMatchExecutor } from "./executors/card-match";
 import { factoringRequestExecutor } from "../factoring/execute";
@@ -32,15 +37,24 @@ import { executePayRuleChange } from "./executors/pay-rule-change";
 // than left waiting), a block carries the person's override reason for the very verdict they saw,
 // a mismatch with the rules engine's own recompute (engine_check, 0045) carries a reason too while
 // verifyEngineMismatchBlocks is on, and anything other than a pass, or anything flagged, carries
-// the person's second confirm. Then
-// the proposal's kind picks its executor from EXECUTORS. A kind with no executor is refused as
-// not_executable before any write. An executor with a precheck is asked it next, still under the
-// lock: a refusal there returns with the proposal still waiting and nothing written. Every refusal
-// except expired leaves the row proposed and writes nothing. When every check passes, the gate
-// moves the proposal to approved in that same locked transaction (a block's or a mismatch's
-// override reason, with who and when, goes in the same statement), so a reject that lands after the gate finds it
-// approved and is refused; only then does the executor run. Each executor reserves its ledger row
-// before any outside call (the money executor) and moves the proposal on from there.
+// the person's second confirm. Then the proposal's kind picks its executor from EXECUTORS. A kind
+// with no executor is refused as not_executable before any write. An executor with a precheck is
+// asked it next, still under the lock: a refusal there returns with the proposal still waiting and
+// nothing written. Every refusal except expired leaves the row proposed and writes nothing. When
+// every check passes, the gate moves the proposal to approved in that same locked transaction (a
+// block's or a mismatch's override reason, with who and when, goes in the same statement), so a
+// reject that lands after the gate finds it approved and is refused; only then does the executor
+// run. Each executor reserves its ledger row before any outside call (the money executor) and moves
+// the proposal on from there.
+//
+// The carrier's autopilot login (src/lib/autopilot) is the one login that approves with no person:
+// only with opts.autopilot naming the rule it was decided on, never with a confirm, an override
+// reason, an audited instant or edits, never on a resume, never over a block or a held mismatch,
+// and only when the policy (src/lib/autopilot/policy.ts) says auto again here, under the lock,
+// with the switch, its arming and start date, the pause, the rule (locked, same id and version)
+// and today's totals read inside this transaction, after every check above and before the
+// precheck. Its approval stores the decision in the same statement. The sweep's login never
+// approves, and opts.autopilot from any other login is refused.
 
 export { PROPOSAL_KINDS, type ProposalKind };
 
@@ -72,11 +86,14 @@ export type ProposalRow = {
 // parser, and takes them only with confirmed. The gate stores them with the approval
 // (approved_edits) and that executor plans from the stored copy only: a resume that sends other
 // edits is refused, one that sends none uses the stored ones.
+// autopilot: only the autopilot login sends it (src/lib/autopilot/run.ts), naming the rule and its
+// version the policy decided on; no HTTP body can carry it (approve-body.ts reads a strict shape).
 export type ApproveOptions = {
   confirmed: boolean;
   overrideReason?: string | null;
   auditedAt?: string | null;
   edits?: Readonly<Record<string, string>>;
+  autopilot?: { ruleId: string; version: number };
 };
 
 export type ProposalRefusal =
@@ -90,7 +107,11 @@ export type ProposalRefusal =
   | "override_required"
   | "engine_override_required"
   | "stale"
-  | "needs_confirm";
+  | "needs_confirm"
+  | "service_login"
+  | "autopilot_only"
+  | "autopilot_override"
+  | "autopilot_rule";
 
 export type ProposalResult =
   | { ok: true; proposalId: string; status: string; moneyActionId: string | null }
@@ -260,6 +281,7 @@ type Row = {
   before_auditor: boolean;
   auditor_checked_at: string | null;
   engine_check: string | null;
+  created_at: string;
 };
 
 function rowOf(r: Row): ProposalRow {
@@ -297,6 +319,70 @@ function executorFor(registry: ExecutorRegistry, kind: string): Executor | null 
 
 const refused = (category: ProposalRefusal): ProposalResult => ({ ok: false, category, retryable: false });
 
+// Who is approving, before any proposal is read: the sweep's login never approves; the autopilot
+// login only with opts.autopilot and nothing a person sends; opts.autopilot only from the
+// carrier's own autopilot login, which must be staff. null means go on.
+function principalRefusal(session: Session, opts: ApproveOptions, role: string | undefined): ProposalResult | null {
+  if (isServiceSub(session.sub)) return refused("service_login");
+  const auto = isAutopilotSub(session.sub);
+  if (auto !== (opts.autopilot !== undefined)) return refused("autopilot_only");
+  if (!auto) return null;
+  if (session.sub !== autopilotSub(session.tenantId)) return refused("autopilot_only");
+  if (
+    opts.confirmed !== false ||
+    (opts.overrideReason !== undefined && opts.overrideReason !== null) ||
+    (opts.auditedAt !== undefined && opts.auditedAt !== null) ||
+    opts.edits !== undefined
+  ) {
+    return refused("autopilot_override");
+  }
+  if (role !== "staff") return refused("role");
+  const a = opts.autopilot;
+  if (!a || !isUuid(a.ruleId) || !Number.isSafeInteger(a.version) || a.version < 1) return refused("autopilot_rule");
+  return null;
+}
+
+// The autopilot's policy, decided again inside the gate's transaction with the proposal locked:
+// the switch, its arming and start date read now, the pause, the rule (locked, so two approvals
+// of one kind read today's totals one after the other) and today's totals. Anything but auto is
+// refused with the policy's reason word and nothing written; a rule changed since the decision
+// (another id or version) is refused too. Reads only.
+async function autopilotDecision(
+  q: Queryable,
+  session: Session,
+  p: ProposalRow,
+  row: Row,
+  sent: { ruleId: string; version: number },
+  now: Date,
+): Promise<{ record: DecisionRecord } | { result: ProposalResult }> {
+  const pause = await readPause(q);
+  const zone = await readZone(q);
+  const rule = await readRule(q, p.kind, true);
+  const today = await readToday(q, p.kind, session.sub, todayStartIso(now, zone));
+  const sw = flags.autopilot;
+  const decided = decide({
+    switch: { enabled: sw.enabled, armed: sw.armed, kinds: sw.kinds },
+    paused: isPaused(pause, now.getTime()),
+    startMs: midnightMs(sw.startDate, zone),
+    rule,
+    proposal: {
+      kind: p.kind,
+      status: p.status,
+      amountCents: p.amountCents,
+      createdAtMs: Date.parse(row.created_at),
+      flagged: p.flaggedInputId !== null,
+      auditorVerdict: p.auditorVerdict,
+      engineCheck: row.engine_check,
+    },
+    today,
+  });
+  if (decided.decision !== "auto") return { result: { ok: false, category: decided.reason, retryable: false } };
+  if (!rule || rule.id !== sent.ruleId.toLowerCase() || rule.version !== sent.version) {
+    return { result: refused("autopilot_rule") };
+  }
+  return { record: recordOf({ ...decided, decision: "auto" }, rule, today) };
+}
+
 // A precheck's refusal, thrown out of the gate so its transaction rolls back (a read inside the
 // precheck may have failed and left that transaction unusable). Nothing was written before it.
 class Prechecked extends Error {
@@ -323,6 +409,9 @@ async function gate(
     "SELECT role FROM memberships WHERE cognito_sub = $1",
     [session.sub],
   );
+  const principal = principalRefusal(session, opts, member.length === 1 ? member[0].role : undefined);
+  if (principal) return { result: principal };
+  const auto = opts.autopilot !== undefined;
   const cutoff = new Date(now.getTime() - flags.proposalMaxAgeDays * DAY_MS).toISOString();
   const rows = await q.query<Row>(
     `SELECT id, conversation_id, turn_id, kind, subject_table, subject_id, amount_cents, direction,
@@ -330,7 +419,8 @@ async function gate(
             money_action_id, trace_id, (created_at < CAST($2 AS timestamptz)) AS too_old,
             (CAST($3 AS timestamptz) IS NULL OR created_at < CAST($3 AS timestamptz)) AS before_auditor,
             to_char(auditor_checked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-              AS auditor_checked_at, engine_check
+              AS auditor_checked_at, engine_check,
+            to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at
        FROM proposals WHERE id = CAST($1 AS uuid) FOR UPDATE`,
     [proposalId, cutoff, auditorStartIso()],
   );
@@ -339,7 +429,9 @@ async function gate(
   const executor = executorFor(registry, p.kind);
   // A resume: every check passed when the row became approved, so none is run again here (see the
   // Executor contract); the executor reads its ledger row back.
+  // The autopilot never resumes: an approval whose outcome it did not see is a person's to carry on.
   if (p.status === "approved" || p.status === "executing") {
+    if (auto) return { result: refused("already_decided") };
     return executor ? { run: p, executor } : { result: refused("not_executable") };
   }
   if (p.status !== "proposed") return { result: refused("already_decided") };
@@ -369,6 +461,9 @@ async function gate(
   // The check never changes once stored, so the reason always refers to the mismatch the card
   // showed; an unchecked or unavailable one is not held (it is never Verified either).
   const mismatch = flags.verifyEngineMismatchBlocks && rows[0].engine_check === "mismatch";
+  // The autopilot never carries an override: a block or any mismatch is refused outright.
+  if (auto && block) return { result: refused("override_required") };
+  if (auto && rows[0].engine_check === "mismatch") return { result: refused("engine_override_required") };
   const reason = block || mismatch ? overrideReasonOf(opts.overrideReason) : null;
   if (block) {
     if (reason === null) return { result: refused("override_required") };
@@ -380,6 +475,12 @@ async function gate(
   const needsConfirm = p.flaggedInputId !== null || p.auditorVerdict !== "pass";
   if (needsConfirm && !opts.confirmed) return { result: refused("needs_confirm") };
   if (!executor) return { result: refused("not_executable") };
+  let decision: DecisionRecord | null = null;
+  if (auto && opts.autopilot) {
+    const checked = await autopilotDecision(q, session, p, rows[0], opts.autopilot, now);
+    if ("result" in checked) return checked;
+    decision = checked.record;
+  }
   // The executor's own early refusal, before anything is approved (see Precheck).
   if (executor.precheck) {
     const stop = await executor.precheck(q, p, now, { session, opts });
@@ -396,6 +497,21 @@ async function gate(
   // than the approved ones.
   const nowIso = now.toISOString();
   const approvedEdits = EDITS_KINDS.has(p.kind) ? JSON.stringify(opts.edits ?? {}) : null;
+  // The autopilot's approval: one fixed statement that stores its decision with it, only on a row
+  // still waiting with no decision, unflagged, passed by the auditor and matched by the engine.
+  if (decision !== null) {
+    const moved = await q.execute(
+      `UPDATE proposals
+          SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+              updated_at = CAST($3 AS timestamptz), autopilot_decision = CAST($4 AS jsonb),
+              approved_edits = CAST($5 AS jsonb)
+        WHERE id = CAST($1 AS uuid) AND status = 'proposed' AND autopilot_decision IS NULL
+          AND flagged_input_id IS NULL AND auditor_verdict = 'pass' AND engine_check = 'matched'`,
+      [p.id, session.sub, nowIso, JSON.stringify(decision), approvedEdits],
+    );
+    if (moved !== 1) return { result: refused("already_decided") };
+    return { run: { ...p, status: "approved" }, executor };
+  }
   const params = reason === null ? [p.id, session.sub, nowIso] : [p.id, session.sub, nowIso, reason];
   const approved = await q.execute(
     block && mismatch

@@ -79,6 +79,7 @@ const RELEASED_ON = [
   "escrowRelease.enabled",
   "escrowRelease.armed",
   "agentFocusEnabled",
+  "autopilot.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -94,6 +95,8 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
+  // The autopilot approves with no click: the owner arms it in its own release PR.
+  "autopilot.armed",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -311,9 +314,15 @@ describe("flags", () => {
     }
     // Local mode can never turn on a switch that stays off: none is on the list that turns one on.
     for (const name of KEPT_OFF) expect(LOCAL_OVERRIDABLE as readonly string[], name).not.toContain(name);
-    // The only kept-off switches local mode may turn off are the four armed money switches listed
-    // ahead of their own arming: exactly those of them still kept off, and nothing else.
-    const armedAhead: readonly string[] = ["moneyCodes.armed", "factoring.armed", "escrowRelease.armed", "deskLoop.armed"];
+    // The only kept-off switches local mode may turn off are the armed switches listed ahead of
+    // their own arming: exactly those of them still kept off, and nothing else.
+    const armedAhead: readonly string[] = [
+      "moneyCodes.armed",
+      "factoring.armed",
+      "escrowRelease.armed",
+      "deskLoop.armed",
+      "autopilot.armed",
+    ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));
   });
@@ -399,6 +408,30 @@ describe("flags", () => {
     expect(flags.deskLoop.limits.sliceMs).toBeLessThan(25_000);
     expect(flags.deskLoop.limits.leaseMs).toBeGreaterThan(30_000);
     expect(flags.deskLoop.limits.wakeCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
+  });
+
+  it("ships the autopilot unarmed, on a fixed start date, with Auto only for the kinds that move no money out", () => {
+    expect(flags.autopilot).toEqual({
+      enabled: true,
+      armed: false,
+      startDate: "2026-10-31",
+      kinds: {
+        invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 },
+        card_match: { maxCents: 50_000, dayMaxCents: 300_000, dayMaxCount: 40 },
+        payment_reapply: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 },
+      },
+    });
+    expect(isLocalDate(flags.autopilot.startDate)).toBe(true);
+    for (const cap of Object.values(flags.autopilot.kinds)) {
+      for (const v of Object.values(cap)) expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+      // One item never exceeds the day, and never the staff login's own approval cap.
+      expect(cap.maxCents).toBeLessThanOrEqual(cap.dayMaxCents);
+      expect(cap.maxCents).toBeLessThanOrEqual(flags.approverRole.adminAboveCents);
+    }
+    // No payout kind is ever on Auto in this release.
+    expect(Object.keys(flags.autopilot.kinds)).not.toContain("advance_payout");
+    expect(Object.keys(flags.autopilot.kinds)).not.toContain("money_code");
+    expect(Object.keys(flags.autopilot.kinds)).not.toContain("settlement_approve");
   });
 
   it("caps dock clips at the header reader's limits and keeps their model calls small", () => {

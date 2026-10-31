@@ -30,7 +30,11 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      delete from, go with their drivers through the foreign keys' cascades, and the plan's log is
 //      written again);
 //   5. the read-back: every seeded table equals the plan, every cleared table is empty, and the
-//      hero's open-week net is the worked example.
+//      hero's open-week net is the worked example;
+//   6. the autopilot paused for 30 minutes (paused_by demo_reset), so it approves nothing on the
+//      fresh rows while a person looks them over; the desk writes "skipped reset_pause" for what it
+//      meets meanwhile. A pause a person set with no end stays as it is, and a longer one is kept.
+//      The owner's autopilot rules are kept; each proposal's autopilot decision goes with it.
 // Any failure rolls the whole transaction back, so a carrier is either reset or left as it was.
 // The seed (npm run seed) splits the same work across two logins and three transactions; here
 // one function call replaces its admin half, so nothing needs to survive a half-done run.
@@ -114,6 +118,12 @@ export const DEMO_RESET_KEPT = {
     "the desk loop's insert-only log, kept so the events it handled survive a reset; its subject ids " +
     "have no foreign key, so it names nothing the reset deletes, and a day's sweep whose run the " +
     "reset deletes is found again as that day's next go (src/lib/desk/discover.ts)",
+  autopilot_rules:
+    "the owner's Off, Ask me or Auto rule and limits per action kind (0070); it names only the " +
+    "carrier, and the owner's choices survive a reset",
+  autopilot_state:
+    "the carrier's Pause autopilot switch (0070); it names only the carrier, and the reset itself " +
+    "sets a 30 minute pause on it",
   demo_sessions:
     "each demo visitor's sign-in with its spend and turn counts (0043); it names only the carrier, " +
     "the app login cannot delete it, and a reset must not hand a visitor a fresh budget",
@@ -353,6 +363,16 @@ async function clearAsOwner(q: Queryable): Promise<Record<ClearedTable | "advanc
   return out;
 }
 
+// Step 6: pause the autopilot for 30 minutes from the transaction's own time. A pause with no end
+// (a person's) is left alone; a timed pause ending later keeps its end.
+const RESET_PAUSE_SQL = `INSERT INTO autopilot_state (tenant_id, paused_at, paused_by, paused_until, updated_at)
+VALUES (current_tenant_id(), now(), 'demo_reset', now() + interval '30 minutes', now())
+ON CONFLICT (tenant_id) DO UPDATE
+  SET paused_at = EXCLUDED.paused_at, paused_by = EXCLUDED.paused_by,
+      paused_until = greatest(EXCLUDED.paused_until, autopilot_state.paused_until),
+      updated_at = EXCLUDED.updated_at
+  WHERE NOT (autopilot_state.paused_at IS NOT NULL AND autopilot_state.paused_until IS NULL)`;
+
 // The hero's open-week net, read back and settled by the engine; null for a carrier with no hero.
 async function heroNet(q: Queryable, plan: CarrierPlan): Promise<number | null> {
   if (!plan.carrier.heroCode) return null;
@@ -395,6 +415,7 @@ export async function resetDemoInTransaction(q: Queryable, plan: CarrierPlan): P
     if (heroNetCents !== null && heroNetCents !== HERO_OPEN_WEEK.netCents) {
       throw new DemoResetFailed("the hero's open-week net read back is not the worked example");
     }
+    await q.execute(RESET_PAUSE_SQL, []);
     return { slug: plan.carrier.slug, before, cleared, replaced, after, heroNetCents };
   } catch (err) {
     if (err instanceof DbError || err instanceof DemoResetRefused || err instanceof DemoResetFailed) {

@@ -3,6 +3,7 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { getDb, type TenantDb } from "../db";
 import { runAudit } from "../agent/auditor/run";
+import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
 import { draftCollections } from "../collections/draft";
 import { handOffMessage, sortMessage } from "../inbound/pipeline";
@@ -254,6 +255,46 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     },
   };
 
+  // A proposal the auditor passed and the engine matched, of a kind set to Auto: the autopilot's
+  // look. The policy decides auto, ask or off in code (never the model); auto goes through the same
+  // approval gate a person's press does, as the carrier's autopilot login, and the kind's executor
+  // runs. Ask or off is stored and the proposal waits for a person. A pause writes a skipped line
+  // (the proposal stays for a person). A proposal already decided is never approved again: an
+  // approval that did not finish is reported as an unknown outcome for a person, not retried.
+  const autopilot: Handler = {
+    switchOn: () => flags.autopilot.enabled === true && flags.autopilot.armed === true,
+    needsMs: 20_000,
+    async run(session, event, ctx) {
+      const id = event.subjectId;
+      if (!id) return failed("bad_request");
+      const r = await runAutopilot(session.tenantId, id, { db: db(), clock: ctx.clock });
+      if (!r.ok) return failed(r.category);
+      const o = r.result;
+      switch (o.outcome) {
+        case "approved":
+          if (o.status === "done") return done({ found: 1, category: "executed" });
+          return failed(o.status === "failed" ? "executor_failed" : "outcome_unknown");
+        case "decided":
+          return done({ found: 0, category: o.mode === "off" ? "kept_off" : o.reason });
+        case "held":
+          if (o.reason === "switched_off" || o.reason === "unarmed") return skipped(SWITCHED_OFF);
+          return skipped(o.reason);
+        case "executor_refused":
+          // The gate expired a proposal too old to approve: nothing ran.
+          if (o.category === "expired") return skipped("expired");
+          return failed(o.category);
+        case "retry":
+          return running({ category: o.category });
+        case "earlier":
+          if (!o.mine) return skipped(o.asked ? "already_asked" : "decided_by_person");
+          if (o.status === "expired") return skipped("expired");
+          if (o.status === "done") return done({ found: 0, category: "executed" });
+          if (o.status === "failed") return failed("executor_failed");
+          return failed("outcome_unknown");
+      }
+    },
+  };
+
   return {
     card_transaction: cardTransaction,
     inbound_message: inboundMessage,
@@ -263,5 +304,6 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     sweep,
     collections,
     cash_check: cashCheck,
+    autopilot,
   };
 }

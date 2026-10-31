@@ -267,6 +267,9 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "call_turns",
     // A terminated driver's escrow release (0069): no seed, an approval writes it.
     "escrow_releases",
+    // A person pausing the autopilot (0070): no seed, the pause switch writes it. Its rules are
+    // seeded for both carriers.
+    "autopilot_state",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -527,6 +530,11 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
              status)
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 2500, 2500, 'failed')`,
           [randomUUID(), c.driver, proposal],
+        );
+        // A person pausing the autopilot until they resume it, as the pause switch writes it (0070).
+        await q.execute(
+          `INSERT INTO autopilot_state (tenant_id, paused_at, paused_by, paused_until, updated_at)
+           VALUES (current_tenant_id(), now(), 'invariants-test', NULL, now())`,
         );
         // A person arming the driver for advances, and the id the carrier's TMS knows them by (0027).
         await q.execute(

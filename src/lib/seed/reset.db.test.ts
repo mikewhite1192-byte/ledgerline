@@ -124,7 +124,22 @@ async function printOf(
 const pick = <T,>(all: Record<string, T>, names: Iterable<string>) =>
   Object.fromEntries([...names].filter((n) => Object.hasOwn(all, n)).map((n) => [n, all[n]]));
 
-const KEPT_WITH_TENANT = Object.keys(DEMO_RESET_KEPT).filter((n) => !n.includes("."));
+// The pause is kept as a table but the reset writes its own 30 minute pause on it, read on its own.
+const KEPT_WITH_TENANT = Object.keys(DEMO_RESET_KEPT).filter((n) => !n.includes(".") && n !== "autopilot_state");
+
+type PauseRow = { paused_by: string | null; until_min: number | null; at_now: boolean };
+// The carrier's pause, read by the admin: who set it, how many minutes it holds for, and whether
+// it was set in the reset's own transaction time (as the read's now() differs, within a minute).
+const pauseOf = async (tenantId: string): Promise<PauseRow[]> =>
+  admin.withoutTenant((q) =>
+    q.query<PauseRow>(
+      `SELECT paused_by,
+              CAST(round(extract(epoch FROM paused_until - paused_at) / 60) AS integer) AS until_min,
+              (paused_at > now() - interval '1 minute' AND paused_at <= now()) AS at_now
+         FROM autopilot_state WHERE tenant_id = CAST($1 AS uuid)`,
+      [tenantId],
+    ),
+  );
 
 const clearDirectly = (tenantId: string | null) =>
   tenantId === null
@@ -818,6 +833,9 @@ describe("the demo reset", () => {
         ),
       );
       expect(Number(named.n)).toBe(0);
+      // The autopilot is paused for 30 minutes by the reset itself, so nothing is approved on the
+      // fresh rows meanwhile.
+      expect(await pauseOf(A)).toEqual([{ paused_by: "demo_reset", until_min: 30, at_now: true }]);
       // Nothing of B's, of the other carrier's, or of the shared tables moved.
       expect(await printOf(B)).toEqual(before.b);
       expect(await printOf(C)).toEqual(before.c);
@@ -826,6 +844,14 @@ describe("the demo reset", () => {
   });
 
   it("changes nothing on a second run: the same rows, and the clear finds nothing", async () => {
+    // A person's pause with no end is never shortened by a reset.
+    await admin.withoutTenant((q) =>
+      q.execute(
+        `UPDATE autopilot_state SET paused_at = now() - interval '1 hour', paused_by = 'sub-owner', paused_until = NULL
+          WHERE tenant_id = CAST($1 AS uuid)`,
+        [A],
+      ),
+    );
     const before = await rowsOf(A);
     const b = await printOf(B);
     const report = await resetDemoTenant(app, A, planA);
@@ -837,6 +863,7 @@ describe("the demo reset", () => {
     expect(report.heroNetCents).toBe(HERO_OPEN_WEEK.netCents);
     expect(await rowsOf(A)).toEqual(before);
     expect(await rowsOf(A)).toEqual(sorted(planA.rows));
+    expect(await pauseOf(A)).toEqual([{ paused_by: "sub-owner", until_min: null, at_now: false }]);
     expect(await printOf(B)).toEqual(b);
   });
 
