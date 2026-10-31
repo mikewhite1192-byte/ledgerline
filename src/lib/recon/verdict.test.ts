@@ -26,15 +26,25 @@ function run(counts: Record<string, unknown>, over: Partial<RunView> = {}): RunV
 
 describe("the card statement's verdict", () => {
   it("is verified with the statement's total when every line was compared and none differs", () => {
-    const r = run({ statement: 38, statementCents: 421_050, statementBreaks: 0, statementOpen: {} });
-    expect(statementVerdict(r)).toEqual({ kind: "verified", cents: 421_050, lines: 38 });
+    const r = run({ statement: 38, statementCents: 421_050, statementBreaks: 0, statementOpen: {}, statementClosed: 0 });
+    expect(statementVerdict(r)).toEqual({ kind: "verified", cents: 421_050, lines: 38, closed: 0 });
     expect(verdictLine(r)).toBe("Verified, go pay $4,210.50: all 38 card lines match our records.");
   });
 
   it("says the one line when the statement has one", () => {
-    expect(verdictWords({ kind: "verified", cents: 21_240, lines: 1 })).toBe(
+    expect(verdictWords({ kind: "verified", cents: 21_240, lines: 1, closed: 0 })).toBe(
       "Verified, go pay $212.40: the one card line matches our records.",
     );
+  });
+
+  it("never says the lines match when a person closed a difference", () => {
+    const r = run({ statement: 38, statementCents: 421_050, statementOpen: {}, statementClosed: 2 });
+    expect(statementVerdict(r)).toEqual({ kind: "verified", cents: 421_050, lines: 38, closed: 2 });
+    expect(verdictLine(r)).toBe("Verified, go pay $4,210.50: 38 card lines checked, 2 differences closed by a person.");
+    expect(verdictWords({ kind: "verified", cents: 21_240, lines: 1, closed: 1 })).toBe(
+      "Verified, go pay $212.40: 1 card line checked, 1 difference closed by a person.",
+    );
+    expect(verdictLine(r)).not.toMatch(/match/);
   });
 
   it("holds with the count of each open category, in a fixed order and fixed words", () => {
@@ -42,6 +52,7 @@ describe("the card statement's verdict", () => {
       statement: 38,
       statementCents: 421_050,
       statementOpen: { card_unknown: 1, fuel_amount_differs: 2, load_not_in_ledger: 1, purchase_not_recorded: 0 },
+      statementClosed: 3,
     });
     expect(statementVerdict(r)).toEqual({
       kind: "hold",
@@ -60,11 +71,14 @@ describe("the card statement's verdict", () => {
 
   it("holds when not every line was compared, with or without a difference", () => {
     const cut = [{ system: "fuel_card_sim", category: "too_many_rows" }];
-    const clean = run({ statement: 2_000, statementCents: 9_000_000, statementOpen: {} }, { unchecked: cut });
+    const clean = run(
+      { statement: 2_000, statementCents: 9_000_000, statementOpen: {}, statementClosed: 0 },
+      { unchecked: cut },
+    );
     expect(statementVerdict(clean)).toEqual({ kind: "hold", breaks: 0, byCategory: [], cut: true });
     expect(verdictLine(clean)).toBe("Hold: not every card line was compared. Do not pay the statement yet.");
     const many = run(
-      { statement: 900, statementCents: 9_000_000, statementOpen: { purchase_not_recorded: 1 } },
+      { statement: 900, statementCents: 9_000_000, statementOpen: { purchase_not_recorded: 1 }, statementClosed: 0 },
       { unchecked: [{ system: "fuel_card_sim", category: "too_many_differences" }] },
     );
     expect(verdictLine(many)).toBe(
@@ -72,39 +86,48 @@ describe("the card statement's verdict", () => {
     );
     // A payment system the check could not read is not a statement line left out.
     const other = run(
-      { statement: 3, statementCents: 30_000, statementOpen: {} },
+      { statement: 3, statementCents: 30_000, statementOpen: {}, statementClosed: 0 },
       { unchecked: [{ system: "stripe_test", category: "not_connected" }] },
     );
     expect(statementVerdict(other)?.kind).toBe("verified");
   });
 
   it("is empty, with nothing to pay, when the window holds no card line", () => {
-    const r = run({ statement: 0, statementCents: 0, statementOpen: {} });
+    const r = run({ statement: 0, statementCents: 0, statementOpen: {}, statementClosed: 0 });
     expect(statementVerdict(r)).toEqual({ kind: "empty" });
     expect(verdictLine(r)).toBe("No card lines on the statement for this window. Nothing to pay.");
   });
 
   it("gives no verdict while running, after a failure, or when the counts do not say", () => {
-    const counts = { statement: 3, statementCents: 30_000, statementOpen: {} };
+    const counts = { statement: 3, statementCents: 30_000, statementOpen: {}, statementClosed: 0 };
     expect(statementVerdict(run(counts, { status: "running" }))).toBeNull();
     expect(statementVerdict(run(counts, { status: "failed" }))).toBeNull();
     // A check stored before the verdict existed: unknown is not zero.
     expect(statementVerdict(run({ statement: 3, statementBreaks: 0 }))).toBeNull();
     expect(statementVerdict(run({ statement: 3, statementCents: 30_000 }))).toBeNull();
+    expect(statementVerdict(run({ statement: 3, statementCents: 30_000, statementOpen: {} }))).toBeNull();
+    expect(statementVerdict(run({ ...counts, statementClosed: 1.5 }))).toBeNull();
+    expect(statementVerdict(run({ ...counts, statementClosed: -1 }))).toBeNull();
+    expect(statementVerdict(run({ ...counts, statementClosed: "2" }))).toBeNull();
     expect(statementVerdict(run({ ...counts, statementCents: 12.5 }))).toBeNull();
     expect(statementVerdict(run({ ...counts, statementCents: -1 }))).toBeNull();
     expect(statementVerdict(run({ ...counts, statementOpen: { card_unknown: 1.5 } }))).toBeNull();
     expect(statementVerdict(run({ ...counts, statementOpen: { not_confirmed: 1 } }))).toBeNull();
     expect(statementVerdict(run({ ...counts, statementOpen: [] }))).toBeNull();
     // Lines with no cents, or cents with no lines, do not add up.
-    expect(statementVerdict(run({ statement: 3, statementCents: 2, statementOpen: {} }))).toBeNull();
-    expect(statementVerdict(run({ statement: 0, statementCents: 100, statementOpen: {} }))).toBeNull();
+    expect(statementVerdict(run({ statement: 3, statementCents: 2, statementOpen: {}, statementClosed: 0 }))).toBeNull();
+    expect(statementVerdict(run({ statement: 0, statementCents: 100, statementOpen: {}, statementClosed: 0 }))).toBeNull();
     expect(verdictLine(null)).toBeNull();
     expect(verdictWords(null)).toBeNull();
   });
 
   it("reads the same verdict from the same stored check every time", () => {
-    const stored = JSON.stringify({ statement: 5, statementCents: 50_000, statementOpen: { card_unknown: 1 } });
+    const stored = JSON.stringify({
+      statement: 5,
+      statementCents: 50_000,
+      statementOpen: { card_unknown: 1 },
+      statementClosed: 0,
+    });
     const first = statementVerdict(run(JSON.parse(stored)));
     const again = statementVerdict(run(JSON.parse(stored)));
     expect(again).toEqual(first);
@@ -113,7 +136,8 @@ describe("the card statement's verdict", () => {
 
   it("writes no dash characters", () => {
     const words = [
-      verdictWords({ kind: "verified", cents: 100, lines: 1 }),
+      verdictWords({ kind: "verified", cents: 100, lines: 1, closed: 0 }),
+      verdictWords({ kind: "verified", cents: 100, lines: 1, closed: 1 }),
       verdictWords({ kind: "hold", breaks: 1, byCategory: [{ category: "card_unknown", count: 1 }], cut: true }),
       verdictWords({ kind: "empty" }),
     ].join(" ");

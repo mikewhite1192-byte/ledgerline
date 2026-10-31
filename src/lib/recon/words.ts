@@ -135,12 +135,19 @@ export function fixedSentence(input: {
 const count = (n: number, one: string, many: string) => `${n.toLocaleString("en-US")} ${n === 1 ? one : many}`;
 
 // The card statement's verdict as one line, from code: "Verified, go pay $4,210.50: all 38 card
-// lines match our records." or "Hold: 2 breaks on the statement: Fuel amount differs (1), Card not
-// on file (1). Do not pay it yet." Categories in fixed words only. Null when there is no verdict.
+// lines match our records." (or, when a person dismissed differences, "38 card lines checked, 2
+// differences closed by a person.") or "Hold: 2 breaks on the statement: Fuel amount differs (1),
+// Card not on file (1). Do not pay it yet." Categories in fixed words only. Null when there is no
+// verdict.
 export function verdictWords(v: StatementVerdict | null): string | null {
   if (!v) return null;
   if (v.kind === "empty") return "No card lines on the statement for this window. Nothing to pay.";
   if (v.kind === "verified") {
+    if (v.closed > 0) {
+      const lines = count(v.lines, "card line", "card lines");
+      const closed = count(v.closed, "difference", "differences");
+      return `Verified, go pay ${money(v.cents)}: ${lines} checked, ${closed} closed by a person.`;
+    }
     const all = v.lines === 1 ? "the one card line matches" : `all ${count(v.lines, "card line", "card lines")} match`;
     return `Verified, go pay ${money(v.cents)}: ${all} our records.`;
   }

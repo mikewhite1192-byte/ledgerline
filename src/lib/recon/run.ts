@@ -136,10 +136,11 @@ type Counts = {
   needsYou: number;
   notConfirmed: number;
   readBySystem: Record<string, number>;
-  // The statement's total and its open differences by category, set at the start and at the end;
-  // a run without them has no verdict.
+  // The statement's total, its open differences by category and the ones a person dismissed, set
+  // at the start and at the end; a run without them has no verdict.
   statementCents?: number;
   statementOpen?: Partial<Record<BreakCategory, number>>;
+  statementClosed?: number;
 };
 
 const emptyCounts = (): Counts => ({
@@ -218,6 +219,9 @@ function countsOf(text: unknown): Counts {
   }
   const open = statementOpenOf(o.statementOpen);
   if (open) out.statementOpen = open;
+  if (typeof o.statementClosed === "number" && Number.isSafeInteger(o.statementClosed) && o.statementClosed >= 0) {
+    out.statementClosed = o.statementClosed;
+  }
   return out;
 }
 
@@ -938,25 +942,34 @@ async function finish(ctx: Ctx): Promise<void> {
     );
     await retireEngineProposalsExcept(q, "card_match", new Set(keep.map((r) => r.id)), ctx.session, ctx.clock());
     const open = await countOpenBreaks(q);
-    // The statement's differences still open when the check ends, by category, for the verdict.
-    const byCategory = await q.query<{ category: string; n: number | string }>(
-      `SELECT b.category, count(*) AS n
+    // The statement's differences when the check ends, for the verdict: the open ones by category,
+    // and how many a person dismissed.
+    const byCategory = await q.query<{ category: string; status: string; n: number | string }>(
+      `SELECT b.category, b.status, count(*) AS n
          FROM card_recon_breaks b
          JOIN card_recon_runs r ON r.tenant_id = b.tenant_id AND r.id = CAST($1 AS uuid)
          JOIN card_transactions t ON t.tenant_id = b.tenant_id AND t.id = b.card_transaction_id
-        WHERE b.tenant_id = current_tenant_id() AND b.status = 'open'
+        WHERE b.tenant_id = current_tenant_id() AND b.status IN ('open', 'dismissed')
           AND b.category IN (${sqlList(STATEMENT_CATEGORIES)})
           AND t.posted_on BETWEEN r.window_from AND r.window_to
-        GROUP BY b.category`,
+        GROUP BY b.category, b.status`,
       [ctx.runId],
     );
     const statementOpen: Partial<Record<BreakCategory, number>> = {};
+    let statementClosed = 0;
     for (const row of byCategory) {
       const n = Number(row.n);
       if (!Number.isSafeInteger(n) || n < 0) throw new Error("not a whole count");
-      statementOpen[row.category as BreakCategory] = n;
+      if (row.status === "open") statementOpen[row.category as BreakCategory] = n;
+      else statementClosed += n;
     }
-    const counts = { ...run.counts, needsYou: open.needsYou, notConfirmed: open.notConfirmed, statementOpen };
+    const counts = {
+      ...run.counts,
+      needsYou: open.needsYou,
+      notConfirmed: open.notConfirmed,
+      statementOpen,
+      statementClosed,
+    };
     await q.execute(
       `UPDATE card_recon_runs
           SET status = 'done', phase = 'done', todo = '[]', counts = CAST($2 AS jsonb),
@@ -970,12 +983,13 @@ async function finish(ctx: Ctx): Promise<void> {
 // ---- Verdict ----
 
 // Whether the card statement can be paid, from a finished check's stored counts, by code alone:
-// verified (every line compared and none differs: pay the statement's total, in cents), hold (a
-// difference is open, or not every line was compared), or empty (no line in the window). Null when
+// verified (every line compared and none open: pay the statement's total, in cents, with how many
+// differences a person dismissed), hold (a difference is open, or not every line was compared), or
+// empty (no line in the window). Null when
 // the check is not done or its counts do not say (unknown is not zero). Nothing here pays: a
 // person pays the statement outside the app.
 export type StatementVerdict =
-  | { kind: "verified"; cents: number; lines: number }
+  | { kind: "verified"; cents: number; lines: number; closed: number }
   | { kind: "hold"; breaks: number; byCategory: { category: BreakCategory; count: number }[]; cut: boolean }
   | { kind: "empty" };
 
@@ -987,6 +1001,8 @@ export function statementVerdict(run: Pick<RunView, "status" | "counts" | "unche
   const cents = run.counts.statementCents;
   if (typeof lines !== "number" || !Number.isSafeInteger(lines) || lines < 0) return null;
   if (typeof cents !== "number" || !Number.isSafeInteger(cents) || cents < 0) return null;
+  const closed = run.counts.statementClosed;
+  if (typeof closed !== "number" || !Number.isSafeInteger(closed) || closed < 0) return null;
   const open = statementOpenOf(run.counts.statementOpen);
   if (!open) return null;
   const byCategory = STATEMENT_CATEGORIES.filter((c) => (open[c] ?? 0) > 0).map((c) => ({
@@ -1005,7 +1021,7 @@ export function statementVerdict(run: Pick<RunView, "status" | "counts" | "unche
   if (lines === 0) return cents === 0 ? { kind: "empty" } : null;
   // Every statement row is more than zero cents.
   if (cents < lines) return null;
-  return { kind: "verified", cents, lines };
+  return { kind: "verified", cents, lines, closed };
 }
 
 // ---- Dismiss ----

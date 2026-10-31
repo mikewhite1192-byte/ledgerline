@@ -842,13 +842,11 @@ describe("which payment records a check reads", () => {
 });
 
 describe("the statement's verdict", () => {
-  async function statementCents(from: string, to: string): Promise<number> {
-    return count(
-      `SELECT coalesce(sum(amount_cents), 0) AS n FROM card_transactions
-        WHERE tenant_id = current_tenant_id() AND posted_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)`,
-      [from, to],
-    );
-  }
+  const IN_WINDOW = `FROM card_transactions
+    WHERE tenant_id = current_tenant_id() AND posted_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)`;
+  const statementCents = (from: string, to: string) =>
+    count(`SELECT coalesce(sum(amount_cents), 0) AS n ${IN_WINDOW}`, [from, to]);
+  const statementLines = (from: string, to: string) => count(`SELECT count(*) AS n ${IN_WINDOW}`, [from, to]);
 
   it("holds on the planted differences by category, then is verified at the statement's total once each is closed", async () => {
     const first = await runToEnd();
@@ -867,13 +865,17 @@ describe("the statement's verdict", () => {
     const total = await statementCents(first.windowFrom, first.windowTo);
     expect(total).toBeGreaterThan(0);
     expect(first.counts.statementCents).toBe(total);
+    expect(first.counts.statementClosed).toBe(0);
 
     for (const b of (await breaks()).filter((x) => x.status === "open" && x.card_transaction_id !== null)) {
       expect(await dismissBreak(SESSION, b.id, "explained", { db: app, clock })).toEqual({ ok: true });
     }
     const verified = await runToEnd();
-    const lines = plan.rows.card_transactions.length;
-    expect(statementVerdict(verified)).toEqual({ kind: "verified", cents: total, lines });
+    const lines = await statementLines(verified.windowFrom, verified.windowTo);
+    expect(lines).toBeGreaterThan(0);
+    // Closed by a person, not matched: the line never says the card lines match.
+    expect(statementVerdict(verified)).toEqual({ kind: "verified", cents: total, lines, closed: 4 });
+    expect(verdictLine(verified)).toMatch(/ checked, 4 differences closed by a person\.$/);
 
     // The same window checked again: the same verdict, and no new difference.
     const before = await breaks();
