@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeCount, greetingLine, moreWaiting, TRUST_LINE, YES_FAILED, yesConfirmation, yesRefused } from "./words";
+import { badgeCount, greetingLine, moreWaiting, TRUST_LINE, YES_SETTLED, YES_UNKNOWN, yesConfirmation, yesRefused } from "./words";
 
 describe("the agent card's words", () => {
   it("greets the carrier by name, and anyone else plainly", () => {
@@ -29,8 +29,12 @@ describe("the agent card's words", () => {
     expect(yesConfirmation("advance_payout", undefined)).toBe("Approved. It is finishing now.");
     expect(yesRefused("needs_confirm", "staff")).toBe("This one needs a closer look first. Open it from Needs you on Home.");
     expect(yesRefused("judge", "staff only")).toBe("staff only");
-    expect(yesRefused("connection to db-host refused", "staff")).toBe(YES_FAILED);
-    expect(yesRefused("toString", "staff")).toBe(YES_FAILED);
-    expect(yesRefused(undefined, "staff")).toBe(YES_FAILED);
+    // Not listed: it may come after the approval is recorded, so the outcome is unknown.
+    expect(yesRefused("connection to db-host refused", "staff")).toBe(YES_UNKNOWN);
+    expect(yesRefused("toString", "staff")).toBe(YES_UNKNOWN);
+    expect(yesRefused(undefined, "staff")).toBe(YES_UNKNOWN);
+    expect(yesRefused("pay_policy_refused", "staff")).toBe(YES_UNKNOWN);
+    expect(yesRefused("stale", "staff")).not.toMatch(/nothing/i);
+    expect([...YES_SETTLED].sort()).toEqual(["already_decided", "expired", "not_found"]);
   });
 });

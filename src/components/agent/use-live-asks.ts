@@ -16,7 +16,7 @@ import {
   type LiveAsk,
   type PollEvent,
 } from "./asks";
-import { STEP_FAILED, YES_UNKNOWN, yesConfirmation, yesRefused } from "./words";
+import { STEP_FAILED, YES_SETTLED, YES_UNKNOWN, yesConfirmation, yesRefused } from "./words";
 
 // The launcher's side of the agent's questions: the poll of GET /api/agent/asks on the schedule in
 // ./asks.ts, the three answers (Yes through the usual approve route, Not now, Got it), and the
@@ -197,7 +197,11 @@ export function useLiveAsks({
             // A server error may have come after the approval went through.
             setState(ask.id, { note: YES_UNKNOWN });
           } else {
-            setState(ask.id, { note: yesRefused(await errorOf(res), STAFF_ONLY_NOTE) });
+            const category = await errorOf(res);
+            const line = yesRefused(category, STAFF_ONLY_NOTE);
+            // Decided, expired or gone somewhere else: no longer live, so it goes like a Not now on a 404.
+            if (typeof category === "string" && YES_SETTLED.has(category)) answered(ask.id, line);
+            else setState(ask.id, { note: line });
           }
         } catch {
           setState(ask.id, { note: YES_UNKNOWN });

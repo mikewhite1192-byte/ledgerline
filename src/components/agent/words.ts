@@ -47,7 +47,8 @@ const YES_REFUSED: Readonly<Record<string, string>> = {
   needs_confirm: "This one needs a closer look first. Open it from Needs you on Home.",
   override_required: "This one needs a closer look first. Open it from Needs you on Home.",
   engine_override_required: "This one needs a closer look first. Open it from Needs you on Home.",
-  stale: "Something changed since this showed, so nothing was done.",
+  // Stale can also come from the step that runs after the approval, so this never says nothing was done.
+  stale: "Something changed since this showed. Check Needs you before trying again.",
   auditor_required: "This waits for the second check. Try again in a minute.",
   not_auditable: "This was made before the second check started. Open it from Needs you on Home.",
   already_decided: "This was already decided.",
@@ -57,14 +58,18 @@ const YES_REFUSED: Readonly<Record<string, string>> = {
   unauthenticated: "Your sign-in ended. Sign in again.",
 };
 
-export const YES_FAILED = "That did not go through. Nothing changed.";
 // The request may have reached the server before the reply was lost.
 export const YES_UNKNOWN = "We could not tell if that went through. Check Needs you before trying again.";
 export const STEP_FAILED = "That did not go through. Try again.";
 
+// A category not listed may come from the step that runs after the approval is recorded, so its
+// outcome is unknown, never "nothing changed".
 export function yesRefused(category: unknown, staffOnly: string): string {
   if (category === "judge") return staffOnly;
   return typeof category === "string" && Object.prototype.hasOwnProperty.call(YES_REFUSED, category)
     ? YES_REFUSED[category]
-    : YES_FAILED;
+    : YES_UNKNOWN;
 }
+
+// Yes found the question already settled elsewhere: the bubble lets it go with its line.
+export const YES_SETTLED: ReadonlySet<string> = new Set(["not_found", "already_decided", "expired"]);

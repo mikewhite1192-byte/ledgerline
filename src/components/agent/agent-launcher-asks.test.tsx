@@ -305,8 +305,25 @@ describe("the agent's questions on the launcher", () => {
     });
     page();
     fireEvent.click(within(await findBubble()).getByRole("button", { name: "Yes" }));
-    await within(bubble()).findByText("Something changed since this showed, so nothing was done.");
+    await within(bubble()).findByText("Something changed since this showed. Check Needs you before trying again.");
     expect(screen.queryByText(YES_UNKNOWN)).toBeNull();
+  });
+
+  it.each([
+    ["already_decided", "This was already decided."],
+    ["expired", "This expired. Nothing changed."],
+    ["not_found", "This is no longer waiting."],
+  ])("lets the question go when Yes finds it %s somewhere else", async (category, line) => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({
+      reads: [showing([ADVANCE])],
+      writes: { [`/api/proposals/${ADVANCE.proposalId}/approve`]: { status: category === "not_found" ? 404 : 409, body: { error: category } } },
+    });
+    page();
+    fireEvent.click(within(await findBubble()).getByRole("button", { name: "Yes" }));
+    await waitFor(() => expect(within(bubble()).getByRole("status").textContent).toBe(line));
+    expect(within(bubble()).queryByRole("button", { name: "Yes" })).toBeNull();
+    expect(screen.queryByTestId("ask-badge")).toBeNull();
   });
 
   it("counts only the questions that can still show in the bubble, not the ones closed here", async () => {
