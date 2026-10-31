@@ -102,6 +102,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-10-31): a finalized delivered load gets its invoice card
   // drafted, after the dispatch recheck. A person still approves it.
   "tmsFinalizeInvoice.enabled",
+  // Released by the owner (D-071, 2026-10-31): an advance whose numbers no longer hold at approval
+  // parks with its reason for a person instead of failing. Parking moves no money.
+  "advanceParking.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -117,8 +120,6 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // Parked advances: off until the owner's own one-line enable PR.
-  "advanceParking.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -340,8 +341,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardLoadRuling.enabled");
   });
 
-  it("ships parked advances off, with a start date, listed ahead of their release", () => {
-    expect(flags.advanceParking).toEqual({ enabled: false, startDate: "2026-11-02" });
+  it("releases parked advances, with a start date, off for the local demo run", () => {
+    expect(flags.advanceParking).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.advanceParking.startDate)).toBe(true);
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("advanceParking.enabled");
   });
