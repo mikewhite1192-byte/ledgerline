@@ -153,5 +153,9 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     get_proposal: { proposalId: "6a1f0c2e-9d3b-4c5a-8e7f-1b2c3d4e5f60" },
     set_checklist: { items: [{ text: "Read the driver's week", state: "doing" }, { text: "Check the pay" }] },
     remember_note: { subject: "driver", subjectId: hero.id, text: "Prefers a text before a call", sourceRefs: refs },
+    // The dispatch mirror tools: a seed plan has no dispatch feed, so each answers not_connected.
+    get_tms_load: { loadId: onRoad.id },
+    get_tms_events: { loadId: onRoad.id, limit: 10 },
+    get_tms_fleet: {},
   };
 }

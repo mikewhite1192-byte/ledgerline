@@ -34,6 +34,9 @@ export type AskFacts = {
   percent: number | null;
   // The stage a load move takes the load to (a word such as picked_up), when it names one.
   stage: string | null;
+  // For an advance drafted at pickup when the dispatch feed moved the load: the pickup's wall time
+  // in the carrier's zone ("9:20 AM"), read from the move itself.
+  dispatchPickup?: string | null;
 };
 
 // For a told line: the owner's own Auto limit for one item, in cents, when the decision read one.
@@ -83,6 +86,9 @@ const money = (cents: number): string => dollars(Number.isSafeInteger(cents) ? M
 const percentOf = (p: number | null): number | null =>
   p !== null && Number.isInteger(p) && p > 0 && p <= 100 ? p : null;
 
+const CLOCK = /^(1[0-2]|[1-9]):[0-5]\d (AM|PM)$/;
+const clockOr = (v: string | null | undefined): string | null => (typeof v === "string" && CLOCK.test(v) ? v : null);
+
 const stageWords = (stage: string | null): string | null =>
   stage !== null && WORD.test(stage) ? stage.replace(/_/g, " ") : null;
 
@@ -103,7 +109,13 @@ export function askWords(f: AskFacts): string {
   const amount = money(f.amountCents);
   const percent = percentOf(f.percent);
   switch (f.kind) {
-    case "advance_payout":
+    case "advance_payout": {
+      const pickup = clockOr(f.dispatchPickup);
+      if (pickup && f.driverName && f.loadNumber && percent !== null) {
+        return fit(
+          `Dispatch shows load ${f.loadNumber} picked up at ${pickup}. Should I send ${f.driverName} the ${percent}% advance, ${amount}?`,
+        );
+      }
       if (f.driverName && f.loadNumber && percent !== null) {
         return fit(
           `All paperwork is in for load ${f.loadNumber}. Should I send ${f.driverName} the ${percent}% advance, ${amount}?`,
@@ -111,6 +123,7 @@ export function askWords(f: AskFacts): string {
       }
       if (f.driverName) return fit(`Should I send ${f.driverName} an advance of ${amount}?`);
       break;
+    }
     case "invoice_post":
       if (f.loadNumber && f.customerName) {
         return fit(`Load ${f.loadNumber} is ready to bill. Should I post the ${amount} invoice to ${f.customerName}?`);

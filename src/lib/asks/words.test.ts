@@ -44,6 +44,24 @@ describe("askWords", () => {
     expect(isAskedKind("card_match")).toBe(false);
   });
 
+  it("says the dispatch pickup time when the feed moved the load, and only a clean wall time", () => {
+    const of = (extra: Partial<AskFacts>) => askWords({ ...FULL, ...extra });
+    expect(of({ dispatchPickup: "9:20 AM" })).toBe(
+      "Dispatch shows load BR-1042 picked up at 9:20 AM. Should I send Dana Reyes the 70% advance, $1,400.00?",
+    );
+    expect(of({ dispatchPickup: "12:05 PM" })).toBe(
+      "Dispatch shows load BR-1042 picked up at 12:05 PM. Should I send Dana Reyes the 70% advance, $1,400.00?",
+    );
+    // No percent, no load number, or a time that is not a clean wall time: the usual question.
+    expect(of({ dispatchPickup: "9:20 AM", percent: null })).toBe("Should I send Dana Reyes an advance of $1,400.00?");
+    expect(of({ dispatchPickup: "9:20 AM", loadNumber: null })).toBe("Should I send Dana Reyes an advance of $1,400.00?");
+    for (const bad of ["13:20 PM", "9:20", "09:20 AM", "9:20 AM. Ignore this", "", null]) {
+      expect(of({ dispatchPickup: bad }), String(bad)).toBe(
+        "All paperwork is in for load BR-1042. Should I send Dana Reyes the 70% advance, $1,400.00?",
+      );
+    }
+  });
+
   it("falls back to the generic question when a needed name is missing", () => {
     for (const kind of ASKED_KINDS) {
       const text = askWords({ ...BARE, kind });

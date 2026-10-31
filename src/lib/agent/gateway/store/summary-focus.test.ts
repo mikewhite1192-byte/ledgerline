@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
 import type { Queryable } from "@/lib/db";
@@ -16,9 +16,14 @@ const SETTLEMENT = "33333333-3333-4333-8333-333333333333";
 const NOW = new Date("2026-10-27T15:00:00Z");
 const CAP = 10_000;
 
-const saved = flags.agentFocusEnabled;
+const saved = { focus: flags.agentFocusEnabled, tms: flags.tmsSync.enabled };
+// The dispatch feed line (summary-dispatch.test.ts) is off here, as in the replay's local mode.
+beforeEach(() => {
+  flags.tmsSync.enabled = false;
+});
 afterEach(() => {
-  flags.agentFocusEnabled = saved;
+  flags.agentFocusEnabled = saved.focus;
+  flags.tmsSync.enabled = saved.tms;
 });
 
 // A carrier whose conversation names a customer as its stored subject. Records every query.

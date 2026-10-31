@@ -63,12 +63,17 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   list_escrow_releases_due: { tier: "read", roles: ["operator", "auditor"] },
   get_escrow_statement: { tier: "read", roles: ["operator", "auditor"] },
   propose_escrow_release: { tier: "propose", roles: ["operator"] },
+  get_tms_load: { tier: "read", roles: ["operator", "auditor"] },
+  get_tms_events: { tier: "read", roles: ["operator", "auditor"] },
+  get_tms_fleet: { tier: "read", roles: ["operator", "auditor"] },
 };
 
 // The tools behind the factoring switch: in the registry always, offered only while it is on.
 const FACTORING_TOOLS = ["get_factoring_packet", "get_factoring_requests", "propose_factoring"];
 // The escrow release tools, behind their own switch: the reads for both, the card for the operator.
 const ESCROW_TOOLS = ["list_escrow_releases_due", "get_escrow_statement", "propose_escrow_release"];
+// The dispatch mirror's reads, behind the mirror's own switch.
+const TMS_TOOLS = ["get_tms_load", "get_tms_events", "get_tms_fleet"];
 
 // The tools behind the detention switch: in the registry always, offered only while it is on.
 const DETENTION_TOOLS = ["find_unbilled_detention", "propose_detention_charge"];
@@ -118,6 +123,7 @@ beforeEach(() => {
   flags.groundedRatesEnabled = false;
   flags.quarterReviewEnabled = false;
   flags.escrowRelease.enabled = false;
+  flags.tmsSync.enabled = false;
 });
 
 afterEach(() => {
@@ -315,6 +321,35 @@ describe("tool registry", () => {
     flags.factoring.enabled = false;
     expect(toolsFor("operator")).toHaveLength(21);
     expect(toolsFor("auditor")).toHaveLength(12);
+  });
+
+  it("offers the dispatch mirror tools only while its switch is on, to the operator and the auditor, all deferred", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    for (const role of AGENT_ROLES) for (const n of TMS_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
+    flags.tmsSync.enabled = true;
+    for (const n of TMS_TOOLS) {
+      expect(names("operator"), n).toContain(n);
+      expect(names("auditor"), n).toContain(n);
+      expect(names("triage"), n).not.toContain(n);
+      expect(ALWAYS_LOADED, n).not.toContain(n);
+      expect(toolsFor("operator", { defer: true }).find((t) => t.name === n)?.deferLoading, n).toBe(true);
+    }
+    expect(toolsFor("operator")).toHaveLength(24);
+    expect(toolsFor("auditor")).toHaveLength(15);
+    flags.tmsSync.enabled = false;
+    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("auditor")).toHaveLength(12);
+  });
+
+  it("holds no get_tms_* tool that is not a read, and no tms tool of any other tier", () => {
+    const tms = Object.values(TOOL_REGISTRY).filter((t) => /tms/i.test(t.name));
+    expect(tms.map((t) => t.name).sort()).toEqual([...TMS_TOOLS].sort());
+    for (const t of Object.values(TOOL_REGISTRY)) {
+      if (t.name.startsWith("get_tms_")) expect(t.tier, t.name).toBe("read");
+    }
+    for (const t of tms) expect(t.tier, t.name).toBe("read");
+    // That nothing a tool reaches writes a tms table is proven on the import graph:
+    // src/lib/agent/__tests__/import-boundary.test.ts (P2).
   });
 
   it("offers the escrow release tools only while the escrow release switch is on, the card to the operator alone", () => {

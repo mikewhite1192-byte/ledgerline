@@ -63,3 +63,10 @@ export function resolve(pair: TwoClocks, zone: string): Resolved {
 export function clocksOf(instant: Instant, zone: string): TwoClocks {
   return { utc: new Date(parseInstant(instant)).toISOString(), local: localClockOf(instant, zone) };
 }
+
+// The wall time an instant shows in a zone, as a person reads it: "9:20 AM".
+export function clockText(instant: Instant, zone: string): string {
+  const t = localTimeOf(instant, zone);
+  const hour = t.hour % 12 === 0 ? 12 : t.hour % 12;
+  return `${hour}:${two(t.minute)} ${t.hour < 12 ? "AM" : "PM"}`;
+}

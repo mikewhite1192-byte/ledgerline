@@ -15,12 +15,13 @@ import { sampleArgs } from "./sample-args";
 const plan = blueRidgePlan();
 const ARGS = sampleArgs(plan);
 const TOOLS = Object.values(TOOL_REGISTRY);
+const TMS_SYNC_WAS = flags.tmsSync.enabled;
 const call = (name: string, args: unknown) => ({ id: "c", name, argumentsJson: JSON.stringify(args) });
 
 // Every tool's switch on (detention, reports with the IFTA quarter and the year-end 1099, invoicing,
 // invoice review, customer payments, the card check, collections,
 // Cash Friday, factoring, the profit brief, the quarter review, pay rule changes, money codes, carrier memory,
-// fuel rates and escrow releases), so each test below reaches every registered tool. The detention switch's own cases are in
+// fuel rates, escrow releases and the dispatch mirror), so each test below reaches every registered tool. The detention switch's own cases are in
 // detention-tools.test.ts; the last test here checks the report switch-off path.
 beforeEach(() => {
   flags.detentionEnabled = true;
@@ -43,6 +44,7 @@ beforeEach(() => {
   flags.escrowRelease.enabled = true;
   flags.yearEndEnabled = true;
   flags.trustMeterEnabled = true;
+  flags.tmsSync.enabled = true;
 });
 
 afterEach(() => {
@@ -66,6 +68,7 @@ afterEach(() => {
   flags.escrowRelease.enabled = false;
   flags.yearEndEnabled = false;
   flags.trustMeterEnabled = false;
+  flags.tmsSync.enabled = TMS_SYNC_WAS;
   vi.restoreAllMocks();
 });
 

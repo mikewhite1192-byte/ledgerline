@@ -22,7 +22,8 @@ import { acknowledgeTold, answerAsksFor, askFor, closeStaleAsks, readShowingAsks
 // owner's limit, and Got it marks that line done once; a plain throw writing the question keeps
 // the card; the reason pass keeps a right line, drops a wrong figure, and never calls twice;
 // row-level security holds each carrier to its own questions and the guard refuses a changed word.
-// A fixed clock; two tenants made here and removed after.
+// An advance at pickup the dispatch feed moved names the pickup's wall time. A fixed clock; two
+// tenants made here and removed after.
 
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
 const HOUR = 3_600_000;
@@ -162,6 +163,61 @@ describe("agent asks", () => {
     ]);
     const mine = await deskCard(A, { session: A.session });
     expect(await asksOf(A, mine)).toEqual([]);
+  });
+
+  it("says the dispatch pickup time on an advance at pickup when the feed moved the load, and only then", async () => {
+    // Two loads on the road: one moved by a dispatch event at 9:20 AM Chicago, one by a person.
+    const pickupCard = async (source: "tms" | "staff", number: string) => {
+      const loadId = randomUUID();
+      const eventId = randomUUID();
+      await admin.withTenant(A.tenantId, async (q) => {
+        await q.execute(
+          `INSERT INTO loads (id, tenant_id, load_number, customer_id, driver_id, status, origin_city, origin_state,
+             dest_city, dest_state, pickup_on, loaded_miles, linehaul_cents)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid), CAST($4 AS uuid), 'in_transit',
+             'Joliet', 'IL', 'Gary', 'IN', CAST('2026-11-02' AS date), 420, 200000)`,
+          [loadId, number, A.customerId, A.driverId],
+        );
+        await q.execute(
+          `INSERT INTO load_events (id, tenant_id, load_id, from_status, to_status, source, evidence_table,
+             evidence_id, at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'planned', 'in_transit', $3, $4,
+             CAST($5 AS uuid), CAST('2026-11-02T15:20:00Z' AS timestamptz))`,
+          [eventId, loadId, source, source === "tms" ? "tms_status_events" : null, source === "tms" ? randomUUID() : null],
+        );
+      });
+      const r = await app.withTenant(A.tenantId, (q) =>
+        persistEngineProposal(
+          q,
+          {
+            kind: "advance_payout",
+            subjectTable: "advances",
+            subjectId: randomUUID(),
+            amountCents: 140_000,
+            args: { driverId: A.driverId, loadId, loadEventId: eventId, load: { number, shareBps: 7000 } },
+            exceptions: [],
+            reasons: ["paperwork_complete"],
+            sources: [{ table: "loads", id: loadId }],
+          },
+          desk(A),
+          new Date(NOW - HOUR),
+        ),
+      );
+      if (r.kind !== "created") throw new Error(`card not created: ${r.kind}`);
+      return r.proposalId;
+    };
+    const fromFeed = await pickupCard("tms", "PU-1");
+    expect(await asksOf(A, fromFeed)).toEqual([
+      expect.objectContaining({
+        kind: "ask",
+        status: "open",
+        text: "Dispatch shows load PU-1 picked up at 9:20 AM. Should I send Test Driver the 70% advance, $1,400.00?",
+      }),
+    ]);
+    const byHand = await pickupCard("staff", "PU-2");
+    expect(await asksOf(A, byHand)).toEqual([
+      expect.objectContaining({ kind: "ask", status: "open", text: "Should I send Test Driver an advance of $1,400.00?" }),
+    ]);
   });
 
   it("keeps one live ask when two writers race and when it is called again", async () => {

@@ -56,10 +56,11 @@ export type ReasonCategory = (typeof REASON_CATEGORIES)[number];
 // own search tool and is never registered: a function call by that name is unknown_tool.
 export const RESERVED_TOOL_NAMES = ["create_case", "tool_search"] as const;
 
-// The tables a tool's ids may point at: the engine's tables plus the outside text. A citation in
-// the operator's answer may name only these.
-export const GATEWAY_TABLES = [...TABLES, "untrusted_inputs"] as const;
-export type GatewayTable = TableName | "untrusted_inputs";
+// The tables a tool's ids may point at: the engine's tables, the outside text, and the dispatch
+// mirror's loads and status events (read only; the sync alone writes them), so a card can cite
+// "dispatch shows delivered at 2:14 PM" by row. A citation in the operator's answer may name only these.
+export const GATEWAY_TABLES = [...TABLES, "untrusted_inputs", "tms_status_events", "tms_loads"] as const;
+export type GatewayTable = TableName | "untrusted_inputs" | "tms_status_events" | "tms_loads";
 // The tables an argument's id may name: the above plus proposals, which only the auditor's
 // get_proposal reads.
 export const REF_TABLES = [...GATEWAY_TABLES, "proposals"] as const;

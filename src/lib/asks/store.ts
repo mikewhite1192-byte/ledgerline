@@ -5,6 +5,7 @@ import { DbError, type Queryable } from "../db";
 import { autopilotModeFor } from "../autopilot/mode";
 import { autopilotSub } from "../autopilot/session";
 import { isServiceSub } from "../sweep/service-session";
+import { clockText } from "../tms/clocks";
 import { isUuid } from "../uuid";
 import { askWords, cleanName, isAskedKind, toldWords, type AskFacts } from "./words";
 
@@ -65,6 +66,20 @@ const NAMES_SQL = `SELECT d.first_name, d.last_name, l.load_number, c.name AS cu
   LEFT JOIN drivers d ON d.tenant_id = current_tenant_id() AND d.id = coalesce(x.driver_id, l.driver_id)
   LEFT JOIN customers c ON c.tenant_id = current_tenant_id() AND c.id = l.customer_id`;
 
+// The pickup an advance at pickup was drafted on, when the dispatch feed made that move: its wall
+// time in the carrier's zone. Null for any other move (a driver's photo, a person's press).
+const PICKUP_SQL = `SELECT e.source, e.to_status, ${ts("e.at")} AS at, t.timezone
+  FROM load_events e JOIN tenants t ON t.id = e.tenant_id
+ WHERE e.tenant_id = current_tenant_id() AND e.id = CAST($1 AS uuid) AND e.load_id = CAST($2 AS uuid)`;
+
+async function dispatchPickupOf(q: Queryable, eventId: string | null, loadId: string | null): Promise<string | null> {
+  if (eventId === null || loadId === null) return null;
+  const [e] = await q.query<{ source: unknown; to_status: unknown; at: unknown; timezone: unknown }>(PICKUP_SQL, [eventId, loadId]);
+  if (!e || e.source !== "tms" || e.to_status !== "in_transit") return null;
+  if (typeof e.at !== "string" || typeof e.timezone !== "string") return null;
+  return clockText(e.at, e.timezone);
+}
+
 // The names a sentence uses, read from the records the proposal names: its driver (the subject,
 // or the args' driverId) and its load (the subject, or the args' loadId), with the load's driver
 // and customer.
@@ -82,14 +97,19 @@ async function factsOf(q: Queryable, p: ProposalRow): Promise<AskFacts> {
   const first = cleanName(r.first_name);
   const last = cleanName(r.last_name);
   const stage = typeof args.toStage === "string" ? args.toStage : typeof args.stage === "string" ? args.stage : null;
+  // An advance at pickup names its load move and the share of the trip pay it may reach (bps).
+  const pickup = p.kind === "advance_payout" ? await dispatchPickupOf(q, uuidOr(args.loadEventId), loadId) : null;
+  const shareBps = wholeOr(nested.shareBps);
+  const sharePercent = pickup !== null && shareBps !== null && shareBps % 100 === 0 ? shareBps / 100 : null;
   return {
     kind: p.kind,
     amountCents: Number(p.amount_cents),
     driverName: first && last ? cleanName(`${first} ${last}`) : (first ?? last),
     loadNumber: cleanName(r.load_number),
     customerName: cleanName(r.customer_name),
-    percent: wholeOr(args.percent) ?? wholeOr(args.advancePercent),
+    percent: wholeOr(args.percent) ?? wholeOr(args.advancePercent) ?? sharePercent,
     stage,
+    dispatchPickup: pickup,
   };
 }
 
