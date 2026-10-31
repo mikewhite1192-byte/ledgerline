@@ -2,10 +2,10 @@ import type { Session } from "../auth/claims";
 import { flags } from "../../config/flags";
 import type { TenantDb } from "../db";
 import { readInvoiceQueue } from "../data/read";
-import { persistEngineProposal, retireEngineProposalsExcept } from "../proposals/engine";
+import { persistEngineProposal, retireEngineProposalsExcept, type EngineDraft } from "../proposals/engine";
 import { assertMembership } from "../tenant/context";
 import { tenantLock } from "./number";
-import { lineSummary, splitInvoiceQueue } from "./queue";
+import { lineSummary, splitInvoiceQueue, type InvoiceableLoad } from "./queue";
 
 // "Refresh" on the invoice queue: one engine proposal per delivered load the rules engine can
 // invoice, each carrying the engine's total and lines. Never on a schedule; a person presses it.
@@ -28,6 +28,27 @@ export type ProposeCounts = {
 };
 
 export type ProposeResult = { ok: true; counts: ProposeCounts } | { ok: false; category: "disabled" };
+
+// One invoiceable load's card, as Refresh and the dispatch finalize hook (./finalize.ts) both draft
+// it. Pure. The dedupe key is a hash of these args, so both paths must draft the same args for the
+// same load: a differing arg would make each one retire the other's card.
+export function invoiceDraftOf(item: InvoiceableLoad): EngineDraft {
+  return {
+    kind: "invoice_post",
+    subjectTable: "loads",
+    subjectId: item.load.id,
+    amountCents: item.amountCents,
+    args: {
+      loadId: item.load.id,
+      loadNumber: item.load.loadNumber,
+      amountCents: item.amountCents,
+      lines: lineSummary(item.lines),
+    },
+    exceptions: [],
+    reasons: ["engine_total"],
+    sources: [...item.sources, ...item.lines.flatMap((l) => l.sources)],
+  };
+}
 
 export async function proposeInvoices(db: TenantDb, session: Session, now: Date): Promise<ProposeResult> {
   if (!flags.invoicesEnabled) return { ok: false, category: "disabled" };
@@ -52,26 +73,7 @@ export async function proposeInvoices(db: TenantDb, session: Session, now: Date)
         counts.truncated = true;
         break;
       }
-      const result = await persistEngineProposal(
-        q,
-        {
-          kind: "invoice_post",
-          subjectTable: "loads",
-          subjectId: item.load.id,
-          amountCents: item.amountCents,
-          args: {
-            loadId: item.load.id,
-            loadNumber: item.load.loadNumber,
-            amountCents: item.amountCents,
-            lines: lineSummary(item.lines),
-          },
-          exceptions: [],
-          reasons: ["engine_total"],
-          sources: [...item.sources, ...item.lines.flatMap((l) => l.sources)],
-        },
-        session,
-        now,
-      );
+      const result = await persistEngineProposal(q, invoiceDraftOf(item), session, now);
       if (result.kind === "created") counts.created += 1;
       else if (result.kind === "duplicate") counts.unchanged += 1;
       else if (result.kind === "live_exists") counts.inFlight += 1;

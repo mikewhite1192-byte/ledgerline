@@ -184,6 +184,7 @@ type OurLoadRow = {
   pickup_on: string;
   linehaul_cents: unknown;
   fuel_surcharge_cents: unknown;
+  pickup_departed_at: string | null;
   delivered_on: string | null;
   delivered_at: string | null;
   driver_id: string | null;
@@ -193,7 +194,8 @@ type OurLoadRow = {
 };
 
 const OUR_LOAD_SQL = `SELECT CAST(l.id AS text) AS id, l.load_number, l.status, ${day("l.pickup_on")} AS pickup_on,
-       l.linehaul_cents, l.fuel_surcharge_cents, ${day("l.delivered_on")} AS delivered_on,
+       l.linehaul_cents, l.fuel_surcharge_cents, ${ts("l.pickup_departed_at")} AS pickup_departed_at,
+       ${day("l.delivered_on")} AS delivered_on,
        ${ts("l.delivered_at")} AS delivered_at, CAST(l.driver_id AS text) AS driver_id,
        CAST(l.customer_id AS text) AS customer_id,
        (SELECT CAST(coalesce(sum(a.amount_cents), 0) AS text) FROM load_accessorials a
@@ -231,6 +233,8 @@ export type OurLoad = {
   fuelSurchargeCents: number | null;
   accessorialsCents: number;
   accessorialsCount: number;
+  // When the truck left the pickup; null while not known (never a guessed time).
+  pickupDepartedAt: string | null;
   deliveredOn: string | null;
   deliveredAt: string | null;
   driverId: string | null;
@@ -263,6 +267,7 @@ export async function readOurLoad(q: Queryable, loadId: string): Promise<OurLoad
     fuelSurchargeCents: num(l.fuel_surcharge_cents),
     accessorialsCents: count(l.accessorials_cents),
     accessorialsCount: count(l.accessorials_count),
+    pickupDepartedAt: l.pickup_departed_at,
     deliveredOn: l.delivered_on,
     deliveredAt: l.delivered_at,
     driverId: l.driver_id,

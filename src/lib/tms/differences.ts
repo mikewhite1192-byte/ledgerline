@@ -2,7 +2,8 @@
 // code only. The agent reads these; it never computes a difference itself and nothing here writes.
 // Money is integer cents on both sides; times are instants compared in milliseconds. Pure.
 
-// More than this between the dispatch delivery time and ours is a difference worth saying.
+// More than this between the dispatch pickup (or delivery) time and ours is a difference worth saying.
+export const PICKUP_SLACK_MINUTES = 30;
 export const DELIVERY_SLACK_MINUTES = 30;
 
 // How far along a load is, on a scale both sides share: 0 not picked up, 1 on the road,
@@ -26,6 +27,7 @@ const OUR_RANK: Readonly<Record<string, number>> = { planned: 0, in_transit: 1, 
 export type TmsSide = {
   statusCode: string;
   revenueTotalCents: number | null;
+  pickedUpAt: string | null;
   deliveredAt: string | null;
   goneAt: string | null;
   flags: readonly string[];
@@ -36,6 +38,8 @@ export type OurSide = {
   status: string;
   // Linehaul plus fuel surcharge plus every extra charge on the load; null while the rate is unknown.
   revenueCents: number | null;
+  // When the truck left the pickup (loads.pickup_departed_at); null while not known.
+  pickedUpAt: string | null;
   deliveredAt: string | null;
   hasPod: boolean;
 };
@@ -44,6 +48,7 @@ export type Difference =
   | { kind: "rate_differs"; dispatchCents: number; oursCents: number; deltaCents: number }
   | { kind: "status_ahead"; dispatchStatus: string; ourStatus: string }
   | { kind: "status_behind"; dispatchStatus: string; ourStatus: string }
+  | { kind: "pickup_time_differs"; dispatchAt: string; oursAt: string; minutesApart: number }
   | { kind: "delivery_time_differs"; dispatchAt: string; oursAt: string; minutesApart: number }
   | { kind: "pod_in_dispatch_not_here" }
   | { kind: "gone_from_dispatch"; goneAt: string }
@@ -78,11 +83,23 @@ export function differencesOf(tms: TmsSide, ours: OurSide): Difference[] {
       ourStatus: ours.status,
     });
   }
+  const p = instantMs(tms.pickedUpAt);
+  const o = instantMs(ours.pickedUpAt);
+  if (p !== null && o !== null && tms.pickedUpAt !== null && ours.pickedUpAt !== null) {
+    // The unrounded gap meets the slack: 30 minutes and a second apart is a difference.
+    const gapMs = Math.abs(p - o);
+    const minutes = Math.round(gapMs / 60_000);
+    if (gapMs > PICKUP_SLACK_MINUTES * 60_000) {
+      out.push({ kind: "pickup_time_differs", dispatchAt: tms.pickedUpAt, oursAt: ours.pickedUpAt, minutesApart: minutes });
+    }
+  }
   const a = instantMs(tms.deliveredAt);
   const b = instantMs(ours.deliveredAt);
   if (a !== null && b !== null && tms.deliveredAt !== null && ours.deliveredAt !== null) {
-    const minutes = Math.round(Math.abs(a - b) / 60_000);
-    if (minutes > DELIVERY_SLACK_MINUTES) {
+    // The unrounded gap meets the slack: 30 minutes and a second apart is a difference.
+    const gapMs = Math.abs(a - b);
+    const minutes = Math.round(gapMs / 60_000);
+    if (gapMs > DELIVERY_SLACK_MINUTES * 60_000) {
       out.push({ kind: "delivery_time_differs", dispatchAt: tms.deliveredAt, oursAt: ours.deliveredAt, minutesApart: minutes });
     }
   }
