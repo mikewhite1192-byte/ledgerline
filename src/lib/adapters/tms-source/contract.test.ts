@@ -54,6 +54,8 @@ function ctxOf(opts: { fail?: boolean; loads?: unknown[] } = {}): TmsContext {
       if (sql.includes("FROM customers")) return [] as T[];
       if (sql.includes("FROM driver_identities")) return [] as T[];
       if (sql.includes("FROM drivers")) return [{ n: 0 }] as T[];
+      // The fault switches, read while demoFaultsEnabled is on: none on, so the feed is the clean one.
+      if (sql.includes("FROM tms_connections")) return [{ faults: "{}" }] as T[];
       throw new Error(`unexpected sql: ${sql.slice(0, 40)}`);
     },
     async execute() {

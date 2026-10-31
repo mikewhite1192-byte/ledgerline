@@ -123,7 +123,7 @@ describe("/settings/demo", () => {
       "0",
     ]);
     expect(screen.getByText(/^Kept as they are:/)).toBeTruthy();
-    expect(screen.getByRole("checkbox")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /deletes the demo's agent records/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reset the demo" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Move the fleet" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sync dispatch now" })).toBeTruthy();
