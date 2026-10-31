@@ -79,7 +79,7 @@ export function TakeBack({
           typeof body.proposalId === "string"
             ? body.changed === false
               ? "A card to pull this back is already waiting for approval. Nothing changed."
-              : `Made a card to pull ${dollars(cents)} back off the card. It pulls it back in test mode once approved.`
+              : `Made a card to pull up to ${dollars(cents)} back off the card. Approve it on this page; it pulls it back in test mode.`
             : body.changed === false
             ? "This was already recorded. Nothing changed."
             : body.status === "cancelled"

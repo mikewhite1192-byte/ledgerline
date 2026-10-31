@@ -157,14 +157,14 @@ export function askWords(f: AskFacts): string {
     case "card_pullback": {
       const pull = f.pull;
       if (f.driverName && pull) {
-        const head = `Pull ${amount} back off ${f.driverName}'s fuel card ending ${pull.last4} (${pull.reason}).`;
+        const head = `Pull ${money(pull.pullCents)} back off ${f.driverName}'s fuel card ending ${pull.last4} (${pull.reason}).`;
         const left = f.amountCents - pull.pullCents;
         const rest =
           left <= 0
             ? ""
             : pull.onAdvance
-              ? ` ${money(left)} of it is more than the card holds and stays owed on the advance.`
-              : ` ${money(pull.shortfallCents)} of it is more than the card holds and would be booked as owed.`;
+              ? ` The other ${money(left)} asked for is more than the card holds and stays owed on the advance.`
+              : ` The other ${money(pull.shortfallCents)} asked for is more than the card holds and would be booked as owed.`;
         return fit(`${head}${rest} Yes pulls it in test mode.`);
       }
       break;

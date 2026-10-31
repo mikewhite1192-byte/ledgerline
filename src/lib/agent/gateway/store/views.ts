@@ -241,6 +241,30 @@ export function cardLoadOf(args: string | null, driverCode: string | null | unde
   return { last4: cardLast4, postedOn, driverCode: code };
 }
 
+// A card pull-back's line from its stored args (the engine's plan): the card's last four, what the
+// approval pulls and what a breakdown books as owed. Null when the args do not read back whole or
+// out of the plan's shape (something pulled, never above what was asked; a breakdown's shortfall
+// is the rest, a take-back has none).
+export function pullViewOf(args: string | null, amountCents: number): NonNullable<ProposalView["pull"]> | null {
+  if (typeof args !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const { cardLast4, requestedCents, pullCents, shortfallCents, advanceId } = raw as Record<string, unknown>;
+  if (typeof cardLast4 !== "string" || !LAST4.test(cardLast4)) return null;
+  const whole = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  if (!whole(requestedCents) || !whole(pullCents) || !whole(shortfallCents)) return null;
+  if (requestedCents !== amountCents || pullCents < 1 || pullCents > requestedCents) return null;
+  const onAdvance = typeof advanceId === "string";
+  if (!onAdvance && advanceId !== null) return null;
+  if (onAdvance ? shortfallCents !== 0 : pullCents + shortfallCents !== requestedCents) return null;
+  return { last4: cardLast4, pullCents, shortfallCents, onAdvance };
+}
+
 export function cardMatchOf(args: string | null): NonNullable<ProposalView["cardMatch"]> | null {
   if (typeof args !== "string") return null;
   let raw: unknown;
@@ -412,6 +436,7 @@ function proposalView(r: ProposalRow): ProposalView {
     ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args), parked: parkedOf(r) } : {}),
     ...(r.kind === "card_match" ? { cardMatch: cardMatchOf(r.args) } : {}),
     ...(r.kind === "card_load_ruling" ? { cardLoad: cardLoadOf(r.args, r.card_load_driver) } : {}),
+    ...(r.kind === "card_pullback" ? { pull: pullViewOf(r.args, Number(r.amount_cents)) } : {}),
     ...(CASH_KINDS.has(r.kind) ? { cash: cashOf(r) } : {}),
     ...(r.kind === "pay_rule_change" ? { ruleChange: ruleChangeOf(r) } : {}),
   };

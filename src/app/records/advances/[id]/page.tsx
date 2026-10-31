@@ -7,6 +7,10 @@ import { PageHeader } from "@/components/app/page-header";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { proposalCardFrom } from "@/components/agent/proposal-card-from";
+import { InvoiceCards, type InvoiceCard } from "@/components/invoices/invoice-cards";
+import { flags } from "@/config/flags";
+import { readEngineProposalViews } from "@/lib/agent/gateway/store";
 import { AdvanceFrame, AdvancesOffPage, problemOf, ReadFailed, type ReadProblem } from "@/app/advances/frame";
 import { cardLineFor, readAdvanceRecord, readShell, type AdvanceRecord, type EligibilityNow, type Shell } from "@/lib/advances/read";
 import { PARK_REASON_WORDS } from "@/lib/advances/parking";
@@ -57,18 +61,28 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
   const { id: raw } = await params;
   const id = isUuid(raw) ? raw.toLowerCase() : null;
 
-  let page: { shell: Shell; record: AdvanceRecord | null } | null = null;
+  let page: { shell: Shell; record: AdvanceRecord | null; pullCards: InvoiceCard[] } | null = null;
   let problem: ReadProblem | null = null;
   try {
     page = await withRequestTenant(async (q, session) => ({
       shell: await readShell(q, session),
       record: id ? await readAdvanceRecord(q, id, new Date()) : null,
+      // A take-back's pull-back card waiting or running, through the same gate as any card.
+      pullCards:
+        id && pullbackOn()
+          ? (await readEngineProposalViews(q, "card_pullback", 5, id)).map((p) => ({
+              card: proposalCardFrom(p, { on: flags.auditorEnabled, checking: false }),
+              verdict: p.auditorVerdict,
+              checkedAt: p.auditorCheckedAt,
+              flagged: p.flagged,
+            }))
+          : [],
     }));
   } catch (err) {
     problem = problemOf(err);
   }
   if (!page) return <ReadFailed problem={problem ?? "unreadable"} />;
-  const { shell, record } = page;
+  const { shell, record, pullCards } = page;
   if (!record) {
     return (
       <AdvanceFrame shell={shell} title="Advance">
@@ -130,6 +144,9 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         stillOwedCents={Math.max(0, advance.amountCents + advance.feeCents - advance.recoveredCents)}
         pulls={pullbackOn()}
       />
+      {pullCards.length > 0 ? (
+        <InvoiceCards cards={pullCards} auditorOn={flags.auditorEnabled} label="Card pull-back to approve" />
+      ) : null}
 
       <Card>
         <CardHeader>

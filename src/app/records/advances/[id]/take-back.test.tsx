@@ -128,7 +128,7 @@ describe("Take back on the advance page", () => {
     fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "duplicate" } });
     fireEvent.click(screen.getByRole("button", { name: "Record take-back" }));
     expect((await screen.findByRole("status")).textContent).toBe(
-      "Made a card to pull $205.00 back off the card. It pulls it back in test mode once approved.",
+      "Made a card to pull up to $205.00 back off the card. Approve it on this page; it pulls it back in test mode.",
     );
     expect(sentBody(fetch)).toEqual({ amountCents: 20_500, reason: "duplicate" });
     cleanup();

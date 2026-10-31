@@ -19,7 +19,8 @@ import type { Cents } from "./types";
 // Refusals, in this order: bad_request (an input not a safe integer, or nothing asked for),
 // over_bound (asked for more than the take-back bound, or than the advance still owes; never
 // trimmed to fit, so no deficit is booked for money still on the card), nothing_to_pull (the
-// balance is zero).
+// balance is zero), then over_bound again for a breakdown asking more than was loaded to the card
+// and not pulled back yet, so no deficit is ever booked for money the card never received.
 
 export const PULLBACK_REFUSALS = ["bad_request", "over_bound", "nothing_to_pull"] as const;
 export type PullbackRefusal = (typeof PULLBACK_REFUSALS)[number];
@@ -68,6 +69,9 @@ export function pullbackPlan(input: PullbackInput): PullbackPlan {
   if (advance !== null && requestedCents > advance.stillOwedCents) return { ok: false, refusal: "over_bound" };
   const balanceCents = cardBalanceCents(balance);
   if (balanceCents === 0) return { ok: false, refusal: "nothing_to_pull" };
+  if (advance === null && requestedCents > sub(sum([balance.loadsCents, balance.handLoadsCents]), balance.pulledCents)) {
+    return { ok: false, refusal: "over_bound" };
+  }
   const pullCents = Math.min(requestedCents, balanceCents) as Cents;
   const shortfallCents = advance === null ? sub(requestedCents, pullCents) : (0 as Cents);
   return { ok: true, balanceCents, pullCents, shortfallCents };

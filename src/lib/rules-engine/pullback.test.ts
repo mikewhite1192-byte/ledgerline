@@ -25,11 +25,11 @@ describe("the card pull-back plan", () => {
   });
 
   it("pulls what a breakdown's card holds and names the rest as the shortfall", () => {
-    expect(pullbackPlan(input({ requestedCents: 40_000 }))).toEqual({
+    expect(pullbackPlan(input({ requestedCents: 30_000 }))).toEqual({
       ok: true,
       balanceCents: 25_000,
       pullCents: 25_000,
-      shortfallCents: 15_000,
+      shortfallCents: 5_000,
     });
   });
 
@@ -40,6 +40,20 @@ describe("the card pull-back plan", () => {
       pullCents: 25_000,
       shortfallCents: 0,
     });
+  });
+
+  it("refuses a breakdown's ask above what was loaded to the card and not pulled back yet", () => {
+    // $300.00 of payouts and $50.00 by hand, less $25.00 pulled back: $325.00 was loaded and not
+    // pulled back, whatever the fuel spent.
+    expect(pullbackPlan(input({ requestedCents: 32_500 }))).toEqual({
+      ok: true,
+      balanceCents: 25_000,
+      pullCents: 25_000,
+      shortfallCents: 7_500,
+    });
+    expect(pullbackPlan(input({ requestedCents: 32_501 }))).toEqual({ ok: false, refusal: "over_bound" });
+    // A take-back is bounded by what the advance still owes instead.
+    expect(pullbackPlan(input({ requestedCents: 32_501, advance: { stillOwedCents: 40_000 } }))).toMatchObject({ ok: true });
   });
 
   it("refuses over the bound or what the advance still owes, never trimming to fit", () => {

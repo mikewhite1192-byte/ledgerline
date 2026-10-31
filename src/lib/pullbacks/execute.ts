@@ -17,7 +17,6 @@ import type {
   ExecuteDeps,
   Executor,
   Precheck,
-  ProposalRefused,
   ProposalResult,
   ProposalRow,
 } from "../proposals/execute";
@@ -46,7 +45,9 @@ import { pullbackOn, pullGate } from "./switches";
 //              taken back and inside its bound); a breakdown with a shortfall books it as a named
 //              deficit; the proposal done. An advance that moved meanwhile is never written past
 //              its bound: the pull is marked 'unknown' for a person and a log line names it by id
-//   failed     the pull 'failed' and the proposal failed; nothing moved
+//   failed     the pull 'failed' and the proposal failed; nothing moved. A provider that confirmed
+//              another amount (amount_mismatch) is not a failure: money moved, so the pull is
+//              marked 'unknown' for a person and stays live
 //   unknown    the pull stays 'issuing' until Check pending reads the row back by its request id
 //              and settles it (the same finishPull), never a second pull
 // The same proposal approved twice, or run again, finds its pull by proposal id and replays the
@@ -368,8 +369,15 @@ export async function finishPull(q: Queryable, action: MoneyAction, nowIso: stri
 }
 
 // A definite failure: nothing was pulled. The pull ends failed and so does its proposal, stamped
-// with the caller's clock. The advance and the deficits are never touched.
+// with the caller's clock. The advance and the deficits are never touched. A row failed as
+// amount_mismatch is the one exception: the provider confirmed a pull of another amount, so money
+// moved. The pull is marked unknown for a person (it stays live under the one-live indexes) and the
+// proposal stays executing.
 async function onPullFailed(q: Queryable, action: MoneyAction, nowIso: string): Promise<void> {
+  if (action.failureCategory === "amount_mismatch") {
+    await markUnknown(q, action.subjectId, "the provider confirmed a different amount");
+    return;
+  }
   await q.execute(
     `UPDATE card_pullbacks SET status = 'failed', updated_at = now()
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'issuing'`,
@@ -536,6 +544,7 @@ async function prepare(
   if (pull.status === "failed" || latest?.state === "failed") {
     if (latest) await onPullFailed(q, latest, nowIso);
     else await failProposal(q, p.id, "pull_failed", nowIso);
+    if (latest?.failureCategory === "amount_mismatch") return { kind: "failed", category: "pull_unknown" };
     return { kind: "failed", category: "pull_failed" };
   }
   return { kind: "issue", pull, attempt: latest ? latest.attempt : 1, createdOn };
@@ -624,6 +633,8 @@ async function issue(
       deps.money,
     );
     if (r.action.state === "failed") {
+      // Another amount confirmed: money moved and the pull waits for a person, never "failed".
+      if (r.action.failureCategory === "amount_mismatch") return no("pull_unknown");
       return no(r.action.failureCategory === "disabled" ? "pullback_off" : "pull_failed");
     }
     if (r.action.state === "confirmed") {

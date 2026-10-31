@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { advanceLoadOf, cardLoadOf } from "@/lib/agent/gateway/store/views";
+import { advanceLoadOf, cardLoadOf, pullViewOf } from "@/lib/agent/gateway/store/views";
 import type { ProposalView } from "@/lib/agent/view";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import {
@@ -11,6 +11,7 @@ import {
   hoursMinutes,
   kindCopy,
   proposalCardFrom,
+  pullDetail,
   verificationFor,
 } from "./proposal-card-from";
 
@@ -476,13 +477,50 @@ describe("a card load ruling card", () => {
 });
 
 describe("a card pull-back card", () => {
-  it("asks to pull the amount back off the driver's card and says what happens to the rest", () => {
-    const card = proposalCardFrom({ ...view, kind: "card_pullback", amountCents: 40_000, direction: "in", destination: null });
+  const ADVANCE = "22222222-2222-4222-8222-222222222222";
+  const plan = { cardLast4: "4417", requestedCents: 40_000, pullCents: 30_000, shortfallCents: 10_000, advanceId: null };
+
+  it("reads the engine's plan from the stored args, whole or not at all", () => {
+    expect(pullViewOf(JSON.stringify(plan), 40_000)).toEqual({ last4: "4417", pullCents: 30_000, shortfallCents: 10_000, onAdvance: false });
+    expect(pullViewOf(JSON.stringify({ ...plan, shortfallCents: 0, advanceId: ADVANCE }), 40_000)).toEqual({
+      last4: "4417",
+      pullCents: 30_000,
+      shortfallCents: 0,
+      onAdvance: true,
+    });
+    for (const bad of [
+      { ...plan, cardLast4: "44" },
+      { ...plan, pullCents: 0, shortfallCents: 40_000 },
+      { ...plan, pullCents: 40_001, shortfallCents: 0 },
+      { ...plan, shortfallCents: 9_999 },
+      { ...plan, advanceId: ADVANCE },
+      { ...plan, pullCents: 1.5 },
+    ]) {
+      expect(pullViewOf(JSON.stringify(bad), 40_000)).toBeNull();
+    }
+    expect(pullViewOf(JSON.stringify(plan), 30_000)).toBeNull();
+    expect(pullViewOf("{", 40_000)).toBeNull();
+    expect(pullViewOf(null, 40_000)).toBeNull();
+  });
+
+  it("asks to pull the engine's planned amount and says what the card holds of the ask", () => {
+    const pull = { last4: "4417", pullCents: 30_000, shortfallCents: 10_000, onAdvance: false };
+    const base = { ...view, kind: "card_pullback", amountCents: 40_000, direction: "in", destination: null } as const;
+    const card = proposalCardFrom({ ...base, pull });
     expect(card.confirmNoun).toBe("card pull-back");
-    expect(card.confirmQuestion).toBe("Pull $400.00 back off the driver's fuel card?");
+    expect(card.confirmQuestion).toBe("Pull $300.00 back off the driver's fuel card ending 4417?");
     expect(card.confirmNext).toBe(
       "Pulls it back off the card in test mode. What the card cannot give back on a breakdown is booked as money the driver owes.",
     );
+    expect(card.detail).toBe("Card ending 4417 holds $300.00 of the $400.00 asked for. The other $100.00 is booked as money the driver owes.");
+    expect(pullDetail({ ...pull, shortfallCents: 0, onAdvance: true }, 40_000)).toBe(
+      "Card ending 4417 holds $300.00 of the $400.00 asked for. The other $100.00 stays owed on the advance and is recovered from pay.",
+    );
+    expect(pullDetail({ ...pull, pullCents: 40_000, shortfallCents: 0 }, 40_000)).toBe("Card ending 4417 holds the whole $400.00 asked for.");
+    // Args that did not read back: only the ask's ceiling, and no line.
+    const unread = proposalCardFrom({ ...base, pull: null });
+    expect(unread.confirmQuestion).toBe("Pull up to $400.00 back off the driver's fuel card?");
+    expect(unread.detail).toBeUndefined();
   });
 });
 

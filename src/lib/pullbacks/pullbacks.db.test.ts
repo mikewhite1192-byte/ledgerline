@@ -293,6 +293,11 @@ describe("card pull-back", () => {
     expect(
       await app.withTenant(A.tenantId, (q) => planPull(q, { ...breakdown(10_000), driverId: A.otherDriverId }, 150_000, new Date(NOW))),
     ).toEqual({ ok: false, refusal: "nothing_to_pull" });
+    // A breakdown's ask above the $300.00 loaded to the card is refused, never trimmed.
+    expect(await app.withTenant(A.tenantId, (q) => planPull(q, breakdown(30_001), 150_000, new Date(NOW)))).toEqual({
+      ok: false,
+      refusal: "over_bound",
+    });
     // Over the take-back bound is refused, never trimmed.
     expect(await app.withTenant(A.tenantId, (q) => planPull(q, breakdown(150_001), 150_000, new Date(NOW)))).toEqual({
       ok: false,
@@ -318,21 +323,21 @@ describe("card pull-back", () => {
   });
 
   it("books what the card could not give back on a breakdown as a named deficit, once", async () => {
-    const plan = await planOf(breakdown(40_000));
-    expect(plan).toMatchObject({ pullCents: 25_000, shortfallCents: 15_000 });
+    const plan = await planOf(breakdown(28_000));
+    expect(plan).toMatchObject({ pullCents: 25_000, shortfallCents: 3_000 });
     const id = await addProposal(plan);
     expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
     const [pull] = await pulls();
-    expect(pull).toMatchObject({ status: "pulled", pull_cents: "25000", shortfall_cents: "15000" });
+    expect(pull).toMatchObject({ status: "pulled", pull_cents: "25000", shortfall_cents: "3000" });
     const owed = await deficits();
     expect(owed).toHaveLength(1);
-    expect(owed[0]).toMatchObject({ amount_cents: "15000", source_kind: "pullback_shortfall", source_id: pull.id });
-    expect(owed[0].note).toBe(`Breakdown pull-back: card ending ${plan.cardLast4} held $250.00 of $400.00.`);
+    expect(owed[0]).toMatchObject({ amount_cents: "3000", source_kind: "pullback_shortfall", source_id: pull.id });
+    expect(owed[0].note).toBe(`Breakdown pull-back: card ending ${plan.cardLast4} held $250.00 of $280.00.`);
   });
 
   it("ends a declined pull failed with nothing moved, and leaves the balance whole", async () => {
     await setCardBehavior(admin, A, A.driverId, "declined");
-    const id = await addProposal(await planOf(breakdown(40_000)));
+    const id = await addProposal(await planOf(breakdown(28_000)));
     expect(await approve(id)).toMatchObject({ ok: false, category: "pull_failed" });
     expect((await pulls())[0].status).toBe("failed");
     expect((await ledger())[0].state).toBe("failed");
@@ -341,9 +346,35 @@ describe("card pull-back", () => {
     expect((await planOf(breakdown(1_000))).balanceCents).toBe(25_000);
   });
 
+  it("holds a pull the provider confirmed at another amount as unknown for a person, never failed", async () => {
+    // A provider that confirms one cent less than was asked: money moved, but not what was approved.
+    const sim = puller;
+    puller = {
+      ...sim,
+      pullBack: async (r, ctx) => {
+        const out = await sim.pullBack(r, ctx);
+        return out.kind === "confirmed" ? { ...out, amountCents: out.amountCents - 1 } : out;
+      },
+    };
+    const id = await addProposal(await planOf(breakdown(28_000)));
+    expect(await approve(id)).toMatchObject({ ok: false, category: "pull_unknown" });
+    expect((await pulls())[0].status).toBe("unknown");
+    const rows = await ledger();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].state).toBe("failed");
+    expect(await deficits()).toEqual([]);
+    expect(await proposalStatus(id)).toBe("executing");
+    expect(calls).toBe(1);
+    // The pull stays live and still counts against the card, so no second card can pull again.
+    expect(await app.withTenant(A.tenantId, (q) => planPull(q, breakdown(1_000), 150_000, new Date(NOW)))).toEqual({
+      ok: false,
+      refusal: "nothing_to_pull",
+    });
+  });
+
   it("keeps a pull with no answer open until Check pending reads it back, then settles it once", async () => {
     await setCardBehavior(admin, A, A.driverId, "slow");
-    const id = await addProposal(await planOf(breakdown(40_000)));
+    const id = await addProposal(await planOf(breakdown(28_000)));
     expect(await approve(id)).toMatchObject({ ok: true, status: "executing" });
     const [open] = await pulls();
     expect(open.status).toBe("issuing");
