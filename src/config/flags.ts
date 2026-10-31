@@ -1073,7 +1073,7 @@ export const flags: Flags = {
   // On by the owner's call (D-071): it only drafts a card; approving it goes through the usual gate.
   advanceAtPickup: { enabled: true, startDate: "2026-10-31" },
   // Off until its own one-line enable PR. Nothing moves money: a ruling books what a driver owes.
-  cardLoadRuling: { enabled: false, startDate: "2026-10-31" },
+  cardLoadRuling: { enabled: true, startDate: "2026-10-31" },
 };
 
 applyLocalOverrides(flags);
