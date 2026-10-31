@@ -314,8 +314,8 @@ describe("flags", () => {
   it("ships the advance at pickup off, with a start date", () => {
     expect(flags.advanceAtPickup).toEqual({ enabled: false, startDate: "2026-10-31" });
     expect(isLocalDate(flags.advanceAtPickup.startDate)).toBe(true);
-    // A card it drafts is an advance: never a kind the autopilot may approve.
-    expect(Object.keys(flags.autopilot.kinds)).not.toContain("advance_payout");
+    // A card it drafts is an advance: the autopilot may approve it only once advance_payout is armed.
+    expect(flags.autopilot.kinds.advance_payout.armed).toBe(false);
   });
 
   it("ships load movement from driver evidence off, with a start date", () => {
