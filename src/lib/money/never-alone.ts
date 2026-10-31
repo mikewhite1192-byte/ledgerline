@@ -11,16 +11,15 @@ import { PROPOSAL_KINDS } from "../agent/gateway/types";
 // kind_never_alone before it reads the rule, and the approval gate refusing the autopilot login
 // on it even if a rule row slipped in.
 
-// The kinds the owner may set to Auto: the three that move nothing out of the company, the two
-// that pay a driver inside the owner's per-driver day, and a load move (no money). The database
-// check in 0077 lists exactly these.
+// The kinds the owner may set to Auto: the three that move nothing out of the company and the two
+// that pay a driver inside the owner's per-driver day. The database check in 0077 lists exactly
+// these. A load_move card is always a person's tap (0070's rule kind check has no load_move).
 export const AUTO_ALLOWED_KINDS = [
   "invoice_post",
   "card_match",
   "payment_reapply",
   "advance_payout",
   "money_code",
-  "load_move",
 ] as const;
 export type AutoAllowedKind = (typeof AUTO_ALLOWED_KINDS)[number];
 

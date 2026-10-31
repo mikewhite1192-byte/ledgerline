@@ -61,6 +61,7 @@ describe("the two sets", () => {
       "load_create",
       "load_rate_fill",
       "invoice_fix",
+      "load_move",
     ]) {
       expect(NEVER_ALONE_KINDS, kind).toContain(kind);
     }
@@ -68,15 +69,21 @@ describe("the two sets", () => {
 
   it("lists in 0077's check exactly the code's allowlist, in the check and in the narrowing", () => {
     const sql = read("0077_never_alone.sql");
+    const validate = read("0077_never_alone_validate.sql");
     const check = sql.match(/ADD\s+CONSTRAINT\s+autopilot_rules_auto_allowlist\s+CHECK\s*\(\s*mode\s*<>\s*'auto'\s+OR\s+kind\s+IN\s*\(([^)]*)\)\s*\)\s*NOT\s+VALID\s*;/i);
     expect(check).not.toBeNull();
     expect(sorted(quoted(check?.[1] ?? ""))).toEqual(sorted(AUTO_ALLOWED_KINDS));
-    const narrow = sql.match(/UPDATE\s+autopilot_rules\s+SET\s+mode\s*=\s*'ask',\s*version\s*=\s*version\s*\+\s*1[^;]*kind\s+NOT\s+IN\s*\(([^)]*)\)\s*;/i);
+    // 0077 only adds the check; the narrowing runs in the validate file, before its VALIDATE.
+    expect(sql).not.toMatch(/\bUPDATE\b/i);
+    const narrow = validate.match(/UPDATE\s+autopilot_rules\s+SET\s+mode\s*=\s*'ask',\s*version\s*=\s*version\s*\+\s*1[^;]*kind\s+NOT\s+IN\s*\(([^)]*)\)\s*;/i);
     expect(narrow).not.toBeNull();
     expect(sorted(quoted(narrow?.[1] ?? ""))).toEqual(sorted(AUTO_ALLOWED_KINDS));
-    expect(read("0077_never_alone_validate.sql")).toMatch(
+    const validated = validate.search(
       /ALTER\s+TABLE\s+autopilot_rules\s+VALIDATE\s+CONSTRAINT\s+autopilot_rules_auto_allowlist\s*;/i,
     );
+    expect(validated).toBeGreaterThan(-1);
+    expect(narrow?.index ?? -1).toBeGreaterThan(-1);
+    expect(narrow?.index ?? Infinity).toBeLessThan(validated);
   });
 
   it("lets the autopilot switch list only allowed kinds", () => {

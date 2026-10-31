@@ -283,12 +283,12 @@ describe("SweepRun answers", () => {
     render(<SweepRun initial={page} auditorOn />);
     const unknown =
       "The answer did not come back, so this may or may not have been rejected. Check the card's status before trying again.";
-    // A card whose money already moved says why, in its own fixed sentence.
+    // A card whose money may have already moved says why, in its own fixed sentence.
     const answers = [
       unknown,
       unknown,
       "The rejection did not go through. Try again.",
-      "Money for this card already moved, so it can't be rejected. Check the card's status.",
+      "Money for this card may have already moved, so it can't be rejected. Check the card's status.",
     ];
     for (const [n, expected] of answers.entries()) {
       rejectCard("D-proposed");
