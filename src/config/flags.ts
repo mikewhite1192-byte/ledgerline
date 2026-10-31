@@ -1043,7 +1043,7 @@ export const flags: Flags = {
       invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
       card_match: { maxCents: 50_000, dayMaxCents: 300_000, dayMaxCount: 40, armed: true },
       payment_reapply: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
-      advance_payout: { maxCents: 30_000, dayMaxCents: 150_000, dayMaxCount: 10, driverDayMaxCents: 30_000, armed: false },
+      advance_payout: { maxCents: 30_000, dayMaxCents: 150_000, dayMaxCount: 10, driverDayMaxCents: 30_000, armed: true },
       money_code: { maxCents: 15_000, dayMaxCents: 60_000, dayMaxCount: 4, driverDayMaxCents: 30_000, armed: false },
     },
   },

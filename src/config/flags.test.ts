@@ -313,8 +313,8 @@ describe("flags", () => {
   it("ships the advance at pickup on, with a start date", () => {
     expect(flags.advanceAtPickup).toEqual({ enabled: true, startDate: "2026-10-31" });
     expect(isLocalDate(flags.advanceAtPickup.startDate)).toBe(true);
-    // A card it drafts is an advance: the autopilot may approve it only once advance_payout is armed.
-    expect(flags.autopilot.kinds.advance_payout?.armed).toBe(false);
+    // A card it drafts is an advance: with advance_payout armed, the autopilot may approve it inside its limits.
+    expect(flags.autopilot.kinds.advance_payout?.armed).toBe(true);
   });
 
   it("ships load movement from driver evidence on, with a start date", () => {
@@ -445,7 +445,7 @@ describe("flags", () => {
     expect(flags.deskLoop.limits.wakeCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
   });
 
-  it("ships the autopilot armed, on a fixed start date, with both kinds that pay a driver unarmed", () => {
+  it("ships the autopilot armed, on a fixed start date, with advances armed and money codes unarmed", () => {
     expect(flags.autopilot).toEqual({
       enabled: true,
       armed: true,
@@ -454,7 +454,7 @@ describe("flags", () => {
         invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
         card_match: { maxCents: 50_000, dayMaxCents: 300_000, dayMaxCount: 40, armed: true },
         payment_reapply: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
-        advance_payout: { maxCents: 30_000, dayMaxCents: 150_000, dayMaxCount: 10, driverDayMaxCents: 30_000, armed: false },
+        advance_payout: { maxCents: 30_000, dayMaxCents: 150_000, dayMaxCount: 10, driverDayMaxCents: 30_000, armed: true },
         money_code: { maxCents: 15_000, dayMaxCents: 60_000, dayMaxCount: 4, driverDayMaxCents: 30_000, armed: false },
       },
     });
@@ -467,11 +467,11 @@ describe("flags", () => {
       expect(cap.maxCents).toBeLessThanOrEqual(cap.dayMaxCents);
       expect(cap.maxCents).toBeLessThanOrEqual(flags.approverRole.adminAboveCents);
     }
-    // Each kind that pays a driver ships unarmed (its arming is its own release), has a driver's
-    // day between one item and the carrier's day, and stays under its own payout cap.
-    expect(flags.autopilot.kinds.advance_payout?.armed).toBe(false);
+    // Each kind that pays a driver is armed in its own release (advances by the owner, D-071; money
+    // codes still unarmed), has a driver's day between one item and the carrier's day, and stays
+    // under its own payout cap.
     expect(flags.autopilot.kinds.money_code?.armed).toBe(false);
-    for (const kind of ["invoice_post", "card_match", "payment_reapply"] as const) {
+    for (const kind of ["invoice_post", "card_match", "payment_reapply", "advance_payout"] as const) {
       expect(flags.autopilot.kinds[kind]?.armed, kind).toBe(true);
     }
     for (const kind of ["advance_payout", "money_code"] as const) {

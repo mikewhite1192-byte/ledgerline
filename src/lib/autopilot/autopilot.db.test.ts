@@ -690,14 +690,14 @@ describe("the autopilot", () => {
         ),
       );
       const advance = await addProposal({ f: B, kind: "advance_payout", amountCents: 1_000 });
-      expect(flags.autopilot.kinds.advance_payout?.armed).toBe(false);
+      const ceiling = flags.autopilot.kinds.advance_payout;
+      if (!ceiling) throw new Error("no advance ceiling");
+      ceiling.armed = false;
       expect(await find()).toEqual({ seen: 0 });
       const none = await admin.withTenant(B.tenantId, (q) =>
         q.query("SELECT 1 FROM desk_log WHERE tenant_id = current_tenant_id() AND event_key = $1", [`autopilot:${advance}`]),
       );
       expect(none).toEqual([]);
-      const ceiling = flags.autopilot.kinds.advance_payout;
-      if (!ceiling) throw new Error("no advance ceiling");
       ceiling.armed = true;
       expect(await find()).toEqual({ seen: 1 });
     });

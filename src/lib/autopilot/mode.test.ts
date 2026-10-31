@@ -28,6 +28,11 @@ const saved = structuredClone(flags.autopilot);
 
 beforeEach(() => {
   Object.assign(flags.autopilot, { enabled: true, armed: true, startDate: "2026-10-31" });
+  // Each kind that pays a driver starts unarmed here, whatever its release ships, so a test arms it itself.
+  for (const kind of ["advance_payout", "money_code"] as const) {
+    const ceiling = flags.autopilot.kinds[kind];
+    if (ceiling) ceiling.armed = false;
+  }
   reads.readRule.mockResolvedValue(rule("auto"));
   reads.readPause.mockResolvedValue(null);
   reads.readZone.mockResolvedValue("America/Chicago");
