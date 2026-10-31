@@ -20,6 +20,7 @@ import {
   resultLine,
   severityOf,
   uncheckedLines,
+  verdictLine,
   whatLine,
   type CardHome,
 } from "@/lib/recon/view";
@@ -121,6 +122,7 @@ export default async function CardsPage() {
   const { run, breaks, open } = read.home;
   const running = run?.status === "running";
   const lines = uncheckedLines(run);
+  const verdict = verdictLine(run);
 
   return (
     <SignedInPage tenant={read.shell} current="/cards" title={TITLE}>
@@ -128,6 +130,7 @@ export default async function CardsPage() {
       <Card className="grid gap-4 px-4 py-4 sm:grid-cols-[1fr_auto] sm:items-center sm:px-5">
         <div className="grid gap-1">
           <p className="text-body text-foreground">{run ? resultLine(run) : "No check yet."}</p>
+          {verdict ? <p className="text-body text-foreground">{verdict}</p> : null}
           {lines.map((line) => (
             <p key={line} className="text-small text-foreground-2">
               {line}

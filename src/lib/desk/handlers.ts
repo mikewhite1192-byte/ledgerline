@@ -11,7 +11,7 @@ import { runCashCheck } from "../cash/check";
 import { draftCollections } from "../collections/draft";
 import { handOffMessage, sortMessage } from "../inbound/pipeline";
 import { moveFromDocument, moveFromMessage, moveFromTmsEvent, type MessageTable, type MoveOutcome } from "../loads/movement";
-import { advanceCardCheck, startCardCheck } from "../recon/run";
+import { advanceCardCheck, startCardCheck, statementVerdict } from "../recon/run";
 import { advanceSweep, startSweep } from "../sweep/run";
 import { assertMembership } from "../tenant/context";
 import { prepareVoiceNote } from "../voice/pipeline";
@@ -189,7 +189,9 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
   };
 
   // A new card row: the card check, unless a finished check that started after the row was
-  // written already covers it (then nothing new is found here, and no second check is run).
+  // written already covers it (then nothing new is found here, and no second check is run). A
+  // finished check's line names the statement's verdict (statement_verified, statement_hold or
+  // statement_empty); nothing here pays it.
   // CARD-LOAD-RULING: first, on the row's first try, a load with no payment record behind it drafts
   // one ruling card for a person (src/lib/card-loads/ruling.ts asks its own switch and start date
   // again); the card it drafted counts in the line's found.
@@ -235,7 +237,13 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
       const cents = whole(r.run.modelCents);
       if (r.run.status === "running") return running({ runId, cents });
       if (r.run.status === "failed") return failed(r.run.failCategory ?? "unknown", { runId, cents });
-      return done({ runId, cents, found: plus(sumOf(r.run.counts.statementBreaks, r.run.counts.recordBreaks)) });
+      const verdict = statementVerdict(r.run);
+      return done({
+        runId,
+        cents,
+        found: plus(sumOf(r.run.counts.statementBreaks, r.run.counts.recordBreaks)),
+        ...(verdict ? { category: `statement_${verdict.kind}` } : {}),
+      });
     },
   };
 

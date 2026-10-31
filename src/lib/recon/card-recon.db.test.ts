@@ -11,6 +11,8 @@ import { readBreak, readLastSeenRunCents, readRun } from "../data/card-recon";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param, Queryable, TenantDb } from "../db/types";
+import { deskHandlers } from "../desk/handlers";
+import { eventKey } from "../desk/keys";
 import { readSentInWindow } from "../money/read";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal } from "../proposals/execute";
@@ -19,8 +21,16 @@ import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import { buildCarrierPlan } from "../seed/plan";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { instantAt } from "../seed/calendar";
-import { MAX_LEDGER_ROWS, WRITE_BATCH, advanceCardCheck, dismissBreak, startCardCheck, type CardCheckDeps } from "./run";
-import { readHandPick } from "./view";
+import {
+  MAX_LEDGER_ROWS,
+  WRITE_BATCH,
+  advanceCardCheck,
+  dismissBreak,
+  startCardCheck,
+  statementVerdict,
+  type CardCheckDeps,
+} from "./run";
+import { readHandPick, verdictLine } from "./view";
 
 // The card check against the real database, as the app's role: the seeded statement compared with
 // the seeded records, payment records read back through a stand-in adapter, one sentence and one
@@ -828,6 +838,81 @@ describe("which payment records a check reads", () => {
       expect(() => readSentInWindow(q, "2026-11-01", "2026-11-02", zone, 0)).toThrow(RangeError);
       expect(() => readSentInWindow(q, "2026-11-01", "2026-11-02", zone, 1001)).toThrow(RangeError);
     });
+  });
+});
+
+describe("the statement's verdict", () => {
+  async function statementCents(from: string, to: string): Promise<number> {
+    return count(
+      `SELECT coalesce(sum(amount_cents), 0) AS n FROM card_transactions
+        WHERE tenant_id = current_tenant_id() AND posted_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)`,
+      [from, to],
+    );
+  }
+
+  it("holds on the planted differences by category, then is verified at the statement's total once each is closed", async () => {
+    const first = await runToEnd();
+    expect(statementVerdict(first)).toEqual({
+      kind: "hold",
+      breaks: 4,
+      byCategory: [
+        { category: "fuel_amount_differs", count: 1 },
+        { category: "purchase_not_recorded", count: 1 },
+        { category: "card_unknown", count: 1 },
+        { category: "load_not_in_ledger", count: 1 },
+      ],
+      cut: false,
+    });
+    expect(verdictLine(first)).toMatch(/^Hold: 4 breaks on the statement: /);
+    const total = await statementCents(first.windowFrom, first.windowTo);
+    expect(total).toBeGreaterThan(0);
+    expect(first.counts.statementCents).toBe(total);
+
+    for (const b of (await breaks()).filter((x) => x.status === "open" && x.card_transaction_id !== null)) {
+      expect(await dismissBreak(SESSION, b.id, "explained", { db: app, clock })).toEqual({ ok: true });
+    }
+    const verified = await runToEnd();
+    const lines = plan.rows.card_transactions.length;
+    expect(statementVerdict(verified)).toEqual({ kind: "verified", cents: total, lines });
+
+    // The same window checked again: the same verdict, and no new difference.
+    const before = await breaks();
+    const again = await runToEnd();
+    expect(statementVerdict(again)).toEqual(statementVerdict(verified));
+    expect((await breaks()).map((b) => [b.id, b.status])).toEqual(before.map((b) => [b.id, b.status]));
+    // Nothing was paid: the check made no payment record.
+    expect(sends).toEqual([]);
+  });
+
+  it("names the verdict on the desk's line for a finished check, with nothing paid", async () => {
+    const finished = await runToEnd();
+    const subjectId = planted.fuelAmountDiffersId.toLowerCase();
+    const out = await deskHandlers({ db: app }).card_transaction.run(
+      SESSION,
+      {
+        eventKey: eventKey("card_transaction", subjectId),
+        source: "card_transaction",
+        subjectId,
+        state: "carried",
+        attempts: 1,
+        carries: 1,
+        threw: 0,
+        runId: finished.id,
+        found: null,
+        firstAt: NOW.toISOString(),
+      },
+      { deadlineMs: NOW.getTime() + SLICE, clock },
+    );
+    expect(out).toEqual({
+      outcome: "done",
+      detail: {
+        runId: finished.id,
+        cents: finished.modelCents,
+        found: Number(finished.counts.statementBreaks) + Number(finished.counts.recordBreaks),
+        category: "statement_hold",
+      },
+    });
+    expect(sends).toEqual([]);
   });
 });
 
