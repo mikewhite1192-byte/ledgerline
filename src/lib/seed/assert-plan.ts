@@ -446,6 +446,7 @@ function keysAndReferences(rows: TenantRows): void {
   unique(rows.loads, (x) => x.load_number, "load number");
   unique(rows.load_state_miles, (x) => `${x.load_id}:${x.state}`, "load state");
   unique(rows.load_accessorials, (x) => `${x.load_id}:${x.kind}:${x.seq}`, "accessorial");
+  unique(rows.load_events, (x) => `${x.load_id}:${x.to_status}`, "load move");
   unique(rows.driver_days, (x) => `${x.driver_id}:${x.day}`, "driver day");
   unique(rows.fuel_purchases, (x) => x.purchase_ref, "purchase ref");
   unique(rows.deduction_schedules, (x) => `${x.driver_id}:${x.kind}:${x.active_from}`, "schedule");
@@ -471,6 +472,7 @@ function keysAndReferences(rows: TenantRows): void {
   refs(rows.loads, (x) => x.driver_id, drivers, "a load");
   refs(rows.load_state_miles, (x) => x.load_id, loads, "a state mile row");
   refs(rows.load_accessorials, (x) => x.load_id, loads, "an accessorial");
+  refs(rows.load_events, (x) => x.load_id, loads, "a load move");
   refs(rows.driver_days, (x) => x.driver_id, drivers, "a driver day");
   refs(rows.driver_days, (x) => x.load_id, loads, "a driver day");
   refs(rows.fuel_purchases, (x) => x.driver_id, drivers, "a fuel purchase");

@@ -18,6 +18,9 @@ export const MESSAGE_CATEGORIES = [
   "time_off",
   "address_change",
   "rate_confirmation",
+  // A driver saying a load was picked up or delivered. Code then checks the whole load number and
+  // the sender before any move (src/lib/loads/movement.ts); this category alone moves nothing.
+  "load_update",
   "other",
 ] as const;
 

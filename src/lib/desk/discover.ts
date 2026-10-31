@@ -24,7 +24,13 @@ import { appendLine, type WakeBy } from "./log";
 // once, ever (a day's sweep whose run the demo reset removed is new work, under a new key: the
 // period's next go). Nothing created before the loop's start is ever found.
 
-export type Watermarks = { card_transactions: string; customer_payments: string };
+export type Watermarks = {
+  card_transactions: string;
+  customer_payments: string;
+  // LOAD-MOVEMENT (0071): a document's last change (its read), and a move's record time.
+  documents: string;
+  load_events: string;
+};
 
 export type DiscoverInput = {
   wakeId: string;
@@ -94,6 +100,30 @@ const FINDERS: {
            WHERE x.tenant_id = current_tenant_id()
              AND x.created_at >= CAST($1 AS timestamptz) AND x.created_at <= CAST($2 AS timestamptz)
              AND ${notLogged("customer_payment", "x")}
+           ORDER BY x.created_at, x.id LIMIT $3`,
+  },
+  // LOAD-MOVEMENT (0071): a document read and matched to one load, by its last change (the read
+  // writes updated_at), so a paper read after its upload is found once its read is in. One line per
+  // document, ever: the same document read twice is one piece of work.
+  {
+    source: "document",
+    watermark: "documents",
+    sql: `SELECT CAST(x.id AS text) AS id, ${ts("x.updated_at")} AS created_at FROM documents x
+           WHERE x.tenant_id = current_tenant_id() AND x.read_status = 'read'
+             AND x.document_kind IN ('bill_of_lading', 'rate_confirmation')
+             AND x.match->>'loadId' IS NOT NULL
+             AND x.updated_at >= CAST($1 AS timestamptz) AND x.updated_at <= CAST($2 AS timestamptz)
+             AND ${notLogged("document", "x")}
+           ORDER BY x.updated_at, x.id LIMIT $3`,
+  },
+  // A move recorded outside the seed: the lanes that follow a move (later items) read these lines.
+  {
+    source: "load_event",
+    watermark: "load_events",
+    sql: `SELECT CAST(x.id AS text) AS id, ${ts("x.created_at")} AS created_at FROM load_events x
+           WHERE x.tenant_id = current_tenant_id() AND x.source <> 'seed'
+             AND x.created_at >= CAST($1 AS timestamptz) AND x.created_at <= CAST($2 AS timestamptz)
+             AND ${notLogged("load_event", "x")}
            ORDER BY x.created_at, x.id LIMIT $3`,
   },
   {

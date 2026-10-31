@@ -76,6 +76,7 @@ export const LOCAL_OFF_ONLY = [
   "escrowRelease.armed",
   "autopilot.enabled",
   "autopilot.armed",
+  "loadMovement.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

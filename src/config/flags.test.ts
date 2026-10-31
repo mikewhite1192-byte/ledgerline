@@ -80,6 +80,7 @@ const RELEASED_ON = [
   "escrowRelease.armed",
   "agentFocusEnabled",
   "autopilot.enabled",
+  "loadMovement.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -300,6 +301,13 @@ describe("flags", () => {
   it("ships escrow releases on and armed, with a $5,000 cap and a start date", () => {
     expect(flags.escrowRelease).toEqual({ enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" });
     expect(isLocalDate(flags.escrowRelease.startDate)).toBe(true);
+  });
+
+  it("ships load movement from driver evidence on, with a start date", () => {
+    expect(flags.loadMovement).toEqual({ enabled: true, startDate: "2026-10-30" });
+    expect(isLocalDate(flags.loadMovement.startDate)).toBe(true);
+    // A load_move card is always a person's tap: never a kind the autopilot may approve.
+    expect(Object.keys(flags.autopilot.kinds)).not.toContain("load_move");
   });
 
   it("pins every switch that ships on for the demo-path run, on or off as its replay was recorded", () => {

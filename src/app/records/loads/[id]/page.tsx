@@ -8,6 +8,7 @@ import { Card, CardBody } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { Term } from "@/components/app/term";
 import { Day, Facts, RecordLink } from "@/components/invoices/cells";
+import { MoveButton } from "@/components/loads/move-button";
 import { lineKindLabel } from "@/lib/format/labels";
 import { QUEUE_REASON_LABELS } from "@/lib/invoices/labels";
 import { readLoadRecord } from "@/lib/invoices/views";
@@ -40,7 +41,13 @@ export default async function LoadRecord({ params }: { params: Promise<{ id: str
       <PageHeader
         title={`Load ${l.loadNumber}`}
         description={<RecordLink table="customers" id={l.customerId}>{l.customerName}</RecordLink>}
-        actions={<StatusBadge status={l.status} />}
+        actions={
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusBadge status={l.status} />
+            {l.status === "planned" ? <MoveButton loadId={l.id} to="in_transit" /> : null}
+            {l.status === "in_transit" ? <MoveButton loadId={l.id} to="delivered" /> : null}
+          </div>
+        }
       />
       <Card>
         <CardBody>

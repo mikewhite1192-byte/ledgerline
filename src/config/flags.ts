@@ -763,6 +763,17 @@ export type Flags = {
     startDate: string;
     kinds: Partial<Record<"invoice_post" | "card_match" | "payment_reapply", AutopilotCeiling>>;
   };
+  // Load movement from driver evidence (docs: LOAD-MOVEMENT, owner D-056): a load moves planned to
+  // in transit once its pickup bill of lading is read in, and in transit to delivered once its
+  // proof of delivery is (src/lib/loads/paperwork.ts decides from the stored reads, no model), or
+  // once a driver's text or voice note names the whole load number and says so. Code writes the
+  // status and one load_events row in one transaction; any case it cannot decide is a load_move
+  // card a person taps. No money moves and nothing is sent. Every automatic path (the desk loop's
+  // document source and its inbound message and voice note sources) asks enabled and startDate
+  // (YYYY-MM-DD, the carrier's zone: evidence from before it never moves a load) itself, and the
+  // load_move executor is registered only while enabled. A person's Mark picked up and Mark
+  // delivered buttons and Settings > Demo's Move the fleet are people's presses and do not read it.
+  loadMovement: { enabled: boolean; startDate: string };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -996,6 +1007,7 @@ export const flags: Flags = {
       payment_reapply: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 },
     },
   },
+  loadMovement: { enabled: true, startDate: "2026-10-30" },
 };
 
 applyLocalOverrides(flags);

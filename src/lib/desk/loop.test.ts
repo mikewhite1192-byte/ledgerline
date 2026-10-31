@@ -79,7 +79,7 @@ function fakeStore(): Fake {
       if (fake.lease && fake.lease.until >= input.nowIso) return null;
       fake.lease = { token: input.token, until: input.leaseUntilIso };
       // A row no wake has moved yet: no watermarks.
-      return { zone: "America/Chicago", watermarks: { card_transactions: null, customer_payments: null } };
+      return { zone: "America/Chicago", watermarks: { card_transactions: null, customer_payments: null, documents: null, load_events: null } };
     },
     async startClock(input) {
       if (fake.lease?.token === input.token) fake.clockStarts.push(input.nowIso);
