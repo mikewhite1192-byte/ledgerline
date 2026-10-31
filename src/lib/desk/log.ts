@@ -38,6 +38,8 @@ const CATEGORY = /^[a-z][a-z0-9_]{0,39}$/;
 
 // The loop's own category word on a carried line whose try threw (no handler writes it).
 export const THREW = "threw";
+// The category word a dispatch finalize carries while it waits for the mirror's recheck (S3).
+export const AWAITING_RECHECK = "awaiting_recheck";
 
 export function isCategory(value: unknown): value is string {
   return typeof value === "string" && CATEGORY.test(value);
@@ -137,7 +139,9 @@ const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-D
 // thaws later and records its old try).
 const RANK = `CASE kind WHEN 'seen' THEN 0 WHEN 'claimed' THEN 1 WHEN 'carried' THEN 2 ELSE 3 END`;
 
-// Oldest first, then by key. TMS-MIRROR (0075): dispatch status events seen in one wake keep their
+// Oldest first, then by key, except that a finalize carried while it waits for the dispatch
+// recheck (S3) goes after every other piece of work, so waits never take other work's share of a
+// wake. TMS-MIRROR (0075): dispatch status events seen in one wake keep their
 // place among the other sources but run in the order they happened, so a load's in transit event
 // runs before its delivered one (their ids are random, so key order is a coin flip).
 export const OPEN_EVENTS_SQL = `WITH lines AS (
@@ -148,7 +152,8 @@ export const OPEN_EVENTS_SQL = `WITH lines AS (
   SELECT DISTINCT ON (event_key) event_key, kind, source, subject_id
     FROM lines ORDER BY event_key, at DESC, rank DESC
 ), carried AS (
-  SELECT DISTINCT ON (event_key) event_key, detail->>'runId' AS run_id, detail->>'found' AS found
+  SELECT DISTINCT ON (event_key) event_key, detail->>'runId' AS run_id, detail->>'found' AS found,
+         detail->>'category' AS category
     FROM lines WHERE kind = 'carried' ORDER BY event_key, at DESC
 ), tally AS (
   SELECT event_key, min(at) AS first_at,
@@ -165,7 +170,8 @@ SELECT l.event_key, l.kind, l.source, CAST(l.subject_id AS text) AS subject_id, 
    AND NOT EXISTS (SELECT 1 FROM desk_log f
                     WHERE f.tenant_id = current_tenant_id() AND f.event_key = l.event_key
                       AND f.kind IN ('done', 'failed', 'skipped'))
- ORDER BY t.first_at,
+ ORDER BY (l.kind = 'carried' AND c.category IS NOT DISTINCT FROM '${AWAITING_RECHECK}'),
+          t.first_at,
           CASE WHEN l.source = 'tms_event' THEN 'tms_event:' ELSE l.event_key END,
           (SELECT e.at FROM tms_status_events e
             WHERE l.source = 'tms_event' AND e.tenant_id = current_tenant_id() AND e.id = l.subject_id),

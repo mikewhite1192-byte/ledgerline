@@ -397,6 +397,25 @@ export async function readInvoiceQueue(
   return { loads: loadsOf(loads, miles, accessorials), customers: customers.map(customerOf) };
 }
 
+// TMS-MIRROR (S3): one load of the invoice queue by its id, under the whole queue's predicate
+// (delivered, from `start` on, no invoice yet), with its own state miles and accessorials and the
+// tenant's customers. No load row when that load is not in the queue.
+const QUEUE_LOAD = `${QUEUE_LOADS} AND id = CAST($2 AS uuid)`;
+const QUEUE_LOAD_CHILDREN = `${QUEUE_CHILDREN} AND load_id = CAST($2 AS uuid)`;
+
+export async function readInvoiceQueueLoad(
+  q: Queryable,
+  start: LocalDate,
+  loadId: string,
+): Promise<{ loads: LoadRecord[]; customers: CustomerRecord[] }> {
+  const p = [assertLocalDate(start, "queue start"), assertUuid(loadId, "load id")];
+  const loads = await readWhere(q, "loads", QUEUE_LOAD, p);
+  const miles = await readWhere(q, "load_state_miles", QUEUE_LOAD_CHILDREN, p);
+  const accessorials = await readWhere(q, "load_accessorials", QUEUE_LOAD_CHILDREN, p);
+  const customers = await readTable(q, "customers");
+  return { loads: loadsOf(loads, miles, accessorials), customers: customers.map(customerOf) };
+}
+
 // A paged read that reached its page bound. The whole read fails: a partial set is never returned.
 export class ReadLimitError extends Error {
   readonly category = "too_many_rows";

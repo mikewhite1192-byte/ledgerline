@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Param, Queryable } from "../db";
 import { impactOf } from "../agent/gateway/store/proposals";
-import type { CustomerRecord, Finding, LoadRecord } from "../rules-engine";
+import { cents, type CustomerRecord, type Finding, type LoadRecord } from "../rules-engine";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import { centsToDollarsText, dollarsToCents } from "./form-text";
 import { OUTCOME_FALLBACK, outcomeLabel, QUEUE_REASON_LABELS } from "./labels";
@@ -16,6 +16,7 @@ import {
   tenantLock,
 } from "./number";
 import { checkApplications, checkPaymentInput, RECEIVED_WINDOW_DAYS } from "./payment-input";
+import { invoiceDraftOf } from "./propose";
 import { lineSummary, sameLines, splitInvoiceQueue } from "./queue";
 
 // Pure pieces of invoicing and customer payments. Fixed dates only; nothing reads the clock.
@@ -161,6 +162,49 @@ describe("invoice queue split", () => {
     expect(sameLines(a, [a[1], a[0]])).toBe(false);
     expect(sameLines(a, [a[0]])).toBe(false);
     expect(sameLines(a, [a[0], { kind: "fuel_surcharge", amountCents: 6 }])).toBe(false);
+  });
+
+  it("drafts one load's invoice card exactly as Refresh always did, so the two paths share one card", () => {
+    const withLumper = load({
+      id: ID(5),
+      loadNumber: "BR-1005",
+      accessorials: [{ id: ID(50), kind: "lumper", seq: 1, amountCents: cents(7_500), paidByDriver: true, description: null }],
+    });
+    const [item] = splitInvoiceQueue([withLumper], [CUSTOMER]).invoiceable;
+    // The literal Refresh drafted before the draft moved into invoiceDraftOf (the dedupe key hashes
+    // these args, so one differing byte would make the two paths retire each other's card).
+    expect(invoiceDraftOf(item)).toEqual({
+      kind: "invoice_post",
+      subjectTable: "loads",
+      subjectId: item.load.id,
+      amountCents: item.amountCents,
+      args: {
+        loadId: item.load.id,
+        loadNumber: item.load.loadNumber,
+        amountCents: item.amountCents,
+        lines: lineSummary(item.lines),
+      },
+      exceptions: [],
+      reasons: ["engine_total"],
+      sources: [...item.sources, ...item.lines.flatMap((l) => l.sources)],
+    });
+    expect(invoiceDraftOf(item).args).toEqual({
+      loadId: ID(5),
+      loadNumber: "BR-1005",
+      amountCents: 199_500,
+      lines: [
+        { kind: "linehaul", amountCents: 180_000 },
+        { kind: "fuel_surcharge", amountCents: 12_000 },
+        { kind: "lumper", amountCents: 7_500 },
+      ],
+    });
+    expect(Object.keys(invoiceDraftOf(item).args)).toEqual(["loadId", "loadNumber", "amountCents", "lines"]);
+    expect(invoiceDraftOf(item).sources).toEqual([
+      { table: "loads", id: ID(5) },
+      { table: "loads", id: ID(5) },
+      { table: "loads", id: ID(5) },
+      { table: "load_accessorials", id: ID(50) },
+    ]);
   });
 
   it("has words for every reason the engine refuses a load", () => {
