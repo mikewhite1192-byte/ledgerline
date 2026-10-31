@@ -23,11 +23,11 @@
   --muted-foreground: #66706b;
   --border: #e2e4df;
   --input: #858e89;
-  --primary: #4f46e5;
-  --primary-hover: #4338ca;
+  --primary: #0e6b4d;
+  --primary-hover: #0b5a41;
   --primary-foreground: #ffffff;
-  --accent-soft: #eef0ff;
-  --link: #4f46e5;
+  --accent-soft: #e5f2eb;
+  --link: #0e6b4d;
   --success: #0b4a36;
   --success-soft: #dcefe5;
   --warning: #8a4b00;
@@ -37,7 +37,7 @@
   --destructive-foreground: #ffffff;
   --info: #2f4b5a;
   --info-soft: #e3eaee;
-  --ring: #4f46e5;
+  --ring: #0e6b4d;
   /* Home's money chart: money in and money out, a pair checked for color-blind readers. */
   --chart-in: #2a78d6;
   --chart-out: #eb6834;
@@ -59,11 +59,11 @@
     --muted-foreground: #8f9893;
     --border: #2a312d;
     --input: #626c66;
-    --primary: #818cf8;
-    --primary-hover: #a5b4fc;
-    --primary-foreground: #111336;
-    --accent-soft: #1e2140;
-    --link: #818cf8;
+    --primary: #3fb984;
+    --primary-hover: #5ccb9c;
+    --primary-foreground: #0e1a14;
+    --accent-soft: #16291f;
+    --link: #5ccb9c;
     --success: #8fe0ba;
     --success-soft: #153527;
     --warning: #f2b33d;
@@ -73,7 +73,7 @@
     --destructive-foreground: #161d1a;
     --info: #a7c3d2;
     --info-soft: #1a2a31;
-    --ring: #818cf8;
+    --ring: #3fb984;
     --chart-in: #3987e5;
     --chart-out: #d95926;
     --radius: 12px;
@@ -94,11 +94,11 @@
   --muted-foreground: #8f9893;
   --border: #2a312d;
   --input: #626c66;
-  --primary: #818cf8;
-  --primary-hover: #a5b4fc;
-  --primary-foreground: #111336;
-  --accent-soft: #1e2140;
-  --link: #818cf8;
+  --primary: #3fb984;
+  --primary-hover: #5ccb9c;
+  --primary-foreground: #0e1a14;
+  --accent-soft: #16291f;
+  --link: #5ccb9c;
   --success: #8fe0ba;
   --success-soft: #153527;
   --warning: #f2b33d;
@@ -108,7 +108,7 @@
   --destructive-foreground: #161d1a;
   --info: #a7c3d2;
   --info-soft: #1a2a31;
-  --ring: #818cf8;
+  --ring: #3fb984;
   --chart-in: #3987e5;
   --chart-out: #d95926;
   --radius: 12px;
