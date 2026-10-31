@@ -87,6 +87,9 @@ const RELEASED_ON = [
   "loadMovement.enabled",
   "agentAsks.enabled",
   "advanceAtPickup.enabled",
+  // Armed by the owner (D-071, 2026-10-31): the autopilot approves the bookkeeping kinds inside their
+  // limits. The two kinds that pay a driver stay unarmed, each armed in its own release.
+  "autopilot.armed",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -102,8 +105,6 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The autopilot approves with no click: the owner arms it in its own release PR.
-  "autopilot.armed",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -444,10 +445,10 @@ describe("flags", () => {
     expect(flags.deskLoop.limits.wakeCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
   });
 
-  it("ships the autopilot unarmed, on a fixed start date, with both kinds that pay a driver unarmed too", () => {
+  it("ships the autopilot armed, on a fixed start date, with both kinds that pay a driver unarmed", () => {
     expect(flags.autopilot).toEqual({
       enabled: true,
-      armed: false,
+      armed: true,
       startDate: "2026-10-31",
       kinds: {
         invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
