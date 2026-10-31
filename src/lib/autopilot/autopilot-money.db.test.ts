@@ -364,6 +364,17 @@ describe("the autopilot on the kinds that pay a driver", () => {
   it("never counts another carrier's approvals in this carrier's day", async () => {
     const theirs = await addAdvanceProposal(B, B.driverId, 20_000);
     expect(await run(B, theirs)).toMatchObject({ ok: true, result: { outcome: "approved" } });
+    // Another carrier's autopilot approval whose args name this carrier's driver (args carry no
+    // foreign key): counted, its 20,000 would put this driver past the 30,000 driver day.
+    const named = await addAdvanceProposal(B, A.driverId, 20_000);
+    await admin.withTenant(B.tenantId, (q) =>
+      q.execute(
+        `UPDATE proposals SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                autopilot_decision = CAST($4 AS jsonb)
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [named, autopilotSub(B.tenantId), new Date(NOW - HOUR / 4).toISOString(), JSON.stringify({ mode: "auto", reason: "within_limits" })],
+      ),
+    );
     const ours = await addAdvanceProposal(A, A.driverId, 20_000);
     expect(await run(A, ours)).toMatchObject({ ok: true, result: { outcome: "approved" } });
     expect((await rowOf(A, ours)).decision).toMatchObject({ dayCents: 0, dayCount: 0, driverDayCents: 0 });

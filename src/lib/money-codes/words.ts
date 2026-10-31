@@ -38,6 +38,7 @@ const OUTCOME_SENTENCES: Readonly<Record<string, string>> = {
   code_unavailable: "The card provider could not be reached, so no code was issued. Try again in a minute.",
   check_unavailable: "The rules could not be checked just now, so no code was issued. Try again.",
   code_ref_collision: "This code's record is already taken. Nothing was issued; it needs a person.",
+  stale_eligibility: "The numbers changed since this was proposed, so no code was issued. Ask again.",
 };
 
 export function moneyCodeSentence(category: string | null | undefined): string {
@@ -48,17 +49,17 @@ export function moneyCodeSentence(category: string | null | undefined): string {
   return "That did not finish. Nothing was issued that cannot be checked; try again.";
 }
 
-// The approval card's sentences for a money code's own categories. load_not_drivers and
-// driver_not_armed are left to the shared advance sentences, which say the same thing, so one
-// card map never holds two sentences for one word.
-const SHARED_WITH_ADVANCES = new Set(["load_not_drivers", "driver_not_armed"]);
+// The approval card's sentences for a money code's own categories. load_not_drivers,
+// driver_not_armed and stale_eligibility are left to the shared advance sentences, which say the
+// same thing, so one card map never holds two sentences for one word.
+const SHARED_WITH_ADVANCES = new Set(["load_not_drivers", "driver_not_armed", "stale_eligibility"]);
 export const MONEY_CODE_APPROVE_NOTICE: Readonly<Record<string, string>> = Object.fromEntries(
   [...Object.entries(REFUSAL_SENTENCES), ...Object.entries(OUTCOME_SENTENCES)].filter(
     ([k]) => !SHARED_WITH_ADVANCES.has(k),
   ),
 );
 
-// The Money codes page's cards say every money code sentence, the two shared words included:
+// The Money codes page's cards say every money code sentence, the shared words included:
 // the page holds only money code cards, so no word there means two things.
 export const MONEY_CODE_PAGE_NOTICE: Readonly<Record<string, string>> = { ...REFUSAL_SENTENCES, ...OUTCOME_SENTENCES };
 

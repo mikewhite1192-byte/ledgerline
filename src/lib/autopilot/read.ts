@@ -101,7 +101,9 @@ const TODAY_SQL = `SELECT CAST(COALESCE(sum(amount_cents), 0) AS text) AS cents,
 
 // The same totals for one driver alone, on a kind that pays a driver: the proposals whose args name
 // that driver, compared as the whole canonical id (both money kinds store it there, checked by
-// their executors).
+// their executors). An advance's driver is its subject (driverOf), and this keys on its args: the
+// two are one id on every row counted here, since the advance precheck refuses one whose args'
+// driverId is not its subject, under the gate's lock, before the approval that stores auto.
 const DRIVER_TODAY_SQL = `${TODAY_SQL} AND args->>'driverId' = $4`;
 
 export async function readToday(q: Queryable, kind: string, sub: string, sinceIso: string): Promise<DayTotals> {

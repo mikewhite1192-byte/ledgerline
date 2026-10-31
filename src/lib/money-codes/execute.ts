@@ -456,7 +456,8 @@ export function codeReconcileHooks(issuer: MoneyCodeIssuer, purpose: MoneyCodePu
 // lock before the proposal becomes approved: a refusal leaves it waiting, with nothing written.
 // Reads only. The executor asks all of it again after the approval. For the autopilot (ctx.opts
 // .autopilot) the rules engine must also allow exactly the proposal's amount now: a code whose
-// numbers moved is refused here and waits for a person, never approved only to be refused after.
+// numbers moved is refused here as stale_eligibility (the advance precheck's word) and waits for a
+// person, never approved only to be refused after.
 export async function precheckMoneyCode(
   q: Queryable,
   p: ProposalRow,
@@ -480,7 +481,7 @@ export async function precheckMoneyCode(
     return no("check_unavailable", true);
   }
   if (!decision.ok) return no(decision.category);
-  if (ctx?.opts.autopilot !== undefined && decision.amountCents !== a.amountCents) return no("amount_invalid");
+  if (ctx?.opts.autopilot !== undefined && decision.amountCents !== a.amountCents) return no("stale_eligibility");
   return null;
 }
 
