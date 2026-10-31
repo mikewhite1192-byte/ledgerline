@@ -173,6 +173,7 @@ export const PROPOSAL_KINDS = [
   "pay_policy_setup",
   "load_create",
   "escrow_release",
+  "load_move",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 

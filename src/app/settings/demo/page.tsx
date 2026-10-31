@@ -14,6 +14,7 @@ import { buildCarrierPlan } from "@/lib/seed/plan";
 import { RESET_TABLES, TABLE_LABELS, demoCarrierOf, previewDemoReset, refusalText } from "@/lib/seed/reset";
 import { countRows } from "@/lib/seed/summary";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
+import { MoveFleetForm } from "./fleet-form";
 import { DemoResetForm } from "./reset-form";
 
 export const dynamic = "force-dynamic";
@@ -140,6 +141,23 @@ export default async function DemoSettings() {
             <ErrorState category={problem === "forbidden" ? "forbidden" : "unreadable"} />
           )}
         </Card>
+        {view?.kind === "ready" ? (
+          <Card>
+            <CardHeader>
+              <div className="grid gap-0.5">
+                <CardTitle>Move the fleet</CardTitle>
+                <CardDescription>
+                  {"The stand-in for a dispatch feed. Each press moves up to three loads one step: a load " +
+                    "whose pickup day has come is picked up, and a load picked up before today is delivered " +
+                    "today. The hero driver's loads are left for the walk-through. No money moves."}
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardBody>
+              <MoveFleetForm />
+            </CardBody>
+          </Card>
+        ) : null}
       </div>
     </main>
   );

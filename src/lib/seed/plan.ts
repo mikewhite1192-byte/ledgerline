@@ -40,6 +40,7 @@ import { applyHistory } from "./history";
 import { HERO_LANES, LANES, laneMiles, reverseLane, type Lane } from "./lanes";
 import { buildCarrierNotes } from "./memory-plan";
 import { CUSTOMERS, FIRST_NAMES, LAST_NAMES } from "./names";
+import { buildLoadEvents } from "./load-events";
 import { Rng } from "./prng";
 import {
   armedAt,
@@ -1200,6 +1201,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     driver_identities: driverIdentities(parity, drivers, prefix),
     driver_arm_events: armEvents(parity, drivers),
     loads,
+    load_events: [],
     load_state_miles: stateMiles,
     load_accessorials: accessorials,
     driver_days: days,
@@ -1262,6 +1264,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   // The departed driver and their three old paid weeks, after everything else and from their own
   // stream, so no row above sees them and no other id or pick moves (terminated-plan.ts).
   appendDeparted({ carrier, seed, periods, rows, firstName: firsts[drivers.length], lastName: lasts[drivers.length] });
+  // The moves the history above made, last of all and from their own stream (load-events.ts).
+  rows.load_events = buildLoadEvents({ seed, zone, loads: rows.loads });
 
   const plan: CarrierPlan = {
     carrier,

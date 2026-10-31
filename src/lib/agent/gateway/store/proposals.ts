@@ -26,6 +26,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   pay_policy_setup: "Pay rules from your policy",
   load_create: "Create load from rate confirmation",
   escrow_release: "Release driver escrow",
+  load_move: "Move a load",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;
@@ -74,6 +75,8 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   if (kind === "pay_policy_setup") return { amountCents: 0, direction: "none" } as const;
   // A load from a rate confirmation: what the customer will owe once it is invoiced; nothing moves.
   if (kind === "load_create") return { amountCents, direction: "in" } as const;
+  // A load's status moves (picked up, delivered): no money and no amount.
+  if (kind === "load_move") return { amountCents: 0, direction: "none" } as const;
   // A pay rule change's amount is the engine's signed change to last settled week's total net pay:
   // more pay is money out, less pay money kept in, none when no one's pay changes.
   if (kind === "pay_rule_change") {

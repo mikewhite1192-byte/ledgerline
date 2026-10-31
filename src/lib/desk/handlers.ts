@@ -7,6 +7,7 @@ import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
 import { draftCollections } from "../collections/draft";
 import { handOffMessage, sortMessage } from "../inbound/pipeline";
+import { moveFromDocument, moveFromMessage, type MessageTable, type MoveOutcome } from "../loads/movement";
 import { advanceCardCheck, startCardCheck } from "../recon/run";
 import { advanceSweep, startSweep } from "../sweep/run";
 import { assertMembership } from "../tenant/context";
@@ -79,9 +80,55 @@ const STORED_CHECK_SQL = `SELECT CAST(c.id AS text) AS id, CAST(jsonb_array_leng
  WHERE c.tenant_id = current_tenant_id() AND c.created_at >= CAST($1 AS timestamptz)
  ORDER BY c.created_at DESC, c.id DESC LIMIT 1`;
 
+// What a move did, as a line: moved (found = the moves), a card for a person (found 1), already
+// there, or nothing to do. Switched off is skipped.
+function moveLine(r: MoveOutcome): HandlerOutcome {
+  if (r.kind === "moved") return done({ found: r.events.length, category: "moved" });
+  if (r.kind === "card") return done({ found: 1, category: "card" });
+  if (r.kind === "already") return done({ found: 0, category: "already" });
+  if (r.category === "switched_off") return skipped(SWITCHED_OFF);
+  return done({ found: 0, category: r.category });
+}
+
 export function deskHandlers(deps: HandlerDeps = {}): Handlers {
   const db = () => deps.db ?? getDb();
   const newId = deps.newId ?? randomUUID;
+
+  // LOAD-MOVEMENT: a driver's message Muse Spark sorted as load_update gets code's check and move
+  // (src/lib/loads/movement.ts asks loadMovement itself). Null when code did nothing with it (not
+  // sorted so, the switch off, before the start date, no sender, unclear, a driver's card already
+  // waiting): the message goes on as before.
+  const moveOnMessage = async (session: Session, table: MessageTable, id: string, clock: () => Date) => {
+    const r = await db().withTenant(session.tenantId, async (q) => {
+      await assertMembership(q, session);
+      return moveFromMessage(q, session, table, id, clock());
+    });
+    return r.kind === "nothing" ? null : moveLine(r);
+  };
+
+  // A read document matched to one load: its paperwork may move the load (one transaction).
+  const document: Handler = {
+    switchOn: () => flags.loadMovement.enabled === true,
+    needsMs: 5_000,
+    async run(session, event, ctx) {
+      const id = event.subjectId;
+      if (!id) return failed("bad_request");
+      const r = await db().withTenant(session.tenantId, async (q) => {
+        await assertMembership(q, session);
+        return moveFromDocument(q, session, id, ctx.clock());
+      });
+      return moveLine(r);
+    },
+  };
+
+  // A recorded move: nothing to run yet. The lanes that follow a move (later items) hang off here.
+  const loadEvent: Handler = {
+    switchOn: () => flags.loadMovement.enabled === true,
+    needsMs: 1_000,
+    async run() {
+      return done({ found: 0, category: "recorded" });
+    },
+  };
 
   // The pay sweep for the carrier's day: start (the schedule trigger returns the day's earlier run),
   // then advance until the deadline; still open, carried on by the next wake with its run id.
@@ -149,7 +196,7 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
   const inboundMessage: Handler = {
     switchOn: () => flags.inboxEnabled === true && flags.aiEnabled === true,
     needsMs: 25_000,
-    async run(session, event) {
+    async run(session, event, ctx) {
       const id = event.subjectId;
       if (!id) return failed("bad_request");
       const r = await sortMessage(session, id, { db: db() });
@@ -161,6 +208,11 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
       if (r.status === "handed_off") return done({ found: 0, category: "already_handed_off" });
       if (r.status === "blocked") return done({ found: 0, category: "held" });
       if (r.status !== "triaged") return failed(r.category ?? "unknown");
+      // A load update is code's to move or card; it is not handed to the agent as a turn.
+      if (event.state !== "carried") {
+        const moved = await moveOnMessage(session, "inbound_messages", id, ctx.clock);
+        if (moved) return moved;
+      }
       if (flags.agentEnabled !== true) return done({ found: 0, category: "sorted" });
       if (event.state !== "carried") return running({ category: "sorted" });
       const h = await handOffMessage(session, id, { db: db() });
@@ -177,7 +229,7 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
   const voiceNote: Handler = {
     switchOn: () => flags.voiceIntakeEnabled === true && flags.aiEnabled === true,
     needsMs: 27_000,
-    async run(session, event) {
+    async run(session, event, ctx) {
       const id = event.subjectId;
       if (!id) return failed("bad_request");
       const r = await prepareVoiceNote(session, id, { db: db() });
@@ -188,7 +240,8 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
       }
       if (r.status === "failed") return failed(r.category ?? "unknown");
       if (r.status === "blocked") return done({ category: "held" });
-      return done({ category: "ready" });
+      const moved = await moveOnMessage(session, "voice_notes", id, ctx.clock);
+      return moved ?? done({ category: "ready" });
     },
   };
 
@@ -305,5 +358,7 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     collections,
     cash_check: cashCheck,
     autopilot,
+    document,
+    load_event: loadEvent,
   };
 }
