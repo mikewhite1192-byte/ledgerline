@@ -15,15 +15,15 @@ describe("DataStack", () => {
 
   afterAll(() => synth?.cleanup());
 
-  it("runs Aurora PostgreSQL 16 Serverless v2 that pauses at 0 and caps at 2 ACU", () => {
+  it("runs Aurora PostgreSQL 16 Serverless v2 that never pauses (0.5 ACU floor) and caps at 2 ACU", () => {
     template.resourceCountIs("AWS::RDS::DBCluster", 1);
     template.hasResourceProperties("AWS::RDS::DBCluster", {
       Engine: "aurora-postgresql",
       EngineVersion: "16.13",
       ServerlessV2ScalingConfiguration: {
-        MinCapacity: 0,
+        MinCapacity: 0.5,
         MaxCapacity: 2,
-        SecondsUntilAutoPause: 600,
+        SecondsUntilAutoPause: Match.absent(),
       },
       EnableHttpEndpoint: true,
       DeletionProtection: false,

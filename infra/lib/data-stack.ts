@@ -17,7 +17,7 @@ export const DB_APP_SECRET_NAME = "payday-copilot/db-app";
 
 // Aurora PostgreSQL Serverless v2, reached only through the Data API. The cluster sits in
 // isolated subnets with no NAT, no internet gateway and no inbound rule: nothing connects to it
-// over the network. It pauses after 10 idle minutes (0 ACU) and wakes on the next Data API call.
+// over the network. It never pauses: it idles at 0.5 ACU, so no request waits for it to wake.
 export class DataStack extends Stack {
   readonly cluster: DatabaseCluster;
   readonly appSecret: ISecret;
@@ -41,8 +41,7 @@ export class DataStack extends Stack {
       subnetConfiguration: [{ name: "db", subnetType: SubnetType.PRIVATE_ISOLATED, cidrMask: 24 }],
     });
 
-    // 16.x to match CI's Postgres 16, so a migration that passes CI runs the same here. 16.13 is
-    // above the 16.3 floor for auto-pause.
+    // 16.x to match CI's Postgres 16, so a migration that passes CI runs the same here.
     this.cluster = new DatabaseCluster(this, "Cluster", {
       engine: DatabaseClusterEngine.auroraPostgres({
         version: AuroraPostgresEngineVersion.VER_16_13,
@@ -50,9 +49,10 @@ export class DataStack extends Stack {
       vpc,
       vpcSubnets: { subnetType: SubnetType.PRIVATE_ISOLATED },
       writer: ClusterInstance.serverlessV2("Writer", { publiclyAccessible: false }),
-      serverlessV2MinCapacity: 0,
+      // Never paused: a paused cluster made the next click wait up to 20 seconds while it resumed.
+      // Half an ACU is the smallest that stays awake, about $1.45 a day.
+      serverlessV2MinCapacity: 0.5,
       serverlessV2MaxCapacity: 2,
-      serverlessV2AutoPauseDuration: Duration.minutes(10),
       enableDataApi: true,
       defaultDatabaseName: DB_NAME,
       // The migrator. Owns the tables; the app never reads this secret.
