@@ -28,7 +28,7 @@ import {
   wonderCapNanocents,
 } from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
-import { readCashHome, type CashHome } from "@/lib/cash/view";
+import { readCashHome } from "@/lib/cash/view";
 import { DbError } from "@/lib/db";
 import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
 import type { TurnView } from "@/lib/agent/view";
@@ -45,7 +45,7 @@ import { readNextWeekStart } from "@/lib/pay-rules/read";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSettlementsView } from "@/lib/settlements/views";
-import { readSweepHome, type SweepRunView } from "@/lib/sweep/view";
+import { readSweepHome } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday } from "@/lib/tenant/shell";
 import { localTimeOf, type LocalDate } from "@/lib/time/local-date";
@@ -152,72 +152,29 @@ export default async function Home({
     </form>
   );
 
-  // The agent's recent turns, for a reload to show the same thread. A failed read shows an empty
-  // thread with the box still working; the turns are read back again on the next question.
-  let agentTurns: TurnView[] = [];
-  let turnsUnread = false;
-  if (carrier && flags.agentEnabled && !(startOver && carrier.role === "judge")) {
-    try {
-      agentTurns = await readRecentAgentTurns(carrier.session);
-    } catch (err) {
-      turnsUnread = true;
-      console.error("agent turns read failed:", err instanceof Error ? err.name : "unknown");
-    }
-  }
+  // Home's reads after the carrier's. Each runs in its own carrier transaction and none needs
+  // another, so they all start at once: the page waits for the slowest read, not for each in turn.
+  const reads = carrier
+    ? await Promise.all([
+        readTurns(carrier, startOver),
+        readNeedsRows(carrier, now),
+        // The last sweep, for the Today card while the sweep is on. A failed database or membership
+        // read says so on the card; any other error goes on to Next.
+        flags.sweepEnabled
+          ? loaded("sweep home", async () => (await readSweepHome(carrier.session)).runs[0] ?? null)
+          : null,
+        // Friday's pay run, when Cash Friday is on: the latest check's verdict, that it is out of
+        // date (its pay day has passed), or that there is none.
+        // A failed database or membership read says so on the card, never "not checked"; any other
+        // error goes on to Next.
+        flags.cashFridayEnabled ? loaded("cash home", () => readCashHome(carrier.session)) : null,
+        // Home's cards, each in its own carrier transaction and only while its page is on, so one
+        // failed read shows that card as unavailable and leaves the rest of the page alone.
+        readCards(carrierToday(carrier.timezone, now)),
+      ])
+    : null;
 
-  // "Needs you": its own carrier transaction, so a failed read here never takes the page down and
-  // never reads as "nothing is waiting".
-  let needsYou: NeedsYouView | null = null;
-  if (carrier) {
-    let rows: NeedsYouRow[] = [];
-    let unread = turnsUnread;
-    try {
-      const today = carrierToday(carrier.timezone, now);
-      rows = await withRequestTenant((q) =>
-        readNeedsYou(q, {
-          today,
-          settlements: flags.settlementsEnabled,
-          advances: flags.advancesEnabled,
-          invoices: flags.invoicesEnabled,
-          ...(flags.verification.enabled && flags.agentEnabled
-            ? {
-                escalations: {
-                  now,
-                  sub: carrier.session.sub,
-                  visitId: carrier.session.demoSessionId ?? null,
-                },
-              }
-            : {}),
-        }),
-      );
-    } catch (err) {
-      if (!(err instanceof ForbiddenError || err instanceof DbError)) throw err;
-      unread = true;
-      console.error("needs you read failed:", err.name);
-    }
-    const cards = flags.agentEnabled ? cardsRow(agentTurns) : null;
-    needsYou = { rows: cards ? [cards, ...rows] : rows, unread };
-  }
-
-  // The last sweep, for the Today card while the sweep is on. A failed database or membership read
-  // says so on the card; any other error goes on to Next.
-  const lastSweep: Loaded<SweepRunView | null> | null =
-    carrier && flags.sweepEnabled
-      ? await loaded("sweep home", async () => (await readSweepHome(carrier.session)).runs[0] ?? null)
-      : null;
-
-  // Friday's pay run, when Cash Friday is on: the latest check's verdict, that it is out of date
-  // (its pay day has passed), or that there is none.
-  // A failed database or membership read says so on the card, never "not checked"; any other error
-  // goes on to Next.
-  const cashHome: Loaded<CashHome | null> | null =
-    carrier && flags.cashFridayEnabled ? await loaded("cash home", () => readCashHome(carrier.session)) : null;
-
-  // Home's cards, each in its own carrier transaction and only while its page is on, so one failed
-  // read shows that card as unavailable and leaves the rest of the page alone.
-  const cards = carrier ? await readCards(carrierToday(carrier.timezone, now)) : null;
-
-  if (!carrier || !cards) {
+  if (!carrier || !reads) {
     return (
       <main className="flex min-h-dvh flex-col items-center bg-background px-4 pt-16 pb-10 sm:pt-24">
         <div className="grid w-full max-w-[440px] gap-6">
@@ -232,6 +189,16 @@ export default async function Home({
       </main>
     );
   }
+
+  const [turns, needsRows, lastSweep, cashHome, cards] = reads;
+  const agentTurns = turns.turns;
+  // "Needs you" never reads as "nothing is waiting" when its rows or the agent's turns were not read.
+  const rows = needsRows ?? [];
+  const cardsAsk = flags.agentEnabled ? cardsRow(agentTurns) : null;
+  const needsYou: NeedsYouView = {
+    rows: cardsAsk ? [cardsAsk, ...rows] : rows,
+    unread: turns.unread || needsRows === null,
+  };
 
   const base = [
     ...SUGGESTIONS,
@@ -257,7 +224,7 @@ export default async function Home({
       // Home's chat is inline, so it has no launcher or panel.
       agentPanel={false}
       // The bell's dot counts only a read that came back; an unread list never reads as zero.
-      needsYouCount={needsYou && !needsYou.unread ? needsYou.rows.length : undefined}
+      needsYouCount={needsYou.unread ? undefined : needsYou.rows.length}
       // The sidebar's pinned amounts, from the cards' own reads; a card not read leaves its out.
       pinned={{
         payWeekCents: cards.payday?.ok ? cards.payday.value.netCents : undefined,
@@ -278,11 +245,11 @@ export default async function Home({
             intake={cards.intake}
             shown={{ documents: flags.documentsEnabled, voiceNotes: flags.voiceIntakeEnabled, messages: flags.inboxEnabled }}
             sweep={lastSweep}
-            needs={needsYou ?? { rows: [], unread: true }}
+            needs={needsYou}
             today={today}
             timezone={carrier.timezone}
           />
-          {needsYou ? <NeedsYou view={needsYou} /> : null}
+          <NeedsYou view={needsYou} />
         </div>
         <NewHereLine />
         {flags.agentEnabled ? (
@@ -388,6 +355,46 @@ async function readCards(today: LocalDate): Promise<Cards> {
       : null,
   ]);
   return { intake, payday, flow, owed };
+}
+
+// The agent's recent turns, for a reload to show the same thread. A failed read shows an empty
+// thread with the box still working; the turns are read back again on the next question.
+async function readTurns(carrier: Carrier, startOver: boolean): Promise<{ turns: TurnView[]; unread: boolean }> {
+  if (!flags.agentEnabled || (startOver && carrier.role === "judge")) return { turns: [], unread: false };
+  try {
+    return { turns: await readRecentAgentTurns(carrier.session), unread: false };
+  } catch (err) {
+    console.error("agent turns read failed:", err instanceof Error ? err.name : "unknown");
+    return { turns: [], unread: true };
+  }
+}
+
+// "Needs you": its own carrier transaction, so a failed read here never takes the page down.
+// null is a failed database or membership read; any other error goes on to Next.
+async function readNeedsRows(carrier: Carrier, now: Date): Promise<NeedsYouRow[] | null> {
+  try {
+    return await withRequestTenant((q) =>
+      readNeedsYou(q, {
+        today: carrierToday(carrier.timezone, now),
+        settlements: flags.settlementsEnabled,
+        advances: flags.advancesEnabled,
+        invoices: flags.invoicesEnabled,
+        ...(flags.verification.enabled && flags.agentEnabled
+          ? {
+              escalations: {
+                now,
+                sub: carrier.session.sub,
+                visitId: carrier.session.demoSessionId ?? null,
+              },
+            }
+          : {}),
+      }),
+    );
+  } catch (err) {
+    if (!(err instanceof ForbiddenError || err instanceof DbError)) throw err;
+    console.error("needs you read failed:", err.name);
+    return null;
+  }
 }
 
 // The greeting's shortcuts, each only while its page is on. Running payday opens the sweep when it
