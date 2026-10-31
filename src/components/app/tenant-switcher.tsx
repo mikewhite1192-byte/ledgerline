@@ -14,6 +14,8 @@ export type TenantInfo = {
   email: string;
   timezone: string;
   role: Role;
+  // asks: and an opaque value, where the browser keeps the agent's questions this person closed.
+  asksKey?: string;
 };
 
 // Two letters for the carrier chip: the first letters of the first two words, else the first two

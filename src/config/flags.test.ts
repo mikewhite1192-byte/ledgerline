@@ -80,6 +80,9 @@ const RELEASED_ON = [
   "escrowRelease.armed",
   "agentFocusEnabled",
   "autopilot.enabled",
+  // The reason line is one capped Muse Spark call a question; it writes nothing until the
+  // questions themselves are on.
+  "agentAsks.reasonEnabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -99,6 +102,8 @@ const KEPT_OFF = [
   "autopilot.armed",
   // Loads move on driver evidence with no click: the owner turns it on in its own release PR.
   "loadMovement.enabled",
+  // The agent's questions: the owner turns them on in their own release PR.
+  "agentAsks.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -309,6 +314,19 @@ describe("flags", () => {
     expect(isLocalDate(flags.loadMovement.startDate)).toBe(true);
     // A load_move card is always a person's tap: never a kind the autopilot may approve.
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("load_move");
+  });
+
+  it("ships the agent's questions off, with the reason line capped at 2 cents and 80 tokens", () => {
+    expect(flags.agentAsks).toEqual({
+      enabled: false,
+      reasonEnabled: true,
+      reasonMaxCostCents: 2,
+      reasonMaxOutputTokens: 80,
+      reasonsPerWake: 3,
+      listLimit: 5,
+    });
+    // The demo-path replay never recorded a reason call, so the local run turns it off.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("agentAsks.reasonEnabled");
   });
 
   it("pins every switch that ships on for the demo-path run, on or off as its replay was recorded", () => {

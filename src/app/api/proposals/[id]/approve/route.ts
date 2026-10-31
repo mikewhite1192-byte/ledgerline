@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { answerAfterApprove } from "@/lib/asks/session";
 import { getSession } from "@/lib/auth/session";
 import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
@@ -41,7 +42,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (!opts) return reply({ error: "bad_request" }, 400);
   try {
     const result = await executeProposal(session, id, opts);
-    if (result.ok) return reply(result, 200);
+    if (result.ok) {
+      // The agent's question about it, if one is live, is answered only now (src/lib/asks).
+      await answerAfterApprove(session, id);
+      return reply(result, 200);
+    }
     return reply({ error: result.category, retryable: result.retryable }, STATUS[result.category] ?? 409);
   } catch (err) {
     if (err instanceof Error && err.name === "ForbiddenError") return reply({ error: "forbidden" }, 403);

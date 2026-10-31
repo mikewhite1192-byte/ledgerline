@@ -16,6 +16,8 @@ import {
   type DiscoverInput,
   type Watermarks,
 } from "./discover";
+import { closeStaleAsks } from "../asks/store";
+import { fillReasons } from "../asks/reason";
 import { deskHandlers, type Handlers } from "./handlers";
 import { localMidnightOf, localNowOf, type DeskSource } from "./keys";
 import { appendLine, categoryWord, readSeenSince, readState, THREW, type Line, type LineDetail, type OpenEvent, type WakeBy } from "./log";
@@ -67,6 +69,9 @@ export type DeskStore = {
   state(sinceStart: string): Promise<OpenEvent[]>;
   seenSince(sinceIso: string): Promise<number>;
   spend(input: { wakeStartIso: string; nowIso: string }): Promise<{ wakeNanocents: number; dayNanocents: number }>;
+  // The agent's questions (src/lib/asks): void the stale ones, then, with `reasons`, write a few
+  // reason lines before the deadline. Optional, so a fake store skips it.
+  asks?(input: { nowIso: string; deadlineMs: number; reasons: boolean }): Promise<void>;
 };
 
 export type LoopDeps = {
@@ -175,6 +180,11 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
         wakeNanocents: (await readSpendSince(q, input.wakeStartIso)).spentNanocents,
         dayNanocents: (await readDaySpend(q, input.nowIso)).spentNanocents,
       })),
+    asks: async (input) => {
+      if (flags.agentAsks.enabled !== true) return;
+      await inTenant((q) => closeStaleAsks(q, new Date(input.nowIso)));
+      if (input.reasons) await fillReasons(session, input.deadlineMs, { db });
+    },
   };
 }
 
@@ -372,6 +382,18 @@ export async function wakeDesk(
     // What is still open for a later wake: the events not reached and those carried on. One whose
     // try did not come back is not counted.
     counts.left = Math.max(0, open.length - (counts.done + counts.skipped + counts.failed + unanswered));
+    // The agent's questions: stale ones close; reason lines only while armed and under the caps.
+    if (store.asks) {
+      try {
+        await store.asks({
+          nowIso: clock().toISOString(),
+          deadlineMs,
+          reasons: armed && reason !== "wake_cents" && reason !== "day_cents",
+        });
+      } catch (err) {
+        log(`desk asks tenant=${session.tenantId} wake=${wakeId} failed=${errorName(err)}`);
+      }
+    }
     await line("sleep", null, { found: counts.done, category: reason });
     // Another wake now only for work this wake could do now and stopped short of (its deadline, or
     // its share of events), and only after a wake that found or closed something. Work carried on,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChatThread, type ChatMessage, type Part } from "@/components/app/chat-thread";
 import type { Suggestion } from "@/components/app/prompt-chips";
 import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
@@ -214,6 +214,30 @@ async function errorOf(res: Response): Promise<unknown> {
   }
 }
 
+// Something the agent said by itself (the card's questions), placed after the turn it followed in
+// time: `after` is that turn's id, null (or a turn not showing) for the top of the thread.
+export type Aside = { id: string; after: string | null; node: ReactNode };
+
+const turnOfMessage = (m: ChatMessage): string => m.id.slice(0, m.id.lastIndexOf(":"));
+
+export function withAsides(messages: ChatMessage[], asides: readonly Aside[]): ChatMessage[] {
+  if (asides.length === 0) return messages;
+  const shown = new Set(messages.map(turnOfMessage));
+  const asMessage = (a: Aside): ChatMessage => ({
+    id: `ask:${a.id}`,
+    role: "agent",
+    parts: [{ kind: "node", key: a.id, node: a.node }],
+  });
+  const out = asides.filter((a) => a.after === null || !shown.has(a.after)).map(asMessage);
+  messages.forEach((m, i) => {
+    out.push(m);
+    const turn = turnOfMessage(m);
+    if (i + 1 < messages.length && turnOfMessage(messages[i + 1]) === turn) return;
+    for (const a of asides) if (a.after === turn) out.push(asMessage(a));
+  });
+  return out;
+}
+
 export function AgentChat({
   initialTurns,
   streamMode,
@@ -233,6 +257,7 @@ export function AgentChat({
   draft: draftRequest,
   onFirstQuestion,
   documentsHref,
+  asides = [],
 }: {
   initialTurns: TurnView[];
   streamMode: "sse" | "poll";
@@ -268,6 +293,8 @@ export function AgentChat({
   onFirstQuestion?: (text: string | null) => void;
   // The documents page, offered in the card's "+" menu while documents are on.
   documentsHref?: string;
+  // The agent card's questions, each in the thread after the turn it followed.
+  asides?: readonly Aside[];
 }) {
   const visitor = useViewerRole() === "judge";
   const [turns, setTurns] = useState<LocalTurn[]>(initialTurns);
@@ -569,7 +596,7 @@ export function AgentChat({
   }
 
   const auditPage: AuditPage = { on: auditorOn, checking, timezone };
-  const messages = toMessages(turns, notices, reports, showReport, auditPage, viewer, visitor).map((m) => ({
+  const turnMessages = toMessages(turns, notices, reports, showReport, auditPage, viewer, visitor).map((m) => ({
     ...m,
     parts: m.parts.map((p): Part => {
       if (p.kind === "trace") return stepThrough && !p.proposalId ? { ...p, stepThrough: true } : p;
@@ -587,6 +614,7 @@ export function AgentChat({
       };
     }),
   }));
+  const messages = withAsides(turnMessages, asides);
 
   const onPick = disabledReason
     ? undefined
