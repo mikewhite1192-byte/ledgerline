@@ -305,7 +305,8 @@ export async function moveFromDocument(
       inputId,
     });
 
-  if (load.status === "cancelled") return cardOn("wrong_status", null);
+  // A cancelled load never moves, so a card for it could never be carried out.
+  if (load.status === "cancelled") return { kind: "nothing", category: "wrong_status" };
   if (load.status === "delivered" || load.status === "invoiced") return { kind: "already", loadId: load.id };
 
   const byId = new Map(docs.map((d) => [d.id, d]));
@@ -398,19 +399,34 @@ async function readMessage(q: Queryable, table: MessageTable, id: string): Promi
   return rows[0] ?? null;
 }
 
-// The loads whose number the text names whole, among the carrier's open loads.
+// The loads whose number the text names whole, among the carrier's loads that are not cancelled
+// (a load already delivered is found, so its own note reads as already there, never a card).
 async function namedLoads(q: Queryable, text: string): Promise<LockedLoad[]> {
-  const open = await q.query<LockedLoad>(
+  const loads = await q.query<LockedLoad>(
     `SELECT ${LOAD_COLUMNS} FROM loads
-      WHERE tenant_id = current_tenant_id() AND status IN ('planned', 'in_transit')
+      WHERE tenant_id = current_tenant_id() AND status <> 'cancelled'
       ORDER BY load_number, id`,
   );
-  return open.filter((l) => namesWhole(text, l.load_number));
+  return loads.filter((l) => namesWhole(text, l.load_number));
+}
+
+// Whether a load_move card about this driver still waits or runs: a second unclear note from the
+// same driver then leaves that card alone (the engine would retire it for different args).
+async function driverCardLive(q: Queryable, driverId: string): Promise<boolean> {
+  const rows = await q.query<{ one: number }>(
+    `SELECT 1 AS one FROM proposals
+      WHERE tenant_id = current_tenant_id() AND kind = 'load_move' AND subject_table = 'drivers'
+        AND subject_id = CAST($1 AS uuid) AND status IN ('proposed', 'approved', 'executing')
+      LIMIT 1`,
+    [driverId],
+  );
+  return rows.length > 0;
 }
 
 // Inside the desk's tenant transaction, after Muse Spark sorted the message as load_update: code
 // checks the whole load number and the sender, then makes the same move a paper would, with the
-// message time as the time. Anything less is a card; a message with no driver is left alone.
+// message time as the time. Anything less is a card, or nothing when a card could never be carried
+// out or one already waits for that driver; a message with no driver is left alone.
 export async function moveFromMessage(
   q: Queryable,
   session: Session,
@@ -429,15 +445,18 @@ export async function moveFromMessage(
   const evidence: Evidence = { table, id: msg.id };
   const source: MoveSource = table === "inbound_messages" ? "driver_text" : "driver_voice";
   const text = msg.text ?? "";
-  const driverCard = (reason: MoveReason) =>
-    card(q, session, now, {
+  const driverCard = async (reason: MoveReason): Promise<MoveOutcome> => {
+    const driverId = msg.driver_id as string;
+    if (await driverCardLive(q, driverId)) return { kind: "nothing", category: "driver_card_waiting" };
+    return card(q, session, now, {
       reason,
-      subject: { table: "drivers", id: msg.driver_id as string },
+      subject: { table: "drivers", id: driverId },
       loadId: null,
       toStatus: null,
       evidence,
       inputId: msg.input_id,
     });
+  };
 
   const named = await namedLoads(q, text);
   if (named.length === 0) return driverCard("no_load_number");
@@ -456,7 +475,8 @@ export async function moveFromMessage(
       inputId: msg.input_id,
     });
   if (load.driver_id !== msg.driver_id) return cardOn("wrong_driver", to);
-  if (to === null) return cardOn("unclear_update", null);
+  // Unclear: a card with no step could never be carried out; the message goes on as before.
+  if (to === null) return { kind: "nothing", category: "unclear_update" };
   const r = await applyMove(q, load, to, { at: msg.at, day, zone, today: localDateOf(now.toISOString(), zone) }, source, evidence, cardOn);
   return r.kind === "refused" ? cardOn(r.reason, to) : r;
 }

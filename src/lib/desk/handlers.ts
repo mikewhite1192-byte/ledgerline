@@ -96,7 +96,8 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
 
   // LOAD-MOVEMENT: a driver's message Muse Spark sorted as load_update gets code's check and move
   // (src/lib/loads/movement.ts asks loadMovement itself). Null when code did nothing with it (not
-  // sorted so, the switch off, before the start date, no sender): the message goes on as before.
+  // sorted so, the switch off, before the start date, no sender, unclear, a driver's card already
+  // waiting): the message goes on as before.
   const moveOnMessage = async (session: Session, table: MessageTable, id: string, clock: () => Date) => {
     const r = await db().withTenant(session.tenantId, async (q) => {
       await assertMembership(q, session);

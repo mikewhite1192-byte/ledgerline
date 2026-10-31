@@ -44,4 +44,49 @@ describe("directionOf", () => {
     expect(directionOf("picked up and delivered")).toBeNull();
     expect(directionOf("running late at the shipper")).toBeNull();
   });
+
+  it("still moves on a plain past tense", () => {
+    expect(directionOf("picked up BR-L10247")).toBe("in_transit");
+    expect(directionOf("delivered BR-L10247")).toBe("delivered");
+    expect(directionOf("ya cargue BR-L10247")).toBe("in_transit");
+    expect(directionOf("entregue BR-L10247")).toBe("delivered");
+  });
+
+  it("gives nothing for a move still ahead, or one the driver is not sure of", () => {
+    const ahead = [
+      "still waiting to get loaded at the shipper BR-L10247",
+      "BR-L10247 should be delivered by 3pm",
+      "BR-L10247 gonna be delivered soon",
+      "BR-L10247 about to be delivered",
+      "BR-L10247 almost delivered",
+      "BR-L10247 needs to be delivered today",
+      "BR-L10247 being loaded",
+      "getting loaded BR-L10247",
+      "going to get BR-L10247 delivered",
+      "BR-L10247 delivered soon",
+      "BR-L10247 need it delivered",
+      "BR-L10247 must be delivered",
+      "BR-L10247 eta delivered 3pm",
+      "BR-L10247 might be delivered",
+      "BR-L10247 may get loaded",
+      "hope BR-L10247 delivered",
+      "hopefully loaded BR-L10247",
+      "parked until BR-L10247 loaded",
+      "parked till BR-L10247 loaded",
+      "call me when BR-L10247 delivered",
+      "once BR-L10247 loaded I roll",
+      "if BR-L10247 loaded I roll",
+      "voy a entregar, BR-L10247 entregado pronto",
+      "vamos cargados BR-L10247",
+      "va entregado BR-L10247",
+      "esperando, BR-L10247 cargado",
+      "casi entregado BR-L10247",
+      "BR-L10247 entregado pronto",
+      "cuando este cargado BR-L10247",
+      "si esta cargado BR-L10247",
+      "BR-L10247 debe estar entregado",
+      "tengo que dejar BR-L10247 entregado",
+    ];
+    for (const text of ahead) expect(directionOf(text), text).toBeNull();
+  });
 });

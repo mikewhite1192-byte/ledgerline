@@ -324,6 +324,16 @@ describe("the paperwork path", () => {
     ]);
   });
 
+  it("moves nothing and makes no card for paper on a cancelled load", async () => {
+    const f = await carrier("move-cancelled");
+    const l = await load(f, { status: "cancelled" });
+    const paper = await bol(f, l, "11/01/2026", [pickupStop(null, null)], "2026-11-01T20:00:00.000Z");
+    expect(await fromDocument(f, paper)).toEqual({ kind: "nothing", category: "wrong_status" });
+    expect((await stateOf(f, l.id)).status).toBe("cancelled");
+    expect(await eventsOf(f, l.id)).toEqual([]);
+    expect(await cardsOf(f)).toEqual([]);
+  });
+
   it("moves nothing with the switch off or for paper from before the start date", async () => {
     const f = await carrier("move-off");
     const l = await load(f);
@@ -377,7 +387,7 @@ describe("the message path", () => {
     ]);
   });
 
-  it("refuses a note without the whole load number, from another driver, or unclear, as a card", async () => {
+  it("refuses a note without the whole load number or from another driver as a card, and moves nothing on an unclear one", async () => {
     const f = await carrier("move-refuse");
     const l = await load(f, { status: "in_transit" });
     const digits = l.number.replace(/^MV-L/, "");
@@ -386,7 +396,7 @@ describe("the message path", () => {
     const other = await voiceNote(f, f.otherDriverId, `Delivered ${l.number}`);
     expect(await fromVoice(f, other)).toMatchObject({ kind: "card", reason: "wrong_driver", loadId: l.id });
     const unclear = await voiceNote(f, f.driverId, `${l.number} not delivered yet`);
-    expect(await fromVoice(f, unclear)).toMatchObject({ kind: "card", reason: "unclear_update", loadId: l.id });
+    expect(await fromVoice(f, unclear)).toEqual({ kind: "nothing", category: "unclear_update" });
     const chat = await voiceNote(f, f.driverId, `Delivered ${l.number}`, "question");
     expect(await fromVoice(f, chat)).toEqual({ kind: "nothing", category: "not_load_update" });
 
@@ -395,6 +405,31 @@ describe("the message path", () => {
     const cards = await cardsOf(f);
     expect(cards.every((c) => c.amount_cents === 0)).toBe(true);
     expect(cards.find((c) => c.args.reason === "no_load_number")).toMatchObject({ subject_table: "drivers", subject_id: f.driverId });
+    expect(cards.map((c) => c.args.reason).sort()).toEqual(["no_load_number", "wrong_driver"]);
+  });
+
+  it("leaves a driver's waiting card alone when a second unclear note comes from the same driver", async () => {
+    const f = await carrier("move-driver-card");
+    await load(f, { status: "in_transit" });
+    const first = await voiceNote(f, f.driverId, "Delivered the load");
+    expect(await fromVoice(f, first)).toMatchObject({ kind: "card", reason: "no_load_number", loadId: null });
+    const second = await voiceNote(f, f.driverId, "Dropped it off, which load was it");
+    expect(await fromVoice(f, second)).toEqual({ kind: "nothing", category: "driver_card_waiting" });
+    const cards = await cardsOf(f);
+    expect(cards.map((c) => [c.subject_table, c.subject_id, c.status, c.args.evidenceId])).toEqual([
+      ["drivers", f.driverId, "proposed", first],
+    ]);
+  });
+
+  it("reads a note on a load already delivered as already there, never a card", async () => {
+    const f = await carrier("move-already");
+    const l = await load(f, { status: "in_transit" });
+    const note = await voiceNote(f, f.driverId, `Delivered ${l.number}`);
+    expect(await fromVoice(f, note)).toMatchObject({ kind: "moved", to: "delivered" });
+    const again = await voiceNote(f, f.driverId, `${l.number} delivered, all signed`);
+    expect(await fromVoice(f, again)).toEqual({ kind: "already", loadId: l.id });
+    expect(await cardsOf(f)).toEqual([]);
+    expect(await eventsOf(f, l.id)).toHaveLength(1);
   });
 });
 

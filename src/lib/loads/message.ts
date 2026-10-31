@@ -1,6 +1,6 @@
 // What a driver's text or voice note says about a load, read by code. Pure. Muse Spark sorts the
 // message as load_update; code then needs the whole load number in the text and a plain picked up
-// or delivered, and anything less is a card for a person, never a guess.
+// or delivered in the past tense, and anything less is never a move, never a guess.
 
 const ALNUM = /[A-Za-z0-9]/;
 
@@ -68,9 +68,22 @@ const DELIVERED = [
   /\bdescargad[oa]s?\b/,
 ];
 
-// A word that can turn the sentence around ("not delivered yet", "no he entregado"): the message is
-// then a card, never a move.
-const TURNS = /\b(not|no|never|yet|cannot|can't|cant|won't|wont|didn't|didnt|haven't|havent|hasn't|hasnt|isn't|isnt|aren't|arent|todavia|aun|nunca|tomorrow|manana|later|will)\b/;
+// A word that can turn the sentence around ("not delivered yet", "no he entregado") or put the move
+// ahead of now ("should be delivered by 3pm", "waiting to get loaded", "voy a entregar"): the
+// message then moves nothing. Only a plain past tense moves a load.
+const TURNS = new RegExp(
+  "\\b(" +
+    [
+      // Not, or not yet.
+      "not|no|never|yet|cannot|can't|cant|won't|wont|didn't|didnt|haven't|havent|hasn't|hasnt|isn't|isnt|aren't|arent",
+      // Ahead of now, or not sure.
+      "will|be|being|get|getting|waiting|about|almost|should|gonna|going|soon|need|needs|must|eta|might|may",
+      "hope|hopefully|until|till|when|once|if|tomorrow|later",
+      // Spanish.
+      "todavia|aun|nunca|manana|voy|vamos|va|esperando|casi|pronto|cuando|si|debe|tengo\\s+que",
+    ].join("|") +
+    ")\\b",
+);
 
 export type SaidMove = "in_transit" | "delivered";
 
