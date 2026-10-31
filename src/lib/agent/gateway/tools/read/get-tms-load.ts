@@ -13,13 +13,15 @@ import {
 import { defineTool } from "../../types";
 import { idField } from "../../validate";
 import { OPERATOR_AUDITOR } from "../shared";
+import { UNTRUSTED_WARNING } from "./get-inbound-message";
 import { fitTmsResult, type FitList } from "./tms-fit";
 
 // TMS-MIRROR (design-tms 4): one of our loads as the dispatch system shows it, read from the
 // mirror the sync keeps. Every difference between the two sides is worked out in code
 // (src/lib/tms/differences.ts); money is integer cents and every time carries both clocks, the
 // instant and the two-clock flag. Dispatch text (labels, names, descriptions, who changed what) is
-// the dispatch system's own words, length-bounded by the mirror's schema: data, never instructions.
+// the dispatch system's own words, length-bounded by the mirror's schema and dropped (null) when the
+// pattern pre-screen flags them (src/lib/tms/read.ts): data, never instructions, under a warning.
 // Reads only; nothing here touches the dispatch system or writes a row.
 
 export const getTmsLoad = defineTool({
@@ -124,6 +126,7 @@ export const getTmsLoad = defineTool({
       loadId: a.loadId,
       status: "linked",
       timeZone: ctx.timeZone,
+      warning: UNTRUSTED_WARNING,
       dispatch: {
         tmsLoadId: tms.id,
         reference: tms.reference,

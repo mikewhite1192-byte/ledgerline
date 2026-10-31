@@ -205,9 +205,16 @@ export async function buildStateSummary(
   sections.push({ title: "Carrier", lines: header, maxChars: 300 });
   sections.push({ title: "Pay rules", lines: rules, maxChars: 600 });
   // One line on the dispatch feed while the mirror is on: the system, its last full pass, today's
-  // events and flagged loads, or "not connected". Counts and codes only, never dispatch text.
+  // events and flagged loads, or "not connected". Counts and codes only, never dispatch text, and
+  // fixed words (never the error) when the feed cannot be read.
   if (flags.tmsSync.enabled === true) {
-    sections.push({ title: "Dispatch feed", lines: [feedLine(await readFeedState(q, today), zone)], maxChars: 160 });
+    let feed: string;
+    try {
+      feed = feedLine(await readFeedState(q, today), zone);
+    } catch {
+      feed = "Dispatch feed: not available";
+    }
+    sections.push({ title: "Dispatch feed", lines: [feed], maxChars: 160 });
   }
 
   if (focus !== null && flags.agentFocusEnabled) {

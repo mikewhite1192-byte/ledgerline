@@ -211,7 +211,7 @@ describe("agent asks", () => {
       expect.objectContaining({
         kind: "ask",
         status: "open",
-        text: "Dispatch shows load PU-1 picked up at 9:20 AM. Should I send Test Driver the 70% advance, $1,400.00?",
+        text: "Dispatch shows load PU-1 picked up at 9:20 AM. Should I send Test Driver the advance at pickup, $1,400.00?",
       }),
     ]);
     const byHand = await pickupCard("staff", "PU-2");

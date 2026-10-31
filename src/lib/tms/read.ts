@@ -1,3 +1,4 @@
+import { patternHits } from "../agent/gateway/patterns";
 import type { Queryable } from "../db";
 import { parseRead } from "../documents/schema";
 import type { ReadStatus } from "../documents/types";
@@ -35,6 +36,14 @@ function count(v: unknown): number {
   const n = num(v);
   if (n === null || n < 0) throw new Error("a count could not be read");
   return n;
+}
+
+// Dispatch text as a model may read it, screened like other untrusted text: never words the
+// gateway's pattern pre-screen flags as an instruction to an automated system. Null when they
+// cannot be shown; nothing is cut or rewritten. Every free-text column a reader returns passes here.
+export function dispatchText(text: string | null): string | null {
+  if (typeof text !== "string" || patternHits(text).length > 0) return null;
+  return text;
 }
 
 function flagsOf(text: unknown): string[] {
@@ -264,10 +273,10 @@ export async function readOurLoad(q: Queryable, loadId: string): Promise<OurLoad
 
 export type TmsLoad = {
   id: string;
-  externalId: string;
-  reference: string;
+  externalId: string | null;
+  reference: string | null;
   statusCode: string;
-  statusLabel: string;
+  statusLabel: string | null;
   customer: { externalId: string | null; name: string | null; customerId: string | null };
   driver: { externalId: string | null; name: string | null; driverId: string | null };
   truckUnit: string | null;
@@ -295,15 +304,15 @@ export async function readTmsLoadFor(q: Queryable, loadId: string, zone: string)
   const r = rows[0];
   return {
     id: r.id,
-    externalId: r.external_id,
-    reference: r.reference,
+    externalId: dispatchText(r.external_id),
+    reference: dispatchText(r.reference),
     statusCode: r.status_code,
-    statusLabel: r.status_label,
-    customer: { externalId: r.customer_external_id, name: r.customer_name, customerId: r.customer_id },
-    driver: { externalId: r.driver_external_id, name: r.driver_name, driverId: r.driver_id },
-    truckUnit: r.truck_unit,
-    trailerUnit: r.trailer_unit,
-    vin: r.vin,
+    statusLabel: dispatchText(r.status_label),
+    customer: { externalId: dispatchText(r.customer_external_id), name: dispatchText(r.customer_name), customerId: r.customer_id },
+    driver: { externalId: dispatchText(r.driver_external_id), name: dispatchText(r.driver_name), driverId: r.driver_id },
+    truckUnit: dispatchText(r.truck_unit),
+    trailerUnit: dispatchText(r.trailer_unit),
+    vin: dispatchText(r.vin),
     stopCount: num(r.stop_count),
     legCount: num(r.leg_count),
     pickedUp: timeView(r.picked_up_utc, r.picked_up_local, r.picked_up_at, r.picked_up_day, zone),
@@ -367,9 +376,9 @@ function stopOf(s: StopRow, zone: string): TmsStop {
     id: s.id,
     ordinal: num(s.ordinal) ?? 0,
     kind: s.stop_kind,
-    name: s.name,
-    city: s.city,
-    state: s.state,
+    name: dispatchText(s.name),
+    city: dispatchText(s.city),
+    state: dispatchText(s.state),
     apptFromLocal: s.appt_from_local,
     apptToLocal: s.appt_to_local,
     apptFromAt: s.appt_from_at,
@@ -397,9 +406,9 @@ export type TmsEvent = {
   id: string;
   tmsLoadId: string;
   loadId: string | null;
-  reference: string;
+  reference: string | null;
   loadNumber: string | null;
-  field: string;
+  field: string | null;
   newValue: string | null;
   previousValue: string | null;
   changedBy: string | null;
@@ -445,24 +454,25 @@ const EVENT_FROM = `FROM tms_status_events e
   JOIN tms_loads l ON l.tenant_id = e.tenant_id AND l.id = e.tms_load_id
   LEFT JOIN loads o ON o.tenant_id = l.tenant_id AND o.id = l.load_id`;
 
-function movedOf(r: EventRow, startDate: string | null): Moved {
+// Worked out from the row as stored, before any text is screened.
+function movedOf(r: EventRow, startDate: string): Moved {
   if (r.moved_event === true) return "yes";
   if (r.moved_card === true) return "card";
-  if (r.field === "status" && r.day !== null && (startDate === null || r.day < startDate)) return "before_start";
+  if (r.field === "status" && r.day !== null && r.day < startDate) return "before_start";
   return "no";
 }
 
-function eventOf(r: EventRow, startDate: string | null): TmsEvent {
+function eventOf(r: EventRow, startDate: string): TmsEvent {
   return {
     id: r.id,
     tmsLoadId: r.tms_load_id,
     loadId: r.load_id,
-    reference: r.reference,
+    reference: dispatchText(r.reference),
     loadNumber: r.load_number,
-    field: r.field,
-    newValue: r.new_value,
-    previousValue: r.previous_value,
-    changedBy: r.changed_by,
+    field: dispatchText(r.field),
+    newValue: dispatchText(r.new_value),
+    previousValue: dispatchText(r.previous_value),
+    changedBy: dispatchText(r.changed_by),
     at: r.at === null ? null : { utc: r.at_utc, local: r.at_local, at: r.at, day: r.day, flag: r.clock_flag },
     receivedAt: r.received_at,
     moved: movedOf(r, startDate),
@@ -473,7 +483,7 @@ function eventOf(r: EventRow, startDate: string | null): TmsEvent {
 export async function readHistory(
   q: Queryable,
   tmsLoadId: string,
-  startDate: string | null,
+  startDate: string,
 ): Promise<{ rows: TmsEvent[]; total: number }> {
   const rows = await q.query<EventRow>(
     `SELECT ${EVENT_COLUMNS} ${EVENT_FROM}
@@ -497,7 +507,7 @@ export type EventFilter = { since: string | null; loadId: string | null; driverI
 export async function readEvents(
   q: Queryable,
   filter: EventFilter,
-  startDate: string | null,
+  startDate: string,
 ): Promise<{ rows: TmsEvent[]; total: number }> {
   const where = [
     "e.tenant_id = current_tenant_id()",
@@ -521,7 +531,7 @@ export async function readEvents(
 
 // ---- Line items and documents ----
 
-export type LineItem = { id: string; group: string; typeLabel: string; description: string; amountCents: number };
+export type LineItem = { id: string; group: string; typeLabel: string | null; description: string | null; amountCents: number };
 export type GroupTotal = { group: string; count: number; totalCents: number };
 
 export async function readLineItems(q: Queryable, tmsLoadId: string): Promise<{ rows: LineItem[]; totals: GroupTotal[] }> {
@@ -541,7 +551,7 @@ export async function readLineItems(q: Queryable, tmsLoadId: string): Promise<{ 
     rows: rows.map((r) => {
       const cents = num(r.amount_cents);
       if (cents === null) throw new Error("a line item amount could not be read");
-      return { id: r.id, group: r.item_group, typeLabel: r.type_label, description: r.description, amountCents: cents };
+      return { id: r.id, group: r.item_group, typeLabel: dispatchText(r.type_label), description: dispatchText(r.description), amountCents: cents };
     }),
     totals: totals.map((t) => {
       const total = num(t.total);
@@ -553,7 +563,7 @@ export async function readLineItems(q: Queryable, tmsLoadId: string): Promise<{ 
 
 export type TmsDocument = {
   id: string;
-  fileName: string;
+  fileName: string | null;
   typeLabel: string | null;
   kind: string;
   uploader: string;
@@ -588,8 +598,8 @@ export async function readDocuments(q: Queryable, tmsLoadId: string): Promise<{ 
   return {
     rows: rows.map((d) => ({
       id: d.id,
-      fileName: d.file_name,
-      typeLabel: d.type_label,
+      fileName: dispatchText(d.file_name),
+      typeLabel: dispatchText(d.type_label),
       kind: d.doc_kind,
       uploader: d.uploader_kind,
       shared: d.shared === true,
@@ -606,14 +616,14 @@ export async function readDocuments(q: Queryable, tmsLoadId: string): Promise<{ 
 export type FleetRow = {
   tmsLoadId: string;
   loadId: string | null;
-  reference: string;
+  reference: string | null;
   loadNumber: string | null;
   driver: { externalId: string | null; name: string | null; driverId: string | null };
   statusCode: string;
-  statusLabel: string;
+  statusLabel: string | null;
   truckUnit: string | null;
   trailerUnit: string | null;
-  lastEvent: { id: string; field: string; newValue: string | null; at: string | null } | null;
+  lastEvent: { id: string; field: string | null; newValue: string | null; at: string | null } | null;
   nextStop: { kind: string; city: string | null; state: string | null; apptFromLocal: string | null; apptToLocal: string | null } | null;
   flags: string[];
 };
@@ -648,7 +658,7 @@ type FleetSqlRow = {
 
 // One row per dispatch driver with an undelivered load: the load on the road first, else the one
 // with the earliest next appointment. A load with no driver is its own row. total counts the rows
-// before the cap.
+// (drivers and driverless loads alike) before the cap.
 const FLEET_KEY = "coalesce(l.driver_external_id, 'load:' || CAST(l.id AS text))";
 const FLEET_SQL = `SELECT f.*, count(*) OVER () AS total FROM (
   SELECT DISTINCT ON (${FLEET_KEY})
@@ -683,23 +693,24 @@ const FLEET_COUNTS_SQL = `SELECT l.status_code, count(*) FILTER (WHERE l.gone_at
   FROM tms_loads l WHERE l.tenant_id = current_tenant_id()
  GROUP BY l.status_code ORDER BY l.status_code`;
 
-export async function readFleet(q: Queryable): Promise<{ rows: FleetRow[]; drivers: number; counts: FleetCounts }> {
+export async function readFleet(q: Queryable): Promise<{ rows: FleetRow[]; lines: number; counts: FleetCounts }> {
   const raw = await q.query<FleetSqlRow>(FLEET_SQL);
   const rows: FleetRow[] = raw.map((r) => ({
       tmsLoadId: r.id,
       loadId: r.load_id,
-      reference: r.reference,
+      reference: dispatchText(r.reference),
       loadNumber: r.load_number,
-      driver: { externalId: r.driver_external_id, name: r.driver_name, driverId: r.driver_id },
+      driver: { externalId: dispatchText(r.driver_external_id), name: dispatchText(r.driver_name), driverId: r.driver_id },
       statusCode: r.status_code,
-      statusLabel: r.status_label,
-      truckUnit: r.truck_unit,
-      trailerUnit: r.trailer_unit,
-      lastEvent: r.ev_id === null ? null : { id: r.ev_id, field: r.ev_field ?? "", newValue: r.ev_new, at: r.ev_at },
+      statusLabel: dispatchText(r.status_label),
+      truckUnit: dispatchText(r.truck_unit),
+      trailerUnit: dispatchText(r.trailer_unit),
+      lastEvent:
+        r.ev_id === null ? null : { id: r.ev_id, field: dispatchText(r.ev_field), newValue: dispatchText(r.ev_new), at: r.ev_at },
       nextStop:
         r.st_kind === null
           ? null
-          : { kind: r.st_kind, city: r.st_city, state: r.st_state, apptFromLocal: r.st_from, apptToLocal: r.st_to },
+          : { kind: r.st_kind, city: dispatchText(r.st_city), state: dispatchText(r.st_state), apptFromLocal: r.st_from, apptToLocal: r.st_to },
       flags: flagsOf(r.flags),
   }));
   const counted = await q.query<{ status_code: string; n: unknown; unlinked: unknown; gone: unknown; flagged: unknown }>(
@@ -713,5 +724,5 @@ export async function readFleet(q: Queryable): Promise<{ rows: FleetRow[]; drive
     counts.gone += count(c.gone);
     counts.flagged += count(c.flagged);
   }
-  return { rows, drivers: raw.length === 0 ? 0 : count(raw[0].total), counts };
+  return { rows, lines: raw.length === 0 ? 0 : count(raw[0].total), counts };
 }

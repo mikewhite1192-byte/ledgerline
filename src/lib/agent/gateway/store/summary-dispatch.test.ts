@@ -21,7 +21,7 @@ afterEach(() => {
 
 type Feed = { system: string; last_walk_completed_at: string | null; events_today: string; flagged: string };
 
-function fakeCarrier(feed: Feed | null, seen: string[]): Queryable {
+function fakeCarrier(feed: Feed | null | "throws", seen: string[]): Queryable {
   return {
     async query<T>(sql: string, params?: unknown[]): Promise<T[]> {
       seen.push(sql);
@@ -30,6 +30,7 @@ function fakeCarrier(feed: Feed | null, seen: string[]): Queryable {
       }
       if (sql.includes("FROM tms_connections")) {
         expect(params).toEqual(["2026-10-31"]);
+        if (feed === "throws") throw new Error("connection reset by peer at 10.0.0.7");
         return (feed ? [feed] : []) as T[];
       }
       if (sql.includes("pay_configs")) return [] as T[];
@@ -61,6 +62,16 @@ describe("the dispatch feed line", () => {
     flags.tmsSync.enabled = true;
     const out = await buildStateSummary(fakeCarrier(null, []), SESSION, CONVERSATION, NOW, CAP);
     expect(out.text).toContain("\n\nDispatch feed:\nnot connected");
+  });
+
+  it("says fixed words, never the error, when the feed cannot be read, and the summary still builds", async () => {
+    flags.tmsSync.enabled = true;
+    const out = await buildStateSummary(fakeCarrier("throws", []), SESSION, CONVERSATION, NOW, CAP);
+    expect(out.text).toContain("\n\nDispatch feed:\nDispatch feed: not available");
+    expect(out.text).not.toContain("connection reset");
+    expect(out.text).not.toContain("10.0.0.7");
+    expect(out.text).toContain("Pay rules:");
+    expect(out.text).toContain("Time zone: America/Chicago");
   });
 
   it("never reads the mirror while the switch is off", async () => {

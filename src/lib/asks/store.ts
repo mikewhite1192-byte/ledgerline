@@ -97,17 +97,15 @@ async function factsOf(q: Queryable, p: ProposalRow): Promise<AskFacts> {
   const first = cleanName(r.first_name);
   const last = cleanName(r.last_name);
   const stage = typeof args.toStage === "string" ? args.toStage : typeof args.stage === "string" ? args.stage : null;
-  // An advance at pickup names its load move and the share of the trip pay it may reach (bps).
+  // An advance at pickup names its load move; the question says the engine's amount, never a share.
   const pickup = p.kind === "advance_payout" ? await dispatchPickupOf(q, uuidOr(args.loadEventId), loadId) : null;
-  const shareBps = wholeOr(nested.shareBps);
-  const sharePercent = pickup !== null && shareBps !== null && shareBps % 100 === 0 ? shareBps / 100 : null;
   return {
     kind: p.kind,
     amountCents: Number(p.amount_cents),
     driverName: first && last ? cleanName(`${first} ${last}`) : (first ?? last),
     loadNumber: cleanName(r.load_number),
     customerName: cleanName(r.customer_name),
-    percent: wholeOr(args.percent) ?? wholeOr(args.advancePercent) ?? sharePercent,
+    percent: wholeOr(args.percent) ?? wholeOr(args.advancePercent),
     stage,
     dispatchPickup: pickup,
   };

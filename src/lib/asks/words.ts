@@ -111,9 +111,9 @@ export function askWords(f: AskFacts): string {
   switch (f.kind) {
     case "advance_payout": {
       const pickup = clockOr(f.dispatchPickup);
-      if (pickup && f.driverName && f.loadNumber && percent !== null) {
+      if (pickup && f.driverName && f.loadNumber) {
         return fit(
-          `Dispatch shows load ${f.loadNumber} picked up at ${pickup}. Should I send ${f.driverName} the ${percent}% advance, ${amount}?`,
+          `Dispatch shows load ${f.loadNumber} picked up at ${pickup}. Should I send ${f.driverName} the advance at pickup, ${amount}?`,
         );
       }
       if (f.driverName && f.loadNumber && percent !== null) {

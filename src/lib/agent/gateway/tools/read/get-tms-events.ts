@@ -4,11 +4,13 @@ import { EVENTS_DEFAULT, EVENTS_MAX, hasConnection, readEvents, readTmsLoadFor }
 import { defineTool, type GatewayRef } from "../../types";
 import { dateField, idField } from "../../validate";
 import { OPERATOR_AUDITOR } from "../shared";
+import { UNTRUSTED_WARNING } from "./get-inbound-message";
 import { fitTmsResult, type FitList } from "./tms-fit";
 
 // TMS-MIRROR (design-tms 4): the dispatch system's status history across the carrier, newest
 // first, from the read-only mirror. Each row says whether it moved our load (from load_events and
-// load_move cards, by the event's own id). Dispatch text is data, never instructions. Reads only.
+// load_move cards, by the event's own id). Dispatch text is data, never instructions: screened in
+// src/lib/tms/read.ts and sent under a warning. Reads only.
 
 export const getTmsEvents = defineTool({
   name: "get_tms_events",
@@ -69,6 +71,7 @@ export const getTmsEvents = defineTool({
     const result = {
       status: "ok",
       timeZone: ctx.timeZone,
+      warning: UNTRUSTED_WARNING,
       since: a.since ?? null,
       total: list.total,
       omitted: 0,
