@@ -28,7 +28,7 @@ function runs(items: NavItem[]): { group?: string; items: NavItem[] }[] {
 }
 
 // One menu row's look, shared with the rows the shell adds above the areas (Needs you, Ask). The
-// row for the page you are on sits on the soft indigo with an indigo icon.
+// row for the page you are on sits on the soft green with a green icon.
 export function navRowClass(current = false): string {
   return cn(
     "flex h-9 items-center gap-2.5 rounded-md px-2.5 text-body transition-colors duration-150 [&_svg]:size-4 [&_svg]:shrink-0",
