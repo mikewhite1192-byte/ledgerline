@@ -106,10 +106,10 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // 0013, 0015, 0022, 0029, 0030, 0032, 0046, 0048, 0062, 0066, 0069, 0071 and 0078 each
-    // re-create the check, so whichever ran last decides it. 0078 runs last in number order and in
-    // production's merge order; it lists 0071's eighteen (0069's seventeen, then load_move) and
-    // then card_load_ruling.
+    // 0013, 0015, 0022, 0029, 0030, 0032, 0046, 0048, 0062, 0066, 0069, 0071, 0078 and 0080 each
+    // re-create the check, so whichever ran last decides it. 0080 runs last in number order and in
+    // production's merge order; it lists 0078's nineteen (0071's eighteen, then card_load_ruling)
+    // and then card_pullback and deficit_book.
     const union = [
       "advance_payout",
       "pay_correction",
@@ -130,6 +130,8 @@ describe("proposal kinds and origins on a fresh database", () => {
       "escrow_release",
       "load_move",
       "card_load_ruling",
+      "card_pullback",
+      "deficit_book",
     ];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);
@@ -144,7 +146,7 @@ describe("proposal kinds and origins on a fresh database", () => {
     expect(listed).toEqual(union);
   });
 
-  it("lists vendor bills (0029), card statement rows (0046) and pinned rates (0053) as subject tables, after the seventeen of 0009", async () => {
+  it("lists vendor bills (0029), card statement rows (0046), pinned rates (0053) and driver deficits (0080) as subject tables, after the seventeen of 0009", async () => {
     const [def] = await admin.withoutTenant((q) =>
       q.query<{ def: string }>(
         `SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
@@ -152,8 +154,8 @@ describe("proposal kinds and origins on a fresh database", () => {
       ),
     );
     const listed = [...def.def.matchAll(/'([a-z_]+)'::text/g)].map((m) => m[1]);
-    expect(listed).toHaveLength(20);
-    expect(listed.slice(17)).toEqual(["vendor_bills", "card_transactions", "pinned_rates"]);
+    expect(listed).toHaveLength(21);
+    expect(listed.slice(17)).toEqual(["vendor_bills", "card_transactions", "pinned_rates", "driver_deficits"]);
   });
 
   it("keeps the dedupe key the engine computes inside the table's pattern", () => {

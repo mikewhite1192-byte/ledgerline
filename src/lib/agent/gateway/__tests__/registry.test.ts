@@ -48,6 +48,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_card_breaks: { tier: "read", roles: ["operator", "auditor"] },
   get_card_loads: { tier: "read", roles: ["operator", "auditor"] },
   propose_card_match: { tier: "propose", roles: ["operator"] },
+  propose_card_pullback: { tier: "propose", roles: ["operator"] },
   get_cash_friday: { tier: "read", roles: ["operator"] },
   preview_rule_change: { tier: "read", roles: ["operator"] },
   propose_rule_change: { tier: "propose", roles: ["operator"] },
@@ -111,6 +112,7 @@ beforeEach(() => {
   flags.moneyCodes.enabled = false;
   flags.cardRecon.enabled = false;
   flags.cardLoadRuling.enabled = false;
+  flags.cardPullback.enabled = false;
   flags.invoicesEnabled = false;
   flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
@@ -154,7 +156,7 @@ describe("tool registry", () => {
 
   it("gives every propose tool an engine limit", () => {
     const propose = Object.values(TOOL_REGISTRY).filter((t) => t.tier === "propose");
-    expect(propose).toHaveLength(11);
+    expect(propose).toHaveLength(12);
     for (const tool of propose) expect(typeof tool.limit).toBe("function");
   });
 
@@ -370,6 +372,21 @@ describe("tool registry", () => {
     flags.escrowRelease.enabled = false;
     expect(toolsFor("operator")).toHaveLength(21);
     expect(toolsFor("auditor")).toHaveLength(12);
+  });
+
+  it("offers the card pull-back proposal to the operator alone, only while its switch is on", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    for (const role of AGENT_ROLES) expect(names(role), role).not.toContain("propose_card_pullback");
+    flags.cardPullback.enabled = true;
+    expect(names("operator")).toContain("propose_card_pullback");
+    expect(names("auditor")).not.toContain("propose_card_pullback");
+    expect(names("triage")).not.toContain("propose_card_pullback");
+    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(ALWAYS_LOADED).not.toContain("propose_card_pullback");
+    expect(toolNamed("propose_card_pullback")?.limit).toBeTypeOf("function");
+    flags.cardPullback.enabled = false;
+    expect(toolsFor("operator")).toHaveLength(21);
   });
 
   it("offers the invoice review tools to the operator and the auditor only while both switches are on", () => {

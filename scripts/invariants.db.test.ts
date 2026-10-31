@@ -274,6 +274,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "agent_asks",
     // A deficit a card load ruling booked (0078): no seed, an approval writes it.
     "driver_deficits",
+    // A fuel card pull-back (0080): no seed, an approval writes it.
+    "card_pullbacks",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -548,6 +550,16 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
              status)
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 2500, 2500, 'failed')`,
           [randomUUID(), c.driver, proposal],
+        );
+        // A card pull-back that ended failed before any ledger row was reserved: no ledger row names
+        // it, so the payout check has nothing to compare (0080).
+        await q.execute(
+          `INSERT INTO card_pullbacks (id, tenant_id, driver_id, card_id, proposal_id, advance_id, reason,
+             requested_cents, balance_cents, pull_cents, shortfall_cents, status)
+           SELECT CAST($1 AS uuid), current_tenant_id(), c.driver_id, c.id, CAST($2 AS uuid), NULL, 'breakdown', 3000,
+             2000, 2000, 1000, 'failed'
+             FROM driver_cards c WHERE c.tenant_id = current_tenant_id() ORDER BY c.id LIMIT 1`,
+          [randomUUID(), proposal],
         );
         // A person pausing the autopilot until they resume it, as the pause switch writes it (0070).
         await q.execute(

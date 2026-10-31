@@ -13,6 +13,7 @@ import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
 import { takebackReasonWords } from "@/lib/advances/takeback-words";
 import { advancesOn } from "@/lib/advances/switches";
+import { pullbackOn } from "@/lib/pullbacks/switches";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
@@ -126,6 +127,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         offered={actions.takeBack}
         paid={advance.status === "paid"}
         stillOwedCents={Math.max(0, advance.amountCents + advance.feeCents - advance.recoveredCents)}
+        pulls={pullbackOn()}
       />
 
       <Card>

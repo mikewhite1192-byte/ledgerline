@@ -81,6 +81,7 @@ export function isHooked(kind: MoneyActionKind): boolean {
 const HOOKED_PAYMENT_SYSTEM: Readonly<Partial<Record<MoneyActionKind, OutsideSystem>>> = {
   factoring_advance: "factoring_sim",
   money_code_issue: "fuel_card_sim",
+  card_pullback: "fuel_card_sim",
 };
 
 // The ledger functions the executor and the reconcile pass use; tests swap in a fake.

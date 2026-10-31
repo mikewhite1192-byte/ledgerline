@@ -10,8 +10,9 @@ import { KIND_SHAPES, MONEY_ACTION_KINDS, OUTSIDE_SYSTEMS } from "./types";
 // order, so whichever runs last decides the constraints. The rule that keeps both orders equal:
 // every re-creation lists the full union the code knows. A value missing there would be refused by
 // the database (23514) after the code had shipped. 0069 (ESCROW-RELEASE) adds the escrow kind and
-// its subject after both had run everywhere, so for the kind, subject and channel checks the newest
-// re-creation is the full union and each earlier one lists only values the code still knows.
+// its subject after both had run everywhere, and 0080 (RECOVERY) the card pull-back kind and its
+// subject the same way, so for the kind, subject and channel checks the newest re-creation is the
+// full union and each earlier one lists only values the code still knows.
 
 const DIR = path.join(process.cwd(), "db/migrations");
 const FILE = /^(\d{4})_[a-z0-9_]+\.sql$/;
@@ -72,7 +73,7 @@ describe("the money ledger checks in the migration texts", () => {
     );
     expect(found.map((l) => l.version)).toContain("0048");
     expect(found.map((l) => l.version)).toContain("0060");
-    expect(newestIsTheUnion(found, MONEY_ACTION_KINDS)).toBe("0069");
+    expect(newestIsTheUnion(found, MONEY_ACTION_KINDS)).toBe("0080");
   });
 
   it("lists every subject table in each subject check re-creation", () => {
@@ -80,7 +81,7 @@ describe("the money ledger checks in the migration texts", () => {
       /ADD\s+CONSTRAINT\s+money_actions_subject_table_check\s+CHECK\s*\(\s*subject_table\s+IN\s*\(([^)]*)\)/gi,
       /ADD\s+CONSTRAINT\s+money_actions_subject_table_check\b/gi,
     );
-    expect(newestIsTheUnion(found, SUBJECT_TABLES)).toBe("0069");
+    expect(newestIsTheUnion(found, SUBJECT_TABLES)).toBe("0080");
   });
 
   it("lists every outside system in each re-creation from the money-code block on", () => {
@@ -107,7 +108,7 @@ describe("the money ledger checks in the migration texts", () => {
       /ADD\s+CONSTRAINT\s+money_actions_counterparty_pairing\b/gi,
     );
     for (const found of [channel, invoice, counterparty]) expect(found.length).toBeGreaterThan(0);
-    expect(newestIsTheUnion(channel, kindsWhere((k) => KIND_SHAPES[k].channel === "payment"))).toBe("0069");
+    expect(newestIsTheUnion(channel, kindsWhere((k) => KIND_SHAPES[k].channel === "payment"))).toBe("0080");
     for (const l of invoice) {
       // The list, then the subject it pairs with: "(kind IN (...)) = (subject_table = 'invoices')".
       expect(sorted(l.values), l.version).toEqual(
@@ -147,10 +148,47 @@ describe("the money ledger checks in the migration texts", () => {
     expect(at).toEqual(["0069"]);
     expect(KIND_SHAPES.escrow_release.subjectTable).toBe("escrow_releases");
   });
+
+  it("pairs the card pull-back kind with its own subject", () => {
+    const re = /ADD\s+CONSTRAINT\s+money_actions_pullback_subject_pairing\s+CHECK\s*\(\s*\(\s*kind\s*=\s*'card_pullback'\s*\)\s*=\s*\(\s*subject_table\s*=\s*'card_pullbacks'\s*\)\s*\)/i;
+    const at = MIGRATIONS.filter((m) => re.test(m.sql)).map((m) => m.version);
+    expect(at).toEqual(["0080"]);
+    expect(KIND_SHAPES.card_pullback.subjectTable).toBe("card_pullbacks");
+    expect(KIND_SHAPES.card_pullback.channel).toBe("payment");
+  });
+
+  // Re-created NOT VALID, so the file that holds the exclusive lock reads no ledger rows, then
+  // validated by the file the runner applies next, in its own transaction.
+  it("adds 0080's four ledger checks NOT VALID and validates each in 0080_recovery_validate, applied next", () => {
+    const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
+    const added = read("0080_recovery.sql");
+    const validate = read("0080_recovery_validate.sql");
+    for (const name of [
+      "money_actions_kind_check",
+      "money_actions_subject_table_check",
+      "money_actions_channel_pairing",
+      "money_actions_pullback_subject_pairing",
+    ]) {
+      const adds = [...added.matchAll(new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\s+CHECK\\b[^;]*;`, "gi"))];
+      expect(adds, name).toHaveLength(1);
+      expect(adds[0][0], name).toMatch(/\)\s*NOT\s+VALID\s*;$/i);
+      expect(validate, name).toMatch(new RegExp(`ALTER\\s+TABLE\\s+money_actions\\s+VALIDATE\\s+CONSTRAINT\\s+${name}\\s*;`, "i"));
+    }
+    const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
+    expect(names.indexOf("0080_recovery_validate.sql")).toBe(names.indexOf("0080_recovery.sql") + 1);
+  });
 });
 
 // Kinds added by a later re-creation of the proposal check, which lists 0048's fourteen first.
-const AFTER_0048 = ["pay_policy_setup", "load_create", "escrow_release", "load_move", "card_load_ruling"];
+const AFTER_0048 = [
+  "pay_policy_setup",
+  "load_create",
+  "escrow_release",
+  "load_move",
+  "card_load_ruling",
+  "card_pullback",
+  "deficit_book",
+];
 
 describe("0048's proposal kind check", () => {
   it("lists the 14-kind union, which holds every kind the code knew then", () => {

@@ -483,7 +483,8 @@ describe("the fuel-card rail", () => {
     const onRail = paymentKinds.filter((k) => !isHooked(k));
     expect(Object.keys(RAIL_OF_KIND).sort()).toEqual([...onRail].sort());
     expect(RAIL_OF_KIND).toEqual({ advance_payout: "fuel_card", settlement_payout: "bank", escrow_release: "bank" });
-    expect(paymentKinds.filter((k) => isHooked(k)).sort()).toEqual(["factoring_advance", "money_code_issue"]);
+    expect(paymentKinds.filter((k) => isHooked(k)).sort()).toEqual(["card_pullback", "factoring_advance", "money_code_issue"]);
+    expect(railOf("card_pullback")).toBeNull();
     expect(railOf("factoring_advance")).toBeNull();
     expect(railOf("money_code_issue")).toBeNull();
   });

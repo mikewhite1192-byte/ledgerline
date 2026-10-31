@@ -4,8 +4,9 @@ import { bodyAction, refuse } from "@/lib/advances/http";
 import { TAKEBACK_REASONS, takeBackAdvance } from "@/lib/advances/takeback";
 
 // POST: a person takes an advance back (src/lib/advances/takeback.ts): an unpaid one is cancelled,
-// a paid one records the amount taken back. Nothing is pulled off the card. The switch is asked
-// here and again by the service.
+// a paid one records the amount taken back. Nothing is pulled off the card, unless the card
+// pull-back switch is on: then a paid one makes a pull-back card that pulls it back in test mode
+// once approved. The switch is asked here and again by the service.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 

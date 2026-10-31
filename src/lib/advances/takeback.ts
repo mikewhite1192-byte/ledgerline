@@ -4,6 +4,9 @@ import { isCanonicalUuid } from "../money/keys";
 import { readBySubject } from "../money/read";
 import type { MoneyAction } from "../money/types";
 import { flags } from "../../config/flags";
+import { proposePull, type PullProposeResult } from "../pullbacks/propose";
+import { pullbackOn } from "../pullbacks/switches";
+import { isPullbackReason } from "../pullbacks/words";
 import { failAdvanceProposal } from "./approve";
 import { readMember } from "./member";
 import { readAdvanceView, type AdvanceView } from "./rows";
@@ -19,6 +22,10 @@ import { CANCELLED_BY_TAKEBACK, isTakebackReason } from "./takeback-words";
 // One per advance: the same amount again returns the row unchanged, a different amount is
 // refused. One tenant transaction with the advance locked. Staff may take back up to the
 // approver rule's line; above it, only an admin.
+//
+// With the card pull-back switch on (S6), a paid advance's take-back makes a pull-back card for a
+// person to approve instead of recording the amount (src/lib/pullbacks/propose.ts); the approved
+// pull then records it. A cancel is unchanged: nothing was paid, so nothing is pulled.
 
 export { TAKEBACK_REASONS, isTakebackReason, type TakebackReason } from "./takeback-words";
 
@@ -67,7 +74,12 @@ export function takebackPlan(
 
 export type TakebackResult =
   | { ok: true; changed: boolean; status: string; takenBackCents: number }
-  | { ok: false; category: TakebackRefusal | "disabled" | "not_found" | "role"; retryable: false };
+  | { ok: true; changed: boolean; proposalId: string }
+  | {
+      ok: false;
+      category: TakebackRefusal | "disabled" | "not_found" | "role" | Extract<PullProposeResult, { ok: false }>["category"];
+      retryable: false;
+    };
 
 const no = (category: Exclude<TakebackResult, { ok: true }>["category"]): TakebackResult => ({
   ok: false,
@@ -100,6 +112,17 @@ export async function takeBackAdvance(
     // The approver rule's line: what is taken back, or for a cancel the advance itself.
     const size = plan.kind === "record" ? plan.cents : advance.amountCents;
     if (size > flags.approverRole.adminAboveCents && member.role !== "admin") return no("role");
+    if (plan.kind === "record" && pullbackOn()) {
+      // Every take-back reason is a pull-back reason; asked again so the type narrows here.
+      if (!isPullbackReason(input.reason)) return no("bad_request");
+      const card = await proposePull(
+        q,
+        session,
+        { driverId: advance.driverId, advanceId: advance.id, reason: input.reason, requestedCents: plan.cents },
+        new Date(nowIso),
+      );
+      return card.ok ? { ok: true, changed: card.changed, proposalId: card.proposalId } : no(card.category);
+    }
     const changed =
       plan.kind === "cancel"
         ? await q.execute(

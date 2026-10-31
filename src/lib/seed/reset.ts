@@ -19,7 +19,8 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //   3. demo_reset_clear() (migration 0025, re-created whole by later migrations: 0033, then 0034 to
 //      empty the fuel checks too, then 0036 to empty the pay rule changes, then 0038 with the Inbox
 //      messages, then 0066 with the rate confirmation readings, then 0069 with the escrow
-//      releases, then 0072 with the agent's questions, then 0078 with the driver deficits), the
+//      releases, then 0072 with the agent's questions, then 0078 with the driver deficits, then
+//      0080 with the card pull-backs), the
 //      one security-definer function, which checks the same things again under the tenant row
 //      lock and deletes the settled ledger rows,
 //      the agent's records and the fictional broker portal's loads (the app role has no DELETE on
@@ -44,6 +45,9 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 // must be in exactly one of TENANT_TABLES, this list or DEMO_RESET_KEPT
 // (src/lib/seed/reset-coverage.db.test.ts fails otherwise), so a new table gets a decision.
 export const DEMO_RESET_CLEARED = {
+  card_pullbacks:
+    "each fuel card pull-back (0080); it names a ledger row and a proposal that go, and the app " +
+    "role cannot delete it",
   escrow_releases:
     "each terminated driver's escrow release (0069); it names a ledger row and a proposal that go, " +
     "and the app role cannot delete it",
@@ -147,6 +151,7 @@ export const RESET_TABLES: readonly ResetTable[] = [...TENANT_TABLES, ...CLEARED
 // What demo_reset_clear() reports: the cleared tables, plus the advances an approval created
 // (they name a proposal; the replace rewrites the rest of advances).
 export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
+  "card_pullbacks",
   "escrow_releases",
   "money_actions",
   "ratecon_reads",
@@ -223,6 +228,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   briefs: "Profit briefs",
   carrier_notes: "Memory notes",
   pinned_rates: "Pinned fuel and tax rates",
+  card_pullbacks: "Card pull-backs (test mode)",
   escrow_releases: "Escrow releases (test mode)",
   money_actions: "Settled payouts and bookings (test mode)",
   ratecon_reads: "Rate confirmation readings",

@@ -175,6 +175,29 @@ export interface MoneyCodeIssuer {
   codeLast4(requestId: string): string;
 }
 
+// A pull back off a driver's fuel card: money a load put on the card comes back to the carrier.
+// Its own capability, as a money code is, so the payment adapter's members stay what they are.
+export type CardPullRequest = {
+  actionId: string;
+  driverId: string;
+  amountCents: number;
+  // Which record this is (memoCodeOf), never a person's name.
+  memoCode: string;
+  destination: FuelCardDestination;
+};
+
+export interface CardPuller {
+  readonly system: "fuel_card_sim";
+  // Repeats the switch checks on every call.
+  ready(): Promise<Ready>;
+  pullBack(req: CardPullRequest, ctx: SendContext): Promise<SendOutcome>;
+  // Reads only; the original request rides along, as for a payout read-back.
+  readBackPull(
+    ref: { requestId: string; outsideId?: string | null; request: CardPullRequest },
+    ctx: SendContext,
+  ): Promise<ReadBack>;
+}
+
 // kind is the rules engine's invoice line kind; it picks the accounting item for the line.
 export type InvoiceLine = {
   kind: "linehaul" | "fuel_surcharge" | "detention" | "layover" | "stop" | "lumper";

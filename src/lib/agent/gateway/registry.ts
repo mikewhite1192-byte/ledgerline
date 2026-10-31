@@ -59,6 +59,7 @@ import { proposeInvoiceFix } from "./tools/propose/propose-invoice-fix";
 import { proposeLoadRate } from "./tools/propose/propose-load-rate";
 import { proposeMoneyCode } from "./tools/propose/propose-money-code";
 import { proposeEscrowRelease } from "./tools/propose/propose-escrow-release";
+import { proposeCardPullback } from "./tools/propose/propose-card-pullback";
 import { proposePayCorrection } from "./tools/propose/propose-pay-correction";
 import { proposePaymentReapply } from "./tools/propose/propose-payment-reapply";
 import { proposeRuleChange } from "./tools/propose/propose-rule-change";
@@ -139,6 +140,8 @@ const TOOLS: readonly AnyToolDef[] = [
   listEscrowReleasesDue,
   getEscrowStatement,
   proposeEscrowRelease,
+  // Offered only while flags.cardPullback.enabled is on (the tool's enabled switch).
+  proposeCardPullback,
   // Offered only while flags.tmsSync.enabled is on (each tool's enabled switch): reads of the
   // dispatch mirror, never a write to it.
   getTmsLoad,

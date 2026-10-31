@@ -16,6 +16,7 @@ import { isServiceSub } from "../sweep/service-session";
 import { isUuid } from "../uuid";
 import { overrideReasonOf } from "../agent/auditor/words";
 import { cardLoadRulingExecutor } from "./executors/card-load-ruling";
+import { pullbackExecutor } from "./executors/card-pullback";
 import { cardMatchExecutor } from "./executors/card-match";
 import { factoringRequestExecutor } from "../factoring/execute";
 import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
@@ -266,6 +267,13 @@ export const EXECUTORS: ExecutorRegistry = {
   // longer stands unexplained before anything is approved. No money moves.
   get card_load_ruling() {
     return flags.cardLoadRuling.enabled ? cardLoadRulingExecutor : undefined;
+  },
+  // A pull back off a driver's fuel card (src/lib/pullbacks/execute.ts): one test-mode pull of the
+  // engine's amount, read through cardPullback.enabled on every approval, with a precheck that
+  // refuses a machine login, a role below the line or a plan that no longer holds (stale) before
+  // anything is approved. Never the autopilot's.
+  get card_pullback() {
+    return flags.cardPullback.enabled ? pullbackExecutor : undefined;
   },
 };
 

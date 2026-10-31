@@ -4,6 +4,8 @@ import { isCanonicalUuid, requestIdOf } from "../../money/keys";
 import { AMOUNT_LIMIT_CENTS, MoneyError, SIM_BEHAVIORS, type SimBehavior } from "../../money/types";
 import { MONEY_CODE_PURPOSES } from "../../rules-engine";
 import type {
+  CardPuller,
+  CardPullRequest,
   FuelCardDestination,
   MoneyCodeIssuer,
   MoneyCodeRequest,
@@ -274,6 +276,111 @@ export function createMoneyCodeIssuer(deps: FuelCardSimDeps = {}): MoneyCodeIssu
 
     codeLast4(requestId: string): string {
       return codeOf(requestId).slice(-4);
+    },
+  };
+}
+
+// ---- Pull-backs ----
+//
+// The same provider takes money back off a card once a person approved it: a load paid against the
+// wrong advance, or to a driver whose truck broke down before the trip. Still no key, no network
+// and no state: the answer is the card's sim_behavior, exactly as for a load:
+//   ok        confirms at pull; reads back succeeded
+//   declined  fails at pull (definite, nothing moved); reads back not found
+//   slow      unknown (timeout) at pull; reads back succeeded: the pull landed, the reply was lost
+//   offline   unknown (unavailable) at pull; the read-back throws unavailable
+// The pull id is fcs_pull_ + 24 hex of sha256("pull:" + request id), so a resend lands on the same
+// pull. ready() and every call re-read payoutsEnabled and cardPullback. Logs carry the behavior,
+// the pull id, the amount and the memo code, never the card's token or last four.
+
+// The provider's id for the pull a request id made: a pure function of the request id.
+export function pullId(requestId: string): string {
+  return `fcs_pull_${createHash("sha256").update(`pull:${requestId}`).digest("hex").slice(0, 24)}`;
+}
+
+function validPullRequest(r: CardPullRequest, ctx: SendContext): boolean {
+  return (
+    typeof ctx === "object" &&
+    ctx !== null &&
+    typeof ctx.requestId === "string" &&
+    REQUEST_ID.test(ctx.requestId) &&
+    typeof r === "object" &&
+    r !== null &&
+    isCanonicalUuid(r.actionId) &&
+    requestIdOf(r.actionId) === ctx.requestId &&
+    isCanonicalUuid(r.driverId) &&
+    Number.isSafeInteger(r.amountCents) &&
+    r.amountCents > 0 &&
+    r.amountCents < AMOUNT_LIMIT_CENTS &&
+    typeof r.memoCode === "string" &&
+    r.memoCode.length > 0 &&
+    r.memoCode.length <= 80 &&
+    validDestination(r.destination)
+  );
+}
+
+const pullsOn = (): boolean => flags.payoutsEnabled === true && flags.cardPullback.enabled === true;
+
+export function createCardPuller(deps: FuelCardSimDeps = {}): CardPuller {
+  const log = deps.log ?? ((line: string) => console.info(line));
+
+  return {
+    system: "fuel_card_sim",
+
+    async ready(): Promise<Ready> {
+      return pullsOn() ? { ok: true } : { ok: false, category: "disabled" };
+    },
+
+    // Never waits and never throws for a valid request.
+    async pullBack(r: CardPullRequest, ctx: SendContext): Promise<SendOutcome> {
+      if (!validPullRequest(r, ctx)) return { kind: "failed", category: "validation" };
+      if (!pullsOn()) return { kind: "failed", category: "disabled" };
+      const behavior = r.destination.simBehavior;
+      const id = pullId(ctx.requestId);
+      log(`fuelcard: ${behavior} pull ${id} ${r.amountCents}c for ${r.memoCode}`);
+      switch (behavior) {
+        case "ok":
+          return { kind: "confirmed", system: "fuel_card_sim", type: "card_pull", id, amountCents: r.amountCents };
+        case "declined":
+          return { kind: "failed", category: "declined" };
+        case "slow":
+          return { kind: "unknown", category: "timeout" };
+        case "offline":
+          return { kind: "unknown", category: "unavailable" };
+      }
+    },
+
+    // Reads only: nothing is ever pulled by a read-back.
+    async readBackPull(ref, ctx): Promise<ReadBack> {
+      if (
+        typeof ref !== "object" ||
+        ref === null ||
+        !validPullRequest(ref.request, ctx) ||
+        ref.requestId !== ctx.requestId
+      ) {
+        throw new MoneyError("validation");
+      }
+      const id = pullId(ctx.requestId);
+      if (ref.outsideId !== undefined && ref.outsideId !== null && ref.outsideId !== id) {
+        throw new MoneyError("validation");
+      }
+      if (!pullsOn()) throw new MoneyError("disabled");
+      switch (ref.request.destination.simBehavior) {
+        case "ok":
+        case "slow":
+          return {
+            found: true,
+            system: "fuel_card_sim",
+            type: "card_pull",
+            id,
+            amountCents: ref.request.amountCents,
+            status: "succeeded",
+          };
+        case "declined":
+          return { found: false };
+        case "offline":
+          throw new MoneyError("unavailable");
+      }
     },
   };
 }

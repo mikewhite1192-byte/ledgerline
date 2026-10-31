@@ -475,6 +475,17 @@ describe("a card load ruling card", () => {
   });
 });
 
+describe("a card pull-back card", () => {
+  it("asks to pull the amount back off the driver's card and says what happens to the rest", () => {
+    const card = proposalCardFrom({ ...view, kind: "card_pullback", amountCents: 40_000, direction: "in", destination: null });
+    expect(card.confirmNoun).toBe("card pull-back");
+    expect(card.confirmQuestion).toBe("Pull $400.00 back off the driver's fuel card?");
+    expect(card.confirmNext).toBe(
+      "Pulls it back off the card in test mode. What the card cannot give back on a breakdown is booked as money the driver owes.",
+    );
+  });
+});
+
 describe("the verification label on the card", () => {
   const on = { on: true, checking: false };
 
