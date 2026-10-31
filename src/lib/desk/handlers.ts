@@ -280,6 +280,8 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
           if (o.reason === "switched_off" || o.reason === "unarmed") return skipped(SWITCHED_OFF);
           return skipped(o.reason);
         case "executor_refused":
+          // The gate expired a proposal too old to approve: nothing ran.
+          if (o.category === "expired") return skipped("expired");
           return failed(o.category);
         case "retry":
           return running({ category: o.category });

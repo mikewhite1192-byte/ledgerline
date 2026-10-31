@@ -12,7 +12,7 @@ import { autopilotSession, autopilotSub } from "./session";
 // asks the policy. Auto: the approval gate decides it all again under the lock and approves, and
 // the kind's executor runs (src/lib/proposals/execute.ts). Ask or off: the decision is stored on
 // the proposal, which stays waiting for a person. Hold (switched off, unarmed, paused, or no longer
-// waiting): nothing is written. It never resumes an approval and never tries one twice: a
+// waiting, or made before the autopilot's start date): nothing is written. It never resumes an approval and never tries one twice: a
 // proposal already decided, whatever came of it, is reported and not run again, so an unknown
 // outcome is never retried blind. A read that does not answer throws before anything is written.
 // No model call.
@@ -33,8 +33,9 @@ export type AutopilotOutcome =
 
 export type AutopilotDeps = ExecuteDeps & { db?: TenantDb };
 
-// Policy reasons that mean "not now", never "a person decides".
-const HOLD_REASONS: ReadonlySet<PolicyReason> = new Set(["switched_off", "unarmed", "paused", "not_waiting"]);
+// Policy reasons that mean "not now", never "a person decides". A proposal made before the start
+// date is never the autopilot's, so nothing is stored on it either.
+const HOLD_REASONS: ReadonlySet<PolicyReason> = new Set(["switched_off", "unarmed", "paused", "not_waiting", "before_start"]);
 
 const PROPOSAL_SQL = `SELECT kind, status, CAST(amount_cents AS text) AS amount_cents, flagged_input_id,
        auditor_verdict, engine_check, decided_by, autopilot_decision IS NOT NULL AS asked,
@@ -67,6 +68,19 @@ type Looked =
   | { kind: "decided"; mode: "ask" | "off"; reason: string }
   | { kind: "auto"; ruleId: string; version: number };
 
+// The row as it reads now, after a write that reached none: decided by someone else in between.
+type Reread = { kind: "gone" } | { kind: "earlier"; status: string; mine: boolean; asked: boolean };
+
+async function reread(q: Queryable, sub: string, proposalId: string): Promise<Reread> {
+  const rows = await q.query<ProposalRead>(PROPOSAL_SQL, [proposalId]);
+  if (rows.length === 0) return { kind: "gone" };
+  const r = rows[0];
+  if (rows.length !== 1 || typeof r.status !== "string") throw new DbError("unknown");
+  // Still waiting with no decision, yet the write reached nothing: unknown, so it fails closed.
+  if (r.status === "proposed" && r.asked !== true) throw new DbError("unknown");
+  return { kind: "earlier", status: r.status, mine: r.decided_by === sub, asked: r.asked === true };
+}
+
 const amountOf = (v: unknown) => (typeof v === "string" && /^\d{1,12}$/.test(v) ? Number(v) : Number.NaN);
 
 async function look(q: Queryable, sub: string, proposalId: string, now: Date): Promise<Looked> {
@@ -85,16 +99,18 @@ async function look(q: Queryable, sub: string, proposalId: string, now: Date): P
   const rule = await readRule(q, r.kind, false);
   const today = await readToday(q, r.kind, sub, todayStartIso(now, zone));
   const sw = flags.autopilot;
+  const startMs = midnightMs(sw.startDate, zone);
+  const createdAtMs = Date.parse(r.created_at);
   const result = decide({
     switch: { enabled: sw.enabled, armed: sw.armed, kinds: sw.kinds },
     paused: isPaused(pause, now.getTime()),
-    startMs: midnightMs(sw.startDate, zone),
+    startMs,
     rule,
     proposal: {
       kind: r.kind,
       status: r.status,
       amountCents: amountOf(r.amount_cents),
-      createdAtMs: Date.parse(r.created_at),
+      createdAtMs,
       flagged: r.flagged_input_id !== null,
       auditorVerdict: typeof r.auditor_verdict === "string" ? r.auditor_verdict : null,
       engineCheck: typeof r.engine_check === "string" ? r.engine_check : null,
@@ -106,20 +122,27 @@ async function look(q: Queryable, sub: string, proposalId: string, now: Date): P
     const reason = result.reason === "paused" && pause?.pausedBy === "demo_reset" ? "reset_pause" : result.reason;
     return { kind: "hold", reason };
   }
+  // Made before the start date (or a start that does not read): not the autopilot's, nothing stored.
+  if (!Number.isFinite(startMs) || !Number.isFinite(createdAtMs) || createdAtMs < startMs) {
+    return { kind: "hold", reason: "before_start" };
+  }
   if (result.decision === "auto") {
     if (!rule) return { kind: "hold", reason: "no_rule" };
     return { kind: "auto", ruleId: rule.id, version: rule.version };
   }
   const record = recordOf({ ...result, decision: result.decision }, rule, today);
-  await q.execute(RECORD_SQL, [proposalId, JSON.stringify(record), now.toISOString()]);
+  const stored = await q.execute(RECORD_SQL, [proposalId, JSON.stringify(record), now.toISOString()]);
+  if (stored !== 1) return reread(q, sub, proposalId);
   return { kind: "decided", mode: result.decision, reason: result.reason };
 }
 
-// The ask decision a gate refusal gave: its own policy reason, or the gate's word under
-// gate_refused. Ids, whole numbers and words only.
+// The decision a gate refusal gave: off for a kind the owner set to Off, ask otherwise; its own
+// policy reason, or the gate's word under gate_refused. Ids, whole numbers and words only.
+const modeOfRefusal = (category: string): "ask" | "off" => (category === "mode_off" ? "off" : "ask");
+
 function askRecord(category: string): string {
   return JSON.stringify({
-    mode: "ask",
+    mode: modeOfRefusal(category),
     reason: isPolicyReason(category) ? category : "gate_refused",
     gate: /^[a-z][a-z0-9_]{0,39}$/.test(category) ? category : "unknown",
     ruleId: null,
@@ -177,15 +200,25 @@ export async function runAutopilot(
     const rows = await q.query<{ status: unknown; decided_by: unknown }>(AFTER_SQL, [proposalId]);
     if (rows.length !== 1 || typeof rows[0].status !== "string") throw new DbError("unknown");
     if (rows[0].status === "proposed" && !holding && !out.retryable) {
-      await q.execute(RECORD_SQL, [proposalId, askRecord(out.category), now.toISOString()]);
+      const stored = await q.execute(RECORD_SQL, [proposalId, askRecord(out.category), now.toISOString()]);
+      if (stored !== 1) return reread(q, sub, proposalId);
     }
     return { status: rows[0].status, mine: rows[0].decided_by === sub };
   });
+  // The ask write reached nothing: decided by someone else in between, so that is the outcome.
+  if ("kind" in after) {
+    if (after.kind === "gone") return { ok: false, category: "not_found" };
+    return { ok: true, result: { outcome: "earlier", status: after.status, mine: after.mine, asked: after.asked } };
+  }
   if (after.status !== "proposed") {
     if (!after.mine) return { ok: true, result: { outcome: "earlier", status: after.status, mine: false, asked: false } };
+    // Another run of the autopilot decided it first: report that run's outcome, never a failure.
+    if (out.category === "already_decided") {
+      return { ok: true, result: { outcome: "earlier", status: after.status, mine: true, asked: true } };
+    }
     return { ok: true, result: { outcome: "executor_refused", category: out.category } };
   }
   if (holding) return { ok: true, result: { outcome: "held", reason: out.category } };
   if (out.retryable) return { ok: true, result: { outcome: "retry", category: out.category } };
-  return { ok: true, result: { outcome: "decided", mode: "ask", reason: out.category } };
+  return { ok: true, result: { outcome: "decided", mode: modeOfRefusal(out.category), reason: out.category } };
 }

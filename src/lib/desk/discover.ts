@@ -1,5 +1,6 @@
 import { flags } from "../../config/flags";
 import { DbError, type Queryable } from "../db";
+import { midnightMs, readZone } from "../autopilot/read";
 import { isUuid } from "../uuid";
 import {
   duePeriodKeys,
@@ -51,8 +52,16 @@ const notLogged = (source: SubjectSource, alias: string) =>
 // The subject finders. Each reads rows created on or after its floor (the watermark, or the start)
 // and not after now, oldest first, that have no line yet. $1 floor, $2 now, $3 limit. A finder with
 // a `when` finds nothing while it reads false (the autopilot's, until it is armed: no line is
-// written for work nobody may do yet, so arming finds the proposals still waiting then).
-const FINDERS: { source: SubjectSource; watermark?: keyof Watermarks; when?: () => boolean; sql: string }[] = [
+// written for work nobody may do yet, so arming finds the proposals still waiting then). A finder
+// with a `notBefore` date (YYYY-MM-DD, the carrier's local midnight) never reads a row made before
+// it, and finds nothing while that date does not read.
+const FINDERS: {
+  source: SubjectSource;
+  watermark?: keyof Watermarks;
+  when?: () => boolean;
+  notBefore?: () => string;
+  sql: string;
+}[] = [
   {
     source: "card_transaction",
     watermark: "card_transactions",
@@ -100,6 +109,7 @@ const FINDERS: { source: SubjectSource; watermark?: keyof Watermarks; when?: () 
     // the autopilot has not looked at. The policy and the approval gate decide it all again.
     source: "autopilot",
     when: () => flags.autopilot.enabled === true && flags.autopilot.armed === true,
+    notBefore: () => flags.autopilot.startDate,
     sql: `SELECT CAST(x.id AS text) AS id, ${ts("x.created_at")} AS created_at FROM proposals x
            WHERE x.tenant_id = current_tenant_id() AND x.status = 'proposed'
              AND x.auditor_verdict = 'pass' AND x.engine_check = 'matched'
@@ -195,7 +205,12 @@ export async function findSubjects(
 ): Promise<FinderResult> {
   if (input.budget <= 0) return { seen: 0 };
   if (finder.when && finder.when() !== true) return { seen: 0 };
-  const floor = finder.watermark ? maxInstant(input.watermarks[finder.watermark], input.startInstant) : input.startInstant;
+  let floor = finder.watermark ? maxInstant(input.watermarks[finder.watermark], input.startInstant) : input.startInstant;
+  if (finder.notBefore) {
+    const startMs = midnightMs(finder.notBefore(), await readZone(q));
+    if (!Number.isFinite(startMs)) return { seen: 0 };
+    floor = maxInstant(floor, new Date(startMs).toISOString());
+  }
   const rows = await q.query<{ id: string; created_at: string }>(finder.sql, [floor, input.nowIso, input.budget]);
   let newest = floor;
   for (const r of rows) {

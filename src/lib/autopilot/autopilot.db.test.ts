@@ -4,8 +4,9 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db, Param } from "../db/types";
+import type { Db, Param, TenantDb } from "../db/types";
 import { findSubjects, SUBJECT_FINDERS } from "../desk/discover";
+import { deskHandlers } from "../desk/handlers";
 import { addAdvance, dropTenant, makeTenant, type Fixture } from "../money/test-db";
 import { executeProposal, type Executor, type ExecutorRegistry, type ProposalKind } from "../proposals/execute";
 import { serviceSub } from "../sweep/service-session";
@@ -18,7 +19,9 @@ import { setPaused } from "./state";
 // its version; the approval gate refuses the autopilot login without opts.autopilot, the sweep's
 // login, and opts.autopilot from a person; the pause stops it in the run and in the gate; inside
 // every limit it approves once (two runs at once still give one execution); over a limit it stores
-// an ask and the proposal waits for a person. A fixed clock; two tenants made here and removed after.
+// an ask and the proposal waits for a person; a proposal made before the start date is never
+// found or written to; a run that loses a race reports the winner's outcome. A fixed clock; two
+// tenants made here and removed after.
 
 const saved = structuredClone(flags.autopilot);
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -129,6 +132,52 @@ const recorder: Executor = async (_db, _session, p) => {
 const REGISTRY: ExecutorRegistry = { invoice_post: recorder, card_match: recorder, payment_reapply: recorder };
 const run = (id: string, executors: ExecutorRegistry = REGISTRY) =>
   runAutopilot(A.tenantId, id, { db: app, clock, executors });
+
+// The desk's own handler for one proposal of A, as the loop calls it.
+const deskRun = (id: string, db: TenantDb = app) =>
+  deskHandlers({ db }).autopilot.run(
+    A.session,
+    {
+      eventKey: `autopilot:${id}`,
+      source: "autopilot",
+      subjectId: id,
+      state: "claimed",
+      attempts: 1,
+      carries: 0,
+      threw: 0,
+      runId: null,
+      found: null,
+      firstAt: new Date(NOW).toISOString(),
+    },
+    { deadlineMs: NOW + 60_000, clock },
+  );
+
+// A database on which another run of the autopilot approves the proposal and its executor
+// finishes it, right after this run's first look (its second transaction: the session read, then
+// the look), so this run's gate finds it already decided.
+function racing(id: string): TenantDb {
+  let calls = 0;
+  return {
+    async withTenant(tenantId, fn) {
+      const out = await app.withTenant(tenantId, fn);
+      calls += 1;
+      if (calls === 2) {
+        expect(await run(id)).toMatchObject({ ok: true, result: { outcome: "approved" } });
+        await app.withTenant(A.tenantId, async (q) => {
+          await q.execute(
+            "UPDATE proposals SET status = 'executing' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+            [id],
+          );
+          await q.execute(
+            "UPDATE proposals SET status = 'done' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+            [id],
+          );
+        });
+      }
+      return out;
+    },
+  };
+}
 
 // A write as the app login; the guard's refusal carries its error code.
 const asApp = async (f: Fixture, sql: string, params: Param[]) => {
@@ -414,8 +463,41 @@ describe("the autopilot", () => {
       const both = await Promise.all([run(id), run(id)]);
       expect(ran).toEqual([id]);
       const outcomes = both.map((r) => (r.ok ? r.result.outcome : r.category)).sort();
-      expect(outcomes[0]).toBe("approved");
-      expect(["earlier", "executor_refused"]).toContain(outcomes[1]);
+      expect(outcomes).toEqual(["approved", "earlier"]);
+    });
+
+    it("reports a run that lost the race as the winner's outcome, and the desk writes no failure", async () => {
+      const id = await addProposal({ kind: "card_match", amountCents: 1_000 });
+      expect(await runAutopilot(A.tenantId, id, { db: racing(id), clock, executors: REGISTRY })).toEqual({
+        ok: true,
+        result: { outcome: "earlier", status: "done", mine: true, asked: true },
+      });
+      expect(ran).toEqual([id]);
+      const other = await addProposal({ kind: "card_match", amountCents: 1_000 });
+      expect(await deskRun(other, racing(other))).toEqual({ outcome: "done", detail: { found: 0, category: "executed" } });
+      expect(ran).toEqual([id, other]);
+    });
+
+    it("leaves a proposal made before the start date untouched, whatever its rule says", async () => {
+      flags.autopilot.startDate = "2026-11-03";
+      const within = await addProposal({ kind: "card_match", amountCents: 1_000 });
+      const over = await addProposal({ kind: "card_match", amountCents: 50_001 });
+      const noRule = await addProposal({ kind: "payment_reapply", amountCents: 1_000 });
+      for (const id of [within, over, noRule]) {
+        expect(await run(id)).toEqual({ ok: true, result: { outcome: "held", reason: "before_start" } });
+        expect(await rowOf(id)).toEqual({ status: "proposed", decided_by: null, decision: null });
+      }
+      expect(await deskRun(within)).toEqual({ outcome: "skipped", detail: { category: "before_start" } });
+      expect(await rowOf(within)).toEqual({ status: "proposed", decided_by: null, decision: null });
+      expect(ran).toEqual([]);
+    });
+
+    it("skips a proposal the gate expired as too old, and the desk writes no failure", async () => {
+      flags.autopilot.startDate = "2026-10-01";
+      const id = await addProposal({ kind: "card_match", amountCents: 1_000, ageMs: 8 * 24 * HOUR });
+      expect(await deskRun(id)).toEqual({ outcome: "skipped", detail: { category: "expired" } });
+      expect(await rowOf(id)).toEqual({ status: "expired", decided_by: autopilotSub(A.tenantId), decision: null });
+      expect(ran).toEqual([]);
     });
 
     it("stores an ask over a limit, and the proposal waits for a person", async () => {
@@ -560,6 +642,21 @@ describe("the autopilot", () => {
       expect(lines).toEqual([{ event_key: `autopilot:${ready}`, subject_table: "proposals" }]);
       // Found once, ever.
       expect(await find()).toEqual({ seen: 0 });
+    });
+
+    it("never finds a proposal made before the autopilot's start date", async () => {
+      // The carrier's midnight on Nov 2 is 06:00 UTC; the loop's own floor is a day before now.
+      flags.autopilot.startDate = "2026-11-02";
+      const early = await addProposal({ f: B, amountCents: 1_000, ageMs: 20 * HOUR });
+      const late = await addProposal({ f: B, amountCents: 1_000 });
+      expect(await find()).toEqual({ seen: 1 });
+      const keys = await admin.withTenant(B.tenantId, (q) =>
+        q.query<{ event_key: string }>(
+          "SELECT event_key FROM desk_log WHERE tenant_id = current_tenant_id() AND event_key IN ($1, $2)",
+          [`autopilot:${early}`, `autopilot:${late}`],
+        ),
+      );
+      expect(keys).toEqual([{ event_key: `autopilot:${late}` }]);
     });
   });
 });
