@@ -97,7 +97,9 @@ export function AgentLauncher({
     if (arrived.current) return;
     arrived.current = true;
     const first = firstOpening.current;
-    if (first) show(first);
+    const hash = window.location.hash;
+    // A query opening and a #card- link on the same load make one ask that does both.
+    if (first) show(isCardAnchor(hash) ? { ...first, scrollTo: hash.slice(1) } : first);
     else fromHash();
   }, [show, fromHash]);
 

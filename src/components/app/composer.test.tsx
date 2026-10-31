@@ -98,6 +98,23 @@ describe("the agent card's pill question box", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("closes the menu when the cursor tabs out of it, but not when it moves inside or nowhere", () => {
+    render(
+      <>
+        <Composer variant="pill" onSubmit={() => undefined} menu={{ suggestions: SUGGESTIONS, onPick: () => undefined }} />
+        <button type="button">After</button>
+      </>,
+    );
+    fireEvent.click(plus());
+    const [first, second] = screen.getAllByRole("menuitem");
+    fireEvent.blur(first, { relatedTarget: second });
+    expect(screen.getByRole("menu")).toBeTruthy();
+    fireEvent.blur(first, { relatedTarget: null });
+    expect(screen.getByRole("menu")).toBeTruthy();
+    fireEvent.blur(first, { relatedTarget: screen.getByRole("button", { name: "After" }) });
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
+
   it("links to the documents page while documents are on, and keeps only that when the agent cannot answer", () => {
     render(<Composer variant="pill" menu={{ suggestions: SUGGESTIONS, documentsHref: "/documents" }} />);
     fireEvent.click(plus());

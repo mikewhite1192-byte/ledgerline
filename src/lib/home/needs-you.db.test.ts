@@ -83,7 +83,7 @@ describe("Home's escalated row", () => {
     await admin?.close();
   });
 
-  it("counts this person's escalated turns from the last 7 days and links to the chat's page", async () => {
+  it("counts this person's escalated turns from the last 7 days and links to the agent card", async () => {
     expect(await home(ME.sub, NOW)).toEqual([
       {
         key: "escalated",
@@ -91,7 +91,7 @@ describe("Home's escalated row", () => {
         atLeast: false,
         what: "requests in your chat escalated to a person",
         amounts: [],
-        href: "/",
+        href: "#ask",
         linkLabel: "Open your chat",
       },
     ]);

@@ -61,8 +61,8 @@ export function cardsRow(turns: readonly TurnView[]): NeedsYouRow | null {
 
 // Requests in this person's chat the agent could not make a card for that passed the checks, so
 // they went to a person (design-agents-102 3.2, D2). The count is the last 7 days; the link opens
-// the chat's page, since nothing in the thread marks a turn to land on. No amount: no card exists
-// for an escalated request.
+// the agent card (#ask) on the page it is on, since nothing in the thread marks a turn to land on.
+// No amount: no card exists for an escalated request.
 export function escalatedRow(count: number): NeedsYouRow | null {
   if (!Number.isSafeInteger(count) || count <= 0) return null;
   return {
@@ -71,7 +71,7 @@ export function escalatedRow(count: number): NeedsYouRow | null {
     atLeast: false,
     what: `${plural(count, "request", "requests")} in your chat escalated to a person`,
     amounts: [],
-    href: "/",
+    href: "#ask",
     linkLabel: "Open your chat",
   };
 }

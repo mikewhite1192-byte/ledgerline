@@ -80,7 +80,17 @@ function ComposerMenu({ suggestions, onPick, documentsHref }: ComposerMenuProps)
   const item =
     "flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-body text-foreground transition-colors duration-150 hover:bg-accent focus-visible:bg-accent";
   return (
-    <div ref={wrap} className="self-end" onKeyDown={onKey}>
+    <div
+      ref={wrap}
+      className="self-end"
+      onKeyDown={onKey}
+      // Tabbing out of the open menu closes it, as a click outside does. Focus going nowhere (a
+      // browser that blurs on a click before the click lands) leaves it to the click.
+      onBlur={(e) => {
+        const to = e.relatedTarget;
+        if (open && to instanceof Node && !wrap.current?.contains(to)) setOpen(false);
+      }}
+    >
       <Button
         ref={plus}
         variant="ghost"

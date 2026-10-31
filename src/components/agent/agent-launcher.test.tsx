@@ -437,4 +437,32 @@ describe("the agent launcher", () => {
     expect(panel().open).toBe(true);
     await waitFor(() => expect(scrolled).toEqual([{ block: "center" }]));
   });
+
+  it("brings back a conversation left with New conversation when a card link points into it", async () => {
+    const storage = memoryStorage({ "pc-conversation": "left:c-1" });
+    vi.stubGlobal("sessionStorage", storage);
+    stubServer({ status: 200, body: { conversationId: "c-1", turns: [EARLIER] } });
+    window.history.replaceState(null, "", "#card-22222222-2222-4222-8222-222222222222");
+    page();
+    expect(panel().open).toBe(true);
+    const thread = await within(panel()).findByRole("list", { name: "Conversation" });
+    expect(within(thread).getByText(EARLIER.userText)).toBeTruthy();
+    await waitFor(() => expect(storage.getItem("pc-conversation")).not.toBe("left:c-1"));
+  });
+
+  it("fills the box from the page's ask and still scrolls to the card when the address has both", async () => {
+    vi.stubGlobal("sessionStorage", memoryStorage());
+    const { posted } = stubServer(EMPTY_RECENT);
+    const cardId = "card-33333333-3333-4333-8333-333333333333";
+    const scrolled: unknown[] = [];
+    window.history.replaceState(null, "", `#${cardId}`);
+    page(undefined, { opening: { draft: "Which customers are past 60 days?" }, extra: <div id={cardId}>A proposal</div> });
+    const card = document.getElementById(cardId);
+    if (!card) throw new Error("no card");
+    card.scrollIntoView = (arg?: boolean | ScrollIntoViewOptions) => void scrolled.push(arg);
+    const box = (await questionBox()) as HTMLTextAreaElement;
+    await waitFor(() => expect(box.value).toBe("Which customers are past 60 days?"));
+    await waitFor(() => expect(scrolled).toEqual([{ block: "center" }]));
+    expect(posted).toHaveLength(0);
+  });
 });

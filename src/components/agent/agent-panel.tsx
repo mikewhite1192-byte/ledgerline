@@ -61,6 +61,14 @@ function leftConversation(): string | null {
   return stored.slice(LEFT.length);
 }
 
+function clearStored() {
+  try {
+    sessionStorage.removeItem(STORE_KEY);
+  } catch {
+    // Nothing to do: the thread still works on this page.
+  }
+}
+
 function writeStored(value: string) {
   try {
     sessionStorage.setItem(STORE_KEY, value);
@@ -182,21 +190,25 @@ export function AgentPanel({
   // The conversation the thread shows, as the chat last told it (loaded turns or a new question).
   const shown = useRef<string | null>(null);
   const fresh = request.fresh === true;
+  // Opened for a #card-<id> link: that card's conversation shows even if it was left.
+  const toCard = request.scrollTo !== undefined;
 
   useEffect(() => {
     if (!open || loading.current) return;
     loading.current = true;
-    const left = leftConversation();
+    const left = toCard ? null : leftConversation();
     void readRecent().then((t) => {
       const newest = t.at(-1)?.conversationId ?? null;
       // ?new=1 leaves the newest conversation the way "New conversation" does, so the next page
       // does not bring it back either.
       if (fresh && newest !== null) writeStored(`${LEFT}${newest}`);
+      // A card link brings the left conversation back, so the next page shows it too.
+      else if (toCard && leftConversation() !== null) clearStored();
       const turns = fresh || (left !== null && newest === left) ? [] : t;
       // "New conversation" pressed while the read ran wins over the read.
       setThread((now) => now ?? { key: 0, turns });
     });
-  }, [open, fresh]);
+  }, [open, fresh, toCard]);
 
   useEffect(() => {
     const want = `${request.n}:${nudge}`;
