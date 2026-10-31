@@ -996,9 +996,12 @@ describe("a finalized dispatch event drafts our load's invoice card", () => {
     flags.agentAsks.reasonEnabled = false;
   });
 
+  // The connection's cool-off is 30 minutes: the read after it is the mirror's recheck.
+  const RECHECK = new Date(NOW.getTime() + 31 * 60_000);
+
   // Our load and its dispatch twin through finalized there; with `deliver`, the delivered event
-  // moves our load first, as the desk would.
-  async function finalized(f: Carrier, deliver = true) {
+  // moves our load first, as the desk would; with `recheck`, the read after the cool-off follows.
+  async function finalized(f: Carrier, deliver = true, recheck = true) {
     const l = await ourLoad(f);
     fake.loads.set(
       "A-1",
@@ -1014,6 +1017,7 @@ describe("a finalized dispatch event drafts our load's invoice card", () => {
     const finalId = await eventIdOf(f, "A-1:h3");
     if (!deliveredId || !finalId) throw new Error("no events");
     if (deliver) expect(await fromEvent(f, deliveredId)).toMatchObject({ kind: "moved", loadId: l.id });
+    if (recheck) await pull(f, RECHECK);
     return { l, finalId };
   }
 
@@ -1086,6 +1090,32 @@ describe("a finalized dispatch event drafts our load's invoice card", () => {
       counts: { created: 0, unchanged: 1, inFlight: 0, decided: 0, retired: 0 },
     });
     expect((await invoiceCardsOf(f)).map((c) => [c.id, c.status])).toEqual([[cards[0].id, "proposed"]]);
+  });
+
+  it("waits for the mirror's recheck after the cool-off, then drafts the card", async () => {
+    const f = await carrier("tms-final-wait");
+    const { l, finalId } = await finalized(f, true, false);
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "waiting", category: "awaiting_recheck" });
+    expect(await invoiceCardsOf(f)).toEqual([]);
+    // A read before the cool-off ends is not the recheck.
+    await pull(f, new Date(NOW.getTime() + 10 * 60_000));
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "waiting", category: "awaiting_recheck" });
+    await pull(f, RECHECK);
+    expect(await fromEvent(f, finalId)).toMatchObject({ kind: "proposed", loadId: l.id });
+    expect(await invoiceCardsOf(f)).toHaveLength(1);
+  });
+
+  it("drafts nothing for a load the dispatch system edited after its finalize", async () => {
+    const f = await carrier("tms-final-edited");
+    const { finalId } = await finalized(f);
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        `UPDATE tms_loads SET flags = flags || '["edited_after_finalize"]'::jsonb
+          WHERE tenant_id = current_tenant_id() AND external_id = 'A-1'`,
+      ),
+    );
+    expect(await fromEvent(f, finalId)).toEqual({ kind: "nothing", category: "edited_after_finalize" });
+    expect(await invoiceCardsOf(f)).toEqual([]);
   });
 
   it("drafts nothing for a load we still have in transit", async () => {
@@ -1187,7 +1217,10 @@ describe("a finalized dispatch event drafts our load's invoice card", () => {
         { wakeId: randomUUID(), by: "schedule", deadlineMs: now + 25_000 },
         { db: app, clock: () => new Date(now), handlers, newId: randomUUID, log: () => {} },
       );
-    // The wake's own pull mirrors the load; the desk moves it delivered, then drafts its card.
+    // The wake's own pull mirrors the load; the desk moves it delivered, and the finalize waits
+    // (carried) until the wake whose pull is the recheck after the cool-off, then drafts its card.
+    await wake();
+    now += 20 * 60_000;
     await wake();
     now += 20 * 60_000;
     await wake();
@@ -1195,7 +1228,14 @@ describe("a finalized dispatch event drafts our load's invoice card", () => {
     const finalId = await eventIdOf(f, "A-1:h3");
     if (!finalId) throw new Error("no event");
     const key = eventKey("tms_event", finalId);
-    expect(runs.filter((k) => k === key)).toHaveLength(1);
+    expect(runs.filter((k) => k === key)).toHaveLength(3);
+    const carried = await admin.withTenant(f.tenantId, (q) =>
+      q.query<{ detail: Record<string, unknown> }>(
+        "SELECT detail FROM desk_log WHERE tenant_id = current_tenant_id() AND event_key = $1 AND kind = 'carried'",
+        [key],
+      ),
+    );
+    expect(carried.map((c) => c.detail.category)).toEqual(["awaiting_recheck", "awaiting_recheck"]);
     expect(await statusOf(f, l.id)).toBe("delivered");
     const lines = await admin.withTenant(f.tenantId, (q) =>
       q.query<{ detail: Record<string, unknown> }>(

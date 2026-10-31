@@ -90,6 +90,8 @@ function moveLine(r: MoveOutcome): HandlerOutcome {
   if (r.kind === "card") return done({ found: 1, category: "card" });
   // TMS-MIRROR (S3): a finalized dispatch event drafted the load's invoice card.
   if (r.kind === "proposed") return done({ found: 1, category: "invoice_proposed" });
+  // A finalize waiting for the mirror's recheck: carried to the next scheduled wake (MAX_CARRIES).
+  if (r.kind === "waiting") return running({ category: r.category });
   if (r.kind === "already") return done({ found: 0, category: "already" });
   if (r.category === "switched_off") return skipped(SWITCHED_OFF);
   return done({ found: 0, category: r.category });

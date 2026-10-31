@@ -6,7 +6,7 @@ import { requireStaff } from "../auth/role";
 import type { Queryable, TenantDb } from "../db";
 import { parseRead } from "../documents/schema";
 import type { ReadStatus } from "../documents/types";
-import { proposeInvoiceOnFinalize } from "../invoices/finalize";
+import { finalizeInvoiceOn, proposeInvoiceOnFinalize } from "../invoices/finalize";
 import { persistEngineProposal } from "../proposals/engine";
 import { instantAt } from "../seed/calendar";
 import { assertMembership } from "../tenant/context";
@@ -78,7 +78,10 @@ export type MoveOutcome =
   | { kind: "nothing"; category: string }
   | { kind: "card"; reason: MoveReason; proposalId: string; loadId: string | null }
   // TMS-MIRROR (S3): a finalized dispatch event drafted the load's invoice card.
-  | { kind: "proposed"; proposalId: string; loadId: string };
+  | { kind: "proposed"; proposalId: string; loadId: string }
+  // TMS-MIRROR (S3): not yet: the finalize waits for the mirror's recheck; the desk carries it to
+  // a later wake.
+  | { kind: "waiting"; category: string };
 
 type StopTimes = { arrivedAt: Instant; departedAt: Instant } | null;
 
@@ -558,6 +561,9 @@ type TmsEventRow = {
   tms_load_id: string;
   load_id: string | null;
   label_map: string | null;
+  // The mirror's finalize state: its recheck has not passed yet, or it saw an edit after it.
+  awaiting_recheck: boolean;
+  edited_after_finalize: boolean;
 };
 
 type TmsStopRow = {
@@ -622,7 +628,9 @@ export async function moveFromTmsEvent(
     `SELECT CAST(e.id AS text) AS id, e.field, e.new_value, e.clock_flag, to_char(e.day, 'YYYY-MM-DD') AS day,
             ${ts("e.at")} AS at, e.seeded, (l.gone_at IS NOT NULL) AS gone,
             CAST(e.tms_load_id AS text) AS tms_load_id, CAST(l.load_id AS text) AS load_id,
-            CAST(c.label_map AS text) AS label_map
+            CAST(c.label_map AS text) AS label_map,
+            (l.finalized_seen_at IS NULL OR l.recheck_after IS NOT NULL) AS awaiting_recheck,
+            (l.flags @> '["edited_after_finalize"]'::jsonb) AS edited_after_finalize
        FROM tms_status_events e
        JOIN tms_loads l ON l.tenant_id = e.tenant_id AND l.id = e.tms_load_id
        LEFT JOIN tms_connections c ON c.tenant_id = e.tenant_id
@@ -655,9 +663,16 @@ export async function moveFromTmsEvent(
       : { kind: "nothing", category: "recorded" };
   }
   // TMS-MIRROR (S3): finalized there drafts our delivered load's invoice card, from our own loads
-  // row (src/lib/invoices/finalize.ts asks its own switch and start date). Invoiced and paid there
-  // are recorded only. Never a move.
-  if (code === "finalized") return proposeInvoiceOnFinalize(q, session, load.id, row.day, now);
+  // row (src/lib/invoices/finalize.ts asks its own switch and start date). Only once the mirror's
+  // recheck after the cool-off has read the load again; until then the event waits. An edit there
+  // after the finalize is for a person, never drafted. Invoiced and paid there are recorded only.
+  // Never a move.
+  if (code === "finalized") {
+    if (!finalizeInvoiceOn(row.day)) return { kind: "nothing", category: "recorded" };
+    if (row.edited_after_finalize === true) return { kind: "nothing", category: "edited_after_finalize" };
+    if (row.awaiting_recheck !== false) return { kind: "waiting", category: "awaiting_recheck" };
+    return proposeInvoiceOnFinalize(q, session, load.id, row.day, now);
+  }
   const to = moveOf(code);
   if (to === null) return { kind: "nothing", category: "recorded" };
   if (load.status === "cancelled") return { kind: "nothing", category: "wrong_status" };
