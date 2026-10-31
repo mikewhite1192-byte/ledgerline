@@ -5,6 +5,7 @@ import { DEMO_CARRIERS } from "../seed/carriers";
 import { cashPositionOf } from "../seed/cash-plan";
 import golden from "../seed/golden.json";
 import { buildCarrierPlan } from "../seed/plan";
+import { withShortFriday } from "../seed/test-short-friday.test-util";
 import { cents, type CashOption, type CashPosition, type ChaseOption } from "../rules-engine";
 import {
   AiError,
@@ -19,11 +20,13 @@ import {
 
 type AiResult = Awaited<ReturnType<CompleteFn>>;
 
-// The seeded carriers at the golden anchor: Blue Ridge short by $6,800.00 with three moves,
-// Prairie Wind covered with $2,140.00 to spare. Pure: no clock, no database, no network.
+// The seeded carriers at the golden anchor: Blue Ridge with its bank balance lowered so Friday is
+// short by $6,800.00 with three moves (the seed covers it), Prairie Wind covered with $2,140.00 to
+// spare. Pure: no clock, no database, no network.
 const plans = Object.fromEntries(
   DEMO_CARRIERS.map((c) => {
-    const plan = buildCarrierPlan(c, golden.anchor);
+    const seeded = buildCarrierPlan(c, golden.anchor);
+    const plan = c.slug === "blue-ridge" ? withShortFriday(seeded) : seeded;
     return [c.slug, { plan, result: cashPositionOf(plan.rows, c, golden.anchor, flags.cashFridayLimits) }];
   }),
 );

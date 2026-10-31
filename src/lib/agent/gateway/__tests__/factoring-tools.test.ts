@@ -4,23 +4,25 @@ import { optionArgs, sameArgs } from "../../../cash/args";
 import { readCashFridayInput } from "../../../data/read";
 import { PACKET_INVOICES_SQL } from "../../../factoring/packet";
 import { computeCashFriday } from "../../../rules-engine";
-import golden from "../../../seed/golden.json";
 import { instantAt } from "../../../seed/calendar";
+import { summarizePlan } from "../../../seed/summary";
+import { TEST_SHORT_CENTS } from "../../../seed/test-short-friday.test-util";
 import { callTool } from "../index";
 import type { GatewayContext } from "../types";
 import { context, fixedClock, TENANT, type Handler } from "./fake-db";
-import { blueRidgePlan, PLAN_ANCHOR, planDb, PROPOSAL_ID, proposalRowFor, withProposal } from "./plan-db";
+import { PLAN_ANCHOR, planDb, PROPOSAL_ID, proposalRowFor, shortFridayPlan, withProposal } from "./plan-db";
 
-// The three factoring tools over the synthetic Blue Ridge plan at the golden anchor, on the real
+// The three factoring tools over the synthetic Blue Ridge plan at the golden anchor, its bank balance
+// lowered so Friday is short (the seed covers it), on the real
 // readers and the real rules engine: switched off they refuse before reading a record; on, the
 // propose tool drafts exactly the engine's figures for the invoices named (the same cents and args
 // Cash Friday's own card carries), the packet tool says per invoice whether it can be factored and
 // which papers are on file, and none of them writes anything. No database, no clock, no network.
 
-const plan = blueRidgePlan();
+const plan = shortFridayPlan();
 const zone = plan.carrier.timezone;
 const ctx: GatewayContext = context({ now: new Date(instantAt(PLAN_ANCHOR, 12, 0, zone)), timeZone: zone });
-const want = golden.carriers["blue-ridge"].cashFriday;
+const want = summarizePlan(plan).cashFriday;
 const paid = plan.rows.invoices.find((i) => i.status === "paid" && i.source === "load")!;
 
 const LATEST_CHECK = /^SELECT CAST\(id AS text\) AS id, CAST\(created_at AS text\) AS created_at\s+FROM cash_checks /;
@@ -80,6 +82,8 @@ describe("factoring tools switched off", () => {
 
 describe("propose_factoring", () => {
   it("drafts the engine's own figures for the named invoices, the same args as Cash Friday's card, and writes nothing", async () => {
+    // The figures below are the plan's own, so first pin that the plan is short by the test's amount.
+    expect(want.gapCents).toBe(-TEST_SHORT_CENTS);
     const engine = await engineOption();
     expect(engine.invoiceIds).toHaveLength(want.factoringInvoices);
     expect(engine.amountCents).toBe(want.factoringNetCents);

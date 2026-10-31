@@ -10,10 +10,10 @@ const cases = buildCases(DEMO_ANCHOR);
 const plans = new Map<string, ReturnType<typeof buildCarrierPlan>>(DEMO_CARRIERS.map((c) => [c.slug, buildCarrierPlan(c, DEMO_ANCHOR)]));
 
 describe("eval cases", () => {
-  it("30 cases, 24 without fuel, ids resolve in the plan", () => {
-    expect(cases).toHaveLength(30);
-    expect(new Set(cases.map((c) => c.key)).size).toBe(30);
-    expect(cases.filter((c) => c.kind !== "fuel")).toHaveLength(24);
+  it("28 cases, 22 without fuel, ids resolve in the plan", () => {
+    expect(cases).toHaveLength(28);
+    expect(new Set(cases.map((c) => c.key)).size).toBe(28);
+    expect(cases.filter((c) => c.kind !== "fuel")).toHaveLength(22);
     // The fuel checks' start date is the first day of the earlier seeded open week, so the
     // product's own checks list every planted fill-up and no case is skipped.
     expect(cases.filter((c) => c.skip !== null).map((c) => c.key)).toEqual([]);
@@ -69,7 +69,6 @@ describe("eval cases", () => {
       detention_a: "detention_charge",
       detention_b: "detention_charge",
       detention_c: "detention_charge",
-      detention_d: "detention_charge",
       fuel_off_route: null,
       fuel_over_tank: null,
       fuel_while_parked: null,

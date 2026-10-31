@@ -10,7 +10,7 @@
         "driver_arm_events": 26,
         "loads": 333,
         "load_state_miles": 1100,
-        "load_accessorials": 90,
+        "load_accessorials": 91,
         "driver_days": 456,
         "fuel_purchases": 466,
         "card_transactions": 168,
@@ -18,14 +18,14 @@
         "deduction_schedules": 19,
         "settlement_periods": 7,
         "settlements": 78,
-        "settlement_lines": 534,
+        "settlement_lines": 535,
         "pay_cards": 0,
-        "pay_items": 247,
+        "pay_items": 246,
         "money_codes": 0,
         "advances": 21,
         "invoices": 335,
-        "customer_payments": 167,
-        "payment_applications": 200,
+        "customer_payments": 168,
+        "payment_applications": 201,
         "untrusted_inputs": 6,
         "screenings": 0,
         "calls": 0,
@@ -129,15 +129,15 @@
         },
         {
           "periodStart": "2026-10-19",
-          "netCents": 2312227
+          "netCents": 2477566
         }
       ],
-      "advancesOutstandingCents": 292381,
+      "advancesOutstandingCents": 264381,
       "receivables": {
         "openByBucket": {
           "current": {
             "invoices": 71,
-            "cents": 8027600
+            "cents": 8053000
           },
           "1_30": {
             "invoices": 46,
@@ -156,7 +156,7 @@
             "cents": 3019460
           }
         },
-        "paymentsInOpenWeek": 43,
+        "paymentsInOpenWeek": 44,
         "overappliedInvoices": 1
       },
       "payConfigVersions": [
@@ -189,8 +189,8 @@
           "purchaseRef": "blue-ridge-fuel-418",
           "driverCode": "BR-D12",
           "state": "FL",
-          "gallonsMilli": 95000,
-          "amountCents": 36575
+          "gallonsMilli": 103000,
+          "amountCents": 41200
         },
         {
           "rule": "overTank",
@@ -225,30 +225,24 @@
         "loads": [
           {
             "loadNumber": "BR-L10117",
-            "stop": "pickup",
-            "overMinutes": 300,
-            "cents": 37500
+            "stop": "delivery",
+            "overMinutes": 720,
+            "cents": 90000
           },
           {
             "loadNumber": "BR-L10195",
             "stop": "delivery",
-            "overMinutes": 360,
-            "cents": 30000
-          },
-          {
-            "loadNumber": "BR-L10216",
-            "stop": "delivery",
-            "overMinutes": 320,
-            "cents": 41250
+            "overMinutes": 885,
+            "cents": 73750
           },
           {
             "loadNumber": "BR-L10220",
             "stop": "delivery",
-            "overMinutes": 315,
-            "cents": 26250
+            "overMinutes": 885,
+            "cents": 73750
           }
         ],
-        "totalCents": 135000
+        "totalCents": 237500
       },
       "collections": [
         {
@@ -371,18 +365,18 @@
       },
       "cashFriday": {
         "payDay": "2026-11-06",
-        "bankBalanceCents": 1513354,
-        "cashOnHandCents": 1513354,
-        "expectedReceiptsCents": 8813237,
-        "payRunCents": 2777844,
+        "bankBalanceCents": 5809366,
+        "cashOnHandCents": 5809366,
+        "expectedReceiptsCents": 8837225,
+        "payRunCents": 2805844,
         "payRunSource": "preview",
         "fuelLoadsCents": 0,
         "vendorBillsDueCents": 8228747,
-        "gapCents": -680000,
-        "factoringInvoices": 3,
-        "factoringNetCents": 184701,
-        "deferBillRef": "BR-NTB-2229",
-        "chaseCustomers": 2
+        "gapCents": 3612000,
+        "factoringInvoices": 0,
+        "factoringNetCents": 0,
+        "deferBillRef": null,
+        "chaseCustomers": 0
       }
     },
     "prairie-wind": {
@@ -394,7 +388,7 @@
         "driver_arm_events": 26,
         "loads": 318,
         "load_state_miles": 694,
-        "load_accessorials": 103,
+        "load_accessorials": 104,
         "driver_days": 336,
         "fuel_purchases": 366,
         "card_transactions": 141,
@@ -402,14 +396,14 @@
         "deduction_schedules": 19,
         "settlement_periods": 7,
         "settlements": 78,
-        "settlement_lines": 559,
+        "settlement_lines": 560,
         "pay_cards": 0,
         "pay_items": 212,
         "money_codes": 0,
         "advances": 20,
         "invoices": 324,
-        "customer_payments": 161,
-        "payment_applications": 203,
+        "customer_payments": 162,
+        "payment_applications": 204,
         "untrusted_inputs": 6,
         "screenings": 0,
         "calls": 0,
@@ -448,19 +442,19 @@
         },
         {
           "periodStart": "2026-10-11",
-          "netCents": 2894837
+          "netCents": 2984837
         },
         {
           "periodStart": "2026-10-18",
           "netCents": 2569512
         }
       ],
-      "advancesOutstandingCents": 337299,
+      "advancesOutstandingCents": 309299,
       "receivables": {
         "openByBucket": {
           "current": {
             "invoices": 90,
-            "cents": 7880454
+            "cents": 7954154
           },
           "1_30": {
             "invoices": 15,
@@ -479,7 +473,7 @@
             "cents": 2866900
           }
         },
-        "paymentsInOpenWeek": 43,
+        "paymentsInOpenWeek": 44,
         "overappliedInvoices": 1
       },
       "payConfigVersions": [
@@ -504,8 +498,8 @@
           "purchaseRef": "prairie-wind-fuel-346",
           "driverCode": "PW-D04",
           "state": "NM",
-          "gallonsMilli": 95000,
-          "amountCents": 36575
+          "gallonsMilli": 103000,
+          "amountCents": 41200
         },
         {
           "rule": "overTank",
@@ -539,31 +533,25 @@
         },
         "loads": [
           {
-            "loadNumber": "PW-L10122",
-            "stop": "delivery",
-            "overMinutes": 320,
-            "cents": 41250
-          },
-          {
             "loadNumber": "PW-L10171",
-            "stop": "pickup",
-            "overMinutes": 300,
-            "cents": 37500
+            "stop": "delivery",
+            "overMinutes": 720,
+            "cents": 90000
           },
           {
             "loadNumber": "PW-L10201",
             "stop": "delivery",
-            "overMinutes": 315,
-            "cents": 26250
+            "overMinutes": 885,
+            "cents": 73750
           },
           {
             "loadNumber": "PW-L10203",
             "stop": "delivery",
-            "overMinutes": 360,
-            "cents": 30000
+            "overMinutes": 885,
+            "cents": 73750
           }
         ],
-        "totalCents": 135000
+        "totalCents": 237500
       },
       "collections": [
         {
@@ -683,9 +671,9 @@
       },
       "cashFriday": {
         "payDay": "2026-11-06",
-        "bankBalanceCents": 3720127,
-        "cashOnHandCents": 3720127,
-        "expectedReceiptsCents": 7004953,
+        "bankBalanceCents": 3650112,
+        "cashOnHandCents": 3650112,
+        "expectedReceiptsCents": 7074968,
         "payRunCents": 2294931,
         "payRunSource": "preview",
         "fuelLoadsCents": 0,

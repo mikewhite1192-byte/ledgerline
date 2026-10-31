@@ -28,8 +28,6 @@ const FIRST_ANSWER_SAYS = [
   "$682.75",
   "Ellen Kowalski",
   "$483.71",
-  "Wesley Delgado",
-  "$146.61",
 ];
 // The hero driver of the seed (the same ids every seed at the anchor), asked for a modest amount
 // so the engine's limit allows it on any day of the demo week. The ask names a fixed date, never

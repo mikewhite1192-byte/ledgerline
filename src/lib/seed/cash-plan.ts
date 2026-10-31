@@ -9,10 +9,10 @@ import { Rng } from "./prng";
 // and six bills from invented vendors. Everything comes from its own id stream, so no other row of
 // the plan changes. The bank balance is planted last: the engine computes the carrier's position
 // at the anchor with a zero balance, and the balance is then set so the gap is exactly the planted
-// one (Blue Ridge short by $6,800.00, Prairie Wind covered with $2,140.00 to spare).
+// one (Blue Ridge covered with $36,120.00 to spare, Prairie Wind with $2,140.00).
 
 export const PLANTED_GAP_CENTS: Record<DemoCarrier["slug"], number> = {
-  "blue-ridge": -680_000,
+  "blue-ridge": 3_612_000,
   "prairie-wind": 214_000,
 };
 

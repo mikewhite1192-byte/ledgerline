@@ -14,7 +14,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
   const wrong = plan.planted.wrongInvoice;
   const doc = rows.untrusted_inputs.find((i) => i.kind === "document") ?? input;
   const noRate = rows.loads.find((l) => l.id === plan.planted.noRateLoadId)!;
-  // The first planted unbilled detention: 41,250 cents in October.
+  // The first planted unbilled detention: 73,750 cents in October.
   const detentionLoad = plan.planted.detentionLoadIds[0];
   const delivered = rows.loads.find((l) => l.status === "delivered") ?? rows.loads[0];
   // A load on the road and its own driver: the only kind of load a money code is for.
@@ -94,7 +94,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     find_unbilled_detention: { month: "2026-10" },
     propose_detention_charge: {
       loadId: detentionLoad,
-      amountCents: 41_250,
+      amountCents: 73_750,
       sourceRefs: [{ table: "loads", id: detentionLoad }],
     },
     get_portal_evidence: { loadId: delivered.id },

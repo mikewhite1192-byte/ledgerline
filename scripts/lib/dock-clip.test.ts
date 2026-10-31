@@ -12,10 +12,10 @@ describe("the demo dock clip plan", () => {
     expect(dockPlant(carrier, "2026-11-02", "BR-L10216", "delivery")).toEqual({
       loadNumber: "BR-L10216",
       stop: "delivery",
-      customerName: "Bluefern Beverage Group",
+      customerName: "Acme Beverage Group",
       zone: "America/New_York",
-      arrivedAt: "2026-10-22T08:05:00.000Z",
-      departedAt: "2026-10-22T15:25:00.000Z",
+      arrivedAt: "2026-10-21T21:46:00.000Z",
+      departedAt: "2026-10-22T23:46:00.000Z",
     });
     expect(() => dockPlant(carrier, "2026-11-02", "NO-SUCH-LOAD", "delivery")).toThrow();
   });
@@ -23,9 +23,9 @@ describe("the demo dock clip plan", () => {
   it("runs the clock from the arrival for the first half and from the departure for the second", () => {
     const frames = frameSpecs(dockPlant(carrier, "2026-11-02", "BR-L10216", "delivery"));
     expect(frames).toHaveLength(CLIP_FRAMES);
-    expect(frames[0]).toMatchObject({ scene: "dock", zoom: 1, clock: "10/22/2026 04:05:00 AM" });
-    expect(frames[71].clock).toBe("10/22/2026 04:05:08 AM");
-    expect(frames[72].clock).toBe("10/22/2026 11:25:00 AM");
+    expect(frames[0]).toMatchObject({ scene: "dock", zoom: 1, clock: "10/21/2026 05:46:00 PM" });
+    expect(frames[71].clock).toBe("10/21/2026 05:46:08 PM");
+    expect(frames[72].clock).toBe("10/22/2026 07:46:00 PM");
     expect(frames.map((f) => f.scene).filter((s, i, all) => s !== all[i - 1])).toEqual(["dock", "trailer", "dock", "form"]);
     expect(cameraClock(Date.parse("2026-10-22T16:00:09Z"), "America/New_York")).toBe("10/22/2026 12:00:09 PM");
   });

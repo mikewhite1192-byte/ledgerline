@@ -28,7 +28,7 @@ describe("fixPlanFor on the seeded open week", () => {
   it("plans the four fixable plants as signed integer-cent corrections", () => {
     expect(openWeek).toEqual({ start: "2026-10-26", end: "2026-11-01" });
     expect(brief(fixPlanFor(byCheck.get("duplicate_advance")!, input, openWeek))).toEqual([
-      [1, "fix", "BR-D17", 34000, "owed_to_driver", "duplicate_charge", "-"],
+      [1, "fix", "BR-D17", 20000, "owed_to_driver", "duplicate_charge", "-"],
     ]);
     expect(brief(fixPlanFor(byCheck.get("fuel_on_wrong_driver")!, input, openWeek))).toEqual([
       [1, "fix", "BR-D18", 28640, "owed_to_driver", "wrong_driver", "item"],

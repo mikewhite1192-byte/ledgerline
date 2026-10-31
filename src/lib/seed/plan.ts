@@ -29,6 +29,7 @@ import {
   type LocalDate,
   type Period,
 } from "../time/local-date";
+import { billDetention, disputedIds, shortPay, type DisputedDetention } from "./acme-plan";
 import { buildReceivables, type CollectionsPlant, type WrongInvoicePlant } from "./ar-plan";
 import { assertPlan, seededAdvanceDecision } from "./assert-plan";
 import { instantAt } from "./calendar";
@@ -108,8 +109,10 @@ export type Planted = {
   // The same receipt turned in twice: [older, newer] fill-ups and their two paybacks.
   fuelDuplicateIds: [string, string];
   fuelDuplicatePaybackIds: [string, string];
-  // The four loads with unbilled detention, in plant order A to D.
+  // The three loads with unbilled detention, in plant order A to C.
   detentionLoadIds: string[];
+  // The billed detention the customer short-paid, on the first detention plant (acme-plan.ts).
+  disputedDetention: DisputedDetention;
   collections: CollectionsPlant[];
   invoiceReview: ReviewPlant;
   // Arming, the extra cards, the load pair and the take-back (parity-plan.ts).
@@ -187,13 +190,14 @@ type LoadDraft = { row: LoadRow; lane: Lane; week: number; driverCode: string; o
 // A state no lane of the carrier crosses, for the purchase made off route.
 const OFF_ROUTE_STATE: Record<DemoCarrier["prefix"], string> = { BR: "FL", PW: "NM" };
 
-// The four unbilled detention cases (addendum B3): the customer (by list index), the stop, and
-// the minutes at it. Past 120 free minutes they bill 41,250 + 30,000 + 37,500 + 26,250 cents.
+// The detention cases (addendum B3): the customer (by list index), the stop, and the minutes at
+// it. The first is billed on the load and short-paid by the customer (acme-plan.ts); the other
+// three are unbilled. Past 120 free minutes they bill 180,000, then 73,750 + 90,000 + 73,750 cents.
 const DETENTION_PLANTS: readonly [number, "pickup" | "delivery", number][] = [
-  [3, "delivery", 440],
-  [0, "delivery", 480],
-  [7, "pickup", 420],
-  [4, "delivery", 435],
+  [3, "delivery", 1560],
+  [0, "delivery", 1005],
+  [7, "delivery", 840],
+  [4, "delivery", 1005],
 ];
 const MINUTE_MS = 60_000;
 const minutesBefore = (at: string, minutes: number) =>
@@ -660,7 +664,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     throw new Error("the off-route state is on a lane");
   }
   const offRoute = addFuel(v8, offRouteLoad.row.id, addDays(offRouteLoad.row.pickup_on, 1),
-    [side.int(6, 20), side.int(0, 59)], offRouteState, 95000, 385);
+    [side.int(6, 20), side.int(0, 59)], offRouteState, 103000, 400);
   // Over the tank: more than a 200-gallon tank holds, on an open-week load, on the company card,
   // so the fill also becomes a fuel deduction below.
   const v9 = chooseFor("oo_leased", (d) => openLoads(d).length > 0);
@@ -912,6 +916,26 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       // Loaded during the day; a long wait at pickup moves the departure later.
       const later = Math.ceil(Math.max(0, pickupDwell - 120) / 60);
       pickupDeparted = instantAt(l.pickup_on, side.int(6, 14) + later, side.int(0, 59), zone);
+      if (plant?.stop === "delivery") {
+        // A long wait at delivery: the truck drives there first (50 miles an hour). When the wait
+        // from the bill's signing reaches back past the drive, the bill is signed later, by the
+        // end of the delivery day at most; what is still short leaves pickup earlier, on the
+        // pickup day.
+        const drive = Math.ceil((l.loaded_miles * 60) / 50) * MINUTE_MS;
+        const short = Date.parse(pickupDeparted) + drive - Date.parse(deliveryArrived);
+        if (short > 0) {
+          const signed = Date.parse(l.delivered_at);
+          const lastSign = Date.parse(instantAt(l.delivered_on, 23, 59, zone));
+          const later = Math.max(0, Math.min(short, lastSign - signed));
+          l.delivered_at = new Date(signed + later).toISOString();
+          deliveryArrived = minutesBefore(l.delivered_at, deliveryDwell);
+          const leave = Date.parse(deliveryArrived) - drive;
+          if (leave < Date.parse(pickupDeparted)) pickupDeparted = new Date(leave).toISOString();
+          if (localDateOf(minutesBefore(pickupDeparted, pickupDwell), zone) !== l.pickup_on) {
+            throw new Error("a detention load cannot reach its delivery wait");
+          }
+        }
+      }
     } else {
       // Same day: leave the drive time (50 miles an hour) before arriving, within the day. When
       // the pickup wait from midnight alone reaches the delivery arrival (a long billed
@@ -1015,8 +1039,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
   // Planted: the same advance logged twice, 12 minutes apart (victim 1).
   const tuesday = weekday(openWeek, 2);
   const v1 = driver(victims.duplicateAdvance);
-  const dupA = advance(v1, tuesday, [9, 14], 34000, 30, `${slug}-adv-dup-a`);
-  const dupB = advance(v1, tuesday, [9, 26], 34000, 30, `${slug}-adv-dup-b`);
+  const dupA = advance(v1, tuesday, [9, 14], 20000, 30, `${slug}-adv-dup-a`);
+  const dupB = advance(v1, tuesday, [9, 26], 20000, 30, `${slug}-adv-dup-b`);
   // Planted: two advances over a $500 limit (victim 7). The first is in a settled week whose pay
   // is under the floor, so none of it is recovered.
   const v7 = driver(victims.overLimit);
@@ -1093,6 +1117,18 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     status: i < 3 ? "paid" : "open",
   }));
 
+  // ---- The disputed detention: billed on the first detention load (acme-plan.ts) ----
+  // From its own id stream, after the stop times it is computed from and after every plan that
+  // reads the loads' charges, so no other row moves; the invoice and the pay history bill it.
+  const [disputedLoad, ...unbilledLoads] = detentionLoads;
+  const disputedId = disputedIds(seed);
+  const disputedCharge = billDetention(
+    disputedLoad.row,
+    customerById.get(disputedLoad.row.customer_id!)!,
+    disputedId,
+  );
+  accessorials.push(disputedCharge);
+
   // ---- Receivables: the settled weeks' loads, the opening invoices, the payments ----
   const windowLoads = drafts.filter((x) => x.week < 3).map((x) => x.row);
   const ar = buildReceivables({
@@ -1122,6 +1158,17 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       ...ar.collections.map((c) => c.invoiceId),
     ]),
     applications: ar.applications,
+  });
+  // The customer paid all of that invoice but the detention, on the open week's fifth day.
+  const disputedDetention = shortPay({
+    prefix,
+    load: loadsOf([disputedLoad.row], stateMiles, accessorials)[0],
+    charge: disputedCharge,
+    invoices: ar.invoices,
+    payments: ar.payments,
+    applications: ar.applications,
+    receivedOn: addDays(openWeek.start, 4),
+    newId: disputedId,
   });
 
   // Parity, after every other draw on the parity stream above: the disarmed driver, the cards,
@@ -1235,7 +1282,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       fuelParkedId: parked.id,
       fuelDuplicateIds: [dupOlder.id, dupNewer.id],
       fuelDuplicatePaybackIds: [dupPaybacks[0].id, dupPaybacks[1].id],
-      detentionLoadIds: detentionLoads.map((x) => x.row.id),
+      detentionLoadIds: unbilledLoads.map((x) => x.row.id),
+      disputedDetention,
       collections: ar.collections,
       invoiceReview,
       parity: {

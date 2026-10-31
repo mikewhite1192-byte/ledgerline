@@ -95,13 +95,13 @@ describe("the sample PDFs", () => {
       "BR-L10216",
       "Greensboro, NC",
       "Columbus, OH",
-      "Bluefern Beverage Group, Richmond, VA",
+      "Acme Beverage Group, Richmond, VA",
       "General freight, palletized",
       "22",
       "10/21/2026 7:40 AM EDT",
       "10/21/2026 8:22 AM EDT",
-      "10/22/2026 4:05 AM EDT",
-      "10/22/2026 11:25 AM EDT",
+      "10/21/2026 5:46 PM EDT",
+      "10/22/2026 7:46 PM EDT",
     ]) {
       expect(bolRuns).toContain(s);
     }

@@ -76,7 +76,7 @@ describe("driver_pay_summary", () => {
     const r = await run("driver_pay_summary");
     expect(r.period).toEqual({ start: "2026-10-19", end: "2026-10-25" });
     expect(r.args).toEqual({ periodStart: "2026-10-19" });
-    expect(r.totals?.netCents).toBe(2312227);
+    expect(r.totals?.netCents).toBe(2477566);
     expect(total(column(r.rows, "netCents"))).toBe(r.totals?.netCents);
     expect(r.totals?.grossCents).toBe(total(column(r.rows, "grossCents")));
   });

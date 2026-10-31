@@ -71,7 +71,7 @@
             "content": [
               {
                 "type": "output_text",
-                "text": "{\"checks\": [{\"name\": \"cause\", \"note\": \"Reason category driver_asked matches the recorded proposal reason\", \"pass\": true}, {\"name\": \"sources\", \"note\": \"Driver, load, and existing advance records all reference the same driver as the proposal subject\", \"pass\": true}, {\"name\": \"amount\", \"note\": \"Proposal amount 10000 equals engine proposedCents and approvedCents\", \"pass\": true}, {\"name\": \"limit\", \"note\": \"Engine eligible true with amount 10000 within maxCents 21250 and limitCents 50000 and no refusals\", \"pass\": true}], \"concerns\": [], \"verdict\": \"pass\"}",
+                "text": "{\"checks\": [{\"name\": \"cause\", \"note\": \"Reason category driver_asked matches the recorded proposal reason\", \"pass\": true}, {\"name\": \"sources\", \"note\": \"Driver, load, and existing advance records all reference the same driver as the proposal subject\", \"pass\": true}, {\"name\": \"amount\", \"note\": \"Proposal amount 10000 equals engine proposedCents and approvedCents\", \"pass\": true}, {\"name\": \"limit\", \"note\": \"Engine eligible true with amount 10000 within maxCents 30000 and limitCents 50000 and no refusals\", \"pass\": true}], \"concerns\": [], \"verdict\": \"pass\"}",
                 "annotations": [],
                 "logprobs": []
               }
@@ -107,7 +107,7 @@
             "content": [
               {
                 "type": "output_text",
-                "text": "No paystubs yet for this week \u2014 week 2026-10-26 to 2026-11-01 is open with 0 settlements.\n\nLast paid week 2026-10-19 to 2026-10-25 paid net $23,122.27 with 3 exceptions \u2014 Ellen Kowalski, Kevin Yarborough, and Wesley Delgado, who carried forward $48,371? No: $483.71, $682.75, and $146.61. Full table is below.\n\nCurrent checks also flag $340.00 duplicate advance for Marcus Calloway, $286.40 fuel on Rosa Pruitt, $175.00 missing reimbursement for Victor Thibodeaux, $11.00 insurance day for Angela Castellanos, missing rate for Darnell Sandoval, and $150.00 over-limit for Tamika Lockhart.",
+                "text": "No paystubs yet for this week \u2014 week 2026-10-26 to 2026-11-01 is open with 0 settlements.\n\nLast paid week 2026-10-19 to 2026-10-25 paid net $24,775.66 with 2 exceptions \u2014 Ellen Kowalski and Kevin Yarborough, who carried forward $48,371? No: $483.71 and $682.75. Full table is below.\n\nCurrent checks also flag $200.00 duplicate advance for Marcus Calloway, $286.40 fuel on Rosa Pruitt, $175.00 missing reimbursement for Victor Thibodeaux, $11.00 insurance day for Angela Castellanos, missing rate for Darnell Sandoval, and $150.00 over-limit for Tamika Lockhart.",
                 "annotations": [],
                 "logprobs": []
               }

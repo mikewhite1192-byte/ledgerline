@@ -4,6 +4,7 @@ import { cashPositionOf } from "../seed/cash-plan";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import golden from "../seed/golden.json";
 import { buildCarrierPlan } from "../seed/plan";
+import { withShortFriday } from "../seed/test-short-friday.test-util";
 import {
   billDeferArgsSchema,
   chaseArgsSchema,
@@ -14,13 +15,14 @@ import {
   sameArgs,
 } from "./args";
 
-// The card args built from the engine's options for the short carrier at the golden anchor: each
+// The card args built from the engine's options for Blue Ridge at the golden anchor, its bank
+// balance lowered so Friday is short by $6,800.00 (the seed covers Friday): each
 // kind round-trips its strict schema, carries the fixed reason categories, and compares as a whole
 // value. Pure: no clock, no database.
 
 const carrier = DEMO_CARRIERS.find((c) => c.slug === "blue-ridge");
 if (!carrier) throw new Error("no blue-ridge carrier");
-const plan = buildCarrierPlan(carrier, golden.anchor);
+const plan = withShortFriday(buildCarrierPlan(carrier, golden.anchor));
 const r = cashPositionOf(plan.rows, carrier, golden.anchor, flags.cashFridayLimits);
 const short = -r.figures.gapCents;
 const of = (kind: string) => r.options.filter((o) => o.kind === kind);

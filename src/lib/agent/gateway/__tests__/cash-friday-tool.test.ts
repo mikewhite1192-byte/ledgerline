@@ -1,20 +1,22 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
-import golden from "../../../seed/golden.json";
 import { instantAt } from "../../../seed/calendar";
+import { summarizePlan } from "../../../seed/summary";
+import { TEST_SHORT_CENTS } from "../../../seed/test-short-friday.test-util";
 import { CASH_PROMPT, CHECKLIST_RULE, OPERATOR_PROMPT, operatorPrompt } from "../../policy";
 import { callTool, MAX_RESULT_CHARS } from "../index";
 import { toolsFor } from "../registry";
 import { CASH_LINES_MAX } from "../tools/read/get-cash-friday";
 import type { GatewayContext } from "../types";
 import { context, fixedClock, type Handler } from "./fake-db";
-import { blueRidgePlan, PLAN_ANCHOR, planDb } from "./plan-db";
+import { PLAN_ANCHOR, planDb, shortFridayPlan } from "./plan-db";
 
-// get_cash_friday over the synthetic Blue Ridge plan at the golden anchor: the engine's figures to
+// get_cash_friday over the synthetic Blue Ridge plan at the golden anchor, its bank balance lowered
+// so Friday is short and the engine has moves to find: the engine's figures to
 // the cent, the moves it found, the latest stored check and the open cards, inside the gateway's
 // size cap. It creates nothing. No database, no clock, no network.
 
-const plan = blueRidgePlan();
+const plan = shortFridayPlan();
 const zone = plan.carrier.timezone;
 const ctx: GatewayContext = context({ now: new Date(instantAt(PLAN_ANCHOR, 12, 0, zone)), timeZone: zone });
 const CHECK = "6b1c9d2e-3f4a-4b5c-8d6e-7f8a9b0c1d2e";
@@ -45,7 +47,9 @@ describe("get_cash_friday", () => {
     expect(out).toMatchObject({ decision: "allowed" });
     if (out.decision !== "allowed") throw new Error("not allowed");
     const r = out.result as Record<string, unknown> & { figures: Record<string, number>; rows: unknown[] };
-    const want = golden.carriers["blue-ridge"].cashFriday;
+    const want = summarizePlan(plan).cashFriday;
+    // The figures below are the plan's own, so first pin that the plan is short by the test's amount.
+    expect(want.gapCents).toBe(-TEST_SHORT_CENTS);
     expect(r.payDay).toBe(want.payDay);
     expect(r.figures).toMatchObject({
       bankBalanceCents: want.bankBalanceCents,

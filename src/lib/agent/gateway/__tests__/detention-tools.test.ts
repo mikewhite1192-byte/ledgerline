@@ -12,7 +12,7 @@ import { blueRidgePlan, planDb } from "./plan-db";
 import type { Handler } from "./fake-db";
 
 // The two detention tools on the real readers and the real rules engine over the synthetic seed
-// plan: switched off they refuse before reading anything; on, the find tool gives the seed's four
+// plan: switched off they refuse before reading anything; on, the find tool gives the seed's three
 // planted loads and their engine cents, and the propose tool drafts exactly the engine's figures.
 
 const plan = blueRidgePlan();
@@ -20,7 +20,7 @@ const zone = plan.carrier.timezone;
 // The seed's anchor day: October 2026 is the carrier's last full month.
 const ctx: GatewayContext = context({ now: new Date(instantAt(plan.anchor, 12, 0, zone)), timeZone: zone });
 const ids = plan.planted.detentionLoadIds;
-const GOLDEN = [41_250, 30_000, 37_500, 26_250];
+const GOLDEN = [73_750, 90_000, 73_750];
 const firstInvoice = plan.rows.invoices.find((i) => i.load_id === ids[0])!;
 
 const screenStore: Handler = (sql) => {
@@ -73,14 +73,14 @@ describe("detention tools switched off", () => {
 });
 
 describe("find_unbilled_detention", () => {
-  it("finds the seed's four planted loads in October, 135,000 cents in all, each ready to propose", async () => {
+  it("finds the seed's three planted loads in October, 237,500 cents in all, each ready to propose", async () => {
     flags.detentionEnabled = true;
     const { out, db } = await run("find_unbilled_detention", { month: "2026-10" });
     if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
     const result = out.result as { window: unknown; rows: FoundRow[]; count: number; totalCents: number };
     expect(result.window).toEqual({ start: "2026-10-01", end: "2026-10-31" });
-    expect(result.count).toBe(4);
-    expect(result.totalCents).toBe(135_000);
+    expect(result.count).toBe(3);
+    expect(result.totalCents).toBe(237_500);
     const byLoad = new Map(result.rows.map((r) => [r.loadId, r]));
     expect(ids.map((id) => byLoad.get(id)?.amountCents)).toEqual(GOLDEN);
     for (const r of result.rows) {
@@ -93,7 +93,7 @@ describe("find_unbilled_detention", () => {
     flags.detentionEnabled = true;
     const { out } = await run("find_unbilled_detention", {}, plan, "auditor");
     if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
-    expect(out.result).toMatchObject({ window: { start: "2026-10-01", end: "2026-10-31" }, totalCents: 135_000 });
+    expect(out.result).toMatchObject({ window: { start: "2026-10-01", end: "2026-10-31" }, totalCents: 237_500 });
   });
 
   it("says why a found charge cannot go on its invoice", async () => {

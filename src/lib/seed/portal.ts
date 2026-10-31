@@ -80,7 +80,10 @@ export function buildPortalPlan(plan: CarrierPlan): PortalPlan {
     .sort((a, b) => (a.load_number < b.load_number ? -1 : a.load_number > b.load_number ? 1 : 0));
 
   // The planted cases, picked by the plan's own facts.
-  const detention = new Set(plan.planted.detentionLoadIds);
+  const detention = new Set([
+    ...plan.planted.detentionLoadIds,
+    plan.planted.disputedDetention.loadId,
+  ]);
   const unknown = delivered.filter((l) => l.delivery_arrived_at === null);
   const known = delivered.filter((l) => l.delivery_arrived_at !== null && !detention.has(l.id));
   const ordinary = rng.shuffle(known);

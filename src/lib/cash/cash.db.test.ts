@@ -12,6 +12,7 @@ import { DEMO_ANCHOR } from "../seed/anchor";
 import { DEMO_CARRIERS } from "../seed/carriers";
 import { cashPositionOf, PLANTED_GAP_CENTS } from "../seed/cash-plan";
 import { buildCarrierPlan } from "../seed/plan";
+import { TEST_SHORT_CENTS, withShortFriday } from "../seed/test-short-friday.test-util";
 import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import { runPayPeriod } from "../settlements/run";
 import { runCashCheck, type CheckDeps } from "./check";
@@ -25,10 +26,11 @@ import { readCashHome, readCashView, readVendorBill } from "./view";
 // factoring and a chase record the decision and write nothing else, the switch off leaves every
 // card waiting, and another carrier reads and changes nothing. Only the model's paragraph is a
 // stand-in. Both demo carriers are seeded from their plans (the seed checks the tenant is the
-// carrier); the two tenants are removed after.
+// carrier); the two tenants are removed after. Blue Ridge's bank balance is lowered so Friday is
+// short and the engine has ways out to card (the seed covers its Friday).
 
 const [BR, PW] = DEMO_CARRIERS;
-const planA = buildCarrierPlan(BR, DEMO_ANCHOR);
+const planA = withShortFriday(buildCarrierPlan(BR, DEMO_ANCHOR));
 const planB = buildCarrierPlan(PW, DEMO_ANCHOR);
 const expectedA = cashPositionOf(planA.rows, BR, DEMO_ANCHOR, flags.cashFridayLimits);
 const expectedB = cashPositionOf(planB.rows, PW, DEMO_ANCHOR, flags.cashFridayLimits);
@@ -181,7 +183,7 @@ describe("Cash Friday on the real database", () => {
 
   it("stores Blue Ridge's figures and makes one card per way out", async () => {
     flags.cashFridayEnabled = true;
-    expect(expectedA.figures.gapCents).toBe(PLANTED_GAP_CENTS["blue-ridge"]);
+    expect(expectedA.figures.gapCents).toBe(-TEST_SHORT_CENTS);
     const r = await press(ADMIN_A);
     expect(r.gapCents).toBe(expectedA.figures.gapCents);
     expect(r.explained).toBe(true);

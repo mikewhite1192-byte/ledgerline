@@ -28,9 +28,16 @@ import {
   settleDriver,
 } from "../rules-engine";
 import { addDays, daysBetween } from "../time/local-date";
+import { SHORT_PAY_MEMO } from "./acme-plan";
 import { customerClassOf } from "./ar-plan";
 import { instantAt } from "./calendar";
-import { assertPlan, DETENTION_TOTAL_CENTS, HERO_OPEN_WEEK, seededAdvanceDecision } from "./assert-plan";
+import {
+  assertPlan,
+  DETENTION_TOTAL_CENTS,
+  DUPLICATE_ADVANCE_CENTS,
+  HERO_OPEN_WEEK,
+  seededAdvanceDecision,
+} from "./assert-plan";
 import { DEMO_CARRIERS } from "./carriers";
 import { buildCarrierPlan, buildDriverCards, type CarrierPlan } from "./plan";
 import { ESCROW_RELEASE_REMINDER_DAYS } from "../escrow/switches";
@@ -109,6 +116,7 @@ describe("buildCarrierPlan", () => {
         (id) => rows.fuel_purchases.find((f) => f.id === id)?.driver_id,
       ),
       ...planted.detentionLoadIds.map(driverOfLoad),
+      driverOfLoad(planted.disputedDetention.loadId),
     ];
     expect(touched).toHaveLength(18);
     for (const id of touched) {
@@ -710,8 +718,8 @@ describe("planted fuel anomalies", () => {
       const load = rows.loads.find((l) => l.id === off.load_id)!;
       expect([off.state, off.gallons_milli, off.amount_cents, off.paid_with]).toEqual([
         plan.carrier.prefix === "BR" ? "FL" : "NM",
-        95000,
-        36575,
+        103000,
+        41200,
         "company_card",
       ]);
       expect(off.purchased_on).toBe(addDays(load.pickup_on, 1));
@@ -753,13 +761,13 @@ describe("planted fuel anomalies", () => {
     );
     expect(listed).toEqual([
       [
-        ["fuel_off_route", "2026-10-29", 36575, -36575, null],
+        ["fuel_off_route", "2026-10-29", 41200, -41200, null],
         ["fuel_over_tank", "2026-10-28", 111696, "over_tank", 33696],
         ["fuel_while_parked", "2026-10-31", 43896, -43896, null],
         ["fuel_duplicate", "2026-10-28", 31996, -31996, null],
       ],
       [
-        ["fuel_off_route", "2026-10-29", 36575, -36575, null],
+        ["fuel_off_route", "2026-10-29", 41200, -41200, null],
         ["fuel_over_tank", "2026-10-27", 111696, "over_tank", 33696],
         ["fuel_while_parked", "2026-10-25", 43896, -43896, null],
         ["fuel_duplicate", "2026-10-30", 31996, -31996, null],
@@ -784,18 +792,16 @@ describe("unbilled detention", () => {
     const customers = rows.customers.map(customerOf);
     const accessorials = rows.load_accessorials.map((a) => ({ loadId: a.load_id, kind: a.kind }));
 
-    it(`finds exactly ${plan.carrier.slug}'s four planted loads, $1,350.00 in all`, () => {
+    it(`finds exactly ${plan.carrier.slug}'s three planted loads, $2,375.00 in all`, () => {
       const found = findUnbilledDetention(stops, customers, accessorials, {
         start: periods[0].start,
         end: periods[3].end,
       });
       const byLoad = new Map(found.map((u) => [u.loadId, u.amountCents]));
-      expect(planted.detentionLoadIds.map((id) => byLoad.get(id))).toEqual([
-        41250, 30000, 37500, 26250,
-      ]);
-      expect(found).toHaveLength(4);
+      expect(planted.detentionLoadIds.map((id) => byLoad.get(id))).toEqual([73750, 90000, 73750]);
+      expect(found).toHaveLength(3);
       expect(found.reduce((n, u) => n + u.amountCents, 0)).toBe(DETENTION_TOTAL_CENTS);
-      // October, the last full month before the anchor, holds the same four.
+      // October, the last full month before the anchor, holds the same three.
       const month = lastFullMonthBefore(ANCHOR);
       expect(month).toEqual({ start: "2026-10-01", end: "2026-10-31" });
       const october = findUnbilledDetention(stops, customers, accessorials, month);
@@ -803,7 +809,8 @@ describe("unbilled detention", () => {
     });
 
     it(`puts ${plan.carrier.slug}'s plants on four drivers with no problem, open invoices`, () => {
-      const loads = planted.detentionLoadIds.map((id) => rows.loads.find((l) => l.id === id)!);
+      const ids = [planted.disputedDetention.loadId, ...planted.detentionLoadIds];
+      const loads = ids.map((id) => rows.loads.find((l) => l.id === id)!);
       const drivers = new Set(loads.map((l) => l.driver_id));
       expect(drivers.size).toBe(4);
       const hero = rows.drivers.find((d) => d.code === plan.carrier.heroCode)?.id;
@@ -813,17 +820,51 @@ describe("unbilled detention", () => {
       for (const l of loads) {
         expect(victimIds.has(l.driver_id!)).toBe(false);
         expect(l.driver_id).not.toBe(hero);
+        expect(l.delivered_on! >= periods[1].start && l.delivered_on! <= periods[2].end).toBe(true);
+      }
+      for (const l of loads.slice(1)) {
         expect(rows.load_accessorials.filter((a) => a.load_id === l.id)).toEqual([]);
         expect(rows.invoices.find((i) => i.load_id === l.id)?.status).toBe("open");
-        expect(l.delivered_on! >= periods[1].start && l.delivered_on! <= periods[2].end).toBe(true);
       }
       expect(loads.map((l) => rows.customers.findIndex((c) => c.id === l.customer_id))).toEqual([
         3, 0, 7, 4,
       ]);
     });
 
+    it(`bills ${plan.carrier.slug}'s disputed detention and leaves exactly it owed`, () => {
+      const d = planted.disputedDetention;
+      const load = stops.find((l) => l.id === d.loadId)!;
+      const customer = customers.find((c) => c.id === load.customerId)!;
+      const [pickup, delivery] = detentionStops(load, customer)!;
+      expect([pickup.cents, delivery.dwellMinutes, delivery.cents]).toEqual([0, 1560, 180000]);
+      const charge = rows.load_accessorials.filter((a) => a.load_id === d.loadId);
+      expect(charge.map((a) => [a.id, a.kind, a.amount_cents, a.paid_by_driver])).toEqual([
+        [d.accessorialId, "detention", 180000, false],
+      ]);
+      const invoice = rows.invoices.find((i) => i.id === d.invoiceId)!;
+      const payment = rows.customer_payments.find((p) => p.id === d.paymentId)!;
+      expect(invoice.load_id).toBe(d.loadId);
+      expect(invoice.status).toBe("partially_paid");
+      expect(invoice.amount_cents - payment.amount_cents).toBe(180000);
+      expect([payment.method, payment.memo, payment.payment_ref]).toEqual([
+        "check",
+        SHORT_PAY_MEMO,
+        `${plan.carrier.prefix}-PAY-SHORT`,
+      ]);
+      expect(payment.received_on >= periods[3].start && payment.received_on < ANCHOR).toBe(true);
+      expect(
+        rows.payment_applications.filter((a) => a.invoice_id === invoice.id),
+      ).toEqual([
+        { id: d.applicationId, payment_id: payment.id, invoice_id: invoice.id, amount_cents: payment.amount_cents },
+      ]);
+    });
+
     it(`gives ${plan.carrier.slug}'s billed detention a bill of lading that agrees`, () => {
-      for (const a of rows.load_accessorials.filter((x) => x.kind === "detention")) {
+      const billedAtRandom = rows.load_accessorials.filter(
+        (x) => x.kind === "detention" && x.id !== planted.disputedDetention.accessorialId,
+      );
+      expect(billedAtRandom.length).toBeGreaterThan(0);
+      for (const a of billedAtRandom) {
         const load = stops.find((l) => l.id === a.load_id)!;
         const customer = customers.find((c) => c.id === load.customerId)!;
         const [pickup, delivery] = detentionStops(load, customer)!;
@@ -831,6 +872,16 @@ describe("unbilled detention", () => {
         expect(pickup.overMinutes).toBe(minutes);
         expect(pickup.cents).toBeGreaterThanOrEqual(a.amount_cents);
         expect(delivery.cents).toBe(0);
+      }
+    });
+
+    it(`drives ${plan.carrier.slug}'s detention loads at no more than 50 miles an hour`, () => {
+      const ids = [planted.disputedDetention.loadId, ...planted.detentionLoadIds];
+      for (const id of ids) {
+        const l = rows.loads.find((x) => x.id === id)!;
+        const minutes =
+          (Date.parse(l.delivery_arrived_at!) - Date.parse(l.pickup_departed_at!)) / 60_000;
+        expect(minutes).toBeGreaterThanOrEqual(Math.ceil((l.loaded_miles * 60) / 50));
       }
     });
 
@@ -855,6 +906,24 @@ describe("unbilled detention", () => {
       for (const l of unknown) expect(l.delivered_on! >= periods[3].start).toBe(true);
     });
   }
+});
+
+describe("the duplicate advance in the demo week", () => {
+  // Blue Ridge recovers advances with no cap, so the victim's open week takes back both in full:
+  // the money the sweep's fix returns.
+  it("recovers both of blue-ridge's planted advances from the victim's open week", () => {
+    const plan = plans[0];
+    const { rows, planted } = plan;
+    const victim = rows.drivers.find((d) => d.code === plan.victims.duplicateAdvance)!;
+    expect([victim.code, `${victim.first_name} ${victim.last_name}`]).toEqual(["BR-D17", "Marcus Calloway"]);
+    const dup = rows.advances.filter((a) => planted.duplicateAdvanceIds.includes(a.id));
+    expect(dup.map((a) => a.amount_cents)).toEqual([DUPLICATE_ADVANCE_CENTS, DUPLICATE_ADVANCE_CENTS]);
+    const week = settleDriver(settlementInputOf(rows, victim.id, plan.periods[3]));
+    const recovered = week.lines.filter((l) => l.kind === "advance_recovery");
+    expect(recovered.map((l) => [l.amountCents, l.sources.map((x) => x.id)])).toEqual(
+      planted.duplicateAdvanceIds.map((id) => [-DUPLICATE_ADVANCE_CENTS, [id]]),
+    );
+  });
 });
 
 describe("payment styles and collections", () => {

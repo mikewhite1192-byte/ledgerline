@@ -26,14 +26,14 @@ const rowsFor = (loadId: string): DetentionChargeRows => {
 };
 
 describe("detentionChargeOf", () => {
-  it("gives the seed's four planted charges, 135,000 cents in all, onto each load's open invoice", () => {
+  it("gives the seed's three planted charges, 237,500 cents in all, onto each load's open invoice", () => {
     const charges = plan.planted.detentionLoadIds.map((id) => {
       const check = detentionChargeOf(rowsFor(id));
       if (!check.ok) throw new Error(check.reason);
       return check.charge;
     });
-    expect(charges.map((c) => c.amountCents)).toEqual([41_250, 30_000, 37_500, 26_250]);
-    expect(charges.reduce((n, c) => n + c.amountCents, 0)).toBe(135_000);
+    expect(charges.map((c) => c.amountCents)).toEqual([73_750, 90_000, 73_750]);
+    expect(charges.reduce((n, c) => n + c.amountCents, 0)).toBe(237_500);
     for (const c of charges) {
       expect(c.invoiceAmountAfterCents).toBe(c.invoiceAmountBeforeCents + c.amountCents);
       expect(c.stops.every((s) => s.cents > 0)).toBe(true);

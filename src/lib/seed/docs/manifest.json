@@ -201,12 +201,12 @@
       "kind": "fuel_receipt",
       "file": "samples/docs/br-fuel-418.webp",
       "mime": "image/webp",
-      "bytes": 171926,
-      "sha256": "16ec18e76a9030a0bea822e43851aead3df4af8e461c0b55ee7a0d80b0959b62",
+      "bytes": 32944,
+      "sha256": "92763b9ab5cd65e795d192b460a77fb28ed6c88dcbfa395cad50a314383e94a0",
       "width": 1008,
       "height": 1344,
       "cabAngle": true,
-      "origin": "generated",
+      "origin": "composed",
       "tenant": "blue-ridge",
       "ref": {
         "table": "fuel_purchases",
@@ -217,11 +217,11 @@
       "expect": {
         "vendor": "Roadside Fuel Stop",
         "date": "2026-10-29",
-        "amountCents": 36575,
+        "amountCents": 41200,
         "loadNumber": null,
         "truckUnit": "BR-T112",
-        "gallonsMilli": 95000,
-        "priceCents": 385,
+        "gallonsMilli": 103000,
+        "priceCents": 400,
         "purchasedAt": "2026-10-29T10:29:00.000Z",
         "localTime": "6:29 AM",
         "state": "FL",
@@ -395,8 +395,8 @@
       "kind": "bill_of_lading",
       "file": "samples/docs/br-l10216-bol.pdf",
       "mime": "application/pdf",
-      "bytes": 9172,
-      "sha256": "cb022a857609e8e7ca173026d4838e1eb6522819879afa2167b9008a924f6fac",
+      "bytes": 9149,
+      "sha256": "0e0ec54762adee997a3387e69a4af197605e6deafa3d6916f76f602b14164865",
       "pages": 1,
       "origin": "rendered",
       "tenant": "blue-ridge",
@@ -410,7 +410,7 @@
         "date": "2026-10-22",
         "loadNumber": "BR-L10216",
         "customer": {
-          "name": "Bluefern Beverage Group",
+          "name": "Acme Beverage Group",
           "city": "Richmond",
           "state": "VA"
         },
@@ -430,14 +430,14 @@
         "stops": {
           "pickupArrivedAt": "2026-10-21T11:40:00.000Z",
           "pickupDepartedAt": "2026-10-21T12:22:00.000Z",
-          "deliveryArrivedAt": "2026-10-22T08:05:00.000Z",
-          "deliveryDepartedAt": "2026-10-22T15:25:00.000Z"
+          "deliveryArrivedAt": "2026-10-21T21:46:00.000Z",
+          "deliveryDepartedAt": "2026-10-22T23:46:00.000Z"
         },
         "stopsLocal": {
           "pickupArrivedAt": "10/21/2026 7:40 AM EDT",
           "pickupDepartedAt": "10/21/2026 8:22 AM EDT",
-          "deliveryArrivedAt": "10/22/2026 4:05 AM EDT",
-          "deliveryDepartedAt": "10/22/2026 11:25 AM EDT"
+          "deliveryArrivedAt": "10/21/2026 5:46 PM EDT",
+          "deliveryDepartedAt": "10/22/2026 7:46 PM EDT"
         }
       },
       "shows": {
@@ -451,7 +451,7 @@
       "file": "samples/docs/br-l10195-bol.pdf",
       "mime": "application/pdf",
       "bytes": 9180,
-      "sha256": "6c62b4ef5f26bcad966aa84a6b5ac5c44e77fb539aa13988755c74e5dce390ed",
+      "sha256": "df4baf31ed6f04dcfc07e79fc54f2fe927fb6a7b22ce4fdfa7c1d87f3314d527",
       "pages": 1,
       "origin": "rendered",
       "tenant": "blue-ridge",
@@ -485,13 +485,13 @@
         "stops": {
           "pickupArrivedAt": "2026-10-20T10:32:00.000Z",
           "pickupDepartedAt": "2026-10-20T11:45:00.000Z",
-          "deliveryArrivedAt": "2026-10-21T05:57:00.000Z",
+          "deliveryArrivedAt": "2026-10-20T21:12:00.000Z",
           "deliveryDepartedAt": "2026-10-21T13:57:00.000Z"
         },
         "stopsLocal": {
           "pickupArrivedAt": "10/20/2026 6:32 AM EDT",
           "pickupDepartedAt": "10/20/2026 7:45 AM EDT",
-          "deliveryArrivedAt": "10/21/2026 1:57 AM EDT",
+          "deliveryArrivedAt": "10/20/2026 5:12 PM EDT",
           "deliveryDepartedAt": "10/21/2026 9:57 AM EDT"
         }
       },
@@ -505,8 +505,8 @@
       "kind": "bill_of_lading",
       "file": "samples/docs/br-l10117-bol.pdf",
       "mime": "application/pdf",
-      "bytes": 9187,
-      "sha256": "d1e5017a7f8b96ce1780ca4ca91bd451e29c9abea71b95f637fcc4f025c99b33",
+      "bytes": 9189,
+      "sha256": "7bca4c9620d3650a326327048d1fa0cb42090399a737809830239a3f40206b72",
       "pages": 1,
       "origin": "rendered",
       "tenant": "blue-ridge",
@@ -538,16 +538,16 @@
         "truckUnit": "BR-T125",
         "driverCode": "BR-D25",
         "stops": {
-          "pickupArrivedAt": "2026-10-13T14:00:00.000Z",
-          "pickupDepartedAt": "2026-10-13T21:00:00.000Z",
-          "deliveryArrivedAt": "2026-10-14T10:18:00.000Z",
-          "deliveryDepartedAt": "2026-10-14T11:22:00.000Z"
+          "pickupArrivedAt": "2026-10-13T14:40:00.000Z",
+          "pickupDepartedAt": "2026-10-13T16:00:00.000Z",
+          "deliveryArrivedAt": "2026-10-13T22:04:00.000Z",
+          "deliveryDepartedAt": "2026-10-14T12:04:00.000Z"
         },
         "stopsLocal": {
-          "pickupArrivedAt": "10/13/2026 10:00 AM EDT",
-          "pickupDepartedAt": "10/13/2026 5:00 PM EDT",
-          "deliveryArrivedAt": "10/14/2026 6:18 AM EDT",
-          "deliveryDepartedAt": "10/14/2026 7:22 AM EDT"
+          "pickupArrivedAt": "10/13/2026 10:40 AM EDT",
+          "pickupDepartedAt": "10/13/2026 12:00 PM EDT",
+          "deliveryArrivedAt": "10/13/2026 6:04 PM EDT",
+          "deliveryDepartedAt": "10/14/2026 8:04 AM EDT"
         }
       },
       "shows": {
@@ -560,8 +560,8 @@
       "kind": "bill_of_lading",
       "file": "samples/docs/br-l10220-bol.pdf",
       "mime": "application/pdf",
-      "bytes": 9144,
-      "sha256": "6d230dc50b11ad14b89539c3167546c9982cae8c27ebd1e674d4cf8f8fc10d8b",
+      "bytes": 9146,
+      "sha256": "8b63e5e1036c1978097568074105ffa8f647977caf36b2725fc2fc329d61e787",
       "pages": 1,
       "origin": "rendered",
       "tenant": "blue-ridge",
@@ -595,14 +595,14 @@
         "stops": {
           "pickupArrivedAt": "2026-10-22T14:32:00.000Z",
           "pickupDepartedAt": "2026-10-22T15:07:00.000Z",
-          "deliveryArrivedAt": "2026-10-23T05:42:00.000Z",
-          "deliveryDepartedAt": "2026-10-23T12:57:00.000Z"
+          "deliveryArrivedAt": "2026-10-22T23:13:00.000Z",
+          "deliveryDepartedAt": "2026-10-23T15:58:00.000Z"
         },
         "stopsLocal": {
           "pickupArrivedAt": "10/22/2026 10:32 AM EDT",
           "pickupDepartedAt": "10/22/2026 11:07 AM EDT",
-          "deliveryArrivedAt": "10/23/2026 1:42 AM EDT",
-          "deliveryDepartedAt": "10/23/2026 8:57 AM EDT"
+          "deliveryArrivedAt": "10/22/2026 7:13 PM EDT",
+          "deliveryDepartedAt": "10/23/2026 11:58 AM EDT"
         }
       },
       "shows": {
