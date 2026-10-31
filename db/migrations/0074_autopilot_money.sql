@@ -5,17 +5,18 @@
 --
 -- 1. autopilot_rules.driver_day_max_cents: null, or a whole number of cents with one item's limit
 --    at or under it and it at or under the carrier's day (autopilot_rules_driver_day_check). A rule
---    for advance_payout or money_code must carry one (autopilot_rules_driver_day_required), added
---    NOT VALID and validated by the next file (every row already there is a bookkeeping kind, where
---    null is fine). The app role may change it.
+--    for advance_payout or money_code must carry one (autopilot_rules_driver_day_required). Both
+--    checks are added NOT VALID and validated by the next file. The app role may change it.
 -- 2. autopilot_rules_guard() re-created: a change to driver_day_max_cents moves the version up by
 --    exactly one, like a change to the mode or the other limits. The trigger is unchanged.
--- 3. The starting rules for the two invented demo carriers: Auto on advance_payout and money_code
+-- 3. A rule for either kind that a carrier already set (0070 allows both) gets the tightest driver's
+--    day that fits, one item's limit, and its version moves up by one through the guard.
+-- 4. The starting rules for the two invented demo carriers: Auto on advance_payout and money_code
 --    with their limits (the same values as src/lib/autopilot/defaults.ts). A carrier that already
---    has a rule for either kind keeps it.
+--    has a rule for either kind keeps it (with the limit step 3 gave it).
 --
 -- No kind check changes anywhere, proposals_autopilot_guard and its decision check are unchanged
--- (the record only gains the driver it read), and no existing row is changed or dropped.
+-- (the record only gains the driver it read), and no existing row is dropped; step 3 only narrows.
 
 -- 1. The driver's day.
 ALTER TABLE autopilot_rules ADD COLUMN driver_day_max_cents bigint;
@@ -23,7 +24,7 @@ ALTER TABLE autopilot_rules
   ADD CONSTRAINT autopilot_rules_driver_day_check CHECK (
     driver_day_max_cents IS NULL
     OR (driver_day_max_cents >= 0 AND driver_day_max_cents < 1000000000
-        AND max_cents <= driver_day_max_cents AND driver_day_max_cents <= day_max_cents));
+        AND max_cents <= driver_day_max_cents AND driver_day_max_cents <= day_max_cents)) NOT VALID;
 ALTER TABLE autopilot_rules
   ADD CONSTRAINT autopilot_rules_driver_day_required CHECK (
     kind NOT IN ('advance_payout', 'money_code') OR driver_day_max_cents IS NOT NULL) NOT VALID;
@@ -57,7 +58,12 @@ BEGIN
 END
 $$;
 
--- 3. The starting money rules for the two invented demo carriers.
+-- 3. Money rules set before this file: one item's limit is the driver's day, the narrowest that fits.
+UPDATE autopilot_rules
+   SET driver_day_max_cents = max_cents, version = version + 1, updated_by = 'setup', updated_at = now()
+ WHERE kind IN ('advance_payout', 'money_code') AND driver_day_max_cents IS NULL;
+
+-- 4. The starting money rules for the two invented demo carriers.
 INSERT INTO autopilot_rules
   (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count, driver_day_max_cents, updated_by)
 SELECT t.id, d.kind, 'auto', d.max_cents, d.day_max_cents, d.day_max_count, d.driver_day_max_cents, 'setup'
