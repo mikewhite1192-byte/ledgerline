@@ -804,6 +804,15 @@ export type Flags = {
   // The handler asks enabled and startDate (YYYY-MM-DD, the carrier's zone: a move recorded
   // before it drafts nothing) itself.
   advanceAtPickup: { enabled: boolean; startDate: string };
+  // The card load ruling (docs: CARD-LOAD-RULING): a fuel card load on the card statement with no
+  // payment record behind it (no money_actions row on fuel_card_sim naming its load id, unless that
+  // row failed) gets one card_load_ruling card from the desk loop's card_transaction source, for a
+  // named person to rule on: Yes books a deficit for the full load amount, an edit to owes_nothing
+  // records the ruling with none (src/lib/card-loads/ruling.ts, the executor in
+  // src/lib/proposals/executors/card-load-ruling.ts). Never the autopilot's. The agent only reads
+  // the loads (get_card_loads). startDate (YYYY-MM-DD, the carrier's zone): a statement row that
+  // reached the records before it drafts nothing. Each path asks enabled itself.
+  cardLoadRuling: { enabled: boolean; startDate: string };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1060,6 +1069,8 @@ export const flags: Flags = {
   },
   // On by the owner's call (D-071): it only drafts a card; approving it goes through the usual gate.
   advanceAtPickup: { enabled: true, startDate: "2026-10-31" },
+  // Off until its own one-line enable PR. Nothing moves money: a ruling books what a driver owes.
+  cardLoadRuling: { enabled: false, startDate: "2026-10-31" },
 };
 
 applyLocalOverrides(flags);

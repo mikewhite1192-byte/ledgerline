@@ -272,6 +272,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "autopilot_state",
     // The agent's question about a proposal (0072): no seed, the desk writes it.
     "agent_asks",
+    // A deficit a card load ruling booked (0078): no seed, an approval writes it.
+    "driver_deficits",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -320,6 +322,14 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), 'ask', CAST($2 AS uuid), 'drivers', CAST($3 AS uuid),
              'Should I send the advance?')`,
           [randomUUID(), proposal, c.driver],
+        );
+        // A deficit a card load ruling booked (0078), as the ruling's executor writes it.
+        await q.execute(
+          `INSERT INTO driver_deficits (id, tenant_id, driver_id, amount_cents, note, source_kind, source_id, named_by,
+             proposal_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 40000, 'Card load with no payment record.',
+             'card_load', CAST($3 AS uuid), CAST($4 AS uuid), CAST($5 AS uuid))`,
+          [randomUUID(), c.driver, randomUUID(), c.membership, proposal],
         );
         // An invoice post a person approved, refused before any call (the switch was off).
         await q.execute(

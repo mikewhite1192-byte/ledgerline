@@ -155,10 +155,20 @@ export type ProposalView = {
   // Set on a card_match only, when its stored args read back whole: the statement row by its last
   // four digits, the driver picked, and the other drivers code ranked for that day.
   cardMatch?: CardMatchView | null;
+  // Set on a card_load_ruling only, when its stored args read back whole.
+  cardLoad?: CardLoadView | null;
   // Set on a Cash Friday card only, when its stored args read back whole.
   cash?: CashCardView | null;
   // Set on a pay_rule_change only, when its stored args read back whole.
   ruleChange?: RuleChangeView | null;
+};
+
+// A card load ruling's line: the card by its last four digits, the posting day, and the driver
+// whose card it is, by code (null when the driver is no longer on file).
+export type CardLoadView = {
+  last4: string;
+  postedOn: string;
+  driverCode: string | null;
 };
 
 export type CardMatchView = {

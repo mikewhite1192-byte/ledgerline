@@ -150,7 +150,7 @@ describe("the money ledger checks in the migration texts", () => {
 });
 
 // Kinds added by a later re-creation of the proposal check, which lists 0048's fourteen first.
-const AFTER_0048 = ["pay_policy_setup", "load_create", "escrow_release", "load_move"];
+const AFTER_0048 = ["pay_policy_setup", "load_create", "escrow_release", "load_move", "card_load_ruling"];
 
 describe("0048's proposal kind check", () => {
   it("lists the 14-kind union, which holds every kind the code knew then", () => {

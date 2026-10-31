@@ -106,10 +106,10 @@ describe("proposal kinds and origins on a fresh database", () => {
   });
 
   it("takes every kind any branch knows, so no migration order drops one", async () => {
-    // 0013, 0015, 0022, 0029, 0030, 0032, 0046, 0048, 0062, 0066, 0069 and 0071 each re-create
-    // the check, so whichever ran last decides it. 0071 runs last in number order and in
-    // production's merge order; it lists 0069's seventeen (0066's sixteen, then escrow_release)
-    // and then load_move.
+    // 0013, 0015, 0022, 0029, 0030, 0032, 0046, 0048, 0062, 0066, 0069, 0071 and 0078 each
+    // re-create the check, so whichever ran last decides it. 0078 runs last in number order and in
+    // production's merge order; it lists 0071's eighteen (0069's seventeen, then load_move) and
+    // then card_load_ruling.
     const union = [
       "advance_payout",
       "pay_correction",
@@ -129,6 +129,7 @@ describe("proposal kinds and origins on a fresh database", () => {
       "load_create",
       "escrow_release",
       "load_move",
+      "card_load_ruling",
     ];
     for (const kind of union) {
       expect(await insert({ kind }), kind).toBe(1);

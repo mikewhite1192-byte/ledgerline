@@ -4,7 +4,8 @@ import type { ApproveOptions } from "./execute";
 
 // A pay_policy_setup card's edits: at most one per rule (13 rules), each a rule key and a value
 // in the stored form ("null", a code, or whole cents or basis points). The executor parses each
-// with the rule's own parser; this only bounds the shape.
+// with the rule's own parser; this only bounds the shape. A card_load_ruling card's edit is one
+// key, ruling, with a whole value its executor checks (owes_nothing or deficit).
 const EDIT_KEY = /^[a-z][a-z_]{2,39}$/;
 const EDIT_VALUE = /^(null|[a-z_]{2,40}|\d{1,9})$/;
 const EDITS_MAX = 13;
