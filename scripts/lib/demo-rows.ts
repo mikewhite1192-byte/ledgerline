@@ -68,10 +68,11 @@ export async function ensureRows(db: Db, carrier: DemoCarrier, tenantId: string,
     // The starting autopilot rules; a rule the owner already changed is kept as it is.
     for (const rule of DEFAULT_RULES) {
       await q.execute(
-        `INSERT INTO autopilot_rules (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count, updated_by)
-         VALUES (current_tenant_id(), $1, $2, $3, $4, $5, 'setup')
+        `INSERT INTO autopilot_rules (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count,
+                                     driver_day_max_cents, updated_by)
+         VALUES (current_tenant_id(), $1, $2, $3, $4, $5, $6, 'setup')
          ON CONFLICT (tenant_id, kind) DO NOTHING`,
-        [rule.kind, rule.mode, rule.maxCents, rule.dayMaxCents, rule.dayMaxCount],
+        [rule.kind, rule.mode, rule.maxCents, rule.dayMaxCents, rule.dayMaxCount, rule.driverDayMaxCents],
       );
     }
   });

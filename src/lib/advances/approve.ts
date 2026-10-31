@@ -11,6 +11,7 @@ import { MAX_ATTEMPT, MoneyError, type MoneyAction, type MoneyFailure } from "..
 import type {
   ApproveOptions,
   ExecuteDeps,
+  PrecheckContext,
   ProposalRefused,
   ProposalResult,
   ProposalRow,
@@ -287,11 +288,15 @@ function validProposal(p: ProposalRow): boolean {
 // lock would end when the gate commits, before the executor's own transaction, which locks the
 // driver itself. What the pay rules decide is left to the executor: a proposal whose numbers no
 // longer hold must end failed with its reason, and only an approved proposal may become failed.
-// The executor asks all of this again after the approval, since a switch can change in between.
+// The autopilot (ctx.opts.autopilot) is the exception: it never approves numbers that no longer
+// hold, so for it a proposal the pay rules no longer allow to the cent is refused here as
+// stale_eligibility and waits for a person. The executor asks all of this again after the
+// approval, since a switch can change in between.
 export async function precheckAdvanceProposal(
   q: Queryable,
   p: ProposalRow,
   now: Date,
+  ctx?: PrecheckContext,
 ): Promise<ProposalRefused | null> {
   if (!advancesOn()) return no("disabled");
   if (!validProposal(p)) return no("not_executable");
@@ -306,13 +311,17 @@ export async function precheckAdvanceProposal(
   if (!(await readPayoutCard(q, p.subjectId, cardId))) return no(cardId ? "card_not_drivers" : "no_card");
   const loadId = namedLoad(p);
   let input: Awaited<ReturnType<typeof readAdvanceInput>>;
+  let decision: AdvanceDecision;
   try {
     input = await readAdvanceInput(q, p.subjectId, nowIso, p.amountCents, loadId);
-    advanceEligibility(input);
+    decision = advanceEligibility(input);
   } catch {
     return no("eligibility_unavailable", true);
   }
   if (loadId && !input.load) return no("load_not_drivers");
+  if (ctx?.opts.autopilot !== undefined && !(decision.eligible && decision.approvedCents === p.amountCents)) {
+    return no("stale_eligibility");
+  }
   return null;
 }
 

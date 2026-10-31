@@ -21,6 +21,7 @@ const rule = (mode: string): RuleFacts => ({
   maxCents: 150_000,
   dayMaxCents: 500_000,
   dayMaxCount: 3,
+  driverDayMaxCents: null,
   version: 1,
 });
 const saved = structuredClone(flags.autopilot);
@@ -64,6 +65,21 @@ describe("autopilotModeFor", () => {
     expect(await autopilotModeFor(q, "advance_payout", NOW)).toBe("ask");
     reads.readRule.mockResolvedValueOnce(rule("ask"));
     expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("ask");
+  });
+
+  it("is ask for a kind that pays a driver until its own ceiling is armed, then auto", async () => {
+    const advance = { ...rule("auto"), kind: "advance_payout", maxCents: 30_000, dayMaxCents: 150_000, driverDayMaxCents: 30_000 };
+    reads.readRule.mockResolvedValue(advance);
+    const ceiling = flags.autopilot.kinds.advance_payout;
+    if (!ceiling) throw new Error("no advance ceiling");
+    expect(ceiling.armed).toBe(false);
+    expect(await autopilotModeFor(q, "advance_payout", NOW)).toBe("ask");
+    ceiling.armed = true;
+    expect(await autopilotModeFor(q, "advance_payout", NOW)).toBe("auto");
+    // Off stays off whether or not the kind is armed.
+    reads.readRule.mockResolvedValue({ ...advance, mode: "off" });
+    ceiling.armed = false;
+    expect(await autopilotModeFor(q, "advance_payout", NOW)).toBe("off");
   });
 
   it("reads the start date in the carrier's zone", async () => {

@@ -58,6 +58,12 @@ const CASES: Case[] = [
     mismatched: { ok: true, check: "load_create", holds: true, totalCents: AMOUNT - 1, linehaulCents: AMOUNT - 1, fuelSurchargeCents: 0, accessorialCents: 0 },
     engineCents: AMOUNT,
   },
+  {
+    kind: "money_code",
+    matched: { ok: true, check: "money_code", proposedCents: AMOUNT, engine: { ok: true, amountCents: AMOUNT, matchesProposal: true, reasons: [] } },
+    mismatched: { ok: true, check: "money_code", proposedCents: AMOUNT, engine: { ok: true, amountCents: AMOUNT - 1, matchesProposal: false, reasons: [] } },
+    engineCents: AMOUNT,
+  },
 ];
 
 describe("compareEngine", () => {
@@ -114,9 +120,22 @@ describe("compareEngine", () => {
   });
 
   it("has no comparison for the kinds merged after the design: unavailable", () => {
-    for (const kind of ["factoring_request", "bill_defer", "collections_chase", "pay_rule_change", "money_code", "card_match", "pay_correction"]) {
+    for (const kind of ["factoring_request", "bill_defer", "collections_chase", "pay_rule_change", "card_match", "pay_correction"]) {
       expect(compareEngine(kind, AMOUNT, { ok: true, eligible: true, approvedCents: AMOUNT }), kind).toEqual(ENGINE_UNAVAILABLE);
     }
+  });
+
+  it("reads a money code the rules refused, or a malformed one, as unavailable, and a stale match as a mismatch", () => {
+    const refused = { ok: true, check: "money_code", proposedCents: AMOUNT, engine: { ok: false, reason: "over_cap", refusals: [] } };
+    expect(compareEngine("money_code", AMOUNT, refused)).toEqual(ENGINE_UNAVAILABLE);
+    expect(compareEngine("money_code", AMOUNT, { ok: true, check: "money_code" })).toEqual(ENGINE_UNAVAILABLE);
+    const text = { ok: true, engine: { ok: true, amountCents: "12345", matchesProposal: true } };
+    expect(compareEngine("money_code", AMOUNT, text)).toEqual(ENGINE_UNAVAILABLE);
+    const truthy = { ok: true, engine: { ok: true, amountCents: AMOUNT, matchesProposal: "yes" } };
+    expect(compareEngine("money_code", AMOUNT, truthy).check).toBe("mismatch");
+    // The engine's own flag says no although the figures agree: a mismatch.
+    const no = { ok: true, engine: { ok: true, amountCents: AMOUNT, matchesProposal: false } };
+    expect(compareEngine("money_code", AMOUNT, no)).toEqual({ check: "mismatch", engineCents: AMOUNT });
   });
 
   it("stores no engine figure the column cannot hold", () => {
