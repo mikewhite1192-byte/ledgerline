@@ -272,13 +272,24 @@ describe("SweepRun answers", () => {
   it("says a rejection's outcome is unknown when the answer is lost, and keeps a refusal definite", async () => {
     const sent = serve(page, {
       approve: [],
-      reject: ["lost", { status: 503, body: { error: "unavailable" } }, { status: 409, body: { error: "already_decided" } }],
+      reject: [
+        "lost",
+        { status: 503, body: { error: "unavailable" } },
+        { status: 409, body: { error: "already_decided" } },
+        { status: 409, body: { error: "reject_after_money_moved" } },
+      ],
       clean: [],
     });
     render(<SweepRun initial={page} auditorOn />);
     const unknown =
       "The answer did not come back, so this may or may not have been rejected. Check the card's status before trying again.";
-    const answers = [unknown, unknown, "The rejection did not go through. Try again."];
+    // A card whose money already moved says why, in its own fixed sentence.
+    const answers = [
+      unknown,
+      unknown,
+      "The rejection did not go through. Try again.",
+      "Money for this card already moved, so it can't be rejected. Check the card's status.",
+    ];
     for (const [n, expected] of answers.entries()) {
       rejectCard("D-proposed");
       await waitFor(() => expect(sent).toHaveLength(n + 1));

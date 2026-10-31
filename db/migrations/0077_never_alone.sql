@@ -13,10 +13,6 @@
 --    a change to the mode moves the version by one) and updated_by 'never_alone', so the rule an
 --    approval names is always the one in force. Its limits stay as they were. Nothing is approved
 --    or undone: a proposal the autopilot already decided keeps its record.
--- 3. desk_log's source check, re-created as the full union of 0071's sources plus the two period
---    sources later items add: 'statement_check' (the card statement check) and 'digest' (the
---    morning digest), so those items need no migration. Added NOT VALID and validated by the next
---    file. Any later migration that re-creates it carries this list whole.
 --
 -- No row is dropped; step 2 only narrows. The kind check, the guard and every other check are
 -- unchanged.
@@ -32,10 +28,3 @@ UPDATE autopilot_rules
    SET mode = 'ask', version = version + 1, updated_by = 'never_alone', updated_at = now()
  WHERE mode = 'auto'
    AND kind NOT IN ('invoice_post', 'card_match', 'payment_reapply', 'advance_payout', 'money_code', 'load_move');
-
--- 3. The desk log's sources, full union, NOT VALID (validated in 0077_never_alone_validate.sql).
-ALTER TABLE desk_log DROP CONSTRAINT desk_log_source_check;
-ALTER TABLE desk_log ADD CONSTRAINT desk_log_source_check CHECK (source IN (
-  'card_transaction', 'inbound_message', 'voice_note', 'customer_payment', 'audit', 'sweep',
-  'collections', 'cash_check', 'autopilot', 'document', 'load_event', 'statement_check',
-  'digest')) NOT VALID;

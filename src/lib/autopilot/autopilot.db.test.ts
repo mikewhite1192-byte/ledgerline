@@ -754,6 +754,13 @@ describe("the autopilot", () => {
       ).toBe("no error");
       // An allowed kind still takes Auto.
       expect(await insertRule("payment_reapply", "auto")).toBe("no error");
+      // 0077_never_alone_validate.sql validated the check against the rows already there.
+      const [check] = await admin.withoutTenant((q) =>
+        q.query<{ validated: boolean }>(
+          `SELECT convalidated AS validated FROM pg_constraint WHERE conname = 'autopilot_rules_auto_allowlist'`,
+        ),
+      );
+      expect(check).toEqual({ validated: true });
     });
 
     it("refuses the autopilot login on a never-alone kind at the gate, even when the switch lists it", async () => {

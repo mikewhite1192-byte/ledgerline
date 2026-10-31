@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { ChatThread, type ChatMessage, type Part } from "@/components/app/chat-thread";
 import type { Suggestion } from "@/components/app/prompt-chips";
+import { rejectNotice } from "@/components/app/reject-notice";
 import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
 import { useViewerRole } from "@/components/app/viewer-role";
 import { decodeEvents } from "@/lib/agent/operator/stream";
@@ -574,7 +575,10 @@ export function AgentChat({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ category: "other" }),
       });
-      if (!res.ok) setNotices((n) => ({ ...n, [proposalId]: failed }));
+      if (!res.ok) {
+        const notice = rejectNotice(await errorOf(res), failed);
+        setNotices((n) => ({ ...n, [proposalId]: notice }));
+      }
     } catch {
       setNotices((n) => ({ ...n, [proposalId]: failed }));
     }
