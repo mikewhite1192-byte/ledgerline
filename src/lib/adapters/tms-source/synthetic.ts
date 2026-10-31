@@ -561,13 +561,33 @@ async function allLoads(ctx: TmsContext): Promise<SynLoad[]> {
   return rows.map((r) => toSynLoad(r, []));
 }
 
-async function served(ctx: TmsContext, externalId: string, faults: DemoFaults): Promise<SynServed | null> {
+type PicksOf = (ctx: TmsContext, world: SynWorld, faults: DemoFaults) => Promise<FaultPicks>;
+
+// The one-load picks, worked out once per feed clock and set of switches: a source is built per
+// pull, so one pull reads the whole feed for its picks once, not once per record read. A read
+// that fails is not kept.
+function picksCache(): PicksOf {
+  let kept: { key: string; picks: Promise<FaultPicks> } | null = null;
+  return (ctx, world, faults) => {
+    if (!picksNeeded(faults)) return Promise.resolve(NO_PICKS);
+    const nowMs = feedNowMs(ctx);
+    const key = `${nowMs}|${JSON.stringify(faults)}`;
+    if (kept?.key === key) return kept.picks;
+    const picks = allLoads(ctx).then((loads) => faultPicks(world, loads, nowMs, faults));
+    const entry = { key, picks };
+    kept = entry;
+    picks.catch(() => {
+      if (kept === entry) kept = null;
+    });
+    return picks;
+  };
+}
+
+async function served(ctx: TmsContext, externalId: string, faults: DemoFaults, picksOf: PicksOf): Promise<SynServed | null> {
   const world = await worldOf(ctx);
   const load = await loadById(ctx, world, externalId);
   if (!load) return null;
-  const nowMs = feedNowMs(ctx);
-  const picks = picksNeeded(faults) ? faultPicks(world, await allLoads(ctx), nowMs, faults) : NO_PICKS;
-  return serveLoad(world, load, nowMs, faults, picks);
+  return serveLoad(world, load, feedNowMs(ctx), faults, await picksOf(ctx, world, faults));
 }
 
 // One history page: HISTORY_PAGE rows, or with history_page_cut on, CUT_PAGE new rows a page with
@@ -585,6 +605,7 @@ const GONE = { kind: "gone" } as const;
 export function createSyntheticSource(): TmsSource {
   const okAt = <T>(ctx: TmsContext, value: T): Read<T> => ({ kind: "ok", value, asOf: iso(feedNowMs(ctx)) });
   let loadReads = 0;
+  const picksOf = picksCache();
   return {
     system: "synthetic",
     ready: async () => ({ ok: true }),
@@ -601,23 +622,23 @@ export function createSyntheticSource(): TmsSource {
           loadReads += 1;
           if (loadReads % 3 === 0) throw new TmsSourceError("server_error");
         }
-        const s = await served(ctx, externalId, faults);
+        const s = await served(ctx, externalId, faults, picksOf);
         return s ? okAt(ctx, s.record) : GONE;
       }),
     readHistory: (ctx, externalId, page) =>
       guarded(async () => {
         const faults = await faultsOf(ctx);
-        const s = await served(ctx, externalId, faults);
+        const s = await served(ctx, externalId, faults, picksOf);
         return s ? okAt(ctx, historyPage(s.history, page, faults)) : GONE;
       }),
     readDocuments: (ctx, externalId) =>
       guarded(async () => {
-        const s = await served(ctx, externalId, await faultsOf(ctx));
+        const s = await served(ctx, externalId, await faultsOf(ctx), picksOf);
         return s ? okAt(ctx, s.documents) : GONE;
       }),
     readLineItems: (ctx, externalId) =>
       guarded(async () => {
-        const s = await served(ctx, externalId, await faultsOf(ctx));
+        const s = await served(ctx, externalId, await faultsOf(ctx), picksOf);
         return s ? okAt(ctx, s.lines) : GONE;
       }),
     readParty: (ctx, kind, externalId) => guarded(async () => readParty(ctx.q, kind, externalId, (v) => okAt(ctx, v))),

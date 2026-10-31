@@ -43,7 +43,7 @@ export function readDemoFaults(value: unknown): DemoFaults {
 export function parseFaultChange(value: unknown): Partial<Record<DemoFault, boolean>> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
   const entries = Object.entries(value as Record<string, unknown>);
-  if (entries.length === 0 || entries.length > DEMO_FAULTS.length) return null;
+  if (entries.length === 0) return null;
   const out: Partial<Record<DemoFault, boolean>> = {};
   for (const [key, on] of entries) {
     if (!isDemoFault(key) || typeof on !== "boolean") return null;

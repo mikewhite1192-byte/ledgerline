@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "../../config/flags";
-import { FAULT_EDIT_CENTS, NO_FAULTS, type DemoFault } from "../adapters/tms-source/faults";
+import { DEMO_FAULTS, FAULT_EDIT_CENTS, NO_FAULTS, type DemoFault } from "../adapters/tms-source/faults";
 import { validated } from "../adapters/tms-source";
 import { createSyntheticSource, YARD_CHECK } from "../adapters/tms-source/synthetic";
 import type { TmsSource } from "../adapters/tms-source/types";
@@ -88,6 +88,21 @@ async function ourLoad(
     ),
   );
   return { id, number, externalId: `syn:${f.slug}:${number}` };
+}
+
+// An invoiced load of ours: picked up Oct 26, delivered Oct 27 14:00 CDT, invoiced on `issuedOn`
+// (the feed finalizes it that day at 10:00 CDT, 15:00Z, after the review 53 hours on).
+async function invoicedLoad(f: Carrier, issuedOn: string): Promise<OurLoad> {
+  const l = await ourLoad(f, { status: "invoiced", pickupOn: "2026-10-26", deliveredAt: "2026-10-27T19:00:00.000Z", deliveredOn: "2026-10-27" });
+  await admin.withTenant(f.tenantId, (q) =>
+    q.execute(
+      `INSERT INTO invoices (id, tenant_id, source, load_id, customer_id, invoice_number, amount_cents, issued_on, due_on, status)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), 'load', CAST($2 AS uuid), CAST($3 AS uuid), $4, 150000,
+               CAST($5 AS date), CAST('2026-11-30' AS date), 'open')`,
+      [randomUUID(), l.id, f.customerId, `INV-${l.number}`, issuedOn],
+    ),
+  );
+  return l;
 }
 
 // A minute of time to spare by a clock that stands still at `now`, so the deadline never comes.
@@ -415,14 +430,65 @@ describe("the demo dispatch feed's faults", () => {
     expect((await mirrorOf(f, l.externalId))?.flags).toContain("edited_after_finalize");
   });
 
+  it("hard_delete: the pick follows the feed's clock, so once the deleted load has delivered the next one in transit is the deleted one, and the first load's tombstone stays", async () => {
+    const f = await carrier("flt-redel");
+    const first = await ourLoad(f);
+    const second = await ourLoad(f, { pickupOn: "2026-11-02" });
+    await pull(f, at(T_PICKED, 60));
+    await setFaults(f, { hard_delete: true });
+    // Only the first is in transit: it is the one deleted.
+    const t1 = at(T_PICKED, 61);
+    expect(await pull(f, t1)).toMatchObject({ ran: true, gone: 1 });
+    expect((await mirrorOf(f, first.externalId))?.gone_at).toBe(t1.toISOString());
+    // The second is not in the feed yet (it is created the evening before its pickup). Once it is,
+    // it is only booked, and the first is still the one deleted.
+    expect(await mirrorOf(f, second.externalId)).toBeUndefined();
+    await pull(f, at(T_PICKED, 8 * 60));
+    expect(await mirrorOf(f, second.externalId)).toMatchObject({ status_code: "booked", gone_at: null });
+    expect((await mirrorOf(f, first.externalId))?.gone_at).toBe(t1.toISOString());
+    // After the first delivers, the second is in transit and is the one deleted: the feed lists the
+    // first again, but a tombstoned load is never read again, so the mirror keeps its tombstone.
+    const t2 = at(T_DELIVERED, 30);
+    await pull(f, t2);
+    expect((await mirrorOf(f, second.externalId))?.gone_at).toBe(t2.toISOString());
+    expect(await mirrorOf(f, first.externalId)).toMatchObject({ status_code: "in_transit", gone_at: t1.toISOString() });
+  });
+
+  it("edit_after_finalize: the pick follows the feed's clock, so once a later load's edit time passes the earlier load's edit is gone", async () => {
+    const f = await carrier("flt-reedit", { edit_after_finalize: true });
+    const early = await invoicedLoad(f, "2026-10-30");
+    const late = await invoicedLoad(f, "2026-10-31");
+    const FINAL_EARLY = "2026-10-30T15:00:00.000Z";
+    const FINAL_LATE = "2026-10-31T15:00:00.000Z";
+    await pull(f, at(FINAL_EARLY, 5));
+    await pull(f, at(FINAL_EARLY, 40));
+    await pull(f, at(FINAL_EARLY, 65));
+    expect(await mirrorOf(f, early.externalId)).toMatchObject({ revenue_total_cents: 150_000 + FAULT_EDIT_CENTS });
+    expect((await mirrorOf(f, early.externalId))?.flags).toContain("edited_after_finalize");
+    // The later load's edit time (an hour after its finalize) passes: it is the edited one now.
+    await pull(f, at(FINAL_LATE, 5));
+    await pull(f, at(FINAL_LATE, 40));
+    await pull(f, at(FINAL_LATE, 65));
+    expect(await mirrorOf(f, late.externalId)).toMatchObject({ revenue_total_cents: 150_000 + FAULT_EDIT_CENTS });
+    expect((await mirrorOf(f, late.externalId))?.flags).toContain("edited_after_finalize");
+    // The feed no longer shows the earlier load's edit, but the sync reads a finalized load again
+    // only once, after its cool-off, so the mirror keeps the edit it flagged.
+    expect(await mirrorOf(f, early.externalId)).toMatchObject({ revenue_total_cents: 150_000 + FAULT_EDIT_CENTS });
+    expect((await mirrorOf(f, early.externalId))?.flags).toContain("edited_after_finalize");
+  });
+
   it("serves the clean feed while the switch is off, whatever the carrier has stored", async () => {
     flags.tmsSync.demoFaultsEnabled = false;
-    const f = await carrier("flt-off", { hard_delete: true, relabeled_status: true, stale_list_rows: true });
+    const f = await carrier("flt-off", Object.fromEntries(DEMO_FAULTS.map((k) => [k, true])));
     const l = await ourLoad(f);
     await pull(f, at(T_PICKED, 10));
     const row = await mirrorOf(f, l.externalId);
-    expect(row).toMatchObject({ status_code: "in_transit", status_label: "In Transit", gone_at: null });
+    expect(row).toMatchObject({ status_code: "in_transit", status_label: "In Transit", gone_at: null, read_attempts: 0, source_updated_at: T_PICKED });
     expect(row?.flags).not.toContain("stale_list_row");
+    expect(Object.values(await storedFaultsOf(f) ?? {})).toEqual(DEMO_FAULTS.map(() => true));
+    expect((await eventsOf(f)).map((e) => e.external_event_id)).toEqual(
+      ["tendered", "booked", "in_transit"].map((k) => `${l.externalId}:${k}`),
+    );
   });
 });
 

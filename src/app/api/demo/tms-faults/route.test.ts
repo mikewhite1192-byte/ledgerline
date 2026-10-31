@@ -7,7 +7,7 @@ import { POST } from "./route";
 // The dispatch fault switches route's gates, with the store a stand-in: the cross-site check and
 // the switch answer before the session is read, only an admin may change a switch, the body must
 // name known faults with boolean values only, and a carrier without the synthetic feed answers
-// 404. The store's own tenant fence is proven against a real database in demo-faults.db.test.ts.
+// 404. The store's own tenant fence is proven against a real database in src/lib/tms/faults.db.test.ts.
 // No database and no network here.
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
@@ -104,6 +104,7 @@ describe("POST /api/demo/tms-faults", () => {
       { hard_delete: "true" },
       { hard_delete: 1 },
       { hard_delete: null },
+      { hard_delete: { a: 1 } },
       {},
       [true],
       "not json",
