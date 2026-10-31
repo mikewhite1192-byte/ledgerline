@@ -288,6 +288,26 @@ describe("home's order and cards", () => {
     await expect(Home({ searchParams: Promise.resolve({}) })).rejects.toThrow("boom");
   });
 
+  it("starts the cards and Needs you reads while the agent's turns are still being read", async () => {
+    cardsOn();
+    flags.cashFridayEnabled = true;
+    mocks.readCashHome.mockResolvedValue(null);
+    let release: (turns: never[]) => void = () => {};
+    mocks.readRecentAgentTurns.mockReturnValue(new Promise((resolve) => (release = resolve)));
+    const page = Home({ searchParams: Promise.resolve({}) });
+    // Read in turn, nothing after the turns read would start until it came back.
+    await vi.waitFor(() => {
+      expect(mocks.readNeedsYou).toHaveBeenCalled();
+      expect(mocks.readCashHome).toHaveBeenCalled();
+      expect(mocks.readTodayIntake).toHaveBeenCalled();
+      expect(mocks.readSettlementsView).toHaveBeenCalled();
+    });
+    release([]);
+    render(await page);
+    expect(region("Today")).toBeTruthy();
+    expect(region("Needs you")).toBeTruthy();
+  });
+
   it("leaves out the cards whose pages are off", async () => {
     render(await Home({ searchParams: Promise.resolve({}) }));
     expect(screen.queryByRole("region", { name: "Paystubs" })).toBeNull();
