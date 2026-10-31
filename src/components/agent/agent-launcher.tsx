@@ -8,7 +8,7 @@ import type { Suggestion } from "@/components/app/prompt-chips";
 import { isCardAnchor } from "@/lib/home/card-anchor";
 import { AgentPanel, PANEL_ID, type AgentPanelConfig, type PanelRequest } from "./agent-panel";
 import type { PageFocus } from "./page-focus";
-import { PanelContext, type AgentOpening, type OpenRequest } from "./panel-context";
+import { PanelContext, type AgentOpening, type PanelControl } from "./panel-context";
 
 // Laptop width, where the card floats at the bottom right; narrower, it is the modal sheet. Read
 // when it opens. Without a media query to ask, it floats.
@@ -121,7 +121,7 @@ export function AgentLauncher({
     return () => document.removeEventListener("keydown", onKey);
   }, [show]);
 
-  const control = useMemo(() => ({ open: (opts?: OpenRequest) => show(opts) }), [show]);
+  const control = useMemo<PanelControl>(() => ({ open: (opts) => show(opts) }), [show]);
 
   return (
     <PanelContext.Provider value={control}>

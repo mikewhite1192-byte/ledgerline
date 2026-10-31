@@ -7,12 +7,9 @@ import { useAgentPanel } from "@/components/agent/panel-context";
 import { cn } from "@/lib/cn";
 import { ASK_ANCHOR, NEEDS_YOU_ANCHOR } from "./anchors";
 import { HideAmounts } from "./hide-amounts";
+import { plainClick } from "./panel-hash-link";
 
 const ASK_HREF = `/#${ASK_ANCHOR}`;
-
-function plainClick(e: MouseEvent<HTMLAnchorElement>): boolean {
-  return e.button === 0 && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.altKey;
-}
 
 // "Ask" goes to the agent. On a page with the agent card it opens the card; without one (the
 // /design specimen) it is a plain link to Home's #ask, which opens the card there. A click with a

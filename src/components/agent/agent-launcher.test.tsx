@@ -3,6 +3,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import type { TurnView } from "@/lib/agent/view";
+import { cardAnchor } from "@/lib/home/card-anchor";
+import * as fx from "@/test/page-fixtures";
 import { AgentLauncher } from "./agent-launcher";
 import type { AgentPanelConfig } from "./agent-panel";
 import type { PageFocus } from "./page-focus";
@@ -338,7 +340,7 @@ describe("the agent launcher", () => {
     fireEvent.click(launcher());
     const thread = await within(panel()).findByRole("list", { name: "Conversation" });
     expect(within(thread).getByText(fromHome.userText)).toBeTruthy();
-    expect(storage.getItem("pc-conversation")).toBe("c-3");
+    await waitFor(() => expect(storage.getItem("pc-conversation")).toBe("c-3"));
   });
 
   it("still opens and asks when the browser refuses its storage", async () => {
@@ -448,6 +450,38 @@ describe("the agent launcher", () => {
     const thread = await within(panel()).findByRole("list", { name: "Conversation" });
     expect(within(thread).getByText(EARLIER.userText)).toBeTruthy();
     await waitFor(() => expect(storage.getItem("pc-conversation")).not.toBe("left:c-1"));
+  });
+
+  it("reads the thread again for a card link once the card was closed on an empty thread, then scrolls to it", async () => {
+    vi.stubGlobal("sessionStorage", memoryStorage());
+    const recent = { status: 200, body: EMPTY_RECENT.body as unknown };
+    const { asked } = stubServer(recent);
+    page();
+    fireEvent.click(launcher());
+    await questionBox();
+    fireEvent.click(launcher());
+    expect(screen.queryByRole("dialog", { name: "Agent" })).toBeNull();
+
+    const withCard: TurnView = { ...EARLIER, proposals: [fx.PROPOSALS[0]] };
+    recent.body = { conversationId: "c-1", turns: [withCard] };
+    const cardId = cardAnchor(fx.PROPOSALS[0].id);
+    const scrolled: string[] = [];
+    const before = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.id);
+    };
+    try {
+      window.history.replaceState(null, "", `#${cardId}`);
+      act(() => {
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+      });
+      expect(panel().open).toBe(true);
+      await waitFor(() => expect(document.getElementById(cardId)).not.toBeNull());
+      await waitFor(() => expect(scrolled).toContain(cardId));
+      expect(asked.filter((u) => u === "/api/agent/recent")).toHaveLength(2);
+    } finally {
+      Element.prototype.scrollIntoView = before;
+    }
   });
 
   it("fills the box from the page's ask and still scrolls to the card when the address has both", async () => {

@@ -122,7 +122,7 @@ function ComposerMenu({ suggestions, onPick, documentsHref }: ComposerMenuProps)
                 tabIndex={-1}
                 className={item}
                 onClick={() => {
-                  setOpen(false);
+                  close();
                   onPick?.(s.id);
                 }}
               >

@@ -65,6 +65,8 @@ describe("the agent card's pill question box", () => {
     fireEvent.click(items[1]);
     expect(picked).toEqual(["pay-run-cost"]);
     expect(screen.queryByRole("menu")).toBeNull();
+    // The cursor goes back to the +, not to the page.
+    expect(document.activeElement).toBe(plus());
   });
 
   it("closes the menu on Esc and uses the key up, so the card around it stays open", () => {

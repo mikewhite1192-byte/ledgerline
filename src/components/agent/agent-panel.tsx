@@ -187,6 +187,7 @@ export function AgentPanel({
   const loading = useRef(false);
   const focused = useRef("");
   const scrolled = useRef(-1);
+  const reloaded = useRef(-1);
   // The conversation the thread shows, as the chat last told it (loaded turns or a new question).
   const shown = useRef<string | null>(null);
   const fresh = request.fresh === true;
@@ -194,8 +195,17 @@ export function AgentPanel({
   const toCard = request.scrollTo !== undefined;
 
   useEffect(() => {
-    if (!open || loading.current) return;
+    if (!open) return;
+    // A card link whose card is not in the thread showing (the card was closed after New
+    // conversation, say) reads the newest turns again, once per ask, so the card can be found.
+    const reload =
+      loading.current &&
+      request.scrollTo !== undefined &&
+      reloaded.current !== request.n &&
+      document.getElementById(request.scrollTo) === null;
+    if (loading.current && !reload) return;
     loading.current = true;
+    if (reload) reloaded.current = request.n;
     const left = toCard ? null : leftConversation();
     void readRecent().then((t) => {
       const newest = t.at(-1)?.conversationId ?? null;
@@ -205,10 +215,11 @@ export function AgentPanel({
       // A card link brings the left conversation back, so the next page shows it too.
       else if (toCard && leftConversation() !== null) clearStored();
       const turns = fresh || (left !== null && newest === left) ? [] : t;
+      if (reload) setThread((now) => ({ key: (now?.key ?? 0) + 1, turns }));
       // "New conversation" pressed while the read ran wins over the read.
-      setThread((now) => now ?? { key: 0, turns });
+      else setThread((now) => now ?? { key: 0, turns });
     });
-  }, [open, fresh, toCard]);
+  }, [open, fresh, toCard, request.n, request.scrollTo]);
 
   useEffect(() => {
     const want = `${request.n}:${nudge}`;
@@ -219,12 +230,14 @@ export function AgentPanel({
     box.focus();
   }, [open, thread, request.n, nudge]);
 
-  // #card-<id>: once the thread shows, that card is scrolled into view, once per ask. A card not in
-  // the thread (an older conversation's) leaves the thread where it is.
+  // #card-<id>: once the thread shows that card, it is scrolled into view, once per ask. A card not
+  // in the thread (an older conversation's) leaves the thread where it is.
   useEffect(() => {
     if (!open || !thread || !request.scrollTo || scrolled.current === request.n) return;
+    const card = document.getElementById(request.scrollTo);
+    if (!card) return;
     scrolled.current = request.n;
-    document.getElementById(request.scrollTo)?.scrollIntoView?.({ block: "center" });
+    card.scrollIntoView?.({ block: "center" });
   }, [open, thread, request.n, request.scrollTo]);
 
   const focusKey = focus ? `${focus.table}:${focus.id}` : null;

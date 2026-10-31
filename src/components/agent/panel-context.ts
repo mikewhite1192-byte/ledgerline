@@ -13,8 +13,9 @@ export type AgentOpening = OpenRequest & {
 };
 
 // Opens the agent card. Kept apart from the card so the top bar can ask for it without loading
-// the chat on a page that has none.
-export type PanelControl = { open: (opts?: OpenRequest) => void };
+// the chat on a page that has none. scrollTo is a "card-<id>" element to bring into view once the
+// thread shows (a Needs you link).
+export type PanelControl = { open: (opts?: OpenRequest & { scrollTo?: string }) => void };
 
 export const PanelContext = createContext<PanelControl | null>(null);
 
