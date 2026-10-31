@@ -51,7 +51,11 @@ async function carrier(slug: string, stage: string | null = "picked_up"): Promis
 let loadSeq = 0;
 // A load on the road: 1,000 loaded miles at the fixture driver's 60 cents is $600.00 of trip pay,
 // so 70% is $420.00 and, after the $5.00 fee, $415.00 is the most on it. Nothing is delivered.
-async function onRoad(f: Fixture, recordedAt = "2026-11-02T14:05:00.000Z"): Promise<{ loadId: string; eventId: string }> {
+async function onRoad(
+  f: Fixture,
+  recordedAt = "2026-11-02T14:05:00.000Z",
+  pickupOn = recordedAt.slice(0, 10),
+): Promise<{ loadId: string; eventId: string }> {
   loadSeq += 1;
   const loadId = randomUUID();
   const eventId = randomUUID();
@@ -61,7 +65,7 @@ async function onRoad(f: Fixture, recordedAt = "2026-11-02T14:05:00.000Z"): Prom
          dest_city, dest_state, pickup_on, loaded_miles, linehaul_cents)
        VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS uuid), CAST($4 AS uuid), 'in_transit', 'Joliet',
          'IL', 'Gary', 'IN', CAST($5 AS date), 1000, 150000)`,
-      [loadId, `AP-L${String(20000 + loadSeq)}`, f.customerId, f.driverId, recordedAt.slice(0, 10)],
+      [loadId, `AP-L${String(20000 + loadSeq)}`, f.customerId, f.driverId, pickupOn],
     );
     // The state miles add up to the load's miles, as the rules engine checks.
     await q.execute(
@@ -254,6 +258,13 @@ describe("the advance at pickup", () => {
     expect(await direct(f, today.eventId)).toEqual({ kind: "nothing", category: "before_start" });
     flags.advanceAtPickup.startDate = "not-a-date";
     expect(await direct(f, today.eventId)).toEqual({ kind: "nothing", category: "before_start" });
+    expect(await advanceCards(f)).toEqual([]);
+  });
+
+  it("drafts nothing for a pickup recorded ahead of the load's pickup day, and says so", async () => {
+    const f = await carrier("pickup-early-day");
+    const { eventId } = await onRoad(f, "2026-11-02T14:05:00.000Z", "2026-11-03");
+    expect(await direct(f, eventId)).toEqual({ kind: "nothing", category: "pickup_not_yet_due" });
     expect(await advanceCards(f)).toEqual([]);
   });
 

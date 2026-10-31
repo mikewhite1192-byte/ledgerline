@@ -52,6 +52,7 @@ export type AtPickupSkip =
   | "load_has_card"
   | "live_card"
   | "daily_cap"
+  | "pickup_not_yet_due"
   | "nothing_to_advance"
   | "engine_refused"
   | "duplicate"
@@ -135,6 +136,10 @@ export async function proposeAdvanceAtPickup(
   const input = await readAdvanceInput(q, driverId, nowIso, 0, load.id);
   if (!input.load) return nothing("not_found");
   if (input.config.advanceUnlockStage !== "picked_up") return nothing("stage_delivered");
+  // A pickup recorded ahead of the load's pickup day: the rules engine counts the load only from
+  // that day (earnedUnpaid), so say so rather than nothing_to_advance.
+  const onLoad = input.loads.find((l) => l.id === load.id);
+  if (onLoad !== undefined && onLoad.pickupOn > input.requestedOn) return nothing("pickup_not_yet_due");
   const sized = advanceEligibility(input);
   if (sized.loadHeadroomCents === null || sized.loadCapCents === null) return nothing("no_load_cap");
   const suggested = advanceEligibility({ ...input, amountCents: sized.loadHeadroomCents }).suggestedCents;
