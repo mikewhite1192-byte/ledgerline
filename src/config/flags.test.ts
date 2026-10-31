@@ -93,6 +93,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-10-31): a card load with no ledger row behind it asks a person
   // to rule whether the driver owes it. A ruling is always a named person's.
   "cardLoadRuling.enabled",
+  // Released by the owner (D-071, 2026-10-31): the desk mirrors the dispatch feed, read only, inside
+  // its per-wake caps.
+  "tmsSync.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -108,8 +111,6 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The dispatch mirror ships off: its own one-line PR turns it on (D-071).
-  "tmsSync.enabled",
   // The synthetic feed's fault switches are a later item.
   "tmsSync.demoFaultsEnabled",
 ] as const;
@@ -340,9 +341,9 @@ describe("flags", () => {
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("load_move");
   });
 
-  it("ships the dispatch mirror off, read only, with a start date and small per-wake caps", () => {
+  it("ships the dispatch mirror on, read only, with a start date and small per-wake caps", () => {
     expect(flags.tmsSync).toEqual({
-      enabled: false,
+      enabled: true,
       startDate: "2026-10-31",
       maxPagesPerWake: 3,
       maxReadsPerWake: 20,
