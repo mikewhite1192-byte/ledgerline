@@ -149,6 +149,10 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
 
   await test.step("2. ask the agent a suggested question", async (step) => {
     step.skip(!on.agent, "skipped: not released (agent)");
+    // The agent is the floating card at the bottom right; its thread loads once it opens.
+    await page.getByRole("button", { name: "Ask the agent" }).click();
+    await expect(page.getByRole("dialog", { name: "Agent" })).toBeVisible();
+    await expect(page.getByLabel("Your question")).toBeVisible();
     const chip = page.getByRole("list", { name: "Suggested questions" }).getByRole("button", { name: FIRST_QUESTION });
     if (DEPLOYED && (await chip.count()) === 0) {
       // A deployed thread may already hold turns, and the suggestions show only on an empty one.

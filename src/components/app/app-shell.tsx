@@ -4,6 +4,9 @@ import type { ReactNode } from "react";
 import { AgentLauncher } from "@/components/agent/agent-launcher";
 import type { AgentPanelConfig } from "@/components/agent/agent-panel";
 import type { PageFocus } from "@/components/agent/page-focus";
+import type { AgentOpening } from "@/components/agent/panel-context";
+import { defaultSuggestions } from "@/components/agent/suggestions";
+import { greetingLine } from "@/components/agent/words";
 import { Wordmark } from "@/components/brand/wordmark";
 import { flags, stepThroughShown } from "@/config/flags";
 import { cn } from "@/lib/cn";
@@ -14,6 +17,7 @@ import { MobileNav } from "./mobile-nav";
 import { Money } from "./money";
 import { MENU_AREAS, type MenuArea } from "./nav/menu-item";
 import { NavList, navRowClass, type NavItem } from "./nav-list";
+import type { Suggestion } from "./prompt-chips";
 import { AccountParts, CarrierTile, TenantSwitcher, type TenantInfo } from "./tenant-switcher";
 import { TestModeBanner, testModeOnly } from "./test-mode-banner";
 import { AskLink, TopBar } from "./top-bar";
@@ -143,15 +147,17 @@ function AreaNav({ nav, agentOn, pinned }: { nav: NavItem[]; agentOn: boolean; p
 // Every signed-in page. While payouts and postings are test-only, the test-mode banner runs across
 // the top. Under it, at laptop width, the sidebar (a sheet behind the menu button under it): the
 // carrier menu on top, then the menu (AreaNav), then the help link and the wordmark. The top bar
-// holds the agent's box, the test-mode chip, the hide-amounts eye and the bell; the page itself is
+// holds the agent's box (it opens the card), the test-mode chip, the hide-amounts eye and the bell; the page itself is
 // in <main id="main">, in a column 1150 px at most. The page's own PageHeader carries its one
 // visible title (the h1); `title` names the main region for a screen reader. A demo visitor (the
 // judge role) also gets the demo banner above the top bar. A nav with no areas (the /design
 // specimen) shows as one flat list.
 //
-// Off Home, while the agent and page focus switches are both on, the page also gets the agent
-// launcher and its panel; `focus` is the one record the page is about, for the panel's chip.
-// Home (its chat is inline) and the public /design specimen pass agentPanel={false}.
+// While the agent switch is on, every page, Home included, also gets the agent launcher and its
+// floating card. `focus` is the one record the page is about, for the card's chip, sent only while
+// the page focus switch is on. `suggestions` are the card's questions (each page gets the default
+// ones unless it passes its own, as Home does), and `agentOpening` asks the card to open as the
+// page loads (Home's links). The public /design specimen passes agentPanel={false}.
 export function AppShell({
   tenant,
   nav,
@@ -163,6 +169,8 @@ export function AppShell({
   pinned,
   focus,
   agentPanel = true,
+  suggestions,
+  agentOpening,
   children,
 }: {
   tenant: TenantInfo;
@@ -176,11 +184,13 @@ export function AppShell({
   pinned?: PinnedAmounts;
   focus?: PageFocus;
   agentPanel?: boolean;
+  suggestions?: Suggestion[];
+  agentOpening?: AgentOpening;
   children: ReactNode;
 }) {
   const testMode = testModeOnly();
   const agentOn = flags.agentEnabled === true;
-  const panelOn = agentPanel && agentOn && flags.agentFocusEnabled === true;
+  const panelOn = agentPanel && agentOn;
   const list = nav.some((i) => i.area !== undefined) ? (
     <AreaNav nav={nav} agentOn={agentOn} pinned={pinned} />
   ) : (
@@ -246,13 +256,19 @@ export function AppShell({
   );
   if (!panelOn) return shell;
   return (
-    <AgentLauncher config={panelConfig(tenant)} focus={focus}>
+    <AgentLauncher
+      config={panelConfig(tenant)}
+      focus={flags.agentFocusEnabled === true ? focus : undefined}
+      suggestions={suggestions ?? defaultSuggestions()}
+      opening={agentOpening}
+    >
       {shell}
     </AgentLauncher>
   );
 }
 
-// The settings Home passes its own chat, read here on the server for the panel's.
+// The card's settings, read here on the server. The greeting is worked out here too, so the
+// browser is handed one finished line.
 function panelConfig(tenant: TenantInfo): AgentPanelConfig {
   return {
     streamMode: flags.agentStreamMode,
@@ -262,5 +278,7 @@ function panelConfig(tenant: TenantInfo): AgentPanelConfig {
     viewer: { admin: tenant.role === "admin", adminAboveCents: flags.approverRole.adminAboveCents },
     role: tenant.role,
     disabledReason: flags.aiEnabled ? undefined : "The models are switched off, so the agent cannot answer right now.",
+    greeting: greetingLine(tenant.name),
+    documentsHref: flags.documentsEnabled ? "/documents" : undefined,
   };
 }

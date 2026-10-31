@@ -264,6 +264,33 @@ describe("AgentChat", () => {
     expect(screen.getByRole("textbox").getAttribute("aria-disabled")).toBe("true");
   });
 
+  it("fills the box with each later ask, its help under it, and sends nothing", () => {
+    const fetchFn = vi.fn();
+    vi.stubGlobal("fetch", fetchFn);
+    const { rerender } = render(<AgentChat initialTurns={[]} streamMode="poll" />);
+    const box = screen.getByRole("textbox", { name: "Your question" }) as HTMLTextAreaElement;
+    expect(box.value).toBe("");
+    rerender(<AgentChat initialTurns={[]} streamMode="poll" draft={{ text: "Who is past 60 days?", help: "Edit it first.", n: 1 }} />);
+    expect(box.value).toBe("Who is past 60 days?");
+    expect(screen.getByText("Edit it first.")).toBeTruthy();
+    // The person's own edit stays until the next ask, which replaces it.
+    fireEvent.change(box, { target: { value: "Who is past 90 days?" } });
+    rerender(<AgentChat initialTurns={[]} streamMode="poll" draft={{ text: "Who is past 60 days?", help: "Edit it first.", n: 1 }} />);
+    expect(box.value).toBe("Who is past 90 days?");
+    rerender(<AgentChat initialTurns={[]} streamMode="poll" draft={{ text: "What will Friday cost?", n: 2 }} />);
+    expect(box.value).toBe("What will Friday cost?");
+    expect(screen.queryByText("Edit it first.")).toBeNull();
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("tells the card its first question, and none for an empty thread", () => {
+    const titles: (string | null)[] = [];
+    const { unmount } = render(<AgentChat initialTurns={[turn]} streamMode="poll" onFirstQuestion={(t) => titles.push(t)} />);
+    unmount();
+    render(<AgentChat initialTurns={[]} streamMode="poll" onFirstQuestion={(t) => titles.push(t)} />);
+    expect(titles).toEqual([turn.userText, null]);
+  });
+
   it("shows a reloaded thread with its card", () => {
     render(<AgentChat initialTurns={[turn]} streamMode="poll" />);
     expect(screen.getByText(turn.userText)).toBeTruthy();

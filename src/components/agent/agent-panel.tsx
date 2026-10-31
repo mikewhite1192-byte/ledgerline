@@ -1,17 +1,21 @@
 "use client";
 
-import { SquarePen, X } from "lucide-react";
+import { ChevronDown, Maximize2, Minimize2, Minus, SquarePen, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Mark } from "@/components/brand/mark";
+import type { Suggestion } from "@/components/app/prompt-chips";
 import { LoadingState } from "@/components/app/states";
 import { ViewerRoleProvider } from "@/components/app/viewer-role";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Sheet } from "@/components/ui/sheet";
+import { useDetailsMenu } from "@/components/ui/details-menu";
 import type { TurnView } from "@/lib/agent/view";
+import { cn } from "@/lib/cn";
 import type { Role } from "@/lib/roles";
+import { FloatingDialog } from "./floating-dialog";
 import type { PageFocus } from "./page-focus";
 import type { Viewer } from "./proposal-card-from";
 import { AgentChat } from "./turn-view";
+import { TRUST_LINE } from "./words";
 
 // What the page's server read for the chat, the same settings Home passes its own chat.
 export type AgentPanelConfig = {
@@ -22,7 +26,15 @@ export type AgentPanelConfig = {
   viewer: Viewer;
   role: Role;
   disabledReason?: string;
+  // "Hey, <carrier>. How can I be helpful?", worked out on the server (words.ts).
+  greeting: string;
+  // The documents page, for the "+" menu, while documents are on.
+  documentsHref?: string;
 };
+
+// One ask to open the card, numbered so each new one is seen once: text for the box and its help
+// line, start a fresh conversation (?new=1), or scroll to a card in the thread (#card-<id>).
+export type PanelRequest = { n: number; draft?: string; help?: string; fresh?: boolean; scrollTo?: string };
 
 export const PANEL_ID = "agent-panel";
 
@@ -82,35 +94,94 @@ async function readRecent(): Promise<TurnView[]> {
 
 type Thread = { key: number; turns: TurnView[] };
 
-// The agent beside the page: the same chat as Home in its compact layout, with the record the page
-// is about as a chip. While the chip is on, each question carries that record as {table, id}; the
-// label is only shown here. The thread loads on the first open and stays mounted after a close, so
-// an answer still running is there when the panel opens again.
+// The card's title and its one menu item. A native <details>, like the carrier menu: a click or
+// Enter opens it, Esc and a click outside close it. The title is the thread's first question, or
+// "New conversation" while it has none. Past conversations are not listed here yet.
+function ConversationMenu({
+  title,
+  canStartOver,
+  onStartOver,
+}: {
+  title: string | null;
+  canStartOver: boolean;
+  onStartOver: () => void;
+}) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useDetailsMenu(ref);
+  return (
+    <details ref={ref} className="group relative min-w-0">
+      <summary
+        className={cn(
+          "flex h-9 max-w-[24ch] cursor-pointer list-none items-center gap-1 rounded-lg px-2 text-body font-semibold text-foreground",
+          "transition-colors duration-150 hover:bg-accent group-open:bg-accent [&::-webkit-details-marker]:hidden",
+        )}
+      >
+        <span className="min-w-0 truncate">{title ?? "New conversation"}</span>
+        <ChevronDown
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground transition-transform duration-150 group-open:rotate-180"
+        />
+      </summary>
+      <div className="absolute top-full left-0 z-10 mt-1 grid w-56 gap-0.5 rounded-xl border border-border bg-card p-1.5 shadow-float motion-safe:animate-rise">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="w-full justify-start"
+          disabled={!canStartOver}
+          onClick={() => {
+            if (ref.current) ref.current.open = false;
+            onStartOver();
+          }}
+        >
+          <SquarePen aria-hidden />
+          New conversation
+        </Button>
+      </div>
+    </details>
+  );
+}
+
+// The agent as a floating card at the bottom right of the page (a phone: the modal sheet): the same
+// chat in its compact layout, with the record the page is about as a chip. While the chip is on,
+// each question carries that record as {table, id}; the label is only shown here. The thread loads
+// on the first open and stays mounted after a close, so an answer still running is there when the
+// card opens again.
 export function AgentPanel({
   open,
   modal,
+  expanded,
+  onExpand,
   onClose,
   focus,
   config,
-  boxRequest,
+  suggestions,
+  request,
 }: {
   open: boolean;
-  // A phone: the modal sheet. Laptop width: beside the page, which stays usable.
+  // A phone: the modal sheet. Laptop width: the floating card, the page still usable behind it.
   modal: boolean;
+  expanded: boolean;
+  onExpand: (expanded: boolean) => void;
   onClose: () => void;
   focus?: PageFocus;
   config: AgentPanelConfig;
-  // Bumped each time the panel is asked to open; the question box takes the cursor then.
-  boxRequest: number;
+  suggestions: Suggestion[];
+  // The newest ask to open; the question box takes the cursor each time its n changes.
+  request: PanelRequest;
 }) {
   const [thread, setThread] = useState<Thread | null>(null);
   const [dropped, setDropped] = useState<string | null>(null);
   const [nudge, setNudge] = useState(0);
+  const [title, setTitle] = useState<string | null>(null);
+  // The ask whose text was already used: "New conversation" never brings it back into the box.
+  const [spentDraft, setSpentDraft] = useState(-1);
   const body = useRef<HTMLDivElement>(null);
   const loading = useRef(false);
   const focused = useRef("");
+  const scrolled = useRef(-1);
   // The conversation the thread shows, as the chat last told it (loaded turns or a new question).
   const shown = useRef<string | null>(null);
+  const fresh = request.fresh === true;
 
   useEffect(() => {
     if (!open || loading.current) return;
@@ -118,27 +189,44 @@ export function AgentPanel({
     const left = leftConversation();
     void readRecent().then((t) => {
       const newest = t.at(-1)?.conversationId ?? null;
-      const turns = left !== null && newest === left ? [] : t;
+      // ?new=1 leaves the newest conversation the way "New conversation" does, so the next page
+      // does not bring it back either.
+      if (fresh && newest !== null) writeStored(`${LEFT}${newest}`);
+      const turns = fresh || (left !== null && newest === left) ? [] : t;
       // "New conversation" pressed while the read ran wins over the read.
       setThread((now) => now ?? { key: 0, turns });
     });
-  }, [open]);
+  }, [open, fresh]);
 
   useEffect(() => {
-    const want = `${boxRequest}:${nudge}`;
+    const want = `${request.n}:${nudge}`;
     if (!open || !thread || focused.current === want) return;
     const box = body.current?.querySelector<HTMLTextAreaElement>("textarea[data-composer]");
     if (!box) return;
     focused.current = want;
     box.focus();
-  }, [open, thread, boxRequest, nudge]);
+  }, [open, thread, request.n, nudge]);
+
+  // #card-<id>: once the thread shows, that card is scrolled into view, once per ask. A card not in
+  // the thread (an older conversation's) leaves the thread where it is.
+  useEffect(() => {
+    if (!open || !thread || !request.scrollTo || scrolled.current === request.n) return;
+    scrolled.current = request.n;
+    document.getElementById(request.scrollTo)?.scrollIntoView?.({ block: "center" });
+  }, [open, thread, request.n, request.scrollTo]);
 
   const focusKey = focus ? `${focus.table}:${focus.id}` : null;
   const about = focus && focusKey !== dropped ? focus : null;
+  const draft =
+    request.draft !== undefined && request.n > spentDraft
+      ? { text: request.draft, help: request.help, n: request.n }
+      : undefined;
 
   function startOver() {
     // With nothing showing, any marker already stored stays as it is.
     if (shown.current !== null) writeStored(`${LEFT}${shown.current}`);
+    setSpentDraft(request.n);
+    setTitle(null);
     setThread((now) => ({ key: (now?.key ?? 0) + 1, turns: [] }));
     setNudge((n) => n + 1);
   }
@@ -148,65 +236,96 @@ export function AgentPanel({
     writeStored(conversationId);
   }
 
+  const content = (
+    <ViewerRoleProvider role={config.role}>
+      <div className={cn("flex h-12 shrink-0 items-center gap-2 pl-2", modal ? "mt-1.5 pr-14" : "mt-1.5 pr-2")}>
+        <h2 className="sr-only">Agent</h2>
+        <ConversationMenu title={title} canStartOver={thread !== null && title !== null} onStartOver={startOver} />
+        <Badge tone="neutral" className="rounded-md px-1.5 before:hidden">
+          Beta
+        </Badge>
+        {modal ? null : (
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              aria-label={expanded ? "Shrink the agent" : "Expand the agent"}
+              aria-pressed={expanded}
+              onClick={() => onExpand(!expanded)}
+            >
+              {expanded ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8"
+              aria-label="Minimize the agent"
+              // The dialog's own close, so it ends where every other way of closing does.
+              onClick={(e) => e.currentTarget.closest("dialog")?.close()}
+            >
+              <Minus aria-hidden />
+            </Button>
+          </div>
+        )}
+      </div>
+      {about ? (
+        <div className="shrink-0 px-4 pb-1">
+          <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-accent-soft py-1 pr-1 pl-3 text-small text-foreground">
+            <span className="min-w-0 truncate">About: {about.label}</span>
+            <button
+              type="button"
+              aria-label={`Stop asking about ${about.label}`}
+              onClick={() => {
+                setDropped(focusKey);
+                setNudge((n) => n + 1);
+              }}
+              className="grid size-6 shrink-0 cursor-pointer place-items-center rounded-full text-foreground-2 transition-colors duration-150 hover:bg-card hover:text-foreground"
+            >
+              <X aria-hidden className="size-3.5" />
+            </button>
+          </span>
+        </div>
+      ) : null}
+      <div ref={body} className="flex min-h-0 flex-1 flex-col">
+        {thread ? (
+          <AgentChat
+            key={thread.key}
+            compact
+            initialTurns={thread.turns}
+            streamMode={config.streamMode}
+            auditorOn={config.auditorOn}
+            timezone={config.timezone}
+            stepThrough={config.stepThrough}
+            viewer={config.viewer}
+            disabledReason={config.disabledReason}
+            suggestions={suggestions}
+            title={config.greeting}
+            intro={TRUST_LINE}
+            draft={draft}
+            documentsHref={config.documentsHref}
+            focus={about ? { table: about.table, id: about.id } : null}
+            onConversation={onConversation}
+            onFirstQuestion={setTitle}
+          />
+        ) : (
+          <LoadingState label="Opening your conversation" className="px-4 py-4" />
+        )}
+      </div>
+    </ViewerRoleProvider>
+  );
+
   return (
-    <Sheet
+    <FloatingDialog
       id={PANEL_ID}
       open={open}
+      modal={modal}
       onClose={onClose}
       label="Agent"
-      side="right"
-      modal={modal}
+      expanded={expanded}
       closeLabel="Close the agent"
-      className={modal ? "w-full sm:w-[420px]" : "z-40 w-[420px]"}
     >
-      <ViewerRoleProvider role={config.role}>
-        <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border pr-14 pl-4">
-          <Mark size={22} />
-          <h2 className="min-w-0 flex-1 truncate text-body font-semibold text-foreground">Agent</h2>
-          <Button variant="ghost" size="sm" onClick={startOver} disabled={!thread}>
-            <SquarePen aria-hidden />
-            New conversation
-          </Button>
-        </div>
-        {about ? (
-          <div className="shrink-0 border-b border-border px-4 py-2">
-            <span className="inline-flex max-w-full items-center gap-1 rounded-full bg-accent-soft py-1 pr-1 pl-3 text-small text-foreground">
-              <span className="min-w-0 truncate">About: {about.label}</span>
-              <button
-                type="button"
-                aria-label={`Stop asking about ${about.label}`}
-                onClick={() => {
-                  setDropped(focusKey);
-                  setNudge((n) => n + 1);
-                }}
-                className="grid size-6 shrink-0 cursor-pointer place-items-center rounded-full text-foreground-2 transition-colors duration-150 hover:bg-card hover:text-foreground"
-              >
-                <X aria-hidden className="size-3.5" />
-              </button>
-            </span>
-          </div>
-        ) : null}
-        <div ref={body} className="flex min-h-0 flex-1 flex-col">
-          {thread ? (
-            <AgentChat
-              key={thread.key}
-              compact
-              initialTurns={thread.turns}
-              streamMode={config.streamMode}
-              auditorOn={config.auditorOn}
-              timezone={config.timezone}
-              stepThrough={config.stepThrough}
-              viewer={config.viewer}
-              disabledReason={config.disabledReason}
-              intro="Ask in plain words. Every number comes from your records, and nothing is paid or sent until you approve it."
-              focus={about ? { table: about.table, id: about.id } : null}
-              onConversation={onConversation}
-            />
-          ) : (
-            <LoadingState label="Opening your conversation" className="px-4 py-4" />
-          )}
-        </div>
-      </ViewerRoleProvider>
-    </Sheet>
+      {content}
+    </FloatingDialog>
   );
 }
