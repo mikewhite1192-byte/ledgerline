@@ -9,6 +9,8 @@ const SENTENCES: Readonly<Record<string, string>> = {
   over_cap: "The ask was over the limit, so the amount is the most the rules allow.",
   fee_applies: "The carrier's advance fee applies.",
   driver_asked: "The driver asked for it.",
+  // the advance at pickup's own card
+  load_picked_up: "The load is picked up and its pickup is on record, so its trip pay counts now.",
   // gateway exceptions
   capped_to_eligible: "Cut to the most the pay rules allow after a larger ask was refused.",
   card_not_drivers: "The card named is not one of this driver's active cards, so it cannot be paid.",

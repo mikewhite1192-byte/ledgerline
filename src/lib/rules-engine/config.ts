@@ -1,5 +1,6 @@
 import { MAX_STORED_CENTS, BPS } from "./money";
 import {
+  ADVANCE_UNLOCK_STAGES,
   assertDate,
   assertId,
   assertOneOf,
@@ -70,6 +71,7 @@ export function assertPayConfig(config: PayConfig | null | undefined): PayConfig
       config.advancePerLoadBpsOfPay === null
         ? null
         : bpsIn(config.advancePerLoadBpsOfPay, "advancePerLoadBpsOfPay"),
+    advanceUnlockStage: oneOf(config.advanceUnlockStage, ADVANCE_UNLOCK_STAGES, "advanceUnlockStage"),
   };
 }
 
@@ -113,6 +115,7 @@ export function parsePayConfig(row: Record<string, unknown> | null | undefined):
     advanceMinCents: centsIn(row.advance_min_cents, "advance_min_cents"),
     advancePerLoadBpsOfPay:
       perLoad === null ? null : bpsIn(perLoad, "advance_per_load_bps_of_pay"),
+    advanceUnlockStage: oneOf(row.advance_unlock_stage, ADVANCE_UNLOCK_STAGES, "advance_unlock_stage"),
   });
 }
 

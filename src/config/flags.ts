@@ -792,6 +792,14 @@ export type Flags = {
     reasonsPerWake: number;
     listLimit: number;
   };
+  // The advance at pickup (docs: ADVANCE-AT-PICKUP): when a load moves to in transit and its
+  // carrier's advances unlock at pickup (pay_configs.advance_unlock_stage, 0073), the desk loop's
+  // load_event source drafts one advance_payout card for the load's driver, at the amount the
+  // rules engine suggests (src/lib/advances/at-pickup.ts). It only drafts: the card is approved by
+  // a person, the advance payout switches and money_armed still apply, and nothing is paid here.
+  // The handler asks enabled and startDate (YYYY-MM-DD, the carrier's zone: a move recorded
+  // before it drafts nothing) itself.
+  advanceAtPickup: { enabled: boolean; startDate: string };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1035,6 +1043,8 @@ export const flags: Flags = {
     reasonsPerWake: 3,
     listLimit: 5,
   },
+  // Ships off: turning it on is the owner's own one-line PR.
+  advanceAtPickup: { enabled: false, startDate: "2026-10-31" },
 };
 
 applyLocalOverrides(flags);

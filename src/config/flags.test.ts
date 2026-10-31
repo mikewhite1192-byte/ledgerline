@@ -104,6 +104,8 @@ const KEPT_OFF = [
   "loadMovement.enabled",
   // The agent's questions: the owner turns them on in their own release PR.
   "agentAsks.enabled",
+  // A load's pickup drafts an advance card with no ask: the owner turns it on in its own release PR.
+  "advanceAtPickup.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -309,6 +311,13 @@ describe("flags", () => {
     expect(isLocalDate(flags.escrowRelease.startDate)).toBe(true);
   });
 
+  it("ships the advance at pickup off, with a start date", () => {
+    expect(flags.advanceAtPickup).toEqual({ enabled: false, startDate: "2026-10-31" });
+    expect(isLocalDate(flags.advanceAtPickup.startDate)).toBe(true);
+    // A card it drafts is an advance: never a kind the autopilot may approve.
+    expect(Object.keys(flags.autopilot.kinds)).not.toContain("advance_payout");
+  });
+
   it("ships load movement from driver evidence off, with a start date", () => {
     expect(flags.loadMovement).toEqual({ enabled: false, startDate: "2026-10-30" });
     expect(isLocalDate(flags.loadMovement.startDate)).toBe(true);
@@ -342,7 +351,8 @@ describe("flags", () => {
     // Local mode can never turn on a switch that stays off: none is on the list that turns one on.
     for (const name of KEPT_OFF) expect(LOCAL_OVERRIDABLE as readonly string[], name).not.toContain(name);
     // The only kept-off switches local mode may turn off are the switches listed ahead of their own
-    // release (the armed ones and load movement's): exactly those still kept off, and nothing else.
+    // release (the armed ones, load movement's and the advance at pickup's): exactly those still
+    // kept off, and nothing else.
     const armedAhead: readonly string[] = [
       "moneyCodes.armed",
       "factoring.armed",
@@ -350,6 +360,7 @@ describe("flags", () => {
       "deskLoop.armed",
       "autopilot.armed",
       "loadMovement.enabled",
+      "advanceAtPickup.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

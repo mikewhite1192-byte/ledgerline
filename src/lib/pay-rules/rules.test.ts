@@ -34,6 +34,7 @@ const BASE: PayConfigKnobs = {
   advance_max_bps_of_earned: 5000,
   advance_min_cents: 5000,
   advance_per_load_bps_of_pay: null,
+  advance_unlock_stage: "delivered",
 };
 
 const categoryOf = (fn: () => unknown) => {

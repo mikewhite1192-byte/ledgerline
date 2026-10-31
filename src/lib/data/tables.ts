@@ -289,6 +289,7 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["advance_max_bps_of_earned", "int"],
       ["advance_min_cents", "int"],
       ["advance_per_load_bps_of_pay", "int"],
+      ["advance_unlock_stage", "text"],
     ],
   },
   deduction_schedules: {

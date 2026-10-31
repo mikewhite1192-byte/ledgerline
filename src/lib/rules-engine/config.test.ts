@@ -21,6 +21,7 @@ const ROW: Record<string, unknown> = {
   advance_max_bps_of_earned: 5_000,
   advance_min_cents: 5_000,
   advance_per_load_bps_of_pay: 4_000,
+  advance_unlock_stage: "delivered",
   created_at: "2026-10-26 12:00:00+00",
 };
 
@@ -35,6 +36,7 @@ describe("parsePayConfig", () => {
     expect(
       parsePayConfig({ ...ROW, advance_per_load_bps_of_pay: null }).advancePerLoadBpsOfPay,
     ).toBeNull();
+    expect(parsePayConfig({ ...ROW, advance_unlock_stage: "picked_up" }).advanceUnlockStage).toBe("picked_up");
   });
 
   it("refuses a missing row", () => {
@@ -65,6 +67,9 @@ describe("parsePayConfig", () => {
     ["percent_base", "gross"],
     ["insurance_applies_to", "company"],
     ["percent_base", 1],
+    ["advance_unlock_stage", "dispatched"],
+    ["advance_unlock_stage", "PICKED_UP"],
+    ["advance_unlock_stage", null],
   ])("refuses %s = %j", (key, value) => {
     expect(() => parsePayConfig({ ...ROW, [key]: value })).toThrow(ConfigError);
   });
@@ -84,6 +89,8 @@ describe("assertPayConfig", () => {
     expect(() => assertPayConfig(null)).toThrow(ConfigError);
     const bad = { ...BLUE_RIDGE, accessorialDriverShareBps: 20_000 } as PayConfig;
     expect(() => assertPayConfig(bad)).toThrow(/accessorialDriverShareBps is out of range/);
+    const stage = { ...BLUE_RIDGE, advanceUnlockStage: "loaded" } as unknown as PayConfig;
+    expect(() => assertPayConfig(stage)).toThrow(ConfigError);
     const partial = { ...BLUE_RIDGE } as Partial<PayConfig>;
     delete partial.advanceRecoveryCapCents;
     expect(() => assertPayConfig(partial as PayConfig)).toThrow(

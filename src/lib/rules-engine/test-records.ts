@@ -31,6 +31,7 @@ export const BLUE_RIDGE: PayConfig = {
   advanceMaxBpsOfEarned: 5_000,
   advanceMinCents: c(5_000),
   advancePerLoadBpsOfPay: 4_000,
+  advanceUnlockStage: "delivered",
 };
 
 export const PRAIRIE_WIND: PayConfig = {
@@ -49,6 +50,7 @@ export const PRAIRIE_WIND: PayConfig = {
   advanceMaxBpsOfEarned: 6_000,
   advanceMinCents: c(5_000),
   advancePerLoadBpsOfPay: 5_000,
+  advanceUnlockStage: "delivered",
 };
 
 export const DRIVER_ID = "drv-1";

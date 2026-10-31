@@ -178,9 +178,14 @@ function referencesFor(p: ProposalView): Record<string, string> | undefined {
 }
 
 // An advance's load line: the load and, under a per-load cap, what was left after this advance
-// when it was proposed. The numbers are the engine's at proposal time, stored on the proposal.
-export function advanceLoadDetail(load: ProposalView["load"]): string | undefined {
+// when it was proposed. The numbers are the engine's at proposal time, stored on the proposal. A
+// card the advance at pickup drafted quotes the amount the engine suggested and the carrier's
+// per-load share, never the headroom under the cap.
+export function advanceLoadDetail(load: ProposalView["load"], amountCents?: number): string | undefined {
   if (!load) return undefined;
+  if (load.shareBps !== undefined && amountCents !== undefined && Number.isSafeInteger(amountCents) && amountCents > 0) {
+    return `Load ${load.number} is picked up: ${formatCents(amountCents)} now, inside the ${percentOf(load.shareBps)} of trip pay the carrier allows on one load.`;
+  }
   if (load.capCents === null || load.leftAfterCents === null) return `For load ${load.number}.`;
   return `Load ${load.number}: ${formatCents(load.leftAfterCents)} of ${formatCents(load.capCents)} cap left after this.`;
 }
@@ -401,7 +406,7 @@ export function proposalCardFrom(
     sources: p.sources,
     status: p.status,
     destination: destinationFor(p),
-    ...(p.kind === "advance_payout" && p.load ? { detail: advanceLoadDetail(p.load) } : {}),
+    ...(p.kind === "advance_payout" && p.load ? { detail: advanceLoadDetail(p.load, p.amountCents) } : {}),
     ...(p.kind === "card_match" && p.cardMatch ? { detail: cardMatchDetail(p.cardMatch) } : {}),
     confirmQuestion,
     confirmNoun: copy.noun,

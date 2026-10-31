@@ -149,7 +149,9 @@ export type ProposalView = {
   detention?: DetentionView | null;
   // Set on an advance_payout only: the load it is for, with the per-load cap and what was left
   // under it after this advance at proposal time (both null when the carrier has no cap).
-  load?: { number: string; capCents: number | null; leftAfterCents: number | null } | null;
+  // shareBps is set only on a card the advance at pickup drafted: the carrier's share of trip pay
+  // allowed on one load.
+  load?: { number: string; capCents: number | null; leftAfterCents: number | null; shareBps?: number } | null;
   // Set on a card_match only, when its stored args read back whole: the statement row by its last
   // four digits, the driver picked, and the other drivers code ranked for that day.
   cardMatch?: CardMatchView | null;

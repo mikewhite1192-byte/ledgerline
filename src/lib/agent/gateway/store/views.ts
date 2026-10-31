@@ -189,6 +189,8 @@ function detentionOf(r: ProposalRow): DetentionView | null {
 // An advance's load line from its stored args: the load's number, its cap and what was left
 // under it after this advance at proposal time. Null when it names no load or does not read back
 // whole; capCents and leftAfterCents are null together when the carrier has no per-load cap.
+// shareBps is set only on a card the advance at pickup drafted (src/lib/advances/at-pickup.ts):
+// the carrier's per-load share of trip pay, a whole number of basis points from 1 to 10000.
 const LOAD_NUMBER = /^[A-Za-z0-9._-]{1,40}$/;
 const wholeOrNull = (v: unknown): v is number | null => v === null || (Number.isSafeInteger(v) && (v as number) >= 0);
 
@@ -202,11 +204,13 @@ export function advanceLoadOf(args: string | null): NonNullable<ProposalView["lo
   }
   const load = raw && typeof raw === "object" ? (raw as Record<string, unknown>).load : null;
   if (!load || typeof load !== "object") return null;
-  const { number, capCents, leftAfterCents } = load as Record<string, unknown>;
+  const { number, capCents, leftAfterCents, shareBps } = load as Record<string, unknown>;
   if (typeof number !== "string" || !LOAD_NUMBER.test(number)) return null;
   if (!wholeOrNull(capCents) || !wholeOrNull(leftAfterCents)) return null;
   if ((capCents === null) !== (leftAfterCents === null)) return null;
-  return { number, capCents, leftAfterCents };
+  if (shareBps === undefined) return { number, capCents, leftAfterCents };
+  if (!Number.isSafeInteger(shareBps) || (shareBps as number) < 1 || (shareBps as number) > 10_000) return null;
+  return { number, capCents, leftAfterCents, shareBps: shareBps as number };
 }
 
 // A card match's lines from its stored args: the card by its last four digits, its pool name, the

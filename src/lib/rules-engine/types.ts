@@ -124,6 +124,10 @@ export const PERCENT_BASES = ["linehaul", "linehaul_fsc", "linehaul_fsc_accessor
 export type PercentBase = (typeof PERCENT_BASES)[number];
 export const INSURANCE_APPLIES_TO = ["owner_operator", "all"] as const;
 export type InsuranceAppliesTo = (typeof INSURANCE_APPLIES_TO)[number];
+// When a load's pay first counts toward what a driver may draw an advance against: once it is
+// delivered (the default), or once it is picked up with the pickup on record (0073).
+export const ADVANCE_UNLOCK_STAGES = ["delivered", "picked_up"] as const;
+export type AdvanceUnlockStage = (typeof ADVANCE_UNLOCK_STAGES)[number];
 
 export type PayConfig = {
   // 0 is Sunday. Blue Ridge runs Monday to Sunday (1), Prairie Wind Sunday to Saturday (0).
@@ -149,6 +153,9 @@ export type PayConfig = {
   // Advances on one load capped at this share of the driver's pay for that load, 0 to 10000.
   // null means no per-load cap.
   advancePerLoadBpsOfPay: number | null;
+  // picked_up: the load an advance names counts toward earned, unpaid pay from the moment its
+  // pickup is on record while it is in transit, not only once it is delivered.
+  advanceUnlockStage: AdvanceUnlockStage;
 };
 
 // ---- Operations (migration 0004) ----
@@ -501,8 +508,10 @@ export type AdvanceInput = {
   // The driver's advances, any status.
   advances: AdvanceRecord[];
   // The load the advance is for and the driver's pay on it (load pay plus their accessorial
-  // share), read by the caller. Absent or null: no per-load cap applies.
-  load?: { id: string; payCents: Cents } | null;
+  // share), read by the caller. Absent or null: no per-load cap applies. pickedUpAt: when the
+  // load's move to in transit was recorded (its first load_events row to in_transit), or null or
+  // absent when none is; only a pickup recorded at or before requestedAt counts.
+  load?: { id: string; payCents: Cents; pickedUpAt?: Instant | null } | null;
 };
 
 export type AdvanceDecision = {

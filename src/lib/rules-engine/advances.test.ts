@@ -428,6 +428,94 @@ describe("arming, the per-load cap and the suggestion", () => {
   });
 });
 
+describe("the advance at pickup", () => {
+  // One load on the road, nothing delivered: $1,000 linehaul at 75% is $750 of trip pay, and the
+  // carrier lets 70% of it ($525) be drawn on that one load from the moment its pickup is on record.
+  const AT_PICKUP = { ...BLUE_RIDGE, advancePerLoadBpsOfPay: 7_000, advanceUnlockStage: "picked_up" as const };
+  // The same rule with the share of earned pay and the driver limit wide open and a $5 fee, so
+  // the per-load cap is what binds.
+  const WIDE = { ...AT_PICKUP, advanceMaxBpsOfEarned: 10_000, advanceLimitDefaultCents: c(1_000_000), advanceFeeCents: c(500) };
+  const onRoad = (over: Partial<Parameters<typeof load>[0]> = {}) =>
+    load({ id: "t1", status: "in_transit", pickupOn: "2026-10-29", deliveredOn: null, ...over });
+  const T1 = { id: "t1", payCents: c(75_000), pickedUpAt: "2026-10-29T13:00:00Z" };
+  const atPickup = (over: Partial<AdvanceInput> = {}) =>
+    request({ config: AT_PICKUP, loads: [onRoad()], load: T1, ...over });
+  // What the desk asks: the suggestion when asked for the whole room on the load.
+  const suggestionOf = (input: AdvanceInput) => {
+    const room = advanceEligibility({ ...input, amountCents: c(0) }).loadHeadroomCents;
+    if (room === null) throw new Error("no per-load cap");
+    return advanceEligibility({ ...input, amountCents: room }).suggestedCents;
+  };
+
+  it("counts the load on the road with zero delivered loads, and the other caps still bind", () => {
+    const decision = advanceEligibility(atPickup({ amountCents: c(37_500) }));
+    expect(decision).toMatchObject({
+      eligible: true,
+      earnedUnpaidCents: 75_000,
+      loadCapCents: 52_500,
+      loadHeadroomCents: 52_500,
+      // Blue Ridge's 50% share of earned pay ($375) binds before the 70% cap ($525).
+      maxCents: 37_500,
+    });
+    expect(decision.sources).toContainEqual({ table: "loads", id: "t1" });
+    expect(suggestionOf(atPickup())).toBe(37_500);
+    // The same load at a carrier whose advances unlock at delivery: nothing earned yet.
+    const delivered = advanceEligibility(atPickup({ config: { ...AT_PICKUP, advanceUnlockStage: "delivered" } }));
+    expect(delivered.reasons).toContain("no_unpaid_earnings");
+    expect([delivered.earnedUnpaidCents, delivered.maxCents, delivered.suggestedCents]).toEqual([0, 0, 0]);
+  });
+
+  it("holds the advance to 70% of trip pay, less open advances on the load, less the fee", () => {
+    // $525 cap, $5 fee: $520 is the most, $520.01 is over.
+    expect(advanceEligibility(atPickup({ config: WIDE, amountCents: c(52_000) })).eligible).toBe(true);
+    const over = advanceEligibility(atPickup({ config: WIDE, amountCents: c(52_001) }));
+    expect(over.reasons).toEqual(["over_load_cap"]);
+    expect([over.maxCents, over.loadHeadroomCents]).toEqual([52_000, 52_500]);
+    expect(suggestionOf(atPickup({ config: WIDE }))).toBe(52_000);
+    // $100 already drawn on the trip: $425 of room, $420 after the fee.
+    const prior = [advance({ id: "a1", loadId: "t1", amountCents: c(10_000), requestedAt: "2026-10-29T13:30:00Z" })];
+    const fits = advanceEligibility(atPickup({ config: WIDE, advances: prior, amountCents: c(42_000) }));
+    expect(fits).toMatchObject({ eligible: true, openOnLoadCents: 10_000, loadHeadroomCents: 42_500, maxCents: 42_000 });
+    const past = advanceEligibility(atPickup({ config: WIDE, advances: prior, amountCents: c(42_001) }));
+    expect(past.reasons).toEqual(["over_load_cap"]);
+    expect(suggestionOf(atPickup({ config: WIDE, advances: prior }))).toBe(42_000);
+    // Room under the minimum after the fee: nothing.
+    const most = [advance({ id: "a2", loadId: "t1", amountCents: c(48_000), requestedAt: "2026-10-29T13:30:00Z" })];
+    expect(suggestionOf(atPickup({ config: WIDE, advances: most }))).toBe(0);
+  });
+
+  it("offers nothing to a driver nobody has armed", () => {
+    const decision = advanceEligibility(atPickup({ driver: driver({ moneyArmed: false }), amountCents: c(37_500) }));
+    expect(decision.reasons[0]).toBe("driver_not_armed");
+    expect([decision.eligible, decision.maxCents, decision.suggestedCents]).toEqual([false, 0, 0]);
+    expect(suggestionOf(atPickup({ driver: driver({ moneyArmed: false }) }))).toBe(0);
+  });
+
+  it.each<[string, Partial<AdvanceInput>]>([
+    ["no pickup on record", { load: { id: "t1", payCents: c(75_000), pickedUpAt: null } }],
+    ["no pickup field at all", { load: { id: "t1", payCents: c(75_000) } }],
+    ["a pickup recorded after the request", { load: { ...T1, pickedUpAt: "2026-10-29T15:00:01Z" } }],
+    ["a pickup date after the request day", { loads: [onRoad({ pickupOn: "2026-10-30" })] }],
+    ["a load still planned", { loads: [onRoad({ status: "planned" })] }],
+  ])("counts nothing on the road with %s", (_name, over) => {
+    const decision = advanceEligibility(atPickup({ amountCents: c(10_000), ...over }));
+    expect(decision.earnedUnpaidCents).toBe(0);
+    expect(decision.reasons).toContain("no_unpaid_earnings");
+    expect(decision.suggestedCents).toBe(0);
+  });
+
+  it("counts only the load the advance is for, and a delivered one once", () => {
+    const two = [onRoad(), onRoad({ id: "t2" })];
+    expect(advanceEligibility(atPickup({ loads: two })).earnedUnpaidCents).toBe(75_000);
+    const done = load({ id: "t1", status: "delivered", pickupOn: "2026-10-28", deliveredOn: "2026-10-29" });
+    expect(advanceEligibility(atPickup({ loads: [done] })).earnedUnpaidCents).toBe(75_000);
+  });
+
+  it("refuses a pickup time that is not an instant", () => {
+    expect(() => advanceEligibility(atPickup({ load: { ...T1, pickedUpAt: "yesterday" } }))).toThrow(InputError);
+  });
+});
+
 describe("what is still owed on an advance", () => {
   it("subtracts what was taken back, never going below zero", () => {
     expect(outstandingCents(advance({ id: "a1", amountCents: c(20_000), feeCents: c(500), takenBackCents: c(20_000) }))).toBe(500);
