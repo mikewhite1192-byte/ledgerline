@@ -183,6 +183,29 @@ describe("0071's re-created kind check", () => {
   });
 });
 
+describe("0078's re-created kind check", () => {
+  const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
+
+  it("adds it NOT VALID in 0078_card_load_ruling and validates it in 0078_card_load_ruling_validate, applied next", () => {
+    const added = read("0078_card_load_ruling.sql");
+    const validate = read("0078_card_load_ruling_validate.sql");
+    const adds = [...added.matchAll(/ADD\s+CONSTRAINT\s+proposals_kind_check\s+CHECK\b[^;]*;/gi)];
+    expect(adds).toHaveLength(1);
+    expect(adds[0][0]).toMatch(/\)\s*NOT\s+VALID\s*;$/i);
+    expect(validate).toMatch(/ALTER\s+TABLE\s+proposals\s+VALIDATE\s+CONSTRAINT\s+proposals_kind_check\s*;/i);
+    const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
+    expect(names.indexOf("0078_card_load_ruling_validate.sql")).toBe(names.indexOf("0078_card_load_ruling.sql") + 1);
+  });
+
+  // A superset of 0071's list, so no row 0071 took can fail the validation.
+  it("lists exactly 0071's kinds plus card_load_ruling", () => {
+    const by = new Map(kindRecreations().map((l) => [l.version, l.kinds]));
+    const before = by.get("0071") ?? [];
+    expect(before.length).toBeGreaterThan(0);
+    expect(by.get("0078")).toEqual([...before, "card_load_ruling"]);
+  });
+});
+
 describe("0077's never-alone check", () => {
   const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
 

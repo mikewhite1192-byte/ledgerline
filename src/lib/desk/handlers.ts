@@ -4,6 +4,7 @@ import type { Session } from "../auth/claims";
 import { askFor, tellFor } from "../asks/store";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { proposeAdvanceAtPickup } from "../advances/at-pickup";
+import { proposeCardLoadRuling } from "../card-loads/ruling";
 import { runAudit } from "../agent/auditor/run";
 import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
@@ -189,11 +190,31 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
 
   // A new card row: the card check, unless a finished check that started after the row was
   // written already covers it (then nothing new is found here, and no second check is run).
+  // CARD-LOAD-RULING: first, on the row's first try, a load with no payment record behind it drafts
+  // one ruling card for a person (src/lib/card-loads/ruling.ts asks its own switch and start date
+  // again); the card it drafted counts in the line's found.
   const cardTransaction: Handler = {
-    switchOn: () => flags.cardRecon.enabled === true,
+    switchOn: () => flags.cardRecon.enabled === true || flags.cardLoadRuling.enabled === true,
     needsMs: 8_000,
     async run(session, event, ctx) {
       let runId = event.state === "carried" ? event.runId : null;
+      let drafted = 0;
+      let ruling: string | null = null;
+      if (!runId && flags.cardLoadRuling.enabled === true) {
+        const subjectId = event.subjectId;
+        if (!subjectId) return failed("bad_request");
+        const r = await db().withTenant(session.tenantId, async (q) => {
+          await assertMembership(q, session);
+          return proposeCardLoadRuling(q, session, subjectId, ctx.clock());
+        });
+        drafted = r.kind === "proposed" ? 1 : 0;
+        ruling = r.kind === "proposed" ? "ruling_drafted" : `ruling_${r.category}`;
+      }
+      // The ruling's line alone while the card check is off.
+      if (flags.cardRecon.enabled !== true) {
+        return ruling === null ? skipped(SWITCHED_OFF) : done({ found: drafted, category: ruling });
+      }
+      const plus = (found: number | undefined) => (found === undefined ? undefined : found + drafted);
       if (!runId) {
         const subjectId = event.subjectId;
         if (!subjectId) return failed("bad_request");
@@ -201,20 +222,20 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
           await assertMembership(q, session);
           return q.query<{ id: string }>(COVERING_CHECK_SQL, [subjectId]);
         });
-        if (covering[0]) return done({ runId: covering[0].id, found: 0, category: "covered" });
+        if (covering[0]) return done({ runId: covering[0].id, found: drafted, category: "covered" });
         const started = await startCardCheck(session, { db: db(), clock: ctx.clock });
-        if (!started.ok) return skipped(SWITCHED_OFF);
+        if (!started.ok) return ruling === null ? skipped(SWITCHED_OFF) : done({ found: drafted, category: ruling });
         runId = started.runId;
       }
       const r = await advanceCardCheck(session, runId, ctx.deadlineMs, { db: db(), clock: ctx.clock });
       if (!r.ok) {
-        if (r.category === "disabled") return skipped(SWITCHED_OFF);
+        if (r.category === "disabled") return ruling === null ? skipped(SWITCHED_OFF) : done({ found: drafted, category: ruling });
         return failed(r.category, { runId });
       }
       const cents = whole(r.run.modelCents);
       if (r.run.status === "running") return running({ runId, cents });
       if (r.run.status === "failed") return failed(r.run.failCategory ?? "unknown", { runId, cents });
-      return done({ runId, cents, found: sumOf(r.run.counts.statementBreaks, r.run.counts.recordBreaks) });
+      return done({ runId, cents, found: plus(sumOf(r.run.counts.statementBreaks, r.run.counts.recordBreaks)) });
     },
   };
 

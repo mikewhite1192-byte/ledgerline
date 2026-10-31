@@ -15,6 +15,7 @@ import { namedPersonRequired } from "../money/never-alone";
 import { isServiceSub } from "../sweep/service-session";
 import { isUuid } from "../uuid";
 import { overrideReasonOf } from "../agent/auditor/words";
+import { cardLoadRulingExecutor } from "./executors/card-load-ruling";
 import { cardMatchExecutor } from "./executors/card-match";
 import { factoringRequestExecutor } from "../factoring/execute";
 import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
@@ -86,8 +87,8 @@ export type ProposalRow = {
 // held mismatch (the gate trims it and checks its length again; one reason covers both).
 // auditedAt: the auditor's checked_at the card showed, so an override always refers to the one
 // verdict the person read. edits: the person's own values for rules on a pay_policy_setup card
-// (rule key to stored value text); only that executor reads them, checks each with the rule's own
-// parser, and takes them only with confirmed. The gate stores them with the approval
+// (rule key to stored value text), or a card_load_ruling's ruling ({ ruling: "owes_nothing" });
+// only those executors read them, check each whole, and take them only with confirmed. The gate stores them with the approval
 // (approved_edits) and that executor plans from the stored copy only: a resume that sends other
 // edits is refused, one that sends none uses the stored ones.
 // autopilot: only the autopilot login sends it (src/lib/autopilot/run.ts), naming the rule and its
@@ -258,12 +259,21 @@ export const EXECUTORS: ExecutorRegistry = {
   get load_move() {
     return flags.loadMovement.enabled ? loadMoveExecutor : undefined;
   },
+  // A named person's ruling on a card load with no payment record
+  // (src/lib/proposals/executors/card-load-ruling.ts): a deficit for the full load as drafted, or
+  // owes_nothing as the person's edit, read through cardLoadRuling.enabled on every approval, with
+  // a precheck that refuses a machine login, a bad edit, an unconfirmed edit or a load that no
+  // longer stands unexplained before anything is approved. No money moves.
+  get card_load_ruling() {
+    return flags.cardLoadRuling.enabled ? cardLoadRulingExecutor : undefined;
+  },
 };
 
 const DAY_MS = 86_400_000;
 
 // The kinds whose executor reads the person's own values: the gate stores them with the approval.
-const EDITS_KINDS: ReadonlySet<string> = new Set<ProposalKind>(["pay_policy_setup"]);
+// A card load ruling's edit is the person's ruling (owes_nothing in place of the drafted deficit).
+const EDITS_KINDS: ReadonlySet<string> = new Set<ProposalKind>(["pay_policy_setup", "card_load_ruling"]);
 
 // auditorStart as an instant, or null when it does not read as one. Null counts every proposal as
 // made before it: the auditor itself never checks a proposal against an unreadable start.

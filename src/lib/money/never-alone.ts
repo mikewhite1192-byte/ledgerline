@@ -26,7 +26,8 @@ export type AutoAllowedKind = (typeof AUTO_ALLOWED_KINDS)[number];
 const AUTO_ALLOWED: ReadonlySet<string> = new Set(AUTO_ALLOWED_KINDS);
 
 // Every other proposal kind the code knows: a named person always approves it (D-072:
-// settlement_approve stays Ask; a pay stub needs a person to review and tap Approve).
+// settlement_approve stays Ask; a pay stub needs a person to review and tap Approve). A
+// card_load_ruling books what a driver owes, so it is never alone by construction.
 export const NEVER_ALONE_KINDS: readonly string[] = PROPOSAL_KINDS.filter((k) => !AUTO_ALLOWED.has(k));
 
 const NEVER_ALONE: ReadonlySet<string> = new Set(NEVER_ALONE_KINDS);

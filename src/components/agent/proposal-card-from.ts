@@ -158,6 +158,14 @@ const KIND_COPY: Readonly<Record<string, KindCopy>> = {
         ? "The paystub is checked against the records once more, then paid to the driver's bank by test payout when payouts are on."
         : "No payout is sent. The paystub is booked, and any deductions left over carry to next week.",
   },
+  card_load_ruling: {
+    noun: "card load ruling",
+    ask: (p, amount) =>
+      p.cardLoad?.driverCode
+        ? `Book this ${amount} card load as money driver ${p.cardLoad.driverCode} owes?`
+        : `Book this ${amount} card load as money the driver owes?`,
+    next: () => "Books the load as money the driver owes. Nothing is paid or sent.",
+  },
 };
 
 export function kindCopy(kind: string): KindCopy {
@@ -203,6 +211,20 @@ export function cardMatchDetail(m: ProposalView["cardMatch"]): string | undefine
   const where = m.state ? ` in ${m.state}` : "";
   const others = m.others.length > 0 ? ` Others who worked then: ${m.others.join(", ")}.` : " No other driver worked then.";
   return `Card ending ${m.last4} (${m.portalName}), ${day}${where}. To driver ${m.driverCode}.${others}`;
+}
+
+// A card load ruling's line: the card by its last four digits, the day the load posted, and the
+// driver whose card it is.
+export function cardLoadDetail(m: ProposalView["cardLoad"]): string | undefined {
+  if (!m) return undefined;
+  let day: string;
+  try {
+    day = formatLocalDate(m.postedOn);
+  } catch {
+    return undefined;
+  }
+  const who = m.driverCode ? ` Driver ${m.driverCode}'s card.` : "";
+  return `Card ending ${m.last4}, loaded ${day}, with no payment record.${who}`;
 }
 
 // Hours and minutes, as the card says a stop's time: 420 is "7 h 00 min".
@@ -408,6 +430,7 @@ export function proposalCardFrom(
     destination: destinationFor(p),
     ...(p.kind === "advance_payout" && p.load ? { detail: advanceLoadDetail(p.load, p.amountCents) } : {}),
     ...(p.kind === "card_match" && p.cardMatch ? { detail: cardMatchDetail(p.cardMatch) } : {}),
+    ...(p.kind === "card_load_ruling" && p.cardLoad ? { detail: cardLoadDetail(p.cardLoad) } : {}),
     confirmQuestion,
     confirmNoun: copy.noun,
     ...(confirmNext ? { confirmNext } : {}),

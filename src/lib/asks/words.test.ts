@@ -34,6 +34,12 @@ describe("askWords", () => {
     expect(of("pay_correction", { amountCents: 4_220 })).toBe("I found a $42.20 pay fix for Dana Reyes. Should I apply it?");
     expect(of("load_move")).toBe("Should I mark load BR-1042 picked up?");
     expect(of("load_move", { stage: "Not A Stage" })).toBe("Should I update load BR-1042?");
+    expect(of("card_load_ruling", { amountCents: 40_000 })).toBe(
+      "Dana Reyes's fuel card got a $400.00 load I have no record of. Yes books it as money Dana Reyes owes; open the card to rule otherwise.",
+    );
+    expect(of("card_load_ruling", { driverName: null, loadNumber: null, customerName: null })).toBe(
+      "I drafted a card load ruling for this record, $1,400.00. Approve?",
+    );
     for (const kind of ASKED_KINDS) expect(isAskedKind(kind)).toBe(true);
     expect(isAskedKind("card_match")).toBe(false);
   });

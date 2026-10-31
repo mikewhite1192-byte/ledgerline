@@ -19,8 +19,9 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //   3. demo_reset_clear() (migration 0025, re-created whole by later migrations: 0033, then 0034 to
 //      empty the fuel checks too, then 0036 to empty the pay rule changes, then 0038 with the Inbox
 //      messages, then 0066 with the rate confirmation readings, then 0069 with the escrow
-//      releases, then 0072 with the agent's questions), the one security-definer function, which
-//      checks the same things again under the tenant row lock and deletes the settled ledger rows,
+//      releases, then 0072 with the agent's questions, then 0078 with the driver deficits), the
+//      one security-definer function, which checks the same things again under the tenant row
+//      lock and deletes the settled ledger rows,
 //      the agent's records and the fictional broker portal's loads (the app role has no DELETE on
 //      them); the portal's loads come back only with npm run seed, since the app cannot write them;
 //   4. the seed's replace of the 47 seeded tables (TENANT_TABLES, with Cash Friday's checks, the
@@ -85,6 +86,9 @@ export const DEMO_RESET_CLEARED = {
   pay_rule_changes:
     "what each saved pay rule change changed (0030); each names its proposal, which goes, and the " +
     "pay rules version it wrote, which the replace rewrites",
+  driver_deficits:
+    "what a card load ruling booked as money a driver owes (0078); each names the proposal that " +
+    "booked it, which goes, and a driver the replace rewrites, and the app role cannot delete them",
   agent_asks:
     "the agent's questions and told lines about its proposals (0072); each names a proposal that " +
     "goes, and the app role cannot delete them",
@@ -168,6 +172,7 @@ export const FUNCTION_TABLES: readonly (ClearedTable | "advances")[] = [
   "approval_batches",
   "pay_rule_changes",
   "advances",
+  "driver_deficits",
   "agent_asks",
   "proposals",
   "turns",
@@ -242,6 +247,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   fuel_check_runs: "Fuel check runs",
   approval_batches: "Approve-all batches",
   pay_rule_changes: "Pay rule changes",
+  driver_deficits: "Driver deficits",
   agent_asks: "Agent questions",
   proposals: "Agent cards",
   turns: "Agent turns",

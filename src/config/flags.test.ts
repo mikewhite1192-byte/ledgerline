@@ -87,6 +87,9 @@ const RELEASED_ON = [
   "loadMovement.enabled",
   "agentAsks.enabled",
   "advanceAtPickup.enabled",
+  // Armed by the owner (D-071, 2026-10-31): the autopilot approves the bookkeeping kinds inside their
+  // limits. The two kinds that pay a driver stay unarmed, each armed in its own release.
+  "autopilot.armed",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -102,12 +105,12 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The autopilot approves with no click: the owner arms it in its own release PR.
-  "autopilot.armed",
   // The dispatch mirror ships off: its own one-line PR turns it on (D-071).
   "tmsSync.enabled",
   // The synthetic feed's fault switches are a later item.
   "tmsSync.demoFaultsEnabled",
+  // The card load ruling ships off; its own one-line enable PR turns it on.
+  "cardLoadRuling.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -320,6 +323,15 @@ describe("flags", () => {
     expect(flags.autopilot.kinds.advance_payout?.armed).toBe(false);
   });
 
+  it("ships the card load ruling off, with a start date, never a kind the autopilot may approve", () => {
+    expect(flags.cardLoadRuling).toEqual({ enabled: false, startDate: "2026-10-31" });
+    expect(isLocalDate(flags.cardLoadRuling.startDate)).toBe(true);
+    // A ruling is always a named person's: never a kind the autopilot may approve.
+    expect(Object.keys(flags.autopilot.kinds)).not.toContain("card_load_ruling");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardLoadRuling.enabled");
+  });
+
   it("ships load movement from driver evidence on, with a start date", () => {
     expect(flags.loadMovement).toEqual({ enabled: true, startDate: "2026-10-30" });
     expect(isLocalDate(flags.loadMovement.startDate)).toBe(true);
@@ -377,6 +389,7 @@ describe("flags", () => {
       "deskLoop.armed",
       "autopilot.armed",
       "tmsSync.enabled",
+      "cardLoadRuling.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));
@@ -465,10 +478,10 @@ describe("flags", () => {
     expect(flags.deskLoop.limits.wakeCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
   });
 
-  it("ships the autopilot unarmed, on a fixed start date, with both kinds that pay a driver unarmed too", () => {
+  it("ships the autopilot armed, on a fixed start date, with both kinds that pay a driver unarmed", () => {
     expect(flags.autopilot).toEqual({
       enabled: true,
-      armed: false,
+      armed: true,
       startDate: "2026-10-31",
       kinds: {
         invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
