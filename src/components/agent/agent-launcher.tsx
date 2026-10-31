@@ -139,7 +139,6 @@ export function AgentLauncher({
     onQuestion: (ask) => show({ draft: askDraft(ask) }),
   });
   const current = open ? null : asks.current;
-  const settled = current ? asks.control.states[current.id]?.settled !== undefined : false;
   const badge = badgeCount(asks.openCount);
 
   // "New question from the agent", once per question, as it first shows in the bubble.
@@ -149,12 +148,28 @@ export function AgentLauncher({
   const currentKind = current?.kind ?? null;
   useEffect(() => {
     if (currentId === null || announced.current.has(currentId)) return;
+    // Cleared first, so a line still held for the last question is read again for this one.
+    const clear = setTimeout(() => setAnnounce(""), 50);
     const say = setTimeout(() => {
       announced.current.add(currentId);
       setAnnounce(currentKind === "told" ? ASK_WORDS.arrivedTold : ASK_WORDS.arrivedAsk);
-    }, 50);
-    return () => clearTimeout(say);
+    }, 100);
+    return () => {
+      clearTimeout(clear);
+      clearTimeout(say);
+    };
   }, [currentId, currentKind]);
+  // When the bubble goes (Got it, Not now, Yes settled, the x) with the cursor lost to the page,
+  // it goes back to the button. A card that opened, or a cursor the person moved, is left alone.
+  const hadBubble = useRef(false);
+  useEffect(() => {
+    const has = currentId !== null;
+    if (hadBubble.current && !has && !open) {
+      const at = document.activeElement;
+      if (!at || at === document.body) button.current?.focus();
+    }
+    hadBubble.current = has;
+  }, [currentId, open]);
   useEffect(() => {
     if (!announce) return;
     const quiet = setTimeout(() => setAnnounce(""), ANNOUNCE_MS);
@@ -177,7 +192,7 @@ export function AgentLauncher({
               ask={current}
               state={asks.control.states[current.id]}
               control={asks.control}
-              more={moreWaiting(settled ? asks.openCount : asks.openCount - 1)}
+              more={moreWaiting(asks.more)}
               onClose={() => asks.dismiss(current.id)}
               className="shadow-float"
             />

@@ -3,14 +3,14 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { Session } from "@/lib/auth/claims";
-import { dismissKey } from "@/components/agent/asks";
+import { dismissKey } from "@/lib/asks/dismiss-key";
 import { isRole, type Role } from "@/lib/auth/role";
 import { DbError, type Queryable } from "@/lib/db";
 import { ForbiddenError } from "@/lib/tenant/context";
 
 // What every signed-in page's shell needs besides the navigation (src/components/app/app-nav):
 // the sign-out form and the carrier's name, time zone and the member's email, and where the
-// browser keeps the agent's questions this member closed (asks:<tenant>:<sub>).
+// browser keeps the agent's questions this member closed (asks: and an opaque value).
 
 export type ShellInfo = { name: string; timezone: string; email: string; role: Role; asksKey: string };
 

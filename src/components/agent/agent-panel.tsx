@@ -34,7 +34,7 @@ export type AgentPanelConfig = {
   documentsHref?: string;
   // flags.agentAsks.enabled: the launcher asks for the agent's questions and shows them.
   asksOn?: boolean;
-  // asks:<tenant>:<sub>, where this browser keeps the questions this person closed.
+  // asks: and an opaque value, where this browser keeps the questions this person closed.
   asksKey?: string;
 };
 

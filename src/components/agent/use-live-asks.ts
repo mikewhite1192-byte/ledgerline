@@ -46,7 +46,7 @@ export function useLiveAsks({
 }: {
   // flags.agentAsks.enabled as the page's server read it; off, nothing is asked for.
   on: boolean;
-  // asks:<tenant>:<sub>, for the closed set; without it the x closes the question on this page only.
+  // asks: and an opaque value, for the closed set; without it the x closes the question on this page only.
   storeKey?: string;
   onQuestion: (ask: LiveAsk) => void;
 }) {
@@ -106,7 +106,7 @@ export function useLiveAsks({
     };
     async function look() {
       timer = null;
-      if (busy || ended) return;
+      if (busy || ended || poll.current.stopped) return;
       busy = true;
       let event: PollEvent;
       try {
@@ -143,7 +143,7 @@ export function useLiveAsks({
     // Hidden, the poll waits; shown again, it looks at once.
     const onVisibility = () => {
       if (!visible()) clear();
-      else if (timer === null && !busy) void look();
+      else if (timer === null && !busy && !poll.current.stopped) void look();
     };
     document.addEventListener("visibilitychange", onVisibility);
     rearm.current = schedule;
@@ -193,6 +193,9 @@ export function useLiveAsks({
           if (res.ok) {
             const body = (await res.json().catch(() => ({}))) as { status?: unknown };
             answered(ask.id, yesConfirmation(ask.proposalKind, body.status));
+          } else if (res.status >= 500) {
+            // A server error may have come after the approval went through.
+            setState(ask.id, { note: YES_UNKNOWN });
           } else {
             setState(ask.id, { note: yesRefused(await errorOf(res), STAFF_ONLY_NOTE) });
           }
@@ -244,5 +247,5 @@ export function useLiveAsks({
   // The bubble's question: the newest showing that was not answered or closed here.
   const showing = live.filter((a) => !gone.has(a.id) && !dismissed.has(a.id));
   const current = showing[0] ?? null;
-  return { control, openCount, current, dismiss };
+  return { control, openCount, current, more: Math.max(0, showing.length - 1), dismiss };
 }

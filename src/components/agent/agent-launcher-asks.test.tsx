@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentLauncher } from "./agent-launcher";
 import type { AgentPanelConfig } from "./agent-panel";
 import type { LiveAsk } from "./asks";
-import { greetingLine } from "./words";
+import { greetingLine, YES_UNKNOWN } from "./words";
 
 // The launcher's questions against a stubbed server: the badge and the bubble for the newest one,
 // Yes through the approve route with the card's own body, Not now and Got it, Ask a question
@@ -58,7 +58,7 @@ function memoryStorage(seed: Record<string, string> = {}): Storage {
   };
 }
 
-const KEY = "asks:11111111-1111-4111-8111-111111111111:sub-1";
+const KEY = "asks:0123456789abcdef0123456789abcdef";
 
 const CONFIG: AgentPanelConfig = {
   streamMode: "poll",
@@ -106,7 +106,8 @@ const TOLD: LiveAsk = {
 };
 
 type Call = { url: string; init?: RequestInit };
-type Reply = { status: number; body: unknown };
+// fail: the request itself throws, as a lost connection does.
+type Reply = { status: number; body: unknown; fail?: boolean };
 
 // The server: the asks read answers from `reads` in turn (the last one again after that), the
 // approve and the two ask routes from `writes`, and the card's recent read is an empty thread.
@@ -126,7 +127,9 @@ function stubServer(opts: { reads: Reply[]; writes?: Record<string, Reply> }) {
         return new Response(JSON.stringify({ conversationId: null, turns: [], asks: [], thread: [] }), { status: 200 });
       }
       for (const [path, r] of Object.entries(opts.writes ?? {})) {
-        if (url.endsWith(path)) return new Response(JSON.stringify(r.body), { status: r.status });
+        if (!url.endsWith(path)) continue;
+        if (r.fail) throw new TypeError("network");
+        return new Response(JSON.stringify(r.body), { status: r.status });
       }
       return new Response(JSON.stringify({ error: "not_found" }), { status: 404 });
     }),
@@ -277,6 +280,104 @@ describe("the agent's questions on the launcher", () => {
     expect(screen.queryByRole("region", { name: "The agent's questions" })).toBeNull();
   });
 
+  it("says the outcome is unknown, never that nothing changed, when the reply is lost or a server error", async () => {
+    const approve = `/api/proposals/${ADVANCE.proposalId}/approve`;
+    const cases: Array<[string, Reply]> = [
+      ["the request throws", { status: 0, body: {}, fail: true }],
+      ["a 503 unavailable", { status: 503, body: { error: "unavailable" } }],
+    ];
+    for (const [, reply] of cases) {
+      vi.stubGlobal("localStorage", memoryStorage());
+      stubServer({ reads: [showing([ADVANCE])], writes: { [approve]: reply } });
+      page();
+      fireEvent.click(within(await findBubble()).getByRole("button", { name: "Yes" }));
+      await within(bubble()).findByText(YES_UNKNOWN);
+      expect(bubble().textContent).not.toContain("Nothing changed");
+      cleanup();
+    }
+  });
+
+  it("keeps the known words for a refusal with a category", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({
+      reads: [showing([ADVANCE])],
+      writes: { [`/api/proposals/${ADVANCE.proposalId}/approve`]: { status: 409, body: { error: "stale" } } },
+    });
+    page();
+    fireEvent.click(within(await findBubble()).getByRole("button", { name: "Yes" }));
+    await within(bubble()).findByText("Something changed since this showed, so nothing was done.");
+    expect(screen.queryByText(YES_UNKNOWN)).toBeNull();
+  });
+
+  it("counts only the questions that can still show in the bubble, not the ones closed here", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({ reads: [showing([ADVANCE, INVOICE, TOLD])] });
+    page();
+    expect(within(await findBubble()).getByText("2 more waiting")).toBeTruthy();
+    expect(screen.getByTestId("ask-badge").textContent).toBe("3");
+    fireEvent.click(within(bubble()).getByRole("button", { name: "Close this question" }));
+    expect(within(bubble()).getByText("1 more waiting")).toBeTruthy();
+    fireEvent.click(within(bubble()).getByRole("button", { name: "Close this question" }));
+    expect(within(bubble()).queryByText(/more waiting/)).toBeNull();
+    // The badge still counts all three: they are open, only out of the bubble.
+    expect(screen.getByTestId("ask-badge").textContent).toBe("3");
+  });
+
+  it("announces a second new question even while the first one's line is still held", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({
+      reads: [showing([ADVANCE, INVOICE])],
+      writes: { [`/api/asks/${ADVANCE.id}/snooze`]: { status: 200, body: { ok: true } } },
+    });
+    page();
+    const announcer = screen.getByTestId("ask-announcer");
+    const seen: string[] = [];
+    const watch = new MutationObserver(() => seen.push(announcer.textContent ?? ""));
+    watch.observe(announcer, { childList: true, characterData: true, subtree: true });
+    await waitFor(() => expect(seen).toEqual(["New question from the agent"]));
+    fireEvent.click(within(await findBubble()).getByRole("button", { name: "Not now" }));
+    await within(bubble()).findByText(INVOICE.text);
+    await waitFor(() => expect(seen).toEqual(["New question from the agent", "", "New question from the agent"]));
+    watch.disconnect();
+  });
+
+  it("puts the cursor back on the launcher button when Got it, Not now or the x removes the bubble", async () => {
+    const launcher = () => screen.getByRole("button", { name: /^Ask the agent/ });
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({
+      reads: [showing([TOLD])],
+      writes: { [`/api/asks/${TOLD.id}/ack`]: { status: 200, body: { ok: true } } },
+    });
+    page();
+    const got = within(await findBubble()).getByRole("button", { name: "Got it" });
+    got.focus();
+    fireEvent.click(got);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "The agent's questions" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(launcher()));
+    cleanup();
+
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({
+      reads: [showing([ADVANCE])],
+      writes: { [`/api/asks/${ADVANCE.id}/snooze`]: { status: 200, body: { ok: true } } },
+    });
+    page();
+    const notNow = within(await findBubble()).getByRole("button", { name: "Not now" });
+    notNow.focus();
+    fireEvent.click(notNow);
+    await waitFor(() => expect(screen.queryByRole("region", { name: "The agent's questions" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(launcher()));
+    cleanup();
+
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({ reads: [showing([ADVANCE])] });
+    page();
+    const x = within(await findBubble()).getByRole("button", { name: "Close this question" });
+    x.focus();
+    fireEvent.click(x);
+    await waitFor(() => expect(document.activeElement).toBe(launcher()));
+  });
+
   it("asks nothing while the questions are off", async () => {
     const server = stubServer({ reads: [showing([ADVANCE])] });
     page({ ...CONFIG, asksOn: false });
@@ -341,5 +442,22 @@ describe("the launcher's poll", () => {
     expect(server.reads()).toHaveLength(1);
     expect(screen.queryByTestId("ask-badge")).toBeNull();
     expect(screen.queryByRole("region", { name: "The agent's questions" })).toBeNull();
+  });
+
+  it.each([401, 409])("stays stopped after a %i when the tab is hidden and shown again", async (status) => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.stubGlobal("localStorage", memoryStorage());
+    const server = stubServer({ reads: [{ status, body: { error: "stopped" } }] });
+    page();
+    await flush();
+    expect(server.reads()).toHaveLength(1);
+    visibility = "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+    await wait(60_000);
+    visibility = "visible";
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flush();
+    await wait(60 * 60_000);
+    expect(server.reads()).toHaveLength(1);
   });
 });

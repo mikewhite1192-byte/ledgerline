@@ -3,7 +3,6 @@ import {
   askDraft,
   asksOf,
   DISMISSED_MAX,
-  dismissKey,
   mergeAsks,
   nextPoll,
   POLL_MS,
@@ -84,14 +83,13 @@ describe("the poll schedule", () => {
 });
 
 describe("the closed set", () => {
-  const KEY = dismissKey("11111111-1111-4111-8111-111111111111", "sub-1");
+  const KEY = "asks:0123456789abcdef0123456789abcdef";
 
   it("is kept per carrier and person, and reads back what was written", () => {
-    expect(KEY).toBe("asks:11111111-1111-4111-8111-111111111111:sub-1");
     const m = memory();
     writeDismissed(KEY, new Set([A1, A2]), m.store);
     expect([...readDismissed(KEY, m.store)]).toEqual([A1, A2]);
-    expect(readDismissed(dismissKey("22222222-2222-4222-8222-222222222222", "sub-1"), m.store).size).toBe(0);
+    expect(readDismissed("asks:fedcba9876543210fedcba9876543210", m.store).size).toBe(0);
   });
 
   it("keeps only ids, the newest 50", () => {

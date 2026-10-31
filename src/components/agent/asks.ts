@@ -95,12 +95,10 @@ export function pollStops(status: number): boolean {
   return status === 409 || status === 401 || status === 403;
 }
 
-// The questions this person closed with the x, kept in this browser under asks:<tenant>:<sub>.
+// The questions this person closed with the x, kept in this browser under the key the server built (src/lib/asks/dismiss-key.ts).
 // Storage can be blocked, full or cleared: every read and write is caught, and a cleared store
 // shows the question again, which is safe. At most DISMISSED_MAX ids, the newest kept.
 export const DISMISSED_MAX = 50;
-
-export const dismissKey = (tenantId: string, sub: string): string => `asks:${tenantId}:${sub}`;
 
 type StorageOf = () => Pick<Storage, "getItem" | "setItem">;
 

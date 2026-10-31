@@ -14,7 +14,7 @@ export type TenantInfo = {
   email: string;
   timezone: string;
   role: Role;
-  // asks:<tenant>:<sub>, where the browser keeps the agent's questions this person closed.
+  // asks: and an opaque value, where the browser keeps the agent's questions this person closed.
   asksKey?: string;
 };
 

@@ -1,5 +1,4 @@
 import { flags } from "@/config/flags";
-import { dismissKey } from "@/components/agent/asks";
 import type { AgentOpening } from "@/components/agent/panel-context";
 import {
   defaultSuggestions,
@@ -32,6 +31,7 @@ import {
   wonderCapNanocents,
 } from "@/lib/ai/prices";
 import { readRecentCalls, readSpend, type CallRow, type Spend } from "@/lib/ai/spend";
+import { dismissKey } from "@/lib/asks/dismiss-key";
 import { readCashHome } from "@/lib/cash/view";
 import { DbError } from "@/lib/db";
 import { readRecentAgentTurns } from "@/lib/agent/gateway/store";
