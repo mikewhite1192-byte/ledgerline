@@ -60,12 +60,19 @@ export const getTmsLoad = defineTool({
       {
         statusCode: tms.statusCode,
         revenueTotalCents: tms.revenueTotalCents,
+        pickedUpAt: tms.pickedUp?.at ?? null,
         deliveredAt: tms.delivered?.at ?? null,
         goneAt: tms.goneAt,
         flags: tms.flags,
         hasPodDocument: docs.hasPod,
       },
-      { status: ours.status, revenueCents, deliveredAt: ours.deliveredAt, hasPod: ours.podDocumentId !== null },
+      {
+        status: ours.status,
+        revenueCents,
+        pickedUpAt: ours.pickupDepartedAt,
+        deliveredAt: ours.deliveredAt,
+        hasPod: ours.podDocumentId !== null,
+      },
     );
 
     const historyList: FitList = {
@@ -156,6 +163,7 @@ export const getTmsLoad = defineTool({
         driverId: ours.driverId,
         customerId: ours.customerId,
         pickupOn: ours.pickupOn,
+        pickupDepartedAt: ours.pickupDepartedAt,
         deliveredOn: ours.deliveredOn,
         deliveredAt: ours.deliveredAt,
         revenueCents,

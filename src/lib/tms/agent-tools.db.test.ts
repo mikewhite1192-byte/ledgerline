@@ -245,6 +245,48 @@ describe("the agent's dispatch tools on a real database", () => {
     }
   });
 
+  it("says the pickup time differs when the two sides are more than half an hour apart", async () => {
+    // Dispatch picked up at 9:15 AM Chicago on Nov 1 (CST); our truck left the pickup 45 minutes later.
+    await admin.withTenant(A.tenantId, async (q) => {
+      await q.execute(
+        `UPDATE tms_loads SET picked_up_utc = CAST('2026-11-01T15:15:00Z' AS timestamptz), picked_up_local = '2026-11-01T09:15',
+           picked_up_at = CAST('2026-11-01T15:15:00Z' AS timestamptz), picked_up_day = CAST('2026-11-01' AS date)
+         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [TMS_LOAD],
+      );
+      await q.execute(
+        `UPDATE loads SET pickup_arrived_at = CAST('2026-11-01T15:00:00Z' AS timestamptz),
+           pickup_departed_at = CAST('2026-11-01T16:00:00Z' AS timestamptz)
+         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [LINKED],
+      );
+    });
+    try {
+      const r = (await run(A, "get_tms_load", { loadId: LINKED })).result as LoadResult;
+      expect(r.dispatch).toMatchObject({ pickedUp: { local: "2026-11-01T09:15", at: "2026-11-01T15:15:00.000Z" } });
+      expect(r.ours).toMatchObject({ pickupDepartedAt: "2026-11-01T16:00:00.000Z" });
+      expect(r.differences).toEqual([
+        { kind: "rate_differs", dispatchCents: 162_550, oursCents: 150_000, deltaCents: 12_550 },
+        { kind: "status_ahead", dispatchStatus: "delivered", ourStatus: "in_transit" },
+        { kind: "pickup_time_differs", dispatchAt: "2026-11-01T15:15:00.000Z", oursAt: "2026-11-01T16:00:00.000Z", minutesApart: 45 },
+      ]);
+    } finally {
+      // The fixture is shared: both pickups go back to unknown.
+      await admin.withTenant(A.tenantId, async (q) => {
+        await q.execute(
+          `UPDATE tms_loads SET picked_up_utc = NULL, picked_up_local = NULL, picked_up_at = NULL, picked_up_day = NULL
+           WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [TMS_LOAD],
+        );
+        await q.execute(
+          `UPDATE loads SET pickup_arrived_at = NULL, pickup_departed_at = NULL
+           WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [LINKED],
+        );
+      });
+    }
+  });
+
   it("lets a card cite the mirror rows a result named, and drops any other id", async () => {
     const out = await run(A, "get_tms_load", { loadId: LINKED });
     const trusted = idsIn(out.result);
