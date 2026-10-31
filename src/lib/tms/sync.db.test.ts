@@ -764,4 +764,82 @@ describe("the desk's dispatch lane", () => {
     expect(runs).toEqual([]);
     expect(await loadEventsOf(f, l.id)).toHaveLength(1);
   });
+
+  it("runs a planned load's in transit and delivered events of one pass in event order: delivered, no card", async () => {
+    const f = await carrier("tms-order");
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+         VALUES (current_tenant_id(), 'service:sweep:' || CAST(current_tenant_id() AS text), 'sweep@tms-test.invalid', 'staff')`,
+      ),
+    );
+    const l = await ourLoad(f, "planned");
+    fake.loads.set(
+      "A-1",
+      dispatchLoad("A-1", l.number, [
+        { label: LABEL.tendered, at: T_TENDERED },
+        { label: LABEL.in_transit, at: T_PICKED },
+        { label: LABEL.delivered, at: T_DELIVERED },
+      ]),
+    );
+    // One pass mirrors both moves with the same received_at. Ids that fall as rows are written put
+    // the delivered event's key before the in transit one's, the order that used to run it first.
+    let n = 0;
+    const falling = () => {
+      n += 1;
+      return `${(0xf0000000 - n).toString(16)}-${randomUUID().slice(9)}`;
+    };
+    expect(await pullTms(app, f.session, { token: f.token, now: NOW }, { newId: falling })).toMatchObject({ ran: true, written: 1 });
+    const pickedId = await eventIdOf(f, "A-1:h1");
+    const deliveredId = await eventIdOf(f, "A-1:h2");
+    if (!pickedId || !deliveredId) throw new Error("no events");
+    const pickedKey = eventKey("tms_event", pickedId);
+    const deliveredKey = eventKey("tms_event", deliveredId);
+    expect(deliveredKey < pickedKey).toBe(true);
+
+    // The desk takes its own lease.
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute("UPDATE desk_loops SET lease_token = NULL, lease_until = NULL WHERE tenant_id = current_tenant_id()"),
+    );
+    const service = await serviceSession(app, f.tenantId);
+    if (!service) throw new Error("no service login");
+    flags.deskLoop.enabled = true;
+    flags.deskLoop.armed = true;
+    flags.deskLoop.startDate = "2026-10-30";
+    const real = deskHandlers({ db: app });
+    const runs: string[] = [];
+    const handlers = {} as Handlers;
+    for (const source of DESK_SOURCES) {
+      handlers[source] =
+        source === "tms_event"
+          ? {
+              ...real.tms_event,
+              run: (s, e, ctx) => {
+                runs.push(e.eventKey);
+                return real.tms_event.run(s, e, ctx);
+              },
+            }
+          : { switchOn: () => true, needsMs: 1_000, run: async () => ({ outcome: "done", detail: { found: 0 } }) };
+    }
+    const now = NOW.getTime() + 20 * 60_000;
+    await wakeDesk(
+      service,
+      { wakeId: randomUUID(), by: "schedule", deadlineMs: now + 25_000 },
+      { db: app, clock: () => new Date(now), handlers, newId: randomUUID, log: () => {} },
+    );
+
+    expect(runs.indexOf(pickedKey)).toBeGreaterThanOrEqual(0);
+    expect(runs.indexOf(pickedKey)).toBeLessThan(runs.indexOf(deliveredKey));
+    expect((await loadEventsOf(f, l.id)).map((e) => e.to_status)).toEqual(["in_transit", "delivered"]);
+    const [state] = await admin.withTenant(f.tenantId, (q) =>
+      q.query<{ status: string; proposals: number; asks: number }>(
+        `SELECT status,
+                (SELECT CAST(count(*) AS integer) FROM proposals p WHERE p.tenant_id = current_tenant_id()) AS proposals,
+                (SELECT CAST(count(*) AS integer) FROM agent_asks a WHERE a.tenant_id = current_tenant_id()) AS asks
+           FROM loads WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [l.id],
+      ),
+    );
+    expect(state).toEqual({ status: "delivered", proposals: 0, asks: 0 });
+  });
 });

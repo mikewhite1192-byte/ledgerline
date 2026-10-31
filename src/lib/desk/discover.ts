@@ -141,7 +141,7 @@ const FINDERS: {
            WHERE x.tenant_id = current_tenant_id() AND NOT x.seeded AND x.field = 'status'
              AND x.received_at >= CAST($1 AS timestamptz) AND x.received_at <= CAST($2 AS timestamptz)
              AND ${notLogged("tms_event", "x")}
-           ORDER BY x.received_at, x.id LIMIT $3`,
+           ORDER BY x.received_at, x.at, x.id LIMIT $3`,
   },
   {
     source: "audit",

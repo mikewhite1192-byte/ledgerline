@@ -332,7 +332,7 @@ describe("flags", () => {
       enabled: true,
       startDate: "2026-10-31",
       maxPagesPerWake: 3,
-      maxReadsPerWake: 40,
+      maxReadsPerWake: 20,
       pageSize: 100,
       demoFaultsEnabled: false,
     });

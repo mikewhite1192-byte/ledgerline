@@ -122,7 +122,8 @@ const CONNECTION_SQL = `SELECT CAST(c.id AS text) AS id, c.system, CAST(c.label_
        (SELECT CAST(l.watermarks->'tms_walk' AS text) FROM desk_loops l
          WHERE l.tenant_id = current_tenant_id() AND l.lease_token = CAST($1 AS uuid)) AS walk,
        (SELECT CAST(count(*) AS integer) FROM desk_loops l
-         WHERE l.tenant_id = current_tenant_id() AND l.lease_token = CAST($1 AS uuid)) AS held
+         WHERE l.tenant_id = current_tenant_id() AND l.lease_token = CAST($1 AS uuid)
+           AND l.lease_until > CAST($2 AS timestamptz)) AS held
   FROM tms_connections c WHERE c.tenant_id = current_tenant_id()`;
 
 // Only the lease holder moves the walk; a lost lease throws and the wake writes nothing more.
@@ -199,7 +200,7 @@ export async function pullTms(
       return fn(q);
     });
 
-  const [conn] = await inTenant((q) => q.query<ConnectionRow>(CONNECTION_SQL, [run.token]));
+  const [conn] = await inTenant((q) => q.query<ConnectionRow>(CONNECTION_SQL, [run.token, nowIso]));
   if (!conn) return { ran: false, category: "not_configured" };
   if (Number(conn.held) !== 1) return { ran: false, category: "no_lease" };
   if (conn.system !== "synthetic" || typeof conn.zone !== "string" || conn.zone.length === 0) throw new DbError("unknown");
@@ -306,9 +307,9 @@ export async function pullTms(
       if (mirrored && (await inTenant((q) => tombstone(q, session, externalId, run.now)))) out.gone += 1;
       return;
     }
-    await inTenant((q) => writeLoad(q, { r, listed, labelMap, zone, nowIso, cooloffMinutes: connection.finalizeCooloffMinutes, newId }));
+    const wrote = await inTenant((q) => writeLoad(q, { r, listed, labelMap, zone, nowIso, cooloffMinutes: connection.finalizeCooloffMinutes, newId }));
     delete walk.misses[externalId];
-    out.written += 1;
+    if (wrote) out.written += 1;
   };
 
   let pages = 0;
@@ -500,15 +501,16 @@ const CASTS: Partial<Record<(typeof LOAD_COLUMNS)[number], string>> = {
 const cast = (n: number, kind?: string) => (kind ? `CAST($${n} AS ${kind})` : `$${n}`);
 
 // The one transaction per load: the load and its stops, line items, new documents and history,
-// the links recomputed by whole values, the read bookkeeping cleared.
-async function writeLoad(q: Queryable, w: WriteInput): Promise<void> {
+// the links recomputed by whole values, the read bookkeeping cleared. False for a tombstoned load,
+// which is never written again.
+async function writeLoad(q: Queryable, w: WriteInput): Promise<boolean> {
   const { record } = w.r;
   const mapped = loadColumnsOf(record, w.labelMap, w.zone);
   const [prev] = await q.query<MirrorState>(
     `SELECT ${STATE_COLUMNS} FROM tms_loads WHERE tenant_id = current_tenant_id() AND external_id = $1 FOR UPDATE`,
     [record.externalId],
   );
-  if (prev?.gone) return;
+  if (prev?.gone) return false;
 
   const links = await q.query<{ id: string }>(LINK_LOAD_SQL, [record.reference, record.externalId]);
   const loadId = links.length === 1 ? links[0].id : null;
@@ -655,6 +657,7 @@ async function writeLoad(q: Queryable, w: WriteInput): Promise<void> {
   if (record.customer) await upsertParty(q, "customer", record.customer.externalId, record.customer.name, null, null, w);
   const d = w.r.driver;
   if (d && d.partyKind === "driver") await upsertParty(q, "driver", d.externalId, d.name, d.unit, d.vin, w);
+  return true;
 }
 
 // A party by its whole external id; linked to ours by whole value only (customers.code, the
