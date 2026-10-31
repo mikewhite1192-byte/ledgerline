@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { AdvanceFrame, AdvancesOffPage, problemOf, ReadFailed, type ReadProblem } from "@/app/advances/frame";
 import { cardLineFor, readAdvanceRecord, readShell, type AdvanceRecord, type EligibilityNow, type Shell } from "@/lib/advances/read";
+import { PARK_REASON_WORDS } from "@/lib/advances/parking";
 import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
 import { takebackReasonWords } from "@/lib/advances/takeback-words";
@@ -142,6 +143,11 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
             <Item label="Fee"><Money cents={advance.feeCents} /></Item>
             <Item label={decidedLabel}>{decided}</Item>
             <Item label="Paid">{paid}</Item>
+            {advance.status === "parked" && advance.parkReason && advance.parkedAt ? (
+              <Item label="Parked">
+                {PARK_REASON_WORDS[advance.parkReason]} (since {when(advance.parkedAt)}). Approve it again from its card, or reject it.
+              </Item>
+            ) : null}
             {cardLine ? (
               <Item label={cardLine.label}>
                 {cardLine.card ? (

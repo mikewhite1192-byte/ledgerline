@@ -446,7 +446,7 @@ export type AdvanceRow = {
   requested_on: string;
   amount_cents: number;
   fee_cents: number;
-  status: "requested" | "approved" | "paid" | "rejected" | "cancelled";
+  status: "requested" | "approved" | "paid" | "rejected" | "cancelled" | "parked";
   recovered_cents: number;
   source: "ui" | "email" | "seed";
   reason_category: string | null;

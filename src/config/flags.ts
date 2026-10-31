@@ -797,6 +797,15 @@ export type Flags = {
     pageSize: number;
     demoFaultsEnabled: boolean;
   };
+  // The invoice on finalize (docs: TMS-MIRROR, S3): when a mirrored status event says the dispatch
+  // system finalized one of our delivered loads, the desk loop's tms_event source drafts that load's
+  // one invoice_post card from our own loads row, the same card Refresh on the invoice queue drafts
+  // (src/lib/invoices/finalize.ts), never from the dispatch system's revenue. It only drafts: the
+  // owner's limit mode decides between a question and the autopilot, and approving it is the usual
+  // route and gate. It acts only while tmsSync, loadMovement and invoicesEnabled are on too; an
+  // event dated before startDate (YYYY-MM-DD, the carrier's zone) drafts nothing. The hook asks
+  // enabled and startDate itself. It ships off; its own one-line PR turns it on.
+  tmsFinalizeInvoice: { enabled: boolean; startDate: string };
   // The agent's questions (src/lib/asks, 0072): when the desk drafts a proposal of an asked kind
   // (advance_payout, invoice_post, detention_charge, settlement_approve, pay_correction, load_move)
   // and the autopilot would not do it by itself, code writes one question about it ("Should I send
@@ -835,6 +844,14 @@ export type Flags = {
   // the loads (get_card_loads). startDate (YYYY-MM-DD, the carrier's zone): a statement row that
   // reached the records before it drafts nothing. Each path asks enabled itself.
   cardLoadRuling: { enabled: boolean; startDate: string };
+  // Parked advances (touchpoint A5): a person's approval of an advance whose numbers no longer
+  // hold when it runs (the card is gone, the card statement names someone else, no room is left,
+  // or the approval went over a block or a mismatch) parks the advance with its reason instead of
+  // failing the proposal (src/lib/advances/approve.ts). A person approves it again to pay it, the
+  // same ledger key it would have had, or rejects it. Never the autopilot's: it never parks,
+  // releases or approves a parked advance. startDate (YYYY-MM-DD, the carrier's zone): a proposal
+  // made before it takes the old fail path. Each path asks enabled itself.
+  advanceParking: { enabled: boolean; startDate: string };
   // The card pull-back (docs: RECOVERY, 0080): taking back a paid advance, or money loaded onto the
   // card of a driver whose truck broke down before the trip, pulls it back off the fuel card in test
   // mode once a person approves a card_pullback card. The rules engine sizes the pull from our own
@@ -1102,6 +1119,8 @@ export const flags: Flags = {
     // On by the owner's call (D-071, 2026-10-31): the panel shows; every fault itself starts off.
     demoFaultsEnabled: true,
   },
+  // On by the owner's call (D-071, 2026-10-31). It only drafts a card; approving it goes through the usual gate.
+  tmsFinalizeInvoice: { enabled: true, startDate: "2026-10-31" },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.
   agentAsks: {
     enabled: true,
@@ -1115,6 +1134,9 @@ export const flags: Flags = {
   advanceAtPickup: { enabled: true, startDate: "2026-10-31" },
   // Off until its own one-line enable PR. Nothing moves money: a ruling books what a driver owes.
   cardLoadRuling: { enabled: true, startDate: "2026-10-31" },
+  // Off until its own one-line enable PR. Parking moves no money; a release pays through the usual
+  // ledger and payout switches.
+  advanceParking: { enabled: false, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. A pull is an outside write, in test mode only.
   cardPullback: { enabled: false, startDate: "2026-11-02" },
 };

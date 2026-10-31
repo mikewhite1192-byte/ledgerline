@@ -534,6 +534,8 @@ export const ADVANCE_RECORD: AdvanceRecord = {
     takenBackAt: null,
     takenBackByMembershipId: null,
     takebackReason: null,
+    parkReason: null,
+    parkedAt: null,
   },
   driver: { id: DRIVER_ID, code: "BR-D07", name: "Rosa Delgado" },
   card: { last4: "4417", status: "active", recorded: true },

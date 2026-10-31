@@ -1,6 +1,7 @@
 import type { Queryable } from "../db";
 import { isCanonicalUuid } from "../money/keys";
 import type { AdvanceSource, AdvanceStatus } from "../rules-engine/types";
+import { isParkReason, type ParkReason } from "./parking";
 
 // A flow advance as the executor reads it: one advances row born from an approved proposal
 // (proposal_id set). Seeded advances are history and never come back through the flow readers,
@@ -30,6 +31,10 @@ export type AdvanceView = {
   takenBackAt: string | null;
   takenBackByMembershipId: string | null;
   takebackReason: string | null;
+  // The latest park (0079): its reason and when. Kept as history once a release pays it; null on
+  // an advance that never parked.
+  parkReason: ParkReason | null;
+  parkedAt: string | null;
 };
 
 export type FlowAdvance = AdvanceView & { proposalId: string };
@@ -55,6 +60,8 @@ type Row = {
   taken_back_at: string | null;
   taken_back_by_membership_id: string | null;
   takeback_reason: string | null;
+  park_reason: string | null;
+  parked_at: string | null;
 };
 
 export const iso = (column: string) =>
@@ -81,6 +88,8 @@ export const FLOW_COLUMNS = [
   iso("taken_back_at"),
   "taken_back_by_membership_id",
   "takeback_reason",
+  "park_reason",
+  iso("parked_at"),
 ].join(", ");
 
 function whole(value: number | string): number {
@@ -111,6 +120,9 @@ export function advanceViewOf(r: Row): AdvanceView {
     takenBackAt: r.taken_back_at,
     takenBackByMembershipId: r.taken_back_by_membership_id,
     takebackReason: r.takeback_reason,
+    // A code off the list (0079's check allows none) reads as no reason, never as a guess.
+    parkReason: isParkReason(r.park_reason) ? r.park_reason : null,
+    parkedAt: r.parked_at,
   };
 }
 

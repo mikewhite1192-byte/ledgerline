@@ -99,6 +99,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-10-31): an admin can switch the synthetic feed's faults on
   // from Settings > Demo. Each fault still starts off.
   "tmsSync.demoFaultsEnabled",
+  // Released by the owner (D-071, 2026-10-31): a finalized delivered load gets its invoice card
+  // drafted, after the dispatch recheck. A person still approves it.
+  "tmsFinalizeInvoice.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -114,6 +117,8 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
+  // Parked advances: off until the owner's own one-line enable PR.
+  "advanceParking.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
 ] as const;
@@ -333,8 +338,14 @@ describe("flags", () => {
     expect(isLocalDate(flags.cardLoadRuling.startDate)).toBe(true);
     // A ruling is always a named person's: never a kind the autopilot may approve.
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("card_load_ruling");
-    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    // The demo-path replay never recorded a finalize, so the local run turns it off.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardLoadRuling.enabled");
+  });
+
+  it("ships parked advances off, with a start date, listed ahead of their release", () => {
+    expect(flags.advanceParking).toEqual({ enabled: false, startDate: "2026-11-02" });
+    expect(isLocalDate(flags.advanceParking.startDate)).toBe(true);
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("advanceParking.enabled");
   });
 
   it("ships the card pull-back off, with a start date, never a kind the autopilot may approve", () => {
@@ -369,6 +380,13 @@ describe("flags", () => {
     expect(flags.loadMovement.enabled).toBe(true);
   });
 
+  it("releases the invoice on finalize, with a start date, off for the local demo run", () => {
+    expect(flags.tmsFinalizeInvoice).toEqual({ enabled: true, startDate: "2026-10-31" });
+    expect(isLocalDate(flags.tmsFinalizeInvoice.startDate)).toBe(true);
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsFinalizeInvoice.enabled");
+  });
+
   it("ships the agent's questions on, with the reason line capped at 2 cents and 80 tokens", () => {
     expect(flags.agentAsks).toEqual({
       enabled: true,
@@ -394,8 +412,9 @@ describe("flags", () => {
     }
     // Local mode can never turn on a switch that stays off: none is on the list that turns one on.
     for (const name of KEPT_OFF) expect(LOCAL_OVERRIDABLE as readonly string[], name).not.toContain(name);
-    // The only kept-off switches local mode may turn off are the armed switches, and the dispatch
-    // sync's switch, listed ahead of their own release: exactly those still kept off, and nothing else.
+    // The only kept-off switches local mode may turn off are the armed switches, the dispatch sync's
+    // switch and the invoice on finalize's, listed ahead of their own release: exactly those still
+    // kept off, and nothing else.
     const armedAhead: readonly string[] = [
       "moneyCodes.armed",
       "factoring.armed",
@@ -404,6 +423,8 @@ describe("flags", () => {
       "autopilot.armed",
       "tmsSync.enabled",
       "cardLoadRuling.enabled",
+      "tmsFinalizeInvoice.enabled",
+      "advanceParking.enabled",
       "cardPullback.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];

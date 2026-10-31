@@ -10,7 +10,7 @@ import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-
 import { serviceSession } from "../sweep/service-session";
 import { deskHandlers, type Handler, type Handlers } from "./handlers";
 import { DESK_SOURCES, eventKey, type DeskSource } from "./keys";
-import { appendLine, readState, type Line, type OpenEvent } from "./log";
+import { appendLine, AWAITING_RECHECK, readState, type Line, type OpenEvent } from "./log";
 import { MOVE_WATERMARK_SQL } from "./discover";
 import { wakeDesk } from "./loop";
 import { readApprovalBreaks, readDeskLog, readDeskPanel } from "./view";
@@ -299,6 +299,32 @@ describe("done once", () => {
     expect(calls.filter((x) => x.key === key)).toEqual([]);
     const lines = (await linesOf(c)).filter((l) => l.event_key === key);
     expect(lines.map((l) => l.kind)).toEqual(["seen", "claimed", "done", "carried"]);
+  });
+
+  it("puts a finalize waiting for the dispatch recheck after every other open piece of work", async () => {
+    const c = await carrier("desk-waits-last");
+    const at = (ms: number) => new Date(T0 - 60_000 + ms).toISOString();
+    const eventId = randomUUID();
+    const waiting = eventKey("tms_event", eventId);
+    const carried = "sweep:2026-01-06";
+    const fresh = "sweep:2026-01-07";
+    await app.withTenant(c.fixture.tenantId, async (q) => {
+      // The oldest: a finalize carried while it waits; then a carried run; then new work.
+      await appendLine(q, line({ kind: "seen", eventKey: waiting, source: "tms_event", subjectId: eventId, at: at(0) }));
+      await appendLine(q, line({ kind: "claimed", eventKey: waiting, source: "tms_event", subjectId: eventId, at: at(1_000) }));
+      await appendLine(
+        q,
+        line({ kind: "carried", eventKey: waiting, source: "tms_event", subjectId: eventId, at: at(2_000), detail: { category: AWAITING_RECHECK } }),
+      );
+      await appendLine(q, line({ kind: "seen", eventKey: carried, source: "sweep", at: at(3_000) }));
+      await appendLine(q, line({ kind: "claimed", eventKey: carried, source: "sweep", at: at(4_000) }));
+      await appendLine(q, line({ kind: "carried", eventKey: carried, source: "sweep", at: at(5_000), detail: { runId: randomUUID() } }));
+      await appendLine(q, line({ kind: "seen", eventKey: fresh, source: "sweep", at: at(6_000) }));
+    });
+    const open = await app.withTenant(c.fixture.tenantId, (q) =>
+      readState(q, { sinceStart: "2026-01-05T06:00:00.000Z", limit: 50 }),
+    );
+    expect(open.map((e) => e.eventKey)).toEqual([carried, fresh, waiting]);
   });
 
   it("gives up a carried piece of work whose tries keep throwing at maxAttempts, keeping its run", async () => {

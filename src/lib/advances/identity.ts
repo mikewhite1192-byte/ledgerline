@@ -52,6 +52,71 @@ export function normalizePortalName(value: unknown): string | null {
   return PORTAL_NAME.test(v) ? v : null;
 }
 
+// What a parked-advance name check compares (src/lib/advances/approve.ts): the card's holder as
+// the records have it, and the name on the provider's latest statement row for that card, null
+// when the statement has no row for it yet. Never the card's token.
+export type CardNameFacts = {
+  holderKind: "named" | "generic";
+  // A generic card's stored portal name; null on a named card.
+  cardPortalName: string | null;
+  driverName: string;
+  driverCode: string;
+  statementName: string | null;
+};
+
+// Whether the statement names the card's holder as the records do, each side normalized and then
+// compared whole: a named card's statement shows the driver's name, first then last, or the
+// driver's code (the form the seeded statement uses); a generic card's shows its stored portal
+// name. A reordered or partial name is a mismatch. A card with no statement row is not checked.
+export function cardNameMatches(f: CardNameFacts): boolean {
+  if (f.statementName === null) return true;
+  const seen = normalizePortalName(f.statementName);
+  if (seen === null) return false;
+  const expected =
+    f.holderKind === "generic"
+      ? [normalizePortalName(f.cardPortalName)]
+      : [normalizePortalName(f.driverName), normalizePortalName(f.driverCode)];
+  return expected.some((name) => name !== null && name === seen);
+}
+
+// The facts above for one of this driver's cards, by id, active or not; null when there is no
+// such card of this driver. The statement row is the latest posted one with the card's own
+// provider and token, joined here so the token never leaves the query.
+export async function readCardStatementName(
+  q: Queryable,
+  driverId: string,
+  cardId: string,
+): Promise<CardNameFacts | null> {
+  if (!isCanonicalUuid(driverId) || !isCanonicalUuid(cardId)) return null;
+  const rows = await q.query<{
+    holder_kind: string;
+    portal_name: string | null;
+    first_name: string;
+    last_name: string;
+    code: string;
+    statement_name: string | null;
+  }>(
+    `SELECT c.holder_kind, c.portal_name, d.first_name, d.last_name, d.code,
+            (SELECT t.portal_name FROM card_transactions t
+              WHERE t.tenant_id = c.tenant_id AND t.provider = c.provider AND t.card_token = c.provider_token
+              ORDER BY t.posted_at DESC, t.id DESC LIMIT 1) AS statement_name
+       FROM driver_cards c
+       JOIN drivers d ON d.tenant_id = c.tenant_id AND d.id = c.driver_id
+      WHERE c.tenant_id = current_tenant_id() AND c.id = CAST($1 AS uuid) AND c.driver_id = CAST($2 AS uuid)`,
+    [cardId, driverId],
+  );
+  if (rows.length !== 1) return null;
+  const r = rows[0];
+  if (r.holder_kind !== "named" && r.holder_kind !== "generic") return null;
+  return {
+    holderKind: r.holder_kind,
+    cardPortalName: r.holder_kind === "generic" ? r.portal_name : null,
+    driverName: `${r.first_name} ${r.last_name}`,
+    driverCode: r.code,
+    statementName: r.statement_name,
+  };
+}
+
 // A new card's provider reference: drawn at random, never from anything a person typed.
 export function newCardToken(uuid: () => string = randomUUID): string {
   const token = `fcs_card_${uuid().replace(/-/g, "").slice(0, 24)}`;
