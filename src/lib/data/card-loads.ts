@@ -1,3 +1,4 @@
+import { ledgerRecordSql } from "../card-loads/facts";
 import type { Queryable } from "../db";
 import type { Period } from "../time/local-date";
 
@@ -25,7 +26,8 @@ export type CardLoad = {
   cardLast4: string;
   amountCents: number;
   driver: { id: string; code: string } | null;
-  // A ledger row on the card provider names the load (any state but failed: unknown is a record).
+  // A payment record stands behind the load, as ledgerRecordSql reads it (src/lib/card-loads/facts.ts):
+  // a settled row naming it, or a row still reserved, sent or unknown that may be it.
   record: "recorded" | "no_record";
   ruling: CardLoadRuling | null;
 };
@@ -49,9 +51,7 @@ const SQL = `
   SELECT CAST(t.id AS text) AS id, CAST(t.posted_on AS text) AS posted_on, t.card_last4,
          CAST(t.amount_cents AS text) AS amount_cents,
          CAST(d.id AS text) AS driver_id, d.code AS driver_code,
-         EXISTS (SELECT 1 FROM money_actions m
-                  WHERE m.tenant_id = t.tenant_id AND m.outside_system = 'fuel_card_sim'
-                    AND m.outside_id = t.provider_ref AND m.state <> 'failed') AS recorded,
+         ${ledgerRecordSql("t.provider_ref", "t.provider", "t.card_token")} AS recorded,
          CAST(p.id AS text) AS proposal_id, p.status AS proposal_status, p.decision_note,
          (SELECT mb.role FROM memberships mb
            WHERE mb.tenant_id = t.tenant_id AND mb.cognito_sub = p.decided_by) AS decided_role,

@@ -23,12 +23,36 @@ export const LOAD_ROW_SQL = `SELECT CAST(id AS text) AS id, provider, provider_r
        CAST(posted_on AS text) AS posted_on, CAST(amount_cents AS text) AS amount_cents, ${ts("created_at")} AS created_at
   FROM card_transactions WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`;
 
-// A payment record behind a load: any ledger row on the card provider naming the load's id, unless
-// it failed. A row still sent or unknown counts as a record, so unknown is never "no record".
-export const LEDGER_ROW_SQL = `SELECT 1 AS one FROM money_actions m
-  WHERE m.tenant_id = current_tenant_id() AND m.outside_system = 'fuel_card_sim'
-    AND m.outside_id = $1 AND m.state <> 'failed'
-  LIMIT 1`;
+// The simulated card provider's id for the load a ledger row's request id makes, in SQL: the same
+// formula as loadId() in src/lib/adapters/payment/fuel-card-sim.ts ("fcs_load_" and the first 24
+// hex of sha256("load:" + request id)). The adapter is called with the row's own request_id.
+export const simLoadIdSql = (requestId: string): string =>
+  `'fcs_load_' || left(encode(sha256(convert_to('load:' || ${requestId}, 'UTF8')), 'hex'), 24)`;
+
+// A payment record behind a load, as a predicate over the load's provider reference, provider and
+// card token (SQL expressions; the token stays inside SQL). Only a settle writes a ledger row's
+// outside columns, so a row still reserved, sent or unknown names no outside id yet. Unknown is
+// never "no record", so any one of these counts:
+//   - a ledger row the card provider settled naming the load's id, unless it failed;
+//   - a row not yet settled (reserved, sent or unknown) whose request id makes the load's id;
+//   - a row not yet settled on an advance whose payout attempt went to this card (advances.card_id):
+//     a payout in flight or unconfirmed on the card may be this load, so it fails closed.
+// Shared by the draft and executor probe below and the agent's read (src/lib/data/card-loads.ts).
+export function ledgerRecordSql(ref: string, provider: string, token: string): string {
+  return `(EXISTS (SELECT 1 FROM money_actions m
+            WHERE m.tenant_id = current_tenant_id() AND m.state <> 'failed'
+              AND ((m.outside_system = 'fuel_card_sim' AND m.outside_id = ${ref})
+                OR (m.state IN ('reserved', 'sent', 'unknown') AND ${simLoadIdSql("m.request_id")} = ${ref})))
+       OR EXISTS (SELECT 1 FROM money_actions m
+            JOIN advances a ON a.tenant_id = m.tenant_id AND a.id = m.subject_id
+            JOIN driver_cards c ON c.tenant_id = a.tenant_id AND c.id = a.card_id
+            WHERE m.tenant_id = current_tenant_id() AND m.subject_table = 'advances'
+              AND m.state IN ('reserved', 'sent', 'unknown')
+              AND c.provider = ${provider} AND c.provider_token = ${token}))`;
+}
+
+export const LEDGER_ROW_SQL = `SELECT 1 AS one
+  WHERE ${ledgerRecordSql("CAST($1 AS text)", "CAST($2 AS text)", "CAST($3 AS text)")}`;
 
 // The drivers whose file holds the card (any status). The provider and token are unique on file,
 // so this is one row or none.
@@ -51,8 +75,11 @@ export async function readLoadRow(q: Queryable, transactionId: string): Promise<
   return rows.length === 1 ? rows[0] : null;
 }
 
-export async function hasLedgerRow(q: Queryable, providerRef: string): Promise<boolean> {
-  return (await q.query(LEDGER_ROW_SQL, [providerRef])).length > 0;
+export async function hasLedgerRow(
+  q: Queryable,
+  load: Pick<LoadRow, "provider_ref" | "provider" | "card_token">,
+): Promise<boolean> {
+  return (await q.query(LEDGER_ROW_SQL, [load.provider_ref, load.provider, load.card_token])).length > 0;
 }
 
 export async function hasOtherDeficit(q: Queryable, transactionId: string, exceptProposal: string | null): Promise<boolean> {

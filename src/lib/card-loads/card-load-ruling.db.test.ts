@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
+import { loadId } from "../adapters/payment/fuel-card-sim";
 import { getCardLoads } from "../agent/gateway/tools/read/get-card-loads";
 import type { Session } from "../auth/claims";
 import { autopilotSub } from "../autopilot/session";
@@ -9,11 +10,13 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param } from "../db/types";
 import { deskHandlers } from "../desk/handlers";
 import type { OpenEvent } from "../desk/log";
+import { requestIdOf } from "../money/keys";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal, type ApproveOptions, type Executor } from "../proposals/execute";
 import { cardLoadRulingExecutor } from "../proposals/executors/card-load-ruling";
 import { serviceSession } from "../sweep/service-session";
 import { assertMembership } from "../tenant/context";
+import { simLoadIdSql } from "./facts";
 import { proposeCardLoadRuling } from "./ruling";
 
 // The card load ruling against the real database, as the app's role, with a fixed clock: a load on
@@ -90,11 +93,11 @@ type Load = { id: string; ref: string; last4: string };
 // A statement load on a card, written at a fixed instant (the seed writes the statement).
 async function load(
   f: Fixture,
-  over: { driverId?: string; token?: string; last4?: string; createdAt?: string; cents?: number } = {},
+  over: { driverId?: string; token?: string; last4?: string; createdAt?: string; cents?: number; ref?: string } = {},
 ): Promise<Load> {
   const card = over.token ? { token: over.token, last4: over.last4 ?? "0000" } : await cardOf(f, over.driverId ?? f.driverId);
   const id = randomUUID();
-  const ref = `fcs_load_${randomBytes(12).toString("hex")}`;
+  const ref = over.ref ?? `fcs_load_${randomBytes(12).toString("hex")}`;
   await admin.withTenant(f.tenantId, (q) =>
     q.execute(
       `INSERT INTO card_transactions (id, tenant_id, provider, provider_ref, kind, card_token, card_last4, portal_name,
@@ -107,24 +110,36 @@ async function load(
   return { id, ref, last4: card.last4 };
 }
 
-// A payment record behind a load, written the way the ledger settles one: reserved, sent, then
-// confirmed by the card provider with the load's reference.
-async function ledgerRow(f: Fixture, ref: string, to: "sent" | "confirmed" = "confirmed"): Promise<void> {
-  const id = randomUUID();
-  const advance = randomUUID();
+type LedgerState = "reserved" | "sent" | "unknown" | "confirmed";
+
+// An advance payout's ledger row, moved the way the ledger moves one: reserved, then sent, then
+// either left unknown or confirmed by the card provider with the load's reference (only a settle
+// writes the outside columns). id: the row's id (its request id is the id without dashes);
+// advanceId: the advance it pays. Returns the row's id.
+async function ledgerRow(
+  f: Fixture,
+  ref: string,
+  to: LedgerState = "confirmed",
+  over: { id?: string; advanceId?: string } = {},
+): Promise<string> {
+  const id = over.id ?? randomUUID();
+  const advance = over.advanceId ?? randomUUID();
   await admin.withTenant(f.tenantId, async (q) => {
     await q.execute(
       `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, idempotency_key,
          request_id, amount_cents, counterparty_table, counterparty_id, proposed_by, approver_membership_id)
        VALUES (CAST($1 AS uuid), current_tenant_id(), 'advance_payout', 'payment', 'advances', CAST($2 AS uuid), $3,
          $4, $5, 'drivers', CAST($6 AS uuid), 'person', CAST($7 AS uuid))`,
-      [id, advance, `advance_payout:${advance}:1`, id.replace(/-/g, ""), CENTS, f.driverId, f.memberId],
+      [id, advance, `advance_payout:${advance}:1`, requestIdOf(id), CENTS, f.driverId, f.memberId],
     );
+    if (to === "reserved") return;
     await q.execute("UPDATE money_actions SET state = 'sent', sent_at = CAST($2 AS timestamptz) WHERE id = CAST($1 AS uuid)", [
       id,
       WRITTEN,
     ]);
-    if (to === "confirmed") {
+    if (to === "unknown") {
+      await q.execute("UPDATE money_actions SET state = 'unknown' WHERE id = CAST($1 AS uuid)", [id]);
+    } else if (to === "confirmed") {
       await q.execute(
         `UPDATE money_actions SET state = 'confirmed', settled_via = 'response', settled_at = CAST($2 AS timestamptz),
                 outside_system = 'fuel_card_sim', outside_type = 'load', outside_id = $3, outside_amount_cents = amount_cents
@@ -133,7 +148,11 @@ async function ledgerRow(f: Fixture, ref: string, to: "sent" | "confirmed" = "co
       );
     }
   });
+  return id;
 }
+
+// A load whose reference is the one the card provider makes for a ledger row with this id.
+const loadFor = (f: Fixture, actionId: string) => load(f, { ref: loadId(requestIdOf(actionId)) });
 
 // The card check's open difference on a load, as a finished check leaves it.
 async function openBreak(f: Fixture, l: Load): Promise<void> {
@@ -350,6 +369,95 @@ describe("ruling on the card", () => {
     const lateId = await drafted(late);
     const racing: Executor = async (db, session, proposal, opts, deps) => {
       await ledgerRow(A, late.ref);
+      return cardLoadRulingExecutor(db, session, proposal, opts, deps);
+    };
+    expect(await approve(A.session, lateId, { confirmed: false }, { card_load_ruling: racing })).toMatchObject({ ok: false });
+    expect(await proposalRow(A, lateId)).toMatchObject({ status: "failed", decision_note: "stale" });
+    expect(await deficitsOn(A, late)).toBe(0);
+  });
+});
+
+describe("a payout not yet settled", () => {
+  it("makes the same load id in SQL as the card provider makes from the row's request id", async () => {
+    const id = await ledgerRow(A, "unused", "reserved");
+    const [r] = await app.withTenant(A.tenantId, (q) =>
+      q.query<{ request_id: string; load_id: string }>(
+        `SELECT m.request_id, ${simLoadIdSql("m.request_id")} AS load_id FROM money_actions m
+          WHERE m.tenant_id = current_tenant_id() AND m.id = CAST($1 AS uuid)`,
+        [id],
+      ),
+    );
+    expect(r.request_id).toBe(requestIdOf(id));
+    expect(r.load_id).toBe(loadId(r.request_id));
+  });
+
+  it("drafts nothing for a load whose payout is still sent, and the agent reads it as recorded", async () => {
+    const id = randomUUID();
+    const l = await loadFor(A, id);
+    await ledgerRow(A, l.ref, "sent", { id });
+    expect(await draft(serviceA, l.id)).toEqual({ kind: "nothing", category: "ledger_row" });
+    expect(await proposalsOn(A, l)).toBe(0);
+    const ctx = { now: NOW, timeZone: "America/Chicago", session: A.session } as never;
+    const out = await app.withTenant(A.tenantId, (q) => getCardLoads.run(q, ctx, { days: 7, limit: 50 }, { screen: null, limit: null }));
+    const rows = (out.result as { rows: { id: string; record: string }[] }).rows;
+    expect(rows.find((r) => r.id === l.id)).toMatchObject({ record: "recorded" });
+  });
+
+  it("drafts nothing for a load whose payout outcome is unknown", async () => {
+    const id = randomUUID();
+    const l = await loadFor(A, id);
+    await ledgerRow(A, l.ref, "unknown", { id });
+    expect(await draft(serviceA, l.id)).toEqual({ kind: "nothing", category: "ledger_row" });
+    expect(await proposalsOn(A, l)).toBe(0);
+  });
+
+  it("drafts nothing for a load whose payout is only reserved", async () => {
+    const id = randomUUID();
+    const l = await loadFor(A, id);
+    await ledgerRow(A, l.ref, "reserved", { id });
+    expect(await draft(serviceA, l.id)).toEqual({ kind: "nothing", category: "ledger_row" });
+    expect(await proposalsOn(A, l)).toBe(0);
+  });
+
+  it("drafts nothing for a load on a card an advance payout not yet settled went to", async () => {
+    // The second driver's card, so no other test's loads sit on it.
+    const [c] = await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ id: string }>(
+        `SELECT CAST(id AS text) AS id FROM driver_cards
+          WHERE tenant_id = current_tenant_id() AND driver_id = CAST($1 AS uuid) AND is_default`,
+        [A.otherDriverId],
+      ),
+    );
+    const advance = randomUUID();
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO advances (id, tenant_id, driver_id, request_ref, requested_at, requested_on, amount_cents, status, source, card_id)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, CAST($4 AS timestamptz), CAST('2026-11-02' AS date),
+           CAST($5 AS bigint), 'approved', 'ui', CAST($6 AS uuid))`,
+        [advance, A.otherDriverId, `REQ-RULING-${advance.slice(0, 8)}`, WRITTEN, CENTS, c.id],
+      ),
+    );
+    // The load's reference is not the one the payout's request id makes: only the card ties them.
+    const l = await load(A, { driverId: A.otherDriverId });
+    await ledgerRow(A, "unused", "unknown", { advanceId: advance });
+    expect(await draft(serviceA, l.id)).toEqual({ kind: "nothing", category: "ledger_row" });
+    expect(await proposalsOn(A, l)).toBe(0);
+  });
+
+  it("goes stale when a payout not yet settled shows up, before the approval and between the approval and the booking", async () => {
+    const early = randomUUID();
+    const l = await loadFor(A, early);
+    const id = await drafted(l);
+    await ledgerRow(A, l.ref, "sent", { id: early });
+    expect(await approve(A.session, id)).toMatchObject({ ok: false, category: "stale" });
+    expect(await proposalRow(A, id)).toMatchObject({ status: "proposed" });
+    expect(await deficitsOn(A, l)).toBe(0);
+
+    const lateAction = randomUUID();
+    const late = await loadFor(A, lateAction);
+    const lateId = await drafted(late);
+    const racing: Executor = async (db, session, proposal, opts, deps) => {
+      await ledgerRow(A, late.ref, "unknown", { id: lateAction });
       return cardLoadRulingExecutor(db, session, proposal, opts, deps);
     };
     expect(await approve(A.session, lateId, { confirmed: false }, { card_load_ruling: racing })).toMatchObject({ ok: false });

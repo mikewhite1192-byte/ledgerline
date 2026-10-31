@@ -28,8 +28,8 @@ import type {
 //      them): none means the drafted ruling (a deficit for the full load); {ruling: owes_nothing}
 //      means none. A request whose edits differ from the stored ones is refused (edits_changed);
 //   c. re-check the facts, because time passed: the statement row is the one the card named (its
-//      kind, reference and amount), no payment record names it, no other ruling booked a deficit on
-//      it, and the card is still that driver's. Any failure marks the proposal failed with the note "stale" and writes nothing;
+//      kind, reference and amount), no payment record stands behind it (ledgerRecordSql), no
+//      other ruling booked a deficit on it, and the card is still that driver's. Any failure marks the proposal failed with the note "stale" and writes nothing;
 //   d. approved -> executing;
 //   e. on a deficit, one driver_deficits row for the full load amount, named by the member who
 //      ruled, ON CONFLICT on the proposal DO NOTHING and read back, so a resume adopts the row a
@@ -162,7 +162,7 @@ async function factsHold(q: Queryable, a: Args, proposalId: string): Promise<boo
   if (!row || row.kind !== "load" || row.provider_ref !== a.providerRef || loadCents(row) !== a.amountCents) {
     return false;
   }
-  if (await hasLedgerRow(q, a.providerRef)) return false;
+  if (await hasLedgerRow(q, row)) return false;
   if (await hasOtherDeficit(q, a.transactionId, proposalId)) return false;
   return (await cardDriver(q, row.provider, row.card_token)) === a.driverId;
 }

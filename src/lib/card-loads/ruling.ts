@@ -72,7 +72,7 @@ export async function proposeCardLoadRuling(
   const amountCents = loadCents(row);
   if (amountCents === null) return nothing("not_found");
 
-  if (await hasLedgerRow(q, row.provider_ref)) return nothing("ledger_row");
+  if (await hasLedgerRow(q, row)) return nothing("ledger_row");
   // A ruling already booked what the driver owes on this row.
   if (await hasOtherDeficit(q, id, null)) return nothing("already_decided");
   const driverId = await cardDriver(q, row.provider, row.card_token);

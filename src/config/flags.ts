@@ -805,10 +805,13 @@ export type Flags = {
   // before it drafts nothing) itself.
   advanceAtPickup: { enabled: boolean; startDate: string };
   // The card load ruling (docs: CARD-LOAD-RULING): a fuel card load on the card statement with no
-  // payment record behind it (no money_actions row on fuel_card_sim naming its load id, unless that
-  // row failed) gets one card_load_ruling card from the desk loop's card_transaction source, for a
-  // named person to rule on: Yes books a deficit for the full load amount, an edit to owes_nothing
-  // records the ruling with none (src/lib/card-loads/ruling.ts, the executor in
+  // payment record behind it gets one card_load_ruling card from the desk loop's card_transaction
+  // source. A record is any money_actions row but a failed one that fuel_card_sim settled naming
+  // the load's id, any row still reserved, sent or unknown whose request id makes that load id, or
+  // any such unsettled row on an advance paid to the load's card (ledgerRecordSql in
+  // src/lib/card-loads/facts.ts): a payout in flight or unconfirmed is never "no record". A
+  // named person rules on the card: Yes books a deficit for the full load amount, an edit to
+  // owes_nothing records the ruling with none (src/lib/card-loads/ruling.ts, the executor in
   // src/lib/proposals/executors/card-load-ruling.ts). Never the autopilot's. The agent only reads
   // the loads (get_card_loads). startDate (YYYY-MM-DD, the carrier's zone): a statement row that
   // reached the records before it drafts nothing. Each path asks enabled itself.
