@@ -15,6 +15,9 @@ export const DESK_SOURCES = [
   "collections",
   "cash_check",
   "autopilot",
+  // LOAD-MOVEMENT (0071): a read document matched to one load, and a load_events row.
+  "document",
+  "load_event",
 ] as const;
 export type DeskSource = (typeof DESK_SOURCES)[number];
 
@@ -27,6 +30,8 @@ export const SUBJECT_TABLES = {
   customer_payment: "customer_payments",
   audit: "proposals",
   autopilot: "proposals",
+  document: "documents",
+  load_event: "load_events",
 } as const;
 export type SubjectSource = keyof typeof SUBJECT_TABLES;
 

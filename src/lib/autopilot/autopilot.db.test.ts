@@ -617,7 +617,7 @@ describe("the autopilot", () => {
             nowIso: new Date(NOW).toISOString(),
             nowLocal: { date: "2026-11-02", hour: 10 },
             startDate: "2026-11-01",
-            watermarks: { card_transactions: "", customer_payments: "" },
+            watermarks: { card_transactions: "", customer_payments: "", documents: "", load_events: "" },
             budget: 10,
             newId: randomUUID,
           },

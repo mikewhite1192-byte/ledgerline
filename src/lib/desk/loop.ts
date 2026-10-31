@@ -100,6 +100,7 @@ const CLAIM_LEASE_SQL = `UPDATE desk_loops
     SET lease_token = CAST($2 AS uuid), lease_until = CAST($3 AS timestamptz), updated_at = CAST($1 AS timestamptz)
   WHERE tenant_id = current_tenant_id() AND (lease_until IS NULL OR lease_until < CAST($1 AS timestamptz))
   RETURNING watermarks->>'card_transactions' AS card_transactions, watermarks->>'customer_payments' AS customer_payments,
+            watermarks->>'documents' AS documents, watermarks->>'load_events' AS load_events,
             (SELECT t.timezone FROM tenants t WHERE t.id = current_tenant_id()) AS zone`;
 
 // The panel's "running since": set once, by the lease holder only.
@@ -120,7 +121,13 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
     claim: (input) =>
       inTenant(async (q) => {
         await q.execute(CLAIM_ROW_SQL, [input.nowIso]);
-        const rows = await q.query<{ card_transactions: unknown; customer_payments: unknown; zone: unknown }>(
+        const rows = await q.query<{
+          card_transactions: unknown;
+          customer_payments: unknown;
+          documents: unknown;
+          load_events: unknown;
+          zone: unknown;
+        }>(
           CLAIM_LEASE_SQL,
           [input.nowIso, input.token, input.leaseUntilIso],
         );
@@ -129,7 +136,12 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
         if (typeof r.zone !== "string" || r.zone.length === 0) throw new DbError("unknown");
         return {
           zone: r.zone,
-          watermarks: { card_transactions: r.card_transactions, customer_payments: r.customer_payments },
+          watermarks: {
+            card_transactions: r.card_transactions,
+            customer_payments: r.customer_payments,
+            documents: r.documents,
+            load_events: r.load_events,
+          },
         };
       }),
     startClock: async (input) => {
@@ -256,6 +268,8 @@ export async function wakeDesk(
     const watermarks: Watermarks = {
       card_transactions: watermarkOf(claimed.watermarks.card_transactions, startInstant),
       customer_payments: watermarkOf(claimed.watermarks.customer_payments, startInstant),
+      documents: watermarkOf(claimed.watermarks.documents, startInstant),
+      load_events: watermarkOf(claimed.watermarks.load_events, startInstant),
     };
 
     // Discovery, inside the day's share.

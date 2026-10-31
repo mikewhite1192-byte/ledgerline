@@ -20,6 +20,7 @@ import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from
 import { escrowReleaseExecutor } from "./executors/escrow-release";
 import { executeDetentionCharge } from "./executors/detention-charge";
 import { loadCreateExecutor } from "./executors/load-create";
+import { loadMoveExecutor } from "./executors/load-move";
 import { loadRateFill } from "./executors/load-rate-fill";
 import { payCorrectionExecutor } from "./executors/pay-correction";
 import { payPolicySetupExecutor } from "./executors/pay-policy-setup";
@@ -246,6 +247,12 @@ export const EXECUTORS: ExecutorRegistry = {
   // release or any release gate reason before anything is approved.
   get escrow_release() {
     return flags.escrowRelease.enabled ? escrowReleaseExecutor : undefined;
+  },
+  // A load move code could not decide (src/lib/proposals/executors/load-move.ts): the one move the
+  // card names, as the person's own press, read through loadMovement.enabled on every approval.
+  // No money moves.
+  get load_move() {
+    return flags.loadMovement.enabled ? loadMoveExecutor : undefined;
   },
 };
 

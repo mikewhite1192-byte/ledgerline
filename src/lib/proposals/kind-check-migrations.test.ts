@@ -165,6 +165,24 @@ describe("0069's re-created kind check", () => {
   });
 });
 
+describe("0071's re-created kind check", () => {
+  const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
+
+  it("adds it NOT VALID in 0071_load_events and validates it in 0071_load_events_validate, applied next", () => {
+    const added = read("0071_load_events.sql");
+    const validate = read("0071_load_events_validate.sql");
+    const adds = [...added.matchAll(/ADD\s+CONSTRAINT\s+proposals_kind_check\s+CHECK\b[^;]*;/gi)];
+    expect(adds).toHaveLength(1);
+    expect(adds[0][0]).toMatch(/\)\s*NOT\s+VALID\s*;$/i);
+    expect(adds[0][0]).toContain("'escrow_release'");
+    expect(adds[0][0]).toContain("'load_move'");
+    expect(validate).toMatch(/ALTER\s+TABLE\s+proposals\s+VALIDATE\s+CONSTRAINT\s+proposals_kind_check\s*;/i);
+    expect(validate).toMatch(/ALTER\s+TABLE\s+desk_log\s+VALIDATE\s+CONSTRAINT\s+desk_log_source_check\s*;/i);
+    const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
+    expect(names.indexOf("0071_load_events_validate.sql")).toBe(names.indexOf("0071_load_events.sql") + 1);
+  });
+});
+
 describe("0062's two re-created checks", () => {
   // Re-created NOT VALID, so the file that holds the exclusive lock reads no rows, then validated
   // by the file the runner applies next, in its own transaction, under a lock that lets reads and

@@ -1,5 +1,5 @@
 // The tenant tables the seed writes and its replace mode clears: the seventeen of migrations 0004
-// and 0005, the outside text and its screenings from 0008, the fuel cards on file from 0017, the
+// and 0005, the moves of a load from 0071 (one per seeded status change, right after loads), the outside text and its screenings from 0008, the fuel cards on file from 0017, the
 // driver identity map and arming log from 0027, the money codes from 0048 (planned empty; it names
 // pay items and load charges, so it goes before them on a delete), the card provider's statement
 // and the card check's runs and differences from 0046 (the seed writes no run and no difference;
@@ -34,6 +34,7 @@ export const TENANT_TABLES = [
   "driver_identities",
   "driver_arm_events",
   "loads",
+  "load_events",
   "load_state_miles",
   "load_accessorials",
   "driver_days",
@@ -186,6 +187,19 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["pickup_departed_at", "timestamptz"],
       ["delivery_arrived_at", "timestamptz"],
       ["delivery_departed_at", "timestamptz"],
+    ],
+  },
+  load_events: {
+    table: "load_events",
+    columns: [
+      ["id", "uuid"],
+      ["load_id", "uuid"],
+      ["from_status", "text"],
+      ["to_status", "text"],
+      ["source", "text"],
+      ["evidence_table", "text"],
+      ["evidence_id", "uuid"],
+      ["at", "timestamptz"],
     ],
   },
   load_state_miles: {

@@ -39,6 +39,7 @@ vi.mock("@/lib/seed/reset", async (importOriginal) => ({
   previewDemoReset: mocks.previewDemoReset,
 }));
 vi.mock("./reset-action", () => ({ resetDemoAction: vi.fn() }));
+vi.mock("./fleet-action", () => ({ moveFleetAction: vi.fn() }));
 
 // The request's transaction, holding one membership with this role.
 function signedIn(role: "admin" | "staff") {
@@ -113,6 +114,7 @@ describe("/settings/demo", () => {
     expect(screen.getByText(/^Kept as they are:/)).toBeTruthy();
     expect(screen.getByRole("checkbox")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reset the demo" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Move the fleet" })).toBeTruthy();
     expect(mocks.previewDemoReset).toHaveBeenCalledWith(expect.anything(), BR);
   });
 
@@ -123,7 +125,8 @@ describe("/settings/demo", () => {
     render(await DemoSettings());
     const blocked = screen.getByRole("status");
     expect(blocked.textContent).toContain(refusalText(refusals[0]));
-    expect(screen.queryByRole("button")).toBeNull();
+    // Only the reset waits on the person; Move the fleet is its own card.
+    expect(screen.queryByRole("button", { name: "Reset the demo" })).toBeNull();
   });
 
   it("shows a staff login a sentence, never the counts or the button", async () => {

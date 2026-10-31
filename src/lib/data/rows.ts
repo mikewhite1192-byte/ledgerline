@@ -106,6 +106,19 @@ export type LoadRow = {
   delivery_departed_at: string | null;
 };
 
+// One move of a load (0071, src/lib/loads/movement.ts). The seed writes one per status change
+// in its history, source seed, naming no evidence.
+export type LoadEventRow = {
+  id: string;
+  load_id: string;
+  from_status: "planned" | "in_transit";
+  to_status: "in_transit" | "delivered";
+  source: "driver_photo" | "driver_text" | "driver_voice" | "staff" | "demo_feed" | "seed";
+  evidence_table: "documents" | "inbound_messages" | "voice_notes" | null;
+  evidence_id: string | null;
+  at: string;
+};
+
 export type LoadStateMilesRow = { id: string; load_id: string; state: string; miles: number };
 
 export type LoadAccessorialRow = {
@@ -667,6 +680,7 @@ export type TenantRows = {
   driver_identities: DriverIdentityRow[];
   driver_arm_events: DriverArmEventRow[];
   loads: LoadRow[];
+  load_events: LoadEventRow[];
   load_state_miles: LoadStateMilesRow[];
   load_accessorials: LoadAccessorialRow[];
   driver_days: DriverDayRow[];
