@@ -12,14 +12,21 @@ import { splitInvoiceQueue } from "./queue";
 // TMS-MIRROR (S3): when the dispatch system finalizes one of our delivered loads, the desk drafts
 // that load's invoice card, the same card Refresh on the invoice queue drafts (./propose.ts): the
 // rules engine's total and lines from OUR loads row, never the dispatch system's revenue. It goes
-// through persistEngineProposal, so the owner's limit mode decides whether a question is written,
-// and approving it is the usual route and gate. Nothing here writes outside the app, and nothing
-// moves money.
+// through persistEngineProposal, so the owner's limit mode decides whether a question is written;
+// under Auto the desk's autopilot lane acts on the card later, never here. Approving it is the
+// usual route and gate. Nothing here writes outside the app, and nothing moves money.
 //
 // Inside the desk's tenant transaction (src/lib/loads/movement.ts moveFromTmsEvent, which already
 // asked tmsSync, its start date and loadMovement and holds the load's row lock). Takes turns with
 // Refresh on the same tenant lock. The same load finalized twice is one card: one live card per
 // kind and subject, equal args are a duplicate, and proposals' unique dedupe key is the backstop.
+// A load whose delivered event became a card instead of a move is not in the queue when its
+// finalize arrives, and this never revisits it: Refresh drafts it once a person settles the move.
+//
+// Lock order: this holds the load row, then locks the load's invoice_post cards; the invoice
+// executor locks its card, then the load row. A person approving a Refresh card for the same load
+// in the same instant can deadlock; Postgres aborts one side, both roll back before any write
+// leaves the database, and the desk retries the event inside its attempt cap.
 
 export type FinalizeOutcome =
   | { kind: "proposed"; proposalId: string; loadId: string }
