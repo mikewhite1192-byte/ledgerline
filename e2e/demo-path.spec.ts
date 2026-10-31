@@ -119,6 +119,8 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
         `/api/agent/turns/${id}`,
         `/api/agent/turns/${id}/trace`,
         `/api/proposals/${id}/audit`,
+        // The launcher polls for the agent's questions on every page now that they are on.
+        "/api/agent/asks",
         "/api/auth/sign-out",
       ]) {
         await fetch(`${APP_URL}${path}`, { redirect: "manual", signal: AbortSignal.timeout(150_000) });

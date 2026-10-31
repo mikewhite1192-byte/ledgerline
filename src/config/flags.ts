@@ -1047,18 +1047,19 @@ export const flags: Flags = {
       money_code: { maxCents: 15_000, dayMaxCents: 60_000, dayMaxCount: 4, driverDayMaxCents: 30_000, armed: false },
     },
   },
-  // Ships off: turning it on is the owner's own one-line PR.
-  loadMovement: { enabled: false, startDate: "2026-10-30" },
+  // On by the owner's call (D-071, 2026-10-31). A load_move card is still a person's tap.
+  loadMovement: { enabled: true, startDate: "2026-10-30" },
+  // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.
   agentAsks: {
-    enabled: false,
+    enabled: true,
     reasonEnabled: true,
     reasonMaxCostCents: 2,
     reasonMaxOutputTokens: 80,
     reasonsPerWake: 3,
     listLimit: 5,
   },
-  // Ships off: turning it on is the owner's own one-line PR.
-  advanceAtPickup: { enabled: false, startDate: "2026-10-31" },
+  // On by the owner's call (D-071): it only drafts a card; approving it goes through the usual gate.
+  advanceAtPickup: { enabled: true, startDate: "2026-10-31" },
 };
 
 applyLocalOverrides(flags);
