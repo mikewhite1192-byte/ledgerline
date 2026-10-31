@@ -1037,7 +1037,7 @@ export const flags: Flags = {
   escrowRelease: { enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" },
   autopilot: {
     enabled: true,
-    armed: false,
+    armed: true,
     startDate: "2026-10-31",
     kinds: {
       invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25, armed: true },
