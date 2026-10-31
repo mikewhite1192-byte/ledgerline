@@ -532,6 +532,8 @@ describe("the advance flow", () => {
   });
 
   it("asks the pay rules again at approval and never pays a proposal the numbers no longer allow", async () => {
+    // With parking off it fails stale; parked.db.test.ts covers the same approval with parking on.
+    flags.advanceParking.enabled = false;
     // An approved $400.00 advance already open: $250.00 more would pass the $600.00 earned share.
     await addAdvance(admin, A, 40_000, "approved");
     const id = await addProposal();
@@ -1389,6 +1391,8 @@ describe("the advance flow", () => {
     });
 
     it("records the load an advance is for, and never pays past what is left under the load's cap", async () => {
+      // With parking off it fails stale; parked.db.test.ts covers the same approval with parking on.
+      flags.advanceParking.enabled = false;
       // A quarter of the load's $1,200.00 pay: a $300.00 cap.
       await setLoadCap(2_500);
       const [mine, theirs] = [await loadOf("L-1"), await loadOf("L-2")];

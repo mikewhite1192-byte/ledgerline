@@ -103,8 +103,8 @@ describe("parkingOn", () => {
     flags.advanceParking = saved;
   });
 
-  it("ships off", () => {
-    expect(parkingOn("2026-11-05T15:00:00.000Z", "America/Chicago")).toBe(false);
+  it("ships on, from its start date", () => {
+    expect(parkingOn("2026-11-05T15:00:00.000Z", "America/Chicago")).toBe(true);
   });
 
   it("is on only with the switch on, for a proposal made on or after the start date in the carrier's zone", () => {
