@@ -746,7 +746,27 @@ export type Flags = {
   // executor before the release row is written and at the reserve, on top of payoutsEnabled.
   // Nothing is emailed: a driver due for release is only listed.
   escrowRelease: { enabled: boolean; armed: boolean; capCents: number; startDate: string };
+  // Autopilot (src/lib/autopilot): the owner's rule per action kind (Off, Ask me, Auto within
+  // limits, autopilot_rules) lets the carrier's autopilot login approve a proposal with no click,
+  // only after the gateway, the rules engine's recompute (matched) and the auditor's pass, and
+  // only inside the limits. The model never decides: a pure policy in code does. enabled: the desk
+  // source, its handler and the pause route; off, nothing is found and nothing is approved. armed:
+  // off, nothing is approved and no decision is written. startDate (YYYY-MM-DD, tenant-local): a
+  // proposal made before it is never approved by the autopilot. kinds: the only kinds that may
+  // ever be on Auto, each with a ceiling (inclusive, whole cents) over the owner's own limits; a
+  // kind not listed stays with a person whatever its rule says. enabled, armed, startDate and the
+  // ceilings are read by the desk handler and again by the approval gate, inside the transaction
+  // that approves.
+  autopilot: {
+    enabled: boolean;
+    armed: boolean;
+    startDate: string;
+    kinds: Partial<Record<"invoice_post" | "card_match" | "payment_reapply", AutopilotCeiling>>;
+  };
 };
+
+// One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
+export type AutopilotCeiling = { maxCents: number; dayMaxCents: number; dayMaxCount: number };
 
 export const flags: Flags = {
   aiEnabled: true,
@@ -966,6 +986,16 @@ export const flags: Flags = {
     idleEndMs: 600_000,
   },
   escrowRelease: { enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" },
+  autopilot: {
+    enabled: true,
+    armed: false,
+    startDate: "2026-10-31",
+    kinds: {
+      invoice_post: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 },
+      card_match: { maxCents: 50_000, dayMaxCents: 300_000, dayMaxCount: 40 },
+      payment_reapply: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 },
+    },
+  },
 };
 
 applyLocalOverrides(flags);

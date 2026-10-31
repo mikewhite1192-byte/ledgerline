@@ -20,9 +20,9 @@ export const LOCAL_OVERRIDABLE = [
 // test's model replay was recorded with them off: each one adds a tool, a prompt line or a
 // request field the replay never saw (or, for accounting, a start-up check that needs the sandbox
 // company's id; for the rest, a page, a card or a route the recorded run never had). The local run
-// sets every one of them false so it replays what it recorded. The four armed switches for money
-// codes, the desk loop, factoring and escrow releases are listed ahead of their own arming, while
-// they still ship off, so each arming PR changes only its flag: an off-only switch can never be
+// sets every one of them false so it replays what it recorded. The armed switches for money
+// codes, the desk loop, factoring, escrow releases and the autopilot are listed ahead of their own
+// arming, while they still ship off, so each arming PR changes only its flag: an off-only switch can never be
 // turned on, so listing one early lets the local run do nothing it could not already do.
 export const LOCAL_OFF_ONLY = [
   "accountingEnabled",
@@ -74,6 +74,8 @@ export const LOCAL_OFF_ONLY = [
   "phoneLineEnabled",
   "escrowRelease.enabled",
   "escrowRelease.armed",
+  "autopilot.enabled",
+  "autopilot.armed",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

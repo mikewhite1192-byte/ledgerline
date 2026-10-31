@@ -82,7 +82,18 @@ describe("event keys", () => {
 
   it("maps every subject source to its own table, and every source is a desk source", () => {
     for (const source of Object.keys(SUBJECT_TABLES)) expect(DESK_SOURCES).toContain(source);
-    expect(new Set(Object.values(SUBJECT_TABLES)).size).toBe(Object.keys(SUBJECT_TABLES).length);
+    // A proposal is two pieces of work under two keys (its audit, then the autopilot's look); every
+    // other table belongs to one source.
+    const others = Object.entries(SUBJECT_TABLES).filter(([source]) => source !== "autopilot");
+    expect(new Set(others.map(([, table]) => table)).size).toBe(others.length);
+    expect(SUBJECT_TABLES.autopilot).toBe("proposals");
+    expect(SUBJECT_TABLES.audit).toBe("proposals");
+  });
+
+  it("keeps a proposal's audit key and its autopilot key apart", () => {
+    const id = "1a2b3c4d-0000-4000-8000-00000000000a";
+    expect(eventKey("audit", id)).not.toBe(eventKey("autopilot", id));
+    expect(parseEventKey(eventKey("autopilot", id))).toEqual({ source: "autopilot", subjectId: id });
   });
 });
 

@@ -1,3 +1,4 @@
+import { flags } from "../../config/flags";
 import { DbError, type Queryable } from "../db";
 import { isUuid } from "../uuid";
 import {
@@ -48,8 +49,10 @@ const notLogged = (source: SubjectSource, alias: string) =>
                   AND d.event_key = '${source}:' || CAST(${alias}.id AS text))`;
 
 // The subject finders. Each reads rows created on or after its floor (the watermark, or the start)
-// and not after now, oldest first, that have no line yet. $1 floor, $2 now, $3 limit.
-const FINDERS: { source: SubjectSource; watermark?: keyof Watermarks; sql: string }[] = [
+// and not after now, oldest first, that have no line yet. $1 floor, $2 now, $3 limit. A finder with
+// a `when` finds nothing while it reads false (the autopilot's, until it is armed: no line is
+// written for work nobody may do yet, so arming finds the proposals still waiting then).
+const FINDERS: { source: SubjectSource; watermark?: keyof Watermarks; when?: () => boolean; sql: string }[] = [
   {
     source: "card_transaction",
     watermark: "card_transactions",
@@ -90,6 +93,21 @@ const FINDERS: { source: SubjectSource; watermark?: keyof Watermarks; sql: strin
            WHERE x.tenant_id = current_tenant_id() AND x.status = 'proposed' AND x.auditor_verdict IS NULL
              AND x.created_at >= CAST($1 AS timestamptz) AND x.created_at <= CAST($2 AS timestamptz)
              AND ${notLogged("audit", "x")}
+           ORDER BY x.created_at, x.id LIMIT $3`,
+  },
+  {
+    // A proposal the auditor passed and the engine matched, of a kind the owner set to Auto, that
+    // the autopilot has not looked at. The policy and the approval gate decide it all again.
+    source: "autopilot",
+    when: () => flags.autopilot.enabled === true && flags.autopilot.armed === true,
+    sql: `SELECT CAST(x.id AS text) AS id, ${ts("x.created_at")} AS created_at FROM proposals x
+           WHERE x.tenant_id = current_tenant_id() AND x.status = 'proposed'
+             AND x.auditor_verdict = 'pass' AND x.engine_check = 'matched'
+             AND x.flagged_input_id IS NULL AND x.autopilot_decision IS NULL
+             AND x.created_at >= CAST($1 AS timestamptz) AND x.created_at <= CAST($2 AS timestamptz)
+             AND EXISTS (SELECT 1 FROM autopilot_rules r WHERE r.tenant_id = current_tenant_id()
+                            AND r.kind = x.kind AND r.mode = 'auto')
+             AND ${notLogged("autopilot", "x")}
            ORDER BY x.created_at, x.id LIMIT $3`,
   },
 ];
@@ -176,6 +194,7 @@ export async function findSubjects(
   finder: (typeof FINDERS)[number],
 ): Promise<FinderResult> {
   if (input.budget <= 0) return { seen: 0 };
+  if (finder.when && finder.when() !== true) return { seen: 0 };
   const floor = finder.watermark ? maxInstant(input.watermarks[finder.watermark], input.startInstant) : input.startInstant;
   const rows = await q.query<{ id: string; created_at: string }>(finder.sql, [floor, input.nowIso, input.budget]);
   let newest = floor;

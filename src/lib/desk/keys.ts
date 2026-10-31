@@ -14,16 +14,19 @@ export const DESK_SOURCES = [
   "sweep",
   "collections",
   "cash_check",
+  "autopilot",
 ] as const;
 export type DeskSource = (typeof DESK_SOURCES)[number];
 
-// A source whose work is one row, and the table that row lives in.
+// A source whose work is one row, and the table that row lives in. A proposal is two pieces of work
+// under two keys: its second check (audit) and then the autopilot's look (autopilot).
 export const SUBJECT_TABLES = {
   card_transaction: "card_transactions",
   inbound_message: "inbound_messages",
   voice_note: "voice_notes",
   customer_payment: "customer_payments",
   audit: "proposals",
+  autopilot: "proposals",
 } as const;
 export type SubjectSource = keyof typeof SUBJECT_TABLES;
 

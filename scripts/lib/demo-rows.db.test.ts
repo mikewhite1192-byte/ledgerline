@@ -43,6 +43,10 @@ const rowsOf = (tenantId: string) =>
       `SELECT id, tenant_id, cognito_sub, email, role, created_at FROM memberships
         WHERE tenant_id = current_tenant_id() ORDER BY cognito_sub`,
     ),
+    rules: await q.query(
+      `SELECT id, kind, mode, max_cents, day_max_cents, day_max_count, version, updated_by FROM autopilot_rules
+        WHERE tenant_id = current_tenant_id() ORDER BY kind`,
+    ),
   }));
 
 describe("demo rows through a login that skips row-level security", () => {
@@ -53,7 +57,7 @@ describe("demo rows through a login that skips row-level security", () => {
       await q.execute(
         `CREATE ROLE ${ROLE} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT BYPASSRLS`,
       );
-      await q.execute(`GRANT SELECT, INSERT ON tenants, memberships TO ${ROLE}`);
+      await q.execute(`GRANT SELECT, INSERT ON tenants, memberships, autopilot_rules TO ${ROLE}`);
       // A new tenant's document key comes from this sequence (0015). The master user that runs the
       // migrations owns it on Aurora, so the stand-in gets the same use of it.
       await q.execute(`GRANT USAGE ON SEQUENCE tenant_doc_key_seq TO ${ROLE}`);
@@ -100,8 +104,15 @@ describe("demo rows through a login that skips row-level security", () => {
     const a = await rowsOf(A);
     expect(a.tenants).toMatchObject([{ id: A, slug: carrierA.slug }]);
     expect(a.members).toMatchObject([
+      { cognito_sub: `service:autopilot:${A}`, email: `autopilot@${carrierA.slug}.invalid`, role: "staff" },
       { cognito_sub: `service:sweep:${A}`, email: `sweep@${carrierA.slug}.invalid`, role: "staff" },
       { cognito_sub: `sub-${A}`, email: carrierA.email, role: "admin" },
+    ]);
+    // The starting autopilot rules: Auto on the three kinds that move no money out of the company.
+    expect(a.rules).toMatchObject([
+      { kind: "card_match", mode: "auto", max_cents: 50000, day_max_cents: 300000, day_max_count: 40, version: 1, updated_by: "setup" },
+      { kind: "invoice_post", mode: "auto", max_cents: 200000, day_max_cents: 1000000, day_max_count: 25, version: 1 },
+      { kind: "payment_reapply", mode: "auto", max_cents: 200000, day_max_cents: 1000000, day_max_count: 25, version: 1 },
     ]);
   });
 
@@ -124,6 +135,7 @@ describe("demo rows through a login that skips row-level security", () => {
     const b = await rowsOf(B);
     expect(b.tenants).toMatchObject([{ id: B, slug: carrierB.slug }]);
     expect(b.members).toMatchObject([
+      { cognito_sub: `service:autopilot:${B}`, email: `autopilot@${carrierB.slug}.invalid`, role: "staff" },
       { cognito_sub: `service:sweep:${B}`, email: `sweep@${carrierB.slug}.invalid`, role: "staff" },
       { cognito_sub: `sub-${B}`, email: carrierB.email, role: "admin" },
     ]);
@@ -148,6 +160,7 @@ describe("demo rows through a login that skips row-level security", () => {
     expect(a.members).toMatchObject([
       { cognito_sub: clerk.sub, email: clerk.email, role: "staff" },
       { cognito_sub: judge.sub, email: judge.email, role: "judge" },
+      { cognito_sub: `service:autopilot:${A}`, role: "staff" },
       { cognito_sub: `service:sweep:${A}`, role: "staff" },
       { cognito_sub: `sub-${A}`, email: carrierA.email, role: "admin" },
     ]);
@@ -170,7 +183,7 @@ describe("demo rows through a login that skips row-level security", () => {
     await expect(ensureRows(master, taken, C, adminOf(taken, `sub-${C}`))).rejects.toThrow(
       /belongs to another tenant id/,
     );
-    expect(await rowsOf(C)).toEqual({ tenants: [], members: [] });
+    expect(await rowsOf(C)).toEqual({ tenants: [], members: [], rules: [] });
     expect(await rowsOf(A)).toEqual(before);
   });
 
@@ -183,7 +196,7 @@ describe("demo rows through a login that skips row-level security", () => {
     await expect(ensureRows(master, other, D, adminOf(other, `sub-${A}`))).rejects.toThrow(
       /linked to another tenant/,
     );
-    expect(await rowsOf(D)).toEqual({ tenants: [], members: [] });
+    expect(await rowsOf(D)).toEqual({ tenants: [], members: [], rules: [] });
     expect(await rowsOf(A)).toEqual(before);
   });
 });

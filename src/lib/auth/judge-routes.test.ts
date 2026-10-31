@@ -132,6 +132,7 @@ describe("a judge on every staff-only route", () => {
       "POST /api/money-codes/[id]/check",
       "POST /api/money-codes/[id]/reveal",
       "POST /api/desk/wake",
+      "POST /api/autopilot/pause",
     ]) {
       expect(keys).toContain(k);
     }

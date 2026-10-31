@@ -45,6 +45,10 @@ describe("parseApproveBody", () => {
 
   it("refuses an extra key, a wrong type, bad JSON and a non-object", () => {
     expect(parseApproveBody(JSON.stringify({ confirmed: true, approvedBy: "someone" }))).toBeNull();
+    // Only the autopilot's own login sends a rule, and never through this body.
+    expect(
+      parseApproveBody(JSON.stringify({ autopilot: { ruleId: "3f0c2a8e-5b1d-4c7e-9a6f-2d8b4e1c0a9f", version: 1 } })),
+    ).toBeNull();
     expect(parseApproveBody(JSON.stringify({ confirmed: "yes" }))).toBeNull();
     expect(parseApproveBody(JSON.stringify({ overrideReason: 12345678901 }))).toBeNull();
     expect(parseApproveBody("{not json")).toBeNull();
