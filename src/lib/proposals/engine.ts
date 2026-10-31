@@ -8,6 +8,7 @@ import {
   impactOf,
 } from "../agent/gateway/store/proposals";
 import type { GatewayRef, GatewayTable, ProposalKind } from "../agent/gateway/types";
+import { askFor, asksForSession } from "../asks/store";
 import type { Session } from "../auth/claims";
 import type { Queryable } from "../db";
 
@@ -147,6 +148,8 @@ export async function persistEngineProposal(
       verdict,
     ],
   );
+  // The desk's card gets its question in the same transaction (src/lib/asks).
+  if (asksForSession(session)) await askFor(q, id, now);
   return { kind: "created", proposalId: id };
 }
 

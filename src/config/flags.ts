@@ -763,6 +763,24 @@ export type Flags = {
     startDate: string;
     kinds: Partial<Record<"invoice_post" | "card_match" | "payment_reapply", AutopilotCeiling>>;
   };
+  // The agent's questions (src/lib/asks, 0072): when the desk drafts a proposal of an asked kind
+  // (advance_payout, invoice_post, detention_charge, settlement_approve, pay_correction, load_move)
+  // and the autopilot would not do it by itself, code writes one question about it ("Should I send
+  // Dana Reyes the 70% advance, $1,400.00?"); after the autopilot did one, a told line. Yes goes
+  // through the usual approve route and gate. enabled: the questions are written, the asks route
+  // and the snooze route answer, and the thread shows them; off, nothing is written and both routes
+  // answer 409 asks_off. reasonEnabled: the desk's pass adds Muse Spark's one reason line beside a
+  // question (caller ask_reason), at most reasonMaxCostCents and reasonMaxOutputTokens a call, one
+  // try per question, at most reasonsPerWake calls a wake; a line naming any dollar figure but the
+  // engine's is dropped. listLimit: the most questions one read of the asks route returns.
+  agentAsks: {
+    enabled: boolean;
+    reasonEnabled: boolean;
+    reasonMaxCostCents: number;
+    reasonMaxOutputTokens: number;
+    reasonsPerWake: number;
+    listLimit: number;
+  };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -995,6 +1013,14 @@ export const flags: Flags = {
       card_match: { maxCents: 50_000, dayMaxCents: 300_000, dayMaxCount: 40 },
       payment_reapply: { maxCents: 200_000, dayMaxCents: 1_000_000, dayMaxCount: 25 },
     },
+  },
+  agentAsks: {
+    enabled: true,
+    reasonEnabled: true,
+    reasonMaxCostCents: 2,
+    reasonMaxOutputTokens: 80,
+    reasonsPerWake: 3,
+    listLimit: 5,
   },
 };
 

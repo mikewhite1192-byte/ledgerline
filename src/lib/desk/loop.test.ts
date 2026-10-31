@@ -491,6 +491,42 @@ describe("wakeDesk", () => {
     expect(out.ok && out.counts.left).toBe(1);
   });
 
+  it("runs the agent's questions pass before sleeping: reasons only while armed and under the caps", async () => {
+    const calls: { reasons: boolean; deadlineMs: number; before: number }[] = [];
+    store.asks = async (input) => {
+      calls.push({ reasons: input.reasons, deadlineMs: input.deadlineMs, before: ofKind("sleep").length });
+    };
+    await wake(handlersWith(vi.fn(async () => done())));
+    expect(calls).toEqual([{ reasons: true, deadlineMs: expect.any(Number), before: 0 }]);
+    // The wake's own deadline (the slice), never past the route's.
+    expect(calls[0].deadlineMs).toBeGreaterThan(now);
+    expect(calls[0].deadlineMs).toBeLessThanOrEqual(now + 25_000);
+    expect(ofKind("sleep")).toHaveLength(1);
+
+    flags.deskLoop.armed = false;
+    await wake(handlersWith(vi.fn(async () => done())), uuid(900));
+    expect(calls.at(-1)?.reasons).toBe(false);
+
+    flags.deskLoop.armed = true;
+    store.pending = [{ eventKey: cardKey(1), source: "card_transaction" }];
+    store.spent = { wakeNanocents: 0, dayNanocents: flags.deskLoop.limits.dayCents * NANOCENTS_PER_CENT };
+    const capped = await wake(handlersWith(vi.fn(async () => done())), uuid(901));
+    expect(capped).toMatchObject({ ok: true, reason: "day_cents" });
+    expect(calls.at(-1)?.reasons).toBe(false);
+  });
+
+  it("logs a questions pass that throws, by name only, and still sleeps and gives the lease back", async () => {
+    store.asks = async () => {
+      throw new Error("connection reset by 10.0.0.9");
+    };
+    const out = await wake(handlersWith(vi.fn(async () => done())));
+    expect(out).toMatchObject({ ok: true, status: "done", reason: "no_work" });
+    expect(ofKind("sleep")).toHaveLength(1);
+    expect(store.lease).toBeNull();
+    expect(logs.join(" ")).toContain("desk asks");
+    expect(logs.join(" ")).not.toContain("10.0.0.9");
+  });
+
   it("answers unavailable when the log does not read back, writes why, and gives the lease back", async () => {
     store.pending = [{ eventKey: cardKey(1), source: "card_transaction" }];
     store.failState = true;

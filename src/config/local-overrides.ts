@@ -14,6 +14,7 @@ export const LOCAL_OVERRIDABLE = [
   "advancesEnabled",
   "payoutsEnabled",
   "advancePayouts.armed",
+  "agentAsks.enabled",
 ] as const;
 
 // Switches FLAGS_LOCAL_OVERRIDES may only turn off, never on. They ship on, but the demo-path
@@ -76,6 +77,7 @@ export const LOCAL_OFF_ONLY = [
   "escrowRelease.armed",
   "autopilot.enabled",
   "autopilot.armed",
+  "agentAsks.reasonEnabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

@@ -698,6 +698,16 @@ describe("the demo reset", () => {
         [randomUUID(), departed.id, flowProposal, departed.escrow_balance_cents],
       ),
     );
+    // The agent's question about the flow's proposal (0072): the app role cannot delete it, so
+    // only the function clears it, before the proposal it names.
+    await app.withTenant(tenantId, (q) =>
+      q.execute(
+        `INSERT INTO agent_asks (id, tenant_id, kind, proposal_id, subject_table, subject_id, text)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), 'ask', CAST($2 AS uuid), 'drivers', CAST($3 AS uuid),
+           'Should I send the advance?')`,
+        [randomUUID(), flowProposal, departed.id],
+      ),
+    );
     return session;
   };
 
@@ -763,6 +773,7 @@ describe("the demo reset", () => {
         fuel_check_runs: 1,
         approval_batches: 1,
         pay_rule_changes: 1,
+        agent_asks: 1,
         proposals: 4,
         turns: 4,
         conversations: 4,
@@ -806,6 +817,7 @@ describe("the demo reset", () => {
         approval_batches: 1,
         pay_rule_changes: 1,
         advances: 1,
+        agent_asks: 1,
         proposals: 4,
         turns: 4,
         conversations: 4,

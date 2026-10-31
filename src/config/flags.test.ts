@@ -80,6 +80,10 @@ const RELEASED_ON = [
   "escrowRelease.armed",
   "agentFocusEnabled",
   "autopilot.enabled",
+  // The agent's questions are written by code and answered through the usual approve gate; the
+  // reason line is one capped Muse Spark call a question.
+  "agentAsks.enabled",
+  "agentAsks.reasonEnabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -300,6 +304,19 @@ describe("flags", () => {
   it("ships escrow releases on and armed, with a $5,000 cap and a start date", () => {
     expect(flags.escrowRelease).toEqual({ enabled: true, armed: true, capCents: 500_000, startDate: "2026-10-30" });
     expect(isLocalDate(flags.escrowRelease.startDate)).toBe(true);
+  });
+
+  it("ships the agent's questions on, with the reason line capped at 2 cents and 80 tokens", () => {
+    expect(flags.agentAsks).toEqual({
+      enabled: true,
+      reasonEnabled: true,
+      reasonMaxCostCents: 2,
+      reasonMaxOutputTokens: 80,
+      reasonsPerWake: 3,
+      listLimit: 5,
+    });
+    // The demo-path replay never recorded a reason call, so the local run turns it off.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("agentAsks.reasonEnabled");
   });
 
   it("pins every switch that ships on for the demo-path run, on or off as its replay was recorded", () => {

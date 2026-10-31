@@ -1,4 +1,5 @@
 import { flags } from "../../../../config/flags";
+import { askFor, asksForSession, readShowingAsks, type AskView } from "../../../asks/store";
 import type { Session } from "../../../auth/claims";
 import { DbError, getDb, type Queryable, type TenantDb } from "../../../db";
 import type { TurnTrace } from "../../../trace/types";
@@ -49,8 +50,15 @@ export function dbTurnStore(session: Session, deps: StoreDeps = {}): TurnStore {
     startStep: (turnId, step) => tx((q) => startStep(q, turnId, step, clock())),
     finishStep: (turnId, stepId, finish) => tx((q) => finishStep(q, turnId, stepId, finish, clock())),
     persistProposal: async (input) => {
+      // A proposal the desk drafted gets its question in the same transaction (src/lib/asks).
+      const asks = asksForSession(session);
       try {
-        return await tx((q) => persistProposal(q, input, clock()));
+        return await tx(async (q) => {
+          const now = clock();
+          const saved = await persistProposal(q, input, now);
+          if (asks && saved.kind === "created") await askFor(q, saved.proposalId, now);
+          return saved;
+        });
       } catch (err) {
         if (!(err instanceof DbError) || err.sqlState !== UNIQUE_VIOLATION) throw err;
         const found = await tx((q) => findProposalConflict(q, input));
@@ -148,6 +156,56 @@ export async function readRecentAgentTurns(
   return withAgentTenant(deps.db ?? getDb(), session, (q) =>
     readRecentTurnViews(q, session.sub, session.demoSessionId ?? null),
   );
+}
+
+// The carrier's agent questions showing now, newest first (GET /api/agent/asks). Reads only.
+export async function readAgentAsks(
+  session: Session,
+  input: { sinceIso: string | null },
+  deps: StoreDeps = {},
+): Promise<{ asks: AskView[]; openCount: number; now: string }> {
+  const now = (deps.clock ?? (() => new Date()))().toISOString();
+  const read = await withAgentTenant(deps.db ?? getDb(), session, (q) =>
+    readShowingAsks(q, { nowIso: now, sinceIso: input.sinceIso, limit: flags.agentAsks.listLimit }),
+  );
+  return { ...read, now };
+}
+
+export type ThreadItem = { type: "turn"; id: string; at: string } | { type: "ask"; id: string; at: string };
+
+// The agent panel's thread: this person's latest turns and the carrier's questions showing now,
+// merged in time order (a turn by its start, a question by its creation). With asks off, the
+// turns alone. Reads only, in one tenant transaction.
+export async function readAgentThread(
+  session: Session,
+  deps: StoreDeps = {},
+): Promise<{ turns: TurnView[]; asks: AskView[]; thread: ThreadItem[] }> {
+  const now = (deps.clock ?? (() => new Date()))().toISOString();
+  return withAgentTenant(deps.db ?? getDb(), session, async (q) => {
+    const turns = await readRecentTurnViews(q, session.sub, session.demoSessionId ?? null);
+    const asks =
+      flags.agentAsks.enabled === true
+        ? (await readShowingAsks(q, { nowIso: now, sinceIso: null, limit: flags.agentAsks.listLimit })).asks.reverse()
+        : [];
+    const started = new Map<string, string>();
+    if (turns.length > 0) {
+      const rows = await q.query<{ id: string; at: string }>(
+        `SELECT CAST(id AS text) AS id, to_char(started_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at
+           FROM turns WHERE id = ANY(CAST($1 AS uuid[]))`,
+        [`{${turns.map((t) => t.id).join(",")}}`],
+      );
+      for (const r of rows) started.set(r.id.toLowerCase(), r.at);
+    }
+    // A turn whose start did not read keeps its place after the turn before it.
+    let last = "";
+    const items: (ThreadItem & { order: number })[] = turns.map((t, i) => {
+      last = started.get(t.id.toLowerCase()) ?? last;
+      return { type: "turn" as const, id: t.id, at: last, order: i };
+    });
+    asks.forEach((a, i) => items.push({ type: "ask", id: a.id, at: a.createdAt, order: turns.length + i }));
+    items.sort((x, y) => (x.at < y.at ? -1 : x.at > y.at ? 1 : x.order - y.order));
+    return { turns, asks, thread: items.map(({ type, id, at }) => ({ type, id, at })) };
+  });
 }
 
 // The auditor's door to its rows on a proposal (design 4.2 step 4). Each call is its own tenant

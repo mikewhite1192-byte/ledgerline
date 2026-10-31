@@ -212,6 +212,8 @@ const AGENT_CLEAR = [
       AND NOT EXISTS (SELECT 1 FROM proposals p
                        WHERE p.tenant_id = CAST($1 AS uuid) AND p.turn_id = s.turn_id
                          AND EXISTS (${NAMED_BY_LEDGER}))`,
+  // The agent's questions name their proposals (0072): every one goes, before the proposals.
+  "DELETE FROM agent_asks WHERE tenant_id = CAST($1 AS uuid)",
   "DELETE FROM advances WHERE tenant_id = CAST($1 AS uuid) AND proposal_id IS NOT NULL",
   `DELETE FROM proposals p
     WHERE p.tenant_id = CAST($1 AS uuid) AND NOT EXISTS (${NAMED_BY_LEDGER})`,
