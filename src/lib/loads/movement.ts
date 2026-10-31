@@ -253,6 +253,66 @@ function matchedLoadId(match: unknown): string | null {
   return m.loadId;
 }
 
+// The load's read papers (bills of lading and rate confirmations matched to it), only those read
+// in from the start date on (the carrier's local midnight): an older paper is never the pickup
+// paper or the POD. The caller checked the switch, so the start date is a local date.
+async function papersOf(q: Queryable, loadId: string, zone: string): Promise<DocRow[]> {
+  return q.query<DocRow>(
+    `SELECT ${DOC_COLUMNS} FROM documents
+      WHERE tenant_id = current_tenant_id() AND read_status = 'read'
+        AND document_kind IN ('bill_of_lading', 'rate_confirmation') AND match->>'loadId' = $1
+        AND created_at >= CAST($2 AS timestamptz)
+      ORDER BY created_at, id`,
+    [loadId, instantAt(flags.loadMovement.startDate, 0, 0, zone)],
+  );
+}
+
+type PodStep =
+  | { kind: "moved"; event: string }
+  // Held: why, the POD's date, and whether a person's press could carry out a card for it (a
+  // press refuses a date after today or before the pickup date).
+  | { kind: "held"; reason: MoveReason; day: LocalDate | null; pressable: boolean };
+
+// The POD step on an in transit load, by the paper rules: delivered on the POD's own date when it
+// is in the POD window, not after today, and the load has a driver.
+async function deliverOnPod(
+  q: Queryable,
+  load: LockedLoad,
+  podDoc: PaperDocument,
+  today: LocalDate,
+  zone: string,
+): Promise<PodStep> {
+  const day = paperDateOf(podDoc);
+  if (day === null || day > today || !podWindowHolds(paperLoad(load), day)) {
+    const pressable = day === null || (day <= today && day >= load.pickup_on);
+    return { kind: "held", reason: "date_out_of_window", day, pressable };
+  }
+  if (load.driver_id === null) return { kind: "held", reason: "no_driver", day, pressable: true };
+  const times = stopTimesOf(podDoc, "delivery", zone);
+  const deliveredAt = deliveredAtOf(day, times, zone);
+  const event = await writeStep(
+    q,
+    load,
+    { to: "delivered", at: deliveredAt, deliveredOn: day, deliveredAt, times },
+    "driver_photo",
+    { table: "documents", id: podDoc.id },
+  );
+  return { kind: "moved", event };
+}
+
+// Right after a move to in transit by a note, a press or the demo feed: a POD already read in
+// (read first, so its own look found the load still planned) delivers the load now, by the same
+// paper rules and the same switch. Never a card. The delivered event's id, or null.
+async function deliverOnPaperIn(q: Queryable, load: LockedLoad, today: LocalDate, zone: string): Promise<string | null> {
+  if (load.status !== "in_transit" || !automaticOn(today)) return null;
+  const docs = (await papersOf(q, load.id, zone)).map(toPaper);
+  const paper = paperworkOf(paperLoad(load), docs);
+  const podDoc = paper.pod ? docs.find((d) => d.id === paper.pod) : undefined;
+  if (!podDoc || !automaticOn(localDateOf(podDoc.createdAt, zone))) return null;
+  const r = await deliverOnPod(q, load, podDoc, today, zone);
+  return r.kind === "moved" ? r.event : null;
+}
+
 // Inside the desk's tenant transaction: what one read document does to its load. Only a rate
 // confirmation or bill of lading matched to one load (whole load number, match.ts) is looked at; a
 // document with no single load is never discovered (src/lib/desk/discover.ts).
@@ -273,7 +333,6 @@ export async function moveFromDocument(
     return { kind: "nothing", category: "not_load_paper" };
   }
   const zone = await zoneOf(q);
-  const startDate = flags.loadMovement.startDate;
   if (!automaticOn(localDateOf(doc.createdAt, zone))) return { kind: "nothing", category: "switched_off" };
   const loadId = matchedLoadId(doc.match);
   if (!loadId) return { kind: "nothing", category: "not_matched" };
@@ -282,17 +341,7 @@ export async function moveFromDocument(
   const load = await lockLoad(q, loadId);
   if (!load) return { kind: "nothing", category: "not_found" };
 
-  // Only paper read in from the start date on (the carrier's local midnight): an older paper is
-  // never the pickup paper or the POD.
-  const rows = await q.query<DocRow>(
-    `SELECT ${DOC_COLUMNS} FROM documents
-      WHERE tenant_id = current_tenant_id() AND read_status = 'read'
-        AND document_kind IN ('bill_of_lading', 'rate_confirmation') AND match->>'loadId' = $1
-        AND created_at >= CAST($2 AS timestamptz)
-      ORDER BY created_at, id`,
-    [load.id, instantAt(startDate, 0, 0, zone)],
-  );
-  const docs = rows.map(toPaper);
+  const docs = (await papersOf(q, load.id, zone)).map(toPaper);
   const pl = paperLoad(load);
   const paper = paperworkOf(pl, docs);
   const today = localDateOf(now.toISOString(), zone);
@@ -337,26 +386,12 @@ export async function moveFromDocument(
   }
 
   if (load.status === "in_transit" && podDoc) {
-    const day = paperDateOf(podDoc);
-    if (day === null || day > today || !podWindowHolds(pl, day)) {
-      if (events.length > 0) return moved(load, events);
-      // Dated after today or before the pickup date: a person's press refuses that date, so a card
-      // with it could never be carried out.
-      if (day !== null && (day > today || day < load.pickup_on)) return { kind: "nothing", category: "date_out_of_window" };
-      return cardOn("date_out_of_window", "delivered", day);
-    }
-    if (load.driver_id === null) return events.length > 0 ? moved(load, events) : cardOn("no_driver", "delivered", day);
-    const times = stopTimesOf(podDoc, "delivery", zone);
-    const deliveredAt = deliveredAtOf(day, times, zone);
-    events.push(
-      await writeStep(
-        q,
-        load,
-        { to: "delivered", at: deliveredAt, deliveredOn: day, deliveredAt, times },
-        "driver_photo",
-        { table: "documents", id: podDoc.id },
-      ),
-    );
+    const r = await deliverOnPod(q, load, podDoc, today, zone);
+    if (r.kind === "moved") events.push(r.event);
+    else if (events.length > 0) return moved(load, events);
+    // A card a person's press would refuse could never be carried out.
+    else if (!r.pressable) return { kind: "nothing", category: r.reason };
+    else return cardOn(r.reason, "delivered", r.day);
   }
 
   if (events.length > 0) return moved(load, events);
@@ -408,12 +443,12 @@ async function readMessage(q: Queryable, table: MessageTable, id: string): Promi
   return rows[0] ?? null;
 }
 
-// The loads whose number the text names whole, among the carrier's planned, in transit and
-// delivered loads (a load already delivered is found, so its own note reads as already there).
+// The loads whose number the text names whole, among every load of the carrier's that is not
+// cancelled: an invoiced load named beside another makes the note ambiguous, never a move.
 async function namedLoads(q: Queryable, text: string): Promise<LockedLoad[]> {
   const loads = await q.query<LockedLoad>(
     `SELECT ${LOAD_COLUMNS} FROM loads
-      WHERE tenant_id = current_tenant_id() AND status IN ('planned', 'in_transit', 'delivered')
+      WHERE tenant_id = current_tenant_id() AND status <> 'cancelled'
       ORDER BY load_number, id`,
   );
   return loads.filter((l) => namesWhole(text, l.load_number));
@@ -472,6 +507,11 @@ export async function moveFromMessage(
   if (named.length > 1) return driverCard("ambiguous_load");
   const load = await lockLoad(q, named[0].id);
   if (!load) return driverCard("no_load_number");
+  // One load named, and it has moved on past delivered (or was cancelled since): nothing to move
+  // and no card; the message goes on as before.
+  if (load.status !== "planned" && load.status !== "in_transit" && load.status !== "delivered") {
+    return { kind: "nothing", category: "not_movable" };
+  }
   const to = directionOf(text);
   const cardOn: CardOn = (reason, toStatus, deliveredOn) =>
     card(q, session, now, {
@@ -525,7 +565,8 @@ async function applyMove(
     if (load.status !== "planned") return refuse("wrong_status");
     if (!inWindow(when.day)) return refuse("date_out_of_window");
     const id = await writeStep(q, load, { to: "in_transit", at: when.at, times: null }, source, evidence);
-    return moved(load, [id]);
+    const delivered = await deliverOnPaperIn(q, load, when.today, when.zone);
+    return moved(load, delivered ? [id, delivered] : [id]);
   }
   if (load.status !== "in_transit") return refuse("wrong_status", when.day);
   if (!inWindow(when.day)) return refuse("date_out_of_window", when.day);
@@ -617,6 +658,7 @@ export async function moveFleetIn(q: Queryable, now: Date, keepDriverId: string 
     if (load.status === "planned") {
       await writeStep(q, load, { to: "in_transit", at: now.toISOString(), times: null }, "demo_feed", null);
       out.pickedUp += 1;
+      if (await deliverOnPaperIn(q, load, today, zone)) out.delivered += 1;
     } else {
       const at = now.toISOString();
       await writeStep(q, load, { to: "delivered", at, deliveredOn: today, deliveredAt: at, times: null }, "demo_feed", null);

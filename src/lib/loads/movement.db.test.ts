@@ -330,6 +330,36 @@ describe("the paperwork path", () => {
     expect(await cardsOf(f)).toEqual([]);
   });
 
+  it("delivers on a POD read before the pickup once a person presses Mark picked up", async () => {
+    const f = await carrier("move-pod-first");
+    const l = await load(f);
+    const pod = await bol(f, l, "11/02/2026", [deliveryStop(null, null)], "2026-11-02T16:00:00.000Z");
+    expect(await fromDocument(f, pod)).toEqual({ kind: "nothing", category: "no_pickup_paper" });
+    expect(await staffMove(app, f.session, l.id, "in_transit", NOW)).toEqual({ ok: true, changed: true, to: "in_transit" });
+    expect(await stateOf(f, l.id)).toMatchObject({ status: "delivered", delivered_on: "2026-11-02" });
+    const events = await eventsOf(f, l.id);
+    expect(events.map((e) => [e.to_status, e.source, e.evidence_table, e.evidence_id])).toEqual([
+      ["in_transit", "staff", null, null],
+      ["delivered", "driver_photo", "documents", pod],
+    ]);
+    expect(await cardsOf(f)).toEqual([]);
+  });
+
+  it("delivers on a POD read before the pickup paper once the pickup paper is read in", async () => {
+    const f = await carrier("move-pod-then-bol");
+    const l = await load(f);
+    const pod = await bol(f, l, "11/02/2026", [deliveryStop(null, null)], "2026-11-02T16:00:00.000Z");
+    expect(await fromDocument(f, pod)).toEqual({ kind: "nothing", category: "no_pickup_paper" });
+    const up = await bol(f, l, "11/01/2026", [pickupStop(null, null)], "2026-11-02T17:00:00.000Z");
+    expect(await fromDocument(f, up)).toMatchObject({ kind: "moved", to: "delivered" });
+    const events = await eventsOf(f, l.id);
+    expect(events.map((e) => [e.to_status, e.source, e.evidence_id])).toEqual([
+      ["in_transit", "driver_photo", up],
+      ["delivered", "driver_photo", pod],
+    ]);
+    expect(await cardsOf(f)).toEqual([]);
+  });
+
   it("never takes a paper read in before the start date as the pickup paper", async () => {
     const f = await carrier("move-floor");
     flags.loadMovement.startDate = "2026-11-01";
@@ -439,20 +469,26 @@ describe("the message path", () => {
     ]);
   });
 
-  it("never looks for an invoiced load's number", async () => {
+  it("counts an invoiced load's number: alone it moves nothing, beside another it is ambiguous", async () => {
     const f = await carrier("move-invoiced");
-    const l = await load(f, { status: "in_transit" });
+    const billed = await load(f, { status: "in_transit" });
     await admin.withTenant(f.tenantId, (q) =>
       q.execute(
         `UPDATE loads SET status = 'invoiced', delivered_on = CAST('2026-11-01' AS date),
                 delivered_at = CAST('2026-11-01T23:00:00Z' AS timestamptz)
           WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
-        [l.id],
+        [billed.id],
       ),
     );
-    const note = await voiceNote(f, f.driverId, `Delivered ${l.number}`);
-    expect(await fromVoice(f, note)).toMatchObject({ kind: "card", reason: "no_load_number", loadId: null });
-    expect((await stateOf(f, l.id)).status).toBe("invoiced");
+    const rolling = await load(f, { status: "in_transit" });
+    const alone = await voiceNote(f, f.driverId, `Delivered ${billed.number}`);
+    expect(await fromVoice(f, alone)).toEqual({ kind: "nothing", category: "not_movable" });
+    expect(await cardsOf(f)).toEqual([]);
+    const both = await voiceNote(f, f.driverId, `Delivered ${billed.number}. ${rolling.number} paperwork attached`);
+    expect(await fromVoice(f, both)).toMatchObject({ kind: "card", reason: "ambiguous_load", loadId: null });
+    expect((await stateOf(f, billed.id)).status).toBe("invoiced");
+    expect((await stateOf(f, rolling.id)).status).toBe("in_transit");
+    expect(await eventsOf(f, rolling.id)).toEqual([]);
   });
 
   it("reads a note on a load already delivered as already there, never a card", async () => {
