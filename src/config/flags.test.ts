@@ -99,6 +99,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-10-31): an admin can switch the synthetic feed's faults on
   // from Settings > Demo. Each fault still starts off.
   "tmsSync.demoFaultsEnabled",
+  // Released by the owner (D-071, 2026-10-31): a finalized delivered load gets its invoice card
+  // drafted, after the dispatch recheck. A person still approves it.
+  "tmsFinalizeInvoice.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -114,8 +117,6 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The invoice on finalize ships off; its own one-line PR turns it on.
-  "tmsFinalizeInvoice.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -333,7 +334,7 @@ describe("flags", () => {
     expect(isLocalDate(flags.cardLoadRuling.startDate)).toBe(true);
     // A ruling is always a named person's: never a kind the autopilot may approve.
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("card_load_ruling");
-    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    // The demo-path replay never recorded a finalize, so the local run turns it off.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardLoadRuling.enabled");
   });
 
@@ -360,8 +361,8 @@ describe("flags", () => {
     expect(flags.loadMovement.enabled).toBe(true);
   });
 
-  it("ships the invoice on finalize off, with a start date, listed ahead of its release", () => {
-    expect(flags.tmsFinalizeInvoice).toEqual({ enabled: false, startDate: "2026-10-31" });
+  it("releases the invoice on finalize, with a start date, off for the local demo run", () => {
+    expect(flags.tmsFinalizeInvoice).toEqual({ enabled: true, startDate: "2026-10-31" });
     expect(isLocalDate(flags.tmsFinalizeInvoice.startDate)).toBe(true);
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsFinalizeInvoice.enabled");

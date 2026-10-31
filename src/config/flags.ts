@@ -1099,8 +1099,8 @@ export const flags: Flags = {
     // On by the owner's call (D-071, 2026-10-31): the panel shows; every fault itself starts off.
     demoFaultsEnabled: true,
   },
-  // Off until its own one-line enable PR. It only drafts a card; approving it goes through the usual gate.
-  tmsFinalizeInvoice: { enabled: false, startDate: "2026-10-31" },
+  // On by the owner's call (D-071, 2026-10-31). It only drafts a card; approving it goes through the usual gate.
+  tmsFinalizeInvoice: { enabled: true, startDate: "2026-10-31" },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.
   agentAsks: {
     enabled: true,
