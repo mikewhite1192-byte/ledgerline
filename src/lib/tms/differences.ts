@@ -86,16 +86,20 @@ export function differencesOf(tms: TmsSide, ours: OurSide): Difference[] {
   const p = instantMs(tms.pickedUpAt);
   const o = instantMs(ours.pickedUpAt);
   if (p !== null && o !== null && tms.pickedUpAt !== null && ours.pickedUpAt !== null) {
-    const minutes = Math.round(Math.abs(p - o) / 60_000);
-    if (minutes > PICKUP_SLACK_MINUTES) {
+    // The unrounded gap meets the slack: 30 minutes and a second apart is a difference.
+    const gapMs = Math.abs(p - o);
+    const minutes = Math.round(gapMs / 60_000);
+    if (gapMs > PICKUP_SLACK_MINUTES * 60_000) {
       out.push({ kind: "pickup_time_differs", dispatchAt: tms.pickedUpAt, oursAt: ours.pickedUpAt, minutesApart: minutes });
     }
   }
   const a = instantMs(tms.deliveredAt);
   const b = instantMs(ours.deliveredAt);
   if (a !== null && b !== null && tms.deliveredAt !== null && ours.deliveredAt !== null) {
-    const minutes = Math.round(Math.abs(a - b) / 60_000);
-    if (minutes > DELIVERY_SLACK_MINUTES) {
+    // The unrounded gap meets the slack: 30 minutes and a second apart is a difference.
+    const gapMs = Math.abs(a - b);
+    const minutes = Math.round(gapMs / 60_000);
+    if (gapMs > DELIVERY_SLACK_MINUTES * 60_000) {
       out.push({ kind: "delivery_time_differs", dispatchAt: tms.deliveredAt, oursAt: ours.deliveredAt, minutesApart: minutes });
     }
   }

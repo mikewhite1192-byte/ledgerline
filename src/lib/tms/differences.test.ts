@@ -64,6 +64,11 @@ describe("differencesOf", () => {
     ]);
     expect(differencesOf(tms({ deliveredAt: at }), ours({ deliveredAt: null }))).toEqual([]);
     expect(differencesOf(tms({ deliveredAt: "not a time" }), ours({ deliveredAt: past }))).toEqual([]);
+    // A second past the slack is a difference, though it rounds to the slack's own minutes.
+    const justPast = new Date(Date.parse(edge) + 1_000).toISOString();
+    expect(differencesOf(tms({ deliveredAt: justPast }), ours({ deliveredAt: at }))).toEqual([
+      { kind: "delivery_time_differs", dispatchAt: justPast, oursAt: at, minutesApart: 30 },
+    ]);
   });
 
   it("says pickup times differ only past the slack, either way round, in whole minutes", () => {
@@ -84,6 +89,10 @@ describe("differencesOf", () => {
     expect(differencesOf(tms({ pickedUpAt: null }), ours({ pickedUpAt: past }))).toEqual([]);
     expect(differencesOf(tms({ pickedUpAt: "not a time" }), ours({ pickedUpAt: past }))).toEqual([]);
     expect(differencesOf(tms({ pickedUpAt: past }), ours({ pickedUpAt: "not a time" }))).toEqual([]);
+    const justPast = new Date(Date.parse(edge) + 1_000).toISOString();
+    expect(differencesOf(tms({ pickedUpAt: at }), ours({ pickedUpAt: justPast }))).toEqual([
+      { kind: "pickup_time_differs", dispatchAt: at, oursAt: justPast, minutesApart: 30 },
+    ]);
   });
 
   it("says a proof of delivery is in dispatch and not here, a load gone from dispatch, and an edit after finalize", () => {
