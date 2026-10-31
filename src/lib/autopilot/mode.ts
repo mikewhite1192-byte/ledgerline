@@ -1,7 +1,7 @@
 import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
 import { localDateOf } from "../time/local-date";
-import { isPaused } from "./policy";
+import { isPaused } from "./facts";
 import { readPause, readRule, readZone } from "./read";
 
 // What the autopilot would do with a new proposal of one kind, read inside the caller's tenant

@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ProposalCard, type ProposalCardProps } from "@/components/app/proposal-card";
+import { rejectNotice } from "@/components/app/reject-notice";
 import { outcomeLabel } from "@/lib/invoices/labels";
 import { postJson } from "./post-json";
 
@@ -146,7 +147,7 @@ export function InvoiceCards({
     setBusy(id);
     setNotes((n) => ({ ...n, [id]: "" }));
     const reply = await postJson(`/api/proposals/${encodeURIComponent(id)}/reject`, { category: "other" });
-    if (!reply.ok) setNotes((n) => ({ ...n, [id]: notice(reply.error) }));
+    if (!reply.ok) setNotes((n) => ({ ...n, [id]: rejectNotice(reply.error, notice(reply.error)) }));
     setBusy(null);
     router.refresh();
   }

@@ -444,6 +444,47 @@ describe("approving and rejecting a proposal", () => {
     expect(await ledgerRows()).toEqual([]);
   });
 
+  it("refuses a reject once money may have left for the proposal, and allows it after a failure", async () => {
+    const p = await addProposal({ amountCents: 12_300 });
+    const ledgerId = randomUUID();
+    const set = (sql: string) =>
+      admin.withTenant(A.tenantId, (q) =>
+        one(q, `UPDATE money_actions SET ${sql} WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`, [ledgerId]),
+      );
+    try {
+      // A ledger row that names the proposal, written by the admin login: reserved, then sent.
+      await admin.withTenant(A.tenantId, (q) =>
+        one(
+          q,
+          `INSERT INTO money_actions (id, tenant_id, kind, channel, subject_table, subject_id, attempt,
+             idempotency_key, request_id, amount_cents, counterparty_table, counterparty_id, proposed_by,
+             proposal_id, approver_membership_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'advance_payout', 'payment', 'advances',
+             CAST($2 AS uuid), 1, $3, $4, 12300, 'drivers', CAST($5 AS uuid), 'agent', CAST($6 AS uuid),
+             CAST($7 AS uuid))`,
+          [ledgerId, p.advanceId, `advance_payout:${p.advanceId}:1`, ledgerId.replace(/-/g, ""), A.driverId, p.id, A.memberId],
+        ),
+      );
+      const reject = () => rejectProposal(A.session, p.id, "not_needed", { db: app, clock });
+      const moved = { ok: false, category: "reject_after_money_moved" };
+      expect(await reject()).toEqual(moved);
+      await set("state = 'sent', sent_at = now()");
+      expect(await reject()).toEqual(moved);
+      await set("state = 'unknown'");
+      expect(await reject()).toEqual(moved);
+      // Nothing was written by any refused reject.
+      expect(await proposalRow(p.id)).toMatchObject({ status: "proposed", decided_by: null, decision_note: null });
+      // A read back that found it failed: nothing left, so a person may reject it.
+      await set(
+        "state = 'failed', failure_category = 'outside_failed', settled_via = 'read_back', settled_at = now()",
+      );
+      expect(await reject()).toEqual({ ok: true });
+      expect(await proposalRow(p.id)).toMatchObject({ status: "rejected", decision_note: "not_needed" });
+    } finally {
+      await clearLedger(admin, A);
+    }
+  });
+
   describe("the auditor's verdict at the gate", () => {
     const BLOCK: Audit = { verdict: "block", concerns: ["amount_wrong"] };
 
