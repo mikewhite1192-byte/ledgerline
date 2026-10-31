@@ -90,6 +90,9 @@ const RELEASED_ON = [
   // Armed by the owner (D-071, 2026-10-31): the autopilot approves the bookkeeping kinds inside their
   // limits. The two kinds that pay a driver stay unarmed, each armed in its own release.
   "autopilot.armed",
+  // Released by the owner (D-071, 2026-10-31): a card load with no ledger row behind it asks a person
+  // to rule whether the driver owes it. A ruling is always a named person's.
+  "cardLoadRuling.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -105,8 +108,6 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The card load ruling ships off; its own one-line enable PR turns it on.
-  "cardLoadRuling.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -319,8 +320,8 @@ describe("flags", () => {
     expect(flags.autopilot.kinds.advance_payout?.armed).toBe(false);
   });
 
-  it("ships the card load ruling off, with a start date, never a kind the autopilot may approve", () => {
-    expect(flags.cardLoadRuling).toEqual({ enabled: false, startDate: "2026-10-31" });
+  it("ships the card load ruling on, with a start date, never a kind the autopilot may approve", () => {
+    expect(flags.cardLoadRuling).toEqual({ enabled: true, startDate: "2026-10-31" });
     expect(isLocalDate(flags.cardLoadRuling.startDate)).toBe(true);
     // A ruling is always a named person's: never a kind the autopilot may approve.
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("card_load_ruling");
