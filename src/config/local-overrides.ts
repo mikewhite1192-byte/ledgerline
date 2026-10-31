@@ -82,6 +82,7 @@ export const LOCAL_OFF_ONLY = [
   "loadMovement.enabled",
   "agentAsks.reasonEnabled",
   "advanceAtPickup.enabled",
+  "tmsSync.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

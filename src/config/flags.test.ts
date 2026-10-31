@@ -87,6 +87,8 @@ const RELEASED_ON = [
   "loadMovement.enabled",
   "agentAsks.enabled",
   "advanceAtPickup.enabled",
+  // The dispatch mirror only reads (D-071); a load moves on it only while loadMovement is on.
+  "tmsSync.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -104,6 +106,8 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The autopilot approves with no click: the owner arms it in its own release PR.
   "autopilot.armed",
+  // The synthetic feed's fault switches are a later item.
+  "tmsSync.demoFaultsEnabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -321,6 +325,22 @@ describe("flags", () => {
     expect(isLocalDate(flags.loadMovement.startDate)).toBe(true);
     // A load_move card is always a person's tap: never a kind the autopilot may approve.
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("load_move");
+  });
+
+  it("ships the dispatch mirror on, read only, with a start date and small per-wake caps", () => {
+    expect(flags.tmsSync).toEqual({
+      enabled: true,
+      startDate: "2026-10-31",
+      maxPagesPerWake: 3,
+      maxReadsPerWake: 40,
+      pageSize: 100,
+      demoFaultsEnabled: false,
+    });
+    expect(isLocalDate(flags.tmsSync.startDate)).toBe(true);
+    // The demo-path replay never recorded a sync, so the local run turns it off.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsSync.enabled");
+    // A load moves on a mirrored event only while load movement is on too (D-071 turned it on).
+    expect(flags.loadMovement.enabled).toBe(true);
   });
 
   it("ships the agent's questions on, with the reason line capped at 2 cents and 80 tokens", () => {

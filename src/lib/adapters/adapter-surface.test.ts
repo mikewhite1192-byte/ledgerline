@@ -6,6 +6,7 @@ import { createFactoringSim } from "./factoring/sim";
 import { createFuelCardSimAdapter } from "./payment/fuel-card-sim";
 import { createMockPaymentAdapter } from "./payment/mock";
 import { createStripeTestAdapter } from "./payment/stripe-test";
+import { tmsSource } from "./tms-source";
 
 // LedgerLine never sends an invoice or an email: an invoice is posted unsent and a person sends it
 // from the accounting system. So no adapter has a member that could, and a later change cannot
@@ -28,8 +29,8 @@ function membersOf(o: object): Map<string, unknown> {
 }
 
 // The member names an interface in types.ts declares, at its first level of indentation.
-function declared(name: string): string[] {
-  const src = readFileSync(join(__dirname, "types.ts"), "utf8");
+function declared(name: string, file = "types.ts"): string[] {
+  const src = readFileSync(join(__dirname, file), "utf8");
   const start = src.indexOf(`export interface ${name} {`);
   expect(start, name).toBeGreaterThanOrEqual(0);
   const end = src.indexOf("\n}\n", start);
@@ -78,6 +79,20 @@ describe("adapter surface: nothing can send an invoice or an email", () => {
       .map(([k]) => k);
     expect(methods).toContain("submitInvoice");
     expect(methods.filter(forbidden)).toEqual([]);
+  });
+
+  // The dispatch system is read only: no member could write to it, send from it or attach to it.
+  it("the dispatch source declares and has only reads", () => {
+    const writes = (n: string) => /send|email|mail|create|update|post|put|delete|upload|attach/i.test(n);
+    const names = declared("TmsSource", "tms-source/types.ts");
+    expect(names).toEqual(["system", "ready", "listLoads", "readLoad", "readHistory", "readDocuments", "readLineItems", "readParty"]);
+    expect(names.filter(writes)).toEqual([]);
+    const members = [...membersOf(tmsSource({ system: "synthetic" })).keys()];
+    expect(members).toContain("readLoad");
+    expect(members.filter(writes)).toEqual([]);
+    for (const n of ["updateLoad", "createLoad", "postStatus", "putDoc", "deleteLoad", "uploadPod", "attachFile"]) {
+      expect(writes(n), n).toBe(true);
+    }
   });
 
   it("the rule itself catches the names it is meant to", () => {

@@ -463,6 +463,17 @@ function keysAndReferences(rows: TenantRows): void {
   unique(rows.untrusted_inputs, (x) => x.seed_key ?? x.id, "untrusted seed key");
   unique(rows.screenings, (x) => `${x.content_hash}:${x.screener_version}`, "screening key");
   unique(rows.vendor_bills, (x) => x.bill_ref, "bill ref");
+  if (rows.tms_connections.length > 1) fail("a tenant has one dispatch connection at most");
+  unique(rows.tms_parties, (x) => `${x.kind}:${x.external_id}`, "dispatch party");
+  unique(rows.tms_loads, (x) => x.external_id, "dispatch load");
+  unique(rows.tms_loads.filter((x) => x.load_id !== null), (x) => x.load_id!, "dispatch load link");
+  unique(rows.tms_stops, (x) => `${x.tms_load_id}:${x.ordinal}`, "dispatch stop");
+  unique(rows.tms_status_events, (x) => x.external_event_id, "dispatch event");
+  unique(rows.tms_line_items, (x) => x.external_id, "dispatch line");
+  unique(rows.tms_documents, (x) => x.external_id, "dispatch document");
+  if (rows.tms_status_events.some((x) => !x.seeded) || rows.tms_loads.some((x) => !x.seeded)) {
+    fail("a dispatch snapshot row is not marked seeded");
+  }
   if (rows.pay_configs.length === 0) fail("a tenant needs a pay config");
 
   const customers = idsOf(rows.customers);
@@ -473,6 +484,14 @@ function keysAndReferences(rows: TenantRows): void {
   refs(rows.load_state_miles, (x) => x.load_id, loads, "a state mile row");
   refs(rows.load_accessorials, (x) => x.load_id, loads, "an accessorial");
   refs(rows.load_events, (x) => x.load_id, loads, "a load move");
+  refs(rows.tms_parties, (x) => x.customer_id, customers, "a dispatch party");
+  refs(rows.tms_parties, (x) => x.driver_id, drivers, "a dispatch party");
+  refs(rows.tms_loads, (x) => x.load_id, loads, "a dispatch load");
+  const tmsLoads = idsOf(rows.tms_loads);
+  refs(rows.tms_stops, (x) => x.tms_load_id, tmsLoads, "a dispatch stop");
+  refs(rows.tms_status_events, (x) => x.tms_load_id, tmsLoads, "a dispatch event");
+  refs(rows.tms_line_items, (x) => x.tms_load_id, tmsLoads, "a dispatch line");
+  refs(rows.tms_documents, (x) => x.tms_load_id, tmsLoads, "a dispatch document");
   refs(rows.driver_days, (x) => x.driver_id, drivers, "a driver day");
   refs(rows.driver_days, (x) => x.load_id, loads, "a driver day");
   refs(rows.fuel_purchases, (x) => x.driver_id, drivers, "a fuel purchase");

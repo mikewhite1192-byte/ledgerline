@@ -30,6 +30,8 @@ export type Watermarks = {
   // LOAD-MOVEMENT (0071): a document's last change (its read), and a move's record time.
   documents: string;
   load_events: string;
+  // TMS-MIRROR (0075): a mirrored status event's arrival.
+  tms_status_events: string;
 };
 
 export type DiscoverInput = {
@@ -127,6 +129,19 @@ const FINDERS: {
              AND x.created_at >= CAST($1 AS timestamptz) AND x.created_at <= CAST($2 AS timestamptz)
              AND ${notLogged("load_event", "x")}
            ORDER BY x.created_at, x.id LIMIT $3`,
+  },
+  // TMS-MIRROR (0075): a status event the sync mirrored, by its arrival, never a seeded one. Nothing
+  // is found while the sync is off, so events wait for it; none from before its start date.
+  {
+    source: "tms_event",
+    watermark: "tms_status_events",
+    when: () => flags.tmsSync.enabled === true,
+    notBefore: () => flags.tmsSync.startDate,
+    sql: `SELECT CAST(x.id AS text) AS id, ${ts("x.received_at")} AS created_at FROM tms_status_events x
+           WHERE x.tenant_id = current_tenant_id() AND NOT x.seeded AND x.field = 'status'
+             AND x.received_at >= CAST($1 AS timestamptz) AND x.received_at <= CAST($2 AS timestamptz)
+             AND ${notLogged("tms_event", "x")}
+           ORDER BY x.received_at, x.id LIMIT $3`,
   },
   {
     source: "audit",

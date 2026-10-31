@@ -115,7 +115,22 @@ describe("/settings/demo", () => {
     expect(screen.getByRole("checkbox")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reset the demo" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Move the fleet" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sync dispatch now" })).toBeTruthy();
     expect(mocks.previewDemoReset).toHaveBeenCalledWith(expect.anything(), BR);
+  });
+
+  it("leaves the dispatch sync off the page while its switch is off", async () => {
+    const saved = flags.tmsSync.enabled;
+    flags.tmsSync.enabled = false;
+    try {
+      signedIn("admin");
+      holding([]);
+      render(await DemoSettings());
+      expect(screen.queryByRole("button", { name: "Sync dispatch now" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Move the fleet" })).toBeTruthy();
+    } finally {
+      flags.tmsSync.enabled = saved;
+    }
   });
 
   it("shows the refusals instead of the button while a person must settle something", async () => {

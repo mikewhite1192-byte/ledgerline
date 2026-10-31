@@ -17,6 +17,7 @@ import {
   type Watermarks,
 } from "./discover";
 import { closeStaleAsks } from "../asks/store";
+import { pullTms } from "../tms/sync";
 import { fillReasons } from "../asks/reason";
 import { deskHandlers, type Handlers } from "./handlers";
 import { localMidnightOf, localNowOf, type DeskSource } from "./keys";
@@ -101,6 +102,7 @@ const CLAIM_LEASE_SQL = `UPDATE desk_loops
   WHERE tenant_id = current_tenant_id() AND (lease_until IS NULL OR lease_until < CAST($1 AS timestamptz))
   RETURNING watermarks->>'card_transactions' AS card_transactions, watermarks->>'customer_payments' AS customer_payments,
             watermarks->>'documents' AS documents, watermarks->>'load_events' AS load_events,
+            watermarks->>'tms_status_events' AS tms_status_events,
             (SELECT t.timezone FROM tenants t WHERE t.id = current_tenant_id()) AS zone`;
 
 // The panel's "running since": set once, by the lease holder only.
@@ -126,6 +128,7 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
           customer_payments: unknown;
           documents: unknown;
           load_events: unknown;
+          tms_status_events: unknown;
           zone: unknown;
         }>(
           CLAIM_LEASE_SQL,
@@ -141,6 +144,7 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
             customer_payments: r.customer_payments,
             documents: r.documents,
             load_events: r.load_events,
+            tms_status_events: r.tms_status_events,
           },
         };
       }),
@@ -152,6 +156,14 @@ export function dbDeskStore(db: TenantDb, session: Session): DeskStore {
     },
     append: (line) => db.withTenant(session.tenantId, (q) => appendLine(q, line)),
     discover: async (input) => {
+      // TMS-MIRROR (0075): the dispatch mirror's walk first, so the events it mirrors are found in
+      // this same wake. A failure is a category in the log and never stops the wake; the walk's
+      // own rows (attempts, flags) say what failed.
+      try {
+        await pullTms(db, session, { token: input.token, now: new Date(input.nowIso) });
+      } catch (err) {
+        console.error(`desk tms sync failed: ${err instanceof Error ? err.name : "unknown"}`);
+      }
       let budget = input.budget;
       let seen = 0;
       const periods = await inTenant((q) => findPeriods(q, { ...input, budget }));
@@ -270,6 +282,7 @@ export async function wakeDesk(
       customer_payments: watermarkOf(claimed.watermarks.customer_payments, startInstant),
       documents: watermarkOf(claimed.watermarks.documents, startInstant),
       load_events: watermarkOf(claimed.watermarks.load_events, startInstant),
+      tms_status_events: watermarkOf(claimed.watermarks.tms_status_events, startInstant),
     };
 
     // Discovery, inside the day's share.
