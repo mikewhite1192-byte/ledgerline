@@ -81,11 +81,11 @@ describe("proposalCardFrom", () => {
 
   it("quotes the advance at pickup's amount and the carrier's share, never the room left", () => {
     const load = { number: "BR-L10230", capCents: null, leftAfterCents: null, shareBps: 7_000 };
-    const line = "Load BR-L10230 is picked up: $200.00 now, inside the 70% of trip pay the carrier allows on one load.";
+    const line = "Load BR-L10230 was picked up: $200.00 now, inside the 70% of trip pay the carrier allows on one load.";
     expect(advanceLoadDetail(load, 20_000)).toBe(line);
     expect(proposalCardFrom({ ...view, load }).detail).toBe(line);
     expect(advanceLoadDetail({ ...load, shareBps: 6_250 }, 41_500)).toBe(
-      "Load BR-L10230 is picked up: $415.00 now, inside the 62.5% of trip pay the carrier allows on one load.",
+      "Load BR-L10230 was picked up: $415.00 now, inside the 62.5% of trip pay the carrier allows on one load.",
     );
     // No amount to quote: the plain load line.
     expect(advanceLoadDetail(load)).toBe("For load BR-L10230.");

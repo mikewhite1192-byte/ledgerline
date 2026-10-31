@@ -27,7 +27,10 @@ import { advancesOn } from "./switches";
 // executing) gets none, so this never retires a card someone is looking at. The proposal's
 // dedupe_key (kind, driver and the canonical args, which name the load and the move) and
 // proposals_one_live_per_subject (0009: one live advance per driver) back that up in the
-// database. The load row is locked first, so two runs on one load take turns.
+// database. The driver row is locked first and then the load row, so two runs on one load, or on
+// two loads of one driver, take turns and the second finds the first's card. That is the order a
+// new money code takes (driver, then load). The driver lock is FOR NO KEY UPDATE, so a writer
+// that holds a load and adds a row keyed to the driver (a key share) never waits on it.
 //
 // Called from the desk loop's load_event source, once per recorded move (its desk_log key is
 // load_event:<load_events.id>). Every path re-asks its own switch and start date here.
@@ -43,6 +46,7 @@ export type AtPickupSkip =
   | "not_pickup"
   | "not_in_transit"
   | "no_driver"
+  | "driver_changed"
   | "stage_delivered"
   | "no_load_cap"
   | "load_has_card"
@@ -67,8 +71,12 @@ const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-D
 const EVENT_SQL = `SELECT CAST(load_id AS text) AS load_id, to_status, ${ts("at")} AS at, ${ts("created_at")} AS created_at
   FROM load_events WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`;
 
-const LOCK_LOAD_SQL = `SELECT CAST(id AS text) AS id, load_number, status, CAST(driver_id AS text) AS driver_id
-  FROM loads WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) FOR UPDATE`;
+const LOAD_SQL = `SELECT CAST(id AS text) AS id, load_number, status, CAST(driver_id AS text) AS driver_id
+  FROM loads WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`;
+const LOCK_LOAD_SQL = `${LOAD_SQL} FOR UPDATE`;
+
+const LOCK_DRIVER_SQL = `SELECT CAST(id AS text) AS id FROM drivers
+  WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) FOR NO KEY UPDATE`;
 
 // Any advance card for this load, in any status and from either origin.
 const LOAD_CARD_SQL = `SELECT 1 AS one FROM proposals
@@ -102,11 +110,17 @@ export async function proposeAdvanceAtPickup(
     if (!atPickupOn(localDateOf(instant, zone))) return nothing("before_start");
   }
 
+  // The load's driver, read without a lock, then the driver's lock, then the load's: a driver
+  // moved off the load in between drafts nothing.
+  const [seen] = await q.query<LoadRow>(LOAD_SQL, [event.load_id]);
+  if (!seen) return nothing("not_found");
+  if (seen.driver_id === null) return nothing("no_driver");
+  const driverId = seen.driver_id;
+  if ((await q.query(LOCK_DRIVER_SQL, [driverId])).length !== 1) return nothing("not_found");
   const [load] = await q.query<LoadRow>(LOCK_LOAD_SQL, [event.load_id]);
   if (!load) return nothing("not_found");
+  if (load.driver_id !== driverId) return nothing("driver_changed");
   if (load.status !== "in_transit") return nothing("not_in_transit");
-  if (load.driver_id === null) return nothing("no_driver");
-  const driverId = load.driver_id;
 
   if ((await q.query(LOAD_CARD_SQL, [load.id])).length > 0) return nothing("load_has_card");
   if ((await q.query(LIVE_CARD_SQL, [driverId])).length > 0) return nothing("live_card");

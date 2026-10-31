@@ -184,7 +184,7 @@ function referencesFor(p: ProposalView): Record<string, string> | undefined {
 export function advanceLoadDetail(load: ProposalView["load"], amountCents?: number): string | undefined {
   if (!load) return undefined;
   if (load.shareBps !== undefined && amountCents !== undefined && Number.isSafeInteger(amountCents) && amountCents > 0) {
-    return `Load ${load.number} is picked up: ${formatCents(amountCents)} now, inside the ${percentOf(load.shareBps)} of trip pay the carrier allows on one load.`;
+    return `Load ${load.number} was picked up: ${formatCents(amountCents)} now, inside the ${percentOf(load.shareBps)} of trip pay the carrier allows on one load.`;
   }
   if (load.capCents === null || load.leftAfterCents === null) return `For load ${load.number}.`;
   return `Load ${load.number}: ${formatCents(load.leftAfterCents)} of ${formatCents(load.capCents)} cap left after this.`;

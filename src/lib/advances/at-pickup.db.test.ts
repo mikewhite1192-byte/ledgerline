@@ -186,6 +186,48 @@ describe("the advance at pickup", () => {
     expect((await advanceCards(f)).map((c) => c.status)).toEqual(["proposed"]);
   });
 
+  it("drafts one card, and throws nothing, when two loads of one driver are picked up at once", async () => {
+    const f = await carrier("pickup-race");
+    const a = await onRoad(f);
+    const b = await onRoad(f, "2026-11-02T14:06:00.000Z");
+    // A third connection holds the driver's row, so both runs queue on it before either asks for
+    // a live card; once it lets go, they take turns and the second finds the first's card.
+    let runs: Promise<PromiseSettledResult<Awaited<ReturnType<typeof direct>>>[]> | undefined;
+    let waiting = 0;
+    await admin.withTenant(f.tenantId, async (q) => {
+      await q.query("SELECT id FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) FOR UPDATE", [
+        f.driverId,
+      ]);
+      const [{ pid }] = await q.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+      runs = Promise.allSettled([direct(f, a.eventId), direct(f, b.eventId)]);
+      // Both runs waiting behind this one, directly or behind the other: bounded, never a hang.
+      for (let i = 0; i < 100 && waiting < 2; i += 1) {
+        const [row] = await admin.withoutTenant((w) =>
+          w.query<{ n: number | string }>(
+            `SELECT count(*) AS n FROM pg_stat_activity s
+              WHERE CAST($1 AS integer) = ANY(pg_blocking_pids(s.pid))
+                 OR EXISTS (SELECT 1 FROM pg_stat_activity t
+                             WHERE t.pid = ANY(pg_blocking_pids(s.pid))
+                               AND CAST($1 AS integer) = ANY(pg_blocking_pids(t.pid)))`,
+            [pid],
+          ),
+        );
+        waiting = Number(row.n);
+        if (waiting < 2) await new Promise((r) => setTimeout(r, 50));
+      }
+    });
+    expect(waiting).toBe(2);
+    const outcomes = await runs!;
+    expect(outcomes.map((o) => o.status)).toEqual(["fulfilled", "fulfilled"]);
+    const kinds = outcomes
+      .map((o) => (o.status === "fulfilled" ? (o.value.kind === "proposed" ? "proposed" : o.value.category) : "threw"))
+      .sort();
+    expect(kinds).toEqual(["live_card", "proposed"]);
+    const cards = await advanceCards(f);
+    expect(cards).toHaveLength(1);
+    expect(cards[0]).toMatchObject({ status: "proposed", amount_cents: 41_500 });
+  });
+
   it("drafts nothing with the switch off, even while load movement is on", async () => {
     const f = await carrier("pickup-off");
     const { eventId } = await onRoad(f);
