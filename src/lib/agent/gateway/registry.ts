@@ -9,6 +9,7 @@ import { getAdvanceHeadroom } from "./tools/read/get-advance-headroom";
 import { getAdvances } from "./tools/read/get-advances";
 import { getArAging } from "./tools/read/get-ar-aging";
 import { getCardBreaks } from "./tools/read/get-card-breaks";
+import { getCardLoads } from "./tools/read/get-card-loads";
 import { getCashFriday } from "./tools/read/get-cash-friday";
 import { getCollections } from "./tools/read/get-collections";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
@@ -115,6 +116,7 @@ const TOOLS: readonly AnyToolDef[] = [
   proposeLoadRate,
   proposeDetentionCharge,
   getCardBreaks,
+  getCardLoads,
   proposeCardMatch,
   previewRuleChange,
   proposeRuleChange,

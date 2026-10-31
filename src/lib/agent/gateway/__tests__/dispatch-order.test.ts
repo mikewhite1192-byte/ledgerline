@@ -423,7 +423,7 @@ describe("callTool dispatch order", () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, IFTA quarter, year-end 1099, trust meter, invoicing, invoice review, customer payments,
     // collections, Cash Friday, factoring, profit brief, quarter review, pay rule change, money code,
-    // carrier memory, fuel rates and escrow release switches after this test. remember_note outside a chat turn writes nothing and says so.
+    // carrier memory, fuel rates, escrow release and card load ruling switches after this test. remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.iftaEnabled = true;
@@ -443,6 +443,7 @@ describe("callTool dispatch order", () => {
     flags.groundedRatesEnabled = true;
     flags.quarterReviewEnabled = true;
     flags.escrowRelease.enabled = true;
+    flags.cardLoadRuling.enabled = true;
     onTestFinished(() => {
       flags.reportsEnabled = false;
       flags.iftaEnabled = false;
@@ -462,10 +463,14 @@ describe("callTool dispatch order", () => {
       flags.groundedRatesEnabled = false;
       flags.quarterReviewEnabled = false;
       flags.escrowRelease.enabled = false;
+      flags.cardLoadRuling.enabled = false;
     });
-    // The second check's read of the office's notes about the driver: none on file.
+    // The second check's read of the office's notes about the driver: none on file. The card
+    // loads read: no loads on the statement in the window.
     const store: Handler = (sql, params) =>
-      sql.includes("FROM carrier_notes n") ? [] : (screenStore(sql, params) ?? cards(sql, params));
+      sql.includes("FROM carrier_notes n") || sql.includes("pr.kind = 'card_load_ruling'")
+        ? []
+        : (screenStore(sql, params) ?? cards(sql, params));
     for (const [name, args] of Object.entries(ARGS)) {
       const auditor = name === "get_proposal";
       const db = planDb(plan, auditor ? withProposal(proposalRowFor(plan, "advance_payout"), store) : store);

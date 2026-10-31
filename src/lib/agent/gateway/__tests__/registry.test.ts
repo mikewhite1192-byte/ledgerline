@@ -46,6 +46,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_money_codes: { tier: "read", roles: ["operator", "auditor"] },
   propose_money_code: { tier: "propose", roles: ["operator"] },
   get_card_breaks: { tier: "read", roles: ["operator", "auditor"] },
+  get_card_loads: { tier: "read", roles: ["operator", "auditor"] },
   propose_card_match: { tier: "propose", roles: ["operator"] },
   get_cash_friday: { tier: "read", roles: ["operator"] },
   preview_rule_change: { tier: "read", roles: ["operator"] },
@@ -104,6 +105,7 @@ beforeEach(() => {
   flags.detentionEnabled = false;
   flags.moneyCodes.enabled = false;
   flags.cardRecon.enabled = false;
+  flags.cardLoadRuling.enabled = false;
   flags.invoicesEnabled = false;
   flags.invoiceReviewEnabled = false;
   flags.customerPaymentsEnabled = false;
@@ -216,6 +218,24 @@ describe("tool registry", () => {
     for (const n of CARD_TOOLS) expect(names("triage"), n).not.toContain(n);
     flags.cardRecon.enabled = false;
     expect(toolsFor("operator")).toHaveLength(21);
+  });
+
+  it("offers the card load read to the operator and the auditor only while the ruling's switch is on", () => {
+    const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
+    for (const role of AGENT_ROLES) expect(names(role), role).not.toContain("get_card_loads");
+    flags.cardLoadRuling.enabled = true;
+    expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
+      operator: 22,
+      auditor: 13,
+      triage: 2,
+    });
+    expect(names("operator")).toContain("get_card_loads");
+    expect(names("auditor")).toContain("get_card_loads");
+    expect(names("triage")).not.toContain("get_card_loads");
+    expect(ALWAYS_LOADED).not.toContain("get_card_loads");
+    flags.cardLoadRuling.enabled = false;
+    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("auditor")).toHaveLength(12);
   });
 
   it("offers the invoice and customer payment tools only while their switches are on, read on every offer", () => {

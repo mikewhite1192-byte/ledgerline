@@ -116,6 +116,8 @@ describe("decide", () => {
     ["kind_never_alone", slipped("settlement_approve")],
     ["kind_never_alone", slipped("escrow_release")],
     ["kind_never_alone", { ...slipped("pay_correction"), rule: null }],
+    // A card load ruling books what a driver owes: a named person rules, Auto rule or not.
+    ["kind_never_alone", slipped("card_load_ruling")],
     ["kind_not_allowed", withProposal({ kind: "advance_payout" })],
     // An inherited name is not a kind the switch allows.
     ["kind_not_allowed", withProposal({ kind: "toString" })],

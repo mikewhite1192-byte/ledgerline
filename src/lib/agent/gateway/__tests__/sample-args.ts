@@ -126,6 +126,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     get_driver_identity: { driverId: hero.id },
     get_advance_headroom: { driverId: hero.id, amountCents: 10_000 },
     get_card_breaks: { status: "open", limit: 10 },
+    get_card_loads: { days: 14, limit: 10 },
     propose_card_match: {
       transactionId: unknownCard.cardUnknownId,
       driverId: unknownCard.candidateDriverId ?? hero.id,

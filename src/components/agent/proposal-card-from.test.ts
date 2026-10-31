@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { advanceLoadOf } from "@/lib/agent/gateway/store/views";
+import { advanceLoadOf, cardLoadOf } from "@/lib/agent/gateway/store/views";
 import type { ProposalView } from "@/lib/agent/view";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import {
   FLAG_QUESTION,
   advanceLoadDetail,
   auditFor,
+  cardLoadDetail,
   detentionLines,
   hoursMinutes,
   kindCopy,
@@ -433,6 +434,44 @@ describe("each kind's confirm words", () => {
     expect(proposalCardFrom({ ...view, subjectLabel: "" })).not.toHaveProperty("references");
     expect(proposalCardFrom({ ...view, subjectLabel: "   " })).not.toHaveProperty("references");
     expect(proposalCardFrom({ ...view, subjectLabel: null })).not.toHaveProperty("references");
+  });
+});
+
+describe("a card load ruling card", () => {
+  const ROW = "55555555-5555-4555-8555-555555555555";
+  const args = JSON.stringify({ transactionId: ROW, cardLast4: "4417", postedOn: "2026-10-28", ruling: "deficit" });
+
+  it("reads the card, the day and the driver's code from its stored args, never a value out of shape", () => {
+    expect(cardLoadOf(args, "BR-D07")).toEqual({ last4: "4417", postedOn: "2026-10-28", driverCode: "BR-D07" });
+    expect(cardLoadOf(args, null)).toEqual({ last4: "4417", postedOn: "2026-10-28", driverCode: null });
+    expect(cardLoadOf(args, "not a code!")?.driverCode).toBeNull();
+    expect(cardLoadOf(JSON.stringify({ cardLast4: "44", postedOn: "2026-10-28" }), "BR-D07")).toBeNull();
+    expect(cardLoadOf("{", "BR-D07")).toBeNull();
+    expect(cardLoadOf(null, "BR-D07")).toBeNull();
+  });
+
+  it("asks to book the load as money the driver owes and says nothing is paid or sent", () => {
+    const cardLoad = { last4: "4417", postedOn: "2026-10-28", driverCode: "BR-D07" };
+    const card = proposalCardFrom({
+      ...view,
+      kind: "card_load_ruling",
+      subjectTable: "card_transactions",
+      subjectId: ROW,
+      subjectLabel: "card ending 4417",
+      amountCents: 40_000,
+      direction: "none",
+      destination: null,
+      cardLoad,
+    });
+    expect(card.confirmNoun).toBe("card load ruling");
+    expect(card.confirmQuestion).toBe("Book this $400.00 card load as money driver BR-D07 owes?");
+    expect(card.confirmNext).toBe("Books the load as money the driver owes. Nothing is paid or sent.");
+    expect(card.detail).toBe(cardLoadDetail(cardLoad));
+    expect(card.detail).toContain("Card ending 4417");
+    expect(card.detail).toContain("Driver BR-D07's card.");
+    const unnamed = proposalCardFrom({ ...view, kind: "card_load_ruling", amountCents: 40_000, destination: null, cardLoad: { ...cardLoad, driverCode: null } });
+    expect(unnamed.confirmQuestion).toBe("Book this $400.00 card load as money the driver owes?");
+    expect(cardLoadDetail(null)).toBeUndefined();
   });
 });
 

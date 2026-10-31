@@ -12,6 +12,7 @@ export const ASKED_KINDS = [
   "settlement_approve",
   "pay_correction",
   "load_move",
+  "card_load_ruling",
 ] as const;
 
 export type AskedKind = (typeof ASKED_KINDS)[number];
@@ -57,6 +58,7 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
   load_create: "a new load",
   escrow_release: "an escrow release",
   load_move: "a load update",
+  card_load_ruling: "a card load ruling",
 };
 
 const WORD = /^[a-z][a-z_]{1,39}$/;
@@ -133,6 +135,13 @@ export function askWords(f: AskFacts): string {
       if (f.loadNumber) return fit(`Should I update load ${f.loadNumber}?`);
       break;
     }
+    case "card_load_ruling":
+      if (f.driverName) {
+        return fit(
+          `${f.driverName}'s fuel card got a ${amount} load I have no record of. Yes books it as money ${f.driverName} owes; open the card to rule otherwise.`,
+        );
+      }
+      break;
   }
   return genericAsk(f);
 }

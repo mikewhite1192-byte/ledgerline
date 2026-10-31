@@ -77,6 +77,7 @@ type ProposalRow = {
   engine_override_role: string | null;
   card_last4: string | null;
   args: string | null;
+  card_load_driver?: string | null;
   exceptions: string | null;
   // A factoring card's request (0060), once its approval wrote one.
   factoring_status?: string | null;
@@ -219,6 +220,24 @@ export function advanceLoadOf(args: string | null): NonNullable<ProposalView["lo
 const DRIVER_CODE = /^[A-Za-z0-9._-]{1,40}$/;
 const PORTAL_NAME = /^[A-Z0-9 -]{2,40}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+// A card load ruling's line from its stored args and the driver's code read at render. Null when
+// the args do not read back whole; a value outside its shape is never shown.
+export function cardLoadOf(args: string | null, driverCode: string | null | undefined): NonNullable<ProposalView["cardLoad"]> | null {
+  if (typeof args !== "string") return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(args);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object") return null;
+  const { cardLast4, postedOn } = raw as Record<string, unknown>;
+  if (typeof cardLast4 !== "string" || !LAST4.test(cardLast4)) return null;
+  if (typeof postedOn !== "string" || !DAY.test(postedOn)) return null;
+  const code = typeof driverCode === "string" && DRIVER_CODE.test(driverCode) ? driverCode : null;
+  return { last4: cardLast4, postedOn, driverCode: code };
+}
 
 export function cardMatchOf(args: string | null): NonNullable<ProposalView["cardMatch"]> | null {
   if (typeof args !== "string") return null;
@@ -387,6 +406,7 @@ function proposalView(r: ProposalRow): ProposalView {
     ...(r.kind === "detention_charge" ? { detention: detentionOf(r) } : {}),
     ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args) } : {}),
     ...(r.kind === "card_match" ? { cardMatch: cardMatchOf(r.args) } : {}),
+    ...(r.kind === "card_load_ruling" ? { cardLoad: cardLoadOf(r.args, r.card_load_driver) } : {}),
     ...(CASH_KINDS.has(r.kind) ? { cash: cashOf(r) } : {}),
     ...(r.kind === "pay_rule_change" ? { ruleChange: ruleChangeOf(r) } : {}),
   };
@@ -460,8 +480,12 @@ const PROPOSAL_SQL = `
            END
          END AS card_last4,
          CASE WHEN p.kind IN ('detention_charge', 'advance_payout', 'card_match', 'factoring_request', 'bill_defer',
-                             'collections_chase', 'pay_rule_change')
+                             'collections_chase', 'pay_rule_change', 'card_load_ruling')
               THEN CAST(p.args AS text) END AS args,
+         CASE WHEN p.kind = 'card_load_ruling' THEN
+           (SELECT d.code FROM drivers d
+             WHERE d.tenant_id = p.tenant_id AND CAST(d.id AS text) = p.args ->> 'driverId')
+         END AS card_load_driver,
          CAST(p.exceptions AS text) AS exceptions,
          CASE WHEN p.kind = 'factoring_request' THEN
            (SELECT fr.status FROM factoring_requests fr WHERE fr.tenant_id = p.tenant_id AND fr.proposal_id = p.id)
