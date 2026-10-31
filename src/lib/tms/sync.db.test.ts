@@ -255,7 +255,12 @@ async function ourLoad(f: Fixture, status = "in_transit"): Promise<{ id: string;
   return { id, number };
 }
 
-const pull = (f: Carrier, now: Date = NOW) => pullTms(app, f.session, { token: f.token, now });
+// A minute of time to spare by a clock that stands still at `now`, so the deadline never comes.
+const roomy = (now: Date) => ({ deadlineMs: now.getTime() + 60_000, clock: () => now.getTime() });
+const pull = (f: Carrier, now: Date = NOW) => {
+  const { deadlineMs, clock } = roomy(now);
+  return pullTms(app, f.session, { token: f.token, now, deadlineMs }, { clock });
+};
 
 const countsOf = (f: Fixture) =>
   admin.withTenant(f.tenantId, async (q) => {
@@ -438,7 +443,10 @@ describe("the sync", () => {
     flags.tmsSync.enabled = false;
     expect(await pull(f)).toEqual({ ran: false, category: "switched_off" });
     flags.tmsSync.enabled = true;
-    expect(await pullTms(app, f.session, { token: randomUUID(), now: NOW })).toEqual({ ran: false, category: "no_lease" });
+    expect(await pullTms(app, f.session, { token: randomUUID(), now: NOW, deadlineMs: roomy(NOW).deadlineMs }, { clock: roomy(NOW).clock })).toEqual({
+      ran: false,
+      category: "no_lease",
+    });
     expect(fake.calls).toEqual([]);
     expect((await countsOf(f)).tms_loads).toBe(0);
   });
@@ -467,6 +475,72 @@ describe("the sync", () => {
     expect(fake.calls.filter((c) => c.startsWith("load:"))).toEqual([]);
     expect(await countsOf(f)).toEqual(counts);
     expect((await walkOf(f))?.below).toBeNull();
+  });
+
+  it("reads nothing once the deadline has come, and leaves the bookmark where it was", async () => {
+    const f = await carrier("tms-late");
+    for (let i = 0; i < 5; i += 1) {
+      const at = new Date(Date.parse(T_TENDERED) + i * 60_000).toISOString();
+      fake.loads.set(`A-${i}`, dispatchLoad(`A-${i}`, `R-${i}`, [{ label: LABEL.tendered, at }]));
+    }
+    flags.tmsSync.pageSize = 2;
+    flags.tmsSync.maxPagesPerWake = 1;
+    await pull(f);
+    const bookmark = (await walkOf(f))?.below;
+    expect(bookmark).toEqual({ createdAt: new Date(Date.parse(T_TENDERED) + 3 * 60_000).toISOString(), id: "A-3" });
+    const counts = await countsOf(f);
+
+    fake.calls = [];
+    const late = new Date(NOW.getTime() + 60_000);
+    const r = await pullTms(app, f.session, { token: f.token, now: late, deadlineMs: late.getTime() }, { clock: () => late.getTime() });
+    expect(r).toMatchObject({ ran: true, listed: 0, read: 0, written: 0, passComplete: false, stopped: "deadline" });
+    expect(fake.calls).toEqual([]);
+    expect((await walkOf(f))?.below).toEqual(bookmark);
+    expect(await countsOf(f)).toEqual(counts);
+  });
+
+  it("saves the walk when the deadline comes mid-page, keeps the bookmark, and the next pass resumes", async () => {
+    const f = await carrier("tms-midpage");
+    for (let i = 0; i < 5; i += 1) {
+      const at = new Date(Date.parse(T_TENDERED) + i * 60_000).toISOString();
+      fake.loads.set(`A-${i}`, dispatchLoad(`A-${i}`, `R-${i}`, [{ label: LABEL.tendered, at }]));
+    }
+    flags.tmsSync.pageSize = 2;
+    flags.tmsSync.maxPagesPerWake = 1;
+    await pull(f);
+    const bookmark = (await walkOf(f))?.below;
+    expect(bookmark).toMatchObject({ id: "A-3" });
+
+    // Ten seconds go by with each full read, and the deadline is five seconds out: the page's first
+    // load (A-2) is read, then time is up before the second (A-1).
+    fake.calls = [];
+    const at = new Date(NOW.getTime() + 60_000);
+    const reads = () => fake.calls.filter((c) => c.startsWith("load:")).length;
+    const r = await pullTms(
+      app,
+      f.session,
+      { token: f.token, now: at, deadlineMs: at.getTime() + 5_000 },
+      { clock: () => at.getTime() + reads() * 10_000 },
+    );
+    expect(r).toMatchObject({ ran: true, listed: 2, read: 1, written: 1, passComplete: false, stopped: "deadline" });
+    expect(fake.calls).toEqual(["list", "load:A-2"]);
+    expect((await walkOf(f))?.below).toEqual(bookmark);
+    // The walk was saved by this run (the lease row's updated_at is its time).
+    const [row] = await admin.withTenant(f.tenantId, (q) =>
+      q.query<{ updated_at: string }>(`SELECT ${ts("updated_at")} AS updated_at FROM desk_loops WHERE tenant_id = current_tenant_id()`),
+    );
+    expect(row.updated_at).toBe(at.toISOString());
+    expect((await countsOf(f)).tms_loads).toBe(3);
+
+    // The next pass lists the same page again: A-2 is mirrored already, so only A-1 is read.
+    fake.calls = [];
+    const next = await pull(f, new Date(NOW.getTime() + 120_000));
+    expect(next).toMatchObject({ ran: true, listed: 2, read: 1, written: 1, stopped: null });
+    expect(fake.calls).toEqual(["list", "load:A-1"]);
+    expect((await walkOf(f))?.below).toEqual({ createdAt: new Date(Date.parse(T_TENDERED) + 60_000).toISOString(), id: "A-1" });
+    const last = await pull(f, new Date(NOW.getTime() + 180_000));
+    expect(last).toMatchObject({ ran: true, passComplete: true, stopped: null });
+    expect((await countsOf(f)).tms_loads).toBe(5);
   });
 
   it("keeps one history row per event when pages repeat a row and the load is read again", async () => {
@@ -789,7 +863,9 @@ describe("the desk's dispatch lane", () => {
       n += 1;
       return `${(0xf0000000 - n).toString(16)}-${randomUUID().slice(9)}`;
     };
-    expect(await pullTms(app, f.session, { token: f.token, now: NOW }, { newId: falling })).toMatchObject({ ran: true, written: 1 });
+    expect(
+      await pullTms(app, f.session, { token: f.token, now: NOW, deadlineMs: roomy(NOW).deadlineMs }, { newId: falling, clock: roomy(NOW).clock }),
+    ).toMatchObject({ ran: true, written: 1 });
     const pickedId = await eventIdOf(f, "A-1:h1");
     const deliveredId = await eventIdOf(f, "A-1:h2");
     if (!pickedId || !deliveredId) throw new Error("no events");

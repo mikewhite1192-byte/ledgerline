@@ -1065,9 +1065,9 @@ export const flags: Flags = {
   },
   // On by the owner's call (D-071, 2026-10-31). A load_move card is still a person's tap.
   loadMovement: { enabled: true, startDate: "2026-10-30" },
-  // Ships on (D-071): it only reads, and a load moves only while loadMovement is on too.
+  // Ships off; its own one-line PR turns it on (D-071). A load moves on it only while loadMovement is on too.
   tmsSync: {
-    enabled: true,
+    enabled: false,
     startDate: "2026-10-31",
     maxPagesPerWake: 3,
     maxReadsPerWake: 20,

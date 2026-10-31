@@ -24,9 +24,10 @@ export const LOCAL_OVERRIDABLE = [
 // request field the replay never saw (or, for accounting, a start-up check that needs the sandbox
 // company's id; for the rest, a page, a card or a route the recorded run never had). The local run
 // sets every one of them false so it replays what it recorded. The armed switches for money
-// codes, the desk loop, factoring, escrow releases and the autopilot are listed ahead of their own
-// release, while they still ship off, so each release PR changes only its flag: an off-only switch
-// can never be turned on, so listing one early lets the local run do nothing it could not already do.
+// codes, the desk loop, factoring, escrow releases and the autopilot, and the dispatch sync's
+// switch (tmsSync.enabled), are listed ahead of their own release, while they still ship off, so
+// each release PR changes only its flag: an off-only switch can never be turned on, so listing one
+// early lets the local run do nothing it could not already do.
 export const LOCAL_OFF_ONLY = [
   "accountingEnabled",
   "documentsEnabled",

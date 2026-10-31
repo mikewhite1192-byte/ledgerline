@@ -4,13 +4,14 @@ import type { Session } from "@/lib/auth/claims";
 import { POST } from "./route";
 
 // The Sync dispatch now route's gates, with the sync itself a stand-in: the cross-site check and
-// the switch answer before the session is read, the pull runs as the carrier's sweep login (never
-// the person's session), and a held lease answers busy. No database and no network.
+// the switch answer before the session is read, only an admin (the one role the page shows the
+// button to) may run it, the pull runs as the carrier's sweep login (never the person's session),
+// and a held lease answers busy. No database and no network.
 
 const TENANT = "11111111-1111-4111-8111-111111111111";
 const SESSION: Session = { sub: "sub-test", email: "ops@example.test", tenantId: TENANT };
 const SERVICE: Session = { sub: `service:sweep:${TENANT}`, email: "sweep@example.test", tenantId: TENANT };
-const COUNTS = { listed: 3, read: 2, written: 2, gone: 0, failed: 0, passComplete: true, listFailed: null };
+const COUNTS = { listed: 3, read: 2, written: 2, gone: 0, failed: 0, passComplete: true, listFailed: null, stopped: null };
 
 const mocks = vi.hoisted(() => ({
   getSession: vi.fn(),
@@ -18,10 +19,12 @@ const mocks = vi.hoisted(() => ({
   syncDispatchNow: vi.fn(),
   assertMembership: vi.fn(),
   staffGate: vi.fn(),
+  readRole: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
 vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: mocks.staffGate }));
+vi.mock("@/lib/auth/role", () => ({ readRole: mocks.readRole }));
 vi.mock("@/lib/db", () => ({ getDb: () => ({ withTenant: (_t: string, fn: (q: unknown) => unknown) => fn({}) }) }));
 vi.mock("@/lib/tms/sync", () => ({ syncDispatchNow: mocks.syncDispatchNow }));
 vi.mock("@/lib/sweep/service-session", () => ({ serviceSession: mocks.serviceSession }));
@@ -41,6 +44,7 @@ beforeEach(() => {
   mocks.serviceSession.mockResolvedValue(SERVICE);
   mocks.assertMembership.mockResolvedValue(undefined);
   mocks.staffGate.mockResolvedValue(null);
+  mocks.readRole.mockResolvedValue("admin");
   mocks.syncDispatchNow.mockResolvedValue({ ok: true, result: { ran: true, ...COUNTS } });
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -58,6 +62,7 @@ describe("POST /api/demo/tms-sync", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.json()).toEqual(COUNTS);
     expect(mocks.assertMembership).toHaveBeenCalledWith({}, SESSION);
+    expect(mocks.readRole).toHaveBeenCalledWith({}, SESSION);
     const [, session] = mocks.syncDispatchNow.mock.calls[0];
     expect(session).toBe(SERVICE);
   });
@@ -72,6 +77,21 @@ describe("POST /api/demo/tms-sync", () => {
     flags.tmsSync.enabled = true;
     mocks.getSession.mockResolvedValue(null);
     expect((await call()).status).toBe(401);
+    expect(mocks.syncDispatchNow).not.toHaveBeenCalled();
+  });
+
+  it("refuses a staff login and a judge, as the page shows neither of them the button", async () => {
+    mocks.readRole.mockResolvedValue("staff");
+    const staff = await call();
+    expect(staff.status).toBe(403);
+    expect(await staff.json()).toMatchObject({ error: "role" });
+    mocks.readRole.mockResolvedValue("judge");
+    expect((await call()).status).toBe(403);
+    // A judge stops at the staff check itself, before the role is read.
+    mocks.staffGate.mockResolvedValue(new Response(JSON.stringify({ error: "judge" }), { status: 403 }));
+    const judge = await call();
+    expect(judge.status).toBe(403);
+    expect(await judge.json()).toMatchObject({ error: "judge" });
     expect(mocks.syncDispatchNow).not.toHaveBeenCalled();
   });
 

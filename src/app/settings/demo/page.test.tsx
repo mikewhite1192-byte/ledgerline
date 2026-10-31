@@ -74,14 +74,19 @@ const rowOf = (label: string) =>
     .closest("tr") as HTMLTableRowElement;
 const cellsOf = (label: string) => [...rowOf(label).querySelectorAll("td")].map((c) => c.textContent);
 
+const savedSync = flags.tmsSync.enabled;
+
 beforeEach(() => {
   flags.demoResetEnabled = true;
+  // The dispatch sync ships off; on here, so the tests show who sees its button.
+  flags.tmsSync.enabled = true;
   mocks.demoCarrierOf.mockResolvedValue(BR);
 });
 
 afterEach(() => {
   cleanup();
   flags.demoResetEnabled = false;
+  flags.tmsSync.enabled = savedSync;
   vi.clearAllMocks();
 });
 

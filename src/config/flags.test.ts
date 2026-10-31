@@ -87,8 +87,6 @@ const RELEASED_ON = [
   "loadMovement.enabled",
   "agentAsks.enabled",
   "advanceAtPickup.enabled",
-  // The dispatch mirror only reads (D-071); a load moves on it only while loadMovement is on.
-  "tmsSync.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -106,6 +104,8 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The autopilot approves with no click: the owner arms it in its own release PR.
   "autopilot.armed",
+  // The dispatch mirror ships off: its own one-line PR turns it on (D-071).
+  "tmsSync.enabled",
   // The synthetic feed's fault switches are a later item.
   "tmsSync.demoFaultsEnabled",
 ] as const;
@@ -327,9 +327,9 @@ describe("flags", () => {
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("load_move");
   });
 
-  it("ships the dispatch mirror on, read only, with a start date and small per-wake caps", () => {
+  it("ships the dispatch mirror off, read only, with a start date and small per-wake caps", () => {
     expect(flags.tmsSync).toEqual({
-      enabled: true,
+      enabled: false,
       startDate: "2026-10-31",
       maxPagesPerWake: 3,
       maxReadsPerWake: 20,
@@ -368,14 +368,15 @@ describe("flags", () => {
     }
     // Local mode can never turn on a switch that stays off: none is on the list that turns one on.
     for (const name of KEPT_OFF) expect(LOCAL_OVERRIDABLE as readonly string[], name).not.toContain(name);
-    // The only kept-off switches local mode may turn off are the armed switches listed ahead of
-    // their own release: exactly those still kept off, and nothing else.
+    // The only kept-off switches local mode may turn off are the armed switches, and the dispatch
+    // sync's switch, listed ahead of their own release: exactly those still kept off, and nothing else.
     const armedAhead: readonly string[] = [
       "moneyCodes.armed",
       "factoring.armed",
       "escrowRelease.armed",
       "deskLoop.armed",
       "autopilot.armed",
+      "tmsSync.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

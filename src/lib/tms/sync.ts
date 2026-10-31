@@ -33,7 +33,8 @@ import { isFinalized, readLabelMap, type TmsStatusCode } from "./status";
 // TMS-MIRROR (0075): the sync. A step at the top of the desk loop's discovery (and Settings >
 // Demo's Sync dispatch now), run by the holder of the desk loop's lease. It walks the TMS list
 // newest created first from a (createdAt, id) bookmark kept in desk_loops.watermarks.tms_walk,
-// at most maxPagesPerWake pages and maxReadsPerWake full reads a wake. A list row only picks a
+// at most maxPagesPerWake pages and maxReadsPerWake full reads a wake, and nothing more once the
+// caller's deadline comes (the page stays unfinished, the walk is saved). A list row only picks a
 // candidate: every write comes from a full read by id (the record, every history page until an
 // empty one, documents, line items, unseen drivers), each read in its own short transaction and
 // never inside the write. Then ONE transaction per load writes the mirror. A read that throws
@@ -62,9 +63,13 @@ export type PullResult =
       passComplete: boolean;
       // The list itself failed this wake: the category, never the cause.
       listFailed: string | null;
+      // "deadline": the run's deadline came first. The page it was on stays unfinished (the
+      // bookmark does not move), the walk is saved, and the next pass resumes there.
+      stopped: "deadline" | null;
     };
 
-export type PullDeps = { source?: TmsSource; newId?: () => string };
+// clock: epoch ms, read against run.deadlineMs (Date.now unless a test or the desk passes its own).
+export type PullDeps = { source?: TmsSource; newId?: () => string; clock?: () => number };
 
 type Miss = { n: number; u: string };
 type Walk = { passStartedAt: string; below: ListBookmark | null; misses: Record<string, Miss> };
@@ -186,7 +191,7 @@ type FullRead =
 export async function pullTms(
   db: TenantDb,
   session: Session,
-  run: { token: string; now: Date },
+  run: { token: string; now: Date; deadlineMs: number },
   deps: PullDeps = {},
 ): Promise<PullResult> {
   if (flags.tmsSync.enabled !== true) return { ran: false, category: "switched_off" };
@@ -234,7 +239,24 @@ export async function pullTms(
   const read = <T>(fn: (ctx: TmsContext) => Promise<T>) =>
     inTenant((q) => fn({ tenantId: session.tenantId, zone, now: nowIso, q, connection }));
 
-  const out = { listed: 0, read: 0, written: 0, gone: 0, failed: 0, passComplete: false, listFailed: null as string | null };
+  const out = {
+    listed: 0,
+    read: 0,
+    written: 0,
+    gone: 0,
+    failed: 0,
+    passComplete: false,
+    listFailed: null as string | null,
+    stopped: null as "deadline" | null,
+  };
+  const clock = deps.clock ?? Date.now;
+  // Checked before each page, each full read and each verification read. A deadline that is not a
+  // number counts as come (fail closed: nothing more is read).
+  const outOfTime = () => {
+    if (clock() < run.deadlineMs) return false;
+    out.stopped = "deadline";
+    return true;
+  };
   const saveWalk = (w: Walk) =>
     inTenant(async (q) => {
       const n = await q.execute(SAVE_WALK_SQL, [JSON.stringify(w), nowIso, run.token]);
@@ -314,6 +336,7 @@ export async function pullTms(
 
   let pages = 0;
   while (pages < s.maxPagesPerWake && out.read < s.maxReadsPerWake) {
+    if (outOfTime()) break;
     let page: { rows: TmsListRow[]; next: ListBookmark | null };
     try {
       page = await read((ctx) => source.listLoads(ctx, walk.below, s.pageSize));
@@ -344,7 +367,7 @@ export async function pullTms(
     for (const row of page.rows) {
       const state = states.get(row.externalId);
       if (!isCandidate(row, state, walk.misses[row.externalId], nowIso)) continue;
-      if (out.read >= s.maxReadsPerWake) {
+      if (out.read >= s.maxReadsPerWake || outOfTime()) {
         finished = false;
         break;
       }
@@ -365,7 +388,10 @@ export async function pullTms(
         ),
       );
       const now = unseen.slice(0, Math.max(0, left));
+      let verified = 0;
       for (const u of now) {
+        if (outOfTime()) break;
+        verified += 1;
         out.read += 1;
         try {
           const one = await read((ctx) => source.readLoad(ctx, u.external_id));
@@ -386,7 +412,9 @@ export async function pullTms(
           await inTenant((q) => bumpAttempts(q, u.external_id, null));
         }
       }
-      if (unseen.length <= now.length) {
+      // Complete only when every unseen load was verified (none left over, and the deadline did
+      // not stop the verification part way); otherwise the next pass verifies again.
+      if (verified === now.length && unseen.length <= now.length) {
         await inTenant((q) =>
           q.execute(
             `UPDATE tms_connections SET last_walk_completed_at = CAST($1 AS timestamptz)
@@ -705,6 +733,10 @@ const CLAIM_LEASE_SQL = `UPDATE desk_loops
 const RELEASE_SQL = `UPDATE desk_loops SET lease_token = NULL, lease_until = NULL, updated_at = CAST($2 AS timestamptz)
   WHERE tenant_id = current_tenant_id() AND lease_token = CAST($1 AS uuid)`;
 
+// The button's pull stops by this long after it starts, well inside the route's maxDuration (30
+// seconds), so the walk is saved and the lease released before the route could be cut off.
+export const SYNC_NOW_BUDGET_MS = 20_000;
+
 export type SyncNowResult = { ok: true; result: PullResult } | { ok: false; category: "switched_off" | "busy" };
 
 export async function syncDispatchNow(
@@ -714,6 +746,7 @@ export async function syncDispatchNow(
   deps: PullDeps & { token?: string } = {},
 ): Promise<SyncNowResult> {
   if (flags.tmsSync.enabled !== true) return { ok: false, category: "switched_off" };
+  const deadlineMs = (deps.clock ?? Date.now)() + SYNC_NOW_BUDGET_MS;
   const token = deps.token ?? randomUUID();
   const nowIso = now.toISOString();
   const inTenant = <T>(fn: (q: Queryable) => Promise<T>) =>
@@ -727,7 +760,7 @@ export async function syncDispatchNow(
   });
   if (claimed !== 1) return { ok: false, category: "busy" };
   try {
-    return { ok: true, result: await pullTms(db, session, { token, now }, deps) };
+    return { ok: true, result: await pullTms(db, session, { token, now, deadlineMs }, deps) };
   } finally {
     await inTenant((q) => q.execute(RELEASE_SQL, [token, nowIso]));
   }
