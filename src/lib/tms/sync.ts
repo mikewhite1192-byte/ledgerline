@@ -137,6 +137,14 @@ const SAVE_WALK_SQL = `UPDATE desk_loops
         updated_at = CAST($2 AS timestamptz)
   WHERE tenant_id = current_tenant_id() AND lease_token = CAST($3 AS uuid)`;
 
+// The fence on every other write: each write transaction first locks the lease row by this run's
+// token. FOR SHARE is enough: a reclaim (CLAIM_LEASE_SQL, or the desk's own claim) is an UPDATE of
+// that row, which conflicts with a share lock, so a reclaim waits for a write already under way, and
+// a write after a reclaim finds no row and rolls back. The run's own writes are one after another, so
+// nothing stronger is needed. The token is the check, never a clock: a stale holder's clock is stale.
+const HOLD_LEASE_SQL = `SELECT 1 AS held FROM desk_loops
+  WHERE tenant_id = current_tenant_id() AND lease_token = CAST($1 AS uuid) FOR SHARE`;
+
 type MirrorState = {
   id: string;
   external_id: string;
@@ -205,6 +213,15 @@ export async function pullTms(
       return fn(q);
     });
 
+  // Every transaction that writes goes through here: the lease is checked in it, and a lost lease
+  // throws (as the walk save does), so the transaction rolls back and the wake writes nothing more.
+  const write = <T>(fn: (q: Queryable) => Promise<T>) =>
+    inTenant(async (q) => {
+      const held = await q.query<{ held: number }>(HOLD_LEASE_SQL, [run.token]);
+      if (held.length !== 1) throw new DbError("unknown");
+      return fn(q);
+    });
+
   const [conn] = await inTenant((q) => q.query<ConnectionRow>(CONNECTION_SQL, [run.token, nowIso]));
   if (!conn) return { ran: false, category: "not_configured" };
   if (Number(conn.held) !== 1) return { ran: false, category: "no_lease" };
@@ -263,7 +280,7 @@ export async function pullTms(
       if (n !== 1) throw new DbError("unknown");
     });
   if (freshPass && walk.below === null) {
-    await inTenant((q) =>
+    await write((q) =>
       q.execute(
         `UPDATE tms_connections SET last_walk_started_at = CAST($1 AS timestamptz)
           WHERE tenant_id = current_tenant_id() AND last_walk_started_at IS DISTINCT FROM CAST($2 AS timestamptz)`,
@@ -315,7 +332,7 @@ export async function pullTms(
       if (!(err instanceof TmsSourceError)) throw err;
       out.failed += 1;
       if (mirrored) {
-        await inTenant((q) => bumpAttempts(q, externalId, listed?.updatedAt ?? null));
+        await write((q) => bumpAttempts(q, externalId, listed?.updatedAt ?? null));
       } else if (listed) {
         const prev = walk.misses[externalId];
         delete walk.misses[externalId];
@@ -326,10 +343,10 @@ export async function pullTms(
       return;
     }
     if (r.kind === "gone") {
-      if (mirrored && (await inTenant((q) => tombstone(q, session, externalId, run.now)))) out.gone += 1;
+      if (mirrored && (await write((q) => tombstone(q, session, externalId, run.now)))) out.gone += 1;
       return;
     }
-    const wrote = await inTenant((q) => writeLoad(q, { r, listed, labelMap, zone, nowIso, cooloffMinutes: connection.finalizeCooloffMinutes, newId }));
+    const wrote = await write((q) => writeLoad(q, { r, listed, labelMap, zone, nowIso, cooloffMinutes: connection.finalizeCooloffMinutes, newId }));
     delete walk.misses[externalId];
     if (wrote) out.written += 1;
   };
@@ -348,7 +365,7 @@ export async function pullTms(
     pages += 1;
     out.listed += page.rows.length;
     const ids = page.rows.map((x) => x.externalId);
-    const states = await inTenant(async (q) => {
+    const states = await write(async (q) => {
       if (ids.length === 0) return new Map<string, MirrorState>();
       await q.execute(
         `UPDATE tms_loads SET listed_at = CAST($1 AS timestamptz)
@@ -396,9 +413,9 @@ export async function pullTms(
         try {
           const one = await read((ctx) => source.readLoad(ctx, u.external_id));
           if (one.kind === "gone") {
-            if (await inTenant((q) => tombstone(q, session, u.external_id, run.now))) out.gone += 1;
+            if (await write((q) => tombstone(q, session, u.external_id, run.now))) out.gone += 1;
           } else {
-            await inTenant((q) =>
+            await write((q) =>
               q.execute(
                 `UPDATE tms_loads SET listed_at = CAST($1 AS timestamptz)
                   WHERE tenant_id = current_tenant_id() AND external_id = $2`,
@@ -409,13 +426,13 @@ export async function pullTms(
         } catch (err) {
           if (!(err instanceof TmsSourceError)) throw err;
           out.failed += 1;
-          await inTenant((q) => bumpAttempts(q, u.external_id, null));
+          await write((q) => bumpAttempts(q, u.external_id, null));
         }
       }
       // Complete only when every unseen load was verified (none left over, and the deadline did
       // not stop the verification part way); otherwise the next pass verifies again.
       if (verified === now.length && unseen.length <= now.length) {
-        await inTenant((q) =>
+        await write((q) =>
           q.execute(
             `UPDATE tms_connections SET last_walk_completed_at = CAST($1 AS timestamptz)
               WHERE tenant_id = current_tenant_id()`,

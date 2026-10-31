@@ -13,7 +13,7 @@ import type {
 import { TmsSourceError } from "../adapters/tms-source/types";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import { DbError, type Db } from "../db/types";
 import { deskHandlers, type Handlers } from "../desk/handlers";
 import { DESK_SOURCES, eventKey } from "../desk/keys";
 import { wakeDesk } from "../desk/loop";
@@ -62,6 +62,8 @@ class FakeTms {
   historyPage = 2;
   // A row repeated at the top of the next history page (a vendor's cut), when set.
   repeatAcrossPages = false;
+  // Run as a load's record is read, when set (a test's hook into the middle of a pass).
+  onReadLoad: ((id: string) => Promise<void>) | null = null;
 
   source(): TmsSource {
     const gone = { kind: "gone" } as const;
@@ -92,6 +94,7 @@ class FakeTms {
       },
       readLoad: async (_ctx, id) => {
         this.calls.push(`load:${id}`);
+        if (this.onReadLoad) await this.onReadLoad(id);
         const l = get(id);
         return l ? ok(l.record) : gone;
       },
@@ -641,6 +644,51 @@ describe("the sync", () => {
     const row = await mirrorOf(f, "A-1");
     expect(row).toMatchObject({ read_attempts: 0, status_code: "delivered", source_updated_at: T_DELIVERED });
     expect(row.flags).not.toContain("read_failed");
+  });
+
+  it("writes no mirror row once another wake takes the lease mid-pass, and ends on the lost lease", async () => {
+    const f = await carrier("tms-fence");
+    const created2 = new Date(Date.parse(T_TENDERED) + 60_000).toISOString();
+    fake.loads.set("A-1", dispatchLoad("A-1", "R-1", [{ label: LABEL.tendered, at: T_TENDERED }]));
+    fake.loads.set("A-2", dispatchLoad("A-2", "R-2", [{ label: LABEL.tendered, at: created2 }]));
+    expect(await pull(f)).toMatchObject({ ran: true, written: 2, passComplete: true });
+    const walk = await walkOf(f);
+    const before = await countsOf(f);
+
+    // Both loads move on. The pass reads A-2 (the newer) first and writes it; while A-1's record is
+    // read, the first lease has run out and a second wake takes it over.
+    fake.loads.set("A-1", dispatchLoad("A-1", "R-1", [{ label: LABEL.tendered, at: T_TENDERED }, { label: LABEL.in_transit, at: T_PICKED }]));
+    fake.loads.set("A-2", dispatchLoad("A-2", "R-2", [{ label: LABEL.tendered, at: created2 }, { label: LABEL.in_transit, at: T_PICKED }]));
+    const second = randomUUID();
+    fake.onReadLoad = async (id) => {
+      if (id !== "A-1") return;
+      await admin.withTenant(f.tenantId, (q) =>
+        q.execute(
+          `UPDATE desk_loops SET lease_token = CAST($1 AS uuid), lease_until = CAST('2026-11-02T19:30:00Z' AS timestamptz)
+            WHERE tenant_id = current_tenant_id()`,
+          [second],
+        ),
+      );
+    };
+    fake.calls = [];
+    const err = await pull(f, new Date(NOW.getTime() + 60_000)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(DbError);
+    expect((err as DbError).category).toBe("unknown");
+    expect(fake.calls).toEqual(["list", "load:A-2", "load:A-1"]);
+
+    // A-2 was written while the lease was still held; A-1 keeps its earlier snapshot.
+    expect(await mirrorOf(f, "A-2")).toMatchObject({ status_code: "in_transit", source_updated_at: T_PICKED });
+    expect(await mirrorOf(f, "A-1")).toMatchObject({ status_code: "tendered", source_updated_at: T_TENDERED, read_attempts: 0 });
+    expect(await countsOf(f)).toEqual({ ...before, tms_status_events: before.tms_status_events + 1 });
+    // The walk stays as the first pass saved it, and the lease stays with the second wake.
+    expect(await walkOf(f)).toEqual(walk);
+    const [lease] = await admin.withTenant(f.tenantId, (q) =>
+      q.query<{ lease_token: string }>("SELECT CAST(lease_token AS text) AS lease_token FROM desk_loops WHERE tenant_id = current_tenant_id()"),
+    );
+    expect(lease.lease_token).toBe(second);
   });
 
   it("runs Sync dispatch now under the desk's lease, and is busy while a wake holds it", async () => {
