@@ -6,6 +6,7 @@ import { proposalCardFrom } from "@/components/agent/proposal-card-from";
 import { Checklist } from "@/components/app/checklist";
 import { PageHeader } from "@/components/app/page-header";
 import { ProposalCard } from "@/components/app/proposal-card";
+import { rejectNotice } from "@/components/app/reject-notice";
 import { StatCard } from "@/components/app/stat-card";
 import { EmptyState, ErrorState } from "@/components/app/states";
 import { STAFF_ONLY_NOTE } from "@/components/app/staff-only";
@@ -258,7 +259,10 @@ export function SweepRun({
         body: JSON.stringify({ category: "other" }),
       });
       if (lostAnswer(res)) setNotices((n) => ({ ...n, [id]: REJECT_UNKNOWN }));
-      else if (!res.ok) setNotices((n) => ({ ...n, [id]: REJECT_FAILED }));
+      else if (!res.ok) {
+        const { error } = await errorOf(res);
+        setNotices((n) => ({ ...n, [id]: rejectNotice(error, REJECT_FAILED) }));
+      }
     } catch {
       setNotices((n) => ({ ...n, [id]: REJECT_UNKNOWN }));
     }

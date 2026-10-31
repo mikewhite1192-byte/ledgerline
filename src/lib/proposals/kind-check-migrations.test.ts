@@ -183,6 +183,22 @@ describe("0071's re-created kind check", () => {
   });
 });
 
+describe("0077's never-alone check", () => {
+  const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
+
+  it("adds it NOT VALID in 0077_never_alone and validates it in 0077_never_alone_validate, applied next", () => {
+    const added = read("0077_never_alone.sql");
+    const validate = read("0077_never_alone_validate.sql");
+    const name = "autopilot_rules_auto_allowlist";
+    const adds = [...added.matchAll(new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\s+CHECK\\b[^;]*;`, "gi"))];
+    expect(adds, name).toHaveLength(1);
+    expect(adds[0][0], name).toMatch(/\)\s*NOT\s+VALID\s*;$/i);
+    expect(validate).toMatch(/ALTER\s+TABLE\s+autopilot_rules\s+VALIDATE\s+CONSTRAINT\s+autopilot_rules_auto_allowlist\s*;/i);
+    const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
+    expect(names.indexOf("0077_never_alone_validate.sql")).toBe(names.indexOf("0077_never_alone.sql") + 1);
+  });
+});
+
 describe("0062's two re-created checks", () => {
   // Re-created NOT VALID, so the file that holds the exclusive lock reads no rows, then validated
   // by the file the runner applies next, in its own transaction, under a lock that lets reads and

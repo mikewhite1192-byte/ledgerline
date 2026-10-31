@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ProposalCard, type ProposalCardProps } from "@/components/app/proposal-card";
+import { rejectNotice } from "@/components/app/reject-notice";
 import { postJson } from "@/components/invoices/post-json";
 import { NOT_NOW_FAILED, SAVE_FAILED, SAVE_NOTICES } from "@/lib/pay-rules/words";
 
@@ -111,7 +112,7 @@ export function RuleChangeCards({ cards, auditorOn = false }: { cards: RuleChang
     setBusy(id);
     setNotes((n) => ({ ...n, [id]: "" }));
     const reply = await postJson(`/api/proposals/${encodeURIComponent(id)}/reject`, { category: "other" });
-    if (!reply.ok) setNotes((n) => ({ ...n, [id]: NOT_NOW_FAILED }));
+    if (!reply.ok) setNotes((n) => ({ ...n, [id]: rejectNotice(reply.error, NOT_NOW_FAILED) }));
     setBusy(null);
     router.refresh();
   }
