@@ -11,7 +11,7 @@ import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
 import { dropTenant, makeTenant, type Fixture } from "../money/test-db";
-import { readFeedState } from "./read";
+import { readFeedState, STOPS_MAX } from "./read";
 import { syntheticLabelMap } from "./status";
 
 // The agent's dispatch tools against a fresh database, as the app's role: not_connected before the
@@ -221,6 +221,28 @@ describe("the agent's dispatch tools on a real database", () => {
     expect(r.history.rows[0].sources).toEqual([{ table: "tms_status_events", id: EVENT_NEW }]);
     expect(r.stops.total).toBe(1);
     expect(r.stops.rows[0]).toMatchObject({ ordinal: 0, kind: "pickup", city: "Joliet", dwellMinutes: 75 });
+  });
+
+  it("counts every stop a load has, not just the rows it shows, so omitted says how many were left out", async () => {
+    await admin.withTenant(A.tenantId, async (q) => {
+      for (let i = 1; i <= STOPS_MAX + 2; i++) {
+        await q.execute(STOP, [
+          randomUUID(), TMS_LOAD, i, "delivery", `Dock ${i}`, "Gary", "IN", "2026-11-02T15:00", "2026-11-02T21:00:00Z",
+          null, null, null, null,
+        ]);
+      }
+    });
+    try {
+      const r = (await run(A, "get_tms_load", { loadId: LINKED })).result as LoadResult & { stops: { omitted: number } };
+      expect(r.stops.total).toBe(STOPS_MAX + 3);
+      expect(r.stops.rows.length).toBeLessThanOrEqual(STOPS_MAX);
+      expect(r.stops.omitted).toBe(STOPS_MAX + 3 - r.stops.rows.length);
+    } finally {
+      // The fixture is shared: only the pickup stays.
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(`DELETE FROM tms_stops WHERE tenant_id = current_tenant_id() AND tms_load_id = CAST($1 AS uuid) AND ordinal > 0`, [TMS_LOAD]),
+      );
+    }
   });
 
   it("lets a card cite the mirror rows a result named, and drops any other id", async () => {

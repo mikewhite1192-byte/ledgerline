@@ -212,7 +212,7 @@ export async function buildStateSummary(
     try {
       feed = feedLine(await readFeedState(q, today), zone);
     } catch {
-      feed = "Dispatch feed: not available";
+      feed = "not available";
     }
     sections.push({ title: "Dispatch feed", lines: [feed], maxChars: 160 });
   }

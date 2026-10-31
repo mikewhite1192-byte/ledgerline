@@ -67,7 +67,8 @@ describe("the dispatch feed line", () => {
   it("says fixed words, never the error, when the feed cannot be read, and the summary still builds", async () => {
     flags.tmsSync.enabled = true;
     const out = await buildStateSummary(fakeCarrier("throws", []), SESSION, CONVERSATION, NOW, CAP);
-    expect(out.text).toContain("\n\nDispatch feed:\nDispatch feed: not available");
+    expect(out.text).toContain("\n\nDispatch feed:\nnot available");
+    expect(out.text).not.toContain("Dispatch feed: not available");
     expect(out.text).not.toContain("connection reset");
     expect(out.text).not.toContain("10.0.0.7");
     expect(out.text).toContain("Pay rules:");

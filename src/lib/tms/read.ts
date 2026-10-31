@@ -392,10 +392,15 @@ export async function readStops(q: Queryable, tmsLoadId: string, zone: string): 
   const rows = await q.query<StopRow>(
     `SELECT ${STOP_COLUMNS} FROM tms_stops s
       WHERE s.tenant_id = current_tenant_id() AND s.tms_load_id = CAST($1 AS uuid)
-      ORDER BY s.ordinal, s.id LIMIT ${STOPS_MAX + 1}`,
+      ORDER BY s.ordinal, s.id LIMIT ${STOPS_MAX}`,
     [tmsLoadId],
   );
-  return { rows: rows.slice(0, STOPS_MAX).map((s) => stopOf(s, zone)), total: rows.length };
+  const [n] = await q.query<{ n: unknown }>(
+    `SELECT count(*) AS n FROM tms_stops
+      WHERE tenant_id = current_tenant_id() AND tms_load_id = CAST($1 AS uuid)`,
+    [tmsLoadId],
+  );
+  return { rows: rows.map((s) => stopOf(s, zone)), total: count(n?.n) };
 }
 
 // ---- History: status events with whether each moved our load ----
