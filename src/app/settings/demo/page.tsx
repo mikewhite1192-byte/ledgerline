@@ -6,6 +6,7 @@ import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/compon
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/table";
 import { flags } from "@/config/flags";
+import type { DemoFaults } from "@/lib/adapters/tms-source/faults";
 import { TENANT_TABLES, type TenantTable } from "@/lib/data/tables";
 import { DbError } from "@/lib/db";
 import { formatLocalDate } from "@/lib/format/dates";
@@ -14,8 +15,10 @@ import { buildCarrierPlan } from "@/lib/seed/plan";
 import { RESET_TABLES, TABLE_LABELS, demoCarrierOf, previewDemoReset, refusalText } from "@/lib/seed/reset";
 import { countRows } from "@/lib/seed/summary";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
+import { readFaultSettings } from "@/lib/tms/demo-faults";
 import { MoveFleetForm } from "./fleet-form";
 import { DemoResetForm } from "./reset-form";
+import { TmsFaultsForm } from "./tms-faults-form";
 import { TmsSyncForm } from "./tms-sync-form";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +27,7 @@ type Row = { table: string; label: string; now: number; after: number };
 type View =
   | { kind: "staff" }
   | { kind: "not_demo" }
-  | { kind: "ready"; name: string; rows: Row[]; refusals: string[] };
+  | { kind: "ready"; name: string; rows: Row[]; refusals: string[]; faults: DemoFaults | null };
 
 const isTenantTable = (t: string): t is TenantTable => (TENANT_TABLES as readonly string[]).includes(t);
 
@@ -54,6 +57,8 @@ export default async function DemoSettings() {
       if (!carrier) return { kind: "not_demo" };
       const preview = await previewDemoReset(q, carrier);
       const planned = countRows(buildCarrierPlan(carrier, DEMO_ANCHOR).rows);
+      // The fault switches show only while their switch is on and the carrier reads the synthetic feed.
+      const faultSettings = flags.tmsSync.demoFaultsEnabled === true ? await readFaultSettings(q) : null;
       return {
         kind: "ready",
         name: carrier.name,
@@ -64,6 +69,7 @@ export default async function DemoSettings() {
           after: isTenantTable(t) ? planned[t] : 0,
         })),
         refusals: preview.refusals.map(refusalText),
+        faults: faultSettings?.kind === "ok" ? faultSettings.faults : null,
       };
     });
   } catch (err) {
@@ -173,6 +179,23 @@ export default async function DemoSettings() {
             </CardHeader>
             <CardBody>
               <TmsSyncForm />
+            </CardBody>
+          </Card>
+        ) : null}
+        {view?.kind === "ready" && view.faults !== null && flags.tmsSync.demoFaultsEnabled === true ? (
+          <Card>
+            <CardHeader>
+              <div className="grid gap-0.5">
+                <CardTitle>Dispatch faults</CardTitle>
+                <CardDescription>
+                  {"Makes the demo dispatch system act like a messy real one, one fault per switch, so the " +
+                    "sync can be seen coping. Each switch saves at once and the next sync reads the feed with " +
+                    "it. Only the demo feed changes. No money moves."}
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardBody>
+              <TmsFaultsForm initial={view.faults} />
             </CardBody>
           </Card>
         ) : null}

@@ -58,10 +58,16 @@ export function labelKey(label: string): string {
   return label.trim().toLowerCase();
 }
 
-// The label map the synthetic feed needs: every synthetic label to its code.
+// The synthetic feed's renamed status: with its relabeled_status fault on, the feed shows In Transit
+// under this name, as a carrier that renamed a built-in status would.
+export const SYNTHETIC_RENAMED = { label: "Rolling", code: "in_transit" } as const;
+
+// The label map the synthetic feed needs: every synthetic label to its code, and the renamed one
+// mapped the way that carrier would map it.
 export function syntheticLabelMap(): Record<string, TmsStatusCode> {
   const out: Record<string, TmsStatusCode> = {};
   for (const [code, label] of Object.entries(SYNTHETIC_LABELS)) out[labelKey(label)] = code as TmsStatusCode;
+  out[labelKey(SYNTHETIC_RENAMED.label)] = SYNTHETIC_RENAMED.code;
   return out;
 }
 

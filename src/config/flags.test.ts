@@ -111,7 +111,7 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The synthetic feed's fault switches are a later item.
+  // The synthetic feed's fault switches ship off: its own one-line PR turns them on.
   "tmsSync.demoFaultsEnabled",
 ] as const;
 

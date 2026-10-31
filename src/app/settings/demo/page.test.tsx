@@ -2,6 +2,7 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
+import { DEMO_FAULTS, FAULT_WORDS, NO_FAULTS } from "@/lib/adapters/tms-source/faults";
 import type { Session } from "@/lib/auth/claims";
 import { DbError, type Queryable } from "@/lib/db";
 import { DEMO_ANCHOR } from "@/lib/seed/anchor";
@@ -26,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   withRequestTenant: vi.fn(),
   demoCarrierOf: vi.fn(),
   previewDemoReset: vi.fn(),
+  readFaultSettings: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound }));
@@ -38,6 +40,7 @@ vi.mock("@/lib/seed/reset", async (importOriginal) => ({
   demoCarrierOf: mocks.demoCarrierOf,
   previewDemoReset: mocks.previewDemoReset,
 }));
+vi.mock("@/lib/tms/demo-faults", () => ({ readFaultSettings: mocks.readFaultSettings }));
 vi.mock("./reset-action", () => ({ resetDemoAction: vi.fn() }));
 vi.mock("./fleet-action", () => ({ moveFleetAction: vi.fn() }));
 
@@ -75,18 +78,21 @@ const rowOf = (label: string) =>
 const cellsOf = (label: string) => [...rowOf(label).querySelectorAll("td")].map((c) => c.textContent);
 
 const savedSync = flags.tmsSync.enabled;
+const savedFaults = flags.tmsSync.demoFaultsEnabled;
 
 beforeEach(() => {
   flags.demoResetEnabled = true;
   // The dispatch sync ships off; on here, so the tests show who sees its button.
   flags.tmsSync.enabled = true;
   mocks.demoCarrierOf.mockResolvedValue(BR);
+  mocks.readFaultSettings.mockResolvedValue({ kind: "ok", faults: { ...NO_FAULTS, clock_skew: true } });
 });
 
 afterEach(() => {
   cleanup();
   flags.demoResetEnabled = false;
   flags.tmsSync.enabled = savedSync;
+  flags.tmsSync.demoFaultsEnabled = savedFaults;
   vi.clearAllMocks();
 });
 
@@ -138,6 +144,36 @@ describe("/settings/demo", () => {
     }
   });
 
+  it("leaves the dispatch faults off the page while their switch is off, and never reads them", async () => {
+    flags.tmsSync.demoFaultsEnabled = false;
+    signedIn("admin");
+    holding([]);
+    render(await DemoSettings());
+    expect(screen.queryByText("Dispatch faults")).toBeNull();
+    expect(mocks.readFaultSettings).not.toHaveBeenCalled();
+  });
+
+  it("shows an admin the nine fault switches as saved while their switch is on", async () => {
+    flags.tmsSync.demoFaultsEnabled = true;
+    signedIn("admin");
+    holding([]);
+    render(await DemoSettings());
+    expect(screen.getByText("Dispatch faults")).toBeTruthy();
+    for (const f of DEMO_FAULTS) {
+      const box = screen.getByRole("checkbox", { name: new RegExp(FAULT_WORDS[f].title) }) as HTMLInputElement;
+      expect(box.checked).toBe(f === "clock_skew");
+    }
+  });
+
+  it("leaves the dispatch faults off the page for a carrier without the demo feed", async () => {
+    flags.tmsSync.demoFaultsEnabled = true;
+    mocks.readFaultSettings.mockResolvedValue({ kind: "not_synthetic" });
+    signedIn("admin");
+    holding([]);
+    render(await DemoSettings());
+    expect(screen.queryByText("Dispatch faults")).toBeNull();
+  });
+
   it("shows the refusals instead of the button while a person must settle something", async () => {
     signedIn("admin");
     const refusals: Refusal[] = [{ kind: "mismatch", count: 1 }];
@@ -149,9 +185,12 @@ describe("/settings/demo", () => {
     expect(screen.queryByRole("button", { name: "Reset the demo" })).toBeNull();
   });
 
-  it("shows a staff login a sentence, never the counts or the button", async () => {
+  it("shows a staff login a sentence, never the counts, the button or the fault switches", async () => {
+    flags.tmsSync.demoFaultsEnabled = true;
     signedIn("staff");
     render(await DemoSettings());
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(mocks.readFaultSettings).not.toHaveBeenCalled();
     expect(screen.getByText("Only an admin of this carrier can reset the demo.")).toBeTruthy();
     expect(screen.queryByRole("table")).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
