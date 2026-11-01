@@ -513,6 +513,38 @@ describe("named stub lines against a seeded database", () => {
     expect((await openCard(s.id)).id).toBe(card.id);
   }, 60_000);
 
+  it("reports not_rerun for a new amount the capped run left off, while the stub still shows the old line", async () => {
+    const s = await stubOf(LUMPER.driverId);
+    const card = await openCard(s.id);
+    const bump = (by: number) =>
+      write(
+        "UPDATE load_accessorials SET amount_cents = amount_cents + $2 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [LUMPER.id, by],
+      );
+    expect(await bump(50)).toBe(1);
+    flags.settlementLimits.driversPerRun = 0;
+    try {
+      expect(await name(lumperBody(LUMPER.cents + 50), s.id)).toEqual({
+        ok: false,
+        category: "not_rerun",
+        retryable: false,
+      });
+    } finally {
+      flags.settlementLimits.driversPerRun = saved.settlementLimits.driversPerRun;
+    }
+    // The item took the new amount; the old line for the same record does not count as redone.
+    expect((await namedItems()).map((i) => i.amount_cents)).toEqual([String(LUMPER.cents + 50)]);
+    const lines = await app.withTenant(T, (q) => readStoredLines(q, s.id));
+    expect(lines.filter((l) => l.enteredBy).map((l) => l.amountCents)).toEqual([LUMPER.cents]);
+    expect(await stubOf(LUMPER.driverId)).toEqual(s);
+    expect((await openCard(s.id)).id).toBe(card.id);
+
+    // Put the record and the item back as the next case expects them.
+    expect(await bump(-50)).toBe(1);
+    expect(await name(lumperBody(), s.id)).toMatchObject({ ok: true });
+    expect((await namedItems()).map((i) => i.amount_cents)).toEqual([String(LUMPER.cents)]);
+  }, 60_000);
+
   it("parks the stub when the record changed after entry, then retyping the amount and running the week clears it", async () => {
     const s = await stubOf(LUMPER.driverId);
     const card = await openCard(s.id);

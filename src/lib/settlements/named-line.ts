@@ -124,7 +124,14 @@ async function readRecordAmount(
 }
 
 type Entry =
-  | { ok: true; periodId: string; payItemId: string; sourceRef: string }
+  | {
+      ok: true;
+      periodId: string;
+      payItemId: string;
+      sourceRef: string;
+      kind: NamedLineInput["kind"];
+      amountCents: number;
+    }
   | { ok: false; category: NamedLineRefusal };
 
 async function enter(q: Queryable, session: Session, settlementId: string, input: NamedLineInput): Promise<Entry> {
@@ -190,7 +197,14 @@ async function enter(q: Queryable, session: Session, settlementId: string, input
   );
   // A conflict that updated nothing: the item is already on a paid stub.
   if (rows.length !== 1) return refuse("not_draft");
-  return { ok: true, periodId: stored.periodId, payItemId: rows[0].id, sourceRef: line.sourceRef };
+  return {
+    ok: true,
+    periodId: stored.periodId,
+    payItemId: rows[0].id,
+    sourceRef: line.sourceRef,
+    kind: line.kind,
+    amountCents: line.amountCents,
+  };
 }
 
 export async function addNamedLine(
@@ -210,14 +224,23 @@ export async function addNamedLine(
   const run = await runPayPeriod(db, session, entry.periodId, now);
   if (!run.ok) return refuse(run.category);
   // The run drafts only up to its cap and leaves a locked or emptied driver alone, so success is
-  // read back: the same draft, still open and unparked, with a line citing the record. Anything
-  // else, or a failed read, is not_rerun.
+  // read back: the same draft, still open and unparked, with the line this item becomes (its kind,
+  // its signed amount, citing the record and the item), not an older line for the same record.
+  // Anything else, or a failed read, is not_rerun.
   const redone = await db
     .withTenant(session.tenantId, async (q) => {
       const stored = await readStoredSettlement(q, settlementId, false);
       if (!stored || stored.status !== "draft" || stored.parkedReason !== null) return false;
       const lines = await readStoredLines(q, settlementId);
-      return lines.some((l) => l.sourceRef === entry.sourceRef);
+      return lines.some(
+        (l) =>
+          l.sourceRef === entry.sourceRef &&
+          l.kind === entry.kind &&
+          l.amountCents === entry.amountCents &&
+          l.sources.length === 1 &&
+          l.sources[0].table === "pay_items" &&
+          l.sources[0].id === entry.payItemId,
+      );
     })
     .catch(() => false);
   if (!redone) return refuse("not_rerun");
