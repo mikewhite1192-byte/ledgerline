@@ -134,6 +134,7 @@ const RELEASED_ON = [
   // Released by the owner (D-071, D-087, 2026-11-01): the sample dispatch system for the demo
   // carriers. It changes only its own tables and moves no money.
   "mockTms.enabled",
+  "mockTms.newLoad",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -151,8 +152,6 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
-  // The sample dispatch system's new load form ships off; its own one-line enable PR turns it on.
-  "mockTms.newLoad",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -448,14 +447,14 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsHook.enabled");
   });
 
-  it("ships the sample dispatch system on, capped per load, and local mode can never turn it on", () => {
-    expect(flags.mockTms).toEqual({ enabled: true, newLoad: false, maxEventsPerLoad: 36, maxNewLoads: 40 });
+  it("ships the sample dispatch system and its new load form on, capped, and local mode can never turn them on", () => {
+    expect(flags.mockTms).toEqual({ enabled: true, newLoad: true, maxEventsPerLoad: 36, maxNewLoads: 40 });
     expect(flags.mockTms.maxEventsPerLoad).toBeLessThan((MAX_HISTORY_PAGES - 1) * CUT_PAGE);
     expect(Number.isSafeInteger(flags.mockTms.maxEventsPerLoad) && flags.mockTms.maxEventsPerLoad > 0).toBe(true);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("mockTms.enabled");
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.enabled");
-    // The new load form: off, capped, and listed ahead of its release the same way.
+    // The new load form: on, capped, and kept off in local mode the same way.
     expect(Number.isSafeInteger(flags.mockTms.maxNewLoads) && flags.mockTms.maxNewLoads > 0).toBe(true);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("mockTms.newLoad");
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.newLoad");

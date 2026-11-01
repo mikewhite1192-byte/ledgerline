@@ -1223,9 +1223,9 @@ export const flags: Flags = {
   // changes only its own tables and moves no money. 36 history rows a load stay readable with the
   // history_page_cut fault on (the sync reads at most MAX_HISTORY_PAGES pages of CUT_PAGE new rows,
   // the last one empty).
-  // newLoad: off until its own one-line enable PR (D-071): the board shows no "New load" link and
-  // the form answers 404.
-  mockTms: { enabled: true, newLoad: false, maxEventsPerLoad: 36, maxNewLoads: 40 },
+  // newLoad: on by the owner's call (D-071, D-089, 2026-11-01): staff and demo visitors may create at
+  // most maxNewLoads loads a carrier there, each linked to our planned load; the demo reset clears them.
+  mockTms: { enabled: true, newLoad: true, maxEventsPerLoad: 36, maxNewLoads: 40 },
   // On by the owner's call (D-071, 2026-10-31). It only drafts a card; approving it goes through the usual gate.
   tmsFinalizeInvoice: { enabled: true, startDate: "2026-10-31" },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.
