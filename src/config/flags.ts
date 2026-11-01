@@ -1235,8 +1235,8 @@ export const flags: Flags = {
   // On by the owner's call (D-074, D-077, 2026-11-01). Adds a driver (not armed, no card),
   // deactivates (disarms) and reactivates (never arms) one; moves no money.
   driverAdmin: { enabled: true },
-  // Off until its own one-line enable PR. Only refuses an arm; nothing is paid or sent.
-  activationChecklist: { enabled: false },
+  // On by the owner's call (D-071, 2026-11-01). Only refuses an arm; nothing is paid or sent.
+  activationChecklist: { enabled: true },
   // On by the owner's call (D-056, D-077, 2026-11-01). A person cancels and a person approves the
   // deficit; the autopilot never approves it.
   cancelledTrip: { enabled: true, startDate: "2026-11-02" },

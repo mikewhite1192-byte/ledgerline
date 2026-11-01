@@ -1551,11 +1551,15 @@ const PAGES: PageCase[] = [
           state.fx.identity = { ...fx.IDENTITY, armed: { on: false, since: null }, tmsIds: [], cards: [] };
         },
         load: async () => {
+          // The activation checklist's reads are not in this fake: off here.
+          const checklistWas = flags.activationChecklist.enabled;
           flags.driverAdmin.enabled = true;
+          flags.activationChecklist.enabled = false;
           try {
             return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
           } finally {
             flags.driverAdmin.enabled = false;
+            flags.activationChecklist.enabled = checklistWas;
           }
         },
         shows: ["Before this driver can take an advance: add a card, then arm them.", "Not armed", "Status", "Active", "Deactivate"],
@@ -1583,11 +1587,15 @@ const PAGES: PageCase[] = [
           state.fx.identity = { ...fx.IDENTITY, armed: { on: false, since: null } };
         },
         load: async () => {
+          // The activation checklist's reads are not in this fake: off here.
+          const checklistWas = flags.activationChecklist.enabled;
           flags.driverAdmin.enabled = true;
+          flags.activationChecklist.enabled = false;
           try {
             return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
           } finally {
             flags.driverAdmin.enabled = false;
+            flags.activationChecklist.enabled = checklistWas;
           }
         },
         shows: ["Before this driver can take an advance: arm them.", "Not armed"],
