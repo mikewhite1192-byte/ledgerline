@@ -29,9 +29,11 @@ vi.mock("@/lib/tenant/context", async (importOriginal) => ({
 const show = async () => render(await DriversPage({ searchParams: Promise.resolve({}) }));
 
 const savedDriverAdmin = flags.driverAdmin.enabled;
+const savedAdvances = flags.advancesEnabled;
 
 afterEach(() => {
   flags.driverAdmin.enabled = savedDriverAdmin;
+  flags.advancesEnabled = savedAdvances;
   mocks.withRequestTenant.mockReset();
   cleanup();
 });
@@ -84,13 +86,24 @@ describe("/drivers Add driver link", () => {
 
   it("shows an admin the link to the Add driver page while driver admin is on", async () => {
     flags.driverAdmin.enabled = true;
+    flags.advancesEnabled = true;
     signedIn("admin");
     await show();
     expect(addLink()?.getAttribute("href")).toBe("/drivers/new");
   });
 
+  it("hides it from an admin while advances are off, since its route then refuses every send", async () => {
+    flags.driverAdmin.enabled = true;
+    flags.advancesEnabled = false;
+    signedIn("admin");
+    await show();
+    expect(screen.getByText("Rosa Delgado")).toBeTruthy();
+    expect(addLink()).toBeNull();
+  });
+
   it("hides it from staff, and from everyone while driver admin is off", async () => {
     flags.driverAdmin.enabled = true;
+    flags.advancesEnabled = true;
     signedIn("staff");
     await show();
     expect(screen.getByText("Rosa Delgado")).toBeTruthy();

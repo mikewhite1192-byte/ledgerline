@@ -7,6 +7,7 @@ import { RecordLink } from "@/components/invoices/cells";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { advancesOn } from "@/lib/advances/switches";
 import { cn } from "@/lib/cn";
 import { DbError } from "@/lib/db";
 import { readCardedDrivers, readDriverInsightInput } from "@/lib/data/driver-insights";
@@ -83,8 +84,10 @@ export default async function DriversPage({
   }
   if (!view) return <NoCarrierPage problem={problem ?? "unreadable"} />;
 
-  // Add driver is an admin's, while the driver admin switch is on; its route asks both again.
-  const canAdd = driverAdminOn() && view.shell.role === "admin";
+  // Add driver is an admin's, while the driver admin switch is on; its route asks both again. Its
+  // post goes through bodyAction (src/lib/advances/http.ts), which also gates on the advances
+  // switch, so the link needs that one on too.
+  const canAdd = driverAdminOn() && advancesOn() && view.shell.role === "admin";
   const all = listRows(view.rows, f);
   const shown = all.slice(0, LIST_LIMIT);
   const carded = view.carded;

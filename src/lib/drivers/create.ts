@@ -4,6 +4,7 @@ import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { ForbiddenError } from "../tenant/context";
 import { carrierToday } from "../tenant/shell";
+import { daysBetween } from "../time/local-date";
 import { DriverDraft } from "./draft";
 import { driverAdminOn } from "./switch";
 
@@ -22,6 +23,10 @@ export type CreateRefusal = "disabled" | "role" | "bad_request" | "code_taken" |
 export type CreateResult =
   | { ok: true; changed: true; id: string }
   | { ok: false; category: CreateRefusal; retryable: false };
+
+// How far a start date may sit from today in the carrier's zone, either side. A date further out
+// is a typing slip (a wrong year), refused as bad_request before anything is written.
+export const ACTIVE_FROM_MAX_DAYS = 366;
 
 const refuse = (category: CreateRefusal): CreateResult => ({ ok: false, category, retryable: false });
 
@@ -43,7 +48,11 @@ export async function createDriver(
     if (member.role !== "admin") return refuse("role");
     const tenants = await q.query<{ timezone: string }>("SELECT timezone FROM tenants WHERE id = current_tenant_id()");
     if (tenants.length !== 1) throw new ForbiddenError();
-    const activeFrom = d.activeFrom ?? carrierToday(tenants[0].timezone, now);
+    const today = carrierToday(tenants[0].timezone, now);
+    if (d.activeFrom !== undefined && Math.abs(daysBetween(today, d.activeFrom)) > ACTIVE_FROM_MAX_DAYS) {
+      return refuse("bad_request");
+    }
+    const activeFrom = d.activeFrom ?? today;
     const before = await taken(q, d.code, d.email);
     if (before !== null) return refuse(before);
     const id = newId();

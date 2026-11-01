@@ -33,7 +33,8 @@ const shared = {
   advanceLimitCents: z.int().min(0).max(999_999_999).optional(),
   truckUnit: z.string().trim().toUpperCase().regex(TRUCK).optional(),
   tankGallons: z.int().min(100).max(400).default(200),
-  // Absent means today in the carrier's zone, set by the service.
+  // Absent means today in the carrier's zone, set by the service, which also refuses a date more
+  // than a year either side of that today (it knows the carrier's zone; this schema does not).
   activeFrom: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -84,7 +85,7 @@ export const FIELD_SENTENCES: Readonly<Record<DriverFormField, string>> = {
   advanceLimit: "Dollars and cents, up to $9,999,999.99, or leave it empty for the carrier's default.",
   truckUnit: "Up to 20 letters, digits or dashes, or leave it empty.",
   tankGallons: "A whole number of gallons from 100 to 400.",
-  activeFrom: "A calendar date.",
+  activeFrom: "A calendar date within a year of today.",
   ownInsurance: "Yes or no.",
   preferredLanguage: "Pick English or Spanish.",
 };

@@ -4,15 +4,16 @@ import { flags } from "@/config/flags";
 import { readDriverIdentity } from "../advances/identity";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db } from "../db/types";
+import type { Db, Param, Queryable, TenantDb } from "../db/types";
 import { addJudge, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { ForbiddenError } from "../tenant/context";
-import { createDriver } from "./create";
+import { addDays } from "../time/local-date";
+import { ACTIVE_FROM_MAX_DAYS, createDriver } from "./create";
 
 // Adding a driver as the app role sees it: only an admin, only in their own carrier under row level
 // security, one row with the money switch off and nothing else beside it, the same driver sent twice
-// (or at once) written once, a code or email already on file answered by its category, and nothing
-// written while driver admin is off. Every tenant made here is removed after each test.
+// (or at once) written once, a code or email already on file answered by its category, a start date
+// more than a year from today refused, and nothing written while driver admin is off. Every tenant made here is removed after each test.
 
 // 04:00 UTC on Nov 2 is still Nov 1 in the fixture carrier's zone (America/Chicago).
 const NOW = Date.UTC(2026, 10, 2, 4, 0, 0);
@@ -183,6 +184,65 @@ describe("adding a driver", () => {
     ]);
     expect(both.map((r) => (r.ok ? "ok" : r.category)).sort()).toEqual(["code_taken", "ok"]);
     expect((await driversOf(A)).map((r) => r.code)).toEqual(["BR-D27", "BR-D29", "DRV-1", "DRV-2"]);
+  });
+
+  it("answers code_taken from the read back after the insert when the check before it missed the row", async () => {
+    await makeAdmin(A);
+    // The row another send committed first.
+    expect(await createDriver(A.session, { ...BODY, code: "BR-D29", email: "cal@example.test" }, deps())).toMatchObject({
+      ok: true,
+    });
+    // This send's check before the insert reads both keys free, as if it ran before that commit.
+    let checks = 0;
+    const racing: TenantDb = {
+      withTenant: (tenantId, fn) =>
+        app.withTenant(tenantId, (q) => {
+          const late: Queryable = {
+            async query<T>(sql: string, params?: Param[]): Promise<T[]> {
+              if (/AS code_taken/.test(sql) && checks++ === 0) return [{ code_taken: false, email_taken: false }] as T[];
+              return q.query<T>(sql, params);
+            },
+            execute: (sql, params) => q.execute(sql, params),
+          };
+          return fn(late);
+        }),
+    };
+    expect(
+      await createDriver(A.session, { ...BODY, code: "BR-D29", email: "dee@example.test" }, { db: racing, clock }),
+    ).toEqual({ ok: false, category: "code_taken", retryable: false });
+    // Both checks ran: the missed one before the insert and the read back after it.
+    expect(checks).toBe(2);
+    const rows = (await driversOf(A)).filter((r) => r.code === "BR-D29");
+    expect(rows.map((r) => r.email)).toEqual(["cal@example.test"]);
+  });
+
+  it("takes a start date up to a year either side of the carrier's today and refuses one further out, writing nothing", async () => {
+    await makeAdmin(A);
+    // The carrier's today at NOW is 2026-11-01 (America/Chicago).
+    const today = "2026-11-01";
+    const cases = [
+      { code: "BR-E01", days: -ACTIVE_FROM_MAX_DAYS, ok: true },
+      { code: "BR-E02", days: ACTIVE_FROM_MAX_DAYS, ok: true },
+      { code: "BR-E03", days: -(ACTIVE_FROM_MAX_DAYS + 1), ok: false },
+      { code: "BR-E04", days: ACTIVE_FROM_MAX_DAYS + 1, ok: false },
+    ];
+    expect(ACTIVE_FROM_MAX_DAYS).toBe(366);
+    for (const c of cases) {
+      const out = await createDriver(
+        A.session,
+        { ...BODY, code: c.code, email: `${c.code.toLowerCase()}@example.test`, activeFrom: addDays(today, c.days) },
+        deps(),
+      );
+      if (c.ok) expect(out, c.code).toMatchObject({ ok: true });
+      else expect(out, c.code).toEqual({ ok: false, category: "bad_request", retryable: false });
+    }
+    const rows = await driversOf(A);
+    expect(rows.map((r) => [r.code, r.active_from])).toEqual([
+      ["BR-E01", "2025-10-31"],
+      ["BR-E02", "2027-11-02"],
+      ["DRV-1", expect.any(String)],
+      ["DRV-2", expect.any(String)],
+    ]);
   });
 
   it("answers a code or an email already on file, in any case, by its category and writes nothing", async () => {

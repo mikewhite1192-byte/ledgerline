@@ -36,13 +36,16 @@ function signedIn(role: "admin" | "staff" | "judge") {
 }
 
 const saved = flags.driverAdmin.enabled;
+const savedAdvances = flags.advancesEnabled;
 
 beforeEach(() => {
   flags.driverAdmin.enabled = true;
+  flags.advancesEnabled = true;
 });
 
 afterEach(() => {
   flags.driverAdmin.enabled = saved;
+  flags.advancesEnabled = savedAdvances;
   mocks.withRequestTenant.mockReset();
   cleanup();
 });
@@ -71,6 +74,15 @@ describe("/drivers/new", () => {
 
   it("shows the switched-off screen and no form while driver admin is off, for an admin too", async () => {
     flags.driverAdmin.enabled = false;
+    signedIn("admin");
+    await show();
+    expect(screen.getByText("Adding drivers is off for this carrier")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Add driver" })).toBeNull();
+    expect(screen.queryByLabelText("Driver code")).toBeNull();
+  });
+
+  it("shows the switched-off screen and no form while advances are off, since the route then refuses every send", async () => {
+    flags.advancesEnabled = false;
     signedIn("admin");
     await show();
     expect(screen.getByText("Adding drivers is off for this carrier")).toBeTruthy();

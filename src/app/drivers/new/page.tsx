@@ -2,6 +2,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { NoCarrierPage, SignedInPage } from "@/components/app/signed-in-page";
 import { FeatureOff } from "@/components/app/states";
 import { Card, CardBody } from "@/components/ui/card";
+import { advancesOn } from "@/lib/advances/switches";
 import { DbError } from "@/lib/db";
 import { driverAdminOn } from "@/lib/drivers/switch";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -30,7 +31,9 @@ export default async function NewDriverPage() {
   }
   if (!view) return <NoCarrierPage problem={problem ?? "unreadable"} />;
 
-  const on = driverAdminOn();
+  // The route posts through bodyAction (src/lib/advances/http.ts), which also gates on the advances
+  // switch, so the form shows only while both are on; otherwise every send would be refused.
+  const on = driverAdminOn() && advancesOn();
   return (
     <SignedInPage tenant={view.shell} current="/drivers" title="Add a driver">
       <PageHeader
