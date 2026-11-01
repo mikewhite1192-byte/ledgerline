@@ -906,6 +906,16 @@ export type Flags = {
   // only then does pay take a deficit back. Off, a cancel is refused as validation, as before. startDate (YYYY-MM-DD, the carrier's zone):
   // a cancel recorded before it drafts nothing, so turning it on never reaches back.
   cancelledTrip: { enabled: boolean; startDate: string };
+  // The morning digest (docs: S7, 0082): at 06:00 the carrier's local time the desk reads about ten
+  // facts from SQL (src/lib/digest/facts.ts: what needs a person, what happened yesterday, the
+  // billing lines, Fridays the week's paystubs, the 1st last month's tie-out counts), Muse Spark
+  // words them into one line of at most 400 characters, every number checked against the facts,
+  // and the line shows in the agent's ask card. A failed call or a refused number lands a line code
+  // wrote from the same facts instead; a fact that could not be read says "not read", never 0.
+  // Sends nothing and moves no money. startDate (YYYY-MM-DD, the carrier's zone): no day before it
+  // is digested. maxCostCents and maxOutputTokens cap the one model call per carrier per day. The
+  // desk's handler and the writer each ask enabled themselves.
+  morningDigest: { enabled: boolean; startDate: string; maxCostCents: number; maxOutputTokens: number };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1192,6 +1202,8 @@ export const flags: Flags = {
   // On by the owner's call (D-056, D-077, 2026-11-01). A person cancels and a person approves the
   // deficit; the autopilot never approves it.
   cancelledTrip: { enabled: true, startDate: "2026-11-02" },
+  // Off until its own one-line enable PR. One model call per carrier per day; sends nothing.
+  morningDigest: { enabled: false, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 },
 };
 
 applyLocalOverrides(flags);

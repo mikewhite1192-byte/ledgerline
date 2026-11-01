@@ -238,6 +238,44 @@ describe("0080's re-created proposals checks", () => {
   });
 });
 
+describe("0082's morning digest checks", () => {
+  const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
+  const CHECKS = [
+    ["desk_log", "desk_log_source_check"],
+    ["agent_asks", "agent_asks_kind_check"],
+    ["agent_asks", "agent_asks_digest_shape"],
+    ["agent_asks", "agent_asks_check3"],
+  ] as const;
+
+  it("adds each NOT VALID in 0082_morning_digest and validates each in 0082_morning_digest_validate, applied next", () => {
+    const added = read("0082_morning_digest.sql");
+    const validate = read("0082_morning_digest_validate.sql");
+    for (const [table, name] of CHECKS) {
+      const adds = [...added.matchAll(new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\s+CHECK\\b[^;]*;`, "gi"))];
+      expect(adds, name).toHaveLength(1);
+      expect(adds[0][0], name).toMatch(/\)\s*NOT\s+VALID\s*;$/i);
+      expect(validate, name).toMatch(new RegExp(`ALTER\\s+TABLE\\s+${table}\\s+VALIDATE\\s+CONSTRAINT\\s+${name}\\s*;`, "i"));
+    }
+    const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
+    expect(names.indexOf("0082_morning_digest_validate.sql")).toBe(names.indexOf("0082_morning_digest.sql") + 1);
+  });
+
+  // A superset of 0075's list, so no desk_log row already there can fail the validation.
+  it("lists exactly 0075's desk sources plus digest", () => {
+    const listOf = (version: string) => {
+      const sql = migrations()
+        .filter((m) => m.version === version)
+        .map((m) => m.sql)
+        .join("\n");
+      const m = /ADD\s+CONSTRAINT\s+desk_log_source_check\s+CHECK\s*\(\s*source\s+IN\s*\(([^)]*)\)\s*\)/i.exec(sql);
+      return m ? quoted(m[1]) : [];
+    };
+    const before = listOf("0075");
+    expect(before.length).toBeGreaterThan(0);
+    expect(listOf("0082")).toEqual([...before, "digest"]);
+  });
+});
+
 describe("0077's never-alone check", () => {
   const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
 
