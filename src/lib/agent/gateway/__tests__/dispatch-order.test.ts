@@ -448,8 +448,13 @@ describe("callTool dispatch order", () => {
     flags.deficitRecovery.enabled = true;
     const tmsSyncWas = flags.tmsSync.enabled;
     flags.tmsSync.enabled = true;
+    // explain_paystub's contradictions read the stub's source records, which the seed plan does not
+    // answer: off here, and named-lines.db.test.ts runs the tool with the switch on.
+    const namedLinesWas = flags.namedLines.enabled;
+    flags.namedLines.enabled = false;
     onTestFinished(() => {
       flags.tmsSync.enabled = tmsSyncWas;
+      flags.namedLines.enabled = namedLinesWas;
       flags.reportsEnabled = false;
       flags.iftaEnabled = false;
       flags.yearEndEnabled = false;
