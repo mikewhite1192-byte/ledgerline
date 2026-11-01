@@ -3,7 +3,9 @@
 // first. src/lib/auth/judge-allowlist.test.ts walks src/app and fails on any write handler that
 // neither calls one nor is listed here, on a listed one that also calls one, and on a stale entry.
 //
-// A judge reads and proposes: it asks the agent and asks for one audit on a card. It never approves,
+// A judge reads and proposes: it asks the agent and asks for one audit on a card. On a demo carrier
+// it may also move a load in the sample dispatch system (/tms-demo), the stand-in for the carrier's
+// own system, which the desk then reads like any other. It never approves,
 // rejects, pays, posts, sends, drafts to a driver, arms a driver, connects a ledger, resets the
 // demo, clears a spend alert, uploads a file (a voice note, a document or a dock clip) or runs a
 // step that follows an upload. The money paths refuse a judge again on their own (approvalFrom and
@@ -19,6 +21,14 @@ export const JUDGE_ALLOWED: Readonly<Record<string, string>> = {
   "src/app/sign-in/actions.ts#signInAction": "signing in comes before any role exists",
   "src/app/sign-in/try-demo-action.ts#tryDemoAction":
     "the demo visitor's sign-in comes before any role exists, and it signs in a judge only",
+  "src/app/tms-demo/actions.ts#assignDriverAction":
+    "writes only the sample dispatch system's rows on a demo carrier, never a card or money",
+  "src/app/tms-demo/actions.ts#completePickupAction":
+    "writes only the sample dispatch system's rows on a demo carrier, never a card or money",
+  "src/app/tms-demo/actions.ts#completeDeliveryAction":
+    "writes only the sample dispatch system's rows on a demo carrier, never a card or money",
+  "src/app/tms-demo/actions.ts#setStatusAction":
+    "writes only the sample dispatch system's rows on a demo carrier, never a card or money",
 };
 
 // Write handlers no carrier login reaches: each takes its own credential, never pc_session.

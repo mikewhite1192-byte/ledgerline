@@ -1,8 +1,9 @@
 // TMS-MIRROR (T3): the synthetic dispatch feed's fault switches. Each one makes the demo feed act
 // like a messy real dispatch system in one way, so the sync can be seen coping with it. They live
 // in tms_connections.demo_faults for one tenant, flipped from Settings > Demo while
-// flags.tmsSync.demoFaultsEnabled is on, and only the synthetic feed (synthetic.ts) reads them:
-// the sync never knows a fault exists. All false by default. Pure; safe to import in the browser.
+// flags.tmsSync.demoFaultsEnabled is on, and only the demo feeds (synthetic.ts, and mock-faults.ts
+// for the sample dispatch system) read them: the sync never knows a fault exists. All false by
+// default. Pure; safe to import in the browser.
 //
 // duplicate_wakeups is not a switch here: it is the dispatch webhook's own repeat, shown by
 // Settings > Demo's "Fire a wake-up twice" (POST /api/demo/tms-wakeup), which sends one wake-up
@@ -23,6 +24,30 @@ export const DEMO_FAULTS = [
 ] as const;
 export type DemoFault = (typeof DEMO_FAULTS)[number];
 export type DemoFaults = Readonly<Record<DemoFault, boolean>>;
+
+// The feeds the switches apply to: the synthetic feed, every switch, and the sample dispatch
+// system (mock-faults.ts), the switches in MOCK_FAULTS only. The other three change what the feed
+// itself would record (a status, a time, a rate), which on the sample system a person does there.
+export const DEMO_FEEDS = ["synthetic", "mock"] as const;
+export type DemoFeed = (typeof DEMO_FEEDS)[number];
+
+export function isDemoFeed(value: unknown): value is DemoFeed {
+  return typeof value === "string" && (DEMO_FEEDS as readonly string[]).includes(value);
+}
+
+export const MOCK_FAULTS: readonly DemoFault[] = [
+  "stale_list_rows",
+  "hard_delete",
+  "clock_skew",
+  "server_errors",
+  "history_page_cut",
+  "relabeled_status",
+];
+
+// The switches one feed applies, in the panel's order.
+export function faultsFor(feed: DemoFeed): readonly DemoFault[] {
+  return feed === "mock" ? MOCK_FAULTS : DEMO_FAULTS;
+}
 
 export const NO_FAULTS: DemoFaults = Object.freeze(
   Object.fromEntries(DEMO_FAULTS.map((f) => [f, false])) as Record<DemoFault, boolean>,

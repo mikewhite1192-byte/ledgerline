@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isTestKey } from "../lib/adapters/payment/stripe-test";
+import { CUT_PAGE } from "../lib/adapters/tms-source/synthetic";
 import { assertMoneyEnvSafe, MoneyEnvRefused } from "../lib/money/guard";
 import { payoutSwitchOn } from "../lib/money/ledger";
 import { DEMO_CARRIERS } from "../lib/seed/carriers";
 import { isLocalDate } from "../lib/time/local-date";
+import { MAX_HISTORY_PAGES } from "../lib/tms/sync";
 import { flags, stepThroughShown, type Flags } from "./flags";
 import { LOCAL_SWITCHES } from "../../e2e/env.local-mode";
 import { applyLocalOverrides, LOCAL_OFF_ONLY, LOCAL_OVERRIDABLE } from "./local-overrides";
@@ -146,6 +148,8 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
+  // The sample dispatch system ships off; its own one-line enable PR turns it on.
+  "mockTms.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -441,6 +445,15 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsHook.enabled");
   });
 
+  it("ships the sample dispatch system off, capped per load, and local mode can never turn it on", () => {
+    expect(flags.mockTms).toEqual({ enabled: false, maxEventsPerLoad: 36 });
+    expect(flags.mockTms.maxEventsPerLoad).toBeLessThan((MAX_HISTORY_PAGES - 1) * CUT_PAGE);
+    expect(Number.isSafeInteger(flags.mockTms.maxEventsPerLoad) && flags.mockTms.maxEventsPerLoad > 0).toBe(true);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("mockTms.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.enabled");
+  });
+
   it("releases the invoice on finalize, with a start date, off for the local demo run", () => {
     expect(flags.tmsFinalizeInvoice).toEqual({ enabled: true, startDate: "2026-10-31" });
     expect(isLocalDate(flags.tmsFinalizeInvoice.startDate)).toBe(true);
@@ -494,6 +507,7 @@ describe("flags", () => {
       "namedLines.enabled",
       "activationChecklist.enabled",
       "stubSent.enabled",
+      "mockTms.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

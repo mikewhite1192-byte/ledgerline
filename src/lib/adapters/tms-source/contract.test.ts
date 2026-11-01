@@ -4,7 +4,8 @@ import { tmsSource, validated } from "./index";
 import { createSyntheticSource } from "./synthetic";
 import { TmsSourceError, type TmsConnection, type TmsContext, type TmsSource } from "./types";
 
-// The contract every TMS source keeps, run against the synthetic feed (and any later adapter):
+// The contract every TMS source keeps, run against the synthetic feed, the sample dispatch system
+// (and any later adapter):
 // a record that is not there reads gone, a fault throws a category, and an answer for the wrong
 // id is malformed. Gone and unknown are never the same thing.
 
@@ -40,12 +41,50 @@ const LOAD_ROW = {
   invoice_issued_on: null,
 };
 
-// The tenant's rows as the synthetic feed reads them; `fail` makes every read a database fault.
+// The same load as the sample dispatch system stores it.
+const MOCK_LOAD = {
+  id: "33333333-3333-4333-8333-333333333333",
+  external_id: "syn:demo-test:L-2001",
+  reference: "L-2001",
+  status_label: "In Transit",
+  customer_external_id: "CUST-1",
+  customer_name: "Example Freight Buyer",
+  driver_external_id: "drv-1",
+  truck_unit: "T-101",
+  trailer_unit: null,
+  vin: null,
+  picked_up_at: "2026-11-02T15:20:00.000Z",
+  delivered_at: null,
+  last_completed_at: null,
+  finalized_at: null,
+  created_at: "2026-11-01T22:00:00.000Z",
+  updated_at: "2026-11-02T15:20:00.000Z",
+};
+
+const MOCK_EVENT = {
+  external_id: "syn:demo-test:L-2001:tendered",
+  field: "status",
+  new_value: "Tendered",
+  previous_value: null,
+  changed_by: "Dispatch desk",
+  at: "2026-11-01T22:00:00.000Z",
+};
+
+// The tenant's rows as the synthetic feed and the sample system read them; `fail` makes every
+// read a database fault.
 function ctxOf(opts: { fail?: boolean; loads?: unknown[] } = {}): TmsContext {
   const q: Queryable = {
     async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
       if (opts.fail) throw new Error("connection reset");
       if (sql.startsWith("SELECT slug FROM tenants")) return [{ slug: "demo-test" }] as T[];
+      if (sql.includes("FROM mock_tms_loads")) {
+        const loads = opts.loads === undefined ? [MOCK_LOAD] : opts.loads.length === 0 ? [] : [MOCK_LOAD];
+        return (sql.includes("external_id = $1") ? loads.filter((l) => l.external_id === params[0]) : loads) as T[];
+      }
+      if (sql.includes("FROM mock_tms_stops")) return [] as T[];
+      if (sql.includes("FROM mock_tms_lines")) return [] as T[];
+      if (sql.includes("FROM mock_tms_documents")) return [] as T[];
+      if (sql.includes("FROM mock_tms_events")) return [MOCK_EVENT] as T[];
       if (sql.includes("FROM load_accessorials")) return [] as T[];
       if (sql.includes("FROM loads l")) {
         const loads = (opts.loads ?? [LOAD_ROW]) as (typeof LOAD_ROW)[];
@@ -65,7 +104,10 @@ function ctxOf(opts: { fail?: boolean; loads?: unknown[] } = {}): TmsContext {
   return { tenantId: CONNECTION.id, zone: "America/Chicago", now: "2026-12-01T00:00:00.000Z", q, connection: CONNECTION };
 }
 
-const SOURCES: [string, () => TmsSource][] = [["synthetic", () => tmsSource(CONNECTION)]];
+const SOURCES: [string, () => TmsSource][] = [
+  ["synthetic", () => tmsSource(CONNECTION)],
+  ["mock", () => tmsSource({ ...CONNECTION, system: "mock" })],
+];
 
 describe.each(SOURCES)("the TMS source contract: %s", (_name, make) => {
   it("reads a load that exists by its id", async () => {

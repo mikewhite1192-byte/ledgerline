@@ -146,7 +146,7 @@ export type LoadEventRow = {
 // attempts, the rest mark, the tombstone, the token cache, the last pass) are runtime only.
 export type TmsConnectionRow = {
   id: string;
-  system: "synthetic";
+  system: "synthetic" | "mock";
   label_map: Record<string, string>;
   lookback_hours: number;
   finalize_cooloff_minutes: number;
@@ -265,6 +265,86 @@ export type TmsDocumentRow = {
   source_updated_at: string;
   review_state: "unreviewed" | "fetched" | "read" | "rejected";
   first_seen_at: string;
+};
+
+// The sample dispatch system (0088, src/lib/mock-tms/). The seed writes the board the synthetic
+// feed serves at the seeded instant (src/lib/seed/mock-tms.ts), id for id the mirror's snapshot;
+// a person's clicks on /tms-demo change it after. The last webhook send is runtime only.
+export type MockTmsPartyRow = {
+  id: string;
+  kind: "customer" | "driver" | "truck" | "trailer";
+  external_id: string;
+  name: string;
+  unit: string | null;
+  vin: string | null;
+};
+
+export type MockTmsLoadRow = {
+  id: string;
+  external_id: string;
+  reference: string;
+  status_label: string;
+  customer_external_id: string | null;
+  customer_name: string | null;
+  driver_external_id: string | null;
+  truck_unit: string | null;
+  trailer_unit: string | null;
+  vin: string | null;
+  picked_up_at: string | null;
+  delivered_at: string | null;
+  last_completed_at: string | null;
+  finalized_at: string | null;
+  created_at: string;
+  updated_at: string;
+  seeded: boolean;
+};
+
+export type MockTmsStopRow = {
+  id: string;
+  mock_load_id: string;
+  ordinal: number;
+  stop_kind: "pickup" | "delivery";
+  name: string;
+  city: string;
+  state: string;
+  appt_from_local: string | null;
+  appt_to_local: string | null;
+  arrived_at: string | null;
+  completed_at: string | null;
+};
+
+export type MockTmsEventRow = {
+  id: string;
+  mock_load_id: string;
+  seq: number;
+  external_id: string;
+  field: string;
+  new_value: string | null;
+  previous_value: string | null;
+  changed_by: string | null;
+  at: string;
+};
+
+export type MockTmsLineRow = {
+  id: string;
+  mock_load_id: string;
+  external_id: string;
+  item_group: "revenue" | "driver_pay" | "accessorial";
+  type_label: string;
+  description: string;
+  amount_cents: number;
+};
+
+export type MockTmsDocumentRow = {
+  id: string;
+  mock_load_id: string;
+  external_id: string;
+  file_name: string;
+  type_label: string;
+  shared: boolean;
+  uploader_kind: "driver_app" | "office" | "unknown";
+  byte_length: number;
+  updated_at: string;
 };
 
 export type LoadStateMilesRow = { id: string; load_id: string; state: string; miles: number };
@@ -848,6 +928,12 @@ export type TenantRows = {
   tms_status_events: TmsStatusEventRow[];
   tms_line_items: TmsLineItemRow[];
   tms_documents: TmsDocumentRow[];
+  mock_tms_parties: MockTmsPartyRow[];
+  mock_tms_loads: MockTmsLoadRow[];
+  mock_tms_stops: MockTmsStopRow[];
+  mock_tms_events: MockTmsEventRow[];
+  mock_tms_lines: MockTmsLineRow[];
+  mock_tms_documents: MockTmsDocumentRow[];
   load_state_miles: LoadStateMilesRow[];
   load_accessorials: LoadAccessorialRow[];
   driver_days: DriverDayRow[];

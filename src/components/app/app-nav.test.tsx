@@ -255,7 +255,8 @@ describe("NavList", () => {
 
 // Every page a person can open from the app is either a menu item or linked from one, so a page
 // never goes missing from the menu. Record pages ([id]) are reached from the lists and answers;
-// /sign-in, /design and the stand-in broker portal are not part of the signed-in app; /help shows
+// /sign-in, /design, the stand-in broker portal and the sample dispatch system (/tms-demo, its own
+// shell with no app menu) are not part of the signed-in app; /help shows
 // nothing of its own and only sends on to the help page under the menu.
 describe("every signed-in page is reachable", () => {
   const appDir = path.join(process.cwd(), "src", "app");
@@ -276,6 +277,7 @@ describe("every signed-in page is reachable", () => {
   const routes = pages(appDir)
     .map(routeOf)
     .filter((r) => r !== "/sign-in" && r !== "/design" && r !== "/help" && r !== "/portal" && !r.startsWith("/portal/"))
+    .filter((r) => r !== "/tms-demo" && !r.startsWith("/tms-demo/"))
     .filter((r) => !r.includes("["));
 
   const itemPage = (href: string) => {

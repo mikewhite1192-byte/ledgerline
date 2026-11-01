@@ -409,6 +409,53 @@ vi.mock("@/lib/seed/reset", async (importOriginal) => ({
   demoCarrierOf: async () => DEMO_CARRIERS[0],
   previewDemoReset: async () => get("demoPreview"),
 }));
+// The sample dispatch system's reads (src/app/tms-demo): one load on its board, picked up, with
+// its delivery open.
+vi.mock("@/lib/mock-tms/store", async (importOriginal) => {
+  const at = "2026-11-02T15:20:00.000Z";
+  return {
+    ...(await importOriginal<typeof import("@/lib/mock-tms/store")>()),
+    readBoard: async () => ({
+      zone: "America/Chicago",
+      rows: [
+        {
+          reference: "ML20001",
+          statusLabel: "In Transit",
+          customerName: "Sample Shipper",
+          driverExternalId: "drv-1",
+          truckUnit: "101",
+          lane: "Joliet, IL to Gary, IN",
+          updatedAt: at,
+        },
+      ],
+    }),
+    readMockLoad: async () => ({
+      zone: "America/Chicago",
+      load: {
+        reference: "ML20001",
+        externalId: "syn:demo:ML20001",
+        statusLabel: "In Transit",
+        customerName: "Sample Shipper",
+        driverExternalId: "drv-1",
+        truckUnit: "101",
+        pickedUpAt: at,
+        deliveredAt: null,
+        finalizedAt: null,
+        updatedAt: at,
+        lastHookAt: at,
+        lastHookResult: "sent",
+      },
+      stops: [
+        { kind: "pickup", name: "Sample Dock", city: "Joliet", state: "IL", apptFromLocal: "2026-11-02T08:00", apptToLocal: "2026-11-02T10:00", arrivedAt: at, completedAt: at },
+        { kind: "delivery", name: "Sample Yard", city: "Gary", state: "IN", apptFromLocal: "2026-11-02T14:00", apptToLocal: "2026-11-02T16:00", arrivedAt: null, completedAt: null },
+      ],
+      lines: [{ typeLabel: "Linehaul", description: "Linehaul", amountCents: 150000 }],
+      documents: [],
+      history: [{ seq: 2, field: "status", from: "Booked", to: "In Transit", by: "Dispatch desk", at }],
+      drivers: [{ externalId: "drv-1", name: "Sample Driver One" }],
+    }),
+  };
+});
 vi.mock("@/lib/data/driver-insights", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/data/driver-insights")>()),
   readDriverInsightInput: async () => get("driverInsightInput"),
@@ -2059,6 +2106,57 @@ const PAGES: PageCase[] = [
         setup: () => (state.session = SESSION),
         load: async () => (await import("@/app/not-found")).default(),
         shows: fx.TENANT.name,
+      },
+    ],
+  },
+  {
+    file: "tms-demo/layout.tsx",
+    variants: [
+      {
+        name: "around a sample dispatch page",
+        load: async () => {
+          flags.mockTms.enabled = true;
+          try {
+            return (await import("@/app/tms-demo/layout")).default({ children: <p>Loads</p> });
+          } finally {
+            flags.mockTms.enabled = false;
+          }
+        },
+        shows: "Sample dispatch system",
+      },
+    ],
+  },
+  {
+    file: "tms-demo/page.tsx",
+    variants: [
+      {
+        name: "the board",
+        load: async () => {
+          flags.mockTms.enabled = true;
+          try {
+            return await (await import("@/app/tms-demo/page")).default();
+          } finally {
+            flags.mockTms.enabled = false;
+          }
+        },
+        shows: ["ML20001", "In Transit"],
+      },
+    ],
+  },
+  {
+    file: "tms-demo/loads/[ref]/page.tsx",
+    variants: [
+      {
+        name: "a load picked up",
+        load: async () => {
+          flags.mockTms.enabled = true;
+          try {
+            return await (await import("@/app/tms-demo/loads/[ref]/page")).default({ params: p({ ref: "ML20001" }) });
+          } finally {
+            flags.mockTms.enabled = false;
+          }
+        },
+        shows: ["Load ML20001", "Complete delivery", "Set status"],
       },
     ],
   },
