@@ -122,6 +122,8 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
+  // Adding a driver ships off; its own one-line enable PR turns it on.
+  "driverAdmin.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -356,6 +358,11 @@ describe("flags", () => {
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("card_pullback");
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardPullback.enabled");
+  });
+
+  it("ships driver admin off, and local mode can never turn it on", () => {
+    expect(flags.driverAdmin).toEqual({ enabled: false });
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("driverAdmin.enabled");
   });
 
   it("ships load movement from driver evidence on, with a start date", () => {
