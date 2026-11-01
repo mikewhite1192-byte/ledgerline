@@ -66,6 +66,9 @@ export type DeskStore = {
   startClock(input: { token: string; nowIso: string }): Promise<void>;
   release(input: { token: string; nowIso: string }): Promise<void>;
   append(line: Line): Promise<boolean>;
+  // The dispatch mirror's walk (TMS-MIRROR 0075), before discovery, on every wake. Optional so a
+  // fake store skips it.
+  sync?(input: { token: string; nowIso: string; deadlineMs: number }): Promise<void>;
   // deadlineMs: the wake's own deadline (epoch ms, by the loop's clock).
   discover(input: DiscoverInput & { token: string; deadlineMs: number }): Promise<number>;
   state(sinceStart: string): Promise<OpenEvent[]>;
@@ -162,20 +165,17 @@ export function dbDeskStore(db: TenantDb, session: Session, clock: () => Date = 
       await db.withTenant(session.tenantId, (q) => q.execute(RELEASE_SQL, [input.token, input.nowIso]));
     },
     append: (line) => db.withTenant(session.tenantId, (q) => appendLine(q, line)),
+    // TMS-MIRROR (0075): the dispatch mirror's walk, before discovery, so the events it mirrors are
+    // found in this same wake. The walk's own rows (attempts, flags) say what failed.
+    sync: async (input) => {
+      await pullTms(
+        db,
+        session,
+        { token: input.token, now: new Date(input.nowIso), deadlineMs: input.deadlineMs - TMS_SYNC_MARGIN_MS },
+        { clock: () => clock().getTime() },
+      );
+    },
     discover: async (input) => {
-      // TMS-MIRROR (0075): the dispatch mirror's walk first, so the events it mirrors are found in
-      // this same wake. A failure is a category in the log and never stops the wake; the walk's
-      // own rows (attempts, flags) say what failed.
-      try {
-        await pullTms(
-          db,
-          session,
-          { token: input.token, now: new Date(input.nowIso), deadlineMs: input.deadlineMs - TMS_SYNC_MARGIN_MS },
-          { clock: () => clock().getTime() },
-        );
-      } catch (err) {
-        console.error(`desk tms sync failed: ${err instanceof Error ? err.name : "unknown"}`);
-      }
       let budget = input.budget;
       let seen = 0;
       const periods = await inTenant((q) => findPeriods(q, { ...input, budget }));
@@ -296,6 +296,17 @@ export async function wakeDesk(
       load_events: watermarkOf(claimed.watermarks.load_events, startInstant),
       tms_status_events: watermarkOf(claimed.watermarks.tms_status_events, startInstant),
     };
+
+    // TMS-MIRROR (0075): the dispatch mirror first, on every wake, whatever the day's share: it writes
+    // no seen lines and is bounded by its own caps (flags.tmsSync) and the deadline, so the event caps
+    // do not apply to it. A failure is a category in the log and never stops the wake.
+    if (store.sync) {
+      try {
+        await store.sync({ token, nowIso: clock().toISOString(), deadlineMs });
+      } catch (err) {
+        log(`desk tms sync tenant=${session.tenantId} wake=${wakeId} failed=${errorName(err)}`);
+      }
+    }
 
     // Discovery, inside the day's share.
     const seenToday = await store.seenSince(new Date(startedAt.getTime() - 86_400_000).toISOString());

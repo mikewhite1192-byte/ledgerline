@@ -16,6 +16,7 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import { DbError, type Db } from "../db/types";
 import { deskHandlers, type Handlers } from "../desk/handlers";
 import { DESK_SOURCES, eventKey } from "../desk/keys";
+import { appendLine } from "../desk/log";
 import { wakeDesk } from "../desk/loop";
 import { proposeInvoices } from "../invoices/propose";
 import { moveFromTmsEvent } from "../loads/movement";
@@ -24,6 +25,7 @@ import { serviceSession, serviceSub } from "../sweep/service-session";
 import { clocksOf } from "./clocks";
 import { syntheticLabelMap } from "./status";
 import { pullTms, syncDispatchNow } from "./sync";
+import { wakeUpFor } from "./wakeups";
 
 // The dispatch mirror against a fresh database, as the app's role, with a hand-rolled TMS source
 // (every source goes through the validating wrapper, as in production) and a fixed clock. The
@@ -369,6 +371,7 @@ afterEach(() => {
   flags.deskLoop.enabled = savedDesk.enabled;
   flags.deskLoop.armed = savedDesk.armed;
   flags.deskLoop.startDate = savedDesk.startDate;
+  Object.assign(flags.deskLoop.limits, savedDesk.limits);
   Object.assign(flags.tmsFinalizeInvoice, savedFinalize);
   flags.invoicesEnabled = savedInvoices;
   Object.assign(flags.agentAsks, savedAsks);
@@ -981,6 +984,110 @@ describe("the desk's dispatch lane", () => {
       ),
     );
     expect(state).toEqual({ status: "delivered", proposals: 0, asks: 0 });
+  });
+
+  it("mirrors a changed load and marks its wake-up while the desk's day share is used, and writes no seen line", async () => {
+    const f = await carrier("tms-capped");
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+         VALUES (current_tenant_id(), 'service:sweep:' || CAST(current_tenant_id() AS text), 'sweep@tms-test.invalid', 'staff')`,
+      ),
+    );
+    const l = await ourLoad(f);
+    const steps = [
+      { label: LABEL.tendered, at: T_TENDERED },
+      { label: LABEL.in_transit, at: T_PICKED },
+    ];
+    fake.loads.set("A-1", dispatchLoad("A-1", l.number, steps));
+    expect(await pull(f)).toMatchObject({ ran: true, written: 1 });
+    expect((await mirrorOf(f, "A-1")).status_code).toBe("in_transit");
+
+    // The desk takes its own lease.
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute("UPDATE desk_loops SET lease_token = NULL, lease_until = NULL WHERE tenant_id = current_tenant_id()"),
+    );
+    const service = await serviceSession(app, f.tenantId);
+    if (!service) throw new Error("no service login");
+    flags.deskLoop.enabled = true;
+    flags.deskLoop.armed = true;
+    flags.deskLoop.startDate = "2026-10-30";
+    const real = deskHandlers({ db: app });
+    const runs: string[] = [];
+    const handlers = {} as Handlers;
+    for (const source of DESK_SOURCES) {
+      handlers[source] =
+        source === "tms_event"
+          ? {
+              ...real.tms_event,
+              run: (s, e, ctx) => {
+                runs.push(e.eventKey);
+                return real.tms_event.run(s, e, ctx);
+              },
+            }
+          : { switchOn: () => true, needsMs: 1_000, run: async () => ({ outcome: "done", detail: { found: 0 } }) };
+    }
+    let now = NOW.getTime() + 20 * 60_000;
+    const wake = () =>
+      wakeDesk(
+        service,
+        { wakeId: randomUUID(), by: "webhook", deadlineMs: now + 25_000 },
+        { db: app, clock: () => new Date(now), handlers, newId: randomUUID, log: () => {} },
+      );
+    const seenCount = () =>
+      admin.withTenant(f.tenantId, async (q) => {
+        const [r] = await q.query<{ n: number }>(
+          "SELECT CAST(count(*) AS integer) AS n FROM desk_log WHERE tenant_id = current_tenant_id() AND kind = 'seen'",
+        );
+        return r.n;
+      });
+
+    // The day's share is used: one seen line an hour ago, against a share of one.
+    flags.deskLoop.limits.eventsPerDay = 1;
+    await app.withTenant(f.tenantId, (q) =>
+      appendLine(q, {
+        id: randomUUID(),
+        wakeId: randomUUID(),
+        at: new Date(now - 3_600_000).toISOString(),
+        kind: "seen",
+        eventKey: "sweep:2026-11-02",
+        source: "sweep",
+        subjectId: null,
+        by: "schedule",
+        detail: {},
+      }),
+    );
+    expect(await seenCount()).toBe(1);
+
+    // The dispatch system delivers the load and its webhook queues a wake-up.
+    fake.loads.set("A-1", dispatchLoad("A-1", l.number, [...steps, { label: LABEL.delivered, at: T_DELIVERED }]));
+    const wakeUpId = randomUUID();
+    await app.withTenant(f.tenantId, (q) =>
+      wakeUpFor(q, { recordType: "load", externalId: "A-1" }, { id: wakeUpId, nowIso: new Date(now).toISOString() }),
+    );
+
+    const out = await wake();
+    expect(out).toMatchObject({ ok: true, reason: "events_per_day", counts: { seen: 0 } });
+    expect((await mirrorOf(f, "A-1")).status_code).toBe("delivered");
+    const [wakeUp] = await admin.withTenant(f.tenantId, (q) =>
+      q.query<{ processed: boolean }>(
+        "SELECT processed_at IS NOT NULL AS processed FROM tms_wakeups WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [wakeUpId],
+      ),
+    );
+    expect(wakeUp).toEqual({ processed: true });
+    expect(await seenCount()).toBe(1);
+    expect(runs).toEqual([]);
+
+    // With share again, discovery finds the mirrored events and the lane works them.
+    flags.deskLoop.limits.eventsPerDay = savedDesk.limits.eventsPerDay;
+    now += 20 * 60_000;
+    await wake();
+    const deliveredId = await eventIdOf(f, "A-1:h2");
+    if (!deliveredId) throw new Error("no delivered event");
+    expect(runs).toContain(eventKey("tms_event", deliveredId));
+    expect(await seenCount()).toBeGreaterThan(1);
+    expect((await loadEventsOf(f, l.id)).map((e) => e.to_status)).toEqual(["delivered"]);
   });
 });
 
