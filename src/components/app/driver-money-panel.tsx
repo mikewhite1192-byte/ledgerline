@@ -9,16 +9,18 @@ import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { controlClass, Input } from "@/components/ui/input";
 import type { DriverIdentity, IdentityCard } from "@/lib/advances/identity";
-import { panelSentence } from "@/lib/advances/reasons";
+import { panelSentence, statusSentence } from "@/lib/advances/reasons";
 import { cn } from "@/lib/cn";
-import { formatInstant } from "@/lib/format/dates";
+import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 
 // The driver's money panel: whether they are armed to receive money, the ids the dispatch system
 // knows them by, and every fuel card on file with the default marked. Arming and the cards are an
 // admin's; any member may add an id. Each press asks its route, which re-checks the role and the
 // driver itself; onDone then lets the page read the driver again. Cards are shown by their last
 // four and, for a generic card, the placeholder its portal shows. Test mode: nothing reaches a
-// provider.
+// provider. While driver admin is on (statusAdminOn, read server side by the page, with the
+// carrier's today), a Status row too: whether the driver is still active and, for an admin,
+// Deactivate (which also disarms) or Reactivate (which never arms). With it off the row is not shown.
 
 export type PanelSend = (path: string, body: Record<string, unknown>) => Promise<{ ok: boolean; error: string | null }>;
 
@@ -49,18 +51,33 @@ export function holderWords(card: Pick<IdentityCard, "holderKind" | "portalName"
   return "In the driver's name";
 }
 
-type Pending = "arm" | "id" | "card" | `default:${string}` | `close:${string}`;
+type Pending = "arm" | "status" | "id" | "card" | `default:${string}` | `close:${string}`;
+
+const DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+
+// The driver's status in words: active, leaving on a set day, or gone. A last day before the
+// carrier's today has passed; today itself is still a working day.
+export function statusWords(activeTo: string | null, today: string): { tone: "success" | "warning"; text: string } {
+  if (activeTo === null) return { tone: "success", text: "Active" };
+  if (activeTo < today) return { tone: "warning", text: `Departed, last day ${formatLocalDate(activeTo)}` };
+  return { tone: "warning", text: `Last day ${formatLocalDate(activeTo)}` };
+}
 
 export function DriverMoneyPanel({
   identity,
   canAdmin,
   timezone,
+  statusAdminOn = false,
+  today,
   send = postJson,
   onDone,
 }: {
   identity: DriverIdentity;
   canAdmin: boolean;
   timezone: string;
+  // The driver admin switch and the carrier's today (YYYY-MM-DD), both from the page.
+  statusAdminOn?: boolean;
+  today?: string;
   send?: PanelSend;
   onDone?: () => void;
 }) {
@@ -70,6 +87,9 @@ export function DriverMoneyPanel({
   const [pending, setPending] = useState<Pending | null>(null);
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmArm, setConfirmArm] = useState(false);
+  const [confirmStatus, setConfirmStatus] = useState(false);
+  const [lastDay, setLastDay] = useState("");
+  const [statusNote, setStatusNote] = useState("");
   const [addingId, setAddingId] = useState(false);
   const [externalId, setExternalId] = useState("");
   const [addingCard, setAddingCard] = useState(false);
@@ -77,15 +97,21 @@ export function DriverMoneyPanel({
   const [holderKind, setHolderKind] = useState<"named" | "generic">("named");
   const [portalName, setPortalName] = useState("");
   const [makeDefault, setMakeDefault] = useState(false);
-  const [errors, setErrors] = useState<{ externalId?: string; last4?: string; portalName?: string }>({});
+  const [errors, setErrors] = useState<{ externalId?: string; last4?: string; portalName?: string; lastDay?: string }>({});
 
-  async function run(what: Pending, path: string, body: Record<string, unknown>, done: string): Promise<boolean> {
+  async function run(
+    what: Pending,
+    path: string,
+    body: Record<string, unknown>,
+    done: string,
+    words: (code: string) => string = panelSentence,
+  ): Promise<boolean> {
     if (pending) return false;
     setPending(what);
     setNotice(null);
     try {
       const out = await send(path, body);
-      setNotice(out.ok ? { ok: true, text: done } : { ok: false, text: panelSentence(out.error ?? "unavailable") });
+      setNotice(out.ok ? { ok: true, text: done } : { ok: false, text: words(out.error ?? "unavailable") });
       return out.ok;
     } finally {
       setPending(null);
@@ -97,6 +123,30 @@ export function DriverMoneyPanel({
     const wanted = !identity.armed.on;
     const ok = await run("arm", `${base}/arm`, { armed: wanted }, wanted ? "Armed. Advances can be paid to this driver." : "Disarmed. Nothing will be paid to this driver until an admin arms them again.");
     if (ok) setConfirmArm(false);
+  }
+
+  async function changeStatus() {
+    const active = identity.activeTo !== null;
+    const body: Record<string, unknown> = { active };
+    if (!active) {
+      const day = lastDay.trim();
+      if (day !== "" && !DATE.test(day)) {
+        setErrors({ lastDay: "A date, like 2026-11-02." });
+        return;
+      }
+      setErrors({});
+      if (day !== "") body.effectiveOn = day;
+    }
+    const note = statusNote.trim();
+    if (note !== "") body.note = note;
+    const done = active
+      ? "Reactivated. They are not armed: an admin arms them again before any advance."
+      : "Deactivated. They are not armed, so no new money can go to this driver.";
+    if (await run("status", `${base}/status`, body, done, statusSentence)) {
+      setConfirmStatus(false);
+      setLastDay("");
+      setStatusNote("");
+    }
   }
 
   async function addId(event: FormEvent<HTMLFormElement>) {
@@ -138,6 +188,11 @@ export function DriverMoneyPanel({
 
   const since = identity.armed.since ? formatInstant(identity.armed.since, timezone) : null;
   const busy = pending !== null;
+  // A driver with a last day on file is never armed (the route refuses it too): reactivate first.
+  // Disarming stays offered.
+  const canArm = identity.armed.on || identity.activeTo === null;
+  const showStatus = statusAdminOn && typeof today === "string" && DATE.test(today);
+  const status = showStatus ? statusWords(identity.activeTo, today) : null;
   return (
     <Card>
       <CardHeader>
@@ -157,13 +212,13 @@ export function DriverMoneyPanel({
             ) : (
               <Badge tone="warning">Not armed</Badge>
             )}
-            {canAdmin && !confirmArm ? (
+            {canAdmin && canArm && !confirmArm ? (
               <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirmArm(true)}>
                 {identity.armed.on ? "Disarm" : "Arm"}
               </Button>
             ) : null}
           </div>
-          {canAdmin && confirmArm ? (
+          {canAdmin && canArm && confirmArm ? (
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-body text-foreground">
                 {identity.armed.on
@@ -185,8 +240,64 @@ export function DriverMoneyPanel({
               </Button>
             </div>
           ) : null}
+          {canAdmin && !canArm ? <p className="text-small text-muted-foreground">{panelSentence("driver_inactive")}</p> : null}
           {!canAdmin ? <p className="text-small text-muted-foreground">Only an admin arms or disarms a driver.</p> : null}
         </section>
+
+        {status ? (
+          <section aria-labelledby={`${uid}-status`} className="grid gap-3">
+            <h3 id={`${uid}-status`} className="text-small text-muted-foreground">
+              Status
+            </h3>
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge tone={status.tone}>{status.text}</Badge>
+              {canAdmin && !confirmStatus ? (
+                <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirmStatus(true)}>
+                  {identity.activeTo === null ? "Deactivate" : "Reactivate"}
+                </Button>
+              ) : null}
+            </div>
+            {canAdmin && confirmStatus ? (
+              <div className="grid gap-3 rounded-lg border border-border p-3">
+                <p className="text-body text-foreground">
+                  {identity.activeTo === null
+                    ? `Deactivate ${identity.name}? They are disarmed now, so no new advance or money code can go to them. A payout already sent is not touched, and their pay is still settled.`
+                    : `Reactivate ${identity.name}? They stay not armed until an admin arms them again.`}
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {identity.activeTo === null ? (
+                    <Field id={`${uid}-last-day`} label="Last day" hint="Leave empty for today." error={errors.lastDay}>
+                      {(control) => (
+                        <Input {...control} type="date" value={lastDay} onChange={(e) => setLastDay(e.target.value)} disabled={busy} />
+                      )}
+                    </Field>
+                  ) : null}
+                  <Field id={`${uid}-status-note`} label="Note (optional)">
+                    {(control) => (
+                      <Input {...control} maxLength={240} autoComplete="off" value={statusNote} onChange={(e) => setStatusNote(e.target.value)} disabled={busy} />
+                    )}
+                  </Field>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant={identity.activeTo === null ? "destructive" : "primary"}
+                    size="sm"
+                    pending={pending === "status"}
+                    pendingLabel={identity.activeTo === null ? "Deactivating" : "Reactivating"}
+                    disabled={busy}
+                    onClick={changeStatus}
+                  >
+                    {identity.activeTo === null ? "Deactivate" : "Reactivate"}
+                  </Button>
+                  <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmStatus(false)}>
+                    Never mind
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {!canAdmin ? <p className="text-small text-muted-foreground">Only an admin deactivates or reactivates a driver.</p> : null}
+          </section>
+        ) : null}
 
         <section aria-labelledby={`${uid}-ids`} className="grid gap-3">
           <h3 id={`${uid}-ids`} className="text-small text-muted-foreground">

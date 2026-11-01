@@ -25,12 +25,13 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      lock and deletes the settled ledger rows,
 //      the agent's records and the fictional broker portal's loads (the app role has no DELETE on
 //      them); the portal's loads come back only with npm run seed, since the app cannot write them;
-//   4. the seed's replace of the 47 seeded tables (TENANT_TABLES, with Cash Friday's checks, the
-//      money codes, the card check's runs and differences, the pinned fuel and tax rates and the
-//      phone line's calls, segments and turns, which the seed leaves empty), as the app role, under
-//      row-level security (the arming log and the calls, which the app role may add to but never
-//      delete from, go with their drivers through the foreign keys' cascades, and the plan's log is
-//      written again);
+//   4. the seed's replace of the 48 seeded tables (TENANT_TABLES, with Cash Friday's checks, the
+//      money codes, the card check's runs and differences, the pinned fuel and tax rates, the
+//      drivers' status log and the phone line's calls, segments and turns, which the seed leaves
+//      empty), as the app role, under
+//      row-level security (the arming log, the status log and the calls, which the app role may add
+//      to but never delete from, go with their drivers through the foreign keys' cascades, and the
+//      plan's arming log is written again);
 //   5. the read-back: every seeded table equals the plan, every cleared table is empty, and the
 //      hero's open-week net is the worked example;
 //   6. the autopilot paused for 30 minutes (paused_by demo_reset), so it approves nothing on the
@@ -191,6 +192,7 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   driver_cards: "Fuel cards on file (test mode)",
   driver_identities: "Driver ids in the dispatch system",
   driver_arm_events: "Changes to who is armed to receive money",
+  driver_status_events: "Drivers deactivated or reactivated",
   loads: "Loads",
   load_events: "Load moves",
   tms_connections: "Dispatch connection",

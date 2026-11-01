@@ -878,8 +878,12 @@ export type Flags = {
   deficitRecovery: { enabled: boolean; startDate: string };
   // Driver admin (docs: design-d1-drivers 5.1): an admin adds a driver on the Add driver page
   // (src/lib/drivers/create.ts, POST /api/drivers). A new driver starts not armed and with no
-  // card, so no money can go to them until an admin adds a card and arms them on their page.
-  // Moves no money. The page, the route and the service each ask enabled themselves.
+  // card, so no money can go to them until an admin adds a card and arms them on their page. The
+  // same switch covers deactivating and reactivating a driver on their page
+  // (src/lib/drivers/status.ts, POST /api/drivers/[id]/status, 5.3): deactivating disarms them in
+  // the same transaction, reactivating never arms. The money gates refuse a driver past their last
+  // day whatever this switch says. Moves no money. The pages, the routes and the services each
+  // ask enabled themselves.
   driverAdmin: { enabled: boolean };
 };
 
@@ -1158,7 +1162,8 @@ export const flags: Flags = {
   cardPullback: { enabled: false, startDate: "2026-11-02" },
   // On by the owner's call (D-071, 2026-11-01). Pay math only; nothing moves money on its own.
   deficitRecovery: { enabled: true, startDate: "2026-11-02" },
-  // Off until its own one-line enable PR. Adds a driver (not armed, no card); moves no money.
+  // Off until its own one-line enable PR. Adds a driver (not armed, no card), deactivates (disarms)
+  // and reactivates (never arms) one; moves no money.
   driverAdmin: { enabled: false },
 };
 

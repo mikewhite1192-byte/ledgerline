@@ -1544,7 +1544,23 @@ const PAGES: PageCase[] = [
             flags.driverAdmin.enabled = false;
           }
         },
-        shows: ["Before this driver can take an advance: add a card, then arm them.", "Not armed"],
+        shows: ["Before this driver can take an advance: add a card, then arm them.", "Not armed", "Status", "Active", "Deactivate"],
+      },
+      {
+        name: "departed, driver admin on",
+        setup: () => {
+          onDay("2026-11-02T15:00:00.000Z");
+          state.fx.identity = { ...fx.IDENTITY, activeTo: "2026-10-30", armed: { on: false, since: null } };
+        },
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: ["Departed, last day Oct 30, 2026", "Reactivate"],
       },
       {
         name: "card on file, not armed, driver admin on",
@@ -1561,6 +1577,22 @@ const PAGES: PageCase[] = [
           }
         },
         shows: ["Before this driver can take an advance: arm them.", "Not armed"],
+      },
+      {
+        name: "deactivated, driver admin on",
+        setup: () => {
+          state.fx.driverRecord = { ...fx.DRIVER_RECORD, settlements: [], advances: [] };
+          state.fx.identity = { ...fx.IDENTITY, armed: { on: false, since: null }, activeTo: "2026-09-30" };
+        },
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: "Not armed",
       },
     ],
   },
