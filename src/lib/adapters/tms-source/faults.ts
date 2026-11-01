@@ -2,7 +2,8 @@
 // like a messy real dispatch system in one way, so the sync can be seen coping with it. They live
 // in tms_connections.demo_faults for one tenant, flipped from Settings > Demo while
 // flags.tmsSync.demoFaultsEnabled is on, and only the demo feeds (synthetic.ts, and mock-faults.ts
-// for the sample dispatch system) read them: the sync never knows a fault exists. All false by default. Pure; safe to import in the browser.
+// for the sample dispatch system) read them: the sync never knows a fault exists. All false by
+// default. Pure; safe to import in the browser.
 //
 // duplicate_wakeups is not a switch here: it is the dispatch webhook's own repeat, shown by
 // Settings > Demo's "Fire a wake-up twice" (POST /api/demo/tms-wakeup), which sends one wake-up

@@ -13,8 +13,9 @@ import { tmsHookKey } from "../tms/hook-key";
 
 export type HookResult = "sent" | "not_configured" | "hook_off" | "timeout" | "unreachable" | `refused_${number}`;
 
-// The route's wake runs up to the desk's slice (20 s) before it answers, so the wait covers that.
-export const HOOK_TIMEOUT_MS = 25_000;
+// The route queues the wake-up before it runs the desk, so a short wait is enough: past it the
+// answer is "timeout" and the queued wake-up or the desk's clock reads the change.
+export const HOOK_TIMEOUT_MS = 5_000;
 
 type Env = Record<string, string | undefined>;
 

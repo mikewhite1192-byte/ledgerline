@@ -85,7 +85,7 @@ CREATE TABLE mock_tms_events (
   new_value      text CHECK (length(new_value) BETWEEN 1 AND 120),
   previous_value text CHECK (length(previous_value) BETWEEN 1 AND 120),
   -- A role word ("Dispatch desk", "Driver app"), never a person's name or address.
-  changed_by     text CHECK (length(changed_by) BETWEEN 0 AND 80),
+  changed_by     text CHECK (length(changed_by) BETWEEN 1 AND 80),
   at             timestamptz NOT NULL,
   UNIQUE (tenant_id, id),
   UNIQUE (tenant_id, mock_load_id, seq),
