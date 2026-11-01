@@ -59,9 +59,11 @@ export const explainPaystub = defineTool({
       // The stub's one line and whether a person recorded sending it, for a paid stub only. The
       // sender is named by role; the membership id and email stay out.
       let stub: { summary: string; sent: { at: string; byRole: string } | null } | null = null;
-      if (stored.status === "paid") {
-        const [period] = await readRowsWhereId(q, "settlement_periods", "id", a.periodId);
-        if (!period || stored.paid_at === null) throw new Error("the paid stub's week or paid time is missing");
+      // A paid stub always has its week and its paid time (foreign key, 0005's paid check); if
+      // either ever reads missing, stub stays null and the lines and totals still come back.
+      const [period] =
+        stored.status === "paid" ? await readRowsWhereId(q, "settlement_periods", "id", a.periodId) : [];
+      if (stored.status === "paid" && period && stored.paid_at !== null) {
         const sent = stored.stub_sent_at !== null ? await readStubSent(q, stored.id) : null;
         if (stored.stub_sent_at !== null && sent === null) throw new Error("the stub sent mark could not be read");
         stub = {

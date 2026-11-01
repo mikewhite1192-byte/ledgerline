@@ -810,7 +810,6 @@ const SETTLEMENT_CASES: [string, SettlementRecordView][] = [
         status: "paid",
         paidAt: "2026-10-27T16:00:00.000Z",
         stubSentAt: "2026-10-28T15:00:00.000Z",
-        stubSentBy: fx.ID,
       },
       latest: { settlement_payout: "confirmed", settlement_bill: "confirmed", settlement_bill_payment: "confirmed" },
       stubSent: { at: "2026-10-28T15:00:00.000Z", byRole: "staff" },

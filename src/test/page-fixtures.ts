@@ -1319,7 +1319,6 @@ export const SETTLEMENT_RECORD: SettlementRecordView = {
     parkedReason: null,
     parkedAt: null,
     stubSentAt: null,
-    stubSentBy: null,
   },
   lines: PAY_LINES,
   period: { id: settled.period.id, start: settled.period.period_start, end: settled.period.period_end, status: "open" },

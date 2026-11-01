@@ -194,6 +194,14 @@ describe("the stub sent mark against a seeded database", () => {
       expect(await sqlStateOf(set(draft, after, staffId))).toBe("23514");
       const before = new Date(Date.parse(PAID.paid_at as string) - 60_000).toISOString();
       expect(await sqlStateOf(set(PAID.id, before, staffId))).toBe("23514");
+      // A paid stub without its paid time cannot exist (0005's paid check), so the paid_at clause is
+      // read off the constraint itself: a null paid_at fails the mark, never passes the compare.
+      const [def] = await admin.withoutTenant((q) =>
+        q.query<{ def: string }>(
+          "SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'settlements_stub_sent_paid'",
+        ),
+      );
+      expect(def.def).toContain("paid_at IS NOT NULL");
       // A person who is no membership of this carrier, nor another carrier's.
       expect(await sqlStateOf(set(PAID.id, after, randomUUID()))).toBe("23503");
       expect(await sqlStateOf(set(PAID.id, after, other!.memberId))).toBe("23503");

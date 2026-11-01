@@ -7,7 +7,8 @@
 -- 1. stub_sent_at, stub_sent_by: set together or not at all (settlements_stub_sent_pair).
 -- 2. stub_sent_by names a membership of the same carrier (settlements_stub_sent_by_fk; every
 --    reference carries tenant_id, as 0084's do).
--- 3. Only a paid paystub can be marked, and never before it was paid (settlements_stub_sent_paid).
+-- 3. Only a paid paystub with its paid time can be marked, and never before it was paid
+--    (settlements_stub_sent_paid; a null paid_at fails it outright rather than passing the compare).
 --
 -- Additive and nullable: every row already there has nulls in both columns, so no row is changed
 -- and none needs narrowing. Each constraint is added NOT VALID and checked by
@@ -22,4 +23,4 @@ ALTER TABLE settlements ADD CONSTRAINT settlements_stub_sent_by_fk
 ALTER TABLE settlements ADD CONSTRAINT settlements_stub_sent_pair
   CHECK ((stub_sent_at IS NULL) = (stub_sent_by IS NULL)) NOT VALID;
 ALTER TABLE settlements ADD CONSTRAINT settlements_stub_sent_paid
-  CHECK (stub_sent_at IS NULL OR (status = 'paid' AND stub_sent_at >= paid_at)) NOT VALID;
+  CHECK (stub_sent_at IS NULL OR (status = 'paid' AND paid_at IS NOT NULL AND stub_sent_at >= paid_at)) NOT VALID;
