@@ -280,7 +280,8 @@ describe("the sample dispatch system", () => {
     expect(await historyOf(f, l.reference)).toEqual([
       { seq: 1, field: "status", previous_value: null, new_value: "Booked", changed_by: "Dispatch desk", at: at(-60).toISOString() },
       { seq: 2, field: "status", previous_value: "Booked", new_value: "In Transit", changed_by: "Dispatch desk", at: at(5).toISOString() },
-      { seq: 3, field: "status", previous_value: "In Transit", new_value: "Delivered", changed_by: "Dispatch desk", at: at(300).toISOString() },
+      // A completed stop is dated at its departure (1:45 PM local), not at the click.
+      { seq: 3, field: "status", previous_value: "In Transit", new_value: "Delivered", changed_by: "Dispatch desk", at: "2026-11-03T19:45:00.000Z" },
     ]);
   });
 

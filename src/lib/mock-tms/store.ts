@@ -229,7 +229,9 @@ export async function applyMockAction(
         [load.id, `${load.external_id}:doc3`, `pod-${load.reference}.jpg`, POD_TYPE, POD_BYTES, times.departed],
       );
     }
-    await writeRows(q, load, rows, who, at);
+    // The stop's row is dated at its departure, as a dispatch system dates a completed stop, so a
+    // back-dated delivery keeps its own day when LedgerLine moves the load.
+    await writeRows(q, load, rows, who, times.departed);
     await touch(
       q,
       load,

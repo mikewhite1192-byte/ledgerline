@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isTestKey } from "../lib/adapters/payment/stripe-test";
+import { CUT_PAGE } from "../lib/adapters/tms-source/synthetic";
 import { assertMoneyEnvSafe, MoneyEnvRefused } from "../lib/money/guard";
 import { payoutSwitchOn } from "../lib/money/ledger";
 import { DEMO_CARRIERS } from "../lib/seed/carriers";
 import { isLocalDate } from "../lib/time/local-date";
+import { MAX_HISTORY_PAGES } from "../lib/tms/sync";
 import { flags, stepThroughShown, type Flags } from "./flags";
 import { LOCAL_SWITCHES } from "../../e2e/env.local-mode";
 import { applyLocalOverrides, LOCAL_OFF_ONLY, LOCAL_OVERRIDABLE } from "./local-overrides";
@@ -444,7 +446,8 @@ describe("flags", () => {
   });
 
   it("ships the sample dispatch system off, capped per load, and local mode can never turn it on", () => {
-    expect(flags.mockTms).toEqual({ enabled: false, maxEventsPerLoad: 200 });
+    expect(flags.mockTms).toEqual({ enabled: false, maxEventsPerLoad: 36 });
+    expect(flags.mockTms.maxEventsPerLoad).toBeLessThan((MAX_HISTORY_PAGES - 1) * CUT_PAGE);
     expect(Number.isSafeInteger(flags.mockTms.maxEventsPerLoad) && flags.mockTms.maxEventsPerLoad > 0).toBe(true);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("mockTms.enabled");
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.

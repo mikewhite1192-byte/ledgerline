@@ -1216,7 +1216,9 @@ export const flags: Flags = {
   // A wake-up only: it reads, never writes to the dispatch system, and moves no money.
   tmsHook: { enabled: true, hookPerMinute: 60 },
   // Off until its own one-line enable PR (D-071): the pages 404 and the seed keeps the synthetic feed.
-  mockTms: { enabled: false, maxEventsPerLoad: 200 },
+  // 36 history rows a load stay readable with the history_page_cut fault on (the sync reads at most
+  // MAX_HISTORY_PAGES pages of CUT_PAGE new rows, the last one empty).
+  mockTms: { enabled: false, maxEventsPerLoad: 36 },
   // On by the owner's call (D-071, 2026-10-31). It only drafts a card; approving it goes through the usual gate.
   tmsFinalizeInvoice: { enabled: true, startDate: "2026-10-31" },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.

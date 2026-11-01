@@ -45,6 +45,8 @@ describe("the sample dispatch system's webhook send", () => {
       return new Response(null, { status: 202 });
     });
     expect(await sendMockHook(TENANT, "x", { fetch: slow, key: async () => KEY, env: ENV, timeoutMs: 5 })).toBe("timeout");
+    const slowKey = () => new Promise<string>(() => {});
+    expect(await sendMockHook(TENANT, "x", { fetch: slow, key: slowKey, env: ENV, timeoutMs: 5 })).toBe("timeout");
     const down = vi.fn(async () => {
       throw new TypeError(`fetch failed for token=${KEY}`);
     });

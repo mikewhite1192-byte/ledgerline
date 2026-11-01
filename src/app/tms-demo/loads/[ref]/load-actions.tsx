@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { Input, controlClass } from "@/components/ui/input";
-import type { HookResult } from "@/lib/mock-tms/hook";
 import {
   assignDriverAction,
   completeDeliveryAction,
@@ -14,6 +13,7 @@ import {
   type MockActionCategory,
   type MockActionState,
 } from "../../actions";
+import { hookWords } from "./hook-words";
 
 // A fixed message per category; nothing the server says is shown.
 export const MOCK_MESSAGES: Record<MockActionCategory, string> = {
@@ -36,18 +36,6 @@ export const MOCK_MESSAGES: Record<MockActionCategory, string> = {
   bad_status: "Pick a status from the list. Nothing was changed.",
   same_status: "The load already has that status. Nothing was changed.",
 };
-
-export const HOOK_WORDS: Record<string, string> = {
-  sent: "LedgerLine was told about the change.",
-  hook_off: "The webhook is switched off; LedgerLine finds the change on its next read.",
-  not_configured: "The webhook is not set up here; LedgerLine finds the change on its next read.",
-  timeout: "The webhook did not answer in time; LedgerLine finds the change on its next read.",
-  unreachable: "The webhook could not be reached; LedgerLine finds the change on its next read.",
-};
-
-export function hookWords(result: HookResult | string): string {
-  return HOOK_WORDS[result] ?? "The webhook refused the call; LedgerLine finds the change on its next read.";
-}
 
 function Outcome({ state }: { state: MockActionState }) {
   if (state === null) return null;

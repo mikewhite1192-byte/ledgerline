@@ -49,10 +49,16 @@ export async function sendMockHook(tenantId: string, externalId: string, deps: H
   if (flags.mockTms.enabled !== true || flags.tmsHook.enabled !== true || flags.tmsSync.enabled !== true) return "hook_off";
   const origin = hookOrigin(deps.env ?? process.env);
   if (origin === null) return "not_configured";
+  // One deadline covers the key lookup and the call, so a slow secret read cannot hold the page.
+  const deadline = AbortSignal.timeout(deps.timeoutMs ?? HOOK_TIMEOUT_MS);
   let key: string | null;
   try {
-    key = await (deps.key ?? (() => tmsHookKey()))();
+    key = await Promise.race([
+      (deps.key ?? (() => tmsHookKey()))(),
+      new Promise<never>((_, reject) => deadline.addEventListener("abort", () => reject(deadline.reason), { once: true })),
+    ]);
   } catch {
+    if (deadline.aborted) return "timeout";
     key = null;
   }
   if (!key) return "not_configured";
@@ -64,7 +70,7 @@ export async function sendMockHook(tenantId: string, externalId: string, deps: H
       body: JSON.stringify({ recordType: "load", externalId }),
       redirect: "manual",
       cache: "no-store",
-      signal: AbortSignal.timeout(deps.timeoutMs ?? HOOK_TIMEOUT_MS),
+      signal: deadline,
     });
     if (res.status === 202) return "sent";
     const status = Number.isSafeInteger(res.status) && res.status >= 100 && res.status <= 599 ? res.status : 500;

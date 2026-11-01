@@ -12,7 +12,8 @@ import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { localClockOf } from "@/lib/tms/clocks";
 import { SYNTHETIC_LABELS } from "@/lib/tms/status";
-import { AssignDriverForm, CompleteStopForm, SetStatusForm, hookWords } from "./load-actions";
+import { hookWords } from "./hook-words";
+import { AssignDriverForm, CompleteStopForm, SetStatusForm } from "./load-actions";
 
 export const dynamic = "force-dynamic";
 
