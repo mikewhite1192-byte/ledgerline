@@ -78,7 +78,7 @@ export function AskCard({
         </p>
       ) : (
         <div className="flex flex-wrap gap-2">
-          {ask.kind === "told" ? (
+          {ask.kind !== "ask" ? (
             <Button size="sm" pending={state.busy === "got_it"} disabled={busy} onClick={() => control.act(ask, "got_it")}>
               {ASK_WORDS.gotIt}
             </Button>

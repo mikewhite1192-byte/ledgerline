@@ -7,9 +7,10 @@ import { isUuid } from "@/lib/uuid";
 
 export type LiveAsk = {
   id: string;
-  kind: "ask" | "told";
-  proposalId: string;
-  proposalKind: string;
+  kind: "ask" | "told" | "digest";
+  // Null only on a morning digest, which names no proposal and offers only Got it.
+  proposalId: string | null;
+  proposalKind: string | null;
   text: string;
   reason: string | null;
   createdAt: string;
@@ -23,16 +24,23 @@ export const isIso = (v: unknown): v is string => typeof v === "string" && ISO.t
 const textOr = (v: unknown, max: number): string | null =>
   typeof v === "string" && v.length > 0 && v.length <= max ? v : null;
 
-// One row of a reply, kept only when every field the bubble uses has the shape the server writes.
+// One row of a reply, kept only when every field the bubble uses has the shape the server writes:
+// an ask or a told line names its proposal, a morning digest names none.
 function askOf(v: unknown): LiveAsk | null {
   if (!v || typeof v !== "object") return null;
   const r = v as Record<string, unknown>;
   const text = textOr(r.text, 400);
+  if (!isUuid(r.id) || text === null || !isIso(r.createdAt) || !isIso(r.shownAt)) return null;
+  const base = { id: r.id.toLowerCase(), text, reason: textOr(r.reason, 200), createdAt: r.createdAt, shownAt: r.shownAt };
+  if (r.kind === "digest") {
+    if (r.proposalId !== null || r.proposalKind !== null) return null;
+    return { ...base, kind: "digest", proposalId: null, proposalKind: null };
+  }
   const proposalKind = textOr(r.proposalKind, 40);
-  if (!isUuid(r.id) || !isUuid(r.proposalId) || text === null || proposalKind === null) return null;
-  if ((r.kind !== "ask" && r.kind !== "told") || !isIso(r.createdAt) || !isIso(r.shownAt)) return null;
+  if (!isUuid(r.proposalId) || proposalKind === null) return null;
+  if (r.kind !== "ask" && r.kind !== "told") return null;
   return {
-    id: r.id.toLowerCase(),
+    id: base.id,
     kind: r.kind,
     proposalId: r.proposalId.toLowerCase(),
     proposalKind,
@@ -127,5 +135,6 @@ const LOAD = /\b[Ll]oad ([A-Z0-9][A-Za-z0-9-]{0,38}[A-Za-z0-9])\b/;
 
 export function askDraft(ask: Pick<LiveAsk, "text" | "proposalKind">): string {
   const load = LOAD.exec(ask.text)?.[1];
-  return load ? `About load ${load}: ` : `About ${kindInWords(ask.proposalKind)}: `;
+  if (load) return `About load ${load}: `;
+  return ask.proposalKind === null ? "About the morning digest: " : `About ${kindInWords(ask.proposalKind)}: `;
 }

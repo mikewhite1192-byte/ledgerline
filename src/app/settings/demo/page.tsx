@@ -20,6 +20,7 @@ import { MoveFleetForm } from "./fleet-form";
 import { DemoResetForm } from "./reset-form";
 import { TmsFaultsForm } from "./tms-faults-form";
 import { TmsSyncForm } from "./tms-sync-form";
+import { TmsWakeUpForm } from "./tms-wakeup-form";
 
 export const dynamic = "force-dynamic";
 
@@ -196,6 +197,11 @@ export default async function DemoSettings() {
             </CardHeader>
             <CardBody>
               <TmsFaultsForm initial={view.faults} />
+              {flags.tmsHook.enabled === true && flags.tmsSync.enabled === true ? (
+                <div className="mt-4">
+                  <TmsWakeUpForm />
+                </div>
+              ) : null}
             </CardBody>
           </Card>
         ) : null}

@@ -21,7 +21,7 @@ import { pullTms } from "../tms/sync";
 import { fillReasons } from "../asks/reason";
 import { deskHandlers, type Handlers } from "./handlers";
 import { localMidnightOf, localNowOf, type DeskSource } from "./keys";
-import { appendLine, categoryWord, readSeenSince, readState, THREW, type Line, type LineDetail, type OpenEvent, type WakeBy } from "./log";
+import { appendLine, categoryWord, readSeenSince, readState, THREW, type Line, type LineDetail, type OpenEvent, WAKE_BY, type WakeBy } from "./log";
 
 // One wake of one carrier's desk loop (design 3): claim the loop's lease, write a wake line, find
 // new work, then pick, claim, run and record one piece of work at a time until the deadline, a cap
@@ -238,7 +238,7 @@ export async function wakeDesk(
 ): Promise<WakeResult> {
   // The switch is read here, whoever calls.
   if (flags.deskLoop.enabled !== true) return { ok: false, category: "disabled" };
-  if (!isUuid(input.wakeId) || (input.by !== "schedule" && input.by !== "button") || !Number.isFinite(input.deadlineMs)) {
+  if (!isUuid(input.wakeId) || !(WAKE_BY as readonly string[]).includes(input.by) || !Number.isFinite(input.deadlineMs)) {
     return { ok: false, category: "bad_request" };
   }
   const limits = readLimits();

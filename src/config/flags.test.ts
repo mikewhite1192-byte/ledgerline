@@ -131,6 +131,10 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
+  // The dispatch webhook ships off; its own one-line enable PR turns it on once the key is stored.
+  "tmsHook.enabled",
+  // The morning digest ships off; its own one-line enable PR turns it on.
+  "morningDigest.enabled",
   // Named stub lines ship off; their own one-line enable PR turns them on.
   "namedLines.enabled",
 ] as const;
@@ -369,6 +373,13 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardPullback.enabled");
   });
 
+  it("ships the morning digest off, with a start date and small caps on its one call", () => {
+    expect(flags.morningDigest).toEqual({ enabled: false, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 });
+    expect(isLocalDate(flags.morningDigest.startDate)).toBe(true);
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("morningDigest.enabled");
+  });
+
   it("releases deficit recovery, with a start date, off for the local demo run", () => {
     expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
@@ -411,6 +422,14 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsSync.enabled");
     // A load moves on a mirrored event only while load movement is on too (D-071 turned it on).
     expect(flags.loadMovement.enabled).toBe(true);
+  });
+
+  it("ships the dispatch webhook off, at 60 calls a minute a carrier, and local mode can never turn it on", () => {
+    expect(flags.tmsHook).toEqual({ enabled: false, hookPerMinute: 60 });
+    expect(Number.isSafeInteger(flags.tmsHook.hookPerMinute) && flags.tmsHook.hookPerMinute > 0).toBe(true);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("tmsHook.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsHook.enabled");
   });
 
   it("releases the invoice on finalize, with a start date, off for the local demo run", () => {
@@ -461,6 +480,8 @@ describe("flags", () => {
       "cardPullback.enabled",
       "deficitRecovery.enabled",
       "cancelledTrip.enabled",
+      "tmsHook.enabled",
+      "morningDigest.enabled",
       "namedLines.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
