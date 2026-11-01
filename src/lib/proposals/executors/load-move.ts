@@ -1,7 +1,8 @@
 import { flags } from "../../../config/flags";
 import { requireStaff } from "../../auth/role";
 import type { Queryable } from "../../db";
-import { staffMoveIn, type MoveTo } from "../../loads/movement";
+import { cancelledTripEnabled } from "../../deficits/switches";
+import { staffMoveIn, type StaffMoveTo } from "../../loads/movement";
 import { isLocalDate } from "../../time/local-date";
 import { isUuid } from "../../uuid";
 import type { Executor, Precheck, ProposalRefused, ProposalResult, ProposalRow } from "../execute";
@@ -11,22 +12,26 @@ import type { Executor, Precheck, ProposalRefused, ProposalResult, ProposalRow }
 // same status guard and CHECKs as any move. No money moves and nothing is sent. Read through
 // loadMovement.enabled on every approval. A card that names no load or no move (a message with no
 // whole load number, say) is refused as not_executable: the person moves that load on its own page.
+// A card that names the cancel (the dispatch system withdrew the load) is executable only while
+// flags.cancelledTrip is on, asked here on every approval and again by staffMoveIn on its date.
 
 const done = (proposalId: string): ProposalResult => ({ ok: true, proposalId, status: "done", moneyActionId: null });
 const refusal = (category: string, retryable = false): ProposalRefused => ({ ok: false, category, retryable });
 
-type MoveArgs = { loadId: string; toStatus: MoveTo; deliveredOn: string | null };
+type MoveArgs = { loadId: string; toStatus: StaffMoveTo; deliveredOn: string | null };
 
 function argsOf(raw: unknown, proposal: Pick<ProposalRow, "subjectTable" | "subjectId" | "amountCents">): MoveArgs | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
   const a = raw as Record<string, unknown>;
   if (typeof a.loadId !== "string" || !isUuid(a.loadId)) return null;
-  if (a.toStatus !== "in_transit" && a.toStatus !== "delivered") return null;
+  const cancel = a.toStatus === "cancelled" && cancelledTripEnabled();
+  if (a.toStatus !== "in_transit" && a.toStatus !== "delivered" && !cancel) return null;
   const deliveredOn = a.deliveredOn ?? null;
   if (deliveredOn !== null && !isLocalDate(deliveredOn)) return null;
   if (proposal.amountCents !== 0) return null;
   if (proposal.subjectTable !== "loads" || proposal.subjectId !== a.loadId) return null;
-  return { loadId: a.loadId, toStatus: a.toStatus, deliveredOn: a.toStatus === "delivered" ? deliveredOn : null };
+  const toStatus: StaffMoveTo = cancel ? "cancelled" : a.toStatus === "delivered" ? "delivered" : "in_transit";
+  return { loadId: a.loadId, toStatus, deliveredOn: toStatus === "delivered" ? deliveredOn : null };
 }
 
 const precheck: Precheck = async (q, proposal, _now, ctx) => {

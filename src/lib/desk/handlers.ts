@@ -5,6 +5,8 @@ import { askFor, tellFor } from "../asks/store";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { proposeAdvanceAtPickup } from "../advances/at-pickup";
 import { proposeCardLoadRuling } from "../card-loads/ruling";
+import { proposeCancelledTripDeficit } from "../deficits/cancelled-trip";
+import { deficitBookEnabled } from "../deficits/switches";
 import { runAudit } from "../agent/auditor/run";
 import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
@@ -133,13 +135,28 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
 
   // A recorded move. ADVANCE-AT-PICKUP: a move to in transit, for a carrier whose advances unlock
   // at pickup, drafts one advance card for a person to approve (src/lib/advances/at-pickup.ts asks
-  // its own switch and start date again). The other lanes that follow a move hang off here too.
+  // its own switch and start date again). CANCELLED-TRIP: a cancel drafts one deficit card per paid
+  // advance still owed on the load (src/lib/deficits/cancelled-trip.ts asks its own switch and
+  // start date again), in its own transaction. The other lanes that follow a move hang off here too.
   const loadEvent: Handler = {
-    switchOn: () => flags.loadMovement.enabled === true || flags.advanceAtPickup.enabled === true,
+    switchOn: () =>
+      flags.loadMovement.enabled === true || flags.advanceAtPickup.enabled === true || deficitBookEnabled(),
     needsMs: 2_000,
     async run(session, event, ctx) {
-      if (flags.advanceAtPickup.enabled !== true) return done({ found: 0, category: "recorded" });
       const id = event.subjectId;
+      if (deficitBookEnabled()) {
+        if (!id) return failed("bad_request");
+        const c = await db().withTenant(session.tenantId, async (q) => {
+          await assertMembership(q, session);
+          return proposeCancelledTripDeficit(q, session, id, ctx.clock());
+        });
+        if (c.kind === "proposed") return done({ found: c.proposalIds.length, category: "deficit_proposed" });
+        // Not a cancel: the move is the advance at pickup's to read.
+        if (c.category !== "not_cancel") {
+          return done({ found: 0, category: c.category === "switched_off" ? "recorded" : c.category });
+        }
+      }
+      if (flags.advanceAtPickup.enabled !== true) return done({ found: 0, category: "recorded" });
       if (!id) return failed("bad_request");
       const r = await db().withTenant(session.tenantId, async (q) => {
         await assertMembership(q, session);

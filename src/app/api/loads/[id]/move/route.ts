@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { staffGate } from "@/lib/auth/staff-gate";
 import { getDb } from "@/lib/db";
+import { cancelledTripEnabled } from "@/lib/deficits/switches";
 import { isCrossSite } from "@/lib/http/same-site";
 import { staffMove } from "@/lib/loads/movement";
 import { isUuid } from "@/lib/uuid";
@@ -9,7 +10,9 @@ import { isUuid } from "@/lib/uuid";
 // POST: "Mark picked up" and "Mark delivered" on a load's record page. A person's press moves the
 // load one step (planned to in transit, in transit to delivered) and records one load_events row
 // with source staff, under the same status guard and CHECKs as any move. No money moves and
-// nothing is sent. Body: { to: "in_transit" | "delivered" }.
+// nothing is sent. Body: { to: "in_transit" | "delivered" | "cancelled" }. A cancel (planned or in
+// transit only) is taken only while flags.cancelledTrip is on, asked here and again in the move;
+// off, it is validation, as before.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -48,8 +51,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   ) {
     return reply({ error: "validation" }, 400);
   }
+  const to = (body as { to?: unknown }).to;
+  if (to === "cancelled" && !cancelledTripEnabled()) return reply({ error: "validation" }, 400);
   try {
-    const result = await staffMove(getDb(), session, id, (body as { to?: unknown }).to, new Date());
+    const result = await staffMove(getDb(), session, id, to, new Date());
     if (result.ok) return reply({ ok: true, changed: result.changed, to: result.to }, 200);
     return reply({ error: result.category }, STATUS[result.category] ?? 409);
   } catch (err) {

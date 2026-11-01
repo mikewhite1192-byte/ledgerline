@@ -885,6 +885,17 @@ export type Flags = {
   // day whatever this switch says. Moves no money. The pages, the routes and the services each
   // ask enabled themselves.
   driverAdmin: { enabled: boolean };
+  // The cancelled trip (docs: RECOVERY, 0080): a person may cancel a planned or in-transit load
+  // (POST /api/loads/[id]/move with to "cancelled", or a load_move card from the dispatch sync's
+  // withdrawn status, approved), and the desk then drafts one deficit_book card per paid advance
+  // still owed on that load (src/lib/deficits/cancelled-trip.ts). A person approves the card; the
+  // approval closes the advance line and books the same cents as a named deficit in one
+  // transaction, so the driver owes them once. Nothing moves money. Read on every path that writes:
+  // the staff move, the load-move executor, the route, the desk handler and the deficit executor.
+  // The deficit card is drafted and approved only while deficitRecovery.enabled is on too, since
+  // only then does pay take a deficit back. Off, a cancel is refused as validation, as before. startDate (YYYY-MM-DD, the carrier's zone):
+  // a cancel recorded before it drafts nothing, so turning it on never reaches back.
+  cancelledTrip: { enabled: boolean; startDate: string };
   // The morning digest (docs: S7, 0082): at 06:00 the carrier's local time the desk reads about ten
   // facts from SQL (src/lib/digest/facts.ts: what needs a person, what happened yesterday, the
   // billing lines, Fridays the week's paystubs, the 1st last month's tie-out counts), Muse Spark
@@ -1172,9 +1183,12 @@ export const flags: Flags = {
   cardPullback: { enabled: false, startDate: "2026-11-02" },
   // On by the owner's call (D-071, 2026-11-01). Pay math only; nothing moves money on its own.
   deficitRecovery: { enabled: true, startDate: "2026-11-02" },
-  // Off until its own one-line enable PR. Adds a driver (not armed, no card), deactivates (disarms)
-  // and reactivates (never arms) one; moves no money.
-  driverAdmin: { enabled: false },
+  // On by the owner's call (D-074, D-077, 2026-11-01). Adds a driver (not armed, no card),
+  // deactivates (disarms) and reactivates (never arms) one; moves no money.
+  driverAdmin: { enabled: true },
+  // On by the owner's call (D-056, D-077, 2026-11-01). A person cancels and a person approves the
+  // deficit; the autopilot never approves it.
+  cancelledTrip: { enabled: true, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. One model call per carrier per day; sends nothing.
   morningDigest: { enabled: false, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 },
 };
