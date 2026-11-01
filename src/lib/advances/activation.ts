@@ -6,7 +6,7 @@ import { getDb, type Queryable, type TenantDb } from "../db";
 import { isCanonicalUuid } from "../money/keys";
 import { isLocalDate } from "../time/local-date";
 import { readDefaultCard } from "./cards";
-import { cardNameMatches, readCardStatementName } from "./identity";
+import { cardNameMatches, readCardStatementName, type IdentityCard } from "./identity";
 import { readMember } from "./member";
 
 // The activation checklist (design-s9, 0085): before an admin arms a driver who is not armed, three
@@ -133,6 +133,21 @@ export async function readActivationChecklist(q: Queryable, driverId: string): P
   const identity = names.statementName === null ? "no_statement" : cardNameMatches(names) ? "match" : "mismatch";
   const facts: ActivationFacts = { card: { id: card.id, last4: card.last4 }, steps, identity, openHandLoads: open };
   return { ...facts, blockers: activationBlockers(facts) };
+}
+
+// What the driver page hands the panel: the checklist only when its card is the card the page's
+// identity read labels Default (a whole-value compare; no card on both sides also agrees). The two
+// are separate reads, so a default card changed between them would show one card as Default while
+// Record sent the other's id; then no checklist is shown, and a reload shows the new card.
+export function checklistForPage(
+  cards: readonly Pick<IdentityCard, "id" | "status" | "isDefault">[],
+  checklist: ActivationChecklist | null,
+): ActivationChecklist | null {
+  if (checklist === null) return null;
+  const shown = cards.filter((c) => c.status === "active" && c.isDefault);
+  if (shown.length > 1) return null;
+  const shownId = shown.length === 1 ? shown[0].id : null;
+  return (checklist.card?.id ?? null) === shownId ? checklist : null;
 }
 
 export type ActivationRefusal =

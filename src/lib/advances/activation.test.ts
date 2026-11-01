@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { activationBlockers, ARM_BLOCKERS, isActivationStep, type ActivationFacts } from "./activation";
+import {
+  activationBlockers,
+  ARM_BLOCKERS,
+  checklistForPage,
+  isActivationStep,
+  type ActivationChecklist,
+  type ActivationFacts,
+} from "./activation";
 
 // The checklist's pure rules: which blockers the facts leave, in the arm's fixed order, and the
 // whole-value test a step name must pass.
@@ -56,5 +63,28 @@ describe("isActivationStep refuses near misses", () => {
     for (const near of ["zero_test_sent ", "ZERO_TEST_SENT", "zero_test", "identity_confirmed_x", "", "armed", null, 1]) {
       expect(isActivationStep(near), String(near)).toBe(false);
     }
+  });
+});
+
+describe("checklistForPage", () => {
+  const OTHER = "44444444-4444-4444-8444-444444444444";
+  const checklist: ActivationChecklist = { ...READY, blockers: [] };
+  const card = (id: string, isDefault: boolean, status: "active" | "closed" = "active") => ({ id, isDefault, status });
+
+  it("hands the panel the checklist when its card is the one labeled Default", () => {
+    expect(checklistForPage([card(CARD.id, true), card(OTHER, false)], checklist)).toBe(checklist);
+    const noCard: ActivationChecklist = { ...checklist, card: null, identity: "no_card", blockers: [...ARM_BLOCKERS] };
+    expect(checklistForPage([card(OTHER, true, "closed")], noCard)).toBe(noCard);
+    expect(checklistForPage([], null)).toBeNull();
+  });
+
+  it("hides it when the default card changed between the two reads", () => {
+    expect(checklistForPage([card(CARD.id, false), card(OTHER, true)], checklist)).toBeNull();
+    expect(checklistForPage([], checklist)).toBeNull();
+    expect(checklistForPage([card(OTHER, true)], { ...checklist, card: null, identity: "no_card" })).toBeNull();
+    // A near miss is another card: the compare is of whole values.
+    const lettered: ActivationChecklist = { ...checklist, card: { id: "abcdef00-3333-4333-8333-333333333333", last4: "4242" } };
+    expect(checklistForPage([card("ABCDEF00-3333-4333-8333-333333333333", true)], lettered)).toBeNull();
+    expect(checklistForPage([card(`${CARD.id} `, true)], checklist)).toBeNull();
   });
 });

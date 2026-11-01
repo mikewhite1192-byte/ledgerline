@@ -7,7 +7,7 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody } from "@/components/ui/card";
-import { activationOn, readActivationChecklist, type ActivationChecklist } from "@/lib/advances/activation";
+import { activationOn, checklistForPage, readActivationChecklist, type ActivationChecklist } from "@/lib/advances/activation";
 import { readDriverIdentity, type DriverIdentity } from "@/lib/advances/identity";
 import { advancesOn } from "@/lib/advances/switches";
 import { readRole } from "@/lib/auth/role";
@@ -53,9 +53,10 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
     const identity = await readDriverIdentity(q, driverId);
     // Read only: any member's role, a demo visitor's too (its writes are refused on the routes).
     const role = await readRole(q, session);
+    // Shown only when its card is the one the identity read labels Default (checklistForPage).
     const activation =
       identity && activationOn() && !identity.armed.on && identity.activeTo === null
-        ? await readActivationChecklist(q, driverId)
+        ? checklistForPage(identity.cards, await readActivationChecklist(q, driverId))
         : null;
     return {
       record,
