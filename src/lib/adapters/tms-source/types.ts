@@ -111,22 +111,30 @@ export class TmsSourceError extends Error {
   }
 }
 
+// The systems we have an adapter for: the synthetic feed and the sample dispatch system (mock.ts).
+// A vendor adds its own literal here; never a vendor name in this repo.
+export const TMS_SYSTEMS = ["synthetic", "mock"] as const;
+export type TmsSystem = (typeof TMS_SYSTEMS)[number];
+
+export function isTmsSystem(value: unknown): value is TmsSystem {
+  return typeof value === "string" && (TMS_SYSTEMS as readonly string[]).includes(value);
+}
+
 // The tenant's connection row (tms_connections), as the adapters see it.
 export type TmsConnection = {
   id: string;
-  system: "synthetic";
+  system: TmsSystem;
   labelMap: Record<string, string>;
   lookbackHours: number;
   finalizeCooloffMinutes: number;
-  // The synthetic feed's clock never reads earlier than this (the seeded snapshot's instant).
+  // The feed's clock never reads earlier than this (the seeded snapshot's instant).
   feedFloorAt: Instant | null;
 };
 
 export type TmsContext = { tenantId: string; zone: string; now: Instant; q: Queryable; connection: TmsConnection };
 
 export interface TmsSource {
-  // A vendor adds its own literal here; never a vendor name in this repo.
-  readonly system: "synthetic";
+  readonly system: TmsSystem;
   ready(ctx: TmsContext): Promise<{ ok: true } | { ok: false; category: TmsFailure }>;
   listLoads(ctx: TmsContext, below: ListBookmark | null, limit: number): Promise<{ rows: TmsListRow[]; next: ListBookmark | null }>;
   readLoad(ctx: TmsContext, externalId: string): Promise<Read<TmsLoadRecord>>;

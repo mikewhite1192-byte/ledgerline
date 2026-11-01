@@ -38,7 +38,7 @@ export async function POST(request: Request) {
       if ((await readRole(q, session)) !== "admin") return "role" as const;
       const rows = await q.query<{ external_id: string; reference: string }>(
         `SELECT l.external_id, l.reference FROM tms_loads l
-          JOIN tms_connections c ON c.tenant_id = l.tenant_id AND c.system = 'synthetic'
+          JOIN tms_connections c ON c.tenant_id = l.tenant_id AND c.system IN ('synthetic', 'mock')
           WHERE l.tenant_id = current_tenant_id() AND l.gone_at IS NULL
           ORDER BY l.source_updated_at DESC, l.external_id DESC LIMIT 1`,
       );

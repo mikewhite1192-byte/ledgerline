@@ -807,6 +807,15 @@ export type Flags = {
   // after both. Settings > Demo's "Fire a wake-up twice" needs it too. It ships off; its own
   // one-line PR turns it on, after the owner stores the key.
   tmsHook: { enabled: boolean; hookPerMinute: number };
+  // The sample dispatch system (docs: MOCK-TMS, 0088, owner D-087): /tms-demo, a plain stand-in for
+  // a carrier's TMS on the demo carriers, where a person moves a seeded load through its statuses
+  // (assign a driver, complete a stop, set a status) and each change writes one history row. The
+  // desk reads it only through the read-only `mock` dispatch source, exactly as it would read a
+  // real one; each change also calls our own webhook route over HTTP with the stored key (it needs
+  // tmsHook and tmsSync on). While on, the seed and the demo reset put the demo carriers'
+  // connection on it. At most maxEventsPerLoad history rows a load. It moves no money and sends
+  // nothing anywhere else. It ships off; its own one-line PR turns it on.
+  mockTms: { enabled: boolean; maxEventsPerLoad: number };
   // The invoice on finalize (docs: TMS-MIRROR, S3): when a mirrored status event says the dispatch
   // system finalized one of our delivered loads, the desk loop's tms_event source drafts that load's
   // one invoice_post card from our own loads row, the same card Refresh on the invoice queue drafts
@@ -1206,6 +1215,8 @@ export const flags: Flags = {
   // On by the owner's call (D-071, 2026-11-01), after the owner stored payday-copilot/tms-hook-key.
   // A wake-up only: it reads, never writes to the dispatch system, and moves no money.
   tmsHook: { enabled: true, hookPerMinute: 60 },
+  // Off until its own one-line enable PR (D-071): the pages 404 and the seed keeps the synthetic feed.
+  mockTms: { enabled: false, maxEventsPerLoad: 200 },
   // On by the owner's call (D-071, 2026-10-31). It only drafts a card; approving it goes through the usual gate.
   tmsFinalizeInvoice: { enabled: true, startDate: "2026-10-31" },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.

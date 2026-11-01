@@ -17,8 +17,9 @@ export const TMS_FAULT_MESSAGES: Readonly<Record<string, string>> = {
 const FALLBACK = "Could not save the change. Try again in a moment.";
 
 // The demo dispatch feed's fault switches: each one makes the feed act like a messy real dispatch
-// system in one way. Flipping one saves it at once; the next sync reads the feed with it.
-export function TmsFaultsForm({ initial }: { initial: DemoFaults }) {
+// system in one way. Flipping one saves it at once; the next sync reads the feed with it. `shown`
+// is the switches the carrier's feed acts on (the sample dispatch system acts on fewer).
+export function TmsFaultsForm({ initial, shown = DEMO_FAULTS }: { initial: DemoFaults; shown?: readonly DemoFault[] }) {
   const [faults, setFaults] = useState<DemoFaults>(initial);
   const [pending, setPending] = useState<DemoFault | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -39,7 +40,7 @@ export function TmsFaultsForm({ initial }: { initial: DemoFaults }) {
 
   return (
     <div className="grid gap-3">
-      {DEMO_FAULTS.map((f) => (
+      {shown.map((f) => (
         <label key={f} className="flex items-start gap-2 text-body text-foreground">
           <input
             type="checkbox"

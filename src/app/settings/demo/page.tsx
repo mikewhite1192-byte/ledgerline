@@ -6,7 +6,7 @@ import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/compon
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/table";
 import { flags } from "@/config/flags";
-import type { DemoFaults } from "@/lib/adapters/tms-source/faults";
+import { DEMO_FAULTS, faultsFor, type DemoFault, type DemoFaults } from "@/lib/adapters/tms-source/faults";
 import { TENANT_TABLES, type TenantTable } from "@/lib/data/tables";
 import { DbError } from "@/lib/db";
 import { formatLocalDate } from "@/lib/format/dates";
@@ -28,7 +28,7 @@ type Row = { table: string; label: string; now: number; after: number };
 type View =
   | { kind: "staff" }
   | { kind: "not_demo" }
-  | { kind: "ready"; name: string; rows: Row[]; refusals: string[]; faults: DemoFaults | null };
+  | { kind: "ready"; name: string; rows: Row[]; refusals: string[]; faults: DemoFaults | null; shownFaults: readonly DemoFault[] };
 
 const isTenantTable = (t: string): t is TenantTable => (TENANT_TABLES as readonly string[]).includes(t);
 
@@ -58,7 +58,7 @@ export default async function DemoSettings() {
       if (!carrier) return { kind: "not_demo" };
       const preview = await previewDemoReset(q, carrier);
       const planned = countRows(buildCarrierPlan(carrier, DEMO_ANCHOR).rows);
-      // The fault switches show only while their switch is on and the carrier reads the synthetic feed.
+      // The fault switches show only while their switch is on and the carrier reads a demo feed.
       const faultSettings = flags.tmsSync.demoFaultsEnabled === true ? await readFaultSettings(q) : null;
       return {
         kind: "ready",
@@ -71,6 +71,7 @@ export default async function DemoSettings() {
         })),
         refusals: preview.refusals.map(refusalText),
         faults: faultSettings?.kind === "ok" ? faultSettings.faults : null,
+        shownFaults: faultSettings?.kind === "ok" ? faultsFor(faultSettings.feed) : DEMO_FAULTS,
       };
     });
   } catch (err) {
@@ -196,7 +197,7 @@ export default async function DemoSettings() {
               </div>
             </CardHeader>
             <CardBody>
-              <TmsFaultsForm initial={view.faults} />
+              <TmsFaultsForm initial={view.faults} shown={view.shownFaults} />
               {flags.tmsHook.enabled === true && flags.tmsSync.enabled === true ? (
                 <div className="mt-4">
                   <TmsWakeUpForm />

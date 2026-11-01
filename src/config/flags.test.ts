@@ -146,6 +146,8 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
+  // The sample dispatch system ships off; its own one-line enable PR turns it on.
+  "mockTms.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -441,6 +443,14 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsHook.enabled");
   });
 
+  it("ships the sample dispatch system off, capped per load, and local mode can never turn it on", () => {
+    expect(flags.mockTms).toEqual({ enabled: false, maxEventsPerLoad: 200 });
+    expect(Number.isSafeInteger(flags.mockTms.maxEventsPerLoad) && flags.mockTms.maxEventsPerLoad > 0).toBe(true);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("mockTms.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.enabled");
+  });
+
   it("releases the invoice on finalize, with a start date, off for the local demo run", () => {
     expect(flags.tmsFinalizeInvoice).toEqual({ enabled: true, startDate: "2026-10-31" });
     expect(isLocalDate(flags.tmsFinalizeInvoice.startDate)).toBe(true);
@@ -494,6 +504,7 @@ describe("flags", () => {
       "namedLines.enabled",
       "activationChecklist.enabled",
       "stubSent.enabled",
+      "mockTms.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

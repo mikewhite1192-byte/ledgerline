@@ -1,3 +1,4 @@
+import { flags } from "../../config/flags";
 import { serveLoad, type SynLoad, type SynWorld } from "../adapters/tms-source/synthetic";
 import type {
   CustomerRow,
@@ -13,6 +14,7 @@ import { documentColumnsOf, eventColumnsOf, lineColumnsOf, loadColumnsOf } from 
 import { syntheticLabelMap } from "../tms/status";
 import { parseInstant, type LocalDate } from "../time/local-date";
 import { instantAt } from "./calendar";
+import { addMockLoad, emptyMockStore, type MockStore } from "./mock-tms";
 import { Rng } from "./prng";
 
 // TMS-MIRROR (0075): the dispatch mirror as the synthetic feed serves it at the seeded instant
@@ -21,6 +23,11 @@ import { Rng } from "./prng";
 // id stream (`<seed>:tms`) so no other row's id moves. Every snapshot row is seeded: the desk
 // never moves a load on a seeded status event. The connection's feed floor is the same instant,
 // so the feed never reads earlier than the snapshot.
+//
+// MOCK-TMS (0088): the sample dispatch system's store is the same served feed (seed/mock-tms.ts),
+// from its own id stream (`<seed>:mock-tms`). While flags.mockTms is on the connection reads it
+// (system `mock`, a 2 minute cool-off so a finalize there drafts its card within a demo); while
+// off the connection stays the synthetic feed and the store is filled but unread.
 
 type Input = {
   seed: string;
@@ -33,13 +40,15 @@ type Input = {
 export type TmsSnapshot = Pick<
   TenantRows,
   "tms_connections" | "tms_parties" | "tms_loads" | "tms_stops" | "tms_status_events" | "tms_line_items" | "tms_documents"
->;
+> &
+  MockStore;
 
 export const SEED_LOOKBACK_HOURS = 4;
 export const SEED_COOLOFF_MINUTES = 30;
+export const MOCK_COOLOFF_MINUTES = 2;
 
 // The feed's facts for one plan load: the same fields the live feed reads from the tables.
-function synLoadOf(
+export function synLoadOf(
   load: LoadRow,
   customers: ReadonlyMap<string, CustomerRow>,
   drivers: ReadonlyMap<string, DriverRow>,
@@ -80,6 +89,8 @@ function synLoadOf(
 
 export function buildTmsSnapshot(input: Input): TmsSnapshot {
   const rng = new Rng(`${input.seed}:tms`);
+  const mockRng = new Rng(`${input.seed}:mock-tms`);
+  const onMock = flags.mockTms.enabled === true;
   const { zone, rows } = input;
   const world: SynWorld = { slug: input.slug, zone };
   const floorAt = instantAt(input.anchor, 0, 0, zone);
@@ -99,10 +110,10 @@ export function buildTmsSnapshot(input: Input): TmsSnapshot {
     tms_connections: [
       {
         id: rng.uuid(),
-        system: "synthetic",
+        system: onMock ? "mock" : "synthetic",
         label_map: labelMap,
         lookback_hours: SEED_LOOKBACK_HOURS,
-        finalize_cooloff_minutes: SEED_COOLOFF_MINUTES,
+        finalize_cooloff_minutes: onMock ? MOCK_COOLOFF_MINUTES : SEED_COOLOFF_MINUTES,
         demo_faults: {},
         feed_floor_at: floorAt,
       },
@@ -113,7 +124,9 @@ export function buildTmsSnapshot(input: Input): TmsSnapshot {
     tms_status_events: [],
     tms_line_items: [],
     tms_documents: [],
+    ...emptyMockStore(),
   };
+  const mockTrucks = new Set<string>();
 
   const ordered = [...rows.loads].sort((a, b) => (a.load_number < b.load_number ? -1 : a.load_number > b.load_number ? 1 : 0));
   const partyDrivers = new Set<string>();
@@ -122,6 +135,7 @@ export function buildTmsSnapshot(input: Input): TmsSnapshot {
     const syn = synLoadOf(load, customers, drivers, identities, rows.load_accessorials, rows.invoices);
     const served = serveLoad(world, syn, floorMs);
     if (served === null) continue;
+    addMockLoad(out, mockRng, served);
     const mapped = loadColumnsOf(served.record, labelMap, zone);
     const linked = byNumber.get(served.record.reference)?.length === 1 ? load.id : null;
     const flags = [...mapped.flags, ...(linked === null ? ["unlinked" as const] : [])];
@@ -162,6 +176,7 @@ export function buildTmsSnapshot(input: Input): TmsSnapshot {
         received_at: floorAt,
         seeded: true,
       });
+      out.mock_tms_parties.push({ id: mockRng.uuid(), kind: "customer", external_id: customer.code, name: customer.name, unit: null, vin: null });
     }
     const ext = served.record.driverExternalId;
     const driver = load.driver_id ? drivers.get(load.driver_id) : undefined;
@@ -179,6 +194,19 @@ export function buildTmsSnapshot(input: Input): TmsSnapshot {
         received_at: floorAt,
         seeded: true,
       });
+      out.mock_tms_parties.push({
+        id: mockRng.uuid(),
+        kind: "driver",
+        external_id: ext,
+        name: `${driver.first_name} ${driver.last_name}`,
+        unit: driver.truck_unit,
+        vin: null,
+      });
+    }
+    const truck = served.record.truckUnit;
+    if (truck !== null && !mockTrucks.has(truck)) {
+      mockTrucks.add(truck);
+      out.mock_tms_parties.push({ id: mockRng.uuid(), kind: "truck", external_id: truck, name: `Truck ${truck}`, unit: truck, vin: null });
     }
   }
   return out;

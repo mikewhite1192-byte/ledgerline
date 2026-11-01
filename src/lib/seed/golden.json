@@ -51,7 +51,13 @@
         "tms_stops": 666,
         "tms_status_events": 1895,
         "tms_line_items": 756,
-        "tms_documents": 997
+        "tms_documents": 997,
+        "mock_tms_parties": 64,
+        "mock_tms_loads": 333,
+        "mock_tms_stops": 666,
+        "mock_tms_events": 1895,
+        "mock_tms_lines": 756,
+        "mock_tms_documents": 997
       },
       "linehaulCents": 30511700,
       "hero": {
@@ -439,7 +445,13 @@
         "tms_stops": 636,
         "tms_status_events": 1817,
         "tms_line_items": 739,
-        "tms_documents": 954
+        "tms_documents": 954,
+        "mock_tms_parties": 64,
+        "mock_tms_loads": 318,
+        "mock_tms_stops": 636,
+        "mock_tms_events": 1817,
+        "mock_tms_lines": 739,
+        "mock_tms_documents": 954
       },
       "linehaulCents": 23722800,
       "hero": null,

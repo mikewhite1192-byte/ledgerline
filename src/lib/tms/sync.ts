@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import { tmsSource } from "../adapters/tms-source";
 import {
+  isTmsSystem,
   TmsSourceError,
   type ListBookmark,
   type TmsConnection,
@@ -228,7 +229,7 @@ export async function pullTms(
   const [conn] = await inTenant((q) => q.query<ConnectionRow>(CONNECTION_SQL, [run.token, nowIso]));
   if (!conn) return { ran: false, category: "not_configured" };
   if (Number(conn.held) !== 1) return { ran: false, category: "no_lease" };
-  if (conn.system !== "synthetic" || typeof conn.zone !== "string" || conn.zone.length === 0) throw new DbError("unknown");
+  if (!isTmsSystem(conn.system) || typeof conn.zone !== "string" || conn.zone.length === 0) throw new DbError("unknown");
   let labelText: unknown = null;
   try {
     labelText = JSON.parse(conn.label_map) as unknown;
@@ -238,7 +239,7 @@ export async function pullTms(
   const labelMap = readLabelMap(labelText);
   const connection: TmsConnection = {
     id: conn.id,
-    system: "synthetic",
+    system: conn.system,
     labelMap,
     lookbackHours: Number(conn.lookback_hours),
     finalizeCooloffMinutes: Number(conn.finalize_cooloff_minutes),
