@@ -105,6 +105,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-10-31): an advance whose numbers no longer hold at approval
   // parks with its reason for a person instead of failing. Parking moves no money.
   "advanceParking.enabled",
+  // Released by the owner (D-071, 2026-11-01): a taken-back or stranded card load is pulled back off
+  // the card once a named person approves. Test mode only; the autopilot never approves a pull.
+  "cardPullback.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -120,8 +123,6 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // The card pull-back ships off; its own one-line enable PR turns it on.
-  "cardPullback.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -349,8 +350,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("advanceParking.enabled");
   });
 
-  it("ships the card pull-back off, with a start date, never a kind the autopilot may approve", () => {
-    expect(flags.cardPullback).toEqual({ enabled: false, startDate: "2026-11-02" });
+  it("releases the card pull-back, with a start date, never a kind the autopilot may approve", () => {
+    expect(flags.cardPullback).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.cardPullback.startDate)).toBe(true);
     // A pull is always a named person's: never a kind the autopilot may approve.
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("card_pullback");
