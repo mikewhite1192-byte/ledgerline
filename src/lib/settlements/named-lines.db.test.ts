@@ -493,7 +493,7 @@ describe("named stub lines against a seeded database", () => {
 
     // The agent sees that a person typed it and the record it cites, never who.
     const told = await app.withTenant(T, (q) =>
-      explainPaystub.run(q, {} as never, { driverId: LUMPER.driverId, periodId: OPEN.id }, {} as never),
+      explainPaystub.run(q, { timeZone: CARRIER.timezone } as never, { driverId: LUMPER.driverId, periodId: OPEN.id }, {} as never),
     );
     const seen = told.result as { contradictions: unknown[]; rows: Record<string, unknown>[] };
     expect(seen.contradictions).toEqual([]);
@@ -565,7 +565,7 @@ describe("named stub lines against a seeded database", () => {
     expect(await ledgerCount(s.id)).toBe(0);
     // The agent reads the same verdict the approval found.
     const told = await app.withTenant(T, (q) =>
-      explainPaystub.run(q, {} as never, { driverId: LUMPER.driverId, periodId: OPEN.id }, {} as never),
+      explainPaystub.run(q, { timeZone: CARRIER.timezone } as never, { driverId: LUMPER.driverId, periodId: OPEN.id }, {} as never),
     );
     expect((told.result as { contradictions: unknown[] }).contradictions).toEqual([
       { category: "contradicting_line", source: { table: "load_accessorials", id: LUMPER.id } },
@@ -614,7 +614,7 @@ describe("named stub lines against a seeded database", () => {
       expect(await name(lumperBody(), stub.id)).toMatchObject({ ok: false, category: "disabled" });
       // The agent is told the check did not run, not that it found nothing.
       const told = await app.withTenant(T, (q) =>
-        explainPaystub.run(q, {} as never, { driverId: LUMPER.driverId, periodId: OPEN.id }, {} as never),
+        explainPaystub.run(q, { timeZone: CARRIER.timezone } as never, { driverId: LUMPER.driverId, periodId: OPEN.id }, {} as never),
       );
       expect((told.result as { contradictions: unknown }).contradictions).toBeNull();
       await approve(card.id);

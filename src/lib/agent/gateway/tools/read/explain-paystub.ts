@@ -4,6 +4,9 @@ import { readRowsWhereId, readSettlementInput } from "../../../../data/read";
 import { settleDriver } from "../../../../rules-engine";
 import { findContradictions, readSourceFacts } from "../../../../settlements/contradiction";
 import { readStoredLines } from "../../../../settlements/stored";
+import { nameOf } from "../../../../settlements/list";
+import { readStubSent, stubSummary } from "../../../../settlements/stub-sent";
+import { localDateOf } from "../../../../time/local-date";
 import { defineTool } from "../../types";
 import { idField } from "../../validate";
 import { OPERATOR } from "../shared";
@@ -18,7 +21,11 @@ export const explainPaystub = defineTool({
     "line applies; parkedReason says why a stored paystub no longer matches its records. A stored " +
     "line with namedByPerson true was typed by staff and cites one record in sourceRef; " +
     "contradictions lists each line that does not match the record it cites, as the approval check " +
-    "would find it now; null means it was not checked, never that there are none.",
+    "would find it now; null means it was not checked, never that there are none. A paid stub " +
+    "carries stub: a one-line summary written from the stored totals, to read to staff as it is, " +
+    "and sent, which says when a staff member recorded sending the stub and their role; sent null " +
+    "on a paid stub means no send is recorded yet. You cannot send a stub: a staff member sends it " +
+    "and records it with the Mark stub sent button on the paystub's page. stub is null unless paid.",
   tier: "read",
   roles: OPERATOR,
   label: "Explaining the pay stub",
@@ -27,7 +34,7 @@ export const explainPaystub = defineTool({
     { table: "drivers", id: a.driverId },
     { table: "settlement_periods", id: a.periodId },
   ],
-  run: async (q, _ctx, a) => {
+  run: async (q, ctx, a) => {
     const [driver] = await readRowsWhereId(q, "drivers", "id", a.driverId);
     if (!driver) throw new Error("driver vanished after the ref check");
     // Why an exempt driver's paystub has no insurance line (the engine never charges one).
@@ -49,6 +56,28 @@ export const explainPaystub = defineTool({
           stored.id,
         ).map((p) => ({ category: p.category, source: p.source }));
       }
+      // The stub's one line and whether a person recorded sending it, for a paid stub only. The
+      // sender is named by role; the membership id and email stay out.
+      let stub: { summary: string; sent: { at: string; byRole: string } | null } | null = null;
+      if (stored.status === "paid") {
+        const [period] = await readRowsWhereId(q, "settlement_periods", "id", a.periodId);
+        if (!period || stored.paid_at === null) throw new Error("the paid stub's week or paid time is missing");
+        const sent = stored.stub_sent_at !== null ? await readStubSent(q, stored.id) : null;
+        if (stored.stub_sent_at !== null && sent === null) throw new Error("the stub sent mark could not be read");
+        stub = {
+          summary: stubSummary({
+            driverName: nameOf(driver.first_name, driver.last_name),
+            driverCode: driver.code,
+            periodEnd: period.period_end,
+            grossCents: stored.gross_cents,
+            deductionsCents: stored.deductions_cents,
+            netCents: stored.net_cents,
+            carryForwardCents: stored.carry_forward_cents,
+            paidOn: localDateOf(stored.paid_at, ctx.timeZone),
+          }),
+          sent: sent ? { at: sent.at, byRole: sent.byRole } : null,
+        };
+      }
       return {
         result: {
           driverId: a.driverId,
@@ -63,6 +92,7 @@ export const explainPaystub = defineTool({
           parkedReason: stored.parked_reason,
           notes: exemptNotes,
           contradictions,
+          stub,
           rows: [...lines]
             .sort((x, y) => x.seq - y.seq)
             .map((l) => ({

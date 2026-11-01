@@ -139,6 +139,8 @@ const KEPT_OFF = [
   "cardPullback.enabled",
   // The dispatch webhook ships off; its own one-line enable PR turns it on once the key is stored.
   "tmsHook.enabled",
+  // The stub sent mark ships off; its own one-line enable PR turns it on.
+  "stubSent.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -485,6 +487,7 @@ describe("flags", () => {
       "tmsHook.enabled",
       "morningDigest.enabled",
       "namedLines.enabled",
+      "stubSent.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

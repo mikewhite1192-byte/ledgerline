@@ -80,7 +80,7 @@ const refuse = (category: NamedLineRefusal): { ok: false; category: NamedLineRef
 });
 
 // The caller's membership id, which entered_by names; requireStaff first, so a judge is refused.
-async function staffMembershipId(q: Queryable, session: Session): Promise<string> {
+export async function staffMembershipId(q: Queryable, session: Session): Promise<string> {
   await requireStaff(q, session);
   const [m] = await q.query<{ id: string }>(
     "SELECT CAST(id AS text) AS id FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $1",

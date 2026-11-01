@@ -495,6 +495,8 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["escrow_closing_cents", "int"],
       ["parked_reason", "text"],
       ["parked_at", "timestamptz"],
+      ["stub_sent_at", "timestamptz"],
+      ["stub_sent_by", "uuid"],
     ],
   },
   settlement_lines: {

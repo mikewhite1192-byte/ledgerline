@@ -123,6 +123,8 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
         escrow_closing_cents: writes.escrow.closingCents,
         parked_reason: null,
         parked_at: null,
+        stub_sent_at: null,
+        stub_sent_by: null,
       };
       rows.settlements.push(settlement);
       for (const line of result.lines) {

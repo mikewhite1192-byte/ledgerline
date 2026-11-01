@@ -38,6 +38,10 @@ export type StoredSettlement = {
   paidAt: string | null;
   parkedReason: string | null;
   parkedAt: string | null;
+  // A staff member's record that they sent the paid stub to the driver (0086): when, and their
+  // membership. Both null until then.
+  stubSentAt: string | null;
+  stubSentBy: string | null;
 };
 
 type Row = {
@@ -53,12 +57,16 @@ type Row = {
   paid_at: string | null;
   parked_reason: string | null;
   parked_at: string | null;
+  stub_sent_at: string | null;
+  stub_sent_by: string | null;
 };
 
 const COLUMNS =
   "id, period_id, driver_id, status, gross_cents, deductions_cents, net_cents, carry_forward_cents," +
   " exception_count, to_char(paid_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS paid_at," +
-  " parked_reason, to_char(parked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS parked_at";
+  " parked_reason, to_char(parked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS parked_at," +
+  " to_char(stub_sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS stub_sent_at," +
+  " CAST(stub_sent_by AS text) AS stub_sent_by";
 
 function whole(value: number | string, what: string): number {
   const n = Number(value);
@@ -80,6 +88,8 @@ function storedOf(r: Row): StoredSettlement {
     paidAt: r.paid_at,
     parkedReason: r.parked_reason,
     parkedAt: r.parked_at,
+    stubSentAt: r.stub_sent_at,
+    stubSentBy: r.stub_sent_by,
   };
 }
 
