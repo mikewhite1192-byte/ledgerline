@@ -41,11 +41,13 @@ import {
   customerOf,
   deficitRecoveryApplies,
   driverOf,
+  dueWeekOf,
   loadsOf,
   payConfigOf,
   receivablesInputOf,
   settlementInputOf,
   advanceOf,
+  type CashFridayRows,
   type DeficitRow,
   type HeldRecoveries,
 } from "./records";
@@ -325,11 +327,17 @@ async function readHeldRecoveries(
   driverId: string,
   period: { id: string; start: LocalDate },
 ): Promise<HeldRecoveries> {
-  const rows = await q.query<{ kind: string; sources: unknown; amount_cents: unknown }>(HELD_SQL, [
-    driverId,
-    period.id,
-    period.start,
-  ]);
+  return heldOf(await readHeldLines(q, driverId, period));
+}
+
+type HeldLine = { kind: string; sources: unknown; amount_cents: unknown };
+
+function readHeldLines(q: Queryable, driverId: string, period: { id: string; start: LocalDate }): Promise<HeldLine[]> {
+  return q.query<HeldLine>(HELD_SQL, [driverId, period.id, period.start]);
+}
+
+// The held lines summed (readHeldRecoveries). Pure; throws on a line that does not read.
+function heldOf(rows: readonly HeldLine[]): HeldRecoveries {
   const advances = new Map<string, number>();
   const deficits = new Map<string, number>();
   let escrowCents = 0;
@@ -468,29 +476,42 @@ export async function readCashFridayInput(
   zone: string,
   limits: CashFridayLimits,
 ): Promise<CashFridayInput> {
-  return cashFridayInputOf(
-    {
-      pay_configs: await readTable(q, "pay_configs"),
-      settlement_periods: await readTable(q, "settlement_periods"),
-      settlements: await readTable(q, "settlements"),
-      drivers: await readTable(q, "drivers"),
-      loads: await readTable(q, "loads"),
-      load_state_miles: await readTable(q, "load_state_miles"),
-      load_accessorials: await readTable(q, "load_accessorials"),
-      driver_days: await readTable(q, "driver_days"),
-      pay_items: await readTable(q, "pay_items"),
-      deduction_schedules: await readTable(q, "deduction_schedules"),
-      advances: await readTable(q, "advances"),
-      invoices: await readTable(q, "invoices"),
-      customer_payments: await readTable(q, "customer_payments"),
-      payment_applications: await readTable(q, "payment_applications"),
-      vendor_bills: await readTable(q, "vendor_bills"),
-      cash_settings: await readTable(q, "cash_settings"),
-      factoring_request_invoices: await readTable(q, "factoring_request_invoices"),
-    },
-    zone,
-    limits,
-  );
+  const rows: CashFridayRows = {
+    pay_configs: await readTable(q, "pay_configs"),
+    settlement_periods: await readTable(q, "settlement_periods"),
+    settlements: await readTable(q, "settlements"),
+    drivers: await readTable(q, "drivers"),
+    loads: await readTable(q, "loads"),
+    load_state_miles: await readTable(q, "load_state_miles"),
+    load_accessorials: await readTable(q, "load_accessorials"),
+    driver_days: await readTable(q, "driver_days"),
+    pay_items: await readTable(q, "pay_items"),
+    deduction_schedules: await readTable(q, "deduction_schedules"),
+    advances: await readTable(q, "advances"),
+    invoices: await readTable(q, "invoices"),
+    customer_payments: await readTable(q, "customer_payments"),
+    payment_applications: await readTable(q, "payment_applications"),
+    vendor_bills: await readTable(q, "vendor_bills"),
+    cash_settings: await readTable(q, "cash_settings"),
+    factoring_request_invoices: await readTable(q, "factoring_request_invoices"),
+  };
+  // The previews read what each driver's other unpaid stubs hold on the week paid next, as a run
+  // of that week does (readSettlementInput), so the two agree. A held line that does not read
+  // makes the previews unknown (held null), never a guess; a database error fails the read.
+  const due = dueWeekOf(rows);
+  let held: Map<string, HeldRecoveries> | null = new Map();
+  if (due) {
+    for (const d of rows.drivers) {
+      const lines = await readHeldLines(q, d.id, { id: due.id, start: due.period_start });
+      try {
+        held.set(d.id, heldOf(lines));
+      } catch {
+        held = null;
+        break;
+      }
+    }
+  }
+  return cashFridayInputOf(rows, zone, limits, held);
 }
 
 // Only the named tables, whole, for the current tenant: what one report reads. A report is a view

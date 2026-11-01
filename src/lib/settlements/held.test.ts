@@ -6,8 +6,8 @@ import { outstandingCents } from "../rules-engine";
 import { carriedItemDate } from "./paid";
 
 // Balances drawn down across open weeks (D-090): what the driver's other unpaid stubs before a week
-// hold counts as taken already, never past what is still owed, and a shortfall carried past a
-// later week already settled is dated after it.
+// hold counts as taken already, never past what is still owed, and a shortfall carried is dated
+// in the earliest later week that still drafts it, else past any later week already settled.
 
 const plan = blueRidgePlan();
 const rows = plan.rows;
@@ -98,5 +98,14 @@ describe("carriedItemDate", () => {
       { start: "2026-11-16", end: "2026-11-22" },
     ];
     expect(carriedItemDate("2026-11-01", settled)).toBe("2026-11-09");
+  });
+
+  it("is the first day of the earliest later week that still drafts it, across a week never opened", () => {
+    expect(carriedItemDate("2026-11-01", [], "2026-11-09")).toBe("2026-11-09");
+    expect(carriedItemDate("2026-11-01", [{ start: "2026-11-02", end: "2026-11-08" }], "2026-11-23")).toBe("2026-11-23");
+  });
+
+  it("refuses a drafting week that does not come after the week", () => {
+    expect(() => carriedItemDate("2026-11-01", [], "2026-11-01")).toThrow(RangeError);
   });
 });

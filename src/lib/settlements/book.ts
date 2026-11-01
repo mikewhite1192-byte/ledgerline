@@ -43,24 +43,30 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
   if (!driver) throw new Error("the settlement's driver is missing");
   const carryForwardCents = cents(stored.carryForwardCents, "carry forward");
   // A shortfall carried into a later week that can no longer draft it would never be charged, so
-  // its date skips past those weeks (carriedItemDate): a week already closed (approved or paid,
-  // which "Run the week" refuses), with or without a stub of this driver, and an open week where
-  // this driver's stub is already approved or paid.
-  const settledWeeks =
+  // it is dated at the start of the earliest later week that can still draft it for this driver
+  // (open, with no approved or paid stub of this driver), else past every later week that cannot
+  // (carriedItemDate): a week already closed (approved or paid, which "Run the week" refuses), with
+  // or without a stub of this driver, and an open week where this driver's stub is already
+  // approved or paid. The driver's lock above is the one every approval of this driver's stubs
+  // takes before its recheck (lockPayDrivers), so no other week's stub of this driver changes
+  // status between this read and the commit.
+  const laterWeeks =
     carryForwardCents > 0
-      ? (
-          await q.query<{ period_start: string; period_end: string }>(
-            `SELECT CAST(p.period_start AS text) AS period_start, CAST(p.period_end AS text) AS period_end
-               FROM settlement_periods p
-              WHERE p.tenant_id = current_tenant_id() AND p.period_start > CAST($2 AS date)
-                AND (p.status <> 'open'
-                     OR EXISTS (SELECT 1 FROM settlements s
-                                 WHERE s.tenant_id = p.tenant_id AND s.period_id = p.id
-                                   AND s.driver_id = CAST($1 AS uuid) AND s.status IN ('approved', 'paid')))`,
-            [stored.driverId, period.start],
-          )
-        ).map((w) => ({ start: w.period_start, end: w.period_end }))
+      ? await q.query<{ period_start: string; period_end: string; state: string }>(
+          `SELECT CAST(p.period_start AS text) AS period_start, CAST(p.period_end AS text) AS period_end,
+                  CASE WHEN p.status <> 'open'
+                         OR EXISTS (SELECT 1 FROM settlements s
+                                     WHERE s.tenant_id = p.tenant_id AND s.period_id = p.id
+                                       AND s.driver_id = CAST($1 AS uuid) AND s.status IN ('approved', 'paid'))
+                       THEN 'settled' ELSE 'drafts' END AS state
+             FROM settlement_periods p
+            WHERE p.tenant_id = current_tenant_id() AND p.period_start > CAST($2 AS date)
+            ORDER BY p.period_start`,
+          [stored.driverId, period.start],
+        )
       : [];
+  const settledWeeks = laterWeeks.filter((w) => w.state === "settled").map((w) => ({ start: w.period_start, end: w.period_end }));
+  const draftingWeek = laterWeeks.find((w) => w.state === "drafts")?.period_start ?? null;
   const writes = paidWritesOf({
     settlementId,
     lines,
@@ -68,6 +74,7 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
     openingCents: Number(driver.escrow_balance_cents),
     periodEnd: period.end,
     settledWeeks,
+    draftingWeek,
   });
   const at = now.toISOString();
 

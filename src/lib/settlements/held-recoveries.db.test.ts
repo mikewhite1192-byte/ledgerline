@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
+import { readCashFridayInput, readSettlementInput } from "../data/read";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
 import { addAdvance, dropTenant, makeTenant, type Fixture } from "../money/test-db";
-import { bookPaidSettlement } from "./book";
+import { settleDriver } from "../rules-engine";
+import { bookPaidSettlement, rollUpPeriod } from "./book";
 import { runPayPeriod } from "./run";
 import { readStoredLines, readStoredSettlement, recheckSettlement } from "./stored";
 
@@ -15,7 +17,9 @@ import { readStoredLines, readStoredSettlement, recheckSettlement } from "./stor
 // the week". The older draft takes and the newer one reads it as held, so whichever week is paid
 // first, every cent of a recovery is booked once. Approval here is the approval's own pre-pay
 // recheck (it must be clean) and the status move, then the booking, as the card executor does
-// them. Every tenant made here is removed after each test.
+// them. A shortfall carried from a week is dated in a later week that still drafts it, and the
+// preview of the week paid next reads what is held as a run of that week does. Every tenant made
+// here is removed after each test.
 
 const saved = structuredClone(flags);
 // Monday November 2, 2026, 10:00 in Chicago (the fixture carrier's zone).
@@ -183,6 +187,15 @@ async function balances(advance: string, deficit: string | null) {
   });
 }
 
+// The carried shortfall items, by date.
+const carriedItems = () =>
+  admin.withTenant(A.tenantId, (q) =>
+    q.query<{ item_date: string; amount: string }>(
+      `SELECT CAST(item_date AS text) AS item_date, CAST(amount_cents AS text) AS amount
+         FROM pay_items WHERE tenant_id = current_tenant_id() AND kind = 'carried_shortfall' ORDER BY item_date`,
+    ),
+  );
+
 describe("recoveries held across two open weeks", () => {
   beforeAll(() => {
     admin = createPgDb({ connectionString: adminUrl() });
@@ -302,5 +315,67 @@ describe("recoveries held across two open weeks", () => {
       ),
     );
     expect(items).toEqual([{ item_date: "2026-11-16" }]);
+  });
+
+  it("dates a carried shortfall in the earliest later open week that drafts it, across a week never opened", async () => {
+    // The finals: the seeded week ending Sunday November 1 is paid while the only other open week
+    // is the week of November 9; no week of November 2 was ever opened.
+    await payConfig();
+    const w0 = await openWeek("2026-10-26");
+    const w2 = await openWeek(W2_START);
+    await item("reimbursement", "2026-10-27", 100_000);
+    await item("other_deduction", "2026-10-28", 150_000);
+    await item("reimbursement", "2026-11-10", 100_000);
+    await runWeek(w0);
+    await pay(await stubOf(w0));
+    expect(await carriedItems()).toEqual([{ item_date: "2026-11-09", amount: "50000" }]);
+    // The week it is dated in drafts it: the carried 50000 comes off that week's 100000.
+    await runWeek(w2);
+    expect(await taken(await stubOf(w2), "carried_shortfall")).toEqual([50_000]);
+  });
+
+  it("dates a carried shortfall in the open week after a newer week paid with no stub of this driver", async () => {
+    const { w1, w2 } = await setup({ deficit: false, escrow: false });
+    await item("other_deduction", "2026-11-04", 150_000);
+    await openWeek("2026-11-23");
+    await runWeek(w1);
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute("UPDATE settlement_periods SET status = 'paid' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [w2]),
+    );
+    await pay(await stubOf(w1));
+    // Past the paid week and the week of November 16, which was never opened, into an open week.
+    expect(await carriedItems()).toEqual([{ item_date: "2026-11-23", amount: "50000" }]);
+  });
+
+  it("builds the week paid next's preview from what another week's approved stub holds, as the run does", async () => {
+    // An approved, unbooked stub in a closed week holds a 50000 advance recovery; the week paid
+    // next has 100000 of earnings and no stub yet. The run of that week reads the advance as taken,
+    // and so does its preview: both pay 100000.
+    await payConfig();
+    const w1 = await openWeek(W1_START);
+    const w2 = await openWeek(W2_START);
+    await item("reimbursement", "2026-11-03", 100_000);
+    await item("reimbursement", "2026-11-10", 100_000);
+    const advance = await paidAdvance();
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute("UPDATE advances SET fee_cents = 0 WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [advance]),
+    );
+    await runWeek(w1);
+    const s1 = await stubOf(w1);
+    expect(await taken(s1, "advance_recovery")).toEqual([ADVANCE]);
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute("UPDATE settlements SET status = 'approved' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [s1]),
+    );
+    await app.withTenant(A.tenantId, (q) => rollUpPeriod(q, w1));
+    const { preview, run } = await app.withTenant(A.tenantId, async (q) => {
+      const input = await readCashFridayInput(q, "America/Chicago", flags.cashFridayLimits);
+      return {
+        preview: input.previews?.find((p) => p.driver.id === A.driverId) ?? null,
+        run: settleDriver(await readSettlementInput(q, A.driverId, w2)).netCents,
+      };
+    });
+    expect(preview?.period.start).toBe(W2_START);
+    expect(preview ? settleDriver(preview).netCents : null).toBe(100_000);
+    expect(run).toBe(100_000);
   });
 });

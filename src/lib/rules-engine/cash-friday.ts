@@ -392,6 +392,24 @@ export function chaseOptions(
     });
 }
 
+// The week paid next (D-090): the oldest open week that holds a paystub or a day that carries pay
+// (payDays: a load delivered, a pay item, a day worked), else the newest open week. An open week
+// with neither never finishes (the roll-up closes a week only from its stubs, and a run of it
+// makes none), so it never holds the week paid next back while a newer week has pay to run; a
+// week with pay and no stub yet (the seeded week before its first run) still comes first. With
+// one open week, that week. Null when no week is open. Cash Friday, its previews and the cash
+// needed report all read the week here, so they describe one week.
+export function dueWeek<P extends { id: string; periodStart: LocalDate; periodEnd: LocalDate; status: string }>(
+  periods: readonly P[],
+  settlements: readonly { periodId: string }[],
+  payDays: readonly LocalDate[] = [],
+): P | null {
+  const open = periods.filter((p) => p.status === "open").sort((a, b) => compareText(a.periodStart, b.periodStart));
+  const held = new Set(settlements.map((s) => s.periodId));
+  const paid = (p: P) => held.has(p.id) || payDays.some((d) => d >= p.periodStart && d <= p.periodEnd);
+  return open.find(paid) ?? open[open.length - 1] ?? null;
+}
+
 export function computeCashFriday(input: CashFridayInput, asOfDate: LocalDate): CashFridayResult {
   const asOf = assertDate(asOfDate, "asOf");
   const limits = checkLimits(input.limits);
@@ -399,12 +417,9 @@ export function computeCashFriday(input: CashFridayInput, asOfDate: LocalDate): 
   if (!settings) return refuse("balance_missing");
   const balanceAsOf = assertDate(settings.balanceAsOf, "balance date");
   if (balanceAsOf > asOf) return refuse("balance_in_future");
-  // With two open weeks (D-090), the week paid next: the oldest open one by its start.
-  const open = input.periods
-    .filter((p) => p.status === "open")
-    .sort((a, b) => compareText(a.periodStart, b.periodStart));
-  if (open.length === 0) return refuse("no_open_period");
-  const period = open[0];
+  // With two open weeks (D-090), the week paid next (dueWeek).
+  const period = dueWeek(input.periods, input.settlements, input.payDays ?? []);
+  if (!period) return refuse("no_open_period");
   const payDay = payDayFor({ start: period.periodStart, end: period.periodEnd }, settings.payDayDow, asOf);
   const payRun = payRunTotal(input, period);
   if (!payRun) return refuse("pay_run_unknown");

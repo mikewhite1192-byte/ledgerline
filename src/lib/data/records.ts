@@ -1,8 +1,8 @@
 import { flags, type Flags } from "../../config/flags";
 import {
   cents,
-  compareText,
   ConfigError,
+  dueWeek,
   InputError,
   parsePayConfig,
   sub,
@@ -496,15 +496,18 @@ export type CashFridayRows = Pick<
 
 // Everything Cash Friday reads (design 4.2). Paid instants become dates in the tenant's zone here,
 // so the engine sees only dates. The pay run preview is one settlement input per driver active in
-// the one open week; when the week is not exactly one, or a driver's input cannot be built (no
-// pay rules version for the week, a record that does not fit), previews are null and the engine
-// refuses the pay run as unknown rather than counting it as zero. An invoice with a live factoring
+// the week paid next (dueWeekOf); when no week is open, the held lines did not read (held null),
+// or a driver's input cannot be built (no pay rules version for the week, a record that does not
+// fit), previews are null and the engine refuses the pay run as unknown rather than counting it
+// as zero. held defaults to nothing held, as for the seed's plan (one open week, every older week
+// paid, so no unpaid stub holds anything). An invoice with a live factoring
 // line (any status but declined or failed: submitted, unknown and funded all mean the partner may
 // hold it) is marked factored, so the engine neither counts its receipt nor offers it again.
 export function cashFridayInputOf(
   rows: CashFridayRows,
   zone: string,
   limits: CashFridayLimits,
+  held: ReadonlyMap<string, HeldRecoveries> | null = new Map(),
 ): CashFridayInput {
   if (rows.cash_settings.length > 1) throw new Error("more than one cash settings row");
   const paidOn = (at: string | null): LocalDate | null => (at === null ? null : localDateOf(at, zone));
@@ -513,7 +516,8 @@ export function cashFridayInputOf(
     settings: rows.cash_settings.length === 1 ? cashSettingsOf(rows.cash_settings[0]) : null,
     periods: rows.settlement_periods.map(periodOf),
     settlements: rows.settlements.map((r) => ({ ...settlementOf(r), paidOn: paidOn(r.paid_at) })),
-    previews: previewsOf(rows),
+    payDays: payDaysOf(rows),
+    previews: previewsOf(rows, held),
     advances: rows.advances.map((r) => ({ ...advanceOf(r), paidOn: paidOn(r.paid_at) })),
     invoices: rows.invoices.map((r) => (factored.has(r.id) ? { ...invoiceOf(r), factored: true } : invoiceOf(r))),
     payments: rows.customer_payments.map(paymentOf),
@@ -528,19 +532,42 @@ export function factoredInvoiceIds(lines: readonly { invoice_id: string; status:
   return new Set(lines.filter((l) => l.status !== "declined" && l.status !== "failed").map((l) => l.invoice_id));
 }
 
-// The previews describe the week Cash Friday reports: the oldest open week (D-090), so the pay
-// run total and the previews are one week's.
-function previewsOf(rows: CashFridayRows): SettlementInput[] | null {
-  const open = rows.settlement_periods
-    .filter((p) => p.status === "open")
-    .sort((a, b) => compareText(a.period_start, b.period_start));
-  if (open.length === 0) return null;
-  const period: Period = { start: open[0].period_start, end: open[0].period_end };
+// The days that carry pay (dueWeek): a load a driver delivered (not cancelled), a pay item, a day
+// worked.
+export function payDaysOf(rows: Pick<TenantRows, "loads" | "pay_items" | "driver_days">): LocalDate[] {
+  return [
+    ...rows.loads.filter((l) => l.driver_id !== null && l.status !== "cancelled" && l.delivered_on !== null).map((l) => l.delivered_on as LocalDate),
+    ...rows.pay_items.map((i) => i.item_date),
+    ...rows.driver_days.map((d) => d.day),
+  ];
+}
+
+// The week Cash Friday reports (dueWeek, D-090), as its row.
+export function dueWeekOf(
+  rows: Pick<CashFridayRows, "settlement_periods" | "settlements" | "loads" | "pay_items" | "driver_days">,
+): SettlementPeriodRow | null {
+  const due = dueWeek(
+    rows.settlement_periods.map(periodOf),
+    rows.settlements.map((s) => ({ periodId: s.period_id })),
+    payDaysOf(rows),
+  );
+  return due ? (rows.settlement_periods.find((p) => p.id === due.id) ?? null) : null;
+}
+
+// The previews describe the week Cash Friday reports (dueWeekOf), so the pay run total and the
+// previews are one week's. Each driver's preview reads what the driver's other unpaid stubs hold
+// (held, by driver id, from readHeldRecoveries for that week), as a run of the week does, so a
+// preview and the run agree; a driver missing from it holds nothing, and null (the held lines did
+// not read) makes the previews null, so the pay run reads unknown.
+function previewsOf(rows: CashFridayRows, held: ReadonlyMap<string, HeldRecoveries> | null): SettlementInput[] | null {
+  const due = dueWeekOf(rows);
+  if (!due || held === null) return null;
+  const period: Period = { start: due.period_start, end: due.period_end };
   const active = rows.drivers
     .filter((d) => d.active_from <= period.end && (d.active_to === null || d.active_to >= period.start))
     .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
   try {
-    return active.map((d) => settlementInputOf(rows, d.id, period));
+    return active.map((d) => settlementInputOf(applyHeld(rows, d.id, held.get(d.id) ?? NOTHING_HELD), d.id, period));
   } catch (error) {
     if (error instanceof ConfigError || error instanceof InputError) return null;
     throw error;
